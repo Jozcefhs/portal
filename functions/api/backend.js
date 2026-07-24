@@ -5053,8 +5053,8 @@ function accountingRowMatches(row, filter, includeBeforeStart = false) {
   if (!includeBeforeStart && filter.DateFrom && date && date < filter.DateFrom) return false;
   if (filter.DateTo && date && date > filter.DateTo) return false;
   if (!includeBeforeStart && filter.FinancialYear && date && !date.startsWith(filter.FinancialYear)) return false;
-  if (filter.AcademicSession && !sameText(row.AcademicSession, filter.AcademicSession)) return false;
-  if (filter.Term && !sameText(row.Term, filter.Term)) return false;
+  if (filter.AcademicSession && clean(row.AcademicSession) && !sameText(row.AcademicSession, filter.AcademicSession)) return false;
+  if (filter.Term && clean(row.Term) && !sameText(row.Term, filter.Term)) return false;
   if (filter.Department && !sameText(row.Department, filter.Department) && !accountingLines(row.Lines).some((line) => sameText(line.Department, filter.Department))) return false;
   return true;
 }
@@ -5117,7 +5117,7 @@ export function buildBudgetVsActual(budgets, journals, filter = {}) {
   });
 }
 
-function buildAccountingReport(chart, journals, expenses, budgets, filter = {}) {
+export function buildAccountingReport(chart, journals, expenses, budgets, filter = {}) {
   const periodJournals = journals.filter((row) => accountingRowMatches(row, filter, false));
   const asOfJournals = journals.filter((row) => accountingRowMatches(row, filter, true));
   const trialBalance = aggregateAccountingBalances(chart, periodJournals);

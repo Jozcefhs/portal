@@ -4,6 +4,7 @@ import {
   accountingDestinationForPayment,
   accountingDestinationForWalletPurchase,
   applyBillingCategoryOverrides,
+  buildAccountingReport,
   buildBudgetVsActual,
   buildGatewayCollectionsReport,
   buildReceivablesAgeing,
@@ -254,6 +255,38 @@ test('financial periods require the same session and term', () => {
   assert.equal(sameFinancialPeriod({ AcademicSession: '2026/2027', Term: 'First Term' }, '2026/2027', 'First Term'), true);
   assert.equal(sameFinancialPeriod({ AcademicSession: '2025/2026', Term: 'First Term' }, '2026/2027', 'First Term'), false);
   assert.equal(sameFinancialPeriod({ AcademicSession: '2026/2027', Term: 'Second Term' }, '2026/2027', 'First Term'), false);
+});
+
+test('legacy ledger rows with blank session/term still report as revenue in period filters', () => {
+  const chart = [{ Code: '4040', Name: 'Books and Uniform Revenue', Type: 'Revenue', Group: 'Operating Revenue', Direction: 'Credit' }];
+  const journals = [{
+    Date: '2026-07-23',
+    Status: 'Posted',
+    AcademicSession: '',
+    Term: '',
+    Lines: [
+      { AccountCode: '2200', Debit: 10000, Credit: 0 },
+      { AccountCode: '4040', Debit: 0, Credit: 10000 }
+    ]
+  }];
+  const report = buildAccountingReport(chart, journals, [], [], {
+    AcademicSession: '2026/2027',
+    Term: 'First Term',
+    DateFrom: '2026-07-01',
+    DateTo: '2026-07-31',
+    FinancialYear: '2026'
+  });
+  assert.equal(report.dashboard.GrossRevenue, 10000);
+  assert.equal(report.dashboard.NetRevenue, 10000);
+
+  const reportForDifferentPeriod = buildAccountingReport(chart, journals, [], [], {
+    AcademicSession: '2025/2026',
+    Term: 'First Term',
+    DateFrom: '2025-07-01',
+    DateTo: '2025-07-31',
+    FinancialYear: '2025'
+  });
+  assert.equal(reportForDifferentPeriod.dashboard.GrossRevenue, 0);
 });
 
 test('specific billing category replaces the All-category fee', () => {
