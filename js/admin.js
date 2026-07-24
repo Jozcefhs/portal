@@ -568,6 +568,47 @@ async function doOfferingAction(action, offeringId, reason = '') {
   return data;
 }
 
+function splitCsvList(value) {
+  return String(value || '')
+    .split(/[;,]/)
+    .map((item) => clean(item))
+    .filter(Boolean);
+}
+
+function isRouteActive(value) {
+  const text = clean(value).toLowerCase();
+  return !['no', 'false', '0', 'inactive', 'disabled'].includes(text);
+}
+
+function roleListInput(row, field) {
+  const values = row[field];
+  if (Array.isArray(values)) return values.join(', ');
+  if (typeof values === 'string') return values;
+  return '';
+}
+
+function routeFundLabel(route, funds) {
+  const fundId = clean(route.FundId || '').toLowerCase();
+  if (!fundId) return 'General';
+  const fund = (funds || []).find((item) => clean(item.FundId || item.__id).toLowerCase() === fundId);
+  return fund?.Name ? `${fund.Name} (${route.FundId})` : route.FundId;
+}
+
+async function doOfferingRouteAction(action, payload = {}) {
+  const response = await fetch('/api/staff-offerings', {
+    method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action,
+      BranchId: currentUser?.branchId || 'main',
+      ...payload
+    })
+  });
+  const data = await response.json();
+  if (!response.ok || !data.ok) throw new Error(data.message || 'Offering route action failed.');
+  return data;
+}
+
 async function loadChurchOfferings() {
   try {
     const response = await fetch('/api/staff-offerings', {
@@ -580,6 +621,65 @@ async function loadChurchOfferings() {
     if (activeSection !== 'offerings') return;
     const summary = data.summary || {};
     const capabilities = data.capabilities || {};
+    const approvalRoutes = data.approvalRoutes || [];
+    const canManageApprovalRoutes = Boolean(capabilities.canManageApprovalRoutes);
+    const routeFundOptions = [
+      { value: '', label: 'General (unassigned)' },
+      ...((data.funds || []).map((fund) => {
+        const fundId = clean(fund.FundId || fund.__id);
+        return { value: fundId, label: fund.Name ? `${fund.Name} (${fundId})` : fundId };
+      }).filter((fund) => fund.label))
+    ];
+    const routeFormSection = canManageApprovalRoutes ? `
+      <section class="config-group">
+        <header><strong>Approval route maintenance</strong><small>Routes are branch scoped and selected automatically by each offering's fund.</small></header>
+        <form id="offeringRouteForm" class="workflow-form config-form">
+          <div class="config-grid">
+            <label>Route ID <input name="RouteId" placeholder="Blank for auto generated"></label>
+            <label>Fund <select name="FundId">${routeFundOptions.map((row) => `<option value="${escapeHtml(row.value)}">${escapeHtml(row.label)}</option>`).join('')}</select></label>
+            <label>Description <input name="Description" required placeholder="General approvals"></label>
+            <label>Sort order <input name="SortOrder" type="number" min="0" step="1" value="100"></label>
+            <label>Status <select name="Active"><option value="YES">Active</option><option value="NO">Inactive</option></select></label>
+          </div>
+          <label>Approval roles <input name="ApprovalRoles" required placeholder="Super Admin, Church Administrator, Treasurer" value="Super Admin, Church Administrator, Treasurer"></label>
+          <label>Posting roles <input name="PostingRoles" required placeholder="Super Admin, Treasurer" value="Super Admin, Treasurer"></label>
+          <div class="config-dialog-actions">
+            <p class="status" data-offering-route-status></p>
+            <button type="submit">Save route</button>
+            <button type="button" id="offeringRouteFormReset">Reset</button>
+          </div>
+        </form>
+      </section>
+      <p class="muted">You can deactivate a route to stop new assignments, then delete only when inactive.</p>
+    ` : '';
+    const routeTableSection = `
+      <section class="config-group">
+        <header><strong>Approval routes</strong><small>Routes drive offering approval and posting permissions.</small></header>
+        ${table('Offering Approval Routes', approvalRoutes, [
+          { label: 'Route', value: (row) => pick(row, ['RouteId']) },
+          { label: 'Fund', value: (row) => routeFundLabel(row, data.funds || []) },
+          { label: 'Description', value: (row) => pick(row, ['Description']) },
+          { label: 'Approval roles', value: (row) => roleListInput(row, 'ApprovalRoles') },
+          { label: 'Posting roles', value: (row) => roleListInput(row, 'PostingRoles') },
+          { label: 'Sort', value: (row) => pick(row, ['SortOrder']) },
+          { label: 'Active', value: (row) => isRouteActive(row.Active) ? 'YES' : 'NO' },
+          {
+            label: 'Actions',
+            render: (row) => {
+              const routeId = pick(row, ['RouteId']);
+              if (!canManageApprovalRoutes || !routeId) return 'Read only';
+              const routeIdSafe = escapeHtml(routeId);
+              const isActive = isRouteActive(row.Active);
+              const editButton = `<button type="button" class="table-action" data-offering-route-action="edit" data-offering-route-id="${routeIdSafe}">Edit</button>`;
+              const actionButton = isActive
+                ? `<button type="button" class="table-action workflow-reject" data-offering-route-action="deactivate" data-offering-route-id="${routeIdSafe}">Deactivate</button>`
+                : `<button type="button" class="table-action" data-offering-route-action="delete" data-offering-route-id="${routeIdSafe}">Delete</button>`;
+              return `${editButton} ${actionButton}`;
+            }
+          }
+        ])}
+      </section>
+    `;
     panelEl.innerHTML = `
       <div class="workflow-intro"><div><p class="eyebrow">Giving control</p><h2>Offering Batches</h2><p class="muted">Branch ${escapeHtml(data.branchId || 'main')} Ã‚Â· ${summary.count || 0} batches Ã‚Â· ${summary.reconciled || 0} reconciled</p></div><button type="button" id="refreshChurchOfferings">Refresh</button></div>
       <div class="workflow-kpis">
@@ -591,6 +691,8 @@ async function loadChurchOfferings() {
         <div><small>Approved</small><strong>${escapeHtml(summary.approved || 0)}</strong><span>Ready for posting</span></div>
         <div><small>Posted</small><strong>${escapeHtml(summary.posted || 0)}</strong><span>Accounting transfer created</span></div>
       </div>
+      ${routeFormSection}
+      ${routeTableSection}
       <p class="muted">Capture and reconciliation are managed in the desktop suite. Reconciliation locks the batch and prepares a journal preview; it still requires approval before posting to accounting.</p>
       ${table('Offering Batches', data.offerings || [], [
         { label: 'Date', value: (row) => pick(row, ['Date']) },
@@ -655,6 +757,88 @@ async function loadChurchOfferings() {
           setStatus(dashboardStatus, error.message || String(error), 'bad');
         }
       });
+    });
+    panelEl.querySelectorAll('[data-offering-route-action]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        if (!canManageApprovalRoutes) return;
+        const routeAction = button.getAttribute('data-offering-route-action');
+        const routeId = button.getAttribute('data-offering-route-id');
+        if (!routeId) return;
+        const selected = approvalRoutes.find((route) => pick(route, ['RouteId']) === routeId) || {};
+        if (routeAction === 'edit') {
+          const form = document.getElementById('offeringRouteForm');
+          if (!form) return;
+          form.elements.RouteId.value = clean(routeId);
+          form.elements.FundId.value = clean(selected.FundId || '');
+          form.elements.Description.value = clean(selected.Description || '');
+          form.elements.SortOrder.value = Number(selected.SortOrder || 100);
+          form.elements.Active.value = isRouteActive(selected.Active) ? 'YES' : 'NO';
+          form.elements.ApprovalRoles.value = roleListInput(selected, 'ApprovalRoles');
+          form.elements.PostingRoles.value = roleListInput(selected, 'PostingRoles');
+          form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return;
+        }
+        if (routeAction === 'deactivate') {
+          if (!window.confirm(`Deactivate route ${routeId}? It will not be used for new assignments.`)) return;
+          try {
+            const data = await doOfferingRouteAction('deactivateofferingroute', { RouteId: routeId });
+            setStatus(dashboardStatus, data.message, 'ok');
+            await loadChurchOfferings();
+          } catch (error) {
+            setStatus(dashboardStatus, error.message || String(error), 'bad');
+          }
+          return;
+        }
+        if (routeAction === 'delete') {
+          if (!window.confirm(`Delete route ${routeId}?`)) return;
+          try {
+            const data = await doOfferingRouteAction('deleteofferingroute', { RouteId: routeId });
+            setStatus(dashboardStatus, data.message, 'ok');
+            await loadChurchOfferings();
+          } catch (error) {
+            setStatus(dashboardStatus, error.message || String(error), 'bad');
+          }
+        }
+      });
+    });
+    const routeForm = document.getElementById('offeringRouteForm');
+    routeForm?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!canManageApprovalRoutes) return;
+      const form = event.currentTarget;
+      const button = form.querySelector('button[type="submit"]');
+      const status = form.querySelector('[data-offering-route-status]');
+      const payload = {
+        RouteId: clean(form.elements.RouteId.value),
+        FundId: clean(form.elements.FundId.value),
+        Description: clean(form.elements.Description.value),
+        SortOrder: Number(form.elements.SortOrder.value || 0),
+        Active: clean(form.elements.Active.value || 'YES').toUpperCase(),
+        ApprovalRoles: splitCsvList(form.elements.ApprovalRoles.value),
+        PostingRoles: splitCsvList(form.elements.PostingRoles.value)
+      };
+      if (!payload.Description) payload.Description = 'General offering approval route';
+      if (!payload.ApprovalRoles.length || !payload.PostingRoles.length) {
+        setStatus(status, 'Both approval and posting roles are required.', 'bad');
+        return;
+      }
+      setButtonLoading(button, true, 'Saving...', 'Save route');
+      try {
+        const data = await doOfferingRouteAction('saveofferingroute', payload);
+        form.reset();
+        setStatus(status, data.message, 'ok');
+        await loadChurchOfferings();
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+      } finally {
+        setButtonLoading(button, false, 'Saving...', 'Save route');
+      }
+    });
+    document.getElementById('offeringRouteFormReset')?.addEventListener('click', () => {
+      const form = document.getElementById('offeringRouteForm');
+      if (!form) return;
+      form.reset();
+      setStatus(form.querySelector('[data-offering-route-status]'), '', '');
     });
     document.getElementById('refreshChurchOfferings')?.addEventListener('click', loadChurchOfferings);
   } catch (error) {

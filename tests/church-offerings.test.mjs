@@ -5,6 +5,7 @@ import {
   normalizeChurchOffering,
   normalizeDenominations,
   normalizeOfferingApprovalRoute,
+  normalizeOfferingApprovalRouteForSave,
   resolveOfferingApprovalRoute,
   isRoleAllowedForRoute,
   offeringCapabilities,
@@ -17,6 +18,9 @@ test('offering roles separate capture, reconciliation, and read-only audit acces
   assert.equal(offeringCapabilities({ role: 'Church Administrator' }).canCapture, true);
   assert.equal(offeringCapabilities({ role: 'Church Administrator' }).canReconcile, false);
   assert.equal(offeringCapabilities({ role: 'Treasurer' }).canReconcile, true);
+  assert.equal(offeringCapabilities({ role: 'Church Administrator' }).canManageApprovalRoutes, true);
+  assert.equal(offeringCapabilities({ role: 'Treasurer' }).canManageApprovalRoutes, true);
+  assert.equal(offeringCapabilities({ role: 'Pastor' }).canManageApprovalRoutes, false);
   assert.equal(offeringCapabilities({ role: 'Pastor' }).canView, true);
   assert.equal(offeringCapabilities({ role: 'Auditor' }).canCapture, false);
   assert.equal(offeringCapabilities({ role: 'Membership Officer' }).canView, false);
@@ -100,6 +104,33 @@ test('offering approval route resolution prefers fund-specific active route and 
   assert.equal(normalized.RouteId, 'ROUTE-1');
   const fallback = resolveOfferingApprovalRoute([{ RouteId: 'Z', FundId: '', SortOrder: 5 }], { FundId: 'CHURCH' });
   assert.equal(fallback.RouteId, 'Z');
+});
+
+test('route save normalization requires both approval and posting role lists', () => {
+  const normalized = normalizeOfferingApprovalRouteForSave({
+    RouteId: 'CHURCH-DEFAULT',
+    FundId: 'GENERAL',
+    Description: 'Default Route',
+    ApprovalRoles: 'Pastor, Treasurer',
+    PostingRoles: ['Super Admin', 'Treasurer'],
+    SortOrder: '10'
+  }, 'main');
+  assert.equal(normalized.RouteId, 'CHURCH-DEFAULT');
+  assert.equal(normalized.ApprovalRoles.length, 2);
+  assert.equal(normalized.PostingRoles.length, 2);
+  assert.equal(normalized.SortOrder, 10);
+  assert.throws(() => normalizeOfferingApprovalRouteForSave({
+    RouteId: 'BROKEN',
+    FundId: 'GENERAL',
+    ApprovalRoles: [],
+    PostingRoles: 'Treasurer'
+  }), /approval role/);
+  assert.throws(() => normalizeOfferingApprovalRouteForSave({
+    RouteId: 'BROKEN2',
+    FundId: 'GENERAL',
+    PostingRoles: [],
+    ApprovalRoles: 'Treasurer'
+  }), /posting role/);
 });
 
 test('offering route role checks support approval and posting role lists', () => {

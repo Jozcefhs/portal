@@ -1,4 +1,4 @@
-import { getDocument, listCollection, upsertDocument } from './firestore.js';
+import { deleteDocument, getDocument, listCollection, upsertDocument } from './firestore.js';
 import {
   buildOfferingJournalDraft,
   CHURCH_COLLECTIONS,
@@ -43,6 +43,7 @@ const CAPTURE_ROLES = new Set(['Super Admin', 'Church Administrator', 'Treasurer
 const RECONCILE_ROLES = new Set(['Super Admin', 'Treasurer']);
 const APPROVE_ROLES = new Set(['Super Admin', 'Church Administrator', 'Treasurer']);
 const POST_ROLES = new Set(['Super Admin', 'Treasurer']);
+const ROUTE_ROLES = new Set(['Super Admin', 'Church Administrator', 'Treasurer']);
 
 export function offeringCapabilities(user = {}) {
   const role = clean(user.role || user.Role);
@@ -52,6 +53,7 @@ export function offeringCapabilities(user = {}) {
     canReconcile: RECONCILE_ROLES.has(role),
     canApprove: APPROVE_ROLES.has(role),
     canPost: POST_ROLES.has(role),
+    canManageApprovalRoutes: ROUTE_ROLES.has(role),
     canViewAudit: VIEW_ROLES.has(role)
   };
 }
@@ -261,6 +263,22 @@ async function writeOfferingApprovalHistory(env, branchId, user, action, offerin
   });
 }
 
+async function writeOfferingApprovalRouteAudit(env, branchId, user, action, route, details = '') {
+  const auditId = `OFFROUTE-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  await upsertDocument(env, churchCollectionPath(CHURCH_COLLECTIONS.offeringApprovalRoutesAudit, branchId), auditId, {
+    AuditId: auditId,
+    Timestamp: nowIso(),
+    Action: clean(action),
+    EntityType: 'Offering Approval Route',
+    EntityId: clean(route?.RouteId),
+    BranchId: branchId,
+    Actor: actorName(user),
+    ActorUsername: clean(user.username || user.Username),
+    ActorRole: clean(user.role || user.Role),
+    Details: clean(details)
+  });
+}
+
 async function writeOfferingAccountingAudit(env, user, journal, details = '') {
   const auditId = `ACCOUNTING-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   await upsertDocument(env, 'accountingAudit', safeChurchDocumentId(auditId), {
@@ -291,6 +309,12 @@ function parseRouteStatus(value, fallback = 'YES') {
   return fallback;
 }
 
+function resolveRouteSortOrder(value, fallback = 100) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return parsed;
+}
+
 export function normalizeOfferingApprovalRoute(route = {}, branchId = 'main', index = 0) {
   const routeId = clean(route.RouteId || route.__id || route.routeId || `ROUTE-${index + 1}`);
   return {
@@ -300,8 +324,27 @@ export function normalizeOfferingApprovalRoute(route = {}, branchId = 'main', in
     Description: clean(route.Description || route.description || 'Default offering approval route'),
     ApprovalRoles: routeRoleList(route.ApprovalRoles || route.approvalRoles || 'Super Admin, Church Administrator, Treasurer'),
     PostingRoles: routeRoleList(route.PostingRoles || route.postingRoles || 'Super Admin, Treasurer'),
-    SortOrder: Number(route.SortOrder || route.sortOrder || 100 + index),
+    SortOrder: resolveRouteSortOrder(route.SortOrder || route.sortOrder, 100 + index),
     Active: parseRouteStatus(route.Active, 'YES')
+  };
+}
+
+export function normalizeOfferingApprovalRouteForSave(route = {}, branchId = 'main') {
+  const normalized = normalizeOfferingApprovalRoute(route, branchId);
+  const approvalRoles = routeRoleList(normalized.ApprovalRoles);
+  const postingRoles = routeRoleList(normalized.PostingRoles);
+  if (!approvalRoles.length) {
+    throw inputError('A route must have at least one approval role.');
+  }
+  if (!postingRoles.length) {
+    throw inputError('A route must have at least one posting role.');
+  }
+  const routeId = clean(route.RouteId || route.__id || route.routeId) || `ROUTE-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  return {
+    ...normalized,
+    RouteId: safeChurchDocumentId(routeId),
+    ApprovalRoles: approvalRoles,
+    PostingRoles: postingRoles
   };
 }
 
@@ -377,6 +420,94 @@ async function requireOfferingForAction(env, user, body = {}, options = {}) {
     throw err;
   }
   return { offering, path, branchId, state };
+}
+
+async function findApprovalRouteById(env, user, body = {}) {
+  const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
+  const routeId = safeChurchDocumentId(clean(body.RouteId || body.routeId));
+  if (!routeId) throw inputError('RouteId is required.', 400);
+  const path = churchCollectionPath(CHURCH_COLLECTIONS.offeringApprovalRoutes, branchId);
+  const existing = await getDocument(env, path, routeId).catch(() => null);
+  if (!existing) throw inputError('Offering approval route was not found.', 404);
+  return { branchId, path, routeId, route: existing };
+}
+
+export async function saveOfferingApprovalRoute(env, user, body = {}) {
+  await requireOfferingsEdition(env);
+  requireCapability(user, 'canManageApprovalRoutes');
+  const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
+  const routeInput = body.route || body.Route || body.offeringApprovalRoute || body;
+  const normalizedRoute = normalizeOfferingApprovalRouteForSave(routeInput, branchId);
+  const path = churchCollectionPath(CHURCH_COLLECTIONS.offeringApprovalRoutes, branchId);
+  const existing = await getDocument(env, path, normalizedRoute.RouteId).catch(() => null);
+  const normalizedPayload = {
+    ...(existing || {}),
+    ...normalizedRoute,
+    BranchId: normalizedRoute.BranchId || branchId,
+    CreatedAt: existing?.CreatedAt || nowIso(),
+    CreatedBy: existing?.CreatedBy || actorName(user),
+    UpdatedAt: nowIso(),
+    UpdatedBy: actorName(user)
+  };
+  delete normalizedPayload.__id;
+  delete normalizedPayload.__name;
+  await upsertDocument(env, path, normalizedRoute.RouteId, normalizedPayload);
+  await writeOfferingApprovalRouteAudit(
+    env,
+    branchId,
+    user,
+    existing ? 'UPDATE ROUTE' : 'CREATE ROUTE',
+    normalizedPayload,
+    `${normalizedPayload.FundId || 'General'} | active ${normalizedPayload.Active} | sort ${normalizedPayload.SortOrder}`
+  );
+  return {
+    ok: true,
+    message: existing ? 'Offering approval route updated.' : 'Offering approval route saved.',
+    route: normalizedPayload
+  };
+}
+
+export async function deactivateOfferingApprovalRoute(env, user, body = {}) {
+  await requireOfferingsEdition(env);
+  requireCapability(user, 'canManageApprovalRoutes');
+  const { branchId, path, routeId, route } = await findApprovalRouteById(env, user, body);
+  const deactivated = {
+    ...(route || {}),
+    Active: 'NO',
+    UpdatedAt: nowIso(),
+    UpdatedBy: actorName(user)
+  };
+  delete deactivated.__id;
+  delete deactivated.__name;
+  await upsertDocument(env, path, routeId, deactivated);
+  await writeOfferingApprovalRouteAudit(
+    env,
+    branchId,
+    user,
+    'DEACTIVATE ROUTE',
+    deactivated,
+    `Route ${routeId} deactivated`
+  );
+  return { ok: true, message: 'Offering approval route deactivated.', route: deactivated };
+}
+
+export async function deleteOfferingApprovalRoute(env, user, body = {}) {
+  await requireOfferingsEdition(env);
+  requireCapability(user, 'canManageApprovalRoutes');
+  const { branchId, path, routeId, route } = await findApprovalRouteById(env, user, body);
+  if (parseRouteStatus(route.Active, 'YES') === 'YES') {
+    throw inputError('Active routes cannot be deleted. Deactivate the route before deleting.', 409);
+  }
+  await deleteDocument(env, path, routeId);
+  await writeOfferingApprovalRouteAudit(
+    env,
+    branchId,
+    user,
+    'DELETE ROUTE',
+    route,
+    `Route ${routeId} removed`
+  );
+  return { ok: true, message: 'Offering approval route deleted.' };
 }
 
 export async function listChurchOfferings(env, user, body = {}) {
@@ -665,6 +796,15 @@ export async function handleChurchOfferingAction(env, user, body = {}) {
   if (['reject', 'rejectchurchoffering'].includes(action)) return rejectChurchOffering(env, user, body);
   if (['post', 'postchurchoffering', 'postchurchofferingaccounting'].includes(action)) {
     return postChurchOfferingToAccounting(env, user, body);
+  }
+  if (['saveofferingapprovalroute', 'saveofferingroute', 'savechurchofferingroute'].includes(action)) {
+    return saveOfferingApprovalRoute(env, user, body);
+  }
+  if (['deactivateofferingapprovalroute', 'deactivateofferingroute', 'deactivateroute'].includes(action)) {
+    return deactivateOfferingApprovalRoute(env, user, body);
+  }
+  if (['deleteofferingapprovalroute', 'deleteofferingroute', 'deleteroute'].includes(action)) {
+    return deleteOfferingApprovalRoute(env, user, body);
   }
   throw inputError('Choose a valid church offering action.');
 }

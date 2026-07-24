@@ -855,6 +855,37 @@ function isStorePurchase(row) {
     normalizeMatchText(row && row.EntryType).includes('store');
 }
 
+function extractStoreMetadata(payload) {
+  const metadata = parseMetadata(payload);
+  const nested = metadata && typeof metadata === 'object' && metadata.metadata && typeof metadata.metadata === 'object'
+    ? metadata.metadata : {};
+  return {
+    ...metadata,
+    ...nested
+  };
+}
+
+function paymentStoreDepartment(row = {}) {
+  const direct = normalizeMatchText(
+    row.Department || row.department || row.StoreType || row.storeType ||
+    row.store || row.category || row.Category || ''
+  );
+  if (direct) return direct;
+  const metadata = extractStoreMetadata(row.Metadata);
+  const cartStoreType = Array.isArray(metadata.storeCart)
+    ? metadata.storeCart.find((item) => clean(item.StoreType || item.storeType).trim())
+    : null;
+  if (cartStoreType) return normalizeMatchText(cartStoreType.StoreType || cartStoreType.storeType);
+  const metadataDepartment = clean(metadata.department || metadata.Department || metadata.storeType || metadata.storetype || metadata.StoreType);
+  return normalizeMatchText(metadataDepartment);
+}
+
+function paymentIndicatesStorePurchase(row = {}) {
+  if (isStorePurchase(row)) return true;
+  const storeDepartment = paymentStoreDepartment(row);
+  return ['bookstore', 'uniform store', 'store', 'tuck shop'].includes(storeDepartment);
+}
+
 function periodKey(key, session, term) {
   const cleanKey = clean(key);
   if (!cleanKey) return '';
@@ -3068,7 +3099,7 @@ async function writePaymentAccountingJournal(env, payment, hasMatchingInvoice) {
 }
 
 export function accountingDestinationForWalletPurchase(row = {}, defaultAccountCode = '4090') {
-  const department = normalizeMatchText(row.Department || row.department || row.StoreType || row.storeType);
+  const department = paymentStoreDepartment(row);
   if (department === 'bookstore' || department === 'uniform store' || department === 'store' || department === 'tuck shop') {
     return '4040';
   }
@@ -3086,9 +3117,12 @@ async function writeWalletPurchaseAccountingJournal(env, purchase = {}, options 
   if (!sourceId || amount <= 0) return;
   const journalNo = `SYS-WALLET-PURCHASE-${safeDocumentId(sourceId)}`;
   const revenueAccount = accountingDestinationForWalletPurchase(purchase);
-  const metadata = parseMetadata(purchase.Metadata);
-  const metadataDepartment = clean(metadata.department || metadata.Department || metadata.storeType || metadata.storetype);
-  const metadataStoreType = clean(metadata.storeType || metadata.storetype || metadata.StoreType || metadata.Storetype);
+  const metadataDepartment = paymentStoreDepartment({
+    ...purchase,
+    Department: purchase.Department || purchase.department || purchase.StoreType || purchase.storeType,
+    Metadata: purchase.Metadata
+  });
+  const metadata = extractStoreMetadata(purchase.Metadata);
   const metadataNotes = clean(metadata.notes || metadata.Notes || metadata.description || metadata.Description);
   const lines = [
     { AccountCode: '2200', Debit: amount, Credit: 0, Description: `Wallet liability ${clean(purchase.AccountRef || purchase.DisplayName || sourceId)}` },
@@ -3100,7 +3134,7 @@ async function writeWalletPurchaseAccountingJournal(env, purchase = {}, options 
     Source: 'Wallet Purchase', SourceId: sourceId, RecordedBy: clean(purchase.RecordedBy) || 'Wallet POS',
     AcademicSession: clean(purchase.AcademicSession || options.AcademicSession || ''),
     Term: clean(purchase.Term || options.Term || ''),
-    Department: clean(metadataDepartment || purchase.Department || options.Department || metadataStoreType),
+    Department: clean(metadataDepartment || purchase.Department || options.Department),
     CostCentre: clean(purchase.CostCentre || options.CostCentre || ''),
     Lines: lines
   };
@@ -4099,8 +4133,10 @@ function accountingAccountCodeForRevenue(category, feeCode = '') {
 }
 
 export function accountingDestinationForPayment(row = {}, hasMatchingInvoice = false) {
+  const department = paymentStoreDepartment(row);
+  if (department === 'bookstore' || department === 'uniform store' || department === 'store' || department === 'tuck shop') return '4040';
   if (isWalletLedger(row)) return '2200';
-  if (isStorePurchase(row)) return '4040';
+  if (paymentIndicatesStorePurchase(row)) return '4040';
   if (hasMatchingInvoice) return '1100';
   return accountingAccountCodeForRevenue(row.FeeCategory, row.FeeCode);
 }

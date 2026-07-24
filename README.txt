@@ -65,3 +65,7 @@ Expected behavior:
   - Topups create wallet-credit (liability) ledger entries as before.
   - Wallet purchases now create a posted accounting journal (`SYS-WALLET-PURCHASE-*`) that debits `2200` (Student Wallet Liability), so the finance liability card reflects spend immediately.
   - Purchase credit account defaults to store/revenue mapping (`4040` for store-like context, otherwise the mapped revenue account).
+- Finance surplus behavior:
+  - Gross Surplus = Net Revenue - Direct Costs.
+  - Net Surplus = Total Income - Total Expenses (includes Other Income).
+  - Therefore Net Surplus may be higher than Gross Surplus when there is positive Other Income.

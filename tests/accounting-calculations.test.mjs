@@ -212,6 +212,21 @@ test('legacy admission form currency strings are normalized without losing Payst
 test('payment accounting routes wallets, stores, receivables, and direct revenue correctly', () => {
   assert.equal(accountingDestinationForPayment({ FeeCode: 'WALLET_TOPUP' }), '2200');
   assert.equal(accountingDestinationForPayment({ FeeCode: 'STORE_CART' }), '4040');
+  assert.equal(accountingDestinationForPayment({
+    Department: 'Uniform Store',
+    FeeCode: 'UNIFORM_ACCESSORY',
+    FeeName: 'School Belt'
+  }), '4040');
+  assert.equal(accountingDestinationForPayment({
+    FeeCode: 'OTHER_ACCESSORY',
+    FeeName: 'Sports Bag',
+    FeeCategory: 'General',
+    Metadata: JSON.stringify({
+      metadata: {
+        storeCart: [{ StoreType: 'Uniform Store', ItemName: 'Sports Bag', Amount: 2500 }]
+      }
+    })
+  }), '4040');
   assert.equal(accountingDestinationForPayment({ FeeCode: 'TUITION', FeeCategory: 'School Fee' }, true), '1100');
   assert.equal(accountingDestinationForPayment({ FeeCode: 'TUITION', FeeCategory: 'School Fee' }, false), '4000');
   assert.equal(accountingDestinationForPayment({ FeeCode: 'ACCEPTANCE_FEE', FeeCategory: 'Admission' }, false), '4110');
@@ -219,6 +234,13 @@ test('payment accounting routes wallets, stores, receivables, and direct revenue
 
 test('wallet purchase destination follows department context and defaults to Other Income when unknown', () => {
   assert.equal(accountingDestinationForWalletPurchase({ Department: 'Bookstore' }), '4040');
+  assert.equal(accountingDestinationForWalletPurchase({
+    Metadata: JSON.stringify({
+      metadata: {
+        storeType: 'Uniform Store'
+      }
+    })
+  }), '4040');
   assert.equal(accountingDestinationForWalletPurchase({
     Department: 'Tuck Shop',
     FeeCategory: 'Store',

@@ -19,6 +19,7 @@ export const CHURCH_COLLECTIONS = Object.freeze({
   fundAudit: 'churchFundAudit',
   offeringApprovalRoutes: 'churchOfferingApprovalRoutes',
   offerings: 'churchOfferings',
+  offeringApprovalRoutesAudit: 'churchOfferingApprovalRoutesAudit',
   offeringAudit: 'churchOfferingAudit',
   approvals: 'churchApprovals',
   membershipAudit: 'churchMembershipAudit'
