@@ -61,3 +61,7 @@ Expected behavior:
 - If uploads return DRIVE_AUTHORIZATION_REQUIRED, the Apps Script Web App has not been redeployed/authorized with Drive access.
 - Parent can pay online fees through Paystack.
 - Verified online Acceptance Fee payments automatically mark AcceptanceFeePaid=YES and appear in the Accounts ledger.
+- Wallet topups and wallet spends are accounted for:
+  - Topups create wallet-credit (liability) ledger entries as before.
+  - Wallet purchases now create a posted accounting journal (`SYS-WALLET-PURCHASE-*`) that debits `2200` (Student Wallet Liability), so the finance liability card reflects spend immediately.
+  - Purchase credit account defaults to store/revenue mapping (`4040` for store-like context, otherwise the mapped revenue account).

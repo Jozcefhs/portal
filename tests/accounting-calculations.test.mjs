@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   accountingDestinationForPayment,
+  accountingDestinationForWalletPurchase,
   applyBillingCategoryOverrides,
   buildBudgetVsActual,
   buildGatewayCollectionsReport,
@@ -214,6 +215,17 @@ test('payment accounting routes wallets, stores, receivables, and direct revenue
   assert.equal(accountingDestinationForPayment({ FeeCode: 'TUITION', FeeCategory: 'School Fee' }, true), '1100');
   assert.equal(accountingDestinationForPayment({ FeeCode: 'TUITION', FeeCategory: 'School Fee' }, false), '4000');
   assert.equal(accountingDestinationForPayment({ FeeCode: 'ACCEPTANCE_FEE', FeeCategory: 'Admission' }, false), '4110');
+});
+
+test('wallet purchase destination follows department context and defaults to Other Income when unknown', () => {
+  assert.equal(accountingDestinationForWalletPurchase({ Department: 'Bookstore' }), '4040');
+  assert.equal(accountingDestinationForWalletPurchase({
+    Department: 'Tuck Shop',
+    FeeCategory: 'Store',
+    FeeCode: 'BOOK_ORDER'
+  }), '4040');
+  assert.equal(accountingDestinationForWalletPurchase({ Department: 'Finance', FeeCategory: 'Admission', FeeCode: 'TUITION' }), '4110');
+  assert.equal(accountingDestinationForWalletPurchase({ FeeCategory: 'Unknown', FeeCode: 'X' }), '4090');
 });
 
 test('financial periods require the same session and term', () => {
