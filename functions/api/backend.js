@@ -3077,17 +3077,99 @@ async function findPaymentByReference(env, reference) {
   return findOneByField(env, 'payments', 'GatewayReference', reference).catch(() => null);
 }
 
-async function writePaymentAccountingJournal(env, payment, hasMatchingInvoice) {
+const STUDENT_OVERPAYMENT_ACCOUNT_CODE = '2310';
+
+function matchingInvoicesForPayment(payment, invoices = [], options = {}) {
+  const {
+    requireOutstanding = false,
+    schoolFeeCodes = null
+  } = options;
+  const normalizedPayment = normalizePayment(payment);
+  const accountSet = schoolFeeCodes
+    ? new Set([...schoolFeeCodes].map((code) => normalizeReferenceText(code)).filter(Boolean))
+    : null;
+  const paymentReferences = accountRefsFrom(normalizedPayment);
+  return (Array.isArray(invoices) ? invoices : []).map((row) => normalizeInvoice(row)).filter((invoice) => {
+    const invoiceReferences = accountRefsFrom(invoice);
+    const isReferenceMatched = invoiceReferences.some((invoiceRef) =>
+      paymentReferences.some((paymentRef) => sameReferenceIdentity(invoiceRef, paymentRef))
+    );
+    if (!isReferenceMatched) return false;
+    if (!sameFinancialPeriod(invoice, normalizedPayment.AcademicSession, normalizedPayment.Term)) return false;
+    if (requireOutstanding) {
+      const debit = asMoneyNumber(invoice.Debit || invoice.Amount);
+      const credit = asMoneyNumber(invoice.Credit || invoice.PaidAmount);
+      if (normalizeMatchText(invoice.Status) === 'paid' || debit - credit <= 0.005) return false;
+    }
+    if (isSchoolFeesTotalPayment(normalizedPayment)) {
+      return isSchoolFeeCategory(invoice.FeeCategory) || (accountSet && accountSet.has(normalizeReferenceText(invoice.FeeCode)));
+    }
+    return sameText(invoice.FeeCode, normalizedPayment.FeeCode);
+  }).sort((a, b) => timestampMs(a.Date || a.CreatedAt) - timestampMs(b.Date || b.CreatedAt));
+}
+
+function buildPaymentReceiptJournalLines(payment, amount, matchingInvoices = []) {
+  const paymentAmount = asMoneyNumber(amount);
+  const normalizedPayment = normalizePayment(payment);
+  if (!normalizedPayment || paymentAmount <= 0) return [];
+  const lines = [
+    { AccountCode: accountingCashAccountFor(normalizedPayment.Method, normalizedPayment.Gateway), Debit: paymentAmount, Credit: 0, Description: clean(normalizedPayment.Method || normalizedPayment.Gateway || 'Payment received') }
+  ];
+  if (!Array.isArray(matchingInvoices) || matchingInvoices.length === 0) {
+    const destination = accountingDestinationForPayment(normalizedPayment, false);
+    lines.push({
+      AccountCode: destination,
+      Debit: 0,
+      Credit: paymentAmount,
+      Description: clean(normalizedPayment.AccountRef || normalizedPayment.DisplayName)
+    });
+    return lines;
+  }
+  const normalizedInvoices = matchingInvoices.map((invoice) => normalizeInvoice(invoice));
+  const allocation = calculateInvoiceCreditAllocations(normalizedInvoices, paymentAmount);
+  const receivableCredit = asMoneyNumber(paymentAmount - allocation.remaining);
+  const overpaymentCredit = asMoneyNumber(allocation.remaining);
+  if (receivableCredit > 0.005) {
+    lines.push({
+      AccountCode: '1100',
+      Debit: 0,
+      Credit: receivableCredit,
+      Description: clean(normalizedPayment.AccountRef || normalizedPayment.DisplayName)
+    });
+  }
+  if (overpaymentCredit > 0.005) {
+    lines.push({
+      AccountCode: STUDENT_OVERPAYMENT_ACCOUNT_CODE,
+      Debit: 0,
+      Credit: overpaymentCredit,
+      Description: `Student overpayment: ${clean(normalizedPayment.AccountRef || normalizedPayment.DisplayName || normalizedPayment.Reference || normalizedPayment.PaymentId)}`
+    });
+  }
+  if (lines.length === 1) {
+    const destination = accountingDestinationForPayment(normalizedPayment, true);
+    lines.push({
+      AccountCode: destination,
+      Debit: 0,
+      Credit: paymentAmount,
+      Description: clean(normalizedPayment.AccountRef || normalizedPayment.DisplayName)
+    });
+  } else {
+    const totalCredit = lines.slice(1).reduce((sum, line) => sum + asMoneyNumber(line.Credit), 0);
+    const difference = asMoneyNumber(paymentAmount - totalCredit);
+    if (Math.abs(difference) > 0.0005) {
+      lines[1].Credit = asMoneyNumber((lines[1].Credit || 0) + difference);
+    }
+  }
+  return lines;
+}
+
+async function writePaymentAccountingJournal(env, payment, matchingInvoices = []) {
   const sourceId = clean(payment.Reference || payment.GatewayReference || payment.PaymentId);
   const amount = paymentCreditedAmount(payment);
   if (!sourceId || amount <= 0) return;
   const journalNo = `SYS-PAY-${safeDocumentId(sourceId)}`;
-  const cash = accountingCashAccountFor(payment.Method, payment.Gateway);
-  const destination = accountingDestinationForPayment(payment, hasMatchingInvoice);
-  const lines = [
-    { AccountCode: cash, Debit: amount, Credit: 0, Description: clean(payment.Method || payment.Gateway || 'Payment received') },
-    { AccountCode: destination, Debit: 0, Credit: amount, Description: clean(payment.AccountRef || payment.DisplayName) }
-  ];
+  const lines = buildPaymentReceiptJournalLines(payment, amount, matchingInvoices);
+  if (lines.length < 2) return;
   await upsertDocument(env, 'accountingJournals', safeDocumentId(journalNo), {
     JournalNo: journalNo, Date: payment.PaidAt || nowIso(), Status: 'Posted',
     Description: `Receipt: ${sourceId}`, Reference: sourceId,
@@ -3306,14 +3388,10 @@ export async function recordManualPayment(env, body) {
     Metadata: payment.Metadata
   });
   await removeStandaloneAcceptanceInvoices(env, payment);
-  const matchingInvoices = (await queryAccountRows(env, 'invoices', accountRef)).map(normalizeInvoice).filter((invoice) => {
-    return sameText(invoice.AccountRef, accountRef) &&
-      (isSchoolFeesTotalPayment(payment)
-        ? isSchoolFeeCategory(invoice.FeeCategory) || schoolFeeCodes.has(normalizeReferenceText(invoice.FeeCode))
-        : sameText(invoice.FeeCode, feeCode)) &&
-      sameFinancialPeriod(invoice, academicSession, term) &&
-      normalizeMatchText(invoice.Status) !== 'paid';
-  }).sort((a, b) => timestampMs(a.Date || a.CreatedAt) - timestampMs(b.Date || b.CreatedAt));
+  const matchingInvoices = matchingInvoicesForPayment(payment, await queryAccountRows(env, 'invoices', accountRef), {
+    schoolFeeCodes: schoolFeeCodes,
+    requireOutstanding: true
+  });
   const invoiceAllocation = calculateInvoiceCreditAllocations(matchingInvoices, creditedAmount);
   for (const allocation of invoiceAllocation.allocations) {
     const invoice = allocation.invoice;
@@ -3352,7 +3430,7 @@ export async function recordManualPayment(env, body) {
       CreatedAt: nowIso(), UpdatedAt: nowIso()
     });
   }
-  await writePaymentAccountingJournal(env, payment, matchingInvoices.length > 0);
+  await writePaymentAccountingJournal(env, payment, matchingInvoices);
   let invoicePostingWarning = '';
   const shouldGenerateSchoolInvoices = Boolean(student) && (
     isSchoolFeesTotalPayment(payment) ||
@@ -4128,6 +4206,7 @@ const DEFAULT_CHART_OF_ACCOUNTS = [
   ['2100', 'Taxes and Statutory Deductions', 'Liability', 'Statutory', 'Credit'],
   ['2200', 'Student Wallet Liability', 'Liability', 'Student Wallets', 'Credit'],
   ['2300', 'Salaries Payable', 'Liability', 'Payroll', 'Credit'],
+  ['2310', 'Student Overpayment Liability', 'Liability', 'Student Overpayments', 'Credit'],
   ['3000', 'Accumulated School Fund', 'Equity', 'School Fund', 'Credit'],
   ['4000', 'Tuition and School Fee Revenue', 'Revenue', 'Operating Revenue', 'Credit'],
   ['4010', 'Admission Form Revenue', 'Revenue', 'Operating Revenue', 'Credit'],
@@ -4470,12 +4549,9 @@ async function syncRevenueToAccounting(env) {
         created += 1;
       }
     }
-    const cash = accountingCashAccountFor(row.Method || row.PaymentMethod, row.Gateway);
-    const destination = accountingDestinationForPayment(payment, paymentHasMatchingInvoice(payment, invoices));
-    const lines = [
-      { AccountCode: cash, Debit: amount, Credit: 0, Description: clean(row.Method || row.Gateway || 'Payment received') },
-      { AccountCode: destination, Debit: 0, Credit: amount, Description: clean(row.AccountRef || row.DisplayName) }
-    ];
+    const matchingInvoices = matchingInvoicesForPayment(payment, invoices, { requireOutstanding: true });
+    const lines = buildPaymentReceiptJournalLines(payment, amount, matchingInvoices);
+    if (lines.length < 2) continue;
     const relatedJournals = journals.filter((journal) => lower(journal.Source) === 'fee payment' && (
       clean(journal.JournalNo || journal.__id) === journalNo ||
       paymentReferences.some((reference) =>

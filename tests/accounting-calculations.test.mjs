@@ -393,6 +393,43 @@ test('receivables card is non-negative after overcollected journal activity', ()
   assert.equal(report.dashboard.Receivables, 0);
 });
 
+test('overpayment beyond invoice balance moves to overpayment liability not negative AR', () => {
+  const report = buildAccountingReport([
+    { Code: '1010', Name: 'Cash on Hand', Type: 'Asset', Group: 'Cash and Bank', Direction: 'Debit' },
+    { Code: '1100', Name: 'Student Accounts Receivable', Type: 'Asset', Group: 'Receivables', Direction: 'Debit' },
+    { Code: '2310', Name: 'Student Overpayment Liability', Type: 'Liability', Group: 'Student Overpayments', Direction: 'Credit' },
+    { Code: '4000', Name: 'Tuition and School Fee Revenue', Type: 'Revenue', Group: 'Operating Revenue', Direction: 'Credit' }
+  ], [{
+    JournalNo: 'J-RECEIPT',
+    Status: 'Posted',
+    Date: '2026-10-01',
+    AcademicSession: '2026/2027',
+    Term: 'First Term',
+    Lines: [
+      { AccountCode: '1020', Debit: 120000, Credit: 0 },
+      { AccountCode: '1100', Debit: 0, Credit: 100000 },
+      { AccountCode: '2310', Debit: 0, Credit: 20000 }
+    ]
+  }], [], [], {
+    DateFrom: '2026-01-01',
+    DateTo: '2026-12-31',
+    FinancialYear: '2026'
+  }, [{
+    InvoiceId: 'INV-1',
+    AccountRef: 'DCA/26/001',
+    FeeCode: 'TUITION',
+    FeeCategory: 'School Fee',
+    AcademicSession: '2026/2027',
+    Term: 'First Term',
+    Date: '2026-09-01',
+    Debit: 100000,
+    Credit: 100000,
+    Balance: 0
+  }]);
+  assert.equal(report.dashboard.Receivables, 0);
+  assert.equal(report.dashboard.Liabilities, 20000);
+});
+
 test('receivables card uses outstanding invoices when receivables ledger has no positive balance', () => {
   const report = buildAccountingReport([], [{
     JournalNo: 'J-NEG',
