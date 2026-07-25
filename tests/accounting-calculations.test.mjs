@@ -289,6 +289,61 @@ test('legacy ledger rows with blank session/term still report as revenue in peri
   assert.equal(reportForDifferentPeriod.dashboard.GrossRevenue, 0);
 });
 
+test('cash position includes all cash-and-bank accounts, not only default codes', () => {
+  const chart = [
+    { Code: '1010', Name: 'Cash on Hand', Type: 'Asset', Group: 'Cash and Bank', Direction: 'Debit' },
+    { Code: '1040', Name: 'School Safe', Type: 'Asset', Group: 'Cash and Bank', Direction: 'Debit' },
+    { Code: '1200', Name: 'Inventory', Type: 'Asset', Group: 'Current Assets', Direction: 'Debit' },
+    { Code: '4000', Name: 'School Fees Revenue', Type: 'Revenue', Group: 'Operating Revenue', Direction: 'Credit' }
+  ];
+  const report = buildAccountingReport(chart, [{
+    Date: '2026-09-01',
+    Status: 'Posted',
+    AcademicSession: '2026/2027',
+    Term: 'First Term',
+    Lines: [
+      { AccountCode: '1040', Debit: 30000, Credit: 0 },
+      { AccountCode: '1200', Debit: 2000, Credit: 0 },
+      { AccountCode: '4000', Debit: 0, Credit: 30000 }
+    ]
+  }], [], [], {
+    DateFrom: '2026-09-01',
+    DateTo: '2026-09-30',
+    FinancialYear: '2026',
+    AcademicSession: '2026/2027',
+    Term: 'First Term'
+  });
+  assert.equal(report.dashboard.CashPosition, 30000);
+  assert.equal(report.dashboard.Assets, 32000);
+});
+
+test('budget remaining remains negative when budget has been overspent', () => {
+  const chart = [
+    { Code: '6010', Name: 'Utilities', Type: 'Expense', Group: 'Operating Expense', Direction: 'Debit' }
+  ];
+  const report = buildAccountingReport(chart, [{
+    Date: '2026-09-05',
+    Status: 'Posted',
+    AcademicSession: '2026/2027',
+    Term: 'First Term',
+    Lines: [{ AccountCode: '6010', Debit: 3000, Credit: 0 }]
+  }], [], [{
+    FinancialYear: '2026',
+    Department: '',
+    AccountCode: '6010',
+    Amount: 2000,
+    AcademicSession: '2026/2027',
+    Term: 'First Term'
+  }], {
+    DateFrom: '2026-09-01',
+    DateTo: '2026-09-30',
+    FinancialYear: '2026',
+    AcademicSession: '2026/2027',
+    Term: 'First Term'
+  });
+  assert.equal(report.dashboard.BudgetRemaining, -1000);
+});
+
 test('receivables card can use outstanding invoices when journals are not yet synchronized', () => {
   const report = buildAccountingReport([], [], [], [], {
     DateFrom: '2026-01-01',

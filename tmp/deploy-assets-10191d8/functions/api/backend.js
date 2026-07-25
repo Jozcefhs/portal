@@ -4834,6 +4834,21 @@ function aggregateAccountingBalances(chart, journals) {
   })).sort((a, b) => a.AccountCode.localeCompare(b.AccountCode));
 }
 
+function isCashAndBankAccount(row) {
+  if (!row) return false;
+  const code = clean(row.AccountCode);
+  const type = lower(row.Type);
+  const group = lower(clean(row.Group));
+  const name = clean(row.AccountName).toLowerCase();
+  if (['1010', '1020', '1030'].includes(code)) return true;
+  if (group === 'cash and bank') return true;
+  return type === 'asset' && (name.includes('cash') || name.includes('bank'));
+}
+
+function calculateCashPosition(rows) {
+  return (rows || []).filter(isCashAndBankAccount).reduce((sum, row) => sum + row.Debit - row.Credit, 0);
+}
+
 export function buildBudgetVsActual(budgets, journals, filter = {}) {
   const availableYears = (budgets || []).map((row) => clean(row.FinancialYear)).filter(Boolean).sort();
   const effectiveYear = clean(filter.FinancialYear) || availableYears[availableYears.length - 1] || '';
@@ -4892,7 +4907,7 @@ function buildAccountingReport(chart, journals, expenses, budgets, filter = {}, 
   const assets = asOfTrialBalance.filter((row) => lower(row.Type) === 'asset').reduce((sum, row) => sum + row.Debit - row.Credit, 0);
   const liabilities = asOfTrialBalance.filter((row) => lower(row.Type) === 'liability').reduce((sum, row) => sum + row.Credit - row.Debit, 0);
   const equity = asOfTrialBalance.filter((row) => lower(row.Type) === 'equity').reduce((sum, row) => sum + row.Credit - row.Debit, 0);
-  const cashPosition = asOfTrialBalance.filter((row) => ['1010', '1020', '1030'].includes(row.AccountCode)).reduce((sum, row) => sum + row.Debit - row.Credit, 0);
+  const cashPosition = calculateCashPosition(asOfTrialBalance);
   const receivables = asOfTrialBalance.filter((row) => row.AccountCode === '1100').reduce((sum, row) => sum + row.Debit - row.Credit, 0);
   const outstandingInvoiceReceivables = (Array.isArray(invoices) ? invoices : []).map(normalizeInvoice).filter((invoice) => {
     if (!accountingRowMatches(invoice, filter, true)) return false;
