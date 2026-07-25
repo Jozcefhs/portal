@@ -289,6 +289,38 @@ test('legacy ledger rows with blank session/term still report as revenue in peri
   assert.equal(reportForDifferentPeriod.dashboard.GrossRevenue, 0);
 });
 
+test('receivables card can use outstanding invoices when journals are not yet synchronized', () => {
+  const report = buildAccountingReport([], [], [], [], {
+    DateFrom: '2026-01-01',
+    DateTo: '2026-12-31',
+    FinancialYear: '2026'
+  }, [{
+    InvoiceId: 'INV-1',
+    AccountRef: 'DCA/26/001',
+    FeeCode: 'TUITION',
+    FeeCategory: 'School Fee',
+    AcademicSession: '2026/2027',
+    Term: 'First Term',
+    Date: '2026-09-01',
+    Debit: 100000,
+    Credit: 30000,
+    Balance: 70000
+  }, {
+    InvoiceId: 'INV-2',
+    AccountRef: 'DCA/26/002',
+    FeeCode: 'UNIFORM',
+    FeeCategory: 'Other',
+    AcademicSession: '2026/2027',
+    Term: 'First Term',
+    Date: '2026-09-10',
+    Debit: 5000,
+    Credit: 7000,
+    Balance: 0
+  }]);
+
+  assert.equal(report.dashboard.Receivables, 70000);
+});
+
 test('specific billing category replaces the All-category fee', () => {
   const fees = [
     { FeeCode: 'TUITION-ALL', FeeName: 'Tuition', FeeCategory: 'School Fee', BillingCategory: 'All', ClassName: 'JSS 1', Term: 'First Term', Amount: 100000 },

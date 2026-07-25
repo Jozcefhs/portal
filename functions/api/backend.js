@@ -5117,7 +5117,7 @@ export function buildBudgetVsActual(budgets, journals, filter = {}) {
   });
 }
 
-export function buildAccountingReport(chart, journals, expenses, budgets, filter = {}) {
+export function buildAccountingReport(chart, journals, expenses, budgets, filter = {}, invoices = []) {
   const periodJournals = journals.filter((row) => accountingRowMatches(row, filter, false));
   const asOfJournals = journals.filter((row) => accountingRowMatches(row, filter, true));
   const trialBalance = aggregateAccountingBalances(chart, periodJournals);
@@ -5136,6 +5136,12 @@ export function buildAccountingReport(chart, journals, expenses, budgets, filter
   const equity = asOfTrialBalance.filter((row) => lower(row.Type) === 'equity').reduce((sum, row) => sum + row.Credit - row.Debit, 0);
   const cashPosition = asOfTrialBalance.filter((row) => ['1010', '1020', '1030'].includes(row.AccountCode)).reduce((sum, row) => sum + row.Debit - row.Credit, 0);
   const receivables = asOfTrialBalance.filter((row) => row.AccountCode === '1100').reduce((sum, row) => sum + row.Debit - row.Credit, 0);
+  const outstandingInvoiceReceivables = (Array.isArray(invoices) ? invoices : []).map(normalizeInvoice).filter((invoice) => {
+    if (!accountingRowMatches(invoice, filter, true)) return false;
+    const outstanding = Math.max(0, asMoneyNumber(invoice.Balance) || Math.max(0, asMoneyNumber(invoice.Debit) - asMoneyNumber(invoice.Credit)));
+    return outstanding > 0.005;
+  }).reduce((sum, invoice) => sum + Math.max(0, asMoneyNumber(invoice.Balance) || Math.max(0, asMoneyNumber(invoice.Debit) - asMoneyNumber(invoice.Credit)), 0), 0);
+  const resolvedReceivables = Math.abs(receivables) > 0.005 ? receivables : outstandingInvoiceReceivables;
   const filteredExpenses = expenses.filter((row) => accountingRowMatches(row, filter));
   const budgetVsActual = buildBudgetVsActual(budgets, periodJournals, filter);
   const postedExpense = filteredExpenses.filter((row) => ['posted', 'paid'].includes(lower(row.Status))).reduce((sum, row) => sum + asMoneyNumber(row.Amount), 0);
@@ -5145,7 +5151,7 @@ export function buildAccountingReport(chart, journals, expenses, budgets, filter
     dashboard: { GrossRevenue: grossRevenue, OtherIncome: otherIncome, Concessions: concessions, NetRevenue: netRevenue, TotalIncome: totalIncome, DirectCosts: directCosts,
       GrossSurplus: netRevenue - directCosts, TotalExpenditure: totalExpenses, NetSurplus: totalIncome - totalExpenses,
       Assets: assets, Liabilities: liabilities, Equity: equity, PostedExpenses: postedExpense, BudgetTotal: budgetTotal,
-      CashPosition: cashPosition, Receivables: receivables, BudgetRemaining: asMoneyNumber(budgetTotal - budgetActual) },
+      CashPosition: cashPosition, Receivables: resolvedReceivables, BudgetRemaining: asMoneyNumber(budgetTotal - budgetActual) },
     filter, trialBalance, asOfTrialBalance, budgetVsActual,
     incomeStatement: { revenue: revenueRows, expenses: expenseRows },
     balanceSheet: { assets: asOfTrialBalance.filter((r) => lower(r.Type) === 'asset'), liabilities: asOfTrialBalance.filter((r) => lower(r.Type) === 'liability'), equity: asOfTrialBalance.filter((r) => lower(r.Type) === 'equity') }
@@ -5241,7 +5247,7 @@ async function getAccountingOverview(env, body = {}) {
   const taxProfileUsage = {};
   payrollItems.filter((row) => finalizedPayrollRunIds.has(lower(row.RunId))).forEach((row) => { const id = clean(row.TaxProfileId || row.ConfigurationSnapshot?.TaxProfile?.ProfileId); if (id) taxProfileUsage[id] = (taxProfileUsage[id] || 0) + 1; });
   const payrollTaxProfilesWithUsage = payrollTaxProfiles.map((row) => ({ ...row, UsageCount: taxProfileUsage[clean(row.ProfileId || row.__id)] || 0 }));
-  const reports = buildAccountingReport(chart, journals, expenses, budgets, filter);
+  const reports = buildAccountingReport(chart, journals, expenses, budgets, filter, invoices);
   reports.receivablesAgeing = buildReceivablesAgeing(invoices, payments, filter.DateTo || nowIso().slice(0, 10));
   reports.payablesAgeing = buildAgeing(supplierBills, filter.DateTo || nowIso().slice(0, 10), 'payable');
   const gatewayReport = buildGatewayCollectionsReport(formSales, gatewayCharges, filter);
