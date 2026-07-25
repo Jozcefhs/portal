@@ -4,6 +4,7 @@ const form = document.getElementById('applicationForm');
 const statusEl = document.getElementById('submitStatus');
 const submitBtn = document.getElementById('submitBtn');
 const classSelect = document.getElementById('classApplying');
+const classCompletedSelect = document.getElementById('classCompleted');
 
 let verified = null;
 let openClassesLoaded = false;
@@ -54,6 +55,48 @@ function setClassOptions(classes) {
   submitBtn.disabled = classes.length === 0;
 }
 
+function setCompletedClassOptions(classes) {
+  if (!classCompletedSelect) {
+    return;
+  }
+  const classNames = Array.isArray(classes) ? classes : [];
+  classCompletedSelect.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = classNames.length ? 'Select highest class completed' : 'No class records are available yet';
+  classCompletedSelect.appendChild(placeholder);
+  classNames.forEach((className) => {
+    const option = document.createElement('option');
+    option.value = className;
+    option.textContent = className;
+    classCompletedSelect.appendChild(option);
+  });
+}
+
+function normalizeClassName(value) {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+  return String(value.ClassName || value.className || value.Name || "").trim();
+}
+
+function parseConfiguredClasses(values) {
+  const unique = new Set();
+  const classes = [];
+  (Array.isArray(values) ? values : []).forEach((entry) => {
+    const className = normalizeClassName(entry);
+    if (!className || unique.has(className.toLowerCase())) {
+      return;
+    }
+    unique.add(className.toLowerCase());
+    classes.push(className);
+  });
+  return classes;
+}
+
 async function loadAdmissionClasses() {
   try {
     const response = await fetch('/api/admission-classes');
@@ -67,9 +110,13 @@ async function loadAdmissionClasses() {
     if (!response.ok || !data.ok) {
       throw new Error(data.message || 'Could not load available classes.');
     }
-    setClassOptions(Array.isArray(data.classes) ? data.classes : []);
+    const openClasses = Array.isArray(data.classes) ? data.classes : [];
+    const configured = parseConfiguredClasses(data.allClasses || openClasses || data.classes || []);
+    setClassOptions(openClasses);
+    setCompletedClassOptions(configured);
   } catch (error) {
     setClassOptions([]);
+    setCompletedClassOptions([]);
     setStatus(error.message, 'bad');
   }
 }
