@@ -3386,13 +3386,96 @@ export async function recordManualPayment(env, body) {
   };
 }
 
+export function resolveSchoolFeeInvoiceAccountRefs(body = {}) {
+  // Supports both existing single-account payloads (AccountRef) and batched
+  // generation payloads (AccountRefs[]) while preserving case-tolerant
+  // deduplication.
+  const refs = [];
+  const seen = new Set();
+  const pushRef = (value) => {
+    const ref = clean(value);
+    if (!ref) return;
+    const key = ref.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    refs.push(ref);
+  };
+
+  if (body.AccountRefs != null) {
+    if (Array.isArray(body.AccountRefs)) {
+      body.AccountRefs.forEach((value) => pushRef(value));
+    } else if (typeof body.AccountRefs === 'string') {
+      body.AccountRefs
+        .split(',')
+        .map((value) => value.trim())
+        .forEach((value) => pushRef(value));
+    }
+  }
+  pushRef(body.AccountRef);
+  pushRef(body.accountRef);
+  return refs;
+}
+
 async function generateSchoolFeeInvoices(env, body) {
-  const accountRef = clean(body.AccountRef || body.accountRef);
-  if (!accountRef) {
+  const accountRefs = resolveSchoolFeeInvoiceAccountRefs(body);
+  if (!accountRefs.length) {
     const err = new Error('AccountRef is required.');
     err.status = 400;
     throw err;
   }
+  if (!Array.isArray(body.AccountRefs)) {
+    const result = await generateSchoolFeeInvoicesForAccount(env, body, accountRefs[0]);
+    return { ok: true, ...result };
+  }
+  const results = [];
+  const failures = [];
+  let created = 0;
+  let updated = 0;
+  let skipped = 0;
+  for (const accountRef of accountRefs) {
+    try {
+      const result = await generateSchoolFeeInvoicesForAccount(env, body, accountRef, { allowEmpty: true });
+      created += result.created;
+      updated += result.updated;
+      skipped += result.skipped;
+      results.push({ accountRef, ...result });
+    } catch (error) {
+      const message = error && error.message ? String(error.message) : String(error || 'Invoice generation failed');
+      failures.push({ accountRef, message });
+      results.push({ accountRef, status: 'failed', message });
+    }
+  }
+  const failed = failures.length;
+  const processed = results.length;
+  const success = created + updated;
+  const message = `Processed ${processed} account(s): ${success} invoice item(s) created, ${updated} updated, ${skipped} skipped${failed ? `, ${failed} failed` : ''}.`;
+  if (failed) {
+    const details = failures.map(({ accountRef, message: reason }) => `${accountRef}: ${reason}`);
+    return {
+      ok: false,
+      message: `${message} Failed accounts: ${failures.length}.`,
+      created,
+      updated,
+      skipped,
+      failed,
+      failures,
+      results,
+      details
+    };
+  }
+  return {
+    ok: true,
+    message,
+    created,
+    updated,
+    skipped,
+    failed,
+    results
+  };
+}
+
+async function generateSchoolFeeInvoicesForAccount(env, body, accountRef, options = {}) {
+  const allowEmpty = Boolean(options.allowEmpty);
   const student = await findStudentByAccountRef(env, accountRef);
   if (!student) throw applicationNotFound(accountRef);
   const profileResult = await getSchoolProfile(env).catch(() => ({ profile: {} }));
@@ -3415,9 +3498,18 @@ async function generateSchoolFeeInvoices(env, body) {
       feeMatchesApplication(fee, billingApp);
   }), billingApp);
   if (!fees.length) {
-    const err = new Error('No matching school fee items found for this class/student type.');
-    err.status = 400;
-    throw err;
+    if (!allowEmpty) {
+      const err = new Error('No matching school fee items found for this class/student type.');
+      err.status = 400;
+      throw err;
+    }
+    return {
+      created: 0,
+      updated: 0,
+      skipped: 1,
+      status: 'skipped',
+      message: `No matching school fee items for ${accountRef}.`
+    };
   }
   const existing = (await queryAccountRows(env, 'invoices', accountRef)).map(normalizeInvoice);
   const linkedReferences = [student.ApplicationReference].map(clean).filter(Boolean);
@@ -3484,7 +3576,13 @@ async function generateSchoolFeeInvoices(env, body) {
     else created += 1;
   }
   await refreshAccountFinancialSummary(env, accountRef, linkedReferences);
-  return { ok: true, message: `${created} school fee invoice item(s) generated, ${updated} updated.`, created, updated };
+  return {
+    created,
+    updated,
+    skipped: 0,
+    status: updated ? 'updated' : (created ? 'created' : 'ok'),
+    message: `${created} school fee invoice item(s) generated, ${updated} updated.`
+  };
 }
 
 function ledgerDocumentId(prefix = 'LED') {
