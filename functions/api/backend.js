@@ -845,45 +845,10 @@ function isWalletLedger(row) {
     normalizeMatchText(row && row.EntryType).includes('wallet');
 }
 
-function isWalletPurchaseEntry(row) {
-  return normalizeMatchText(row && row.EntryType) === 'wallet purchase';
-}
-
 function isStorePurchase(row) {
   return normalizeMatchText(row && row.FeeCategory) === 'store' ||
     clean(row && row.FeeCode).toUpperCase() === 'STORE_CART' ||
     normalizeMatchText(row && row.EntryType).includes('store');
-}
-
-function extractStoreMetadata(payload) {
-  const metadata = parseMetadata(payload);
-  const nested = metadata && typeof metadata === 'object' && metadata.metadata && typeof metadata.metadata === 'object'
-    ? metadata.metadata : {};
-  return {
-    ...metadata,
-    ...nested
-  };
-}
-
-function paymentStoreDepartment(row = {}) {
-  const direct = normalizeMatchText(
-    row.Department || row.department || row.StoreType || row.storeType ||
-    row.store || row.category || row.Category || ''
-  );
-  if (direct) return direct;
-  const metadata = extractStoreMetadata(row.Metadata);
-  const cartStoreType = Array.isArray(metadata.storeCart)
-    ? metadata.storeCart.find((item) => clean(item.StoreType || item.storeType).trim())
-    : null;
-  if (cartStoreType) return normalizeMatchText(cartStoreType.StoreType || cartStoreType.storeType);
-  const metadataDepartment = clean(metadata.department || metadata.Department || metadata.storeType || metadata.storetype || metadata.StoreType);
-  return normalizeMatchText(metadataDepartment);
-}
-
-function paymentIndicatesStorePurchase(row = {}) {
-  if (isStorePurchase(row)) return true;
-  const storeDepartment = paymentStoreDepartment(row);
-  return ['bookstore', 'uniform store', 'store', 'tuck shop'].includes(storeDepartment);
 }
 
 function periodKey(key, session, term) {
@@ -3077,99 +3042,17 @@ async function findPaymentByReference(env, reference) {
   return findOneByField(env, 'payments', 'GatewayReference', reference).catch(() => null);
 }
 
-const STUDENT_OVERPAYMENT_ACCOUNT_CODE = '2310';
-
-function matchingInvoicesForPayment(payment, invoices = [], options = {}) {
-  const {
-    requireOutstanding = false,
-    schoolFeeCodes = null
-  } = options;
-  const normalizedPayment = normalizePayment(payment);
-  const accountSet = schoolFeeCodes
-    ? new Set([...schoolFeeCodes].map((code) => normalizeReferenceText(code)).filter(Boolean))
-    : null;
-  const paymentReferences = accountRefsFrom(normalizedPayment);
-  return (Array.isArray(invoices) ? invoices : []).map((row) => normalizeInvoice(row)).filter((invoice) => {
-    const invoiceReferences = accountRefsFrom(invoice);
-    const isReferenceMatched = invoiceReferences.some((invoiceRef) =>
-      paymentReferences.some((paymentRef) => sameReferenceIdentity(invoiceRef, paymentRef))
-    );
-    if (!isReferenceMatched) return false;
-    if (!sameFinancialPeriod(invoice, normalizedPayment.AcademicSession, normalizedPayment.Term)) return false;
-    if (requireOutstanding) {
-      const debit = asMoneyNumber(invoice.Debit || invoice.Amount);
-      const credit = asMoneyNumber(invoice.Credit || invoice.PaidAmount);
-      if (normalizeMatchText(invoice.Status) === 'paid' || debit - credit <= 0.005) return false;
-    }
-    if (isSchoolFeesTotalPayment(normalizedPayment)) {
-      return isSchoolFeeCategory(invoice.FeeCategory) || (accountSet && accountSet.has(normalizeReferenceText(invoice.FeeCode)));
-    }
-    return sameText(invoice.FeeCode, normalizedPayment.FeeCode);
-  }).sort((a, b) => timestampMs(a.Date || a.CreatedAt) - timestampMs(b.Date || b.CreatedAt));
-}
-
-function buildPaymentReceiptJournalLines(payment, amount, matchingInvoices = []) {
-  const paymentAmount = asMoneyNumber(amount);
-  const normalizedPayment = normalizePayment(payment);
-  if (!normalizedPayment || paymentAmount <= 0) return [];
-  const lines = [
-    { AccountCode: accountingCashAccountFor(normalizedPayment.Method, normalizedPayment.Gateway), Debit: paymentAmount, Credit: 0, Description: clean(normalizedPayment.Method || normalizedPayment.Gateway || 'Payment received') }
-  ];
-  if (!Array.isArray(matchingInvoices) || matchingInvoices.length === 0) {
-    const destination = accountingDestinationForPayment(normalizedPayment, false);
-    lines.push({
-      AccountCode: destination,
-      Debit: 0,
-      Credit: paymentAmount,
-      Description: clean(normalizedPayment.AccountRef || normalizedPayment.DisplayName)
-    });
-    return lines;
-  }
-  const normalizedInvoices = matchingInvoices.map((invoice) => normalizeInvoice(invoice));
-  const allocation = calculateInvoiceCreditAllocations(normalizedInvoices, paymentAmount);
-  const receivableCredit = asMoneyNumber(paymentAmount - allocation.remaining);
-  const overpaymentCredit = asMoneyNumber(allocation.remaining);
-  if (receivableCredit > 0.005) {
-    lines.push({
-      AccountCode: '1100',
-      Debit: 0,
-      Credit: receivableCredit,
-      Description: clean(normalizedPayment.AccountRef || normalizedPayment.DisplayName)
-    });
-  }
-  if (overpaymentCredit > 0.005) {
-    lines.push({
-      AccountCode: STUDENT_OVERPAYMENT_ACCOUNT_CODE,
-      Debit: 0,
-      Credit: overpaymentCredit,
-      Description: `Student overpayment: ${clean(normalizedPayment.AccountRef || normalizedPayment.DisplayName || normalizedPayment.Reference || normalizedPayment.PaymentId)}`
-    });
-  }
-  if (lines.length === 1) {
-    const destination = accountingDestinationForPayment(normalizedPayment, true);
-    lines.push({
-      AccountCode: destination,
-      Debit: 0,
-      Credit: paymentAmount,
-      Description: clean(normalizedPayment.AccountRef || normalizedPayment.DisplayName)
-    });
-  } else {
-    const totalCredit = lines.slice(1).reduce((sum, line) => sum + asMoneyNumber(line.Credit), 0);
-    const difference = asMoneyNumber(paymentAmount - totalCredit);
-    if (Math.abs(difference) > 0.0005) {
-      lines[1].Credit = asMoneyNumber((lines[1].Credit || 0) + difference);
-    }
-  }
-  return lines;
-}
-
-async function writePaymentAccountingJournal(env, payment, matchingInvoices = []) {
+async function writePaymentAccountingJournal(env, payment, hasMatchingInvoice) {
   const sourceId = clean(payment.Reference || payment.GatewayReference || payment.PaymentId);
   const amount = paymentCreditedAmount(payment);
   if (!sourceId || amount <= 0) return;
   const journalNo = `SYS-PAY-${safeDocumentId(sourceId)}`;
-  const lines = buildPaymentReceiptJournalLines(payment, amount, matchingInvoices);
-  if (lines.length < 2) return;
+  const cash = accountingCashAccountFor(payment.Method, payment.Gateway);
+  const destination = accountingDestinationForPayment(payment, hasMatchingInvoice);
+  const lines = [
+    { AccountCode: cash, Debit: amount, Credit: 0, Description: clean(payment.Method || payment.Gateway || 'Payment received') },
+    { AccountCode: destination, Debit: 0, Credit: amount, Description: clean(payment.AccountRef || payment.DisplayName) }
+  ];
   await upsertDocument(env, 'accountingJournals', safeDocumentId(journalNo), {
     JournalNo: journalNo, Date: payment.PaidAt || nowIso(), Status: 'Posted',
     Description: `Receipt: ${sourceId}`, Reference: sourceId,
@@ -3178,49 +3061,6 @@ async function writePaymentAccountingJournal(env, payment, matchingInvoices = []
     Lines: lines, TotalDebit: amount, TotalCredit: amount,
     CreatedAt: payment.RecordedAt || nowIso(), UpdatedAt: nowIso()
   });
-}
-
-export function accountingDestinationForWalletPurchase(row = {}, defaultAccountCode = '4090') {
-  const department = paymentStoreDepartment(row);
-  if (department === 'bookstore' || department === 'uniform store' || department === 'store' || department === 'tuck shop') {
-    return '4040';
-  }
-  const categoryText = `${clean(row.FeeCategory || '')} ${clean(row.FeeCode || '')} ${clean(row.FeeName || '')}`;
-  const lowerText = normalizeMatchText(categoryText);
-  if (lowerText.includes('book') || lowerText.includes('uniform') || lowerText.includes('store') || clean(row.FeeCode).toUpperCase() === 'STORE_CART') {
-    return '4040';
-  }
-  return accountingAccountCodeForRevenue(categoryText, row.FeeCode || row.department) || defaultAccountCode;
-}
-
-async function writeWalletPurchaseAccountingJournal(env, purchase = {}, options = {}) {
-  const sourceId = clean(purchase.Reference || purchase.LedgerNo || purchase.PurchaseNo);
-  const amount = asMoneyNumber(purchase.Debit || purchase.Amount);
-  if (!sourceId || amount <= 0) return;
-  const journalNo = `SYS-WALLET-PURCHASE-${safeDocumentId(sourceId)}`;
-  const revenueAccount = accountingDestinationForWalletPurchase(purchase);
-  const metadataDepartment = paymentStoreDepartment({
-    ...purchase,
-    Department: purchase.Department || purchase.department || purchase.StoreType || purchase.storeType,
-    Metadata: purchase.Metadata
-  });
-  const metadata = extractStoreMetadata(purchase.Metadata);
-  const metadataNotes = clean(metadata.notes || metadata.Notes || metadata.description || metadata.Description);
-  const lines = [
-    { AccountCode: '2200', Debit: amount, Credit: 0, Description: `Wallet liability ${clean(purchase.AccountRef || purchase.DisplayName || sourceId)}` },
-    { AccountCode: revenueAccount, Debit: 0, Credit: amount, Description: clean(purchase.Description || metadataNotes) || 'Wallet purchase settlement' }
-  ];
-  const payload = {
-    JournalNo: journalNo, Date: purchase.Date || nowIso(), Status: 'Posted',
-    Description: `Wallet purchase: ${clean(purchase.Description) || sourceId}`, Reference: sourceId,
-    Source: 'Wallet Purchase', SourceId: sourceId, RecordedBy: clean(purchase.RecordedBy) || 'Wallet POS',
-    AcademicSession: clean(purchase.AcademicSession || options.AcademicSession || ''),
-    Term: clean(purchase.Term || options.Term || ''),
-    Department: clean(metadataDepartment || purchase.Department || options.Department),
-    CostCentre: clean(purchase.CostCentre || options.CostCentre || ''),
-    Lines: lines
-  };
-  await saveAccountingJournal(env, payload, true);
 }
 
 export function calculateAccountFinancialSummary(invoiceRows = [], ledgerRows = [], accountRef = '') {
@@ -3388,10 +3228,14 @@ export async function recordManualPayment(env, body) {
     Metadata: payment.Metadata
   });
   await removeStandaloneAcceptanceInvoices(env, payment);
-  const matchingInvoices = matchingInvoicesForPayment(payment, await queryAccountRows(env, 'invoices', accountRef), {
-    schoolFeeCodes: schoolFeeCodes,
-    requireOutstanding: true
-  });
+  const matchingInvoices = (await queryAccountRows(env, 'invoices', accountRef)).map(normalizeInvoice).filter((invoice) => {
+    return sameText(invoice.AccountRef, accountRef) &&
+      (isSchoolFeesTotalPayment(payment)
+        ? isSchoolFeeCategory(invoice.FeeCategory) || schoolFeeCodes.has(normalizeReferenceText(invoice.FeeCode))
+        : sameText(invoice.FeeCode, feeCode)) &&
+      sameFinancialPeriod(invoice, academicSession, term) &&
+      normalizeMatchText(invoice.Status) !== 'paid';
+  }).sort((a, b) => timestampMs(a.Date || a.CreatedAt) - timestampMs(b.Date || b.CreatedAt));
   const invoiceAllocation = calculateInvoiceCreditAllocations(matchingInvoices, creditedAmount);
   for (const allocation of invoiceAllocation.allocations) {
     const invoice = allocation.invoice;
@@ -3430,7 +3274,7 @@ export async function recordManualPayment(env, body) {
       CreatedAt: nowIso(), UpdatedAt: nowIso()
     });
   }
-  await writePaymentAccountingJournal(env, payment, matchingInvoices);
+  await writePaymentAccountingJournal(env, payment, matchingInvoices.length > 0);
   let invoicePostingWarning = '';
   const shouldGenerateSchoolInvoices = Boolean(student) && (
     isSchoolFeesTotalPayment(payment) ||
@@ -3464,96 +3308,13 @@ export async function recordManualPayment(env, body) {
   };
 }
 
-export function resolveSchoolFeeInvoiceAccountRefs(body = {}) {
-  // Supports both existing single-account payloads (AccountRef) and batched
-  // generation payloads (AccountRefs[]) while preserving case-tolerant
-  // deduplication.
-  const refs = [];
-  const seen = new Set();
-  const pushRef = (value) => {
-    const ref = clean(value);
-    if (!ref) return;
-    const key = ref.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    refs.push(ref);
-  };
-
-  if (body.AccountRefs != null) {
-    if (Array.isArray(body.AccountRefs)) {
-      body.AccountRefs.forEach((value) => pushRef(value));
-    } else if (typeof body.AccountRefs === 'string') {
-      body.AccountRefs
-        .split(',')
-        .map((value) => value.trim())
-        .forEach((value) => pushRef(value));
-    }
-  }
-  pushRef(body.AccountRef);
-  pushRef(body.accountRef);
-  return refs;
-}
-
 async function generateSchoolFeeInvoices(env, body) {
-  const accountRefs = resolveSchoolFeeInvoiceAccountRefs(body);
-  if (!accountRefs.length) {
+  const accountRef = clean(body.AccountRef || body.accountRef);
+  if (!accountRef) {
     const err = new Error('AccountRef is required.');
     err.status = 400;
     throw err;
   }
-  if (!Array.isArray(body.AccountRefs)) {
-    const result = await generateSchoolFeeInvoicesForAccount(env, body, accountRefs[0]);
-    return { ok: true, ...result };
-  }
-  const results = [];
-  const failures = [];
-  let created = 0;
-  let updated = 0;
-  let skipped = 0;
-  for (const accountRef of accountRefs) {
-    try {
-      const result = await generateSchoolFeeInvoicesForAccount(env, body, accountRef, { allowEmpty: true });
-      created += result.created;
-      updated += result.updated;
-      skipped += result.skipped;
-      results.push({ accountRef, ...result });
-    } catch (error) {
-      const message = error && error.message ? String(error.message) : String(error || 'Invoice generation failed');
-      failures.push({ accountRef, message });
-      results.push({ accountRef, status: 'failed', message });
-    }
-  }
-  const failed = failures.length;
-  const processed = results.length;
-  const success = created + updated;
-  const message = `Processed ${processed} account(s): ${success} invoice item(s) created, ${updated} updated, ${skipped} skipped${failed ? `, ${failed} failed` : ''}.`;
-  if (failed) {
-    const details = failures.map(({ accountRef, message: reason }) => `${accountRef}: ${reason}`);
-    return {
-      ok: false,
-      message: `${message} Failed accounts: ${failures.length}.`,
-      created,
-      updated,
-      skipped,
-      failed,
-      failures,
-      results,
-      details
-    };
-  }
-  return {
-    ok: true,
-    message,
-    created,
-    updated,
-    skipped,
-    failed,
-    results
-  };
-}
-
-async function generateSchoolFeeInvoicesForAccount(env, body, accountRef, options = {}) {
-  const allowEmpty = Boolean(options.allowEmpty);
   const student = await findStudentByAccountRef(env, accountRef);
   if (!student) throw applicationNotFound(accountRef);
   const profileResult = await getSchoolProfile(env).catch(() => ({ profile: {} }));
@@ -3576,18 +3337,9 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef, option
       feeMatchesApplication(fee, billingApp);
   }), billingApp);
   if (!fees.length) {
-    if (!allowEmpty) {
-      const err = new Error('No matching school fee items found for this class/student type.');
-      err.status = 400;
-      throw err;
-    }
-    return {
-      created: 0,
-      updated: 0,
-      skipped: 1,
-      status: 'skipped',
-      message: `No matching school fee items for ${accountRef}.`
-    };
+    const err = new Error('No matching school fee items found for this class/student type.');
+    err.status = 400;
+    throw err;
   }
   const existing = (await queryAccountRows(env, 'invoices', accountRef)).map(normalizeInvoice);
   const linkedReferences = [student.ApplicationReference].map(clean).filter(Boolean);
@@ -3654,13 +3406,7 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef, option
     else created += 1;
   }
   await refreshAccountFinancialSummary(env, accountRef, linkedReferences);
-  return {
-    created,
-    updated,
-    skipped: 0,
-    status: updated ? 'updated' : (created ? 'created' : 'ok'),
-    message: `${created} school fee invoice item(s) generated, ${updated} updated.`
-  };
+  return { ok: true, message: `${created} school fee invoice item(s) generated, ${updated} updated.`, created, updated };
 }
 
 function ledgerDocumentId(prefix = 'LED') {
@@ -3839,7 +3585,6 @@ async function recordWalletPurchase(env, body) {
     EntryType: 'Wallet Purchase',
     FeeCategory: 'Wallet',
     Description: clean(body.Description || body.description) || 'Wallet purchase',
-    Department: clean(body.Department || body.department),
     Debit: amount,
     Credit: 0,
     Currency: 'NGN',
@@ -3852,20 +3597,11 @@ async function recordWalletPurchase(env, body) {
     })
   };
   await upsertDocument(env, 'ledger', safeDocumentId(ledgerNo), entry);
-  let accountingWarning = '';
-  try {
-    await writeWalletPurchaseAccountingJournal(env, entry);
-  } catch (error) {
-    accountingWarning = error && error.message ? error.message : 'Unable to post the wallet purchase to accounting journals.';
-  }
   return {
     ok: true,
-    message: accountingWarning
-      ? `Wallet purchase recorded, but accounting sync needs attention: ${accountingWarning}`
-      : 'Wallet purchase recorded.',
+    message: 'Wallet purchase recorded.',
     ledger: entry,
     balance: await walletBalanceForAccount(env, account.AccountRef),
-    accountingWarning,
     account: await walletAccountPayload(env, student)
   };
 }
@@ -4206,7 +3942,6 @@ const DEFAULT_CHART_OF_ACCOUNTS = [
   ['2100', 'Taxes and Statutory Deductions', 'Liability', 'Statutory', 'Credit'],
   ['2200', 'Student Wallet Liability', 'Liability', 'Student Wallets', 'Credit'],
   ['2300', 'Salaries Payable', 'Liability', 'Payroll', 'Credit'],
-  ['2310', 'Student Overpayment Liability', 'Liability', 'Student Overpayments', 'Credit'],
   ['3000', 'Accumulated School Fund', 'Equity', 'School Fund', 'Credit'],
   ['4000', 'Tuition and School Fee Revenue', 'Revenue', 'Operating Revenue', 'Credit'],
   ['4010', 'Admission Form Revenue', 'Revenue', 'Operating Revenue', 'Credit'],
@@ -4310,11 +4045,56 @@ function accountingAccountCodeForRevenue(category, feeCode = '') {
 }
 
 export function accountingDestinationForPayment(row = {}, hasMatchingInvoice = false) {
-  const department = paymentStoreDepartment(row);
-  if (department === 'bookstore' || department === 'uniform store' || department === 'store' || department === 'tuck shop') return '4040';
   if (isWalletLedger(row)) return '2200';
-  if (paymentIndicatesStorePurchase(row)) return '4040';
+  const metadata = parseMetadata(row && row.Metadata);
+  const nested = metadata && typeof metadata.metadata === 'object' ? metadata.metadata : {};
+  const department = normalizeMatchText(row && row.Department);
+  const storeType = normalizeMatchText(metadata.storeType || nested.storeType);
+  const storeCart = Array.isArray(metadata.storeCart) ? metadata.storeCart : (Array.isArray(nested.storeCart) ? nested.storeCart : []);
+  const cartHint = storeCart.some((item) => {
+    return normalizeMatchText(item && item.StoreType) === 'store' ||
+      normalizeMatchText(item && item.StoreType) === 'uniform store' ||
+      normalizeMatchText(item && item.StoreType) === 'bookstore' ||
+      normalizeMatchText(item && item.StoreType) === 'book store' ||
+      normalizeMatchText(item && item.ItemName) === 'uniform store' ||
+      normalizeMatchText(item && item.ItemName) === 'book store' ||
+      normalizeMatchText(item && item.ItemName) === 'bookstore';
+  });
+  const storeHint = [
+    normalizeMatchText(row && row.FeeCategory),
+    normalizeMatchText(row && row.FeeCode),
+    normalizeMatchText(row && row.FeeName),
+    normalizeMatchText(row && row.EntryType),
+    storeType,
+    normalizeMatchText(row && row.StoreType),
+    normalizeMatchText((metadata.metadata && metadata.metadata.StoreType) || nested.storeType)
+  ].some((value) => value === 'store' || value === 'uniform store' || value === 'book store' || value === 'bookstore');
+
+  if (storeHint || cartHint || isStorePurchase(row) ||
+    (department === 'store' || department === 'uniform store' || department === 'bookstore' || department === 'book store')) return '4040';
   if (hasMatchingInvoice) return '1100';
+  return accountingAccountCodeForRevenue(row.FeeCategory, row.FeeCode);
+}
+
+export function accountingDestinationForWalletPurchase(row = {}) {
+  const metadata = parseMetadata(row && row.Metadata);
+  const nested = metadata && typeof metadata.metadata === 'object' ? metadata.metadata : {};
+  const department = normalizeMatchText(row && row.Department);
+  const category = normalizeMatchText(row && row.FeeCategory);
+  const code = clean(row && row.FeeCode).toUpperCase();
+  const name = normalizeMatchText(row && row.FeeName);
+  const metadataStoreType = normalizeMatchText(metadata.storeType || metadata.store_type || nested.storeType || nested.store_type);
+  const hasStoreCart = Array.isArray(metadata.storeCart) || Array.isArray(nested.storeCart);
+  const storeHint = [
+    department,
+    category,
+    normalizeMatchText(code),
+    name,
+    metadataStoreType,
+    normalizeMatchText(row && row.EntryType),
+  ].some((value) => value === 'store' || value === 'uniform store' || value === 'book store' || value === 'bookstore');
+
+  if (storeHint || hasStoreCart || isStorePurchase(row)) return '4040';
   return accountingAccountCodeForRevenue(row.FeeCategory, row.FeeCode);
 }
 
@@ -4335,33 +4115,6 @@ function journalLineSignature(lines) {
   return accountingLines(lines).map((line) => [
     clean(line.AccountCode), asMoneyNumber(line.Debit), asMoneyNumber(line.Credit)
   ].join(':')).join('|');
-}
-
-function referenceEquivalent(left, right) {
-  if (!clean(left) || !clean(right)) return false;
-  const leftText = clean(left).trim();
-  const rightText = clean(right).trim();
-  if (sameText(leftText, rightText)) return true;
-  if (sameReferenceIdentity(leftText, rightText)) return true;
-  if (referencesMatch(leftText, rightText)) return true;
-  return false;
-}
-
-function journalMatchesReference(journal, reference) {
-  if (!clean(reference)) return false;
-  return referenceEquivalent(journal.Reference, reference) ||
-    referenceEquivalent(journal.SourceId, reference) ||
-    referenceEquivalent(journal.__id, reference) ||
-    referenceEquivalent(journal.JournalNo, reference);
-}
-
-function syncJournalNo(prefix, sourceRef) {
-  return `${prefix}${safeDocumentId(sourceRef)}`;
-}
-
-function parseBoolean(value) {
-  if (typeof value === 'boolean') return value;
-  return ['1', 'true', 'yes', 'on', 'y', 'rebuild'].includes(normalizeMatchText(value));
 }
 
 function accountingCashAccountFor(method, gateway = '') {
@@ -4501,11 +4254,8 @@ export async function saveAccountingJournal(env, body, system = false) {
   return payload;
 }
 
-async function syncRevenueToAccounting(env, options = {}) {
-  const force = parseBoolean(options.Force || options.force || options.Rebuild || options.rebuild || options.Resync || options.resync);
+async function syncRevenueToAccounting(env) {
   await seedAccountingChart(env);
-  let created = 0;
-  const warnings = [];
   const [invoices, payments, sales, journals, ledgerRows, legacyGatewayExpenses, gatewayCharges, admissionClasses] = await Promise.all([
     listCollection(env, 'invoices'),
     listCollection(env, 'payments'),
@@ -4516,298 +4266,170 @@ async function syncRevenueToAccounting(env, options = {}) {
     listCollection(env, 'paymentGatewayCharges').catch(() => []),
     listCollection(env, 'settings/admission/classes').catch(() => [])
   ]);
-  let journalRows = journals.map((row) => ({ ...row }));
-  if (force) {
-    const removable = journalRows.filter((journal) => {
-      const journalNo = clean(journal.JournalNo || journal.__id);
-      return /^SYS-(INV|PAY|WALLET-PURCHASE|FORM)-/.test(journalNo);
-    });
-    for (const journal of removable) {
-      const journalNo = clean(journal.JournalNo || journal.__id);
-      const documentId = clean(journal.__id) || safeDocumentId(journalNo);
-      if (!documentId) {
-        warnings.push(`Unable to remove existing generated journal ${journalNo || 'UNIDENTIFIED'}: missing id.`);
-        continue;
-      }
-      try {
-        await deleteDocument(env, 'accountingJournals', documentId);
-      } catch (error) {
-        warnings.push(`Unable to remove existing generated journal ${journalNo || documentId}: ${error && error.message ? error.message : 'unknown delete error.'}`);
-      }
-      created += 1;
-    }
-    journalRows = journalRows.filter((journal) => !/^SYS-(INV|PAY|WALLET-PURCHASE|FORM)-/.test(clean(journal.JournalNo || journal.__id)));
-  }
-  const existing = new Set(journalRows.map((row) => clean(row.JournalNo || row.__id)));
-  const journalsByNo = new Map(journalRows.map((row) => [clean(row.JournalNo || row.__id), row]));
-  const removeJournalFromIndex = (journal) => {
-    const rowId = clean(journal.__id || journal.__name || '');
-    const journalNo = clean(journal.JournalNo || rowId);
-    if (!journalNo && !rowId) return;
-    journalRows = journalRows.filter((row) => {
-      const candidateId = clean(row.__id || row.__name || '');
-      const candidateNo = clean(row.JournalNo || row.__id || row.__name);
-      return candidateId !== rowId && !(journalNo && candidateNo === journalNo);
-    });
-    if (journalNo) {
-      existing.delete(journalNo);
-      journalsByNo.delete(journalNo);
-    }
-  };
-  const trackJournal = (journal) => {
-    const journalNo = clean(journal.JournalNo || journal.__id);
-    if (journalNo) {
-      existing.add(journalNo);
-      journalsByNo.set(journalNo, journal);
-    }
-    if (journal) {
-      const journalId = clean(journal.__id || journal.__name || '');
-      const normalizedNo = clean(journal.JournalNo || journal.__id);
-      journalRows = journalRows.filter((row) => {
-        const candidateId = clean(row.__id || row.__name || '');
-        const candidateNo = clean(row.JournalNo || row.__id || row.__name);
-        return candidateId !== journalId && (!normalizedNo || candidateNo !== normalizedNo);
-      });
-      if (normalizedNo) journalRows.push(journal);
-    }
-  };
-  const findRelatedJournals = (sourceType, canonicalNo, sourcePrefix, sourceId, references = []) => {
-    const normalizedReferences = [...references, sourceId, canonicalNo]
-      .map(clean).filter(Boolean);
-    return journalRows.filter((journal) => {
-      if (lower(journal.Source) !== sourceType) return false;
-      const journalNo = clean(journal.JournalNo || journal.__id);
-      return sameText(journalNo, canonicalNo) ||
-        normalizedReferences.some((reference) =>
-          journalMatchesReference(journal, reference) ||
-          sameText(journalNo, syncJournalNo(sourcePrefix, reference))
-        );
-    });
-  };
-  const removeDuplicateJournals = async (sourceType, sourcePrefix, sourceId, references = [], canonicalNo = '') => {
-    const relatedJournals = findRelatedJournals(sourceType, canonicalNo, sourcePrefix, sourceId, references);
-    for (const duplicate of relatedJournals) {
-      const duplicateNo = clean(duplicate.JournalNo || duplicate.__id);
-      if (duplicateNo === clean(canonicalNo)) continue;
-      const duplicateId = clean(duplicate.__id || duplicate.__name);
-      if (!duplicateId && !duplicateNo) {
-        warnings.push(`Unable to remove duplicate ${sourceType} journal for ${sourceId}: missing id.`);
-        continue;
-      }
-      try {
-        await deleteDocument(env, 'accountingJournals', duplicateId || safeDocumentId(duplicateNo));
-        removeJournalFromIndex(duplicate);
-        created += 1;
-      } catch (error) {
-        warnings.push(`Unable to remove duplicate ${sourceType} journal ${duplicateId || duplicateNo}: ${error && error.message ? error.message : 'unknown delete error.'}`);
-      }
-    }
-  };
+  const existing = new Set(journals.map((row) => clean(row.JournalNo || row.__id)));
+  const journalsByNo = new Map(journals.map((row) => [clean(row.JournalNo || row.__id), row]));
+  let created = 0;
   for (const row of invoices) {
-    try {
-      const sourceId = clean(row.InvoiceId || row.InvoiceNo || row.invoiceId || row.__id);
-      const journalNo = `SYS-INV-${safeDocumentId(sourceId)}`;
-      const amount = asMoneyNumber(row.Amount || row.amount);
-      if (!sourceId || amount <= 0) continue;
-      if (!force) {
-        await removeDuplicateJournals('student invoice', 'SYS-INV-', sourceId, [row.InvoiceId, row.InvoiceNo, row.__id], journalNo);
-        if (journalsByNo.get(journalNo)) continue;
-      }
-      const revenue = accountingAccountCodeForRevenue(row.FeeCategory || row.feeCategory, row.FeeCode || row.feeCode);
-      const savedJournal = await saveAccountingJournal(env, {
-        JournalNo: journalNo, Date: row.CreatedAt || row.Date || nowIso(), Status: 'Posted',
-        Description: `Invoice: ${clean(row.FeeName || row.Description || sourceId)}`,
-        Reference: sourceId, Source: 'Student Invoice', SourceId: sourceId,
-        AcademicSession: row.AcademicSession || '', Term: row.Term || '', RecordedBy: 'System',
-        Lines: [
-          { AccountCode: '1100', Debit: amount, Credit: 0, Description: clean(row.AccountRef || row.DisplayName) },
-          { AccountCode: revenue, Debit: 0, Credit: amount, Description: clean(row.FeeName || row.FeeCategory) }
-        ]
-      }, true);
-      trackJournal(savedJournal); existing.add(journalNo); created += 1;
-    } catch (error) {
-      const rowId = clean(row.InvoiceId || row.InvoiceNo || row.invoiceId || row.__id || 'unknown invoice');
-      warnings.push(`Unable to sync invoice ${rowId}: ${error && error.message ? error.message : 'unknown sync error.'}`);
-    }
+    const sourceId = clean(row.InvoiceId || row.InvoiceNo || row.invoiceId || row.__id);
+    const journalNo = `SYS-INV-${safeDocumentId(sourceId)}`;
+    const amount = asMoneyNumber(row.Amount || row.amount);
+    if (!sourceId || amount <= 0 || existing.has(journalNo)) continue;
+    const revenue = accountingAccountCodeForRevenue(row.FeeCategory || row.feeCategory, row.FeeCode || row.feeCode);
+    await saveAccountingJournal(env, {
+      JournalNo: journalNo, Date: row.CreatedAt || row.Date || nowIso(), Status: 'Posted',
+      Description: `Invoice: ${clean(row.FeeName || row.Description || sourceId)}`,
+      Reference: sourceId, Source: 'Student Invoice', SourceId: sourceId,
+      AcademicSession: row.AcademicSession || '', Term: row.Term || '', RecordedBy: 'System',
+      Lines: [
+        { AccountCode: '1100', Debit: amount, Credit: 0, Description: clean(row.AccountRef || row.DisplayName) },
+        { AccountCode: revenue, Debit: 0, Credit: amount, Description: clean(row.FeeName || row.FeeCategory) }
+      ]
+    }, true);
+    existing.add(journalNo); created += 1;
   }
   for (const row of payments) {
-    try {
-      const payment = normalizePayment(row);
-      const sourceId = clean(payment.Reference || payment.GatewayReference || payment.PaymentId || row.PaymentNo || row.__id);
-      const journalNo = `SYS-PAY-${safeDocumentId(sourceId)}`;
-      const amount = paymentCreditedAmount(payment);
-      if (!sourceId || amount <= 0) continue;
-      const paymentReferences = [
-        payment.Reference, payment.GatewayReference, payment.PaymentId,
-        row.PaymentNo, row.__id
-      ].map(clean).filter(Boolean);
-      const canonicalNo = journalNo;
-      const legacyLedger = ledgerRows.find((entry) => asMoneyNumber(entry.Credit) > 0 && paymentReferences.some((reference) => referencesMatch(entry.Reference, reference)));
-      if (legacyLedger && (Math.abs(asMoneyNumber(legacyLedger.Credit) - amount) > 0.005 ||
-        !sameText(legacyLedger.AcademicSession, payment.AcademicSession) || !sameText(legacyLedger.Term, payment.Term))) {
-        const repairedLedger = { ...legacyLedger, Credit: amount, AcademicSession: payment.AcademicSession, Term: payment.Term,
-          CalculationRepair: 'Net payment credit and exact financial period', CalculationRepairedAt: nowIso() };
-        delete repairedLedger.__id; delete repairedLedger.__name;
-        await upsertDocument(env, 'ledger', legacyLedger.__id || safeDocumentId(legacyLedger.LedgerNo), repairedLedger);
+    const payment = normalizePayment(row);
+    const sourceId = clean(payment.Reference || payment.GatewayReference || payment.PaymentId || row.PaymentNo || row.__id);
+    const journalNo = `SYS-PAY-${safeDocumentId(sourceId)}`;
+    const amount = paymentCreditedAmount(payment);
+    if (!sourceId || amount <= 0) continue;
+    const paymentReferences = [
+      payment.Reference, payment.GatewayReference, payment.PaymentId,
+      row.PaymentNo, row.__id
+    ].map(clean).filter(Boolean);
+    const legacyLedger = ledgerRows.find((entry) => asMoneyNumber(entry.Credit) > 0 && paymentReferences.some((reference) => sameText(entry.Reference, reference)));
+    if (legacyLedger && (Math.abs(asMoneyNumber(legacyLedger.Credit) - amount) > 0.005 ||
+      !sameText(legacyLedger.AcademicSession, payment.AcademicSession) || !sameText(legacyLedger.Term, payment.Term))) {
+      const repairedLedger = { ...legacyLedger, Credit: amount, AcademicSession: payment.AcademicSession, Term: payment.Term,
+        CalculationRepair: 'Net payment credit and exact financial period', CalculationRepairedAt: nowIso() };
+      delete repairedLedger.__id; delete repairedLedger.__name;
+      await upsertDocument(env, 'ledger', legacyLedger.__id || safeDocumentId(legacyLedger.LedgerNo), repairedLedger);
+      created += 1;
+    }
+    if (payment.GatewayFee > 0) {
+      const chargeId = safeDocumentId(`PAYSTACK-FEE-${payment.Reference || sourceId}`);
+      const existingCharge = gatewayCharges.find((charge) => sameText(charge.ChargeId || charge.__id, chargeId));
+      if (!existingCharge || Math.abs(asMoneyNumber(existingCharge.Amount) - payment.GatewayFee) > 0.005 ||
+        Math.abs(asMoneyNumber(existingCharge.NetSettlement) - amount) > 0.005 || lower(existingCharge.Treatment) !== 'deductedbeforestudentcredit') {
+        await upsertDocument(env, 'paymentGatewayCharges', chargeId, {
+          ChargeId: chargeId, Date: row.PaidAt || row.PaymentDate || row.Date || nowIso(),
+          Description: `Paystack transaction charge - ${payment.Reference || sourceId}`,
+          Amount: payment.GatewayFee, GrossCollection: payment.GrossAmount, NetSettlement: amount,
+          Treatment: 'DeductedBeforeStudentCredit', Status: 'Recorded', Reference: payment.Reference || sourceId,
+          Source: 'Paystack', CreatedAt: existingCharge?.CreatedAt || nowIso(), UpdatedAt: nowIso()
+        });
         created += 1;
       }
-      if (payment.GatewayFee > 0) {
-        const chargeId = safeDocumentId(`PAYSTACK-FEE-${payment.Reference || sourceId}`);
-        const existingCharge = gatewayCharges.find((charge) => sameText(charge.ChargeId || charge.__id, chargeId));
-        if (!existingCharge || Math.abs(asMoneyNumber(existingCharge.Amount) - payment.GatewayFee) > 0.005 ||
-          Math.abs(asMoneyNumber(existingCharge.NetSettlement) - amount) > 0.005 || lower(existingCharge.Treatment) !== 'deductedbeforestudentcredit') {
-          await upsertDocument(env, 'paymentGatewayCharges', chargeId, {
-            ChargeId: chargeId, Date: row.PaidAt || row.PaymentDate || row.Date || nowIso(),
-            Description: `Paystack transaction charge - ${payment.Reference || sourceId}`,
-            Amount: payment.GatewayFee, GrossCollection: payment.GrossAmount, NetSettlement: amount,
-            Treatment: 'DeductedBeforeStudentCredit', Status: 'Recorded', Reference: payment.Reference || sourceId,
-            Source: 'Paystack', CreatedAt: existingCharge?.CreatedAt || nowIso(), UpdatedAt: nowIso()
-          });
-          created += 1;
-        }
-        const oldExpense = legacyGatewayExpenses.find((expense) => sameText(expense.Reference, payment.Reference) && lower(expense.Source).includes('paystack'));
-        if (oldExpense && ['posted', 'paid'].includes(lower(oldExpense.Status))) {
-          const reclassified = { ...oldExpense, Status: 'Reclassified', Treatment: 'DeductedBeforeStudentCredit',
-            ReclassifiedAt: nowIso(), ReclassificationNote: 'Parent account is credited with the Paystack net settlement; this charge is retained for audit only.' };
-          delete reclassified.__id; delete reclassified.__name;
-          await upsertDocument(env, 'accountingExpenses', oldExpense.__id || safeDocumentId(oldExpense.ExpenseNo), reclassified);
-          created += 1;
-        }
+      const oldExpense = legacyGatewayExpenses.find((expense) => sameText(expense.Reference, payment.Reference) && lower(expense.Source).includes('paystack'));
+      if (oldExpense && ['posted', 'paid'].includes(lower(oldExpense.Status))) {
+        const reclassified = { ...oldExpense, Status: 'Reclassified', Treatment: 'DeductedBeforeStudentCredit',
+          ReclassifiedAt: nowIso(), ReclassificationNote: 'Parent account is credited with the Paystack net settlement; this charge is retained for audit only.' };
+        delete reclassified.__id; delete reclassified.__name;
+        await upsertDocument(env, 'accountingExpenses', oldExpense.__id || safeDocumentId(oldExpense.ExpenseNo), reclassified);
+        created += 1;
       }
-      const matchingInvoices = matchingInvoicesForPayment(payment, invoices, { requireOutstanding: true });
-      const lines = buildPaymentReceiptJournalLines(payment, amount, matchingInvoices);
-      if (lines.length < 2) continue;
-      await removeDuplicateJournals('fee payment', 'SYS-PAY-', sourceId, paymentReferences, canonicalNo);
-      const prior = journalsByNo.get(journalNo);
-      if (!force && prior && journalLineSignature(prior.Lines) === journalLineSignature(lines) &&
-        sameText(prior.Reference, sourceId) && sameText(prior.SourceId, sourceId)) continue;
-      const savedJournal = await saveAccountingJournal(env, {
-        JournalNo: journalNo, Date: row.PaidAt || row.PaymentDate || row.Date || nowIso(), Status: 'Posted',
-        Description: `Receipt: ${clean(row.Reference || sourceId)}`, Reference: clean(row.Reference || sourceId),
-        Source: 'Fee Payment', SourceId: sourceId, RecordedBy: 'System',
-        Lines: lines
-      }, true);
-      trackJournal(savedJournal);
-      existing.add(journalNo); created += 1;
-    } catch (error) {
-      const paymentId = clean(row.Reference || row.GatewayReference || row.PaymentId || row.PaymentNo || row.__id || 'unknown payment');
-      warnings.push(`Unable to sync payment ${paymentId}: ${error && error.message ? error.message : 'unknown sync error.'}`);
     }
-  }
-  const walletPurchases = ledgerRows.map(normalizeLedger).filter((row) => isWalletPurchaseEntry(row) && asMoneyNumber(row.Debit) > 0);
-  for (const row of walletPurchases) {
-    try {
-      const sourceId = clean(row.Reference || row.LedgerNo || row.__id);
-      const journalNo = `SYS-WALLET-PURCHASE-${safeDocumentId(sourceId)}`;
-      const amount = asMoneyNumber(row.Debit);
-      if (!sourceId || amount <= 0) continue;
-      const destination = accountingDestinationForWalletPurchase(row);
-      const rowMetadata = parseMetadata(row.Metadata);
-      const lines = [
-        { AccountCode: '2200', Debit: amount, Credit: 0, Description: clean(row.AccountRef || row.DisplayName || 'Wallet purchase') },
-        { AccountCode: destination, Debit: 0, Credit: amount, Description: clean(row.Description) || clean(row.Notes) || 'Wallet purchase settlement' }
-      ];
-      await removeDuplicateJournals('wallet purchase', 'SYS-WALLET-PURCHASE-', sourceId, [sourceId], journalNo);
-      const prior = journalsByNo.get(journalNo);
-      if (!force && prior && journalLineSignature(prior.Lines) === journalLineSignature(lines) &&
-        sameText(prior.Reference, sourceId) && sameText(prior.SourceId, sourceId)) {
-        continue;
-      }
-      const savedJournal = await saveAccountingJournal(env, {
-        JournalNo: journalNo, Date: row.Date || nowIso(), Status: 'Posted',
-        Description: `Wallet purchase: ${clean(row.Description) || sourceId}`,
-        Reference: sourceId, Source: 'Wallet Purchase', SourceId: sourceId, RecordedBy: clean(row.RecordedBy) || 'System',
-        Department: clean(row.Department) || clean(rowMetadata.Department || rowMetadata.department || rowMetadata.StoreType || rowMetadata.storeType),
-        AcademicSession: row.AcademicSession || '', Term: row.Term || '', Lines: lines
-      }, true);
-      trackJournal(savedJournal);
-      existing.add(journalNo); created += 1;
-    } catch (error) {
-      const ledgerId = clean(row.Reference || row.LedgerNo || row.__id || 'unknown wallet ledger row');
-      warnings.push(`Unable to sync wallet purchase ${ledgerId}: ${error && error.message ? error.message : 'unknown sync error.'}`);
+    const cash = accountingCashAccountFor(row.Method || row.PaymentMethod, row.Gateway);
+    const destination = accountingDestinationForPayment(payment, paymentHasMatchingInvoice(payment, invoices));
+    const lines = [
+      { AccountCode: cash, Debit: amount, Credit: 0, Description: clean(row.Method || row.Gateway || 'Payment received') },
+      { AccountCode: destination, Debit: 0, Credit: amount, Description: clean(row.AccountRef || row.DisplayName) }
+    ];
+    const relatedJournals = journals.filter((journal) => lower(journal.Source) === 'fee payment' && (
+      clean(journal.JournalNo || journal.__id) === journalNo ||
+      paymentReferences.some((reference) =>
+        sameText(journal.Reference, reference) || sameText(journal.SourceId, reference) ||
+        clean(journal.JournalNo || journal.__id) === `SYS-PAY-${safeDocumentId(reference)}`
+      )
+    ));
+    for (const duplicate of relatedJournals) {
+      const duplicateNo = clean(duplicate.JournalNo || duplicate.__id);
+      if (duplicateNo === journalNo) continue;
+      await deleteDocument(env, 'accountingJournals', clean(duplicate.__id) || safeDocumentId(duplicateNo));
+      existing.delete(duplicateNo);
+      journalsByNo.delete(duplicateNo);
+      created += 1;
     }
+    const prior = relatedJournals.find((journal) => clean(journal.JournalNo || journal.__id) === journalNo) ||
+      journalsByNo.get(journalNo);
+    if (prior && journalLineSignature(prior.Lines) === journalLineSignature(lines) &&
+      sameText(prior.Reference, sourceId) && sameText(prior.SourceId, sourceId)) continue;
+    await saveAccountingJournal(env, {
+      JournalNo: journalNo, Date: row.PaidAt || row.PaymentDate || row.Date || nowIso(), Status: 'Posted',
+      Description: `Receipt: ${clean(row.Reference || sourceId)}`, Reference: clean(row.Reference || sourceId),
+      Source: 'Fee Payment', SourceId: sourceId, RecordedBy: 'System',
+      Lines: lines
+    }, true);
+    existing.add(journalNo); created += 1;
   }
   const normalizedAdmissionClasses = admissionClasses.map(normalizeAdmissionClass);
   const defaultConfiguredFormAmount = asMoneyNumber(
     normalizedAdmissionClasses.find((item) => asMoneyNumber(item.FormAmount) > 0)?.FormAmount
   );
   for (const row of sales) {
-    try {
-      const sourceId = clean(row.ReceiptNo || row.receiptNo || row.__id);
-      const journalNo = `SYS-FORM-${safeDocumentId(sourceId)}`;
-      const classConfiguration = normalizedAdmissionClasses.find((item) =>
-        classNamesMatch(item.ClassName, row.ClassApplyingFor || row.ClassName)
-      );
-      const configuredFormAmount = asMoneyNumber(classConfiguration?.FormAmount) || defaultConfiguredFormAmount;
-      const amounts = formSaleFinancialAmounts(row, configuredFormAmount);
-      const amount = amounts.RecognizedAmount;
-      if (!sourceId || amount <= 0) continue;
-      const normalizedSale = {
-        ...row,
-        AmountPaid: formatNairaAmount(amount),
-        FormAmount: amounts.FormAmount,
-        GrossAmount: amounts.GrossAmount,
-        GatewayFee: amounts.GatewayFee,
-        NetAmount: amounts.NetAmount,
-        Gateway: clean(row.Gateway) || (amounts.GatewayFee > 0 ? 'Paystack' : 'Manual'),
-        PaymentMethod: clean(row.PaymentMethod || row.Method) || (amounts.GatewayFee > 0 ? 'Online' : 'Manual'),
-        UpdatedAt: nowIso()
-      };
-      delete normalizedSale.__id; delete normalizedSale.__name;
-      if (journalLineSignature([{
-        AccountCode: 'FORM',
-        Debit: asMoneyNumber(row.GrossAmount),
-        Credit: asMoneyNumber(row.GatewayFee)
-      }]) !== journalLineSignature([{
-        AccountCode: 'FORM',
-        Debit: amounts.GrossAmount,
-        Credit: amounts.GatewayFee
-      }]) || !asMoneyNumber(row.FormAmount) || !asMoneyNumber(row.NetAmount)) {
-        await upsertDocument(env, 'formSales', clean(row.__id) || safeDocumentId(sourceId), normalizedSale);
+    const sourceId = clean(row.ReceiptNo || row.receiptNo || row.__id);
+    const journalNo = `SYS-FORM-${safeDocumentId(sourceId)}`;
+    const classConfiguration = normalizedAdmissionClasses.find((item) =>
+      classNamesMatch(item.ClassName, row.ClassApplyingFor || row.ClassName)
+    );
+    const configuredFormAmount = asMoneyNumber(classConfiguration?.FormAmount) || defaultConfiguredFormAmount;
+    const amounts = formSaleFinancialAmounts(row, configuredFormAmount);
+    const amount = amounts.RecognizedAmount;
+    if (!sourceId || amount <= 0) continue;
+    const normalizedSale = {
+      ...row,
+      AmountPaid: formatNairaAmount(amount),
+      FormAmount: amounts.FormAmount,
+      GrossAmount: amounts.GrossAmount,
+      GatewayFee: amounts.GatewayFee,
+      NetAmount: amounts.NetAmount,
+      Gateway: clean(row.Gateway) || (amounts.GatewayFee > 0 ? 'Paystack' : 'Manual'),
+      PaymentMethod: clean(row.PaymentMethod || row.Method) || (amounts.GatewayFee > 0 ? 'Online' : 'Manual'),
+      UpdatedAt: nowIso()
+    };
+    delete normalizedSale.__id; delete normalizedSale.__name;
+    if (journalLineSignature([{
+      AccountCode: 'FORM',
+      Debit: asMoneyNumber(row.GrossAmount),
+      Credit: asMoneyNumber(row.GatewayFee)
+    }]) !== journalLineSignature([{
+      AccountCode: 'FORM',
+      Debit: amounts.GrossAmount,
+      Credit: amounts.GatewayFee
+    }]) || !asMoneyNumber(row.FormAmount) || !asMoneyNumber(row.NetAmount)) {
+      await upsertDocument(env, 'formSales', clean(row.__id) || safeDocumentId(sourceId), normalizedSale);
+      created += 1;
+    }
+    if (amounts.GatewayFee > 0) {
+      const chargeId = safeDocumentId(`PAYSTACK-FORM-FEE-${row.PaymentReference || sourceId}`);
+      const existingCharge = gatewayCharges.find((charge) => sameText(charge.ChargeId || charge.__id, chargeId));
+      if (!existingCharge) {
+        await upsertDocument(env, 'paymentGatewayCharges', chargeId, {
+          ChargeId: chargeId, Date: row.PaymentDate || row.Time || nowIso(),
+          Description: `Paystack admission-form transaction charge - ${row.PaymentReference || sourceId}`,
+          Amount: amounts.GatewayFee, GrossCollection: amounts.GrossAmount, NetSettlement: amounts.NetAmount,
+          Treatment: 'DeductedBeforeRevenueRecognition', Status: 'Recorded',
+          Reference: row.PaymentReference || sourceId, Source: 'Paystack Admission Form',
+          CreatedAt: nowIso(), UpdatedAt: nowIso()
+        });
         created += 1;
       }
-      if (amounts.GatewayFee > 0) {
-        const chargeId = safeDocumentId(`PAYSTACK-FORM-FEE-${row.PaymentReference || sourceId}`);
-        const existingCharge = gatewayCharges.find((charge) => sameText(charge.ChargeId || charge.__id, chargeId));
-        if (!existingCharge) {
-          await upsertDocument(env, 'paymentGatewayCharges', chargeId, {
-            ChargeId: chargeId, Date: row.PaymentDate || row.Time || nowIso(),
-            Description: `Paystack admission-form transaction charge - ${row.PaymentReference || sourceId}`,
-            Amount: amounts.GatewayFee, GrossCollection: amounts.GrossAmount, NetSettlement: amounts.NetAmount,
-            Treatment: 'DeductedBeforeRevenueRecognition', Status: 'Recorded',
-            Reference: row.PaymentReference || sourceId, Source: 'Paystack Admission Form',
-            CreatedAt: nowIso(), UpdatedAt: nowIso()
-          });
-          created += 1;
-        }
-      }
-      if (!force) await removeDuplicateJournals('admission form sale', 'SYS-FORM-', sourceId,
-        [row.PaymentReference, row.TransactionId, row.__id, row.ReceiptNo, row.receiptNo], journalNo);
-      const lines = [
-        { AccountCode: accountingCashAccountFor(normalizedSale.PaymentMethod, normalizedSale.Gateway), Debit: amount, Credit: 0, Description: 'Form sale net receipt' },
-        { AccountCode: '4010', Debit: 0, Credit: amount, Description: 'Admission form revenue' }
-      ];
-      const prior = journalsByNo.get(journalNo);
-      if (!force && prior && journalLineSignature(prior.Lines) === journalLineSignature(lines)) continue;
-      const savedJournal = await saveAccountingJournal(env, {
-        JournalNo: journalNo, Date: row.PaymentDate || row.Timestamp || nowIso(), Status: 'Posted',
-        Description: `Admission form sale: ${clean(row.ApplicantName || sourceId)}`, Reference: sourceId,
-        Source: 'Admission Form Sale', SourceId: sourceId, RecordedBy: 'System',
-        Lines: lines
-      }, true);
-      trackJournal(savedJournal);
-      existing.add(journalNo); created += 1;
-    } catch (error) {
-      const receiptId = clean(row.ReceiptNo || row.receiptNo || row.__id || 'unknown form sale');
-      warnings.push(`Unable to sync admission form sale ${receiptId}: ${error && error.message ? error.message : 'unknown sync error.'}`);
     }
+    const lines = [
+      { AccountCode: accountingCashAccountFor(normalizedSale.PaymentMethod, normalizedSale.Gateway), Debit: amount, Credit: 0, Description: 'Form sale net receipt' },
+      { AccountCode: '4010', Debit: 0, Credit: amount, Description: 'Admission form revenue' }
+    ];
+    const prior = journalsByNo.get(journalNo);
+    if (prior && journalLineSignature(prior.Lines) === journalLineSignature(lines)) continue;
+    await saveAccountingJournal(env, {
+      JournalNo: journalNo, Date: row.PaymentDate || row.Timestamp || nowIso(), Status: 'Posted',
+      Description: `Admission form sale: ${clean(row.ApplicantName || sourceId)}`, Reference: sourceId,
+      Source: 'Admission Form Sale', SourceId: sourceId, RecordedBy: 'System',
+      Lines: lines
+    }, true);
+    existing.add(journalNo); created += 1;
   }
-  return {
-    created,
-    warnings,
-    hadWarnings: warnings.length > 0,
-    warningCount: warnings.length
-  };
+  return created;
 }
 
 async function saveChartAccount(env, body) {
@@ -5370,19 +4992,8 @@ function aggregateAccountingBalances(chart, journals) {
   })).sort((a, b) => a.AccountCode.localeCompare(b.AccountCode));
 }
 
-function isCashAndBankAccount(row) {
-  if (!row) return false;
-  const code = clean(row.AccountCode);
-  const type = lower(row.Type);
-  const group = lower(clean(row.Group));
-  const name = clean(row.AccountName).toLowerCase();
-  if (['1010', '1020', '1030'].includes(code)) return true;
-  if (group === 'cash and bank') return true;
-  return type === 'asset' && (name.includes('cash') || name.includes('bank'));
-}
-
-function calculateCashPosition(rows) {
-  return (rows || []).filter(isCashAndBankAccount).reduce((sum, row) => sum + row.Debit - row.Credit, 0);
+function calculateCashPosition(trialBalance = []) {
+  return trialBalance.filter((row) => sameText(row.Group, 'Cash and Bank')).reduce((sum, row) => sum + row.Debit - row.Credit, 0);
 }
 
 export function buildBudgetVsActual(budgets, journals, filter = {}) {
@@ -6330,15 +5941,7 @@ async function routeAction(env, action, body = {}) {
       return deleteStaffUserFromDesktop(env, body);
     case 'syncAccountingRevenue':
       requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
-      const syncResult = await syncRevenueToAccounting(env, body);
-      const syncCreated = syncResult?.created ?? syncResult;
-      const syncWarnings = syncResult?.warnings || [];
-      return {
-        ok: true,
-        message: 'Revenue subledgers synchronized.',
-        created: syncCreated,
-        ...(syncWarnings.length > 0 ? { warnings: syncWarnings, warningCount: syncWarnings.length } : {})
-      };
+      return { ok: true, message: 'Revenue subledgers synchronized.', created: await syncRevenueToAccounting(env) };
     case 'saveChartAccount':
       return saveChartAccount(env, body);
     case 'saveAccountingJournal':
