@@ -4899,7 +4899,7 @@ function buildAccountingReport(chart, journals, expenses, budgets, filter = {}, 
     const outstanding = Math.max(0, asMoneyNumber(invoice.Balance) || Math.max(0, asMoneyNumber(invoice.Debit) - asMoneyNumber(invoice.Credit)));
     return outstanding > 0.005;
   }).reduce((sum, invoice) => sum + Math.max(0, asMoneyNumber(invoice.Balance) || Math.max(0, asMoneyNumber(invoice.Debit) - asMoneyNumber(invoice.Credit)), 0), 0);
-  const resolvedReceivables = Math.abs(receivables) > 0.005 ? receivables : outstandingInvoiceReceivables;
+  const resolvedReceivables = Math.max(0, receivables > 0.005 ? receivables : outstandingInvoiceReceivables);
   const filteredExpenses = expenses.filter((row) => accountingRowMatches(row, filter));
   const budgetVsActual = buildBudgetVsActual(budgets, periodJournals, filter);
   const postedExpense = filteredExpenses.filter((row) => ['posted', 'paid'].includes(lower(row.Status))).reduce((sum, row) => sum + asMoneyNumber(row.Amount), 0);

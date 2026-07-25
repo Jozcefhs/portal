@@ -321,6 +321,50 @@ test('receivables card can use outstanding invoices when journals are not yet sy
   assert.equal(report.dashboard.Receivables, 70000);
 });
 
+test('receivables card is non-negative after overcollected journal activity', () => {
+  const report = buildAccountingReport([], [{
+    JournalNo: 'J-REV',
+    Status: 'Posted',
+    Date: '2026-09-12',
+    Lines: [
+      { AccountCode: '1100', Debit: 0, Credit: 30000, Description: 'Receivables overcredit reversal' },
+      { AccountCode: '4000', Debit: 30000, Credit: 0, Description: 'Offsetting tuition credit' }
+    ]
+  }], [], [], {
+    DateFrom: '2026-01-01',
+    DateTo: '2026-12-31',
+    FinancialYear: '2026'
+  }, []);
+  assert.equal(report.dashboard.Receivables, 0);
+});
+
+test('receivables card uses outstanding invoices when receivables ledger has no positive balance', () => {
+  const report = buildAccountingReport([], [{
+    JournalNo: 'J-NEG',
+    Status: 'Posted',
+    Date: '2026-09-15',
+    Lines: [
+      { AccountCode: '1100', Debit: 0, Credit: 12000, Description: 'Receivables overcredit reversal' }
+    ]
+  }], [], [], {
+    DateFrom: '2026-01-01',
+    DateTo: '2026-12-31',
+    FinancialYear: '2026'
+  }, [{
+    InvoiceId: 'INV-1',
+    AccountRef: 'DCA/26/001',
+    FeeCode: 'TUITION',
+    FeeCategory: 'School Fee',
+    AcademicSession: '2026/2027',
+    Term: 'First Term',
+    Date: '2026-09-10',
+    Debit: 25000,
+    Credit: 10000,
+    Balance: 15000
+  }]);
+  assert.equal(report.dashboard.Receivables, 15000);
+});
+
 test('specific billing category replaces the All-category fee', () => {
   const fees = [
     { FeeCode: 'TUITION-ALL', FeeName: 'Tuition', FeeCategory: 'School Fee', BillingCategory: 'All', ClassName: 'JSS 1', Term: 'First Term', Amount: 100000 },
