@@ -572,3 +572,43 @@ html[data-theme="dark"] .preference-switch-row{border-color:#2a3c52}
   .staff-page #staffDashboardStatus.status.ok{display:none}
   .staff-page .staff-summary{margin:12px 0 10px}
 }
+
+/* Keep tapped table rows legible when dark mode gives them a light selection surface. */
+html[data-theme="dark"] .staff-page .admin-table tbody tr:hover,
+html[data-theme="dark"] .staff-page .admin-table tbody tr:active,
+html[data-theme="dark"] .staff-page .admin-table tbody tr:focus-within,
+html[data-theme="dark"] .staff-page .admin-table tbody tr.selected{
+  background:#f8fbfd;
+  color:#102a43;
+}
+html[data-theme="dark"] .staff-page .admin-table tbody tr:hover td,
+html[data-theme="dark"] .staff-page .admin-table tbody tr:active td,
+html[data-theme="dark"] .staff-page .admin-table tbody tr:focus-within td,
+html[data-theme="dark"] .staff-page .admin-table tbody tr.selected td{
+  color:#102a43;
+  border-color:#cbd7e5;
+}
+
+@media (max-width:560px){
+  .launcher-showcase{min-height:190px;padding:12px 16px 14px;border-radius:0 0 28px 28px}
+  .launcher-showcase-top{gap:9px;font-size:14px}
+  .launcher-logo{width:36px;height:36px;padding:5px;border-radius:11px}
+  .launcher-art{width:225px;top:-24%;right:-16%;opacity:.68}
+  .launcher-message{padding-top:24px}
+  .launcher-message p{margin-bottom:4px;font-size:8px}
+  .launcher-message h1{font-size:28px;line-height:1}
+  .launcher-message>span{max-width:330px;margin-top:7px;font-size:10px;line-height:1.35}
+  .launcher-directory{padding:18px 12px 68px}
+  .launcher-heading{margin-bottom:14px}
+  .launcher-kicker{margin-bottom:5px;font-size:9px}
+  .launcher-heading h2{margin-bottom:5px;font-size:24px;line-height:1.03}
+  .launcher-heading>p:last-child{font-size:12px}
+  .launcher-channels{gap:8px}
+  .launcher-channel{grid-template-columns:44px minmax(0,1fr) 20px;gap:10px;min-height:66px;padding:8px 10px;border-radius:13px}
+  .channel-mark{width:44px;height:44px;border-radius:12px;font-size:13px}
+  .channel-copy strong{font-size:15px}
+  .channel-copy small{margin-top:2px;font-size:9px;line-height:1.25}
+  .channel-arrow{font-size:18px}
+  .launcher-help{margin-top:14px;font-size:11px}
+  .launcher-settings-button{width:48px;height:48px;font-size:20px}
+}

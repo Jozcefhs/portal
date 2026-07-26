@@ -1146,9 +1146,7 @@ if (signOutDashboardBtn) {
     loginForm.hidden = false;
     loginForm.reset();
     setLoginLoading(false);
-    setStatus('Signed out successfully.', 'ok');
-    document.getElementById('parentEmail')?.focus();
-    loginForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    window.location.replace('index.html');
   });
 }
 

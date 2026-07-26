@@ -1812,8 +1812,7 @@ async function signOutFromPortal(button) {
     await sessionRequest('POST', { action: 'logout' });
   } finally {
     button.disabled = false;
-    showLogin('Signed out successfully.', 'ok');
-    document.getElementById('staffUsername').focus();
+    window.location.replace('index.html');
   }
 }
 
@@ -1883,7 +1882,7 @@ document.getElementById('staffPasswordSignOut').addEventListener('click', async 
   await sessionRequest('POST', { action: 'logout' });
   passwordDialog.close();
   passwordForm.reset();
-  showLogin('Signed out successfully.', 'ok');
+  window.location.replace('index.html');
 });
 
 (async function restoreSession() {
