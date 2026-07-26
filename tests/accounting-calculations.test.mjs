@@ -8,6 +8,7 @@ import {
   buildBudgetVsActual,
   buildGatewayCollectionsReport,
   buildReceivablesAgeing,
+  buildWalletPurchaseAccountingJournal,
   calculateAccountFinancialSummary,
   calculateInvoiceCreditAllocations,
   financialRowMatchesAccount,
@@ -247,8 +248,57 @@ test('wallet purchase destination follows department context and defaults to Oth
     FeeCategory: 'Store',
     FeeCode: 'BOOK_ORDER'
   }), '4040');
+  assert.equal(accountingDestinationForWalletPurchase({
+    FeeCategory: 'Wallet',
+    EntryType: 'Wallet Purchase',
+    Metadata: JSON.stringify({ department: 'Tuck Shop' })
+  }), '4040');
   assert.equal(accountingDestinationForWalletPurchase({ Department: 'Finance', FeeCategory: 'Admission', FeeCode: 'TUITION' }), '4110');
   assert.equal(accountingDestinationForWalletPurchase({ FeeCategory: 'Unknown', FeeCode: 'X' }), '4090');
+});
+
+test('wallet purchase builds a balanced deterministic accounting journal', () => {
+  const purchase = {
+    LedgerNo: 'WALLET-20260726-001',
+    Date: '2026-07-26T10:30:00.000Z',
+    EntryType: 'Wallet Purchase',
+    FeeCategory: 'Wallet',
+    AccountRef: 'DIGC-001',
+    DisplayName: 'Test Student',
+    Description: 'Lunch',
+    Debit: 2500,
+    Reference: 'POS-001',
+    AcademicSession: '2026/2027',
+    Term: 'First Term',
+    Metadata: JSON.stringify({ department: 'Tuck Shop' })
+  };
+  const journal = buildWalletPurchaseAccountingJournal(purchase);
+  assert.equal(journal.JournalNo, 'SYS-WALLET-WALLET-20260726-001');
+  assert.equal(journal.Source, 'Wallet Purchase');
+  assert.equal(journal.SourceId, purchase.LedgerNo);
+  assert.equal(journal.Reference, 'POS-001');
+  assert.equal(journal.Status, 'Posted');
+  assert.equal(journal.Department, 'Tuck Shop');
+  assert.deepEqual(journal.Lines.map((line) => [line.AccountCode, line.Debit, line.Credit]), [
+    ['2200', 2500, 0],
+    ['4040', 0, 2500]
+  ]);
+  assert.equal(journal.TotalDebit, journal.TotalCredit);
+  assert.equal(buildWalletPurchaseAccountingJournal(purchase).JournalNo, journal.JournalNo);
+});
+
+test('wallet accounting builder ignores top-ups and invalid purchase rows', () => {
+  assert.equal(buildWalletPurchaseAccountingJournal({
+    LedgerNo: 'WALLET-TOPUP-001',
+    EntryType: 'Wallet Top-up',
+    FeeCode: 'WALLET_TOPUP',
+    Credit: 5000
+  }), null);
+  assert.equal(buildWalletPurchaseAccountingJournal({
+    LedgerNo: 'WALLET-PURCHASE-EMPTY',
+    EntryType: 'Wallet Purchase',
+    Debit: 0
+  }), null);
 });
 
 test('financial periods require the same session and term', () => {

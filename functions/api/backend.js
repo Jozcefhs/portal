@@ -3621,6 +3621,7 @@ async function recordWalletPurchase(env, body) {
     Term: account.Term || student.Term || '',
     EntryType: 'Wallet Purchase',
     FeeCategory: 'Wallet',
+    Department: clean(body.Department || body.department),
     Description: clean(body.Description || body.description) || 'Wallet purchase',
     Debit: amount,
     Credit: 0,
@@ -3634,6 +3635,7 @@ async function recordWalletPurchase(env, body) {
     })
   };
   await upsertDocument(env, 'ledger', safeDocumentId(ledgerNo), entry);
+  await writeWalletPurchaseAccountingJournal(env, entry);
   return {
     ok: true,
     message: 'Wallet purchase recorded.',
@@ -4116,7 +4118,10 @@ export function accountingDestinationForPayment(row = {}, hasMatchingInvoice = f
 export function accountingDestinationForWalletPurchase(row = {}) {
   const metadata = parseMetadata(row && row.Metadata);
   const nested = metadata && typeof metadata.metadata === 'object' ? metadata.metadata : {};
-  const department = normalizeMatchText(row && row.Department);
+  const department = normalizeMatchText(
+    (row && row.Department) || metadata.department || metadata.Department ||
+    nested.department || nested.Department
+  );
   const category = normalizeMatchText(row && row.FeeCategory);
   const code = clean(row && row.FeeCode).toUpperCase();
   const name = normalizeMatchText(row && row.FeeName);
@@ -4129,10 +4134,48 @@ export function accountingDestinationForWalletPurchase(row = {}) {
     name,
     metadataStoreType,
     normalizeMatchText(row && row.EntryType),
-  ].some((value) => value === 'store' || value === 'uniform store' || value === 'book store' || value === 'bookstore');
+  ].some((value) => value === 'store' || value === 'tuck shop' || value === 'uniform store' || value === 'book store' || value === 'bookstore');
 
   if (storeHint || hasStoreCart || isStorePurchase(row)) return '4040';
   return accountingAccountCodeForRevenue(row.FeeCategory, row.FeeCode);
+}
+
+export function buildWalletPurchaseAccountingJournal(row = {}) {
+  const sourceId = clean(row.LedgerNo || row.ledgerNo || row.__id);
+  const amount = asMoneyNumber(row.Debit || row.debit || row.Amount || row.amount);
+  if (!sourceId || amount <= 0 || !normalizeMatchText(row.EntryType || row.entryType).includes('wallet purchase')) return null;
+  const journalNo = `SYS-WALLET-${safeDocumentId(sourceId)}`;
+  const destination = accountingDestinationForWalletPurchase(row);
+  const description = clean(row.Description || row.description) || 'Wallet purchase';
+  const department = clean(row.Department || row.department || parseMetadata(row.Metadata || row.metadata).department);
+  return normalizedJournal({
+    JournalNo: journalNo,
+    Date: row.Date || row.date || row.CreatedAt || row.createdAt || nowIso(),
+    Status: 'Posted',
+    Description: `Wallet purchase: ${description}`,
+    Reference: clean(row.Reference || row.reference) || sourceId,
+    Source: 'Wallet Purchase',
+    SourceId: sourceId,
+    RecordedBy: clean(row.RecordedBy || row.recordedBy) || 'System',
+    AcademicSession: clean(row.AcademicSession || row.academicSession),
+    Term: clean(row.Term || row.term),
+    Department: department,
+    Lines: [
+      { AccountCode: '2200', Debit: amount, Credit: 0, Description: clean(row.DisplayName || row.AccountRef) || 'Student wallet liability', Department: department },
+      { AccountCode: destination, Debit: 0, Credit: amount, Description: description, Department: department }
+    ],
+    TotalDebit: amount,
+    TotalCredit: amount,
+    CreatedAt: row.CreatedAt || row.createdAt || row.Date || row.date || nowIso(),
+    UpdatedAt: nowIso()
+  });
+}
+
+async function writeWalletPurchaseAccountingJournal(env, row) {
+  const journal = buildWalletPurchaseAccountingJournal(row);
+  if (!journal) return null;
+  await upsertDocument(env, 'accountingJournals', safeDocumentId(journal.JournalNo), journal);
+  return journal;
 }
 
 function paymentHasMatchingInvoice(payment, invoices) {
@@ -4398,6 +4441,17 @@ async function syncRevenueToAccounting(env) {
       Lines: lines
     }, true);
     existing.add(journalNo); created += 1;
+  }
+  for (const row of ledgerRows) {
+    const journal = buildWalletPurchaseAccountingJournal(row);
+    if (!journal) continue;
+    const prior = journalsByNo.get(journal.JournalNo);
+    if (prior && journalLineSignature(prior.Lines) === journalLineSignature(journal.Lines) &&
+      sameText(prior.Reference, journal.Reference) && sameText(prior.SourceId, journal.SourceId)) continue;
+    await saveAccountingJournal(env, journal, true);
+    existing.add(journal.JournalNo);
+    journalsByNo.set(journal.JournalNo, journal);
+    created += 1;
   }
   const normalizedAdmissionClasses = admissionClasses.map(normalizeAdmissionClass);
   const defaultConfiguredFormAmount = asMoneyNumber(
