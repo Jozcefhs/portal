@@ -3,18 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>School Staff Portal</title>
-  <link rel="stylesheet" href="css/style.css?v=20260723-student-profiles">
+  <title>Organisation Staff Portal</title>
+  <meta name="theme-color" content="#071b33">
+  <link rel="stylesheet" href="css/style.css?v=20260726-mobile-command-centre-2">
 </head>
 <body class="staff-page">
   <header class="staff-topbar">
     <a class="staff-brand" href="index.html">
       <img src="images/logo.png" alt="" class="nav-logo" onerror="this.style.display='none'">
-      <span><strong data-school-name>School Management Suite</strong><small>Web Companion</small></span>
+      <span><strong data-school-name>Organisation Management Suite</strong><small id="staffEditionLabel">Web Companion</small></span>
     </a>
     <div id="staffIdentity" class="staff-identity" hidden>
       <button type="button" id="staffMenuToggle" class="staff-menu-toggle" aria-controls="staffSidebar" aria-expanded="false"><span aria-hidden="true">☰</span> Menu</button>
-      <span><strong id="staffDisplayName"></strong><small id="staffRole"></small></span>
+      <span id="staffAvatar" class="staff-avatar" aria-hidden="true">S</span>
+      <span class="staff-identity-copy"><strong id="staffDisplayName"></strong><small id="staffRole"></small></span>
       <button type="button" id="staffSignOut" class="dashboard-signout">Sign Out</button>
     </div>
   </header>
@@ -22,8 +24,8 @@
   <main class="staff-shell">
     <section id="staffLoginCard" class="card staff-login-card">
       <p class="eyebrow">Authorized staff only</p>
-      <h1>Staff Web Companion</h1>
-      <p class="lead">Sign in to access the Firestore records permitted for your role.</p>
+      <h1>Operations Companion</h1>
+      <p class="lead">Sign in to access the organisation records permitted for your role.</p>
       <form id="staffLoginForm" autocomplete="on">
         <label for="staffUsername">Username</label>
         <input id="staffUsername" name="username" autocomplete="username" required>
@@ -40,7 +42,7 @@
         <aside class="staff-sidebar" id="staffSidebar">
           <div class="staff-sidebar-heading">
             <small>Workspace</small>
-            <strong>Financial Operations</strong>
+            <strong id="staffWorkspaceTitle">Operations Centre</strong>
           </div>
           <nav class="admin-tabs staff-tabs" id="adminTabs" aria-label="Staff dashboard sections"></nav>
           <div class="staff-sidebar-note">
@@ -52,9 +54,9 @@
         <div class="staff-main-content">
           <div class="staff-welcome">
             <div>
-              <p class="eyebrow">Operations overview</p>
+              <p id="staffOverviewLabel" class="eyebrow">Operations overview</p>
               <h1 id="staffWelcomeTitle">Dashboard</h1>
-              <p class="muted">Monitor records, requests and departmental activity.</p>
+              <p id="staffWelcomeCopy" class="muted">Monitor records, requests and departmental activity.</p>
             </div>
             <button type="button" id="staffRefresh">Refresh Data</button>
           </div>
@@ -65,6 +67,18 @@
         </div>
       </div>
     </section>
+
+    <nav id="staffMobileNav" class="staff-mobile-nav" aria-label="Mobile portal navigation" hidden></nav>
+
+    <dialog id="staffModuleDialog" class="staff-module-dialog" aria-labelledby="staffModuleDialogTitle">
+      <div class="staff-module-sheet">
+        <header>
+          <div><small>Quick access</small><h2 id="staffModuleDialogTitle">All Modules</h2></div>
+          <button type="button" id="staffModuleClose" aria-label="Close all modules">×</button>
+        </header>
+        <div id="staffModuleGrid" class="staff-module-grid"></div>
+      </div>
+    </dialog>
   </main>
 
   <dialog id="staffPasswordDialog" class="workflow-dialog staff-password-dialog">
@@ -81,6 +95,6 @@
 
   <script src="js/site-config.js?v=20260718-personalized-ui"></script>
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
-  <script src="js/admin.js?v=20260723-student-profiles"></script>
+  <script src="js/admin.js?v=20260726-mobile-command-centre"></script>
 </body>
 </html>

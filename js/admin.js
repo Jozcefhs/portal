@@ -21,6 +21,15 @@ const passwordStatus = document.getElementById('staffPasswordStatus');
 const menuToggleButton = document.getElementById('staffMenuToggle');
 const sidebarEl = document.getElementById('staffSidebar');
 const sidebarScrim = document.getElementById('staffSidebarScrim');
+const staffAvatar = document.getElementById('staffAvatar');
+const editionLabel = document.getElementById('staffEditionLabel');
+const workspaceTitle = document.getElementById('staffWorkspaceTitle');
+const overviewLabel = document.getElementById('staffOverviewLabel');
+const welcomeCopy = document.getElementById('staffWelcomeCopy');
+const mobileNav = document.getElementById('staffMobileNav');
+const moduleDialog = document.getElementById('staffModuleDialog');
+const moduleGrid = document.getElementById('staffModuleGrid');
+const moduleCloseButton = document.getElementById('staffModuleClose');
 
 let currentUser = null;
 let dashboardData = null;
@@ -29,6 +38,7 @@ let financeData = null;
 let staffUsersData = [];
 let staffAuditData = [];
 let staffApprovalAccounts = [];
+let activeTabs = [];
 
 const tabConfig = [
   ['admissions', 'Admissions'],
@@ -49,6 +59,13 @@ const tabConfig = [
   ['uniformStore', 'Clothing & Supplies'],
   ['staffUsers', 'Staff & Permissions']
 ];
+
+const tabIcons = {
+  admissions: '✦', formPurchases: '▤', students: '♟', members: '♟',
+  services: '◷', funds: '₦', offerings: '◉', donations: '♡', accounts: '▥',
+  financeRequests: '✓', payroll: '▦', clinic: '+', kitchen: '⌂', tuckShop: '▣',
+  bookstore: '▤', uniformStore: '◇', staffUsers: '♙'
+};
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -103,20 +120,37 @@ function showLogin(message = '', type = '') {
   currentUser = null;
   dashboardData = null;
   activeSection = '';
+  activeTabs = [];
   dashboardEl.hidden = true;
   identityEl.hidden = true;
+  mobileNav.hidden = true;
+  if (moduleDialog.open) moduleDialog.close();
   loginCard.hidden = false;
   setStatus(loginStatus, message, type);
 }
 
 function showDashboard(user) {
   currentUser = user;
-  displayNameEl.textContent = user.displayName || user.username;
+  const displayName = user.displayName || user.username || 'Staff';
+  const explicitEdition = clean(user.organisationEdition || user.organizationEdition || user.edition).toLowerCase();
+  const profileName = clean(window.SCHOOL_PROFILE?.SchoolName);
+  const isChurch = explicitEdition === 'church' || /dunamis|digc|church/i.test(profileName);
+  displayNameEl.textContent = displayName;
   roleEl.textContent = [user.role, user.department].filter(Boolean).join(' • ');
-  welcomeTitle.textContent = `Welcome, ${user.displayName || user.username}`;
+  staffAvatar.textContent = displayName.charAt(0).toUpperCase();
+  sidebarEl.querySelector('.staff-sidebar-heading')?.setAttribute('data-initial', displayName.charAt(0).toUpperCase());
+  editionLabel.textContent = isChurch ? 'Church Operations' : 'Staff Web Companion';
+  workspaceTitle.textContent = isChurch ? 'Church Operations' : 'Operations Centre';
+  overviewLabel.textContent = isChurch ? 'Ministry overview' : 'Operations overview';
+  welcomeCopy.textContent = isChurch
+    ? 'Monitor giving, members, services and ministry activity.'
+    : 'Monitor records, requests and departmental activity.';
+  welcomeTitle.textContent = `Welcome, ${displayName}`;
+  document.documentElement.dataset.edition = isChurch ? 'church' : 'school';
   loginCard.hidden = true;
   identityEl.hidden = false;
   dashboardEl.hidden = false;
+  mobileNav.hidden = false;
 }
 
 async function continueAfterAuthentication(user) {
@@ -177,6 +211,12 @@ async function loadDashboard() {
 
 function renderDashboardCharts(charts) {
   if (!dashboardChartsEl) return;
+  if (document.documentElement.dataset.edition === 'church') {
+    dashboardChartsEl.hidden = true;
+    dashboardChartsEl.innerHTML = '';
+    return;
+  }
+  dashboardChartsEl.hidden = false;
   const groups = [
     ['Students by Gender', charts.studentGender || [], false],
     ['New Intake / Returning', charts.studentCategory || [], false],
@@ -208,19 +248,58 @@ function renderSummary(summary) {
 
 function renderTabs(allowed) {
   const tabs = tabConfig.filter(([key]) => allowed.includes(key));
+  activeTabs = tabs;
+  const isChurch = tabs.some(([key]) => key === 'members' || key === 'services');
+  if (isChurch) {
+    document.documentElement.dataset.edition = 'church';
+    editionLabel.textContent = 'Church Operations';
+    workspaceTitle.textContent = 'Church Operations';
+    overviewLabel.textContent = 'Ministry overview';
+    welcomeCopy.textContent = 'Monitor giving, members, services and ministry activity.';
+  }
   tabsEl.innerHTML = tabs.map(([key, label]) => {
     const selected = key === activeSection ? ' selected' : '';
     return `<button type="button" class="child-card${selected}" data-tab="${escapeHtml(key)}" aria-selected="${key === activeSection}">${escapeHtml(label)}</button>`;
   }).join('');
   tabsEl.querySelectorAll('[data-tab]').forEach((button) => {
-    button.addEventListener('click', () => {
-      activeSection = button.dataset.tab;
-      renderTabs(allowed);
-      renderSection(activeSection);
-      setSidebarOpen(false);
-      panelEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
+    button.addEventListener('click', () => selectSection(button.dataset.tab, allowed));
   });
+  renderMobileNavigation(tabs);
+}
+
+function selectSection(key, allowed = activeTabs.map(([tabKey]) => tabKey)) {
+  if (!allowed.includes(key)) return;
+  activeSection = key;
+  renderTabs(allowed);
+  renderSection(activeSection);
+  setSidebarOpen(false);
+  if (moduleDialog.open) moduleDialog.close();
+  panelEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderMobileNavigation(tabs) {
+  if (!tabs.length) {
+    mobileNav.innerHTML = '';
+    moduleGrid.innerHTML = '';
+    return;
+  }
+  const findTab = (...keys) => tabs.find(([key]) => keys.includes(key));
+  const homeTab = tabs[0];
+  const peopleTab = findTab('members', 'students', 'services', 'admissions') || homeTab;
+  const financeTab = findTab('donations', 'offerings', 'funds', 'accounts', 'financeRequests') || homeTab;
+  const items = [
+    [homeTab[0], '⌂', 'Home'],
+    [peopleTab[0], tabIcons[peopleTab[0]] || '♟', peopleTab[0] === 'members' ? 'Members' : 'People'],
+    ['__modules__', '▦', 'Modules'],
+    [financeTab[0], tabIcons[financeTab[0]] || '₦', 'Finance'],
+    ['__more__', '☰', 'More']
+  ];
+  mobileNav.innerHTML = items.map(([key, icon, label]) => {
+    const selected = key === activeSection ? ' selected' : '';
+    const central = key === '__modules__' ? ' mobile-nav-centre' : '';
+    return `<button type="button" class="${selected}${central}" data-mobile-tab="${escapeHtml(key)}" aria-label="${escapeHtml(label)}"><span>${escapeHtml(icon)}</span><small>${escapeHtml(label)}</small></button>`;
+  }).join('');
+  moduleGrid.innerHTML = tabs.map(([key, label], index) => `<button type="button" data-module="${escapeHtml(key)}" class="module-tone-${index % 6}${key === activeSection ? ' selected' : ''}"><span>${escapeHtml(tabIcons[key] || '•')}</span><strong>${escapeHtml(label)}</strong></button>`).join('');
 }
 
 function table(title, rows, columns) {
@@ -682,7 +761,7 @@ async function loadChurchDonations() {
         <div>
           <p class="eyebrow">Giving counter</p>
           <h2>Church Donations</h2>
-          <p class="muted">Branch ${escapeHtml(data.branchId || 'main')} � ${summary.count || 0} entries � ${summary.paid || 0} paid � ${summary.pending || 0} pending</p>
+          <p class="muted">Branch ${escapeHtml(data.branchId || 'main')} � ${summary.count || 0} entries � ${summary.paid || 0} paid � ${summary.pending || 0} pending</p>
         </div>
         <button type="button" id="refreshChurchDonations">Refresh</button>
       </div>
@@ -1699,8 +1778,37 @@ signOutButton.addEventListener('click', async () => {
 refreshButton.addEventListener('click', loadDashboard);
 menuToggleButton.addEventListener('click', () => setSidebarOpen(!sidebarEl.classList.contains('is-open')));
 sidebarScrim.addEventListener('click', () => setSidebarOpen(false));
-document.addEventListener('keydown', (event) => { if (event.key === 'Escape') setSidebarOpen(false); });
-window.addEventListener('resize', () => { if (window.innerWidth > 680) setSidebarOpen(false); });
+mobileNav.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-mobile-tab]');
+  if (!button) return;
+  const key = button.dataset.mobileTab;
+  if (key === '__modules__') {
+    if (!moduleDialog.open) moduleDialog.showModal();
+    return;
+  }
+  if (key === '__more__') {
+    setSidebarOpen(true);
+    return;
+  }
+  selectSection(key);
+});
+moduleGrid.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-module]');
+  if (button) selectSection(button.dataset.module);
+});
+moduleCloseButton.addEventListener('click', () => moduleDialog.close());
+moduleDialog.addEventListener('click', (event) => { if (event.target === moduleDialog) moduleDialog.close(); });
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  setSidebarOpen(false);
+  if (moduleDialog.open) moduleDialog.close();
+});
+window.addEventListener('resize', () => {
+  if (window.innerWidth > 680) {
+    setSidebarOpen(false);
+    if (moduleDialog.open) moduleDialog.close();
+  }
+});
 
 passwordForm.addEventListener('submit', async (event) => {
   event.preventDefault();

@@ -3308,13 +3308,50 @@ export async function recordManualPayment(env, body) {
   };
 }
 
+export function resolveSchoolFeeInvoiceAccountRefs(body = {}) {
+  const values = [
+    body.AccountRef,
+    body.accountRef,
+    ...(Array.isArray(body.AccountRefs)
+      ? body.AccountRefs
+      : clean(body.AccountRefs || body.accountRefs).split(','))
+  ];
+  const seen = new Set();
+  const references = [];
+  for (const value of values) {
+    const reference = clean(value);
+    const key = reference.toLowerCase();
+    if (!reference || seen.has(key)) continue;
+    seen.add(key);
+    references.push(reference);
+  }
+  return references;
+}
+
 async function generateSchoolFeeInvoices(env, body) {
-  const accountRef = clean(body.AccountRef || body.accountRef);
-  if (!accountRef) {
-    const err = new Error('AccountRef is required.');
+  const accountRefs = resolveSchoolFeeInvoiceAccountRefs(body);
+  if (!accountRefs.length) {
+    const err = new Error('AccountRef or AccountRefs is required.');
     err.status = 400;
     throw err;
   }
+  const results = [];
+  for (const accountRef of accountRefs) {
+    results.push(await generateSchoolFeeInvoicesForAccount(env, body, accountRef));
+  }
+  if (results.length === 1) return results[0];
+  const created = results.reduce((sum, result) => sum + result.created, 0);
+  const updated = results.reduce((sum, result) => sum + result.updated, 0);
+  return {
+    ok: true,
+    message: `${created} school fee invoice item(s) generated, ${updated} updated for ${results.length} student(s).`,
+    created,
+    updated,
+    results
+  };
+}
+
+async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
   const student = await findStudentByAccountRef(env, accountRef);
   if (!student) throw applicationNotFound(accountRef);
   const profileResult = await getSchoolProfile(env).catch(() => ({ profile: {} }));
