@@ -119,6 +119,11 @@
           <section class="panel full-panel dashboard-view-panel" data-dashboard-view="stores" hidden>
             <h2>School Store</h2>
             <p class="muted">Buy replacements or extra items. First-term items already included in school fees appear in your collection records after payment is confirmed.</p>
+            <label class="store-search-control" for="storeSearch">
+              <span>Search store</span>
+              <input id="storeSearch" type="search" placeholder="Item, category, size, class or store" autocomplete="off">
+            </label>
+            <p id="storeSearchSummary" class="store-search-summary muted" aria-live="polite"></p>
             <div id="schoolStores" class="activity-list"></div>
             <section class="store-cart-panel">
               <h3>Shopping Cart</h3>

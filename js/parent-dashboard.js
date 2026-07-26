@@ -14,6 +14,8 @@ const entranceResultPanel = document.getElementById('entranceResultPanel');
 const entranceResults = document.getElementById('entranceResults');
 const clinicRecords = document.getElementById('clinicRecords');
 const schoolStores = document.getElementById('schoolStores');
+const storeSearch = document.getElementById('storeSearch');
+const storeSearchSummary = document.getElementById('storeSearchSummary');
 const storeOrders = document.getElementById('storeOrders');
 const storeCartEl = document.getElementById('storeCart');
 const checkoutStoreCartBtn = document.getElementById('checkoutStoreCartBtn');
@@ -960,8 +962,27 @@ function normalizePortalClass(value) {
 
 function renderStores(child) {
   if (!schoolStores || !storeOrders) return;
-  const catalog = (dashboard.storeCatalog || []).filter((item) => storeItemMatchesChild(item, child));
-  schoolStores.innerHTML = catalog.length ? '' : '<p class="muted">No school-store items are currently available.</p>';
+  const eligibleCatalog = (dashboard.storeCatalog || []).filter((item) => storeItemMatchesChild(item, child));
+  const query = String(storeSearch?.value || '').trim().toLowerCase();
+  const catalog = query
+    ? eligibleCatalog.filter((item) => [
+        item.ItemName,
+        item.ItemCode,
+        item.Category,
+        item.Size,
+        item.Gender,
+        item.ClassName,
+        item.StoreType
+      ].filter(Boolean).join(' ').toLowerCase().includes(query))
+    : eligibleCatalog;
+  if (storeSearchSummary) {
+    storeSearchSummary.textContent = query
+      ? `${catalog.length} of ${eligibleCatalog.length} item${eligibleCatalog.length === 1 ? '' : 's'} found`
+      : `${eligibleCatalog.length} item${eligibleCatalog.length === 1 ? '' : 's'} available`;
+  }
+  schoolStores.innerHTML = catalog.length
+    ? ''
+    : `<p class="muted">${query ? `No store items match “${escapeHtml(query)}”.` : 'No school-store items are currently available.'}</p>`;
   const groups = ['Bookstore', 'Uniform Store'];
   groups.forEach((storeType) => {
     const items = catalog.filter((item) => item.StoreType === storeType);
@@ -995,6 +1016,11 @@ function renderStores(child) {
     storeOrders.appendChild(row);
   });
 }
+
+storeSearch?.addEventListener('input', () => {
+  const child = selectedChild();
+  if (child) renderStores(child);
+});
 
 function renderStoreCart(child) {
   if (!storeCartEl || !checkoutStoreCartBtn) return;

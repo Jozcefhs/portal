@@ -9,6 +9,7 @@ const [adminHtml, adminJs, portalCss] = await Promise.all([
   readFile(new URL('css/style.css', portalRoot), 'utf8')
 ]);
 const parentDashboardJs = await readFile(new URL('js/parent-dashboard.js', portalRoot), 'utf8');
+const parentDashboardHtml = await readFile(new URL('parent-dashboard.html', portalRoot), 'utf8');
 
 test('mobile staff header no longer renders the drawer toggle button', () => {
   assert.doesNotMatch(adminHtml, /id="staffMenuToggle"/);
@@ -145,4 +146,15 @@ test('finance requests use one-row records, icon decisions, printing, and a repe
   assert.match(portalCss, /\.compact-print-action\{color:/);
   assert.match(portalCss, /\.compact-approve-action\{color:/);
   assert.match(portalCss, /\.compact-reject-action\{color:/);
+});
+
+test('parents can search the eligible school-store catalog', () => {
+  assert.match(parentDashboardHtml, /id="storeSearch" type="search"/);
+  assert.match(parentDashboardHtml, /id="storeSearchSummary"[\s\S]*?aria-live="polite"/);
+  assert.match(parentDashboardJs, /const eligibleCatalog = \(dashboard\.storeCatalog \|\| \[\]\)\.filter/);
+  assert.match(parentDashboardJs, /item\.ItemName,[\s\S]*?item\.Category,[\s\S]*?item\.Size,[\s\S]*?item\.ClassName,[\s\S]*?item\.StoreType/);
+  assert.match(parentDashboardJs, /\.join\(' '\)\.toLowerCase\(\)\.includes\(query\)/);
+  assert.match(parentDashboardJs, /storeSearch\?\.addEventListener\('input'/);
+  assert.match(parentDashboardJs, /No store items match/);
+  assert.match(portalCss, /\.store-search-control input\{height:36px;min-height:36px;[^}]*font-size:12px/);
 });
