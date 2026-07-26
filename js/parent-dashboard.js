@@ -1012,7 +1012,9 @@ function renderStores(child) {
       buy.innerHTML = '<span aria-hidden="true">&#128722;</span>';
       const key = `${item.StoreType}|${item.ItemCode}`;
       const markAdded = () => {
-        qty.disabled = true;
+        qty.classList.add('is-locked');
+        qty.setAttribute('aria-disabled', 'true');
+        qty.tabIndex = -1;
         buy.disabled = true;
         buy.classList.add('is-added');
         buy.setAttribute('aria-label', `${item.ItemName} added to cart`);
