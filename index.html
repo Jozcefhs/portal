@@ -3,81 +3,140 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>School Admission Portal</title>
-  <meta name="theme-color" content="#0f3d66"><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="app-icon.svg">
-  <link rel="stylesheet" href="css/style.css?v=20260718-personalized-ui">
+  <meta name="description" content="Choose a DIGC Suite workspace for school, church, family and administrative services.">
+  <title>DIGC Suite — Choose a workspace</title>
+  <meta name="theme-color" content="#071b38">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="app-icon.svg">
+  <script src="js/preferences.js?v=20260726-launcher"></script>
+  <link rel="stylesheet" href="css/style.css?v=20260726-launcher">
 </head>
-<body>
-  <main class="landing-page">
-    <nav class="landing-nav">
-      <div class="brand-lockup">
-        <img src="images/logo.png" alt="School logo" class="logo nav-logo" onerror="this.style.display='none'">
-        <div>
-          <strong data-school-name>School Portal</strong>
-          <span data-school-address></span>
-        </div>
+<body class="suite-launcher-page">
+  <main class="suite-launcher">
+    <section class="launcher-showcase" aria-labelledby="launcherTitle">
+      <div class="launcher-showcase-top">
+        <span class="launcher-logo"><img src="app-icon.svg" alt=""></span>
+        <span class="launcher-product">DIGC Suite</span>
       </div>
-      <div class="nav-actions">
-        <a href="parent-dashboard.html">Parent Dashboard</a>
-        <a href="admin.html">Staff Portal</a>
+      <div class="launcher-art" aria-hidden="true">
+        <span></span><span></span><span></span>
       </div>
-    </nav>
-
-    <section class="landing-hero">
-      <div class="hero-copy">
-        <p class="eyebrow">Integrated School Management Suite</p>
-        <h1 data-portal-headline>Admissions and parent services in one place</h1>
-        <p class="lead" data-portal-subheading>Buy forms, complete applications, upload documents, pay fees, and monitor student activity from a secure school portal.</p>
-        <p class="portal-notice" data-portal-notice hidden></p>
-        <div class="hero-actions">
-          <a class="btn" href="buy-form.html">Buy Admission Form</a>
-          <a class="btn secondary" href="verify.html">Register Application</a>
-        </div>
-      </div>
-      <div class="hero-service-panel" aria-label="Portal services">
-        <div>
-          <strong>Admission</strong>
-          <span>Purchase forms and submit applications securely.</span>
-        </div>
-        <div>
-          <strong>Payments</strong>
-          <span>Pay approved fees and view payment status.</span>
-        </div>
-        <div>
-          <strong>Parent View</strong>
-          <span>Track results, clinic visits, wallet activity, and notices.</span>
-        </div>
+      <div class="launcher-message">
+        <p>One connected platform</p>
+        <h1 id="launcherTitle">Serve people.<br><strong>Manage better.</strong></h1>
+        <span>School, church and shared services—thoughtfully brought together.</span>
       </div>
     </section>
 
-    <section class="service-grid">
-      <a class="service-tile" href="buy-form.html">
-        <strong>Buy Admission Form</strong>
-        <span>Start a new application and receive a verification code.</span>
-      </a>
-      <a class="service-tile" href="verify.html">
-        <strong>Register</strong>
-        <span>Continue after purchasing an admission form.</span>
-      </a>
-      <a class="service-tile" href="payments.html">
-        <strong>Pay Fees</strong>
-        <span>Review payable items and proceed to secure checkout.</span>
-      </a>
-      <a class="service-tile" href="parent-dashboard.html">
-        <strong>Parent Dashboard</strong>
-        <span>Monitor linked children, payments, results, and activity.</span>
-      </a>
-      <a class="service-tile" href="upload-documents.html">
-        <strong>Upload Documents</strong>
-        <span>Submit missing documents requested by the admissions office.</span>
-      </a>
-      <a class="service-tile" href="setup.html">
-        <strong>School Setup</strong>
-        <span>Configure the school profile and portal display.</span>
-      </a>
+    <section class="launcher-directory" aria-labelledby="workspaceTitle">
+      <header class="launcher-heading">
+        <p class="launcher-kicker">Welcome to DIGC Suite</p>
+        <h2 id="workspaceTitle">Where would you like to go?</h2>
+        <p>Select a workspace to continue.</p>
+      </header>
+
+      <div class="launcher-channels">
+        <a class="launcher-channel" href="school.html">
+          <span class="channel-mark" aria-hidden="true">SC</span>
+          <span class="channel-copy">
+            <strong>School</strong>
+            <small>Admissions, parents, students and payments</small>
+          </span>
+          <span class="channel-arrow" aria-hidden="true">→</span>
+        </a>
+        <a class="launcher-channel" href="admin.html?workspace=church">
+          <span class="channel-mark" aria-hidden="true">CH</span>
+          <span class="channel-copy">
+            <strong>Church</strong>
+            <small>Membership, services, funds and ministry operations</small>
+          </span>
+          <span class="channel-arrow" aria-hidden="true">→</span>
+        </a>
+        <button class="launcher-channel" type="button" id="openServices" aria-haspopup="dialog" aria-controls="servicesSheet">
+          <span class="channel-mark" aria-hidden="true">+</span>
+          <span class="channel-copy">
+            <strong>Other services</strong>
+            <small>Parents, staff, payments, setup and more</small>
+          </span>
+          <span class="channel-arrow" aria-hidden="true">→</span>
+        </button>
+      </div>
+
+      <p class="launcher-help">Need staff access? <a href="admin.html">Sign in to the staff portal</a></p>
     </section>
   </main>
-  <script src="js/site-config.js?v=20260718-personalized-ui"></script>
+
+  <button class="launcher-settings-button" type="button" id="openSettings" aria-label="Open general settings" aria-haspopup="dialog" aria-controls="settingsPanel">
+    <span aria-hidden="true">⚙</span>
+  </button>
+
+  <div class="launcher-overlay" id="servicesSheet" role="dialog" aria-modal="true" aria-labelledby="servicesTitle" hidden>
+    <div class="launcher-sheet services-sheet">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <header class="sheet-header">
+        <div><p>Quick access</p><h2 id="servicesTitle">Other services</h2></div>
+        <button type="button" class="sheet-close" data-close-panel aria-label="Close other services">×</button>
+      </header>
+      <div class="services-grid">
+        <a href="parent-dashboard.html"><span>PA</span><strong>Parent portal</strong><small>Children and activity</small></a>
+        <a href="buy-form.html"><span>AD</span><strong>Admissions</strong><small>Buy an application</small></a>
+        <a href="payments.html"><span>₦</span><strong>Payments</strong><small>Pay approved fees</small></a>
+        <a href="verify.html"><span>RG</span><strong>Registration</strong><small>Continue an application</small></a>
+        <a href="admin.html"><span>ST</span><strong>Staff portal</strong><small>Operations sign-in</small></a>
+        <a href="setup.html"><span>SE</span><strong>Suite setup</strong><small>Organisation settings</small></a>
+      </div>
+    </div>
+  </div>
+
+  <div class="launcher-overlay" id="settingsPanel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" hidden>
+    <div class="launcher-sheet settings-sheet">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <header class="sheet-header">
+        <div><p>Personalise your experience</p><h2 id="settingsTitle">General settings</h2></div>
+        <button type="button" class="sheet-close" data-close-panel aria-label="Close general settings">×</button>
+      </header>
+
+      <form id="preferenceForm">
+        <fieldset class="preference-group">
+          <legend>Appearance</legend>
+          <div class="preference-options preference-options-three">
+            <label><input type="radio" name="theme" value="light"><span>Light</span></label>
+            <label><input type="radio" name="theme" value="dark"><span>Dark</span></label>
+            <label><input type="radio" name="theme" value="system"><span>System</span></label>
+          </div>
+        </fieldset>
+
+        <fieldset class="preference-group">
+          <legend>Accent colour</legend>
+          <div class="accent-options">
+            <label title="DIGC blue"><input type="radio" name="accent" value="blue"><span class="accent-blue"></span><small>Blue</small></label>
+            <label title="Gold"><input type="radio" name="accent" value="gold"><span class="accent-gold"></span><small>Gold</small></label>
+            <label title="Emerald"><input type="radio" name="accent" value="emerald"><span class="accent-emerald"></span><small>Emerald</small></label>
+          </div>
+        </fieldset>
+
+        <div class="preference-switch-row">
+          <span><strong>Larger text</strong><small>Increase text size throughout the portal</small></span>
+          <label class="preference-switch"><input type="checkbox" name="largeText"><span></span></label>
+        </div>
+        <div class="preference-switch-row">
+          <span><strong>Compact layout</strong><small>Show more information on each screen</small></span>
+          <label class="preference-switch"><input type="checkbox" name="compact"><span></span></label>
+        </div>
+        <div class="preference-switch-row">
+          <span><strong>Reduce motion</strong><small>Limit animation and movement</small></span>
+          <label class="preference-switch"><input type="checkbox" name="reduceMotion"><span></span></label>
+        </div>
+
+        <div class="settings-actions">
+          <button type="button" class="settings-reset" id="resetPreferences">Reset</button>
+          <button type="submit" class="settings-save">Save settings</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="js/launcher.js?v=20260726-launcher"></script>
   <script src="js/pwa-install.js?v=20260722"></script>
 </body>
 </html>

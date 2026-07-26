@@ -1,11 +1,11 @@
 {
-  "name": "School Parent Portal",
-  "short_name": "School Portal",
-  "start_url": "/parent-dashboard.html",
+  "name": "DIGC Suite",
+  "short_name": "DIGC Suite",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#f4f7fb",
-  "theme_color": "#0f3d66",
-  "description": "School admissions, payments, results and parent services",
+  "background_color": "#071b38",
+  "theme_color": "#0b4bc8",
+  "description": "School, church, finance and shared services in one connected suite",
   "icons": [{ "src": "/app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
 }
