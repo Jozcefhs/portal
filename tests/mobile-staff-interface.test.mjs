@@ -118,3 +118,10 @@ test('store collection uses one state-aware status button per order', () => {
   assert.match(portalCss, /\.store-order-status\{[^}]*width:100%;[^}]*min-height:38px/);
   assert.match(portalCss, /\.store-order-status\.is-collected,[\s\S]*?background:#e8f7ee/);
 });
+
+test('mobile configuration inputs use compact regular-weight sizing', () => {
+  assert.match(portalCss, /@media \(max-width:680px\)\{[\s\S]*?\.staff-page \.workflow-form-grid\{gap:9px 12px\}/);
+  assert.match(portalCss, /\.staff-page \.config-form>label,[\s\S]*?font-size:11px;[\s\S]*?font-weight:400;/);
+  assert.match(portalCss, /\.staff-page \.config-form input:not\(\[type="checkbox"\]\)[\s\S]*?min-height:36px;[\s\S]*?padding:6px 9px;[\s\S]*?font-size:12px;[\s\S]*?font-weight:400;/);
+  assert.match(portalCss, /\.staff-page \.config-form textarea,[\s\S]*?min-height:58px;[\s\S]*?font-size:12px;/);
+});
