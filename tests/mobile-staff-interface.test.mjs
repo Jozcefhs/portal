@@ -69,6 +69,14 @@ test('mobile launcher uses a compact first-screen layout', () => {
   assert.match(portalCss, /\.launcher-channel\{[^}]*min-height:66px/);
 });
 
+test('preference toggles have clearly distinct on and off states', () => {
+  assert.match(portalCss, /\.preference-switch-row:has\(\.preference-switch input:checked\)\{background:#edf9f4;box-shadow:inset 4px 0 0 #087a55\}/);
+  assert.match(portalCss, /\.preference-switch span::before\{content:"OFF"/);
+  assert.match(portalCss, /\.preference-switch input:checked\+span\{border-color:#087a55;background:#0aa174/);
+  assert.match(portalCss, /\.preference-switch input:checked\+span::before\{content:"ON"/);
+  assert.match(portalCss, /\.preference-switch input:focus-visible\+span\{outline:3px solid/);
+});
+
 test('student profile action uses a compact accessible pencil icon', () => {
   assert.match(adminJs, /class="student-edit-icon compact-icon-action compact-edit-action"/);
   assert.match(adminJs, /aria-label="Edit profile for \$\{studentName\}"/);
