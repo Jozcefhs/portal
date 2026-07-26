@@ -1010,11 +1010,24 @@ function renderStores(child) {
       buy.setAttribute('aria-label', `Add ${item.ItemName} to cart`);
       buy.title = 'Add to cart';
       buy.innerHTML = '<span aria-hidden="true">&#128722;</span>';
+      const key = `${item.StoreType}|${item.ItemCode}`;
+      const markAdded = () => {
+        qty.disabled = true;
+        buy.disabled = true;
+        buy.classList.add('is-added');
+        buy.setAttribute('aria-label', `${item.ItemName} added to cart`);
+        buy.title = 'Added to cart';
+        buy.innerHTML = '<span aria-hidden="true">&#10003;</span>';
+      };
+      const existingCartItem = storeCart.get(key);
+      if (existingCartItem) {
+        qty.value = String(Math.min(available, existingCartItem.quantity));
+        markAdded();
+      }
       buy.addEventListener('click', () => {
         const quantity = Math.max(1, Math.min(available, Number(qty.value || 1)));
-        const key = `${item.StoreType}|${item.ItemCode}`;
-        const existing = storeCart.get(key);
-        storeCart.set(key, { item, quantity: Math.min(available, quantity + (existing?.quantity || 0)) });
+        storeCart.set(key, { item, quantity });
+        markAdded();
         renderStoreCart(child);
       });
       const purchaseControls = document.createElement('div');
@@ -1050,7 +1063,7 @@ function renderStoreCart(child) {
     const row = document.createElement('div'); row.className = 'activity-item store-item-row';
     row.innerHTML = `<strong>${escapeHtml(entry.item.ItemName)}</strong><span>${escapeHtml(entry.item.StoreType)} × ${entry.quantity}</span><small>${money(Number(entry.item.Price || 0) * entry.quantity)}</small>`;
     const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'compact-icon-action compact-delete-action'; remove.setAttribute('aria-label', `Delete ${entry.item.ItemName} from cart`); remove.title = 'Delete from cart'; remove.innerHTML = '<span aria-hidden="true">&#128465;&#65038;</span>';
-    remove.addEventListener('click', () => { storeCart.delete(key); renderStoreCart(child); });
+    remove.addEventListener('click', () => { storeCart.delete(key); renderStores(child); });
     row.appendChild(remove); storeCartEl.appendChild(row);
   });
   checkoutStoreCartBtn.disabled = !entries.length;

@@ -169,3 +169,16 @@ test('parent store uses a compact quantity selector and cart icon', () => {
   assert.match(portalCss, /\.store-quantity\{width:52px;max-width:52px;height:30px;min-height:30px/);
   assert.match(portalCss, /\.activity-item \.store-cart-action\{width:30px!important;[^}]*border-radius:50%/);
 });
+
+test('parent store confirms added items and prevents repeated cart clicks', () => {
+  assert.match(parentDashboardJs, /const markAdded = \(\) => \{/);
+  assert.match(parentDashboardJs, /qty\.disabled = true/);
+  assert.match(parentDashboardJs, /buy\.disabled = true/);
+  assert.match(parentDashboardJs, /buy\.classList\.add\('is-added'\)/);
+  assert.match(parentDashboardJs, /buy\.title = 'Added to cart'/);
+  assert.match(parentDashboardJs, /buy\.innerHTML = '<span aria-hidden="true">&#10003;<\/span>'/);
+  assert.match(parentDashboardJs, /storeCart\.delete\(key\); renderStores\(child\)/);
+  assert.match(portalCss, /\.store-cart-action\.is-added\{background:#e7f7ef;[^}]*opacity:1/);
+  assert.match(portalCss, /\.store-catalog-section \.store-item-row\{gap:2px 6px\}/);
+  assert.match(portalCss, /\.store-cart-panel\{margin:10px 0;padding:10px/);
+});
