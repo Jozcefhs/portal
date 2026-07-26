@@ -1236,7 +1236,11 @@ function renderSection(active) {
       { label: 'Class', value: (row) => [pick(row, ['ClassName']), pick(row, ['ClassArm'])].filter(Boolean).join(' ') },
       { label: 'Type', value: (row) => pick(row, ['StudentType']) },
       { label: 'Status', value: (row) => pick(row, ['Status']) },
-      { label: 'Profile', render: (row) => `<button type="button" class="table-action" data-edit-student="${escapeHtml(pick(row, ['AdmissionNo', 'AccountRef', '__id']))}">Edit</button>` }
+      { label: 'Profile', render: (row) => {
+        const studentRef = escapeHtml(pick(row, ['AdmissionNo', 'AccountRef', '__id']));
+        const studentName = escapeHtml(pick(row, ['DisplayName', 'ApplicantName', 'StudentName']) || 'student');
+        return `<button type="button" class="student-edit-icon" data-edit-student="${studentRef}" aria-label="Edit profile for ${studentName}" title="Edit student profile"><span aria-hidden="true">&#9998;</span></button>`;
+      } }
     ]) + renderStudentEditor(students);
     bindStudentEditor(students);
   } else if (active === 'members') {

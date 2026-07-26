@@ -225,7 +225,7 @@ html[data-theme="dark"] .terms-text,
 html[data-theme="dark"] .fee-breakdown,
 html[data-theme="dark"] .receipt-box{background:#0d1a29}
 
-.suite-launcher-page{min-height:100vh;background:#071b38;color:#fff;overflow-x:hidden}
+.suite-launcher-page{height:100vh;height:100dvh;min-height:0;background:#071b38;color:#fff;overflow:hidden}
 .suite-launcher{position:relative;display:grid;grid-template-columns:minmax(360px,.92fr) minmax(480px,1.08fr);min-height:100vh;background:radial-gradient(circle at 84% 12%,rgba(42,112,255,.18),transparent 32%),#f5f8fd}
 .launcher-showcase{position:relative;min-height:100vh;padding:clamp(30px,5vw,72px);overflow:hidden;background:linear-gradient(145deg,#061a38 0%,#0a3d96 55%,#1269ef 100%);color:#fff;display:flex;flex-direction:column;isolation:isolate}
 .launcher-showcase::before,.launcher-showcase::after{content:"";position:absolute;border:1px solid rgba(255,255,255,.15);border-radius:50%;z-index:-1}
@@ -518,6 +518,7 @@ html[data-theme="dark"] .preference-switch-row{border-color:#2a3c52}
 .config-option-list{margin-top:14px;padding:13px;border:1px solid #dce4ec;border-radius:9px;background:#f8fafc}.config-option-list>strong{display:block;margin-bottom:9px;color:#486581;font-size:12px}.config-option-list label{margin:7px 0;font-size:12px}.config-option-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px 14px;margin-top:0}.config-dialog-actions{position:sticky;bottom:0;z-index:2;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;padding:13px 20px;background:#fff;box-shadow:0 -5px 16px rgba(16,42,67,.08)}.config-dialog-actions .status,.config-dialog-actions button{margin:0}.workflow-form .config-dialog-actions button{width:auto;min-width:160px}
 #staffUserDialog{width:min(780px,calc(100vw - 24px))}
 .student-profile-dialog{width:min(920px,calc(100vw - 24px))}.student-login-guidance{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:13px 20px;border-bottom:1px solid #dce4ec;background:#edf7ff;color:#274b6d}.student-login-guidance strong{color:var(--finance-navy)}.student-login-guidance span{font-size:12px;text-align:right}.student-code-generator{width:auto!important;min-height:32px!important;margin:7px 0 0!important;padding:6px 9px!important;background:#edf3f8!important;color:var(--finance-navy)!important;font-size:11px!important}.table-action{width:auto;margin:0;padding:7px 11px;font-size:12px}
+.student-edit-icon{display:grid;place-items:center;width:28px;height:28px;min-height:28px!important;margin:0;padding:0;border:0;border-radius:50%;background:transparent;color:#c98500;font-size:20px;line-height:1}.student-edit-icon:hover{background:#fff2cf;color:#8b6000}.student-edit-icon:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 @media (max-width:680px){.config-actionbar{grid-template-columns:1fr;margin-top:2px}.workflow-form .config-actionbar button{width:100%}.config-group{padding:15px}.config-group>header{display:block}.config-group>header small{display:block;margin-top:3px;text-align:left}.config-grid,.config-option-grid{grid-template-columns:1fr}.config-dialog-actions{grid-template-columns:1fr}.workflow-form .config-dialog-actions button{width:100%}}
 @media (max-width:680px){.student-login-guidance{display:block;padding:12px 15px}.student-login-guidance span{display:block;margin-top:4px;text-align:left}}
 
@@ -571,6 +572,48 @@ html[data-theme="dark"] .preference-switch-row{border-color:#2a3c52}
 @media (max-width:680px){
   .staff-page #staffDashboardStatus.status.ok{display:none}
   .staff-page .staff-summary{margin:12px 0 10px}
+  .staff-page .staff-summary>div{
+    display:flex;
+    flex:0 0 144px;
+    width:144px;
+    height:98px;
+    min-width:144px;
+    min-height:98px;
+    max-width:144px;
+    padding:12px;
+    align-items:center;
+    justify-content:center;
+    flex-direction:column;
+    text-align:center;
+    color:#fff;
+    background:linear-gradient(145deg,#123a67,#0b2748);
+  }
+  .staff-page .staff-summary>div:nth-child(4n+2){background:linear-gradient(145deg,#086b75,#064752)}
+  .staff-page .staff-summary>div:nth-child(4n+3){background:linear-gradient(145deg,#7350a8,#422c70)}
+  .staff-page .staff-summary>div:nth-child(4n+4){background:linear-gradient(145deg,#a44f2d,#71301b)}
+  .staff-page .staff-summary>div::before{background:rgba(255,255,255,.58)}
+  .staff-page .staff-summary>div strong,
+  .staff-page .staff-summary>div span,
+  .staff-page .staff-summary>div small,
+  .staff-page .staff-summary>div small b{color:#fff}
+  .staff-page .staff-summary>div strong{font-size:24px;line-height:1}
+  .staff-page .staff-summary>div span{max-width:100%;margin-top:9px;line-height:1.25}
+  .staff-page .staff-summary .student-summary-card{
+    flex-basis:144px;
+    width:144px;
+    min-width:144px;
+    max-width:144px;
+  }
+  .staff-page .student-summary-card small{flex-wrap:wrap;line-height:1.15}
+  html[data-theme="dark"] .staff-page .staff-summary>div,
+  html[data-theme="dark"] .staff-page .staff-summary>div strong,
+  html[data-theme="dark"] .staff-page .staff-summary>div span,
+  html[data-theme="dark"] .staff-page .staff-summary>div small,
+  html[data-theme="dark"] .staff-page .staff-summary>div small b{color:#fff}
+  html[data-theme="dark"] .staff-page .staff-summary>div{background:linear-gradient(145deg,#123a67,#0b2748)}
+  html[data-theme="dark"] .staff-page .staff-summary>div:nth-child(4n+2){background:linear-gradient(145deg,#086b75,#064752)}
+  html[data-theme="dark"] .staff-page .staff-summary>div:nth-child(4n+3){background:linear-gradient(145deg,#7350a8,#422c70)}
+  html[data-theme="dark"] .staff-page .staff-summary>div:nth-child(4n+4){background:linear-gradient(145deg,#a44f2d,#71301b)}
 }
 
 /* Keep tapped table rows legible when dark mode gives them a light selection surface. */
@@ -588,9 +631,14 @@ html[data-theme="dark"] .staff-page .admin-table tbody tr.selected td{
   color:#102a43;
   border-color:#cbd7e5;
 }
+html[data-theme="dark"] .staff-page .admin-table tbody tr:hover .student-edit-icon,
+html[data-theme="dark"] .staff-page .admin-table tbody tr:active .student-edit-icon,
+html[data-theme="dark"] .staff-page .admin-table tbody tr:focus-within .student-edit-icon,
+html[data-theme="dark"] .staff-page .admin-table tbody tr.selected .student-edit-icon{color:#8b6000}
 
 @media (max-width:560px){
-  .launcher-showcase{min-height:190px;padding:12px 16px 14px;border-radius:0 0 28px 28px}
+  .suite-launcher{height:100%;min-height:0;grid-template-rows:clamp(150px,27dvh,190px) minmax(0,1fr);overflow:hidden}
+  .launcher-showcase{height:auto;min-height:0;padding:12px 16px 14px;border-radius:0 0 28px 28px}
   .launcher-showcase-top{gap:9px;font-size:14px}
   .launcher-logo{width:36px;height:36px;padding:5px;border-radius:11px}
   .launcher-art{width:225px;top:-24%;right:-16%;opacity:.68}
@@ -598,7 +646,7 @@ html[data-theme="dark"] .staff-page .admin-table tbody tr.selected td{
   .launcher-message p{margin-bottom:4px;font-size:8px}
   .launcher-message h1{font-size:28px;line-height:1}
   .launcher-message>span{max-width:330px;margin-top:7px;font-size:10px;line-height:1.35}
-  .launcher-directory{padding:18px 12px 68px}
+  .launcher-directory{min-height:0;padding:18px 12px 58px;overflow:hidden}
   .launcher-heading{margin-bottom:14px}
   .launcher-kicker{margin-bottom:5px;font-size:9px}
   .launcher-heading h2{margin-bottom:5px;font-size:24px;line-height:1.03}
@@ -611,4 +659,18 @@ html[data-theme="dark"] .staff-page .admin-table tbody tr.selected td{
   .channel-arrow{font-size:18px}
   .launcher-help{margin-top:14px;font-size:11px}
   .launcher-settings-button{width:48px;height:48px;font-size:20px}
+}
+
+@media (max-width:560px) and (max-height:640px){
+  .suite-launcher{grid-template-rows:145px minmax(0,1fr)}
+  .launcher-showcase{padding-top:9px;padding-bottom:10px}
+  .launcher-message{padding-top:13px}
+  .launcher-message h1{font-size:25px}
+  .launcher-message>span{font-size:9px}
+  .launcher-directory{padding-top:12px;padding-bottom:52px}
+  .launcher-heading{margin-bottom:9px}
+  .launcher-heading h2{font-size:21px}
+  .launcher-channels{gap:6px}
+  .launcher-channel{min-height:58px;padding-top:6px;padding-bottom:6px}
+  .launcher-help{margin-top:9px}
 }

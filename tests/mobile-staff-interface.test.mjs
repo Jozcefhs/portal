@@ -34,6 +34,14 @@ test('mobile welcome heading uses the reduced type scale', () => {
   assert.match(portalCss, /@media \(max-width:380px\)\{[\s\S]*?\.staff-page \.staff-welcome h1\{font-size:19px\}/);
 });
 
+test('mobile summary cards are equal, centered, legible, and color coded', () => {
+  assert.match(portalCss, /\.staff-page \.staff-summary>div\{[\s\S]*?flex:0 0 144px;[\s\S]*?width:144px;[\s\S]*?height:98px;/);
+  assert.match(portalCss, /\.staff-page \.staff-summary>div\{[\s\S]*?align-items:center;[\s\S]*?justify-content:center;[\s\S]*?text-align:center;/);
+  assert.match(portalCss, /\.staff-page \.staff-summary>div:nth-child\(4n\+2\)\{background:linear-gradient/);
+  assert.match(portalCss, /\.staff-page \.staff-summary>div:nth-child\(4n\+3\)\{background:linear-gradient/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.staff-page \.staff-summary>div[\s\S]*?\{color:#fff\}/);
+});
+
 test('dark table selection inverts row text against the light selection surface', () => {
   assert.match(portalCss, /html\[data-theme="dark"\] \.staff-page \.admin-table tbody tr:hover[\s\S]*?background:#f8fbfd;[\s\S]*?color:#102a43;/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.staff-page \.admin-table tbody tr:hover td[\s\S]*?color:#102a43;/);
@@ -46,6 +54,15 @@ test('staff and parent sign-out actions return to the suite landing page', () =>
 });
 
 test('mobile launcher uses a compact first-screen layout', () => {
-  assert.match(portalCss, /@media \(max-width:560px\)\{[\s\S]*?\.launcher-showcase\{min-height:190px/);
+  assert.match(portalCss, /\.suite-launcher-page\{height:100vh;height:100dvh;[^}]*overflow:hidden/);
+  assert.match(portalCss, /@media \(max-width:560px\)\{[\s\S]*?\.suite-launcher\{height:100%;min-height:0;[^}]*overflow:hidden/);
+  assert.match(portalCss, /\.launcher-showcase\{height:auto;min-height:0/);
   assert.match(portalCss, /\.launcher-channel\{[^}]*min-height:66px/);
+});
+
+test('student profile action uses a compact accessible pencil icon', () => {
+  assert.match(adminJs, /class="student-edit-icon"/);
+  assert.match(adminJs, /aria-label="Edit profile for \$\{studentName\}"/);
+  assert.doesNotMatch(adminJs, /data-edit-student="[^"]*">Edit<\/button>/);
+  assert.match(portalCss, /\.student-edit-icon\{[^}]*width:28px;[^}]*height:28px;[^}]*min-height:28px!important/);
 });
