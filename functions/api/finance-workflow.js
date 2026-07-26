@@ -14,6 +14,30 @@ function amount(value) {
   return Number.isFinite(number) ? Math.round((number + Number.EPSILON) * 100) / 100 : 0;
 }
 
+export function normalizeMaterialItems(input) {
+  let rows = input;
+  if (typeof rows === 'string') {
+    try {
+      rows = JSON.parse(rows);
+    } catch {
+      rows = [];
+    }
+  }
+  if (!Array.isArray(rows)) return [];
+  return rows.map((row) => {
+    const quantity = amount(row?.quantity ?? row?.Quantity);
+    const unitPrice = amount(row?.unitPrice ?? row?.UnitPrice);
+    return {
+      Item: clean(row?.item ?? row?.Item),
+      Specification: clean(row?.specification ?? row?.Specification),
+      Quantity: quantity,
+      UnitPrice: unitPrice,
+      Total: amount(quantity * unitPrice)
+    };
+  }).filter((row) => row.Item || row.Specification || row.Quantity || row.UnitPrice)
+    .map((row, index) => ({ SNo: index + 1, ...row }));
+}
+
 function safeId(value) {
   return clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140);
 }
@@ -168,6 +192,53 @@ async function submitRequisition(env, user, body) {
   await upsertDocument(env, 'accountingExpenses', safeId(expenseNo), payload);
   await writeAudit(env, user, 'CREATE', 'Expense Requisition', expenseNo, `${department}: ${description}`);
   return { ok: true, message: 'Requisition submitted for approval.', requisition: payload };
+}
+
+async function submitMaterialRequisition(env, user, body) {
+  const department = requireSubmitter(user);
+  const items = normalizeMaterialItems(body.items || body.MaterialItems);
+  if (!items.length) {
+    const err = new Error('Add at least one material item.');
+    err.status = 400;
+    throw err;
+  }
+  const invalidItem = items.find((item) => !item.Item || !item.Specification || item.Quantity <= 0 || item.UnitPrice <= 0);
+  if (invalidItem) {
+    const err = new Error(`Complete item, specification, quantity and unit price for line ${invalidItem.SNo}.`);
+    err.status = 400;
+    throw err;
+  }
+  const value = amount(items.reduce((sum, item) => sum + item.Total, 0));
+  const expenseNo = requestNumber('WEB-MAT');
+  const itemNames = items.map((item) => item.Item).join(', ');
+  const payload = {
+    ExpenseNo: expenseNo,
+    RequisitionType: 'Material',
+    Date: clean(body.date || body.Date) || dateToday(),
+    Vendor: clean(body.vendor || body.Vendor),
+    Description: clean(body.description || body.Description) || `Material requisition: ${itemNames}`,
+    MaterialItems: items,
+    Amount: value,
+    ExpenseAccount: clean(body.expenseAccount || body.ExpenseAccount) || '6090',
+    PaymentAccount: '1020',
+    Department: department,
+    CostCentre: clean(body.costCentre || body.CostCentre),
+    BudgetCode: clean(body.budgetCode || body.BudgetCode),
+    Reference: clean(body.reference || body.Reference),
+    AttachmentUrl: clean(body.attachmentUrl || body.AttachmentUrl),
+    Notes: clean(body.notes || body.Notes),
+    Status: 'Submitted',
+    RequestedBy: actor(user),
+    RequestedAt: nowIso(),
+    CreatedAt: nowIso(),
+    UpdatedAt: nowIso(),
+    SourcePlatform: 'Web',
+    BranchId: clean(user.branchId) || 'main',
+    SchoolSection: clean(user.schoolSectionAccess) === 'All' ? 'Secondary' : clean(user.schoolSectionAccess || 'Secondary')
+  };
+  await upsertDocument(env, 'accountingExpenses', safeId(expenseNo), payload);
+  await writeAudit(env, user, 'CREATE', 'Material Requisition', expenseNo, `${department}: ${items.length} item(s), ${value}`);
+  return { ok: true, message: 'Material requisition submitted for approval.', requisition: payload };
 }
 
 async function submitBill(env, user, body) {
@@ -333,6 +404,7 @@ export async function onRequestPost(context) {
     let data;
     if (action === 'list') data = await listWorkflow(env, user);
     else if (action === 'submitrequisition') data = await submitRequisition(env, user, body);
+    else if (action === 'submitmaterialrequisition') data = await submitMaterialRequisition(env, user, body);
     else if (action === 'submitbill') data = await submitBill(env, user, body);
     else if (action === 'review') data = await reviewRecord(env, user, body);
     else if (action === 'accountsreview') data = await accountsReview(env, user, body);

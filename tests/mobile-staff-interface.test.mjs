@@ -69,8 +69,52 @@ test('mobile launcher uses a compact first-screen layout', () => {
 });
 
 test('student profile action uses a compact accessible pencil icon', () => {
-  assert.match(adminJs, /class="student-edit-icon"/);
+  assert.match(adminJs, /class="student-edit-icon compact-icon-action compact-edit-action"/);
   assert.match(adminJs, /aria-label="Edit profile for \$\{studentName\}"/);
   assert.doesNotMatch(adminJs, /data-edit-student="[^"]*">Edit<\/button>/);
   assert.match(portalCss, /\.student-edit-icon\{[^}]*width:28px;[^}]*height:28px;[^}]*min-height:28px!important/);
+});
+
+test('student profile editor uses smaller regular-weight typography', () => {
+  assert.match(portalCss, /\.student-profile-dialog \.workflow-dialog-header h2\{font-size:17px;font-weight:400\}/);
+  assert.match(portalCss, /\.student-profile-dialog \.config-group>header strong\{font-size:12px;font-weight:400\}/);
+  assert.match(portalCss, /\.student-profile-dialog \.config-grid>label\{font-size:11px;font-weight:400\}/);
+  assert.match(portalCss, /\.student-profile-dialog \.config-grid input,[\s\S]*?font-size:13px;font-weight:400/);
+  assert.match(portalCss, /\.student-profile-dialog \.config-dialog-actions button\{font-size:12px;font-weight:400\}/);
+});
+
+test('store categories use compact pencil and active-checkbox controls', () => {
+  assert.match(adminJs, /class="store-category-edit compact-icon-action compact-edit-action"[\s\S]*?data-edit-category=/);
+  assert.match(adminJs, /type="checkbox" data-category-active=/);
+  assert.doesNotMatch(adminJs, /data-deactivate-category=/);
+  assert.match(adminJs, /action: 'saveCategory'[\s\S]*?Active: active \? 'YES' : 'NO'/);
+  assert.match(portalCss, /\.store-category-row\{[^}]*min-height:44px;[^}]*padding:7px 9px/);
+  assert.match(portalCss, /\.store-category-edit\{[^}]*width:24px!important;[^}]*height:24px;[^}]*min-height:24px!important/);
+  assert.match(portalCss, /\.store-category-toggle input\{[^}]*width:15px;[^}]*height:15px/);
+});
+
+test('edit and delete row actions use shared small accessible icons', () => {
+  assert.match(adminJs, /data-edit-user="[^"]*" aria-label="Edit/);
+  assert.match(adminJs, /data-delete-user="[^"]*" aria-label="Delete/);
+  assert.doesNotMatch(adminJs, /data-edit-user="[^"]*">Manage<\/button>/);
+  assert.doesNotMatch(adminJs, /data-delete-user="[^"]*">Delete<\/button>/);
+  assert.match(adminJs, /data-delete-document="[^"]*"[\s\S]*?aria-label="Delete/);
+  assert.match(adminJs, /data-offering-route-action="edit"[\s\S]*?title="Edit route"/);
+  assert.match(adminJs, /data-offering-route-action="delete"[\s\S]*?title="Delete route"/);
+  assert.match(parentDashboardJs, /remove\.className = 'compact-icon-action compact-delete-action'/);
+  assert.doesNotMatch(parentDashboardJs, /remove\.textContent = 'Remove'/);
+  assert.match(portalCss, /\.compact-icon-action\{[\s\S]*?width:24px!important;[\s\S]*?height:24px!important;/);
+  assert.match(portalCss, /\.compact-edit-action\{color:/);
+  assert.match(portalCss, /\.compact-delete-action\{color:/);
+});
+
+test('store collection uses one state-aware status button per order', () => {
+  assert.match(adminJs, /const statusLabel = collected \? 'Collected' : ready \? 'Ready · Verify Collection' : 'Paid · Mark Ready'/);
+  assert.match(adminJs, /class="store-order-status \$\{collected \? 'is-collected' : ''\}"/);
+  assert.match(adminJs, /\$\{collected \? 'disabled' : ''\}>\$\{escapeHtml\(statusLabel\)\}<\/button>/);
+  assert.doesNotMatch(adminJs, />Ready for Collection<\/button><button[^>]*>Verify & Mark Collected<\/button>/);
+  assert.match(adminJs, /button\.dataset\.storeStatus === 'Collected'[\s\S]*?window\.prompt/);
+  assert.match(adminJs, /await loadStaffStore\(section\)/);
+  assert.match(portalCss, /\.store-order-status\{[^}]*width:100%;[^}]*min-height:38px/);
+  assert.match(portalCss, /\.store-order-status\.is-collected,[\s\S]*?background:#e8f7ee/);
 });

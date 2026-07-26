@@ -1005,7 +1005,7 @@ function renderStoreCart(child) {
     total += Number(entry.item.Price || 0) * entry.quantity;
     const row = document.createElement('div'); row.className = 'activity-item store-item-row';
     row.innerHTML = `<strong>${escapeHtml(entry.item.ItemName)}</strong><span>${escapeHtml(entry.item.StoreType)} × ${entry.quantity}</span><small>${money(Number(entry.item.Price || 0) * entry.quantity)}</small>`;
-    const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Remove';
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'compact-icon-action compact-delete-action'; remove.setAttribute('aria-label', `Delete ${entry.item.ItemName} from cart`); remove.title = 'Delete from cart'; remove.innerHTML = '<span aria-hidden="true">&#128465;&#65038;</span>';
     remove.addEventListener('click', () => { storeCart.delete(key); renderStoreCart(child); });
     row.appendChild(remove); storeCartEl.appendChild(row);
   });

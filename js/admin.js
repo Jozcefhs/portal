@@ -495,7 +495,7 @@ function renderAdmissionDocuments(row) {
   const links = uploaded.map((item) => {
     const query = `applicationReference=${encodeURIComponent(reference)}&documentType=${encodeURIComponent(item.key)}`;
     const canDelete = ['Super Admin', 'Admissions Officer'].includes(clean(currentUser?.role));
-    return `<div class="document-action-row"><span>${escapeHtml(item.label)}</span><a href="/api/staff-document?${query}&mode=view" target="_blank" rel="noopener">View</a><a href="/api/staff-document?${query}&mode=download">Download</a>${canDelete ? `<button type="button" class="document-delete" data-delete-document="${escapeHtml(item.key)}" data-application-reference="${escapeHtml(reference)}">Delete</button>` : ''}</div>`;
+    return `<div class="document-action-row"><span>${escapeHtml(item.label)}</span><a href="/api/staff-document?${query}&mode=view" target="_blank" rel="noopener">View</a><a href="/api/staff-document?${query}&mode=download">Download</a>${canDelete ? `<button type="button" class="document-delete compact-icon-action compact-delete-action" data-delete-document="${escapeHtml(item.key)}" data-application-reference="${escapeHtml(reference)}" aria-label="Delete ${escapeHtml(item.label)}" title="Delete document"><span aria-hidden="true">&#128465;&#65038;</span></button>` : ''}</div>`;
   }).join('');
   return `<details class="document-actions"><summary>${uploaded.length} document${uploaded.length === 1 ? '' : 's'}</summary>${links}</details>`;
 }
@@ -528,18 +528,28 @@ function renderStaffStore(section, store) {
     </section>
     <details class="workflow-card config-details"><summary><span>Category management<small>Add, rename or deactivate reusable product categories.</small></span></summary>
       <form id="storeCategoryForm" class="workflow-form workflow-form-grid config-form"><input type="hidden" name="CategoryId"><label>Category name<input name="Name" required></label><label>Available in<select name="AppliesTo"><option value="${label}">${label}</option><option value="Bookstore,Uniform Store">Both stores</option></select></label><div class="config-actionbar"><label class="check-row"><input name="Active" type="checkbox" checked> Category active</label><p class="status" data-category-status></p><button type="submit">Save category</button></div></form>
-      <div class="workflow-record-list">${categories.length ? categories.map((row) => `<article class="workflow-record"><div><strong>${escapeHtml(row.Name)}</strong><small>${escapeHtml((row.StoreScopes || []).join(', '))} · ${escapeHtml(row.Active || 'YES')}</small></div><div class="workflow-actions"><button type="button" data-edit-category="${escapeHtml(row.CategoryId)}">Edit</button>${clean(row.Active || 'YES') === 'NO' ? '' : `<button type="button" data-deactivate-category="${escapeHtml(row.CategoryId)}">Deactivate</button>`}</div></article>`).join('') : '<p class="muted">Existing item categories will be added here automatically.</p>'}</div>
+      <div class="workflow-record-list store-category-list">${categories.length ? categories.map((row) => {
+        const categoryActive = clean(row.Active || 'YES') !== 'NO';
+        return `<article class="workflow-record store-category-row"><div class="store-category-copy"><strong>${escapeHtml(row.Name)}</strong><small>${escapeHtml((row.StoreScopes || []).join(', '))}</small></div><div class="store-category-actions"><button type="button" class="store-category-edit compact-icon-action compact-edit-action" data-edit-category="${escapeHtml(row.CategoryId)}" aria-label="Edit ${escapeHtml(row.Name)}" title="Edit category"><span aria-hidden="true">&#9998;</span></button><label class="store-category-toggle"><input type="checkbox" data-category-active="${escapeHtml(row.CategoryId)}" aria-label="${categoryActive ? 'Deactivate' : 'Activate'} ${escapeHtml(row.Name)}" ${categoryActive ? 'checked' : ''}><span>Active</span></label></div></article>`;
+      }).join('') : '<p class="muted">Existing item categories will be added here automatically.</p>'}</div>
     </details>
     ${table(`${label} Items`, store.items || [], [
       { label: 'Code', value: (row) => pick(row, ['ItemCode', '__id']) }, { label: 'Item', value: (row) => pick(row, ['ItemName']) },
       { label: 'Category / Size', value: (row) => [pick(row, ['Category']), pick(row, ['Size'])].filter(Boolean).join(' / ') },
       { label: 'Price', value: (row) => money(pick(row, ['Price'])) }, { label: 'Stock', value: (row) => pick(row, ['Quantity']) }
     ])}
-    <h2>Paid Orders & Collection</h2><div class="workflow-record-list">${(store.orders || []).length ? (store.orders || []).map((order) => `
-      <article class="workflow-record"><div class="workflow-record-heading"><div><strong>${escapeHtml(order.DisplayName || order.AccountRef)}</strong><small>${escapeHtml(order.OrderNo)}</small></div><span class="workflow-status">${escapeHtml(order.Status || 'Paid - Awaiting Collection')}</span></div>
+    <h2>Paid Orders & Collection</h2><div class="workflow-record-list">${(store.orders || []).length ? (store.orders || []).map((order) => {
+      const orderStatus = clean(order.Status || 'Paid - Awaiting Collection');
+      const statusKey = orderStatus.toLowerCase();
+      const collected = statusKey === 'collected';
+      const ready = statusKey === 'ready for collection';
+      const nextStatus = ready ? 'Collected' : 'Ready for Collection';
+      const statusLabel = collected ? 'Collected' : ready ? 'Ready · Verify Collection' : 'Paid · Mark Ready';
+      return `
+      <article class="workflow-record store-order-record"><div class="workflow-record-heading"><div><strong>${escapeHtml(order.DisplayName || order.AccountRef)}</strong><small>${escapeHtml(order.OrderNo)}</small></div></div>
       <p>${money(order.Amount)} &middot; ${escapeHtml(order.PaidAt || order.CreatedAt || '')}</p>
-      <div class="workflow-actions"><button type="button" data-store-order="${escapeHtml(order.OrderNo)}" data-store-status="Ready for Collection">Ready for Collection</button><button type="button" data-store-order="${escapeHtml(order.OrderNo)}" data-store-status="Collected">Verify & Mark Collected</button></div></article>
-    `).join('') : '<p class="muted">No paid orders yet.</p>'}</div>`;
+      <button type="button" class="store-order-status ${collected ? 'is-collected' : ''}" data-store-order="${escapeHtml(order.OrderNo)}" data-store-status="${escapeHtml(nextStatus)}" aria-label="${escapeHtml(statusLabel)} for ${escapeHtml(order.DisplayName || order.AccountRef)}" ${collected ? 'disabled' : ''}>${escapeHtml(statusLabel)}</button></article>`;
+    }).join('') : '<p class="muted">No paid orders yet.</p>'}</div>`;
   document.getElementById('staffStoreItemForm')?.addEventListener('submit', async (event) => {
     event.preventDefault(); const form = event.currentTarget; const status = form.querySelector('[data-store-status]');
     const payload = Object.fromEntries(new FormData(form).entries()); payload.Active = form.elements.Active.checked;
@@ -558,7 +568,34 @@ function renderStaffStore(section, store) {
     try { const response = await fetch('/api/staff-stores', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'saveCategory', section, ...payload }) }); const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.message || 'Could not save category.'); setStatus(status, data.message, 'ok'); await loadStaffStore(section); } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
   });
   panelEl.querySelectorAll('[data-edit-category]').forEach((button) => button.addEventListener('click', () => { const row = categories.find((item) => item.CategoryId === button.dataset.editCategory); if (!row || !categoryForm) return; categoryForm.elements.CategoryId.value = row.CategoryId; categoryForm.elements.Name.value = row.Name; categoryForm.elements.Active.checked = clean(row.Active || 'YES') !== 'NO'; categoryForm.scrollIntoView({ behavior: 'smooth', block: 'center' }); }));
-  panelEl.querySelectorAll('[data-deactivate-category]').forEach((button) => button.addEventListener('click', async () => { if (!window.confirm('Deactivate this category? Existing inventory and transaction references will remain intact.')) return; const response = await fetch('/api/staff-stores', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'deactivateCategory', section, CategoryId: button.dataset.deactivateCategory, Name: categories.find((row) => row.CategoryId === button.dataset.deactivateCategory)?.Name }) }); const data = await response.json(); if (!response.ok || !data.ok) return setStatus(dashboardStatus, data.message || 'Could not deactivate category.', 'bad'); await loadStaffStore(section); }));
+  panelEl.querySelectorAll('[data-category-active]').forEach((checkbox) => checkbox.addEventListener('change', async () => {
+    const row = categories.find((item) => item.CategoryId === checkbox.dataset.categoryActive);
+    if (!row) return;
+    const active = checkbox.checked;
+    checkbox.disabled = true;
+    try {
+      const response = await fetch('/api/staff-stores', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'saveCategory',
+          section,
+          CategoryId: row.CategoryId,
+          Name: row.Name,
+          AppliesTo: (row.StoreScopes || [label]).join(','),
+          Active: active ? 'YES' : 'NO'
+        })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.message || 'Could not update category.');
+      await loadStaffStore(section);
+    } catch (error) {
+      checkbox.checked = !active;
+      checkbox.disabled = false;
+      setStatus(dashboardStatus, error.message || String(error), 'bad');
+    }
+  }));
   panelEl.querySelectorAll('[data-store-order]').forEach((button) => button.addEventListener('click', async () => {
     const collectionReference = button.dataset.storeStatus === 'Collected'
       ? window.prompt("Scan or enter the student's card ID, admission number, or parent verification code.")
@@ -567,7 +604,7 @@ function renderStaffStore(section, store) {
     button.disabled = true;
     try {
       const response = await fetch('/api/staff-stores', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateOrder', section, OrderNo: button.dataset.storeOrder, Status: button.dataset.storeStatus, CollectionReference: collectionReference }) });
-      const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.message || 'Could not update order.'); await loadDashboard();
+      const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.message || 'Could not update order.'); await loadStaffStore(section);
     } catch (error) { setStatus(dashboardStatus, error.message || String(error), 'bad'); button.disabled = false; }
   }));
 }
@@ -1035,10 +1072,10 @@ async function loadChurchOfferings() {
               if (!canManageApprovalRoutes || !routeId) return 'Read only';
               const routeIdSafe = escapeHtml(routeId);
               const isActive = isRouteActive(row.Active);
-              const editButton = `<button type="button" class="table-action" data-offering-route-action="edit" data-offering-route-id="${routeIdSafe}">Edit</button>`;
+              const editButton = `<button type="button" class="table-action compact-icon-action compact-edit-action" data-offering-route-action="edit" data-offering-route-id="${routeIdSafe}" aria-label="Edit route ${routeIdSafe}" title="Edit route"><span aria-hidden="true">&#9998;</span></button>`;
               const actionButton = isActive
                 ? `<button type="button" class="table-action workflow-reject" data-offering-route-action="deactivate" data-offering-route-id="${routeIdSafe}">Deactivate</button>`
-                : `<button type="button" class="table-action" data-offering-route-action="delete" data-offering-route-id="${routeIdSafe}">Delete</button>`;
+                : `<button type="button" class="table-action compact-icon-action compact-delete-action" data-offering-route-action="delete" data-offering-route-id="${routeIdSafe}" aria-label="Delete route ${routeIdSafe}" title="Delete route"><span aria-hidden="true">&#128465;&#65038;</span></button>`;
               return `${editButton} ${actionButton}`;
             }
           }
@@ -1252,7 +1289,7 @@ function renderSection(active) {
       { label: 'Profile', render: (row) => {
         const studentRef = escapeHtml(pick(row, ['AdmissionNo', 'AccountRef', '__id']));
         const studentName = escapeHtml(pick(row, ['DisplayName', 'ApplicantName', 'StudentName']) || 'student');
-        return `<button type="button" class="student-edit-icon" data-edit-student="${studentRef}" aria-label="Edit profile for ${studentName}" title="Edit student profile"><span aria-hidden="true">&#9998;</span></button>`;
+        return `<button type="button" class="student-edit-icon compact-icon-action compact-edit-action" data-edit-student="${studentRef}" aria-label="Edit profile for ${studentName}" title="Edit student profile"><span aria-hidden="true">&#9998;</span></button>`;
       } }
     ]) + renderStudentEditor(students);
     bindStudentEditor(students);
@@ -1320,7 +1357,8 @@ function bindDocumentDeleteEvents() {
     const applicationReference = button.dataset.applicationReference;
     const documentType = button.dataset.deleteDocument;
     if (!window.confirm('Delete this uploaded document? The file will be moved to Google Drive trash.')) return;
-    setButtonLoading(button, true, 'Deleting...', 'Delete');
+    const normalMarkup = button.innerHTML;
+    setButtonLoading(button, true, '', '');
     try {
       const response = await fetch('/api/staff-document', {
         method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
@@ -1332,7 +1370,8 @@ function bindDocumentDeleteEvents() {
       setStatus(dashboardStatus, data.message, 'ok');
     } catch (error) {
       setStatus(dashboardStatus, error.message || String(error), 'bad');
-      setButtonLoading(button, false, 'Deleting...', 'Delete');
+      setButtonLoading(button, false, '', '');
+      button.innerHTML = normalMarkup;
     }
   }));
 }
@@ -1397,10 +1436,35 @@ async function financeRequest(action, payload = {}) {
   return data;
 }
 
+function materialItemsTable(items) {
+  if (!Array.isArray(items) || !items.length) return '';
+  const rows = items.map((item, index) => `
+    <tr>
+      <td>${escapeHtml(item.SNo || index + 1)}</td>
+      <td>${escapeHtml(item.Item || item.item || '-')}</td>
+      <td>${escapeHtml(item.Specification || item.specification || '-')}</td>
+      <td>${escapeHtml(item.Quantity ?? item.quantity ?? '-')}</td>
+      <td>${escapeHtml(money(item.UnitPrice ?? item.unitPrice))}</td>
+      <td>${escapeHtml(money(item.Total ?? (Number(item.Quantity || item.quantity || 0) * Number(item.UnitPrice || item.unitPrice || 0))))}</td>
+    </tr>
+  `).join('');
+  return `
+    <div class="admin-table-wrap material-submission-table">
+      <table class="admin-table">
+        <thead><tr><th>S/No.</th><th>Item</th><th>Specification</th><th>Quantity</th><th>Unit Price</th><th>Total</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
 function financeRecordCard(record, type, capabilities) {
   const id = pick(record, type === 'bill' ? ['BillNo', '__id'] : ['ExpenseNo', '__id']);
   const status = pick(record, ['Status']) || 'Submitted';
-  const title = type === 'bill'
+  const isMaterial = type === 'requisition' && clean(record.RequisitionType).toLowerCase() === 'material';
+  const title = isMaterial
+    ? 'Material Requisition'
+    : type === 'bill'
     ? pick(record, ['VendorName', 'Vendor']) || 'Supplier Bill'
     : pick(record, ['Description']) || 'Requisition';
   const description = pick(record, ['Description']);
@@ -1424,6 +1488,7 @@ function financeRecordCard(record, type, capabilities) {
         <span class="workflow-status status-${escapeHtml(clean(status).toLowerCase().replace(/\s+/g, '-'))}">${escapeHtml(status)}</span>
       </div>
       <p>${escapeHtml(description)}</p>
+      ${isMaterial ? materialItemsTable(record.MaterialItems || record.Items) : ''}
       <div class="workflow-record-meta">
         <span><strong>${escapeHtml(money(record.Amount))}</strong>Amount</span>
         <span><strong>${escapeHtml(record.Department || '-')}</strong>Department</span>
@@ -1476,6 +1541,36 @@ function renderFinanceWorkflow() {
           <p class="status" data-form-status></p>
         </form>
       </dialog>
+      <dialog id="materialRequisitionDialog" class="workflow-dialog material-requisition-dialog">
+        <div class="workflow-dialog-header"><div><small>${escapeHtml(department)}</small><h2>New Material Requisition</h2></div><button type="button" data-close-dialog aria-label="Close">&times;</button></div>
+        <form id="materialRequisitionForm" class="workflow-form">
+          <h3>Material Items</h3>
+          <p class="muted">List every requested item. Line totals and the requisition total are calculated automatically.</p>
+          <div class="admin-table-wrap material-entry-wrap">
+            <table class="admin-table material-entry-table">
+              <thead><tr><th>S/No.</th><th>Item</th><th>Specification</th><th>Quantity</th><th>Unit Price</th><th>Total</th></tr></thead>
+              <tbody data-material-items>
+                <tr data-material-row>
+                  <td data-material-serial>1</td>
+                  <td><div class="material-item-control"><input data-material-field="item" aria-label="Item 1" required><button type="button" class="compact-icon-action compact-delete-action" data-remove-material-item aria-label="Delete item 1" title="Delete item"><span aria-hidden="true">&#128465;&#65038;</span></button></div></td>
+                  <td><input data-material-field="specification" aria-label="Specification 1" required></td>
+                  <td><input data-material-field="quantity" aria-label="Quantity 1" type="number" min="0.01" step="0.01" inputmode="decimal" required></td>
+                  <td><input data-material-field="unitPrice" aria-label="Unit price 1" type="number" min="0.01" step="0.01" inputmode="decimal" required></td>
+                  <td><output data-material-line-total>₦0.00</output></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="material-entry-actions"><button type="button" data-add-material-item>+ Add Item</button><strong>Grand Total: <output data-material-grand-total>₦0.00</output></strong></div>
+          <label>Preferred vendor<input name="vendor"></label>
+          <label>Required date<input name="date" type="date"></label>
+          <label>Reference<input name="reference"></label>
+          <label>Supporting document URL<input name="attachmentUrl" type="url"></label>
+          <label>Notes<textarea name="notes" rows="2"></textarea></label>
+          <button type="submit">Submit Material Requisition</button>
+          <p class="status" data-form-status></p>
+        </form>
+      </dialog>
       <dialog id="supplierBillDialog" class="workflow-dialog">
         <div class="workflow-dialog-header"><div><small>${escapeHtml(department)}</small><h2>New Supplier Bill</h2></div><button type="button" data-close-dialog aria-label="Close">×</button></div>
         <form id="supplierBillForm" class="workflow-form">
@@ -1498,7 +1593,7 @@ function renderFinanceWorkflow() {
     <div class="workflow-intro">
       <div><p class="eyebrow">Department finance</p><h2>Bills & Requisitions</h2><p class="muted">${escapeHtml(department)} workspace</p></div>
       <div class="workflow-primary-actions">
-        ${capabilities.canSubmit ? '<button type="button" data-open-dialog="requisitionDialog">+ New Requisition</button><button type="button" class="workflow-secondary-action" data-open-dialog="supplierBillDialog">+ Supplier Bill</button>' : ''}
+        ${capabilities.canSubmit ? '<button type="button" data-open-dialog="requisitionDialog">+ New Requisition</button><button type="button" class="workflow-secondary-action" data-open-dialog="materialRequisitionDialog">+ Material Requisition</button><button type="button" class="workflow-secondary-action" data-open-dialog="supplierBillDialog">+ Supplier Bill</button>' : ''}
         <button type="button" class="workflow-icon-action" id="refreshFinanceWorkflow" aria-label="Refresh requests">Refresh</button>
       </div>
     </div>
@@ -1520,6 +1615,93 @@ function renderFinanceWorkflow() {
 
 function formPayload(form) {
   return Object.fromEntries(new FormData(form).entries());
+}
+
+function materialEntryRow(index) {
+  return `
+    <tr data-material-row>
+      <td data-material-serial>${index}</td>
+      <td><div class="material-item-control"><input data-material-field="item" aria-label="Item ${index}" required><button type="button" class="compact-icon-action compact-delete-action" data-remove-material-item aria-label="Delete item ${index}" title="Delete item"><span aria-hidden="true">&#128465;&#65038;</span></button></div></td>
+      <td><input data-material-field="specification" aria-label="Specification ${index}" required></td>
+      <td><input data-material-field="quantity" aria-label="Quantity ${index}" type="number" min="0.01" step="0.01" inputmode="decimal" required></td>
+      <td><input data-material-field="unitPrice" aria-label="Unit price ${index}" type="number" min="0.01" step="0.01" inputmode="decimal" required></td>
+      <td><output data-material-line-total>₦0.00</output></td>
+    </tr>
+  `;
+}
+
+function materialRequisitionItems(form) {
+  return [...form.querySelectorAll('[data-material-row]')].map((row) => ({
+    item: clean(row.querySelector('[data-material-field="item"]')?.value),
+    specification: clean(row.querySelector('[data-material-field="specification"]')?.value),
+    quantity: Number(row.querySelector('[data-material-field="quantity"]')?.value || 0),
+    unitPrice: Number(row.querySelector('[data-material-field="unitPrice"]')?.value || 0)
+  }));
+}
+
+function updateMaterialRequisitionTable(form) {
+  const rows = [...form.querySelectorAll('[data-material-row]')];
+  let grandTotal = 0;
+  rows.forEach((row, index) => {
+    const serial = index + 1;
+    row.querySelector('[data-material-serial]').textContent = serial;
+    row.querySelectorAll('[data-material-field]').forEach((input) => {
+      const label = input.dataset.materialField === 'unitPrice'
+        ? 'Unit price'
+        : input.dataset.materialField.charAt(0).toUpperCase() + input.dataset.materialField.slice(1);
+      input.setAttribute('aria-label', `${label} ${serial}`);
+    });
+    const removeButton = row.querySelector('[data-remove-material-item]');
+    removeButton.setAttribute('aria-label', `Delete item ${serial}`);
+    const quantity = Number(row.querySelector('[data-material-field="quantity"]').value || 0);
+    const unitPrice = Number(row.querySelector('[data-material-field="unitPrice"]').value || 0);
+    const lineTotal = Math.round((quantity * unitPrice + Number.EPSILON) * 100) / 100;
+    grandTotal += lineTotal;
+    row.querySelector('[data-material-line-total]').textContent = money(lineTotal);
+  });
+  form.querySelector('[data-material-grand-total]').textContent = money(grandTotal);
+}
+
+function bindMaterialRequisitionForm() {
+  const form = document.getElementById('materialRequisitionForm');
+  if (!form) return;
+  const itemsBody = form.querySelector('[data-material-items]');
+  form.querySelector('[data-add-material-item]').addEventListener('click', () => {
+    itemsBody.insertAdjacentHTML('beforeend', materialEntryRow(itemsBody.querySelectorAll('[data-material-row]').length + 1));
+    updateMaterialRequisitionTable(form);
+    itemsBody.lastElementChild?.querySelector('[data-material-field="item"]')?.focus();
+  });
+  itemsBody.addEventListener('click', (event) => {
+    const removeButton = event.target.closest('[data-remove-material-item]');
+    if (!removeButton) return;
+    const rows = itemsBody.querySelectorAll('[data-material-row]');
+    if (rows.length === 1) {
+      rows[0].querySelectorAll('input').forEach((input) => { input.value = ''; });
+    } else {
+      removeButton.closest('[data-material-row]')?.remove();
+    }
+    updateMaterialRequisitionTable(form);
+  });
+  itemsBody.addEventListener('input', () => updateMaterialRequisitionTable(form));
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    const button = form.querySelector('button[type="submit"]');
+    const status = form.querySelector('[data-form-status]');
+    const payload = { ...formPayload(form), items: materialRequisitionItems(form) };
+    setButtonLoading(button, true, 'Submitting...', 'Submit Material Requisition');
+    setStatus(status, 'Saving to Firestore...');
+    try {
+      await financeRequest('submitMaterialRequisition', payload);
+      setStatus(status, 'Material requisition submitted.', 'ok');
+      await loadFinanceWorkflow();
+    } catch (error) {
+      setStatus(status, error.message || String(error), 'bad');
+    } finally {
+      setButtonLoading(button, false, 'Submitting...', 'Submit Material Requisition');
+    }
+  });
+  updateMaterialRequisitionTable(form);
 }
 
 function bindSubmissionForm(formId, action, successText) {
@@ -1554,6 +1736,7 @@ function bindFinanceWorkflowEvents() {
     button.addEventListener('click', () => button.closest('dialog')?.close());
   });
   bindSubmissionForm('requisitionForm', 'submitRequisition', 'Requisition submitted.');
+  bindMaterialRequisitionForm();
   bindSubmissionForm('supplierBillForm', 'submitBill', 'Supplier bill submitted.');
   panelEl.querySelectorAll('[data-workflow-action]').forEach((button) => {
     button.addEventListener('click', async () => {
@@ -1629,7 +1812,7 @@ function renderStaffUsers() {
           <div class="staff-user-avatar">${escapeHtml((user.DisplayName || user.Username || 'U').split(/\s+/).slice(0,2).map((part) => part[0]).join('').toUpperCase())}</div>
           <div class="staff-user-copy"><strong>${escapeHtml(user.DisplayName || user.Username)}</strong><span>@${escapeHtml(user.Username)} • ${escapeHtml(user.Role)}</span><small>${escapeHtml(user.Department || 'No department')} • ${escapeHtml(user.BranchId || 'All branches')} / ${escapeHtml(user.SchoolSectionAccess || 'All sections')}${yes(user.MustChangePassword) ? ' • Password change required' : ''}</small></div>
           <span class="workflow-status ${yes(user.Active) ? 'status-approved' : 'status-rejected'}">${yes(user.Active) ? 'Active' : 'Disabled'}</span>
-          <div class="staff-user-actions"><button type="button" data-edit-user="${escapeHtml(user.Username)}">Manage</button><button type="button" class="workflow-reject" data-delete-user="${escapeHtml(user.Username)}">Delete</button></div>
+          <div class="staff-user-actions"><button type="button" class="compact-icon-action compact-edit-action" data-edit-user="${escapeHtml(user.Username)}" aria-label="Edit ${escapeHtml(user.DisplayName || user.Username)}" title="Edit staff account"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action compact-delete-action" data-delete-user="${escapeHtml(user.Username)}" aria-label="Delete ${escapeHtml(user.DisplayName || user.Username)}" title="Delete staff account"><span aria-hidden="true">&#128465;&#65038;</span></button></div>
         </article>
       `).join('') : '<p class="muted">No Firestore staff accounts found. Create the first shared staff account.</p>'}
     </div>
@@ -1707,15 +1890,16 @@ function bindStaffUserEvents() {
   panelEl.querySelectorAll('[data-delete-user]').forEach((button) => button.addEventListener('click', async () => {
     const username = button.dataset.deleteUser;
     if (!window.confirm(`Delete staff account ${username}? This cannot be undone.`)) return;
-    const normalText = button.textContent;
-    setButtonLoading(button, true, 'Deleting...', normalText);
+    const normalMarkup = button.innerHTML;
+    setButtonLoading(button, true, '', '');
     try {
       const data = await staffUserRequest('delete', { Username: username });
       await loadStaffUsers();
       setStatus(document.getElementById('staffUsersStatus'), data.message, 'ok');
     } catch (error) {
       setStatus(document.getElementById('staffUsersStatus'), error.message || String(error), 'bad');
-      setButtonLoading(button, false, 'Deleting...', normalText);
+      setButtonLoading(button, false, '', '');
+      button.innerHTML = normalMarkup;
     }
   }));
   document.getElementById('staffUserForm')?.addEventListener('submit', async (event) => {
