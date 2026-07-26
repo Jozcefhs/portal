@@ -179,6 +179,9 @@ test('parent store confirms added items and prevents repeated cart clicks', () =
   assert.match(parentDashboardJs, /buy\.innerHTML = '<span aria-hidden="true">&#10003;<\/span>'/);
   assert.match(parentDashboardJs, /storeCart\.delete\(key\); renderStores\(child\)/);
   assert.match(portalCss, /\.store-cart-action\.is-added\{background:#e7f7ef;[^}]*opacity:1/);
+  assert.match(portalCss, /\.store-quantity:disabled\{opacity:1;color:#102a43;-webkit-text-fill-color:#102a43/);
   assert.match(portalCss, /\.store-catalog-section \.store-item-row\{gap:2px 6px\}/);
+  assert.match(portalCss, /\.store-catalog-section \.store-item-row>span\{margin:0;font-size:12px/);
+  assert.match(portalCss, /\.store-catalog-section \.store-item-row>small\{margin:0;font-size:11px/);
   assert.match(portalCss, /\.store-cart-panel\{margin:10px 0;padding:10px/);
 });
