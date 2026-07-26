@@ -233,9 +233,11 @@ function friendlyPasskeyError(error) {
 }
 
 async function refreshPasskeyControls() {
-  const enabled = biometricPreferenceEnabled() && passkeysSupported();
-  passkeyLoginButton.hidden = !enabled || Boolean(currentUser);
-  passkeySetupButton.hidden = !enabled || !currentUser || Boolean(currentUser.mustChangePassword);
+  const supported = passkeysSupported();
+  const preferred = biometricPreferenceEnabled();
+  passkeyLoginButton.hidden = !supported || Boolean(currentUser);
+  passkeyLoginButton.classList.toggle('is-preferred', preferred);
+  passkeySetupButton.hidden = !supported || !preferred || !currentUser || Boolean(currentUser.mustChangePassword);
   passkeySetupButton.classList.remove('is-registered');
   if (passkeySetupButton.hidden) return;
   passkeySetupButton.innerHTML = '<span aria-hidden="true">◉</span> Set up biometric sign-in';
@@ -2607,7 +2609,7 @@ loginForm.addEventListener('submit', async (event) => {
 
 passkeyLoginButton.addEventListener('click', async () => {
   if (passkeyLoginButton.disabled) return;
-  setButtonLoading(passkeyLoginButton, true, 'Checking your device...', 'Use biometric sign-in');
+  setButtonLoading(passkeyLoginButton, true, 'Checking your device...', 'Sign in with biometrics');
   setStatus(loginStatus, 'Follow your device prompt to sign in...');
   try {
     const started = await passkeyRequest('authentication-options');
@@ -2623,7 +2625,7 @@ passkeyLoginButton.addEventListener('click', async () => {
   } catch (error) {
     setStatus(loginStatus, friendlyPasskeyError(error), 'bad');
   } finally {
-    setButtonLoading(passkeyLoginButton, false, 'Checking your device...', 'Use biometric sign-in');
+    setButtonLoading(passkeyLoginButton, false, 'Checking your device...', 'Sign in with biometrics');
   }
 });
 

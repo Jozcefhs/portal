@@ -26,8 +26,11 @@ test('landing settings include a persisted biometric preference', () => {
 
 test('staff portal offers passkey registration and authentication', () => {
   assert.match(adminHtml, /id="staffPasskeyLogin"/);
+  assert.match(adminHtml, /Sign in with biometrics/);
   assert.match(adminHtml, /id="staffPasskeySetup"/);
   assert.match(adminHtml, /autocomplete="username webauthn"/);
+  assert.match(adminJs, /passkeyLoginButton\.hidden = !supported \|\| Boolean\(currentUser\)/);
+  assert.match(adminJs, /passkeyLoginButton\.classList\.toggle\('is-preferred', preferred\)/);
   assert.match(adminJs, /navigator\.credentials\.create/);
   assert.match(adminJs, /navigator\.credentials\.get/);
   assert.match(passkeyApi, /action === 'approval-options'/);
