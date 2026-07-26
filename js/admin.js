@@ -22,6 +22,8 @@ const summaryEl = document.getElementById('adminSummary');
 const dashboardChartsEl = document.getElementById('dashboardCharts');
 const tabsEl = document.getElementById('adminTabs');
 const panelEl = document.getElementById('adminPanel');
+const welcomeEl = document.querySelector('.staff-welcome');
+const staffMainContent = document.querySelector('.staff-main-content');
 const profileTrigger = document.getElementById('staffProfileTrigger');
 const passwordDialog = document.getElementById('staffPasswordDialog');
 const passwordForm = document.getElementById('staffPasswordForm');
@@ -79,10 +81,24 @@ const tabConfig = [
 ];
 
 const tabIcons = {
-  admissions: '✦', formPurchases: '▤', students: '♟', members: '♟',
-  services: '◷', funds: '₦', offerings: '◉', donations: '♡', accounts: '▥',
-  financeRequests: '✓', payroll: '▦', clinic: '+', kitchen: '⌂', tuckShop: '▣',
-  bookstore: '▤', uniformStore: '◇', staffUsers: '♙'
+  overview: '\u2302',
+  admissions: '\u{1F4DD}',
+  formPurchases: '\u{1F9FE}',
+  students: '\u{1F465}',
+  members: '\u{1F465}',
+  services: '\u{1F4C5}',
+  funds: '\u{1F4B0}',
+  offerings: '\u{1F9FA}',
+  donations: '\u{1F381}',
+  accounts: '\u{1F9EE}',
+  financeRequests: '\u{1F4CB}',
+  payroll: '\u{1F4B3}',
+  clinic: '\u2695',
+  kitchen: '\u{1F37D}',
+  tuckShop: '\u{1F6D2}',
+  bookstore: '\u{1F4DA}',
+  uniformStore: '\u{1F455}',
+  staffUsers: '\u2699'
 };
 
 function clean(value) {
@@ -507,11 +523,11 @@ async function loadDashboard() {
     dashboardData = data;
     currentUser = data.user || currentUser;
     showDashboard(currentUser);
-    renderSummary(data.summary || {});
-    renderDashboardCharts(data.charts || {});
     const allowed = data.allowedSections || currentUser.allowedSections || [];
-    if (!activeSection || !allowed.includes(activeSection)) activeSection = allowed[0] || '';
+    const workspaceSections = ['overview', ...allowed];
+    if (!activeSection || !workspaceSections.includes(activeSection)) activeSection = 'overview';
     renderTabs(allowed);
+    renderWorkspace(activeSection);
     renderSection(activeSection);
     setStatus(dashboardStatus, 'Dashboard updated.', 'ok');
   } catch (error) {
@@ -523,7 +539,7 @@ async function loadDashboard() {
 
 function renderDashboardCharts(charts) {
   if (!dashboardChartsEl) return;
-  if (document.documentElement.dataset.edition === 'church') {
+  if (activeSection !== 'overview' || document.documentElement.dataset.edition === 'church') {
     dashboardChartsEl.hidden = true;
     dashboardChartsEl.innerHTML = '';
     return;
@@ -558,8 +574,161 @@ function renderSummary(summary) {
   summaryEl.innerHTML = studentCard + items.map(([label, value]) => `<div><strong>${escapeHtml(value || 0)}</strong><span>${escapeHtml(label)}</span></div>`).join('');
 }
 
+function sumRows(rows, keys) {
+  return (rows || []).reduce((total, row) => {
+    const value = pick(row, keys);
+    const amount = Number(String(value || 0).replace(/[₦,\s]/g, ''));
+    return total + (Number.isFinite(amount) ? amount : 0);
+  }, 0);
+}
+
+function renderSummaryCards(cards = []) {
+  summaryEl.innerHTML = cards.filter(Boolean).map((card) => `
+    <div class="module-summary-card">
+      <span class="module-summary-icon" aria-hidden="true">${escapeHtml(card.icon || tabIcons[activeSection] || '•')}</span>
+      <strong>${escapeHtml(card.value ?? 0)}</strong>
+      <span>${escapeHtml(card.label || '')}</span>
+      ${card.note ? `<small>${escapeHtml(card.note)}</small>` : ''}
+    </div>`).join('');
+}
+
+function renderModuleSummary(active, liveData = null) {
+  if (active === 'overview') {
+    renderSummary(dashboardData?.summary || {});
+    return;
+  }
+  const departments = dashboardData?.departments || {};
+  const icon = tabIcons[active];
+  let cards = [];
+  if (active === 'admissions') {
+    const rows = departments.admissions || [];
+    cards = [
+      { icon, label: 'Applications', value: rows.length },
+      { icon: '\u2713', label: 'Admitted', value: rows.filter((row) => /admitted|accepted|approved/i.test(clean(pick(row, ['Status', 'ResultStatus'])))).length },
+      { icon: '\u231B', label: 'Pending', value: rows.filter((row) => !/admitted|accepted|approved|rejected/i.test(clean(pick(row, ['Status', 'ResultStatus'])))).length },
+      { icon: '\u{1F4CE}', label: 'With Documents', value: rows.filter((row) => admissionDocuments.some(([key]) => uploadedDocument(row, key))).length }
+    ];
+  } else if (active === 'formPurchases') {
+    const rows = departments.formPurchases || [];
+    cards = [
+      { icon, label: 'Purchases', value: rows.length },
+      { icon: '\u20A6', label: 'Revenue', value: money(sumRows(rows, ['AmountPaid', 'Amount'])) },
+      { icon: '\u{1F465}', label: 'Applicants', value: new Set(rows.map((row) => clean(pick(row, ['Email', 'ApplicantName']))).filter(Boolean)).size },
+      { icon: '\u{1F4DA}', label: 'Classes', value: new Set(rows.map((row) => clean(pick(row, ['ClassApplyingFor']))).filter(Boolean)).size }
+    ];
+  } else if (active === 'students') {
+    const rows = departments.students || [];
+    cards = [
+      { icon, label: 'Students', value: rows.length },
+      { icon: '\u2713', label: 'Active', value: rows.filter((row) => !/inactive|withdrawn|disabled/i.test(clean(pick(row, ['Status'])))).length },
+      { icon: '\u2600', label: 'Day Students', value: rows.filter((row) => /day/i.test(clean(pick(row, ['StudentType'])))).length },
+      { icon: '\u2302', label: 'Boarding', value: rows.filter((row) => /board/i.test(clean(pick(row, ['StudentType'])))).length }
+    ];
+  } else if (active === 'accounts') {
+    const data = departments.accounts || {};
+    cards = [
+      { icon, label: 'Payments', value: (data.payments || []).length },
+      { icon: '\u20A6', label: 'Collections', value: money(sumRows(data.payments, ['Amount'])) },
+      { icon: '\u{1F9FE}', label: 'Invoices', value: (data.invoices || []).length },
+      { icon: '\u{1F4CA}', label: 'Invoice Value', value: money(sumRows(data.invoices, ['Debit', 'Amount'])) }
+    ];
+  } else if (active === 'clinic') {
+    const data = departments.clinic || {};
+    cards = [
+      { icon, label: 'Clinic Records', value: (data.records || []).length },
+      { icon: '\u{1F48A}', label: 'Inventory Items', value: (data.inventory || []).length },
+      { icon: '\u26A0', label: 'Low Stock', value: (data.lowStock || []).length }
+    ];
+  } else if (active === 'kitchen') {
+    const data = departments.kitchen || {};
+    cards = [
+      { icon, label: 'Inventory Items', value: (data.inventory || []).length },
+      { icon: '\u{1F4E6}', label: 'Units in Stock', value: sumRows(data.inventory, ['Quantity']) },
+      { icon: '\u26A0', label: 'Low Stock', value: (data.lowStock || []).length }
+    ];
+  } else if (active === 'tuckShop') {
+    const rows = (departments.tuckShop || {}).purchases || [];
+    cards = [
+      { icon, label: 'Purchases', value: rows.length },
+      { icon: '\u20A6', label: 'Sales Value', value: money(sumRows(rows, ['Debit', 'Amount'])) },
+      { icon: '\u{1F465}', label: 'Students Served', value: new Set(rows.map((row) => clean(pick(row, ['AccountRef', 'AdmissionNo', 'DisplayName']))).filter(Boolean)).size }
+    ];
+  } else if ((active === 'bookstore' || active === 'uniformStore') && liveData) {
+    const items = liveData.items || [];
+    const orders = liveData.orders || [];
+    cards = [
+      { icon, label: 'Store Items', value: items.length },
+      { icon: '\u2713', label: 'Available Items', value: items.filter((row) => clean(row.Active || 'YES') !== 'NO').length },
+      { icon: '\u{1F4E6}', label: 'Units in Stock', value: sumRows(items, ['Quantity']) },
+      { icon: '\u{1F6D2}', label: 'Paid Orders', value: orders.length }
+    ];
+  } else if (active === 'members' && liveData) {
+    cards = [
+      { icon, label: 'Members', value: (liveData.members || []).length },
+      { icon: '\u2302', label: 'Households', value: (liveData.households || []).length },
+      { icon: '\u2713', label: 'Active Members', value: (liveData.members || []).filter((row) => !/inactive|former/i.test(clean(row.MembershipStatus))).length }
+    ];
+  } else if (active === 'services' && liveData) {
+    cards = [
+      { icon, label: 'Services', value: (liveData.services || []).length },
+      { icon: '\u{1F4C5}', label: 'Occurrences', value: (liveData.occurrences || []).length },
+      { icon: '\u2713', label: 'Check-ins', value: (liveData.attendance || []).length },
+      { icon: '\u{1F464}', label: 'Visitors', value: (liveData.attendance || []).filter((row) => /visitor/i.test(clean(row.AttendanceType))).length }
+    ];
+  } else if (active === 'funds' && liveData) {
+    cards = [
+      { icon, label: 'Funds', value: (liveData.funds || []).length },
+      { icon: '\u2713', label: 'Active Funds', value: (liveData.funds || []).filter((row) => !/no|false|inactive/i.test(clean(row.Active || 'YES'))).length },
+      { icon: '\u{1F517}', label: 'Mappings', value: (liveData.mappings || []).length },
+      { icon: '\u{1F4DD}', label: 'Audit Entries', value: (liveData.audit || []).length }
+    ];
+  } else if (active === 'donations' && liveData) {
+    const rows = liveData.donations || [];
+    cards = [
+      { icon, label: 'Donations', value: rows.length },
+      { icon: '\u20A6', label: 'Total Value', value: money(sumRows(rows, ['Amount', 'Total'])) },
+      { icon: '\u{1F465}', label: 'Donors', value: new Set(rows.map((row) => clean(pick(row, ['DonorId', 'DonorName', 'Email']))).filter(Boolean)).size },
+      { icon: '\u{1F4DD}', label: 'Audit Entries', value: (liveData.audit || []).length }
+    ];
+  } else if (active === 'offerings' && liveData) {
+    const rows = liveData.offerings || [];
+    cards = [
+      { icon, label: 'Offering Batches', value: rows.length },
+      { icon: '\u20A6', label: 'Total Value', value: money(sumRows(rows, ['TotalAmount', 'Amount'])) },
+      { icon: '\u231B', label: 'Awaiting Approval', value: rows.filter((row) => /submitted|pending/i.test(clean(row.Status))).length },
+      { icon: '\u2713', label: 'Posted', value: rows.filter((row) => /posted|approved/i.test(clean(row.Status))).length }
+    ];
+  } else if (active === 'financeRequests' && liveData) {
+    const rows = [...(liveData.requisitions || []), ...(liveData.bills || [])];
+    cards = [
+      { icon, label: 'Documents', value: rows.length },
+      { icon: '\u231B', label: 'Awaiting Approval', value: rows.filter((row) => /submitted|pending/i.test(clean(row.Status))).length },
+      { icon: '\u2713', label: 'Approved', value: rows.filter((row) => /approved|posted/i.test(clean(row.Status))).length },
+      { icon: '\u20A6', label: 'Total Value', value: money(sumRows(rows, ['Amount', 'Total'])) }
+    ];
+  } else if (active === 'payroll' && liveData) {
+    const rows = liveData.items || liveData;
+    cards = [
+      { icon, label: 'Payroll Periods', value: rows.length },
+      { icon: '\u20A6', label: 'Net Pay', value: money(sumRows(rows, ['NetPay'])) },
+      { icon: '\u2713', label: 'Paid', value: money(sumRows(rows, ['PaidAmount'])) },
+      { icon: '\u231B', label: 'Outstanding', value: money(sumRows(rows, ['OutstandingAmount'])) }
+    ];
+  } else if (active === 'staffUsers' && liveData) {
+    const rows = liveData.users || liveData;
+    cards = [
+      { icon, label: 'Staff Accounts', value: rows.length },
+      { icon: '\u2713', label: 'Active', value: rows.filter((row) => yes(row.Active)).length },
+      { icon: '\u{1F6E1}', label: 'Administrators', value: rows.filter((row) => row.Role === 'Super Admin' && yes(row.Active)).length },
+      { icon: '\u26A0', label: 'Disabled', value: rows.filter((row) => !yes(row.Active)).length }
+    ];
+  }
+  if (!cards.length) cards = [{ icon, label: tabConfig.find(([key]) => key === active)?.[1] || 'Module', value: 'Loading' }];
+  renderSummaryCards(cards);
+}
+
 function renderTabs(allowed) {
-  const tabs = tabConfig.filter(([key]) => allowed.includes(key));
+  const tabs = [['overview', 'Dashboard'], ...tabConfig.filter(([key]) => allowed.includes(key))];
   activeTabs = tabs;
   const isChurch = tabs.some(([key]) => key === 'members' || key === 'services');
   if (isChurch) {
@@ -571,22 +740,33 @@ function renderTabs(allowed) {
   }
   tabsEl.innerHTML = tabs.map(([key, label]) => {
     const selected = key === activeSection ? ' selected' : '';
-    return `<button type="button" class="child-card${selected}" data-tab="${escapeHtml(key)}" aria-selected="${key === activeSection}">${escapeHtml(label)}</button>`;
+    return `<button type="button" class="child-card${selected}" data-tab="${escapeHtml(key)}" aria-selected="${key === activeSection}"><span class="staff-tab-icon" aria-hidden="true">${escapeHtml(tabIcons[key] || '•')}</span><span>${escapeHtml(label)}</span></button>`;
   }).join('');
   tabsEl.querySelectorAll('[data-tab]').forEach((button) => {
-    button.addEventListener('click', () => selectSection(button.dataset.tab, allowed));
+    button.addEventListener('click', () => selectSection(button.dataset.tab, tabs.map(([key]) => key)));
   });
   renderMobileNavigation(tabs);
+}
+
+function renderWorkspace(active) {
+  const overview = active === 'overview';
+  welcomeEl.hidden = !overview;
+  dashboardStatus.hidden = !overview;
+  panelEl.hidden = overview;
+  staffMainContent.classList.toggle('module-view-active', !overview);
+  renderModuleSummary(active);
+  renderDashboardCharts(dashboardData?.charts || {});
 }
 
 function selectSection(key, allowed = activeTabs.map(([tabKey]) => tabKey)) {
   if (!allowed.includes(key)) return;
   activeSection = key;
   renderTabs(allowed);
+  renderWorkspace(activeSection);
   renderSection(activeSection);
   setSidebarOpen(false);
   if (moduleDialog.open) moduleDialog.close();
-  panelEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  (activeSection === 'overview' ? staffMainContent : panelEl).scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function renderMobileNavigation(tabs) {
@@ -596,14 +776,14 @@ function renderMobileNavigation(tabs) {
     return;
   }
   const findTab = (...keys) => tabs.find(([key]) => keys.includes(key));
-  const homeTab = tabs[0];
+  const homeTab = findTab('overview') || tabs[0];
   const peopleTab = findTab('members', 'students', 'services', 'admissions') || homeTab;
   const financeTab = findTab('donations', 'offerings', 'funds', 'accounts', 'financeRequests') || homeTab;
   const items = [
-    [homeTab[0], '⌂', 'Home'],
-    [peopleTab[0], tabIcons[peopleTab[0]] || '♟', peopleTab[0] === 'members' ? 'Members' : 'People'],
+    [homeTab[0], tabIcons.overview, 'Home'],
+    [peopleTab[0], tabIcons[peopleTab[0]] || '\u{1F465}', peopleTab[0] === 'members' ? 'Members' : 'People'],
     ['__modules__', '▦', 'Modules'],
-    [financeTab[0], tabIcons[financeTab[0]] || '₦', 'Finance'],
+    [financeTab[0], tabIcons[financeTab[0]] || '\u20A6', 'Finance'],
     ['__more__', '☰', 'More']
   ];
   mobileNav.innerHTML = items.map(([key, icon, label]) => {
@@ -771,6 +951,7 @@ function renderStaffStore(section, store) {
   const label = section === 'bookstore' ? 'Bookstore' : 'Uniform Store';
   const categories = store.categories || [];
   const activeCategories = categories.filter((row) => clean(row.Active || 'YES') !== 'NO');
+  renderModuleSummary(section, store);
   panelEl.innerHTML = `
     <div class="workflow-intro"><div><p class="eyebrow">School store</p><h2>${label}</h2><p class="muted">List items and prices, monitor paid orders, and record collection.</p></div></div>
     <section class="config-card">
@@ -880,6 +1061,7 @@ async function loadChurchMembership() {
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load church membership.');
     if (activeSection !== 'members') return;
+    renderModuleSummary('members', data);
     panelEl.innerHTML = `
       <div class="workflow-intro"><div><p class="eyebrow">Church directory</p><h2>Members & Households</h2><p class="muted">Branch ${escapeHtml(data.branchId || 'main')} · ${data.members.length} members · ${data.households.length} households</p></div><button type="button" id="refreshChurchMembers">Refresh</button></div>
       ${table('Members', data.members || [], [
@@ -913,6 +1095,7 @@ async function loadChurchServices() {
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load church services.');
     if (activeSection !== 'services') return;
+    renderModuleSummary('services', data);
     panelEl.innerHTML = `
       <div class="workflow-intro"><div><p class="eyebrow">Gatherings</p><h2>Services & Attendance</h2><p class="muted">Branch ${escapeHtml(data.branchId || 'main')} · ${data.services.length} service definitions · ${data.attendance.length} check-ins</p></div><button type="button" id="refreshChurchServices">Refresh</button></div>
       ${table('Service Occurrences', data.occurrences || [], [
@@ -947,6 +1130,7 @@ async function loadChurchFunds() {
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load church funds.');
     if (activeSection !== 'funds') return;
+    renderModuleSummary('funds', data);
     panelEl.innerHTML = `
       <div class="workflow-intro"><div><p class="eyebrow">Church finance setup</p><h2>Funds & Accounting Mappings</h2><p class="muted">Branch ${escapeHtml(data.branchId || 'main')} Â· ${data.funds.length} funds Â· ${data.mappings.length} mappings</p></div><button type="button" id="refreshChurchFunds">Refresh</button></div>
       <p class="muted">Fund setup is managed in the desktop suite. Mappings use the shared Chart of Accounts and do not create a separate church ledger.</p>
@@ -1096,6 +1280,7 @@ async function loadChurchDonations() {
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load church donations.');
     if (activeSection !== 'donations') return;
+    renderModuleSummary('donations', data);
 
     const summary = data.summary || {};
     const capabilities = data.capabilities || {};
@@ -1278,6 +1463,7 @@ async function loadChurchOfferings() {
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load church offerings.');
     if (activeSection !== 'offerings') return;
+    renderModuleSummary('offerings', data);
     const summary = data.summary || {};
     const capabilities = data.capabilities || {};
     const approvalRoutes = data.approvalRoutes || [];
@@ -1508,6 +1694,10 @@ async function loadChurchOfferings() {
 function renderSection(active) {
   if (!dashboardData) return;
   panelEl.classList.toggle('school-store-panel', active === 'bookstore' || active === 'uniformStore');
+  if (active === 'overview') {
+    panelEl.innerHTML = '';
+    return;
+  }
   const departments = dashboardData.departments || {};
   if (active === 'staffUsers') {
     panelEl.innerHTML = '<p class="muted">Loading staff accounts...</p>';
@@ -1640,6 +1830,8 @@ async function loadMyPayroll() {
     if (response.status === 401) { showLogin(data.message || 'Your staff session has expired.', 'bad'); return; }
     if (!response.ok || !data.ok) throw new Error(data.message || 'Payroll history could not be loaded.');
     const items = data.items || [];
+    if (activeSection !== 'payroll') return;
+    renderModuleSummary('payroll', items);
     const totals = items.reduce((summary, item) => {
       summary.gross += Number(item.GrossPay || 0); summary.net += Number(item.NetPay || 0);
       summary.paid += Number(item.PaidAmount || 0); summary.outstanding += Number(item.OutstandingAmount || 0); return summary;
@@ -2171,6 +2363,7 @@ async function loadFinanceWorkflow() {
   if (activeSection !== 'financeRequests') return;
   try {
     financeData = await financeRequest('list');
+    renderModuleSummary('financeRequests', financeData);
     renderFinanceWorkflow();
   } catch (error) {
     if (activeSection === 'financeRequests') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
@@ -2383,6 +2576,7 @@ async function loadStaffUsers() {
     staffUsersData = data.users || [];
     staffAuditData = data.audit || [];
     staffApprovalAccounts = data.approvalAccounts || [];
+    renderModuleSummary('staffUsers', staffUsersData);
     renderStaffUsers();
   } catch (error) {
     if (activeSection === 'staffUsers') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;

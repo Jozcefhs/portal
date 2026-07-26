@@ -58,6 +58,12 @@ test('sidebar keeps account actions visible and database status last', () => {
   assert.match(portalCss, /\.staff-sidebar-actions\{display:grid;flex:0 0 auto;gap:8px;margin-top:auto\}/);
 });
 
+test('sidebar action zone prevents the final module from overlapping user controls', () => {
+  assert.match(portalCss, /\.staff-sidebar-actions\{[\s\S]*?position:relative;[\s\S]*?z-index:3;[\s\S]*?padding-top:11px;[\s\S]*?background:#0b2239/);
+  assert.match(portalCss, /@media \(max-width:680px\)\{[\s\S]*?\.staff-sidebar-actions\{background:#092642\}/);
+  assert.match(portalCss, /\.staff-sidebar \.staff-tabs\{margin-bottom:0;padding-bottom:12px\}/);
+});
+
 test('mobile data-table columns fit their unwrapped contents', () => {
   assert.match(portalCss, /\.staff-page \.admin-table\{[\s\S]*?width:max-content;[\s\S]*?min-width:100%;[\s\S]*?table-layout:auto;/);
   assert.match(portalCss, /\.staff-page \.admin-table th,[\s\S]*?\.staff-page \.admin-table td\{[\s\S]*?white-space:nowrap;[\s\S]*?overflow-wrap:normal;[\s\S]*?word-break:normal;/);
@@ -117,6 +123,41 @@ test('dark mode covers shared forms, notices, and general settings', () => {
   assert.match(portalCss, /html\[data-theme="dark"\] input::placeholder/);
 });
 
+test('password visibility controls stay compact and reserve input space', () => {
+  assert.match(portalCss, /\.password-field>input\{padding-right:68px!important\}/);
+  assert.match(portalCss, /\.password-field>\.password-toggle\{[\s\S]*?right:6px;[\s\S]*?width:auto!important;[\s\S]*?min-width:50px;/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.password-field>\.password-toggle\{color:#75adff\}/);
+});
+
+test('every staff module uses a corresponding navigation icon', () => {
+  ['overview', 'admissions', 'formPurchases', 'students', 'members', 'services', 'funds', 'offerings',
+    'donations', 'accounts', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop',
+    'bookstore', 'uniformStore', 'staffUsers'].forEach((key) => {
+    assert.match(adminJs, new RegExp(`${key}: '\\\\u`), `${key} should define an icon`);
+  });
+  assert.match(adminJs, /class="staff-tab-icon"[\s\S]*?tabIcons\[key\]/);
+  assert.match(portalCss, /\.staff-tab-icon\{display:grid!important;place-items:center/);
+});
+
+test('selected modules replace overview content with a full-height workspace', () => {
+  assert.match(adminJs, /const tabs = \[\['overview', 'Dashboard'\], \.\.\.tabConfig/);
+  assert.match(adminJs, /welcomeEl\.hidden = !overview/);
+  assert.match(adminJs, /dashboardStatus\.hidden = !overview/);
+  assert.match(adminJs, /panelEl\.hidden = overview/);
+  assert.match(adminJs, /activeSection !== 'overview'[\s\S]*?dashboardChartsEl\.hidden = true/);
+  assert.match(portalCss, /\.staff-main-content\.module-view-active \.staff-panel\{min-height:calc\(100vh - 168px\)/);
+});
+
+test('school, church, finance, payroll, store, and staff modules receive summary cards', () => {
+  ['admissions', 'formPurchases', 'students', 'accounts', 'clinic', 'kitchen', 'tuckShop',
+    'bookstore', 'uniformStore', 'members', 'services', 'funds', 'donations', 'offerings',
+    'financeRequests', 'payroll', 'staffUsers'].forEach((key) => {
+    assert.match(adminJs, new RegExp(`active === '${key}'|renderModuleSummary\\('${key}'`), `${key} should render module summaries`);
+  });
+  assert.match(adminJs, /class="module-summary-card"/);
+  assert.match(portalCss, /\.staff-summary \.module-summary-icon/);
+});
+
 test('selected student card has an unmistakable active state', () => {
   assert.match(portalCss, /\.child-list \.child-card\.selected\{border:2px solid var\(--blue\);background:#e8f1ff;box-shadow:0 0 0 3px/);
   assert.match(portalCss, /\.child-list \.child-card\.selected::after\{content:"✓ Selected"/);
@@ -174,6 +215,10 @@ test('store collection uses one state-aware status button per order', () => {
   assert.match(adminJs, /await loadStaffStore\(section\)/);
   assert.match(portalCss, /\.store-order-status\{[^}]*width:100%;[^}]*min-height:38px/);
   assert.match(portalCss, /\.store-order-status\.is-collected,[\s\S]*?background:#e8f7ee/);
+});
+
+test('store collection status button fits its content', () => {
+  assert.match(portalCss, /\.store-order-status\{[\s\S]*?display:inline-flex;[\s\S]*?width:fit-content;[\s\S]*?max-width:100%;/);
 });
 
 test('mobile configuration inputs use compact regular-weight sizing', () => {

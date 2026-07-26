@@ -580,7 +580,7 @@ html[data-theme="dark"] .material-entry-table output{color:#fff}
 .config-actionbar{grid-column:1/-1;display:grid;grid-template-columns:minmax(180px,1fr) minmax(120px,1fr) auto;gap:13px;align-items:center;margin:3px -18px -18px;padding:13px 18px;border-top:1px solid #e4eaf0;background:#f9fbfc}.config-actionbar label,.config-actionbar .status,.config-actionbar button{margin:0}.workflow-form .config-actionbar button{width:auto;min-width:130px}
 .config-details{margin:14px 0 22px;border:1px solid #dce4ec;border-radius:12px;background:#fff;overflow:hidden}.config-details>summary{padding:15px 18px;cursor:pointer;list-style:none;color:var(--finance-navy);font-weight:750}.config-details>summary::-webkit-details-marker{display:none}.config-details>summary::after{content:'+';float:right;width:25px;height:25px;border-radius:7px;background:#edf3f8;text-align:center;line-height:25px}.config-details[open]>summary::after{content:'–'}.config-details>summary span,.config-details>summary small{display:block}.config-details>summary small{margin-top:2px;color:#718096;font-size:11px;font-weight:400}.config-details[open]>summary{border-bottom:1px solid #e4eaf0;background:#f9fbfc}.config-details .config-form{margin:0;padding:18px;border:0;border-radius:0;background:#fff}.config-details>.workflow-record-list{margin:0;padding:0 18px 18px}
 .store-category-list{gap:6px}.store-category-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;min-height:44px;padding:7px 9px;border-radius:8px}.store-category-copy{min-width:0}.store-category-copy strong,.store-category-copy small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.store-category-copy strong{font-size:13px}.store-category-copy small{margin-top:1px;color:#718096;font-size:10px}.store-category-actions{display:flex;align-items:center;gap:9px}.store-category-edit{display:grid;place-items:center;width:24px!important;height:24px;min-height:24px!important;margin:0!important;padding:0!important;border:0;border-radius:50%;background:transparent!important;color:#9a6800!important;font-size:16px;line-height:1}.store-category-edit:hover{background:#fff2cf!important}.store-category-edit:focus-visible{outline:2px solid currentColor;outline-offset:2px}.store-category-toggle{display:flex!important;align-items:center;gap:5px;margin:0!important;color:#486581!important;font-size:10px!important;white-space:nowrap;cursor:pointer}.store-category-toggle input{width:15px;height:15px;min-height:15px;margin:0;accent-color:#15936f}
-.store-order-record{padding:11px}.store-order-record>p{margin:6px 0}.store-order-status{width:100%;min-height:38px;margin:8px 0 0;padding:8px 11px;border-radius:8px;background:#08775f;font-size:12px;font-weight:600}.store-order-status:hover{background:#075f4d}.store-order-status.is-collected,.store-order-status.is-collected:disabled{border:1px solid #b9e6d1;background:#e8f7ee;color:#14724a;opacity:1}
+.store-order-record{padding:11px}.store-order-record>p{margin:6px 0}.store-order-status{display:inline-flex;align-items:center;justify-content:center;width:fit-content;max-width:100%;min-height:38px;margin:8px 0 0;padding:8px 13px;border-radius:8px;background:#08775f;font-size:12px;font-weight:600;white-space:nowrap}.store-order-status:hover{background:#075f4d}.store-order-status.is-collected,.store-order-status.is-collected:disabled{border:1px solid #b9e6d1;background:#e8f7ee;color:#14724a;opacity:1}
 .config-dialog-form{display:grid;gap:0!important;padding:0!important}.config-group{padding:18px 20px;border-bottom:1px solid #e4eaf0}.config-group>header{display:flex;align-items:baseline;justify-content:space-between;gap:14px;margin-bottom:13px}.config-group>header strong{color:var(--finance-navy);font-size:14px}.config-group>header small{color:#718096;font-size:11px;text-align:right}.config-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.config-grid>label{margin:0}.config-switch{align-self:center;padding:11px;border:1px solid #dce4ec;border-radius:8px;background:#f8fafc}.config-toggle-stack{display:grid;align-content:center;gap:10px;padding:10px 0}.config-toggle-stack label{margin:0}
 .config-option-list{margin-top:14px;padding:13px;border:1px solid #dce4ec;border-radius:9px;background:#f8fafc}.config-option-list>strong{display:block;margin-bottom:9px;color:#486581;font-size:12px}.config-option-list label{margin:7px 0;font-size:12px}.config-option-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px 14px;margin-top:0}.config-dialog-actions{position:sticky;bottom:0;z-index:2;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;padding:13px 20px;background:#fff;box-shadow:0 -5px 16px rgba(16,42,67,.08)}.config-dialog-actions .status,.config-dialog-actions button{margin:0}.workflow-form .config-dialog-actions button{width:auto;min-width:160px}
 #staffUserDialog{width:min(780px,calc(100vw - 24px))}
@@ -1003,4 +1003,73 @@ html[data-theme="dark"] .workflow-form .profile-photo-remove{border-color:#45617
   .staff-avatar>span{display:block!important}
   .profile-photo-editor{grid-template-columns:74px minmax(0,1fr);gap:12px}
   .profile-photo-preview{width:72px;height:72px;font-size:23px}
+}
+
+/* Keep the password visibility control clear of entered text in every form layout. */
+.password-field>input{padding-right:68px!important}
+.password-field>.password-toggle{
+  position:absolute;
+  top:50%;
+  right:6px;
+  z-index:1;
+  width:auto!important;
+  min-width:50px;
+  min-height:28px;
+  margin:0!important;
+  padding:5px 8px!important;
+  transform:translateY(-50%);
+  border-radius:6px;
+  background:transparent;
+  line-height:1;
+}
+html[data-theme="dark"] .password-field>.password-toggle{color:#75adff}
+html[data-theme="dark"] .password-field>.password-toggle:hover{background:#1a3149;color:#cfe3ff}
+
+/* Icon-led navigation and isolated, full-height module workspaces. */
+.staff-page .staff-tabs .child-card{display:flex;align-items:center;gap:10px}
+.staff-tab-icon{display:grid!important;place-items:center;flex:0 0 25px;width:25px;height:25px;border-radius:8px;background:rgba(255,255,255,.07);font-size:15px;line-height:1}
+.staff-page .staff-tabs .child-card.selected .staff-tab-icon{background:rgba(255,255,255,.14)}
+.staff-sidebar .staff-tabs{margin-bottom:0;padding-bottom:12px}
+.staff-sidebar-actions{
+  position:relative;
+  z-index:3;
+  padding-top:11px;
+  border-top:1px solid rgba(255,255,255,.12);
+  background:#0b2239;
+}
+.staff-sidebar-note{position:relative;z-index:3}
+.staff-main-content.module-view-active{padding-top:18px}
+.staff-main-content.module-view-active .staff-summary{margin:0 0 14px}
+.staff-main-content.module-view-active .staff-panel{min-height:calc(100vh - 168px);min-height:calc(100dvh - 168px)}
+.staff-summary .module-summary-card{gap:2px}
+.staff-summary .module-summary-icon{
+  display:grid;
+  place-items:center;
+  width:28px;
+  height:28px;
+  margin:0 0 2px;
+  border-radius:9px;
+  background:#e8f2ff;
+  color:#1559aa;
+  font-size:15px;
+  line-height:1;
+  text-transform:none;
+}
+.staff-summary .module-summary-card:nth-child(4n+2) .module-summary-icon{background:#e7f7ef;color:#14724a}
+.staff-summary .module-summary-card:nth-child(4n+3) .module-summary-icon{background:#eeeaff;color:#5840a7}
+.staff-summary .module-summary-card:nth-child(4n+4) .module-summary-icon{background:#fff2cf;color:#8b6000}
+.staff-summary .module-summary-card small{margin-top:2px;color:#829ab1;font-size:9px}
+html[data-theme="dark"] .staff-summary .module-summary-icon{background:#183657;color:#9bc7ff}
+html[data-theme="dark"] .staff-summary .module-summary-card:nth-child(4n+2) .module-summary-icon{background:#123b32;color:#8be0bd}
+html[data-theme="dark"] .staff-summary .module-summary-card:nth-child(4n+3) .module-summary-icon{background:#30294d;color:#c9baff}
+html[data-theme="dark"] .staff-summary .module-summary-card:nth-child(4n+4) .module-summary-icon{background:#473716;color:#ffd877}
+@media (max-width:680px){
+  .staff-sidebar-actions{background:#092642}
+  .staff-main-content.module-view-active{padding-top:12px}
+  .staff-main-content.module-view-active .staff-summary{margin:0 0 8px}
+  .staff-main-content.module-view-active .staff-panel{min-height:calc(100vh - 188px);min-height:calc(100dvh - 188px);margin-top:0}
+  .staff-summary .module-summary-card{gap:1px}
+  .staff-summary .module-summary-icon{width:25px;height:25px;margin-bottom:1px;background:rgba(255,255,255,.16)!important;color:#fff!important;font-size:14px}
+  .staff-summary .module-summary-card strong{font-size:20px!important}
+  .staff-summary .module-summary-card span:not(.module-summary-icon){margin-top:3px!important}
 }
