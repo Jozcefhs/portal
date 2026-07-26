@@ -120,6 +120,7 @@ function installSidebarSwipeGestures() {
   let lastX = 0;
   let tracking = false;
   let openingGesture = false;
+  let gestureAxis = '';
 
   document.addEventListener('touchstart', (event) => {
     if (event.touches.length !== 1 || window.innerWidth > 680 || dashboardEl.hidden || moduleDialog.open) return;
@@ -132,6 +133,7 @@ function installSidebarSwipeGestures() {
     startY = touch.clientY;
     lastX = startX;
     openingGesture = !sidebarOpen && startedAtLeftEdge;
+    gestureAxis = '';
     tracking = true;
   }, { passive: true });
 
@@ -140,7 +142,15 @@ function installSidebarSwipeGestures() {
     lastX = event.touches[0].clientX;
     const deltaX = lastX - startX;
     const deltaY = event.touches[0].clientY - startY;
-    if (Math.abs(deltaX) > 12 && Math.abs(deltaX) > Math.abs(deltaY)) event.preventDefault();
+    if (!gestureAxis && Math.max(Math.abs(deltaX), Math.abs(deltaY)) >= 10) {
+      gestureAxis = Math.abs(deltaX) > Math.abs(deltaY) ? 'horizontal' : 'vertical';
+    }
+    if (gestureAxis === 'vertical') {
+      tracking = false;
+      return;
+    }
+    const movingInExpectedDirection = openingGesture ? deltaX > 0 : deltaX < 0;
+    if (gestureAxis === 'horizontal' && movingInExpectedDirection) event.preventDefault();
   }, { passive: false });
 
   document.addEventListener('touchend', (event) => {
@@ -149,12 +159,15 @@ function installSidebarSwipeGestures() {
     const deltaX = (touch?.clientX ?? lastX) - startX;
     const deltaY = (touch?.clientY ?? startY) - startY;
     tracking = false;
-    if (Math.abs(deltaY) > 90 || Math.abs(deltaX) < 64 || Math.abs(deltaX) < Math.abs(deltaY) * 1.25) return;
-    if (openingGesture && deltaX > 0) setSidebarOpen(true);
-    if (!openingGesture && deltaX < 0) setSidebarOpen(false);
+    if (gestureAxis !== 'horizontal') return;
+    if (openingGesture && deltaX >= 64 && Math.abs(deltaX) > Math.abs(deltaY)) setSidebarOpen(true);
+    if (!openingGesture && deltaX <= -38 && Math.abs(deltaX) >= Math.abs(deltaY) * .85) setSidebarOpen(false);
   }, { passive: true });
 
-  document.addEventListener('touchcancel', () => { tracking = false; }, { passive: true });
+  document.addEventListener('touchcancel', () => {
+    tracking = false;
+    gestureAxis = '';
+  }, { passive: true });
 }
 
 function showLogin(message = '', type = '') {

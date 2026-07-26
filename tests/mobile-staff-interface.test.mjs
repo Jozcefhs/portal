@@ -25,8 +25,10 @@ test('staff drawer supports touch swipe gestures in both directions', () => {
   assert.match(adminJs, /addEventListener\('touchstart'/);
   assert.match(adminJs, /addEventListener\('touchmove'/);
   assert.match(adminJs, /addEventListener\('touchend'/);
-  assert.match(adminJs, /openingGesture && deltaX > 0/);
-  assert.match(adminJs, /!openingGesture && deltaX < 0/);
+  assert.match(adminJs, /openingGesture && deltaX >= 64/);
+  assert.match(adminJs, /!openingGesture && deltaX <= -38/);
+  assert.match(adminJs, /gestureAxis === 'vertical'[\s\S]*?tracking = false/);
+  assert.match(adminJs, /movingInExpectedDirection = openingGesture \? deltaX > 0 : deltaX < 0/);
 });
 
 test('mobile welcome heading uses the reduced type scale', () => {
@@ -40,6 +42,12 @@ test('mobile summary cards are equal, centered, legible, and color coded', () =>
   assert.match(portalCss, /\.staff-page \.staff-summary>div:nth-child\(4n\+2\)\{background:linear-gradient/);
   assert.match(portalCss, /\.staff-page \.staff-summary>div:nth-child\(4n\+3\)\{background:linear-gradient/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.staff-page \.staff-summary>div[\s\S]*?\{color:#fff\}/);
+});
+
+test('mobile data-table columns fit their unwrapped contents', () => {
+  assert.match(portalCss, /\.staff-page \.admin-table\{[\s\S]*?width:max-content;[\s\S]*?min-width:100%;[\s\S]*?table-layout:auto;/);
+  assert.match(portalCss, /\.staff-page \.admin-table th,[\s\S]*?\.staff-page \.admin-table td\{[\s\S]*?white-space:nowrap;[\s\S]*?overflow-wrap:normal;[\s\S]*?word-break:normal;/);
+  assert.match(portalCss, /\.staff-page \.admin-table-wrap\{[\s\S]*?overflow-x:auto;/);
 });
 
 test('dark table selection inverts row text against the light selection surface', () => {

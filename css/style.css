@@ -614,6 +614,24 @@ html[data-theme="dark"] .preference-switch-row{border-color:#2a3c52}
   html[data-theme="dark"] .staff-page .staff-summary>div:nth-child(4n+2){background:linear-gradient(145deg,#086b75,#064752)}
   html[data-theme="dark"] .staff-page .staff-summary>div:nth-child(4n+3){background:linear-gradient(145deg,#7350a8,#422c70)}
   html[data-theme="dark"] .staff-page .staff-summary>div:nth-child(4n+4){background:linear-gradient(145deg,#a44f2d,#71301b)}
+  .staff-page .admin-table-wrap{
+    overflow-x:auto;
+    overflow-y:auto;
+    overscroll-behavior-x:contain;
+    -webkit-overflow-scrolling:touch;
+  }
+  .staff-page .admin-table{
+    width:max-content;
+    min-width:100%;
+    table-layout:auto;
+  }
+  .staff-page .admin-table th,
+  .staff-page .admin-table td{
+    width:1%;
+    white-space:nowrap;
+    overflow-wrap:normal;
+    word-break:normal;
+  }
 }
 
 /* Keep tapped table rows legible when dark mode gives them a light selection surface. */
