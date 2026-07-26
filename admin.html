@@ -6,7 +6,7 @@
   <title>Organisation Staff Portal</title>
   <meta name="theme-color" content="#071b33">
   <script src="js/preferences.js?v=20260726-launcher"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260726-mobile-command-centre-2">
+  <link rel="stylesheet" href="css/style.css?v=20260726-mobile-command-centre-3">
 </head>
 <body class="staff-page">
   <header class="staff-topbar">
@@ -15,7 +15,6 @@
       <span><strong data-school-name>Organisation Management Suite</strong><small id="staffEditionLabel">Web Companion</small></span>
     </a>
     <div id="staffIdentity" class="staff-identity" hidden>
-      <button type="button" id="staffMenuToggle" class="staff-menu-toggle" aria-controls="staffSidebar" aria-expanded="false"><span aria-hidden="true">☰</span> Menu</button>
       <span id="staffAvatar" class="staff-avatar" aria-hidden="true">S</span>
       <span class="staff-identity-copy"><strong id="staffDisplayName"></strong><small id="staffRole"></small></span>
       <button type="button" id="staffSignOut" class="dashboard-signout">Sign Out</button>
@@ -49,6 +48,10 @@
           <div class="staff-sidebar-note">
             <span class="staff-live-dot"></span>
             <div><strong>Firestore Live</strong><small>Desktop and web are synchronized</small></div>
+          </div>
+          <div class="staff-sidebar-actions">
+            <small class="staff-swipe-hint">Swipe left to close this panel</small>
+            <button type="button" id="staffSidebarSignOut" class="staff-sidebar-signout"><span aria-hidden="true">↪</span> Sign out</button>
           </div>
         </aside>
         <button type="button" id="staffSidebarScrim" class="staff-sidebar-scrim" aria-label="Close navigation menu" hidden></button>
@@ -96,6 +99,6 @@
 
   <script src="js/site-config.js?v=20260718-personalized-ui"></script>
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
-  <script src="js/admin.js?v=20260726-mobile-command-centre"></script>
+  <script src="js/admin.js?v=20260726-mobile-command-centre-3"></script>
 </body>
 </html>

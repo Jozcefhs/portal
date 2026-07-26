@@ -9,6 +9,7 @@ const displayNameEl = document.getElementById('staffDisplayName');
 const roleEl = document.getElementById('staffRole');
 const welcomeTitle = document.getElementById('staffWelcomeTitle');
 const signOutButton = document.getElementById('staffSignOut');
+const sidebarSignOutButton = document.getElementById('staffSidebarSignOut');
 const refreshButton = document.getElementById('staffRefresh');
 const summaryEl = document.getElementById('adminSummary');
 const dashboardChartsEl = document.getElementById('dashboardCharts');
@@ -18,7 +19,6 @@ const passwordDialog = document.getElementById('staffPasswordDialog');
 const passwordForm = document.getElementById('staffPasswordForm');
 const passwordButton = document.getElementById('staffPasswordButton');
 const passwordStatus = document.getElementById('staffPasswordStatus');
-const menuToggleButton = document.getElementById('staffMenuToggle');
 const sidebarEl = document.getElementById('staffSidebar');
 const sidebarScrim = document.getElementById('staffSidebarScrim');
 const staffAvatar = document.getElementById('staffAvatar');
@@ -110,9 +110,51 @@ function setSidebarOpen(open) {
   const shouldOpen = Boolean(open) && window.matchMedia('(max-width: 680px)').matches && !dashboardEl.hidden;
   sidebarEl.classList.toggle('is-open', shouldOpen);
   sidebarScrim.hidden = !shouldOpen;
-  menuToggleButton.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
   document.body.classList.toggle('staff-sidebar-open', shouldOpen);
   if (shouldOpen) sidebarEl.querySelector('[data-tab]')?.focus();
+}
+
+function installSidebarSwipeGestures() {
+  let startX = 0;
+  let startY = 0;
+  let lastX = 0;
+  let tracking = false;
+  let openingGesture = false;
+
+  document.addEventListener('touchstart', (event) => {
+    if (event.touches.length !== 1 || window.innerWidth > 680 || dashboardEl.hidden || moduleDialog.open) return;
+    const touch = event.touches[0];
+    const sidebarOpen = sidebarEl.classList.contains('is-open');
+    const startedAtLeftEdge = touch.clientX <= 32;
+    const startedInsideSidebar = sidebarOpen && sidebarEl.contains(event.target);
+    if (!startedAtLeftEdge && !startedInsideSidebar) return;
+    startX = touch.clientX;
+    startY = touch.clientY;
+    lastX = startX;
+    openingGesture = !sidebarOpen && startedAtLeftEdge;
+    tracking = true;
+  }, { passive: true });
+
+  document.addEventListener('touchmove', (event) => {
+    if (!tracking || event.touches.length !== 1) return;
+    lastX = event.touches[0].clientX;
+    const deltaX = lastX - startX;
+    const deltaY = event.touches[0].clientY - startY;
+    if (Math.abs(deltaX) > 12 && Math.abs(deltaX) > Math.abs(deltaY)) event.preventDefault();
+  }, { passive: false });
+
+  document.addEventListener('touchend', (event) => {
+    if (!tracking) return;
+    const touch = event.changedTouches[0];
+    const deltaX = (touch?.clientX ?? lastX) - startX;
+    const deltaY = (touch?.clientY ?? startY) - startY;
+    tracking = false;
+    if (Math.abs(deltaY) > 90 || Math.abs(deltaX) < 64 || Math.abs(deltaX) < Math.abs(deltaY) * 1.25) return;
+    if (openingGesture && deltaX > 0) setSidebarOpen(true);
+    if (!openingGesture && deltaX < 0) setSidebarOpen(false);
+  }, { passive: true });
+
+  document.addEventListener('touchcancel', () => { tracking = false; }, { passive: true });
 }
 
 function showLogin(message = '', type = '') {
@@ -1764,20 +1806,23 @@ loginForm.addEventListener('submit', async (event) => {
   }
 });
 
-signOutButton.addEventListener('click', async () => {
-  signOutButton.disabled = true;
+async function signOutFromPortal(button) {
+  button.disabled = true;
   try {
     await sessionRequest('POST', { action: 'logout' });
   } finally {
-    signOutButton.disabled = false;
+    button.disabled = false;
     showLogin('Signed out successfully.', 'ok');
     document.getElementById('staffUsername').focus();
   }
-});
+}
+
+signOutButton.addEventListener('click', () => signOutFromPortal(signOutButton));
+sidebarSignOutButton.addEventListener('click', () => signOutFromPortal(sidebarSignOutButton));
 
 refreshButton.addEventListener('click', loadDashboard);
-menuToggleButton.addEventListener('click', () => setSidebarOpen(!sidebarEl.classList.contains('is-open')));
 sidebarScrim.addEventListener('click', () => setSidebarOpen(false));
+installSidebarSwipeGestures();
 mobileNav.addEventListener('click', (event) => {
   const button = event.target.closest('[data-mobile-tab]');
   if (!button) return;
