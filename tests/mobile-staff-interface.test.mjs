@@ -166,7 +166,8 @@ test('parent store uses a compact quantity selector and cart icon', () => {
   assert.match(parentDashboardJs, /buy\.className = 'compact-icon-action store-cart-action'/);
   assert.match(parentDashboardJs, /buy\.setAttribute\('aria-label', `Add \$\{item\.ItemName\} to cart`\)/);
   assert.match(portalCss, /\.store-purchase-controls\{display:flex;[^}]*gap:6px/);
-  assert.match(portalCss, /\.store-quantity\{width:58px;max-width:58px;height:30px;min-height:30px/);
+  assert.match(portalCss, /\.store-quantity\{width:78px;max-width:78px;height:30px;min-height:30px/);
+  assert.match(portalCss, /@media \(max-width:780px\)[\s\S]*?\.store-quantity\{width:58px;max-width:58px/);
   assert.match(portalCss, /\.activity-item \.store-cart-action\{width:30px!important;[^}]*border-radius:50%/);
 });
 
