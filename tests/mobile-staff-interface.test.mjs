@@ -126,13 +126,23 @@ test('mobile configuration inputs use compact regular-weight sizing', () => {
   assert.match(portalCss, /\.staff-page \.config-form textarea,[\s\S]*?min-height:58px;[\s\S]*?font-size:12px;/);
 });
 
-test('finance requests use one-row metadata, paired decisions, and a repeat action', () => {
-  assert.match(adminJs, /class="admin-table-wrap finance-record-meta-table"/);
-  assert.match(adminJs, /<th>Amount<\/th><th>Department<\/th><th>Date<\/th>/);
-  assert.match(adminJs, /class="workflow-actions finance-record-actions"/);
+test('finance requests use one-row records, icon decisions, printing, and a repeat action', () => {
+  assert.match(adminJs, /class="admin-table finance-record-table"/);
+  assert.match(adminJs, /<th>Reference<\/th><th>Request<\/th><th>Description<\/th><th>Amount<\/th><th>Department<\/th><th>Date<\/th>/);
+  assert.match(adminJs, /class="finance-row-actions"/);
   assert.match(adminJs, /class="finance-new-request" data-open-dialog="requisitionDialog">\+ New Requisition/);
-  assert.match(portalCss, /\.finance-record-meta-table \.admin-table\{[^}]*width:max-content;[^}]*min-width:100%;[^}]*table-layout:auto/);
-  assert.match(portalCss, /\.finance-record-actions\{[^}]*display:flex!important;[^}]*flex-wrap:nowrap/);
-  assert.match(portalCss, /\.finance-record-actions button\{[^}]*flex:1 1 0;[^}]*width:auto!important/);
+  assert.match(adminJs, /class="compact-icon-action compact-print-action" data-print-finance-record=/);
+  assert.match(adminJs, /class="compact-icon-action compact-approve-action"[\s\S]*?aria-label="Approve/);
+  assert.match(adminJs, /class="compact-icon-action compact-reject-action"[\s\S]*?aria-label="Reject/);
+  assert.match(adminJs, /function openFinanceRecordPrint\(record, type\)/);
+  assert.match(adminJs, /window\.setTimeout\(\(\) => printable\.print\(\), 250\)/);
+  assert.match(adminJs, /data-offering-action="approvechurchoffering"[\s\S]*?aria-label="Approve offering"/);
+  assert.match(adminJs, /data-offering-action="rejectchurchoffering"[\s\S]*?aria-label="Reject offering"/);
+  assert.match(portalCss, /\.finance-record-table\{[^}]*width:max-content;[^}]*min-width:100%;[^}]*table-layout:auto/);
+  assert.match(portalCss, /\.finance-record-table th,\.finance-record-table td\{white-space:nowrap\}/);
+  assert.match(portalCss, /\.finance-row-actions\{[^}]*display:flex;[^}]*gap:4px/);
   assert.match(portalCss, /\.workflow-ledger-heading \.finance-new-request\{[^}]*width:auto;[^}]*min-width:132px/);
+  assert.match(portalCss, /\.compact-print-action\{color:/);
+  assert.match(portalCss, /\.compact-approve-action\{color:/);
+  assert.match(portalCss, /\.compact-reject-action\{color:/);
 });

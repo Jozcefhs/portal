@@ -1121,8 +1121,8 @@ async function loadChurchOfferings() {
               buttons.push(`<button type="button" class="table-action" data-offering-action="reconcile" data-offering-id="${escapeHtml(pick(row, ['OfferingId', '__id']))}">Reconcile</button>`);
             }
             if (row.CanApprove && status === 'reconciled' && approvalStatus !== 'approved' && accountingStatus !== 'posted') {
-              buttons.push(`<button type="button" class="table-action" data-offering-action="approvechurchoffering" data-offering-id="${escapeHtml(pick(row, ['OfferingId', '__id']))}">Approve</button>`);
-              buttons.push(`<button type="button" class="table-action workflow-reject" data-offering-action="rejectchurchoffering" data-offering-id="${escapeHtml(pick(row, ['OfferingId', '__id']) )}">Reject</button>`);
+              buttons.push(`<button type="button" class="table-action compact-icon-action compact-approve-action" data-offering-action="approvechurchoffering" data-offering-id="${escapeHtml(pick(row, ['OfferingId', '__id']))}" aria-label="Approve offering" title="Approve"><span aria-hidden="true">&#10003;</span></button>`);
+              buttons.push(`<button type="button" class="table-action compact-icon-action compact-reject-action" data-offering-action="rejectchurchoffering" data-offering-id="${escapeHtml(pick(row, ['OfferingId', '__id']) )}" aria-label="Reject offering" title="Reject"><span aria-hidden="true">&#10005;</span></button>`);
             }
             if (row.CanPost && status === 'reconciled' && approvalStatus === 'approved' && accountingStatus !== 'posted') {
               buttons.push(`<button type="button" class="table-action" data-offering-action="postchurchoffering" data-offering-id="${escapeHtml(pick(row, ['OfferingId', '__id']) )}">Post to Accounting</button>`);
@@ -1458,7 +1458,7 @@ function materialItemsTable(items) {
   `;
 }
 
-function financeRecordCard(record, type, capabilities) {
+function financeRecordRow(record, type, capabilities) {
   const id = pick(record, type === 'bill' ? ['BillNo', '__id'] : ['ExpenseNo', '__id']);
   const status = pick(record, ['Status']) || 'Submitted';
   const isMaterial = type === 'requisition' && clean(record.RequisitionType).toLowerCase() === 'material';
@@ -1469,37 +1469,30 @@ function financeRecordCard(record, type, capabilities) {
     : pick(record, ['Description']) || 'Requisition';
   const description = pick(record, ['Description']);
   const accountsReviewed = clean(record.AccountsReviewStatus).toLowerCase() === 'reviewed';
-  let actions = '';
+  let actions = `<button type="button" class="compact-icon-action compact-print-action" data-print-finance-record="${escapeHtml(id)}" data-record-type="${type}" aria-label="View and print ${escapeHtml(id)}" title="View and print"><span aria-hidden="true">&#128424;&#65038;</span></button>`;
   if (capabilities.canApprove && clean(status).toLowerCase() === 'submitted') {
-    actions += `<button type="button" class="workflow-approve" data-workflow-action="review" data-decision="Approved" data-record-type="${type}" data-record-id="${escapeHtml(id)}">Approve</button>`;
-    actions += `<button type="button" class="workflow-reject" data-workflow-action="review" data-decision="Rejected" data-record-type="${type}" data-record-id="${escapeHtml(id)}">Reject</button>`;
+    actions += `<button type="button" class="compact-icon-action compact-approve-action" data-workflow-action="review" data-decision="Approved" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Approve ${escapeHtml(id)}" title="Approve"><span aria-hidden="true">&#10003;</span></button>`;
+    actions += `<button type="button" class="compact-icon-action compact-reject-action" data-workflow-action="review" data-decision="Rejected" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Reject ${escapeHtml(id)}" title="Reject"><span aria-hidden="true">&#10005;</span></button>`;
   }
   if (capabilities.canAdminOverride && clean(status).toLowerCase() === 'approved' && !record.AdminReviewedAt) {
-    actions += `<button type="button" class="workflow-approve" data-workflow-action="review" data-decision="Approved" data-record-type="${type}" data-record-id="${escapeHtml(id)}">Admin OK</button>`;
-    actions += `<button type="button" class="workflow-reject" data-workflow-action="review" data-decision="Rejected" data-record-type="${type}" data-record-id="${escapeHtml(id)}">Admin Reject</button>`;
+    actions += `<button type="button" class="compact-icon-action compact-approve-action" data-workflow-action="review" data-decision="Approved" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Administratively approve ${escapeHtml(id)}" title="Administrative approval"><span aria-hidden="true">&#10003;</span></button>`;
+    actions += `<button type="button" class="compact-icon-action compact-reject-action" data-workflow-action="review" data-decision="Rejected" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Administratively reject ${escapeHtml(id)}" title="Administrative rejection"><span aria-hidden="true">&#10005;</span></button>`;
   }
   if (capabilities.canAccountsReview && clean(status).toLowerCase() === 'approved' && !accountsReviewed) {
-    actions += `<button type="button" data-workflow-action="accountsReview" data-record-type="${type}" data-record-id="${escapeHtml(id)}">Mark Accounts Reviewed</button>`;
+    actions += `<button type="button" class="compact-icon-action compact-approve-action" data-workflow-action="accountsReview" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Mark ${escapeHtml(id)} as accounts reviewed" title="Mark Accounts Reviewed"><span aria-hidden="true">&#10003;</span></button>`;
   }
   return `
-    <article class="workflow-record">
-      <div class="workflow-record-heading">
-        <div><strong>${escapeHtml(title)}</strong><small>${escapeHtml(id)}</small></div>
-        <span class="workflow-status status-${escapeHtml(clean(status).toLowerCase().replace(/\s+/g, '-'))}">${escapeHtml(status)}</span>
-      </div>
-      <p>${escapeHtml(description)}</p>
-      ${isMaterial ? materialItemsTable(record.MaterialItems || record.Items) : ''}
-      <div class="admin-table-wrap finance-record-meta-table">
-        <table class="admin-table">
-          <thead><tr><th>Amount</th><th>Department</th><th>Date</th><th>${type === 'bill' ? 'Due Date' : 'Vendor'}</th></tr></thead>
-          <tbody><tr><td>${escapeHtml(money(record.Amount))}</td><td>${escapeHtml(record.Department || '-')}</td><td>${escapeHtml(record.Date || '-')}</td><td>${escapeHtml(type === 'bill' ? (record.DueDate || '-') : (record.Vendor || '-'))}</td></tr></tbody>
-        </table>
-      </div>
-      ${record.Notes ? `<small>Notes: ${escapeHtml(record.Notes)}</small>` : ''}
-      ${record.ReviewNotes ? `<small>Review: ${escapeHtml(record.ReviewNotes)}</small>` : ''}
-      ${accountsReviewed ? `<small class="status ok">Accounts reviewed by ${escapeHtml(record.AccountsReviewedBy || 'Accounts')}</small>` : ''}
-      ${actions ? `<div class="workflow-actions finance-record-actions">${actions}</div>` : ''}
-    </article>
+    <tr>
+      <td>${escapeHtml(id)}</td>
+      <td>${escapeHtml(title)}</td>
+      <td>${escapeHtml(description || '-')}</td>
+      <td>${escapeHtml(money(record.Amount))}</td>
+      <td>${escapeHtml(record.Department || '-')}</td>
+      <td>${escapeHtml(record.Date || '-')}</td>
+      <td>${escapeHtml(type === 'bill' ? (record.DueDate || '-') : (record.Vendor || '-'))}</td>
+      <td><span class="workflow-status status-${escapeHtml(clean(status).toLowerCase().replace(/\s+/g, '-'))}">${escapeHtml(status)}</span></td>
+      <td><div class="finance-row-actions">${actions}</div></td>
+    </tr>
   `;
 }
 
@@ -1507,11 +1500,40 @@ function financeRecordsSection(title, records, type, capabilities) {
   return `
     <section class="workflow-list-section">
       <h2>${escapeHtml(title)} <small>(${records.length})</small></h2>
-      <div class="workflow-record-list">
-        ${records.length ? records.map((record) => financeRecordCard(record, type, capabilities)).join('') : '<p class="muted">No records found.</p>'}
+      <div class="admin-table-wrap finance-record-table-wrap">
+        <table class="admin-table finance-record-table">
+          <thead><tr><th>Reference</th><th>Request</th><th>Description</th><th>Amount</th><th>Department</th><th>Date</th><th>${type === 'bill' ? 'Due Date' : 'Vendor'}</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>${records.length ? records.map((record) => financeRecordRow(record, type, capabilities)).join('') : '<tr><td colspan="9">No records found.</td></tr>'}</tbody>
+        </table>
       </div>
     </section>
   `;
+}
+
+function openFinanceRecordPrint(record, type) {
+  if (!record) return;
+  const id = pick(record, type === 'bill' ? ['BillNo', '__id'] : ['ExpenseNo', '__id']);
+  const isMaterial = type === 'requisition' && clean(record.RequisitionType).toLowerCase() === 'material';
+  const heading = isMaterial ? 'Material Requisition' : type === 'bill' ? 'Supplier Bill' : 'Expense Requisition';
+  const materialTable = isMaterial ? materialItemsTable(record.MaterialItems || record.Items) : '';
+  const printable = window.open('', '_blank', 'width=900,height=720');
+  if (!printable) {
+    setStatus(document.getElementById('financeWorkflowStatus'), 'Allow pop-ups to view and print this request.', 'bad');
+    return;
+  }
+  printable.opener = null;
+  printable.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(heading)} ${escapeHtml(id)}</title><style>
+    body{margin:32px;color:#102a43;font:13px Arial,sans-serif}h1{margin:0 0 4px;font-size:22px}h2{margin:24px 0 8px;font-size:16px}.muted{color:#627d98}.summary{width:100%;margin:20px 0;border-collapse:collapse}.summary th,.summary td,.admin-table th,.admin-table td{padding:8px;border:1px solid #cbd7e5;text-align:left;vertical-align:top}.summary th,.admin-table th{background:#edf3f8;font-size:10px;text-transform:uppercase}.admin-table{width:100%;border-collapse:collapse}.admin-table-wrap{margin:14px 0}.print-action{margin:0 0 20px;padding:8px 14px;border:0;border-radius:6px;background:#102a43;color:#fff}.notes{padding:10px;border-left:3px solid #19a7a0;background:#f5f8fb}@media print{.print-action{display:none}body{margin:12mm}}
+  </style></head><body><button class="print-action" onclick="window.print()">Print</button><h1>${escapeHtml(heading)}</h1><p class="muted">${escapeHtml(id)} · ${escapeHtml(record.Status || 'Submitted')}</p>
+  <table class="summary"><tbody>
+    <tr><th>Description</th><td>${escapeHtml(record.Description || '-')}</td><th>Amount</th><td>${escapeHtml(money(record.Amount))}</td></tr>
+    <tr><th>Department</th><td>${escapeHtml(record.Department || '-')}</td><th>Date</th><td>${escapeHtml(record.Date || '-')}</td></tr>
+    <tr><th>${type === 'bill' ? 'Due Date' : 'Vendor'}</th><td>${escapeHtml(type === 'bill' ? (record.DueDate || '-') : (record.Vendor || '-'))}</td><th>Requested By</th><td>${escapeHtml(record.RequestedBy || record.CreatedBy || '-')}</td></tr>
+  </tbody></table>${materialTable}${record.Notes ? `<p class="notes"><strong>Notes:</strong> ${escapeHtml(record.Notes)}</p>` : ''}${record.ReviewNotes ? `<p class="notes"><strong>Review:</strong> ${escapeHtml(record.ReviewNotes)}</p>` : ''}
+  </body></html>`);
+  printable.document.close();
+  printable.focus();
+  window.setTimeout(() => printable.print(), 250);
 }
 
 function renderFinanceWorkflow() {
@@ -1738,6 +1760,14 @@ function bindFinanceWorkflowEvents() {
   bindSubmissionForm('requisitionForm', 'submitRequisition', 'Requisition submitted.');
   bindMaterialRequisitionForm();
   bindSubmissionForm('supplierBillForm', 'submitBill', 'Supplier bill submitted.');
+  panelEl.querySelectorAll('[data-print-finance-record]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const type = button.dataset.recordType;
+      const records = type === 'bill' ? financeData?.bills : financeData?.requisitions;
+      const record = (records || []).find((item) => clean(pick(item, type === 'bill' ? ['BillNo', '__id'] : ['ExpenseNo', '__id'])) === clean(button.dataset.printFinanceRecord));
+      openFinanceRecordPrint(record, type);
+    });
+  });
   panelEl.querySelectorAll('[data-workflow-action]').forEach((button) => {
     button.addEventListener('click', async () => {
       const action = button.dataset.workflowAction;
