@@ -15,9 +15,32 @@ function response(data, status = 200, cookie = '') {
   return Response.json(data, { status, headers });
 }
 
+function profilePhoto(value) {
+  const photo = String(value || '').trim();
+  if (!photo) return '';
+  if (photo.length > 350000 || !/^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/=\s]+$/i.test(photo)) {
+    const err = new Error('Choose a valid PNG, JPG or WebP profile picture.');
+    err.status = 400;
+    throw err;
+  }
+  return photo;
+}
+
 export async function onRequestGet(context) {
   try {
-    const user = await readStaffSession(context.env, context.request);
+    const sessionUser = await readStaffSession(context.env, context.request);
+    let user = sessionUser;
+    if (sessionUser) {
+      const users = await listCollection(context.env, 'staffUsers').catch(() => []);
+      const stored = users.find((row) => String(row.Username || row.__id || '').trim().toLowerCase() === sessionUser.username.toLowerCase());
+      if (stored) {
+        user = {
+          ...sessionUser,
+          displayName: String(stored.DisplayName || sessionUser.displayName || sessionUser.username).trim(),
+          profilePhotoUrl: String(stored.ProfilePhotoDataUrl || '').trim()
+        };
+      }
+    }
     const access = user ? await staffAccessFor(context.env, user) : null;
     return response({
       ok: true,
@@ -38,6 +61,43 @@ export async function onRequestPost(context) {
       return response({ ok: true, authenticated: false, message: 'Signed out.' }, 200, clearStaffSessionCookie());
     }
     requireFirestoreEnv(env);
+    if (action === 'updateprofile') {
+      const sessionUser = await readStaffSession(env, request);
+      if (!sessionUser) return response({ ok: false, message: 'Your staff session has expired.' }, 401);
+      const users = await listCollection(env, 'staffUsers');
+      const existing = users.find((row) => String(row.Username || row.__id || '').trim().toLowerCase() === sessionUser.username.toLowerCase());
+      if (!existing) return response({ ok: false, message: 'The Firestore staff account was not found.' }, 404);
+      if (['no', 'false', '0', 'inactive', 'disabled'].includes(String(existing.Active ?? 'YES').trim().toLowerCase())) {
+        return response({ ok: false, message: 'This staff account has been disabled.' }, 401, clearStaffSessionCookie());
+      }
+      const displayName = String(body.displayName || '').trim();
+      if (!displayName) return response({ ok: false, message: 'Display name is required.' }, 400);
+      const updatedAt = new Date().toISOString();
+      const updated = {
+        ...existing,
+        DisplayName: displayName,
+        ProfilePhotoDataUrl: profilePhoto(body.profilePhotoDataUrl),
+        UpdatedAt: updatedAt,
+        UpdatedBy: sessionUser.username
+      };
+      delete updated.__id;
+      delete updated.__name;
+      await upsertDocument(env, 'staffUsers', existing.__id, updated);
+      const refreshedUser = {
+        ...sessionUser,
+        displayName,
+        profilePhotoUrl: updated.ProfilePhotoDataUrl,
+        mustChangePassword: Boolean(sessionUser.mustChangePassword)
+      };
+      const refreshedToken = await createStaffSession(env, refreshedUser);
+      const access = await staffAccessFor(env, refreshedUser);
+      return response({
+        ok: true,
+        authenticated: true,
+        message: 'Profile updated.',
+        user: { ...refreshedUser, ...access }
+      }, 200, staffSessionCookie(refreshedToken));
+    }
     if (action === 'changepassword') {
       const sessionUser = await readStaffSession(env, request);
       if (!sessionUser) return response({ ok: false, message: 'Your staff session has expired.' }, 401);
@@ -64,6 +124,7 @@ export async function onRequestPost(context) {
       const refreshedUser = {
         username: String(existing.Username || existing.__id || sessionUser.username).trim(),
         displayName: String(existing.DisplayName || existing.Username || sessionUser.displayName).trim(),
+        profilePhotoUrl: String(existing.ProfilePhotoDataUrl || sessionUser.profilePhotoUrl || '').trim(),
         role: String(existing.Role || sessionUser.role || 'Front Desk').trim(),
         department: String(existing.Department || sessionUser.department || '').trim(),
         branchId: String(existing.BranchId || sessionUser.branchId || '').trim(),

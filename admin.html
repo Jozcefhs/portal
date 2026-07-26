@@ -6,7 +6,7 @@
   <title>Organisation Staff Portal</title>
   <meta name="theme-color" content="#071b33">
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260726-shared-mobile-14">
+  <link rel="stylesheet" href="css/style.css?v=20260726-shared-mobile-15">
 </head>
 <body class="staff-page">
   <header class="staff-topbar">
@@ -15,8 +15,10 @@
       <span><strong data-school-name>Organisation Management Suite</strong><small id="staffEditionLabel">Web Companion</small></span>
     </a>
     <div id="staffIdentity" class="staff-identity" hidden>
-      <span id="staffAvatar" class="staff-avatar" aria-hidden="true">S</span>
-      <span class="staff-identity-copy"><strong id="staffDisplayName"></strong><small id="staffRole"></small></span>
+      <button type="button" id="staffProfileTrigger" class="staff-profile-trigger" aria-label="Edit my profile" title="Edit my profile">
+        <span id="staffAvatar" class="staff-avatar" aria-hidden="true"><img id="staffAvatarImage" alt="" hidden><span id="staffAvatarFallback">S</span></span>
+        <span class="staff-identity-copy"><strong id="staffDisplayName"></strong><small id="staffRole"></small></span>
+      </button>
       <button type="button" id="staffSignOut" class="dashboard-signout">Sign Out</button>
     </div>
   </header>
@@ -48,10 +50,6 @@
             <strong id="staffWorkspaceTitle">Operations Centre</strong>
           </div>
           <nav class="admin-tabs staff-tabs" id="adminTabs" aria-label="Staff dashboard sections"></nav>
-          <div class="staff-sidebar-note">
-            <span class="staff-live-dot"></span>
-            <div><strong>Firestore Live</strong><small>Desktop and web are synchronized</small></div>
-          </div>
           <div class="staff-sidebar-actions">
             <small class="staff-swipe-hint">Swipe left to close this panel</small>
             <button type="button" id="staffApprovalSettings" class="staff-profile-settings" hidden>
@@ -61,6 +59,10 @@
               <span aria-hidden="true">◉</span> Set up biometric sign-in
             </button>
             <button type="button" id="staffSidebarSignOut" class="staff-sidebar-signout"><span aria-hidden="true">↪</span> Sign out</button>
+          </div>
+          <div class="staff-sidebar-note">
+            <span class="staff-live-dot"></span>
+            <div><strong>Database Live</strong><small>Desktop and web are synchronized</small></div>
           </div>
         </aside>
         <button type="button" id="staffSidebarScrim" class="staff-sidebar-scrim" aria-label="Close navigation menu" hidden></button>
@@ -103,6 +105,29 @@
       <button id="staffPasswordButton" type="submit">Change Password</button>
       <button id="staffPasswordSignOut" type="button" class="dashboard-signout">Sign Out Instead</button>
       <p id="staffPasswordStatus" class="status" role="status"></p>
+    </form>
+  </dialog>
+
+  <dialog id="staffProfileDialog" class="workflow-dialog staff-profile-dialog">
+    <div class="workflow-dialog-header">
+      <div><small>My account</small><h2>Edit Profile</h2></div>
+      <button type="button" id="staffProfileClose" aria-label="Close profile">&times;</button>
+    </div>
+    <form id="staffProfileForm" class="workflow-form">
+      <label>Display name <span class="required">*</span><input id="staffProfileDisplayName" name="displayName" required></label>
+      <div class="profile-photo-editor">
+        <div class="profile-photo-preview">
+          <img id="staffProfilePhotoPreview" alt="Profile picture preview" hidden>
+          <span id="staffProfilePhotoFallback" aria-hidden="true">S</span>
+        </div>
+        <div>
+          <label>Profile picture<input id="staffProfilePhotoFile" type="file" accept="image/png,image/jpeg,image/webp"></label>
+          <small class="muted">PNG, JPG or WebP. The image is optimized before saving.</small>
+          <button type="button" id="staffProfilePhotoRemove" class="profile-photo-remove">Remove picture</button>
+        </div>
+      </div>
+      <button type="submit" id="staffProfileSave">Save profile</button>
+      <p id="staffProfileStatus" class="status" role="status"></p>
     </form>
   </dialog>
 
@@ -172,6 +197,6 @@
 
   <script src="js/site-config.js?v=20260718-personalized-ui"></script>
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
-  <script src="js/admin.js?v=20260726-shared-mobile-14"></script>
+  <script src="js/admin.js?v=20260726-shared-mobile-15"></script>
 </body>
 </html>

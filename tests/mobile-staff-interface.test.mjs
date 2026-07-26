@@ -45,6 +45,19 @@ test('mobile summary cards are equal, centered, legible, and color coded', () =>
   assert.match(portalCss, /html\[data-theme="dark"\] \.staff-page \.staff-summary>div[\s\S]*?\{color:#fff\}/);
 });
 
+test('summary-card contents are centered on desktop as well as mobile', () => {
+  assert.match(portalCss, /\.staff-page \.staff-summary>div\{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center\}/);
+});
+
+test('sidebar keeps account actions visible and database status last', () => {
+  const actionsIndex = adminHtml.indexOf('class="staff-sidebar-actions"');
+  const databaseIndex = adminHtml.indexOf('<strong>Database Live</strong>');
+  assert.ok(actionsIndex >= 0 && databaseIndex > actionsIndex);
+  assert.doesNotMatch(adminHtml, /Firestore Live/);
+  assert.match(portalCss, /\.staff-sidebar \.staff-tabs\{flex:1 1 auto;min-height:0\}/);
+  assert.match(portalCss, /\.staff-sidebar-actions\{display:grid;flex:0 0 auto;gap:8px;margin-top:auto\}/);
+});
+
 test('mobile data-table columns fit their unwrapped contents', () => {
   assert.match(portalCss, /\.staff-page \.admin-table\{[\s\S]*?width:max-content;[\s\S]*?min-width:100%;[\s\S]*?table-layout:auto;/);
   assert.match(portalCss, /\.staff-page \.admin-table th,[\s\S]*?\.staff-page \.admin-table td\{[\s\S]*?white-space:nowrap;[\s\S]*?overflow-wrap:normal;[\s\S]*?word-break:normal;/);
@@ -85,6 +98,23 @@ test('dark mode preserves dashboard and requisition text contrast', () => {
   assert.match(portalCss, /html\[data-theme="dark"\] \.workflow-ledger-heading h2\{color:#f4f8ff\}/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.workflow-dialog,[\s\S]*?background:#0d1a29;color:#edf4ff/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.workflow-dialog \.workflow-form label\{color:#f4f8ff\}/);
+});
+
+test('dark mode covers staff configuration and account-management surfaces', () => {
+  assert.match(portalCss, /html\[data-theme="dark"\] \.config-switch/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.config-option-list/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.config-option-list label/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.config-dialog-actions/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.staff-user-row/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.staff-module-dialog/);
+});
+
+test('dark mode covers shared forms, notices, and general settings', () => {
+  assert.match(portalCss, /html\[data-theme="dark"\] \.fee-option/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.upload-result/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.settings-section/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.settings-field input/);
+  assert.match(portalCss, /html\[data-theme="dark"\] input::placeholder/);
 });
 
 test('selected student card has an unmistakable active state', () => {

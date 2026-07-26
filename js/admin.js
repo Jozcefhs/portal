@@ -22,6 +22,7 @@ const summaryEl = document.getElementById('adminSummary');
 const dashboardChartsEl = document.getElementById('dashboardCharts');
 const tabsEl = document.getElementById('adminTabs');
 const panelEl = document.getElementById('adminPanel');
+const profileTrigger = document.getElementById('staffProfileTrigger');
 const passwordDialog = document.getElementById('staffPasswordDialog');
 const passwordForm = document.getElementById('staffPasswordForm');
 const passwordButton = document.getElementById('staffPasswordButton');
@@ -29,6 +30,10 @@ const passwordStatus = document.getElementById('staffPasswordStatus');
 const sidebarEl = document.getElementById('staffSidebar');
 const sidebarScrim = document.getElementById('staffSidebarScrim');
 const staffAvatar = document.getElementById('staffAvatar');
+const staffAvatarImage = document.getElementById('staffAvatarImage');
+const staffAvatarFallback = document.getElementById('staffAvatarFallback');
+const staffProfileDialog = document.getElementById('staffProfileDialog');
+const staffProfileForm = document.getElementById('staffProfileForm');
 const editionLabel = document.getElementById('staffEditionLabel');
 const workspaceTitle = document.getElementById('staffWorkspaceTitle');
 const overviewLabel = document.getElementById('staffOverviewLabel');
@@ -51,6 +56,7 @@ let approvalProfile = null;
 let approvalAssetState = { signature: '', stamp: '' };
 let pendingFinanceDecision = null;
 let financeDecisionBiometricVerified = false;
+let profilePhotoState = '';
 
 const tabConfig = [
   ['admissions', 'Admissions'],
@@ -276,6 +282,59 @@ async function approvalImageDataUrl(file) {
   return optimized;
 }
 
+async function profilePhotoDataUrl(file) {
+  if (!file || !/^image\/(?:png|jpeg|webp)$/i.test(file.type)) throw new Error('Choose a PNG, JPG or WebP image.');
+  if (file.size > 5 * 1024 * 1024) throw new Error('Choose an image smaller than 5 MB.');
+  const raw = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Could not read the selected image.'));
+    reader.readAsDataURL(file);
+  });
+  const image = await new Promise((resolve, reject) => {
+    const loaded = new Image();
+    loaded.onload = () => resolve(loaded);
+    loaded.onerror = () => reject(new Error('The selected image could not be opened.'));
+    loaded.src = raw;
+  });
+  const sourceSize = Math.min(image.width, image.height);
+  const sourceX = Math.max(0, (image.width - sourceSize) / 2);
+  const sourceY = Math.max(0, (image.height - sourceSize) / 2);
+  const canvas = document.createElement('canvas');
+  canvas.width = 320;
+  canvas.height = 320;
+  canvas.getContext('2d').drawImage(image, sourceX, sourceY, sourceSize, sourceSize, 0, 0, 320, 320);
+  const optimized = canvas.toDataURL('image/webp', .82);
+  if (optimized.length > 350000) throw new Error('The optimized picture is still too large. Choose a smaller image.');
+  return optimized;
+}
+
+function renderProfilePhoto(dataUrl = '', displayName = '') {
+  const photo = clean(dataUrl);
+  const fallback = clean(displayName).charAt(0).toUpperCase() || 'S';
+  staffAvatarImage.src = photo;
+  staffAvatarImage.hidden = !photo;
+  staffAvatarFallback.textContent = fallback;
+  staffAvatarFallback.hidden = Boolean(photo);
+  const preview = document.getElementById('staffProfilePhotoPreview');
+  const previewFallback = document.getElementById('staffProfilePhotoFallback');
+  preview.src = photo;
+  preview.hidden = !photo;
+  previewFallback.textContent = fallback;
+  previewFallback.hidden = Boolean(photo);
+  document.getElementById('staffProfilePhotoRemove').hidden = !photo;
+}
+
+function openStaffProfile() {
+  if (!currentUser) return;
+  staffProfileForm.reset();
+  profilePhotoState = clean(currentUser.profilePhotoUrl);
+  document.getElementById('staffProfileDisplayName').value = currentUser.displayName || currentUser.username || '';
+  renderProfilePhoto(profilePhotoState, currentUser.displayName || currentUser.username);
+  setStatus(document.getElementById('staffProfileStatus'), '');
+  staffProfileDialog.showModal();
+}
+
 async function openApprovalSettings() {
   setStatus(document.getElementById('staffApprovalSettingsStatus'), 'Loading saved settings...');
   approvalSettingsDialog.showModal();
@@ -384,7 +443,7 @@ function showDashboard(user) {
   const isChurch = requestedWorkspace === 'church' || explicitEdition === 'church' || /dunamis|digc|church/i.test(profileName);
   displayNameEl.textContent = displayName;
   roleEl.textContent = [user.role, user.department].filter(Boolean).join(' • ');
-  staffAvatar.textContent = displayName.charAt(0).toUpperCase();
+  renderProfilePhoto(user.profilePhotoUrl, displayName);
   sidebarEl.querySelector('.staff-sidebar-heading')?.setAttribute('data-initial', displayName.charAt(0).toUpperCase());
   editionLabel.textContent = isChurch ? 'Church Operations' : 'Staff Web Companion';
   workspaceTitle.textContent = isChurch ? 'Church Operations' : 'Operations Centre';
@@ -2458,6 +2517,48 @@ document.getElementById('financeDecisionClose').addEventListener('click', () => 
 });
 document.getElementById('financeDecisionBiometric').addEventListener('click', verifyFinanceDecisionBiometric);
 financeDecisionForm.addEventListener('submit', submitFinanceDecision);
+
+profileTrigger.addEventListener('click', openStaffProfile);
+document.getElementById('staffProfileClose').addEventListener('click', () => staffProfileDialog.close());
+document.getElementById('staffProfilePhotoRemove').addEventListener('click', () => {
+  profilePhotoState = '';
+  document.getElementById('staffProfilePhotoFile').value = '';
+  renderProfilePhoto('', document.getElementById('staffProfileDisplayName').value || currentUser?.displayName);
+  setStatus(document.getElementById('staffProfileStatus'), 'Profile picture will be removed when you save.');
+});
+document.getElementById('staffProfilePhotoFile').addEventListener('change', async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  try {
+    profilePhotoState = await profilePhotoDataUrl(file);
+    renderProfilePhoto(profilePhotoState, document.getElementById('staffProfileDisplayName').value || currentUser?.displayName);
+    setStatus(document.getElementById('staffProfileStatus'), 'Profile picture ready to save.', 'ok');
+  } catch (error) {
+    event.target.value = '';
+    setStatus(document.getElementById('staffProfileStatus'), error.message || String(error), 'bad');
+  }
+});
+staffProfileForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = document.getElementById('staffProfileSave');
+  const displayName = clean(document.getElementById('staffProfileDisplayName').value);
+  setButtonLoading(button, true, 'Saving...', 'Save profile');
+  try {
+    const { response, data } = await sessionRequest('POST', {
+      action: 'updateProfile',
+      displayName,
+      profilePhotoDataUrl: profilePhotoState
+    });
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Profile could not be updated.');
+    showDashboard(data.user);
+    staffProfileDialog.close();
+    setStatus(dashboardStatus, data.message, 'ok');
+  } catch (error) {
+    setStatus(document.getElementById('staffProfileStatus'), error.message || String(error), 'bad');
+  } finally {
+    setButtonLoading(button, false, 'Saving...', 'Save profile');
+  }
+});
 
 async function signOutFromPortal(button) {
   button.disabled = true;

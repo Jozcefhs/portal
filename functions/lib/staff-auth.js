@@ -110,6 +110,7 @@ function publicUser(user) {
   return {
     username: clean(user.Username || user.username || user.__id),
     displayName: clean(user.DisplayName || user.displayName || user.Username || user.username || user.__id),
+    profilePhotoUrl: clean(user.ProfilePhotoDataUrl || user.profilePhotoUrl),
     role: clean(user.Role || user.role) || 'Front Desk',
     department: inferDepartment(user),
     branchId: clean(user.BranchId || user.branchId),
