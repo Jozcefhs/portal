@@ -505,7 +505,7 @@ async function sessionRequest(method = 'GET', body = null) {
 
 async function loadDashboard() {
   setButtonLoading(refreshButton, true, 'Refreshing...', 'Refresh Dashboard');
-  setStatus(dashboardStatus, 'Loading permitted Firestore records...');
+  setStatus(dashboardStatus, 'Loading permitted database records...');
   try {
     const response = await fetch('/api/admin', {
       method: 'POST',
@@ -2285,7 +2285,7 @@ function bindMaterialRequisitionForm() {
     const status = form.querySelector('[data-form-status]');
     const payload = { ...formPayload(form), items: materialRequisitionItems(form) };
     setButtonLoading(button, true, 'Submitting...', 'Submit Material Requisition');
-    setStatus(status, 'Saving to Firestore...');
+    setStatus(status, 'Saving to database...');
     try {
       await financeRequest('submitMaterialRequisition', payload);
       setStatus(status, 'Material requisition submitted.', 'ok');
@@ -2308,7 +2308,7 @@ function bindSubmissionForm(formId, action, successText) {
     const status = form.querySelector('[data-form-status]');
     setButtonLoading(button, true, 'Submitting...', button.dataset.normalText || button.textContent);
     if (!button.dataset.normalText) button.dataset.normalText = action === 'submitBill' ? 'Submit Supplier Bill' : 'Submit Requisition';
-    setStatus(status, 'Saving to Firestore...');
+    setStatus(status, 'Saving to database...');
     try {
       await financeRequest(action, formPayload(form));
       form.reset();
@@ -2392,12 +2392,12 @@ function renderStaffUsers() {
   const admins = staffUsersData.filter((user) => user.Role === 'Super Admin' && yes(user.Active)).length;
   panelEl.innerHTML = `
     <div class="workflow-intro">
-      <div><p class="eyebrow">Identity & access</p><h2>Staff & Permissions</h2><p class="muted">Shared Firestore accounts for desktop and web access</p></div>
+      <div><p class="eyebrow">Identity & access</p><h2>Staff & Permissions</h2><p class="muted">Shared database accounts for desktop and web access</p></div>
       <div class="workflow-primary-actions"><button type="button" id="newStaffUser">+ New Staff Account</button><button type="button" id="uploadStaffCsv">Upload Staff CSV</button><button type="button" class="workflow-icon-action" id="staffCsvTemplate">CSV Template</button><button type="button" class="workflow-icon-action" id="refreshStaffUsers">Refresh</button><input type="file" id="staffCsvFile" accept=".csv,text/csv" hidden></div>
     </div>
     <p id="staffUsersStatus" class="status"></p>
     <div class="workflow-kpis staff-user-kpis">
-      <div><small>Total Accounts</small><strong>${staffUsersData.length}</strong><span>Firestore staff users</span></div>
+      <div><small>Total Accounts</small><strong>${staffUsersData.length}</strong><span>Database staff users</span></div>
       <div><small>Active</small><strong>${activeUsers}</strong><span>Can sign in</span></div>
       <div><small>Super Admins</small><strong>${admins}</strong><span>Active administrators</span></div>
       <div><small>Disabled</small><strong>${staffUsersData.length - activeUsers}</strong><span>Access blocked</span></div>
@@ -2410,7 +2410,7 @@ function renderStaffUsers() {
           <span class="workflow-status ${yes(user.Active) ? 'status-approved' : 'status-rejected'}">${yes(user.Active) ? 'Active' : 'Disabled'}</span>
           <div class="staff-user-actions"><button type="button" class="compact-icon-action compact-edit-action" data-edit-user="${escapeHtml(user.Username)}" aria-label="Edit ${escapeHtml(user.DisplayName || user.Username)}" title="Edit staff account"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action compact-delete-action" data-delete-user="${escapeHtml(user.Username)}" aria-label="Delete ${escapeHtml(user.DisplayName || user.Username)}" title="Delete staff account"><span aria-hidden="true">&#128465;&#65038;</span></button></div>
         </article>
-      `).join('') : '<p class="muted">No Firestore staff accounts found. Create the first shared staff account.</p>'}
+      `).join('') : '<p class="muted">No database staff accounts found. Create the first shared staff account.</p>'}
     </div>
     <section class="staff-security-activity">
       <h2>Recent Security Activity</h2>
@@ -2596,6 +2596,7 @@ loginForm.addEventListener('submit', async (event) => {
     });
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not sign in.');
     loginForm.reset();
+    setStatus(loginStatus, '');
     await continueAfterAuthentication(data.user);
   } catch (error) {
     setStatus(loginStatus, error.message || String(error), 'bad');
@@ -2812,7 +2813,7 @@ passwordForm.addEventListener('submit', async (event) => {
     return;
   }
   setButtonLoading(passwordButton, true, 'Changing...', 'Change Password');
-  setStatus(passwordStatus, 'Updating your Firestore staff account...');
+  setStatus(passwordStatus, 'Updating your database staff account...');
   try {
     const { response, data } = await sessionRequest('POST', { action: 'changePassword', password, confirmPassword });
     if (!response.ok || !data.ok) throw new Error(data.message || 'Password could not be changed.');

@@ -1,5 +1,6 @@
 import {
   authenticateStaff,
+  clearStaffApprovalProofCookie,
   clearStaffSessionCookie,
   createStaffSession,
   readStaffSession,
@@ -9,9 +10,10 @@ import {
 import { listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { hashStaffPassword } from '../lib/staff-auth.js';
 
-function response(data, status = 200, cookie = '') {
-  const headers = { 'Cache-Control': 'no-store' };
-  if (cookie) headers['Set-Cookie'] = cookie;
+function response(data, status = 200, cookies = []) {
+  const headers = new Headers({ 'Cache-Control': 'no-store' });
+  const values = Array.isArray(cookies) ? cookies : [cookies];
+  values.filter(Boolean).forEach((cookie) => headers.append('Set-Cookie', cookie));
   return Response.json(data, { status, headers });
 }
 
@@ -58,7 +60,11 @@ export async function onRequestPost(context) {
     const body = await request.json().catch(() => ({}));
     const action = String(body.action || body.Action || 'login').trim().toLowerCase();
     if (action === 'logout') {
-      return response({ ok: true, authenticated: false, message: 'Signed out.' }, 200, clearStaffSessionCookie());
+      return response(
+        { ok: true, authenticated: false, message: 'Signed out. You can sign in again at any time.' },
+        200,
+        [clearStaffSessionCookie(), clearStaffApprovalProofCookie()]
+      );
     }
     requireFirestoreEnv(env);
     if (action === 'updateprofile') {
@@ -66,7 +72,7 @@ export async function onRequestPost(context) {
       if (!sessionUser) return response({ ok: false, message: 'Your staff session has expired.' }, 401);
       const users = await listCollection(env, 'staffUsers');
       const existing = users.find((row) => String(row.Username || row.__id || '').trim().toLowerCase() === sessionUser.username.toLowerCase());
-      if (!existing) return response({ ok: false, message: 'The Firestore staff account was not found.' }, 404);
+      if (!existing) return response({ ok: false, message: 'The database staff account was not found.' }, 404);
       if (['no', 'false', '0', 'inactive', 'disabled'].includes(String(existing.Active ?? 'YES').trim().toLowerCase())) {
         return response({ ok: false, message: 'This staff account has been disabled.' }, 401, clearStaffSessionCookie());
       }
@@ -105,7 +111,7 @@ export async function onRequestPost(context) {
       if (password !== String(body.confirmPassword || '')) return response({ ok: false, message: 'Passwords do not match.' }, 400);
       const users = await listCollection(env, 'staffUsers');
       const existing = users.find((row) => String(row.Username || row.__id || '').trim().toLowerCase() === sessionUser.username.toLowerCase());
-      if (!existing) return response({ ok: false, message: 'The Firestore staff account was not found.' }, 404);
+      if (!existing) return response({ ok: false, message: 'The database staff account was not found.' }, 404);
       if (['no', 'false', '0', 'inactive', 'disabled'].includes(String(existing.Active ?? 'YES').trim().toLowerCase())) {
         return response({ ok: false, message: 'This staff account has been disabled.' }, 401, clearStaffSessionCookie());
       }

@@ -55,7 +55,7 @@ export function requireFirestoreEnv(env) {
   const missing = ['FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY']
     .filter((key) => !String(env[key] || '').trim());
   if (missing.length) {
-    throw new Error(`Firestore is not configured. Missing: ${missing.join(', ')}`);
+    throw new Error(`Database is not configured. Missing: ${missing.join(', ')}`);
   }
 }
 
@@ -76,7 +76,7 @@ export async function getFirestoreAccessToken(env) {
   });
   const data = await response.json();
   if (!response.ok || !data.access_token) {
-    throw new Error(data.error_description || data.error || 'Could not obtain Firestore access token.');
+    throw new Error(data.error_description || data.error || 'Could not obtain the database access token.');
   }
   cachedToken = {
     accessToken: data.access_token,
@@ -104,7 +104,7 @@ export async function firestoreRequest(env, path, options = {}) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const message = data && data.error && data.error.message ? data.error.message : `Firestore HTTP ${response.status}`;
+    const message = data && data.error && data.error.message ? data.error.message : `Database request failed (${response.status})`;
     const error = new Error(message);
     error.status = response.status;
     error.data = data;
@@ -196,7 +196,7 @@ export async function upsertDocument(env, collectionPath, documentId, data) {
 function collectionQueryLocation(collectionPath) {
   const cleanPath = String(collectionPath || '').replace(/^\/+|\/+$/g, '');
   const parts = cleanPath.split('/').filter(Boolean);
-  if (!parts.length || parts.length % 2 === 0) throw new Error('A Firestore collection path is required.');
+  if (!parts.length || parts.length % 2 === 0) throw new Error('A database collection path is required.');
   return {
     collectionId: parts.pop(),
     parentPath: parts.join('/')
@@ -219,7 +219,7 @@ function structuredFieldFilter(filter = {}) {
   };
   const field = String(filter.field || filter.fieldPath || '').trim();
   const op = opMap[String(filter.op || '==').trim().toLowerCase()];
-  if (!field || !op) throw new Error('A supported Firestore query field and operator are required.');
+  if (!field || !op) throw new Error('A supported database query field and operator are required.');
   return {
     fieldFilter: {
       field: { fieldPath: field },
@@ -300,7 +300,7 @@ export async function createDocumentIfAbsent(env, collectionPath, documentId, da
 export async function batchUpsertDocuments(env, writes) {
   const items = Array.isArray(writes) ? writes : [];
   if (!items.length) return { writeResults: [] };
-  if (items.length > 500) throw new Error('A Firestore batch may contain at most 500 writes.');
+  if (items.length > 500) throw new Error('A database batch may contain at most 500 writes.');
   const token = await getFirestoreAccessToken(env);
   const base = firestoreBaseUrl(env);
   // Firestore commit write names are resource names (projects/.../documents/...),
@@ -326,7 +326,7 @@ export async function batchUpsertDocuments(env, writes) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(data?.error?.message || `Firestore batch HTTP ${response.status}`);
+    const error = new Error(data?.error?.message || `Database batch request failed (${response.status})`);
     error.status = response.status;
     throw error;
   }

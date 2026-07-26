@@ -49,7 +49,7 @@ export function resolveAuthoritativeDesktopActor(body = {}, users = [], env = {}
       source: 'environment-admin'
     };
   }
-  const error = new Error(user ? 'This staff account is disabled.' : 'The signed-in staff account was not found in Firestore.');
+  const error = new Error(user ? 'This staff account is disabled.' : 'The signed-in staff account was not found in the database.');
   error.status = 403;
   error.code = user ? 'BACKEND_ACTOR_DISABLED' : 'BACKEND_ACTOR_NOT_FOUND';
   throw error;

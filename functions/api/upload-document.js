@@ -80,7 +80,7 @@ async function enabledDocumentFields(env) {
 async function saveFirestoreDocumentMetadata(env, app, definition, file, url, replaceExisting) {
   const now = new Date().toISOString();
   const reference = clean(pick(app, ['ApplicationReference', 'applicationReference', 'ApplicationID', '__id']));
-  if (!reference) throw new Error('The Firestore application has no application reference.');
+  if (!reference) throw new Error('The database application has no application reference.');
   const previousUrl = documentUrl(app, definition.key);
   const documents = app.documents && typeof app.documents === 'object' ? { ...app.documents } : {};
   documents[definition.key] = {
@@ -161,7 +161,7 @@ export async function onRequestPost(context) {
     }
     const firestoreApp = await findFirestoreApplication(env, email, code);
     if (!firestoreApp) {
-      return Response.json({ ok: false, message: 'Application not found in Firestore for that email/code.' }, { status: 404 });
+      return Response.json({ ok: false, message: 'Application not found in the database for that email/code.' }, { status: 404 });
     }
     const existingUrl = documentUrl(firestoreApp, definition.key);
     if ((existingUrl || documentUploaded(firestoreApp, definition.key)) && !replaceExisting) {
@@ -177,7 +177,7 @@ export async function onRequestPost(context) {
     if (!env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) {
       return Response.json({
         ok: false,
-        message: 'Firestore application lookup succeeded, but Google Drive file storage is not configured.'
+        message: 'Database application lookup succeeded, but Google Drive file storage is not configured.'
       }, { status: 500 });
     }
 

@@ -73,7 +73,7 @@ export async function onRequestPost(context) {
         return Response.json(firestoreResult, { status: firestoreResult.ok ? 200 : 400 });
       }
       if (!legacyGoogleDataEnabled(env)) {
-        return Response.json({ ok: false, message: 'No Firestore form purchase matches that email and verification code.' }, { status: 404 });
+        return Response.json({ ok: false, message: 'No database form purchase matches that email and verification code.' }, { status: 404 });
       }
     } catch (firestoreErr) {
       if (!legacyGoogleDataEnabled(env)) {

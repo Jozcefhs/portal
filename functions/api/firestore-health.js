@@ -15,7 +15,7 @@ export async function onRequestGet(context) {
     }
     return Response.json({
       ok: true,
-      message: 'Firestore connection is configured.',
+      message: 'Database connection is configured.',
       projectId: env.FIREBASE_PROJECT_ID,
       healthDocumentFound: documentFound
     });

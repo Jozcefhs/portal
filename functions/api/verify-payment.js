@@ -123,10 +123,10 @@ export async function onRequestPost(context) {
         if (firestoreData && firestoreData.ok) {
           recordData = firestoreData;
         } else {
-          recordErrors.push(`Firestore: ${(firestoreData && firestoreData.message) || 'record failed'}`);
+          recordErrors.push(`Database: ${(firestoreData && firestoreData.message) || 'record failed'}`);
         }
       } catch (err) {
-        recordErrors.push(`Firestore: ${err && err.message ? err.message : String(err)}`);
+        recordErrors.push(`Database: ${err && err.message ? err.message : String(err)}`);
       }
     }
     if (appsScriptConfigured && (!firestoreConfigured || !isChurchDonation)) {

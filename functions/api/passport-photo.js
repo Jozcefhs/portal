@@ -87,7 +87,7 @@ export async function onRequestPost(context) {
 
     const applications = await listSchoolCollection(env, 'applications');
     const application = applications.find((row) => sameText(applicationReference(row), reference) || sameText(row.__id, reference));
-    if (!application) return Response.json({ ok: false, message: 'Application was not found in Firestore.' }, { status: 404 });
+    if (!application) return Response.json({ ok: false, message: 'Application was not found in the database.' }, { status: 404 });
 
     const suppliedSecret = clean(body.Secret || body.secret);
     const staffAuthorized = Boolean(env.BACKEND_SHARED_SECRET) && suppliedSecret === clean(env.BACKEND_SHARED_SECRET);

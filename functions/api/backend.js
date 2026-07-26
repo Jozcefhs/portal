@@ -1082,7 +1082,7 @@ async function storeGeneratedAdmissionDocument(env, body) {
   }
   const application = await findApplicationForAdmissionDocument(env, body);
   if (!application) {
-    const err = new Error('The matching Firestore application was not found.');
+    const err = new Error('The matching database application was not found.');
     err.status = 404;
     throw err;
   }
@@ -1690,7 +1690,7 @@ export async function getPayableFees(env, body = {}) {
   const schoolFeeTotal = schoolFeeBreakdown.reduce((total, fee) => total + asMoneyNumber(fee.Amount), 0);
   return {
     ok: true,
-    message: 'Payable fees loaded from Firestore.',
+    message: 'Payable fees loaded from the database.',
     account: {
       AccountRef: accountRef,
       ApplicationReference: billingApp.ApplicationReference || app.ApplicationReference || '',
@@ -1979,7 +1979,7 @@ export async function getAccountsOverview(env) {
   });
   return {
     ok: true,
-    message: 'Accounts loaded from Firestore.',
+    message: 'Accounts loaded from the database.',
     accounts: accountRows,
     payments: normalizedPayments,
     invoices: visibleInvoices,
@@ -2098,7 +2098,7 @@ async function saveBrevoSettings(env, body) {
   await upsertDocument(env, 'settings', 'brevo', payload);
   return {
     ok: true,
-    message: 'Brevo settings saved to Firestore.',
+    message: 'Brevo settings saved to the database.',
     settings: {
       BrevoSenderName: senderName,
       BrevoSenderEmail: senderEmail,
@@ -2211,7 +2211,7 @@ async function saveSchoolProfile(env, body) {
     UpdatedAt: profile.UpdatedAt, UpdatedBy: profile.UpdatedBy
   }));
   await upsertDocument(env, 'settings', 'schoolProfile', profile);
-  return { ok: true, message: 'School profile saved to Firestore.', profile };
+  return { ok: true, message: 'School profile saved to the database.', profile };
 }
 
 async function getSchoolProfile(env) {
@@ -2779,7 +2779,7 @@ async function getFormSales(env) {
     .sort((a, b) => clean(b.Time || b.PaymentDate).localeCompare(clean(a.Time || a.PaymentDate)));
   return {
     ok: true,
-    message: 'Form purchases loaded from Firestore.',
+    message: 'Form purchases loaded from the database.',
     backend: 'firestore',
     sales
   };
@@ -2811,7 +2811,7 @@ export async function getSchoolClasses(env) {
     .sort((a, b) => asMoneyNumber(a.SortOrder) - asMoneyNumber(b.SortOrder));
   return {
     ok: true,
-    message: 'School classes loaded from Firestore.',
+    message: 'School classes loaded from the database.',
     backend: 'firestore',
     classes
   };
@@ -2852,7 +2852,7 @@ async function saveSchoolClasses(env, body) {
   }
   return {
     ok: true,
-    message: `School classes saved to Firestore (${saved}).`,
+    message: `School classes saved to the database (${saved}).`,
     saved,
     ...(await getSchoolClasses(env))
   };
@@ -2871,7 +2871,7 @@ export async function getAdmissionClasses(env) {
     {};
   return {
     ok: true,
-    message: 'Admission classes loaded from Firestore.',
+    message: 'Admission classes loaded from the database.',
     backend: 'firestore',
     openClasses,
     openClassOptions: openClasses,
@@ -2916,7 +2916,7 @@ async function saveAdmissionClasses(env, body) {
   }
   return {
     ok: true,
-    message: `Admission classes saved to Firestore (${saved}).`,
+    message: `Admission classes saved to the database (${saved}).`,
     saved,
     ...(await getAdmissionClasses(env))
   };
@@ -2970,7 +2970,7 @@ async function saveFeeItem(env, body) {
     UpdatedAt: nowIso()
   };
   await upsertDocument(env, 'feeItems', safeDocumentId(feeCode), payload);
-  return { ok: true, message: 'Fee item saved to Firestore.', fee: normalizeFeeItem(payload) };
+  return { ok: true, message: 'Fee item saved to the database.', fee: normalizeFeeItem(payload) };
 }
 
 async function deleteFeeItem(env, body) {
@@ -2981,7 +2981,7 @@ async function deleteFeeItem(env, body) {
     throw err;
   }
   await deleteDocument(env, 'feeItems', safeDocumentId(feeCode));
-  return { ok: true, message: 'Fee item deleted from Firestore.' };
+  return { ok: true, message: 'Fee item deleted from the database.' };
 }
 
 const DEFAULT_FEE_ITEMS = [
@@ -3009,7 +3009,7 @@ async function seedDefaultFeeItems(env) {
     });
     added += 1;
   }
-  return { ok: true, message: added ? 'Default fee items created in Firestore.' : 'Default fee items already exist in Firestore.', added };
+  return { ok: true, message: added ? 'Default fee items created in the database.' : 'Default fee items already exist in the database.', added };
 }
 
 async function queryAccountRows(env, collection, accountRef) {
@@ -3302,7 +3302,7 @@ export async function recordManualPayment(env, body) {
     ok: true,
     message: invoicePostingWarning
       ? `Payment recorded, but invoice posting needs attention: ${invoicePostingWarning}`
-      : 'Payment recorded in Firestore.',
+      : 'Payment recorded in the database.',
     payment,
     invoicePostingWarning
   };
@@ -3839,7 +3839,7 @@ async function saveClinicRecord(env, body) {
     UpdatedAt: nowIso()
   };
   await upsertDocument(env, 'clinicRecords', safeDocumentId(recordId), payload);
-  return { ok: true, message: 'Clinic record saved to Firestore.', record: payload };
+  return { ok: true, message: 'Clinic record saved to the database.', record: payload };
 }
 
 async function saveInventoryItem(env, body, collection, defaults) {
@@ -3868,7 +3868,7 @@ async function saveInventoryItem(env, body, collection, defaults) {
     await deleteDocument(env, collection, originalId);
   }
   await upsertDocument(env, collection, nextId, payload);
-  return { ok: true, message: `${defaults.label} inventory item saved to Firestore.`, item: normalizeInventory(payload) };
+  return { ok: true, message: `${defaults.label} inventory item saved to the database.`, item: normalizeInventory(payload) };
 }
 
 async function deleteInventoryItem(env, body, collection, label) {
@@ -3879,7 +3879,7 @@ async function deleteInventoryItem(env, body, collection, label) {
     throw err;
   }
   await deleteDocument(env, collection, safeDocumentId(itemName));
-  return { ok: true, message: `${label} inventory item deleted from Firestore.` };
+  return { ok: true, message: `${label} inventory item deleted from the database.` };
 }
 
 async function recordStockMovement(env, body, collection, movementCollection, defaults) {
@@ -3927,7 +3927,7 @@ async function recordStockMovement(env, body, collection, movementCollection, de
     RecordedBy: clean(body.RecordedBy) || defaults.actor
   };
   await upsertDocument(env, movementCollection, safeDocumentId(movementNo), movement);
-  return { ok: true, message: `${defaults.label} stock movement recorded in Firestore.`, movement, item: normalizeInventory(itemPayload) };
+  return { ok: true, message: `${defaults.label} stock movement recorded in the database.`, movement, item: normalizeInventory(itemPayload) };
 }
 
 async function updateStudentBillingCategory(env, body) {
@@ -5642,7 +5642,7 @@ function activeStaffSuperAdmins(rows, excluding = '') {
 async function getStaffUsersForDesktop(env, body) {
   requireStaffUserAdmin(body);
   const users = await listCollection(env, 'staffUsers');
-  return { ok: true, message: 'Staff users loaded from Firestore.', users };
+  return { ok: true, message: 'Staff users loaded from the database.', users };
 }
 
 async function saveStaffUserFromDesktop(env, body) {
@@ -5683,7 +5683,7 @@ async function saveStaffUserFromDesktop(env, body) {
     Timestamp: nowIso(), Action: existing ? 'UPDATE USER' : 'CREATE USER', Username: username,
     Actor: clean(body.RecordedBy) || 'Desktop Super Admin', SourcePlatform: 'Desktop'
   });
-  return { ok: true, message: existing ? 'Staff user updated in Firestore.' : 'Staff user created in Firestore.', user: payload };
+  return { ok: true, message: existing ? 'Staff user updated in the database.' : 'Staff user created in the database.', user: payload };
 }
 
 async function deleteStaffUserFromDesktop(env, body) {
@@ -5701,7 +5701,7 @@ async function deleteStaffUserFromDesktop(env, body) {
     Timestamp: nowIso(), Action: 'DELETE USER', Username: username,
     Actor: clean(body.RecordedBy) || 'Desktop Super Admin', SourcePlatform: 'Desktop'
   });
-  return { ok: true, message: 'Staff user deleted from Firestore.' };
+  return { ok: true, message: 'Staff user deleted from the database.' };
 }
 
 function withoutFirestoreMetadata(row = {}) {
@@ -5752,7 +5752,7 @@ async function optimizeFirestoreData(env, body) {
   }
   return {
     ok: true,
-    message: `${writes.length} existing records were prepared for targeted Firestore access.`,
+    message: `${writes.length} existing records were prepared for targeted database access.`,
     optimized: writes.length,
     version: 1
   };
@@ -5788,7 +5788,7 @@ async function getSystemHealth(env, body) {
   }));
   return {
     ok: true,
-    message: 'Firestore and payment health checks completed.',
+    message: 'Database and payment health checks completed.',
     checkedAt: nowIso(),
     pendingPaymentIntents: pendingIntents.length,
     processingPayments: processingPayments.length,
@@ -5803,7 +5803,7 @@ async function routeAction(env, action, body = {}) {
     case 'ping':
       return {
         ok: true,
-        message: 'Firestore backend is reachable.',
+        message: 'Database backend is reachable.',
         backend: 'firestore',
         projectId: env.FIREBASE_PROJECT_ID
       };
@@ -5842,7 +5842,7 @@ async function routeAction(env, action, body = {}) {
       rootCollections.forEach((name, index) => { collections[name] = rootGroups[index]; });
       schoolCollections.forEach((name, index) => { collections[name] = schoolGroups[index]; });
       churchPaths.forEach((path, index) => { collections[path] = churchGroups[index]; });
-      return { ok: true, message: 'Complete Firestore backup prepared.', exportedAt: nowIso(), collections };
+      return { ok: true, message: 'Complete database backup prepared.', exportedAt: nowIso(), collections };
     }
     case 'getSystemHealth':
       return getSystemHealth(env, body);
@@ -5851,13 +5851,13 @@ async function routeAction(env, action, body = {}) {
     case 'getApplications':
       return {
         ok: true,
-        message: 'Applications loaded from Firestore.',
+        message: 'Applications loaded from the database.',
         applications: (await listSchoolCollection(env, 'applications')).map(normalizeApplication)
       };
     case 'getStudents':
       return {
         ok: true,
-        message: 'Students loaded from Firestore.',
+        message: 'Students loaded from the database.',
         students: (await listSchoolCollection(env, 'students')).map(normalizeStudent)
       };
     case 'getChurchMembership':
@@ -6081,7 +6081,7 @@ async function routeAction(env, action, body = {}) {
     case 'getClinicRecords':
       return {
         ok: true,
-        message: 'Clinic records loaded from Firestore.',
+        message: 'Clinic records loaded from the database.',
         records: (await listCollection(env, 'clinicRecords')).map(normalizeClinicRecord)
       };
     case 'saveClinicRecord':
@@ -6089,7 +6089,7 @@ async function routeAction(env, action, body = {}) {
     case 'getClinicInventory':
       return {
         ok: true,
-        message: 'Clinic inventory loaded from Firestore.',
+        message: 'Clinic inventory loaded from the database.',
         inventory: (await listCollection(env, 'clinicInventory')).map(normalizeInventory)
       };
     case 'saveClinicInventoryItem':
@@ -6101,7 +6101,7 @@ async function routeAction(env, action, body = {}) {
     case 'getKitchenInventory':
       return {
         ok: true,
-        message: 'Kitchen inventory loaded from Firestore.',
+        message: 'Kitchen inventory loaded from the database.',
         inventory: (await listCollection(env, 'kitchenInventory')).map(normalizeInventory)
       };
     case 'saveKitchenInventoryItem':
@@ -6141,7 +6141,7 @@ async function routeAction(env, action, body = {}) {
     case 'getFormSales':
       return getFormSales(env);
     default: {
-      const err = new Error(`Firestore backend action is not implemented yet: ${action}`);
+      const err = new Error(`Database action is not implemented yet: ${action}`);
       err.status = 400;
       throw err;
     }
@@ -6181,7 +6181,7 @@ export async function onRequestGet(context) {
     if (action && action !== 'ping') return Response.json({ ok: false, message: 'Backend actions require POST; credentials must not be placed in a URL.' }, { status: 405, headers: { Allow: 'POST' } });
     return Response.json({
       ok: true,
-      message: 'Firestore backend is reachable.',
+      message: 'Database backend is reachable.',
       backend: 'firestore',
       projectId: env.FIREBASE_PROJECT_ID
     });

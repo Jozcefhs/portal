@@ -211,7 +211,7 @@ export async function onRequestGet({ env }) {
     requireFirestoreEnv(env);
     return json({
       ok: true,
-      message: 'Firestore import endpoint is ready.',
+      message: 'Database import endpoint is ready.',
       collections: Object.values(COLLECTION_ALIASES).filter((value, index, list) => list.indexOf(value) === index)
     });
   } catch (error) {
