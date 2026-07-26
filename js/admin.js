@@ -30,6 +30,7 @@ const mobileNav = document.getElementById('staffMobileNav');
 const moduleDialog = document.getElementById('staffModuleDialog');
 const moduleGrid = document.getElementById('staffModuleGrid');
 const moduleCloseButton = document.getElementById('staffModuleClose');
+const requestedWorkspace = new URLSearchParams(window.location.search).get('workspace')?.trim().toLowerCase() || '';
 
 let currentUser = null;
 let dashboardData = null;
@@ -189,7 +190,7 @@ function showDashboard(user) {
   const displayName = user.displayName || user.username || 'Staff';
   const explicitEdition = clean(user.organisationEdition || user.organizationEdition || user.edition).toLowerCase();
   const profileName = clean(window.SCHOOL_PROFILE?.SchoolName);
-  const isChurch = explicitEdition === 'church' || /dunamis|digc|church/i.test(profileName);
+  const isChurch = requestedWorkspace === 'church' || explicitEdition === 'church' || /dunamis|digc|church/i.test(profileName);
   displayNameEl.textContent = displayName;
   roleEl.textContent = [user.role, user.department].filter(Boolean).join(' • ');
   staffAvatar.textContent = displayName.charAt(0).toUpperCase();

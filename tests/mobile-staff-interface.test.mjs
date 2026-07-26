@@ -158,3 +158,14 @@ test('parents can search the eligible school-store catalog', () => {
   assert.match(parentDashboardJs, /No store items match/);
   assert.match(portalCss, /\.store-search-control input\{height:36px;min-height:36px;[^}]*font-size:12px/);
 });
+
+test('parent store uses a compact quantity selector and cart icon', () => {
+  assert.match(parentDashboardJs, /const qty = document\.createElement\('select'\)/);
+  assert.match(parentDashboardJs, /Array\.from\(\{ length: available \}/);
+  assert.match(parentDashboardJs, /qty\.setAttribute\('aria-label', `Quantity for \$\{item\.ItemName\}`\)/);
+  assert.match(parentDashboardJs, /buy\.className = 'compact-icon-action store-cart-action'/);
+  assert.match(parentDashboardJs, /buy\.setAttribute\('aria-label', `Add \$\{item\.ItemName\} to cart`\)/);
+  assert.match(portalCss, /\.store-purchase-controls\{display:flex;[^}]*gap:6px/);
+  assert.match(portalCss, /\.store-quantity\{width:52px;max-width:52px;height:30px;min-height:30px/);
+  assert.match(portalCss, /\.activity-item \.store-cart-action\{width:30px!important;[^}]*border-radius:50%/);
+});
