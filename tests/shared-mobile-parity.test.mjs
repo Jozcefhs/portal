@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
-const sharedVersion = '20260726-shared-mobile-10';
+const sharedVersion = '20260726-shared-mobile-11';
 const pageNames = [
   'admin.html',
   'application.html',
@@ -58,7 +58,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /digc-suite-v20-shared-mobile/);
+  assert.match(serviceWorker, /digc-suite-v21-shared-mobile/);
   assert.match(serviceWorker, /'\/admin\.html'/);
   assert.match(serviceWorker, /'\/js\/admin\.js'/);
   assert.match(serviceWorker, /self\.skipWaiting\(\)/);

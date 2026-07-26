@@ -225,6 +225,34 @@ html[data-theme="dark"] .terms-text,
 html[data-theme="dark"] .fee-breakdown,
 html[data-theme="dark"] .receipt-box{background:#0d1a29}
 
+/* Preserve staff-dashboard contrast when the shared dark theme is active. */
+html[data-theme="dark"] .staff-page .staff-topbar{background:#0d1a29;border-color:#2b3d53}
+html[data-theme="dark"] .staff-page .staff-brand strong,
+html[data-theme="dark"] .staff-page .staff-identity-copy strong{color:#f4f8ff}
+html[data-theme="dark"] .staff-page .staff-brand small,
+html[data-theme="dark"] .staff-page .staff-identity-copy small{color:#b7c6d8}
+html[data-theme="dark"] .staff-main-content{background:#091321}
+html[data-theme="dark"] .staff-page .staff-welcome h1,
+html[data-theme="dark"] .staff-page .staff-summary strong,
+html[data-theme="dark"] .staff-page .staff-summary span,
+html[data-theme="dark"] .staff-page .staff-summary small,
+html[data-theme="dark"] .staff-page .staff-summary small b{color:#f4f8ff}
+html[data-theme="dark"] .dashboard-charts article{background:#111e2e;border-color:#2b3d53}
+html[data-theme="dark"] .dashboard-charts h3,
+html[data-theme="dark"] .chart-row>strong{color:#f4f8ff}
+html[data-theme="dark"] .chart-row>span,
+html[data-theme="dark"] .dashboard-charts .muted{color:#c3d0df}
+html[data-theme="dark"] .chart-row>span small{color:#9fb1c5}
+html[data-theme="dark"] .chart-row i{background:#2a3b50}
+html[data-theme="dark"] .workflow-ledger-heading h2{color:#f4f8ff}
+html[data-theme="dark"] .workflow-dialog,
+html[data-theme="dark"] .workflow-dialog-header,
+html[data-theme="dark"] .workflow-dialog .workflow-form{background:#0d1a29;color:#edf4ff}
+html[data-theme="dark"] .workflow-dialog-header{border-color:#2b3d53}
+html[data-theme="dark"] .workflow-dialog-header h2,
+html[data-theme="dark"] .workflow-dialog .workflow-form label{color:#f4f8ff}
+html[data-theme="dark"] .workflow-dialog-header>button{background:#17273a;color:#e8f1ff}
+
 .suite-launcher-page{height:100vh;height:100dvh;min-height:0;background:#071b38;color:#fff;overflow:hidden}
 .suite-launcher{position:relative;display:grid;grid-template-columns:minmax(360px,.92fr) minmax(480px,1.08fr);min-height:100vh;background:radial-gradient(circle at 84% 12%,rgba(42,112,255,.18),transparent 32%),#f5f8fd}
 .launcher-showcase{position:relative;min-height:100vh;padding:clamp(30px,5vw,72px);overflow:hidden;background:linear-gradient(145deg,#061a38 0%,#0a3d96 55%,#1269ef 100%);color:#fff;display:flex;flex-direction:column;isolation:isolate}

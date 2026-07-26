@@ -77,6 +77,16 @@ test('preference toggles have clearly distinct on and off states', () => {
   assert.match(portalCss, /\.preference-switch input:focus-visible\+span\{outline:3px solid/);
 });
 
+test('dark mode preserves dashboard and requisition text contrast', () => {
+  assert.match(portalCss, /html\[data-theme="dark"\] \.staff-page \.staff-identity-copy strong\{color:#f4f8ff\}/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.staff-page \.staff-summary strong,/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.dashboard-charts article\{background:#111e2e;border-color:#2b3d53\}/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.chart-row>span,[\s\S]*?color:#c3d0df/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.workflow-ledger-heading h2\{color:#f4f8ff\}/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.workflow-dialog,[\s\S]*?background:#0d1a29;color:#edf4ff/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.workflow-dialog \.workflow-form label\{color:#f4f8ff\}/);
+});
+
 test('student profile action uses a compact accessible pencil icon', () => {
   assert.match(adminJs, /class="student-edit-icon compact-icon-action compact-edit-action"/);
   assert.match(adminJs, /aria-label="Edit profile for \$\{studentName\}"/);
