@@ -1489,16 +1489,16 @@ function financeRecordCard(record, type, capabilities) {
       </div>
       <p>${escapeHtml(description)}</p>
       ${isMaterial ? materialItemsTable(record.MaterialItems || record.Items) : ''}
-      <div class="workflow-record-meta">
-        <span><strong>${escapeHtml(money(record.Amount))}</strong>Amount</span>
-        <span><strong>${escapeHtml(record.Department || '-')}</strong>Department</span>
-        <span><strong>${escapeHtml(record.Date || '-')}</strong>Date</span>
-        <span><strong>${escapeHtml(type === 'bill' ? (record.DueDate || '-') : (record.Vendor || '-'))}</strong>${type === 'bill' ? 'Due Date' : 'Vendor'}</span>
+      <div class="admin-table-wrap finance-record-meta-table">
+        <table class="admin-table">
+          <thead><tr><th>Amount</th><th>Department</th><th>Date</th><th>${type === 'bill' ? 'Due Date' : 'Vendor'}</th></tr></thead>
+          <tbody><tr><td>${escapeHtml(money(record.Amount))}</td><td>${escapeHtml(record.Department || '-')}</td><td>${escapeHtml(record.Date || '-')}</td><td>${escapeHtml(type === 'bill' ? (record.DueDate || '-') : (record.Vendor || '-'))}</td></tr></tbody>
+        </table>
       </div>
       ${record.Notes ? `<small>Notes: ${escapeHtml(record.Notes)}</small>` : ''}
       ${record.ReviewNotes ? `<small>Review: ${escapeHtml(record.ReviewNotes)}</small>` : ''}
       ${accountsReviewed ? `<small class="status ok">Accounts reviewed by ${escapeHtml(record.AccountsReviewedBy || 'Accounts')}</small>` : ''}
-      ${actions ? `<div class="workflow-actions">${actions}</div>` : ''}
+      ${actions ? `<div class="workflow-actions finance-record-actions">${actions}</div>` : ''}
     </article>
   `;
 }
@@ -1605,7 +1605,7 @@ function renderFinanceWorkflow() {
       <div><small>Rejected</small><strong>${statusCount('rejected')}</strong><span>Requires attention</span></div>
       <div><small>Total Records</small><strong>${allRecords.length}</strong><span>Current view</span></div>
     </div>
-    <div class="workflow-ledger-heading"><div><h2>Recent Transactions</h2><p class="muted">Requisitions and bills synchronized with desktop accounting</p></div></div>
+    <div class="workflow-ledger-heading"><div><h2>Recent Transactions</h2><p class="muted">Requisitions and bills synchronized with desktop accounting</p></div>${capabilities.canSubmit ? '<button type="button" class="finance-new-request" data-open-dialog="requisitionDialog">+ New Requisition</button>' : ''}</div>
     ${financeRecordsSection('Expense Requisitions', requisitions, 'requisition', capabilities)}
     ${financeRecordsSection('Supplier Bills', bills, 'bill', capabilities)}
     ${submissionDialogs}

@@ -125,3 +125,14 @@ test('mobile configuration inputs use compact regular-weight sizing', () => {
   assert.match(portalCss, /\.staff-page \.config-form input:not\(\[type="checkbox"\]\)[\s\S]*?min-height:36px;[\s\S]*?padding:6px 9px;[\s\S]*?font-size:12px;[\s\S]*?font-weight:400;/);
   assert.match(portalCss, /\.staff-page \.config-form textarea,[\s\S]*?min-height:58px;[\s\S]*?font-size:12px;/);
 });
+
+test('finance requests use one-row metadata, paired decisions, and a repeat action', () => {
+  assert.match(adminJs, /class="admin-table-wrap finance-record-meta-table"/);
+  assert.match(adminJs, /<th>Amount<\/th><th>Department<\/th><th>Date<\/th>/);
+  assert.match(adminJs, /class="workflow-actions finance-record-actions"/);
+  assert.match(adminJs, /class="finance-new-request" data-open-dialog="requisitionDialog">\+ New Requisition/);
+  assert.match(portalCss, /\.finance-record-meta-table \.admin-table\{[^}]*width:max-content;[^}]*min-width:100%;[^}]*table-layout:auto/);
+  assert.match(portalCss, /\.finance-record-actions\{[^}]*display:flex!important;[^}]*flex-wrap:nowrap/);
+  assert.match(portalCss, /\.finance-record-actions button\{[^}]*flex:1 1 0;[^}]*width:auto!important/);
+  assert.match(portalCss, /\.workflow-ledger-heading \.finance-new-request\{[^}]*width:auto;[^}]*min-width:132px/);
+});
