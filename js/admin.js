@@ -1,6 +1,13 @@
 const loginCard = document.getElementById('staffLoginCard');
 const loginForm = document.getElementById('staffLoginForm');
 const loginButton = document.getElementById('staffLoginButton');
+const passkeyLoginButton = document.getElementById('staffPasskeyLogin');
+const passkeySetupButton = document.getElementById('staffPasskeySetup');
+const approvalSettingsButton = document.getElementById('staffApprovalSettings');
+const approvalSettingsDialog = document.getElementById('staffApprovalSettingsDialog');
+const approvalSettingsForm = document.getElementById('staffApprovalSettingsForm');
+const financeDecisionDialog = document.getElementById('financeDecisionDialog');
+const financeDecisionForm = document.getElementById('financeDecisionForm');
 const loginStatus = document.getElementById('staffLoginStatus');
 const dashboardEl = document.getElementById('staffDashboard');
 const dashboardStatus = document.getElementById('staffDashboardStatus');
@@ -40,6 +47,10 @@ let staffUsersData = [];
 let staffAuditData = [];
 let staffApprovalAccounts = [];
 let activeTabs = [];
+let approvalProfile = null;
+let approvalAssetState = { signature: '', stamp: '' };
+let pendingFinanceDecision = null;
+let financeDecisionBiometricVerified = false;
 
 const tabConfig = [
   ['admissions', 'Admissions'],
@@ -105,6 +116,184 @@ function setButtonLoading(button, loading, loadingText, normalText) {
   button.classList.toggle('is-loading', loading);
   button.setAttribute('aria-busy', loading ? 'true' : 'false');
   button.textContent = loading ? loadingText : normalText;
+}
+
+function biometricPreferenceEnabled() {
+  return Boolean(window.DIGCPreferences?.read().biometric);
+}
+
+function passkeysSupported() {
+  return Boolean(window.PublicKeyCredential && navigator.credentials);
+}
+
+function base64UrlToBytes(value) {
+  const normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+  const binary = atob(padded);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function bytesToBase64Url(value) {
+  const bytes = new Uint8Array(value || 0);
+  let binary = '';
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function registrationOptionsFromJSON(options) {
+  return {
+    ...options,
+    challenge: base64UrlToBytes(options.challenge),
+    user: { ...options.user, id: base64UrlToBytes(options.user.id) },
+    excludeCredentials: (options.excludeCredentials || []).map((credential) => ({
+      ...credential,
+      id: base64UrlToBytes(credential.id)
+    }))
+  };
+}
+
+function authenticationOptionsFromJSON(options) {
+  return {
+    ...options,
+    challenge: base64UrlToBytes(options.challenge),
+    allowCredentials: (options.allowCredentials || []).map((credential) => ({
+      ...credential,
+      id: base64UrlToBytes(credential.id)
+    }))
+  };
+}
+
+function credentialToJSON(credential) {
+  if (typeof credential.toJSON === 'function') return credential.toJSON();
+  const response = credential.response;
+  const json = {
+    id: credential.id,
+    rawId: bytesToBase64Url(credential.rawId),
+    type: credential.type,
+    authenticatorAttachment: credential.authenticatorAttachment || undefined,
+    clientExtensionResults: credential.getClientExtensionResults(),
+    response: {
+      clientDataJSON: bytesToBase64Url(response.clientDataJSON)
+    }
+  };
+  if ('attestationObject' in response) {
+    json.response.attestationObject = bytesToBase64Url(response.attestationObject);
+    json.response.transports = response.getTransports?.() || [];
+    if (response.getAuthenticatorData?.()) json.response.authenticatorData = bytesToBase64Url(response.getAuthenticatorData());
+    if (response.getPublicKey?.()) json.response.publicKey = bytesToBase64Url(response.getPublicKey());
+    if (response.getPublicKeyAlgorithm) json.response.publicKeyAlgorithm = response.getPublicKeyAlgorithm();
+  } else {
+    json.response.authenticatorData = bytesToBase64Url(response.authenticatorData);
+    json.response.signature = bytesToBase64Url(response.signature);
+    json.response.userHandle = response.userHandle ? bytesToBase64Url(response.userHandle) : undefined;
+  }
+  return json;
+}
+
+async function passkeyRequest(action, extra = {}) {
+  const response = await fetch('/api/staff-passkey', {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...extra })
+  });
+  const data = await response.json().catch(() => ({ ok: false, message: 'Biometric sign-in did not return JSON.' }));
+  if (!response.ok || !data.ok) throw new Error(data.message || 'Biometric sign-in failed.');
+  return data;
+}
+
+function friendlyPasskeyError(error) {
+  if (error?.name === 'NotAllowedError') return 'Biometric verification was cancelled or timed out.';
+  if (error?.name === 'InvalidStateError') return 'This device is already registered for biometric sign-in.';
+  if (error?.name === 'SecurityError') return 'Biometric sign-in requires a secure HTTPS connection.';
+  return error?.message || String(error);
+}
+
+async function refreshPasskeyControls() {
+  const enabled = biometricPreferenceEnabled() && passkeysSupported();
+  passkeyLoginButton.hidden = !enabled || Boolean(currentUser);
+  passkeySetupButton.hidden = !enabled || !currentUser || Boolean(currentUser.mustChangePassword);
+  passkeySetupButton.classList.remove('is-registered');
+  if (passkeySetupButton.hidden) return;
+  passkeySetupButton.innerHTML = '<span aria-hidden="true">◉</span> Set up biometric sign-in';
+  try {
+    const status = await passkeyRequest('status');
+    if (status.registered > 0) {
+      passkeySetupButton.classList.add('is-registered');
+      passkeySetupButton.innerHTML = '<span aria-hidden="true">✓</span> Add another biometric device';
+    }
+  } catch (_error) {
+    // Dashboard access remains available if the optional status check fails.
+  }
+}
+
+async function approvalProfileRequest(method = 'GET', payload = null) {
+  const response = await fetch('/api/staff-approval-profile', {
+    method,
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: payload ? { 'Content-Type': 'application/json' } : undefined,
+    body: payload ? JSON.stringify(payload) : undefined
+  });
+  const data = await response.json().catch(() => ({ ok: false, message: 'User settings did not return JSON.' }));
+  if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load approval settings.');
+  return data;
+}
+
+function renderApprovalAssetPreview(kind) {
+  const dataUrl = approvalAssetState[kind] || '';
+  const capitalized = kind.charAt(0).toUpperCase() + kind.slice(1);
+  const image = document.getElementById(`staff${capitalized}Preview`);
+  const empty = document.getElementById(`staff${capitalized}Empty`);
+  image.src = dataUrl;
+  image.hidden = !dataUrl;
+  empty.hidden = Boolean(dataUrl);
+}
+
+async function approvalImageDataUrl(file) {
+  if (!file || !/^image\/(?:png|jpeg|webp)$/i.test(file.type)) throw new Error('Choose a PNG, JPG or WebP image.');
+  if (file.size > 5 * 1024 * 1024) throw new Error('Choose an image smaller than 5 MB.');
+  const raw = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Could not read the selected image.'));
+    reader.readAsDataURL(file);
+  });
+  const image = await new Promise((resolve, reject) => {
+    const loaded = new Image();
+    loaded.onload = () => resolve(loaded);
+    loaded.onerror = () => reject(new Error('The selected image could not be opened.'));
+    loaded.src = raw;
+  });
+  const scale = Math.min(1, 700 / image.width, 280 / image.height);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(image.width * scale));
+  canvas.height = Math.max(1, Math.round(image.height * scale));
+  canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+  const optimized = canvas.toDataURL('image/webp', .82);
+  if (optimized.length > 350000) throw new Error('The optimized image is still too large. Crop it more closely and try again.');
+  return optimized;
+}
+
+async function openApprovalSettings() {
+  setStatus(document.getElementById('staffApprovalSettingsStatus'), 'Loading saved settings...');
+  approvalSettingsDialog.showModal();
+  try {
+    const data = await approvalProfileRequest();
+    approvalProfile = data.profile || {};
+    approvalAssetState = {
+      signature: approvalProfile.SignatureDataUrl || '',
+      stamp: approvalProfile.StampDataUrl || ''
+    };
+    renderApprovalAssetPreview('signature');
+    renderApprovalAssetPreview('stamp');
+    ['ApplySignatureOnApproval', 'ApplyStampOnApproval', 'ApplySignatureOnPosting', 'ApplyStampOnPosting']
+      .forEach((name) => { approvalSettingsForm.elements[name].checked = Boolean(approvalProfile[name]); });
+    setStatus(document.getElementById('staffApprovalSettingsStatus'), '');
+  } catch (error) {
+    setStatus(document.getElementById('staffApprovalSettingsStatus'), error.message || String(error), 'bad');
+  }
 }
 
 function setSidebarOpen(open) {
@@ -179,10 +368,12 @@ function showLogin(message = '', type = '') {
   activeTabs = [];
   dashboardEl.hidden = true;
   identityEl.hidden = true;
+  approvalSettingsButton.hidden = true;
   mobileNav.hidden = true;
   if (moduleDialog.open) moduleDialog.close();
   loginCard.hidden = false;
   setStatus(loginStatus, message, type);
+  refreshPasskeyControls();
 }
 
 function showDashboard(user) {
@@ -207,6 +398,12 @@ function showDashboard(user) {
   identityEl.hidden = false;
   dashboardEl.hidden = false;
   mobileNav.hidden = false;
+  approvalSettingsButton.hidden = !(
+    user.role === 'Super Admin' ||
+    user.role === 'Accounts Officer' ||
+    user.approvalEnabled
+  );
+  refreshPasskeyControls();
 }
 
 async function continueAfterAuthentication(user) {
@@ -1437,7 +1634,111 @@ async function financeRequest(action, payload = {}) {
   return data;
 }
 
-function materialItemsTable(items) {
+function openFinanceDecision(button) {
+  const action = button.dataset.workflowAction;
+  const decision = button.dataset.decision || '';
+  const secureDecision = decision === 'Approved' || action === 'accountsReview';
+  const posting = action === 'accountsReview';
+  const profile = financeData?.approvalProfile || {};
+  pendingFinanceDecision = {
+    button,
+    action,
+    decision,
+    recordType: button.dataset.recordType,
+    recordId: button.dataset.recordId
+  };
+  financeDecisionBiometricVerified = false;
+  financeDecisionForm.reset();
+  document.getElementById('financeDecisionTitle').textContent = decision === 'Rejected'
+    ? 'Reject Document'
+    : posting ? 'Accounts Review / Posting' : 'Approve Document';
+  document.getElementById('financeDecisionRecord').textContent = button.dataset.recordId;
+  document.getElementById('financeEndorsementOptions').hidden = !secureDecision;
+  document.getElementById('financeDecisionVerification').hidden = !secureDecision;
+  const signatureInput = financeDecisionForm.elements.applySignature;
+  const stampInput = financeDecisionForm.elements.applyStamp;
+  signatureInput.disabled = !profile.HasSignature;
+  stampInput.disabled = !profile.HasStamp;
+  signatureInput.checked = Boolean(profile.HasSignature && profile[posting ? 'ApplySignatureOnPosting' : 'ApplySignatureOnApproval']);
+  stampInput.checked = Boolean(profile.HasStamp && profile[posting ? 'ApplyStampOnPosting' : 'ApplyStampOnApproval']);
+  signatureInput.closest('label').title = profile.HasSignature ? '' : 'Save a signature in User Settings first';
+  stampInput.closest('label').title = profile.HasStamp ? '' : 'Save a stamp in User Settings first';
+  const biometricButton = document.getElementById('financeDecisionBiometric');
+  biometricButton.hidden = !secureDecision || !passkeysSupported();
+  biometricButton.classList.remove('is-verified');
+  biometricButton.innerHTML = '<span aria-hidden="true">◉</span> Verify with biometric';
+  setStatus(document.getElementById('financeDecisionVerificationStatus'), '');
+  setStatus(document.getElementById('financeDecisionStatus'), '');
+  document.getElementById('financeDecisionSubmit').textContent = decision === 'Rejected' ? 'Reject Document' : 'Confirm Decision';
+  financeDecisionDialog.showModal();
+}
+
+async function verifyFinanceDecisionBiometric() {
+  const button = document.getElementById('financeDecisionBiometric');
+  setButtonLoading(button, true, 'Checking your device...', 'Verify with biometric');
+  setStatus(document.getElementById('financeDecisionVerificationStatus'), 'Follow your device prompt...');
+  try {
+    const started = await passkeyRequest('approval-options', {
+      recordId: pendingFinanceDecision?.recordId,
+      recordType: pendingFinanceDecision?.recordType,
+      decisionAction: pendingFinanceDecision?.action === 'accountsReview' ? 'accountsReview' : 'review:Approved'
+    });
+    const credential = await navigator.credentials.get({
+      publicKey: authenticationOptionsFromJSON(started.options)
+    });
+    if (!credential) throw new Error('No biometric credential was returned.');
+    const completed = await passkeyRequest('approval-verify', {
+      ceremonyId: started.ceremonyId,
+      credential: credentialToJSON(credential)
+    });
+    financeDecisionBiometricVerified = true;
+    button.disabled = false;
+    button.classList.remove('is-loading');
+    button.classList.add('is-verified');
+    button.removeAttribute('aria-busy');
+    button.innerHTML = '<span aria-hidden="true">✓</span> Biometric verified';
+    setStatus(document.getElementById('financeDecisionVerificationStatus'), completed.message, 'ok');
+  } catch (error) {
+    financeDecisionBiometricVerified = false;
+    setStatus(document.getElementById('financeDecisionVerificationStatus'), friendlyPasskeyError(error), 'bad');
+    setButtonLoading(button, false, 'Checking your device...', 'Verify with biometric');
+  }
+}
+
+async function submitFinanceDecision(event) {
+  event.preventDefault();
+  if (!pendingFinanceDecision) return;
+  const context = pendingFinanceDecision;
+  const secureDecision = context.decision === 'Approved' || context.action === 'accountsReview';
+  const password = financeDecisionForm.elements.approvalPassword.value;
+  if (secureDecision && !password && !financeDecisionBiometricVerified) {
+    setStatus(document.getElementById('financeDecisionVerificationStatus'), 'Enter your current password or verify with biometric.', 'bad');
+    return;
+  }
+  const submitButton = document.getElementById('financeDecisionSubmit');
+  setButtonLoading(submitButton, true, 'Saving...', 'Confirm Decision');
+  try {
+    const data = await financeRequest(context.action, {
+      recordType: context.recordType,
+      recordId: context.recordId,
+      decision: context.decision,
+      notes: financeDecisionForm.elements.notes.value,
+      approvalPassword: password,
+      applySignature: financeDecisionForm.elements.applySignature.checked,
+      applyStamp: financeDecisionForm.elements.applyStamp.checked
+    });
+    financeDecisionDialog.close();
+    pendingFinanceDecision = null;
+    setStatus(document.getElementById('financeWorkflowStatus'), data.message, 'ok');
+    await loadFinanceWorkflow();
+  } catch (error) {
+    setStatus(document.getElementById('financeDecisionStatus'), error.message || String(error), 'bad');
+  } finally {
+    setButtonLoading(submitButton, false, 'Saving...', context.decision === 'Rejected' ? 'Reject Document' : 'Confirm Decision');
+  }
+}
+
+function materialItemsTable(items, grandTotal = null) {
   if (!Array.isArray(items) || !items.length) return '';
   const rows = items.map((item, index) => `
     <tr>
@@ -1449,11 +1750,15 @@ function materialItemsTable(items) {
       <td>${escapeHtml(money(item.Total ?? (Number(item.Quantity || item.quantity || 0) * Number(item.UnitPrice || item.unitPrice || 0))))}</td>
     </tr>
   `).join('');
+  const total = grandTotal === null
+    ? items.reduce((sum, item) => sum + Number(item.Total ?? (Number(item.Quantity || item.quantity || 0) * Number(item.UnitPrice || item.unitPrice || 0))), 0)
+    : Number(grandTotal || 0);
   return `
     <div class="admin-table-wrap material-submission-table">
       <table class="admin-table">
         <thead><tr><th>S/No.</th><th>Item</th><th>Specification</th><th>Quantity</th><th>Unit Price</th><th>Total</th></tr></thead>
         <tbody>${rows}</tbody>
+        <tfoot><tr class="material-grand-total-row"><th colspan="5">Grand Total</th><th>${escapeHtml(money(total))}</th></tr></tfoot>
       </table>
     </div>
   `;
@@ -1511,26 +1816,40 @@ function financeRecordsSection(title, records, type, capabilities) {
   `;
 }
 
-function openFinanceRecordPrint(record, type) {
+function approvalEndorsementBlock(title, officer, timestamp, endorsement) {
+  if (!officer) return '';
+  const signature = clean(endorsement?.SignatureDataUrl);
+  const stamp = clean(endorsement?.StampDataUrl);
+  return `<section class="approval-block"><div><strong>${escapeHtml(title)}</strong><span>${escapeHtml(officer)}</span><small>${escapeHtml(timestamp || '')}</small></div>
+    ${signature || stamp ? `<div class="approval-images">${signature ? `<figure><img src="${escapeHtml(signature)}" alt="Signature"><figcaption>Signature</figcaption></figure>` : ''}${stamp ? `<figure><img src="${escapeHtml(stamp)}" alt="Official stamp"><figcaption>Official stamp</figcaption></figure>` : ''}</div>` : ''}</section>`;
+}
+
+function openFinanceRecordPrint(record, type, endorsements = {}, printableWindow = null) {
   if (!record) return;
   const id = pick(record, type === 'bill' ? ['BillNo', '__id'] : ['ExpenseNo', '__id']);
   const isMaterial = type === 'requisition' && clean(record.RequisitionType).toLowerCase() === 'material';
   const heading = isMaterial ? 'Material Requisition' : type === 'bill' ? 'Supplier Bill' : 'Expense Requisition';
-  const materialTable = isMaterial ? materialItemsTable(record.MaterialItems || record.Items) : '';
-  const printable = window.open('', '_blank', 'width=900,height=720');
+  const materialTable = isMaterial ? materialItemsTable(record.MaterialItems || record.Items, record.Amount) : '';
+  const printable = printableWindow || window.open('', '_blank', 'width=900,height=720');
   if (!printable) {
     setStatus(document.getElementById('financeWorkflowStatus'), 'Allow pop-ups to view and print this request.', 'bad');
     return;
   }
   printable.opener = null;
   printable.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(heading)} ${escapeHtml(id)}</title><style>
-    body{margin:32px;color:#102a43;font:13px Arial,sans-serif}h1{margin:0 0 4px;font-size:22px}h2{margin:24px 0 8px;font-size:16px}.muted{color:#627d98}.summary{width:100%;margin:20px 0;border-collapse:collapse}.summary th,.summary td,.admin-table th,.admin-table td{padding:8px;border:1px solid #cbd7e5;text-align:left;vertical-align:top}.summary th,.admin-table th{background:#edf3f8;font-size:10px;text-transform:uppercase}.admin-table{width:100%;border-collapse:collapse}.admin-table-wrap{margin:14px 0}.print-action{margin:0 0 20px;padding:8px 14px;border:0;border-radius:6px;background:#102a43;color:#fff}.notes{padding:10px;border-left:3px solid #19a7a0;background:#f5f8fb}@media print{.print-action{display:none}body{margin:12mm}}
+    body{margin:32px;color:#102a43;font:13px Arial,sans-serif}h1{margin:0 0 4px;font-size:22px}.muted{color:#627d98}.summary{width:100%;margin:20px 0;border-collapse:collapse}.summary th,.summary td,.admin-table th,.admin-table td{padding:8px;border:1px solid #cbd7e5;text-align:left;vertical-align:top}.summary th,.admin-table th{background:#edf3f8;font-size:10px;text-transform:uppercase}.admin-table{width:100%;border-collapse:collapse}.admin-table-wrap{margin:14px 0}.material-grand-total-row th{border-top:2px solid #102a43;background:#e3edf6;font-size:12px}.material-grand-total-row th:first-child{text-align:right}.print-action{margin:0 0 20px;padding:8px 14px;border:0;border-radius:6px;background:#102a43;color:#fff}.notes{padding:10px;border-left:3px solid #19a7a0;background:#f5f8fb}.approval-block{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-top:16px;padding:12px;border:1px solid #cbd7e5;border-radius:7px}.approval-block strong,.approval-block span,.approval-block small{display:block}.approval-block span{margin-top:4px}.approval-block small{margin-top:3px;color:#627d98}.approval-images{display:flex;align-items:flex-end;gap:18px}.approval-images figure{margin:0;text-align:center}.approval-images img{display:block;max-width:150px;max-height:70px;object-fit:contain}.approval-images figcaption{margin-top:3px;color:#627d98;font-size:9px;text-transform:uppercase}@media print{.print-action{display:none}body{margin:12mm}.approval-block{break-inside:avoid}}
   </style></head><body><button class="print-action" onclick="window.print()">Print</button><h1>${escapeHtml(heading)}</h1><p class="muted">${escapeHtml(id)} · ${escapeHtml(record.Status || 'Submitted')}</p>
   <table class="summary"><tbody>
-    <tr><th>Description</th><td>${escapeHtml(record.Description || '-')}</td><th>Amount</th><td>${escapeHtml(money(record.Amount))}</td></tr>
+    ${isMaterial
+      ? `<tr><th>Description</th><td colspan="3">${escapeHtml(record.Description || '-')}</td></tr>`
+      : `<tr><th>Description</th><td>${escapeHtml(record.Description || '-')}</td><th>Amount</th><td>${escapeHtml(money(record.Amount))}</td></tr>`}
     <tr><th>Department</th><td>${escapeHtml(record.Department || '-')}</td><th>Date</th><td>${escapeHtml(record.Date || '-')}</td></tr>
     <tr><th>${type === 'bill' ? 'Due Date' : 'Vendor'}</th><td>${escapeHtml(type === 'bill' ? (record.DueDate || '-') : (record.Vendor || '-'))}</td><th>Requested By</th><td>${escapeHtml(record.RequestedBy || record.CreatedBy || '-')}</td></tr>
+    <tr><th>Approved By</th><td>${escapeHtml(record.ApprovedBy || '-')}</td><th>Approved At</th><td>${escapeHtml(record.ApprovedAt || '-')}</td></tr>
   </tbody></table>${materialTable}${record.Notes ? `<p class="notes"><strong>Notes:</strong> ${escapeHtml(record.Notes)}</p>` : ''}${record.ReviewNotes ? `<p class="notes"><strong>Review:</strong> ${escapeHtml(record.ReviewNotes)}</p>` : ''}
+  ${approvalEndorsementBlock('Approved by', record.ApprovedBy, record.ApprovedAt, endorsements.approval)}
+  ${approvalEndorsementBlock('Administrative approval', record.AdminReviewedBy, record.AdminReviewedAt, endorsements.admin)}
+  ${approvalEndorsementBlock('Accounts review / posting', record.AccountsReviewedBy, record.AccountsReviewedAt, endorsements.accounts)}
   </body></html>`);
   printable.document.close();
   printable.focus();
@@ -1568,6 +1887,7 @@ function renderFinanceWorkflow() {
         <div class="workflow-dialog-header"><div><small>${escapeHtml(department)}</small><h2>New Material Requisition</h2></div><button type="button" data-close-dialog aria-label="Close">&times;</button></div>
         <form id="materialRequisitionForm" class="workflow-form">
           <h3>Material Items</h3>
+          <label>Description <span class="required">*</span><textarea name="description" rows="2" required placeholder="State the purpose of this material request"></textarea></label>
           <p class="muted">List every requested item. Line totals and the requisition total are calculated automatically.</p>
           <div class="admin-table-wrap material-entry-wrap">
             <table class="admin-table material-entry-table">
@@ -1582,9 +1902,10 @@ function renderFinanceWorkflow() {
                   <td><output data-material-line-total>₦0.00</output></td>
                 </tr>
               </tbody>
+              <tfoot><tr class="material-grand-total-row"><th colspan="5">Grand Total</th><th><output data-material-grand-total>₦0.00</output></th></tr></tfoot>
             </table>
           </div>
-          <div class="material-entry-actions"><button type="button" data-add-material-item>+ Add Item</button><strong>Grand Total: <output data-material-grand-total>₦0.00</output></strong></div>
+          <div class="material-entry-actions"><button type="button" data-add-material-item>+ Add Item</button></div>
           <label>Preferred vendor<input name="vendor"></label>
           <label>Required date<input name="date" type="date"></label>
           <label>Reference<input name="reference"></label>
@@ -1762,36 +2083,28 @@ function bindFinanceWorkflowEvents() {
   bindMaterialRequisitionForm();
   bindSubmissionForm('supplierBillForm', 'submitBill', 'Supplier bill submitted.');
   panelEl.querySelectorAll('[data-print-finance-record]').forEach((button) => {
-    button.addEventListener('click', () => {
+    button.addEventListener('click', async () => {
       const type = button.dataset.recordType;
-      const records = type === 'bill' ? financeData?.bills : financeData?.requisitions;
-      const record = (records || []).find((item) => clean(pick(item, type === 'bill' ? ['BillNo', '__id'] : ['ExpenseNo', '__id'])) === clean(button.dataset.printFinanceRecord));
-      openFinanceRecordPrint(record, type);
+      const printable = window.open('', '_blank', 'width=900,height=720');
+      if (!printable) {
+        setStatus(document.getElementById('financeWorkflowStatus'), 'Allow pop-ups to view and print this request.', 'bad');
+        return;
+      }
+      printable.document.write('<p style="font:14px Arial;padding:24px">Loading document...</p>');
+      try {
+        const data = await financeRequest('document', {
+          recordType: type,
+          recordId: button.dataset.printFinanceRecord
+        });
+        openFinanceRecordPrint(data.record, type, data.endorsements || {}, printable);
+      } catch (error) {
+        printable.close();
+        setStatus(document.getElementById('financeWorkflowStatus'), error.message || String(error), 'bad');
+      }
     });
   });
   panelEl.querySelectorAll('[data-workflow-action]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const action = button.dataset.workflowAction;
-      const decision = button.dataset.decision || '';
-      const notes = window.prompt(`${decision || 'Accounts review'} notes (optional):`, '');
-      if (notes === null) return;
-      const normalText = button.textContent;
-      setButtonLoading(button, true, 'Saving...', normalText);
-      try {
-        const data = await financeRequest(action, {
-          recordType: button.dataset.recordType,
-          recordId: button.dataset.recordId,
-          decision,
-          notes
-        });
-        setStatus(document.getElementById('financeWorkflowStatus'), data.message, 'ok');
-        await loadFinanceWorkflow();
-      } catch (error) {
-        setStatus(document.getElementById('financeWorkflowStatus'), error.message || String(error), 'bad');
-      } finally {
-        setButtonLoading(button, false, 'Saving...', normalText);
-      }
-    });
+    button.addEventListener('click', () => openFinanceDecision(button));
   });
 }
 
@@ -2037,6 +2350,114 @@ loginForm.addEventListener('submit', async (event) => {
     setButtonLoading(loginButton, false, 'Signing in...', 'Sign In');
   }
 });
+
+passkeyLoginButton.addEventListener('click', async () => {
+  if (passkeyLoginButton.disabled) return;
+  setButtonLoading(passkeyLoginButton, true, 'Checking your device...', 'Use biometric sign-in');
+  setStatus(loginStatus, 'Follow your device prompt to sign in...');
+  try {
+    const started = await passkeyRequest('authentication-options');
+    const credential = await navigator.credentials.get({
+      publicKey: authenticationOptionsFromJSON(started.options)
+    });
+    if (!credential) throw new Error('No biometric credential was returned.');
+    const completed = await passkeyRequest('authentication-verify', {
+      ceremonyId: started.ceremonyId,
+      credential: credentialToJSON(credential)
+    });
+    await continueAfterAuthentication(completed.user);
+  } catch (error) {
+    setStatus(loginStatus, friendlyPasskeyError(error), 'bad');
+  } finally {
+    setButtonLoading(passkeyLoginButton, false, 'Checking your device...', 'Use biometric sign-in');
+  }
+});
+
+passkeySetupButton.addEventListener('click', async () => {
+  if (passkeySetupButton.disabled) return;
+  const originalText = passkeySetupButton.textContent.trim();
+  setButtonLoading(passkeySetupButton, true, 'Opening device security...', originalText);
+  setStatus(dashboardStatus, 'Follow your device prompt to register biometric sign-in...');
+  try {
+    const started = await passkeyRequest('registration-options');
+    const credential = await navigator.credentials.create({
+      publicKey: registrationOptionsFromJSON(started.options)
+    });
+    if (!credential) throw new Error('No biometric credential was created.');
+    const completed = await passkeyRequest('registration-verify', {
+      ceremonyId: started.ceremonyId,
+      credential: credentialToJSON(credential)
+    });
+    setStatus(dashboardStatus, completed.message, 'ok');
+    await refreshPasskeyControls();
+  } catch (error) {
+    setStatus(dashboardStatus, friendlyPasskeyError(error), 'bad');
+  } finally {
+    passkeySetupButton.disabled = false;
+    passkeySetupButton.classList.remove('is-loading');
+    passkeySetupButton.removeAttribute('aria-busy');
+  }
+});
+
+approvalSettingsButton.addEventListener('click', openApprovalSettings);
+document.getElementById('staffApprovalSettingsClose').addEventListener('click', () => approvalSettingsDialog.close());
+document.getElementById('removeStaffSignature').addEventListener('click', () => {
+  approvalAssetState.signature = '';
+  document.getElementById('staffSignatureFile').value = '';
+  renderApprovalAssetPreview('signature');
+});
+document.getElementById('removeStaffStamp').addEventListener('click', () => {
+  approvalAssetState.stamp = '';
+  document.getElementById('staffStampFile').value = '';
+  renderApprovalAssetPreview('stamp');
+});
+[['staffSignatureFile', 'signature'], ['staffStampFile', 'stamp']].forEach(([inputId, kind]) => {
+  document.getElementById(inputId).addEventListener('change', async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      approvalAssetState[kind] = await approvalImageDataUrl(file);
+      renderApprovalAssetPreview(kind);
+      setStatus(document.getElementById('staffApprovalSettingsStatus'), `${kind === 'signature' ? 'Signature' : 'Stamp'} ready to save.`, 'ok');
+    } catch (error) {
+      event.target.value = '';
+      setStatus(document.getElementById('staffApprovalSettingsStatus'), error.message || String(error), 'bad');
+    }
+  });
+});
+approvalSettingsForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = document.getElementById('staffApprovalSettingsSave');
+  setButtonLoading(button, true, 'Saving...', 'Save user settings');
+  try {
+    const data = await approvalProfileRequest('POST', {
+      SignatureDataUrl: approvalAssetState.signature,
+      StampDataUrl: approvalAssetState.stamp,
+      ApplySignatureOnApproval: approvalSettingsForm.elements.ApplySignatureOnApproval.checked,
+      ApplyStampOnApproval: approvalSettingsForm.elements.ApplyStampOnApproval.checked,
+      ApplySignatureOnPosting: approvalSettingsForm.elements.ApplySignatureOnPosting.checked,
+      ApplyStampOnPosting: approvalSettingsForm.elements.ApplyStampOnPosting.checked
+    });
+    approvalProfile = data.profile;
+    if (financeData) {
+      financeData.approvalProfile = { ...approvalProfile };
+      delete financeData.approvalProfile.SignatureDataUrl;
+      delete financeData.approvalProfile.StampDataUrl;
+    }
+    setStatus(document.getElementById('staffApprovalSettingsStatus'), data.message, 'ok');
+  } catch (error) {
+    setStatus(document.getElementById('staffApprovalSettingsStatus'), error.message || String(error), 'bad');
+  } finally {
+    setButtonLoading(button, false, 'Saving...', 'Save user settings');
+  }
+});
+
+document.getElementById('financeDecisionClose').addEventListener('click', () => {
+  financeDecisionDialog.close();
+  pendingFinanceDecision = null;
+});
+document.getElementById('financeDecisionBiometric').addEventListener('click', verifyFinanceDecisionBiometric);
+financeDecisionForm.addEventListener('submit', submitFinanceDecision);
 
 async function signOutFromPortal(button) {
   button.disabled = true;

@@ -4,6 +4,8 @@ import { filterSectionsForFeatures, resolveOrganizationConfig } from './organiza
 const encoder = new TextEncoder();
 const SESSION_COOKIE = 'school_staff_session';
 const SESSION_SECONDS = 4 * 60 * 60;
+const APPROVAL_PROOF_COOKIE = 'staff_approval_proof';
+const APPROVAL_PROOF_SECONDS = 3 * 60;
 const WEB_PASSWORD_ITERATIONS = 10000;
 
 function clean(value) {
@@ -233,6 +235,63 @@ export async function authenticateStaff(env, username, password) {
   return null;
 }
 
+export async function authenticateStaffPasskey(env, username) {
+  const wanted = lower(username);
+  if (!wanted) return null;
+  let users = [];
+  try {
+    users = await listCollection(env, 'staffUsers');
+  } catch (_err) {
+    users = [];
+  }
+  const user = users.find((row) => lower(row.Username || row.username || row.__id) === wanted);
+  let authenticated = null;
+  if (user) {
+    const active = user.Active === undefined ? true : !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(user.Active));
+    if (!active) return null;
+    const loginAt = new Date().toISOString();
+    const saved = { ...user, LastLoginAt: loginAt };
+    delete saved.__id;
+    delete saved.__name;
+    await upsertDocument(env, 'staffUsers', user.__id, saved);
+    authenticated = publicUser(saved);
+  } else if (wanted === lower(env.ADMIN_WEB_USERNAME || 'admin')) {
+    authenticated = publicUser({
+      username: clean(env.ADMIN_WEB_USERNAME || 'admin'),
+      displayName: clean(env.ADMIN_WEB_DISPLAY_NAME || 'Super Admin'),
+      role: 'Super Admin',
+      schoolSectionAccess: 'All'
+    });
+  }
+  if (!authenticated) return null;
+  const loginAt = new Date().toISOString();
+  const auditId = `LOGIN-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  await upsertDocument(env, 'staffSecurityAudit', auditId, {
+    Timestamp: loginAt,
+    Action: 'LOGIN',
+    Username: authenticated.username,
+    Role: authenticated.role,
+    Department: authenticated.department,
+    SourcePlatform: 'Web Passkey'
+  });
+  return authenticated;
+}
+
+export async function verifyStaffApprovalPassword(env, username, password) {
+  const wanted = lower(username);
+  if (!wanted || !password) return false;
+  const users = await listCollection(env, 'staffUsers').catch(() => []);
+  const user = users.find((row) => lower(row.Username || row.username || row.__id) === wanted);
+  if (user) {
+    const active = user.Active === undefined ? true : !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(user.Active));
+    if (!active) return false;
+    if (await verifyDesktopPassword(user, password)) return true;
+  }
+  const envUsername = lower(env.ADMIN_WEB_USERNAME || 'admin');
+  return wanted === envUsername && Boolean(clean(env.ADMIN_WEB_PASSWORD)) &&
+    secureEqual(password, clean(env.ADMIN_WEB_PASSWORD));
+}
+
 export async function createStaffSession(env, user) {
   const payload = {
     ...publicUser(user),
@@ -240,6 +299,39 @@ export async function createStaffSession(env, user) {
   };
   const encoded = base64Url(JSON.stringify(payload));
   return `${encoded}.${await signPayload(env, encoded)}`;
+}
+
+export async function createStaffApprovalProof(env, user, scope = {}) {
+  const payload = {
+    username: lower(user.username),
+    purpose: 'finance-approval',
+    recordId: clean(scope.recordId),
+    recordType: lower(scope.recordType),
+    action: clean(scope.action),
+    exp: Math.floor(Date.now() / 1000) + APPROVAL_PROOF_SECONDS,
+    nonce: crypto.randomUUID()
+  };
+  const encoded = base64Url(JSON.stringify(payload));
+  return `${encoded}.${await signPayload(env, encoded)}`;
+}
+
+export async function readStaffApprovalProof(env, request, username, scope = {}) {
+  const token = cookieValue(request, APPROVAL_PROOF_COOKIE);
+  const [encoded, signature, extra] = token.split('.');
+  if (!encoded || !signature || extra) return false;
+  const verified = await crypto.subtle.verify('HMAC', await hmacKey(env), fromBase64Url(signature), encoder.encode(encoded));
+  if (!verified) return false;
+  try {
+    const payload = JSON.parse(new TextDecoder().decode(fromBase64Url(encoded)));
+    return payload.purpose === 'finance-approval' &&
+      lower(payload.username) === lower(username) &&
+      clean(payload.recordId) === clean(scope.recordId) &&
+      lower(payload.recordType) === lower(scope.recordType) &&
+      clean(payload.action) === clean(scope.action) &&
+      Number(payload.exp) > Math.floor(Date.now() / 1000);
+  } catch (_error) {
+    return false;
+  }
 }
 
 function cookieValue(request, name) {
@@ -305,4 +397,12 @@ export function staffSessionCookie(token) {
 
 export function clearStaffSessionCookie() {
   return `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict`;
+}
+
+export function staffApprovalProofCookie(token) {
+  return `${APPROVAL_PROOF_COOKIE}=${token}; Path=/api/; Max-Age=${APPROVAL_PROOF_SECONDS}; HttpOnly; Secure; SameSite=Strict`;
+}
+
+export function clearStaffApprovalProofCookie() {
+  return `${APPROVAL_PROOF_COOKIE}=; Path=/api/; Max-Age=0; HttpOnly; Secure; SameSite=Strict`;
 }

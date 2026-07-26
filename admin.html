@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Organisation Staff Portal</title>
   <meta name="theme-color" content="#071b33">
-  <script src="js/preferences.js?v=20260726-launcher"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260726-shared-mobile-11">
+  <script src="js/preferences.js?v=20260726-biometric"></script>
+  <link rel="stylesheet" href="css/style.css?v=20260726-shared-mobile-14">
 </head>
 <body class="staff-page">
   <header class="staff-topbar">
@@ -28,10 +28,13 @@
       <p class="lead">Sign in to access the organisation records permitted for your role.</p>
       <form id="staffLoginForm" autocomplete="on">
         <label for="staffUsername">Username</label>
-        <input id="staffUsername" name="username" autocomplete="username" required>
+        <input id="staffUsername" name="username" autocomplete="username webauthn" required>
         <label for="staffPassword">Password</label>
         <input id="staffPassword" name="password" type="password" autocomplete="current-password" required>
         <button id="staffLoginButton" type="submit">Sign In</button>
+        <button id="staffPasskeyLogin" type="button" class="staff-passkey-button" hidden>
+          <span aria-hidden="true">◉</span> Use biometric sign-in
+        </button>
         <p id="staffLoginStatus" class="status" role="status"></p>
       </form>
       <p class="muted staff-login-note">This web portal complements the desktop application. Both use the same Firestore data.</p>
@@ -51,6 +54,12 @@
           </div>
           <div class="staff-sidebar-actions">
             <small class="staff-swipe-hint">Swipe left to close this panel</small>
+            <button type="button" id="staffApprovalSettings" class="staff-profile-settings" hidden>
+              <span aria-hidden="true">⚙</span> User settings
+            </button>
+            <button type="button" id="staffPasskeySetup" class="staff-passkey-setup" hidden>
+              <span aria-hidden="true">◉</span> Set up biometric sign-in
+            </button>
             <button type="button" id="staffSidebarSignOut" class="staff-sidebar-signout"><span aria-hidden="true">↪</span> Sign out</button>
           </div>
         </aside>
@@ -97,8 +106,72 @@
     </form>
   </dialog>
 
+  <dialog id="staffApprovalSettingsDialog" class="workflow-dialog staff-approval-settings-dialog">
+    <div class="workflow-dialog-header">
+      <div><small>User settings</small><h2>Approval Signature & Stamp</h2></div>
+      <button type="button" id="staffApprovalSettingsClose" aria-label="Close user settings">&times;</button>
+    </div>
+    <form id="staffApprovalSettingsForm" class="workflow-form">
+      <p class="muted">Save your own approval identity. It is applied only when you select it during an approval or posting decision.</p>
+      <div class="approval-asset-grid">
+        <label>Signature image
+          <input id="staffSignatureFile" type="file" accept="image/png,image/jpeg,image/webp">
+          <small>PNG, JPG or WebP. A transparent background is recommended.</small>
+        </label>
+        <div class="approval-asset-preview">
+          <img id="staffSignaturePreview" alt="Saved signature preview" hidden>
+          <span id="staffSignatureEmpty">No signature saved</span>
+          <button type="button" id="removeStaffSignature" class="secondary">Remove signature</button>
+        </div>
+        <label>Official stamp image
+          <input id="staffStampFile" type="file" accept="image/png,image/jpeg,image/webp">
+          <small>Use a clear cropped image of the authorized stamp.</small>
+        </label>
+        <div class="approval-asset-preview">
+          <img id="staffStampPreview" alt="Saved stamp preview" hidden>
+          <span id="staffStampEmpty">No stamp saved</span>
+          <button type="button" id="removeStaffStamp" class="secondary">Remove stamp</button>
+        </div>
+      </div>
+      <fieldset class="approval-defaults">
+        <legend>Default choices</legend>
+        <label class="check-row"><input name="ApplySignatureOnApproval" type="checkbox"> Select signature when approving</label>
+        <label class="check-row"><input name="ApplyStampOnApproval" type="checkbox"> Select stamp when approving</label>
+        <label class="check-row"><input name="ApplySignatureOnPosting" type="checkbox"> Select signature when reviewing/posting</label>
+        <label class="check-row"><input name="ApplyStampOnPosting" type="checkbox"> Select stamp when reviewing/posting</label>
+      </fieldset>
+      <button id="staffApprovalSettingsSave" type="submit">Save user settings</button>
+      <p id="staffApprovalSettingsStatus" class="status" role="status"></p>
+    </form>
+  </dialog>
+
+  <dialog id="financeDecisionDialog" class="workflow-dialog finance-decision-dialog">
+    <div class="workflow-dialog-header">
+      <div><small>Secure decision</small><h2 id="financeDecisionTitle">Approve Document</h2></div>
+      <button type="button" id="financeDecisionClose" aria-label="Close decision">&times;</button>
+    </div>
+    <form id="financeDecisionForm" class="workflow-form">
+      <p id="financeDecisionRecord" class="decision-record-reference"></p>
+      <label>Decision notes<textarea name="notes" rows="2"></textarea></label>
+      <fieldset id="financeEndorsementOptions" class="approval-defaults">
+        <legend>Apply to this document</legend>
+        <label class="check-row"><input name="applySignature" type="checkbox"> Signature</label>
+        <label class="check-row"><input name="applyStamp" type="checkbox"> Official stamp</label>
+      </fieldset>
+      <fieldset id="financeDecisionVerification" class="decision-verification">
+        <legend>Confirm your identity</legend>
+        <label>Current password<input name="approvalPassword" type="password" autocomplete="current-password"></label>
+        <div class="decision-verification-divider"><span>or</span></div>
+        <button id="financeDecisionBiometric" type="button" class="staff-passkey-button"><span aria-hidden="true">◉</span> Verify with biometric</button>
+        <p id="financeDecisionVerificationStatus" class="status" role="status"></p>
+      </fieldset>
+      <button id="financeDecisionSubmit" type="submit">Confirm Decision</button>
+      <p id="financeDecisionStatus" class="status" role="status"></p>
+    </form>
+  </dialog>
+
   <script src="js/site-config.js?v=20260718-personalized-ui"></script>
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
-  <script src="js/admin.js?v=20260726-shared-mobile-11"></script>
+  <script src="js/admin.js?v=20260726-shared-mobile-14"></script>
 </body>
 </html>

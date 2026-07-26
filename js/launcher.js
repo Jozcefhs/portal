@@ -4,6 +4,8 @@
   const form = document.getElementById('preferenceForm');
   const openServices = document.getElementById('openServices');
   const openSettings = document.getElementById('openSettings');
+  const biometricInput = form.elements.biometric;
+  const biometricHint = document.getElementById('biometricPreferenceHint');
   let lastTrigger = null;
 
   function focusable(panel) {
@@ -33,6 +35,7 @@
     form.elements.largeText.checked = preferences.largeText;
     form.elements.compact.checked = preferences.compact;
     form.elements.reduceMotion.checked = preferences.reduceMotion;
+    biometricInput.checked = preferences.biometric;
   }
 
   openServices.addEventListener('click', () => openPanel(services, openServices));
@@ -71,7 +74,8 @@
       accent: form.elements.accent.value,
       largeText: form.elements.largeText.checked,
       compact: form.elements.compact.checked,
-      reduceMotion: form.elements.reduceMotion.checked
+      reduceMotion: form.elements.reduceMotion.checked,
+      biometric: biometricInput.checked
     });
   });
 
@@ -82,7 +86,8 @@
       accent: form.elements.accent.value,
       largeText: form.elements.largeText.checked,
       compact: form.elements.compact.checked,
-      reduceMotion: form.elements.reduceMotion.checked
+      reduceMotion: form.elements.reduceMotion.checked,
+      biometric: biometricInput.checked
     });
     closePanel(settings);
   });
@@ -91,4 +96,17 @@
     window.DIGCPreferences.save(window.DIGCPreferences.defaults);
     populateForm();
   });
+
+  (async function checkBiometricSupport() {
+    let supported = Boolean(window.PublicKeyCredential && navigator.credentials);
+    if (supported && PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
+      supported = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().catch(() => false);
+    }
+    biometricInput.disabled = !supported;
+    biometricInput.closest('.preference-switch-row').classList.toggle('is-unavailable', !supported);
+    if (!supported) {
+      biometricInput.checked = false;
+      biometricHint.textContent = 'This browser or device does not offer secure biometric sign-in';
+    }
+  }());
 })();

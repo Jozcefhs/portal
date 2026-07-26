@@ -35,9 +35,14 @@ test('material requisition is an additional workflow with a multi-item table', (
   assert.match(adminJs, /<th>S\/No\.<\/th><th>Item<\/th><th>Specification<\/th><th>Quantity<\/th><th>Unit Price<\/th><th>Total<\/th>/);
   assert.match(adminJs, /data-add-material-item/);
   assert.match(adminJs, /financeRequest\('submitMaterialRequisition', payload\)/);
-  assert.match(adminJs, /materialItemsTable\(record\.MaterialItems \|\| record\.Items\)/);
+  assert.match(adminJs, /materialItemsTable\(record\.MaterialItems \|\| record\.Items, record\.Amount\)/);
+  assert.match(adminJs, /name="description"[\s\S]*?required[\s\S]*?State the purpose of this material request/);
+  assert.match(adminJs, /<tfoot><tr class="material-grand-total-row"><th colspan="5">Grand Total<\/th>/);
+  assert.doesNotMatch(workflowApi, /Material requisition: \$\{itemNames\}/);
+  assert.match(workflowApi, /A description is required for the material requisition/);
   assert.match(workflowApi, /RequisitionType: 'Material'/);
   assert.match(workflowApi, /MaterialItems: items/);
   assert.match(workflowApi, /action === 'submitmaterialrequisition'/);
   assert.match(portalCss, /\.material-requisition-dialog\{width:min\(1000px/);
+  assert.match(portalCss, /\.material-grand-total-row th\{/);
 });

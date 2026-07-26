@@ -8,6 +8,7 @@
     "test:payroll": "node --test tests/payroll/backend-security.test.mjs tests/payroll/formula-engine.test.mjs tests/payroll/paye-engine.test.mjs tests/payroll/payroll-calculation.test.mjs tests/payroll/payroll-ledger.test.mjs tests/payroll/payroll-migration.test.mjs tests/payroll/payroll-run-guards.test.mjs"
   },
   "dependencies": {
+    "@simplewebauthn/server": "^13.3.2",
     "pdf-lib": "^1.17.1",
     "qrcode": "^1.5.4"
   }

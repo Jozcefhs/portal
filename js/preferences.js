@@ -1,6 +1,6 @@
 (function () {
   const KEY = 'digc-suite-preferences';
-  const defaults = { theme: 'system', accent: 'blue', largeText: false, compact: false, reduceMotion: false };
+  const defaults = { theme: 'system', accent: 'blue', largeText: false, compact: false, reduceMotion: false, biometric: false };
 
   function read() {
     try {
@@ -23,6 +23,7 @@
     root.dataset.largeText = preferences.largeText ? 'true' : 'false';
     root.dataset.density = preferences.compact ? 'compact' : 'comfortable';
     root.dataset.reduceMotion = preferences.reduceMotion ? 'true' : 'false';
+    root.dataset.biometric = preferences.biometric ? 'true' : 'false';
     const themeMeta = document.querySelector('meta[name="theme-color"]');
     if (themeMeta) themeMeta.content = root.dataset.theme === 'dark' ? '#07111f' : '#0b4bc8';
   }

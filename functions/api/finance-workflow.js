@@ -1,5 +1,11 @@
-import { listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
-import { requireStaffSession } from '../lib/staff-auth.js';
+import { batchUpsertDocuments, deleteDocument, getDocument, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import {
+  clearStaffApprovalProofCookie,
+  readStaffApprovalProof,
+  requireStaffSession,
+  verifyStaffApprovalPassword
+} from '../lib/staff-auth.js';
+import { loadStaffApprovalProfile, publicStaffApprovalProfile } from '../lib/staff-approval-profile.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -89,6 +95,20 @@ function actor(user) {
   return clean(user.displayName || user.username);
 }
 
+async function requireDecisionAuthorization(env, user, body, request, decisionAction) {
+  if (clean(body.approvalPassword) && await verifyStaffApprovalPassword(env, user.username, body.approvalPassword)) {
+    return 'Password';
+  }
+  if (await readStaffApprovalProof(env, request, user.username, {
+    recordId: body.recordId,
+    recordType: body.recordType,
+    action: decisionAction
+  })) return 'Biometric';
+  const err = new Error('Confirm this decision with your current password or biometric verification.');
+  err.status = 401;
+  throw err;
+}
+
 function publicRows(rows) {
   return (rows || []).map((row) => {
     const copy = { ...row };
@@ -131,16 +151,21 @@ async function writeAudit(env, user, action, recordType, recordId, details = '')
 
 async function listWorkflow(env, user) {
   const access = capabilities(user);
-  const [requests, bills] = await Promise.all([
+  const [requests, bills, approvalProfile] = await Promise.all([
     listCollection(env, 'accountingExpenses'),
-    listCollection(env, 'accountingSupplierBills')
+    listCollection(env, 'accountingSupplierBills'),
+    loadStaffApprovalProfile(env, user.username)
   ]);
+  const approvalProfileSummary = publicStaffApprovalProfile(approvalProfile || {});
+  delete approvalProfileSummary.SignatureDataUrl;
+  delete approvalProfileSummary.StampDataUrl;
   const sortRecent = (rows) => [...rows].sort((a, b) => clean(b.UpdatedAt || b.CreatedAt || b.Date).localeCompare(clean(a.UpdatedAt || a.CreatedAt || a.Date)));
   return {
     ok: true,
     message: 'Department finance workflow loaded.',
     department: userDepartment(user),
     capabilities: access,
+    approvalProfile: approvalProfileSummary,
     requisitions: publicRows(sortRecent(scopedRows(requests, user, access))).slice(0, 150),
     bills: publicRows(sortRecent(scopedRows(bills, user, access))).slice(0, 150)
   };
@@ -197,6 +222,12 @@ async function submitRequisition(env, user, body) {
 async function submitMaterialRequisition(env, user, body) {
   const department = requireSubmitter(user);
   const items = normalizeMaterialItems(body.items || body.MaterialItems);
+  const description = clean(body.description || body.Description);
+  if (!description) {
+    const err = new Error('A description is required for the material requisition.');
+    err.status = 400;
+    throw err;
+  }
   if (!items.length) {
     const err = new Error('Add at least one material item.');
     err.status = 400;
@@ -210,13 +241,12 @@ async function submitMaterialRequisition(env, user, body) {
   }
   const value = amount(items.reduce((sum, item) => sum + item.Total, 0));
   const expenseNo = requestNumber('WEB-MAT');
-  const itemNames = items.map((item) => item.Item).join(', ');
   const payload = {
     ExpenseNo: expenseNo,
     RequisitionType: 'Material',
     Date: clean(body.date || body.Date) || dateToday(),
     Vendor: clean(body.vendor || body.Vendor),
-    Description: clean(body.description || body.Description) || `Material requisition: ${itemNames}`,
+    Description: description,
     MaterialItems: items,
     Amount: value,
     ExpenseAccount: clean(body.expenseAccount || body.ExpenseAccount) || '6090',
@@ -298,7 +328,7 @@ function approvalAccountAllows(user, existing, isBill) {
   return allowed.some((value) => value === lower(accountCode));
 }
 
-async function reviewRecord(env, user, body) {
+async function reviewRecord(env, user, body, request) {
   const access = capabilities(user);
   if (!access.canApprove) {
     const err = new Error('Approval rights have not been enabled for this account by an administrator.');
@@ -340,24 +370,65 @@ async function reviewRecord(env, user, body) {
     err.status = 403;
     throw err;
   }
+  const authorizationMethod = decision === 'Approved'
+    ? await requireDecisionAuthorization(env, user, body, request, 'review:Approved')
+    : '';
   const timestamp = nowIso();
+  const isAdminOverrideApproval = decision === 'Approved' && Boolean(isAdminOverride);
+  const stage = isAdminOverrideApproval ? 'admin' : 'approval';
+  const endorsement = decision === 'Approved'
+    ? await buildEndorsement(env, user, body, id, stage)
+    : null;
   const payload = {
     ...existing,
     Status: decision,
     ReviewNotes: clean(body.notes),
     UpdatedAt: timestamp,
     ...(decision === 'Approved'
-      ? { ApprovedAt: existing.ApprovedAt || timestamp, ApprovedBy: existing.ApprovedBy || actor(user), AdminReviewedAt: user.role === 'Super Admin' ? timestamp : '', AdminReviewedBy: user.role === 'Super Admin' ? actor(user) : '', RejectedAt: '', RejectedBy: '' }
-      : { RejectedAt: timestamp, RejectedBy: actor(user), ApprovedAt: '', ApprovedBy: '' })
+      ? {
+          ApprovedAt: existing.ApprovedAt || timestamp,
+          ApprovedBy: existing.ApprovedBy || actor(user),
+          ApprovedByUsername: existing.ApprovedByUsername || clean(user.username),
+          ApprovalSignatureApplied: isAdminOverrideApproval ? existing.ApprovalSignatureApplied : Boolean(endorsement?.SignatureDataUrl),
+          ApprovalStampApplied: isAdminOverrideApproval ? existing.ApprovalStampApplied : Boolean(endorsement?.StampDataUrl),
+          ApprovalAuthenticationMethod: isAdminOverrideApproval ? existing.ApprovalAuthenticationMethod : authorizationMethod,
+          AdminReviewedAt: isAdminOverrideApproval ? timestamp : '',
+          AdminReviewedBy: isAdminOverrideApproval ? actor(user) : '',
+          AdminReviewedByUsername: isAdminOverrideApproval ? clean(user.username) : '',
+          AdminSignatureApplied: isAdminOverrideApproval ? Boolean(endorsement?.SignatureDataUrl) : false,
+          AdminStampApplied: isAdminOverrideApproval ? Boolean(endorsement?.StampDataUrl) : false,
+          AdminAuthenticationMethod: isAdminOverrideApproval ? authorizationMethod : '',
+          RejectedAt: '',
+          RejectedBy: ''
+        }
+      : {
+          RejectedAt: timestamp,
+          RejectedBy: actor(user),
+          ApprovedAt: '',
+          ApprovedBy: '',
+          ApprovedByUsername: '',
+          ApprovalSignatureApplied: false,
+          ApprovalStampApplied: false
+        })
   };
   delete payload.__id;
   delete payload.__name;
-  await upsertDocument(env, collection, safeId(id), payload);
+  const writes = [{ collectionPath: collection, documentId: safeId(id), data: payload }];
+  if (endorsement) writes.push({
+    collectionPath: 'financeDocumentEndorsements',
+    documentId: endorsementId(id, stage),
+    data: endorsement
+  });
+  await batchUpsertDocuments(env, writes);
+  if (decision === 'Rejected') {
+    await deleteDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'approval')).catch(() => null);
+    await deleteDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'admin')).catch(() => null);
+  }
   await writeAudit(env, user, decision.toUpperCase(), isBill ? 'Supplier Bill' : 'Expense Requisition', id, clean(body.notes));
   return { ok: true, message: `${isBill ? 'Supplier bill' : 'Requisition'} ${decision.toLowerCase()}.`, record: payload };
 }
 
-async function accountsReview(env, user, body) {
+async function accountsReview(env, user, body, request) {
   const access = capabilities(user);
   if (!access.canAccountsReview) {
     const err = new Error('Only Accounts or Super Admin can review approved requests for processing.');
@@ -379,19 +450,89 @@ async function accountsReview(env, user, body) {
     err.status = 409;
     throw err;
   }
+  const authorizationMethod = await requireDecisionAuthorization(env, user, body, request, 'accountsReview');
+  const endorsement = await buildEndorsement(env, user, body, id, 'accounts');
   const payload = {
     ...existing,
     AccountsReviewStatus: 'Reviewed',
     AccountsReviewedBy: actor(user),
+    AccountsReviewedByUsername: clean(user.username),
     AccountsReviewedAt: nowIso(),
+    AccountsSignatureApplied: Boolean(endorsement?.SignatureDataUrl),
+    AccountsStampApplied: Boolean(endorsement?.StampDataUrl),
+    AccountsAuthenticationMethod: authorizationMethod,
     AccountsReviewNotes: clean(body.notes),
     UpdatedAt: nowIso()
   };
   delete payload.__id;
   delete payload.__name;
-  await upsertDocument(env, collection, safeId(id), payload);
+  const writes = [{ collectionPath: collection, documentId: safeId(id), data: payload }];
+  if (endorsement) writes.push({
+    collectionPath: 'financeDocumentEndorsements',
+    documentId: endorsementId(id, 'accounts'),
+    data: endorsement
+  });
+  await batchUpsertDocuments(env, writes);
   await writeAudit(env, user, 'ACCOUNTS REVIEW', isBill ? 'Supplier Bill' : 'Expense Requisition', id, clean(body.notes));
   return { ok: true, message: 'Marked as reviewed by Accounts. Post or pay it from the desktop Finance & Accounting tab.', record: payload };
+}
+
+function endorsementId(recordId, stage) {
+  return safeId(`${recordId}-${stage}`);
+}
+
+async function buildEndorsement(env, user, body, recordId, stage) {
+  const applySignature = body.applySignature === true;
+  const applyStamp = body.applyStamp === true;
+  if (!applySignature && !applyStamp) return null;
+  const profile = publicStaffApprovalProfile(await loadStaffApprovalProfile(env, user.username) || {});
+  if (applySignature && !profile.SignatureDataUrl) {
+    const err = new Error('Save a signature in User Settings before applying it.');
+    err.status = 400;
+    throw err;
+  }
+  if (applyStamp && !profile.StampDataUrl) {
+    const err = new Error('Save a stamp in User Settings before applying it.');
+    err.status = 400;
+    throw err;
+  }
+  return {
+    RecordId: clean(recordId),
+    Stage: stage,
+    AppliedBy: actor(user),
+    AppliedByUsername: clean(user.username),
+    AppliedAt: nowIso(),
+    SignatureDataUrl: applySignature ? profile.SignatureDataUrl : '',
+    StampDataUrl: applyStamp ? profile.StampDataUrl : ''
+  };
+}
+
+async function documentRecord(env, user, body) {
+  const isBill = lower(body.recordType) === 'bill';
+  const collection = isBill ? 'accountingSupplierBills' : 'accountingExpenses';
+  const idField = isBill ? 'BillNo' : 'ExpenseNo';
+  const id = clean(body.recordId);
+  const existing = (await listCollection(env, collection))
+    .find((row) => same(row[idField], id) || same(row.__id, safeId(id)));
+  if (!existing || !scopedRows([existing], user, capabilities(user)).length) {
+    const err = new Error('The selected finance document was not found.');
+    err.status = 404;
+    throw err;
+  }
+  const [approvalEndorsement, adminEndorsement, accountsEndorsement] = await Promise.all([
+    getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'approval')),
+    getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'admin')),
+    getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'accounts'))
+  ]);
+  return {
+    ok: true,
+    record: publicRows([existing])[0],
+    endorsements: {
+      approval: approvalEndorsement || null,
+      admin: adminEndorsement || null,
+      accounts: accountsEndorsement || null
+    }
+  };
 }
 
 export async function onRequestPost(context) {
@@ -406,14 +547,17 @@ export async function onRequestPost(context) {
     else if (action === 'submitrequisition') data = await submitRequisition(env, user, body);
     else if (action === 'submitmaterialrequisition') data = await submitMaterialRequisition(env, user, body);
     else if (action === 'submitbill') data = await submitBill(env, user, body);
-    else if (action === 'review') data = await reviewRecord(env, user, body);
-    else if (action === 'accountsreview') data = await accountsReview(env, user, body);
+    else if (action === 'review') data = await reviewRecord(env, user, body, request);
+    else if (action === 'accountsreview') data = await accountsReview(env, user, body, request);
+    else if (action === 'document') data = await documentRecord(env, user, body);
     else {
       const err = new Error('Unknown finance workflow action.');
       err.status = 400;
       throw err;
     }
-    return Response.json(data, { headers: { 'Cache-Control': 'no-store' } });
+    const headers = { 'Cache-Control': 'no-store' };
+    if (action === 'review' || action === 'accountsreview') headers['Set-Cookie'] = clearStaffApprovalProofCookie();
+    return Response.json(data, { headers });
   } catch (err) {
     return Response.json({ ok: false, message: err.message || String(err) }, {
       status: err.status || 500,

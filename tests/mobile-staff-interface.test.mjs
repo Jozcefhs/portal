@@ -87,6 +87,14 @@ test('dark mode preserves dashboard and requisition text contrast', () => {
   assert.match(portalCss, /html\[data-theme="dark"\] \.workflow-dialog \.workflow-form label\{color:#f4f8ff\}/);
 });
 
+test('selected student card has an unmistakable active state', () => {
+  assert.match(portalCss, /\.child-list \.child-card\.selected\{border:2px solid var\(--blue\);background:#e8f1ff;box-shadow:0 0 0 3px/);
+  assert.match(portalCss, /\.child-list \.child-card\.selected::after\{content:"✓ Selected"/);
+  assert.match(portalCss, /\.child-list \.child-card\.selected \.child-card-layout\{padding-right:72px\}/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.child-list \.child-card\.selected\{border-color:#43d19e;background:#123a67/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.child-list \.child-card\.selected::after\{background:#43d19e;color:#071b2c\}/);
+});
+
 test('student profile action uses a compact accessible pencil icon', () => {
   assert.match(adminJs, /class="student-edit-icon compact-icon-action compact-edit-action"/);
   assert.match(adminJs, /aria-label="Edit profile for \$\{studentName\}"/);
@@ -153,7 +161,7 @@ test('finance requests use one-row records, icon decisions, printing, and a repe
   assert.match(adminJs, /class="compact-icon-action compact-print-action" data-print-finance-record=/);
   assert.match(adminJs, /class="compact-icon-action compact-approve-action"[\s\S]*?aria-label="Approve/);
   assert.match(adminJs, /class="compact-icon-action compact-reject-action"[\s\S]*?aria-label="Reject/);
-  assert.match(adminJs, /function openFinanceRecordPrint\(record, type\)/);
+  assert.match(adminJs, /function openFinanceRecordPrint\(record, type, endorsements = \{\}, printableWindow = null\)/);
   assert.match(adminJs, /window\.setTimeout\(\(\) => printable\.print\(\), 250\)/);
   assert.match(adminJs, /data-offering-action="approvechurchoffering"[\s\S]*?aria-label="Approve offering"/);
   assert.match(adminJs, /data-offering-action="rejectchurchoffering"[\s\S]*?aria-label="Reject offering"/);
