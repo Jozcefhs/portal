@@ -142,11 +142,13 @@ test('dark mode preserves dashboard and requisition text contrast', () => {
   assert.match(portalCss, /html\[data-theme="dark"\] \.workflow-dialog \.workflow-form label\{color:#f4f8ff\}/);
 });
 
-test('school dashboard graphs remain available on mobile for cross-functional staff', () => {
+test('school and organisation dashboard graphs remain available on mobile', () => {
   const renderTabsSource = adminJs.slice(adminJs.indexOf('function renderTabs'), adminJs.indexOf('function renderWorkspace'));
   assert.doesNotMatch(renderTabsSource, /dataset\.edition\s*=/);
   assert.match(adminJs, /document\.documentElement\.dataset\.edition = isOrganisationOperations \? 'church' : 'school'/);
-  assert.match(adminJs, /if \(activeSection !== 'overview' \|\| document\.documentElement\.dataset\.edition === 'church'\)/);
+  assert.match(adminJs, /if \(activeSection !== 'overview'\)/);
+  assert.match(adminJs, /if \(document\.documentElement\.dataset\.edition === 'church'\)[\s\S]*?loadOrganizationDashboardCharts\(\)/);
+  assert.match(adminJs, /Attendance by department[\s\S]*?Offerings by department[\s\S]*?Home churches by area \/ zone[\s\S]*?Program participants by country/);
   assert.match(portalCss, /@media \(max-width:780px\)\{\.dashboard-charts\{grid-template-columns:1fr\}/);
 });
 

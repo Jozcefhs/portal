@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
-const sharedVersion = '20260727-tuckshop-nfc';
-const adminScriptVersion = '20260727-tuckshop-nfc';
+const sharedVersion = '20260727-dashboard-charts';
+const adminScriptVersion = '20260727-dashboard-charts';
 const pageNames = [
   'admin.html',
   'application.html',
@@ -69,7 +69,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v45-tuckshop-nfc/);
+  assert.match(serviceWorker, /dynamax-v47-dashboard-charts/);
   assert.match(serviceWorker, /'\/admin\.html'/);
   assert.match(serviceWorker, /'\/js\/admin\.js'/);
   assert.match(serviceWorker, /self\.skipWaiting\(\)/);
