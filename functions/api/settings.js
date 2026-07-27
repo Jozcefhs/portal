@@ -30,7 +30,7 @@ function defaultProfile(env) {
     OrganisationName: organization.Name,
     OrganisationCode: organization.Code,
     FeatureFlags: organization.FeatureFlags,
-    SchoolName: clean(env.SCHOOL_NAME) || 'Integrated School Management Suite',
+    SchoolName: clean(env.SCHOOL_NAME) || 'Dynamax',
     SchoolCode: normalizeSchoolCode(env.SCHOOL_CODE),
     SchoolAddress: clean(env.SCHOOL_ADDRESS) || '',
     SchoolPhone: clean(env.SCHOOL_PHONE) || '',
@@ -48,7 +48,7 @@ function defaultProfile(env) {
     PortalHeadline: clean(env.PORTAL_HEADLINE) || 'Admissions and parent services in one place',
     PortalSubheading: clean(env.PORTAL_SUBHEADING) || 'Buy forms, complete applications, upload documents, pay fees, and monitor student activity from a secure school portal.',
     PortalNotice: clean(env.PORTAL_NOTICE) || '',
-    WebLogoUrl: '',
+    WebLogoUrl: '/images/Logo.png',
     WebLogoConfigured: false,
     ResultDisplayMode: clean(env.RESULT_DISPLAY_MODE) || 'subjects',
     ShowResultsOnline: clean(env.SHOW_RESULTS_ONLINE) || 'NO',
@@ -56,6 +56,9 @@ function defaultProfile(env) {
     CurrentTerm: clean(env.CURRENT_TERM) || 'First Term',
     DeclarationStatement: clean(env.DECLARATION_STATEMENT) || 'I declare that the information supplied in this application is complete and correct.',
     ProductKeyMode: clean(env.PRODUCT_KEY_MODE) || 'off',
+    GoogleDocumentsUrl: clean(env.GOOGLE_DOCUMENTS_URL) || '',
+    SubscriptionPlan: clean(env.SUBSCRIPTION_PLAN) || 'Starter',
+    UserLimit: Math.max(1, Number(env.USER_LIMIT || 5) || 5),
     UpdatedAt: ''
   };
 }
@@ -123,7 +126,7 @@ export async function onRequestPost(context) {
       OrganisationName: organization.Name,
       OrganisationCode: organization.Code,
       FeatureFlags: organization.FeatureFlags,
-      SchoolName: clean(incoming.SchoolName) || 'Integrated School Management Suite',
+      SchoolName: clean(incoming.SchoolName) || 'Dynamax',
       SchoolCode: normalizeSchoolCode(incoming.SchoolCode),
       SchoolAddress: clean(incoming.SchoolAddress),
       SchoolPhone: clean(incoming.SchoolPhone),
@@ -147,6 +150,9 @@ export async function onRequestPost(context) {
       CurrentTerm: clean(incoming.CurrentTerm) || 'First Term',
       DeclarationStatement: clean(incoming.DeclarationStatement) || 'I declare that the information supplied in this application is complete and correct.',
       ProductKeyMode: ['off', 'required'].includes(clean(incoming.ProductKeyMode)) ? clean(incoming.ProductKeyMode) : 'off',
+      GoogleDocumentsUrl: clean(incoming.GoogleDocumentsUrl),
+      SubscriptionPlan: clean(incoming.SubscriptionPlan) || 'Starter',
+      UserLimit: Math.max(1, Number(incoming.UserLimit || existing.UserLimit || 5) || 5),
       UpdatedAt: new Date().toISOString()
     };
     if (incoming.WebLogoDataUrl !== undefined) {
@@ -160,11 +166,18 @@ export async function onRequestPost(context) {
     }
     delete profile.WebLogoUrl;
     delete profile.WebLogoConfigured;
-    await upsertDocument(env, 'settings', 'organisationProfile', organizationProfileDocument(organization, {
+    await upsertDocument(env, 'settings', 'organisationProfile', organizationProfileDocument({
+      ...organization,
+      GoogleDocumentsUrl: profile.GoogleDocumentsUrl,
+      Plan: profile.SubscriptionPlan,
+      UserLimit: profile.UserLimit,
+      BrandName: 'Dynamax',
+      BrandLogoUrl: '/images/Logo.png'
+    }, {
       UpdatedAt: profile.UpdatedAt, UpdatedBy: 'Setup'
     }));
     await upsertDocument(env, 'settings', 'schoolProfile', profile);
-    return Response.json({ ok: true, message: 'School setup saved.', profile: await getProfile(env) });
+    return Response.json({ ok: true, message: 'Organisation setup saved.', profile: await getProfile(env) });
   } catch (err) {
     return Response.json({
       ok: false,

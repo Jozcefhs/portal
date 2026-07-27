@@ -1,6 +1,6 @@
 async function loadSiteProfile() {
   const fallback = {
-    SchoolName: 'Integrated School Management Suite',
+    SchoolName: 'Dynamax',
     SchoolAddress: '',
     PortalHeadline: 'Admissions and parent services in one place',
     PortalSubheading: 'Buy forms, complete applications, upload documents, pay fees, and monitor student activity from a secure school portal.',
@@ -41,9 +41,10 @@ function applySiteProfile(profile) {
   document.querySelectorAll('[data-declaration-statement]').forEach((node) => {
     node.textContent = profile.DeclarationStatement || 'I declare that the information supplied in this application is complete and correct.';
   });
-  if (profile.WebLogoUrl) {
+  const brandLogo = profile.WebLogoUrl || '/images/Logo.png';
+  if (brandLogo) {
     document.querySelectorAll('img.logo, img.nav-logo').forEach((node) => {
-      node.src = profile.WebLogoUrl;
+      node.src = brandLogo;
       node.style.display = '';
     });
   }

@@ -71,7 +71,7 @@ const tabConfig = [
   ['admissions', 'Admissions'],
   ['formPurchases', 'Form Purchases'],
   ['students', 'Students'],
-  ['members', 'Members & Households'],
+  ['members', 'Departments & Members'],
   ['services', 'Services & Attendance'],
   ['funds', 'Funds & Mappings'],
   ['offerings', 'Offerings'],
@@ -544,19 +544,22 @@ function showDashboard(user) {
   const displayName = user.displayName || user.username || 'Staff';
   const explicitEdition = clean(user.organisationEdition || user.organizationEdition || user.edition).toLowerCase();
   const profileName = clean(window.SCHOOL_PROFILE?.SchoolName);
-  const isChurch = requestedWorkspace === 'church' || explicitEdition === 'church' || /dunamis|digc|church/i.test(profileName);
+  const isFaith = ['church', 'faith'].includes(requestedWorkspace)
+    || ['church', 'faith'].includes(explicitEdition) || /dunamis|digc|church/i.test(profileName);
+  const isGenericOrganization = requestedWorkspace === 'organization' || explicitEdition === 'organization';
+  const isOrganisationOperations = isFaith || isGenericOrganization;
   displayNameEl.textContent = displayName;
   roleEl.textContent = [user.role, user.department].filter(Boolean).join(' • ');
   renderProfilePhoto(user.profilePhotoUrl, displayName);
   sidebarEl.querySelector('.staff-sidebar-heading')?.setAttribute('data-initial', displayName.charAt(0).toUpperCase());
-  editionLabel.textContent = isChurch ? 'Church Operations' : 'Staff Web Companion';
-  workspaceTitle.textContent = isChurch ? 'Church Operations' : 'Operations Centre';
-  overviewLabel.textContent = isChurch ? 'Ministry overview' : 'Operations overview';
-  welcomeCopy.textContent = isChurch
-    ? 'Monitor giving, members, services and ministry activity.'
+  editionLabel.textContent = isFaith ? 'Religious Organisation' : (isGenericOrganization ? 'Organisation Operations' : 'Staff Web Companion');
+  workspaceTitle.textContent = isOrganisationOperations ? 'Organisation Operations' : 'Operations Centre';
+  overviewLabel.textContent = isFaith ? 'Community overview' : 'Operations overview';
+  welcomeCopy.textContent = isOrganisationOperations
+    ? 'Monitor departments, meetings, offerings, programs and organisational activity.'
     : 'Monitor records, requests and departmental activity.';
   welcomeTitle.textContent = `Welcome, ${displayName}`;
-  document.documentElement.dataset.edition = isChurch ? 'church' : 'school';
+  document.documentElement.dataset.edition = isOrganisationOperations ? 'church' : 'school';
   loginCard.hidden = true;
   identityEl.hidden = false;
   dashboardEl.hidden = false;
@@ -1497,6 +1500,181 @@ async function loadChurchMembership() {
   }
 }
 
+function verticalBars(title, rows, labelKey, valueKey, tone = 'blue') {
+  const maximum = Math.max(1, ...rows.map((row) => Number(row[valueKey] || 0)));
+  return `<section class="department-chart-card"><h3>${escapeHtml(title)}</h3><div class="vertical-bar-chart" role="img" aria-label="${escapeHtml(title)}">${
+    rows.length ? rows.map((row) => {
+      const value = Number(row[valueKey] || 0);
+      const height = Math.max(value ? 12 : 2, Math.round((value / maximum) * 100));
+      return `<div class="vertical-bar-item"><strong>${escapeHtml(value)}</strong><span class="vertical-bar-track"><i class="${tone}" style="height:${height}%"></i></span><small>${escapeHtml(row[labelKey] || 'Unassigned')}</small></div>`;
+    }).join('') : '<p class="muted">No recordings yet.</p>'
+  }</div></section>`;
+}
+
+async function organizationDepartmentAction(action, payload = {}) {
+  const response = await staffFetch('/api/staff-organization-departments', {
+    method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, BranchId: currentUser?.branchId || 'main', ...payload })
+  });
+  const data = await response.json();
+  if (!response.ok || !data.ok) throw new Error(data.message || 'Department action failed.');
+  return data;
+}
+
+function departmentFormPayload(form) {
+  return Object.fromEntries(new FormData(form).entries());
+}
+
+function departmentOptions(rows, selected = '') {
+  return `<option value="">Choose department</option>${rows.map((row) => {
+    const id = clean(row.DepartmentId || row.__id);
+    return `<option value="${escapeHtml(id)}"${id === selected ? ' selected' : ''}>${escapeHtml(row.Name || id)}</option>`;
+  }).join('')}`;
+}
+
+function departmentWorkspace(data) {
+  const departments = data.departments || [];
+  const positions = data.departmentPositions || [];
+  const members = data.members || [];
+  const meetings = data.departmentMeetings || [];
+  const offerings = data.departmentOfferings || [];
+  const programs = data.specialPrograms || [];
+  const departmentSummary = data.summaries?.departments || [];
+  const areaSummary = data.summaries?.homeChurchAreas || [];
+  const countrySummary = data.summaries?.participantsByCountry || [];
+  const departmentCards = departmentSummary.map((row, index) => `
+    <article class="module-stat tone-${(index % 5) + 1}">
+      <strong>${escapeHtml(row.Name)}</strong>
+      <span>${escapeHtml(row.Members)} members · ${escapeHtml(row.Meetings)} meetings</span>
+      <small>${escapeHtml(row.Attendance)} attendance · ${money(row.Offerings)} offerings</small>
+    </article>`).join('');
+  return `
+    <div class="workflow-intro"><div><p class="eyebrow">People and participation</p><h2>Departments</h2><p class="muted">Manage departments, positions, members, meetings, attendance, offerings and programs.</p></div><button type="button" id="refreshOrganizationDepartments" class="compact-action">↻ Refresh</button></div>
+    <div class="module-summary-grid department-summary-grid">${departmentCards || '<p class="muted">Create the first department to begin.</p>'}</div>
+    <div class="department-chart-grid">
+      ${verticalBars('Attendance by department', departmentSummary, 'Name', 'Attendance', 'blue')}
+      ${verticalBars('Offerings by department', departmentSummary, 'Name', 'Offerings', 'gold')}
+      ${verticalBars('Home churches by area / zone', areaSummary, 'AreaZone', 'HomeChurches', 'emerald')}
+      ${verticalBars('Weekly home-church attendance by area / zone', areaSummary, 'AreaZone', 'Attendance', 'purple')}
+      ${verticalBars('Program participants by country', countrySummary, 'Country', 'Participants', 'coral')}
+    </div>
+    <div class="department-form-grid">
+      <form class="workflow-card compact-form" data-department-action="saveDepartment">
+        <h3>Create or edit department</h3>
+        <input name="DepartmentId" placeholder="Department ID" required><input name="Name" placeholder="Department name" required>
+        <select name="DepartmentType"><option>Department</option><option>Home Church</option><option>Home Cell</option><option>Foreign Desk</option></select>
+        <input name="AreaZone" placeholder="Area / zone"><input name="Description" placeholder="Description">
+        <label class="inline-check"><input type="checkbox" name="Active" value="YES" checked> Active</label>
+        <button type="submit">Save department</button>
+      </form>
+      <form class="workflow-card compact-form" data-department-action="savePosition">
+        <h3>Position</h3><select name="DepartmentId" required>${departmentOptions(departments)}</select>
+        <input name="PositionId" placeholder="Position ID" required><input name="Name" placeholder="Position name" required>
+        <button type="submit">Save position</button>
+      </form>
+      <form class="workflow-card compact-form" data-department-action="saveDepartmentMember">
+        <h3>Assign member</h3><select name="DepartmentId" required>${departmentOptions(departments)}</select>
+        <select name="MemberId" required><option value="">Choose member</option>${members.map((row) => `<option value="${escapeHtml(row.MemberId || row.__id)}">${escapeHtml(row.DisplayName || row.MemberId)}</option>`).join('')}</select>
+        <select name="PositionId"><option value="">No position</option>${positions.map((row) => `<option value="${escapeHtml(row.PositionId)}">${escapeHtml(row.Name)}</option>`).join('')}</select>
+        <button type="submit">Assign member</button>
+      </form>
+      <form class="workflow-card compact-form" data-department-action="saveMeeting">
+        <h3>Meeting</h3><select name="DepartmentId" required>${departmentOptions(departments)}</select>
+        <input name="MeetingId" value="MTG-${Date.now()}" required><input name="Title" placeholder="Meeting title">
+        <input name="Date" type="date" required><input name="AreaZone" placeholder="Area / zone"><input name="Location" placeholder="Location">
+        <button type="submit">Save meeting</button>
+      </form>
+      <form class="workflow-card compact-form" data-department-action="recordAttendance">
+        <h3>Meeting attendance</h3><select name="MeetingId" required><option value="">Choose meeting</option>${meetings.map((row) => `<option value="${escapeHtml(row.MeetingId)}">${escapeHtml(`${row.Date || ''} · ${row.Title || row.MeetingId}`)}</option>`).join('')}</select>
+        <select name="MemberId"><option value="">Visitor / manual name</option>${members.map((row) => `<option value="${escapeHtml(row.MemberId || row.__id)}">${escapeHtml(row.DisplayName || row.MemberId)}</option>`).join('')}</select>
+        <input name="DisplayName" placeholder="Attendee name"><button type="submit">Record attendance</button>
+      </form>
+      <form class="workflow-card compact-form" data-department-action="saveOffering">
+        <h3>Submit departmental offering</h3><select name="DepartmentId" required>${departmentOptions(departments)}</select>
+        <select name="MeetingId"><option value="">No linked meeting</option>${meetings.map((row) => `<option value="${escapeHtml(row.MeetingId)}">${escapeHtml(row.Title || row.MeetingId)}</option>`).join('')}</select>
+        <input name="OfferingId" value="DOF-${Date.now()}" required><input name="Date" type="date" required>
+        <input name="Amount" type="number" min="0.01" step="0.01" placeholder="Amount" required>
+        <select name="PaymentMethod"><option>Cash</option><option>Online</option><option>Transfer</option><option>Card</option></select>
+        <input name="PaymentReference" placeholder="Payment / remittance reference"><button type="submit">Submit offering</button>
+      </form>
+      <form class="workflow-card compact-form" data-department-action="saveProgram">
+        <h3>Special program</h3><input name="ProgramId" value="PRG-${Date.now()}" required><input name="Name" placeholder="Program name" required>
+        <input name="StartDate" type="date"><input name="EndDate" type="date"><input name="Venue" placeholder="Venue">
+        <button type="submit">Save program</button>
+      </form>
+      <form class="workflow-card compact-form" data-department-action="registerParticipant">
+        <h3>Register participant</h3><select name="ProgramId" required><option value="">Choose program</option>${programs.map((row) => `<option value="${escapeHtml(row.ProgramId)}">${escapeHtml(row.Name)}</option>`).join('')}</select>
+        <input name="FullName" placeholder="Full name" required><input name="Country" placeholder="Country" required>
+        <input name="Email" type="email" placeholder="Email"><input name="Phone" placeholder="Phone"><button type="submit">Register participant</button>
+      </form>
+      <form class="workflow-card compact-form" data-department-action="saveForeignVisitor">
+        <h3>Foreign Desk visitor</h3><input name="FullName" placeholder="Visitor name" required><input name="Country" placeholder="Country" required>
+        <input name="VisitDate" type="date"><input name="Email" type="email" placeholder="Email"><input name="Phone" placeholder="Phone">
+        <input name="Purpose" placeholder="Purpose of visit"><button type="submit">Record visitor</button>
+      </form>
+    </div>
+    ${table('Departments', departments, [
+      { label: 'Department', value: (row) => row.Name },
+      { label: 'Type', value: (row) => row.DepartmentType },
+      { label: 'Area / zone', value: (row) => row.AreaZone },
+      { label: 'Status', value: (row) => row.Active },
+      { label: 'Actions', render: (row) => `<button class="compact-icon-action compact-delete-action" data-delete-department="${escapeHtml(row.DepartmentId || row.__id)}" title="Delete department" aria-label="Delete ${escapeHtml(row.Name)}">✕</button>` }
+    ])}
+    ${table('Department members and positions', data.departmentMembers || [], [
+      { label: 'Department', value: (row) => row.DepartmentName || row.DepartmentId },
+      { label: 'Member', value: (row) => row.DisplayName || row.MemberId },
+      { label: 'Position', value: (row) => row.PositionName || row.PositionId },
+      { label: 'Status', value: (row) => row.Status }
+    ])}
+    ${table('Department offerings and remittance', offerings, [
+      { label: 'Date', value: (row) => row.Date },
+      { label: 'Department', value: (row) => row.DepartmentId },
+      { label: 'Amount', value: (row) => money(row.Amount) },
+      { label: 'Method', value: (row) => row.PaymentMethod },
+      { label: 'Status', value: (row) => row.RemittanceStatus },
+      { label: 'Accounting', render: (row) => lower(row.RemittanceStatus) === 'paid' ? '<span class="status good">✓ Paid</span>' : `<button class="compact-icon-action" data-mark-offering-paid="${escapeHtml(row.OfferingId)}" title="Confirm remittance" aria-label="Mark offering paid">✓</button>` }
+    ])}
+    ${table('Foreign Desk visitors', data.foreignVisitors || [], [
+      { label: 'Visit date', value: (row) => row.VisitDate }, { label: 'Visitor', value: (row) => row.FullName },
+      { label: 'Country', value: (row) => row.Country }, { label: 'Purpose', value: (row) => row.Purpose },
+      { label: 'Follow-up', value: (row) => row.FollowUpOfficer }
+    ])}
+    <p id="organizationDepartmentStatus" class="status" aria-live="polite"></p>`;
+}
+
+async function loadOrganizationDepartments() {
+  try {
+    const data = await organizationDepartmentAction('list');
+    if (activeSection !== 'members') return;
+    panelEl.innerHTML = departmentWorkspace(data);
+    const status = document.getElementById('organizationDepartmentStatus');
+    document.getElementById('refreshOrganizationDepartments')?.addEventListener('click', loadOrganizationDepartments);
+    panelEl.querySelectorAll('[data-department-action]').forEach((form) => form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      try {
+        setStatus(status, 'Saving...');
+        const result = await organizationDepartmentAction(form.dataset.departmentAction, departmentFormPayload(form));
+        setStatus(status, result.message || 'Saved.', 'good');
+        await loadOrganizationDepartments();
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    }));
+    panelEl.querySelectorAll('[data-delete-department]').forEach((button) => button.addEventListener('click', async () => {
+      if (!window.confirm('Delete this department? Departments with members or meetings cannot be deleted.')) return;
+      try { await organizationDepartmentAction('deleteDepartment', { DepartmentId: button.dataset.deleteDepartment }); await loadOrganizationDepartments(); }
+      catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    }));
+    panelEl.querySelectorAll('[data-mark-offering-paid]').forEach((button) => button.addEventListener('click', async () => {
+      const reference = window.prompt('Enter the remittance reference:');
+      if (reference === null) return;
+      try { await organizationDepartmentAction('markOfferingPaid', { OfferingId: button.dataset.markOfferingPaid, RemittanceReference: reference }); await loadOrganizationDepartments(); }
+      catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    }));
+  } catch (error) {
+    if (activeSection === 'members') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+  }
+}
+
 async function loadChurchServices() {
   try {
     const response = await staffFetch('/api/staff-services', {
@@ -2153,8 +2331,8 @@ function renderSection(active) {
     ]) + renderStudentEditor(students);
     bindStudentEditor(students);
   } else if (active === 'members') {
-    panelEl.innerHTML = '<p class="muted">Loading church members and households...</p>';
-    loadChurchMembership();
+    panelEl.innerHTML = '<p class="muted">Loading departments, members and programs...</p>';
+    loadOrganizationDepartments();
   } else if (active === 'services') {
     panelEl.innerHTML = '<p class="muted">Loading church services and attendance...</p>';
     loadChurchServices();

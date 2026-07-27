@@ -19,6 +19,7 @@ import { CHURCH_COLLECTIONS, churchCollectionPath } from '../lib/church-foundati
 import { handleChurchServiceAction } from '../lib/church-services.js';
 import { handleChurchFundAction } from '../lib/church-funds.js';
 import { handleChurchOfferingAction } from '../lib/church-offerings.js';
+import { handleOrganizationDepartmentAction } from '../lib/organization-departments.js';
 
 export const SCHOOL_FEES_TOTAL_CODE = 'SCHOOL_FEES_TOTAL';
 
@@ -2132,7 +2133,7 @@ async function saveSchoolProfile(env, body) {
     AcceptanceForm: yesNo(body.EnableAcceptanceForm ?? 'YES') === 'YES'
   };
   const profile = {
-    SchoolName: clean(body.SchoolName || body.schoolName) || 'Integrated School Management Suite',
+    SchoolName: clean(body.SchoolName || body.schoolName) || 'Dynamax',
     SchoolCode: normalizeSchoolCode(body.SchoolCode || body.schoolCode),
     SchoolAddress: clean(body.SchoolAddress || body.schoolAddress),
     SchoolPhone: clean(body.SchoolPhone || body.schoolPhone),
@@ -2157,6 +2158,9 @@ async function saveSchoolProfile(env, body) {
     ShowResultsOnline: yesNo(body.ShowResultsOnline ?? body.showResultsOnline ?? 'NO') || 'NO',
     OfferDocumentBodyTemplate: clean(body.OfferDocumentBodyTemplate || body.offerDocumentBodyTemplate),
     AdmissionDocumentBodyTemplate: clean(body.AdmissionDocumentBodyTemplate || body.admissionDocumentBodyTemplate),
+    GoogleDocumentsUrl: clean(body.GoogleDocumentsUrl || body.googleDocumentsUrl),
+    SubscriptionPlan: clean(body.SubscriptionPlan || body.subscriptionPlan) || 'Starter',
+    UserLimit: Math.max(1, Number(body.UserLimit || body.userLimit || 5) || 5),
     UpdatedAt: nowIso(),
     UpdatedBy: clean(body.UserRole || body.UpdatedBy || body.updatedBy) || 'Super Admin'
   };
@@ -2207,11 +2211,18 @@ async function saveSchoolProfile(env, body) {
   await upsertDocument(env, 'settings', 'admissionDocuments', {
     Enabled: documentRequirements, UpdatedAt: nowIso(), UpdatedBy: profile.UpdatedBy
   });
-  await upsertDocument(env, 'settings', 'organisationProfile', organizationProfileDocument(organization, {
+  await upsertDocument(env, 'settings', 'organisationProfile', organizationProfileDocument({
+    ...organization,
+    GoogleDocumentsUrl: profile.GoogleDocumentsUrl,
+    Plan: profile.SubscriptionPlan,
+    UserLimit: profile.UserLimit,
+    BrandName: 'Dynamax',
+    BrandLogoUrl: '/images/Logo.png'
+  }, {
     UpdatedAt: profile.UpdatedAt, UpdatedBy: profile.UpdatedBy
   }));
   await upsertDocument(env, 'settings', 'schoolProfile', profile);
-  return { ok: true, message: 'School profile saved to the database.', profile };
+  return { ok: true, message: 'Organisation profile saved to the database.', profile };
 }
 
 async function getSchoolProfile(env) {
@@ -2228,7 +2239,7 @@ async function getSchoolProfile(env) {
   return {
     ok: true,
     profile: { ...(profile || {
-      SchoolName: 'Integrated School Management Suite',
+      SchoolName: 'Dynamax',
       SchoolCode: normalizeSchoolCode(env.SCHOOL_CODE),
       SchoolAddress: '',
       SchoolPhone: '',
@@ -2256,6 +2267,9 @@ async function getSchoolProfile(env) {
       OrganisationName: organization.Name,
       OrganisationCode: organization.Code,
       FeatureFlags: organization.FeatureFlags,
+      GoogleDocumentsUrl: clean(organizationProfile?.GoogleDocumentsUrl || profile?.GoogleDocumentsUrl),
+      SubscriptionPlan: clean(organizationProfile?.Plan || profile?.SubscriptionPlan) || 'Starter',
+      UserLimit: Math.max(1, Number(organizationProfile?.UserLimit || profile?.UserLimit || 5) || 5),
       SchoolBranches: (structure.Branches || []).map((row) => clean(typeof row === 'string' ? row : row.Name || row.Id)).filter(Boolean).join(', '),
       ActiveBranchId: clean(structure.ActiveBranchId || 'main'),
       EnablePrimarySection: (structure.Sections || []).includes('primary') ? 'YES' : 'NO',
@@ -5871,6 +5885,42 @@ async function routeAction(env, action, body = {}) {
         department: clean(body.UserDepartment),
         branchId: clean(body.UserBranchId)
       }, body);
+    case 'getOrganizationDepartments':
+    case 'saveDepartment':
+    case 'deleteDepartment':
+    case 'savePosition':
+    case 'saveDepartmentMember':
+    case 'saveDepartmentMeeting':
+    case 'recordDepartmentAttendance':
+    case 'saveDepartmentOffering':
+    case 'markDepartmentOfferingPaid':
+    case 'saveSpecialProgram':
+    case 'registerProgramParticipant':
+    case 'saveForeignVisitor':
+      return handleOrganizationDepartmentAction(env, {
+        username: clean(body.UserUsername),
+        displayName: clean(body.RecordedBy),
+        role: clean(body.UserRole),
+        department: clean(body.UserDepartment),
+        branchId: clean(body.UserBranchId),
+        allowedSections: ['members']
+      }, {
+        ...body,
+        action: ({
+          getOrganizationDepartments: 'list',
+          saveDepartment: 'saveDepartment',
+          deleteDepartment: 'deleteDepartment',
+          savePosition: 'savePosition',
+          saveDepartmentMember: 'saveDepartmentMember',
+          saveDepartmentMeeting: 'saveMeeting',
+          recordDepartmentAttendance: 'recordAttendance',
+          saveDepartmentOffering: 'saveOffering',
+          markDepartmentOfferingPaid: 'markOfferingPaid',
+          saveSpecialProgram: 'saveProgram',
+          registerProgramParticipant: 'registerParticipant',
+          saveForeignVisitor: 'saveForeignVisitor'
+        })[action]
+      });
     case 'getChurchServices':
     case 'saveChurchService':
     case 'saveChurchServiceOccurrence':

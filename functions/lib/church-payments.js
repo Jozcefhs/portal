@@ -144,7 +144,7 @@ async function requireDonationsEdition(env) {
     getDocument(env, 'settings', 'schoolProfile').catch(() => null)
   ]);
   const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile });
-  if (organization.Edition !== 'church' || !organization.FeatureFlags.donations) {
+  if (!['church', 'faith', 'organization'].includes(organization.Edition) || !organization.FeatureFlags.donations) {
     const error = new Error('Church donations are not enabled for this organisation.');
     error.status = 403;
     throw error;

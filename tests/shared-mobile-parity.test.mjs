@@ -26,10 +26,11 @@ const [adminJs, portalCss, serviceWorker, ...pages] = await Promise.all([
   ...pageNames.map((name) => readFile(new URL(name, portalRoot), 'utf8'))
 ]);
 
-test('church launcher explicitly selects the shared church mobile shell', () => {
-  assert.match(pages[pageNames.indexOf('index.html')], /admin\.html\?workspace=church/);
+test('launcher selects the shared operations shell for religious and other organisations', () => {
+  assert.match(pages[pageNames.indexOf('index.html')], /admin\.html\?workspace=faith/);
+  assert.match(pages[pageNames.indexOf('index.html')], /admin\.html\?workspace=organization/);
   assert.match(adminJs, /const requestedWorkspace = new URLSearchParams\(window\.location\.search\)\.get\('workspace'\)/);
-  assert.match(adminJs, /requestedWorkspace === 'church' \|\| explicitEdition === 'church'/);
+  assert.match(adminJs, /\['church', 'faith'\]\.includes\(requestedWorkspace\)/);
 });
 
 test('sidebar swipe gestures are edition-neutral and installed globally', () => {
@@ -68,7 +69,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /digc-suite-v42-content-buttons/);
+  assert.match(serviceWorker, /dynamax-v43-departments/);
   assert.match(serviceWorker, /'\/admin\.html'/);
   assert.match(serviceWorker, /'\/js\/admin\.js'/);
   assert.match(serviceWorker, /self\.skipWaiting\(\)/);

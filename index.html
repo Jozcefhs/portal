@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Choose a DIGC Suite workspace for school, church, family and administrative services.">
-  <title>DIGC Suite — Choose a workspace</title>
+  <meta name="description" content="Dynamax management software for schools, religious bodies and other organisations.">
+  <title>Dynamax — Choose a workspace</title>
   <meta name="theme-color" content="#071b38">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" href="app-icon.svg">
+  <link rel="icon" href="images/Logo.png">
   <script src="js/preferences.js?v=20260726-biometric"></script>
   <link rel="stylesheet" href="css/style.css?v=20260727-content-buttons">
 </head>
@@ -15,8 +15,8 @@
   <main class="suite-launcher">
     <section class="launcher-showcase" aria-labelledby="launcherTitle">
       <div class="launcher-showcase-top">
-        <span class="launcher-logo"><img src="app-icon.svg" alt=""></span>
-        <span class="launcher-product">DIGC Suite</span>
+        <span class="launcher-logo"><img src="images/Logo.png" alt=""></span>
+        <span class="launcher-product">Dynamax</span>
       </div>
       <div class="launcher-art" aria-hidden="true">
         <span></span><span></span><span></span>
@@ -24,13 +24,13 @@
       <div class="launcher-message">
         <p>One connected platform</p>
         <h1 id="launcherTitle">Serve people.<br><strong>Manage better.</strong></h1>
-        <span>School, church and shared services—thoughtfully brought together.</span>
+        <span>Schools, religious bodies and other organisations—thoughtfully brought together.</span>
       </div>
     </section>
 
     <section class="launcher-directory" aria-labelledby="workspaceTitle">
       <header class="launcher-heading">
-        <p class="launcher-kicker">Welcome to DIGC Suite</p>
+        <p class="launcher-kicker">Welcome to Dynamax</p>
         <h2 id="workspaceTitle">Where would you like to go?</h2>
         <p>Select a workspace to continue.</p>
       </header>
@@ -44,11 +44,19 @@
           </span>
           <span class="channel-arrow" aria-hidden="true">→</span>
         </a>
-        <a class="launcher-channel" href="admin.html?workspace=church">
-          <span class="channel-mark" aria-hidden="true">CH</span>
+        <a class="launcher-channel" href="admin.html?workspace=faith">
+          <span class="channel-mark" aria-hidden="true">FA</span>
           <span class="channel-copy">
-            <strong>Church</strong>
-            <small>Membership, services, funds and ministry operations</small>
+            <strong>Religious organisation</strong>
+            <small>Departments, meetings, offerings, programs and visitors</small>
+          </span>
+          <span class="channel-arrow" aria-hidden="true">→</span>
+        </a>
+        <a class="launcher-channel" href="admin.html?workspace=organization">
+          <span class="channel-mark" aria-hidden="true">OR</span>
+          <span class="channel-copy">
+            <strong>Other organisation</strong>
+            <small>People, departments, finance, payroll and operations</small>
           </span>
           <span class="channel-arrow" aria-hidden="true">→</span>
         </a>
@@ -63,6 +71,10 @@
       </div>
 
       <p class="launcher-help">Need staff access? <a href="admin.html">Sign in to the staff portal</a></p>
+      <div class="launcher-public-actions">
+        <a href="register-organization.html">Register & choose a plan</a>
+        <button type="button" id="installDynamaxApp">Install app</button>
+      </div>
     </section>
   </main>
 

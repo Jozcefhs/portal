@@ -136,7 +136,7 @@ async function requireChurchEdition(env) {
     getDocument(env, 'settings', 'schoolProfile').catch(() => null)
   ]);
   const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile });
-  if (organization.Edition !== 'church' || !organization.FeatureFlags.members) {
+  if (!['church', 'faith', 'organization'].includes(organization.Edition) || !organization.FeatureFlags.members) {
     const error = new Error('Church membership is not enabled for this organisation.');
     error.status = 403;
     throw error;

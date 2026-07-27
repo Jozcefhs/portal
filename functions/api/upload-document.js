@@ -3,6 +3,7 @@
 
 import { listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { listSchoolCollection, upsertSchoolDocument } from '../lib/school-scope.js';
+import { resolveDocumentStorage } from '../lib/document-storage.js';
 
 function clean(value) {
   return String(value || '').trim();
@@ -117,8 +118,8 @@ async function saveFirestoreDocumentMetadata(env, app, definition, file, url, re
   return { application: next, previousUrl };
 }
 
-async function uploadViaAppsScript(env, payload) {
-  const res = await fetch(env.GOOGLE_APPS_SCRIPT_URL, {
+async function uploadViaAppsScript(storageUrl, payload) {
+  const res = await fetch(storageUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(payload)
@@ -174,7 +175,8 @@ export async function onRequestPost(context) {
         documentLabel: definition.label
       }, { status: 409 });
     }
-    if (!env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) {
+    const storage = await resolveDocumentStorage(env);
+    if (!storage.url || !storage.secret) {
       return Response.json({
         ok: false,
         message: 'Database application lookup succeeded, but Google Drive file storage is not configured.'
@@ -182,7 +184,7 @@ export async function onRequestPost(context) {
     }
 
     const payload = {
-      Secret: env.GOOGLE_APPS_SCRIPT_SECRET,
+      Secret: storage.secret,
       Action: 'uploadParentDocument',
       StorageOnly: 'YES',
       ApplicationReference: pick(firestoreApp, ['ApplicationReference', 'applicationReference', 'ApplicationID', '__id']),
@@ -196,7 +198,7 @@ export async function onRequestPost(context) {
       ExistingUrl: existingUrl
     };
 
-    const data = await uploadViaAppsScript(env, payload);
+    const data = await uploadViaAppsScript(storage.url, payload);
     if (!data.ok) {
       return Response.json(data, { status: 400 });
     }

@@ -223,7 +223,7 @@ async function requireOfferingsEdition(env) {
     getDocument(env, 'settings', 'schoolProfile').catch(() => null)
   ]);
   const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile });
-  if (organization.Edition !== 'church' || !organization.FeatureFlags.offerings || !organization.FeatureFlags.funds) {
+  if (!['church', 'faith', 'organization'].includes(organization.Edition) || !organization.FeatureFlags.offerings || !organization.FeatureFlags.funds) {
     throw inputError('Church offerings and funds are not enabled for this organisation.', 403);
   }
 }

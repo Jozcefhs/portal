@@ -1,0 +1,319 @@
+import { deleteDocument, getDocument, listCollection, upsertDocument } from './firestore.js';
+import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from './church-foundation.js';
+import { resolveMembershipBranch } from './church-membership.js';
+
+const clean = (value) => String(value ?? '').trim();
+const lower = (value) => clean(value).toLowerCase();
+const nowIso = () => new Date().toISOString();
+const number = (value) => {
+  const parsed = Number(String(value ?? 0).replace(/,/g, ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+const yes = (value) => value === true || ['yes', 'true', '1', 'paid', 'successful', 'success'].includes(lower(value));
+const inputError = (message, status = 400) => Object.assign(new Error(message), { status });
+const actor = (user = {}) => clean(user.displayName || user.DisplayName || user.username || user.Username || 'Unknown staff');
+const role = (user = {}) => clean(user.role || user.Role);
+
+const VIEW_ROLES = new Set(['Super Admin', 'Pastor', 'Church Administrator', 'Membership Officer', 'Treasurer', 'Auditor']);
+const MANAGE_ROLES = new Set(['Super Admin', 'Pastor', 'Church Administrator']);
+const OFFERING_ROLES = new Set(['Super Admin', 'Pastor', 'Church Administrator', 'Treasurer']);
+const REMITTANCE_ROLES = new Set(['Super Admin', 'Treasurer', 'Accountant', 'Finance Officer']);
+
+export function departmentCapabilities(user = {}) {
+  return {
+    canView: VIEW_ROLES.has(role(user)) || Boolean((user.allowedSections || []).includes('members')),
+    canManageDepartments: MANAGE_ROLES.has(role(user)),
+    canManageMembers: MANAGE_ROLES.has(role(user)) || role(user) === 'Membership Officer',
+    canRecordMeetings: MANAGE_ROLES.has(role(user)) || role(user) === 'Membership Officer',
+    canSubmitOfferings: OFFERING_ROLES.has(role(user)),
+    canConfirmRemittance: REMITTANCE_ROLES.has(role(user)),
+    canManagePrograms: MANAGE_ROLES.has(role(user)),
+    canManageForeignVisitors: MANAGE_ROLES.has(role(user)) || role(user) === 'Membership Officer'
+  };
+}
+
+function requireCapability(user, capability) {
+  const capabilities = departmentCapabilities(user);
+  if (!capabilities[capability]) throw inputError('This account is not permitted to perform that department action.', 403);
+  return capabilities;
+}
+
+function path(name, branchId) {
+  return churchCollectionPath(CHURCH_COLLECTIONS[name], branchId);
+}
+
+async function audit(env, branchId, user, action, entityType, entityId, details = '') {
+  const id = `DEP-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  await upsertDocument(env, path('departmentAudit', branchId), id, {
+    AuditId: id, Timestamp: nowIso(), Action: clean(action), EntityType: clean(entityType),
+    EntityId: clean(entityId), Details: clean(details), BranchId: branchId,
+    Actor: actor(user), ActorRole: role(user), ActorUsername: clean(user.username || user.Username)
+  });
+}
+
+export function normalizedDepartment(input = {}, branchId = 'main') {
+  const DepartmentId = clean(input.DepartmentId || input.departmentId);
+  const Name = clean(input.Name || input.name || input.DepartmentName);
+  if (!DepartmentId) throw inputError('Department ID is required.');
+  if (!Name) throw inputError('Department name is required.');
+  return {
+    DepartmentId, Name, BranchId: branchId, Description: clean(input.Description),
+    DepartmentType: clean(input.DepartmentType) || 'Department',
+    AreaZone: clean(input.AreaZone), MeetingFrequency: clean(input.MeetingFrequency) || 'As scheduled',
+    Active: yes(input.Active ?? 'YES') ? 'YES' : 'NO',
+    IsForeignDesk: yes(input.IsForeignDesk) || lower(Name) === 'foreign desk',
+    IsHomeChurch: yes(input.IsHomeChurch) || ['home church', 'home cell'].includes(lower(input.DepartmentType))
+  };
+}
+
+async function saveDepartment(env, user, body, branchId) {
+  requireCapability(user, 'canManageDepartments');
+  const department = normalizedDepartment(body.department || body, branchId);
+  const id = safeChurchDocumentId(department.DepartmentId);
+  const existing = await getDocument(env, path('departments', branchId), id).catch(() => null);
+  const payload = {
+    ...(existing || {}), ...department, CreatedAt: existing?.CreatedAt || nowIso(),
+    CreatedBy: existing?.CreatedBy || actor(user), UpdatedAt: nowIso(), UpdatedBy: actor(user)
+  };
+  delete payload.__id; delete payload.__name;
+  await upsertDocument(env, path('departments', branchId), id, payload);
+  await audit(env, branchId, user, existing ? 'UPDATE' : 'CREATE', 'Department', department.DepartmentId, department.Name);
+  return { message: existing ? 'Department updated.' : 'Department created.' };
+}
+
+async function deleteDepartment(env, user, body, branchId) {
+  requireCapability(user, 'canManageDepartments');
+  const id = safeChurchDocumentId(body.DepartmentId);
+  if (!id) throw inputError('Department ID is required.');
+  const [members, meetings] = await Promise.all([
+    listCollection(env, path('departmentMembers', branchId)),
+    listCollection(env, path('departmentMeetings', branchId))
+  ]);
+  if (members.some((row) => safeChurchDocumentId(row.DepartmentId) === id)
+    || meetings.some((row) => safeChurchDocumentId(row.DepartmentId) === id)) {
+    throw inputError('Remove or reassign this department’s members and meetings before deleting it.', 409);
+  }
+  await deleteDocument(env, path('departments', branchId), id);
+  await audit(env, branchId, user, 'DELETE', 'Department', body.DepartmentId);
+  return { message: 'Department deleted.' };
+}
+
+async function savePosition(env, user, body, branchId) {
+  requireCapability(user, 'canManageDepartments');
+  const PositionId = clean(body.PositionId);
+  const DepartmentId = clean(body.DepartmentId);
+  const Name = clean(body.Name || body.PositionName);
+  if (!PositionId || !DepartmentId || !Name) throw inputError('Position ID, department and name are required.');
+  const id = safeChurchDocumentId(`${DepartmentId}--${PositionId}`);
+  const existing = await getDocument(env, path('departmentPositions', branchId), id).catch(() => null);
+  await upsertDocument(env, path('departmentPositions', branchId), id, {
+    ...(existing || {}), PositionId, DepartmentId, Name, Description: clean(body.Description),
+    Active: yes(body.Active ?? 'YES') ? 'YES' : 'NO', BranchId,
+    CreatedAt: existing?.CreatedAt || nowIso(), UpdatedAt: nowIso(), UpdatedBy: actor(user)
+  });
+  await audit(env, branchId, user, existing ? 'UPDATE' : 'CREATE', 'Position', PositionId, `${DepartmentId} | ${Name}`);
+  return { message: existing ? 'Position updated.' : 'Position created.' };
+}
+
+async function saveDepartmentMember(env, user, body, branchId) {
+  requireCapability(user, 'canManageMembers');
+  const DepartmentId = clean(body.DepartmentId);
+  const MemberId = clean(body.MemberId);
+  if (!DepartmentId || !MemberId) throw inputError('Department and member are required.');
+  const department = await getDocument(env, path('departments', branchId), safeChurchDocumentId(DepartmentId));
+  if (!department) throw inputError('Department was not found.', 404);
+  const membershipId = safeChurchDocumentId(`${DepartmentId}--${MemberId}`);
+  const existing = await getDocument(env, path('departmentMembers', branchId), membershipId).catch(() => null);
+  await upsertDocument(env, path('departmentMembers', branchId), membershipId, {
+    ...(existing || {}), MembershipId: membershipId, DepartmentId, DepartmentName: clean(department.Name),
+    MemberId, DisplayName: clean(body.DisplayName), PositionId: clean(body.PositionId),
+    PositionName: clean(body.PositionName), JoinedDate: clean(body.JoinedDate),
+    Status: clean(body.Status) || 'Active', BranchId,
+    CreatedAt: existing?.CreatedAt || nowIso(), UpdatedAt: nowIso(), UpdatedBy: actor(user)
+  });
+  await audit(env, branchId, user, existing ? 'UPDATE' : 'ASSIGN', 'Department Member', membershipId);
+  return { message: existing ? 'Department member updated.' : 'Member assigned to department.' };
+}
+
+async function saveMeeting(env, user, body, branchId) {
+  requireCapability(user, 'canRecordMeetings');
+  const MeetingId = clean(body.MeetingId);
+  const DepartmentId = clean(body.DepartmentId);
+  const Date = clean(body.Date);
+  if (!MeetingId || !DepartmentId || !/^\d{4}-\d{2}-\d{2}$/.test(Date)) {
+    throw inputError('Meeting ID, department and a valid date are required.');
+  }
+  const existing = await getDocument(env, path('departmentMeetings', branchId), safeChurchDocumentId(MeetingId)).catch(() => null);
+  await upsertDocument(env, path('departmentMeetings', branchId), safeChurchDocumentId(MeetingId), {
+    ...(existing || {}), MeetingId, DepartmentId, Date, Title: clean(body.Title) || 'Department meeting',
+    AreaZone: clean(body.AreaZone), Location: clean(body.Location), Notes: clean(body.Notes), BranchId,
+    CreatedAt: existing?.CreatedAt || nowIso(), UpdatedAt: nowIso(), UpdatedBy: actor(user)
+  });
+  await audit(env, branchId, user, existing ? 'UPDATE' : 'CREATE', 'Department Meeting', MeetingId, `${DepartmentId} | ${Date}`);
+  return { message: existing ? 'Meeting updated.' : 'Meeting recorded.' };
+}
+
+async function recordAttendance(env, user, body, branchId) {
+  requireCapability(user, 'canRecordMeetings');
+  const MeetingId = clean(body.MeetingId);
+  const MemberId = clean(body.MemberId);
+  const DisplayName = clean(body.DisplayName);
+  if (!MeetingId || (!MemberId && !DisplayName)) throw inputError('Meeting and attendee are required.');
+  const id = safeChurchDocumentId(`${MeetingId}--${MemberId || DisplayName}`);
+  const existing = await getDocument(env, path('departmentAttendance', branchId), id).catch(() => null);
+  await upsertDocument(env, path('departmentAttendance', branchId), id, {
+    ...(existing || {}), AttendanceId: id, MeetingId, MemberId, DisplayName,
+    Status: clean(body.Status) || 'Present', CheckedInAt: clean(body.CheckedInAt) || nowIso(),
+    BranchId, UpdatedAt: nowIso(), UpdatedBy: actor(user)
+  });
+  return { message: existing ? 'Attendance updated.' : 'Attendance recorded.' };
+}
+
+async function saveDepartmentOffering(env, user, body, branchId) {
+  requireCapability(user, 'canSubmitOfferings');
+  const OfferingId = clean(body.OfferingId);
+  const DepartmentId = clean(body.DepartmentId);
+  const Amount = number(body.Amount);
+  if (!OfferingId || !DepartmentId || Amount <= 0) throw inputError('Offering ID, department and an amount greater than zero are required.');
+  const method = clean(body.PaymentMethod) || 'Cash';
+  const onlinePaid = ['online', 'card', 'transfer'].includes(lower(method)) && yes(body.PaymentStatus);
+  const existing = await getDocument(env, path('departmentOfferings', branchId), safeChurchDocumentId(OfferingId)).catch(() => null);
+  await upsertDocument(env, path('departmentOfferings', branchId), safeChurchDocumentId(OfferingId), {
+    ...(existing || {}), OfferingId, DepartmentId, MeetingId: clean(body.MeetingId),
+    Date: clean(body.Date) || nowIso().slice(0, 10), Amount, Currency: clean(body.Currency) || 'NGN',
+    PaymentMethod: method, PaymentReference: clean(body.PaymentReference),
+    Status: onlinePaid ? 'Paid' : 'Awaiting Remittance',
+    RemittanceStatus: onlinePaid ? 'Paid' : 'Unpaid',
+    SubmittedAt: existing?.SubmittedAt || nowIso(), SubmittedBy: existing?.SubmittedBy || actor(user),
+    PaidAt: onlinePaid ? nowIso() : clean(existing?.PaidAt), PaidBy: onlinePaid ? 'Online payment confirmation' : clean(existing?.PaidBy),
+    BranchId, Notes: clean(body.Notes), UpdatedAt: nowIso(), UpdatedBy: actor(user)
+  });
+  await audit(env, branchId, user, onlinePaid ? 'ONLINE PAYMENT CONFIRMED' : 'SUBMIT', 'Department Offering', OfferingId, `${DepartmentId} | ${Amount}`);
+  return { message: onlinePaid ? 'Offering submitted and automatically marked paid.' : 'Offering submitted for remittance.' };
+}
+
+async function markOfferingPaid(env, user, body, branchId) {
+  requireCapability(user, 'canConfirmRemittance');
+  const id = safeChurchDocumentId(body.OfferingId);
+  const existing = await getDocument(env, path('departmentOfferings', branchId), id);
+  if (!existing) throw inputError('Department offering was not found.', 404);
+  const payload = {
+    ...existing, Status: 'Paid', RemittanceStatus: 'Paid', PaidAt: nowIso(), PaidBy: actor(user),
+    RemittanceReference: clean(body.RemittanceReference || body.PaymentReference), UpdatedAt: nowIso(), UpdatedBy: actor(user)
+  };
+  delete payload.__id; delete payload.__name;
+  await upsertDocument(env, path('departmentOfferings', branchId), id, payload);
+  await audit(env, branchId, user, 'MARK PAID', 'Department Offering', body.OfferingId, payload.RemittanceReference);
+  return { message: 'Offering remittance marked paid.' };
+}
+
+async function saveProgram(env, user, body, branchId) {
+  requireCapability(user, 'canManagePrograms');
+  const ProgramId = clean(body.ProgramId);
+  const Name = clean(body.Name || body.ProgramName);
+  if (!ProgramId || !Name) throw inputError('Program ID and name are required.');
+  const existing = await getDocument(env, path('specialPrograms', branchId), safeChurchDocumentId(ProgramId)).catch(() => null);
+  await upsertDocument(env, path('specialPrograms', branchId), safeChurchDocumentId(ProgramId), {
+    ...(existing || {}), ProgramId, Name, StartDate: clean(body.StartDate), EndDate: clean(body.EndDate),
+    Venue: clean(body.Venue), Description: clean(body.Description), RegistrationOpen: yes(body.RegistrationOpen ?? 'YES'),
+    BranchId, CreatedAt: existing?.CreatedAt || nowIso(), UpdatedAt: nowIso(), UpdatedBy: actor(user)
+  });
+  return { message: existing ? 'Special program updated.' : 'Special program created.' };
+}
+
+async function registerParticipant(env, user, body, branchId) {
+  requireCapability(user, 'canManagePrograms');
+  const ProgramId = clean(body.ProgramId);
+  const FullName = clean(body.FullName);
+  const Country = clean(body.Country);
+  if (!ProgramId || !FullName || !Country) throw inputError('Program, participant name and country are required.');
+  const RegistrationId = clean(body.RegistrationId) || `REG-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  await upsertDocument(env, path('programRegistrations', branchId), safeChurchDocumentId(RegistrationId), {
+    RegistrationId, ProgramId, FullName, Country, Email: lower(body.Email), Phone: clean(body.Phone),
+    Status: clean(body.Status) || 'Registered', RegisteredAt: nowIso(), RegisteredBy: actor(user), BranchId
+  });
+  return { message: 'Participant registered.' };
+}
+
+async function saveForeignVisitor(env, user, body, branchId) {
+  requireCapability(user, 'canManageForeignVisitors');
+  const VisitorId = clean(body.VisitorId) || `VIS-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const FullName = clean(body.FullName);
+  const Country = clean(body.Country);
+  if (!FullName || !Country) throw inputError('Visitor name and country are required.');
+  await upsertDocument(env, path('foreignVisitors', branchId), safeChurchDocumentId(VisitorId), {
+    VisitorId, FullName, Country, Email: lower(body.Email), Phone: clean(body.Phone),
+    VisitDate: clean(body.VisitDate) || nowIso().slice(0, 10), Purpose: clean(body.Purpose),
+    FollowUpOfficer: clean(body.FollowUpOfficer), Notes: clean(body.Notes), BranchId,
+    UpdatedAt: nowIso(), UpdatedBy: actor(user)
+  });
+  return { message: 'Foreign visitor recorded.' };
+}
+
+export function departmentSummaries(departments, departmentMembers, meetings, attendance, offerings, registrations) {
+  const attendanceByMeeting = new Map();
+  attendance.forEach((row) => attendanceByMeeting.set(clean(row.MeetingId), (attendanceByMeeting.get(clean(row.MeetingId)) || 0) + 1));
+  const departmentRows = departments.map((department) => {
+    const id = clean(department.DepartmentId || department.__id);
+    const deptMeetings = meetings.filter((row) => clean(row.DepartmentId) === id);
+    const deptOfferings = offerings.filter((row) => clean(row.DepartmentId) === id);
+    return {
+      DepartmentId: id, Name: clean(department.Name), DepartmentType: clean(department.DepartmentType),
+      AreaZone: clean(department.AreaZone),
+      Members: departmentMembers.filter((row) => clean(row.DepartmentId) === id && lower(row.Status || 'active') === 'active').length,
+      Meetings: deptMeetings.length,
+      Attendance: deptMeetings.reduce((sum, row) => sum + (attendanceByMeeting.get(clean(row.MeetingId)) || 0), 0),
+      Offerings: deptOfferings.reduce((sum, row) => sum + number(row.Amount), 0),
+      Unremitted: deptOfferings.filter((row) => lower(row.RemittanceStatus) !== 'paid').reduce((sum, row) => sum + number(row.Amount), 0)
+    };
+  });
+  const homeCells = departmentRows.filter((row) => ['home church', 'home cell'].includes(lower(row.DepartmentType)));
+  const areas = {};
+  homeCells.forEach((row) => {
+    const key = row.AreaZone || 'Unassigned';
+    areas[key] ||= { AreaZone: key, HomeChurches: 0, Attendance: 0 };
+    areas[key].HomeChurches += 1; areas[key].Attendance += row.Attendance;
+  });
+  const countries = {};
+  registrations.forEach((row) => { const key = clean(row.Country) || 'Not specified'; countries[key] = (countries[key] || 0) + 1; });
+  return {
+    departments: departmentRows,
+    homeChurchAreas: Object.values(areas),
+    participantsByCountry: Object.entries(countries).map(([Country, Participants]) => ({ Country, Participants }))
+  };
+}
+
+export async function listOrganizationDepartments(env, user, body = {}) {
+  const capabilities = requireCapability(user, 'canView');
+  const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
+  const names = ['members', 'departments', 'departmentPositions', 'departmentMembers', 'departmentMeetings',
+    'departmentAttendance', 'departmentOfferings', 'specialPrograms', 'programRegistrations',
+    'foreignVisitors', 'departmentAudit'];
+  const rows = await Promise.all(names.map((name) => listCollection(env, path(name, branchId)).catch(() => [])));
+  const data = Object.fromEntries(names.map((name, index) => [name, rows[index]]));
+  return {
+    ok: true, branchId, capabilities, ...data,
+    summaries: departmentSummaries(data.departments, data.departmentMembers, data.departmentMeetings,
+      data.departmentAttendance, data.departmentOfferings, data.programRegistrations)
+  };
+}
+
+export async function handleOrganizationDepartmentAction(env, user, body = {}) {
+  const action = lower(body.Action || body.action || 'list');
+  if (action === 'list') return listOrganizationDepartments(env, user, body);
+  const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
+  let result;
+  if (action === 'savedepartment') result = await saveDepartment(env, user, body, branchId);
+  else if (action === 'deletedepartment') result = await deleteDepartment(env, user, body, branchId);
+  else if (action === 'saveposition') result = await savePosition(env, user, body, branchId);
+  else if (action === 'savedepartmentmember') result = await saveDepartmentMember(env, user, body, branchId);
+  else if (action === 'savemeeting') result = await saveMeeting(env, user, body, branchId);
+  else if (action === 'recordattendance') result = await recordAttendance(env, user, body, branchId);
+  else if (action === 'saveoffering') result = await saveDepartmentOffering(env, user, body, branchId);
+  else if (action === 'markofferingpaid') result = await markOfferingPaid(env, user, body, branchId);
+  else if (action === 'saveprogram') result = await saveProgram(env, user, body, branchId);
+  else if (action === 'registerparticipant') result = await registerParticipant(env, user, body, branchId);
+  else if (action === 'saveforeignvisitor') result = await saveForeignVisitor(env, user, body, branchId);
+  else throw inputError('Choose a valid department action.');
+  return { ...(await listOrganizationDepartments(env, user, { BranchId: branchId })), ...result };
+}

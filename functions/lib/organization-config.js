@@ -1,6 +1,6 @@
 const clean = (value) => String(value ?? '').trim();
 
-export const ORGANIZATION_EDITIONS = Object.freeze(['school', 'church']);
+export const ORGANIZATION_EDITIONS = Object.freeze(['school', 'church', 'faith', 'organization']);
 
 export const EDITION_FEATURE_DEFAULTS = Object.freeze({
   school: Object.freeze({
@@ -20,6 +20,26 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     funds: false,
     offerings: false
   }),
+  faith: Object.freeze({
+    branches: true,
+    branding: true,
+    approvals: true,
+    accounting: true,
+    payroll: true,
+    admissions: false,
+    students: false,
+    parentPortal: false,
+    stores: false,
+    clinic: false,
+    kitchen: false,
+    members: true,
+    services: true,
+    funds: true,
+    offerings: true,
+    donations: true,
+    departments: true,
+    programs: true
+  }),
   church: Object.freeze({
     branches: true,
     branding: true,
@@ -36,7 +56,29 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     services: true,
     funds: true,
     offerings: true,
-    donations: true
+    donations: true,
+    departments: true,
+    programs: true
+  }),
+  organization: Object.freeze({
+    branches: true,
+    branding: true,
+    approvals: true,
+    accounting: true,
+    payroll: true,
+    admissions: false,
+    students: false,
+    parentPortal: false,
+    stores: false,
+    clinic: false,
+    kitchen: false,
+    members: true,
+    services: true,
+    funds: true,
+    offerings: true,
+    donations: true,
+    departments: true,
+    programs: true
   })
 });
 
@@ -50,6 +92,8 @@ function booleanValue(value, fallback) {
 
 export function normalizeOrganizationEdition(value) {
   const normalized = clean(value).toLowerCase();
+  if (normalized === 'religious' || normalized === 'religious body') return 'faith';
+  if (normalized === 'other') return 'organization';
   return ORGANIZATION_EDITIONS.includes(normalized) ? normalized : 'school';
 }
 
@@ -73,7 +117,7 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
       || legacy.OrganisationEdition || legacy.OrganizationEdition
       || env.ORGANISATION_EDITION || env.ORGANIZATION_EDITION
   );
-  const fallbackName = edition === 'church' ? 'Your Church Name' : 'Integrated School Management Suite';
+  const fallbackName = edition === 'school' ? 'Your School Name' : 'Your Organisation Name';
   const name = clean(
     profile.Name || profile.OrganisationName || profile.OrganizationName
       || legacy.OrganisationName || legacy.OrganizationName || legacy.SchoolName
@@ -83,7 +127,7 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
     profile.Code || profile.OrganisationCode || profile.OrganizationCode
       || legacy.OrganisationCode || legacy.OrganizationCode || legacy.SchoolCode
       || env.ORGANISATION_CODE || env.ORGANIZATION_CODE || env.SCHOOL_CODE
-  ).toUpperCase().replace(/[^A-Z0-9]/g, '') || (edition === 'church' ? 'CHURCH' : 'DCA');
+  ).toUpperCase().replace(/[^A-Z0-9]/g, '') || (edition === 'school' ? 'DCA' : 'ORG');
   const overrides = profile.FeatureFlags || profile.Features
     || legacy.FeatureFlags || legacy.Features || {};
   return {
@@ -102,7 +146,12 @@ export function organizationProfileDocument(config, audit = {}) {
     Code: resolved.Code,
     FeatureFlags: resolved.FeatureFlags,
     UpdatedAt: clean(audit.UpdatedAt),
-    UpdatedBy: clean(audit.UpdatedBy)
+    UpdatedBy: clean(audit.UpdatedBy),
+    GoogleDocumentsUrl: clean(config.GoogleDocumentsUrl || config.googleDocumentsUrl),
+    Plan: clean(config.Plan || config.plan) || 'Starter',
+    UserLimit: Math.max(1, Number(config.UserLimit || config.userLimit || 5) || 5),
+    BrandName: clean(config.BrandName || config.brandName) || 'Dynamax',
+    BrandLogoUrl: clean(config.BrandLogoUrl || config.brandLogoUrl)
   };
 }
 
@@ -122,7 +171,9 @@ const SECTION_FEATURES = Object.freeze({
   services: 'services',
   funds: 'funds',
   offerings: 'offerings',
-  donations: 'donations'
+  donations: 'donations',
+  departments: 'departments',
+  programs: 'programs'
 });
 
 export function filterSectionsForFeatures(sections, featureFlags) {

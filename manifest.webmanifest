@@ -1,11 +1,11 @@
 {
-  "name": "DIGC Suite",
-  "short_name": "DIGC Suite",
+  "name": "Dynamax",
+  "short_name": "Dynamax",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#071b38",
   "theme_color": "#0b4bc8",
-  "description": "School, church, finance and shared services in one connected suite",
-  "icons": [{ "src": "/app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+  "description": "Management software for schools, religious bodies and other organisations",
+  "icons": [{ "src": "/images/Logo.png", "sizes": "any", "type": "image/png", "purpose": "any maskable" }]
 }

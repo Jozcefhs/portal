@@ -11,7 +11,7 @@
   <main class="settings-shell">
     <header class="settings-topbar">
       <div class="settings-brand">
-        <span class="settings-logo-wrap"><img src="images/logo.png" alt="School logo" class="settings-logo" onerror="this.style.display='none'"></span>
+        <span class="settings-logo-wrap"><img src="images/Logo.png" alt="Dynamax logo" class="settings-logo" onerror="this.style.display='none'"></span>
         <div>
           <p class="settings-eyebrow">Administration</p>
           <h1>Settings</h1>
@@ -49,6 +49,7 @@
           <a href="#brand-settings" class="settings-nav-link"><span>04</span><div><strong>Branding</strong><small>Web logo</small></div></a>
           <a href="#landing-settings" class="settings-nav-link"><span>05</span><div><strong>Landing page</strong><small>Public portal content</small></div></a>
           <a href="#licence-settings" class="settings-nav-link"><span>06</span><div><strong>Licensing</strong><small>Product access</small></div></a>
+          <a href="#storage-settings" class="settings-nav-link"><span>07</span><div><strong>Storage</strong><small>Google documents</small></div></a>
         </nav>
         <div class="settings-sidebar-note">
           <strong>Tip</strong>
@@ -86,6 +87,14 @@
             <div class="settings-field full-width">
               <label for="schoolAddress">School address</label>
               <input id="schoolAddress" name="SchoolAddress">
+            </div>
+            <div class="settings-field">
+              <label for="organisationEdition">Organisation type</label>
+              <select id="organisationEdition" name="OrganisationEdition">
+                <option value="school">School</option>
+                <option value="faith">Religious organisation</option>
+                <option value="organization">Other organisation</option>
+              </select>
             </div>
             <div class="settings-field full-width">
               <label for="nameFormat">Student and applicant name format</label>
@@ -177,7 +186,7 @@
             </div>
           </div>
           <div class="settings-logo-card">
-            <div class="settings-logo-preview"><img id="webLogoPreview" src="images/logo.png" alt="Current web logo"></div>
+            <div class="settings-logo-preview"><img id="webLogoPreview" src="images/Logo.png" alt="Current web logo"></div>
             <div class="settings-logo-copy">
               <strong>School web logo</strong>
               <p>PNG, JPG or WebP. The image is resized automatically and does not affect PDF documents.</p>
@@ -217,6 +226,16 @@
           </div>
           <div class="settings-fields">
             <div class="settings-field">
+              <label for="subscriptionPlan">Subscription plan</label>
+              <select id="subscriptionPlan" name="SubscriptionPlan">
+                <option>Starter</option><option>Standard</option><option>Professional</option><option>Enterprise</option>
+              </select>
+            </div>
+            <div class="settings-field">
+              <label for="userLimit">Maximum active users</label>
+              <input id="userLimit" name="UserLimit" type="number" min="1" value="5">
+            </div>
+            <div class="settings-field">
               <label for="productKeyMode">Product key requirement</label>
               <select id="productKeyMode" name="ProductKeyMode">
                 <option value="off">Off for now</option>
@@ -227,8 +246,26 @@
           </div>
         </section>
 
+        <section id="storage-settings" class="settings-section">
+          <div class="settings-section-heading">
+            <div><span class="settings-section-icon">S</span></div>
+            <div>
+              <p class="settings-eyebrow">External storage</p>
+              <h2>Google document storage</h2>
+              <p>Configure the organisation-owned Google Drive or Apps Script URL used for uploaded documents.</p>
+            </div>
+          </div>
+          <div class="settings-fields">
+            <div class="settings-field">
+              <label for="googleDocumentsUrl">Google document storage URL</label>
+              <input id="googleDocumentsUrl" name="GoogleDocumentsUrl" type="url" placeholder="https://drive.google.com/... or Apps Script /exec URL">
+              <small class="settings-help">Leave blank to use the server environment configuration.</small>
+            </div>
+          </div>
+        </section>
+
         <div class="settings-savebar">
-          <div><strong>School settings</strong><p id="setupStatus" class="status">Review your changes before saving.</p></div>
+          <div><strong>Organisation settings</strong><p id="setupStatus" class="status">Review your changes before saving.</p></div>
           <button id="saveSetupButton" type="submit">Save changes</button>
         </div>
       </div>

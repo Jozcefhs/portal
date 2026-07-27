@@ -45,7 +45,11 @@ function profileFromForm() {
     PortalNotice: data.get('PortalNotice'),
     ResultDisplayMode: data.get('ResultDisplayMode'),
     ShowResultsOnline: data.get('ShowResultsOnline'),
-    ProductKeyMode: data.get('ProductKeyMode')
+    ProductKeyMode: data.get('ProductKeyMode'),
+    OrganisationEdition: data.get('OrganisationEdition'),
+    GoogleDocumentsUrl: data.get('GoogleDocumentsUrl'),
+    SubscriptionPlan: data.get('SubscriptionPlan'),
+    UserLimit: data.get('UserLimit')
   };
   if (webLogoChanged) profile.WebLogoDataUrl = webLogoDataUrl;
   return profile;
@@ -66,6 +70,7 @@ async function loadProfile(password = '') {
     setField('schoolName', profile.SchoolName);
     setField('schoolCode', profile.SchoolCode || 'DCA');
     setField('schoolAddress', profile.SchoolAddress);
+    setField('organisationEdition', profile.OrganisationEdition || 'school');
     setField('schoolEmail', profile.SchoolEmail);
     setField('schoolPhone', profile.SchoolPhone);
     setField('schoolSignatoryName', profile.SchoolSignatoryName);
@@ -83,10 +88,13 @@ async function loadProfile(password = '') {
     setField('portalNotice', profile.PortalNotice);
     webLogoDataUrl = '';
     webLogoChanged = false;
-    document.getElementById('webLogoPreview').src = profile.WebLogoUrl || 'images/logo.png';
+    document.getElementById('webLogoPreview').src = profile.WebLogoUrl || 'images/Logo.png';
     setField('resultDisplayMode', profile.ResultDisplayMode || 'subjects');
     setField('showResultsOnline', profile.ShowResultsOnline || 'NO');
     setField('productKeyMode', profile.ProductKeyMode || 'off');
+    setField('googleDocumentsUrl', profile.GoogleDocumentsUrl);
+    setField('subscriptionPlan', profile.SubscriptionPlan || 'Starter');
+    setField('userLimit', profile.UserLimit || 5);
   } catch (error) {
     setStatus(error.message, 'bad');
     throw error;
@@ -126,7 +134,7 @@ document.getElementById('removeWebLogo').addEventListener('click', () => {
   webLogoDataUrl = '';
   webLogoChanged = true;
   document.getElementById('webLogoFile').value = '';
-  document.getElementById('webLogoPreview').src = 'images/logo.png';
+  document.getElementById('webLogoPreview').src = 'images/Logo.png';
   setStatus('Default web logo selected. Save Setup to publish it.', 'ok');
 });
 

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Register your organisation — Dynamax</title>
+  <link rel="icon" href="images/Logo.png">
+  <script src="js/preferences.js?v=20260726-biometric"></script>
+  <link rel="stylesheet" href="css/style.css?v=20260727-dynamax-departments">
+</head>
+<body class="auth-page">
+  <main class="auth-shell">
+    <section class="auth-card organisation-registration-card">
+      <header class="registration-brand"><img src="images/Logo.png" alt="Dynamax"><div><p class="eyebrow">Dynamax</p><h1>Register your organisation</h1><p>Choose the workspace and plan that fit your team.</p></div></header>
+      <form id="organisationRegistrationForm" class="settings-fields two-column">
+        <div class="settings-field"><label>Organisation name</label><input name="OrganisationName" required></div>
+        <div class="settings-field"><label>Organisation type</label><select name="Edition" required><option value="school">School</option><option value="faith">Religious organisation</option><option value="organization">Other organisation</option></select></div>
+        <div class="settings-field"><label>Contact name</label><input name="ContactName" required></div>
+        <div class="settings-field"><label>Contact email</label><input name="Email" type="email" required></div>
+        <div class="settings-field"><label>Phone</label><input name="Phone" required></div>
+        <div class="settings-field"><label>Country</label><input name="Country" required></div>
+        <div class="settings-field full-width"><label>Plan</label><div class="plan-choice-grid">
+          <label><input type="radio" name="Plan" value="Starter" checked><span><strong>Starter</strong><small>5 users · core records</small></span></label>
+          <label><input type="radio" name="Plan" value="Standard"><span><strong>Standard</strong><small>20 users · finance and workflows</small></span></label>
+          <label><input type="radio" name="Plan" value="Professional"><span><strong>Professional</strong><small>50 users · full operations</small></span></label>
+          <label><input type="radio" name="Plan" value="Enterprise"><span><strong>Enterprise</strong><small>Custom users and modules</small></span></label>
+        </div></div>
+        <label class="inline-check full-width"><input type="checkbox" name="Consent" value="YES" required> I confirm that I am authorised to register this organisation.</label>
+        <button type="submit">Submit registration</button><a class="settings-link" href="index.html">Back to Dynamax</a>
+        <p id="organisationRegistrationStatus" class="status full-width" aria-live="polite"></p>
+      </form>
+    </section>
+  </main>
+  <script src="js/register-organization.js?v=20260727"></script>
+</body>
+</html>

@@ -154,7 +154,7 @@ async function requireFundsEdition(env) {
     getDocument(env, 'settings', 'schoolProfile').catch(() => null)
   ]);
   const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile });
-  if (organization.Edition !== 'church' || !organization.FeatureFlags.funds || !organization.FeatureFlags.accounting) {
+  if (!['church', 'faith', 'organization'].includes(organization.Edition) || !organization.FeatureFlags.funds || !organization.FeatureFlags.accounting) {
     const error = new Error('Church funds and shared accounting are not enabled for this organisation.');
     error.status = 403;
     throw error;

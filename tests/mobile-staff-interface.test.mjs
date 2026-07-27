@@ -145,7 +145,7 @@ test('dark mode preserves dashboard and requisition text contrast', () => {
 test('school dashboard graphs remain available on mobile for cross-functional staff', () => {
   const renderTabsSource = adminJs.slice(adminJs.indexOf('function renderTabs'), adminJs.indexOf('function renderWorkspace'));
   assert.doesNotMatch(renderTabsSource, /dataset\.edition\s*=/);
-  assert.match(adminJs, /document\.documentElement\.dataset\.edition = isChurch \? 'church' : 'school'/);
+  assert.match(adminJs, /document\.documentElement\.dataset\.edition = isOrganisationOperations \? 'church' : 'school'/);
   assert.match(adminJs, /if \(activeSection !== 'overview' \|\| document\.documentElement\.dataset\.edition === 'church'\)/);
   assert.match(portalCss, /@media \(max-width:780px\)\{\.dashboard-charts\{grid-template-columns:1fr\}/);
 });

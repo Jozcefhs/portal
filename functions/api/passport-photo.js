@@ -3,6 +3,7 @@
 
 import { getDocument, listCollection, requireFirestoreEnv } from '../lib/firestore.js';
 import { listSchoolCollection } from '../lib/school-scope.js';
+import { resolveDocumentStorage } from '../lib/document-storage.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -54,16 +55,17 @@ function decodeBase64(value) {
 }
 
 async function loadDriveFile(env, documentUrl) {
-  if (!env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) {
+  const storage = await resolveDocumentStorage(env);
+  if (!storage.url || !storage.secret) {
     const error = new Error('Private document storage is not configured.');
     error.status = 500;
     throw error;
   }
-  const response = await fetch(env.GOOGLE_APPS_SCRIPT_URL, {
+  const response = await fetch(storage.url, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify({
-      Secret: env.GOOGLE_APPS_SCRIPT_SECRET,
+      Secret: storage.secret,
       Action: 'getStoredDocument',
       DocumentUrl: documentUrl
     })

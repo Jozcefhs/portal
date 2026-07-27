@@ -150,7 +150,7 @@ async function requireServicesEdition(env) {
     getDocument(env, 'settings', 'schoolProfile').catch(() => null)
   ]);
   const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile });
-  if (organization.Edition !== 'church' || !organization.FeatureFlags.services) {
+  if (!['church', 'faith', 'organization'].includes(organization.Edition) || !organization.FeatureFlags.services) {
     const error = new Error('Church services are not enabled for this organisation.');
     error.status = 403;
     throw error;

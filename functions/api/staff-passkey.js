@@ -65,10 +65,12 @@ async function documentIdForCredential(credentialId) {
 
 export function relyingPartySettings(request, env = {}) {
   const url = new URL(request.url);
+  const forwardedPortal = clean(request.headers.get('X-Dynamax-Portal')).toLowerCase();
+  const approvedForwardedPortal = ['dynamaxms.pages.dev'].includes(forwardedPortal) ? forwardedPortal : '';
   return {
-    rpID: clean(env.WEBAUTHN_RP_ID) || url.hostname,
-    origin: clean(env.WEBAUTHN_ORIGIN) || url.origin,
-    rpName: clean(env.WEBAUTHN_RP_NAME) || 'DIGC Suite'
+    rpID: clean(env.WEBAUTHN_RP_ID) || approvedForwardedPortal || url.hostname,
+    origin: clean(env.WEBAUTHN_ORIGIN) || (approvedForwardedPortal ? `https://${approvedForwardedPortal}` : url.origin),
+    rpName: clean(env.WEBAUTHN_RP_NAME) || 'Dynamax'
   };
 }
 

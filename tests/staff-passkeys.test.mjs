@@ -102,6 +102,6 @@ test('relying party defaults are derived from the current secure origin', () => 
   assert.deepEqual(settings, {
     rpID: 'digc-suite.pages.dev',
     origin: 'https://digc-suite.pages.dev',
-    rpName: 'DIGC Suite'
+    rpName: 'Dynamax'
   });
 });

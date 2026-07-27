@@ -3,6 +3,7 @@
 import { deleteDocument, getDocument, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { listSchoolCollection, upsertSchoolDocument } from '../lib/school-scope.js';
+import { resolveDocumentStorage } from '../lib/document-storage.js';
 
 const DOCUMENTS = [
   ['BirthCertificate', 'Birth Certificate'],
@@ -42,16 +43,17 @@ function safeFileName(value, fallback) {
 }
 
 async function loadDriveFile(env, url) {
-  if (!env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) {
+  const storage = await resolveDocumentStorage(env);
+  if (!storage.url || !storage.secret) {
     const error = new Error('Private document storage is not configured.');
     error.status = 500;
     throw error;
   }
-  const response = await fetch(env.GOOGLE_APPS_SCRIPT_URL, {
+  const response = await fetch(storage.url, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify({
-      Secret: env.GOOGLE_APPS_SCRIPT_SECRET,
+      Secret: storage.secret,
       Action: 'getStoredDocument',
       DocumentUrl: url
     })
@@ -66,10 +68,11 @@ async function loadDriveFile(env, url) {
 }
 
 async function deleteDriveFile(env, url) {
-  if (!env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) throw Object.assign(new Error('Private document storage is not configured.'), { status: 500 });
-  const response = await fetch(env.GOOGLE_APPS_SCRIPT_URL, {
+  const storage = await resolveDocumentStorage(env);
+  if (!storage.url || !storage.secret) throw Object.assign(new Error('Private document storage is not configured.'), { status: 500 });
+  const response = await fetch(storage.url, {
     method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ Secret: env.GOOGLE_APPS_SCRIPT_SECRET, Action: 'deleteStoredDocument', DocumentUrl: url })
+    body: JSON.stringify({ Secret: storage.secret, Action: 'deleteStoredDocument', DocumentUrl: url })
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || !data.ok) throw Object.assign(new Error(data.message || 'The stored document could not be deleted.'), { status: response.status >= 400 ? response.status : 502 });
