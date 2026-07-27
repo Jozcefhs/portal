@@ -416,14 +416,15 @@ function settingsDocumentForDonation(settings = {}, env = {}) {
 }
 
 function receiptLogoSource(webBranding = {}, organizationProfile = {}, env = {}) {
+  const publicPortalUrl = clean(env.PUBLIC_PORTAL_URL || env.CANONICAL_PORTAL_URL || 'https://digc-suite.pages.dev')
+    .replace(/\/+$/, '');
   const embeddedLogo = clean(webBranding.WebLogoDataUrl);
-  if (/^data:image\/(?:png|jpeg|webp);base64,/i.test(embeddedLogo)) return embeddedLogo;
+  if (/^data:image\/(?:png|jpeg|webp);base64,/i.test(embeddedLogo)) {
+    return `${publicPortalUrl}/api/web-logo`;
+  }
 
   const configuredLogo = clean(organizationProfile.BrandLogoUrl);
   if (/^https:\/\//i.test(configuredLogo)) return configuredLogo;
-
-  const publicPortalUrl = clean(env.PUBLIC_PORTAL_URL || env.CF_PAGES_URL || 'https://dynamaxms.pages.dev')
-    .replace(/\/+$/, '');
   if (configuredLogo.startsWith('/')) return `${publicPortalUrl}${configuredLogo}`;
   return `${publicPortalUrl}/images/Logo.png`;
 }
@@ -492,11 +493,17 @@ export function buildDonationReceiptHtml(context, link = '') {
   const watermark = logoSource
     ? `<img src="${escapeHtml(logoSource)}" alt="" width="240" style="position:absolute; left:50%; top:50%; width:240px; max-width:55%; height:auto; transform:translate(-50%,-50%); opacity:0.07; pointer-events:none;" />`
     : '';
+  const headerLogo = logoSource
+    ? `<td style="width:62px; padding:0 12px 0 0; vertical-align:middle;"><img src="${escapeHtml(logoSource)}" alt="${escapeHtml(context.ChurchName || context.name || 'Organisation')} logo" width="50" height="50" style="display:block; width:50px; height:50px; object-fit:contain; border:0;" /></td>`
+    : '';
   return `<div style="font-family:Arial,sans-serif; max-width:680px; border:1px solid #dbe6f2; color:#243447; position:relative; overflow:hidden;">
     ${watermark}
     <div style="position:relative; z-index:1;">
     <div style="padding: 18px 20px; background:#eaf2ff;">
-      <h3 style="margin:0; color:#1f4e79;">${escapeHtml(context.ChurchName || context.name || 'Church')} donation receipt</h3>
+      <table role="presentation" style="border-collapse:collapse; width:100%;"><tr>
+        ${headerLogo}
+        <td style="vertical-align:middle;"><h3 style="margin:0; color:#1f4e79;">${escapeHtml(context.ChurchName || context.name || 'Church')} donation receipt</h3></td>
+      </tr></table>
     </div>
     <div style="padding: 14px 18px;">
       <p>Dear ${escapeHtml(context.DonorName || 'Donor')},</p>

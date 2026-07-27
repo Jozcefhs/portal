@@ -1,7 +1,7 @@
 // Cloudflare Pages Function: /api/verify-payment
 // Verifies Paystack payment and records it in the configured backend.
 
-import { recordManualPayment } from './backend.js';
+import { postChurchDonationToAccounting, recordManualPayment } from './backend.js';
 import { createDocumentIfAbsent, getDocument, upsertDocument } from '../lib/firestore.js';
 import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
 import { markDonationPaidByReference, sendChurchDonationReceipt } from '../lib/church-payments.js';
@@ -144,6 +144,7 @@ export async function onRequestPost(context) {
 
     let donation = null;
     let donationReceipt = null;
+    let donationJournal = null;
     if (isChurchDonation) {
       try {
         donation = await markDonationPaidByReference(env, tx.reference || reference, {
@@ -152,6 +153,9 @@ export async function onRequestPost(context) {
           PaymentMethod: 'ONLINE',
           Status: 'Paid',
           PaidAt: tx.paid_at || tx.paidAt || new Date().toISOString(),
+          GrossAmount: amount,
+          GatewayFee: gatewayFee,
+          NetAmount: netAmount,
           Gateway: 'Paystack',
           GatewayReference: tx.reference,
           UpdatedBy: 'Paystack Verification'
@@ -169,6 +173,20 @@ export async function onRequestPost(context) {
             recordErrors.push('Church donation receipt was not sent because email is not configured.');
           } else {
             recordErrors.push(`Church receipt: ${donationReceipt?.message || 'unable to send payment receipt'}`);
+          }
+          try {
+            donationJournal = await postChurchDonationToAccounting(env, donation, {
+              Status: 'Paid',
+              PaymentMethod: 'ONLINE',
+              Gateway: 'Paystack',
+              Reference: tx.reference,
+              GrossAmount: amount,
+              GatewayFee: gatewayFee,
+              NetAmount: netAmount,
+              PaidAt: tx.paid_at || tx.paidAt || new Date().toISOString()
+            });
+          } catch (accountingError) {
+            recordErrors.push(`Church donation accounting: ${accountingError?.message || String(accountingError)}`);
           }
         } else {
           recordErrors.push('Church donation record was not found for the payment reference.');
@@ -203,7 +221,7 @@ export async function onRequestPost(context) {
           Treatment: 'DeductedBeforeStudentCredit',
           Status: 'Recorded',
           Reference: tx.reference,
-          Source: 'Paystack',
+          Source: isChurchDonation ? 'Church Donation / Paystack' : 'Paystack',
           CreatedAt: new Date().toISOString()
         });
       }
@@ -262,6 +280,7 @@ export async function onRequestPost(context) {
       netAmount,
       currency: tx.currency || 'NGN',
       feeName: isChurchDonation ? 'Church Donation' : (meta.feeName || 'Online Payment'),
+      donationJournal: donationJournal || null,
       receipt: donationReceipt || null,
       receiptStatus: donationReceipt ? (donationReceipt.ok ? 'sent' : (donationReceipt.skipped ? 'skipped' : 'failed')) : null
     });

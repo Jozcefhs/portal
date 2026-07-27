@@ -35,8 +35,15 @@ test('donation receipt includes a subdued organisation logo watermark', () => {
     ReceiptLogoSource: 'https://example.test/logo.png'
   });
 
-  assert.match(html, /src="https:\/\/example\.test\/logo\.png"/);
+  assert.equal((html.match(/src="https:\/\/example\.test\/logo\.png"/g) || []).length, 2);
   assert.match(html, /opacity:0\.07/);
+  assert.match(html, /alt="Example Organisation logo"/);
+  assert.match(html, /width="50" height="50"/);
   assert.match(html, /Example Organisation donation receipt/);
   assert.doesNotMatch(html, />Pay Now</);
+});
+
+test('configured web branding uses a public image endpoint that email clients can load', () => {
+  assert.match(paymentSource, /return `\$\{publicPortalUrl\}\/api\/web-logo`/);
+  assert.doesNotMatch(paymentSource, /if \(\/\^data:image[\s\S]{0,120}return embeddedLogo/);
 });

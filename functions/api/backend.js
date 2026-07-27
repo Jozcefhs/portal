@@ -4218,6 +4218,109 @@ function accountingCashAccountFor(method, gateway = '') {
   return '1020';
 }
 
+async function listChurchDonationsForAccounting(env) {
+  const [organizationProfile, legacyProfile, structure] = await Promise.all([
+    getDocument(env, 'settings', 'organisationProfile').catch(() => null),
+    getDocument(env, 'settings', 'schoolProfile').catch(() => null),
+    getSchoolStructure(env).catch(() => ({ Branches: [{ Id: 'main' }] }))
+  ]);
+  const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile });
+  if (!['church', 'faith', 'organization'].includes(organization.Edition) || !organization.FeatureFlags.donations) {
+    return [];
+  }
+  const branchIds = [...new Set((structure.Branches || [{ Id: 'main' }])
+    .map((branch) => clean(branch.Id || branch.id || branch.Name || branch.name).toLowerCase() || 'main'))];
+  const groups = await Promise.all(branchIds.map((branchId) =>
+    listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.donations, branchId)).catch(() => [])
+  ));
+  return groups.flatMap((rows, index) => rows.map((row) => ({
+    ...row,
+    BranchId: clean(row.BranchId || branchIds[index]) || 'main'
+  })));
+}
+
+export function buildChurchDonationAccountingJournal(donation = {}, settlement = {}) {
+  const status = lower(settlement.Status || donation.Status || donation.PaymentStatus);
+  const sourceId = clean(
+    settlement.Reference || donation.Reference || donation.GatewayReference
+      || donation.DonationId || donation.ReceiptNo || donation.__id
+  );
+  const grossAmount = asMoneyNumber(
+    settlement.GrossAmount || donation.GrossAmount || donation.Amount
+  );
+  if (status !== 'paid' && status !== 'completed') return null;
+  if (!sourceId || grossAmount <= 0) return null;
+
+  const method = clean(settlement.PaymentMethod || donation.PaymentMethod || donation.Method);
+  const gateway = clean(settlement.Gateway || donation.Gateway);
+  const online = lower(`${method} ${gateway}`).match(/online|paystack|gateway|card|mobile money/);
+  const suppliedFee = online
+    ? Math.max(0, asMoneyNumber(settlement.GatewayFee ?? donation.GatewayFee))
+    : 0;
+  const suppliedNet = online
+    ? asMoneyNumber(settlement.NetAmount ?? donation.NetAmount)
+    : grossAmount;
+  const netAmount = Math.min(grossAmount, suppliedNet > 0 ? suppliedNet : Math.max(0, grossAmount - suppliedFee));
+  const gatewayFee = Math.max(0, asMoneyNumber(grossAmount - netAmount));
+  const branchId = clean(donation.BranchId || settlement.BranchId || 'main').toLowerCase() || 'main';
+  const description = clean(donation.PaymentType || settlement.PaymentType || 'Donation');
+  const journalNo = `SYS-DON-${safeDocumentId(sourceId)}`;
+  const lines = [
+    {
+      AccountCode: online ? '1030' : accountingCashAccountFor(method, gateway),
+      Debit: netAmount,
+      Credit: 0,
+      Description: online ? 'Online donation net settlement' : `${method || 'Donation'} received`,
+      Department: 'Donations',
+      CostCentre: branchId
+    }
+  ];
+  if (gatewayFee > 0) {
+    lines.push({
+      AccountCode: '6060',
+      Debit: gatewayFee,
+      Credit: 0,
+      Description: 'Donation payment processing charge',
+      Department: 'Donations',
+      CostCentre: branchId
+    });
+  }
+  lines.push({
+    AccountCode: '4080',
+    Debit: 0,
+    Credit: grossAmount,
+    Description: `${description} income`,
+    Department: 'Donations',
+    CostCentre: branchId
+  });
+
+  return normalizedJournal({
+    JournalNo: journalNo,
+    Date: clean(donation.PaidAt || settlement.PaidAt || donation.Date || donation.CreatedAt || nowIso()).slice(0, 10),
+    Status: 'Posted',
+    Description: `Donation receipt: ${clean(donation.DonorName || 'Donor')}`,
+    Reference: sourceId,
+    Source: 'Church Donation',
+    SourceId: sourceId,
+    Department: 'Donations',
+    CostCentre: branchId,
+    RecordedBy: clean(donation.UpdatedBy || settlement.RecordedBy || 'System'),
+    Lines: lines,
+    TotalDebit: grossAmount,
+    TotalCredit: grossAmount,
+    CreatedAt: clean(donation.PaidAt || donation.UpdatedAt || donation.CreatedAt || nowIso()),
+    UpdatedAt: nowIso(),
+    System: 'YES'
+  });
+}
+
+export async function postChurchDonationToAccounting(env, donation = {}, settlement = {}) {
+  const journal = buildChurchDonationAccountingJournal(donation, settlement);
+  if (!journal) return null;
+  await seedAccountingChart(env);
+  return saveAccountingJournal(env, journal, true);
+}
+
 async function seedAccountingChart(env) {
   const existing = await listCollection(env, 'chartOfAccounts');
   const codes = new Set(existing.map((row) => clean(row.Code || row.code || row.__id)));
@@ -4350,7 +4453,7 @@ export async function saveAccountingJournal(env, body, system = false) {
 
 async function syncRevenueToAccounting(env) {
   await seedAccountingChart(env);
-  const [invoices, payments, sales, journals, ledgerRows, legacyGatewayExpenses, gatewayCharges, admissionClasses] = await Promise.all([
+  const [invoices, payments, sales, journals, ledgerRows, legacyGatewayExpenses, gatewayCharges, admissionClasses, churchDonations] = await Promise.all([
     listCollection(env, 'invoices'),
     listCollection(env, 'payments'),
     listCollection(env, 'formSales').catch(() => []),
@@ -4358,11 +4461,23 @@ async function syncRevenueToAccounting(env) {
     listCollection(env, 'ledger'),
     listCollection(env, 'accountingExpenses').catch(() => []),
     listCollection(env, 'paymentGatewayCharges').catch(() => []),
-    listCollection(env, 'settings/admission/classes').catch(() => [])
+    listCollection(env, 'settings/admission/classes').catch(() => []),
+    listChurchDonationsForAccounting(env)
   ]);
   const existing = new Set(journals.map((row) => clean(row.JournalNo || row.__id)));
   const journalsByNo = new Map(journals.map((row) => [clean(row.JournalNo || row.__id), row]));
   let created = 0;
+  for (const donation of churchDonations) {
+    const journal = buildChurchDonationAccountingJournal(donation);
+    if (!journal) continue;
+    const prior = journalsByNo.get(journal.JournalNo);
+    if (prior && journalLineSignature(prior.Lines) === journalLineSignature(journal.Lines) &&
+      sameText(prior.Reference, journal.Reference) && sameText(prior.SourceId, journal.SourceId)) continue;
+    await saveAccountingJournal(env, journal, true);
+    existing.add(journal.JournalNo);
+    journalsByNo.set(journal.JournalNo, journal);
+    created += 1;
+  }
   for (const row of invoices) {
     const sourceId = clean(row.InvoiceId || row.InvoiceNo || row.invoiceId || row.__id);
     const journalNo = `SYS-INV-${safeDocumentId(sourceId)}`;
@@ -5246,7 +5361,7 @@ async function getAccountingOverview(env, body = {}) {
       budgets: budgets.filter((row) => sameText(row.Department, department)), vendors,
       supplierBills: supplierBills.filter((row) => sameText(row.Department, department)),
       journals: [], banks: [], reconciliations: [], periods: [], audit: [], supplierPayments: [], assets: [], adjustments: [],
-      approvalLimits: [], closeChecklist: [], bankStatementItems: [], reports: {}
+      approvalLimits: [], closeChecklist: [], bankStatementItems: [], donations: [], reports: {}
     };
   }
   // Keep the overview read-only. Revenue synchronization and accounting setup
@@ -5254,7 +5369,7 @@ async function getAccountingOverview(env, body = {}) {
   // causing Cloudflare Workers to exceed their per-request subrequest quota.
   // Administrators can still run the explicit "Synchronize Revenue" action.
   const synchronized = 0;
-  const [chart, journals, expenses, budgets, banks, reconciliations, periods, audit, vendors, supplierBills, supplierPayments, assets, adjustments, approvalLimits, closeChecklist, bankStatementItems, invoices, payments, formSales, gatewayCharges, payrollProfiles, payrollRuns, payrollItems, payrollPayments, payrollAudit, payrollTaxProfiles, payrollTaxOverrides, payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings] = await Promise.all([
+  const [chart, journals, expenses, budgets, banks, reconciliations, periods, audit, vendors, supplierBills, supplierPayments, assets, adjustments, approvalLimits, closeChecklist, bankStatementItems, invoices, payments, formSales, gatewayCharges, payrollProfiles, payrollRuns, payrollItems, payrollPayments, payrollAudit, payrollTaxProfiles, payrollTaxOverrides, payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings, donations] = await Promise.all([
     listCollection(env, 'chartOfAccounts'), listCollection(env, 'accountingJournals'), listCollection(env, 'accountingExpenses'),
     listCollection(env, 'accountingBudgets'), listCollection(env, 'accountingBanks'), listCollection(env, 'accountingReconciliations'),
     listCollection(env, 'accountingPeriods'), listCollection(env, 'accountingAudit'), listCollection(env, 'accountingVendors'),
@@ -5265,7 +5380,8 @@ async function getAccountingOverview(env, body = {}) {
     listCollection(env, 'payrollProfiles'), listCollection(env, 'payrollRuns'), listCollection(env, 'payrollItems'),
     listCollection(env, 'payrollPayments'), listCollection(env, 'payrollAudit'), listCollection(env, PAYROLL_TAX_COLLECTIONS.profiles).catch(() => []), listCollection(env, PAYROLL_TAX_COLLECTIONS.overrides).catch(() => []),
     listCollection(env, PAYROLL_TAX_COLLECTIONS.components).catch(() => []), listCollection(env, PAYROLL_TAX_COLLECTIONS.bands).catch(() => []),
-    listCollection(env, PAYROLL_TAX_COLLECTIONS.reliefs).catch(() => []), listCollection(env, PAYROLL_TAX_COLLECTIONS.mappings).catch(() => [])
+    listCollection(env, PAYROLL_TAX_COLLECTIONS.reliefs).catch(() => []), listCollection(env, PAYROLL_TAX_COLLECTIONS.mappings).catch(() => []),
+    listChurchDonationsForAccounting(env)
   ]);
   const filter = accountingFilter(body);
   const finalizedPayrollRunIds = new Set(payrollRuns.filter((row) => ['approved', 'posted', 'part paid', 'paid', 'finalized'].includes(lower(row.Status))).map((row) => lower(row.RunId)));
@@ -5279,7 +5395,7 @@ async function getAccountingOverview(env, body = {}) {
   return { ok: true, message: 'Finance and accounting records loaded.', synchronized, filter, chart, journals, expenses, budgets, banks, reconciliations, periods, audit,
     vendors, supplierBills, supplierPayments, assets, adjustments, approvalLimits, closeChecklist, bankStatementItems,
     payrollProfiles, payrollRuns, payrollItems, payrollPayments, payrollAudit, payrollTaxProfiles: payrollTaxProfilesWithUsage, payrollTaxOverrides,
-    payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings, gatewayReport, reports };
+    payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings, donations, gatewayReport, reports };
 }
 
 async function getAccountingRequisitionDocument(env, body = {}) {

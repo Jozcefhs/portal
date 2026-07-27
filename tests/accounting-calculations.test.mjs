@@ -6,6 +6,7 @@ import {
   applyBillingCategoryOverrides,
   buildAccountingReport,
   buildBudgetVsActual,
+  buildChurchDonationAccountingJournal,
   buildGatewayCollectionsReport,
   buildReceivablesAgeing,
   buildWalletPurchaseAccountingJournal,
@@ -128,6 +129,48 @@ test('finance reports expose gross collections, Paystack charges, and net form r
   assert.deepEqual(
     report.formSales.map((row) => [row.GrossCollection, row.PaystackCharge, row.NetRevenue]),
     [[10300, 300, 10000]]
+  );
+});
+
+test('paid church donations post gross income, net clearing and gateway charges once', () => {
+  const journal = buildChurchDonationAccountingJournal({
+    DonationId: 'DON-1',
+    DonorName: 'Example Donor',
+    PaymentType: 'Thanksgiving',
+    PaymentMethod: 'ONLINE',
+    Gateway: 'Paystack',
+    Reference: 'PS-DON-1',
+    Status: 'Paid',
+    BranchId: 'main',
+    PaidAt: '2026-07-27T10:00:00.000Z',
+    Amount: 100000,
+    GrossAmount: 100000,
+    GatewayFee: 1500,
+    NetAmount: 98500
+  });
+
+  assert.equal(journal.JournalNo, 'SYS-DON-PS-DON-1');
+  assert.equal(journal.Source, 'Church Donation');
+  assert.equal(journal.TotalDebit, 100000);
+  assert.equal(journal.TotalCredit, 100000);
+  assert.deepEqual(
+    journal.Lines.map((line) => [line.AccountCode, line.Debit, line.Credit]),
+    [['1030', 98500, 0], ['6060', 1500, 0], ['4080', 0, 100000]]
+  );
+});
+
+test('pending donations do not enter accounting and paid cash donations remain balanced', () => {
+  assert.equal(buildChurchDonationAccountingJournal({
+    DonationId: 'DON-PENDING', Status: 'Pending', Amount: 5000
+  }), null);
+
+  const journal = buildChurchDonationAccountingJournal({
+    DonationId: 'DON-CASH', Status: 'Paid', PaymentMethod: 'CASH',
+    Amount: 5000, DonorName: 'Cash Donor'
+  });
+  assert.deepEqual(
+    journal.Lines.map((line) => [line.AccountCode, line.Debit, line.Credit]),
+    [['1010', 5000, 0], ['4080', 0, 5000]]
   );
 });
 
