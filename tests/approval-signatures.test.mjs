@@ -13,11 +13,12 @@ import {
 } from '../functions/lib/staff-approval-profile.js';
 
 const portalRoot = new URL('../', import.meta.url);
-const [adminHtml, adminJs, workflowApi, profileApi] = await Promise.all([
+const [adminHtml, adminJs, workflowApi, profileApi, backendApi] = await Promise.all([
   readFile(new URL('admin.html', portalRoot), 'utf8'),
   readFile(new URL('js/admin.js', portalRoot), 'utf8'),
   readFile(new URL('functions/api/finance-workflow.js', portalRoot), 'utf8'),
-  readFile(new URL('functions/api/staff-approval-profile.js', portalRoot), 'utf8')
+  readFile(new URL('functions/api/staff-approval-profile.js', portalRoot), 'utf8'),
+  readFile(new URL('functions/api/backend.js', portalRoot), 'utf8')
 ]);
 
 test('decision officials can save private signature and stamp settings', () => {
@@ -89,4 +90,13 @@ test('approved officer and selected endorsements appear on printable documents',
   assert.match(adminJs, /<th>Approved By<\/th>/);
   assert.match(adminJs, /approvalEndorsementBlock\('Approved by'/);
   assert.match(adminJs, /approvalEndorsementBlock\('Accounts review \/ posting'/);
+});
+
+test('desktop requisition documents retrieve their applied endorsements on demand', () => {
+  assert.match(backendApi, /async function getAccountingRequisitionDocument/);
+  assert.match(backendApi, /financeDocumentEndorsements/);
+  assert.match(backendApi, /endorsement\('approval'\)/);
+  assert.match(backendApi, /endorsement\('admin'\)/);
+  assert.match(backendApi, /endorsement\('accounts'\)/);
+  assert.match(backendApi, /case 'getAccountingRequisitionDocument'/);
 });

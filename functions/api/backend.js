@@ -5282,6 +5282,48 @@ async function getAccountingOverview(env, body = {}) {
     payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings, gatewayReport, reports };
 }
 
+async function getAccountingRequisitionDocument(env, body = {}) {
+  requireAccountingRole(
+    body,
+    ['Super Admin', 'Accounts Officer', 'Management', ...DEPARTMENT_ACCOUNTING_ROLES],
+    'Your role is not allowed to view this requisition document.'
+  );
+  const expenseNo = clean(body.ExpenseNo || body.expenseNo || body.RecordId || body.recordId);
+  if (!expenseNo) {
+    const err = new Error('Select a requisition first.');
+    err.status = 400;
+    throw err;
+  }
+  const record = (await listCollection(env, 'accountingExpenses'))
+    .find((row) => sameText(row.ExpenseNo, expenseNo) || sameText(row.__id, safeDocumentId(expenseNo)));
+  if (!record) {
+    const err = new Error('The selected requisition was not found.');
+    err.status = 404;
+    throw err;
+  }
+  if (isDepartmentAccountingUser(body) && !sameText(record.Department, accountingDepartment(body))) {
+    const err = new Error('You cannot view another department\'s requisition.');
+    err.status = 403;
+    throw err;
+  }
+  const endorsement = (stage) => getDocument(
+    env,
+    'financeDocumentEndorsements',
+    safeDocumentId(`${expenseNo}-${stage}`)
+  ).catch(() => null);
+  const [approval, admin, accounts] = await Promise.all([
+    endorsement('approval'),
+    endorsement('admin'),
+    endorsement('accounts')
+  ]);
+  return {
+    ok: true,
+    message: 'Requisition document loaded.',
+    record,
+    endorsements: { approval, admin, accounts }
+  };
+}
+
 function payrollComponents(value) {
   if (Array.isArray(value)) return value;
   if (typeof value === 'string' && value.trim()) {
@@ -6000,6 +6042,8 @@ async function routeAction(env, action, body = {}) {
       return getAccountsOverview(env);
     case 'getAccountingOverview':
       return getAccountingOverview(env, body);
+    case 'getAccountingRequisitionDocument':
+      return getAccountingRequisitionDocument(env, body);
     case 'getPayrollTaxConfiguration': {
       requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
       const configuration = await getPayrollTaxConfiguration(env);
