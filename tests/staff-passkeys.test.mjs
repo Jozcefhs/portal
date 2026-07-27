@@ -31,10 +31,14 @@ test('staff portal offers passkey registration and authentication', () => {
   assert.match(adminHtml, /autocomplete="username webauthn"/);
   assert.match(adminJs, /passkeyLoginButton\.hidden = !supported \|\| Boolean\(currentUser\)/);
   assert.match(adminJs, /passkeyLoginButton\.classList\.toggle\('is-preferred', preferred\)/);
+  assert.match(adminJs, /confirmFreshStaffSession\(completed\.user\)/);
+  assert.match(adminJs, /const delays = \[120, 300, 700, 1200\]/);
+  assert.match(adminJs, /this browser did not retain the new session/);
   assert.match(adminJs, /navigator\.credentials\.create/);
   assert.match(adminJs, /navigator\.credentials\.get/);
   assert.match(passkeyApi, /action === 'approval-options'/);
   assert.match(passkeyApi, /action === 'approval-verify'/);
+  assert.match(passkeyApi, /}, 200, staffSessionCookie\(token\)\)/);
 });
 
 test('passkey API requires user verification and validates origin, RP ID and one-time challenges', () => {

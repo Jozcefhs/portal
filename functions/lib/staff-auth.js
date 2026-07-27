@@ -2,7 +2,8 @@ import { getDocument, listCollection, upsertDocument } from './firestore.js';
 import { filterSectionsForFeatures, resolveOrganizationConfig } from './organization-config.js';
 
 const encoder = new TextEncoder();
-const SESSION_COOKIE = 'school_staff_session';
+const SESSION_COOKIE = '__Host-digc_staff_session';
+const LEGACY_SESSION_COOKIE = 'school_staff_session';
 const SESSION_SECONDS = 4 * 60 * 60;
 const APPROVAL_PROOF_COOKIE = 'staff_approval_proof';
 const APPROVAL_PROOF_SECONDS = 3 * 60;
@@ -346,7 +347,7 @@ function cookieValue(request, name) {
 }
 
 export async function readStaffSession(env, request) {
-  const token = cookieValue(request, SESSION_COOKIE);
+  const token = cookieValue(request, SESSION_COOKIE) || cookieValue(request, LEGACY_SESSION_COOKIE);
   const [encoded, signature, extra] = token.split('.');
   if (!encoded || !signature || extra) return null;
   const verified = await crypto.subtle.verify('HMAC', await hmacKey(env), fromBase64Url(signature), encoder.encode(encoded));
@@ -393,11 +394,15 @@ export async function requireStaffSession(env, request) {
 }
 
 export function staffSessionCookie(token) {
-  return `${SESSION_COOKIE}=${token}; Path=/; Max-Age=${SESSION_SECONDS}; HttpOnly; Secure; SameSite=Strict`;
+  return `${SESSION_COOKIE}=${token}; Path=/; Max-Age=${SESSION_SECONDS}; HttpOnly; Secure; SameSite=Lax`;
 }
 
 export function clearStaffSessionCookie() {
-  return `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict`;
+  return `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`;
+}
+
+export function clearLegacyStaffSessionCookie() {
+  return `${LEGACY_SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`;
 }
 
 export function staffApprovalProofCookie(token) {

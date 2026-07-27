@@ -37,9 +37,10 @@ function isActive(value) {
   return !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(value ?? true));
 }
 
-function response(data, status = 200, cookie = '') {
-  const headers = { 'Cache-Control': 'no-store' };
-  if (cookie) headers['Set-Cookie'] = cookie;
+function response(data, status = 200, cookies = []) {
+  const headers = new Headers({ 'Cache-Control': 'no-store' });
+  const values = Array.isArray(cookies) ? cookies : [cookies];
+  values.filter(Boolean).forEach((cookie) => headers.append('Set-Cookie', cookie));
   return Response.json(data, { status, headers });
 }
 

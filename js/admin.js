@@ -505,6 +505,18 @@ async function sessionRequest(method = 'GET', body = null) {
   return { response, data };
 }
 
+async function confirmFreshStaffSession(fallbackUser) {
+  const delays = [120, 300, 700, 1200];
+  let lastMessage = '';
+  for (const delay of delays) {
+    await new Promise((resolve) => window.setTimeout(resolve, delay));
+    const { response, data } = await sessionRequest();
+    if (response.ok && data.authenticated && data.user) return data.user;
+    lastMessage = data.message || lastMessage;
+  }
+  throw new Error(lastMessage || `Your identity was verified, but this browser did not retain the new session for ${fallbackUser?.displayName || fallbackUser?.username || 'this account'}.`);
+}
+
 async function loadDashboard() {
   setButtonLoading(refreshButton, true, 'Refreshing...', 'Refresh Dashboard');
   setStatus(dashboardStatus, 'Loading permitted database records...');
@@ -2599,7 +2611,7 @@ loginForm.addEventListener('submit', async (event) => {
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not sign in.');
     loginForm.reset();
     setStatus(loginStatus, '');
-    await continueAfterAuthentication(data.user);
+    await continueAfterAuthentication(await confirmFreshStaffSession(data.user));
   } catch (error) {
     setStatus(loginStatus, error.message || String(error), 'bad');
   } finally {
@@ -2621,7 +2633,7 @@ passkeyLoginButton.addEventListener('click', async () => {
       ceremonyId: started.ceremonyId,
       credential: credentialToJSON(credential)
     });
-    await continueAfterAuthentication(completed.user);
+    await continueAfterAuthentication(await confirmFreshStaffSession(completed.user));
   } catch (error) {
     setStatus(loginStatus, friendlyPasskeyError(error), 'bad');
   } finally {
