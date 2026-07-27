@@ -16,14 +16,17 @@ test('mobile staff header no longer renders the drawer toggle button', () => {
   assert.match(adminHtml, /id="staffAvatar"/);
 });
 
-test('desktop header owns refresh and theme controls while mobile keeps its hero refresh', () => {
+test('desktop header owns refresh and theme controls while the mobile logo refreshes', () => {
   assert.match(adminHtml, /id="staffHeaderRefresh"[\s\S]*?id="staffThemeToggle"/);
-  assert.match(adminHtml, /id="staffRefresh"/);
+  assert.doesNotMatch(adminHtml, /id="staffRefresh"/);
+  assert.match(adminHtml, /id="staffBrand"/);
   assert.match(adminJs, /headerRefreshButton\.addEventListener\('click', loadDashboard\)/);
   assert.match(adminJs, /themeToggleButton\.addEventListener\('click', toggleStaffTheme\)/);
   assert.match(adminJs, /DIGCPreferences\.save\(\{ \.\.\.preferences, theme: nextTheme \}\)/);
-  assert.match(portalCss, /\.staff-page \.staff-welcome #staffRefresh\{display:none\}/);
-  assert.match(portalCss, /@media \(max-width:680px\)\{[\s\S]*?\.staff-desktop-tools\{display:none\}[\s\S]*?\.staff-page \.staff-welcome #staffRefresh\{display:block\}/);
+  assert.match(adminJs, /window\.matchMedia\('\(max-width:680px\)'\)\.matches[\s\S]*?!dashboardEl\.hidden/);
+  assert.match(adminJs, /event\.target\.closest\('\.nav-logo'\)/);
+  assert.match(adminJs, /if \(!headerRefreshButton\.disabled\) loadDashboard\(\)/);
+  assert.match(portalCss, /@media \(max-width:680px\)\{[\s\S]*?\.staff-desktop-tools\{display:none\}[\s\S]*?\.staff-brand \.nav-logo\{cursor:pointer\}[\s\S]*?\.staff-brand\.is-refreshing \.nav-logo\{animation:button-spin/);
 });
 
 test('staff drawer exposes a dedicated sign-out action', () => {

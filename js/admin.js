@@ -11,13 +11,13 @@ const financeDecisionForm = document.getElementById('financeDecisionForm');
 const loginStatus = document.getElementById('staffLoginStatus');
 const dashboardEl = document.getElementById('staffDashboard');
 const dashboardStatus = document.getElementById('staffDashboardStatus');
+const staffBrand = document.getElementById('staffBrand');
 const identityEl = document.getElementById('staffIdentity');
 const displayNameEl = document.getElementById('staffDisplayName');
 const roleEl = document.getElementById('staffRole');
 const welcomeTitle = document.getElementById('staffWelcomeTitle');
 const signOutButton = document.getElementById('staffSignOut');
 const sidebarSignOutButton = document.getElementById('staffSidebarSignOut');
-const refreshButton = document.getElementById('staffRefresh');
 const headerRefreshButton = document.getElementById('staffHeaderRefresh');
 const themeToggleButton = document.getElementById('staffThemeToggle');
 const themeToggleIcon = document.getElementById('staffThemeToggleIcon');
@@ -146,10 +146,11 @@ function setButtonLoading(button, loading, loadingText, normalText) {
 }
 
 function setDashboardRefreshLoading(loading) {
-  setButtonLoading(refreshButton, loading, 'Refreshing...', 'Refresh Dashboard');
   headerRefreshButton.disabled = loading;
   headerRefreshButton.classList.toggle('is-loading', loading);
   headerRefreshButton.setAttribute('aria-busy', loading ? 'true' : 'false');
+  staffBrand.classList.toggle('is-refreshing', loading);
+  staffBrand.setAttribute('aria-busy', loading ? 'true' : 'false');
   const label = loading ? 'Refreshing dashboard' : 'Refresh dashboard';
   headerRefreshButton.setAttribute('aria-label', label);
   headerRefreshButton.title = label;
@@ -2965,7 +2966,14 @@ async function signOutFromPortal(button) {
 signOutButton.addEventListener('click', () => signOutFromPortal(signOutButton));
 sidebarSignOutButton.addEventListener('click', () => signOutFromPortal(sidebarSignOutButton));
 
-refreshButton.addEventListener('click', loadDashboard);
+staffBrand.addEventListener('click', (event) => {
+  const mobileDashboard = window.matchMedia('(max-width:680px)').matches
+    && currentUser
+    && !dashboardEl.hidden;
+  if (!mobileDashboard || !event.target.closest('.nav-logo')) return;
+  event.preventDefault();
+  if (!headerRefreshButton.disabled) loadDashboard();
+});
 headerRefreshButton.addEventListener('click', loadDashboard);
 themeToggleButton.addEventListener('click', toggleStaffTheme);
 new MutationObserver(updateStaffThemeToggle).observe(document.documentElement, {
