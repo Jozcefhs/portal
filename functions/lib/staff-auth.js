@@ -17,6 +17,16 @@ function lower(value) {
   return clean(value).toLowerCase();
 }
 
+export function findStaffUser(users = [], identity = '') {
+  const wanted = lower(identity);
+  if (!wanted) return null;
+  return users.find((row) => [
+    row?.Username,
+    row?.username,
+    row?.__id
+  ].some((value) => lower(value) === wanted)) || null;
+}
+
 function base64Url(value) {
   const bytes = typeof value === 'string' ? encoder.encode(value) : new Uint8Array(value);
   let binary = '';
@@ -209,7 +219,7 @@ export async function authenticateStaff(env, username, password) {
   } catch (_err) {
     users = [];
   }
-  const user = users.find((row) => lower(row.Username || row.username || row.__id) === wanted);
+  const user = findStaffUser(users, wanted);
   if (user) {
     const active = user.Active === undefined ? true : !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(user.Active));
     if (active && await verifyDesktopPassword(user, password)) {
@@ -270,7 +280,7 @@ export async function authenticateStaffPasskey(env, username) {
   } catch (_err) {
     users = [];
   }
-  const user = users.find((row) => lower(row.Username || row.username || row.__id) === wanted);
+  const user = findStaffUser(users, wanted);
   let authenticated = null;
   if (user) {
     const active = user.Active === undefined ? true : !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(user.Active));
@@ -307,7 +317,7 @@ export async function verifyStaffApprovalPassword(env, username, password) {
   const wanted = lower(username);
   if (!wanted || !password) return false;
   const users = await listCollection(env, 'staffUsers').catch(() => []);
-  const user = users.find((row) => lower(row.Username || row.username || row.__id) === wanted);
+  const user = findStaffUser(users, wanted);
   if (user) {
     const active = user.Active === undefined ? true : !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(user.Active));
     if (!active) return false;
@@ -396,7 +406,7 @@ export async function requireStaffSession(env, request) {
   }
   const envAdmin = lower(env.ADMIN_WEB_USERNAME || 'admin');
   const users = await listCollection(env, 'staffUsers');
-  const current = users.find((row) => lower(row.Username || row.username || row.__id) === lower(user.username));
+  const current = findStaffUser(users, user.username);
   if (current) {
     const active = current && (current.Active === undefined || !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(current.Active)));
     if (!active) {

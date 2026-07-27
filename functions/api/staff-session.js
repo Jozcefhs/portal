@@ -4,6 +4,7 @@ import {
   clearStaffApprovalProofCookie,
   clearStaffSessionCookie,
   createStaffSession,
+  findStaffUser,
   readStaffSession,
   staffSessionCookie,
   staffAccessFor
@@ -29,13 +30,45 @@ function profilePhoto(value) {
   return photo;
 }
 
+function clean(value) {
+  return String(value ?? '').trim();
+}
+
+function lower(value) {
+  return clean(value).toLowerCase();
+}
+
+function safeStaffId(value) {
+  return lower(value).replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120);
+}
+
+function environmentAdminProfile(env, sessionUser) {
+  const configuredUsername = clean(env.ADMIN_WEB_USERNAME || 'admin');
+  if (sessionUser.role !== 'Super Admin' || lower(sessionUser.username) !== lower(configuredUsername)) return null;
+  const createdAt = new Date().toISOString();
+  return {
+    __id: safeStaffId(configuredUsername),
+    Username: configuredUsername,
+    DisplayName: clean(sessionUser.displayName || env.ADMIN_WEB_DISPLAY_NAME || 'Super Admin'),
+    Role: 'Super Admin',
+    Department: clean(sessionUser.department),
+    BranchId: clean(sessionUser.branchId),
+    SchoolSectionAccess: clean(sessionUser.schoolSectionAccess || 'All'),
+    ApprovalEnabled: true,
+    Active: true,
+    MustChangePassword: false,
+    CreatedAt: createdAt,
+    CreatedBy: 'Cloudflare Environment Admin'
+  };
+}
+
 export async function onRequestGet(context) {
   try {
     const sessionUser = await readStaffSession(context.env, context.request);
     let user = sessionUser;
     if (sessionUser) {
       const users = await listCollection(context.env, 'staffUsers').catch(() => []);
-      const stored = users.find((row) => String(row.Username || row.__id || '').trim().toLowerCase() === sessionUser.username.toLowerCase());
+      const stored = findStaffUser(users, sessionUser.username);
       if (stored) {
         user = {
           ...sessionUser,
@@ -72,7 +105,7 @@ export async function onRequestPost(context) {
       const sessionUser = await readStaffSession(env, request);
       if (!sessionUser) return response({ ok: false, message: 'Your staff session has expired.' }, 401);
       const users = await listCollection(env, 'staffUsers');
-      const existing = users.find((row) => String(row.Username || row.__id || '').trim().toLowerCase() === sessionUser.username.toLowerCase());
+      const existing = findStaffUser(users, sessionUser.username) || environmentAdminProfile(env, sessionUser);
       if (!existing) return response({ ok: false, message: 'The database staff account was not found.' }, 404);
       if (['no', 'false', '0', 'inactive', 'disabled'].includes(String(existing.Active ?? 'YES').trim().toLowerCase())) {
         return response(
@@ -115,7 +148,7 @@ export async function onRequestPost(context) {
       const password = String(body.password || '');
       if (password !== String(body.confirmPassword || '')) return response({ ok: false, message: 'Passwords do not match.' }, 400);
       const users = await listCollection(env, 'staffUsers');
-      const existing = users.find((row) => String(row.Username || row.__id || '').trim().toLowerCase() === sessionUser.username.toLowerCase());
+      const existing = findStaffUser(users, sessionUser.username) || environmentAdminProfile(env, sessionUser);
       if (!existing) return response({ ok: false, message: 'The database staff account was not found.' }, 404);
       if (['no', 'false', '0', 'inactive', 'disabled'].includes(String(existing.Active ?? 'YES').trim().toLowerCase())) {
         return response(
