@@ -757,25 +757,27 @@ function renderModuleSummary(active, liveData = null) {
       { icon: '\u{1F4CA}', label: 'Invoice Value', value: money(sumRows(data.invoices, ['Debit', 'Amount'])) }
     ];
   } else if (active === 'clinic') {
-    const data = departments.clinic || {};
+    const data = liveData || departments.clinic || {};
     cards = [
       { icon, label: 'Clinic Records', value: (data.records || []).length },
       { icon: '\u{1F48A}', label: 'Inventory Items', value: (data.inventory || []).length },
       { icon: '\u26A0', label: 'Low Stock', value: (data.lowStock || []).length }
     ];
   } else if (active === 'kitchen') {
-    const data = departments.kitchen || {};
+    const data = liveData || departments.kitchen || {};
     cards = [
       { icon, label: 'Inventory Items', value: (data.inventory || []).length },
       { icon: '\u{1F4E6}', label: 'Units in Stock', value: sumRows(data.inventory, ['Quantity']) },
       { icon: '\u26A0', label: 'Low Stock', value: (data.lowStock || []).length }
     ];
   } else if (active === 'tuckShop') {
-    const rows = (departments.tuckShop || {}).purchases || [];
+    const data = liveData || departments.tuckShop || {};
+    const rows = data.purchases || [];
     cards = [
       { icon, label: 'Purchases', value: rows.length },
       { icon: '\u20A6', label: 'Sales Value', value: money(sumRows(rows, ['Debit', 'Amount'])) },
-      { icon: '\u{1F465}', label: 'Students Served', value: new Set(rows.map((row) => clean(pick(row, ['AccountRef', 'AdmissionNo', 'DisplayName']))).filter(Boolean)).size }
+      { icon: '\u{1F4E6}', label: 'Inventory Items', value: (data.inventory || []).length },
+      { icon: '\u26A0', label: 'Low Stock', value: (data.lowStock || []).length }
     ];
   } else if ((active === 'bookstore' || active === 'uniformStore') && liveData) {
     const items = liveData.items || [];
@@ -1250,6 +1252,127 @@ function renderStaffStore(section, store) {
 
 async function loadStaffStore(section) {
   try { const response = await staffFetch('/api/staff-stores', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'list', section }) }); const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load school store.'); renderStaffStore(section, data); } catch (error) { panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`; }
+}
+
+async function submitDepartmentAction(section, action, form) {
+  const status = form.querySelector('[data-department-status]');
+  const button = form.querySelector('button[type="submit"]');
+  const payload = Object.fromEntries(new FormData(form).entries());
+  setButtonLoading(button, true, 'Saving...', button.textContent);
+  try {
+    const response = await staffFetch('/api/staff-departments', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, section, ...payload })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Could not save the department record.');
+    renderDepartmentOperations(section, data);
+    setStatus(dashboardStatus, data.message, 'ok');
+  } catch (error) {
+    setStatus(status, error.message || String(error), 'bad');
+  } finally {
+    setButtonLoading(button, false, 'Saving...', button.dataset.normalText || 'Save');
+  }
+}
+
+function renderInventoryActions(row) {
+  const name = escapeHtml(pick(row, ['ItemName', '__id']));
+  return `<button type="button" class="compact-icon-action compact-edit-action" data-edit-inventory="${name}" aria-label="Edit ${name}" title="Edit item"><span aria-hidden="true">&#9998;</span></button>`;
+}
+
+function renderDepartmentOperations(section, data) {
+  if (activeSection !== section) return;
+  const labels = { clinic: 'Clinic', kitchen: 'Kitchen', tuckShop: 'Tuck Shop' };
+  const descriptions = {
+    clinic: 'Record student visits, maintain medical supplies, and track every stock receipt or issue.',
+    kitchen: 'Maintain food and kitchen supplies and track every stock receipt or issue.',
+    tuckShop: 'Maintain tuck-shop stock while wallet purchases remain synchronized with Finance and Accounting.'
+  };
+  const label = labels[section];
+  const inventory = data.inventory || [];
+  const records = data.records || [];
+  const purchases = (dashboardData?.departments?.tuckShop || {}).purchases || [];
+  renderModuleSummary(section, {
+    ...(dashboardData?.departments?.[section] || {}),
+    ...data,
+    purchases
+  });
+  panelEl.innerHTML = `
+    <div class="workflow-intro"><div><p class="eyebrow">Department operations</p><h2>${label}</h2><p class="muted">${descriptions[section]}</p></div><button type="button" class="workflow-icon-action" id="refreshDepartmentOperations" aria-label="Refresh ${label}">Refresh</button></div>
+    ${section === 'clinic' ? `
+    <section class="config-card"><header class="config-card-heading"><div><small>Patient care</small><h3>Record a clinic visit</h3></div></header>
+      <form id="clinicRecordForm" class="workflow-form workflow-form-grid config-form">
+        <label>Date<input type="date" name="Date" value="${new Date().toISOString().slice(0, 10)}" required></label>
+        <label>Student name<input name="StudentName" required></label>
+        <label>Admission number<input name="AdmissionNo"></label><label>Class<input name="ClassName"></label>
+        <label>Complaint<textarea name="Complaint" required></textarea></label><label>Treatment<textarea name="Treatment"></textarea></label>
+        <label>Disposition<select name="Disposition"><option>Treated and returned</option><option>Resting in clinic</option><option>Sent home</option><option>Referred to hospital</option></select></label>
+        <label>Notes<input name="Notes"></label>
+        <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" data-normal-text="Save visit">Save visit</button></div>
+      </form>
+    </section>` : ''}
+    <section class="config-card"><header class="config-card-heading"><div><small>Inventory setup</small><h3>Add or update an item</h3></div></header>
+      <form id="departmentInventoryForm" class="workflow-form workflow-form-grid config-form">
+        <input type="hidden" name="OriginalItemName">
+        <label>Item name<input name="ItemName" required></label><label>Category<input name="Category" value="${section === 'clinic' ? 'Medical Supply' : section === 'kitchen' ? 'Foodstuff' : 'General Item'}"></label>
+        <label>Unit<input name="Unit" value="${section === 'kitchen' ? 'kg' : 'pcs'}" required></label><label>Opening/current quantity<input name="Quantity" type="number" min="0" step="0.01" value="0" required></label>
+        <label>Reorder level<input name="ReorderLevel" type="number" min="0" step="0.01" value="0"></label><label>Notes<input name="Notes"></label>
+        <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" data-normal-text="Save item">Save item</button></div>
+      </form>
+    </section>
+    <section class="config-card"><header class="config-card-heading"><div><small>Stock control</small><h3>Record stock in or out</h3></div></header>
+      <form id="departmentMovementForm" class="workflow-form workflow-form-grid config-form">
+        <label>Item<select name="ItemName" required><option value="">Choose item</option>${inventory.map((row) => `<option>${escapeHtml(row.ItemName)}</option>`).join('')}</select></label>
+        <label>Movement<select name="MovementType"><option value="IN">Stock In</option><option value="OUT">Stock Out</option></select></label>
+        <label>Quantity<input name="Quantity" type="number" min="0.01" step="0.01" required></label><label>Reason<input name="Reason" required></label>
+        <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" data-normal-text="Record movement">Record movement</button></div>
+      </form>
+    </section>
+    ${table(`${label} Inventory`, inventory, [...inventoryColumns(), { label: 'Edit', render: renderInventoryActions }])}
+    ${table('Low Stock', data.lowStock || [], inventoryColumns())}
+    ${section === 'clinic' ? table('Clinic Records', records, [
+      { label: 'Date', value: (row) => pick(row, ['Date']) }, { label: 'Student', value: (row) => pick(row, ['StudentName']) },
+      { label: 'Class', value: (row) => pick(row, ['ClassName']) }, { label: 'Complaint', value: (row) => pick(row, ['Complaint']) },
+      { label: 'Treatment', value: (row) => pick(row, ['Treatment']) }, { label: 'Disposition', value: (row) => pick(row, ['Disposition']) }
+    ]) : ''}
+    ${section === 'tuckShop' ? table('Wallet Purchases', purchases, [
+      { label: 'Date', value: (row) => pick(row, ['Date']) }, { label: 'Student', value: (row) => pick(row, ['DisplayName']) },
+      { label: 'Class', value: (row) => pick(row, ['ClassName']) }, { label: 'Amount', value: (row) => money(pick(row, ['Debit'])) },
+      { label: 'Description', value: (row) => pick(row, ['Description']) }
+    ]) : ''}
+    ${table('Recent Stock Movements', data.movements || [], [
+      { label: 'Date', value: (row) => pick(row, ['Date']) }, { label: 'Item', value: (row) => pick(row, ['ItemName']) },
+      { label: 'Type', value: (row) => pick(row, ['MovementType']) }, { label: 'Quantity', value: (row) => pick(row, ['Quantity']) },
+      { label: 'Reason', value: (row) => pick(row, ['Reason']) }, { label: 'Recorded by', value: (row) => pick(row, ['RecordedBy']) }
+    ])}`;
+  document.getElementById('refreshDepartmentOperations')?.addEventListener('click', () => loadDepartmentOperations(section));
+  document.getElementById('clinicRecordForm')?.addEventListener('submit', (event) => { event.preventDefault(); submitDepartmentAction(section, 'saveClinicRecord', event.currentTarget); });
+  document.getElementById('departmentInventoryForm')?.addEventListener('submit', (event) => { event.preventDefault(); submitDepartmentAction(section, 'saveItem', event.currentTarget); });
+  document.getElementById('departmentMovementForm')?.addEventListener('submit', (event) => { event.preventDefault(); submitDepartmentAction(section, 'recordMovement', event.currentTarget); });
+  panelEl.querySelectorAll('[data-edit-inventory]').forEach((button) => button.addEventListener('click', () => {
+    const row = inventory.find((item) => clean(item.ItemName) === button.dataset.editInventory);
+    const form = document.getElementById('departmentInventoryForm');
+    if (!row || !form) return;
+    ['ItemName', 'Category', 'Unit', 'Quantity', 'ReorderLevel', 'Notes'].forEach((key) => { if (form.elements[key]) form.elements[key].value = row[key] ?? ''; });
+    form.elements.OriginalItemName.value = row.ItemName;
+    form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }));
+}
+
+async function loadDepartmentOperations(section) {
+  try {
+    const response = await staffFetch('/api/staff-departments', {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'list', section })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load department operations.');
+    renderDepartmentOperations(section, data);
+  } catch (error) {
+    if (activeSection === section) panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+  }
 }
 
 async function loadChurchMembership() {
@@ -1974,27 +2097,9 @@ function renderSection(active) {
       { label: 'Debit', value: (row) => money(pick(row, ['Debit', 'Amount'])) },
       { label: 'Status', value: (row) => pick(row, ['Status']) }
     ]);
-  } else if (active === 'clinic') {
-    const clinic = departments.clinic || {};
-    panelEl.innerHTML = table('Clinic Records', clinic.records || [], [
-      { label: 'Date', value: (row) => pick(row, ['Date']) },
-      { label: 'Student', value: (row) => pick(row, ['StudentName']) },
-      { label: 'Class', value: (row) => pick(row, ['ClassName']) },
-      { label: 'Complaint', value: (row) => pick(row, ['Complaint']) },
-      { label: 'Treatment', value: (row) => pick(row, ['Treatment']) }
-    ]) + table('Low Stock', clinic.lowStock || [], inventoryColumns());
-  } else if (active === 'kitchen') {
-    const kitchen = departments.kitchen || {};
-    panelEl.innerHTML = table('Kitchen Inventory', kitchen.inventory || [], inventoryColumns()) +
-      table('Low Stock', kitchen.lowStock || [], inventoryColumns());
-  } else if (active === 'tuckShop') {
-    panelEl.innerHTML = table('Tuck Shop Wallet Purchases', (departments.tuckShop || {}).purchases || [], [
-      { label: 'Date', value: (row) => pick(row, ['Date']) },
-      { label: 'Student', value: (row) => pick(row, ['DisplayName']) },
-      { label: 'Class', value: (row) => pick(row, ['ClassName']) },
-      { label: 'Amount', value: (row) => money(pick(row, ['Debit'])) },
-      { label: 'Description', value: (row) => pick(row, ['Description']) }
-    ]);
+  } else if (active === 'clinic' || active === 'kitchen' || active === 'tuckShop') {
+    panelEl.innerHTML = '<p class="muted">Loading department operations...</p>';
+    loadDepartmentOperations(active);
   } else {
     panelEl.innerHTML = '<p class="muted">No dashboard section is available for this role yet.</p>';
   }

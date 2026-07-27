@@ -89,7 +89,9 @@ export async function onRequestPost(context) {
       clinicInventory,
       kitchenInventory,
       clinicMovements,
-      kitchenMovements
+      kitchenMovements,
+      tuckShopInventory,
+      tuckShopMovements
       ,storeItems
       ,storeOrders
     ] = await Promise.all([
@@ -104,6 +106,8 @@ export async function onRequestPost(context) {
       allowed.has('kitchen') ? listCollection(env, 'kitchenInventory') : Promise.resolve([]),
       allowed.has('clinic') ? listCollection(env, 'clinicMovements') : Promise.resolve([]),
       allowed.has('kitchen') ? listCollection(env, 'kitchenMovements') : Promise.resolve([]),
+      allowed.has('tuckShop') ? listCollection(env, 'tuckShopInventory') : Promise.resolve([]),
+      allowed.has('tuckShop') ? listCollection(env, 'tuckShopMovements') : Promise.resolve([]),
       (allowed.has('bookstore') || allowed.has('uniformStore')) ? listCollection(env, 'storeItems') : Promise.resolve([]),
       (allowed.has('bookstore') || allowed.has('uniformStore')) ? listCollection(env, 'storeOrders') : Promise.resolve([])
     ]);
@@ -140,9 +144,12 @@ export async function onRequestPost(context) {
     const visibleStoreOrders = staffScope(storeOrders);
     const visibleClinicInventory = staffScope(clinicInventory);
     const visibleKitchenInventory = staffScope(kitchenInventory);
+    const visibleTuckShopInventory = staffScope(tuckShopInventory);
+    const visibleTuckShopMovements = staffScope(tuckShopMovements);
     const walletPurchases = visibleLedger.filter((row) => clean(row.EntryType).toLowerCase() === 'wallet purchase');
     const lowClinic = visibleClinicInventory.filter((row) => toNumber(row.ReorderLevel) > 0 && toNumber(row.Quantity) <= toNumber(row.ReorderLevel));
     const lowKitchen = visibleKitchenInventory.filter((row) => toNumber(row.ReorderLevel) > 0 && toNumber(row.Quantity) <= toNumber(row.ReorderLevel));
+    const lowTuckShop = visibleTuckShopInventory.filter((row) => toNumber(row.ReorderLevel) > 0 && toNumber(row.Quantity) <= toNumber(row.ReorderLevel));
 
     const allDepartments = {
       admissions: publicRows(sortRecent(visibleApplications, ['SubmittedAt', 'UpdatedAt', 'Timestamp']), 80),
@@ -165,7 +172,10 @@ export async function onRequestPost(context) {
         movements: publicRows(sortRecent(visibleKitchenMovements, ['Date', 'CreatedAt']), 80)
       },
       tuckShop: {
-        purchases: publicRows(sortRecent(walletPurchases, ['Date', 'CreatedAt']), 100)
+        purchases: publicRows(sortRecent(walletPurchases, ['Date', 'CreatedAt']), 100),
+        inventory: publicRows(sortRecent(visibleTuckShopInventory, ['LastUpdated', 'UpdatedAt']), 100),
+        lowStock: publicRows(lowTuckShop, 100),
+        movements: publicRows(sortRecent(visibleTuckShopMovements, ['Date', 'CreatedAt']), 100)
       },
       bookstore: {
         items: publicRows(visibleStoreItems.filter((row) => clean(row.StoreType) === 'Bookstore'), 200),
@@ -198,7 +208,11 @@ export async function onRequestPost(context) {
       summary.kitchenInventory = visibleKitchenInventory.length;
       summary.lowKitchenStock = lowKitchen.length;
     }
-    if (allowed.has('tuckShop')) summary.tuckShopPurchases = walletPurchases.length;
+    if (allowed.has('tuckShop')) {
+      summary.tuckShopPurchases = walletPurchases.length;
+      summary.tuckShopInventory = visibleTuckShopInventory.length;
+      summary.lowTuckShopStock = lowTuckShop.length;
+    }
 
     const countBy = (rows, getter) => Object.entries(rows.reduce((out, row) => {
       const key = clean(getter(row)) || 'Unspecified'; out[key] = (out[key] || 0) + 1; return out;
