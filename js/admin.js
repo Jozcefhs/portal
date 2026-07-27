@@ -58,7 +58,9 @@ let approvalProfile = null;
 let approvalAssetState = { signature: '', stamp: '' };
 let pendingFinanceDecision = null;
 let financeDecisionBiometricVerified = false;
+let financeDecisionApprovalProof = '';
 let profilePhotoState = '';
+let staffBearerToken = '';
 
 const tabConfig = [
   ['admissions', 'Admissions'],
@@ -148,6 +150,19 @@ function passkeysSupported() {
   return Boolean(window.PublicKeyCredential && navigator.credentials);
 }
 
+function staffFetch(input, init = {}) {
+  const options = { ...init };
+  if (staffBearerToken) {
+    const requestUrl = new URL(typeof input === 'string' ? input : input.url, window.location.href);
+    if (requestUrl.origin === window.location.origin && requestUrl.pathname.startsWith('/api/')) {
+      const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
+      headers.set('Authorization', `Bearer ${staffBearerToken}`);
+      options.headers = headers;
+    }
+  }
+  return window.fetch(input, options);
+}
+
 function base64UrlToBytes(value) {
   const normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
   const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
@@ -213,7 +228,7 @@ function credentialToJSON(credential) {
 }
 
 async function passkeyRequest(action, extra = {}) {
-  const response = await fetch('/api/staff-passkey', {
+  const response = await staffFetch('/api/staff-passkey', {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
@@ -253,7 +268,7 @@ async function refreshPasskeyControls() {
 }
 
 async function approvalProfileRequest(method = 'GET', payload = null) {
-  const response = await fetch('/api/staff-approval-profile', {
+  const response = await staffFetch('/api/staff-approval-profile', {
     method,
     credentials: 'same-origin',
     cache: 'no-store',
@@ -439,6 +454,7 @@ function installSidebarSwipeGestures() {
 
 function showLogin(message = '', type = '') {
   setSidebarOpen(false);
+  staffBearerToken = '';
   currentUser = null;
   dashboardData = null;
   activeSection = '';
@@ -494,7 +510,7 @@ async function continueAfterAuthentication(user) {
 }
 
 async function sessionRequest(method = 'GET', body = null) {
-  const response = await fetch('/api/staff-session', {
+  const response = await staffFetch('/api/staff-session', {
     method,
     credentials: 'same-origin',
     cache: 'no-store',
@@ -505,13 +521,22 @@ async function sessionRequest(method = 'GET', body = null) {
   return { response, data };
 }
 
-async function confirmFreshStaffSession(fallbackUser) {
+async function confirmFreshStaffSession(fallbackUser, fallbackToken = '') {
+  staffBearerToken = '';
   const delays = [120, 300, 700, 1200];
   let lastMessage = '';
   for (const delay of delays) {
     await new Promise((resolve) => window.setTimeout(resolve, delay));
     const { response, data } = await sessionRequest();
     if (response.ok && data.authenticated && data.user) return data.user;
+    lastMessage = data.message || lastMessage;
+  }
+  const memoryToken = clean(fallbackToken);
+  if (memoryToken) {
+    staffBearerToken = memoryToken;
+    const { response, data } = await sessionRequest();
+    if (response.ok && data.authenticated && data.user) return data.user;
+    staffBearerToken = '';
     lastMessage = data.message || lastMessage;
   }
   throw new Error(lastMessage || `Your identity was verified, but this browser did not retain the new session for ${fallbackUser?.displayName || fallbackUser?.username || 'this account'}.`);
@@ -521,7 +546,7 @@ async function loadDashboard() {
   setButtonLoading(refreshButton, true, 'Refreshing...', 'Refresh Dashboard');
   setStatus(dashboardStatus, 'Loading permitted database records...');
   try {
-    const response = await fetch('/api/admin', {
+    const response = await staffFetch('/api/admin', {
       method: 'POST',
       credentials: 'same-origin',
       cache: 'no-store',
@@ -906,7 +931,7 @@ function bindStudentEditor(students) {
     payload.VerificationCode = payload.ParentLoginCode || '';
     setButtonLoading(button, true, 'Saving...', 'Save student profile');
     try {
-      const response = await fetch('/api/staff-students', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const response = await staffFetch('/api/staff-students', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.message || 'Could not update student profile.');
       setStatus(status, data.message, 'ok');
@@ -946,9 +971,86 @@ function renderAdmissionDocuments(row) {
   const links = uploaded.map((item) => {
     const query = `applicationReference=${encodeURIComponent(reference)}&documentType=${encodeURIComponent(item.key)}`;
     const canDelete = ['Super Admin', 'Admissions Officer'].includes(clean(currentUser?.role));
-    return `<div class="document-action-row"><span>${escapeHtml(item.label)}</span><a href="/api/staff-document?${query}&mode=view" target="_blank" rel="noopener">View</a><a href="/api/staff-document?${query}&mode=download">Download</a>${canDelete ? `<button type="button" class="document-delete compact-icon-action compact-delete-action" data-delete-document="${escapeHtml(item.key)}" data-application-reference="${escapeHtml(reference)}" aria-label="Delete ${escapeHtml(item.label)}" title="Delete document"><span aria-hidden="true">&#128465;&#65038;</span></button>` : ''}</div>`;
+    const fileName = item.fileName || `${reference}-${item.key}`;
+    return `<div class="document-action-row"><span>${escapeHtml(item.label)}</span><button type="button" class="payslip-download document-file-action" data-protected-file="${escapeHtml(`/api/staff-document?${query}&mode=view`)}" data-file-mode="view" data-file-name="${escapeHtml(fileName)}">View</button><button type="button" class="payslip-download document-file-action" data-protected-file="${escapeHtml(`/api/staff-document?${query}&mode=download`)}" data-file-mode="download" data-file-name="${escapeHtml(fileName)}">Download</button>${canDelete ? `<button type="button" class="document-delete compact-icon-action compact-delete-action" data-delete-document="${escapeHtml(item.key)}" data-application-reference="${escapeHtml(reference)}" aria-label="Delete ${escapeHtml(item.label)}" title="Delete document"><span aria-hidden="true">&#128465;&#65038;</span></button>` : ''}</div>`;
   }).join('');
   return `<details class="document-actions"><summary>${uploaded.length} document${uploaded.length === 1 ? '' : 's'}</summary>${links}</details>`;
+}
+
+function protectedFileName(response, fallback = 'document') {
+  const disposition = clean(response.headers.get('Content-Disposition'));
+  const encodedMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  const quotedMatch = disposition.match(/filename="([^"]+)"/i);
+  const plainMatch = disposition.match(/filename=([^;]+)/i);
+  let fileName = encodedMatch?.[1] || quotedMatch?.[1] || plainMatch?.[1] || fallback;
+  if (encodedMatch) {
+    try {
+      fileName = decodeURIComponent(fileName);
+    } catch (_error) {
+      fileName = fallback;
+    }
+  }
+  return clean(fileName).replace(/[\\/:*?"<>|]+/g, '_') || 'document';
+}
+
+async function openProtectedFile(button) {
+  const resourceUrl = clean(button.dataset.protectedFile);
+  const mode = clean(button.dataset.fileMode) || 'download';
+  if (!resourceUrl) return;
+  let viewer = null;
+  if (mode === 'view') {
+    viewer = window.open('about:blank', '_blank');
+    if (!viewer) {
+      setStatus(dashboardStatus, 'Allow pop-ups for this site to view the document.', 'bad');
+      return;
+    }
+    viewer.opener = null;
+  }
+  const normalMarkup = button.innerHTML;
+  setButtonLoading(button, true, mode === 'view' ? 'Opening...' : 'Downloading...', normalMarkup);
+  try {
+    const response = await staffFetch(resourceUrl, {
+      credentials: 'same-origin',
+      cache: 'no-store'
+    });
+    if (response.status === 401) {
+      const data = await response.json().catch(() => ({}));
+      if (viewer) viewer.close();
+      showLogin(data.message || 'Your staff session has expired. Please sign in again.', 'bad');
+      return;
+    }
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.message || 'The requested file could not be opened.');
+    }
+    const fileName = protectedFileName(response, clean(button.dataset.fileName) || 'document');
+    const objectUrl = URL.createObjectURL(await response.blob());
+    if (mode === 'view') {
+      viewer.location.replace(objectUrl);
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 5 * 60 * 1000);
+      viewer = null;
+    } else {
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    }
+  } catch (error) {
+    if (viewer) viewer.close();
+    setStatus(dashboardStatus, error.message || String(error), 'bad');
+  } finally {
+    setButtonLoading(button, false, '', normalMarkup);
+    button.innerHTML = normalMarkup;
+  }
+}
+
+function bindProtectedFileEvents(container = panelEl) {
+  container.querySelectorAll('[data-protected-file]').forEach((button) => {
+    button.addEventListener('click', () => openProtectedFile(button));
+  });
 }
 
 function inventoryColumns() {
@@ -1009,7 +1111,7 @@ function renderStaffStore(section, store) {
     if (!match && !window.confirm(`Create "${payload.Category}" as a new ${label} category?`)) return;
     payload.CategoryId = match?.CategoryId || ''; payload.CreateCategoryIfMissing = !match;
     try {
-      const response = await fetch('/api/staff-stores', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'saveItem', section, ...payload }) });
+      const response = await staffFetch('/api/staff-stores', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'saveItem', section, ...payload }) });
       const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.message || 'Could not save store item.');
       setStatus(status, data.message, 'ok'); await loadStaffStore(section);
     } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
@@ -1017,7 +1119,7 @@ function renderStaffStore(section, store) {
   const categoryForm = document.getElementById('storeCategoryForm');
   categoryForm?.addEventListener('submit', async (event) => {
     event.preventDefault(); const form = event.currentTarget; const status = form.querySelector('[data-category-status]'); const payload = Object.fromEntries(new FormData(form).entries()); payload.Active = form.elements.Active.checked ? 'YES' : 'NO';
-    try { const response = await fetch('/api/staff-stores', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'saveCategory', section, ...payload }) }); const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.message || 'Could not save category.'); setStatus(status, data.message, 'ok'); await loadStaffStore(section); } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    try { const response = await staffFetch('/api/staff-stores', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'saveCategory', section, ...payload }) }); const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.message || 'Could not save category.'); setStatus(status, data.message, 'ok'); await loadStaffStore(section); } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
   });
   panelEl.querySelectorAll('[data-edit-category]').forEach((button) => button.addEventListener('click', () => { const row = categories.find((item) => item.CategoryId === button.dataset.editCategory); if (!row || !categoryForm) return; categoryForm.elements.CategoryId.value = row.CategoryId; categoryForm.elements.Name.value = row.Name; categoryForm.elements.Active.checked = clean(row.Active || 'YES') !== 'NO'; categoryForm.scrollIntoView({ behavior: 'smooth', block: 'center' }); }));
   panelEl.querySelectorAll('[data-category-active]').forEach((checkbox) => checkbox.addEventListener('change', async () => {
@@ -1026,7 +1128,7 @@ function renderStaffStore(section, store) {
     const active = checkbox.checked;
     checkbox.disabled = true;
     try {
-      const response = await fetch('/api/staff-stores', {
+      const response = await staffFetch('/api/staff-stores', {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -1055,19 +1157,19 @@ function renderStaffStore(section, store) {
     if (button.dataset.storeStatus === 'Collected' && !clean(collectionReference)) return;
     button.disabled = true;
     try {
-      const response = await fetch('/api/staff-stores', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateOrder', section, OrderNo: button.dataset.storeOrder, Status: button.dataset.storeStatus, CollectionReference: collectionReference }) });
+      const response = await staffFetch('/api/staff-stores', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateOrder', section, OrderNo: button.dataset.storeOrder, Status: button.dataset.storeStatus, CollectionReference: collectionReference }) });
       const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.message || 'Could not update order.'); await loadStaffStore(section);
     } catch (error) { setStatus(dashboardStatus, error.message || String(error), 'bad'); button.disabled = false; }
   }));
 }
 
 async function loadStaffStore(section) {
-  try { const response = await fetch('/api/staff-stores', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'list', section }) }); const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load school store.'); renderStaffStore(section, data); } catch (error) { panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`; }
+  try { const response = await staffFetch('/api/staff-stores', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'list', section }) }); const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load school store.'); renderStaffStore(section, data); } catch (error) { panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`; }
 }
 
 async function loadChurchMembership() {
   try {
-    const response = await fetch('/api/staff-members', {
+    const response = await staffFetch('/api/staff-members', {
       method: 'POST', credentials: 'same-origin', cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'list', BranchId: currentUser?.branchId || 'main' })
@@ -1101,7 +1203,7 @@ async function loadChurchMembership() {
 
 async function loadChurchServices() {
   try {
-    const response = await fetch('/api/staff-services', {
+    const response = await staffFetch('/api/staff-services', {
       method: 'POST', credentials: 'same-origin', cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'list', BranchId: currentUser?.branchId || 'main' })
@@ -1136,7 +1238,7 @@ async function loadChurchServices() {
 
 async function loadChurchFunds() {
   try {
-    const response = await fetch('/api/staff-funds', {
+    const response = await staffFetch('/api/staff-funds', {
       method: 'POST', credentials: 'same-origin', cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'list', BranchId: currentUser?.branchId || 'main' })
@@ -1180,7 +1282,7 @@ async function loadChurchFunds() {
 
 async function doOfferingAction(action, offeringId, reason = '') {
   if (!offeringId) return;
-  const response = await fetch('/api/staff-offerings', {
+  const response = await staffFetch('/api/staff-offerings', {
     method: 'POST', credentials: 'same-origin', cache: 'no-store',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -1222,7 +1324,7 @@ function routeFundLabel(route, funds) {
 }
 
 async function doOfferingRouteAction(action, payload = {}) {
-  const response = await fetch('/api/staff-offerings', {
+  const response = await staffFetch('/api/staff-offerings', {
     method: 'POST', credentials: 'same-origin', cache: 'no-store',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -1236,7 +1338,7 @@ async function doOfferingRouteAction(action, payload = {}) {
   return data;
 }
 async function churchDonationRequest(action, payload = {}) {
-  const response = await fetch('/api/staff-church-payments', {
+  const response = await staffFetch('/api/staff-church-payments', {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
@@ -1258,7 +1360,7 @@ async function churchDonationRequest(action, payload = {}) {
 }
 
 async function initChurchDonationPayment(payload = {}) {
-  const response = await fetch('/api/init-church-payment', {
+  const response = await staffFetch('/api/init-church-payment', {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
@@ -1284,7 +1386,7 @@ async function loadChurchDonations() {
     const methods = ['CASH', 'BANK TRANSFER', 'CHEQUE', 'POS', 'ONLINE', 'CARD', 'MOBILE MONEY'];
     const currencies = ['NGN', 'USD', 'GBP', 'EUR', 'KES', 'GHS'];
     const paymentTypes = ['Donation', 'Tithe', 'Offering', 'Seed', 'Building Fund', 'Other'];
-    const response = await fetch('/api/staff-church-payments', {
+    const response = await staffFetch('/api/staff-church-payments', {
       method: 'POST',
       credentials: 'same-origin',
       cache: 'no-store',
@@ -1469,7 +1571,7 @@ async function loadChurchDonations() {
 
 async function loadChurchOfferings() {
   try {
-    const response = await fetch('/api/staff-offerings', {
+    const response = await staffFetch('/api/staff-offerings', {
       method: 'POST', credentials: 'same-origin', cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'list', BranchId: currentUser?.branchId || 'main' })
@@ -1814,6 +1916,7 @@ function renderSection(active) {
 }
 
 function bindDocumentDeleteEvents() {
+  bindProtectedFileEvents(panelEl);
   panelEl.querySelectorAll('[data-delete-document]').forEach((button) => button.addEventListener('click', async () => {
     const applicationReference = button.dataset.applicationReference;
     const documentType = button.dataset.deleteDocument;
@@ -1821,7 +1924,7 @@ function bindDocumentDeleteEvents() {
     const normalMarkup = button.innerHTML;
     setButtonLoading(button, true, '', '');
     try {
-      const response = await fetch('/api/staff-document', {
+      const response = await staffFetch('/api/staff-document', {
         method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'delete', applicationReference, documentType })
       });
@@ -1839,7 +1942,7 @@ function bindDocumentDeleteEvents() {
 
 async function loadMyPayroll() {
   try {
-    const response = await fetch('/api/staff-payroll', { credentials: 'same-origin', cache: 'no-store' });
+    const response = await staffFetch('/api/staff-payroll', { credentials: 'same-origin', cache: 'no-store' });
     const data = await response.json().catch(() => ({ ok: false, message: 'Payroll service did not return JSON.' }));
     if (response.status === 401) { showLogin(data.message || 'Your staff session has expired.', 'bad'); return; }
     if (!response.ok || !data.ok) throw new Error(data.message || 'Payroll history could not be loaded.');
@@ -1864,9 +1967,10 @@ async function loadMyPayroll() {
         { label: 'Paid', value: (row) => money(row.PaidAmount) },
         { label: 'Status', value: (row) => row.PaymentStatus },
         { label: 'Tax details', render: (row) => row.TaxProfileId ? `<button type="button" class="secondary" data-tax-breakdown="${escapeHtml(row.ItemId)}">View breakdown</button>` : '<span class="muted">Legacy</span>' },
-        { label: 'Payslip', render: (row) => `<a class="payslip-download" href="/api/staff-payroll?action=payslip&itemId=${encodeURIComponent(row.ItemId)}">Download PDF</a>` }
+        { label: 'Payslip', render: (row) => `<button type="button" class="payslip-download" data-protected-file="${escapeHtml(`/api/staff-payroll?action=payslip&itemId=${encodeURIComponent(row.ItemId)}`)}" data-file-mode="download" data-file-name="${escapeHtml(`payslip-${row.ItemId || row.Month || 'staff'}.pdf`)}">Download PDF</button>` }
       ])}
       <dialog id="taxBreakdownDialog" class="workflow-dialog tax-breakdown-dialog"><div id="taxBreakdownContent"></div><form method="dialog" class="tax-breakdown-close"><button type="submit">Close</button></form></dialog>`;
+    bindProtectedFileEvents(panelEl);
     const dialog = document.querySelector('#taxBreakdownDialog'); const content = document.querySelector('#taxBreakdownContent');
     panelEl.querySelectorAll('[data-tax-breakdown]').forEach((button) => button.addEventListener('click', () => {
       const item = items.find((row) => clean(row.ItemId) === clean(button.dataset.taxBreakdown)); if (!item || !dialog || !content) return;
@@ -1882,12 +1986,15 @@ async function loadMyPayroll() {
   }
 }
 
-async function financeRequest(action, payload = {}) {
-  const response = await fetch('/api/finance-workflow', {
+async function financeRequest(action, payload = {}, options = {}) {
+  const headers = new Headers({ 'Content-Type': 'application/json' });
+  const approvalProof = clean(options.approvalProof);
+  if (approvalProof) headers.set('X-DIGC-Approval-Proof', approvalProof);
+  const response = await staffFetch('/api/finance-workflow', {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ action, ...payload })
   });
   const data = await response.json().catch(() => ({ ok: false, message: 'Finance workflow did not return JSON.' }));
@@ -1913,6 +2020,7 @@ function openFinanceDecision(button) {
     recordId: button.dataset.recordId
   };
   financeDecisionBiometricVerified = false;
+  financeDecisionApprovalProof = '';
   financeDecisionForm.reset();
   document.getElementById('financeDecisionTitle').textContent = decision === 'Rejected'
     ? 'Reject Document'
@@ -1956,6 +2064,8 @@ async function verifyFinanceDecisionBiometric() {
       ceremonyId: started.ceremonyId,
       credential: credentialToJSON(credential)
     });
+    financeDecisionApprovalProof = clean(completed.approvalProof);
+    if (!financeDecisionApprovalProof) throw new Error('Biometric verification did not return an approval proof.');
     financeDecisionBiometricVerified = true;
     button.disabled = false;
     button.classList.remove('is-loading');
@@ -1965,6 +2075,7 @@ async function verifyFinanceDecisionBiometric() {
     setStatus(document.getElementById('financeDecisionVerificationStatus'), completed.message, 'ok');
   } catch (error) {
     financeDecisionBiometricVerified = false;
+    financeDecisionApprovalProof = '';
     setStatus(document.getElementById('financeDecisionVerificationStatus'), friendlyPasskeyError(error), 'bad');
     setButtonLoading(button, false, 'Checking your device...', 'Verify with biometric');
   }
@@ -1991,12 +2102,18 @@ async function submitFinanceDecision(event) {
       approvalPassword: password,
       applySignature: financeDecisionForm.elements.applySignature.checked,
       applyStamp: financeDecisionForm.elements.applyStamp.checked
-    });
+    }, { approvalProof: financeDecisionApprovalProof });
     financeDecisionDialog.close();
     pendingFinanceDecision = null;
+    financeDecisionBiometricVerified = false;
+    financeDecisionApprovalProof = '';
     setStatus(document.getElementById('financeWorkflowStatus'), data.message, 'ok');
     await loadFinanceWorkflow();
   } catch (error) {
+    if (secureDecision && !password) {
+      financeDecisionBiometricVerified = false;
+      financeDecisionApprovalProof = '';
+    }
     setStatus(document.getElementById('financeDecisionStatus'), error.message || String(error), 'bad');
   } finally {
     setButtonLoading(submitButton, false, 'Saving...', context.decision === 'Rejected' ? 'Reject Document' : 'Confirm Decision');
@@ -2385,7 +2502,7 @@ async function loadFinanceWorkflow() {
 }
 
 async function staffUserRequest(action, payload = {}) {
-  const response = await fetch('/api/staff-users', {
+  const response = await staffFetch('/api/staff-users', {
     method: 'POST', credentials: 'same-origin', cache: 'no-store',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action, ...payload })
@@ -2611,7 +2728,7 @@ loginForm.addEventListener('submit', async (event) => {
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not sign in.');
     loginForm.reset();
     setStatus(loginStatus, '');
-    await continueAfterAuthentication(await confirmFreshStaffSession(data.user));
+    await continueAfterAuthentication(await confirmFreshStaffSession(data.user, clean(data.sessionToken)));
   } catch (error) {
     setStatus(loginStatus, error.message || String(error), 'bad');
   } finally {
@@ -2633,8 +2750,11 @@ passkeyLoginButton.addEventListener('click', async () => {
       ceremonyId: started.ceremonyId,
       credential: credentialToJSON(credential)
     });
-    await continueAfterAuthentication(await confirmFreshStaffSession(completed.user));
+    const sessionToken = clean(completed.sessionToken);
+    if (!sessionToken) throw new Error('Biometric sign-in did not return a staff session.');
+    await continueAfterAuthentication(await confirmFreshStaffSession(completed.user, sessionToken));
   } catch (error) {
+    staffBearerToken = '';
     setStatus(loginStatus, friendlyPasskeyError(error), 'bad');
   } finally {
     setButtonLoading(passkeyLoginButton, false, 'Checking your device...', 'Sign in with biometrics');
@@ -2723,6 +2843,9 @@ approvalSettingsForm.addEventListener('submit', async (event) => {
 document.getElementById('financeDecisionClose').addEventListener('click', () => {
   financeDecisionDialog.close();
   pendingFinanceDecision = null;
+  financeDecisionBiometricVerified = false;
+  financeDecisionApprovalProof = '';
+  financeDecisionForm.reset();
 });
 document.getElementById('financeDecisionBiometric').addEventListener('click', verifyFinanceDecisionBiometric);
 financeDecisionForm.addEventListener('submit', submitFinanceDecision);
@@ -2774,6 +2897,7 @@ async function signOutFromPortal(button) {
   try {
     await sessionRequest('POST', { action: 'logout' });
   } finally {
+    staffBearerToken = '';
     button.disabled = false;
     window.location.replace('index.html');
   }
@@ -2843,6 +2967,7 @@ passwordForm.addEventListener('submit', async (event) => {
 
 document.getElementById('staffPasswordSignOut').addEventListener('click', async () => {
   await sessionRequest('POST', { action: 'logout' });
+  staffBearerToken = '';
   passwordDialog.close();
   passwordForm.reset();
   window.location.replace('index.html');

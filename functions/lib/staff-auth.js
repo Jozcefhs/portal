@@ -65,6 +65,30 @@ async function signPayload(env, payloadText) {
   return base64Url(signature);
 }
 
+async function verifiedSignedPayload(env, token) {
+  const [encoded, signature, extra] = String(token || '').split('.');
+  if (!encoded || !signature || extra) return null;
+  let signatureBytes;
+  try {
+    signatureBytes = fromBase64Url(signature);
+  } catch (_error) {
+    return null;
+  }
+  const key = await hmacKey(env);
+  let verified = false;
+  try {
+    verified = await crypto.subtle.verify('HMAC', key, signatureBytes, encoder.encode(encoded));
+  } catch (_error) {
+    return null;
+  }
+  if (!verified) return null;
+  try {
+    return JSON.parse(new TextDecoder().decode(fromBase64Url(encoded)));
+  } catch (_error) {
+    return null;
+  }
+}
+
 async function verifyDesktopPassword(user, password) {
   const salt = clean(user.Salt || user.salt);
   const expected = lower(user.PasswordHash || user.passwordHash);
@@ -297,6 +321,7 @@ export async function verifyStaffApprovalPassword(env, username, password) {
 export async function createStaffSession(env, user) {
   const payload = {
     ...publicUser(user),
+    purpose: 'staff-session',
     exp: Math.floor(Date.now() / 1000) + SESSION_SECONDS
   };
   const encoded = base64Url(JSON.stringify(payload));
@@ -318,22 +343,18 @@ export async function createStaffApprovalProof(env, user, scope = {}) {
 }
 
 export async function readStaffApprovalProof(env, request, username, scope = {}) {
-  const token = cookieValue(request, APPROVAL_PROOF_COOKIE);
-  const [encoded, signature, extra] = token.split('.');
-  if (!encoded || !signature || extra) return false;
-  const verified = await crypto.subtle.verify('HMAC', await hmacKey(env), fromBase64Url(signature), encoder.encode(encoded));
-  if (!verified) return false;
-  try {
-    const payload = JSON.parse(new TextDecoder().decode(fromBase64Url(encoded)));
-    return payload.purpose === 'finance-approval' &&
-      lower(payload.username) === lower(username) &&
-      clean(payload.recordId) === clean(scope.recordId) &&
-      lower(payload.recordType) === lower(scope.recordType) &&
-      clean(payload.action) === clean(scope.action) &&
-      Number(payload.exp) > Math.floor(Date.now() / 1000);
-  } catch (_error) {
-    return false;
-  }
+  const headerProof = clean(request.headers.get('X-DIGC-Approval-Proof'));
+  const payload = await verifiedSignedPayload(
+    env,
+    headerProof || cookieValue(request, APPROVAL_PROOF_COOKIE)
+  );
+  return Boolean(payload &&
+    payload.purpose === 'finance-approval' &&
+    lower(payload.username) === lower(username) &&
+    clean(payload.recordId) === clean(scope.recordId) &&
+    lower(payload.recordType) === lower(scope.recordType) &&
+    clean(payload.action) === clean(scope.action) &&
+    Number(payload.exp) > Math.floor(Date.now() / 1000));
 }
 
 function cookieValue(request, name) {
@@ -346,19 +367,24 @@ function cookieValue(request, name) {
   return '';
 }
 
+function bearerValue(request) {
+  const authorization = String(request.headers.get('Authorization') || '').trim();
+  if (!authorization) return { present: false, token: '' };
+  const match = authorization.match(/^Bearer\s+([A-Za-z0-9._~-]+)$/i);
+  return { present: true, token: match ? match[1] : '' };
+}
+
 export async function readStaffSession(env, request) {
-  const token = cookieValue(request, SESSION_COOKIE) || cookieValue(request, LEGACY_SESSION_COOKIE);
-  const [encoded, signature, extra] = token.split('.');
-  if (!encoded || !signature || extra) return null;
-  const verified = await crypto.subtle.verify('HMAC', await hmacKey(env), fromBase64Url(signature), encoder.encode(encoded));
-  if (!verified) return null;
-  try {
-    const payload = JSON.parse(new TextDecoder().decode(fromBase64Url(encoded)));
-    if (!payload.exp || Number(payload.exp) <= Math.floor(Date.now() / 1000)) return null;
-    return publicUser(payload);
-  } catch (_err) {
-    return null;
-  }
+  const bearer = bearerValue(request);
+  const token = bearer.present
+    ? bearer.token
+    : cookieValue(request, SESSION_COOKIE) || cookieValue(request, LEGACY_SESSION_COOKIE);
+  const payload = await verifiedSignedPayload(env, token);
+  if (!payload?.exp || Number(payload.exp) <= Math.floor(Date.now() / 1000)) return null;
+  const purpose = lower(payload.purpose);
+  if (bearer.present && purpose !== 'staff-session') return null;
+  if (!bearer.present && purpose && purpose !== 'staff-session') return null;
+  return publicUser(payload);
 }
 
 export async function requireStaffSession(env, request) {

@@ -31,14 +31,31 @@ test('staff portal offers passkey registration and authentication', () => {
   assert.match(adminHtml, /autocomplete="username webauthn"/);
   assert.match(adminJs, /passkeyLoginButton\.hidden = !supported \|\| Boolean\(currentUser\)/);
   assert.match(adminJs, /passkeyLoginButton\.classList\.toggle\('is-preferred', preferred\)/);
-  assert.match(adminJs, /confirmFreshStaffSession\(completed\.user\)/);
+  assert.match(adminJs, /confirmFreshStaffSession\(completed\.user, sessionToken\)/);
+  assert.match(adminJs, /staffBearerToken = ''[\s\S]*?const delays = \[120, 300, 700, 1200\][\s\S]*?staffBearerToken = memoryToken/);
+  assert.match(adminJs, /requestUrl\.origin === window\.location\.origin && requestUrl\.pathname\.startsWith\('\/api\/'\)/);
+  assert.match(adminJs, /headers\.set\('Authorization', `Bearer \$\{staffBearerToken\}`\)/);
+  assert.doesNotMatch(adminJs, /(?:localStorage|sessionStorage).*staffBearerToken/);
   assert.match(adminJs, /const delays = \[120, 300, 700, 1200\]/);
   assert.match(adminJs, /this browser did not retain the new session/);
   assert.match(adminJs, /navigator\.credentials\.create/);
   assert.match(adminJs, /navigator\.credentials\.get/);
   assert.match(passkeyApi, /action === 'approval-options'/);
   assert.match(passkeyApi, /action === 'approval-verify'/);
+  assert.match(passkeyApi, /sessionToken: token/);
   assert.match(passkeyApi, /}, 200, staffSessionCookie\(token\)\)/);
+});
+
+test('bearer-backed sessions also protect files and biometric approval decisions', () => {
+  assert.match(adminJs, /data-protected-file=/);
+  assert.match(adminJs, /staffFetch\(resourceUrl/);
+  assert.match(adminJs, /response\.blob\(\)/);
+  assert.match(adminJs, /URL\.createObjectURL/);
+  assert.match(adminJs, /response\.headers\.get\('Content-Disposition'\)/);
+  assert.doesNotMatch(adminJs, /<a[^>]+href="\/api\/staff-(?:document|payroll)/);
+  assert.match(passkeyApi, /approvalProof: proof/);
+  assert.match(adminJs, /headers\.set\('X-DIGC-Approval-Proof', approvalProof\)/);
+  assert.doesNotMatch(adminJs, /(?:localStorage|sessionStorage).*financeDecisionApprovalProof/);
 });
 
 test('passkey API requires user verification and validates origin, RP ID and one-time challenges', () => {

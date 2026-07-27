@@ -55,6 +55,7 @@ test('approval and posting require password or fresh biometric proof', () => {
   assert.match(workflowApi, /requireDecisionAuthorization/);
   assert.match(workflowApi, /verifyStaffApprovalPassword/);
   assert.match(workflowApi, /readStaffApprovalProof/);
+  assert.match(workflowApi, /Confirm this decision[\s\S]*?err\.status = 403/);
   assert.match(workflowApi, /decision === 'Approved'[\s\S]*?requireDecisionAuthorization/);
   assert.match(workflowApi, /accountsReview[\s\S]*?requireDecisionAuthorization/);
   assert.match(adminHtml, /name="approvalPassword"/);
@@ -70,6 +71,14 @@ test('biometric approval proof is signed, scoped to the officer and short lived'
     headers: { Cookie: cookie.split(';')[0] }
   });
   assert.equal(await readStaffApprovalProof(env, request, 'jane.officer', scope), true);
+  const headerRequest = new Request('https://example.com/api/finance-workflow', {
+    headers: { 'X-DIGC-Approval-Proof': token }
+  });
+  assert.equal(await readStaffApprovalProof(env, headerRequest, 'jane.officer', scope), true);
+  const malformedHeaderRequest = new Request('https://example.com/api/finance-workflow', {
+    headers: { 'X-DIGC-Approval-Proof': '~.~', Cookie: cookie.split(';')[0] }
+  });
+  assert.equal(await readStaffApprovalProof(env, malformedHeaderRequest, 'jane.officer', scope), false);
   assert.equal(await readStaffApprovalProof(env, request, 'jane.officer', { ...scope, recordId: 'WEB-MAT-2' }), false);
   assert.equal(await readStaffApprovalProof(env, request, 'another.officer', scope), false);
 });

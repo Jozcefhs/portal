@@ -271,6 +271,7 @@ async function verifyAuthentication(request, env, body) {
     ok: true,
     authenticated: true,
     message: 'Signed in with your device.',
+    sessionToken: token,
     user: { ...user, ...access }
   }, 200, staffSessionCookie(token));
 }
@@ -313,7 +314,11 @@ async function verifyApproval(request, env, body) {
     action: ceremony.DecisionAction
   });
   return response(
-    { ok: true, message: 'Identity verified. You may confirm this decision now.' },
+    {
+      ok: true,
+      message: 'Identity verified. You may confirm this decision now.',
+      approvalProof: proof
+    },
     200,
     staffApprovalProofCookie(proof)
   );

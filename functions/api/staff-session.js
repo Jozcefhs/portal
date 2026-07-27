@@ -162,6 +162,7 @@ export async function onRequestPost(context) {
       ok: true,
       authenticated: true,
       message: 'Signed in.',
+      sessionToken: token,
       user: { ...user, ...access }
     }, 200, staffSessionCookie(token));
   } catch (err) {

@@ -105,7 +105,7 @@ async function requireDecisionAuthorization(env, user, body, request, decisionAc
     action: decisionAction
   })) return 'Biometric';
   const err = new Error('Confirm this decision with your current password or biometric verification.');
-  err.status = 401;
+  err.status = 403;
   throw err;
 }
 
