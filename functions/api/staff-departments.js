@@ -1,6 +1,8 @@
 import { listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
-import { schoolSectionFor } from '../lib/school-scope.js';
+import { listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
+import { getWalletCardAccount, recordWalletPurchase } from './backend.js';
+import { escapeEmailHtml, sendConfiguredEmail } from '../lib/email-service.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -10,6 +12,7 @@ function number(value) {
 }
 function safeId(value) { return clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140); }
 function nowIso() { return new Date().toISOString(); }
+function sameRef(a, b) { return lower(a).replace(/[^a-z0-9]/g, '') === lower(b).replace(/[^a-z0-9]/g, ''); }
 
 const CONFIG = {
   clinic: { label: 'Clinic', inventory: 'clinicInventory', movements: 'clinicMovements', prefix: 'MED', category: 'Medical Supply', unit: 'pcs' },
@@ -111,9 +114,11 @@ async function recordMovement(env, section, body, user) {
 }
 
 async function saveClinicRecord(env, body, user) {
-  const studentName = clean(body.StudentName);
+  const student = await findScopedStudent(env, user, body.AdmissionNo || body.AccountRef);
+  if (!student) { const err = new Error('Find an enrolled student with a valid admission number before recording a clinic visit.'); err.status = 404; throw err; }
+  const studentName = clean(student.DisplayName || student.StudentName || student.ApplicantName);
   const complaint = clean(body.Complaint);
-  if (!studentName || !complaint) { const err = new Error('Student name and complaint are required.'); err.status = 400; throw err; }
+  if (!complaint) { const err = new Error('Complaint is required.'); err.status = 400; throw err; }
   const recordId = clean(body.RecordId) || `CLN-${Date.now()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
   await upsertDocument(env, 'clinicRecords', safeId(recordId), {
     ...scopeFields(user),
@@ -121,8 +126,8 @@ async function saveClinicRecord(env, body, user) {
     RecordNo: recordId,
     Date: clean(body.Date) || nowIso().slice(0, 10),
     StudentName: studentName,
-    AdmissionNo: clean(body.AdmissionNo),
-    ClassName: clean(body.ClassName),
+    AdmissionNo: studentReference(student),
+    ClassName: clean(student.ClassName || student.ClassAdmitted),
     Complaint: complaint,
     Treatment: clean(body.Treatment),
     Disposition: clean(body.Disposition),
@@ -131,6 +136,120 @@ async function saveClinicRecord(env, body, user) {
     UpdatedAt: nowIso()
   });
   return { ok: true, message: 'Clinic visit saved.' };
+}
+
+function studentReference(row) {
+  return clean(row.AdmissionNo || row.AccountRef || row.ApplicationReference || row.Reference);
+}
+
+async function scopedStudents(env, user) {
+  return visible(await listSchoolCollection(env, 'students'), user);
+}
+
+async function findScopedStudent(env, user, reference, cardId = '') {
+  const students = await scopedStudents(env, user);
+  const card = clean(cardId).toUpperCase();
+  const ref = clean(reference);
+  return students.find((row) => (card && clean(row.WalletCardId).toUpperCase() === card)
+    || (ref && [row.AdmissionNo, row.AccountRef, row.ApplicationReference, row.Reference].some((value) => sameRef(value, ref))));
+}
+
+async function lookupWallet(env, body, user) {
+  const student = await findScopedStudent(env, user, body.AccountRef, body.WalletCardId);
+  if (!student) { const err = new Error('No student wallet was found for that card or admission number.'); err.status = 404; throw err; }
+  const result = await getWalletCardAccount(env, { AccountRef: studentReference(student) });
+  return result.account;
+}
+
+async function postWalletPurchase(env, body, user) {
+  const student = await findScopedStudent(env, user, body.AccountRef, body.WalletCardId);
+  if (!student) { const err = new Error('No student wallet was found for that card or admission number.'); err.status = 404; throw err; }
+  return recordWalletPurchase(env, {
+    AccountRef: studentReference(student),
+    Amount: body.Amount,
+    Description: clean(body.Description) || 'Tuck shop purchase',
+    WalletPin: body.WalletPin,
+    Department: 'Tuck Shop',
+    Terminal: 'Web Tuck Shop POS',
+    RecordedBy: user.displayName || user.username,
+    Reference: `TUK-${Date.now()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`
+  });
+}
+
+function parentEmailFor(student) {
+  return clean(student.ParentEmail || student.VerificationEmail || student.FatherEmail
+    || student.MotherEmail || student.GuardianEmail || student.Email);
+}
+
+function clinicHistory(records, student) {
+  const ref = studentReference(student);
+  return records.filter((row) => sameRef(row.AdmissionNo || row.AccountRef, ref))
+    .sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)));
+}
+
+async function prepareClinicReport(env, body, user) {
+  const student = await findScopedStudent(env, user, body.AccountRef || body.AdmissionNo);
+  if (!student) { const err = new Error('Student was not found in your branch and school section.'); err.status = 404; throw err; }
+  const email = parentEmailFor(student);
+  if (!email) { const err = new Error('No parent email is saved for this student.'); err.status = 400; throw err; }
+  const records = clinicHistory(visible(await listCollection(env, 'clinicRecords'), user), student);
+  return {
+    AccountRef: studentReference(student),
+    StudentName: clean(student.DisplayName || student.StudentName || student.ApplicantName),
+    ClassName: clean(student.ClassName || student.ClassAdmitted),
+    ParentEmail: email,
+    RecordCount: records.length,
+    Records: publicRows(records)
+  };
+}
+
+async function auditMessage(env, type, section, user, data) {
+  const id = `MSG-${Date.now()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  await upsertDocument(env, 'departmentMessages', safeId(id), {
+    ...scopeFields(user), MessageId: id, Type: type, Department: CONFIG[section].label,
+    SentAt: nowIso(), SentBy: user.displayName || user.username, ...data
+  });
+}
+
+async function sendClinicReport(env, body, user) {
+  const report = await prepareClinicReport(env, body, user);
+  const subject = clean(body.Subject) || `Clinic report - ${report.StudentName}`;
+  const intro = clean(body.Message) || `Please find the clinic report for ${report.StudentName} below.`;
+  const lines = report.Records.length ? report.Records.map((row, index) =>
+    `${index + 1}. ${clean(row.Date)} - ${clean(row.Complaint)}; Treatment: ${clean(row.Treatment) || 'Not recorded'}; Disposition: ${clean(row.Disposition) || 'Not recorded'}${clean(row.Notes) ? `; Notes: ${clean(row.Notes)}` : ''}`
+  ) : ['No clinic visits have been recorded.'];
+  const htmlRows = report.Records.length ? report.Records.map((row) => `<tr><td>${escapeEmailHtml(row.Date)}</td><td>${escapeEmailHtml(row.Complaint)}</td><td>${escapeEmailHtml(row.Treatment || 'Not recorded')}</td><td>${escapeEmailHtml(row.Disposition || 'Not recorded')}</td><td>${escapeEmailHtml(row.Notes)}</td></tr>`).join('') : '<tr><td colspan="5">No clinic visits have been recorded.</td></tr>';
+  await sendConfiguredEmail(env, {
+    toEmail: report.ParentEmail, toName: `Parent of ${report.StudentName}`, subject,
+    textContent: `Dear Parent/Guardian,\n\n${intro}\n\nStudent: ${report.StudentName}\nClass: ${report.ClassName}\n\n${lines.join('\n')}\n\nSent by ${user.displayName || user.username}`,
+    htmlContent: `<div style="font-family:Arial,sans-serif"><p>Dear Parent/Guardian,</p><p>${escapeEmailHtml(intro)}</p><p><strong>Student:</strong> ${escapeEmailHtml(report.StudentName)}<br><strong>Class:</strong> ${escapeEmailHtml(report.ClassName)}</p><table style="border-collapse:collapse;width:100%" border="1" cellpadding="7"><thead><tr><th>Date</th><th>Complaint</th><th>Treatment</th><th>Disposition</th><th>Notes</th></tr></thead><tbody>${htmlRows}</tbody></table><p>Sent by ${escapeEmailHtml(user.displayName || user.username)}</p></div>`
+  });
+  await auditMessage(env, 'Clinic Parent Report', 'clinic', user, { AccountRef: report.AccountRef, StudentName: report.StudentName, RecipientEmail: report.ParentEmail, Subject: subject, RecordCount: report.RecordCount });
+  return report;
+}
+
+function marketItems(body) {
+  const rows = Array.isArray(body.Items) ? body.Items : [];
+  const items = rows.slice(0, 100).map((row) => ({
+    ItemName: clean(row.ItemName), Unit: clean(row.Unit), OrderQuantity: number(row.OrderQuantity)
+  })).filter((row) => row.ItemName && row.OrderQuantity > 0);
+  if (!items.length) { const err = new Error('Select at least one item and enter an order quantity.'); err.status = 400; throw err; }
+  return items;
+}
+
+async function sendMarketList(env, section, body, user) {
+  const supplierEmail = clean(body.SupplierEmail);
+  const supplierName = clean(body.SupplierName) || 'Supplier';
+  const subject = clean(body.Subject) || `${CONFIG[section].label} market list`;
+  const items = marketItems(body);
+  const lines = items.map((row, index) => `${index + 1}. ${row.ItemName} - ${row.OrderQuantity} ${row.Unit || 'units'}`);
+  const htmlRows = items.map((row, index) => `<tr><td>${index + 1}</td><td>${escapeEmailHtml(row.ItemName)}</td><td>${row.OrderQuantity}</td><td>${escapeEmailHtml(row.Unit || 'units')}</td></tr>`).join('');
+  await sendConfiguredEmail(env, {
+    toEmail: supplierEmail, toName: supplierName, subject,
+    textContent: `Dear ${supplierName},\n\nKindly supply the following items for ${CONFIG[section].label}:\n\n${lines.join('\n')}\n\nRequested by ${user.displayName || user.username}`,
+    htmlContent: `<div style="font-family:Arial,sans-serif"><p>Dear ${escapeEmailHtml(supplierName)},</p><p>Kindly supply the following items for <strong>${CONFIG[section].label}</strong>:</p><table style="border-collapse:collapse;width:100%" border="1" cellpadding="7"><thead><tr><th>S/No.</th><th>Item</th><th>Order quantity</th><th>Unit</th></tr></thead><tbody>${htmlRows}</tbody></table><p>Requested by ${escapeEmailHtml(user.displayName || user.username)}</p></div>`
+  });
+  await auditMessage(env, 'Supplier Market List', section, user, { RecipientEmail: supplierEmail, RecipientName: supplierName, Subject: subject, ItemCount: items.length, Items: items });
 }
 
 export async function onRequestPost(context) {
@@ -144,12 +263,31 @@ export async function onRequestPost(context) {
       const err = new Error('This staff account is not allowed to manage that department.'); err.status = 403; throw err;
     }
     const action = lower(body.action || 'list');
+    let actionResult = null;
     if (action === 'saveitem') await saveInventory(env, section, body, user);
     else if (action === 'recordmovement') await recordMovement(env, section, body, user);
     else if (action === 'saveclinicrecord' && section === 'clinic') await saveClinicRecord(env, body, user);
+    else if (action === 'lookupwallet' && section === 'tuckShop') actionResult = { walletAccount: await lookupWallet(env, body, user) };
+    else if (action === 'recordwalletpurchase' && section === 'tuckShop') {
+      const purchase = await postWalletPurchase(env, body, user);
+      actionResult = { walletAccount: purchase.account, walletPurchase: purchase.ledger };
+    }
+    else if (action === 'prepareclinicreport' && section === 'clinic') actionResult = { clinicReport: await prepareClinicReport(env, body, user) };
+    else if (action === 'sendclinicreport' && section === 'clinic') actionResult = { clinicReport: await sendClinicReport(env, body, user) };
+    else if (action === 'sendmarketlist' && ['clinic', 'kitchen'].includes(section)) await sendMarketList(env, section, body, user);
     else if (action !== 'list') { const err = new Error('Choose a valid department action.'); err.status = 400; throw err; }
     const data = await loadDepartment(env, section, user);
-    if (action !== 'list') data.message = action === 'saveitem' ? `${CONFIG[section].label} inventory item saved.` : action === 'recordmovement' ? `${CONFIG[section].label} stock movement recorded.` : 'Clinic visit saved.';
+    Object.assign(data, actionResult || {});
+    if (action !== 'list') data.message = ({
+      saveitem: `${CONFIG[section].label} inventory item saved.`,
+      recordmovement: `${CONFIG[section].label} stock movement recorded.`,
+      saveclinicrecord: 'Clinic visit saved.',
+      lookupwallet: 'Wallet account loaded.',
+      recordwalletpurchase: 'Wallet purchase recorded and posted to Finance and Accounting.',
+      prepareclinicreport: 'Clinic report prepared for review.',
+      sendclinicreport: 'Clinic report sent to the parent email.',
+      sendmarketlist: 'Market list sent to the supplier.'
+    })[action] || 'Department action completed.';
     return Response.json(data);
   } catch (err) {
     return Response.json({ ok: false, message: err.message || String(err) }, { status: err.status || 500 });

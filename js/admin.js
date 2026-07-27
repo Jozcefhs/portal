@@ -1269,6 +1269,20 @@ async function submitDepartmentAction(section, action, form) {
   }
 }
 
+async function requestDepartmentAction(section, action, payload = {}) {
+  const response = await staffFetch('/api/staff-departments', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, section, ...payload })
+  });
+  const data = await response.json();
+  if (!response.ok || !data.ok) throw new Error(data.message || 'Could not complete the department action.');
+  renderDepartmentOperations(section, data);
+  setStatus(dashboardStatus, data.message, 'ok');
+  return data;
+}
+
 function renderInventoryActions(row) {
   const name = escapeHtml(pick(row, ['ItemName', '__id']));
   return `<button type="button" class="compact-icon-action compact-edit-action" data-edit-inventory="${name}" aria-label="Edit ${name}" title="Edit item"><span aria-hidden="true">&#9998;</span></button>`;
@@ -1285,6 +1299,8 @@ function renderDepartmentOperations(section, data) {
   const label = labels[section];
   const inventory = data.inventory || [];
   const records = data.records || [];
+  const wallet = data.walletAccount || null;
+  const clinicReport = data.clinicReport || null;
   const purchases = (dashboardData?.departments?.tuckShop || {}).purchases || [];
   renderModuleSummary(section, {
     ...(dashboardData?.departments?.[section] || {}),
@@ -1293,16 +1309,61 @@ function renderDepartmentOperations(section, data) {
   });
   panelEl.innerHTML = `
     <div class="workflow-intro"><div><p class="eyebrow">Department operations</p><h2>${label}</h2><p class="muted">${descriptions[section]}</p></div><button type="button" class="workflow-icon-action" id="refreshDepartmentOperations" aria-label="Refresh ${label}">Refresh</button></div>
+    ${section === 'tuckShop' ? `
+    <section class="config-card department-primary-workflow"><header class="config-card-heading"><div><small>Student wallet POS</small><h3>Record a tuck-shop purchase</h3></div></header>
+      <form id="walletLookupForm" class="workflow-form workflow-form-grid config-form">
+        <label>Wallet card ID<input name="WalletCardId" autocomplete="off" placeholder="Scan or enter card ID"></label>
+        <label>Admission number<input name="AccountRef" autocomplete="off" placeholder="Or enter admission number"></label>
+        <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit">Find student</button></div>
+      </form>
+      ${wallet ? `<div class="wallet-account-result">
+        <div><small>Student</small><strong>${escapeHtml(wallet.DisplayName)}</strong><span>${escapeHtml(wallet.AdmissionNo || wallet.AccountRef)} &middot; ${escapeHtml(wallet.ClassName || '')}</span></div>
+        <div><small>Wallet balance</small><strong>${money(wallet.WalletBalance)}</strong><span>${escapeHtml(wallet.WalletCardStatus || 'Active')} &middot; Spent today ${money(wallet.WalletSpentToday)}</span></div>
+      </div>
+      <form id="walletPurchaseForm" class="workflow-form workflow-form-grid config-form">
+        <input type="hidden" name="AccountRef" value="${escapeHtml(wallet.AccountRef)}">
+        <label>Amount<input name="Amount" type="number" min="0.01" step="0.01" required></label>
+        <label>Description<input name="Description" value="Tuck shop purchase" required></label>
+        <label>Wallet PIN (when required)<input name="WalletPin" type="password" inputmode="numeric" autocomplete="off"></label>
+        <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit">Record purchase</button></div>
+      </form>` : '<p class="muted">Find the student before recording a purchase. Card limits, balance and PIN rules will be checked automatically.</p>'}
+    </section>` : ''}
     ${section === 'clinic' ? `
     <section class="config-card"><header class="config-card-heading"><div><small>Patient care</small><h3>Record a clinic visit</h3></div></header>
       <form id="clinicRecordForm" class="workflow-form workflow-form-grid config-form">
         <label>Date<input type="date" name="Date" value="${new Date().toISOString().slice(0, 10)}" required></label>
-        <label>Student name<input name="StudentName" required></label>
-        <label>Admission number<input name="AdmissionNo"></label><label>Class<input name="ClassName"></label>
+        <label>Admission number<input name="AdmissionNo" required placeholder="Finds the enrolled student"></label>
         <label>Complaint<textarea name="Complaint" required></textarea></label><label>Treatment<textarea name="Treatment"></textarea></label>
         <label>Disposition<select name="Disposition"><option>Treated and returned</option><option>Resting in clinic</option><option>Sent home</option><option>Referred to hospital</option></select></label>
         <label>Notes<input name="Notes"></label>
         <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" data-normal-text="Save visit">Save visit</button></div>
+      </form>
+    </section>` : ''}
+    ${section === 'clinic' ? `
+    <section class="config-card department-primary-workflow"><header class="config-card-heading"><div><small>Parent communication</small><h3>Email a clinic report</h3></div></header>
+      <form id="clinicReportForm" class="workflow-form workflow-form-grid config-form">
+        <label>Admission number<input name="AccountRef" value="${escapeHtml(clinicReport?.AccountRef || '')}" required></label>
+        <label>Subject<input name="Subject" value="${escapeHtml(clinicReport ? `Clinic report - ${clinicReport.StudentName}` : 'Clinic Report')}"></label>
+        <label class="workflow-wide-field">Message<textarea name="Message">Please find the clinic report below.</textarea></label>
+        ${clinicReport ? `<div class="workflow-wide-field report-recipient-preview"><strong>${escapeHtml(clinicReport.StudentName)}</strong><span>${escapeHtml(clinicReport.ClassName)} &middot; ${escapeHtml(clinicReport.ParentEmail)} &middot; ${clinicReport.RecordCount} clinic record(s)</span></div>` : ''}
+        <div class="config-actionbar"><p class="status" data-department-status></p><div class="inline-action-group"><button type="button" id="prepareClinicReport">Prepare report</button><button type="submit" ${clinicReport ? '' : 'disabled'}>Send to parent</button></div></div>
+      </form>
+    </section>` : ''}
+    ${['clinic', 'kitchen'].includes(section) ? `
+    <section class="config-card department-primary-workflow"><header class="config-card-heading"><div><small>Procurement</small><h3>Create and email a market list</h3></div></header>
+      <form id="marketListForm" class="workflow-form config-form">
+        <div class="workflow-form-grid">
+          <label>Supplier name<input name="SupplierName" required></label>
+          <label>Supplier email<input name="SupplierEmail" type="email" required></label>
+          <label class="workflow-wide-field">Subject<input name="Subject" value="${label} market list"></label>
+        </div>
+        <div class="table-wrap market-list-table"><table><thead><tr><th>Use</th><th>Item</th><th>Current</th><th>Unit</th><th>Order qty</th></tr></thead><tbody>
+          ${inventory.map((row, index) => {
+            const low = Number(row.ReorderLevel || 0) > 0 && Number(row.Quantity || 0) <= Number(row.ReorderLevel || 0);
+            return `<tr data-market-row><td><input type="checkbox" aria-label="Include ${escapeHtml(row.ItemName)}" ${low ? 'checked' : ''}></td><td data-item="${escapeHtml(row.ItemName)}">${escapeHtml(row.ItemName)}</td><td>${escapeHtml(row.Quantity)}</td><td data-unit="${escapeHtml(row.Unit)}">${escapeHtml(row.Unit)}</td><td><input type="number" min="0.01" step="0.01" value="${low ? Math.max(1, Number(row.ReorderLevel || 0) - Number(row.Quantity || 0)) : 1}" aria-label="Order quantity for ${escapeHtml(row.ItemName)}"></td></tr>`;
+          }).join('') || '<tr><td colspan="5">Add inventory items before preparing a market list.</td></tr>'}
+        </tbody></table></div>
+        <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" ${inventory.length ? '' : 'disabled'}>Send market list</button></div>
       </form>
     </section>` : ''}
     <section class="config-card"><header class="config-card-heading"><div><small>Inventory setup</small><h3>Add or update an item</h3></div></header>
@@ -1341,6 +1402,41 @@ function renderDepartmentOperations(section, data) {
     ])}`;
   document.getElementById('refreshDepartmentOperations')?.addEventListener('click', () => loadDepartmentOperations(section));
   document.getElementById('clinicRecordForm')?.addEventListener('submit', (event) => { event.preventDefault(); submitDepartmentAction(section, 'saveClinicRecord', event.currentTarget); });
+  document.getElementById('walletLookupForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget; const status = form.querySelector('[data-department-status]');
+    try { await requestDepartmentAction(section, 'lookupWallet', Object.fromEntries(new FormData(form).entries())); }
+    catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+  });
+  document.getElementById('walletPurchaseForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget; const status = form.querySelector('[data-department-status]');
+    try { await requestDepartmentAction(section, 'recordWalletPurchase', Object.fromEntries(new FormData(form).entries())); }
+    catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+  });
+  document.getElementById('prepareClinicReport')?.addEventListener('click', async () => {
+    const form = document.getElementById('clinicReportForm'); const status = form.querySelector('[data-department-status]');
+    try { await requestDepartmentAction(section, 'prepareClinicReport', Object.fromEntries(new FormData(form).entries())); }
+    catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+  });
+  document.getElementById('clinicReportForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget; const status = form.querySelector('[data-department-status]');
+    try { await requestDepartmentAction(section, 'sendClinicReport', Object.fromEntries(new FormData(form).entries())); }
+    catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+  });
+  document.getElementById('marketListForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget; const status = form.querySelector('[data-department-status]');
+    const payload = Object.fromEntries(new FormData(form).entries());
+    payload.Items = [...form.querySelectorAll('[data-market-row]')].filter((row) => row.querySelector('input[type="checkbox"]').checked).map((row) => ({
+      ItemName: row.querySelector('[data-item]').dataset.item,
+      Unit: row.querySelector('[data-unit]').dataset.unit,
+      OrderQuantity: row.querySelector('input[type="number"]').value
+    }));
+    try { await requestDepartmentAction(section, 'sendMarketList', payload); }
+    catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+  });
   document.getElementById('departmentInventoryForm')?.addEventListener('submit', (event) => { event.preventDefault(); submitDepartmentAction(section, 'saveItem', event.currentTarget); });
   document.getElementById('departmentMovementForm')?.addEventListener('submit', (event) => { event.preventDefault(); submitDepartmentAction(section, 'recordMovement', event.currentTarget); });
   panelEl.querySelectorAll('[data-edit-inventory]').forEach((button) => button.addEventListener('click', () => {

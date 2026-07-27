@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
-const [api, adminApi, adminJs] = await Promise.all([
+const [api, adminApi, adminJs, backend, emailService] = await Promise.all([
   readFile(new URL('functions/api/staff-departments.js', portalRoot), 'utf8'),
   readFile(new URL('functions/api/admin.js', portalRoot), 'utf8'),
-  readFile(new URL('js/admin.js', portalRoot), 'utf8')
+  readFile(new URL('js/admin.js', portalRoot), 'utf8'),
+  readFile(new URL('functions/api/backend.js', portalRoot), 'utf8'),
+  readFile(new URL('functions/lib/email-service.js', portalRoot), 'utf8')
 ]);
 
 test('clinic, kitchen and tuck shop operations require staff section access', () => {
@@ -42,4 +44,31 @@ test('tuck shop dashboard includes inventory without bypassing wallet purchase h
   assert.match(adminApi, /tuckShopMovements/);
   assert.match(adminApi, /purchases: publicRows\(sortRecent\(walletPurchases/);
   assert.match(adminJs, /Wallet Purchases/);
+});
+
+test('tuck shop web POS reuses the authoritative wallet and accounting workflow', () => {
+  assert.match(backend, /export async function getWalletCardAccount/);
+  assert.match(backend, /export async function recordWalletPurchase/);
+  assert.match(api, /recordWalletPurchase\(env/);
+  assert.match(api, /Department: 'Tuck Shop'/);
+  assert.match(api, /Terminal: 'Web Tuck Shop POS'/);
+  assert.match(api, /findScopedStudent/);
+  assert.match(adminJs, /id="walletLookupForm"/);
+  assert.match(adminJs, /id="walletPurchaseForm"/);
+});
+
+test('clinic reports use the parent email stored on the scoped student record', () => {
+  assert.match(api, /function parentEmailFor/);
+  assert.match(api, /sendClinicReport/);
+  assert.match(api, /RecipientEmail: report\.ParentEmail/);
+  assert.match(api, /Type: type/);
+  assert.match(adminJs, /id="clinicReportForm"/);
+});
+
+test('clinic and kitchen market lists are emailed and audited without exposing credentials', () => {
+  assert.match(api, /\['clinic', 'kitchen'\]\.includes\(section\)/);
+  assert.match(api, /Supplier Market List/);
+  assert.match(adminJs, /id="marketListForm"/);
+  assert.match(emailService, /env\.BREVO_API_KEY/);
+  assert.doesNotMatch(emailService, /return \{[^}]*apiKey/);
 });

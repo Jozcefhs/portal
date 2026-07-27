@@ -3508,7 +3508,7 @@ async function walletAccountPayload(env, student) {
   };
 }
 
-async function getWalletCardAccount(env, body) {
+export async function getWalletCardAccount(env, body) {
   const cardId = clean(body.WalletCardId || body.CardId || body.cardId).toUpperCase();
   const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo || body.admissionNo);
   const student = cardId ? await findStudentByWalletCard(env, cardId) : await findStudentByAccountRef(env, accountRef);
@@ -3559,7 +3559,7 @@ async function saveWalletCard(env, body) {
   return { ok: true, message: 'Wallet card saved.', account: await walletAccountPayload(env, saved) };
 }
 
-async function recordWalletPurchase(env, body) {
+export async function recordWalletPurchase(env, body) {
   const cardId = clean(body.WalletCardId || body.CardId || body.cardId).toUpperCase();
   const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo || body.admissionNo);
   const amount = asMoneyNumber(body.Amount || body.amount);
