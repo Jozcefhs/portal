@@ -90,7 +90,7 @@ test('sidebar keeps account actions visible and database status last', () => {
   assert.ok(actionsIndex >= 0 && databaseIndex > actionsIndex);
   assert.doesNotMatch(adminHtml, /Firestore Live/);
   assert.match(portalCss, /\.staff-sidebar \.staff-tabs\{flex:1 1 auto;min-height:0\}/);
-  assert.match(portalCss, /\.staff-sidebar-actions\{display:grid;flex:0 0 auto;gap:8px;margin-top:auto\}/);
+  assert.match(portalCss, /\.staff-sidebar-actions\{display:flex;flex:0 0 auto;flex-wrap:wrap;gap:8px;margin-top:auto\}/);
 });
 
 test('sidebar action zone prevents the final module from overlapping user controls', () => {

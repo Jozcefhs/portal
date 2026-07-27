@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
-const sharedVersion = '20260727-department-workflows';
+const sharedVersion = '20260727-content-buttons';
 const adminScriptVersion = '20260727-department-workflows';
 const pageNames = [
   'admin.html',
@@ -50,6 +50,15 @@ test('recent compact interface rules target the shared staff shell', () => {
   assert.match(portalCss, /\.staff-sidebar\.is-open/);
 });
 
+test('action buttons fit their contents instead of stretching across cards and forms', () => {
+  assert.match(portalCss, /\.workflow-form button\{width:fit-content/);
+  assert.match(portalCss, /\.activity-item button,.activity-item \.btn\{width:fit-content/);
+  assert.match(portalCss, /\.staff-login-card button\[type="submit"\]\{width:fit-content/);
+  assert.match(portalCss, /\.staff-sidebar-signout\{[^}]*width:fit-content/);
+  assert.match(portalCss, /\.finance-record-actions button\{flex:0 0 auto;width:fit-content!important/);
+  assert.doesNotMatch(portalCss, /\.workflow-form button\{width:100%/);
+});
+
 test('all portal pages reference the current shared stylesheet version', () => {
   pages.forEach((html, index) => {
     assert.match(html, new RegExp(`css/style\\.css\\?v=${sharedVersion}`), `${pageNames[index]} should use the shared stylesheet version`);
@@ -59,7 +68,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /digc-suite-v41-department-workflows/);
+  assert.match(serviceWorker, /digc-suite-v42-content-buttons/);
   assert.match(serviceWorker, /'\/admin\.html'/);
   assert.match(serviceWorker, /'\/js\/admin\.js'/);
   assert.match(serviceWorker, /self\.skipWaiting\(\)/);
