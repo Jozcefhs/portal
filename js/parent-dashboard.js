@@ -50,6 +50,10 @@ function childInitials(child) {
   return String(child.DisplayName || 'Student').split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join('') || 'ST';
 }
 
+function childCardHue(index) {
+  return Math.round((207 + index * 137.508) % 360);
+}
+
 async function loadPassportPhoto(child, image) {
   const reference = child.PassportPhotoApplicationReference || child.ApplicationReference || child.AccountRef;
   if (!child.PassportPhotoAvailable || !reference || !image) return;
@@ -153,10 +157,11 @@ function showDashboardView(view, scrollToContent = false) {
 function renderChildren() {
   childrenList.innerHTML = '';
   const children = dashboard?.children || [];
-  children.forEach((child) => {
+  children.forEach((child, index) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'child-card' + (child.AccountRef === selectedAccountRef ? ' selected' : '');
+    button.style.setProperty('--child-hue', String(childCardHue(index)));
     button.innerHTML = `
       <span class="child-card-layout">
         <span class="child-passport" aria-hidden="true">

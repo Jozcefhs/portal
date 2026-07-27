@@ -202,11 +202,18 @@ test('school, church, finance, payroll, store, and staff modules receive summary
 });
 
 test('selected student card has an unmistakable active state', () => {
-  assert.match(portalCss, /\.child-list \.child-card\.selected\{border:2px solid var\(--blue\);background:#e8f1ff;box-shadow:0 0 0 3px/);
+  assert.match(portalCss, /\.child-list \.child-card\.selected\{border:2px solid #43d19e;background:hsl\(var\(--child-hue,207\) 64% 34%\);box-shadow:0 0 0 3px/);
   assert.match(portalCss, /\.child-list \.child-card\.selected::after\{content:"✓ Selected"/);
   assert.match(portalCss, /\.child-list \.child-card\.selected \.child-card-layout\{padding-right:72px\}/);
-  assert.match(portalCss, /html\[data-theme="dark"\] \.child-list \.child-card\.selected\{border-color:#43d19e;background:#123a67/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.child-list \.child-card\.selected\{border-color:#43d19e;background:hsl\(var\(--child-hue,207\) 55% 29%\)/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.child-list \.child-card\.selected::after\{background:#43d19e;color:#071b2c\}/);
+});
+
+test('parent dashboard gives each student card a distinct colour', () => {
+  assert.match(parentDashboardJs, /function childCardHue\(index\)/);
+  assert.match(parentDashboardJs, /index \* 137\.508/);
+  assert.match(parentDashboardJs, /button\.style\.setProperty\('--child-hue', String\(childCardHue\(index\)\)\)/);
+  assert.match(portalCss, /\.child-list \.child-card\{[^}]*background:hsl\(var\(--child-hue,207\) 72% 94%\)/);
 });
 
 test('student profile action uses a compact accessible pencil icon', () => {
