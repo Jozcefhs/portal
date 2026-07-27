@@ -1,5 +1,6 @@
 import {
   authenticateStaff,
+  clearLegacyStaffSessionCookie,
   clearStaffApprovalProofCookie,
   clearStaffSessionCookie,
   createStaffSession,
@@ -63,7 +64,7 @@ export async function onRequestPost(context) {
       return response(
         { ok: true, authenticated: false, message: 'Signed out. You can sign in again at any time.' },
         200,
-        [clearStaffSessionCookie(), clearStaffApprovalProofCookie()]
+        [clearStaffSessionCookie(), clearLegacyStaffSessionCookie(), clearStaffApprovalProofCookie()]
       );
     }
     requireFirestoreEnv(env);
@@ -74,7 +75,11 @@ export async function onRequestPost(context) {
       const existing = users.find((row) => String(row.Username || row.__id || '').trim().toLowerCase() === sessionUser.username.toLowerCase());
       if (!existing) return response({ ok: false, message: 'The database staff account was not found.' }, 404);
       if (['no', 'false', '0', 'inactive', 'disabled'].includes(String(existing.Active ?? 'YES').trim().toLowerCase())) {
-        return response({ ok: false, message: 'This staff account has been disabled.' }, 401, clearStaffSessionCookie());
+        return response(
+          { ok: false, message: 'This staff account has been disabled.' },
+          401,
+          [clearStaffSessionCookie(), clearLegacyStaffSessionCookie()]
+        );
       }
       const displayName = String(body.displayName || '').trim();
       if (!displayName) return response({ ok: false, message: 'Display name is required.' }, 400);
@@ -102,7 +107,7 @@ export async function onRequestPost(context) {
         authenticated: true,
         message: 'Profile updated.',
         user: { ...refreshedUser, ...access }
-      }, 200, staffSessionCookie(refreshedToken));
+      }, 200, [staffSessionCookie(refreshedToken), clearLegacyStaffSessionCookie()]);
     }
     if (action === 'changepassword') {
       const sessionUser = await readStaffSession(env, request);
@@ -113,7 +118,11 @@ export async function onRequestPost(context) {
       const existing = users.find((row) => String(row.Username || row.__id || '').trim().toLowerCase() === sessionUser.username.toLowerCase());
       if (!existing) return response({ ok: false, message: 'The database staff account was not found.' }, 404);
       if (['no', 'false', '0', 'inactive', 'disabled'].includes(String(existing.Active ?? 'YES').trim().toLowerCase())) {
-        return response({ ok: false, message: 'This staff account has been disabled.' }, 401, clearStaffSessionCookie());
+        return response(
+          { ok: false, message: 'This staff account has been disabled.' },
+          401,
+          [clearStaffSessionCookie(), clearLegacyStaffSessionCookie()]
+        );
       }
       const passwordFields = await hashStaffPassword(password);
       const updated = {
@@ -139,7 +148,11 @@ export async function onRequestPost(context) {
       };
       const refreshedToken = await createStaffSession(env, refreshedUser);
       const access = await staffAccessFor(env, refreshedUser);
-      return response({ ok: true, authenticated: true, message: 'Password changed successfully.', user: { ...refreshedUser, ...access } }, 200, staffSessionCookie(refreshedToken));
+      return response(
+        { ok: true, authenticated: true, message: 'Password changed successfully.', user: { ...refreshedUser, ...access } },
+        200,
+        [staffSessionCookie(refreshedToken), clearLegacyStaffSessionCookie()]
+      );
     }
     const user = await authenticateStaff(env, body.username, body.password);
     if (!user) return response({ ok: false, message: 'Invalid username/password or inactive account.' }, 401);
@@ -150,7 +163,7 @@ export async function onRequestPost(context) {
       authenticated: true,
       message: 'Signed in.',
       user: { ...user, ...access }
-    }, 200, staffSessionCookie(token));
+    }, 200, [staffSessionCookie(token), clearLegacyStaffSessionCookie()]);
   } catch (err) {
     return response({ ok: false, message: err.message || String(err) }, err.status || 500);
   }

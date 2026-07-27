@@ -505,6 +505,14 @@ async function sessionRequest(method = 'GET', body = null) {
   return { response, data };
 }
 
+async function confirmFreshStaffSession(fallbackUser) {
+  const { response, data } = await sessionRequest();
+  if (!response.ok || !data.authenticated || !data.user) {
+    throw new Error('Your identity was verified, but the browser could not save the new session. Refresh this page and try again.');
+  }
+  return data.user || fallbackUser;
+}
+
 async function loadDashboard() {
   setButtonLoading(refreshButton, true, 'Refreshing...', 'Refresh Dashboard');
   setStatus(dashboardStatus, 'Loading permitted database records...');
@@ -2599,7 +2607,7 @@ loginForm.addEventListener('submit', async (event) => {
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not sign in.');
     loginForm.reset();
     setStatus(loginStatus, '');
-    await continueAfterAuthentication(data.user);
+    await continueAfterAuthentication(await confirmFreshStaffSession(data.user));
   } catch (error) {
     setStatus(loginStatus, error.message || String(error), 'bad');
   } finally {
@@ -2621,7 +2629,7 @@ passkeyLoginButton.addEventListener('click', async () => {
       ceremonyId: started.ceremonyId,
       credential: credentialToJSON(credential)
     });
-    await continueAfterAuthentication(completed.user);
+    await continueAfterAuthentication(await confirmFreshStaffSession(completed.user));
   } catch (error) {
     setStatus(loginStatus, friendlyPasskeyError(error), 'bad');
   } finally {

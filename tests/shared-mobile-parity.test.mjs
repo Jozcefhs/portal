@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260727-session-relogin';
-const adminScriptVersion = '20260727-biometric-login';
+const adminScriptVersion = '20260727-biometric-session';
 const pageNames = [
   'admin.html',
   'application.html',
@@ -59,7 +59,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /digc-suite-v28-biometric-login/);
+  assert.match(serviceWorker, /digc-suite-v29-biometric-session/);
   assert.match(serviceWorker, /'\/admin\.html'/);
   assert.match(serviceWorker, /'\/js\/admin\.js'/);
   assert.match(serviceWorker, /self\.skipWaiting\(\)/);
