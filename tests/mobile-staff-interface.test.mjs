@@ -354,3 +354,8 @@ test('parent store confirms added items and prevents repeated cart clicks', () =
   assert.match(portalCss, /\.store-catalog-section \.store-item-row>small\{margin:0;font-size:11px/);
   assert.match(portalCss, /\.store-cart-panel\{margin:10px 0;padding:10px/);
 });
+
+test('parent store checkout button fits its content', () => {
+  assert.match(parentDashboardHtml, /id="checkoutStoreCartBtn"/);
+  assert.match(portalCss, /\.store-cart-panel>button\{[^}]*width:fit-content;[^}]*max-width:100%;[^}]*min-height:38px/);
+});
