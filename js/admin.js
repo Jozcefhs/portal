@@ -86,6 +86,8 @@ const tabConfig = [
   ['tuckShop', 'Tuck Shop'],
   ['bookstore', 'Books & Supplies'],
   ['uniformStore', 'Clothing & Supplies'],
+  ['organizationStore', 'Organisation Store'],
+  ['restaurant', 'Restaurant'],
   ['staffUsers', 'Staff & Permissions']
 ];
 
@@ -107,6 +109,8 @@ const tabIcons = {
   tuckShop: '\u{1F6D2}',
   bookstore: '\u{1F4DA}',
   uniformStore: '\u{1F455}',
+  organizationStore: '\u{1F3EA}',
+  restaurant: '\u{1F37D}',
   staffUsers: '\u2699'
 };
 
@@ -718,7 +722,11 @@ function renderSummary(summary) {
     ['Kitchen Items', summary.kitchenInventory],
     ['Tuck Shop Purchases', summary.tuckShopPurchases],
     ['Low Clinic Stock', summary.lowClinicStock],
-    ['Low Kitchen Stock', summary.lowKitchenStock]
+    ['Low Kitchen Stock', summary.lowKitchenStock],
+    ['Restaurant Items', summary.restaurantInventory],
+    ['Low Restaurant Stock', summary.lowRestaurantStock],
+    ['Store Items', summary.organizationStoreItems],
+    ['Store Orders', summary.organizationStoreOrders]
   ].filter(([, value]) => value !== undefined);
   const studentCard = summary.students === undefined ? '' : `<div class="student-summary-card"><strong>${escapeHtml(summary.students || 0)}</strong><span>Total Students</span><small><b>${escapeHtml(summary.dayStudents || 0)}</b> Day <i></i> <b>${escapeHtml(summary.boardingStudents || 0)}</b> Boarding</small></div>`;
   summaryEl.innerHTML = studentCard + items.map(([label, value]) => `<div><strong>${escapeHtml(value || 0)}</strong><span>${escapeHtml(label)}</span></div>`).join('');
@@ -804,8 +812,8 @@ function renderModuleSummary(active, liveData = null) {
       { icon: '\u{1F48A}', label: 'Inventory Items', value: (data.inventory || []).length },
       { icon: '\u26A0', label: 'Low Stock', value: (data.lowStock || []).length }
     ];
-  } else if (active === 'kitchen') {
-    const data = liveData || departments.kitchen || {};
+  } else if (active === 'kitchen' || active === 'restaurant') {
+    const data = liveData || departments[active] || {};
     cards = [
       { icon, label: 'Inventory Items', value: (data.inventory || []).length },
       { icon: '\u{1F4E6}', label: 'Units in Stock', value: sumRows(data.inventory, ['Quantity']) },
@@ -820,7 +828,7 @@ function renderModuleSummary(active, liveData = null) {
       { icon: '\u{1F4E6}', label: 'Inventory Items', value: (data.inventory || []).length },
       { icon: '\u26A0', label: 'Low Stock', value: (data.lowStock || []).length }
     ];
-  } else if ((active === 'bookstore' || active === 'uniformStore') && liveData) {
+  } else if ((active === 'bookstore' || active === 'uniformStore' || active === 'organizationStore') && liveData) {
     const items = liveData.items || [];
     const orders = liveData.orders || [];
     cards = [
@@ -1184,24 +1192,26 @@ function inventoryColumns() {
 }
 
 function renderStaffStore(section, store) {
-  const label = section === 'bookstore' ? 'Bookstore' : 'Uniform Store';
+  const organisationStore = section === 'organizationStore';
+  const label = organisationStore ? 'Organisation Store' : (section === 'bookstore' ? 'Bookstore' : 'Uniform Store');
+  const storeAudience = organisationStore ? 'customers and storekeepers' : 'parents and storekeepers';
   const categories = store.categories || [];
   const activeCategories = categories.filter((row) => clean(row.Active || 'YES') !== 'NO');
   renderModuleSummary(section, store);
   panelEl.innerHTML = `
-    <div class="workflow-intro"><div><p class="eyebrow">School store</p><h2>${label}</h2><p class="muted">List items and prices, monitor paid orders, and record collection.</p></div></div>
+    <div class="workflow-intro"><div><p class="eyebrow">${organisationStore ? 'Retail operations' : 'School store'}</p><h2>${label}</h2><p class="muted">List items and prices, monitor paid orders, and record collection.</p></div></div>
     <section class="config-card">
-      <header class="config-card-heading"><div><small>Inventory setup</small><h3>Add or update an item</h3><p>Define how this product appears to parents and storekeepers.</p></div></header>
+      <header class="config-card-heading"><div><small>Inventory setup</small><h3>Add or update an item</h3><p>Define how this product appears to ${storeAudience}.</p></div></header>
     <form id="staffStoreItemForm" class="workflow-form workflow-form-grid config-form">
       <label>Item code<input name="ItemCode" required></label><label>Item name<input name="ItemName" required></label>
-      <label>Category<input name="Category" list="storeCategoryOptions" autocomplete="off" required><datalist id="storeCategoryOptions">${activeCategories.map((row) => `<option value="${escapeHtml(row.Name)}"></option>`).join('')}</datalist></label><label>Size<input name="Size"></label>
-      <label>Gender<select name="Gender"><option>All</option><option>Male</option><option>Female</option></select></label><label>Class<input name="ClassName" value="All"></label>
+      <label>Category<input name="Category" list="storeCategoryOptions" autocomplete="off" required><datalist id="storeCategoryOptions">${activeCategories.map((row) => `<option value="${escapeHtml(row.Name)}"></option>`).join('')}</datalist></label><label>Variant / size<input name="Size"></label>
+      ${organisationStore ? '' : '<label>Gender<select name="Gender"><option>All</option><option>Male</option><option>Female</option></select></label><label>Class<input name="ClassName" value="All"></label>'}
       <label>Price<input name="Price" type="number" min="0" step="0.01" required></label><label>Stock quantity<input name="Quantity" type="number" min="0" step="1" required></label>
-      <div class="config-actionbar"><label class="check-row"><input name="Active" type="checkbox" checked> Available to parents</label><p class="status" data-store-status></p><button type="submit">Save item</button></div>
+      <div class="config-actionbar"><label class="check-row"><input name="Active" type="checkbox" checked> ${organisationStore ? 'Available for sale' : 'Available to parents'}</label><p class="status" data-store-status></p><button type="submit">Save item</button></div>
     </form>
     </section>
     <details class="workflow-card config-details"><summary><span>Category management<small>Add, rename or deactivate reusable product categories.</small></span></summary>
-      <form id="storeCategoryForm" class="workflow-form workflow-form-grid config-form"><input type="hidden" name="CategoryId"><label>Category name<input name="Name" required></label><label>Available in<select name="AppliesTo"><option value="${label}">${label}</option><option value="Bookstore,Uniform Store">Both stores</option></select></label><div class="config-actionbar"><label class="check-row"><input name="Active" type="checkbox" checked> Category active</label><p class="status" data-category-status></p><button type="submit">Save category</button></div></form>
+      <form id="storeCategoryForm" class="workflow-form workflow-form-grid config-form"><input type="hidden" name="CategoryId"><label>Category name<input name="Name" required></label><label>Available in<select name="AppliesTo"><option value="${label}">${label}</option>${organisationStore ? '' : '<option value="Bookstore,Uniform Store">Both stores</option>'}</select></label><div class="config-actionbar"><label class="check-row"><input name="Active" type="checkbox" checked> Category active</label><p class="status" data-category-status></p><button type="submit">Save category</button></div></form>
       <div class="workflow-record-list store-category-list">${categories.length ? categories.map((row) => {
         const categoryActive = clean(row.Active || 'YES') !== 'NO';
         return `<article class="workflow-record store-category-row"><div class="store-category-copy"><strong>${escapeHtml(row.Name)}</strong><small>${escapeHtml((row.StoreScopes || []).join(', '))}</small></div><div class="store-category-actions"><button type="button" class="store-category-edit compact-icon-action compact-edit-action" data-edit-category="${escapeHtml(row.CategoryId)}" aria-label="Edit ${escapeHtml(row.Name)}" title="Edit category"><span aria-hidden="true">&#9998;</span></button><label class="store-category-toggle"><input type="checkbox" data-category-active="${escapeHtml(row.CategoryId)}" aria-label="${categoryActive ? 'Deactivate' : 'Activate'} ${escapeHtml(row.Name)}" ${categoryActive ? 'checked' : ''}><span>Active</span></label></div></article>`;
@@ -1220,7 +1230,7 @@ function renderStaffStore(section, store) {
       const nextStatus = ready ? 'Collected' : 'Ready for Collection';
       const statusLabel = collected ? 'Collected' : ready ? 'Ready · Verify Collection' : 'Paid · Mark Ready';
       return `
-      <article class="workflow-record store-order-record"><div class="workflow-record-heading"><div><strong>${escapeHtml(order.DisplayName || order.AccountRef)}</strong><small>${escapeHtml(order.OrderNo)}</small></div></div>
+      <article class="workflow-record store-order-record"><div class="workflow-record-heading"><div><strong>${escapeHtml(order.DisplayName || order.CustomerName || order.AccountRef || 'Customer')}</strong><small>${escapeHtml(order.OrderNo)}</small></div></div>
       <p>${money(order.Amount)} &middot; ${escapeHtml(order.PaidAt || order.CreatedAt || '')}</p>
       <button type="button" class="store-order-status ${collected ? 'is-collected' : ''}" data-store-order="${escapeHtml(order.OrderNo)}" data-store-status="${escapeHtml(nextStatus)}" aria-label="${escapeHtml(statusLabel)} for ${escapeHtml(order.DisplayName || order.AccountRef)}" ${collected ? 'disabled' : ''}>${escapeHtml(statusLabel)}</button></article>`;
     }).join('') : '<p class="muted">No paid orders yet.</p>'}</div>`;
@@ -1272,7 +1282,9 @@ function renderStaffStore(section, store) {
   }));
   panelEl.querySelectorAll('[data-store-order]').forEach((button) => button.addEventListener('click', async () => {
     const collectionReference = button.dataset.storeStatus === 'Collected'
-      ? window.prompt("Scan or enter the student's card ID, admission number, or parent verification code.")
+      ? window.prompt(organisationStore
+        ? 'Enter the order number or customer collection reference.'
+        : "Scan or enter the student's card ID, admission number, or parent verification code.")
       : '';
     if (button.dataset.storeStatus === 'Collected' && !clean(collectionReference)) return;
     button.disabled = true;
@@ -1406,10 +1418,11 @@ async function scanTuckShopNfc(form, button) {
 
 function renderDepartmentOperations(section, data) {
   if (activeSection !== section) return;
-  const labels = { clinic: 'Clinic', kitchen: 'Kitchen', tuckShop: 'Tuck Shop' };
+  const labels = { clinic: 'Clinic', kitchen: 'Kitchen', restaurant: 'Restaurant', tuckShop: 'Tuck Shop' };
   const descriptions = {
     clinic: 'Record student visits, maintain medical supplies, and track every stock receipt or issue.',
     kitchen: 'Maintain food and kitchen supplies and track every stock receipt or issue.',
+    restaurant: 'Manage restaurant and catering inventory, stock movement, low-stock alerts, and supplier market lists.',
     tuckShop: 'Maintain tuck-shop stock while wallet purchases remain synchronized with Finance and Accounting.'
   };
   const label = labels[section];
@@ -1473,7 +1486,7 @@ function renderDepartmentOperations(section, data) {
         <div class="config-actionbar"><p class="status" data-department-status></p><div class="inline-action-group"><button type="button" id="prepareClinicReport">Prepare report</button><button type="submit" ${clinicReport ? '' : 'disabled'}>Send to parent</button></div></div>
       </form>
     </section>` : ''}
-    ${['clinic', 'kitchen'].includes(section) ? `
+    ${['clinic', 'kitchen', 'restaurant'].includes(section) ? `
     <section class="config-card department-primary-workflow"><header class="config-card-heading"><div><small>Procurement</small><h3>Create and email a market list</h3></div></header>
       <form id="marketListForm" class="workflow-form config-form">
         <div class="workflow-form-grid">
@@ -1493,7 +1506,7 @@ function renderDepartmentOperations(section, data) {
     <section class="config-card" id="departmentInventoryWorkspace"><header class="config-card-heading"><div><small>Inventory setup</small><h3>Add or update an item</h3></div></header>
       <form id="departmentInventoryForm" class="workflow-form workflow-form-grid config-form">
         <input type="hidden" name="OriginalItemName">
-        <label>Item name<input name="ItemName" required></label><label>Category<input name="Category" value="${section === 'clinic' ? 'Medical Supply' : section === 'kitchen' ? 'Foodstuff' : 'General Item'}"></label>
+        <label>Item name<input name="ItemName" required></label><label>Category<input name="Category" value="${section === 'clinic' ? 'Medical Supply' : section === 'kitchen' ? 'Foodstuff' : section === 'restaurant' ? 'Food & Beverage' : 'General Item'}"></label>
         <label>Unit<input name="Unit" value="${section === 'kitchen' ? 'kg' : 'pcs'}" required></label><label>Opening/current quantity<input name="Quantity" type="number" min="0" step="0.01" value="0" required></label>
         <label>Reorder level<input name="ReorderLevel" type="number" min="0" step="0.01" value="0"></label><label>Notes<input name="Notes"></label>
         <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" data-normal-text="Save item">Save item</button></div>
@@ -2593,7 +2606,7 @@ async function loadChurchOfferings() {
 
 function renderSection(active) {
   if (!dashboardData) return;
-  panelEl.classList.toggle('school-store-panel', active === 'bookstore' || active === 'uniformStore');
+  panelEl.classList.toggle('school-store-panel', active === 'bookstore' || active === 'uniformStore' || active === 'organizationStore');
   if (active === 'overview') {
     panelEl.innerHTML = '';
     return;
@@ -2655,7 +2668,7 @@ function renderSection(active) {
   } else if (active === 'offerings') {
     panelEl.innerHTML = '<p class="muted">Loading church offering batches...</p>';
     loadChurchOfferings();
-  } else if (active === 'bookstore' || active === 'uniformStore') {
+  } else if (active === 'bookstore' || active === 'uniformStore' || active === 'organizationStore') {
     panelEl.innerHTML = '<p class="muted">Loading store catalog...</p>';
     loadStaffStore(active);
   } else if (active === 'accounts') {
@@ -2673,7 +2686,7 @@ function renderSection(active) {
       { label: 'Debit', value: (row) => money(pick(row, ['Debit', 'Amount'])) },
       { label: 'Status', value: (row) => pick(row, ['Status']) }
     ]);
-  } else if (active === 'clinic' || active === 'kitchen' || active === 'tuckShop') {
+  } else if (active === 'clinic' || active === 'kitchen' || active === 'restaurant' || active === 'tuckShop') {
     panelEl.innerHTML = '<p class="muted">Loading department operations...</p>';
     loadDepartmentOperations(active);
   } else {
@@ -3319,7 +3332,7 @@ function renderStaffUsers() {
         <section class="config-group"><header><strong>Account identity</strong><small>Basic sign-in identity and organizational access.</small></header><div class="config-grid">
           <label>Username <span class="required">*</span><input name="Username" required></label>
           <label>Display name <span class="required">*</span><input name="DisplayName" required></label>
-          <label>Role <select name="Role" required>${['Super Admin','Admissions Officer','Accounts Officer','Management','Department User','Tuck Shop User','Clinic User','Kitchen User','Front Desk','Pastor','Church Administrator','Membership Officer','Treasurer','Auditor'].map((role) => `<option>${role}</option>`).join('')}</select></label>
+          <label>Role <select name="Role" required>${['Super Admin','Admissions Officer','Accounts Officer','Management','Department User','Tuck Shop User','Clinic User','Kitchen User','Store User','Restaurant User','Front Desk','Pastor','Church Administrator','Membership Officer','Treasurer','Auditor'].map((role) => `<option>${role}</option>`).join('')}</select></label>
           <label>Department<input name="Department" placeholder="Required for Department User"></label>
           <label>Branch ID<input name="BranchId" placeholder="Blank allows all branches"></label>
           <label>School section<select name="SchoolSectionAccess"><option>All</option><option>Primary</option><option>Secondary</option></select></label>

@@ -11,7 +11,9 @@ function yes(value) { return ['yes', 'true', '1', 'active'].includes(lower(value
 function referenceKey(value) { return lower(value).split(/[^a-z0-9]+/).filter(Boolean).map((part) => /^\d+$/.test(part) ? String(Number(part)) : part).join('|'); }
 
 function storeForSection(section) {
-  return section === 'uniformStore' ? 'Uniform Store' : 'Bookstore';
+  if (section === 'uniformStore') return 'Uniform Store';
+  if (section === 'organizationStore') return 'Organisation Store';
+  return 'Bookstore';
 }
 
 function visible(rows, user) {
@@ -27,7 +29,7 @@ export async function onRequestPost(context) {
     const user = await requireStaffSession(env, request);
     const body = await request.json().catch(() => ({}));
     const section = clean(body.section || body.Section);
-    if (!['bookstore', 'uniformStore'].includes(section) || !(user.allowedSections || []).includes(section)) {
+    if (!['bookstore', 'uniformStore', 'organizationStore'].includes(section) || !(user.allowedSections || []).includes(section)) {
       const err = new Error('This staff account is not allowed to manage that store.'); err.status = 403; throw err;
     }
     const storeType = storeForSection(section);
@@ -44,8 +46,8 @@ export async function onRequestPost(context) {
       const category = await resolveStoreCategory(env, body, storeType);
       const payload = {
         StoreType: storeType, ItemCode: itemCode, ItemName: itemName,
-        CategoryId: category.CategoryId, Category: category.Name, Size: clean(body.Size), Gender: clean(body.Gender) || 'All',
-        ClassName: canonicalConfiguredClass(clean(body.ClassName) || 'All', configuredClasses), Price: Math.max(0, Number(body.Price || 0) || 0),
+        CategoryId: category.CategoryId, Category: category.Name, Size: clean(body.Size), Gender: section === 'organizationStore' ? 'All' : (clean(body.Gender) || 'All'),
+        ClassName: section === 'organizationStore' ? 'All' : canonicalConfiguredClass(clean(body.ClassName) || 'All', configuredClasses), Price: Math.max(0, Number(body.Price || 0) || 0),
         Quantity: Math.max(0, Math.floor(Number(body.Quantity || 0) || 0)), Active: yes(body.Active ?? true) ? 'YES' : 'NO',
         BranchId: clean(user.branchId) || 'main',
         SchoolSection: clean(user.schoolSectionAccess) === 'All' ? 'Secondary' : clean(user.schoolSectionAccess || 'Secondary'),
@@ -63,10 +65,15 @@ export async function onRequestPost(context) {
       let verifiedReference = '';
       if (status === 'Collected') {
         verifiedReference = clean(body.CollectionReference);
-        if (!verifiedReference) { const err = new Error('Student card ID, admission number, or parent verification code is required.'); err.status = 400; throw err; }
-        const students = await listSchoolCollection(env, 'students');
-        const student = students.find((row) => [row.AccountRef, row.AdmissionNo, row.ApplicationReference].map(referenceKey).filter(Boolean).includes(referenceKey(order.AccountRef || order.AdmissionNo)));
-        const allowed = [order.AccountRef, order.AdmissionNo, student?.AccountRef, student?.AdmissionNo, student?.WalletCardId, student?.VerificationCode, student?.ParentLoginCode].map(referenceKey).filter(Boolean);
+        if (!verifiedReference) { const err = new Error(section === 'organizationStore' ? 'Order number or customer collection reference is required.' : 'Student card ID, admission number, or parent verification code is required.'); err.status = 400; throw err; }
+        let allowed;
+        if (section === 'organizationStore') {
+          allowed = [order.OrderNo, order.Reference, order.CustomerReference, order.Email, order.Phone].map(referenceKey).filter(Boolean);
+        } else {
+          const students = await listSchoolCollection(env, 'students');
+          const student = students.find((row) => [row.AccountRef, row.AdmissionNo, row.ApplicationReference].map(referenceKey).filter(Boolean).includes(referenceKey(order.AccountRef || order.AdmissionNo)));
+          allowed = [order.AccountRef, order.AdmissionNo, student?.AccountRef, student?.AdmissionNo, student?.WalletCardId, student?.VerificationCode, student?.ParentLoginCode].map(referenceKey).filter(Boolean);
+        }
         if (!allowed.includes(referenceKey(verifiedReference))) { const err = new Error('The collection reference does not match this order. Nothing was marked collected.'); err.status = 409; throw err; }
       }
       const payload = { ...order, Status: status, UpdatedAt: new Date().toISOString(), UpdatedBy: user.displayName || user.username };

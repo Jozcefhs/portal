@@ -90,6 +90,8 @@ export async function onRequestPost(context) {
       kitchenInventory,
       clinicMovements,
       kitchenMovements,
+      restaurantInventory,
+      restaurantMovements,
       tuckShopInventory,
       tuckShopMovements
       ,storeItems
@@ -106,10 +108,12 @@ export async function onRequestPost(context) {
       allowed.has('kitchen') ? listCollection(env, 'kitchenInventory') : Promise.resolve([]),
       allowed.has('clinic') ? listCollection(env, 'clinicMovements') : Promise.resolve([]),
       allowed.has('kitchen') ? listCollection(env, 'kitchenMovements') : Promise.resolve([]),
+      allowed.has('restaurant') ? listCollection(env, 'restaurantInventory') : Promise.resolve([]),
+      allowed.has('restaurant') ? listCollection(env, 'restaurantMovements') : Promise.resolve([]),
       allowed.has('tuckShop') ? listCollection(env, 'tuckShopInventory') : Promise.resolve([]),
       allowed.has('tuckShop') ? listCollection(env, 'tuckShopMovements') : Promise.resolve([]),
-      (allowed.has('bookstore') || allowed.has('uniformStore')) ? listCollection(env, 'storeItems') : Promise.resolve([]),
-      (allowed.has('bookstore') || allowed.has('uniformStore')) ? listCollection(env, 'storeOrders') : Promise.resolve([])
+      (allowed.has('bookstore') || allowed.has('uniformStore') || allowed.has('organizationStore')) ? listCollection(env, 'storeItems') : Promise.resolve([]),
+      (allowed.has('bookstore') || allowed.has('uniformStore') || allowed.has('organizationStore')) ? listCollection(env, 'storeOrders') : Promise.resolve([])
     ]);
 
     let accountOverview = null;
@@ -137,6 +141,7 @@ export async function onRequestPost(context) {
     const visibleClinicRecords = staffScope(clinicRecords);
     const visibleClinicMovements = staffScope(clinicMovements);
     const visibleKitchenMovements = staffScope(kitchenMovements);
+    const visibleRestaurantMovements = staffScope(restaurantMovements);
     const visiblePayments = staffScope(payments);
     const visibleInvoices = staffScope(displayInvoices);
     const visibleLedger = staffScope(ledger);
@@ -144,11 +149,13 @@ export async function onRequestPost(context) {
     const visibleStoreOrders = staffScope(storeOrders);
     const visibleClinicInventory = staffScope(clinicInventory);
     const visibleKitchenInventory = staffScope(kitchenInventory);
+    const visibleRestaurantInventory = staffScope(restaurantInventory);
     const visibleTuckShopInventory = staffScope(tuckShopInventory);
     const visibleTuckShopMovements = staffScope(tuckShopMovements);
     const walletPurchases = visibleLedger.filter((row) => clean(row.EntryType).toLowerCase() === 'wallet purchase');
     const lowClinic = visibleClinicInventory.filter((row) => toNumber(row.ReorderLevel) > 0 && toNumber(row.Quantity) <= toNumber(row.ReorderLevel));
     const lowKitchen = visibleKitchenInventory.filter((row) => toNumber(row.ReorderLevel) > 0 && toNumber(row.Quantity) <= toNumber(row.ReorderLevel));
+    const lowRestaurant = visibleRestaurantInventory.filter((row) => toNumber(row.ReorderLevel) > 0 && toNumber(row.Quantity) <= toNumber(row.ReorderLevel));
     const lowTuckShop = visibleTuckShopInventory.filter((row) => toNumber(row.ReorderLevel) > 0 && toNumber(row.Quantity) <= toNumber(row.ReorderLevel));
 
     const allDepartments = {
@@ -171,6 +178,11 @@ export async function onRequestPost(context) {
         lowStock: publicRows(lowKitchen, 80),
         movements: publicRows(sortRecent(visibleKitchenMovements, ['Date', 'CreatedAt']), 80)
       },
+      restaurant: {
+        inventory: publicRows(sortRecent(visibleRestaurantInventory, ['LastUpdated', 'UpdatedAt']), 80),
+        lowStock: publicRows(lowRestaurant, 80),
+        movements: publicRows(sortRecent(visibleRestaurantMovements, ['Date', 'CreatedAt']), 80)
+      },
       tuckShop: {
         purchases: publicRows(sortRecent(walletPurchases, ['Date', 'CreatedAt']), 100),
         inventory: publicRows(sortRecent(visibleTuckShopInventory, ['LastUpdated', 'UpdatedAt']), 100),
@@ -184,6 +196,10 @@ export async function onRequestPost(context) {
       uniformStore: {
         items: publicRows(visibleStoreItems.filter((row) => clean(row.StoreType) === 'Uniform Store'), 200),
         orders: publicRows(sortRecent(visibleStoreOrders.filter((row) => clean(row.StoreType) === 'Uniform Store'), ['PaidAt', 'CreatedAt']), 200)
+      },
+      organizationStore: {
+        items: publicRows(visibleStoreItems.filter((row) => clean(row.StoreType) === 'Organisation Store'), 200),
+        orders: publicRows(sortRecent(visibleStoreOrders.filter((row) => clean(row.StoreType) === 'Organisation Store'), ['PaidAt', 'CreatedAt']), 200)
       }
     };
     const departments = Object.fromEntries(Object.entries(allDepartments).filter(([key]) => allowed.has(key)));
@@ -207,6 +223,14 @@ export async function onRequestPost(context) {
     if (allowed.has('kitchen')) {
       summary.kitchenInventory = visibleKitchenInventory.length;
       summary.lowKitchenStock = lowKitchen.length;
+    }
+    if (allowed.has('restaurant')) {
+      summary.restaurantInventory = visibleRestaurantInventory.length;
+      summary.lowRestaurantStock = lowRestaurant.length;
+    }
+    if (allowed.has('organizationStore')) {
+      summary.organizationStoreItems = visibleStoreItems.filter((row) => clean(row.StoreType) === 'Organisation Store').length;
+      summary.organizationStoreOrders = visibleStoreOrders.filter((row) => clean(row.StoreType) === 'Organisation Store').length;
     }
     if (allowed.has('tuckShop')) {
       summary.tuckShopPurchases = walletPurchases.length;

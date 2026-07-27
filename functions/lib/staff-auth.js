@@ -137,7 +137,9 @@ function inferDepartment(user) {
   return clean(user.Department || user.department || ({
     'Tuck Shop User': 'Tuck Shop',
     'Clinic User': 'Clinic',
-    'Kitchen User': 'Kitchen'
+    'Kitchen User': 'Kitchen',
+    'Store User': 'Organisation Store',
+    'Restaurant User': 'Restaurant'
   }[clean(user.Role || user.role)] || ''));
 }
 
@@ -173,16 +175,18 @@ export function allowedSectionsFor(user = {}, featureFlags = null) {
     featureFlags
   );
   const roleSections = {
-    'Super Admin': ['admissions', 'formPurchases', 'students', 'accounts', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'staffUsers'],
+    'Super Admin': ['admissions', 'formPurchases', 'students', 'accounts', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'staffUsers'],
     'Admissions Officer': ['admissions', 'formPurchases', 'students', 'financeRequests', 'payroll'],
     'Accounts Officer': ['students', 'accounts', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
     Management: ['admissions', 'formPurchases', 'students', 'accounts', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
     'Tuck Shop User': ['tuckShop', 'financeRequests', 'payroll'],
     'Clinic User': ['clinic', 'financeRequests', 'payroll'],
     'Kitchen User': ['kitchen', 'financeRequests', 'payroll'],
+    'Store User': ['organizationStore', 'financeRequests', 'payroll'],
+    'Restaurant User': ['restaurant', 'financeRequests', 'payroll'],
     'Front Desk': ['admissions', 'formPurchases', 'students', 'financeRequests', 'payroll'],
     Pastor: ['members', 'services', 'funds', 'offerings', 'donations'],
-    'Church Administrator': ['members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll'],
+    'Church Administrator': ['members', 'services', 'funds', 'offerings', 'donations', 'organizationStore', 'restaurant', 'financeRequests', 'payroll'],
     'Membership Officer': ['members', 'services'],
     Treasurer: ['funds', 'offerings', 'donations', 'financeRequests', 'payroll'],
     Auditor: ['funds', 'offerings', 'donations', 'financeRequests']
@@ -190,6 +194,8 @@ export function allowedSectionsFor(user = {}, featureFlags = null) {
   if (role === 'Department User') {
     if (department.includes('clinic')) return filterSectionsForFeatures(['clinic', 'financeRequests', 'payroll'], featureFlags);
     if (department.includes('kitchen')) return filterSectionsForFeatures(['kitchen', 'financeRequests', 'payroll'], featureFlags);
+    if (department.includes('restaurant') || department.includes('catering')) return filterSectionsForFeatures(['restaurant', 'financeRequests', 'payroll'], featureFlags);
+    if (department.includes('store') || department.includes('retail') || department.includes('bookshop')) return filterSectionsForFeatures(['organizationStore', 'financeRequests', 'payroll'], featureFlags);
     if (department.includes('tuck')) return filterSectionsForFeatures(['tuckShop', 'financeRequests', 'payroll'], featureFlags);
     if (department.includes('account') || department.includes('finance')) return filterSectionsForFeatures(['accounts', 'financeRequests', 'payroll'], featureFlags);
     return filterSectionsForFeatures(['financeRequests', 'payroll'], featureFlags);

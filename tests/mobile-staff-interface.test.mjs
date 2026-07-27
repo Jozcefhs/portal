@@ -208,7 +208,7 @@ test('password visibility controls stay compact and reserve input space', () => 
 test('every staff module uses a corresponding navigation icon', () => {
   ['overview', 'admissions', 'formPurchases', 'students', 'members', 'services', 'funds', 'offerings',
     'donations', 'accounts', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop',
-    'bookstore', 'uniformStore', 'staffUsers'].forEach((key) => {
+    'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'staffUsers'].forEach((key) => {
     assert.match(adminJs, new RegExp(`${key}: '\\\\u`), `${key} should define an icon`);
   });
   assert.match(adminJs, /class="staff-tab-icon"[\s\S]*?tabIcons\[key\]/);

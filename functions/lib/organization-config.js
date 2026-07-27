@@ -38,7 +38,9 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     offerings: true,
     donations: true,
     departments: true,
-    programs: true
+    programs: true,
+    retail: true,
+    restaurant: true
   }),
   church: Object.freeze({
     branches: true,
@@ -58,7 +60,9 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     offerings: true,
     donations: true,
     departments: true,
-    programs: true
+    programs: true,
+    retail: true,
+    restaurant: true
   }),
   organization: Object.freeze({
     branches: true,
@@ -167,6 +171,8 @@ const SECTION_FEATURES = Object.freeze({
   tuckShop: 'stores',
   bookstore: 'stores',
   uniformStore: 'stores',
+  organizationStore: 'retail',
+  restaurant: 'restaurant',
   members: 'members',
   services: 'services',
   funds: 'funds',

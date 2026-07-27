@@ -1,7 +1,14 @@
 import { batchUpsertDocuments, listCollection, upsertDocument } from './firestore.js';
 
 const clean = (value) => String(value ?? '').trim().replace(/\s+/g, ' ');
-const scopeName = (value) => clean(value).toLowerCase().includes('uniform') ? 'Uniform Store' : 'Bookstore';
+const scopeName = (value) => {
+  const normalized = clean(value).toLowerCase();
+  if (normalized.includes('uniform')) return 'Uniform Store';
+  if (normalized.includes('organisation') || normalized.includes('organization') || normalized.includes('church') || normalized.includes('ministry')) {
+    return 'Organisation Store';
+  }
+  return 'Bookstore';
+};
 const safeId = (value) => clean(value).replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 90) || 'category';
 export const categoryKey = (value) => clean(value).normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
   .replace(/[&/+]/g, ' and ').replace(/\b(accessories)\b/g, 'accessory').replace(/\b(books)\b/g, 'book')

@@ -40,6 +40,8 @@ test('church edition enables church boundaries while retaining shared finance mo
   assert.equal(flags.funds, true);
   assert.equal(flags.offerings, true);
   assert.equal(flags.donations, true);
+  assert.equal(flags.retail, true);
+  assert.equal(flags.restaurant, true);
   assert.equal(flags.admissions, false);
   assert.deepEqual(
     filterSectionsForFeatures(
@@ -50,7 +52,7 @@ test('church edition enables church boundaries while retaining shared finance mo
   );
   assert.deepEqual(
     allowedSectionsFor({ role: 'Super Admin' }, flags),
-    ['members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'staffUsers']
+    ['members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'organizationStore', 'restaurant', 'staffUsers']
   );
 });
 

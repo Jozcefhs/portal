@@ -17,6 +17,7 @@ function sameRef(a, b) { return lower(a).replace(/[^a-z0-9]/g, '') === lower(b).
 const CONFIG = {
   clinic: { label: 'Clinic', inventory: 'clinicInventory', movements: 'clinicMovements', prefix: 'MED', category: 'Medical Supply', unit: 'pcs' },
   kitchen: { label: 'Kitchen', inventory: 'kitchenInventory', movements: 'kitchenMovements', prefix: 'KIT', category: 'Foodstuff', unit: 'kg' },
+  restaurant: { label: 'Restaurant', inventory: 'restaurantInventory', movements: 'restaurantMovements', prefix: 'RST', category: 'Food & Beverage', unit: 'pcs' },
   tuckShop: { label: 'Tuck Shop', inventory: 'tuckShopInventory', movements: 'tuckShopMovements', prefix: 'TUK', category: 'General Item', unit: 'pcs' }
 };
 
@@ -274,7 +275,7 @@ export async function onRequestPost(context) {
     }
     else if (action === 'prepareclinicreport' && section === 'clinic') actionResult = { clinicReport: await prepareClinicReport(env, body, user) };
     else if (action === 'sendclinicreport' && section === 'clinic') actionResult = { clinicReport: await sendClinicReport(env, body, user) };
-    else if (action === 'sendmarketlist' && ['clinic', 'kitchen'].includes(section)) await sendMarketList(env, section, body, user);
+    else if (action === 'sendmarketlist' && ['clinic', 'kitchen', 'restaurant'].includes(section)) await sendMarketList(env, section, body, user);
     else if (action !== 'list') { const err = new Error('Choose a valid department action.'); err.status = 400; throw err; }
     const data = await loadDepartment(env, section, user);
     Object.assign(data, actionResult || {});

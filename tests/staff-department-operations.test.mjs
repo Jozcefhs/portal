@@ -11,11 +11,12 @@ const [api, adminApi, adminJs, backend, emailService] = await Promise.all([
   readFile(new URL('functions/lib/email-service.js', portalRoot), 'utf8')
 ]);
 
-test('clinic, kitchen and tuck shop operations require staff section access', () => {
+test('clinic, kitchen, restaurant and tuck shop operations require staff section access', () => {
   assert.match(api, /requireStaffSession\(env, request\)/);
   assert.match(api, /!\(user\.allowedSections \|\| \[\]\)\.includes\(section\)/);
   assert.match(api, /clinicInventory/);
   assert.match(api, /kitchenInventory/);
+  assert.match(api, /restaurantInventory/);
   assert.match(api, /tuckShopInventory/);
 });
 
@@ -36,7 +37,7 @@ test('clinic web workflow records visits and all departments manage stock', () =
   assert.match(adminJs, /saveClinicRecord/);
   assert.match(adminJs, /id="departmentInventoryForm"/);
   assert.match(adminJs, /id="departmentMovementForm"/);
-  assert.match(adminJs, /active === 'clinic' \|\| active === 'kitchen' \|\| active === 'tuckShop'/);
+  assert.match(adminJs, /active === 'clinic' \|\| active === 'kitchen' \|\| active === 'restaurant' \|\| active === 'tuckShop'/);
 });
 
 test('tuck shop dashboard includes inventory without bypassing wallet purchase history', () => {
@@ -83,8 +84,8 @@ test('clinic reports use the parent email stored on the scoped student record', 
   assert.match(adminJs, /id="clinicReportForm"/);
 });
 
-test('clinic and kitchen market lists are emailed and audited without exposing credentials', () => {
-  assert.match(api, /\['clinic', 'kitchen'\]\.includes\(section\)/);
+test('clinic, kitchen and restaurant market lists are emailed and audited without exposing credentials', () => {
+  assert.match(api, /\['clinic', 'kitchen', 'restaurant'\]\.includes\(section\)/);
   assert.match(api, /Supplier Market List/);
   assert.match(adminJs, /id="marketListForm"/);
   assert.match(emailService, /env\.BREVO_API_KEY/);
