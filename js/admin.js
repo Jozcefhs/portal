@@ -1312,23 +1312,31 @@ function renderDepartmentOperations(section, data) {
   });
   panelEl.innerHTML = `
     <div class="workflow-intro"><div><p class="eyebrow">Department operations</p><h2>${label}</h2><p class="muted">${descriptions[section]}</p></div><button type="button" class="workflow-icon-action" id="refreshDepartmentOperations" aria-label="Refresh ${label}">Refresh</button></div>
+    ${section === 'tuckShop' ? `<nav class="department-workspace-links" aria-label="Tuck shop workspaces">
+      <button type="button" class="active" data-department-jump="tuckShopPOS"><span aria-hidden="true">&#128722;</span> Student Purchase</button>
+      <button type="button" data-department-jump="departmentInventoryWorkspace"><span aria-hidden="true">&#128230;</span> Inventory</button>
+      <button type="button" data-department-jump="departmentStockWorkspace"><span aria-hidden="true">&#8645;</span> Stock In / Out</button>
+      <button type="button" data-department-jump="departmentPurchaseHistory"><span aria-hidden="true">&#128203;</span> Purchase History</button>
+    </nav>` : ''}
     ${section === 'tuckShop' ? `
-    <section class="config-card department-primary-workflow"><header class="config-card-heading"><div><small>Student wallet POS</small><h3>Record a tuck-shop purchase</h3></div></header>
+    <section class="config-card department-primary-workflow tuck-shop-pos-workspace" id="tuckShopPOS"><header class="config-card-heading"><div><small>Student wallet, card or admission lookup</small><h3>Student Purchase</h3><p>Scan a wallet card or enter the student's admission number, confirm the wallet, then record the sale.</p></div><span class="workspace-feature-icon" aria-hidden="true">&#128722;</span></header>
+      <div class="purchase-step-label"><strong>1</strong><span>Find the student wallet</span></div>
       <form id="walletLookupForm" class="workflow-form workflow-form-grid config-form">
         <label>Wallet card ID<input name="WalletCardId" autocomplete="off" placeholder="Scan or enter card ID"></label>
         <label>Admission number<input name="AccountRef" autocomplete="off" placeholder="Or enter admission number"></label>
-        <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit">Find student</button></div>
+        <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit">&#128269; Find Student Wallet</button></div>
       </form>
       ${wallet ? `<div class="wallet-account-result">
         <div><small>Student</small><strong>${escapeHtml(wallet.DisplayName)}</strong><span>${escapeHtml(wallet.AdmissionNo || wallet.AccountRef)} &middot; ${escapeHtml(wallet.ClassName || '')}</span></div>
         <div><small>Wallet balance</small><strong>${money(wallet.WalletBalance)}</strong><span>${escapeHtml(wallet.WalletCardStatus || 'Active')} &middot; Spent today ${money(wallet.WalletSpentToday)}</span></div>
       </div>
+      <div class="purchase-step-label"><strong>2</strong><span>Enter the purchase and complete the sale</span></div>
       <form id="walletPurchaseForm" class="workflow-form workflow-form-grid config-form">
         <input type="hidden" name="AccountRef" value="${escapeHtml(wallet.AccountRef)}">
-        <label>Amount<input name="Amount" type="number" min="0.01" step="0.01" required></label>
-        <label>Description<input name="Description" value="Tuck shop purchase" required></label>
+        <label>Purchase amount<input name="Amount" type="number" min="0.01" step="0.01" required placeholder="0.00"></label>
+        <label>Items / description<input name="Description" value="Tuck shop purchase" required placeholder="Describe the items purchased"></label>
         <label>Wallet PIN (when required)<input name="WalletPin" type="password" inputmode="numeric" autocomplete="off"></label>
-        <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit">Record purchase</button></div>
+        <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit">&#10003; Complete Wallet Purchase</button></div>
       </form>` : '<p class="muted">Find the student before recording a purchase. Card limits, balance and PIN rules will be checked automatically.</p>'}
     </section>` : ''}
     ${section === 'clinic' ? `
@@ -1369,7 +1377,7 @@ function renderDepartmentOperations(section, data) {
         <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" ${inventory.length ? '' : 'disabled'}>Send market list</button></div>
       </form>
     </section>` : ''}
-    <section class="config-card"><header class="config-card-heading"><div><small>Inventory setup</small><h3>Add or update an item</h3></div></header>
+    <section class="config-card" id="departmentInventoryWorkspace"><header class="config-card-heading"><div><small>Inventory setup</small><h3>Add or update an item</h3></div></header>
       <form id="departmentInventoryForm" class="workflow-form workflow-form-grid config-form">
         <input type="hidden" name="OriginalItemName">
         <label>Item name<input name="ItemName" required></label><label>Category<input name="Category" value="${section === 'clinic' ? 'Medical Supply' : section === 'kitchen' ? 'Foodstuff' : 'General Item'}"></label>
@@ -1378,7 +1386,7 @@ function renderDepartmentOperations(section, data) {
         <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" data-normal-text="Save item">Save item</button></div>
       </form>
     </section>
-    <section class="config-card"><header class="config-card-heading"><div><small>Stock control</small><h3>Record stock in or out</h3></div></header>
+    <section class="config-card" id="departmentStockWorkspace"><header class="config-card-heading"><div><small>Stock control</small><h3>Record stock in or out</h3></div></header>
       <form id="departmentMovementForm" class="workflow-form workflow-form-grid config-form">
         <label>Item<select name="ItemName" required><option value="">Choose item</option>${inventory.map((row) => `<option>${escapeHtml(row.ItemName)}</option>`).join('')}</select></label>
         <label>Movement<select name="MovementType"><option value="IN">Stock In</option><option value="OUT">Stock Out</option></select></label>
@@ -1393,17 +1401,21 @@ function renderDepartmentOperations(section, data) {
       { label: 'Class', value: (row) => pick(row, ['ClassName']) }, { label: 'Complaint', value: (row) => pick(row, ['Complaint']) },
       { label: 'Treatment', value: (row) => pick(row, ['Treatment']) }, { label: 'Disposition', value: (row) => pick(row, ['Disposition']) }
     ]) : ''}
-    ${section === 'tuckShop' ? table('Wallet Purchases', purchases, [
+    ${section === 'tuckShop' ? `<div id="departmentPurchaseHistory">${table('Wallet Purchases', purchases, [
       { label: 'Date', value: (row) => pick(row, ['Date']) }, { label: 'Student', value: (row) => pick(row, ['DisplayName']) },
       { label: 'Class', value: (row) => pick(row, ['ClassName']) }, { label: 'Amount', value: (row) => money(pick(row, ['Debit'])) },
       { label: 'Description', value: (row) => pick(row, ['Description']) }
-    ]) : ''}
+    ])}</div>` : ''}
     ${table('Recent Stock Movements', data.movements || [], [
       { label: 'Date', value: (row) => pick(row, ['Date']) }, { label: 'Item', value: (row) => pick(row, ['ItemName']) },
       { label: 'Type', value: (row) => pick(row, ['MovementType']) }, { label: 'Quantity', value: (row) => pick(row, ['Quantity']) },
       { label: 'Reason', value: (row) => pick(row, ['Reason']) }, { label: 'Recorded by', value: (row) => pick(row, ['RecordedBy']) }
     ])}`;
   document.getElementById('refreshDepartmentOperations')?.addEventListener('click', () => loadDepartmentOperations(section));
+  panelEl.querySelectorAll('[data-department-jump]').forEach((button) => button.addEventListener('click', () => {
+    panelEl.querySelectorAll('[data-department-jump]').forEach((item) => item.classList.toggle('active', item === button));
+    document.getElementById(button.dataset.departmentJump)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
   document.getElementById('clinicRecordForm')?.addEventListener('submit', (event) => { event.preventDefault(); submitDepartmentAction(section, 'saveClinicRecord', event.currentTarget); });
   document.getElementById('walletLookupForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();

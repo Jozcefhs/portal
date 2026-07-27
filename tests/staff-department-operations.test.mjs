@@ -57,6 +57,14 @@ test('tuck shop web POS reuses the authoritative wallet and accounting workflow'
   assert.match(adminJs, /id="walletPurchaseForm"/);
 });
 
+test('tuck shop exposes an unmistakable student purchase workspace', () => {
+  assert.match(adminJs, /data-department-jump="tuckShopPOS"/);
+  assert.match(adminJs, /<h3>Student Purchase<\/h3>/);
+  assert.match(adminJs, /Find Student Wallet/);
+  assert.match(adminJs, /Complete Wallet Purchase/);
+  assert.match(adminJs, /departmentPurchaseHistory/);
+});
+
 test('clinic reports use the parent email stored on the scoped student record', () => {
   assert.match(api, /function parentEmailFor/);
   assert.match(api, /sendClinicReport/);
