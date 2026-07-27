@@ -6,7 +6,7 @@
   <title>Organisation Staff Portal</title>
   <meta name="theme-color" content="#071b33">
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260727-mobile-logo-refresh">
+  <link rel="stylesheet" href="css/style.css?v=20260727-mobile-theme-admissions">
 </head>
 <body class="staff-page">
   <header class="staff-topbar">
@@ -27,7 +27,9 @@
         <span id="staffAvatar" class="staff-avatar" aria-hidden="true"><img id="staffAvatarImage" alt="" hidden><span id="staffAvatarFallback">S</span></span>
         <span class="staff-identity-copy"><strong id="staffDisplayName"></strong><small id="staffRole"></small></span>
       </button>
-      <button type="button" id="staffSignOut" class="dashboard-signout">Sign Out</button>
+      <button type="button" id="staffSignOut" class="dashboard-signout staff-header-signout" aria-label="Sign out" title="Sign out">
+        <span aria-hidden="true">&#8618;</span>
+      </button>
     </div>
   </header>
 
@@ -54,6 +56,9 @@
       <div class="staff-app-layout">
         <aside class="staff-sidebar" id="staffSidebar">
           <div class="staff-sidebar-heading">
+            <button type="button" id="staffSidebarThemeToggle" class="staff-sidebar-theme" aria-label="Switch colour theme" title="Switch colour theme">
+              <span id="staffSidebarThemeToggleIcon" aria-hidden="true">&#9790;</span>
+            </button>
             <small>Workspace</small>
             <strong id="staffWorkspaceTitle">Operations Centre</strong>
           </div>
@@ -204,6 +209,6 @@
 
   <script src="js/site-config.js?v=20260718-personalized-ui"></script>
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
-  <script src="js/admin.js?v=20260727-mobile-logo-refresh"></script>
+  <script src="js/admin.js?v=20260727-mobile-theme-admissions"></script>
 </body>
 </html>

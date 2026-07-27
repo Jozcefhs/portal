@@ -29,6 +29,25 @@ test('desktop header owns refresh and theme controls while the mobile logo refre
   assert.match(portalCss, /@media \(max-width:680px\)\{[\s\S]*?\.staff-desktop-tools\{display:none\}[\s\S]*?\.staff-brand \.nav-logo\{cursor:pointer\}[\s\S]*?\.staff-brand\.is-refreshing \.nav-logo\{animation:button-spin/);
 });
 
+test('mobile sidebar exposes the theme toggle in its workspace heading', () => {
+  assert.match(adminHtml, /id="staffSidebarThemeToggle"[\s\S]*?id="staffSidebarThemeToggleIcon"/);
+  assert.match(adminJs, /sidebarThemeToggleButton\.addEventListener\('click', toggleStaffTheme\)/);
+  assert.match(portalCss, /\.staff-sidebar-theme\{display:none\}/);
+  assert.match(portalCss, /@media \(max-width:680px\)\{[\s\S]*?\.staff-sidebar \.staff-sidebar-heading\{position:relative;padding-right:58px\}[\s\S]*?\.staff-sidebar-theme\{position:absolute;right:4px;top:0;display:grid/);
+});
+
+test('desktop header sign-out uses a compact accessible icon', () => {
+  assert.match(adminHtml, /id="staffSignOut" class="dashboard-signout staff-header-signout" aria-label="Sign out" title="Sign out"[\s\S]*?<span aria-hidden="true">/);
+  assert.doesNotMatch(adminHtml, /id="staffSignOut"[^>]*>Sign Out<\/button>/);
+  assert.match(portalCss, /\.staff-header-signout\{display:grid;place-items:center;flex:0 0 38px;width:38px;height:38px;min-height:38px/);
+});
+
+test('enrolled applications count as admitted rather than pending', () => {
+  assert.match(adminJs, /function applicationIsAdmitted\(row\)[\s\S]*?\/admitted\|accepted\|approved\|enrolled\//);
+  assert.match(adminJs, /label: 'Admitted', value: rows\.filter\(applicationIsAdmitted\)\.length/);
+  assert.match(adminJs, /label: 'Pending', value: rows\.filter\(\(row\) => !applicationIsAdmitted\(row\) && !applicationIsRejected\(row\)\)\.length/);
+});
+
 test('staff drawer exposes a dedicated sign-out action', () => {
   assert.match(adminHtml, /id="staffSidebarSignOut"/);
   assert.match(adminJs, /sidebarSignOutButton\.addEventListener\('click'/);

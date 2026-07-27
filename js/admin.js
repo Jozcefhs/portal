@@ -21,6 +21,8 @@ const sidebarSignOutButton = document.getElementById('staffSidebarSignOut');
 const headerRefreshButton = document.getElementById('staffHeaderRefresh');
 const themeToggleButton = document.getElementById('staffThemeToggle');
 const themeToggleIcon = document.getElementById('staffThemeToggleIcon');
+const sidebarThemeToggleButton = document.getElementById('staffSidebarThemeToggle');
+const sidebarThemeToggleIcon = document.getElementById('staffSidebarThemeToggleIcon');
 const summaryEl = document.getElementById('adminSummary');
 const dashboardChartsEl = document.getElementById('dashboardCharts');
 const tabsEl = document.getElementById('adminTabs');
@@ -159,9 +161,13 @@ function setDashboardRefreshLoading(loading) {
 function updateStaffThemeToggle() {
   const darkTheme = document.documentElement.dataset.theme === 'dark';
   const label = darkTheme ? 'Switch to light mode' : 'Switch to dark mode';
-  themeToggleIcon.textContent = darkTheme ? '\u2600' : '\u263e';
-  themeToggleButton.setAttribute('aria-label', label);
-  themeToggleButton.title = label;
+  [themeToggleIcon, sidebarThemeToggleIcon].forEach((icon) => {
+    icon.textContent = darkTheme ? '\u2600' : '\u263e';
+  });
+  [themeToggleButton, sidebarThemeToggleButton].forEach((button) => {
+    button.setAttribute('aria-label', label);
+    button.title = label;
+  });
 }
 
 function toggleStaffTheme() {
@@ -695,6 +701,21 @@ function renderSummaryCards(cards = []) {
     </div>`).join('');
 }
 
+function applicationOutcomeValues(row) {
+  return ['Status', 'ResultStatus', 'EnrollmentStatus']
+    .map((key) => clean(row?.[key]).toLowerCase())
+    .filter(Boolean);
+}
+
+function applicationIsRejected(row) {
+  return applicationOutcomeValues(row).some((status) => /rejected|declined|failed|not admitted/.test(status));
+}
+
+function applicationIsAdmitted(row) {
+  if (applicationIsRejected(row)) return false;
+  return applicationOutcomeValues(row).some((status) => /admitted|accepted|approved|enrolled/.test(status));
+}
+
 function renderModuleSummary(active, liveData = null) {
   if (active === 'overview') {
     renderSummary(dashboardData?.summary || {});
@@ -707,8 +728,8 @@ function renderModuleSummary(active, liveData = null) {
     const rows = departments.admissions || [];
     cards = [
       { icon, label: 'Applications', value: rows.length },
-      { icon: '\u2713', label: 'Admitted', value: rows.filter((row) => /admitted|accepted|approved/i.test(clean(pick(row, ['Status', 'ResultStatus'])))).length },
-      { icon: '\u231B', label: 'Pending', value: rows.filter((row) => !/admitted|accepted|approved|rejected/i.test(clean(pick(row, ['Status', 'ResultStatus'])))).length },
+      { icon: '\u2713', label: 'Admitted', value: rows.filter(applicationIsAdmitted).length },
+      { icon: '\u231B', label: 'Pending', value: rows.filter((row) => !applicationIsAdmitted(row) && !applicationIsRejected(row)).length },
       { icon: '\u{1F4CE}', label: 'With Documents', value: rows.filter((row) => admissionDocuments.some(([key]) => uploadedDocument(row, key))).length }
     ];
   } else if (active === 'formPurchases') {
@@ -2976,6 +2997,7 @@ staffBrand.addEventListener('click', (event) => {
 });
 headerRefreshButton.addEventListener('click', loadDashboard);
 themeToggleButton.addEventListener('click', toggleStaffTheme);
+sidebarThemeToggleButton.addEventListener('click', toggleStaffTheme);
 new MutationObserver(updateStaffThemeToggle).observe(document.documentElement, {
   attributes: true,
   attributeFilter: ['data-theme']
