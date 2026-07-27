@@ -16,6 +16,16 @@ test('mobile staff header no longer renders the drawer toggle button', () => {
   assert.match(adminHtml, /id="staffAvatar"/);
 });
 
+test('desktop header owns refresh and theme controls while mobile keeps its hero refresh', () => {
+  assert.match(adminHtml, /id="staffHeaderRefresh"[\s\S]*?id="staffThemeToggle"/);
+  assert.match(adminHtml, /id="staffRefresh"/);
+  assert.match(adminJs, /headerRefreshButton\.addEventListener\('click', loadDashboard\)/);
+  assert.match(adminJs, /themeToggleButton\.addEventListener\('click', toggleStaffTheme\)/);
+  assert.match(adminJs, /DIGCPreferences\.save\(\{ \.\.\.preferences, theme: nextTheme \}\)/);
+  assert.match(portalCss, /\.staff-page \.staff-welcome #staffRefresh\{display:none\}/);
+  assert.match(portalCss, /@media \(max-width:680px\)\{[\s\S]*?\.staff-desktop-tools\{display:none\}[\s\S]*?\.staff-page \.staff-welcome #staffRefresh\{display:block\}/);
+});
+
 test('staff drawer exposes a dedicated sign-out action', () => {
   assert.match(adminHtml, /id="staffSidebarSignOut"/);
   assert.match(adminJs, /sidebarSignOutButton\.addEventListener\('click'/);
@@ -47,6 +57,9 @@ test('mobile summary cards are equal, centered, legible, and color coded', () =>
 
 test('summary-card contents are centered on desktop as well as mobile', () => {
   assert.match(portalCss, /\.staff-page \.staff-summary>div\{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center\}/);
+  assert.match(portalCss, /@media \(min-width:681px\)\{[\s\S]*?\.staff-page \.staff-summary>div:nth-child\(4n\+2\)\{background:linear-gradient/);
+  assert.match(portalCss, /@media \(min-width:681px\)\{[\s\S]*?\.staff-page \.staff-summary>div:nth-child\(4n\+3\)\{background:linear-gradient/);
+  assert.match(portalCss, /@media \(min-width:681px\)\{[\s\S]*?\.staff-page \.staff-summary>div:nth-child\(4n\+4\)\{background:linear-gradient/);
 });
 
 test('sidebar keeps account actions visible and database status last', () => {
@@ -111,6 +124,8 @@ test('dark mode covers staff configuration and account-management surfaces', () 
   assert.match(portalCss, /html\[data-theme="dark"\] \.config-switch/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.config-option-list/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.config-option-list label/);
+  assert.match(portalCss, /\.config-option-list \.check-row\{display:flex;align-items:center;gap:8px;min-height:28px/);
+  assert.match(portalCss, /\.config-option-list \.check-row input\[type="checkbox"\]\{flex:0 0 15px;width:15px;height:15px;min-height:15px;margin:0/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.config-dialog-actions/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.staff-user-row/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.staff-module-dialog/);

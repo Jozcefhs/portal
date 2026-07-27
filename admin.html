@@ -6,7 +6,7 @@
   <title>Organisation Staff Portal</title>
   <meta name="theme-color" content="#071b33">
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260727-settings-dark-contrast">
+  <link rel="stylesheet" href="css/style.css?v=20260727-desktop-header-tools">
 </head>
 <body class="staff-page">
   <header class="staff-topbar">
@@ -15,6 +15,14 @@
       <span><strong data-school-name>Organisation Management Suite</strong><small id="staffEditionLabel">Web Companion</small></span>
     </a>
     <div id="staffIdentity" class="staff-identity" hidden>
+      <div class="staff-desktop-tools" aria-label="Dashboard controls">
+        <button type="button" id="staffHeaderRefresh" class="staff-header-icon" aria-label="Refresh dashboard" title="Refresh dashboard">
+          <span aria-hidden="true">&#8635;</span>
+        </button>
+        <button type="button" id="staffThemeToggle" class="staff-header-icon" aria-label="Switch colour theme" title="Switch colour theme">
+          <span id="staffThemeToggleIcon" aria-hidden="true">&#9790;</span>
+        </button>
+      </div>
       <button type="button" id="staffProfileTrigger" class="staff-profile-trigger" aria-label="Edit my profile" title="Edit my profile">
         <span id="staffAvatar" class="staff-avatar" aria-hidden="true"><img id="staffAvatarImage" alt="" hidden><span id="staffAvatarFallback">S</span></span>
         <span class="staff-identity-copy"><strong id="staffDisplayName"></strong><small id="staffRole"></small></span>
@@ -197,6 +205,6 @@
 
   <script src="js/site-config.js?v=20260718-personalized-ui"></script>
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
-  <script src="js/admin.js?v=20260727-credential-manager-retry"></script>
+  <script src="js/admin.js?v=20260727-desktop-header-tools"></script>
 </body>
 </html>

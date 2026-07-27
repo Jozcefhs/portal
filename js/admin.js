@@ -18,6 +18,9 @@ const welcomeTitle = document.getElementById('staffWelcomeTitle');
 const signOutButton = document.getElementById('staffSignOut');
 const sidebarSignOutButton = document.getElementById('staffSidebarSignOut');
 const refreshButton = document.getElementById('staffRefresh');
+const headerRefreshButton = document.getElementById('staffHeaderRefresh');
+const themeToggleButton = document.getElementById('staffThemeToggle');
+const themeToggleIcon = document.getElementById('staffThemeToggleIcon');
 const summaryEl = document.getElementById('adminSummary');
 const dashboardChartsEl = document.getElementById('dashboardCharts');
 const tabsEl = document.getElementById('adminTabs');
@@ -142,6 +145,32 @@ function setButtonLoading(button, loading, loadingText, normalText) {
   button.textContent = loading ? loadingText : normalText;
 }
 
+function setDashboardRefreshLoading(loading) {
+  setButtonLoading(refreshButton, loading, 'Refreshing...', 'Refresh Dashboard');
+  headerRefreshButton.disabled = loading;
+  headerRefreshButton.classList.toggle('is-loading', loading);
+  headerRefreshButton.setAttribute('aria-busy', loading ? 'true' : 'false');
+  const label = loading ? 'Refreshing dashboard' : 'Refresh dashboard';
+  headerRefreshButton.setAttribute('aria-label', label);
+  headerRefreshButton.title = label;
+}
+
+function updateStaffThemeToggle() {
+  const darkTheme = document.documentElement.dataset.theme === 'dark';
+  const label = darkTheme ? 'Switch to light mode' : 'Switch to dark mode';
+  themeToggleIcon.textContent = darkTheme ? '\u2600' : '\u263e';
+  themeToggleButton.setAttribute('aria-label', label);
+  themeToggleButton.title = label;
+}
+
+function toggleStaffTheme() {
+  const preferences = window.DIGCPreferences?.read();
+  if (!preferences || !window.DIGCPreferences?.save) return;
+  const nextTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  window.DIGCPreferences.save({ ...preferences, theme: nextTheme });
+  updateStaffThemeToggle();
+}
+
 function biometricPreferenceEnabled() {
   return Boolean(window.DIGCPreferences?.read().biometric);
 }
@@ -218,10 +247,10 @@ function retryableCredentialManagerError(error) {
   return /^an unknown error occur(?:red|ed) while talking to (?:the )?credential manager\.?$/i.test(message);
 }
 
-async function getPasskeyCredential(options) {
+async function getPasskeyCredential(options, mediation = 'required') {
   const requestCredential = () => navigator.credentials.get({
     publicKey: authenticationOptionsFromJSON(options),
-    mediation: 'required'
+    mediation
   });
   try {
     return await requestCredential();
@@ -577,7 +606,7 @@ async function confirmFreshStaffSession(fallbackUser, fallbackToken = '') {
 }
 
 async function loadDashboard() {
-  setButtonLoading(refreshButton, true, 'Refreshing...', 'Refresh Dashboard');
+  setDashboardRefreshLoading(true);
   setStatus(dashboardStatus, 'Loading permitted database records...');
   try {
     const response = await staffFetch('/api/admin', {
@@ -606,7 +635,7 @@ async function loadDashboard() {
   } catch (error) {
     setStatus(dashboardStatus, error.message || String(error), 'bad');
   } finally {
-    setButtonLoading(refreshButton, false, 'Refreshing...', 'Refresh Dashboard');
+    setDashboardRefreshLoading(false);
   }
 }
 
@@ -2774,7 +2803,7 @@ passkeyLoginButton.addEventListener('click', async () => {
   setStatus(loginStatus, 'Follow your device prompt to sign in...');
   try {
     const started = await passkeyRequest('authentication-options');
-    const credential = await getPasskeyCredential(started.options);
+    const credential = await getPasskeyCredential(started.options, 'optional');
     if (!credential) throw new Error('No biometric credential was returned.');
     const completed = await passkeyRequest('authentication-verify', {
       ceremonyId: started.ceremonyId,
@@ -2937,6 +2966,13 @@ signOutButton.addEventListener('click', () => signOutFromPortal(signOutButton));
 sidebarSignOutButton.addEventListener('click', () => signOutFromPortal(sidebarSignOutButton));
 
 refreshButton.addEventListener('click', loadDashboard);
+headerRefreshButton.addEventListener('click', loadDashboard);
+themeToggleButton.addEventListener('click', toggleStaffTheme);
+new MutationObserver(updateStaffThemeToggle).observe(document.documentElement, {
+  attributes: true,
+  attributeFilter: ['data-theme']
+});
+updateStaffThemeToggle();
 sidebarScrim.addEventListener('click', () => setSidebarOpen(false));
 installSidebarSwipeGestures();
 mobileNav.addEventListener('click', (event) => {

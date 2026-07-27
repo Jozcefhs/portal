@@ -51,11 +51,13 @@ test('credential-manager cold starts retry once without repeating the server cer
   assert.match(adminJs, /\['NotReadableError', 'UnknownError'\]\.includes\(name\)/);
   assert.match(adminJs, /unknown error occur\(\?:red\|ed\) while talking to/);
   assert.match(adminJs, /window\.setTimeout\(resolve, 350\)/);
-  assert.match(adminJs, /mediation: 'required'/);
+  assert.match(adminJs, /async function getPasskeyCredential\(options, mediation = 'required'\)/);
+  assert.match(adminJs, /getPasskeyCredential\(started\.options, 'optional'\)/);
   assert.match(adminJs, /function warmPasskeyCredentialManager\(\)/);
   assert.match(adminJs, /isUserVerifyingPlatformAuthenticatorAvailable/);
   assert.equal((adminJs.match(/navigator\.credentials\.get\(/g) || []).length, 1);
-  assert.equal((adminJs.match(/getPasskeyCredential\(started\.options\)/g) || []).length, 2);
+  assert.equal((adminJs.match(/getPasskeyCredential\(started\.options(?:, 'optional')?\)/g) || []).length, 2);
+  assert.equal((adminJs.match(/getPasskeyCredential\(started\.options, 'optional'\)/g) || []).length, 1);
   const retrySource = adminJs.slice(
     adminJs.indexOf('function retryableCredentialManagerError'),
     adminJs.indexOf('async function getPasskeyCredential')
