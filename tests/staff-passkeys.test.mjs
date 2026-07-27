@@ -46,6 +46,23 @@ test('staff portal offers passkey registration and authentication', () => {
   assert.match(passkeyApi, /}, 200, staffSessionCookie\(token\)\)/);
 });
 
+test('credential-manager cold starts retry once without repeating the server ceremony', () => {
+  assert.match(adminJs, /function retryableCredentialManagerError\(error\)/);
+  assert.match(adminJs, /\['NotReadableError', 'UnknownError'\]\.includes\(name\)/);
+  assert.match(adminJs, /unknown error occur\(\?:red\|ed\) while talking to/);
+  assert.match(adminJs, /window\.setTimeout\(resolve, 350\)/);
+  assert.match(adminJs, /mediation: 'required'/);
+  assert.match(adminJs, /function warmPasskeyCredentialManager\(\)/);
+  assert.match(adminJs, /isUserVerifyingPlatformAuthenticatorAvailable/);
+  assert.equal((adminJs.match(/navigator\.credentials\.get\(/g) || []).length, 1);
+  assert.equal((adminJs.match(/getPasskeyCredential\(started\.options\)/g) || []).length, 2);
+  const retrySource = adminJs.slice(
+    adminJs.indexOf('function retryableCredentialManagerError'),
+    adminJs.indexOf('async function getPasskeyCredential')
+  );
+  assert.doesNotMatch(retrySource, /NotAllowedError|AbortError|SecurityError/);
+});
+
 test('bearer-backed sessions also protect files and biometric approval decisions', () => {
   assert.match(adminJs, /data-protected-file=/);
   assert.match(adminJs, /staffFetch\(resourceUrl/);

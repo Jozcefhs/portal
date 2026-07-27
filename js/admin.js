@@ -150,6 +150,17 @@ function passkeysSupported() {
   return Boolean(window.PublicKeyCredential && navigator.credentials);
 }
 
+function warmPasskeyCredentialManager() {
+  if (!passkeysSupported()) return;
+  const availabilityCheck = window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable;
+  if (typeof availabilityCheck !== 'function') return;
+  try {
+    void Promise.resolve(availabilityCheck.call(window.PublicKeyCredential)).catch(() => false);
+  } catch (_error) {
+    // Availability probing is only a best-effort Android credential-provider warm-up.
+  }
+}
+
 function staffFetch(input, init = {}) {
   const options = { ...init };
   if (staffBearerToken) {
@@ -200,6 +211,27 @@ function authenticationOptionsFromJSON(options) {
   };
 }
 
+function retryableCredentialManagerError(error) {
+  const name = clean(error?.name);
+  const message = clean(error?.message);
+  if (!['NotReadableError', 'UnknownError'].includes(name)) return false;
+  return /^an unknown error occur(?:red|ed) while talking to (?:the )?credential manager\.?$/i.test(message);
+}
+
+async function getPasskeyCredential(options) {
+  const requestCredential = () => navigator.credentials.get({
+    publicKey: authenticationOptionsFromJSON(options),
+    mediation: 'required'
+  });
+  try {
+    return await requestCredential();
+  } catch (error) {
+    if (!retryableCredentialManagerError(error)) throw error;
+    await new Promise((resolve) => window.setTimeout(resolve, 350));
+    return requestCredential();
+  }
+}
+
 function credentialToJSON(credential) {
   if (typeof credential.toJSON === 'function') return credential.toJSON();
   const response = credential.response;
@@ -244,6 +276,7 @@ function friendlyPasskeyError(error) {
   if (error?.name === 'NotAllowedError') return 'Biometric verification was cancelled or timed out.';
   if (error?.name === 'InvalidStateError') return 'This device is already registered for biometric sign-in.';
   if (error?.name === 'SecurityError') return 'Biometric sign-in requires a secure HTTPS connection.';
+  if (retryableCredentialManagerError(error)) return 'Your device credential manager could not open. Please try again or use your password.';
   return error?.message || String(error);
 }
 
@@ -467,6 +500,7 @@ function showLogin(message = '', type = '') {
   loginCard.hidden = false;
   setStatus(loginStatus, message, type);
   refreshPasskeyControls();
+  warmPasskeyCredentialManager();
 }
 
 function showDashboard(user) {
@@ -2056,9 +2090,7 @@ async function verifyFinanceDecisionBiometric() {
       recordType: pendingFinanceDecision?.recordType,
       decisionAction: pendingFinanceDecision?.action === 'accountsReview' ? 'accountsReview' : 'review:Approved'
     });
-    const credential = await navigator.credentials.get({
-      publicKey: authenticationOptionsFromJSON(started.options)
-    });
+    const credential = await getPasskeyCredential(started.options);
     if (!credential) throw new Error('No biometric credential was returned.');
     const completed = await passkeyRequest('approval-verify', {
       ceremonyId: started.ceremonyId,
@@ -2742,9 +2774,7 @@ passkeyLoginButton.addEventListener('click', async () => {
   setStatus(loginStatus, 'Follow your device prompt to sign in...');
   try {
     const started = await passkeyRequest('authentication-options');
-    const credential = await navigator.credentials.get({
-      publicKey: authenticationOptionsFromJSON(started.options)
-    });
+    const credential = await getPasskeyCredential(started.options);
     if (!credential) throw new Error('No biometric credential was returned.');
     const completed = await passkeyRequest('authentication-verify', {
       ceremonyId: started.ceremonyId,

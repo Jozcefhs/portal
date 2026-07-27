@@ -62,6 +62,7 @@ test('sidebar action zone prevents the final module from overlapping user contro
   assert.match(portalCss, /\.staff-sidebar-actions\{[\s\S]*?position:relative;[\s\S]*?z-index:3;[\s\S]*?padding-top:11px;[\s\S]*?background:#0b2239/);
   assert.match(portalCss, /@media \(max-width:680px\)\{[\s\S]*?\.staff-sidebar-actions\{background:#092642\}/);
   assert.match(portalCss, /\.staff-sidebar \.staff-tabs\{margin-bottom:0;padding-bottom:12px\}/);
+  assert.match(portalCss, /@media \(min-width:681px\)\{[\s\S]*?\.staff-sidebar > \.staff-tabs\{[\s\S]*?overflow-x:hidden;[\s\S]*?overflow-y:auto;[\s\S]*?overscroll-behavior-y:contain;[\s\S]*?scrollbar-width:thin/);
 });
 
 test('mobile data-table columns fit their unwrapped contents', () => {

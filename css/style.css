@@ -1038,6 +1038,14 @@ html[data-theme="dark"] .password-field>.password-toggle:hover{background:#1a314
   background:#0b2239;
 }
 .staff-sidebar-note{position:relative;z-index:3}
+@media (min-width:681px){
+  .staff-sidebar > .staff-tabs{
+    overflow-x:hidden;
+    overflow-y:auto;
+    overscroll-behavior-y:contain;
+    scrollbar-width:thin;
+  }
+}
 .staff-main-content.module-view-active{padding-top:18px}
 .staff-main-content.module-view-active .staff-summary{margin:0 0 14px}
 .staff-main-content.module-view-active .staff-panel{min-height:calc(100vh - 168px);min-height:calc(100dvh - 168px)}
