@@ -20,7 +20,7 @@ test('successful receipt delivery is persisted and pending payment links stay di
   assert.match(paymentSource, /A receipt can only be sent after the donation is paid\./);
 });
 
-test('donation receipt includes a subdued organisation logo watermark', () => {
+test('donation receipt uses an email-safe centred watermark and visible organisation logo', () => {
   const html = buildDonationReceiptHtml({
     DonorName: 'Example Donor',
     DonorEmail: 'donor@example.test',
@@ -35,11 +35,17 @@ test('donation receipt includes a subdued organisation logo watermark', () => {
     ReceiptLogoSource: 'https://example.test/logo.png'
   });
 
-  assert.equal((html.match(/src="https:\/\/example\.test\/logo\.png"/g) || []).length, 2);
-  assert.match(html, /opacity:0\.07/);
+  assert.equal((html.match(/src="https:\/\/example\.test\/logo\.png"/g) || []).length, 1);
+  assert.match(html, /background-image:linear-gradient\(rgba\(255,255,255,0\.91\),rgba\(255,255,255,0\.91\)\),url\('https:\/\/example\.test\/logo\.png'\)/);
+  assert.match(html, /background-position:center 58%/);
+  assert.match(html, /background-size:240px auto/);
+  assert.doesNotMatch(html, /position:absolute/);
   assert.match(html, /alt="Example Organisation logo"/);
   assert.match(html, /width="50" height="50"/);
   assert.match(html, /Example Organisation donation receipt/);
+  assert.match(html, /background:#164a78/);
+  assert.match(html, /border-top:5px solid #d39400/);
+  assert.match(html, /background:#dff5e9/);
   assert.doesNotMatch(html, />Pay Now</);
 });
 

@@ -486,35 +486,50 @@ export function buildDonationReceiptHtml(context, link = '') {
   if (context.Notes) {
     lineItems.push(['Notes', context.Notes]);
   }
-  const rows = lineItems.map(([label, value]) => `<tr><td style="padding: 6px 8px; border-bottom: 1px solid #ebeff5;"><strong>${escapeHtml(label)}:</strong></td><td style="padding: 6px 8px; border-bottom: 1px solid #ebeff5;">${escapeHtml(value)}</td></tr>`).join('');
+  const rows = lineItems.map(([label, value], index) => {
+    const amountRow = label === 'Amount';
+    const statusRow = label === 'Status';
+    const labelBackground = amountRow ? '#fff4d6' : (index % 2 ? '#edf8f7' : '#eef5ff');
+    const valueBackground = amountRow ? '#fffaf0' : (index % 2 ? '#f7fcfb' : '#f8fbff');
+    const renderedValue = statusRow
+      ? `<span style="display:inline-block; padding:4px 10px; border-radius:999px; background:${lower(value) === 'paid' ? '#dff5e9' : '#fff1c7'}; color:${lower(value) === 'paid' ? '#08775f' : '#8a5b00'}; font-weight:700;">${escapeHtml(value)}</span>`
+      : `<span style="${amountRow ? 'color:#08775f; font-size:17px; font-weight:700;' : ''}">${escapeHtml(value)}</span>`;
+    return `<tr>
+      <td style="width:36%; padding:9px 11px; border-bottom:1px solid #dce7f2; background:${labelBackground}; color:#173b63;"><strong>${escapeHtml(label)}:</strong></td>
+      <td style="padding:9px 11px; border-bottom:1px solid #dce7f2; background:${valueBackground}; color:#243447;">${renderedValue}</td>
+    </tr>`;
+  }).join('');
   const callToAction = isOnline
-    ? `<p><a href="${escapeHtml(link)}" style="display:inline-block; background:#1f4e79; color:#fff; padding:10px 14px; text-decoration:none; border-radius:6px;">Pay Now</a></p>`
-    : '';
-  const watermark = logoSource
-    ? `<img src="${escapeHtml(logoSource)}" alt="" width="240" style="position:absolute; left:50%; top:50%; width:240px; max-width:55%; height:auto; transform:translate(-50%,-50%); opacity:0.07; pointer-events:none;" />`
+    ? `<p style="margin:18px 0 4px;"><a href="${escapeHtml(link)}" style="display:inline-block; background:#087f72; color:#fff; padding:11px 18px; text-decoration:none; border-radius:7px; font-weight:700;">Pay Now</a></p>`
     : '';
   const headerLogo = logoSource
-    ? `<td style="width:62px; padding:0 12px 0 0; vertical-align:middle;"><img src="${escapeHtml(logoSource)}" alt="${escapeHtml(context.ChurchName || context.name || 'Organisation')} logo" width="50" height="50" style="display:block; width:50px; height:50px; object-fit:contain; border:0;" /></td>`
+    ? `<td style="width:68px; padding:0 14px 0 0; vertical-align:middle;"><span style="display:inline-block; padding:6px; border-radius:12px; background:#ffffff;"><img src="${escapeHtml(logoSource)}" alt="${escapeHtml(context.ChurchName || context.name || 'Organisation')} logo" width="50" height="50" style="display:block; width:50px; height:50px; object-fit:contain; border:0;" /></span></td>`
     : '';
-  return `<div style="font-family:Arial,sans-serif; max-width:680px; border:1px solid #dbe6f2; color:#243447; position:relative; overflow:hidden;">
-    ${watermark}
-    <div style="position:relative; z-index:1;">
-    <div style="padding: 18px 20px; background:#eaf2ff;">
-      <table role="presentation" style="border-collapse:collapse; width:100%;"><tr>
+  const watermarkStyle = logoSource
+    ? `background-image:linear-gradient(rgba(255,255,255,0.91),rgba(255,255,255,0.91)),url('${escapeHtml(logoSource)}'); background-position:center 58%; background-repeat:no-repeat; background-size:240px auto;`
+    : '';
+  return `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font-family:Arial,sans-serif; width:100%; max-width:680px; border-collapse:separate; border-spacing:0; border:1px solid #cbdced; border-top:5px solid #d39400; border-radius:12px; overflow:hidden; color:#243447; background:#ffffff;">
+    <tr><td style="padding:20px 22px; background:#164a78; border-bottom:4px solid #18a69a;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse; width:100%;"><tr>
         ${headerLogo}
-        <td style="vertical-align:middle;"><h3 style="margin:0; color:#1f4e79;">${escapeHtml(context.ChurchName || context.name || 'Church')} donation receipt</h3></td>
+        <td style="vertical-align:middle;">
+          <div style="margin:0 0 4px; color:#a9f0e7; font-size:11px; font-weight:700; letter-spacing:1.4px; text-transform:uppercase;">Official acknowledgement</div>
+          <h3 style="margin:0; color:#ffffff; font-size:20px; line-height:1.3;">${escapeHtml(context.ChurchName || context.name || 'Church')} donation receipt</h3>
+        </td>
       </tr></table>
-    </div>
-    <div style="padding: 14px 18px;">
-      <p>Dear ${escapeHtml(context.DonorName || 'Donor')},</p>
-      <p>${escapeHtml(context.customMessage || 'Thank you for your payment.')}</p>
-      <table style="border-collapse:collapse; width:100%; border:1px solid #ebeff5; margin:12px 0;">
+    </td></tr>
+    <tr><td style="padding:20px 20px 16px; background-color:#ffffff; ${watermarkStyle}">
+      <p style="margin:0 0 10px; color:#173b63;">Dear ${escapeHtml(context.DonorName || 'Donor')},</p>
+      <p style="margin:0 0 16px; color:#4d6075;">${escapeHtml(context.customMessage || 'Thank you for your payment.')}</p>
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse; width:100%; border:1px solid #cfddeb; margin:12px 0; background:rgba(255,255,255,0.88);">
         ${rows}
       </table>
       ${callToAction}
-    </div>
-    </div>
-  </div>`;
+    </td></tr>
+    <tr><td style="padding:11px 20px; background:#edf8f7; border-top:1px solid #cfe8e4; color:#37655f; font-size:11px; line-height:1.5;">
+      Thank you for your generosity. Please retain this receipt for your records.
+    </td></tr>
+  </table>`;
 }
 
 async function sendSchoolEmail(env, settings, subject, textContent, htmlContent, toEmail, toName) {
