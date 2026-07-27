@@ -9,7 +9,9 @@ const paymentSource = await readFile(new URL('../functions/lib/church-payments.j
 test('donation rows render one state-aware action button', () => {
   assert.match(adminJs, /if \(receiptSent\)[\s\S]*?>Receipt sent<\/button>/);
   assert.match(adminJs, /status === 'paid'[\s\S]*?>Send receipt<\/button>/);
+  assert.match(adminJs, /paymentLinkSentAt[\s\S]*?status === 'pending' && paymentLinkSent[\s\S]*?>Payment link sent<\/button>/);
   assert.match(adminJs, /status === 'pending'[\s\S]*?>Send payment link<\/button>/);
+  assert.match(adminJs, /const initialized = await initChurchDonationPayment\(payload\);\s*await loadChurchDonations\(\)/);
   assert.doesNotMatch(adminJs, /data-donation-action="setstatus"[\s\S]*?>Mark Paid<\/button>/);
 });
 

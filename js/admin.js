@@ -2241,11 +2241,18 @@ async function loadChurchDonations() {
             const canCollect = capabilities.canCollect;
             const receiptSent = clean(pick(row, ['ReceiptStatus'])).toLowerCase() === 'sent'
               || Boolean(clean(pick(row, ['ReceiptSentAt'])));
+            const paymentLinkSentAt = clean(pick(row, ['PaymentLinkSentAt']));
+            const paymentLinkSentTo = clean(pick(row, ['PaymentLinkSentTo']));
+            const paymentLinkSent = Boolean(paymentLinkSentAt || paymentLinkSentTo);
             if (receiptSent) {
               return '<button type="button" class="table-action" disabled aria-disabled="true">Receipt sent</button>';
             }
             if (status === 'paid' && canSendReceipt) {
               return `<button type="button" class="table-action" data-donation-action="sendreceipt" data-donation-id="${escapeHtml(donationId)}">Send receipt</button>`;
+            }
+            if (status === 'pending' && paymentLinkSent) {
+              const sentDetail = [paymentLinkSentTo, paymentLinkSentAt].filter(Boolean).join(' · ');
+              return `<button type="button" class="table-action" disabled aria-disabled="true" title="${escapeHtml(sentDetail || 'Payment link sent')}">Payment link sent</button>`;
             }
             if (status === 'pending' && canCollect) {
               return `<button type="button" class="table-action" data-donation-action="sendpayment" data-donation-id="${escapeHtml(donationId)}">Send payment link</button>`;
@@ -2331,6 +2338,7 @@ async function loadChurchDonations() {
             ReceiptMessage: row?.ReceiptMessage || 'Click the link to complete your donation payment.'
           };
           const initialized = await initChurchDonationPayment(payload);
+          await loadChurchDonations();
           setStatus(document.getElementById('churchDonationStatus'), initialized.message, 'ok');
         }
       } catch (error) {
