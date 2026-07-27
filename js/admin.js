@@ -856,14 +856,6 @@ function renderModuleSummary(active, liveData = null) {
 function renderTabs(allowed) {
   const tabs = [['overview', 'Dashboard'], ...tabConfig.filter(([key]) => allowed.includes(key))];
   activeTabs = tabs;
-  const isChurch = tabs.some(([key]) => key === 'members' || key === 'services');
-  if (isChurch) {
-    document.documentElement.dataset.edition = 'church';
-    editionLabel.textContent = 'Church Operations';
-    workspaceTitle.textContent = 'Church Operations';
-    overviewLabel.textContent = 'Ministry overview';
-    welcomeCopy.textContent = 'Monitor giving, members, services and ministry activity.';
-  }
   tabsEl.innerHTML = tabs.map(([key, label]) => {
     const selected = key === activeSection ? ' selected' : '';
     return `<button type="button" class="child-card${selected}" data-tab="${escapeHtml(key)}" aria-selected="${key === activeSection}"><span class="staff-tab-icon" aria-hidden="true">${escapeHtml(tabIcons[key] || '•')}</span><span>${escapeHtml(label)}</span></button>`;

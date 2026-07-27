@@ -142,6 +142,21 @@ test('dark mode preserves dashboard and requisition text contrast', () => {
   assert.match(portalCss, /html\[data-theme="dark"\] \.workflow-dialog \.workflow-form label\{color:#f4f8ff\}/);
 });
 
+test('school dashboard graphs remain available on mobile for cross-functional staff', () => {
+  const renderTabsSource = adminJs.slice(adminJs.indexOf('function renderTabs'), adminJs.indexOf('function renderWorkspace'));
+  assert.doesNotMatch(renderTabsSource, /dataset\.edition\s*=/);
+  assert.match(adminJs, /document\.documentElement\.dataset\.edition = isChurch \? 'church' : 'school'/);
+  assert.match(adminJs, /if \(activeSection !== 'overview' \|\| document\.documentElement\.dataset\.edition === 'church'\)/);
+  assert.match(portalCss, /@media \(max-width:780px\)\{\.dashboard-charts\{grid-template-columns:1fr\}/);
+});
+
+test('sidebar module labels keep strong contrast', () => {
+  assert.match(portalCss, /\.staff-page \.staff-tabs \.child-card\{[^}]*color:#edf4ff/);
+  assert.match(portalCss, /\.staff-page \.staff-tabs \.child-card>span:last-child\{color:#edf4ff;font-weight:600\}/);
+  assert.match(portalCss, /\.child-list \.child-card span\{display:block;color:hsl/);
+  assert.doesNotMatch(portalCss, /(?:^|})\.child-card span\{display:block;color:hsl/);
+});
+
 test('dark mode covers staff configuration and account-management surfaces', () => {
   assert.match(portalCss, /html\[data-theme="dark"\] \.config-switch/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.config-option-list/);
