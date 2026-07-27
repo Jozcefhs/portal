@@ -152,6 +152,22 @@ test('school and organisation dashboard graphs remain available on mobile', () =
   assert.match(portalCss, /@media \(max-width:780px\)\{\.dashboard-charts\{grid-template-columns:1fr\}/);
 });
 
+test('authenticated school edition overrides an organisation-flavoured URL', () => {
+  assert.match(adminJs, /function resolveDashboardEdition\(user = \{\}\)/);
+  assert.match(adminJs, /if \(\['school', 'church', 'faith', 'organization'\]\.includes\(explicitEdition\)\) return explicitEdition/);
+  assert.match(adminJs, /const dashboardEdition = resolveDashboardEdition\(user\)/);
+  assert.doesNotMatch(adminJs, /\/dunamis\|digc\|church\/i\.test\(profileName\)/);
+  const source = adminJs.slice(
+    adminJs.indexOf('function resolveDashboardEdition'),
+    adminJs.indexOf('function showDashboard')
+  );
+  const resolveFor = new Function('clean', 'requestedWorkspace', `${source}; return resolveDashboardEdition;`);
+  const cleanValue = (value) => String(value ?? '').trim();
+  assert.equal(resolveFor(cleanValue, 'organization')({ edition: 'school' }), 'school');
+  assert.equal(resolveFor(cleanValue, 'faith')({ edition: 'school' }), 'school');
+  assert.equal(resolveFor(cleanValue, 'faith')({}), 'faith');
+});
+
 test('sidebar module labels keep strong contrast', () => {
   assert.match(portalCss, /\.staff-page \.staff-tabs \.child-card\{[^}]*color:#edf4ff/);
   assert.match(portalCss, /\.staff-page \.staff-tabs \.child-card>span:last-child\{color:#edf4ff;font-weight:600\}/);

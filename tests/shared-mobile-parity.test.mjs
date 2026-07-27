@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
-const sharedVersion = '20260727-dashboard-charts';
-const adminScriptVersion = '20260727-dashboard-charts';
+const sharedVersion = '20260727-school-chart-fix';
+const adminScriptVersion = '20260727-school-chart-fix';
 const pageNames = [
   'admin.html',
   'application.html',
@@ -30,7 +30,7 @@ test('launcher selects the shared operations shell for religious and other organ
   assert.match(pages[pageNames.indexOf('index.html')], /admin\.html\?workspace=faith/);
   assert.match(pages[pageNames.indexOf('index.html')], /admin\.html\?workspace=organization/);
   assert.match(adminJs, /const requestedWorkspace = new URLSearchParams\(window\.location\.search\)\.get\('workspace'\)/);
-  assert.match(adminJs, /\['church', 'faith'\]\.includes\(requestedWorkspace\)/);
+  assert.match(adminJs, /if \(\['church', 'faith', 'organization'\]\.includes\(requestedWorkspace\)\) return requestedWorkspace/);
 });
 
 test('sidebar swipe gestures are edition-neutral and installed globally', () => {
@@ -69,7 +69,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v47-dashboard-charts/);
+  assert.match(serviceWorker, /dynamax-v48-school-chart-fix/);
   assert.match(serviceWorker, /'\/admin\.html'/);
   assert.match(serviceWorker, /'\/js\/admin\.js'/);
   assert.match(serviceWorker, /self\.skipWaiting\(\)/);

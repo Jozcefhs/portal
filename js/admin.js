@@ -541,14 +541,19 @@ function showLogin(message = '', type = '') {
   warmPasskeyCredentialManager();
 }
 
+function resolveDashboardEdition(user = {}) {
+  const explicitEdition = clean(user.organisationEdition || user.organizationEdition || user.edition).toLowerCase();
+  if (['school', 'church', 'faith', 'organization'].includes(explicitEdition)) return explicitEdition;
+  if (['church', 'faith', 'organization'].includes(requestedWorkspace)) return requestedWorkspace;
+  return 'school';
+}
+
 function showDashboard(user) {
   currentUser = user;
   const displayName = user.displayName || user.username || 'Staff';
-  const explicitEdition = clean(user.organisationEdition || user.organizationEdition || user.edition).toLowerCase();
-  const profileName = clean(window.SCHOOL_PROFILE?.SchoolName);
-  const isFaith = ['church', 'faith'].includes(requestedWorkspace)
-    || ['church', 'faith'].includes(explicitEdition) || /dunamis|digc|church/i.test(profileName);
-  const isGenericOrganization = requestedWorkspace === 'organization' || explicitEdition === 'organization';
+  const dashboardEdition = resolveDashboardEdition(user);
+  const isFaith = ['church', 'faith'].includes(dashboardEdition);
+  const isGenericOrganization = dashboardEdition === 'organization';
   const isOrganisationOperations = isFaith || isGenericOrganization;
   displayNameEl.textContent = displayName;
   roleEl.textContent = [user.role, user.department].filter(Boolean).join(' • ');
