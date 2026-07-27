@@ -415,6 +415,19 @@ function settingsDocumentForDonation(settings = {}, env = {}) {
   return { name, senderEmail, senderName, apiKey, profileName };
 }
 
+function receiptLogoSource(webBranding = {}, organizationProfile = {}, env = {}) {
+  const embeddedLogo = clean(webBranding.WebLogoDataUrl);
+  if (/^data:image\/(?:png|jpeg|webp);base64,/i.test(embeddedLogo)) return embeddedLogo;
+
+  const configuredLogo = clean(organizationProfile.BrandLogoUrl);
+  if (/^https:\/\//i.test(configuredLogo)) return configuredLogo;
+
+  const publicPortalUrl = clean(env.PUBLIC_PORTAL_URL || env.CF_PAGES_URL || 'https://dynamaxms.pages.dev')
+    .replace(/\/+$/, '');
+  if (configuredLogo.startsWith('/')) return `${publicPortalUrl}${configuredLogo}`;
+  return `${publicPortalUrl}/images/Logo.png`;
+}
+
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>\"']|`/g, (char) => ({
     '&': '&amp;',
@@ -457,8 +470,9 @@ function formatMoney(amount = 0, currency = 'NGN') {
   }
 }
 
-function buildDonationReceiptHtml(context, link = '') {
+export function buildDonationReceiptHtml(context, link = '') {
   const isOnline = clean(context.PaymentMethod).toUpperCase() === 'ONLINE' && clean(link);
+  const logoSource = clean(context.ReceiptLogoSource);
   const lineItems = [
     ['Donor', context.DonorName || context.name || 'Donor'],
     ['Email', context.DonorEmail || context.email || ''],
@@ -475,7 +489,12 @@ function buildDonationReceiptHtml(context, link = '') {
   const callToAction = isOnline
     ? `<p><a href="${escapeHtml(link)}" style="display:inline-block; background:#1f4e79; color:#fff; padding:10px 14px; text-decoration:none; border-radius:6px;">Pay Now</a></p>`
     : '';
-  return `<div style="font-family:Arial,sans-serif; max-width:680px; border:1px solid #dbe6f2; color:#243447;">
+  const watermark = logoSource
+    ? `<img src="${escapeHtml(logoSource)}" alt="" width="240" style="position:absolute; left:50%; top:50%; width:240px; max-width:55%; height:auto; transform:translate(-50%,-50%); opacity:0.07; pointer-events:none;" />`
+    : '';
+  return `<div style="font-family:Arial,sans-serif; max-width:680px; border:1px solid #dbe6f2; color:#243447; position:relative; overflow:hidden;">
+    ${watermark}
+    <div style="position:relative; z-index:1;">
     <div style="padding: 18px 20px; background:#eaf2ff;">
       <h3 style="margin:0; color:#1f4e79;">${escapeHtml(context.ChurchName || context.name || 'Church')} donation receipt</h3>
     </div>
@@ -486,6 +505,7 @@ function buildDonationReceiptHtml(context, link = '') {
         ${rows}
       </table>
       ${callToAction}
+    </div>
     </div>
   </div>`;
 }
@@ -514,9 +534,10 @@ async function sendSchoolEmail(env, settings, subject, textContent, htmlContent,
 }
 
 export async function sendChurchDonationReceipt(env, donation, options = {}) {
-  const [brevoSettings, organizationProfile] = await Promise.all([
+  const [brevoSettings, organizationProfile, webBranding] = await Promise.all([
     getDocument(env, 'settings', 'brevo').catch(() => ({})),
-    getDocument(env, 'settings', 'organisationProfile').catch(() => ({}))
+    getDocument(env, 'settings', 'organisationProfile').catch(() => ({})),
+    getDocument(env, 'settings', 'webBranding').catch(() => ({}))
   ]);
   const settings = settingsDocumentForDonation({ ...brevoSettings, ...(organizationProfile || {}) }, env);
   const paymentLink = clean(options.paymentLink || '');
@@ -529,12 +550,42 @@ export async function sendChurchDonationReceipt(env, donation, options = {}) {
     Reference: donation.Reference || donation.DonationId,
     ChurchName: settings.name,
     name: settings.name,
+    ReceiptLogoSource: receiptLogoSource(webBranding, organizationProfile, env),
     customMessage: renderTemplate(messageTemplate, donation, paymentLink)
   };
   const subject = renderTemplate(subjectTemplate, payload, paymentLink);
   const content = `Payment reference ${payload.Reference}\nAmount: ${payload.Currency} ${payload.Amount}`;
   const htmlContent = `${buildDonationReceiptHtml(payload, paymentLink)}`;
-  return sendSchoolEmail(env, settings, subject, content, htmlContent, payload.DonorEmail, donationName);
+  const result = await sendSchoolEmail(env, settings, subject, content, htmlContent, payload.DonorEmail, donationName);
+  if (!result.ok || !clean(donation.DonationId || donation.__id)) return result;
+
+  const sentAt = nowIso();
+  const isPaymentLink = Boolean(paymentLink) && lower(donation.Status) !== 'paid';
+  const updatedDonation = {
+    ...donation,
+    ...(isPaymentLink
+      ? {
+        PaymentLinkSentAt: sentAt,
+        PaymentLinkSentTo: clean(payload.DonorEmail)
+      }
+      : {
+        ReceiptStatus: 'Sent',
+        ReceiptSentAt: sentAt,
+        ReceiptSentTo: clean(payload.DonorEmail)
+      }),
+    UpdatedAt: sentAt
+  };
+  const branchId = clean(donation.BranchId || 'main').toLowerCase() || 'main';
+  const donationId = safeChurchDocumentId(donation.__id || donation.DonationId || donation.Reference);
+  delete updatedDonation.__id;
+  delete updatedDonation.__name;
+  await upsertDocument(env, churchCollectionPath(CHURCH_COLLECTIONS.donations, branchId), donationId, updatedDonation);
+  return {
+    ...result,
+    purpose: isPaymentLink ? 'payment-link' : 'receipt',
+    sentAt,
+    donation: updatedDonation
+  };
 }
 
 export async function buildChurchPaymentInitMetadata(env, donation = {}, body = {}, requestUrl = '') {
@@ -678,17 +729,24 @@ async function sendChurchDonationReceiptAction(env, user, body = {}) {
   const capabilities = requireCapability(user, 'canSendReceipt');
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
   const donation = await findDonationByIdOrReference(env, { ...body }, branchId);
+  if (lower(donation.Status) !== 'paid') {
+    inputError('A receipt can only be sent after the donation is paid.', 409);
+  }
   const result = await sendChurchDonationReceipt(env, donation, {
     subject: clean(body.subject || body.ReceiptSubject || body.receiptSubject || ''),
     message: clean(body.message || body.ReceiptMessage || body.receiptMessage || ''),
-    paymentLink: clean(body.paymentLink || body.PaymentLink || donation.PaymentLink || '')
+    paymentLink: ''
   });
-  await writeDonationAudit(env, branchId, user, 'SEND RECEIPT', donation.DonationId, `Receipt sent to ${extractDonorEmailFromMetadata(donation)} (${donation.Status})`);
+  if (result.ok) {
+    await writeDonationAudit(env, branchId, user, 'SEND RECEIPT', donation.DonationId, `Receipt sent to ${extractDonorEmailFromMetadata(donation)} (${donation.Status})`);
+  }
   return {
     ok: true,
     message: result.ok ? 'Donation receipt sent.' : (result.skipped ? 'Receipt skipped (email not configured).' : 'Receipt could not be sent.'),
     result,
-    donation: capabilities?.canView ? publicDonationRow(donation) : { ...publicDonationRow(donation), DonorEmail: clean(donation.DonorEmail) }
+    donation: capabilities?.canView
+      ? publicDonationRow(result.donation || donation)
+      : { ...publicDonationRow(result.donation || donation), DonorEmail: clean(donation.DonorEmail) }
   };
 }
 

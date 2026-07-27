@@ -2236,20 +2236,21 @@ async function loadChurchDonations() {
           render: (row) => {
             const donationId = pick(row, ['DonationId', '__id']);
             const status = clean(pick(row, ['Status'])).toLowerCase();
-            const method = clean(pick(row, ['PaymentMethod'])).toUpperCase();
             if (!donationId) return 'No id';
             const canSendReceipt = capabilities.canSendReceipt;
             const canCollect = capabilities.canCollect;
-            const sendReceipt = canSendReceipt
-              ? `<button type="button" class="table-action" data-donation-action="sendreceipt" data-donation-id="${escapeHtml(donationId)}">Send Receipt</button>`
-              : '';
-            const markPaid = canCollect && status !== 'paid'
-              ? `<button type="button" class="table-action" data-donation-action="setstatus" data-donation-id="${escapeHtml(donationId)}" data-status="Paid">Mark Paid</button>`
-              : '';
-            const sendPayment = canCollect && method === 'ONLINE'
-              ? `<button type="button" class="table-action" data-donation-action="sendpayment" data-donation-id="${escapeHtml(donationId)}">Send payment link</button>`
-              : '';
-            return `${sendReceipt} ${markPaid} ${sendPayment}`.trim();
+            const receiptSent = clean(pick(row, ['ReceiptStatus'])).toLowerCase() === 'sent'
+              || Boolean(clean(pick(row, ['ReceiptSentAt'])));
+            if (receiptSent) {
+              return '<button type="button" class="table-action" disabled aria-disabled="true">Receipt sent</button>';
+            }
+            if (status === 'paid' && canSendReceipt) {
+              return `<button type="button" class="table-action" data-donation-action="sendreceipt" data-donation-id="${escapeHtml(donationId)}">Send receipt</button>`;
+            }
+            if (status === 'pending' && canCollect) {
+              return `<button type="button" class="table-action" data-donation-action="sendpayment" data-donation-id="${escapeHtml(donationId)}">Send payment link</button>`;
+            }
+            return '';
           }
         }
       ])}
