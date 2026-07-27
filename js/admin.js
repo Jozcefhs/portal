@@ -2214,8 +2214,7 @@ async function loadChurchDonations() {
           <label>Notes
             <textarea name="Notes" rows="2" placeholder="Optional notes for donation records."></textarea>
           </label>
-          <label class="check-row config-switch"><input name="sendReceipt" type="checkbox" checked> Send receipt now</label>
-          <label class="check-row config-switch"><input name="sendOnlineEmail" type="checkbox" checked> Send online payment link for this donation</label>
+          <label class="check-row config-switch" style="display:flex;align-items:center;justify-content:flex-start;gap:8px;"><input name="sendOnlineEmail" type="checkbox" checked style="flex:0 0 16px;width:16px;height:16px;min-height:16px;margin:0;padding:0;"><span>Send online payment link for this donation</span></label>
           <div class="config-dialog-actions">
             <p class="status" id="churchDonationStatus"></p>
             <button type="submit">Save donation</button>
@@ -2275,7 +2274,7 @@ async function loadChurchDonations() {
       const status = document.getElementById('churchDonationStatus');
       const button = form.querySelector('button[type="submit"]');
       const payload = Object.fromEntries(new FormData(form).entries());
-      payload.sendReceipt = form.elements.sendReceipt.checked ? 'yes' : 'no';
+      payload.sendReceipt = 'yes';
       payload.Status = clean(payload.Status || '');
       setButtonLoading(button, true, 'Saving...', 'Save donation');
       try {

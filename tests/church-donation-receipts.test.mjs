@@ -15,6 +15,14 @@ test('donation rows render one state-aware action button', () => {
   assert.doesNotMatch(adminJs, /data-donation-action="setstatus"[\s\S]*?>Mark Paid<\/button>/);
 });
 
+test('donation form keeps one aligned online-email option', () => {
+  assert.doesNotMatch(adminJs, /Send receipt now/);
+  assert.doesNotMatch(adminJs, /form\.elements\.sendReceipt/);
+  assert.match(adminJs, /name="sendOnlineEmail"[\s\S]{0,180}<span>Send online payment link for this donation<\/span>/);
+  assert.match(adminJs, /align-items:center;justify-content:flex-start;gap:8px/);
+  assert.match(adminJs, /payload\.sendReceipt = 'yes'/);
+});
+
 test('successful receipt delivery is persisted and pending payment links stay distinct', () => {
   assert.match(paymentSource, /ReceiptStatus: 'Sent'/);
   assert.match(paymentSource, /ReceiptSentAt: sentAt/);
