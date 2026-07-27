@@ -121,6 +121,11 @@ test('dark mode covers shared forms, notices, and general settings', () => {
   assert.match(portalCss, /html\[data-theme="dark"\] \.upload-result/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.settings-section/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.settings-field input/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.settings-topbar h1/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.settings-nav-link\{color:#d8e5f5\}/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.settings-field label/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.settings-subsection-title strong/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.settings-savebar\{/);
   assert.match(portalCss, /html\[data-theme="dark"\] input::placeholder/);
 });
 

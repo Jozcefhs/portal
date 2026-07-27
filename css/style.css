@@ -933,7 +933,6 @@ html[data-theme="dark"] .staff-module-sheet header button{background:#172a3e;col
 html[data-theme="dark"] .staff-login-card h1{color:#f4f8ff}
 
 html[data-theme="dark"] .settings-page{background:#091321;color:#edf4ff}
-html[data-theme="dark"] .settings-header,
 html[data-theme="dark"] .settings-sidebar,
 html[data-theme="dark"] .settings-section,
 html[data-theme="dark"] .settings-unlock-card,
@@ -942,6 +941,20 @@ html[data-theme="dark"] .settings-logo-card{
   background:#111e2e;
   color:#edf4ff;
 }
+html[data-theme="dark"] .settings-topbar{border-color:#33465c}
+html[data-theme="dark"] .settings-topbar h1,
+html[data-theme="dark"] .settings-unlock-copy h2,
+html[data-theme="dark"] .settings-subsection-title strong,
+html[data-theme="dark"] .settings-logo-copy strong,
+html[data-theme="dark"] .settings-savebar strong{color:#f4f8ff}
+html[data-theme="dark"] .settings-topbar p,
+html[data-theme="dark"] .settings-subsection-title span,
+html[data-theme="dark"] .settings-logo-copy p,
+html[data-theme="dark"] .settings-savebar .status{color:#a8b8cb}
+html[data-theme="dark"] .settings-sidebar-title{color:#9fb2c8}
+html[data-theme="dark"] .settings-nav-link{color:#d8e5f5}
+html[data-theme="dark"] .settings-nav-link small{color:#a8b8cb}
+html[data-theme="dark"] .settings-nav-link.active small{color:#bcd0e5}
 html[data-theme="dark"] .settings-section h1,
 html[data-theme="dark"] .settings-section h2,
 html[data-theme="dark"] .settings-section h3,
@@ -956,7 +969,12 @@ html[data-theme="dark"] .settings-field textarea{
   border-color:#3b5068;
   background:#0d1a29;
   color:#edf4ff;
+  color-scheme:dark;
 }
+html[data-theme="dark"] .settings-field label,
+html[data-theme="dark"] .settings-unlock-control label{color:#dce8f8}
+html[data-theme="dark"] .settings-field input::placeholder,
+html[data-theme="dark"] .settings-field textarea::placeholder{color:#7f93aa;opacity:1}
 html[data-theme="dark"] .settings-link,
 html[data-theme="dark"] .settings-nav-link:hover,
 html[data-theme="dark"] .settings-nav-link.active{
@@ -968,6 +986,21 @@ html[data-theme="dark"] .settings-nav-link>span,
 html[data-theme="dark"] .settings-section-icon,
 html[data-theme="dark"] .settings-help code{background:#172a3e;color:#cfe3fb}
 html[data-theme="dark"] .settings-sidebar-note{background:#102d28;color:#bcebd8}
+html[data-theme="dark"] .settings-logo-wrap,
+html[data-theme="dark"] .settings-logo-preview{
+  border-color:#3b5068;
+  background:#0d1a29;
+}
+html[data-theme="dark"] .settings-text-button{
+  border-color:#3b526b;
+  background:#14263a;
+  color:#d9eaff;
+}
+html[data-theme="dark"] .settings-text-button:hover{background:#1b334c;color:#fff}
+html[data-theme="dark"] .settings-savebar{
+  border-color:#3b5068;
+  background:rgba(17,30,46,.96);
+}
 
 /* Signed-in staff profile editing and photo avatar. */
 .staff-profile-trigger{

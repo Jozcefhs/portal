@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
-const sharedVersion = '20260727-desktop-sidebar-retry';
+const sharedVersion = '20260727-settings-dark-contrast';
 const adminScriptVersion = '20260727-credential-manager-retry';
 const pageNames = [
   'admin.html',
@@ -59,7 +59,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /digc-suite-v32-desktop-sidebar-credential-retry/);
+  assert.match(serviceWorker, /digc-suite-v33-settings-dark-contrast/);
   assert.match(serviceWorker, /'\/admin\.html'/);
   assert.match(serviceWorker, /'\/js\/admin\.js'/);
   assert.match(serviceWorker, /self\.skipWaiting\(\)/);
