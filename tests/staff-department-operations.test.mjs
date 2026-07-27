@@ -65,6 +65,16 @@ test('tuck shop exposes an unmistakable student purchase workspace', () => {
   assert.match(adminJs, /departmentPurchaseHistory/);
 });
 
+test('tuck shop supports Web NFC with manual and USB-reader fallbacks', () => {
+  assert.match(adminJs, /id="tuckShopNfcScan"/);
+  assert.match(adminJs, /'NDEFReader' in window/);
+  assert.match(adminJs, /new NDEFReader\(\)/);
+  assert.match(adminJs, /reader\.scan\(\{ signal: controller\.signal \}\)/);
+  assert.match(adminJs, /event\?\.serialNumber/);
+  assert.match(adminJs, /form\.requestSubmit\(\)/);
+  assert.match(adminJs, /USB reader/);
+});
+
 test('clinic reports use the parent email stored on the scoped student record', () => {
   assert.match(api, /function parentEmailFor/);
   assert.match(api, /sendClinicReport/);

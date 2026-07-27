@@ -1291,6 +1291,81 @@ function renderInventoryActions(row) {
   return `<button type="button" class="compact-icon-action compact-edit-action" data-edit-inventory="${name}" aria-label="Edit ${name}" title="Edit item"><span aria-hidden="true">&#9998;</span></button>`;
 }
 
+function decodeNfcRecord(record) {
+  if (!record?.data) return '';
+  try {
+    return new TextDecoder(record.encoding || 'utf-8').decode(record.data).trim();
+  } catch (_error) {
+    return '';
+  }
+}
+
+function walletCardIdFromNfc(event) {
+  for (const record of event?.message?.records || []) {
+    const value = decodeNfcRecord(record);
+    if (!value) continue;
+    try {
+      const parsed = JSON.parse(value);
+      const cardId = clean(parsed.WalletCardId || parsed.walletCardId || parsed.CardId || parsed.cardId || parsed.id);
+      if (cardId) return cardId;
+    } catch (_error) {
+      // Plain-text and URL records are valid card identifiers too.
+    }
+    try {
+      const url = new URL(value);
+      const cardId = clean(url.searchParams.get('walletCardId') || url.searchParams.get('cardId') || url.searchParams.get('id'));
+      if (cardId) return cardId;
+    } catch (_error) {
+      // Continue with the plain NDEF record below.
+    }
+    const labelled = value.match(/(?:wallet(?:card)?id|cardid)\s*[:=]\s*([A-Za-z0-9._:-]+)/i);
+    if (labelled?.[1]) return labelled[1];
+    if (/^[A-Za-z0-9][A-Za-z0-9._:-]{2,80}$/.test(value)) return value;
+  }
+  return clean(event?.serialNumber).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+}
+
+async function scanTuckShopNfc(form, button) {
+  const status = form.querySelector('[data-department-status]');
+  if (!('NDEFReader' in window)) {
+    setStatus(status, 'Direct NFC scanning is unavailable in this browser. Use Android Chrome, enter the card ID, or tap a USB reader while the card field is focused.', 'bad');
+    form.elements.WalletCardId?.focus();
+    return;
+  }
+  const normalText = button.textContent;
+  const controller = new AbortController();
+  try {
+    button.disabled = true;
+    button.textContent = 'Waiting for card...';
+    setStatus(status, 'Allow NFC access if prompted, then hold the student card near this device.', 'ok');
+    const reader = new NDEFReader();
+    reader.addEventListener('readingerror', () => {
+      setStatus(status, 'This card could not be read. Confirm it is an NDEF-compatible card or enter its card ID manually.', 'bad');
+    }, { once: true });
+    reader.addEventListener('reading', (event) => {
+      const cardId = walletCardIdFromNfc(event);
+      controller.abort();
+      button.disabled = false;
+      button.textContent = normalText;
+      if (!cardId) {
+        setStatus(status, 'The NFC card was detected, but it did not contain a usable card ID.', 'bad');
+        return;
+      }
+      form.elements.WalletCardId.value = cardId;
+      setStatus(status, `Card ${cardId} scanned. Looking up the student wallet...`, 'ok');
+      form.requestSubmit();
+    }, { once: true });
+    await reader.scan({ signal: controller.signal });
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = normalText;
+    if (error?.name === 'AbortError') return;
+    setStatus(status, error?.name === 'NotAllowedError'
+      ? 'NFC permission was not granted. Allow NFC access or enter the card ID manually.'
+      : `NFC scanning could not start: ${error?.message || error}`, 'bad');
+  }
+}
+
 function renderDepartmentOperations(section, data) {
   if (activeSection !== section) return;
   const labels = { clinic: 'Clinic', kitchen: 'Kitchen', tuckShop: 'Tuck Shop' };
@@ -1324,7 +1399,7 @@ function renderDepartmentOperations(section, data) {
       <form id="walletLookupForm" class="workflow-form workflow-form-grid config-form">
         <label>Wallet card ID<input name="WalletCardId" autocomplete="off" placeholder="Scan or enter card ID"></label>
         <label>Admission number<input name="AccountRef" autocomplete="off" placeholder="Or enter admission number"></label>
-        <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit">&#128269; Find Student Wallet</button></div>
+        <div class="config-actionbar"><p class="status" data-department-status></p><div class="inline-action-group"><button type="button" id="tuckShopNfcScan">&#9673; Scan NFC Card</button><button type="submit">&#128269; Find Student Wallet</button></div></div>
       </form>
       ${wallet ? `<div class="wallet-account-result">
         <div><small>Student</small><strong>${escapeHtml(wallet.DisplayName)}</strong><span>${escapeHtml(wallet.AdmissionNo || wallet.AccountRef)} &middot; ${escapeHtml(wallet.ClassName || '')}</span></div>
@@ -1423,6 +1498,14 @@ function renderDepartmentOperations(section, data) {
     try { await requestDepartmentAction(section, 'lookupWallet', Object.fromEntries(new FormData(form).entries())); }
     catch (error) { setStatus(status, error.message || String(error), 'bad'); }
   });
+  const nfcButton = document.getElementById('tuckShopNfcScan');
+  if (nfcButton) {
+    nfcButton.classList.toggle('nfc-unavailable', !('NDEFReader' in window));
+    nfcButton.title = 'NDEFReader' in window
+      ? 'Scan a compatible NFC student card'
+      : 'Direct NFC requires Android Chrome; USB readers and manual entry remain available';
+    nfcButton.addEventListener('click', () => scanTuckShopNfc(document.getElementById('walletLookupForm'), nfcButton));
+  }
   document.getElementById('walletPurchaseForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget; const status = form.querySelector('[data-department-status]');

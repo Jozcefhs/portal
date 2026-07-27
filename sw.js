@@ -1,4 +1,4 @@
-const CACHE = 'dynamax-v44-tuckshop-pos';
+const CACHE = 'dynamax-v45-tuckshop-nfc';
 const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/parent-dashboard.html', '/register-organization.html', '/css/style.css', '/js/preferences.js', '/js/launcher.js', '/js/site-config.js', '/js/admin.js', '/js/parent-dashboard.js', '/js/register-organization.js', '/images/Logo.png'];
 self.addEventListener('install', (event) => event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()).catch(() => null)));
 self.addEventListener('activate', (event) => event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim())));
