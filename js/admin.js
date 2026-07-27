@@ -2208,8 +2208,8 @@ async function loadChurchDonations() {
             <label>Currency <select name="Currency">${currencies.map((currency) => `<option value="${escapeHtml(currency)}">${escapeHtml(currency)}</option>`).join('')}</select></label>
             <label>Method <select name="PaymentMethod">${methods.map((method) => `<option value="${escapeHtml(method)}">${escapeHtml(method)}</option>`).join('')}</select></label>
             <label>Payment type <select name="PaymentType">${paymentTypes.map((paymentType) => `<option value="${escapeHtml(paymentType)}">${escapeHtml(paymentType)}</option>`).join('')}</select></label>
-            <label>Receipt subject <input name="ReceiptSubject" value="Thank you for your donation"></label>
-            <label>Receipt message <input name="ReceiptMessage" value="Your gift was received."></label>
+            <label>Receipt subject (after payment) <input name="ReceiptSubject" value="Thank you for your donation"></label>
+            <label>Receipt message (after payment) <input name="ReceiptMessage" value="Your gift was received."></label>
           </div>
           <label>Notes
             <textarea name="Notes" rows="2" placeholder="Optional notes for donation records."></textarea>

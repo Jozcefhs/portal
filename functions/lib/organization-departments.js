@@ -108,7 +108,7 @@ async function savePosition(env, user, body, branchId) {
   const existing = await getDocument(env, path('departmentPositions', branchId), id).catch(() => null);
   await upsertDocument(env, path('departmentPositions', branchId), id, {
     ...(existing || {}), PositionId, DepartmentId, Name, Description: clean(body.Description),
-    Active: yes(body.Active ?? 'YES') ? 'YES' : 'NO', BranchId,
+    Active: yes(body.Active ?? 'YES') ? 'YES' : 'NO', BranchId: branchId,
     CreatedAt: existing?.CreatedAt || nowIso(), UpdatedAt: nowIso(), UpdatedBy: actor(user)
   });
   await audit(env, branchId, user, existing ? 'UPDATE' : 'CREATE', 'Position', PositionId, `${DepartmentId} | ${Name}`);
@@ -128,7 +128,7 @@ async function saveDepartmentMember(env, user, body, branchId) {
     ...(existing || {}), MembershipId: membershipId, DepartmentId, DepartmentName: clean(department.Name),
     MemberId, DisplayName: clean(body.DisplayName), PositionId: clean(body.PositionId),
     PositionName: clean(body.PositionName), JoinedDate: clean(body.JoinedDate),
-    Status: clean(body.Status) || 'Active', BranchId,
+    Status: clean(body.Status) || 'Active', BranchId: branchId,
     CreatedAt: existing?.CreatedAt || nowIso(), UpdatedAt: nowIso(), UpdatedBy: actor(user)
   });
   await audit(env, branchId, user, existing ? 'UPDATE' : 'ASSIGN', 'Department Member', membershipId);
@@ -146,7 +146,7 @@ async function saveMeeting(env, user, body, branchId) {
   const existing = await getDocument(env, path('departmentMeetings', branchId), safeChurchDocumentId(MeetingId)).catch(() => null);
   await upsertDocument(env, path('departmentMeetings', branchId), safeChurchDocumentId(MeetingId), {
     ...(existing || {}), MeetingId, DepartmentId, Date, Title: clean(body.Title) || 'Department meeting',
-    AreaZone: clean(body.AreaZone), Location: clean(body.Location), Notes: clean(body.Notes), BranchId,
+    AreaZone: clean(body.AreaZone), Location: clean(body.Location), Notes: clean(body.Notes), BranchId: branchId,
     CreatedAt: existing?.CreatedAt || nowIso(), UpdatedAt: nowIso(), UpdatedBy: actor(user)
   });
   await audit(env, branchId, user, existing ? 'UPDATE' : 'CREATE', 'Department Meeting', MeetingId, `${DepartmentId} | ${Date}`);
@@ -164,7 +164,7 @@ async function recordAttendance(env, user, body, branchId) {
   await upsertDocument(env, path('departmentAttendance', branchId), id, {
     ...(existing || {}), AttendanceId: id, MeetingId, MemberId, DisplayName,
     Status: clean(body.Status) || 'Present', CheckedInAt: clean(body.CheckedInAt) || nowIso(),
-    BranchId, UpdatedAt: nowIso(), UpdatedBy: actor(user)
+    BranchId: branchId, UpdatedAt: nowIso(), UpdatedBy: actor(user)
   });
   return { message: existing ? 'Attendance updated.' : 'Attendance recorded.' };
 }
@@ -186,7 +186,7 @@ async function saveDepartmentOffering(env, user, body, branchId) {
     RemittanceStatus: onlinePaid ? 'Paid' : 'Unpaid',
     SubmittedAt: existing?.SubmittedAt || nowIso(), SubmittedBy: existing?.SubmittedBy || actor(user),
     PaidAt: onlinePaid ? nowIso() : clean(existing?.PaidAt), PaidBy: onlinePaid ? 'Online payment confirmation' : clean(existing?.PaidBy),
-    BranchId, Notes: clean(body.Notes), UpdatedAt: nowIso(), UpdatedBy: actor(user)
+    BranchId: branchId, Notes: clean(body.Notes), UpdatedAt: nowIso(), UpdatedBy: actor(user)
   });
   await audit(env, branchId, user, onlinePaid ? 'ONLINE PAYMENT CONFIRMED' : 'SUBMIT', 'Department Offering', OfferingId, `${DepartmentId} | ${Amount}`);
   return { message: onlinePaid ? 'Offering submitted and automatically marked paid.' : 'Offering submitted for remittance.' };
@@ -216,7 +216,7 @@ async function saveProgram(env, user, body, branchId) {
   await upsertDocument(env, path('specialPrograms', branchId), safeChurchDocumentId(ProgramId), {
     ...(existing || {}), ProgramId, Name, StartDate: clean(body.StartDate), EndDate: clean(body.EndDate),
     Venue: clean(body.Venue), Description: clean(body.Description), RegistrationOpen: yes(body.RegistrationOpen ?? 'YES'),
-    BranchId, CreatedAt: existing?.CreatedAt || nowIso(), UpdatedAt: nowIso(), UpdatedBy: actor(user)
+    BranchId: branchId, CreatedAt: existing?.CreatedAt || nowIso(), UpdatedAt: nowIso(), UpdatedBy: actor(user)
   });
   return { message: existing ? 'Special program updated.' : 'Special program created.' };
 }
@@ -230,7 +230,7 @@ async function registerParticipant(env, user, body, branchId) {
   const RegistrationId = clean(body.RegistrationId) || `REG-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   await upsertDocument(env, path('programRegistrations', branchId), safeChurchDocumentId(RegistrationId), {
     RegistrationId, ProgramId, FullName, Country, Email: lower(body.Email), Phone: clean(body.Phone),
-    Status: clean(body.Status) || 'Registered', RegisteredAt: nowIso(), RegisteredBy: actor(user), BranchId
+    Status: clean(body.Status) || 'Registered', RegisteredAt: nowIso(), RegisteredBy: actor(user), BranchId: branchId
   });
   return { message: 'Participant registered.' };
 }
@@ -244,7 +244,7 @@ async function saveForeignVisitor(env, user, body, branchId) {
   await upsertDocument(env, path('foreignVisitors', branchId), safeChurchDocumentId(VisitorId), {
     VisitorId, FullName, Country, Email: lower(body.Email), Phone: clean(body.Phone),
     VisitDate: clean(body.VisitDate) || nowIso().slice(0, 10), Purpose: clean(body.Purpose),
-    FollowUpOfficer: clean(body.FollowUpOfficer), Notes: clean(body.Notes), BranchId,
+    FollowUpOfficer: clean(body.FollowUpOfficer), Notes: clean(body.Notes), BranchId: branchId,
     UpdatedAt: nowIso(), UpdatedBy: actor(user)
   });
   return { message: 'Foreign visitor recorded.' };

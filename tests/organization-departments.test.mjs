@@ -1,10 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import {
   departmentCapabilities,
   departmentSummaries,
   normalizedDepartment
 } from '../functions/lib/organization-departments.js';
+
+const departmentSource = await readFile(new URL('../functions/lib/organization-departments.js', import.meta.url), 'utf8');
 
 test('department records normalize generic, home-cell and foreign-desk identities', () => {
   const home = normalizedDepartment({
@@ -51,4 +54,9 @@ test('department summaries feed vertical charts, home-cell comparisons and count
   assert.deepEqual(result.participantsByCountry, [
     { Country: 'Nigeria', Participants: 2 }, { Country: 'Ghana', Participants: 1 }
   ]);
+});
+
+test('department write actions persist the resolved branch without an undefined identifier', () => {
+  assert.doesNotMatch(departmentSource, /(?:,\s*|\{\s*)BranchId(?=\s*[,}])/);
+  assert.equal((departmentSource.match(/BranchId: branchId/g) || []).length >= 9, true);
 });

@@ -293,6 +293,7 @@ function withReceiptStatus(payload, user) {
 async function sendReceipt(env, donation, body = {}, message = null, subject = null) {
   const send = lower(body.sendReceipt || 'yes');
   if (send === 'no' || send === 'false' || send === '0') return null;
+  if (lower(donation.Status) !== 'paid') return null;
   return sendChurchDonationReceipt(env, donation, {
     donorName: clean(body.donorName || donation.DonorName),
     subject: subject || clean(body.subject || body.ReceiptSubject || body.receiptSubject),
@@ -472,17 +473,22 @@ function formatMoney(amount = 0, currency = 'NGN') {
 }
 
 export function buildDonationReceiptHtml(context, link = '') {
-  const isOnline = clean(context.PaymentMethod).toUpperCase() === 'ONLINE' && clean(link);
+  const isPaid = lower(context.Status) === 'paid';
+  const isPaymentRequest = clean(context.PaymentMethod).toUpperCase() === 'ONLINE'
+    && Boolean(clean(link))
+    && !isPaid;
   const logoSource = clean(context.ReceiptLogoSource);
   const lineItems = [
     ['Donor', context.DonorName || context.name || 'Donor'],
     ['Email', context.DonorEmail || context.email || ''],
     ['Amount', formatMoney(context.Amount, context.Currency)],
     ['Payment', `${context.PaymentType || 'Donation'} (${context.PaymentMethod || 'Cash'})`],
-    ['Reference', context.Reference || context.ReceiptNo || context.DonationId || ''],
-    ['Receipt Number', context.ReceiptNo || ''],
+    [isPaymentRequest ? 'Payment Reference' : 'Reference', context.Reference || context.ReceiptNo || context.DonationId || ''],
     ['Status', context.Status || 'Pending']
   ];
+  if (!isPaymentRequest && context.ReceiptNo) {
+    lineItems.splice(5, 0, ['Receipt Number', context.ReceiptNo]);
+  }
   if (context.Notes) {
     lineItems.push(['Notes', context.Notes]);
   }
@@ -499,7 +505,7 @@ export function buildDonationReceiptHtml(context, link = '') {
       <td style="padding:9px 11px; border-bottom:1px solid #dce7f2; background:${valueBackground}; color:#243447;">${renderedValue}</td>
     </tr>`;
   }).join('');
-  const callToAction = isOnline
+  const callToAction = isPaymentRequest
     ? `<p style="margin:18px 0 4px;"><a href="${escapeHtml(link)}" style="display:inline-block; background:#087f72; color:#fff; padding:11px 18px; text-decoration:none; border-radius:7px; font-weight:700;">Pay Now</a></p>`
     : '';
   const headerLogo = logoSource
@@ -508,26 +514,34 @@ export function buildDonationReceiptHtml(context, link = '') {
   const watermarkStyle = logoSource
     ? `background-image:linear-gradient(rgba(255,255,255,0.91),rgba(255,255,255,0.91)),url('${escapeHtml(logoSource)}'); background-position:center 58%; background-repeat:no-repeat; background-size:240px auto;`
     : '';
+  const eyebrow = isPaymentRequest ? 'Secure online payment' : 'Official acknowledgement';
+  const documentTitle = isPaymentRequest ? 'donation payment link' : 'donation receipt';
+  const message = isPaymentRequest
+    ? 'Please use the secure Pay Now button below to complete your gift. No payment has been received yet.'
+    : (context.customMessage || 'Thank you for your payment.');
+  const footerMessage = isPaymentRequest
+    ? 'This is a payment request, not a receipt. A receipt will be emailed after payment is confirmed.'
+    : 'Thank you for your generosity. Please retain this receipt for your records.';
   return `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font-family:Arial,sans-serif; width:100%; max-width:680px; border-collapse:separate; border-spacing:0; border:1px solid #cbdced; border-top:5px solid #d39400; border-radius:12px; overflow:hidden; color:#243447; background:#ffffff;">
     <tr><td style="padding:20px 22px; background:#164a78; border-bottom:4px solid #18a69a;">
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse; width:100%;"><tr>
         ${headerLogo}
         <td style="vertical-align:middle;">
-          <div style="margin:0 0 4px; color:#a9f0e7; font-size:11px; font-weight:700; letter-spacing:1.4px; text-transform:uppercase;">Official acknowledgement</div>
-          <h3 style="margin:0; color:#ffffff; font-size:20px; line-height:1.3;">${escapeHtml(context.ChurchName || context.name || 'Church')} donation receipt</h3>
+          <div style="margin:0 0 4px; color:#a9f0e7; font-size:11px; font-weight:700; letter-spacing:1.4px; text-transform:uppercase;">${eyebrow}</div>
+          <h3 style="margin:0; color:#ffffff; font-size:20px; line-height:1.3;">${escapeHtml(context.ChurchName || context.name || 'Church')} ${documentTitle}</h3>
         </td>
       </tr></table>
     </td></tr>
     <tr><td style="padding:20px 20px 16px; background-color:#ffffff; ${watermarkStyle}">
       <p style="margin:0 0 10px; color:#173b63;">Dear ${escapeHtml(context.DonorName || 'Donor')},</p>
-      <p style="margin:0 0 16px; color:#4d6075;">${escapeHtml(context.customMessage || 'Thank you for your payment.')}</p>
+      <p style="margin:0 0 16px; color:#4d6075;">${escapeHtml(message)}</p>
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse; width:100%; border:1px solid #cfddeb; margin:12px 0; background:rgba(255,255,255,0.88);">
         ${rows}
       </table>
       ${callToAction}
     </td></tr>
     <tr><td style="padding:11px 20px; background:#edf8f7; border-top:1px solid #cfe8e4; color:#37655f; font-size:11px; line-height:1.5;">
-      Thank you for your generosity. Please retain this receipt for your records.
+      ${footerMessage}
     </td></tr>
   </table>`;
 }
@@ -563,9 +577,14 @@ export async function sendChurchDonationReceipt(env, donation, options = {}) {
   ]);
   const settings = settingsDocumentForDonation({ ...brevoSettings, ...(organizationProfile || {}) }, env);
   const paymentLink = clean(options.paymentLink || '');
+  const isPaymentRequest = Boolean(paymentLink) && lower(donation.Status) !== 'paid';
   const donationName = clean(options.donorName || donation.DonorName || 'Donor');
-  const subjectTemplate = clean(options.subject || `Payment confirmation - ${settings.profileName || settings.name}`);
-  const messageTemplate = clean(options.message || 'Thank you for supporting our church.');
+  const subjectTemplate = isPaymentRequest
+    ? `Complete your donation - ${settings.profileName || settings.name}`
+    : clean(options.subject || `Payment confirmation - ${settings.profileName || settings.name}`);
+  const messageTemplate = isPaymentRequest
+    ? 'Please use the secure Pay Now button below to complete your gift. No payment has been received yet.'
+    : clean(options.message || 'Thank you for supporting our organisation.');
   const payload = {
     ...donation,
     DonationId: donation.DonationId,
@@ -576,16 +595,17 @@ export async function sendChurchDonationReceipt(env, donation, options = {}) {
     customMessage: renderTemplate(messageTemplate, donation, paymentLink)
   };
   const subject = renderTemplate(subjectTemplate, payload, paymentLink);
-  const content = `Payment reference ${payload.Reference}\nAmount: ${payload.Currency} ${payload.Amount}`;
+  const content = isPaymentRequest
+    ? `Complete your donation using this secure payment link: ${paymentLink}\nPayment reference: ${payload.Reference}\nAmount: ${payload.Currency} ${payload.Amount}\nNo payment has been received yet.`
+    : `Donation receipt\nPayment reference: ${payload.Reference}\nAmount: ${payload.Currency} ${payload.Amount}\nStatus: Paid`;
   const htmlContent = `${buildDonationReceiptHtml(payload, paymentLink)}`;
   const result = await sendSchoolEmail(env, settings, subject, content, htmlContent, payload.DonorEmail, donationName);
   if (!result.ok || !clean(donation.DonationId || donation.__id)) return result;
 
   const sentAt = nowIso();
-  const isPaymentLink = Boolean(paymentLink) && lower(donation.Status) !== 'paid';
   const updatedDonation = {
     ...donation,
-    ...(isPaymentLink
+    ...(isPaymentRequest
       ? {
         PaymentLinkSentAt: sentAt,
         PaymentLinkSentTo: clean(payload.DonorEmail)
@@ -604,7 +624,7 @@ export async function sendChurchDonationReceipt(env, donation, options = {}) {
   await upsertDocument(env, churchCollectionPath(CHURCH_COLLECTIONS.donations, branchId), donationId, updatedDonation);
   return {
     ...result,
-    purpose: isPaymentLink ? 'payment-link' : 'receipt',
+    purpose: isPaymentRequest ? 'payment-link' : 'receipt',
     sentAt,
     donation: updatedDonation
   };
