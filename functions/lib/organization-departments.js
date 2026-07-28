@@ -1,6 +1,6 @@
 import { deleteDocument, getDocument, listCollection, upsertDocument } from './firestore.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from './church-foundation.js';
-import { resolveMembershipBranch } from './church-membership.js';
+import { resolveMembershipBranch, saveChurchMember } from './church-membership.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -115,20 +115,97 @@ async function savePosition(env, user, body, branchId) {
   return { message: existing ? 'Position updated.' : 'Position created.' };
 }
 
+function authoritativeMemberName(member = {}) {
+  return clean(member.DisplayName || [
+    member.Title,
+    member.FirstName,
+    member.MiddleName,
+    member.Surname || member.LastName
+  ].map(clean).filter(Boolean).join(' '));
+}
+
+function belongsToBranch(record = {}, branchId = '') {
+  const recordBranch = clean(record.BranchId || record.branchId);
+  return !recordBranch || lower(recordBranch) === lower(branchId);
+}
+
+export function authoritativeDepartmentMemberAssignment(
+  input = {},
+  branchId = 'main',
+  department = null,
+  member = null,
+  position = null
+) {
+  const DepartmentId = clean(input.DepartmentId);
+  const MemberId = clean(input.MemberId);
+  const PositionId = clean(input.PositionId);
+  if (!DepartmentId || !MemberId) throw inputError('Department and member are required.');
+  if (!department || !belongsToBranch(department, branchId)) {
+    throw inputError('Department was not found in this branch.', 404);
+  }
+  if (!member || !belongsToBranch(member, branchId)) {
+    throw inputError('Member was not found in this branch.', 404);
+  }
+  const authoritativeDepartmentId = clean(department.DepartmentId || DepartmentId);
+  if (safeChurchDocumentId(authoritativeDepartmentId) !== safeChurchDocumentId(DepartmentId)) {
+    throw inputError('Department was not found in this branch.', 404);
+  }
+  const authoritativeMemberId = clean(member.MemberId || MemberId);
+  if (safeChurchDocumentId(authoritativeMemberId) !== safeChurchDocumentId(MemberId)) {
+    throw inputError('Member was not found in this branch.', 404);
+  }
+  const DisplayName = authoritativeMemberName(member);
+  if (!DisplayName) throw inputError('The selected member does not have a usable name.', 409);
+  if (PositionId) {
+    if (!position || !belongsToBranch(position, branchId)) {
+      throw inputError('The selected position does not exist in this department.', 404);
+    }
+    if (safeChurchDocumentId(position.PositionId) !== safeChurchDocumentId(PositionId)
+      || safeChurchDocumentId(position.DepartmentId) !== safeChurchDocumentId(DepartmentId)) {
+      throw inputError('The selected position does not belong to this department.');
+    }
+  }
+  return {
+    DepartmentId: authoritativeDepartmentId,
+    DepartmentName: clean(department.Name || department.DepartmentName),
+    MemberId: authoritativeMemberId,
+    DisplayName,
+    PositionId,
+    PositionName: PositionId ? clean(position.Name || position.PositionName) : '',
+    JoinedDate: clean(input.JoinedDate),
+    Status: clean(input.Status) || 'Active',
+    BranchId: branchId
+  };
+}
+
 async function saveDepartmentMember(env, user, body, branchId) {
   requireCapability(user, 'canManageMembers');
   const DepartmentId = clean(body.DepartmentId);
   const MemberId = clean(body.MemberId);
+  const PositionId = clean(body.PositionId);
   if (!DepartmentId || !MemberId) throw inputError('Department and member are required.');
-  const department = await getDocument(env, path('departments', branchId), safeChurchDocumentId(DepartmentId));
-  if (!department) throw inputError('Department was not found.', 404);
+  const [department, member, position] = await Promise.all([
+    getDocument(env, path('departments', branchId), safeChurchDocumentId(DepartmentId)),
+    getDocument(env, path('members', branchId), safeChurchDocumentId(MemberId)),
+    PositionId
+      ? getDocument(
+        env,
+        path('departmentPositions', branchId),
+        safeChurchDocumentId(`${DepartmentId}--${PositionId}`)
+      )
+      : Promise.resolve(null)
+  ]);
+  const assignment = authoritativeDepartmentMemberAssignment(
+    body,
+    branchId,
+    department,
+    member,
+    position
+  );
   const membershipId = safeChurchDocumentId(`${DepartmentId}--${MemberId}`);
   const existing = await getDocument(env, path('departmentMembers', branchId), membershipId).catch(() => null);
   await upsertDocument(env, path('departmentMembers', branchId), membershipId, {
-    ...(existing || {}), MembershipId: membershipId, DepartmentId, DepartmentName: clean(department.Name),
-    MemberId, DisplayName: clean(body.DisplayName), PositionId: clean(body.PositionId),
-    PositionName: clean(body.PositionName), JoinedDate: clean(body.JoinedDate),
-    Status: clean(body.Status) || 'Active', BranchId: branchId,
+    ...(existing || {}), ...assignment, MembershipId: membershipId,
     CreatedAt: existing?.CreatedAt || nowIso(), UpdatedAt: nowIso(), UpdatedBy: actor(user)
   });
   await audit(env, branchId, user, existing ? 'UPDATE' : 'ASSIGN', 'Department Member', membershipId);
@@ -303,7 +380,11 @@ export async function handleOrganizationDepartmentAction(env, user, body = {}) {
   if (action === 'list') return listOrganizationDepartments(env, user, body);
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
   let result;
-  if (action === 'savedepartment') result = await saveDepartment(env, user, body, branchId);
+  if (['savemember', 'savechurchmember'].includes(action)) {
+    requireCapability(user, 'canManageMembers');
+    result = await saveChurchMember(env, user, { ...body, BranchId: branchId });
+  }
+  else if (action === 'savedepartment') result = await saveDepartment(env, user, body, branchId);
   else if (action === 'deletedepartment') result = await deleteDepartment(env, user, body, branchId);
   else if (action === 'saveposition') result = await savePosition(env, user, body, branchId);
   else if (action === 'savedepartmentmember') result = await saveDepartmentMember(env, user, body, branchId);

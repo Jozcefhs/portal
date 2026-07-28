@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
+  authoritativeDepartmentMemberAssignment,
   departmentCapabilities,
   departmentSummaries,
   normalizedDepartment
@@ -59,4 +60,67 @@ test('department summaries feed vertical charts, home-cell comparisons and count
 test('department write actions persist the resolved branch without an undefined identifier', () => {
   assert.doesNotMatch(departmentSource, /(?:,\s*|\{\s*)BranchId(?=\s*[,}])/);
   assert.equal((departmentSource.match(/BranchId: branchId/g) || []).length >= 9, true);
+});
+
+test('department-member assignments hydrate identity and position names from authoritative records', () => {
+  const assignment = authoritativeDepartmentMemberAssignment(
+    {
+      DepartmentId: 'CHOIR',
+      MemberId: 'MEM-001',
+      DisplayName: 'Forged browser name',
+      PositionId: 'LEAD',
+      PositionName: 'Forged browser position',
+      JoinedDate: '2026-07-28'
+    },
+    'main',
+    { DepartmentId: 'CHOIR', Name: 'Choir', BranchId: 'main' },
+    { MemberId: 'MEM-001', DisplayName: 'Ada Okafor', BranchId: 'main' },
+    { PositionId: 'LEAD', DepartmentId: 'CHOIR', Name: 'Choir Lead', BranchId: 'main' }
+  );
+  assert.equal(assignment.DisplayName, 'Ada Okafor');
+  assert.equal(assignment.PositionName, 'Choir Lead');
+  assert.equal(assignment.DepartmentName, 'Choir');
+  assert.equal(assignment.JoinedDate, '2026-07-28');
+});
+
+test('department-member assignments reject missing, cross-branch and cross-department records', () => {
+  const base = { DepartmentId: 'CHOIR', MemberId: 'MEM-001', PositionId: 'LEAD' };
+  const department = { DepartmentId: 'CHOIR', Name: 'Choir', BranchId: 'main' };
+  const member = { MemberId: 'MEM-001', DisplayName: 'Ada Okafor', BranchId: 'main' };
+  const position = { PositionId: 'LEAD', DepartmentId: 'CHOIR', Name: 'Choir Lead', BranchId: 'main' };
+
+  assert.throws(
+    () => authoritativeDepartmentMemberAssignment(base, 'main', department, null, position),
+    /member was not found in this branch/i
+  );
+  assert.throws(
+    () => authoritativeDepartmentMemberAssignment(
+      base,
+      'main',
+      department,
+      { ...member, BranchId: 'abuja' },
+      position
+    ),
+    /member was not found in this branch/i
+  );
+  assert.throws(
+    () => authoritativeDepartmentMemberAssignment(
+      base,
+      'main',
+      department,
+      member,
+      { ...position, DepartmentId: 'USHERS' }
+    ),
+    /does not belong to this department/i
+  );
+});
+
+test('department endpoint exposes member creation while preserving membership and branch guards', () => {
+  assert.match(
+    departmentSource,
+    /import\s+\{\s*resolveMembershipBranch,\s*saveChurchMember\s*\}\s+from '\.\/church-membership\.js'/
+  );
+  assert.match(departmentSource, /\['savemember', 'savechurchmember'\]\.includes\(action\)/);
+  assert.match(departmentSource, /requireCapability\(user, 'canManageMembers'\)/);
+  assert.match(departmentSource, /saveChurchMember\(env, user, \{ \.\.\.body, BranchId: branchId \}\)/);
 });

@@ -2364,9 +2364,11 @@ function organizedDepartmentWorkspace(data) {
   ];
   if (!tabs.some(([key]) => key === organizationDepartmentWorkspaceTab)) organizationDepartmentWorkspaceTab = 'overview';
   const panelState = (key) => key === organizationDepartmentWorkspaceTab ? '' : ' hidden';
-  const memberOptions = `<option value="">Choose member</option>${members.map((row) => `<option value="${escapeHtml(row.MemberId || row.__id)}">${escapeHtml(row.DisplayName || row.MemberId)}</option>`).join('')}`;
+  const memberOptions = members.length
+    ? `<option value="">Choose member</option>${members.map((row) => `<option value="${escapeHtml(row.MemberId || row.__id)}">${escapeHtml(row.DisplayName || row.MemberId)}</option>`).join('')}`
+    : '<option value="">No registered members — create one first</option>';
   const meetingOptions = `<option value="">Choose meeting</option>${meetings.map((row) => `<option value="${escapeHtml(row.MeetingId)}">${escapeHtml(`${row.Date || ''} · ${row.Title || row.MeetingId}`)}</option>`).join('')}`;
-  const positionOptions = `<option value="">No position</option>${positions.map((row) => `<option value="${escapeHtml(row.PositionId)}">${escapeHtml(row.Name)}</option>`).join('')}`;
+  const positionOptions = `<option value="">No position</option>${positions.map((row) => `<option value="${escapeHtml(row.PositionId)}" data-department-id="${escapeHtml(row.DepartmentId)}">${escapeHtml(row.Name)}</option>`).join('')}`;
   const programOptions = `<option value="">Choose program</option>${programs.map((row) => `<option value="${escapeHtml(row.ProgramId)}">${escapeHtml(row.Name)}</option>`).join('')}`;
   const departmentCards = departmentSummary.map((row, index) => `
     <article class="module-stat tone-${(index % 5) + 1}">
@@ -2416,11 +2418,37 @@ function organizedDepartmentWorkspace(data) {
     </section>
 
     <section class="organization-workspace-panel" data-organization-workspace-panel="members"${panelState('members')}>
-      <div class="department-panel-heading"><div><small>People and responsibilities</small><h3>Members & Positions</h3></div><p>Define positions and assign registered members to department responsibilities.</p></div>
-      <div class="department-form-grid department-two-column-grid">
-        <form class="workflow-card compact-form" data-department-action="savePosition"><h3>Create a position</h3><select name="DepartmentId" required>${departmentOptions(departments)}</select><input name="PositionId" placeholder="Position ID" required><input name="Name" placeholder="Position name" required><button type="submit">Save position</button></form>
-        <form class="workflow-card compact-form" data-department-action="saveDepartmentMember"><h3>Assign a member</h3><select name="DepartmentId" required>${departmentOptions(departments)}</select><select name="MemberId" required>${memberOptions}</select><select name="PositionId">${positionOptions}</select><button type="submit">Assign member</button></form>
+      <div class="department-panel-heading"><div><small>People and responsibilities</small><h3>Members & Positions</h3></div><p>Register people, define positions and assign members to department responsibilities.</p></div>
+      <div class="department-member-onboarding">
+        <strong>New here?</strong>
+        <span>1. Register the member. 2. Create a position if needed. 3. Assign the member to a department.</span>
       </div>
+      <div class="department-form-grid department-three-column-grid">
+        <form class="workflow-card compact-form department-member-create-card" data-department-action="saveChurchMember">
+          <h3>Register a member</h3>
+          <input name="MemberId" value="MEM-${Date.now()}" placeholder="Member ID" required>
+          <input name="DisplayName" placeholder="Full display name" required>
+          <div class="department-member-name-grid">
+            <input name="FirstName" placeholder="First name">
+            <input name="Surname" placeholder="Surname">
+          </div>
+          <input name="Phone" inputmode="tel" placeholder="Phone">
+          <input name="Email" type="email" placeholder="Email">
+          <select name="Gender"><option value="">Gender (optional)</option><option>Male</option><option>Female</option></select>
+          <input name="MembershipDate" type="date" value="${new Date().toISOString().slice(0, 10)}">
+          <select name="MembershipStatus"><option>Active</option><option>Visitor</option><option>Inactive</option><option>Transferred</option></select>
+          <button type="submit">Create member</button>
+        </form>
+        <form class="workflow-card compact-form" data-department-action="savePosition"><h3>Create a position</h3><select name="DepartmentId" required>${departmentOptions(departments)}</select><input name="PositionId" placeholder="Position ID" required><input name="Name" placeholder="Position name" required><button type="submit">Save position</button></form>
+        <form class="workflow-card compact-form department-member-assignment-form" data-department-action="saveDepartmentMember"><h3>Assign a member</h3><select name="DepartmentId" required>${departmentOptions(departments)}</select><select name="MemberId" required${members.length ? '' : ' disabled'}>${memberOptions}</select><select name="PositionId">${positionOptions}</select><input name="JoinedDate" type="date" value="${new Date().toISOString().slice(0, 10)}"><select name="Status"><option>Active</option><option>Inactive</option></select><button type="submit"${departments.length && members.length ? '' : ' disabled'}>Assign member</button>${departments.length ? '' : '<small class="muted">Create a department before assigning members.</small>'}${members.length ? '' : '<small class="muted">Register the first member before making an assignment.</small>'}</form>
+      </div>
+      ${table('Registered members', members, [
+        { label: 'Member ID', value: (row) => row.MemberId || row.__id },
+        { label: 'Name', value: (row) => row.DisplayName },
+        { label: 'Phone', value: (row) => row.Phone },
+        { label: 'Email', value: (row) => row.Email },
+        { label: 'Status', value: (row) => row.MembershipStatus }
+      ])}
       ${table('Department members and positions', departmentMembers, [
         { label: 'Department', value: (row) => row.DepartmentName || row.DepartmentId },
         { label: 'Member', value: (row) => row.DisplayName || row.MemberId },
@@ -2530,6 +2558,22 @@ async function loadOrganizationDepartments() {
         if (option) select.value = option.value;
       });
     }
+    panelEl.querySelectorAll('.department-member-assignment-form').forEach((form) => {
+      const departmentSelect = form.elements.DepartmentId;
+      const positionSelect = form.elements.PositionId;
+      const syncPositions = () => {
+        const departmentId = clean(departmentSelect?.value);
+        [...(positionSelect?.options || [])].forEach((option, index) => {
+          const available = index === 0 || !departmentId
+            || clean(option.dataset.departmentId) === departmentId;
+          option.hidden = !available;
+          option.disabled = !available;
+        });
+        if (positionSelect?.selectedOptions?.[0]?.disabled) positionSelect.value = '';
+      };
+      departmentSelect?.addEventListener('change', syncPositions);
+      syncPositions();
+    });
     panelEl.querySelectorAll('[data-department-action]').forEach((form) => form.addEventListener('submit', async (event) => {
       event.preventDefault();
       try {

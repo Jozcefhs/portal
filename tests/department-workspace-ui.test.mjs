@@ -24,6 +24,7 @@ test('departments and members use focused task-based workspaces', () => {
 test('department workspace preserves forms, registers and direct editing', () => {
   [
     'saveDepartment',
+    'saveChurchMember',
     'savePosition',
     'saveDepartmentMember',
     'saveMeeting',
@@ -40,11 +41,24 @@ test('department workspace preserves forms, registers and direct editing', () =>
   assert.match(adminJs, /Program participants/);
 });
 
+test('members can be registered before they are assigned to a department', () => {
+  assert.match(adminJs, /<h3>Register a member<\/h3>/);
+  assert.match(adminJs, /name="MemberId" value="MEM-\$\{Date\.now\(\)\}"/);
+  assert.match(adminJs, /name="DisplayName" placeholder="Full display name" required/);
+  assert.match(adminJs, /<h3>Assign a member<\/h3>/);
+  assert.match(adminJs, /No registered members .* create one first/);
+  assert.match(adminJs, /Registered members/);
+  assert.match(adminJs, /data-department-id="\$\{escapeHtml\(row\.DepartmentId\)\}"/);
+  assert.match(adminJs, /clean\(option\.dataset\.departmentId\) === departmentId/);
+});
+
 test('department workspace is responsive and supports dark mode', () => {
   assert.match(portalCss, /\.organization-workspace-tabs/);
   assert.match(portalCss, /\.organization-workspace-panel\[hidden\]/);
   assert.match(portalCss, /\.department-two-column-grid/);
   assert.match(portalCss, /\.department-three-column-grid/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.organization-workspace-tabs/);
+  assert.match(portalCss, /\.department-member-onboarding/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.department-member-onboarding/);
   assert.match(portalCss, /@media \(max-width: 640px\)[\s\S]*?\.organization-workspace-tabs/);
 });
