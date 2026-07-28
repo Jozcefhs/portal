@@ -262,6 +262,8 @@ test('printable official documents use branding and safely escape plain-text con
   assert.match(printable.html, /class="stamp-image"/);
   assert.doesNotMatch(printable.html, /class="watermark"/);
   assert.match(printable.html, /background-image:/);
+  assert.match(printable.html, /header\{[^}]*justify-content:center/);
+  assert.match(printable.html, /\.footer\{[^}]*text-align:center/);
   assert.match(printable.emailHtml, /Digitally signed/);
   assert.match(printable.emailHtml, /Official stamp applied/);
   assert.doesNotMatch(printable.emailHtml, /data:image/);

@@ -1682,6 +1682,8 @@ html[data-theme="dark"] .department-guidance-card { background: linear-gradient(
 .executive-register-list{display:grid;gap:6px}
 .executive-register-row{display:grid;grid-template-columns:minmax(125px,.7fr) minmax(220px,1.5fr) 100px 105px auto;align-items:center;gap:10px;padding:10px;border:1px solid #d7e2ec;border-radius:10px;background:#fff}
 .executive-register-row strong,.executive-register-row small{display:block}.executive-register-row strong{font-size:10px}.executive-register-row small{margin-top:2px;color:#708497;font-size:8px}.executive-register-row time{color:#60778c;font-size:9px}.executive-register-row .workflow-status{justify-self:start}.executive-register-row button{margin:0}
+.executive-register-row .executive-send-action,.executive-register-row .executive-print-action{color:#185f96!important}
+.executive-register-row .executive-send-action:hover,.executive-register-row .executive-print-action:hover{background:#e7f1fb!important;color:#0b456f!important}
 html[data-theme="dark"] .executive-office-intro{border-color:#33485f}
 html[data-theme="dark"] .executive-workspace-tabs,html[data-theme="dark"] .executive-workspace-panel{border-color:#33485f;background:rgba(15,31,49,.97)}
 html[data-theme="dark"] .executive-workspace-tabs button{color:#cfdeed}
@@ -1707,6 +1709,11 @@ html[data-theme="dark"] .executive-directory-email{color:#e7f1fb}
 html[data-theme="dark"] .executive-compose-card input:not([type=checkbox]):not([type=radio]),html[data-theme="dark"] .executive-compose-card select,html[data-theme="dark"] .executive-compose-card textarea{border-color:#405871;background:#0d1c2c;color:#f2f7ff}
 html[data-theme="dark"] .executive-authorization-card{border-color:#287663;background:#102f2b}
 html[data-theme="dark"] .executive-selected-recipient{border-color:#2f927c;background:#123c35;color:#e8fff9}
+html[data-theme="dark"] .executive-empty-chart{border-color:#354b62;background:#112438;color:#edf5ff}
+html[data-theme="dark"] .executive-empty-chart>span{background:#213b55;color:#dcecff}
+html[data-theme="dark"] .executive-empty-chart .muted{color:#b8cada!important}
+html[data-theme="dark"] .executive-register-row .executive-send-action,html[data-theme="dark"] .executive-register-row .executive-print-action{color:#9ed2ff!important}
+html[data-theme="dark"] .executive-register-row .executive-send-action:hover,html[data-theme="dark"] .executive-register-row .executive-print-action:hover{background:#213b55!important;color:#fff!important}
 @media(max-width:980px){
   .executive-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .executive-hero-card{grid-column:1/-1}

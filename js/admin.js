@@ -3742,10 +3742,22 @@ function executiveRegisterRow(row) {
     <span class="workflow-status status-${escapeHtml(status.toLowerCase().replace(/[^a-z]+/g, '-'))}">${escapeHtml(status)}</span>
     <div class="compact-row-actions">
       ${/draft/i.test(status) ? `<button type="button" class="compact-icon-action compact-edit-action" data-edit-executive="${escapeHtml(id)}" aria-label="Edit draft" title="Edit draft">&#9998;</button>` : ''}
-      ${/^issued$/i.test(status) ? `<button type="button" class="compact-icon-action" data-send-executive="${escapeHtml(id)}" aria-label="Send issued document" title="Send issued document">&#9993;</button>` : ''}
-      <button type="button" class="compact-icon-action" data-print-executive="${escapeHtml(id)}" aria-label="View and print" title="View and print">&#128424;</button>
+      ${/^issued$/i.test(status) ? `<button type="button" class="compact-icon-action executive-send-action" data-send-executive="${escapeHtml(id)}" aria-label="Send issued document" title="Send issued document"><span aria-hidden="true">&#9993;</span></button>` : ''}
+      <button type="button" class="compact-icon-action executive-print-action" data-print-executive="${escapeHtml(id)}" aria-label="View and print" title="View and print"><span aria-hidden="true">&#128424;&#65038;</span></button>
     </div>
   </article>`;
+}
+
+function executiveSendDialogMarkup() {
+  return `<dialog id="executiveSendDialog" class="workflow-dialog executive-send-dialog">
+    <div class="workflow-dialog-header"><div><small>Secure delivery</small><h2>Send issued document</h2></div><button type="button" data-close-executive-send aria-label="Close">&times;</button></div>
+    <form id="executiveSendForm" class="workflow-form">
+      <input type="hidden" name="correspondenceId">
+      <label>Recipient email <input type="email" name="recipientEmail" required></label>
+      <label>Current password <input type="password" name="approvalPassword" autocomplete="current-password" required></label>
+      <div class="executive-form-actions"><button type="submit">Send document</button><p id="executiveSendStatus" class="status"></p></div>
+    </form>
+  </dialog>`;
 }
 
 function renderExecutiveRegister() {
@@ -3753,16 +3765,7 @@ function renderExecutiveRegister() {
   return `
     <div class="department-panel-heading"><div><small>Audit trail</small><h3>Correspondence register</h3></div><p>Every saved, issued and sent document remains traceable by its official reference and status.</p></div>
     <div class="executive-register-toolbar"><span>${records.length.toLocaleString()} record${records.length === 1 ? '' : 's'}</span><button type="button" data-executive-open="compose">New correspondence</button></div>
-    <div class="executive-register-list">${records.length ? records.map(executiveRegisterRow).join('') : '<p class="muted">No correspondence has been recorded yet.</p>'}</div>
-    <dialog id="executiveSendDialog" class="workflow-dialog executive-send-dialog">
-      <div class="workflow-dialog-header"><div><small>Secure delivery</small><h2>Send issued document</h2></div><button type="button" data-close-executive-send aria-label="Close">&times;</button></div>
-      <form id="executiveSendForm" class="workflow-form">
-        <input type="hidden" name="correspondenceId">
-        <label>Recipient email <input type="email" name="recipientEmail" required></label>
-        <label>Current password <input type="password" name="approvalPassword" autocomplete="current-password" required></label>
-        <div class="executive-form-actions"><button type="submit">Send document</button><p id="executiveSendStatus" class="status"></p></div>
-      </form>
-    </dialog>`;
+    <div class="executive-register-list">${records.length ? records.map(executiveRegisterRow).join('') : '<p class="muted">No correspondence has been recorded yet.</p>'}</div>`;
 }
 
 function renderExecutiveOffice(draft = null) {
@@ -3785,7 +3788,8 @@ function renderExecutiveOffice(draft = null) {
       <button type="button" class="compact-action secondary" id="refreshExecutiveOffice" aria-label="Refresh executive office">&#8635; Refresh</button>
     </div>
     <nav class="executive-workspace-tabs" aria-label="${escapeHtml(executiveOfficeTitle())} sections">${tabs.map(([key, icon, label]) => `<button type="button" data-executive-tab="${key}" class="${executiveOfficeTab === key ? 'active' : ''}" aria-selected="${executiveOfficeTab === key}"><span aria-hidden="true">${icon}</span>${label}</button>`).join('')}</nav>
-    <div class="executive-workspace-panel">${body}</div>`;
+    <div class="executive-workspace-panel">${body}</div>
+    ${executiveSendDialogMarkup()}`;
   bindExecutiveOfficeEvents();
 }
 
