@@ -52,7 +52,7 @@ test('church edition enables church boundaries while retaining shared finance mo
   );
   assert.deepEqual(
     allowedSectionsFor({ role: 'Super Admin' }, flags),
-    ['members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'organizationStore', 'restaurant', 'staffUsers']
+    ['incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'organizationStore', 'restaurant', 'staffUsers']
   );
 });
 

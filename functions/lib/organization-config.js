@@ -164,6 +164,7 @@ const SECTION_FEATURES = Object.freeze({
   formPurchases: 'admissions',
   students: 'students',
   accounts: 'students',
+  incomeAnalytics: 'accounting',
   financeRequests: 'accounting',
   payroll: 'payroll',
   clinic: 'clinic',

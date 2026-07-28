@@ -68,6 +68,8 @@ let profilePhotoState = '';
 let staffBearerToken = '';
 let organizationDepartmentWorkspaceTab = 'overview';
 let organizationDashboardChartsRequest = 0;
+let incomeAnalyticsData = null;
+let incomeAnalyticsFilter = { period: 'monthly' };
 
 const tabConfig = [
   ['admissions', 'Admissions'],
@@ -79,6 +81,7 @@ const tabConfig = [
   ['offerings', 'Offerings'],
   ['donations', 'Donations'],
   ['accounts', 'Accounts'],
+  ['incomeAnalytics', 'Income Analytics'],
   ['financeRequests', 'Bills & Requisitions'],
   ['payroll', 'My Payroll'],
   ['clinic', 'Clinic'],
@@ -102,6 +105,7 @@ const tabIcons = {
   offerings: '\u{1F9FA}',
   donations: '\u{1F381}',
   accounts: '\u{1F9EE}',
+  incomeAnalytics: '\u{1F4CA}',
   financeRequests: '\u{1F4CB}',
   payroll: '\u{1F4B3}',
   clinic: '\u2695',
@@ -805,6 +809,15 @@ function renderModuleSummary(active, liveData = null) {
       { icon: '\u{1F9FE}', label: 'Invoices', value: (data.invoices || []).length },
       { icon: '\u{1F4CA}', label: 'Invoice Value', value: money(sumRows(data.invoices, ['Debit', 'Amount'])) }
     ];
+  } else if (active === 'incomeAnalytics' && liveData) {
+    const summary = liveData.summary || {};
+    const comparison = Number(summary.comparisonPercent || 0);
+    cards = [
+      { icon, label: 'Total Income', value: money(summary.totalIncome), note: `${liveData.period?.dateFrom || ''} to ${liveData.period?.dateTo || ''}` },
+      { icon: '\u{1F9FE}', label: 'Transactions', value: summary.transactionCount || 0, note: 'Posted income records' },
+      { icon: '\u00F7', label: 'Average Income', value: money(summary.averageIncome), note: 'Per transaction' },
+      { icon: comparison >= 0 ? '\u2191' : '\u2193', label: 'Previous Period', value: `${comparison >= 0 ? '+' : ''}${comparison.toFixed(1)}%`, note: money(summary.previousTotal) }
+    ];
   } else if (active === 'clinic') {
     const data = liveData || departments.clinic || {};
     cards = [
@@ -945,7 +958,7 @@ function renderMobileNavigation(tabs) {
   const findTab = (...keys) => tabs.find(([key]) => keys.includes(key));
   const homeTab = findTab('overview') || tabs[0];
   const peopleTab = findTab('members', 'students', 'services', 'admissions') || homeTab;
-  const financeTab = findTab('donations', 'offerings', 'funds', 'accounts', 'financeRequests') || homeTab;
+  const financeTab = findTab('incomeAnalytics', 'accounts', 'donations', 'offerings', 'funds', 'financeRequests') || homeTab;
   const items = [
     [homeTab[0], tabIcons.overview, 'Home'],
     [peopleTab[0], tabIcons[peopleTab[0]] || '\u{1F465}', peopleTab[0] === 'members' ? 'Members' : 'People'],
@@ -2604,6 +2617,183 @@ async function loadChurchOfferings() {
   }
 }
 
+function compactMoney(value) {
+  const numeric = Number(value || 0);
+  return new Intl.NumberFormat('en-NG', {
+    style: 'currency',
+    currency: 'NGN',
+    notation: Math.abs(numeric) >= 1000000 ? 'compact' : 'standard',
+    maximumFractionDigits: Math.abs(numeric) >= 1000000 ? 1 : 0
+  }).format(numeric);
+}
+
+function incomeOptionList(rows, valueKey, labelKey, selected, firstLabel) {
+  return `<option value="">${escapeHtml(firstLabel)}</option>${(rows || []).map((row) => {
+    const value = typeof row === 'object' ? row[valueKey] : row;
+    const label = typeof row === 'object' ? row[labelKey] : row;
+    return `<option value="${escapeHtml(value)}"${clean(value) === clean(selected) ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+  }).join('')}`;
+}
+
+function renderIncomeBars(rows = []) {
+  const maximum = Math.max(1, ...rows.map((row) => Math.abs(Number(row.value || 0))));
+  if (!rows.some((row) => Math.abs(Number(row.value || 0)) > 0.005)) {
+    return '<div class="income-empty-chart"><span aria-hidden="true">▥</span><p>No posted income was recorded for this period.</p></div>';
+  }
+  return `<div class="income-bar-chart" role="img" aria-label="Income over time">${rows.map((row) => {
+    const height = Math.max(3, Math.round(Math.abs(Number(row.value || 0)) / maximum * 100));
+    return `<div class="income-bar-item" title="${escapeHtml(row.label)}: ${escapeHtml(money(row.value))}">
+      <strong>${escapeHtml(compactMoney(row.value))}</strong>
+      <div><i style="height:${height}%"></i></div>
+      <small>${escapeHtml(row.label)}</small>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+const incomeChartColours = ['#18c7a3', '#206de5', '#ffc94a', '#9167d8', '#ef775a', '#24a6b8', '#e64e72', '#829ab1'];
+
+function renderIncomeDistribution(title, rows = []) {
+  const total = rows.reduce((sum, row) => sum + Math.max(0, Number(row.value || 0)), 0);
+  if (!total) {
+    return `<article class="income-distribution-card"><h3>${escapeHtml(title)}</h3><div class="income-empty-chart compact"><p>No distribution data yet.</p></div></article>`;
+  }
+  let cursor = 0;
+  const segments = rows.map((row, index) => {
+    const start = cursor;
+    cursor += Math.max(0, Number(row.value || 0)) / total * 100;
+    return `${incomeChartColours[index % incomeChartColours.length]} ${start.toFixed(2)}% ${cursor.toFixed(2)}%`;
+  });
+  return `<article class="income-distribution-card">
+    <h3>${escapeHtml(title)}</h3>
+    <div class="income-donut-layout">
+      <div class="income-donut" style="--income-donut:${segments.join(',')}"><span><strong>${escapeHtml(compactMoney(total))}</strong><small>Total</small></span></div>
+      <div class="income-legend">${rows.map((row, index) => `<div><i style="background:${incomeChartColours[index % incomeChartColours.length]}"></i><span>${escapeHtml(row.label)}</span><strong>${escapeHtml(money(row.value))}</strong></div>`).join('')}</div>
+    </div>
+  </article>`;
+}
+
+function renderIncomeAnalytics(data) {
+  if (activeSection !== 'incomeAnalytics') return;
+  incomeAnalyticsData = data;
+  incomeAnalyticsFilter = { ...incomeAnalyticsFilter, ...(data.filter || {}) };
+  renderModuleSummary('incomeAnalytics', data);
+  const period = data.period || {};
+  const options = data.options || {};
+  const selectedBranch = data.filter?.branchId || incomeAnalyticsFilter.branchId || '';
+  const accountOptions = (options.accounts || []).map((row) => ({ ...row, label: `${row.code} - ${row.name}` }));
+  const periodButtons = [
+    ['daily', 'Daily'],
+    ['weekly', 'Weekly'],
+    ['monthly', 'Monthly'],
+    ['quarterly', 'Quarterly']
+  ].map(([key, label]) => `<button type="button" data-income-period="${key}" class="${period.mode === key ? 'active' : ''}">${label}</button>`).join('');
+  panelEl.innerHTML = `
+    <div class="income-analytics" id="incomeAnalyticsReport">
+      <div class="workflow-intro income-report-heading">
+        <div><p class="eyebrow">Finance & accounting</p><h2>Income Analytics</h2><p class="muted">Posted revenue from the shared accounting ledger, without duplicate operational totals.</p></div>
+        <div class="income-report-actions"><button type="button" class="secondary" id="incomeExportCsv">&#8681; CSV</button><button type="button" id="incomePrintReport">&#9113; Print / PDF</button></div>
+      </div>
+      <section class="income-filter-card" aria-label="Income report filters">
+        <div class="income-period-switch">${periodButtons}</div>
+        <form id="incomeAnalyticsFilter" class="income-filter-grid">
+          <label>From<input type="date" name="dateFrom" value="${escapeHtml(period.dateFrom)}"></label>
+          <label>To<input type="date" name="dateTo" value="${escapeHtml(period.dateTo)}"></label>
+          <label>Branch<select name="branchId">${incomeOptionList(options.branches, '', '', selectedBranch, 'All branches')}</select></label>
+          <label>Department<select name="department">${incomeOptionList(options.departments, '', '', incomeAnalyticsFilter.department, 'All departments')}</select></label>
+          <label>Income account<select name="accountCode">${incomeOptionList(accountOptions, 'code', 'label', incomeAnalyticsFilter.accountCode, 'All income accounts')}</select></label>
+          <label>Payment route<select name="channel">${incomeOptionList(options.channels, '', '', incomeAnalyticsFilter.channel, 'All payment routes')}</select></label>
+          <label>Income source<select name="source">${incomeOptionList(options.sources, '', '', incomeAnalyticsFilter.source, 'All income sources')}</select></label>
+          <button type="submit">Apply filters</button>
+        </form>
+      </section>
+      <div class="income-report-period"><span>${escapeHtml(period.dateFrom)} to ${escapeHtml(period.dateTo)}</span><strong>${escapeHtml(money(data.summary?.totalIncome))}</strong><small>${escapeHtml(data.summary?.transactionCount || 0)} transaction${Number(data.summary?.transactionCount) === 1 ? '' : 's'}</small></div>
+      <section class="income-chart-card"><div class="income-card-heading"><div><p class="eyebrow">Income dynamics</p><h3>Income over time</h3></div><span>Hover or tap a bar for the exact value</span></div>${renderIncomeBars(data.timeline || [])}</section>
+      <section class="income-distribution-grid">
+        ${renderIncomeDistribution('Income by source', data.sources || [])}
+        ${renderIncomeDistribution('Settlement route', data.channels || [])}
+      </section>
+      <section class="income-transactions">
+        <div class="income-card-heading"><div><p class="eyebrow">Drill-down</p><h3>Income transactions</h3></div><span>${escapeHtml((data.transactions || []).length)} rows</span></div>
+        ${table('', data.transactions || [], [
+          { label: 'Date', value: (row) => row.date },
+          { label: 'Reference', value: (row) => row.reference || row.journalNo },
+          { label: 'Description', value: (row) => row.description },
+          { label: 'Source', value: (row) => row.source },
+          { label: 'Department', value: (row) => row.department },
+          { label: 'Route', value: (row) => row.channel },
+          { label: 'Income Account', value: (row) => row.accounts },
+          { label: 'Amount', value: (row) => money(row.amount) }
+        ])}
+      </section>
+    </div>`;
+  bindIncomeAnalyticsEvents();
+}
+
+async function loadIncomeAnalytics(filter = incomeAnalyticsFilter) {
+  try {
+    const response = await staffFetch('/api/income-analytics', {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(filter || {})
+    });
+    const data = await response.json().catch(() => ({ ok: false, message: 'Income analytics did not return JSON.' }));
+    if (response.status === 401) { showLogin(data.message || 'Your staff session has expired.', 'bad'); return; }
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Income analytics could not be loaded.');
+    renderIncomeAnalytics(data);
+  } catch (error) {
+    if (activeSection === 'incomeAnalytics') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+  }
+}
+
+function csvCell(value) {
+  let text = clean(value).replace(/"/g, '""');
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  return `"${text}"`;
+}
+
+function exportIncomeAnalyticsCsv() {
+  const rows = incomeAnalyticsData?.transactions || [];
+  const headings = ['Date', 'Reference', 'Description', 'Source', 'Department', 'Payment Route', 'Income Account', 'Amount'];
+  const content = [headings, ...rows.map((row) => [
+    row.date, row.reference || row.journalNo, row.description, row.source,
+    row.department, row.channel, row.accounts, Number(row.amount || 0).toFixed(2)
+  ])].map((row) => row.map(csvCell).join(',')).join('\r\n');
+  const url = URL.createObjectURL(new Blob([`\uFEFF${content}`], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `income-report-${incomeAnalyticsData?.period?.dateFrom || 'from'}-${incomeAnalyticsData?.period?.dateTo || 'to'}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function bindIncomeAnalyticsEvents() {
+  panelEl.querySelectorAll('[data-income-period]').forEach((button) => button.addEventListener('click', () => {
+    incomeAnalyticsFilter = {
+      period: button.dataset.incomePeriod,
+      branchId: incomeAnalyticsFilter.branchId,
+      department: incomeAnalyticsFilter.department,
+      accountCode: incomeAnalyticsFilter.accountCode,
+      channel: incomeAnalyticsFilter.channel,
+      source: incomeAnalyticsFilter.source
+    };
+    panelEl.innerHTML = '<p class="muted">Updating income report...</p>';
+    loadIncomeAnalytics(incomeAnalyticsFilter);
+  }));
+  document.getElementById('incomeAnalyticsFilter')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+    incomeAnalyticsFilter = { ...values, period: 'custom' };
+    panelEl.innerHTML = '<p class="muted">Applying income filters...</p>';
+    loadIncomeAnalytics(incomeAnalyticsFilter);
+  });
+  document.getElementById('incomeExportCsv')?.addEventListener('click', exportIncomeAnalyticsCsv);
+  document.getElementById('incomePrintReport')?.addEventListener('click', () => window.print());
+}
+
 function renderSection(active) {
   if (!dashboardData) return;
   panelEl.classList.toggle('school-store-panel', active === 'bookstore' || active === 'uniformStore' || active === 'organizationStore');
@@ -2621,6 +2811,9 @@ function renderSection(active) {
   } else if (active === 'financeRequests') {
     panelEl.innerHTML = '<p class="muted">Loading bills and requisitions...</p>';
     loadFinanceWorkflow();
+  } else if (active === 'incomeAnalytics') {
+    panelEl.innerHTML = '<p class="muted">Loading posted income analytics...</p>';
+    loadIncomeAnalytics();
   } else if (active === 'admissions') {
     panelEl.innerHTML = table('Admissions', departments.admissions || [], [
       { label: 'Reference', value: (row) => pick(row, ['ApplicationReference', 'ApplicationID', '__id']) },

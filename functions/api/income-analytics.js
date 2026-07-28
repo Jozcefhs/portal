@@ -1,0 +1,41 @@
+import { listCollection, requireFirestoreEnv } from '../lib/firestore.js';
+import { requireStaffSession } from '../lib/staff-auth.js';
+import { buildIncomeAnalytics, journalMatchesIncomeBranch } from '../lib/income-analytics.js';
+
+function clean(value) {
+  return String(value ?? '').trim();
+}
+
+export async function onRequestPost(context) {
+  try {
+    const { request, env } = context;
+    requireFirestoreEnv(env);
+    const user = await requireStaffSession(env, request);
+    if (!(user.allowedSections || []).includes('incomeAnalytics')) {
+      const error = new Error('Your staff account is not allowed to view income analytics.');
+      error.status = 403;
+      throw error;
+    }
+    const body = await request.json().catch(() => ({}));
+    const [chart, journals] = await Promise.all([
+      listCollection(env, 'chartOfAccounts'),
+      listCollection(env, 'accountingJournals')
+    ]);
+    const privileged = ['Super Admin', 'Accounts Officer', 'Management', 'Treasurer', 'Auditor'].includes(clean(user.role));
+    const assignedBranch = clean(user.branchId) || 'main';
+    const requestedBranch = clean(body.branchId);
+    const effectiveBranch = privileged ? (requestedBranch || 'all') : assignedBranch;
+    const scopedJournals = journals.filter((journal) => journalMatchesIncomeBranch(journal, effectiveBranch));
+    const analytics = buildIncomeAnalytics(chart, scopedJournals, body);
+    const branchOptions = privileged
+      ? [...new Set(['all', assignedBranch, ...(analytics.options.branches || [])].filter(Boolean))]
+      : [assignedBranch];
+    analytics.options.branches = branchOptions;
+    analytics.filter = { ...body, branchId: effectiveBranch };
+    return Response.json({ ok: true, message: 'Income analytics loaded.', ...analytics }, {
+      headers: { 'Cache-Control': 'no-store' }
+    });
+  } catch (error) {
+    return Response.json({ ok: false, message: error.message || String(error) }, { status: error.status || 500 });
+  }
+}

@@ -848,6 +848,104 @@ html[data-theme="dark"] .staff-page .admin-table tbody tr.selected .student-edit
   }
 }
 
+/* Posted-ledger income analytics */
+.income-analytics{display:grid;gap:16px;min-width:0}
+.income-report-heading{align-items:flex-end}
+.income-report-heading .muted{max-width:660px}
+.income-report-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
+.income-report-actions button{width:auto;min-height:38px;margin:0;padding:8px 13px}
+.income-filter-card,.income-chart-card,.income-distribution-card,.income-transactions{
+  min-width:0;padding:16px;border:1px solid #d8e2ed;border-radius:16px;background:#fff
+}
+.income-period-switch{display:grid;grid-template-columns:repeat(4,minmax(80px,1fr));gap:8px;margin-bottom:14px}
+.income-period-switch button{
+  width:100%;min-height:38px;margin:0;padding:7px 12px;border:1px solid #cbd8e6;border-radius:999px;
+  background:#eef5f7;color:#31516c;font-size:12px
+}
+.income-period-switch button.active{border-color:#0ca982;background:#0ca982;color:#fff;box-shadow:0 5px 14px rgba(12,169,130,.22)}
+.income-filter-grid{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:10px;align-items:end}
+.income-filter-grid label{display:grid;gap:5px;margin:0;color:#52667c;font-size:11px;font-weight:650}
+.income-filter-grid input,.income-filter-grid select{width:100%;min-height:38px;margin:0;padding:6px 9px;font-size:12px;font-weight:400}
+.income-filter-grid button{width:fit-content;min-height:38px;margin:0;padding:8px 15px}
+.income-report-period{
+  display:grid;grid-template-columns:1fr auto;align-items:center;gap:4px 16px;padding:20px;border-radius:17px;
+  background:linear-gradient(125deg,#103b67,#0b7d78);color:#fff;box-shadow:0 12px 28px rgba(16,59,103,.16)
+}
+.income-report-period span{font-size:12px;letter-spacing:.02em}.income-report-period strong{grid-row:1/3;grid-column:2;font-size:30px}.income-report-period small{opacity:.82}
+.income-card-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:12px}
+.income-card-heading h3{margin:2px 0 0}.income-card-heading>span{color:#71859b;font-size:11px;text-align:right}
+.income-bar-chart{display:flex;align-items:stretch;gap:8px;height:270px;overflow-x:auto;padding:8px 2px 2px;scrollbar-width:thin}
+.income-bar-item{display:grid;grid-template-rows:28px 1fr 34px;flex:1 0 54px;min-width:54px;gap:5px;text-align:center}
+.income-bar-item>strong{align-self:end;overflow:hidden;color:#52667c;font-size:9px;text-overflow:ellipsis;white-space:nowrap}
+.income-bar-item>div{display:flex;align-items:flex-end;justify-content:center;overflow:hidden;border-radius:9px 9px 3px 3px;background:#eef3f7}
+.income-bar-item i{display:block;width:68%;min-height:3px;border-radius:7px 7px 2px 2px;background:linear-gradient(180deg,#42d7ba,#0b9b79);box-shadow:0 3px 8px rgba(11,155,121,.22)}
+.income-bar-item small{overflow:hidden;color:#52667c;font-size:10px;line-height:1.2;text-overflow:ellipsis}
+.income-empty-chart{display:grid;min-height:220px;place-content:center;text-align:center;color:#71859b}
+.income-empty-chart span{font-size:40px;opacity:.38}.income-empty-chart p{margin:6px}.income-empty-chart.compact{min-height:180px}
+.income-distribution-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.income-distribution-card h3{margin:0 0 16px}
+.income-donut-layout{display:grid;grid-template-columns:minmax(150px,220px) minmax(0,1fr);align-items:center;gap:20px}
+.income-donut{
+  display:grid;width:min(100%,210px);aspect-ratio:1;margin:auto;place-items:center;border-radius:50%;
+  background:conic-gradient(var(--income-donut));box-shadow:inset 0 0 0 1px rgba(16,42,67,.05)
+}
+.income-donut::before{content:"";grid-area:1/1;width:54%;aspect-ratio:1;border-radius:50%;background:#fff;box-shadow:0 2px 10px rgba(16,42,67,.08)}
+.income-donut span{z-index:1;grid-area:1/1;display:grid;max-width:52%;text-align:center}
+.income-donut strong{overflow:hidden;color:#102a43;font-size:14px;text-overflow:ellipsis}.income-donut small{color:#71859b;font-size:10px}
+.income-legend{display:grid;gap:8px;min-width:0}
+.income-legend>div{display:grid;grid-template-columns:10px minmax(70px,1fr) auto;align-items:center;gap:8px;padding-bottom:7px;border-bottom:1px solid #edf1f5;font-size:11px}
+.income-legend i{width:10px;height:10px;border-radius:3px}.income-legend span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.income-legend strong{color:#102a43;font-size:11px}
+.income-transactions>.income-card-heading+h2:empty{display:none}
+.income-transactions .admin-table-wrap{max-height:440px}.income-transactions .admin-table th{position:sticky;top:0;z-index:1}
+
+html[data-theme="dark"] .income-filter-card,
+html[data-theme="dark"] .income-chart-card,
+html[data-theme="dark"] .income-distribution-card,
+html[data-theme="dark"] .income-transactions{border-color:#33465c;background:#111e2e;color:#edf4ff}
+html[data-theme="dark"] .income-period-switch button{border-color:#3b536c;background:#172a3e;color:#d4e2f1}
+html[data-theme="dark"] .income-period-switch button.active{border-color:#22c39c;background:#087c65;color:#fff}
+html[data-theme="dark"] .income-filter-grid label,
+html[data-theme="dark"] .income-card-heading>span,
+html[data-theme="dark"] .income-bar-item>strong,
+html[data-theme="dark"] .income-bar-item small,
+html[data-theme="dark"] .income-empty-chart{color:#a8b8cb}
+html[data-theme="dark"] .income-filter-grid input,
+html[data-theme="dark"] .income-filter-grid select{border-color:#3b5068;background:#0d1a29;color:#edf4ff;color-scheme:dark}
+html[data-theme="dark"] .income-bar-item>div{background:#233448}
+html[data-theme="dark"] .income-donut::before{background:#111e2e}
+html[data-theme="dark"] .income-donut strong,
+html[data-theme="dark"] .income-legend strong{color:#f4f8ff}
+html[data-theme="dark"] .income-donut small{color:#a8b8cb}
+html[data-theme="dark"] .income-legend>div{border-color:#2c4055}
+
+@media (max-width:980px){
+  .income-filter-grid{grid-template-columns:repeat(3,minmax(120px,1fr))}
+  .income-donut-layout{grid-template-columns:150px minmax(0,1fr)}
+}
+@media (max-width:680px){
+  .income-analytics{gap:11px}
+  .income-filter-card,.income-chart-card,.income-distribution-card,.income-transactions{padding:12px;border-radius:14px}
+  .income-report-heading{display:grid;align-items:start}.income-report-actions{justify-content:flex-start}
+  .income-period-switch{gap:5px}.income-period-switch button{min-width:0;min-height:34px;padding:6px 4px;font-size:10px}
+  .income-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .income-filter-grid label{font-size:10px}.income-filter-grid input,.income-filter-grid select{min-height:35px;padding:5px 7px;font-size:11px}
+  .income-report-period{padding:15px}.income-report-period strong{font-size:21px}.income-report-period span{font-size:10px}
+  .income-bar-chart{height:230px}.income-bar-item{flex-basis:48px;min-width:48px}
+  .income-distribution-grid{grid-template-columns:1fr}
+  .income-donut-layout{grid-template-columns:125px minmax(0,1fr);gap:12px}
+  .income-donut strong{font-size:11px}.income-legend>div{font-size:10px}.income-legend strong{font-size:10px}
+  .income-card-heading{align-items:flex-start}.income-card-heading>span{max-width:42%}
+  .income-transactions .admin-table-wrap{max-height:52vh}
+}
+
+@media print{
+  body.staff-page{background:#fff!important}
+  .staff-topbar,.staff-sidebar,.staff-mobile-nav,.staff-sidebar-scrim,.staff-summary,.income-report-actions,.income-filter-card{display:none!important}
+  .staff-shell,.staff-dashboard,.staff-app-layout,.staff-main-content,.staff-panel{display:block!important;width:100%!important;max-width:none!important;margin:0!important;padding:0!important;border:0!important;box-shadow:none!important}
+  .income-analytics{gap:10px}.income-chart-card,.income-distribution-card,.income-transactions{break-inside:avoid;border-color:#bdcad8}
+  .income-bar-chart{overflow:visible;height:220px}.income-bar-item{min-width:24px;flex-basis:24px}.income-transactions .admin-table-wrap{max-height:none;overflow:visible}
+}
+
 /* Complete dark-theme coverage for shared forms, configuration surfaces, and dialogs. */
 html[data-theme="dark"] input::placeholder,
 html[data-theme="dark"] textarea::placeholder{color:#8297ad;opacity:1}
