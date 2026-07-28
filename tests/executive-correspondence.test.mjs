@@ -20,11 +20,12 @@ import { recordsDeskCapabilities } from '../functions/lib/records-desk.js';
 import { allowedSectionsFor } from '../functions/lib/staff-auth.js';
 
 const portalRoot = new URL('../', import.meta.url);
-const [endpoint, backend, backendSecurity, executiveSource] = await Promise.all([
+const [endpoint, backend, backendSecurity, executiveSource, emailSource] = await Promise.all([
   readFile(new URL('functions/api/staff-correspondence.js', portalRoot), 'utf8'),
   readFile(new URL('functions/api/backend.js', portalRoot), 'utf8'),
   readFile(new URL('functions/lib/backend-security.js', portalRoot), 'utf8'),
-  readFile(new URL('functions/lib/executive-correspondence.js', portalRoot), 'utf8')
+  readFile(new URL('functions/lib/executive-correspondence.js', portalRoot), 'utf8'),
+  readFile(new URL('functions/lib/email-service.js', portalRoot), 'utf8')
 ]);
 
 test('principal and senior-minister roles receive only the executive office and directory defaults', () => {
@@ -246,6 +247,7 @@ test('printable official documents use branding and safely escape plain-text con
     Address: 'School Road',
     Email: 'office@example.com',
     Phone: '0800',
+    LogoUrl: 'https://portal.example/images/logo.png',
     LogoDataUrl: 'data:image/png;base64,AAAA'
   }, {
     subject: 'Transfer <Certificate>',
@@ -256,11 +258,27 @@ test('printable official documents use branding and safely escape plain-text con
   });
   assert.equal(printable.title, 'Transfer <Certificate>');
   assert.equal(printable.documentTypeTitle, 'Transfer Certificate');
-  assert.match(printable.html, /class="watermark"/);
   assert.match(printable.html, /class="signature-image"/);
   assert.match(printable.html, /class="stamp-image"/);
+  assert.doesNotMatch(printable.html, /class="watermark"/);
+  assert.match(printable.html, /background-image:/);
+  assert.match(printable.emailHtml, /Digitally signed/);
+  assert.match(printable.emailHtml, /Official stamp applied/);
+  assert.doesNotMatch(printable.emailHtml, /data:image/);
+  assert.match(printable.emailHtml, /https:\/\/portal\.example\/images\/logo\.png/);
+  assert.equal(printable.emailAttachments.length, 2);
+  assert.equal(printable.emailAttachments[0].name, 'DCA-TC-1-signature.png');
+  assert.equal(printable.emailAttachments[0].content, 'BBBB');
   assert.match(printable.html, /Ada &lt;Grace&gt;/);
   assert.doesNotMatch(printable.html, /<script>alert/);
+  assert.doesNotMatch(printable.emailHtml, /<script>alert/);
+});
+
+test('official correspondence sends the email-safe layout with bounded endorsement attachments', () => {
+  assert.match(executiveSource, /htmlContent: printable\.emailHtml \|\| printable\.html/);
+  assert.match(executiveSource, /attachments: printable\.emailAttachments/);
+  assert.match(emailSource, /payload\.attachment = normalizedAttachments/);
+  assert.match(emailSource, /content\.length > 1500000/);
 });
 
 test('web issue and send verify the current password server-side and never accept the desktop secret', () => {

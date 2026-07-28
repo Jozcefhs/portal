@@ -859,31 +859,74 @@ function imageTag(source, alt, className) {
   return `<img class="${className}" src="${escapeEmailHtml(url)}" alt="${escapeEmailHtml(alt)}">`;
 }
 
+function cssImageUrl(source) {
+  const url = clean(source);
+  if (!url || (!/^data:image\/(?:png|jpe?g|webp);base64,/i.test(url) && !/^https?:\/\//i.test(url) && !url.startsWith('/'))) return '';
+  return `url("${url.replace(/["\\\r\n<>]/g, (character) => encodeURIComponent(character))}")`;
+}
+
+function dataImageAttachment(source, filename) {
+  const match = clean(source).match(/^data:image\/(png|jpe?g|webp);base64,([a-z0-9+/=\s]+)$/i);
+  if (!match) return null;
+  const extension = /^jpe?g$/i.test(match[1]) ? 'jpg' : match[1].toLowerCase();
+  return {
+    name: `${filename}.${extension}`,
+    content: match[2].replace(/\s+/g, '')
+  };
+}
+
 export function buildPrintableCorrespondence(correspondence, identity, rendered, endorsement = {}) {
   const reference = clean(correspondence.Reference || correspondence.CorrespondenceId);
   const documentTypeTitle = correspondence.Kind === 'transfer-certificate' ? 'Transfer Certificate' : 'Official Correspondence';
   const paragraphs = String(rendered.body || '').split(/\n{2,}/)
     .map((paragraph) => `<p>${paragraph.split(/\n/).map(escapeEmailHtml).join('<br>')}</p>`).join('');
-  // Email clients need a public absolute URL. Embedded data remains a fallback
-  // for offline/legacy printable documents.
   const logoSource = identity.LogoUrl || identity.LogoDataUrl;
+  const publicLogoSource = /^https:\/\//i.test(clean(identity.LogoUrl)) ? clean(identity.LogoUrl) : '';
   const logo = imageTag(logoSource, identity.Name, 'brand-logo');
-  const watermark = imageTag(logoSource, '', 'watermark');
+  const emailLogo = imageTag(publicLogoSource, identity.Name, 'brand-logo');
+  const watermarkImage = cssImageUrl(logoSource);
+  const watermarkStyle = watermarkImage
+    ? `background-image:linear-gradient(rgba(255,255,255,.93),rgba(255,255,255,.93)),${watermarkImage};background-position:center 55%;background-repeat:no-repeat;background-size:360px auto;`
+    : '';
   const signature = correspondence.SignatureApplied
     ? imageTag(endorsement.SignatureDataUrl, 'Signature', 'signature-image')
     : '';
   const stamp = correspondence.StampApplied
     ? imageTag(endorsement.StampDataUrl, 'Official stamp', 'stamp-image')
     : '';
+  const emailAttachments = [
+    correspondence.SignatureApplied
+      ? dataImageAttachment(endorsement.SignatureDataUrl, `${safeId(reference || 'official-document')}-signature`)
+      : null,
+    correspondence.StampApplied
+      ? dataImageAttachment(endorsement.StampDataUrl, `${safeId(reference || 'official-document')}-stamp`)
+      : null
+  ].filter(Boolean);
+  const attachmentLabels = [
+    correspondence.SignatureApplied && dataImageAttachment(endorsement.SignatureDataUrl, 'signature') ? 'Digitally signed' : '',
+    correspondence.StampApplied && dataImageAttachment(endorsement.StampDataUrl, 'stamp') ? 'Official stamp applied' : ''
+  ].filter(Boolean);
+  const attachmentNotice = attachmentLabels.length
+    ? `<div class="attachment-note">${escapeEmailHtml(attachmentLabels.join(' · '))}<br><small>The applied endorsement image${emailAttachments.length === 1 ? ' is' : 's are'} attached to this email.</small></div>`
+    : '';
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeEmailHtml(rendered.subject)}</title>
 <style>
-@page{size:A4;margin:18mm}*{box-sizing:border-box}body{margin:0;background:#eef3f8;color:#15283f;font:15px/1.58 Arial,sans-serif}.document{position:relative;max-width:850px;min-height:1050px;margin:24px auto;background:#fff;border:1px solid #cbd9e7;box-shadow:0 14px 40px rgba(17,42,70,.12);overflow:hidden}.accent{height:10px;background:linear-gradient(90deg,#0b4a78,#0d9488,#d39a18)}header{display:flex;align-items:center;gap:18px;padding:28px 38px 22px;border-bottom:2px solid #194f7d}.brand-logo{width:76px;height:76px;object-fit:contain}.identity h1{margin:0;color:#123f68;font-size:25px}.identity div{color:#587086}.meta{display:grid;grid-template-columns:1fr 1fr;gap:8px 28px;padding:18px 38px;background:#eef6ff}.meta b{color:#173f65}.content{position:relative;z-index:1;padding:34px 48px 38px}.recipient{white-space:pre-line;margin-bottom:28px}.subject{margin:0 0 26px;text-align:center;text-transform:uppercase;text-decoration:underline;font-size:18px}.content p{margin:0 0 18px}.watermark{position:absolute;left:50%;top:50%;width:430px;height:430px;object-fit:contain;transform:translate(-50%,-45%);opacity:.045}.endorsement{display:flex;align-items:flex-end;justify-content:space-between;gap:26px;margin-top:60px}.signature-image{display:block;max-width:190px;max-height:72px;object-fit:contain}.stamp-image{display:block;max-width:120px;max-height:95px;object-fit:contain}.signatory{min-width:260px;border-top:1px solid #536b84;padding-top:8px}.footer{padding:14px 38px;background:#123f68;color:#fff;font-size:12px} @media print{body{background:#fff}.document{margin:0;min-height:auto;border:0;box-shadow:none}}
-</style></head><body><article class="document"><div class="accent"></div>${watermark}<header>${logo}<div class="identity"><h1>${escapeEmailHtml(identity.Name)}</h1><div>${escapeEmailHtml(identity.Address)}</div><div>${escapeEmailHtml([identity.Email, identity.Phone].filter(Boolean).join(' · '))}</div></div></header><section class="meta"><div><b>Reference:</b> ${escapeEmailHtml(reference)}</div><div><b>Date:</b> ${escapeEmailHtml(clean(correspondence.IssuedAt || correspondence.UpdatedAt).slice(0, 10))}</div></section><main class="content"><div class="recipient">${escapeEmailHtml([
+@page{size:A4;margin:16mm}*{box-sizing:border-box}body{margin:0;background:#eef3f8;color:#15283f;font:16px/1.62 Arial,sans-serif}.document{position:relative;max-width:760px;margin:22px auto;background:#fff;border:1px solid #cbd9e7;box-shadow:0 14px 40px rgba(17,42,70,.12);overflow:hidden}.accent{height:7px;background:linear-gradient(90deg,#0b4a78,#0d9488,#d39a18)}header{display:flex;align-items:center;gap:18px;padding:21px 30px 18px;border-bottom:2px solid #194f7d}.brand-logo{display:block;width:72px;height:72px;object-fit:contain}.identity h1{margin:0 0 3px;color:#123f68;font-size:24px;line-height:1.2}.identity div{color:#587086;font-size:14px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:8px 28px;padding:13px 30px;background:#eef6ff}.meta b{color:#173f65}.content{position:relative;z-index:1;padding:30px 40px 34px;${watermarkStyle}}.recipient{white-space:pre-line;margin-bottom:24px}.subject{margin:0 0 25px;text-align:center;text-transform:uppercase;text-decoration:underline;font-size:20px;line-height:1.35}.content p{margin:0 0 17px}.endorsement{display:flex;align-items:flex-end;justify-content:space-between;gap:26px;margin-top:48px}.signature-image{display:block;max-width:190px;max-height:72px;object-fit:contain;margin-bottom:5px}.stamp-image{display:block;max-width:120px;max-height:95px;object-fit:contain}.signatory{min-width:260px;border-top:1px solid #536b84;padding-top:8px}.attachment-note{margin-bottom:10px;padding:9px 12px;border-left:4px solid #0d9488;background:#eef9f7;color:#17485a;font-weight:700}.attachment-note small{font-weight:400}.footer{padding:12px 30px;background:#123f68;color:#fff;font-size:12px}@media print{body{background:#fff}.document{margin:0;min-height:250mm;border:0;box-shadow:none}}
+</style></head><body><article class="document"><div class="accent"></div><header>${logo}<div class="identity"><h1>${escapeEmailHtml(identity.Name)}</h1><div>${escapeEmailHtml(identity.Address)}</div><div>${escapeEmailHtml([identity.Email, identity.Phone].filter(Boolean).join(' · '))}</div></div></header><section class="meta"><div><b>Reference:</b> ${escapeEmailHtml(reference)}</div><div><b>Date:</b> ${escapeEmailHtml(clean(correspondence.IssuedAt || correspondence.UpdatedAt).slice(0, 10))}</div></section><main class="content"><div class="recipient">${escapeEmailHtml([
     correspondence.RecipientTitle,
     correspondence.RecipientName,
     correspondence.RecipientOrganisation,
     correspondence.RecipientAddress
   ].map(clean).filter(Boolean).join('\n'))}</div><h2 class="subject">${escapeEmailHtml(rendered.subject)}</h2>${paragraphs}<div class="endorsement"><div class="signatory">${signature}<strong>${escapeEmailHtml(correspondence.IssuedBy)}</strong><br>${escapeEmailHtml(correspondence.IssuerTitle)}</div>${stamp}</div></main><footer class="footer">Official document · ${escapeEmailHtml(reference)} · ${escapeEmailHtml(identity.Name)}</footer></article></body></html>`;
+  let emailHtml = html;
+  if (logo !== emailLogo) emailHtml = emailHtml.replace(logo, emailLogo);
+  if (!publicLogoSource && watermarkStyle) emailHtml = emailHtml.replace(watermarkStyle, '');
+  if (signature && clean(endorsement.SignatureDataUrl).startsWith('data:')) {
+    emailHtml = emailHtml.replace(signature, attachmentNotice);
+  } else if (attachmentNotice) {
+    emailHtml = emailHtml.replace('<div class="signatory">', `<div class="signatory">${attachmentNotice}`);
+  }
+  if (stamp && clean(endorsement.StampDataUrl).startsWith('data:')) emailHtml = emailHtml.replace(stamp, '');
   const text = [
     identity.Name,
     identity.Address,
@@ -909,7 +952,9 @@ export function buildPrintableCorrespondence(correspondence, identity, rendered,
     filename: `${safeId(reference || title)}.html`,
     text: rendered.body,
     fullText: text,
-    html
+    html,
+    emailHtml,
+    emailAttachments
   };
 }
 
@@ -1193,7 +1238,8 @@ async function sendCorrespondence(env, user, body, scope, identity, authorizatio
       toName: existing.RecipientName,
       subject: printable.subject,
       textContent: printable.fullText || printable.text,
-      htmlContent: printable.html
+      htmlContent: printable.emailHtml || printable.html,
+      attachments: printable.emailAttachments
     });
   } catch (error) {
     const failedAt = nowIso();
