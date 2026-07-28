@@ -33,6 +33,8 @@ Required Cloudflare variables
 
 Core:
 
+- DYNAMAX_WORKSPACE_ID (use school, faith, or organization for the current desktop workspace)
+- ORGANISATION_EDITION (school, faith or organization; church is accepted as a faith alias)
 - FIREBASE_PROJECT_ID
 - FIREBASE_CLIENT_EMAIL
 - FIREBASE_PRIVATE_KEY (encrypted)
@@ -52,7 +54,8 @@ Feature-specific:
 - TURNSTILE_SITE_KEY
 - TURNSTILE_SECRET_KEY
 - TURNSTILE_ALLOWED_HOSTNAMES
-- CANONICAL_PORTAL_URL
+- ALLOW_CANONICAL_API_PROXY (off by default; enable only for an intentional bridge)
+- CANONICAL_PORTAL_URL (required when ALLOW_CANONICAL_API_PROXY is enabled)
 - WEBAUTHN_RP_ID
 - WEBAUTHN_ORIGIN
 - WEBAUTHN_RP_NAME
@@ -61,6 +64,13 @@ Feature-specific:
 Set production and preview values separately. Encrypt all private values. Do
 not commit .dev.vars, .env files, Firebase service-account JSON, private keys,
 Paystack secrets, Brevo keys, shared secrets, passwords or session secrets.
+
+For the current desktop workspace registry, use DYNAMAX_WORKSPACE_ID=school
+with ORGANISATION_EDITION=school on the School deployment, and
+DYNAMAX_WORKSPACE_ID=faith with ORGANISATION_EDITION=faith on the Religious
+Organisation deployment. They must use different Firebase projects. The
+desktop bridge sends its expected workspace and edition on every authenticated
+request; the backend rejects a mismatch before running an action.
 
 Payment setup
 -------------

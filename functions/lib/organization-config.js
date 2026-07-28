@@ -1,6 +1,6 @@
 const clean = (value) => String(value ?? '').trim();
 
-export const ORGANIZATION_EDITIONS = Object.freeze(['school', 'church', 'faith', 'organization']);
+export const ORGANIZATION_EDITIONS = Object.freeze(['school', 'faith', 'organization']);
 
 export const EDITION_FEATURE_DEFAULTS = Object.freeze({
   school: Object.freeze({
@@ -23,30 +23,6 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     offerings: false
   }),
   faith: Object.freeze({
-    branches: true,
-    branding: true,
-    approvals: true,
-    executiveOffice: true,
-    accounting: true,
-    payroll: true,
-    admissions: false,
-    students: false,
-    studentConduct: false,
-    parentPortal: false,
-    stores: false,
-    clinic: false,
-    kitchen: false,
-    members: true,
-    services: true,
-    funds: true,
-    offerings: true,
-    donations: true,
-    departments: true,
-    programs: true,
-    retail: true,
-    restaurant: true
-  }),
-  church: Object.freeze({
     branches: true,
     branding: true,
     approvals: true,
@@ -104,9 +80,17 @@ function booleanValue(value, fallback) {
 
 export function normalizeOrganizationEdition(value) {
   const normalized = clean(value).toLowerCase();
-  if (normalized === 'religious' || normalized === 'religious body') return 'faith';
+  if (['church', 'religious', 'religious body', 'religious organisation', 'religious organization'].includes(normalized)) return 'faith';
   if (normalized === 'other') return 'organization';
   return ORGANIZATION_EDITIONS.includes(normalized) ? normalized : 'school';
+}
+
+function explicitOrganizationEdition(value) {
+  const normalized = clean(value).toLowerCase();
+  if (!normalized) return '';
+  if (['church', 'religious', 'religious body', 'religious organisation', 'religious organization'].includes(normalized)) return 'faith';
+  if (normalized === 'other') return 'organization';
+  return ORGANIZATION_EDITIONS.includes(normalized) ? normalized : '';
 }
 
 export function featureFlagsForEdition(edition, overrides = {}) {
@@ -124,10 +108,39 @@ export function featureFlagsForEdition(edition, overrides = {}) {
 export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, legacyProfile = {} } = {}) {
   const profile = organizationProfile && typeof organizationProfile === 'object' ? organizationProfile : {};
   const legacy = legacyProfile && typeof legacyProfile === 'object' ? legacyProfile : {};
+  const britishEnvironmentEdition = clean(env.ORGANISATION_EDITION);
+  const americanEnvironmentEdition = clean(env.ORGANIZATION_EDITION);
+  const environmentEdition = britishEnvironmentEdition || americanEnvironmentEdition;
+  const configuredEdition = explicitOrganizationEdition(environmentEdition);
+  if (environmentEdition && !configuredEdition) {
+    const error = new Error('The deployment organisation edition is invalid.');
+    error.status = 503;
+    error.code = 'DEPLOYMENT_EDITION_INVALID';
+    throw error;
+  }
+  if (britishEnvironmentEdition && americanEnvironmentEdition
+    && explicitOrganizationEdition(britishEnvironmentEdition) !== explicitOrganizationEdition(americanEnvironmentEdition)) {
+    const error = new Error('ORGANISATION_EDITION and ORGANIZATION_EDITION identify different deployments.');
+    error.status = 503;
+    error.code = 'DEPLOYMENT_EDITION_CONFLICT';
+    throw error;
+  }
+  const profileEdition = clean(profile.Edition || profile.OrganisationEdition || profile.OrganizationEdition);
+  if (environmentEdition && profileEdition) {
+    const storedEdition = explicitOrganizationEdition(profileEdition);
+    if (!storedEdition || (configuredEdition && storedEdition !== configuredEdition)) {
+      const error = new Error('The database organisation profile conflicts with this deployment edition.');
+      error.status = 503;
+      error.code = storedEdition
+        ? 'DEPLOYMENT_PROFILE_EDITION_CONFLICT'
+        : 'DEPLOYMENT_PROFILE_EDITION_INVALID';
+      throw error;
+    }
+  }
   const edition = normalizeOrganizationEdition(
-    profile.Edition || profile.OrganisationEdition || profile.OrganizationEdition
+    environmentEdition
+      || profileEdition
       || legacy.OrganisationEdition || legacy.OrganizationEdition
-      || env.ORGANISATION_EDITION || env.ORGANIZATION_EDITION
   );
   const fallbackName = edition === 'school' ? 'Your School Name' : 'Your Organisation Name';
   const name = clean(
@@ -153,6 +166,7 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
 export function organizationProfileDocument(config, audit = {}) {
   const resolved = resolveOrganizationConfig({ organizationProfile: config });
   return {
+    WorkspaceId: clean(config.WorkspaceId || config.workspaceId),
     Edition: resolved.Edition,
     Name: resolved.Name,
     Code: resolved.Code,

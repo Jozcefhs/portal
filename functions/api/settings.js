@@ -1,6 +1,12 @@
 import { getDocument, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { secureTextEqual } from '../lib/backend-security.js';
 import { organizationProfileDocument, resolveOrganizationConfig } from '../lib/organization-config.js';
+import {
+  assertDeploymentEditionSelection,
+  deploymentIdentityDetails,
+  invalidateDeploymentIdentityCache,
+  requiredDeploymentIdentity
+} from '../lib/deployment-identity.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
 
@@ -30,8 +36,12 @@ function requireAdmin(env, password) {
 }
 
 function defaultProfile(env) {
-  const organization = resolveOrganizationConfig({ env });
+  const deployment = requiredDeploymentIdentity(env);
+  const organization = resolveOrganizationConfig({
+    env: { ...env, ORGANISATION_EDITION: deployment.edition, ORGANIZATION_EDITION: '' }
+  });
   return {
+    WorkspaceId: deployment.workspaceId,
     OrganisationEdition: organization.Edition,
     OrganisationName: organization.Name,
     OrganisationCode: organization.Code,
@@ -71,7 +81,13 @@ function defaultProfile(env) {
 }
 
 function profileEnvironmentKey(env) {
-  return `${clean(env.FIREBASE_PROJECT_ID)}|${clean(env.TURNSTILE_SITE_KEY)}`;
+  const deployment = requiredDeploymentIdentity(env);
+  return [
+    clean(env.FIREBASE_PROJECT_ID),
+    deployment.workspaceId,
+    deployment.edition,
+    clean(env.TURNSTILE_SITE_KEY)
+  ].join('|');
 }
 
 function invalidateProfileCache() {
@@ -79,6 +95,7 @@ function invalidateProfileCache() {
 }
 
 async function loadProfile(env) {
+  const deployment = requiredDeploymentIdentity(env);
   let profile = defaultProfile(env);
   try {
     requireFirestoreEnv(env);
@@ -92,16 +109,27 @@ async function loadProfile(env) {
         if (saved[key] !== undefined) profile[key] = saved[key];
       });
     }
-    const organization = resolveOrganizationConfig({ env, organizationProfile: savedOrganization, legacyProfile: profile });
-    profile.OrganisationEdition = organization.Edition;
-    profile.OrganisationName = organization.Name;
-    profile.OrganisationCode = organization.Code;
+    const identity = deploymentIdentityDetails({
+      env,
+      identity: deployment,
+      organizationProfile: savedOrganization
+    });
+    const organization = resolveOrganizationConfig({
+      env: { ...env, ORGANISATION_EDITION: identity.edition, ORGANIZATION_EDITION: '' },
+      organizationProfile: savedOrganization,
+      legacyProfile: profile
+    });
+    profile.WorkspaceId = identity.workspaceId;
+    profile.OrganisationEdition = identity.edition;
+    profile.OrganisationName = identity.organisationName;
+    profile.OrganisationCode = identity.organisationCode;
     profile.FeatureFlags = organization.FeatureFlags;
     if (branding && clean(branding.WebLogoDataUrl)) {
       profile.WebLogoConfigured = true;
       profile.WebLogoUrl = `/api/web-logo?v=${encodeURIComponent(clean(branding.UpdatedAt))}`;
     }
-  } catch (_err) {
+  } catch (error) {
+    if (String(error?.code || '').startsWith('DEPLOYMENT_')) throw error;
     // Public pages should still load with environment/default values if Firestore is unavailable.
   }
   profile.TurnstileSiteKey = clean(env.TURNSTILE_SITE_KEY);
@@ -124,7 +152,7 @@ async function getProfile(env, options = {}) {
 
 function publicProfile(profile = {}) {
   const keys = [
-    'OrganisationEdition', 'OrganisationName', 'OrganisationCode',
+    'WorkspaceId', 'OrganisationEdition', 'OrganisationName', 'OrganisationCode',
     'SchoolName', 'SchoolAddress', 'SchoolPhone', 'SchoolEmail',
     'PortalHeadline', 'PortalSubheading', 'PortalNotice', 'NameFormat',
     'ResultDisplayMode', 'ShowResultsOnline', 'DeclarationStatement',
@@ -152,6 +180,7 @@ export async function onRequestPost(context) {
   let action = 'save';
   try {
     const { request, env } = context;
+    const deployment = requiredDeploymentIdentity(env);
     const body = await readJsonBody(request, { maxBytes: 1024 * 1024 });
     requireAdmin(env, body.password);
     if (clean(body.action || body.Action) === 'load') {
@@ -160,14 +189,17 @@ export async function onRequestPost(context) {
       finishRequestMetric(metric, { status: 200, action });
       return Response.json({ ok: true, profile }, { headers: { 'Cache-Control': 'no-store' } });
     }
-    requireFirestoreEnv(env);
-
     const incoming = body.profile || {};
+    assertDeploymentEditionSelection(
+      deployment,
+      incoming.OrganisationEdition || incoming.OrganizationEdition
+    );
+    requireFirestoreEnv(env);
     const existing = await getProfile(env, { fresh: true });
     const organization = resolveOrganizationConfig({
       env,
       organizationProfile: {
-        Edition: incoming.OrganisationEdition || incoming.OrganizationEdition || existing.OrganisationEdition,
+        Edition: deployment.edition,
         Name: incoming.OrganisationName || incoming.OrganizationName || incoming.SchoolName || existing.OrganisationName,
         Code: incoming.OrganisationCode || incoming.OrganizationCode || incoming.SchoolCode || existing.OrganisationCode,
         FeatureFlags: incoming.FeatureFlags || incoming.Features || existing.FeatureFlags
@@ -177,6 +209,7 @@ export async function onRequestPost(context) {
     const profile = {
       ...defaultProfile(env),
       ...existing,
+      WorkspaceId: deployment.workspaceId,
       OrganisationEdition: organization.Edition,
       OrganisationName: organization.Name,
       OrganisationCode: organization.Code,
@@ -224,6 +257,7 @@ export async function onRequestPost(context) {
     delete profile.TurnstileSiteKey;
     await upsertDocument(env, 'settings', 'organisationProfile', organizationProfileDocument({
       ...organization,
+      WorkspaceId: deployment.workspaceId,
       GoogleDocumentsUrl: profile.GoogleDocumentsUrl,
       Plan: profile.SubscriptionPlan,
       UserLimit: profile.UserLimit,
@@ -234,6 +268,7 @@ export async function onRequestPost(context) {
     }));
     await upsertDocument(env, 'settings', 'schoolProfile', profile);
     invalidateProfileCache();
+    invalidateDeploymentIdentityCache();
     const savedProfile = await getProfile(env, { fresh: true });
     finishRequestMetric(metric, { status: 200, action });
     return Response.json({ ok: true, message: 'Organisation setup saved.', profile: savedProfile }, {

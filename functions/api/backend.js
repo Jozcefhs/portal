@@ -19,6 +19,11 @@ import {
 } from '../lib/backend-security.js';
 import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
 import { organizationProfileDocument, resolveOrganizationConfig } from '../lib/organization-config.js';
+import {
+  assertExpectedDeploymentIdentity,
+  loadDeploymentIdentity,
+  requiredDeploymentIdentity
+} from '../lib/deployment-identity.js';
 import { handleChurchMembershipAction } from '../lib/church-membership.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath } from '../lib/church-foundation.js';
 import { handleChurchServiceAction } from '../lib/church-services.js';
@@ -34,6 +39,25 @@ export const SCHOOL_FEES_TOTAL_CODE = 'SCHOOL_FEES_TOTAL';
 
 function clean(value) {
   return String(value ?? '').trim();
+}
+
+function expectedDeploymentIdentityFromRequest(request, body = {}) {
+  const url = new URL(request.url);
+  return {
+    ExpectedWorkspaceId: clean(
+      body.ExpectedWorkspaceId || body.expectedWorkspaceId
+        || url.searchParams.get('ExpectedWorkspaceId')
+        || url.searchParams.get('expectedWorkspaceId')
+    ),
+    ExpectedOrganisationEdition: clean(
+      body.ExpectedOrganisationEdition || body.expectedOrganisationEdition
+        || body.ExpectedOrganizationEdition || body.expectedOrganizationEdition
+        || url.searchParams.get('ExpectedOrganisationEdition')
+        || url.searchParams.get('expectedOrganisationEdition')
+        || url.searchParams.get('ExpectedOrganizationEdition')
+        || url.searchParams.get('expectedOrganizationEdition')
+    )
+  };
 }
 
 function normalizeSchoolCode(value) {
@@ -2168,7 +2192,7 @@ async function saveBrevoSettings(env, body) {
   };
 }
 
-async function saveSchoolProfile(env, body) {
+async function saveSchoolProfile(env, body, deploymentIdentity) {
   const existingOrganization = await getDocument(env, 'settings', 'organisationProfile').catch(() => null);
   const branchValues = Array.isArray(body.SchoolBranches) ? body.SchoolBranches : clean(body.SchoolBranches || body.schoolBranches || 'Main Branch').split(',');
   const requestedActiveBranchId = safeScopeId(body.ActiveBranchId || body.activeBranchId || 'main');
@@ -2272,6 +2296,7 @@ async function saveSchoolProfile(env, body) {
   });
   await upsertDocument(env, 'settings', 'organisationProfile', organizationProfileDocument({
     ...organization,
+    WorkspaceId: deploymentIdentity?.workspaceId,
     GoogleDocumentsUrl: profile.GoogleDocumentsUrl,
     Plan: profile.SubscriptionPlan,
     UserLimit: profile.UserLimit,
@@ -6204,15 +6229,31 @@ async function getSystemHealth(env, body) {
   };
 }
 
-async function routeAction(env, action, body = {}) {
+async function routeAction(env, action, body = {}, deploymentIdentity = null) {
   switch (action) {
-    case 'ping':
+    case 'ping': {
+      const identity = {
+        workspaceKey: deploymentIdentity?.edition || '',
+        workspaceId: deploymentIdentity?.workspaceId || '',
+        edition: deploymentIdentity?.edition || '',
+        environmentId: clean(env.FIREBASE_PROJECT_ID),
+        firebaseProjectId: clean(env.FIREBASE_PROJECT_ID),
+        organisationName: deploymentIdentity?.organisationName || '',
+        organisationCode: deploymentIdentity?.organisationCode || ''
+      };
       return {
         ok: true,
         message: 'Database backend is reachable.',
         backend: 'firestore',
-        projectId: env.FIREBASE_PROJECT_ID
+        projectId: env.FIREBASE_PROJECT_ID,
+        workspaceKey: identity.workspaceKey,
+        workspaceId: identity.workspaceId,
+        edition: identity.edition,
+        organisationName: identity.organisationName,
+        organisationCode: identity.organisationCode,
+        identity
       };
+    }
     case 'exportBackup': {
       requireAccountingRole(body, ['Super Admin']);
       const backupCursor = Math.floor(Math.max(0, Number(body.Cursor || body.cursor || 0) || 0));
@@ -6640,7 +6681,7 @@ async function routeAction(env, action, body = {}) {
     case 'saveBrevoSettings':
       return saveBrevoSettings(env, body);
     case 'saveSchoolProfile':
-      return saveSchoolProfile(env, body);
+      return saveSchoolProfile(env, body, deploymentIdentity);
     case 'getSchoolProfile':
       return getSchoolProfile(env);
     case 'getPayableFees':
@@ -6720,7 +6761,6 @@ export async function onRequestPost(context) {
   let action = '';
   try {
     const { request, env } = context;
-    requireFirestoreEnv(env);
     let body = await readJsonBody(request, { maxBytes: 16 * 1024 * 1024 });
     requireBackendSecret(env, body);
     action = clean(body.Action || body.action);
@@ -6729,8 +6769,12 @@ export async function onRequestPost(context) {
       error.status = 400;
       throw error;
     }
+    const expectedIdentity = expectedDeploymentIdentityFromRequest(request, body);
+    const configuredIdentity = assertExpectedDeploymentIdentity(env, expectedIdentity);
+    requireFirestoreEnv(env);
+    const deploymentIdentity = await loadDeploymentIdentity(env, { identity: configuredIdentity });
     body = await verifyDesktopActor(env, action, body);
-    const data = await routeAction(env, action, body);
+    const data = await routeAction(env, action, body, deploymentIdentity);
     finishRequestMetric(metric, { status: 200, action });
     return Response.json(data, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
@@ -6738,6 +6782,7 @@ export async function onRequestPost(context) {
     if (status >= 500) console.error('Firestore backend failure', err);
     finishRequestMetric(metric, { status, action: action || 'unknown', outcome: err?.code || 'error' });
     const configurationMessage = err?.code === 'BACKEND_SECRET_NOT_CONFIGURED'
+      || String(err?.code || '').startsWith('DEPLOYMENT_')
       ? String(err.message || 'The desktop backend is not configured.')
       : '';
     return Response.json({
@@ -6752,6 +6797,7 @@ export async function onRequestGet(context) {
   const metric = startRequestMetric(context.request, '/api/backend');
   try {
     const { request, env } = context;
+    const deploymentIdentity = requiredDeploymentIdentity(env);
     requireFirestoreEnv(env);
     requireConfiguredDesktopSecret(env, 'desktop backend');
     const url = new URL(request.url);
@@ -6764,10 +6810,22 @@ export async function onRequestGet(context) {
       });
     }
     finishRequestMetric(metric, { status: 200, action: 'readiness' });
+    const identity = {
+      workspaceKey: deploymentIdentity.edition,
+      workspaceId: deploymentIdentity.workspaceId,
+      edition: deploymentIdentity.edition,
+      environmentId: clean(env.FIREBASE_PROJECT_ID),
+      firebaseProjectId: clean(env.FIREBASE_PROJECT_ID)
+    };
     return Response.json({
       ok: true,
       message: 'Database backend is reachable.',
-      backend: 'firestore'
+      backend: 'firestore',
+      projectId: clean(env.FIREBASE_PROJECT_ID),
+      workspaceKey: identity.workspaceKey,
+      workspaceId: identity.workspaceId,
+      edition: identity.edition,
+      identity
     }, { headers: { 'Cache-Control': 'public, max-age=60, stale-while-revalidate=120' } });
   } catch (err) {
     console.error('Firestore backend health-check failure', err);
@@ -6776,6 +6834,7 @@ export async function onRequestGet(context) {
     return Response.json({
       ok: false,
       message: err?.code === 'BACKEND_SECRET_NOT_CONFIGURED'
+        || String(err?.code || '').startsWith('DEPLOYMENT_')
         ? String(err.message)
         : 'The backend health check failed.',
       ...(err?.code ? { code: err.code } : {})

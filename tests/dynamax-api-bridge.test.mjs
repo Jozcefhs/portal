@@ -1,16 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { onRequest, onRequestWithIdentityLoader } from '../functions/_middleware.js';
 
 const middleware = await readFile(new URL('../functions/_middleware.js', import.meta.url), 'utf8');
 const routes = JSON.parse(await readFile(new URL('../_routes.json', import.meta.url), 'utf8'));
 
-test('Dynamax Pages can use the canonical secured API without copying secrets', () => {
-  assert.match(middleware, /https:\/\/digc-suite\.pages\.dev/);
+test('Dynamax Pages fail closed unless an API proxy is explicitly configured', () => {
   assert.match(middleware, /env\.FIREBASE_PROJECT_ID/);
+  assert.match(middleware, /loadDeploymentIdentity/);
   assert.match(middleware, /if \(!isApi\) return next\(\)/);
   assert.match(middleware, /if \(hasLocalBackend\)/);
+  assert.match(middleware, /env\.ALLOW_CANONICAL_API_PROXY/);
   assert.match(middleware, /env\.CANONICAL_PORTAL_URL/);
+  assert.match(middleware, /if \(!proxyAllowed \|\| !configuredOrigin\)/);
+  assert.doesNotMatch(middleware, /https:\/\/digc-suite\.pages\.dev/);
   assert.doesNotMatch(middleware, /PRIVATE_KEY|SHARED_SECRET|SESSION_SECRET/);
 });
 
@@ -22,4 +26,126 @@ test('only real API paths invoke Pages Functions', () => {
   });
   assert.equal(routes.include.some((route) => route.includes('.html')), false);
   assert.equal(routes.include.some((route) => /\/(?:css|js|images|icons|fonts)\//.test(route)), false);
+});
+
+test('an API request without local Firebase or explicit proxy opt-in fails closed', async () => {
+  let nextCalled = false;
+  const response = await onRequest({
+    request: new Request('https://school.example/api/settings'),
+    env: {},
+    next: async () => {
+      nextCalled = true;
+      return Response.json({ ok: true });
+    }
+  });
+  assert.equal(response.status, 503);
+  assert.equal(nextCalled, false);
+  assert.deepEqual(await response.json(), {
+    ok: false,
+    message: 'The API backend is not configured for this deployment.'
+  });
+});
+
+test('a deployment with a local Firebase backend continues to its own Pages Function', async () => {
+  let nextCalled = false;
+  let identityCalled = false;
+  const response = await onRequestWithIdentityLoader({
+    request: new Request('https://school.example/api/settings'),
+    env: { FIREBASE_PROJECT_ID: 'school-project' },
+    next: async () => {
+      nextCalled = true;
+      return Response.json({ ok: true, local: true });
+    }
+  }, async () => {
+    identityCalled = true;
+    return { workspaceId: 'school', edition: 'school' };
+  });
+  assert.equal(response.status, 200);
+  assert.equal(identityCalled, true);
+  assert.equal(nextCalled, true);
+  assert.deepEqual(await response.json(), { ok: true, local: true });
+});
+
+test('a local backend with missing deployment identity fails closed before its Pages Function', async () => {
+  let nextCalled = false;
+  const response = await onRequest({
+    request: new Request('https://school.example/api/settings'),
+    env: { FIREBASE_PROJECT_ID: 'school-project' },
+    next: async () => {
+      nextCalled = true;
+      return Response.json({ ok: true });
+    }
+  });
+  assert.equal(response.status, 503);
+  assert.equal(nextCalled, false);
+  assert.deepEqual(await response.json(), {
+    ok: false,
+    message: 'Deployment identity is not configured. Add DYNAMAX_WORKSPACE_ID in Cloudflare.'
+  });
+});
+
+test('a local profile conflict returns 503 without invoking a Pages Function or proxy fallback', async () => {
+  let nextCalled = false;
+  let fetchCalled = false;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    fetchCalled = true;
+    return Response.json({ ok: true, proxied: true });
+  };
+  try {
+    const response = await onRequestWithIdentityLoader({
+      request: new Request('https://school.example/api/backend'),
+      env: {
+        FIREBASE_PROJECT_ID: 'school-project',
+        ALLOW_CANONICAL_API_PROXY: 'true',
+        CANONICAL_PORTAL_URL: 'https://canonical.example'
+      },
+      next: async () => {
+        nextCalled = true;
+        return Response.json({ ok: true });
+      }
+    }, async () => {
+      const error = new Error('The database organisation profile belongs to a different workspace.');
+      error.code = 'DEPLOYMENT_PROFILE_WORKSPACE_CONFLICT';
+      throw error;
+    });
+    assert.equal(response.status, 503);
+    assert.equal(nextCalled, false);
+    assert.equal(fetchCalled, false);
+    assert.deepEqual(await response.json(), {
+      ok: false,
+      message: 'The database organisation profile belongs to a different workspace.'
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('unexpected identity verification failures do not expose secrets', async () => {
+  const secret = 'PRIVATE_KEY=do-not-expose';
+  const response = await onRequestWithIdentityLoader({
+    request: new Request('https://school.example/api/backend'),
+    env: { FIREBASE_PROJECT_ID: 'school-project' },
+    next: async () => Response.json({ ok: true })
+  }, async () => {
+    throw new Error(`Credential failure: ${secret}`);
+  });
+  assert.equal(response.status, 503);
+  const payload = await response.json();
+  assert.equal(payload.message, 'The deployment identity could not be verified.');
+  assert.equal(JSON.stringify(payload).includes(secret), false);
+});
+
+test('proxy opt-in still rejects a missing, malformed, insecure, or self-referencing target', async () => {
+  for (const canonicalUrl of ['', 'not-a-url', 'http://backend.example', 'https://school.example']) {
+    const response = await onRequest({
+      request: new Request('https://school.example/api/backend'),
+      env: {
+        ALLOW_CANONICAL_API_PROXY: 'true',
+        CANONICAL_PORTAL_URL: canonicalUrl
+      },
+      next: async () => Response.json({ ok: true })
+    });
+    assert.equal(response.status, 503);
+  }
 });

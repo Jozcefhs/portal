@@ -88,10 +88,18 @@ test('mobile summary cards are equal, centered, legible, and color coded', () =>
 });
 
 test('summary-card contents are centered on desktop as well as mobile', () => {
-  assert.match(portalCss, /\.staff-page \.staff-summary>div\{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center\}/);
+  assert.match(portalCss, /\.staff-page \.staff-summary>div\{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;/);
+  assert.match(portalCss, /\.staff-page \.staff-summary\{display:flex;flex-wrap:nowrap;[\s\S]*?overflow-x:auto;[\s\S]*?scroll-snap-type:x proximity;/);
+  assert.match(portalCss, /\.staff-page \.staff-summary>div\{[\s\S]*?flex:0 0 clamp\(150px,13vw,178px\);[\s\S]*?scroll-snap-align:start/);
   assert.match(portalCss, /@media \(min-width:681px\)\{[\s\S]*?\.staff-page \.staff-summary>div:nth-child\(4n\+2\)\{background:linear-gradient/);
   assert.match(portalCss, /@media \(min-width:681px\)\{[\s\S]*?\.staff-page \.staff-summary>div:nth-child\(4n\+3\)\{background:linear-gradient/);
   assert.match(portalCss, /@media \(min-width:681px\)\{[\s\S]*?\.staff-page \.staff-summary>div:nth-child\(4n\+4\)\{background:linear-gradient/);
+});
+
+test('overview and department summary cards stay in one scrollable row', () => {
+  assert.match(portalCss, /\.staff-page \.staff-summary\{display:flex;flex-wrap:nowrap;[\s\S]*?overflow-x:auto;/);
+  assert.match(portalCss, /\.department-summary-grid \{[\s\S]*?display: flex;[\s\S]*?flex-wrap: nowrap;[\s\S]*?overflow-x: auto;/);
+  assert.match(portalCss, /\.department-summary-grid \.module-stat \{[\s\S]*?flex: 1 0 180px;[\s\S]*?min-width: 180px;[\s\S]*?scroll-snap-align: start;/);
 });
 
 test('sidebar keeps account actions visible and database status last', () => {

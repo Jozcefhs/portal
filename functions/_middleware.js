@@ -1,6 +1,25 @@
-const CANONICAL_API_ORIGIN = 'https://digc-suite.pages.dev';
+import { loadDeploymentIdentity } from './lib/deployment-identity.js';
 
-export async function onRequest(context) {
+function enabled(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
+}
+
+function unavailableResponse(requestId, message = 'The API backend is not configured for this deployment.') {
+  return Response.json({ ok: false, message }, {
+    status: 503,
+    headers: { 'Cache-Control': 'no-store', 'X-Request-Id': requestId }
+  });
+}
+
+function identityUnavailableResponse(requestId, error) {
+  const code = String(error?.code || '');
+  const message = code.startsWith('DEPLOYMENT_')
+    ? String(error?.message || 'The deployment identity is invalid.')
+    : 'The deployment identity could not be verified.';
+  return unavailableResponse(requestId, message);
+}
+
+async function handleRequest(context, identityLoader) {
   const { request, env, next } = context;
   const url = new URL(request.url);
   const isApi = url.pathname === '/api' || url.pathname.startsWith('/api/');
@@ -11,28 +30,46 @@ export async function onRequest(context) {
   const requestId = String(request.headers.get('CF-Ray') || crypto.randomUUID()).slice(0, 96);
   let response;
   let failure = null;
+  let proxied = false;
   try {
     if (hasLocalBackend) {
-      response = await next();
+      let identityFailure = null;
+      try {
+        await identityLoader(env);
+      } catch (error) {
+        identityFailure = error;
+      }
+      response = identityFailure
+        ? identityUnavailableResponse(requestId, identityFailure)
+        : await next();
     } else {
-      const configuredOrigin = String(env.CANONICAL_PORTAL_URL || CANONICAL_API_ORIGIN).trim();
-      const target = new URL(`${url.pathname}${url.search}`, configuredOrigin);
-      if (target.origin === url.origin) {
-        response = Response.json({ ok: false, message: 'The API backend is not configured for this deployment.' }, {
-          status: 503,
-          headers: { 'Cache-Control': 'no-store', 'X-Request-Id': requestId }
-        });
+      const proxyAllowed = enabled(env.ALLOW_CANONICAL_API_PROXY);
+      const configuredOrigin = String(env.CANONICAL_PORTAL_URL || '').trim();
+      if (!proxyAllowed || !configuredOrigin) {
+        response = unavailableResponse(requestId);
       } else {
-        const headers = new Headers(request.headers);
-        headers.set('X-Dynamax-Portal', url.hostname);
-        headers.set('X-Request-Id', requestId);
-        headers.delete('host');
-        response = await fetch(new Request(target, {
-          method: request.method,
-          headers,
-          body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
-          redirect: 'manual'
-        }));
+        let configuredUrl = null;
+        try {
+          configuredUrl = new URL(configuredOrigin);
+        } catch (_error) {
+          // Handled by the explicit fail-closed branch below.
+        }
+        if (!configuredUrl || configuredUrl.protocol !== 'https:' || configuredUrl.origin === url.origin) {
+          response = unavailableResponse(requestId, 'The configured canonical API proxy is invalid.');
+        } else {
+          const target = new URL(`${url.pathname}${url.search}`, configuredUrl.origin);
+          const headers = new Headers(request.headers);
+          headers.set('X-Dynamax-Portal', url.hostname);
+          headers.set('X-Request-Id', requestId);
+          headers.delete('host');
+          proxied = true;
+          response = await fetch(new Request(target, {
+            method: request.method,
+            headers,
+            body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
+            redirect: 'manual'
+          }));
+        }
       }
     }
     const responseHeaders = new Headers(response.headers);
@@ -57,7 +94,15 @@ export async function onRequest(context) {
       status: response?.status || Number(failure?.status || 500),
       durationMs: Date.now() - started,
       colo: String(request.cf?.colo || ''),
-      proxied: !hasLocalBackend
+      proxied
     }));
   }
+}
+
+export async function onRequestWithIdentityLoader(context, identityLoader) {
+  return handleRequest(context, identityLoader);
+}
+
+export async function onRequest(context) {
+  return handleRequest(context, loadDeploymentIdentity);
 }

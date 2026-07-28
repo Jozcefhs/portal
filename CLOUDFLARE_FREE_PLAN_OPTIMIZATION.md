@@ -231,6 +231,8 @@ HTML, CSS, JavaScript, images, icons, fonts, the manifest, service worker and fa
 
 ### Required core secrets/variables
 
+- `DYNAMAX_WORKSPACE_ID` — use `school`, `faith`, or `organization` for the current desktop workspace
+- `ORGANISATION_EDITION` — `school`, `faith`, or `organization` (`church` is accepted as a `faith` alias)
 - `FIREBASE_PROJECT_ID`
 - `FIREBASE_CLIENT_EMAIL`
 - `FIREBASE_PRIVATE_KEY` — encrypted secret
@@ -250,7 +252,8 @@ HTML, CSS, JavaScript, images, icons, fonts, the manifest, service worker and fa
 - `TURNSTILE_SITE_KEY`
 - `TURNSTILE_SECRET_KEY`
 - `TURNSTILE_ALLOWED_HOSTNAMES` — comma-separated hostnames
-- `CANONICAL_PORTAL_URL` — only for an intentional preview/custom-domain API bridge
+- `ALLOW_CANONICAL_API_PROXY` — must be explicitly enabled for an intentional API bridge
+- `CANONICAL_PORTAL_URL` — required only when `ALLOW_CANONICAL_API_PROXY` is enabled
 - `WEBAUTHN_RP_ID`
 - `WEBAUTHN_ORIGIN`
 - `WEBAUTHN_RP_NAME`
@@ -267,6 +270,9 @@ Cloudflare Pages currently limits configured variables per environment. The sour
    - Build output directory: repository/portal root as used by the existing deployment
 2. Add production and preview variables separately. Use **Encrypt** for every secret.
 3. Never configure only one Firebase variable. All three service-account values are required.
+   School and faith deployments must use different Firebase projects. For the
+   current desktop workspace registry, configure the canonical values
+   `DYNAMAX_WORKSPACE_ID=school` and `DYNAMAX_WORKSPACE_ID=faith` respectively.
 4. If Turnstile is enabled:
    - create a widget for the production/custom hostnames;
    - set both Turnstile keys;
@@ -298,13 +304,15 @@ Cloudflare Pages currently limits configured variables per environment. The sour
 
 1. Full accounting/admin overview can still approach 50 external subrequests when several collections exceed one Firestore page. Continue converting large tables to explicit page-token endpoints.
 2. Firestore reads/writes can exceed Google's free quota even while Cloudflare remains inside the Workers Free allowance.
-3. The canonical API proxy means an unconfigured preview can reach production. Keep preview access restricted and set `CANONICAL_PORTAL_URL` only when that behavior is intentional.
+3. API proxying is fail-closed by default. If a preview/custom-domain bridge is
+   intentionally enabled, keep preview access restricted and configure both
+   `ALLOW_CANONICAL_API_PROXY` and `CANONICAL_PORTAL_URL`.
 4. Paystack webhook processing is synchronous. A durable queue/outbox would provide better retry isolation if webhook volume grows.
 5. Browser idempotency keys other than payment verification are memory-based and do not survive a full page reload. Normal retry clicks are protected; persistent form recovery would need payload-fingerprint storage and cleanup rules.
 6. Legacy payment rows created before repair markers may have one historical allocation ambiguity. New transactions close that crash window.
 7. Stateless bearer tokens cannot be centrally revoked before expiry. Disabling the account blocks subsequent live checks, but a server-side session registry would enable immediate token revocation everywhere.
 8. Distributed authentication attacks from many addresses still require Cloudflare WAF/rate limiting; application limits alone are not a substitute.
-9. `CANONICAL_PORTAL_URL` should not point a test environment at production when testing mutations.
+9. Never opt a test environment into a production `CANONICAL_PORTAL_URL` when testing mutations.
 10. Google Apps Script calls support a shared-secret-only trust mode. Several legacy calls send that bearer secret in the JSON body and some GET compatibility paths place it in the query string; there is no Cloudflare-side request signature, timestamp or nonce that independently prevents replay. A leaked script URL and secret can therefore impersonate the portal to the script unless the Apps Script deployment adds its own restrictions. Keep the secret isolated and rotated, avoid legacy Google data mode when it is not required, and prefer request-bound signatures if that integration is retained.
 11. The authoritative desktop-actor check is an explicit action allowlist, not a universal mutation gate. Some intentionally lower-risk, nonfinancial desktop mutations remain protected by the desktop shared secret and their local endpoint checks without reloading the staff actor. They must not be described as having authoritative role enforcement; any such action that begins making privilege-bearing, financial or security-sensitive changes should first be added to the authoritative gate and its role policy.
 12. DPAPI prevents new plaintext credential saves, but it cannot guarantee removal of credentials written by older builds. If one-time DPAPI migration fails, the desktop intentionally leaves the legacy plaintext settings fields in place to avoid losing backend access. Operators must treat that file as sensitive, correct DPAPI access, rerun migration, confirm the legacy keys were removed, and rotate any credential that may have been exposed.

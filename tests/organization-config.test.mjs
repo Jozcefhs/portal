@@ -30,7 +30,22 @@ test('missing and invalid editions remain school for backward compatibility', ()
   assert.equal(config.FeatureFlags.offerings, false);
 });
 
-test('church edition enables church boundaries while retaining shared finance modules', () => {
+test('environment edition is authoritative over the database organisation profile', () => {
+  assert.throws(
+    () => resolveOrganizationConfig({
+      env: { ORGANISATION_EDITION: 'school' },
+      organizationProfile: { Edition: 'church', Name: 'Wrong workspace' }
+    }),
+    (error) => error.status === 503 && error.code === 'DEPLOYMENT_PROFILE_EDITION_CONFLICT'
+  );
+  assert.equal(resolveOrganizationConfig({
+    env: { ORGANISATION_EDITION: 'faith' },
+    organizationProfile: { Edition: 'church', Name: 'Grace Assembly' }
+  }).Edition, 'faith');
+});
+
+test('church is canonicalized to faith while retaining shared finance modules', () => {
+  assert.equal(normalizeOrganizationEdition('church'), 'faith');
   const flags = featureFlagsForEdition('church');
   assert.equal(flags.accounting, true);
   assert.equal(flags.payroll, true);
@@ -80,10 +95,12 @@ test('known feature overrides are normalized and unknown flags are discarded', (
 test('organisation document stores canonical edition identity and flags', () => {
   const document = organizationProfileDocument({
     Edition: 'church',
+    WorkspaceId: 'grace-faith',
     Name: 'Grace Assembly',
     Code: 'grace-01'
   }, { UpdatedAt: '2026-07-24T10:00:00.000Z', UpdatedBy: 'Admin' });
-  assert.equal(document.Edition, 'church');
+  assert.equal(document.WorkspaceId, 'grace-faith');
+  assert.equal(document.Edition, 'faith');
   assert.equal(document.Name, 'Grace Assembly');
   assert.equal(document.Code, 'GRACE01');
   assert.equal(document.FeatureFlags.offerings, true);
