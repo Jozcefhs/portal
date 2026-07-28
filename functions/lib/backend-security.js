@@ -35,6 +35,7 @@ export function resolveAuthoritativeDesktopActor(body = {}, users = [], env = {}
       role: clean(user.Role || user.role) || 'Front Desk',
       department: clean(user.Department || user.department),
       branchId: clean(user.BranchId || user.branchId),
+      schoolSectionAccess: clean(user.SchoolSectionAccess || user.schoolSectionAccess) || 'All',
       source: 'staffUsers'
     };
   }
@@ -46,6 +47,7 @@ export function resolveAuthoritativeDesktopActor(body = {}, users = [], env = {}
       role: 'Super Admin',
       department: '',
       branchId: '',
+      schoolSectionAccess: 'All',
       source: 'environment-admin'
     };
   }
@@ -62,6 +64,7 @@ export function applyAuthoritativeActor(body, actor) {
     UserRole: actor.role,
     UserDepartment: actor.department,
     UserBranchId: actor.branchId,
+    UserSchoolSectionAccess: actor.schoolSectionAccess,
     RecordedBy: actor.displayName
   };
 }

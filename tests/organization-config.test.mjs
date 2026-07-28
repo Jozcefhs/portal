@@ -35,6 +35,7 @@ test('church edition enables church boundaries while retaining shared finance mo
   assert.equal(flags.accounting, true);
   assert.equal(flags.payroll, true);
   assert.equal(flags.approvals, true);
+  assert.equal(flags.executiveOffice, true);
   assert.equal(flags.members, true);
   assert.equal(flags.services, true);
   assert.equal(flags.funds, true);
@@ -52,7 +53,7 @@ test('church edition enables church boundaries while retaining shared finance mo
   );
   assert.deepEqual(
     allowedSectionsFor({ role: 'Super Admin' }, flags),
-    ['recordsDesk', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'organizationStore', 'restaurant', 'staffUsers']
+    ['recordsDesk', 'executiveOffice', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'organizationStore', 'restaurant', 'staffUsers']
   );
 });
 

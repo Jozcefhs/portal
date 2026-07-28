@@ -9,7 +9,8 @@ export const RECORD_DESK_TYPES = Object.freeze([
   'departments'
 ]);
 
-const PASTORAL_ROLES = new Set(['Super Admin', 'Pastor']);
+const PASTORAL_ROLES = new Set(['Super Admin', 'Pastor', 'Senior Pastor', 'Head Minister']);
+const EXECUTIVE_ROLES = new Set(['Principal', 'Senior Pastor', 'Head Minister']);
 
 export function recordsDeskCapabilities(user = {}) {
   const allowed = new Set((user.allowedSections || []).map(clean).filter(Boolean));
@@ -17,24 +18,32 @@ export function recordsDeskCapabilities(user = {}) {
   const enabled = allowed.has('recordsDesk');
   const schoolEdition = edition === 'school';
   const organisationEdition = ['church', 'faith', 'organization'].includes(edition);
+  const role = clean(user.role);
+  const executive = allowed.has('executiveOffice') && EXECUTIVE_ROLES.has(role);
+  const schoolExecutive = executive && role === 'Principal' && schoolEdition;
+  const ministryExecutive = executive && ['Senior Pastor', 'Head Minister'].includes(role) && organisationEdition;
   return {
     enabled,
     edition,
     canSearchStudents: enabled && schoolEdition &&
-      ['students', 'accounts', 'clinic', 'tuckShop'].some((section) => allowed.has(section)),
+      (schoolExecutive ||
+      ['students', 'accounts', 'clinic', 'tuckShop'].some((section) => allowed.has(section))),
     canSearchApplicants: enabled && schoolEdition && allowed.has('admissions'),
-    canSearchStaff: enabled && allowed.has('staffUsers') && clean(user.role) === 'Super Admin',
-    canSearchMembers: enabled && organisationEdition && allowed.has('members'),
+    canSearchStaff: enabled && (
+      (allowed.has('staffUsers') && role === 'Super Admin') ||
+      schoolExecutive || ministryExecutive
+    ),
+    canSearchMembers: enabled && organisationEdition && (allowed.has('members') || ministryExecutive),
     canSearchDepartments: enabled && organisationEdition &&
-      ['members', 'funds', 'offerings'].some((section) => allowed.has(section)),
-    canViewStudentContact: allowed.has('students') || allowed.has('admissions'),
+      (ministryExecutive || ['members', 'funds', 'offerings'].some((section) => allowed.has(section))),
+    canViewStudentContact: schoolExecutive || allowed.has('students') || allowed.has('admissions'),
     canViewStudentFinance: allowed.has('accounts'),
     canViewStudentClinic: allowed.has('clinic'),
     canViewStudentWallet: allowed.has('tuckShop') || allowed.has('accounts'),
     canViewStaffSecurity: allowed.has('staffUsers') && clean(user.role) === 'Super Admin',
-    canViewMemberContact: allowed.has('members'),
+    canViewMemberContact: ministryExecutive || allowed.has('members'),
     canViewPastoralNotes: PASTORAL_ROLES.has(clean(user.role)),
-    canViewDepartmentRoster: allowed.has('members'),
+    canViewDepartmentRoster: ministryExecutive || allowed.has('members'),
     canViewDepartmentFinance: allowed.has('funds') || allowed.has('offerings') || allowed.has('incomeAnalytics')
   };
 }

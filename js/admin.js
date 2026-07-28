@@ -77,6 +77,13 @@ let incomeAnalyticsFilter = { period: 'monthly' };
 let recordsDeskRequest = 0;
 let recordsDeskSearchTimer = 0;
 let recordsDeskHandoffContext = null;
+let executiveOfficeData = null;
+let executiveOfficeTab = 'overview';
+let executiveDirectoryType = '';
+let executiveDirectoryQuery = '';
+let executiveDirectoryResults = [];
+let executiveAvailableDirectoryTypes = [];
+let executiveSelectedRecipient = null;
 let recordsDeskState = {
   query: '',
   type: 'all',
@@ -94,6 +101,7 @@ let recordsDeskState = {
 
 const tabConfig = [
   ['recordsDesk', 'Records Desk'],
+  ['executiveOffice', 'Executive Office'],
   ['admissions', 'Admissions'],
   ['formPurchases', 'Form Purchases'],
   ['students', 'Students'],
@@ -119,6 +127,7 @@ const tabConfig = [
 const tabIcons = {
   overview: '\u2302',
   recordsDesk: '\u{1F5C2}',
+  executiveOffice: '\u{1F4E8}',
   admissions: '\u{1F4DD}',
   formPurchases: '\u{1F9FE}',
   students: '\u{1F465}',
@@ -578,6 +587,13 @@ function clearStaffWorkspaceState() {
   incomeAnalyticsData = null;
   incomeAnalyticsFilter = { period: 'monthly' };
   organizationDepartmentWorkspaceTab = 'overview';
+  executiveOfficeData = null;
+  executiveOfficeTab = 'overview';
+  executiveDirectoryType = '';
+  executiveDirectoryQuery = '';
+  executiveDirectoryResults = [];
+  executiveAvailableDirectoryTypes = [];
+  executiveSelectedRecipient = null;
   activeSection = '';
   activeTabs = [];
   recordsDeskHandoffContext = null;
@@ -622,6 +638,19 @@ function resolveDashboardEdition(user = {}) {
   return 'school';
 }
 
+function executiveOfficeTitle() {
+  const role = clean(currentUser?.role);
+  const faithEdition = document.documentElement.dataset.edition === 'church'
+    || ['church', 'faith', 'organization'].includes(resolveDashboardEdition(currentUser || {}));
+  if (!faithEdition) return "Principal's Office";
+  if (role === 'Senior Pastor') return "Senior Pastor's Office";
+  return 'Executive Office';
+}
+
+function staffTabLabel(key, fallback = '') {
+  return key === 'executiveOffice' ? executiveOfficeTitle() : fallback;
+}
+
 function showDashboard(user) {
   currentUser = user;
   const displayName = user.displayName || user.username || 'Staff';
@@ -629,16 +658,22 @@ function showDashboard(user) {
   const isFaith = ['church', 'faith'].includes(dashboardEdition);
   const isGenericOrganization = dashboardEdition === 'organization';
   const isOrganisationOperations = isFaith || isGenericOrganization;
+  const isExecutiveRole = ['Principal', 'Senior Pastor', 'Head Minister'].includes(clean(user.role));
+  const executiveWorkspaceName = isFaith && user.role === 'Senior Pastor'
+    ? "Senior Pastor's Office"
+    : (isExecutiveRole ? (isOrganisationOperations ? 'Executive Office' : "Principal's Office") : '');
   displayNameEl.textContent = displayName;
   roleEl.textContent = [user.role, user.department].filter(Boolean).join(' • ');
   renderProfilePhoto(user.profilePhotoUrl, displayName);
   sidebarEl.querySelector('.staff-sidebar-heading')?.setAttribute('data-initial', displayName.charAt(0).toUpperCase());
   editionLabel.textContent = isFaith ? 'Religious Organisation' : (isGenericOrganization ? 'Organisation Operations' : 'Staff Web Companion');
-  workspaceTitle.textContent = isOrganisationOperations ? 'Organisation Operations' : 'Operations Centre';
-  overviewLabel.textContent = isFaith ? 'Community overview' : 'Operations overview';
-  welcomeCopy.textContent = isOrganisationOperations
-    ? 'Monitor departments, meetings, offerings, programs and organisational activity.'
-    : 'Monitor records, requests and departmental activity.';
+  workspaceTitle.textContent = executiveWorkspaceName || (isOrganisationOperations ? 'Organisation Operations' : 'Operations Centre');
+  overviewLabel.textContent = executiveWorkspaceName ? 'Executive overview' : (isFaith ? 'Community overview' : 'Operations overview');
+  welcomeCopy.textContent = executiveWorkspaceName
+    ? 'Review the organisation, prepare official correspondence and monitor the summaries selected for your office.'
+    : (isOrganisationOperations
+      ? 'Monitor departments, meetings, offerings, programs and organisational activity.'
+      : 'Monitor records, requests and departmental activity.');
   welcomeTitle.textContent = `Welcome, ${displayName}`;
   document.documentElement.dataset.edition = isOrganisationOperations ? 'church' : 'school';
   loginCard.hidden = true;
@@ -648,6 +683,7 @@ function showDashboard(user) {
   approvalSettingsButton.hidden = !(
     user.role === 'Super Admin' ||
     user.role === 'Accounts Officer' ||
+    isExecutiveRole ||
     user.approvalEnabled
   );
   refreshPasskeyControls();
@@ -820,6 +856,46 @@ function renderSummaryCards(cards = []) {
     </div>`).join('');
 }
 
+function executiveMetricCatalog(data = executiveOfficeData || {}) {
+  const available = Array.isArray(data.availableMetrics) ? data.availableMetrics : [];
+  const values = Array.isArray(data.metrics)
+    ? Object.fromEntries(data.metrics.map((metric) => [clean(metric.id || metric.key), metric]))
+    : (data.metrics || {});
+  return available.map((entry) => {
+    const definition = typeof entry === 'string' ? { id: entry, label: entry } : entry;
+    const id = clean(definition.id || definition.key || definition.metricId);
+    const measured = values[id];
+    const measuredObject = measured && typeof measured === 'object' ? measured : {};
+    return {
+      ...definition,
+      ...measuredObject,
+      id,
+      label: clean(definition.label || definition.name || measuredObject.label || id),
+      value: measuredObject.value ?? measuredObject.total ?? measured ?? definition.value ?? 0,
+      note: clean(measuredObject.note || definition.note || definition.description),
+      icon: clean(definition.icon || measuredObject.icon || tabIcons.executiveOffice),
+      format: clean(definition.format || measuredObject.format).toLowerCase(),
+      series: measuredObject.series || measuredObject.points || definition.series || definition.points || []
+    };
+  }).filter((metric) => metric.id);
+}
+
+function executiveSelectedMetricIds(data = executiveOfficeData || {}) {
+  const preference = data.metricPreferences;
+  const selected = Array.isArray(preference)
+    ? preference
+    : (preference?.metricIds || preference?.selectedMetrics || data.selectedMetricIds || []);
+  const allowed = new Set(executiveMetricCatalog(data).map((metric) => metric.id));
+  const valid = (selected || []).map(clean).filter((id) => allowed.has(id));
+  return valid.length ? valid : Array.from(allowed).slice(0, 4);
+}
+
+function executiveMetricDisplay(metric) {
+  if (metric.format === 'currency' || metric.format === 'money') return money(metric.value);
+  if (metric.format === 'percent' || metric.format === 'percentage') return `${Number(metric.value || 0).toLocaleString()}%`;
+  return typeof metric.value === 'number' ? metric.value.toLocaleString() : clean(metric.value || 0);
+}
+
 function applicationOutcomeValues(row) {
   return ['Status', 'ResultStatus', 'EnrollmentStatus']
     .map((key) => clean(row?.[key]).toLowerCase())
@@ -843,7 +919,26 @@ function renderModuleSummary(active, liveData = null) {
   const departments = dashboardData?.departments || {};
   const icon = tabIcons[active];
   let cards = [];
-  if (active === 'recordsDesk') {
+  if (active === 'executiveOffice' && liveData) {
+    const selected = new Set(executiveSelectedMetricIds(liveData));
+    cards = executiveMetricCatalog(liveData)
+      .filter((metric) => selected.has(metric.id))
+      .map((metric) => ({
+        icon: metric.icon,
+        label: metric.label,
+        value: executiveMetricDisplay(metric),
+        note: metric.note
+      }));
+    if (!cards.length) {
+      const rows = liveData.correspondence || [];
+      cards = [
+        { icon, label: 'Correspondence', value: rows.length },
+        { icon: '\u{1F4DD}', label: 'Drafts', value: rows.filter((row) => /draft/i.test(clean(row.Status || row.status))).length },
+        { icon: '\u2713', label: 'Issued', value: rows.filter((row) => /issued/i.test(clean(row.Status || row.status))).length },
+        { icon: '\u{1F4E4}', label: 'Sent', value: rows.filter((row) => /sent|delivered/i.test(clean(row.Status || row.status))).length }
+      ];
+    }
+  } else if (active === 'recordsDesk') {
     const data = liveData || recordsDeskState;
     cards = [
       { icon, label: 'Record Types', value: (data.availableTypes || []).length, note: 'Allowed for this account' },
@@ -993,6 +1088,7 @@ function renderTabs(allowed) {
   const tabs = [['overview', 'Dashboard'], ...tabConfig.filter(([key]) => allowed.includes(key))];
   activeTabs = tabs;
   tabsEl.innerHTML = tabs.map(([key, label]) => {
+    label = staffTabLabel(key, label);
     const selected = key === activeSection ? ' selected' : '';
     return `<button type="button" class="child-card${selected}" data-tab="${escapeHtml(key)}" aria-selected="${key === activeSection}"><span class="staff-tab-icon" aria-hidden="true">${escapeHtml(tabIcons[key] || '•')}</span><span>${escapeHtml(label)}</span></button>`;
   }).join('');
@@ -1045,7 +1141,7 @@ function renderMobileNavigation(tabs) {
     const central = key === '__modules__' ? ' mobile-nav-centre' : '';
     return `<button type="button" class="${selected}${central}" data-mobile-tab="${escapeHtml(key)}" aria-label="${escapeHtml(label)}"><span>${escapeHtml(icon)}</span><small>${escapeHtml(label)}</small></button>`;
   }).join('');
-  moduleGrid.innerHTML = tabs.map(([key, label], index) => `<button type="button" data-module="${escapeHtml(key)}" class="module-tone-${index % 6}${key === activeSection ? ' selected' : ''}"><span>${escapeHtml(tabIcons[key] || '•')}</span><strong>${escapeHtml(label)}</strong></button>`).join('');
+  moduleGrid.innerHTML = tabs.map(([key, label], index) => `<button type="button" data-module="${escapeHtml(key)}" class="module-tone-${index % 6}${key === activeSection ? ' selected' : ''}"><span>${escapeHtml(tabIcons[key] || '•')}</span><strong>${escapeHtml(staffTabLabel(key, label))}</strong></button>`).join('');
 }
 
 function table(title, rows, columns) {
@@ -3247,6 +3343,702 @@ function bindRecordsDeskEvents() {
   }));
 }
 
+async function executiveOfficeRequest(action, payload = {}) {
+  const response = await staffFetch('/api/staff-correspondence', {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...payload })
+  });
+  const data = await response.json().catch(() => ({ ok: false, message: 'The executive correspondence service did not return JSON.' }));
+  if (response.status === 401) {
+    showLogin(data.message || 'Your staff session has expired.', 'bad');
+    throw new Error(data.message || 'Your staff session has expired.');
+  }
+  if (!response.ok || !data.ok) throw new Error(data.message || 'The executive correspondence request failed.');
+  return data;
+}
+
+function executiveDirectoryTypes() {
+  const friendlyLabels = { student: 'Students', staff: 'Staff', class: 'Classes', member: 'Members', department: 'Departments' };
+  const supplied = executiveAvailableDirectoryTypes.map((entry) => {
+    if (typeof entry === 'string') return { id: entry, label: friendlyLabels[entry] || executiveKindLabel(entry) };
+    const id = clean(entry.id || entry.type || entry.key);
+    return { id, label: clean(entry.label || entry.name || friendlyLabels[id] || id) };
+  }).filter((entry) => entry.id);
+  if (supplied.length) return supplied;
+  const faith = document.documentElement.dataset.edition === 'church';
+  return faith
+    ? [{ id: 'member', label: 'Members' }, { id: 'department', label: 'Departments' }, { id: 'staff', label: 'Staff' }]
+    : [{ id: 'student', label: 'Students' }, { id: 'staff', label: 'Staff' }, { id: 'class', label: 'Classes' }];
+}
+
+function executiveRecordId(row = {}) {
+  return clean(pick(row, [
+    'id', 'Id', 'recordId', 'RecordId', 'AdmissionNo', 'AccountRef', 'Username',
+    'MemberId', 'DepartmentId', 'ClassId', 'ClassName', '__id'
+  ]));
+}
+
+function executiveRecordName(row = {}) {
+  return clean(pick(row, [
+    'name', 'Name', 'displayName', 'DisplayName', 'StudentName', 'ApplicantName',
+    'MemberName', 'DepartmentName', 'ClassName', 'Username'
+  ])) || executiveRecordId(row) || 'Unnamed record';
+}
+
+function executiveRecordEmail(row = {}) {
+  return clean(pick(row, ['email', 'Email', 'ParentEmail', 'WorkEmail', 'OfficialEmail']));
+}
+
+function executiveRecordType(row = {}) {
+  return clean(pick(row, ['type', 'Type', 'recordType', 'RecordType'])) || executiveDirectoryType;
+}
+
+function executiveRecordMeta(row = {}) {
+  const supplied = clean(pick(row, ['subtitle', 'Subtitle']));
+  if (supplied) return supplied;
+  return [
+    pick(row, ['AdmissionNo', 'AccountRef', 'MemberId', 'Username', 'DepartmentId']),
+    pick(row, ['ClassName', 'Class', 'Department', 'Position', 'Role']),
+    pick(row, ['Phone', 'ParentPhone', 'Status'])
+  ].map(clean).filter(Boolean).join(' · ');
+}
+
+function executiveClassRows() {
+  return (executiveOfficeData?.classes || []).map((row) => {
+    if (typeof row === 'string') return { type: 'class', ClassName: row, id: row, name: row };
+    return { type: 'class', ...row };
+  });
+}
+
+function executiveCorrespondenceRows() {
+  return executiveOfficeData?.correspondence || executiveOfficeData?.records || [];
+}
+
+function executiveTemplateRows() {
+  return executiveOfficeData?.templates || [];
+}
+
+function executiveCorrespondenceId(row = {}) {
+  return clean(pick(row, ['correspondenceId', 'CorrespondenceId', 'id', 'Id', '__id']));
+}
+
+function executiveCorrespondenceStatus(row = {}) {
+  return clean(pick(row, ['status', 'Status'])) || 'Draft';
+}
+
+function executiveCorrespondenceKind(row = {}) {
+  return clean(pick(row, ['kind', 'Kind', 'documentType', 'DocumentType'])) || 'official-letter';
+}
+
+function executiveKindLabel(value) {
+  const normalized = clean(value).replace(/[_-]+/g, ' ');
+  return normalized.replace(/\b\w/g, (letter) => letter.toUpperCase()) || 'Official Letter';
+}
+
+function executiveKindOptions() {
+  const supplied = executiveOfficeData?.kinds || [];
+  const rows = supplied.map((entry) => {
+    if (typeof entry === 'string') return { id: entry, label: executiveKindLabel(entry) };
+    return { id: clean(entry.id || entry.key || entry.value), label: clean(entry.label || entry.name || executiveKindLabel(entry.id)) };
+  }).filter((entry) => entry.id);
+  if (rows.length) return rows;
+  const standard = [
+    ['official-letter', 'Official Letter'],
+    ['recommendation', 'Recommendation Letter'],
+    ['attestation', 'Attestation / Confirmation'],
+    ['external-agency', 'Ministry / Agency Letter']
+  ];
+  if (document.documentElement.dataset.edition !== 'church') standard.splice(1, 0, ['transfer-certificate', 'Transfer Certificate']);
+  return standard.map(([id, label]) => ({ id, label }));
+}
+
+function executiveTemplateId(row = {}) {
+  return clean(pick(row, ['templateId', 'TemplateId', 'id', 'Id', '__id']));
+}
+
+function executiveTemplateName(row = {}) {
+  return clean(pick(row, ['name', 'Name', 'templateName', 'TemplateName', 'title', 'Title'])) || executiveKindLabel(executiveCorrespondenceKind(row));
+}
+
+function executiveTemplateToken(value) {
+  const token = clean(typeof value === 'string' ? value : value?.token || value?.id);
+  if (!token) return '';
+  return token.startsWith('{{') ? token : `{{${token}}}`;
+}
+
+function executiveDraftToken(draft = {}, key = '') {
+  const values = pick(draft, ['TokenValues', 'tokenValues']) || {};
+  return clean(values?.[key] || executiveSelectedRecipient?.tokenValues?.[key]);
+}
+
+function executiveEditableTemplateBody(row = {}) {
+  const body = clean(pick(row, ['bodyTemplate', 'BodyTemplate', 'body', 'Body', 'bodyText', 'BodyText']));
+  const letterBody = executiveDraftToken(row, 'LETTER_BODY');
+  return body.replace(/\{\{LETTER_BODY\}\}/gi, letterBody && letterBody !== body ? letterBody : '');
+}
+
+function executiveComposerTokens() {
+  return (executiveOfficeData?.tokens || []).filter((token) => executiveTemplateToken(token) !== '{{LETTER_BODY}}');
+}
+
+function executiveMetricCharts() {
+  const selected = new Set(executiveSelectedMetricIds());
+  return executiveMetricCatalog()
+    .filter((metric) => selected.has(metric.id) && Array.isArray(metric.series) && metric.series.length)
+    .map((metric, index) => {
+      const rows = metric.series.map((point) => {
+        if (typeof point === 'number') return { Label: '', Value: point };
+        return {
+          Label: clean(point.label || point.name || point.period || point.category || point.x),
+          Value: Number(point.value ?? point.total ?? point.count ?? point.y ?? 0)
+        };
+      });
+      return verticalBars(metric.label, rows, 'Label', 'Value', ['blue', 'emerald', 'purple', 'gold', 'coral'][index % 5]);
+    });
+}
+
+function renderExecutiveOverview() {
+  const charts = executiveMetricCharts();
+  const records = executiveCorrespondenceRows();
+  const recent = records.slice(0, 5);
+  return `
+    <section class="executive-overview-grid">
+      <article class="executive-hero-card">
+        <div><small>Selected intelligence</small><h3>Your executive summary</h3><p>Choose only the approved statistics and charts that matter to your office. The server limits the available choices to information this account may access.</p></div>
+        <button type="button" class="compact-action" data-executive-metrics>Configure summary</button>
+      </article>
+      <article class="executive-quick-card">
+        <small>Official communication</small><h3>Prepare correspondence</h3><p>Issue branded letters, certificates and external communications with a traceable reference.</p>
+        <button type="button" data-executive-open="compose">Compose document</button>
+      </article>
+      <article class="executive-quick-card">
+        <small>People and structure</small><h3>Search the directory</h3><p>Find a permitted student, member, staff account, class or department without changing its source record.</p>
+        <button type="button" class="secondary" data-executive-open="directory">Open directory</button>
+      </article>
+    </section>
+    <section class="department-chart-grid executive-chart-grid">
+      ${charts.length ? charts.join('') : `<article class="department-chart-card executive-empty-chart"><span aria-hidden="true">&#128202;</span><h3>No chart selected</h3><p class="muted">Use “Configure summary” to add any available graphical summaries.</p></article>`}
+    </section>
+    <section class="executive-recent">
+      <div class="department-panel-heading"><div><small>Correspondence register</small><h3>Recent activity</h3></div><button type="button" class="secondary compact-action" data-executive-open="register">View all</button></div>
+      ${recent.length ? `<div class="executive-register-list">${recent.map(executiveRegisterRow).join('')}</div>` : '<p class="muted">No official correspondence has been recorded yet.</p>'}
+    </section>
+    <dialog id="executiveMetricsDialog" class="workflow-dialog executive-metrics-dialog">
+      <div class="workflow-dialog-header"><div><small>Executive dashboard</small><h2>Choose summary cards and charts</h2></div><button type="button" data-close-executive-metrics aria-label="Close">&times;</button></div>
+      <form id="executiveMetricsForm" class="workflow-form">
+        <p class="muted">Selections are drawn only from the information this account is authorised to view.</p>
+        <div class="executive-metric-picker">${executiveMetricCatalog().map((metric) => `<label class="check-row"><input type="checkbox" name="metricId" value="${escapeHtml(metric.id)}"${executiveSelectedMetricIds().includes(metric.id) ? ' checked' : ''}><span><strong>${escapeHtml(metric.label)}</strong><small>${escapeHtml(metric.note || (metric.series?.length ? 'Includes a chart' : 'Summary card'))}</small></span></label>`).join('') || '<p class="muted">No configurable metrics are available for this account yet.</p>'}</div>
+        <div class="executive-form-actions"><button type="submit">Save dashboard</button><p id="executiveMetricsStatus" class="status"></p></div>
+      </form>
+    </dialog>`;
+}
+
+function renderExecutiveDirectory() {
+  const types = executiveDirectoryTypes();
+  if (!executiveDirectoryType || !types.some((type) => type.id === executiveDirectoryType)) executiveDirectoryType = types[0]?.id || '';
+  const classMode = /class/i.test(executiveDirectoryType);
+  const rows = classMode && !executiveDirectoryQuery ? executiveClassRows() : executiveDirectoryResults;
+  return `
+    <section class="executive-directory-layout">
+      <aside class="executive-directory-filters">
+        <small>Read-only directory</small><h3>Find a record</h3>
+        <div class="executive-directory-types">${types.map((type) => `<button type="button" class="${type.id === executiveDirectoryType ? 'active' : ''}" data-executive-directory-type="${escapeHtml(type.id)}"><span aria-hidden="true">${escapeHtml(tabIcons[type.id] || '\u{1F465}')}</span>${escapeHtml(type.label)}</button>`).join('')}</div>
+        <p><span aria-hidden="true">&#128737;</span> Directory access follows your edition, branch and assigned school-section permissions.</p>
+      </aside>
+      <div class="executive-directory-main">
+        <form id="executiveDirectorySearch" class="executive-directory-search" role="search">
+          <label>Search ${escapeHtml(types.find((type) => type.id === executiveDirectoryType)?.label || 'directory')}
+            <span><input name="query" value="${escapeHtml(executiveDirectoryQuery)}" placeholder="Name, ID, email, phone or class"><button type="submit">Search</button></span>
+          </label>
+        </form>
+        <p id="executiveDirectoryStatus" class="status"></p>
+        <div class="executive-directory-results">
+          ${rows.length ? rows.map((row) => `
+            <article class="executive-directory-record">
+              <span class="executive-record-avatar">${escapeHtml(executiveRecordName(row).split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase())}</span>
+              <div><strong>${escapeHtml(executiveRecordName(row))}</strong><small>${escapeHtml(executiveRecordMeta(row) || executiveRecordId(row))}</small>${executiveRecordEmail(row) ? `<a href="mailto:${escapeHtml(executiveRecordEmail(row))}">${escapeHtml(executiveRecordEmail(row))}</a>` : ''}</div>
+              <button type="button" class="secondary compact-action" data-executive-recipient="${escapeHtml(executiveRecordId(row))}">Write</button>
+            </article>`).join('') : `<div class="executive-directory-empty"><span aria-hidden="true">&#128269;</span><p>${executiveDirectoryQuery ? 'No permitted records matched this search.' : 'Search to display permitted records here.'}</p></div>`}
+        </div>
+      </div>
+    </section>`;
+}
+
+function renderExecutiveTemplates() {
+  const templates = executiveTemplateRows();
+  return `
+    <div class="department-panel-heading"><div><small>Reusable communication</small><h3>Template library</h3></div><p>Start from an approved template, then personalise its recipient and message.</p></div>
+    <div class="executive-template-grid">
+      ${templates.length ? templates.map((row) => `
+        <article class="executive-template-card">
+          <span aria-hidden="true">${escapeHtml(tabIcons.executiveOffice)}</span>
+          <small>${escapeHtml(executiveKindLabel(executiveCorrespondenceKind(row)))}</small>
+          <h3>${escapeHtml(executiveTemplateName(row))}</h3>
+          <p>${escapeHtml(clean(pick(row, ['subjectTemplate', 'SubjectTemplate', 'subject', 'Subject'])) || clean(pick(row, ['bodyTemplate', 'BodyTemplate', 'body', 'Body'])).slice(0, 120) || 'Reusable official correspondence')}</p>
+          <button type="button" data-use-executive-template="${escapeHtml(executiveTemplateId(row))}">Use template</button>
+        </article>`).join('') : '<div class="executive-directory-empty"><span aria-hidden="true">&#128196;</span><p>No saved template yet. Compose a document and save it as a template.</p></div>'}
+    </div>
+    <aside class="executive-token-guide"><strong>Available merge fields</strong><p>${executiveComposerTokens().map((token) => `<code>${escapeHtml(executiveTemplateToken(token))}</code>`).join(' ') || '<span class="muted">Merge fields will be supplied by the server for your edition.</span>'}</p></aside>`;
+}
+
+function executiveSelectedRecipientMarkup() {
+  if (!executiveSelectedRecipient) return '<p class="muted">No directory record selected. Choose one from the Directory or use an external recipient.</p>';
+  return `<div class="executive-selected-recipient"><span aria-hidden="true">&#10003;</span><div><strong>${escapeHtml(executiveRecordName(executiveSelectedRecipient))}</strong><small>${escapeHtml(executiveRecordMeta(executiveSelectedRecipient))}</small></div><button type="button" class="secondary compact-icon-action" data-clear-executive-recipient aria-label="Remove selected recipient">&times;</button></div>`;
+}
+
+function renderExecutiveComposer(draft = null) {
+  const templateId = clean(pick(draft || {}, ['templateId', 'TemplateId']));
+  const selectedId = executiveRecordId(executiveSelectedRecipient || {});
+  const selectedType = executiveRecordType(executiveSelectedRecipient || {});
+  return `
+    <div class="department-panel-heading"><div><small>Official correspondence</small><h3>Compose document</h3></div><p>Draft freely; issuing or sending requires your current password and creates an auditable record.</p></div>
+    <form id="executiveComposerForm" class="workflow-form executive-composer">
+      <input type="hidden" name="correspondenceId" value="${escapeHtml(executiveCorrespondenceId(draft || {}))}">
+      <input type="hidden" name="recipientId" value="${escapeHtml(selectedId || pick(draft || {}, ['recipientId', 'RecipientId']))}">
+      <input type="hidden" name="recipientType" value="${escapeHtml(selectedType || pick(draft || {}, ['recipientType', 'RecipientType']))}">
+      <section class="executive-compose-card">
+        <header><span>01</span><div><strong>Document</strong><small>Choose a document type and optional template.</small></div></header>
+        <div class="executive-compose-grid">
+          <label>Document type<select name="kind" required>${executiveKindOptions().map((entry) => `<option value="${escapeHtml(entry.id)}"${entry.id === executiveCorrespondenceKind(draft || {}) ? ' selected' : ''}>${escapeHtml(entry.label)}</option>`).join('')}</select></label>
+          <label>Template<select name="templateId"><option value="">Start without a template</option>${executiveTemplateRows().map((row) => `<option value="${escapeHtml(executiveTemplateId(row))}"${executiveTemplateId(row) === templateId ? ' selected' : ''}>${escapeHtml(executiveTemplateName(row))}</option>`).join('')}</select></label>
+          <label>Template name <input name="templateName" value="${escapeHtml(executiveTemplateName(draft || {}) === executiveKindLabel(executiveCorrespondenceKind(draft || {})) ? '' : executiveTemplateName(draft || {}))}" placeholder="Only needed when saving as a template"></label>
+        </div>
+      </section>
+      <section class="executive-compose-card">
+        <header><span>02</span><div><strong>Recipient</strong><small>Select a permitted directory record or address an external organisation.</small></div></header>
+        <div class="executive-recipient-mode">
+          <label class="check-row"><input type="radio" name="recipientMode" value="directory"${selectedId ? ' checked' : ''}> Directory recipient</label>
+          <label class="check-row"><input type="radio" name="recipientMode" value="external"${selectedId ? '' : ' checked'}> External / manual recipient</label>
+        </div>
+        <div data-executive-directory-recipient>${executiveSelectedRecipientMarkup()}<label class="executive-directory-email">Delivery email <input type="email" name="directoryRecipientEmail" value="${escapeHtml(executiveRecordEmail(executiveSelectedRecipient || {}) || pick(draft || {}, ['recipientEmail', 'RecipientEmail']))}" placeholder="Email used when this document is sent"></label><button type="button" class="secondary compact-action" data-executive-open="directory">Search directory</button></div>
+        <div class="executive-compose-grid" data-executive-external-recipient>
+          <label>Recipient name <input name="recipientName" value="${escapeHtml(pick(draft || {}, ['recipientName', 'RecipientName']))}"></label>
+          <label>Organisation / ministry <input name="recipientOrganisation" value="${escapeHtml(pick(draft || {}, ['recipientOrganisation', 'RecipientOrganisation']))}"></label>
+          <label>Email <input type="email" name="recipientEmail" value="${escapeHtml(pick(draft || {}, ['recipientEmail', 'RecipientEmail']))}"></label>
+          <label class="executive-span-two">Postal address<textarea name="recipientAddress" rows="2">${escapeHtml(pick(draft || {}, ['recipientAddress', 'RecipientAddress']))}</textarea></label>
+        </div>
+      </section>
+      <section class="executive-compose-card">
+        <header><span>03</span><div><strong>Message</strong><small>Use the available merge fields where a template should insert official data.</small></div></header>
+        <label>Subject <input name="subject" required value="${escapeHtml(pick(draft || {}, ['subjectTemplate', 'SubjectTemplate', 'subject', 'Subject']))}" placeholder="Subject of the official communication"></label>
+        <label>Letter body <textarea name="body" rows="12" required placeholder="Write the official communication here.">${escapeHtml(executiveEditableTemplateBody(draft || {}))}</textarea></label>
+        <div class="executive-token-strip">${executiveComposerTokens().map((token) => `<button type="button" class="secondary" data-insert-executive-token="${escapeHtml(executiveTemplateToken(token))}">${escapeHtml(executiveTemplateToken(token))}</button>`).join('')}</div>
+      </section>
+      <section class="executive-compose-card executive-transfer-fields" data-executive-transfer-fields hidden>
+        <header><span>TC</span><div><strong>Transfer certificate details</strong><small>These fields supplement the selected student's official record.</small></div></header>
+        <div class="executive-compose-grid">
+          <label>Date admitted <input type="date" name="admissionDate" value="${escapeHtml(pick(draft || {}, ['admissionDate', 'AdmissionDate']) || executiveDraftToken(draft || {}, 'ADMISSION_DATE'))}"></label>
+          <label>Date leaving <input type="date" name="leavingDate" value="${escapeHtml(pick(draft || {}, ['leavingDate', 'LeavingDate']) || executiveDraftToken(draft || {}, 'LEAVING_DATE'))}"></label>
+          <label>Last class attended <input name="lastClass" value="${escapeHtml(pick(draft || {}, ['lastClass', 'LastClass']) || executiveDraftToken(draft || {}, 'CLASS'))}"></label>
+          <label>Conduct <input name="conduct" value="${escapeHtml(pick(draft || {}, ['conduct', 'Conduct']) || executiveDraftToken(draft || {}, 'CONDUCT'))}"></label>
+          <label class="executive-span-two">Reason for leaving <input name="reasonForLeaving" value="${escapeHtml(pick(draft || {}, ['reasonForLeaving', 'ReasonForLeaving']) || executiveDraftToken(draft || {}, 'REASON'))}"></label>
+          <label class="executive-span-two">Transferring to <input name="transferTo" value="${escapeHtml(pick(draft || {}, ['transferTo', 'TransferTo']) || executiveDraftToken(draft || {}, 'DESTINATION'))}"></label>
+        </div>
+      </section>
+      <section class="executive-compose-card executive-authorization-card">
+        <header><span>04</span><div><strong>Issue and delivery</strong><small>Your saved signature and stamp remain optional for each document.</small></div></header>
+        <div class="executive-endorsement-row">
+          <label class="check-row"><input type="checkbox" name="applySignature"${yes(pick(draft || {}, ['applySignature', 'ApplySignature', 'SignatureApplied'])) || yes(executiveOfficeData?.approvalProfile?.ApplySignatureOnApproval) ? ' checked' : ''}> Apply my signature</label>
+          <label class="check-row"><input type="checkbox" name="applyStamp"${yes(pick(draft || {}, ['applyStamp', 'ApplyStamp', 'StampApplied'])) || yes(executiveOfficeData?.approvalProfile?.ApplyStampOnApproval) ? ' checked' : ''}> Apply official stamp</label>
+        </div>
+        <label class="executive-password-confirm">Current password <input type="password" name="approvalPassword" autocomplete="current-password"><small>Required only when issuing or sending.</small></label>
+        <div class="executive-form-actions">
+          <button type="submit" class="secondary" data-correspondence-action="saveDraft">Save draft</button>
+          <button type="button" class="secondary" data-save-executive-template>Save as template</button>
+          <button type="button" class="secondary" data-preview-executive>Print preview</button>
+          <button type="submit" data-correspondence-action="issue">Issue document</button>
+          <button type="submit" data-correspondence-action="send">Issue &amp; send</button>
+        </div>
+        <p id="executiveComposerStatus" class="status" aria-live="polite"></p>
+      </section>
+    </form>`;
+}
+
+function executiveRegisterRow(row) {
+  const id = executiveCorrespondenceId(row);
+  const status = executiveCorrespondenceStatus(row);
+  const recipient = clean(pick(row, ['recipientName', 'RecipientName', 'recipientOrganisation', 'RecipientOrganisation'])) || 'Not specified';
+  const date = clean(pick(row, ['sentAt', 'SentAt', 'issuedAt', 'IssuedAt', 'updatedAt', 'UpdatedAt', 'createdAt', 'CreatedAt']));
+  return `<article class="executive-register-row">
+    <div class="executive-reference"><strong>${escapeHtml(pick(row, ['reference', 'Reference']) || id)}</strong><small>${escapeHtml(executiveKindLabel(executiveCorrespondenceKind(row)))}</small></div>
+    <div><strong>${escapeHtml(pick(row, ['subject', 'Subject']) || 'Untitled correspondence')}</strong><small>${escapeHtml(recipient)}</small></div>
+    <time>${escapeHtml(date ? date.slice(0, 10) : '')}</time>
+    <span class="workflow-status status-${escapeHtml(status.toLowerCase().replace(/[^a-z]+/g, '-'))}">${escapeHtml(status)}</span>
+    <div class="compact-row-actions">
+      ${/draft/i.test(status) ? `<button type="button" class="compact-icon-action compact-edit-action" data-edit-executive="${escapeHtml(id)}" aria-label="Edit draft" title="Edit draft">&#9998;</button>` : ''}
+      ${/^issued$/i.test(status) ? `<button type="button" class="compact-icon-action" data-send-executive="${escapeHtml(id)}" aria-label="Send issued document" title="Send issued document">&#9993;</button>` : ''}
+      <button type="button" class="compact-icon-action" data-print-executive="${escapeHtml(id)}" aria-label="View and print" title="View and print">&#128424;</button>
+    </div>
+  </article>`;
+}
+
+function renderExecutiveRegister() {
+  const records = executiveCorrespondenceRows();
+  return `
+    <div class="department-panel-heading"><div><small>Audit trail</small><h3>Correspondence register</h3></div><p>Every saved, issued and sent document remains traceable by its official reference and status.</p></div>
+    <div class="executive-register-toolbar"><span>${records.length.toLocaleString()} record${records.length === 1 ? '' : 's'}</span><button type="button" data-executive-open="compose">New correspondence</button></div>
+    <div class="executive-register-list">${records.length ? records.map(executiveRegisterRow).join('') : '<p class="muted">No correspondence has been recorded yet.</p>'}</div>
+    <dialog id="executiveSendDialog" class="workflow-dialog executive-send-dialog">
+      <div class="workflow-dialog-header"><div><small>Secure delivery</small><h2>Send issued document</h2></div><button type="button" data-close-executive-send aria-label="Close">&times;</button></div>
+      <form id="executiveSendForm" class="workflow-form">
+        <input type="hidden" name="correspondenceId">
+        <label>Recipient email <input type="email" name="recipientEmail" required></label>
+        <label>Current password <input type="password" name="approvalPassword" autocomplete="current-password" required></label>
+        <div class="executive-form-actions"><button type="submit">Send document</button><p id="executiveSendStatus" class="status"></p></div>
+      </form>
+    </dialog>`;
+}
+
+function renderExecutiveOffice(draft = null) {
+  if (activeSection !== 'executiveOffice' || !executiveOfficeData) return;
+  const tabs = [
+    ['overview', '\u{1F4CA}', 'Overview'],
+    ['directory', '\u{1F50D}', 'Directory'],
+    ['templates', '\u{1F4C4}', 'Templates'],
+    ['compose', '\u270E', 'Compose'],
+    ['register', '\u{1F5C2}', 'Register']
+  ];
+  const body = executiveOfficeTab === 'directory' ? renderExecutiveDirectory()
+    : executiveOfficeTab === 'templates' ? renderExecutiveTemplates()
+      : executiveOfficeTab === 'compose' ? renderExecutiveComposer(draft)
+        : executiveOfficeTab === 'register' ? renderExecutiveRegister()
+          : renderExecutiveOverview();
+  panelEl.innerHTML = `
+    <div class="workflow-intro executive-office-intro">
+      <div><p class="eyebrow">Leadership and official communication</p><h2>${escapeHtml(executiveOfficeTitle())}</h2><p class="muted">Authorised insight, directories, branded documents and a complete correspondence history.</p></div>
+      <button type="button" class="compact-action secondary" id="refreshExecutiveOffice" aria-label="Refresh executive office">&#8635; Refresh</button>
+    </div>
+    <nav class="executive-workspace-tabs" aria-label="${escapeHtml(executiveOfficeTitle())} sections">${tabs.map(([key, icon, label]) => `<button type="button" data-executive-tab="${key}" class="${executiveOfficeTab === key ? 'active' : ''}" aria-selected="${executiveOfficeTab === key}"><span aria-hidden="true">${icon}</span>${label}</button>`).join('')}</nav>
+    <div class="executive-workspace-panel">${body}</div>`;
+  bindExecutiveOfficeEvents();
+}
+
+function switchExecutiveOfficeTab(tab, draft = null) {
+  if (!['overview', 'directory', 'templates', 'compose', 'register'].includes(tab)) return;
+  executiveOfficeTab = tab;
+  renderExecutiveOffice(draft);
+  panelEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function executiveComposerPayload(form) {
+  const payload = Object.fromEntries(new FormData(form).entries());
+  payload.applySignature = form.elements.applySignature.checked;
+  payload.applyStamp = form.elements.applyStamp.checked;
+  payload.SubjectTemplate = payload.subject;
+  payload.BodyTemplate = payload.body;
+  payload.Name = payload.templateName;
+  payload.Kind = payload.kind;
+  payload.TokenValues = {
+    ...(executiveSelectedRecipient?.tokenValues || {}),
+    SUBJECT: payload.subject,
+    LETTER_BODY: '',
+    ADMISSION_DATE: payload.admissionDate,
+    LEAVING_DATE: payload.leavingDate,
+    CLASS: payload.lastClass,
+    REASON: payload.reasonForLeaving,
+    CONDUCT: payload.conduct,
+    DESTINATION: payload.transferTo
+  };
+  if (payload.recipientMode === 'directory' && executiveSelectedRecipient) {
+    payload.recipientId = executiveRecordId(executiveSelectedRecipient);
+    payload.recipientType = executiveRecordType(executiveSelectedRecipient);
+    payload.recipientName = executiveRecordName(executiveSelectedRecipient);
+    payload.recipientEmail = clean(payload.directoryRecipientEmail) || executiveRecordEmail(executiveSelectedRecipient);
+    payload.recipientOrganisation = clean(pick(executiveSelectedRecipient, ['Organisation', 'Organization', 'DepartmentName']));
+    payload.recipientAddress = clean(pick(executiveSelectedRecipient, ['address', 'Address', 'PostalAddress', 'ResidentialAddress']));
+  } else if (payload.recipientMode === 'external') {
+    payload.recipientType = 'custom';
+    payload.recipientId = '';
+  }
+  return payload;
+}
+
+function safeExecutiveImage(value) {
+  const source = clean(value);
+  return /^(?:https?:\/\/|data:image\/(?:png|jpeg|webp);base64,|\/|images\/)/i.test(source) ? source : '';
+}
+
+function openExecutivePrint(record = {}, printable = {}, targetWindow = null) {
+  const printableWindow = targetWindow || window.open('', '_blank', 'width=960,height=760');
+  if (!printableWindow) throw new Error('Allow pop-ups to view and print this document.');
+  printableWindow.opener = null;
+  printableWindow.document.open();
+  if (clean(printable.html)) {
+    const printControl = '<button class="executive-print-control" type="button" onclick="window.print()">Print / Save as PDF</button>';
+    const printStyle = '<style>.executive-print-control{position:fixed;z-index:20;top:12px;right:12px;width:auto;padding:10px 14px;border:0;border-radius:7px;background:#1769e0;color:#fff;font:bold 12px Arial;cursor:pointer}@media print{.executive-print-control{display:none}}</style>';
+    const brandedHtml = String(printable.html)
+      .replace('</head>', `${printStyle}</head>`)
+      .replace('</body>', `${printControl}</body>`);
+    printableWindow.document.write(brandedHtml);
+    printableWindow.document.close();
+    return;
+  }
+  const organisation = clean(document.querySelector('[data-school-name]')?.textContent) || 'Dynamax';
+  const reference = clean(printable.reference || pick(record, ['reference', 'Reference', 'correspondenceId', 'CorrespondenceId'])) || 'PREVIEW';
+  const subject = clean(printable.title || pick(record, ['subject', 'Subject'])) || 'Official correspondence';
+  const recipient = clean(pick(record, ['recipientName', 'RecipientName', 'recipientOrganisation', 'RecipientOrganisation']));
+  const body = clean(printable.text || pick(record, ['body', 'Body', 'bodyText', 'BodyText']));
+  const status = executiveCorrespondenceStatus(record);
+  const logo = safeExecutiveImage(document.querySelector('.nav-logo')?.getAttribute('src') || 'images/Logo.png');
+  const signature = yes(pick(record, ['applySignature', 'ApplySignature']))
+    ? safeExecutiveImage(pick(record, ['signatureUrl', 'SignatureUrl']) || executiveOfficeData?.approvalProfile?.SignatureDataUrl)
+    : '';
+  const stamp = yes(pick(record, ['applyStamp', 'ApplyStamp']))
+    ? safeExecutiveImage(pick(record, ['stampUrl', 'StampUrl']) || executiveOfficeData?.approvalProfile?.StampDataUrl)
+    : '';
+  const filename = clean(printable.filename || `${reference}.pdf`);
+  printableWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(filename)}</title><style>
+    @page{size:A4;margin:18mm}*{box-sizing:border-box}body{margin:0;color:#18324d;font:15px/1.65 Georgia,serif}.sheet{position:relative;min-height:250mm;padding:10mm;border:1px solid #c9d8e7;background:#fff;overflow:hidden}.watermark{position:absolute;inset:25% 25%;width:50%;height:50%;object-fit:contain;opacity:.045}.letterhead{position:relative;display:flex;align-items:center;gap:16px;padding:0 0 17px;border-bottom:4px solid #0c8b78}.letterhead img{width:68px;height:68px;object-fit:contain}.letterhead h1{margin:0;color:#123f6d;font:700 25px/1.2 Arial,sans-serif}.letterhead p{margin:4px 0 0;color:#61758a;font:12px Arial,sans-serif}.meta{display:flex;justify-content:space-between;gap:20px;margin:22px 0;color:#587087;font:12px Arial,sans-serif}.subject{margin:24px 0 18px;color:#123f6d;font:700 19px Arial,sans-serif}.recipient{margin-bottom:18px}.body{position:relative;min-height:330px;white-space:pre-wrap}.endorsements{display:flex;gap:50px;margin-top:40px}.endorsement{min-width:210px;padding-top:8px;border-top:1px solid #8499ad;font:12px Arial,sans-serif}.endorsement img{display:block;max-width:150px;max-height:70px;object-fit:contain;margin:-65px 0 4px}.footer{position:absolute;right:10mm;bottom:8mm;left:10mm;display:flex;justify-content:space-between;border-top:1px solid #d6e1ec;padding-top:8px;color:#71869a;font:10px Arial,sans-serif}.print{position:fixed;top:12px;right:12px;padding:10px 14px;border:0;border-radius:7px;background:#1769e0;color:white;font:bold 12px Arial;cursor:pointer}@media print{.print{display:none}.sheet{border:0;padding:0;min-height:auto}}</style></head><body><button class="print" onclick="window.print()">Print / Save as PDF</button><main class="sheet">${logo ? `<img class="watermark" src="${escapeHtml(logo)}" alt="">` : ''}<header class="letterhead">${logo ? `<img src="${escapeHtml(logo)}" alt="">` : ''}<div><h1>${escapeHtml(organisation)}</h1><p>${escapeHtml(executiveOfficeTitle())} · Official communication</p></div></header><div class="meta"><span>Reference: <strong>${escapeHtml(reference)}</strong></span><span>Status: <strong>${escapeHtml(status)}</strong></span></div>${recipient ? `<div class="recipient">To:<br><strong>${escapeHtml(recipient)}</strong></div>` : ''}<h2 class="subject">${escapeHtml(subject)}</h2><div class="body">${escapeHtml(body)}</div><div class="endorsements">${signature ? `<div class="endorsement"><img src="${escapeHtml(signature)}" alt=""><strong>${escapeHtml(currentUser?.displayName || currentUser?.username || '')}</strong><br>${escapeHtml(currentUser?.role || '')}</div>` : ''}${stamp ? `<div class="endorsement"><img src="${escapeHtml(stamp)}" alt="Official stamp"><strong>Official stamp</strong></div>` : ''}</div><footer class="footer"><span>Generated by Dynamax</span><span>${escapeHtml(new Date().toLocaleString())}</span></footer></main></body></html>`);
+  printableWindow.document.close();
+}
+
+function updateExecutiveComposerVisibility() {
+  const form = document.getElementById('executiveComposerForm');
+  if (!form) return;
+  const external = form.elements.recipientMode.value === 'external';
+  form.querySelector('[data-executive-directory-recipient]').hidden = external;
+  form.querySelector('[data-executive-external-recipient]').hidden = !external;
+  form.querySelector('[data-executive-transfer-fields]').hidden = form.elements.kind.value !== 'transfer-certificate';
+}
+
+async function searchExecutiveDirectory() {
+  const status = document.getElementById('executiveDirectoryStatus');
+  setStatus(status, 'Searching permitted records...');
+  try {
+    const data = await executiveOfficeRequest('search', { query: executiveDirectoryQuery, type: executiveDirectoryType });
+    executiveDirectoryResults = data.results || [];
+    executiveAvailableDirectoryTypes = data.availableTypes || executiveAvailableDirectoryTypes;
+    if (activeSection === 'executiveOffice' && executiveOfficeTab === 'directory') {
+      renderExecutiveOffice();
+      setStatus(document.getElementById('executiveDirectoryStatus'), `${executiveDirectoryResults.length} permitted record${executiveDirectoryResults.length === 1 ? '' : 's'} found.`, 'ok');
+    }
+  } catch (error) {
+    setStatus(status, error.message || String(error), 'bad');
+  }
+}
+
+function bindExecutiveOfficeEvents() {
+  document.getElementById('refreshExecutiveOffice')?.addEventListener('click', loadExecutiveOffice);
+  panelEl.querySelectorAll('[data-executive-tab]').forEach((button) => button.addEventListener('click', () => switchExecutiveOfficeTab(button.dataset.executiveTab)));
+  panelEl.querySelectorAll('[data-executive-open]').forEach((button) => button.addEventListener('click', () => {
+    if (button.dataset.executiveOpen === 'compose') executiveSelectedRecipient = null;
+    switchExecutiveOfficeTab(button.dataset.executiveOpen);
+  }));
+  document.querySelector('[data-executive-metrics]')?.addEventListener('click', () => document.getElementById('executiveMetricsDialog')?.showModal());
+  document.querySelector('[data-close-executive-metrics]')?.addEventListener('click', () => document.getElementById('executiveMetricsDialog')?.close());
+  document.getElementById('executiveMetricsForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = form.querySelector('button[type="submit"]');
+    const metricIds = Array.from(form.querySelectorAll('[name="metricId"]:checked')).map((input) => input.value);
+    setButtonLoading(button, true, 'Saving...', 'Save dashboard');
+    try {
+      const data = await executiveOfficeRequest('savePreferences', { metricIds });
+      executiveOfficeData = { ...executiveOfficeData, ...data, metricPreferences: data.metricPreferences || { metricIds } };
+      renderModuleSummary('executiveOffice', executiveOfficeData);
+      renderExecutiveOffice();
+    } catch (error) {
+      setStatus(document.getElementById('executiveMetricsStatus'), error.message || String(error), 'bad');
+      setButtonLoading(button, false, 'Saving...', 'Save dashboard');
+    }
+  });
+  document.getElementById('executiveDirectorySearch')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    executiveDirectoryQuery = clean(new FormData(event.currentTarget).get('query'));
+    searchExecutiveDirectory();
+  });
+  panelEl.querySelectorAll('[data-executive-directory-type]').forEach((button) => button.addEventListener('click', () => {
+    executiveDirectoryType = button.dataset.executiveDirectoryType;
+    executiveDirectoryQuery = '';
+    executiveDirectoryResults = [];
+    renderExecutiveOffice();
+  }));
+  panelEl.querySelectorAll('[data-executive-recipient]').forEach((button) => button.addEventListener('click', () => {
+    const rows = /class/i.test(executiveDirectoryType) && !executiveDirectoryQuery ? executiveClassRows() : executiveDirectoryResults;
+    executiveSelectedRecipient = rows.find((row) => executiveRecordId(row) === button.dataset.executiveRecipient) || null;
+    switchExecutiveOfficeTab('compose');
+  }));
+  panelEl.querySelectorAll('[data-use-executive-template]').forEach((button) => button.addEventListener('click', () => {
+    const template = executiveTemplateRows().find((row) => executiveTemplateId(row) === button.dataset.useExecutiveTemplate);
+    executiveSelectedRecipient = null;
+    switchExecutiveOfficeTab('compose', template || null);
+  }));
+  panelEl.querySelectorAll('[data-edit-executive]').forEach((button) => button.addEventListener('click', () => {
+    const draft = executiveCorrespondenceRows().find((row) => executiveCorrespondenceId(row) === button.dataset.editExecutive);
+    executiveSelectedRecipient = draft && clean(pick(draft, ['RecipientType', 'recipientType'])) !== 'custom'
+      ? {
+        id: pick(draft, ['RecipientId', 'recipientId']),
+        type: pick(draft, ['RecipientType', 'recipientType']),
+        name: pick(draft, ['RecipientName', 'recipientName']),
+        email: pick(draft, ['RecipientEmail', 'recipientEmail']),
+        address: pick(draft, ['RecipientAddress', 'recipientAddress']),
+        tokenValues: pick(draft, ['TokenValues', 'tokenValues']) || {}
+      }
+      : null;
+    switchExecutiveOfficeTab('compose', draft || null);
+  }));
+  panelEl.querySelectorAll('[data-print-executive]').forEach((button) => button.addEventListener('click', async () => {
+    const original = button.innerHTML;
+    const printableWindow = window.open('', '_blank', 'width=960,height=760');
+    if (!printableWindow) {
+      window.alert('Allow pop-ups to view and print this document.');
+      return;
+    }
+    printableWindow.document.write('<p style="font:14px Arial;padding:24px">Preparing official document...</p>');
+    setButtonLoading(button, true, '', '');
+    try {
+      const data = await executiveOfficeRequest('document', { correspondenceId: button.dataset.printExecutive });
+      openExecutivePrint(data.correspondence || {}, data.printable || {}, printableWindow);
+    } catch (error) {
+      printableWindow.close();
+      window.alert(error.message || String(error));
+    } finally {
+      setButtonLoading(button, false, '', '');
+      button.innerHTML = original;
+    }
+  }));
+  panelEl.querySelectorAll('[data-send-executive]').forEach((button) => button.addEventListener('click', () => {
+    const row = executiveCorrespondenceRows().find((item) => executiveCorrespondenceId(item) === button.dataset.sendExecutive);
+    const dialog = document.getElementById('executiveSendDialog');
+    const form = document.getElementById('executiveSendForm');
+    if (!row || !dialog || !form) return;
+    form.reset();
+    form.elements.correspondenceId.value = executiveCorrespondenceId(row);
+    form.elements.recipientEmail.value = clean(pick(row, ['RecipientEmail', 'recipientEmail']));
+    dialog.showModal();
+  }));
+  document.querySelector('[data-close-executive-send]')?.addEventListener('click', () => document.getElementById('executiveSendDialog')?.close());
+  document.getElementById('executiveSendForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = form.querySelector('button[type="submit"]');
+    const status = document.getElementById('executiveSendStatus');
+    setButtonLoading(button, true, 'Sending...', 'Send document');
+    try {
+      const data = await executiveOfficeRequest('send', Object.fromEntries(new FormData(form).entries()));
+      const refreshed = await executiveOfficeRequest('bootstrap');
+      executiveOfficeData = refreshed;
+      renderModuleSummary('executiveOffice', refreshed);
+      renderExecutiveOffice();
+      setStatus(dashboardStatus, data.message || 'Official correspondence sent.', 'ok');
+    } catch (error) {
+      setStatus(status, error.message || String(error), 'bad');
+      setButtonLoading(button, false, 'Sending...', 'Send document');
+    }
+  });
+  const composer = document.getElementById('executiveComposerForm');
+  composer?.querySelectorAll('[name="recipientMode"]').forEach((input) => input.addEventListener('change', updateExecutiveComposerVisibility));
+  composer?.elements.kind?.addEventListener('change', updateExecutiveComposerVisibility);
+  composer?.elements.templateId?.addEventListener('change', () => {
+    const template = executiveTemplateRows().find((row) => executiveTemplateId(row) === composer.elements.templateId.value);
+    if (!template) return;
+    composer.elements.kind.value = executiveCorrespondenceKind(template);
+    composer.elements.subject.value = pick(template, ['subjectTemplate', 'SubjectTemplate', 'subject', 'Subject']);
+    composer.elements.body.value = executiveEditableTemplateBody(template);
+    updateExecutiveComposerVisibility();
+  });
+  composer?.querySelector('[data-clear-executive-recipient]')?.addEventListener('click', () => {
+    executiveSelectedRecipient = null;
+    renderExecutiveOffice();
+  });
+  composer?.querySelectorAll('[data-insert-executive-token]').forEach((button) => button.addEventListener('click', () => {
+    const textarea = composer.elements.body;
+    const token = button.dataset.insertExecutiveToken;
+    const start = textarea.selectionStart ?? textarea.value.length;
+    const end = textarea.selectionEnd ?? start;
+    textarea.setRangeText(token, start, end, 'end');
+    textarea.focus();
+  }));
+  composer?.querySelector('[data-preview-executive]')?.addEventListener('click', () => {
+    try { openExecutivePrint(executiveComposerPayload(composer)); } catch (error) { setStatus(document.getElementById('executiveComposerStatus'), error.message || String(error), 'bad'); }
+  });
+  composer?.querySelector('[data-save-executive-template]')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const payload = executiveComposerPayload(composer);
+    delete payload.approvalPassword;
+    const selectedTemplate = executiveTemplateRows().find((row) => executiveTemplateId(row) === clean(payload.templateId));
+    if (selectedTemplate?.BuiltIn) {
+      payload.templateId = '';
+      payload.TemplateId = '';
+    }
+    if (!clean(payload.templateName)) {
+      setStatus(document.getElementById('executiveComposerStatus'), 'Enter a template name before saving this reusable document.', 'bad');
+      composer.elements.templateName.focus();
+      return;
+    }
+    setButtonLoading(button, true, 'Saving...', 'Save as template');
+    try {
+      const data = await executiveOfficeRequest('saveTemplate', payload);
+      executiveOfficeData.templates = [data.template, ...executiveTemplateRows().filter((row) => executiveTemplateId(row) !== executiveTemplateId(data.template))];
+      setStatus(document.getElementById('executiveComposerStatus'), data.message || 'Template saved.', 'ok');
+    } catch (error) {
+      setStatus(document.getElementById('executiveComposerStatus'), error.message || String(error), 'bad');
+    } finally {
+      setButtonLoading(button, false, 'Saving...', 'Save as template');
+    }
+  });
+  composer?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const action = event.submitter?.dataset.correspondenceAction || 'saveDraft';
+    const payload = executiveComposerPayload(composer);
+    const status = document.getElementById('executiveComposerStatus');
+    if (['issue', 'send'].includes(action) && !clean(payload.approvalPassword)) {
+      setStatus(status, 'Enter your current password to issue or send this official document.', 'bad');
+      composer.elements.approvalPassword.focus();
+      return;
+    }
+    if (action === 'send' && !clean(payload.recipientEmail)) {
+      setStatus(status, 'A recipient email address is required before this document can be sent.', 'bad');
+      return;
+    }
+    const button = event.submitter;
+    const normalText = button.textContent;
+    setButtonLoading(button, true, action === 'saveDraft' ? 'Saving...' : action === 'send' ? 'Sending...' : 'Issuing...', normalText);
+    try {
+      let data;
+      if (action === 'saveDraft') {
+        const draftPayload = { ...payload };
+        delete draftPayload.approvalPassword;
+        data = await executiveOfficeRequest(action, draftPayload);
+      } else {
+        const draftPayload = { ...payload };
+        delete draftPayload.approvalPassword;
+        const saved = await executiveOfficeRequest('saveDraft', draftPayload);
+        payload.correspondenceId = executiveCorrespondenceId(saved.correspondence);
+        data = await executiveOfficeRequest(action, payload);
+      }
+      composer.elements.approvalPassword.value = '';
+      setStatus(status, data.message || (action === 'saveDraft' ? 'Draft saved.' : action === 'send' ? 'Document issued and sent.' : 'Document issued.'), 'ok');
+      const refreshed = await executiveOfficeRequest('bootstrap');
+      executiveOfficeData = refreshed;
+      renderModuleSummary('executiveOffice', refreshed);
+      executiveSelectedRecipient = null;
+      switchExecutiveOfficeTab('register');
+    } catch (error) {
+      setStatus(status, error.message || String(error), 'bad');
+      setButtonLoading(button, false, '', normalText);
+    }
+  });
+  updateExecutiveComposerVisibility();
+}
+
+async function loadExecutiveOffice() {
+  if (activeSection !== 'executiveOffice') return;
+  try {
+    const data = await executiveOfficeRequest('bootstrap');
+    if (activeSection !== 'executiveOffice') return;
+    executiveOfficeData = data;
+    executiveAvailableDirectoryTypes = data.availableTypes || executiveAvailableDirectoryTypes;
+    renderModuleSummary('executiveOffice', data);
+    renderExecutiveOffice();
+  } catch (error) {
+    if (activeSection === 'executiveOffice') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+  }
+}
+
 function renderSection(active) {
   if (!dashboardData) return;
   panelEl.classList.toggle('school-store-panel', active === 'bookstore' || active === 'uniformStore' || active === 'organizationStore');
@@ -3257,6 +4049,9 @@ function renderSection(active) {
   const departments = dashboardData.departments || {};
   if (active === 'recordsDesk') {
     renderRecordsDesk();
+  } else if (active === 'executiveOffice') {
+    panelEl.innerHTML = `<div class="executive-loading"><span class="records-desk-spinner" aria-hidden="true"></span><strong>Opening ${escapeHtml(executiveOfficeTitle())}...</strong><small>Loading authorised metrics, directories, templates and correspondence.</small></div>`;
+    loadExecutiveOffice();
   } else if (active === 'staffUsers') {
     panelEl.innerHTML = '<p class="muted">Loading staff accounts...</p>';
     loadStaffUsers();
@@ -4009,7 +4804,7 @@ function renderStaffUsers() {
         <section class="config-group"><header><strong>Account identity</strong><small>Basic sign-in identity and organizational access.</small></header><div class="config-grid">
           <label>Username <span class="required">*</span><input name="Username" required></label>
           <label>Display name <span class="required">*</span><input name="DisplayName" required></label>
-          <label>Role <select name="Role" required>${['Super Admin','Admissions Officer','Accounts Officer','Management','Department User','Tuck Shop User','Clinic User','Kitchen User','Store User','Restaurant User','Front Desk','Pastor','Church Administrator','Membership Officer','Treasurer','Auditor'].map((role) => `<option>${role}</option>`).join('')}</select></label>
+          <label>Role <select name="Role" required>${['Super Admin','Principal','Senior Pastor','Head Minister','Admissions Officer','Accounts Officer','Management','Department User','Tuck Shop User','Clinic User','Kitchen User','Store User','Restaurant User','Front Desk','Pastor','Church Administrator','Membership Officer','Treasurer','Auditor'].map((role) => `<option>${role}</option>`).join('')}</select></label>
           <label>Department<input name="Department" placeholder="Required for Department User"></label>
           <label>Branch ID<input name="BranchId" placeholder="Blank allows all branches"></label>
           <label>School section<select name="SchoolSectionAccess"><option>All</option><option>Primary</option><option>Secondary</option></select></label>

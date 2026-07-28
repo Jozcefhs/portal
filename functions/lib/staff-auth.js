@@ -174,13 +174,14 @@ export function allowedSectionsFor(user = {}, featureFlags = null) {
     const inherited = role === 'Super Admin' ? [...custom, 'staffUsers'] : [...custom];
     const recordsDeskSources = new Set([
       'admissions', 'students', 'accounts', 'clinic', 'tuckShop',
-      'staffUsers', 'members', 'funds', 'offerings'
+      'staffUsers', 'members', 'funds', 'offerings', 'executiveOffice'
     ]);
     if (inherited.some((section) => recordsDeskSources.has(section))) inherited.push('recordsDesk');
     return filterSectionsForFeatures([...new Set(inherited)], featureFlags);
   }
   const roleSections = {
-    'Super Admin': ['recordsDesk', 'admissions', 'formPurchases', 'students', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'staffUsers'],
+    'Super Admin': ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'staffUsers'],
+    Principal: ['recordsDesk', 'executiveOffice'],
     'Admissions Officer': ['recordsDesk', 'admissions', 'formPurchases', 'students', 'financeRequests', 'payroll'],
     'Accounts Officer': ['recordsDesk', 'students', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
     Management: ['recordsDesk', 'admissions', 'formPurchases', 'students', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
@@ -191,6 +192,8 @@ export function allowedSectionsFor(user = {}, featureFlags = null) {
     'Restaurant User': ['restaurant', 'financeRequests', 'payroll'],
     'Front Desk': ['recordsDesk', 'admissions', 'formPurchases', 'students', 'financeRequests', 'payroll'],
     Pastor: ['recordsDesk', 'members', 'services', 'funds', 'offerings', 'donations'],
+    'Senior Pastor': ['recordsDesk', 'executiveOffice'],
+    'Head Minister': ['recordsDesk', 'executiveOffice'],
     'Church Administrator': ['recordsDesk', 'members', 'services', 'funds', 'offerings', 'donations', 'organizationStore', 'restaurant', 'financeRequests', 'payroll'],
     'Membership Officer': ['recordsDesk', 'members', 'services'],
     Treasurer: ['recordsDesk', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests', 'payroll'],

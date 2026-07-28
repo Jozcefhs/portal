@@ -79,6 +79,16 @@ function visibleSchoolRecord(row, user, requestedBranch = '') {
   return branchAllowed && sectionAllowed;
 }
 
+function visibleStaffDirectoryRecord(row, user, requestedBranch = '') {
+  const branch = assignedBranch(user, requestedBranch, true);
+  const branchAllowed = !branch || lower(row.BranchId || 'main') === branch;
+  if (!branchAllowed) return false;
+  if (lower(user.edition) !== 'school') return true;
+  const section = lower(user.schoolSectionAccess || 'All');
+  const rowSection = lower(row.SchoolSectionAccess || row.SchoolSection || 'All');
+  return section === 'all' || rowSection === 'all' || rowSection === section;
+}
+
 function searchFields(type, capabilities) {
   const fields = [...(SEARCH_FIELDS[type] || [])];
   if (type === 'students' && capabilities.canViewStudentContact) {
@@ -106,10 +116,8 @@ async function rowsForType(env, user, type, branchId) {
     return (await listSchoolCollection(env, 'applications')).filter((row) => visibleSchoolRecord(row, user, branchId));
   }
   if (type === 'staff') {
-    return (await listCollection(env, 'staffUsers')).filter((row) => {
-      const branch = assignedBranch(user, branchId, true);
-      return !branch || lower(row.BranchId || 'main') === branch;
-    });
+    return (await listCollection(env, 'staffUsers'))
+      .filter((row) => visibleStaffDirectoryRecord(row, user, branchId));
   }
   const organisationBranch = resolveMembershipBranch(user, branchId);
   if (type === 'members') {

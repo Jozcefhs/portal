@@ -20,6 +20,7 @@ import { handleChurchServiceAction } from '../lib/church-services.js';
 import { handleChurchFundAction } from '../lib/church-funds.js';
 import { handleChurchOfferingAction } from '../lib/church-offerings.js';
 import { handleOrganizationDepartmentAction } from '../lib/organization-departments.js';
+import { handleExecutiveOfficeAction } from '../lib/executive-correspondence.js';
 
 export const SCHOOL_FEES_TOTAL_CODE = 'SCHOOL_FEES_TOTAL';
 
@@ -556,9 +557,24 @@ function normalizeInventory(row) {
   };
 }
 
-function requireBackendSecret(env, body) {
+const EXECUTIVE_BRIDGE_ACTIONS = new Set([
+  'getExecutiveOffice', 'searchExecutiveDirectory', 'listOfficialCorrespondence',
+  'saveOfficialCorrespondenceDraft', 'saveOfficialCorrespondenceTemplate',
+  'getOfficialCorrespondenceDocument', 'issueOfficialCorrespondence',
+  'sendOfficialCorrespondence', 'saveExecutiveDashboardPreferences'
+]);
+
+export function requireBackendSecret(env, body) {
   const expected = clean(env.BACKEND_SHARED_SECRET || env.GOOGLE_APPS_SCRIPT_SECRET);
-  if (!expected) return;
+  const action = clean(body.Action || body.action);
+  if (!expected) {
+    if (EXECUTIVE_BRIDGE_ACTIONS.has(action)) {
+      const err = new Error('The desktop Executive Office bridge is not configured.');
+      err.status = 503;
+      throw err;
+    }
+    return;
+  }
   const supplied = clean(body.Secret || body.secret);
   if (!secureTextEqual(supplied, expected)) {
     const err = new Error('Unauthorized.');
@@ -578,7 +594,11 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'getChurchMembership', 'saveChurchMember', 'saveChurchHousehold', 'importChurchMembers',
   'getChurchServices', 'saveChurchService', 'saveChurchServiceOccurrence', 'recordChurchAttendance',
   'getChurchFunds', 'saveChurchFund', 'saveChurchFundMapping',
-  'getChurchOfferings', 'saveChurchOffering', 'reconcileChurchOffering'
+  'getChurchOfferings', 'saveChurchOffering', 'reconcileChurchOffering',
+  'getExecutiveOffice', 'searchExecutiveDirectory', 'listOfficialCorrespondence',
+  'saveOfficialCorrespondenceDraft', 'saveOfficialCorrespondenceTemplate',
+  'getOfficialCorrespondenceDocument', 'issueOfficialCorrespondence',
+  'sendOfficialCorrespondence', 'saveExecutiveDashboardPreferences'
 ]);
 
 async function verifyDesktopActor(env, action, body) {
@@ -5996,6 +6016,10 @@ async function routeAction(env, action, body = {}) {
       const rootCollections = [
         'accounts', 'payments', 'paymentGatewayCharges', 'invoices', 'ledger', 'feeItems', 'billingCategories',
         'settings', 'formSales', 'staffUsers', 'staffSecurityAudit',
+        'executiveCorrespondence', 'executiveCorrespondenceTemplates',
+        'executiveCorrespondenceEndorsements', 'executiveCorrespondenceSnapshots',
+        'executiveCorrespondenceTransitions', 'executiveCorrespondenceAudit',
+        'executiveMetricPreferences',
         'accountingExpenses', 'accountingSupplierBills', 'accountingApprovalLimits',
         'accountingAudit', 'accountingJournals', 'accountingBudgets', 'accountingBanks', 'chartOfAccounts',
         'accountingPayrollProfiles', 'accountingPayrollRuns',
@@ -6044,6 +6068,49 @@ async function routeAction(env, action, body = {}) {
         message: 'Students loaded from the database.',
         students: (await listSchoolCollection(env, 'students')).map(normalizeStudent)
       };
+    case 'getExecutiveOffice':
+    case 'searchExecutiveDirectory':
+    case 'listOfficialCorrespondence':
+    case 'saveOfficialCorrespondenceDraft':
+    case 'saveOfficialCorrespondenceTemplate':
+    case 'getOfficialCorrespondenceDocument':
+    case 'issueOfficialCorrespondence':
+    case 'sendOfficialCorrespondence':
+    case 'saveExecutiveDashboardPreferences': {
+      const mappedAction = {
+        getExecutiveOffice: 'bootstrap',
+        searchExecutiveDirectory: 'search',
+        listOfficialCorrespondence: 'list',
+        saveOfficialCorrespondenceDraft: 'saveDraft',
+        saveOfficialCorrespondenceTemplate: 'saveTemplate',
+        getOfficialCorrespondenceDocument: 'document',
+        issueOfficialCorrespondence: 'issue',
+        sendOfficialCorrespondence: 'send',
+        saveExecutiveDashboardPreferences: 'savePreferences'
+      }[action];
+      const requiresDecisionProof = ['issueOfficialCorrespondence', 'sendOfficialCorrespondence'].includes(action);
+      if (requiresDecisionProof && body.AuthorizationVerified !== true) {
+        const error = new Error('Confirm this official action with the current desktop user password.');
+        error.status = 403;
+        throw error;
+      }
+      return handleExecutiveOfficeAction(env, {
+        username: clean(body.UserUsername),
+        displayName: clean(body.RecordedBy),
+        role: clean(body.UserRole),
+        department: clean(body.UserDepartment),
+        branchId: clean(body.UserBranchId),
+        schoolSectionAccess: clean(body.UserSchoolSectionAccess || 'All')
+      }, {
+        ...body,
+        action: mappedAction
+      }, {
+        authorization: requiresDecisionProof
+          ? { method: 'Desktop password', sourcePlatform: 'Desktop Executive Office' }
+          : null,
+        sourcePlatform: 'Desktop Executive Office'
+      });
+    }
     case 'getChurchMembership':
     case 'saveChurchMember':
     case 'saveChurchHousehold':
