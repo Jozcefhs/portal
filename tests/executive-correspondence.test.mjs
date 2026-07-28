@@ -283,6 +283,9 @@ test('official correspondence sends the email-safe layout with bounded endorseme
   assert.match(executiveSource, /attachments: printable\.emailAttachments/);
   assert.match(emailSource, /payload\.attachment = normalizedAttachments/);
   assert.match(emailSource, /content\.length > 1500000/);
+  assert.match(emailSource, /getDocument\(env, 'settings', 'organisationProfile'\)/);
+  assert.match(emailSource, /organizationProfile\?\.BrevoSenderEmail/);
+  assert.match(emailSource, /schoolProfile\?\.BrevoSenderEmail/);
 });
 
 test('web issue and send verify the current password server-side and never accept the desktop secret', () => {

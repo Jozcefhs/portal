@@ -39,15 +39,37 @@ export async function sendConfiguredEmail(env, {
     err.status = 400;
     throw err;
   }
-  const [brevo, profile] = await Promise.all([
+  const [brevo, organizationProfile, schoolProfile] = await Promise.all([
     getDocument(env, 'settings', 'brevo').catch(() => ({})),
+    getDocument(env, 'settings', 'organisationProfile').catch(() => ({})),
     getDocument(env, 'settings', 'schoolProfile').catch(() => ({}))
   ]);
   const apiKey = clean(env.BREVO_API_KEY);
-  const senderEmail = clean(brevo?.BrevoSenderEmail || env.BREVO_SENDER_EMAIL || env.SCHOOL_EMAIL);
-  const senderName = clean(brevo?.BrevoSenderName || env.BREVO_SENDER_NAME || profile?.SchoolName || env.SCHOOL_NAME || 'DIGC Suite');
-  if (!apiKey || !validEmail(senderEmail)) {
-    const err = new Error('Email sending is not configured. Add the sender email and email-service credentials in Settings.');
+  const senderEmail = clean(
+    brevo?.BrevoSenderEmail
+    || organizationProfile?.BrevoSenderEmail
+    || schoolProfile?.BrevoSenderEmail
+    || env.BREVO_SENDER_EMAIL
+    || env.SCHOOL_EMAIL
+  );
+  const senderName = clean(
+    brevo?.BrevoSenderName
+    || organizationProfile?.BrevoSenderName
+    || schoolProfile?.BrevoSenderName
+    || env.BREVO_SENDER_NAME
+    || organizationProfile?.Name
+    || organizationProfile?.OrganisationName
+    || schoolProfile?.SchoolName
+    || env.SCHOOL_NAME
+    || 'Dynamax'
+  );
+  if (!apiKey) {
+    const err = new Error('The existing email-service credential is unavailable in this portal environment.');
+    err.status = 503;
+    throw err;
+  }
+  if (!validEmail(senderEmail)) {
+    const err = new Error('The existing sender email could not be resolved for this organisation.');
     err.status = 503;
     throw err;
   }
