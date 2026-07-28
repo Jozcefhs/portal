@@ -52,13 +52,13 @@ test('church edition enables church boundaries while retaining shared finance mo
   );
   assert.deepEqual(
     allowedSectionsFor({ role: 'Super Admin' }, flags),
-    ['incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'organizationStore', 'restaurant', 'staffUsers']
+    ['recordsDesk', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'organizationStore', 'restaurant', 'staffUsers']
   );
 });
 
 test('church staff role defaults respect the membership privacy boundary', () => {
   const flags = featureFlagsForEdition('church');
-  assert.deepEqual(allowedSectionsFor({ role: 'Membership Officer' }, flags), ['members', 'services']);
+  assert.deepEqual(allowedSectionsFor({ role: 'Membership Officer' }, flags), ['recordsDesk', 'members', 'services']);
   assert.equal(allowedSectionsFor({ role: 'Pastor' }, flags).includes('members'), true);
   assert.equal(allowedSectionsFor({ role: 'Treasurer' }, flags).includes('members'), false);
   assert.equal(allowedSectionsFor({ role: 'Auditor' }, flags).includes('members'), false);

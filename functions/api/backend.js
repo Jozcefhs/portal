@@ -1,5 +1,5 @@
 import { batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
-import { deleteSchoolDocument, getSchoolDocumentById, getSchoolStructure, listSchoolCollection, querySchoolCollection, safeScopeId, upsertSchoolDocument } from '../lib/school-scope.js';
+import { deleteSchoolDocument, getSchoolDocumentById, getSchoolStructure, listSchoolCollection, querySchoolCollection, safeScopeId, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass, classNamesMatch } from '../lib/class-names.js';
 import { categoryApplies, ensureStoreCategories, resolveStoreCategory, saveStoreCategory } from '../lib/store-categories.js';
 import {
@@ -3183,6 +3183,8 @@ export async function recordManualPayment(env, body) {
     AccountRefNormalized: normalizeReferenceText(accountRef),
     ApplicationReference: clean(body.ApplicationReference || (student && student.ApplicationReference)),
     AdmissionNo: clean(body.AdmissionNo || (student && student.AdmissionNo)),
+    BranchId: clean(body.BranchId || (student && student.BranchId) || 'main').toLowerCase() || 'main',
+    SchoolSection: clean(body.SchoolSection || (student && student.SchoolSection) || (student && schoolSectionFor(student))),
     DisplayName: clean(body.DisplayName || (student && (student.DisplayName || student.ApplicantName))),
     ClassName: clean(body.ClassName || (student && student.ClassName)),
     StudentType: clean(body.StudentType || (student && student.StudentType) || fee.StudentType),
@@ -3224,6 +3226,8 @@ export async function recordManualPayment(env, body) {
     AccountRefNormalized: normalizeReferenceText(payment.AccountRef),
     ApplicationReference: payment.ApplicationReference,
     AdmissionNo: payment.AdmissionNo,
+    BranchId: payment.BranchId,
+    SchoolSection: payment.SchoolSection,
     DisplayName: payment.DisplayName,
     ClassName: payment.ClassName,
     EntryType: normalizeMatchText(payment.FeeCategory) === 'wallet' || clean(payment.FeeCode) === 'WALLET_TOPUP' ? 'Wallet Deposit' : 'Payment',
@@ -3512,6 +3516,8 @@ async function walletAccountPayload(env, student) {
     BillingCategory: normalized.BillingCategory || 'Regular',
     AcademicSession: normalized.AcademicSession || '',
     Term: normalized.Term || '',
+    BranchId: clean(normalized.BranchId || 'main').toLowerCase() || 'main',
+    SchoolSection: clean(normalized.SchoolSection || schoolSectionFor(normalized)),
     WalletCardId: normalized.WalletCardId || '',
     WalletCardStatus: normalized.WalletCardStatus || 'Active',
     WalletDailyLimit: normalized.WalletDailyLimit || '',
@@ -3633,6 +3639,8 @@ export async function recordWalletPurchase(env, body) {
     ClassName: account.ClassName,
     AcademicSession: account.AcademicSession || student.AcademicSession || '',
     Term: account.Term || student.Term || '',
+    BranchId: clean(account.BranchId || student.BranchId || 'main').toLowerCase() || 'main',
+    SchoolSection: clean(account.SchoolSection || student.SchoolSection || schoolSectionFor(student)),
     EntryType: 'Wallet Purchase',
     FeeCategory: 'Wallet',
     Department: clean(body.Department || body.department),
@@ -3696,6 +3704,8 @@ async function recordCreditAction(env, body) {
     ClassName: account.ClassName,
     AcademicSession: account.AcademicSession || student.AcademicSession || '',
     Term: account.Term || student.Term || '',
+    BranchId: clean(account.BranchId || student.BranchId || 'main').toLowerCase() || 'main',
+    SchoolSection: clean(account.SchoolSection || student.SchoolSection || schoolSectionFor(student)),
     FeeCategory: 'Account Credit',
     Currency: 'NGN',
     Reference: reference,
@@ -3780,6 +3790,8 @@ async function recordCreditAction(env, body) {
       ClassName: targetAccount.ClassName,
       AcademicSession: targetAccount.AcademicSession || targetStudent.AcademicSession || '',
       Term: targetAccount.Term || targetStudent.Term || '',
+      BranchId: clean(targetAccount.BranchId || targetStudent.BranchId || 'main').toLowerCase() || 'main',
+      SchoolSection: clean(targetAccount.SchoolSection || targetStudent.SchoolSection || schoolSectionFor(targetStudent)),
       EntryType: 'Credit Transfer',
       FeeCode: 'CREDIT_TRANSFER_IN',
       FeeName: 'Credit Transfer In',

@@ -206,7 +206,7 @@ test('password visibility controls stay compact and reserve input space', () => 
 });
 
 test('every staff module uses a corresponding navigation icon', () => {
-  ['overview', 'admissions', 'formPurchases', 'students', 'members', 'services', 'funds', 'offerings',
+  ['overview', 'recordsDesk', 'admissions', 'formPurchases', 'students', 'members', 'services', 'funds', 'offerings',
     'donations', 'accounts', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop',
     'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'staffUsers'].forEach((key) => {
     assert.match(adminJs, new RegExp(`${key}: '\\\\u`), `${key} should define an icon`);
@@ -225,7 +225,7 @@ test('selected modules replace overview content with a full-height workspace', (
 });
 
 test('school, church, finance, payroll, store, and staff modules receive summary cards', () => {
-  ['admissions', 'formPurchases', 'students', 'accounts', 'clinic', 'kitchen', 'tuckShop',
+  ['recordsDesk', 'admissions', 'formPurchases', 'students', 'accounts', 'clinic', 'kitchen', 'tuckShop',
     'bookstore', 'uniformStore', 'members', 'services', 'funds', 'donations', 'offerings',
     'financeRequests', 'payroll', 'staffUsers'].forEach((key) => {
     assert.match(adminJs, new RegExp(`active === '${key}'|renderModuleSummary\\('${key}'`), `${key} should render module summaries`);

@@ -241,7 +241,7 @@ export function buildStructuredQuery(collectionPath, options = {}) {
   } else if (filters.length > 1) {
     structuredQuery.where = {
       compositeFilter: {
-        op: 'AND',
+        op: String(options.filterJoin || 'AND').trim().toUpperCase() === 'OR' ? 'OR' : 'AND',
         filters: filters.map(structuredFieldFilter)
       }
     };

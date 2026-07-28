@@ -70,8 +70,26 @@ let organizationDepartmentWorkspaceTab = 'overview';
 let organizationDashboardChartsRequest = 0;
 let incomeAnalyticsData = null;
 let incomeAnalyticsFilter = { period: 'monthly' };
+let recordsDeskRequest = 0;
+let recordsDeskSearchTimer = 0;
+let recordsDeskHandoffContext = null;
+let recordsDeskState = {
+  query: '',
+  type: 'all',
+  availableTypes: [],
+  results: [],
+  totalMatches: 0,
+  truncated: false,
+  selectedKey: '',
+  selectedBranchId: '',
+  detail: null,
+  loading: false,
+  loadingDetail: false,
+  error: ''
+};
 
 const tabConfig = [
+  ['recordsDesk', 'Records Desk'],
   ['admissions', 'Admissions'],
   ['formPurchases', 'Form Purchases'],
   ['students', 'Students'],
@@ -96,6 +114,7 @@ const tabConfig = [
 
 const tabIcons = {
   overview: '\u2302',
+  recordsDesk: '\u{1F5C2}',
   admissions: '\u{1F4DD}',
   formPurchases: '\u{1F9FE}',
   students: '\u{1F465}',
@@ -538,6 +557,10 @@ function showLogin(message = '', type = '') {
   dashboardData = null;
   activeSection = '';
   activeTabs = [];
+  recordsDeskState = {
+    query: '', type: 'all', availableTypes: [], results: [], totalMatches: 0,
+    truncated: false, selectedKey: '', selectedBranchId: '', detail: null, loading: false, loadingDetail: false, error: ''
+  };
   dashboardEl.hidden = true;
   identityEl.hidden = true;
   approvalSettingsButton.hidden = true;
@@ -777,7 +800,15 @@ function renderModuleSummary(active, liveData = null) {
   const departments = dashboardData?.departments || {};
   const icon = tabIcons[active];
   let cards = [];
-  if (active === 'admissions') {
+  if (active === 'recordsDesk') {
+    const data = liveData || recordsDeskState;
+    cards = [
+      { icon, label: 'Record Types', value: (data.availableTypes || []).length, note: 'Allowed for this account' },
+      { icon: '\u{1F50D}', label: 'Matches', value: data.totalMatches || 0, note: clean(data.query) ? `Search: ${clean(data.query)}` : 'Enter two or more characters' },
+      { icon: '\u2713', label: 'Selected', value: data.detail ? 1 : 0, note: data.detail?.title || 'No record selected' },
+      { icon: '\u{1F6E1}', label: 'Scope', value: currentUser?.branchId || 'All', note: currentUser?.schoolSectionAccess || currentUser?.edition || 'Current organisation' }
+    ];
+  } else if (active === 'admissions') {
     const rows = departments.admissions || [];
     cards = [
       { icon, label: 'Applications', value: rows.length },
@@ -957,7 +988,7 @@ function renderMobileNavigation(tabs) {
   }
   const findTab = (...keys) => tabs.find(([key]) => keys.includes(key));
   const homeTab = findTab('overview') || tabs[0];
-  const peopleTab = findTab('members', 'students', 'services', 'admissions') || homeTab;
+  const peopleTab = findTab('recordsDesk', 'members', 'students', 'services', 'admissions') || homeTab;
   const financeTab = findTab('incomeAnalytics', 'accounts', 'donations', 'offerings', 'funds', 'financeRequests') || homeTab;
   const items = [
     [homeTab[0], tabIcons.overview, 'Home'],
@@ -1550,6 +1581,21 @@ function renderDepartmentOperations(section, data) {
       { label: 'Type', value: (row) => pick(row, ['MovementType']) }, { label: 'Quantity', value: (row) => pick(row, ['Quantity']) },
       { label: 'Reason', value: (row) => pick(row, ['Reason']) }, { label: 'Recorded by', value: (row) => pick(row, ['RecordedBy']) }
     ])}`;
+  const recordsHandoff = takeRecordsDeskHandoff(section);
+  const selectedAccountRef = recordsDeskHandoffReference(recordsHandoff);
+  if (selectedAccountRef && section === 'clinic') {
+    const clinicRecordForm = document.getElementById('clinicRecordForm');
+    const clinicReportForm = document.getElementById('clinicReportForm');
+    if (clinicRecordForm?.elements?.AdmissionNo) clinicRecordForm.elements.AdmissionNo.value = selectedAccountRef;
+    if (clinicReportForm?.elements?.AccountRef) clinicReportForm.elements.AccountRef.value = selectedAccountRef;
+  }
+  if (selectedAccountRef && section === 'tuckShop') {
+    const walletLookupForm = document.getElementById('walletLookupForm');
+    if (walletLookupForm?.elements?.AccountRef) {
+      walletLookupForm.elements.AccountRef.value = selectedAccountRef;
+      walletLookupForm.elements.AccountRef.focus();
+    }
+  }
   document.getElementById('refreshDepartmentOperations')?.addEventListener('click', () => loadDepartmentOperations(section));
   panelEl.querySelectorAll('[data-department-jump]').forEach((button) => button.addEventListener('click', () => {
     panelEl.querySelectorAll('[data-department-jump]').forEach((item) => item.classList.toggle('active', item === button));
@@ -1966,6 +2012,32 @@ async function loadOrganizationDepartments() {
       setOrganizationDepartmentWorkspaceTab(button.dataset.organizationWorkspaceTab);
     }));
     setOrganizationDepartmentWorkspaceTab(organizationDepartmentWorkspaceTab);
+    const recordsHandoff = takeRecordsDeskHandoff('members');
+    const selectedDepartmentId = clean(recordsHandoff?.context?.DepartmentId);
+    const selectedMemberId = clean(recordsHandoff?.context?.MemberId);
+    if (selectedDepartmentId) {
+      const department = (data.departments || []).find((row) => recordsDeskRowMatches(
+        row,
+        selectedDepartmentId,
+        ['DepartmentId', '__id']
+      ));
+      const form = document.getElementById('organizationDepartmentEditor');
+      if (department && form) {
+        setOrganizationDepartmentWorkspaceTab('departments');
+        ['DepartmentId', 'Name', 'DepartmentType', 'AreaZone', 'Description'].forEach((field) => {
+          if (form.elements[field]) form.elements[field].value = clean(department[field]);
+        });
+        form.elements.Active.checked = !['no', 'false', '0', 'inactive'].includes(lower(department.Active || 'YES'));
+        form.elements.Name.focus();
+      }
+    } else if (selectedMemberId) {
+      setOrganizationDepartmentWorkspaceTab('members');
+      panelEl.querySelectorAll('select[name="MemberId"]').forEach((select) => {
+        const option = [...select.options].find((item) =>
+          recordsDeskReferenceKey(item.value) === recordsDeskReferenceKey(selectedMemberId));
+        if (option) select.value = option.value;
+      });
+    }
     panelEl.querySelectorAll('[data-department-action]').forEach((form) => form.addEventListener('submit', async (event) => {
       event.preventDefault();
       try {
@@ -2794,6 +2866,344 @@ function bindIncomeAnalyticsEvents() {
   document.getElementById('incomePrintReport')?.addEventListener('click', () => window.print());
 }
 
+const recordsDeskTypeLabels = {
+  students: 'Students',
+  applicants: 'Applicants',
+  staff: 'Staff',
+  members: 'Members',
+  departments: 'Departments'
+};
+
+const recordsDeskTypeIcons = {
+  students: '\u{1F393}',
+  applicants: '\u{1F4DD}',
+  staff: '\u{1F9D1}',
+  members: '\u{1F465}',
+  departments: '\u{1F3E2}'
+};
+
+function inferredRecordsDeskTypes() {
+  const allowed = new Set(currentUser?.allowedSections || []);
+  const edition = resolveDashboardEdition(currentUser || {});
+  const school = edition === 'school';
+  return [
+    school && ['students', 'accounts', 'clinic', 'tuckShop'].some((key) => allowed.has(key)) && 'students',
+    school && allowed.has('admissions') && 'applicants',
+    allowed.has('staffUsers') && 'staff',
+    !school && allowed.has('members') && 'members',
+    !school && ['members', 'funds', 'offerings'].some((key) => allowed.has(key)) && 'departments'
+  ].filter(Boolean);
+}
+
+function recordsDeskResultKey(type, id, branchId = '') {
+  return `${clean(type)}::${clean(id)}::${clean(branchId).toLowerCase()}`;
+}
+
+function renderRecordsDeskResult(record) {
+  const selected = recordsDeskState.selectedKey === recordsDeskResultKey(record.type, record.id, record.branchId);
+  const initials = clean(record.title).split(/\s+/).slice(0, 2).map((part) => part.charAt(0)).join('').toUpperCase() || '?';
+  return `<button type="button" class="records-desk-result${selected ? ' selected' : ''}" data-record-type="${escapeHtml(record.type)}" data-record-id="${escapeHtml(record.id)}" data-record-branch="${escapeHtml(record.branchId || '')}" aria-pressed="${selected}">
+    <span class="records-desk-result-avatar tone-${Math.abs(clean(record.id).split('').reduce((sum, char) => sum + char.charCodeAt(0), 0)) % 5 + 1}">${escapeHtml(initials)}</span>
+    <span class="records-desk-result-copy"><strong>${escapeHtml(record.title)}</strong><span>${escapeHtml(record.subtitle || record.id)}</span><small>${escapeHtml(recordsDeskTypeLabels[record.type] || record.type)} · ${escapeHtml(record.status || 'Active')}</small></span>
+    <span class="records-desk-result-arrow" aria-hidden="true">›</span>
+  </button>`;
+}
+
+function renderRecordsDeskMetric(metric) {
+  const value = metric.format === 'money' ? money(metric.value) : clean(metric.value);
+  return `<div><small>${escapeHtml(metric.label)}</small><strong>${escapeHtml(value || '0')}</strong></div>`;
+}
+
+function renderRecordsDeskDetail(detail) {
+  if (recordsDeskState.loadingDetail) {
+    return `<div class="records-desk-detail-state"><span class="records-desk-spinner" aria-hidden="true"></span><strong>Loading record details...</strong><small>Applying your role and branch permissions.</small></div>`;
+  }
+  if (!detail) {
+    return `<div class="records-desk-detail-state">
+      <span class="records-desk-empty-icon" aria-hidden="true">\u{1F5C2}</span>
+      <strong>Select a record</strong>
+      <small>The permitted profile, activity and quick links will appear here.</small>
+    </div>`;
+  }
+  const initials = clean(detail.title).split(/\s+/).slice(0, 2).map((part) => part.charAt(0)).join('').toUpperCase() || '?';
+  const sections = (detail.sections || []).map((section) => `<section class="records-desk-info-card">
+    <h3>${escapeHtml(section.title)}</h3>
+    <dl>${(section.items || []).map((entry) => `<div><dt>${escapeHtml(entry.label)}</dt><dd>${escapeHtml(entry.value || '—')}</dd></div>`).join('')}</dl>
+  </section>`).join('');
+  const activities = (detail.activities || []).map((group) => `<section class="records-desk-activity-card">
+    <h3>${escapeHtml(group.title)}</h3>
+    <div>${(group.rows || []).map((row) => `<article>
+      <span><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.meta || row.status || '')}</small></span>
+      ${row.amount === undefined ? '' : `<b>${escapeHtml(money(row.amount))}</b>`}
+    </article>`).join('')}</div>
+  </section>`).join('');
+  const actions = (detail.actions || []).map((action, index) =>
+    `<button type="button" data-record-action="${index}">${escapeHtml(action.label)}</button>`).join('');
+  return `
+    <button type="button" class="records-desk-mobile-back" id="recordsDeskBack"><span aria-hidden="true">‹</span> Back to results</button>
+    <header class="records-desk-profile-header">
+      <span class="records-desk-profile-avatar">${escapeHtml(initials)}</span>
+      <div><small>${escapeHtml(recordsDeskTypeLabels[detail.type] || detail.type)}</small><h2>${escapeHtml(detail.title)}</h2><p>${escapeHtml(detail.subtitle || detail.id)}</p></div>
+      <span class="records-desk-status">${escapeHtml(detail.status || 'Active')}</span>
+    </header>
+    ${(detail.metrics || []).length ? `<div class="records-desk-metrics">${detail.metrics.map(renderRecordsDeskMetric).join('')}</div>` : ''}
+    ${actions ? `<nav class="records-desk-actions" aria-label="Record actions">${actions}</nav>` : ''}
+    <div class="records-desk-detail-grid">${sections}${activities}</div>`;
+}
+
+function renderRecordsDesk() {
+  const availableTypes = recordsDeskState.availableTypes.length
+    ? recordsDeskState.availableTypes
+    : inferredRecordsDeskTypes();
+  recordsDeskState.availableTypes = availableTypes;
+  if (recordsDeskState.type !== 'all' && !availableTypes.includes(recordsDeskState.type)) recordsDeskState.type = 'all';
+  const typeButtons = [
+    ['all', 'All records', '\u{1F5C2}'],
+    ...availableTypes.map((type) => [type, recordsDeskTypeLabels[type] || type, recordsDeskTypeIcons[type] || '\u2022'])
+  ];
+  const resultMessage = recordsDeskState.error
+    ? `<p class="status bad">${escapeHtml(recordsDeskState.error)}</p>`
+    : !clean(recordsDeskState.query)
+      ? '<p>Search by name, record number, email, phone or another permitted identifier.</p>'
+      : clean(recordsDeskState.query).length < 2
+        ? '<p>Enter at least two characters to begin.</p>'
+        : recordsDeskState.results.length
+          ? `<p>${escapeHtml(recordsDeskState.totalMatches)} matching record${recordsDeskState.totalMatches === 1 ? '' : 's'}${recordsDeskState.truncated ? ' · showing the first results' : ''}</p>`
+          : '<p>No matching records found.</p>';
+  panelEl.innerHTML = `<section class="records-desk-shell${recordsDeskState.detail || recordsDeskState.loadingDetail ? ' detail-open' : ''}">
+    <aside class="records-desk-filters">
+      <div class="records-desk-heading"><span aria-hidden="true">\u{1F5C2}</span><div><small>Universal lookup</small><h2>Records Desk</h2></div></div>
+      <form id="recordsDeskSearchForm" class="records-desk-search" role="search">
+        <label for="recordsDeskSearch">Search permitted records</label>
+        <div><span aria-hidden="true">\u{1F50D}</span><input id="recordsDeskSearch" name="query" type="search" minlength="2" maxlength="120" autocomplete="off" placeholder="Name, ID, phone, email..." value="${escapeHtml(recordsDeskState.query)}"><button type="submit">Search</button></div>
+      </form>
+      <nav class="records-desk-type-list" aria-label="Record type filters">
+        ${typeButtons.map(([key, label, icon]) => `<button type="button" data-record-filter="${escapeHtml(key)}" class="${recordsDeskState.type === key ? 'active' : ''}" aria-pressed="${recordsDeskState.type === key}"><span aria-hidden="true">${escapeHtml(icon)}</span><span>${escapeHtml(label)}</span></button>`).join('')}
+      </nav>
+      <div class="records-desk-privacy"><span aria-hidden="true">\u{1F6E1}</span><p><strong>Permission protected</strong><small>Results and detail sections follow your role, branch and school-section access.</small></p></div>
+    </aside>
+    <section class="records-desk-results-pane" aria-live="polite">
+      <header><div><small>Search results</small><h2>${escapeHtml(recordsDeskState.type === 'all' ? 'All permitted records' : recordsDeskTypeLabels[recordsDeskState.type])}</h2></div><span>${recordsDeskState.results.length}</span></header>
+      <div class="records-desk-result-message" id="recordsDeskResultMessage">${resultMessage}</div>
+      <div class="records-desk-results">${recordsDeskState.results.map(renderRecordsDeskResult).join('')}</div>
+    </section>
+    <article class="records-desk-detail-pane" aria-live="polite">${renderRecordsDeskDetail(recordsDeskState.detail)}</article>
+  </section>`;
+  bindRecordsDeskEvents();
+  renderModuleSummary('recordsDesk', recordsDeskState);
+}
+
+async function recordsDeskApi(payload) {
+  const response = await staffFetch('/api/staff-records', {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({ ok: false, message: 'The Records Desk did not return JSON.' }));
+  if (response.status === 401) {
+    showLogin(data.message || 'Your staff session has expired.', 'bad');
+    throw new Error(data.message || 'Your staff session has expired.');
+  }
+  if (!response.ok || !data.ok) throw new Error(data.message || 'The Records Desk request could not be completed.');
+  return data;
+}
+
+async function searchRecordsDesk({ keepFocus = false } = {}) {
+  const query = clean(recordsDeskState.query);
+  if (query.length < 2) {
+    recordsDeskState.results = [];
+    recordsDeskState.totalMatches = 0;
+    recordsDeskState.error = '';
+    recordsDeskState.detail = null;
+    recordsDeskState.selectedKey = '';
+    recordsDeskState.selectedBranchId = '';
+    renderRecordsDesk();
+    return;
+  }
+  const requestId = ++recordsDeskRequest;
+  recordsDeskState.loading = true;
+  recordsDeskState.error = '';
+  const message = document.getElementById('recordsDeskResultMessage');
+  if (message) message.innerHTML = '<p><span class="records-desk-spinner" aria-hidden="true"></span> Searching permitted records...</p>';
+  try {
+    const data = await recordsDeskApi({
+      action: 'search',
+      query,
+      type: recordsDeskState.type === 'all' ? '' : recordsDeskState.type,
+      limit: 30
+    });
+    if (requestId !== recordsDeskRequest || activeSection !== 'recordsDesk') return;
+    recordsDeskState.availableTypes = data.availableTypes || recordsDeskState.availableTypes;
+    recordsDeskState.results = data.results || [];
+    recordsDeskState.totalMatches = Number(data.totalMatches || 0);
+    recordsDeskState.truncated = Boolean(data.truncated);
+    if (recordsDeskState.selectedKey && !recordsDeskState.results.some((row) => recordsDeskResultKey(row.type, row.id, row.branchId) === recordsDeskState.selectedKey)) {
+      recordsDeskState.selectedKey = '';
+      recordsDeskState.selectedBranchId = '';
+      recordsDeskState.detail = null;
+    }
+  } catch (failure) {
+    if (requestId !== recordsDeskRequest || activeSection !== 'recordsDesk') return;
+    recordsDeskState.results = [];
+    recordsDeskState.totalMatches = 0;
+    recordsDeskState.error = failure.message || String(failure);
+  } finally {
+    if (requestId === recordsDeskRequest && activeSection === 'recordsDesk') {
+      recordsDeskState.loading = false;
+      renderRecordsDesk();
+      if (keepFocus) {
+        const input = document.getElementById('recordsDeskSearch');
+        input?.focus();
+        input?.setSelectionRange(input.value.length, input.value.length);
+      }
+    }
+  }
+}
+
+async function loadRecordsDeskDetail(type, id, branchId = '') {
+  recordsDeskState.selectedKey = recordsDeskResultKey(type, id, branchId);
+  recordsDeskState.selectedBranchId = branchId;
+  recordsDeskState.detail = null;
+  recordsDeskState.loadingDetail = true;
+  recordsDeskState.error = '';
+  renderRecordsDesk();
+  const requestId = ++recordsDeskRequest;
+  try {
+    const data = await recordsDeskApi({ action: 'detail', type, id, branchId });
+    if (requestId !== recordsDeskRequest || activeSection !== 'recordsDesk') return;
+    recordsDeskState.availableTypes = data.availableTypes || recordsDeskState.availableTypes;
+    recordsDeskState.detail = data.detail || null;
+  } catch (failure) {
+    if (requestId !== recordsDeskRequest || activeSection !== 'recordsDesk') return;
+    recordsDeskState.selectedKey = '';
+    recordsDeskState.selectedBranchId = '';
+    recordsDeskState.error = failure.message || String(failure);
+  } finally {
+    if (requestId === recordsDeskRequest && activeSection === 'recordsDesk') {
+      recordsDeskState.loadingDetail = false;
+      renderRecordsDesk();
+    }
+  }
+}
+
+function openRecordsDeskAction(action) {
+  if (!action?.targetSection || !activeTabs.some(([key]) => key === action.targetSection)) return;
+  const handoff = {
+    source: 'recordsDesk',
+    targetSection: action.targetSection,
+    recordType: recordsDeskState.detail?.type,
+    recordId: recordsDeskState.detail?.id,
+    context: action.context || {},
+    createdAt: new Date().toISOString()
+  };
+  recordsDeskHandoffContext = handoff;
+  try {
+    sessionStorage.setItem('dynamaxRecordsDeskContext', JSON.stringify(handoff));
+  } catch (_error) {
+    // A module hand-off still works when private browsing blocks session storage.
+  }
+  selectSection(action.targetSection);
+}
+
+function takeRecordsDeskHandoff(targetSection) {
+  let handoff = recordsDeskHandoffContext;
+  if (!handoff) {
+    try {
+      handoff = JSON.parse(sessionStorage.getItem('dynamaxRecordsDeskContext') || 'null');
+    } catch (_error) {
+      handoff = null;
+    }
+  }
+  const createdAt = Date.parse(handoff?.createdAt || '');
+  const fresh = Number.isFinite(createdAt) && Date.now() - createdAt < 15 * 60 * 1000;
+  if (!fresh || handoff?.source !== 'recordsDesk') {
+    recordsDeskHandoffContext = null;
+    try { sessionStorage.removeItem('dynamaxRecordsDeskContext'); } catch (_error) { /* Ignore private storage. */ }
+    return null;
+  }
+  if (handoff.targetSection !== targetSection) return null;
+  recordsDeskHandoffContext = null;
+  try { sessionStorage.removeItem('dynamaxRecordsDeskContext'); } catch (_error) { /* Ignore private storage. */ }
+  return handoff;
+}
+
+function recordsDeskHandoffReference(handoff) {
+  return clean(
+    handoff?.context?.AccountRef ||
+    handoff?.context?.ApplicationReference ||
+    handoff?.context?.Username ||
+    handoff?.context?.MemberId ||
+    handoff?.context?.DepartmentId ||
+    handoff?.recordId
+  );
+}
+
+function recordsDeskReferenceKey(value) {
+  return clean(value).toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function recordsDeskRowMatches(row, reference, fields) {
+  const wanted = recordsDeskReferenceKey(reference);
+  return Boolean(wanted && fields.some((field) => recordsDeskReferenceKey(row?.[field]) === wanted));
+}
+
+function recordsDeskHandoffBanner(handoff, reference) {
+  if (!handoff || !reference) return '';
+  return `<div class="records-desk-handoff"><span aria-hidden="true">\u{1F5C2}</span><p><strong>Selected from Records Desk</strong><small>Showing the workflow for ${escapeHtml(reference)}.</small></p></div>`;
+}
+
+function bindRecordsDeskEvents() {
+  const searchForm = document.getElementById('recordsDeskSearchForm');
+  const searchInput = document.getElementById('recordsDeskSearch');
+  searchForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    recordsDeskState.query = clean(searchInput?.value);
+    window.clearTimeout(recordsDeskSearchTimer);
+    searchRecordsDesk({ keepFocus: true });
+  });
+  searchInput?.addEventListener('input', (event) => {
+    recordsDeskState.query = event.currentTarget.value;
+    window.clearTimeout(recordsDeskSearchTimer);
+    if (clean(recordsDeskState.query).length < 2) {
+      recordsDeskState.results = [];
+      recordsDeskState.totalMatches = 0;
+      recordsDeskState.detail = null;
+      recordsDeskState.selectedKey = '';
+      recordsDeskState.selectedBranchId = '';
+      const results = panelEl.querySelector('.records-desk-results');
+      if (results) results.innerHTML = '';
+      const message = document.getElementById('recordsDeskResultMessage');
+      if (message) message.innerHTML = `<p>${clean(recordsDeskState.query) ? 'Enter at least two characters to begin.' : 'Search by name, record number, email, phone or another permitted identifier.'}</p>`;
+      renderModuleSummary('recordsDesk', recordsDeskState);
+      return;
+    }
+    recordsDeskSearchTimer = window.setTimeout(() => searchRecordsDesk({ keepFocus: true }), 320);
+  });
+  panelEl.querySelectorAll('[data-record-filter]').forEach((button) => button.addEventListener('click', () => {
+    recordsDeskState.type = button.dataset.recordFilter;
+    recordsDeskState.selectedKey = '';
+    recordsDeskState.selectedBranchId = '';
+    recordsDeskState.detail = null;
+    renderRecordsDesk();
+    if (clean(recordsDeskState.query).length >= 2) searchRecordsDesk({ keepFocus: true });
+  }));
+  panelEl.querySelectorAll('.records-desk-result').forEach((button) => button.addEventListener('click', () => {
+    loadRecordsDeskDetail(button.dataset.recordType, button.dataset.recordId, button.dataset.recordBranch);
+  }));
+  document.getElementById('recordsDeskBack')?.addEventListener('click', () => {
+    recordsDeskState.selectedKey = '';
+    recordsDeskState.selectedBranchId = '';
+    recordsDeskState.detail = null;
+    recordsDeskState.loadingDetail = false;
+    renderRecordsDesk();
+  });
+  panelEl.querySelectorAll('[data-record-action]').forEach((button) => button.addEventListener('click', () => {
+    openRecordsDeskAction(recordsDeskState.detail?.actions?.[Number(button.dataset.recordAction)]);
+  }));
+}
+
 function renderSection(active) {
   if (!dashboardData) return;
   panelEl.classList.toggle('school-store-panel', active === 'bookstore' || active === 'uniformStore' || active === 'organizationStore');
@@ -2802,7 +3212,9 @@ function renderSection(active) {
     return;
   }
   const departments = dashboardData.departments || {};
-  if (active === 'staffUsers') {
+  if (active === 'recordsDesk') {
+    renderRecordsDesk();
+  } else if (active === 'staffUsers') {
     panelEl.innerHTML = '<p class="muted">Loading staff accounts...</p>';
     loadStaffUsers();
   } else if (active === 'payroll') {
@@ -2815,7 +3227,16 @@ function renderSection(active) {
     panelEl.innerHTML = '<p class="muted">Loading posted income analytics...</p>';
     loadIncomeAnalytics();
   } else if (active === 'admissions') {
-    panelEl.innerHTML = table('Admissions', departments.admissions || [], [
+    const handoff = takeRecordsDeskHandoff('admissions');
+    const reference = recordsDeskHandoffReference(handoff);
+    const admissions = reference
+      ? (departments.admissions || []).filter((row) => recordsDeskRowMatches(
+        row,
+        reference,
+        ['ApplicationReference', 'ApplicationID', 'AdmissionNo', '__id']
+      ))
+      : departments.admissions || [];
+    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + table('Admissions', admissions, [
       { label: 'Reference', value: (row) => pick(row, ['ApplicationReference', 'ApplicationID', '__id']) },
       { label: 'Name', value: (row) => pick(row, ['ApplicantName', 'Name']) },
       { label: 'Class', value: (row) => pick(row, ['ClassApplyingFor', 'ClassAppliedFor']) },
@@ -2833,7 +3254,9 @@ function renderSection(active) {
     ]);
   } else if (active === 'students') {
     const students = departments.students || [];
-    panelEl.innerHTML = table('Students', students, [
+    const handoff = takeRecordsDeskHandoff('students');
+    const reference = recordsDeskHandoffReference(handoff);
+    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + table('Students', students, [
       { label: 'Admission No', value: (row) => pick(row, ['AdmissionNo', 'AccountRef', '__id']) },
       { label: 'Name', value: (row) => pick(row, ['DisplayName', 'ApplicantName', 'StudentName']) },
       { label: 'Class', value: (row) => [pick(row, ['ClassName']), pick(row, ['ClassArm'])].filter(Boolean).join(' ') },
@@ -2846,6 +3269,15 @@ function renderSection(active) {
       } }
     ]) + renderStudentEditor(students);
     bindStudentEditor(students);
+    if (reference) {
+      const student = students.find((row) => recordsDeskRowMatches(
+        row,
+        reference,
+        ['AdmissionNo', 'AccountRef', 'ApplicationReference', '__id']
+      ));
+      if (student) openStudentEditor(student);
+      else setStatus(dashboardStatus, `The selected student ${reference} is no longer in your permitted register.`, 'bad');
+    }
   } else if (active === 'members') {
     panelEl.innerHTML = '<p class="muted">Loading departments, members and programs...</p>';
     loadOrganizationDepartments();
@@ -2866,13 +3298,22 @@ function renderSection(active) {
     loadStaffStore(active);
   } else if (active === 'accounts') {
     const accounts = departments.accounts || {};
-    panelEl.innerHTML = table('Payments', accounts.payments || [], [
+    const handoff = takeRecordsDeskHandoff('accounts');
+    const reference = recordsDeskHandoffReference(handoff);
+    const matchesAccount = (row) => !reference || recordsDeskRowMatches(
+      row,
+      reference,
+      ['AccountRef', 'AdmissionNo', 'ApplicationReference']
+    );
+    const payments = (accounts.payments || []).filter(matchesAccount);
+    const invoices = (accounts.invoices || []).filter(matchesAccount);
+    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + table('Payments', payments, [
       { label: 'Date', value: (row) => pick(row, ['PaidAt', 'Date']) },
       { label: 'Account', value: (row) => pick(row, ['AccountRef', 'AdmissionNo']) },
       { label: 'Fee', value: (row) => pick(row, ['FeeName', 'FeeCode']) },
       { label: 'Amount', value: (row) => money(pick(row, ['Amount'])) },
       { label: 'Reference', value: (row) => pick(row, ['Reference']) }
-    ]) + table('Invoices', accounts.invoices || [], [
+    ]) + table('Invoices', invoices, [
       { label: 'Date', value: (row) => pick(row, ['Date', 'CreatedAt']) },
       { label: 'Account', value: (row) => pick(row, ['AccountRef']) },
       { label: 'Fee', value: (row) => pick(row, ['FeeName', 'FeeCode']) },
@@ -3679,6 +4120,9 @@ async function loadStaffUsers() {
     staffApprovalAccounts = data.approvalAccounts || [];
     renderModuleSummary('staffUsers', staffUsersData);
     renderStaffUsers();
+    const handoff = takeRecordsDeskHandoff('staffUsers');
+    const username = recordsDeskHandoffReference(handoff);
+    if (username) openStaffUserDialog(username);
   } catch (error) {
     if (activeSection === 'staffUsers') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
   }
