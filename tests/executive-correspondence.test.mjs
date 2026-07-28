@@ -281,11 +281,15 @@ test('printable official documents use branding and safely escape plain-text con
 test('official correspondence sends the email-safe layout with bounded endorsement attachments', () => {
   assert.match(executiveSource, /htmlContent: printable\.emailHtml \|\| printable\.html/);
   assert.match(executiveSource, /attachments: printable\.emailAttachments/);
+  assert.match(executiveSource, /senderProfile: 'executive'/);
   assert.match(emailSource, /payload\.attachment = normalizedAttachments/);
   assert.match(emailSource, /content\.length > 1500000/);
   assert.match(emailSource, /getDocument\(env, 'settings', 'organisationProfile'\)/);
+  assert.match(emailSource, /env\.BREVO_API_KEY \|\| brevo\?\.BrevoApiKey/);
   assert.match(emailSource, /organizationProfile\?\.BrevoSenderEmail/);
   assert.match(emailSource, /schoolProfile\?\.BrevoSenderEmail/);
+  assert.match(emailSource, /brevo\?\.ExecutiveSenderEmail/);
+  assert.match(emailSource, /payload\.replyTo = \{ email: replyToEmail/);
 });
 
 test('web issue and send verify the current password server-side and never accept the desktop secret', () => {

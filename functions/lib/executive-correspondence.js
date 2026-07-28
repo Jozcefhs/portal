@@ -1239,7 +1239,8 @@ async function sendCorrespondence(env, user, body, scope, identity, authorizatio
       subject: printable.subject,
       textContent: printable.fullText || printable.text,
       htmlContent: printable.emailHtml || printable.html,
-      attachments: printable.emailAttachments
+      attachments: printable.emailAttachments,
+      senderProfile: 'executive'
     });
   } catch (error) {
     const failedAt = nowIso();

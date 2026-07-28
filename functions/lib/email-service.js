@@ -31,7 +31,8 @@ export async function sendConfiguredEmail(env, {
   subject,
   textContent,
   htmlContent,
-  attachments = []
+  attachments = [],
+  senderProfile = ''
 }) {
   const recipient = clean(toEmail);
   if (!validEmail(recipient)) {
@@ -44,15 +45,18 @@ export async function sendConfiguredEmail(env, {
     getDocument(env, 'settings', 'organisationProfile').catch(() => ({})),
     getDocument(env, 'settings', 'schoolProfile').catch(() => ({}))
   ]);
-  const apiKey = clean(env.BREVO_API_KEY);
-  const senderEmail = clean(
+  // Prefer the encrypted environment secret. Existing installations may still
+  // have a legacy server-side credential while they complete the migration;
+  // it is consumed only inside the Worker and is never returned to clients.
+  const apiKey = clean(env.BREVO_API_KEY || brevo?.BrevoApiKey);
+  const sharedSenderEmail = clean(
     brevo?.BrevoSenderEmail
     || organizationProfile?.BrevoSenderEmail
     || schoolProfile?.BrevoSenderEmail
     || env.BREVO_SENDER_EMAIL
     || env.SCHOOL_EMAIL
   );
-  const senderName = clean(
+  const sharedSenderName = clean(
     brevo?.BrevoSenderName
     || organizationProfile?.BrevoSenderName
     || schoolProfile?.BrevoSenderName
@@ -63,6 +67,19 @@ export async function sendConfiguredEmail(env, {
     || env.SCHOOL_NAME
     || 'Dynamax'
   );
+  const useExecutiveProfile = clean(senderProfile).toLowerCase() === 'executive';
+  const senderEmail = clean(useExecutiveProfile
+    ? (brevo?.ExecutiveSenderEmail || organizationProfile?.ExecutiveSenderEmail || sharedSenderEmail)
+    : sharedSenderEmail);
+  const senderName = clean(useExecutiveProfile
+    ? (brevo?.ExecutiveSenderName || organizationProfile?.ExecutiveSenderName || sharedSenderName)
+    : sharedSenderName);
+  const replyToEmail = clean(useExecutiveProfile
+    ? (brevo?.ExecutiveReplyToEmail || organizationProfile?.ExecutiveReplyToEmail || brevo?.BrevoReplyToEmail || organizationProfile?.BrevoReplyToEmail)
+    : (brevo?.BrevoReplyToEmail || organizationProfile?.BrevoReplyToEmail));
+  const replyToName = clean(useExecutiveProfile
+    ? (brevo?.ExecutiveReplyToName || organizationProfile?.ExecutiveReplyToName || brevo?.BrevoReplyToName || organizationProfile?.BrevoReplyToName || senderName)
+    : (brevo?.BrevoReplyToName || organizationProfile?.BrevoReplyToName || senderName));
   if (!apiKey) {
     const err = new Error('The existing email-service credential is unavailable in this portal environment.');
     err.status = 503;
@@ -81,6 +98,7 @@ export async function sendConfiguredEmail(env, {
     textContent: clean(textContent),
     htmlContent: clean(htmlContent)
   };
+  if (validEmail(replyToEmail)) payload.replyTo = { email: replyToEmail, name: replyToName || senderName };
   if (normalizedAttachments.length) payload.attachment = normalizedAttachments;
   const response = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',

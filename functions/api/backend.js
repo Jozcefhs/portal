@@ -2109,6 +2109,10 @@ async function saveBrevoSettings(env, body) {
   const senderEmail = clean(body.BrevoSenderEmail || body.SenderEmail || body.senderEmail);
   const submittedApiKey = clean(body.BrevoApiKey || body.ApiKey || body.apiKey);
   const environmentApiKeyConfigured = Boolean(clean(env.BREVO_API_KEY));
+  const executiveSenderName = clean(body.ExecutiveSenderName || body.executiveSenderName);
+  const executiveSenderEmail = clean(body.ExecutiveSenderEmail || body.executiveSenderEmail);
+  const executiveReplyToEmail = clean(body.ExecutiveReplyToEmail || body.executiveReplyToEmail);
+  const executiveReplyToName = clean(body.ExecutiveReplyToName || body.executiveReplyToName);
   if (!senderEmail) {
     const err = new Error('Brevo sender email is required.');
     err.status = 400;
@@ -2128,6 +2132,10 @@ async function saveBrevoSettings(env, body) {
     BrevoSenderEmail: senderEmail,
     BrevoReplyToEmail: clean(body.BrevoReplyToEmail || body.ReplyToEmail),
     BrevoReplyToName: clean(body.BrevoReplyToName || body.ReplyToName),
+    ExecutiveSenderName: executiveSenderName,
+    ExecutiveSenderEmail: executiveSenderEmail,
+    ExecutiveReplyToEmail: executiveReplyToEmail,
+    ExecutiveReplyToName: executiveReplyToName,
     UpdatedAt: now,
     UpdatedBy: clean(body.UserRole || body.UpdatedBy || body.updatedBy) || 'Super Admin'
   };
@@ -2147,6 +2155,10 @@ async function saveBrevoSettings(env, body) {
       BrevoSenderEmail: senderEmail,
       BrevoReplyToEmail: payload.BrevoReplyToEmail,
       BrevoReplyToName: payload.BrevoReplyToName,
+      ExecutiveSenderName: payload.ExecutiveSenderName,
+      ExecutiveSenderEmail: payload.ExecutiveSenderEmail,
+      ExecutiveReplyToEmail: payload.ExecutiveReplyToEmail,
+      ExecutiveReplyToName: payload.ExecutiveReplyToName,
       HasBrevoApiKey: environmentApiKeyConfigured || legacyDatabaseKeyConfigured,
       CredentialSource: credentialSource,
       LegacyCredentialMigrationRequired: legacyDatabaseKeyConfigured && !environmentApiKeyConfigured
