@@ -3881,6 +3881,27 @@ function updateExecutiveComposerVisibility() {
   form.querySelector('[data-executive-transfer-fields]').hidden = form.elements.kind.value !== 'transfer-certificate';
 }
 
+function openExecutiveSendDialog(correspondenceId) {
+  const id = clean(correspondenceId);
+  const row = executiveCorrespondenceRows().find((item) => executiveCorrespondenceId(item) === id);
+  const dialog = document.getElementById('executiveSendDialog');
+  const form = document.getElementById('executiveSendForm');
+  if (!row || !dialog || !form) {
+    setStatus(dashboardStatus, 'The email form could not be opened. Refresh this workspace and try again.', 'bad');
+    return;
+  }
+  form.reset();
+  form.elements.correspondenceId.value = executiveCorrespondenceId(row);
+  form.elements.recipientEmail.value = clean(pick(row, ['RecipientEmail', 'recipientEmail']));
+  setStatus(document.getElementById('executiveSendStatus'), '');
+  if (typeof dialog.showModal === 'function') {
+    if (!dialog.open) dialog.showModal();
+  } else {
+    dialog.setAttribute('open', '');
+  }
+  window.requestAnimationFrame(() => form.elements.recipientEmail.focus());
+}
+
 async function searchExecutiveDirectory() {
   const status = document.getElementById('executiveDirectoryStatus');
   setStatus(status, 'Searching permitted records...');
@@ -3977,15 +3998,10 @@ function bindExecutiveOfficeEvents() {
       button.innerHTML = original;
     }
   }));
-  panelEl.querySelectorAll('[data-send-executive]').forEach((button) => button.addEventListener('click', () => {
-    const row = executiveCorrespondenceRows().find((item) => executiveCorrespondenceId(item) === button.dataset.sendExecutive);
-    const dialog = document.getElementById('executiveSendDialog');
-    const form = document.getElementById('executiveSendForm');
-    if (!row || !dialog || !form) return;
-    form.reset();
-    form.elements.correspondenceId.value = executiveCorrespondenceId(row);
-    form.elements.recipientEmail.value = clean(pick(row, ['RecipientEmail', 'recipientEmail']));
-    dialog.showModal();
+  panelEl.querySelectorAll('[data-send-executive]').forEach((button) => button.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openExecutiveSendDialog(button.dataset.sendExecutive);
   }));
   document.querySelector('[data-close-executive-send]')?.addEventListener('click', () => document.getElementById('executiveSendDialog')?.close());
   document.getElementById('executiveSendForm')?.addEventListener('submit', async (event) => {

@@ -1,4 +1,4 @@
-const CACHE = 'dynamax-v58-routing-and-resilience';
+const CACHE = 'dynamax-v60-executive-email';
 const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/parent-dashboard.html', '/register-organization.html', '/css/style.css', '/js/preferences.js', '/js/launcher.js', '/js/site-config.js', '/js/admin.js', '/js/parent-dashboard.js', '/js/register-organization.js', '/images/Logo.png'];
 
 self.addEventListener('install', (event) => {

@@ -1609,6 +1609,8 @@ html[data-theme="dark"] .department-guidance-card { background: linear-gradient(
 .executive-chart-grid .department-chart-card{min-height:245px}
 .executive-empty-chart{display:grid;place-content:center;justify-items:center;text-align:center}
 .executive-empty-chart>span{display:grid;place-items:center;width:50px;height:50px;border-radius:15px;background:#e7f1fb;font-size:25px}
+.executive-empty-chart h3{color:#173b58}
+.executive-empty-chart .muted{color:#60778c!important}
 .executive-recent{margin-top:14px;padding:15px;border:1px solid #d6e1eb;border-radius:14px;background:#fff}
 .executive-recent .department-panel-heading{align-items:center}
 .executive-metric-picker{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:14px 0}

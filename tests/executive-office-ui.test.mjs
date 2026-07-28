@@ -36,6 +36,10 @@ test('executive correspondence uses the authenticated server API for every workf
   assert.match(adminJs, /function executiveSendDialogMarkup\(\)/);
   assert.match(adminJs, /\$\{executiveSendDialogMarkup\(\)\}/);
   assert.match(adminJs, /class="compact-icon-action executive-send-action" data-send-executive=/);
+  assert.match(adminJs, /function openExecutiveSendDialog\(correspondenceId\)/);
+  assert.match(adminJs, /form\.elements\.recipientEmail\.value = clean\(pick\(row, \['RecipientEmail', 'recipientEmail'\]\)\)/);
+  assert.match(adminJs, /typeof dialog\.showModal === 'function'/);
+  assert.match(adminJs, /openExecutiveSendDialog\(button\.dataset\.sendExecutive\)/);
 });
 
 test('executive workspace provides configurable metrics, directories, templates, composer and register', () => {
@@ -69,9 +73,11 @@ test('executive office remains responsive and readable in dark mode', () => {
   assert.match(portalCss, /html\[data-theme="dark"\] \.executive-compose-card input/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.executive-directory-search>label\{color:#e7f1fb\}/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.executive-directory-email\{color:#e7f1fb\}/);
+  assert.match(portalCss, /\.executive-empty-chart h3\{color:#173b58\}/);
+  assert.match(portalCss, /\.executive-empty-chart \.muted\{color:#60778c!important\}/);
   assert.match(portalCss, /\.executive-register-row \.executive-send-action,[^{]*\{color:#185f96!important\}/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.executive-empty-chart\{[^}]*background:#112438;[^}]*color:#edf5ff\}/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.executive-empty-chart \.muted\{color:#b8cada!important\}/);
   assert.match(portalCss, /@media\(max-width:680px\)\{[\s\S]*?\.executive-directory-layout\{grid-template-columns:1fr/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260728-quota-safety/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260728-executive-email/);
 });
