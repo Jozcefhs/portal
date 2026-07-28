@@ -44,6 +44,16 @@ const COLLECTION_ALIASES = {
   kitchen_inventory: 'kitchenInventory',
   kitchenmovements: 'kitchenMovements',
   kitchen_movements: 'kitchenMovements',
+  restaurantinventory: 'restaurantInventory',
+  restaurant_inventory: 'restaurantInventory',
+  restaurantmovements: 'restaurantMovements',
+  restaurant_movements: 'restaurantMovements',
+  organizationcommercesales: 'organizationCommerceSales',
+  organisationcommercesales: 'organizationCommerceSales',
+  organization_commerce_sales: 'organizationCommerceSales',
+  organizationcommercemovements: 'organizationCommerceMovements',
+  organisationcommercemovements: 'organizationCommerceMovements',
+  organization_commerce_movements: 'organizationCommerceMovements',
   auditlogs: 'auditLogs',
   audit_logs: 'auditLogs'
 };
@@ -63,6 +73,10 @@ const ID_FIELDS = {
   clinicMovements: ['MovementNo', 'MovementId', 'MovementID', 'Reference'],
   kitchenInventory: ['ItemName', 'ItemCode', 'SKU'],
   kitchenMovements: ['MovementNo', 'MovementId', 'MovementID', 'Reference'],
+  restaurantInventory: ['ItemName', 'ItemCode', 'SKU'],
+  restaurantMovements: ['MovementNo', 'MovementId', 'MovementID', 'Reference'],
+  organizationCommerceSales: ['SaleNo', 'SaleId', 'Reference', 'PaymentReference'],
+  organizationCommerceMovements: ['MovementNo', 'SaleNo', 'Reference'],
   auditLogs: ['LogId', 'LogID', 'Reference']
 };
 

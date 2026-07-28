@@ -28,10 +28,10 @@ const [endpoint, backend, backendSecurity, executiveSource, emailSource] = await
   readFile(new URL('functions/lib/email-service.js', portalRoot), 'utf8')
 ]);
 
-test('principal and senior-minister roles receive only the executive office and directory defaults', () => {
+test('principal also receives school conduct oversight while senior-minister defaults remain scoped', () => {
   assert.deepEqual(
     allowedSectionsFor({ role: 'Principal' }, featureFlagsForEdition('school')),
-    ['recordsDesk', 'executiveOffice']
+    ['recordsDesk', 'executiveOffice', 'studentConduct']
   );
   assert.deepEqual(
     allowedSectionsFor({ role: 'Senior Pastor' }, featureFlagsForEdition('faith')),

@@ -22,6 +22,7 @@ import {
   recordsDeskLimit,
   recordsDeskRank,
   staffDetailProjection,
+  staffRecordMatchesEdition,
   staffSearchCard,
   studentDetailProjection,
   studentSearchCard
@@ -84,6 +85,7 @@ function visibleSchoolRecord(row, user, requestedBranch = '') {
 }
 
 function visibleStaffDirectoryRecord(row, user, requestedBranch = '') {
+  if (!staffRecordMatchesEdition(row, user)) return false;
   const branch = assignedBranch(user, requestedBranch, true);
   const branchAllowed = !branch || lower(row.BranchId || 'main') === branch;
   if (!branchAllowed) return false;

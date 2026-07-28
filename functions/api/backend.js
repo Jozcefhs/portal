@@ -26,6 +26,7 @@ import { handleChurchFundAction } from '../lib/church-funds.js';
 import { handleChurchOfferingAction } from '../lib/church-offerings.js';
 import { handleOrganizationDepartmentAction } from '../lib/organization-departments.js';
 import { handleExecutiveOfficeAction } from '../lib/executive-correspondence.js';
+import { handleStudentConductAction } from '../lib/student-conduct.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
 
@@ -588,6 +589,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'saveOfficialCorrespondenceDraft', 'saveOfficialCorrespondenceTemplate',
   'getOfficialCorrespondenceDocument', 'issueOfficialCorrespondence',
   'sendOfficialCorrespondence', 'saveExecutiveDashboardPreferences',
+  'getStudentConductCases', 'saveStudentConductCase', 'deleteStudentConductCase',
   'getAccountingRequisitionDocument', 'syncAccountingRevenue', 'saveChartAccount',
   'saveAccountingJournal', 'saveAccountingExpense', 'saveAccountingBudget',
   'saveAccountingBank', 'saveAccountingReconciliation', 'saveAccountingPeriod',
@@ -4164,6 +4166,8 @@ const DEFAULT_CHART_OF_ACCOUNTS = [
   ['4090', 'Other Income', 'Revenue', 'Other Income', 'Credit'],
   ['4100', 'Discounts, Scholarships and Refunds', 'Revenue', 'Contra Revenue', 'Debit'],
   ['4110', 'Acceptance Fee Revenue', 'Revenue', 'Operating Revenue', 'Credit'],
+  ['4120', 'Organisation Store Revenue', 'Revenue', 'Operating Revenue', 'Credit'],
+  ['4130', 'Restaurant and Catering Revenue', 'Revenue', 'Operating Revenue', 'Credit'],
   ['5000', 'Academic Direct Costs', 'Expense', 'Direct Cost', 'Debit'],
   ['5010', 'Boarding Direct Costs', 'Expense', 'Direct Cost', 'Debit'],
   ['5020', 'Transport Direct Costs', 'Expense', 'Direct Cost', 'Debit'],
@@ -6061,6 +6065,11 @@ async function saveStaffUserFromDesktop(env, body) {
     DisplayName: clean(incoming.DisplayName) || username,
     Role: role,
     Department: department,
+    OrganisationEdition: clean(
+      incoming.OrganisationEdition || incoming.organisationEdition
+        || body.OrganisationEdition || body.organisationEdition
+        || existing?.OrganisationEdition || existing?.OrganizationEdition
+    ) || 'school',
     BranchId: clean(incoming.BranchId || incoming.branchId || existing?.BranchId),
     Active: active,
     Salt: clean(incoming.Salt),
@@ -6223,7 +6232,9 @@ async function routeAction(env, action, body = {}) {
         PAYROLL_TAX_COLLECTIONS.reliefs, PAYROLL_TAX_COLLECTIONS.mappings, PAYROLL_TAX_COLLECTIONS.overrides, PAYROLL_TAX_COLLECTIONS.migrations,
         'clinicRecords',
         'clinicInventory', 'clinicMovements', 'kitchenInventory', 'kitchenMovements',
-        'tuckShopPurchases', 'storeItems', 'storeOrders', 'storeCategories'
+        'restaurantInventory', 'restaurantMovements',
+        'tuckShopPurchases', 'storeItems', 'storeOrders', 'storeCategories',
+        'organizationCommerceSales', 'organizationCommerceMovements'
       ];
       const schoolCollections = ['applications', 'students'];
       const [organizationProfile, legacyProfile] = await Promise.all([
@@ -6233,7 +6244,7 @@ async function routeAction(env, action, body = {}) {
       const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile });
       const structure = await getSchoolStructure(env);
       const schoolPaths = (await Promise.all(schoolCollections.map((name) => schoolCollectionPaths(env, name)))).flat();
-      const churchPaths = organization.Edition === 'church'
+      const churchPaths = ['church', 'faith', 'organization'].includes(organization.Edition)
         ? (structure.Branches || [{ Id: 'main' }]).flatMap((branch) =>
           Object.values(CHURCH_COLLECTIONS).map((collection) => churchCollectionPath(collection, branch.Id || branch.id || 'main')))
         : [];
@@ -6316,6 +6327,25 @@ async function routeAction(env, action, body = {}) {
         message: 'Students loaded from the database.',
         students: (await listSchoolCollection(env, 'students')).map(normalizeStudent)
       };
+    case 'getStudentConductCases':
+    case 'saveStudentConductCase':
+    case 'deleteStudentConductCase':
+      return handleStudentConductAction(env, {
+        username: clean(body.UserUsername),
+        displayName: clean(body.RecordedBy),
+        role: clean(body.UserRole),
+        branchId: clean(body.UserBranchId),
+        schoolSectionAccess: clean(body.UserSchoolSectionAccess || 'All'),
+        edition: clean(body.OrganisationEdition || body.OrganizationEdition || 'school'),
+        allowedSections: ['studentConduct']
+      }, {
+        ...body,
+        action: ({
+          getStudentConductCases: 'list',
+          saveStudentConductCase: 'save',
+          deleteStudentConductCase: 'delete'
+        })[action]
+      });
     case 'getExecutiveOffice':
     case 'searchExecutiveDirectory':
     case 'listOfficialCorrespondence':

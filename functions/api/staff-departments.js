@@ -3,7 +3,18 @@ import { requireStaffSession } from '../lib/staff-auth.js';
 import { listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
 import { getWalletCardAccount, recordWalletPurchase } from './backend.js';
 import { escapeEmailHtml, sendConfiguredEmail } from '../lib/email-service.js';
-import { readJsonBody } from '../lib/request-security.js';
+import {
+  beginIdempotentRequest,
+  completeIdempotentRequest,
+  failIdempotentRequest,
+  readJsonBody
+} from '../lib/request-security.js';
+import {
+  initializeOnlineOrganizationCommerceSale,
+  listOrganizationCommerceSales,
+  normalizeCommercePaymentMethod,
+  recordManualOrganizationCommerceSale
+} from '../lib/organization-commerce.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -14,6 +25,12 @@ function number(value) {
 function safeId(value) { return clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140); }
 function nowIso() { return new Date().toISOString(); }
 function sameRef(a, b) { return lower(a).replace(/[^a-z0-9]/g, '') === lower(b).replace(/[^a-z0-9]/g, ''); }
+function editionKey(value) {
+  const edition = lower(value);
+  if (['church', 'faith', 'religious'].includes(edition)) return 'faith';
+  if (['organization', 'organisation', 'other'].includes(edition)) return 'organization';
+  return edition || 'school';
+}
 
 const CONFIG = {
   clinic: { label: 'Clinic', inventory: 'clinicInventory', movements: 'clinicMovements', prefix: 'MED', category: 'Medical Supply', unit: 'pcs' },
@@ -25,6 +42,7 @@ const CONFIG = {
 function scopeFields(user) {
   return {
     BranchId: clean(user.branchId) || 'main',
+    OrganisationEdition: clean(user.edition || user.OrganisationEdition) || 'school',
     SchoolSection: clean(user.schoolSectionAccess) === 'All' ? 'Secondary' : clean(user.schoolSectionAccess || 'Secondary')
   };
 }
@@ -32,9 +50,12 @@ function scopeFields(user) {
 function visible(rows, user) {
   const section = lower(user.schoolSectionAccess || 'All');
   const branch = lower(user.branchId || '');
+  const edition = editionKey(user.edition || user.OrganisationEdition);
   return (rows || []).filter((row) => {
     const branchAllowed = !branch || lower(row.BranchId || 'main') === branch;
-    return branchAllowed && (section === 'all' || schoolSectionFor(row) === section);
+    const rowEdition = clean(row.OrganisationEdition || row.OrganizationEdition);
+    const editionAllowed = !rowEdition || editionKey(rowEdition) === edition;
+    return branchAllowed && editionAllowed && (section === 'all' || schoolSectionFor(row) === section);
   });
 }
 
@@ -44,10 +65,13 @@ function publicRows(rows) {
 
 async function loadDepartment(env, section, user) {
   const config = CONFIG[section];
-  const [inventory, movements, records] = await Promise.all([
+  const [inventory, movements, records, sales] = await Promise.all([
     listCollection(env, config.inventory),
     listCollection(env, config.movements),
-    section === 'clinic' ? listCollection(env, 'clinicRecords') : Promise.resolve([])
+    section === 'clinic' ? listCollection(env, 'clinicRecords') : Promise.resolve([]),
+    section === 'restaurant'
+      ? listOrganizationCommerceSales(env, section, user)
+      : Promise.resolve([])
   ]);
   const scopedInventory = visible(inventory, user);
   return {
@@ -55,7 +79,8 @@ async function loadDepartment(env, section, user) {
     inventory: publicRows(scopedInventory),
     movements: publicRows(visible(movements, user).sort((a, b) => clean(b.Date).localeCompare(clean(a.Date))).slice(0, 100)),
     records: publicRows(visible(records, user).sort((a, b) => clean(b.Date).localeCompare(clean(a.Date))).slice(0, 100)),
-    lowStock: publicRows(scopedInventory.filter((row) => number(row.ReorderLevel) > 0 && number(row.Quantity) <= number(row.ReorderLevel)))
+    lowStock: publicRows(scopedInventory.filter((row) => number(row.ReorderLevel) > 0 && number(row.Quantity) <= number(row.ReorderLevel))),
+    sales: publicRows(sales)
   };
 }
 
@@ -74,6 +99,12 @@ async function saveInventory(env, section, body, user) {
     Unit: clean(body.Unit) || config.unit,
     Quantity: Math.max(0, number(body.Quantity)),
     ReorderLevel: Math.max(0, number(body.ReorderLevel)),
+    Price: section === 'restaurant'
+      ? Math.max(0, number(body.Price ?? body.SalePrice ?? existing.Price ?? existing.SalePrice))
+      : number(existing.Price),
+    Active: section === 'restaurant'
+      ? (['no', 'false', '0', 'inactive'].includes(lower(body.Active ?? existing.Active ?? 'yes')) ? 'NO' : 'YES')
+      : clean(existing.Active),
     Notes: clean(body.Notes),
     LastUpdated: nowIso(),
     UpdatedBy: user.displayName || user.username
@@ -258,6 +289,7 @@ async function sendMarketList(env, section, body, user) {
 }
 
 export async function onRequestPost(context) {
+  let idempotency = null;
   try {
     const { request, env } = context;
     requireFirestoreEnv(env);
@@ -268,6 +300,24 @@ export async function onRequestPost(context) {
       const err = new Error('This staff account is not allowed to manage that department.'); err.status = 403; throw err;
     }
     const action = lower(body.action || 'list');
+    if (action === 'recordsale') {
+      if (section !== 'restaurant') {
+        const err = new Error('Direct commerce payments are available only in the Restaurant workspace.');
+        err.status = 403;
+        throw err;
+      }
+      idempotency = await beginIdempotentRequest(env, request, body, {
+        scope: 'restaurant-record-sale',
+        actor: user.username,
+        ttlMinutes: 30 * 24 * 60
+      });
+      if (idempotency.replay) {
+        return Response.json(idempotency.response, {
+          status: idempotency.status || (idempotency.response?.ok === false ? 409 : 200),
+          headers: { 'Cache-Control': 'no-store', 'Idempotency-Replayed': 'true' }
+        });
+      }
+    }
     let actionResult = null;
     if (action === 'saveitem') await saveInventory(env, section, body, user);
     else if (action === 'recordmovement') await recordMovement(env, section, body, user);
@@ -280,7 +330,17 @@ export async function onRequestPost(context) {
     else if (action === 'prepareclinicreport' && section === 'clinic') actionResult = { clinicReport: await prepareClinicReport(env, body, user) };
     else if (action === 'sendclinicreport' && section === 'clinic') actionResult = { clinicReport: await sendClinicReport(env, body, user) };
     else if (action === 'sendmarketlist' && ['clinic', 'kitchen', 'restaurant'].includes(section)) await sendMarketList(env, section, body, user);
+    else if (action === 'recordsale' && section === 'restaurant') {
+      const method = normalizeCommercePaymentMethod(body.PaymentMethod);
+      actionResult = method === 'Paystack Online'
+        ? await initializeOnlineOrganizationCommerceSale(env, request, section, body, user)
+        : await recordManualOrganizationCommerceSale(env, section, body, user);
+    }
     else if (action !== 'list') { const err = new Error('Choose a valid department action.'); err.status = 400; throw err; }
+    if (action === 'recordsale') {
+      await completeIdempotentRequest(env, idempotency, actionResult, 200);
+      return Response.json(actionResult, { headers: { 'Cache-Control': 'no-store' } });
+    }
     const data = await loadDepartment(env, section, user);
     Object.assign(data, actionResult || {});
     if (action !== 'list') data.message = ({
@@ -291,10 +351,12 @@ export async function onRequestPost(context) {
       recordwalletpurchase: 'Wallet purchase recorded and posted to Finance and Accounting.',
       prepareclinicreport: 'Clinic report prepared for review.',
       sendclinicreport: 'Clinic report sent to the parent email.',
-      sendmarketlist: 'Market list sent to the supplier.'
+      sendmarketlist: 'Market list sent to the supplier.',
+      recordsale: actionResult?.message || 'Restaurant payment recorded.'
     })[action] || 'Department action completed.';
     return Response.json(data);
   } catch (err) {
+    if (idempotency?.owner) await failIdempotentRequest(context.env, idempotency, err);
     return Response.json({ ok: false, message: err.message || String(err) }, { status: err.status || 500 });
   }
 }

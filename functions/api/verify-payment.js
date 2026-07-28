@@ -5,6 +5,7 @@ import { postChurchDonationToAccounting, recordManualPayment } from './backend.j
 import { batchUpsertDocuments, createDocumentIfAbsent, getDocument, upsertDocument } from '../lib/firestore.js';
 import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
 import { markDonationPaidByReference, sendChurchDonationReceipt } from '../lib/church-payments.js';
+import { finalizeOnlineOrganizationCommerceSale } from '../lib/organization-commerce.js';
 import {
   beginIdempotentRequest,
   completeIdempotentRequest,
@@ -195,7 +196,15 @@ export async function onRequestPost(context) {
         message: 'This is an admission form purchase and must be verified by the admission form payment verifier.'
       }, { status: 400 });
     }
-    const isChurchDonation = paymentType(metadataPaymentType || storedIntentType) === 'churchdonation';
+    const resolvedPaymentType = paymentType(metadataPaymentType || storedIntentType);
+    const isChurchDonation = resolvedPaymentType === 'churchdonation';
+    const isOrganizationCommerce = resolvedPaymentType === 'organizationcommerce';
+    if (isOrganizationCommerce && !intent) {
+      return Response.json({
+        ok: false,
+        message: 'The saved organisation commerce payment intent was not found.'
+      }, { status: 409 });
+    }
     if (intent) {
       const savedReference = intentReference(intent);
       if (savedReference && clean(tx.reference || reference).toLowerCase() !== savedReference.toLowerCase()) {
@@ -209,13 +218,21 @@ export async function onRequestPost(context) {
           String(intent.AccountRef).trim().toLowerCase() !== String(meta.accountRef).trim().toLowerCase()) {
         return Response.json({ ok: false, message: 'The verified payment belongs to a different student account.' }, { status: 409 });
       }
+      if (isOrganizationCommerce && clean(meta.commerceSaleId) &&
+          clean(meta.commerceSaleId).toLowerCase() !== clean(intent.SaleId).toLowerCase()) {
+        return Response.json({ ok: false, message: 'The verified transaction belongs to a different commerce sale.' }, { status: 409 });
+      }
+      if (isOrganizationCommerce && clean(meta.commerceSection) &&
+          clean(meta.commerceSection) !== clean(intent.SaleType)) {
+        return Response.json({ ok: false, message: 'The verified transaction belongs to a different commerce workspace.' }, { status: 409 });
+      }
     }
     if (!body.idempotencyKey && !body.IdempotencyKey && !request.headers.get('Idempotency-Key')) {
       body.idempotencyKey = `verify:${safeId(reference)}`;
     }
     idempotency = await beginIdempotentRequest(env, request, body, {
       scope: 'verify-payment',
-      actor: clean(meta.accountRef || meta.applicationReference || meta.donationId || tx.reference),
+      actor: clean(meta.accountRef || meta.applicationReference || meta.donationId || meta.commerceSaleId || intent?.SaleId || tx.reference),
       ttlMinutes: 30 * 24 * 60,
       fingerprintPayload: { reference: tx.reference || reference }
     });
@@ -266,7 +283,29 @@ export async function onRequestPost(context) {
 
     let recordData = null;
     const recordErrors = [];
-    if (firestoreConfigured && !isChurchDonation) {
+    let commerceResult = null;
+    if (firestoreConfigured && isOrganizationCommerce) {
+      try {
+        commerceResult = await finalizeOnlineOrganizationCommerceSale(env, intent, {
+          SaleId: clean(meta.commerceSaleId || intent?.SaleId),
+          SaleType: clean(meta.commerceSection || intent?.SaleType),
+          GrossAmount: amount,
+          GatewayFee: gatewayFee,
+          NetAmount: netAmount,
+          Reference: tx.reference,
+          PaidAt: tx.paid_at || tx.paidAt || new Date().toISOString(),
+          PaymentMethod: 'Paystack Online'
+        });
+        if (commerceResult?.ok) {
+          recordData = { ok: true, payment: commerceResult.sale };
+        } else {
+          recordErrors.push(`Organisation commerce: ${commerceResult?.message || 'record failed'}`);
+        }
+      } catch (err) {
+        recordErrors.push(`Organisation commerce: ${err?.message || String(err)}`);
+      }
+    }
+    if (firestoreConfigured && !isChurchDonation && !isOrganizationCommerce) {
       try {
         const firestoreData = await recordManualPayment(env, paymentPayload);
         if (firestoreData && firestoreData.ok) {
@@ -278,7 +317,7 @@ export async function onRequestPost(context) {
         recordErrors.push(`Database: ${err && err.message ? err.message : String(err)}`);
       }
     }
-    if (appsScriptConfigured && (!firestoreConfigured || !isChurchDonation)) {
+    if (!isOrganizationCommerce && appsScriptConfigured && (!firestoreConfigured || !isChurchDonation)) {
       try {
         const sheetData = await recordInAppsScript(env, paymentPayload);
         if (sheetData && sheetData.ok) {
@@ -347,7 +386,8 @@ export async function onRequestPost(context) {
 
     if (!recordData || !recordData.ok) {
       const churchHandled = isChurchDonation && donation;
-      if (!churchHandled) {
+      const commerceHandled = isOrganizationCommerce && commerceResult?.ok;
+      if (!churchHandled && !commerceHandled) {
         const error = new Error(recordErrors.length
           ? `Payment confirmed, but backend recording failed. ${recordErrors.filter(Boolean).join(' | ')}`
           : 'Payment confirmed, but it could not be recorded.');
@@ -367,10 +407,12 @@ export async function onRequestPost(context) {
           Amount: gatewayFee,
           GrossCollection: amount,
           NetSettlement: netAmount,
-          Treatment: 'DeductedBeforeStudentCredit',
+          Treatment: isOrganizationCommerce ? 'DeductedBeforeRevenueSettlement' : 'DeductedBeforeStudentCredit',
           Status: 'Recorded',
           Reference: tx.reference,
-          Source: isChurchDonation ? 'Church Donation / Paystack' : 'Paystack',
+          Source: isChurchDonation
+            ? 'Church Donation / Paystack'
+            : (isOrganizationCommerce ? 'Organisation Commerce / Paystack' : 'Paystack'),
           CreatedAt: new Date().toISOString()
         });
       }
@@ -381,7 +423,7 @@ export async function onRequestPost(context) {
           ItemCode: item.FeeCode, ItemName: item.FeeName, StoreType: /uniform|wear/i.test(`${item.FeeCategory || ''} ${item.FeeName || ''}`) ? 'Uniform Store' : 'Bookstore', Quantity: 1, UnitPrice: Number(item.Amount || 0), Amount: Number(item.Amount || 0), IncludedInSchoolFees: 'YES'
         })) : [];
       const orderItems = paidItems.length ? paidItems : includedItems;
-      if (orderItems.length) {
+      if (!isOrganizationCommerce && orderItems.length) {
         for (const storeType of [...new Set(orderItems.map((item) => item.StoreType || 'Bookstore'))]) {
           const items = orderItems.filter((item) => (item.StoreType || 'Bookstore') === storeType);
           const orderNo = `${tx.reference}-${storeType === 'Uniform Store' ? 'UNIFORM' : 'BOOKS'}`;
@@ -420,7 +462,10 @@ export async function onRequestPost(context) {
       gatewayFee,
       netAmount,
       currency: tx.currency || 'NGN',
-      feeName: isChurchDonation ? 'Church Donation' : (meta.feeName || 'Online Payment'),
+      feeName: isChurchDonation
+        ? 'Church Donation'
+        : (isOrganizationCommerce ? `${commerceResult?.sale?.Department || 'Organisation'} sale` : (meta.feeName || 'Online Payment')),
+      commerceSale: commerceResult?.sale || null,
       donationJournal: donationJournal || null,
       receipt: donationReceipt || null,
       receiptStatus: donationReceipt ? (donationReceipt.ok ? 'sent' : (donationReceipt.skipped ? 'skipped' : 'failed')) : null

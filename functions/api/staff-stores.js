@@ -3,7 +3,18 @@ import { requireStaffSession } from '../lib/staff-auth.js';
 import { listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
 import { canonicalConfiguredClass } from '../lib/class-names.js';
 import { categoryApplies, ensureStoreCategories, resolveStoreCategory, saveStoreCategory } from '../lib/store-categories.js';
-import { readJsonBody } from '../lib/request-security.js';
+import {
+  beginIdempotentRequest,
+  completeIdempotentRequest,
+  failIdempotentRequest,
+  readJsonBody
+} from '../lib/request-security.js';
+import {
+  initializeOnlineOrganizationCommerceSale,
+  listOrganizationCommerceSales,
+  normalizeCommercePaymentMethod,
+  recordManualOrganizationCommerceSale
+} from '../lib/organization-commerce.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -24,6 +35,7 @@ function visible(rows, user) {
 }
 
 export async function onRequestPost(context) {
+  let idempotency = null;
   try {
     const { request, env } = context;
     requireFirestoreEnv(env);
@@ -51,11 +63,36 @@ export async function onRequestPost(context) {
         ClassName: section === 'organizationStore' ? 'All' : canonicalConfiguredClass(clean(body.ClassName) || 'All', configuredClasses), Price: Math.max(0, Number(body.Price || 0) || 0),
         Quantity: Math.max(0, Math.floor(Number(body.Quantity || 0) || 0)), Active: yes(body.Active ?? true) ? 'YES' : 'NO',
         BranchId: clean(user.branchId) || 'main',
+        OrganisationEdition: clean(user.edition || user.OrganisationEdition) || 'school',
         SchoolSection: clean(user.schoolSectionAccess) === 'All' ? 'Secondary' : clean(user.schoolSectionAccess || 'Secondary'),
         UpdatedAt: new Date().toISOString(), UpdatedBy: user.displayName || user.username
       };
       await upsertDocument(env, 'storeItems', safeId(`${storeType}-${itemCode}-${payload.BranchId}-${payload.SchoolSection}`), payload);
       return Response.json({ ok: true, message: 'Store item saved.', item: payload });
+    }
+    if (action === 'recordsale') {
+      if (section !== 'organizationStore') {
+        const err = new Error('Walk-in commerce payments are available only in the Organisation Store workspace.');
+        err.status = 403;
+        throw err;
+      }
+      idempotency = await beginIdempotentRequest(env, request, body, {
+        scope: 'organisation-store-record-sale',
+        actor: user.username,
+        ttlMinutes: 30 * 24 * 60
+      });
+      if (idempotency.replay) {
+        return Response.json(idempotency.response, {
+          status: idempotency.status || (idempotency.response?.ok === false ? 409 : 200),
+          headers: { 'Cache-Control': 'no-store', 'Idempotency-Replayed': 'true' }
+        });
+      }
+      const method = normalizeCommercePaymentMethod(body.PaymentMethod);
+      const result = method === 'Paystack Online'
+        ? await initializeOnlineOrganizationCommerceSale(env, request, section, body, user)
+        : await recordManualOrganizationCommerceSale(env, section, body, user);
+      await completeIdempotentRequest(env, idempotency, result, 200);
+      return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
     }
     if (action === 'updateorder') {
       const orderNo = clean(body.OrderNo);
@@ -86,9 +123,22 @@ export async function onRequestPost(context) {
       await upsertDocument(env, 'storeOrders', order.__id || safeId(orderNo), payload);
       return Response.json({ ok: true, message: 'Order collection status updated.', order: payload });
     }
-    const [{ categories, items }, orders] = await Promise.all([ensureStoreCategories(env), listCollection(env, 'storeOrders')]);
-    return Response.json({ ok: true, categories: categories.filter((row) => categoryApplies(row, storeType)), items: visible(items, user).filter((row) => clean(row.StoreType) === storeType), orders: visible(orders, user).filter((row) => clean(row.StoreType) === storeType) });
+    const [{ categories, items }, orders, sales] = await Promise.all([
+      ensureStoreCategories(env),
+      listCollection(env, 'storeOrders'),
+      section === 'organizationStore'
+        ? listOrganizationCommerceSales(env, section, user)
+        : Promise.resolve([])
+    ]);
+    return Response.json({
+      ok: true,
+      categories: categories.filter((row) => categoryApplies(row, storeType)),
+      items: visible(items, user).filter((row) => clean(row.StoreType) === storeType),
+      orders: visible(orders, user).filter((row) => clean(row.StoreType) === storeType),
+      sales
+    });
   } catch (err) {
+    if (idempotency?.owner) await failIdempotentRequest(context.env, idempotency, err);
     return Response.json({ ok: false, message: err.message || String(err) }, { status: err.status || 500 });
   }
 }

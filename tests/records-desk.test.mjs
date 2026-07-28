@@ -9,6 +9,7 @@ import {
   recordMatches,
   recordsDeskCapabilities,
   recordsDeskLimit,
+  staffRecordMatchesEdition,
   staffDetailProjection,
   studentDetailProjection,
   studentSearchCard
@@ -56,6 +57,21 @@ test('record types are derived from the signed-in edition and allowed sections',
     allowedSections: ['recordsDesk', 'staffUsers']
   });
   assert.equal(delegatedStaffTab.canSearchStaff, false);
+});
+
+test('staff directory records never cross organisation editions', () => {
+  const legacySchoolStaff = { Username: 'school.teacher', Role: 'Department User' };
+  const schoolStaff = { Username: 'school.principal', OrganisationEdition: 'school' };
+  const faithStaff = { Username: 'faith.pastor', OrganisationEdition: 'church' };
+  const otherStaff = { Username: 'other.manager', OrganisationEdition: 'organization' };
+
+  assert.equal(staffRecordMatchesEdition(legacySchoolStaff, { edition: 'school', username: 'admin' }), true);
+  assert.equal(staffRecordMatchesEdition(legacySchoolStaff, { edition: 'faith', username: 'faith.admin' }), false);
+  assert.equal(staffRecordMatchesEdition(schoolStaff, { edition: 'faith', username: 'faith.admin' }), false);
+  assert.equal(staffRecordMatchesEdition(faithStaff, { edition: 'faith', username: 'faith.admin' }), true);
+  assert.equal(staffRecordMatchesEdition(faithStaff, { edition: 'church', username: 'faith.admin' }), true);
+  assert.equal(staffRecordMatchesEdition(otherStaff, { edition: 'faith', username: 'faith.admin' }), false);
+  assert.equal(staffRecordMatchesEdition(legacySchoolStaff, { edition: 'faith', username: 'school.teacher' }), true);
 });
 
 test('student projections whitelist fields and keep credentials out of every response', () => {
@@ -142,6 +158,7 @@ test('records API requires a live staff session, scopes every type, audits recor
   assert.match(apiSource, /requireStaffSession\(env, request\)/);
   assert.match(apiSource, /recordsDeskCapabilities\(user\)/);
   assert.match(apiSource, /visibleSchoolRecord\(row, user, branchId\)/);
+  assert.match(apiSource, /staffRecordMatchesEdition\(row, user\)/);
   assert.match(apiSource, /resolveMembershipBranch\(user, branchId\)/);
   assert.match(apiSource, /query\.length < 3/);
   assert.match(apiSource, /recordsDeskLimit\(body\.limit\)/);

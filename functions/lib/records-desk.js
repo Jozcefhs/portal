@@ -11,6 +11,38 @@ export const RECORD_DESK_TYPES = Object.freeze([
 
 const PASTORAL_ROLES = new Set(['Super Admin', 'Pastor', 'Senior Pastor', 'Head Minister']);
 const EXECUTIVE_ROLES = new Set(['Principal', 'Senior Pastor', 'Head Minister']);
+const FAITH_EDITIONS = new Set(['church', 'faith']);
+
+export function canonicalRecordEdition(value) {
+  const edition = lower(value);
+  if (FAITH_EDITIONS.has(edition) || ['religious', 'religious organisation', 'religious organization'].includes(edition)) return 'faith';
+  if (['organization', 'organisation', 'other'].includes(edition)) return 'organization';
+  return edition === 'school' ? 'school' : '';
+}
+
+export function staffRecordEdition(row = {}) {
+  return canonicalRecordEdition(
+    row.Edition || row.edition
+      || row.OrganisationEdition || row.organisationEdition
+      || row.OrganizationEdition || row.organizationEdition
+  );
+}
+
+export function staffRecordMatchesEdition(row = {}, user = {}) {
+  const requestedEdition = canonicalRecordEdition(
+    user.edition || user.Edition
+      || user.organisationEdition || user.OrganisationEdition
+      || user.organizationEdition || user.OrganizationEdition
+  ) || 'school';
+  const rowEdition = staffRecordEdition(row);
+  if (rowEdition) return rowEdition === requestedEdition;
+  const currentIdentity = lower(user.username || user.Username);
+  const rowIdentity = lower(row.Username || row.username || row.__id);
+  if (currentIdentity && rowIdentity === currentIdentity) return true;
+  // Unlabelled staff records pre-date multi-organisation support and belong to
+  // the legacy school workspace. Non-school workspaces fail closed.
+  return requestedEdition === 'school';
+}
 
 export function recordsDeskCapabilities(user = {}) {
   const allowed = new Set((user.allowedSections || []).map(clean).filter(Boolean));

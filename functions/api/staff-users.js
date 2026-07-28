@@ -1,6 +1,7 @@
 import { batchUpsertDocuments, deleteDocument, getDocument, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { hashStaffPassword, requireStaffSession } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
+import { staffRecordMatchesEdition } from '../lib/records-desk.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -16,6 +17,11 @@ function publicUser(row) {
     Department: clean(row.Department || row.department),
     BranchId: clean(row.BranchId || row.branchId),
     SchoolSectionAccess: clean(row.SchoolSectionAccess || row.schoolSectionAccess) || 'All',
+    OrganisationEdition: clean(
+      row.OrganisationEdition || row.organisationEdition
+        || row.OrganizationEdition || row.organizationEdition
+        || row.Edition || row.edition
+    ),
     ApprovalEnabled: row.ApprovalEnabled === undefined ? false : activeValue(row.ApprovalEnabled),
     ApprovalMaxAmount: Number(row.ApprovalMaxAmount || 0) || 0,
     ApprovalAccounts: Array.isArray(row.ApprovalAccounts) ? row.ApprovalAccounts : clean(row.ApprovalAccounts).split(',').map(clean).filter(Boolean),
@@ -54,9 +60,12 @@ function activeSuperAdmins(rows, excluding = '') {
     clean(row.Role) === 'Super Admin' && (row.Active === undefined || activeValue(row.Active)));
 }
 
-async function listUsers(env) {
+async function listUsers(env, actor) {
   const rows = await listCollection(env, 'staffUsers');
-  return rows.map(publicUser).sort((a, b) => a.Username.localeCompare(b.Username));
+  return rows
+    .filter((row) => staffRecordMatchesEdition(row, actor))
+    .map(publicUser)
+    .sort((a, b) => a.Username.localeCompare(b.Username));
 }
 
 async function listSecurityAudit(env) {
@@ -105,6 +114,7 @@ async function saveUser(env, actor, body) {
     DisplayName: clean(body.DisplayName || body.displayName) || username,
     Role: role,
     Department: department,
+    OrganisationEdition: clean(actor.edition) || 'school',
     BranchId: clean(body.BranchId || body.branchId),
     SchoolSectionAccess: clean(body.SchoolSectionAccess || body.schoolSectionAccess) || 'All',
     ApprovalEnabled: role === 'Super Admin' ? true : activeValue(body.ApprovalEnabled ?? false),
@@ -159,6 +169,7 @@ async function importUsers(env, actor, body) {
         ...(existing || {}), Username: username,
         DisplayName: clean(row.DisplayName || row.displayName) || username,
         Role: role, Department: department,
+        OrganisationEdition: clean(actor.edition) || 'school',
         BranchId: clean(row.BranchId || row.branchId),
         SchoolSectionAccess: clean(row.SchoolSectionAccess || row.schoolSectionAccess) || 'All',
         ApprovalEnabled: role === 'Super Admin' ? true : activeValue(row.ApprovalEnabled ?? false),
@@ -207,7 +218,7 @@ export async function onRequestPost(context) {
     const action = lower(body.action || 'list');
     let result;
     if (action === 'list') {
-      const [users, audit, accounts] = await Promise.all([listUsers(env), listSecurityAudit(env), listCollection(env, 'chartOfAccounts')]);
+      const [users, audit, accounts] = await Promise.all([listUsers(env, actor), listSecurityAudit(env), listCollection(env, 'chartOfAccounts')]);
       result = { ok: true, users, audit, approvalAccounts: accounts.filter((row) => activeValue(row.Active === undefined ? true : row.Active)).map((row) => ({ Code: clean(row.Code || row.__id), Name: clean(row.Name) })).filter((row) => row.Code).sort((a, b) => a.Code.localeCompare(b.Code)) };
     }
     else if (action === 'save') result = await saveUser(env, actor, body);

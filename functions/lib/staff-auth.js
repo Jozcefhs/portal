@@ -211,11 +211,12 @@ export function allowedSectionsFor(user = {}, featureFlags = null) {
     return filterSectionsForFeatures([...new Set(inherited)], featureFlags);
   }
   const roleSections = {
-    'Super Admin': ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'staffUsers'],
-    Principal: ['recordsDesk', 'executiveOffice'],
-    'Admissions Officer': ['recordsDesk', 'admissions', 'formPurchases', 'students', 'financeRequests', 'payroll'],
+    'Super Admin': ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'studentConduct', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'staffUsers'],
+    Principal: ['recordsDesk', 'executiveOffice', 'studentConduct'],
+    'Admissions Officer': ['recordsDesk', 'admissions', 'formPurchases', 'students', 'studentConduct', 'financeRequests', 'payroll'],
     'Accounts Officer': ['recordsDesk', 'students', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
-    Management: ['recordsDesk', 'admissions', 'formPurchases', 'students', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
+    Management: ['recordsDesk', 'admissions', 'formPurchases', 'students', 'studentConduct', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
+    'Student Welfare Officer': ['recordsDesk', 'students', 'studentConduct'],
     'Tuck Shop User': ['recordsDesk', 'tuckShop', 'financeRequests', 'payroll'],
     'Clinic User': ['recordsDesk', 'clinic', 'financeRequests', 'payroll'],
     'Kitchen User': ['kitchen', 'financeRequests', 'payroll'],

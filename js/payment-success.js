@@ -57,6 +57,19 @@ async function verifyPayment() {
   const params = new URLSearchParams(window.location.search);
   const reference = params.get('reference') || params.get('trxref');
   const paymentType = params.get('type') || '';
+  const isCommerce = params.get('commerce') === '1';
+  const anotherLink = document.getElementById('anotherPaymentLink');
+  const returnLink = document.getElementById('returnPortalLink');
+  if (isCommerce) {
+    if (anotherLink) {
+      anotherLink.href = 'admin?workspace=faith';
+      anotherLink.textContent = 'Record another sale';
+    }
+    if (returnLink) {
+      returnLink.href = 'admin?workspace=faith';
+      returnLink.textContent = 'Return to organisation operations';
+    }
+  }
   if (!reference) {
     setStatus('Payment reference is missing. Please contact the Accounts Office.', 'bad');
     return;
@@ -81,8 +94,13 @@ async function verifyPayment() {
     idempotency.release();
     setLead(isFormPurchase
       ? 'Your admission form purchase has been confirmed.'
-      : 'Your payment has been confirmed.');
-    setStatus(isFormPurchase ? 'Admission form purchased successfully.' : 'Payment verified successfully.', 'ok');
+      : (isCommerce ? 'The customer payment and sale have been confirmed.' : 'Your payment has been confirmed.'));
+    setStatus(
+      isFormPurchase
+        ? 'Admission form purchased successfully.'
+        : (isCommerce ? 'Sale payment verified and posted successfully.' : 'Payment verified successfully.'),
+      'ok'
+    );
     const details = document.createElement('div');
     details.className = 'receipt-box';
     const rows = isFormPurchase
@@ -95,11 +113,17 @@ async function verifyPayment() {
           ['Reference', data.reference || reference],
           ['Code Expiry Date', data.expiryDate || '']
         ]
-      : [
+      : (isCommerce ? [
+          ['Sale', data.feeName || data.commerceSale?.Department || 'Organisation sale'],
+          ['Customer', data.commerceSale?.CustomerName || 'Walk-in customer'],
+          ['Items', (data.commerceSale?.Items || []).map((item) => `${item.ItemName} × ${item.Quantity}`).join(', ')],
+          ['Amount', formatMoney(data.amount, data.currency)],
+          ['Reference', data.reference || reference]
+        ] : [
           ['Fee', data.feeName || 'Online Payment'],
           ['Amount', formatMoney(data.amount, data.currency)],
           ['Reference', data.reference || reference]
-        ];
+        ]);
 
     rows.forEach(([label, value]) => {
       if (!value) return;
@@ -113,7 +137,9 @@ async function verifyPayment() {
     note.className = 'muted';
     note.textContent = isFormPurchase
       ? 'Use this email address and verification code to register. A copy has also been sent to your email.'
-      : 'Your payment has been recorded with the Accounts Office.';
+      : (isCommerce
+          ? 'The payment, stock movement, and Finance & Accounting entry have been recorded.'
+          : 'Your payment has been recorded with the Accounts Office.');
     details.appendChild(note);
     if (isFormPurchase) {
       const link = document.createElement('p');

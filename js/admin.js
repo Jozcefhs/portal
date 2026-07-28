@@ -86,6 +86,27 @@ let executiveDirectoryQuery = '';
 let executiveDirectoryResults = [];
 let executiveAvailableDirectoryTypes = [];
 let executiveSelectedRecipient = null;
+let studentConductData = null;
+const organizationCommerceCarts = {
+  organizationStore: new Map(),
+  restaurant: new Map()
+};
+const organizationCommerceSearch = {
+  organizationStore: '',
+  restaurant: ''
+};
+const organizationCommerceLastSale = {
+  organizationStore: null,
+  restaurant: null
+};
+const organizationCommerceCustomerDraft = {
+  organizationStore: { CustomerName: '', CustomerEmail: '', CustomerPhone: '', PaymentMethod: 'Cash', PaymentReference: '' },
+  restaurant: { CustomerName: '', CustomerEmail: '', CustomerPhone: '', PaymentMethod: 'Cash', PaymentReference: '' }
+};
+const organizationCommerceSaleRequestIds = {
+  organizationStore: '',
+  restaurant: ''
+};
 let recordsDeskState = {
   query: '',
   type: 'all',
@@ -107,6 +128,7 @@ const tabConfig = [
   ['admissions', 'Admissions'],
   ['formPurchases', 'Form Purchases'],
   ['students', 'Students'],
+  ['studentConduct', 'Student Conduct & Discipline'],
   ['members', 'Departments & Members'],
   ['services', 'Services & Attendance'],
   ['funds', 'Funds & Mappings'],
@@ -133,6 +155,7 @@ const tabIcons = {
   admissions: '\u{1F4DD}',
   formPurchases: '\u{1F9FE}',
   students: '\u{1F465}',
+  studentConduct: '\u2696',
   members: '\u{1F465}',
   services: '\u{1F4C5}',
   funds: '\u{1F4B0}',
@@ -1018,7 +1041,13 @@ function renderModuleSummary(active, liveData = null) {
     ];
   } else if (active === 'kitchen' || active === 'restaurant') {
     const data = liveData || departments[active] || {};
-    cards = [
+    const commerce = active === 'restaurant' ? commerceSalesSummary(data.sales || []) : null;
+    cards = active === 'restaurant' ? [
+      { icon, label: 'Today Sales', value: money(commerce.todayAmount), note: `${commerce.todayTransactions} transaction(s)` },
+      { icon: '\u{1F9FE}', label: 'Paid Sales', value: commerce.paid },
+      { icon: '\u231B', label: 'Pending Online', value: commerce.pending },
+      { icon: '\u26A0', label: 'Low Stock', value: (data.lowStock || []).length }
+    ] : [
       { icon, label: 'Inventory Items', value: (data.inventory || []).length },
       { icon: '\u{1F4E6}', label: 'Units in Stock', value: sumRows(data.inventory, ['Quantity']) },
       { icon: '\u26A0', label: 'Low Stock', value: (data.lowStock || []).length }
@@ -1035,7 +1064,13 @@ function renderModuleSummary(active, liveData = null) {
   } else if ((active === 'bookstore' || active === 'uniformStore' || active === 'organizationStore') && liveData) {
     const items = liveData.items || [];
     const orders = liveData.orders || [];
-    cards = [
+    const commerce = active === 'organizationStore' ? commerceSalesSummary(liveData.sales || []) : null;
+    cards = active === 'organizationStore' ? [
+      { icon, label: 'Today Sales', value: money(commerce.todayAmount), note: `${commerce.todayTransactions} transaction(s)` },
+      { icon: '\u{1F9FE}', label: 'Paid Sales', value: commerce.paid },
+      { icon: '\u231B', label: 'Pending Online', value: commerce.pending },
+      { icon: '\u{1F4E6}', label: 'Units in Stock', value: sumRows(items, ['Quantity']) }
+    ] : [
       { icon, label: 'Store Items', value: items.length },
       { icon: '\u2713', label: 'Available Items', value: items.filter((row) => clean(row.Active || 'YES') !== 'NO').length },
       { icon: '\u{1F4E6}', label: 'Units in Stock', value: sumRows(items, ['Quantity']) },
@@ -1396,6 +1431,292 @@ function inventoryColumns() {
   ];
 }
 
+function commerceNumber(value) {
+  const amount = Number(String(value ?? 0).replace(/[^\d.-]/g, ''));
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function commerceInventory(section, data = {}) {
+  return section === 'organizationStore' ? (data.items || []) : (data.inventory || []);
+}
+
+function commerceItemReference(section, item = {}) {
+  return clean(section === 'organizationStore'
+    ? (item.ItemCode || item.__id)
+    : (item.ItemName || item.__id));
+}
+
+function commerceItemPrice(item = {}) {
+  return commerceNumber(item.Price ?? item.SalePrice);
+}
+
+function commerceItemStock(item = {}) {
+  return Math.max(0, Math.floor(commerceNumber(item.Quantity)));
+}
+
+function commerceCart(section) {
+  return organizationCommerceCarts[section] || new Map();
+}
+
+function commerceQuantityOptions(maximum, selected = 1) {
+  const max = Math.max(1, Math.min(100, Math.floor(maximum || 1)));
+  const selectedQuantity = Math.max(1, Math.min(max, Math.floor(selected || 1)));
+  return Array.from({ length: max }, (_, index) => index + 1)
+    .map((quantity) => `<option value="${quantity}" ${quantity === selectedQuantity ? 'selected' : ''}>${quantity}</option>`)
+    .join('');
+}
+
+function syncCommerceCart(section, inventory = []) {
+  const cart = commerceCart(section);
+  const availableByReference = new Map(inventory.map((item) => [commerceItemReference(section, item), item]));
+  [...cart.entries()].forEach(([reference, entry]) => {
+    const current = availableByReference.get(reference);
+    if (!current || commerceItemStock(current) < 1 || commerceItemPrice(current) <= 0 || clean(current.Active || 'YES').toUpperCase() === 'NO') {
+      cart.delete(reference);
+      return;
+    }
+    entry.item = current;
+    entry.quantity = Math.min(Math.max(1, entry.quantity), commerceItemStock(current));
+  });
+}
+
+function commerceSalesSummary(sales = []) {
+  const today = new Date().toISOString().slice(0, 10);
+  const paid = sales.filter((sale) => clean(sale.PaymentStatus || sale.Status).toLowerCase() === 'paid');
+  const todayPaid = paid.filter((sale) => clean(sale.PaidAt || sale.SaleDate || sale.CreatedAt).slice(0, 10) === today);
+  return {
+    todayTransactions: todayPaid.length,
+    todayAmount: todayPaid.reduce((sum, sale) => sum + commerceNumber(sale.Amount || sale.GrossAmount), 0),
+    paid: paid.length,
+    pending: sales.filter((sale) => /pending/i.test(clean(sale.PaymentStatus || sale.Status))).length
+  };
+}
+
+function commerceSaleStatus(sale = {}) {
+  const status = clean(sale.PaymentStatus || sale.Status || 'Pending');
+  return `<span class="commerce-sale-status ${status.toLowerCase() === 'paid' ? 'is-paid' : 'is-pending'}">${escapeHtml(status)}</span>`;
+}
+
+function commerceReceiptPreview(sale = {}) {
+  const items = Array.isArray(sale.Items) ? sale.Items : [];
+  return `
+    <aside class="commerce-receipt-preview" aria-live="polite">
+      <div><small>Payment recorded</small><strong>${escapeHtml(sale.SaleNo || 'Sale')}</strong><span>${escapeHtml(sale.CustomerName || 'Walk-in customer')} &middot; ${money(sale.Amount || sale.GrossAmount)}</span></div>
+      <div class="inline-action-group">
+        <button type="button" class="compact-icon-action" data-commerce-print="${escapeHtml(sale.SaleNo || '')}" title="View and print receipt" aria-label="View and print receipt">&#128424;</button>
+      </div>
+      ${items.length ? `<small>${escapeHtml(items.map((item) => `${item.ItemName} x ${item.Quantity}`).join(', '))}</small>` : ''}
+    </aside>`;
+}
+
+function renderOrganizationCommerceWorkspace(section, data = {}) {
+  const inventory = commerceInventory(section, data);
+  syncCommerceCart(section, inventory);
+  const cart = commerceCart(section);
+  const sales = data.sales || [];
+  const summary = commerceSalesSummary(sales);
+  const label = section === 'restaurant' ? 'Restaurant' : 'Organisation Store';
+  const itemLabel = section === 'restaurant' ? 'menu item' : 'product';
+  const search = organizationCommerceSearch[section] || '';
+  const draft = organizationCommerceCustomerDraft[section];
+  const sale = organizationCommerceLastSale[section];
+  const cartEntries = [...cart.entries()];
+  const cartTotal = cartEntries.reduce((total, [, entry]) => total + commerceItemPrice(entry.item) * entry.quantity, 0);
+  const available = inventory.filter((item) => clean(item.Active || 'YES').toUpperCase() !== 'NO'
+    && commerceItemStock(item) > 0 && commerceItemPrice(item) > 0);
+  const recentSales = sales.slice(0, 30);
+  return `
+    <section class="config-card organization-commerce-workspace" id="organizationCommercePOS" data-commerce-section="${section}">
+      <header class="config-card-heading commerce-heading">
+        <div><small>Sales and payments</small><h3>${label} Point of Sale</h3><p>Build a cart, receive payment and issue a branded receipt.</p></div>
+        <span class="workspace-feature-icon" aria-hidden="true">&#128722;</span>
+      </header>
+      <div class="commerce-summary-grid">
+        <div><small>Today's sales</small><strong>${money(summary.todayAmount)}</strong><span>${summary.todayTransactions} transaction(s)</span></div>
+        <div><small>Paid sales</small><strong>${summary.paid}</strong><span>Recorded receipts</span></div>
+        <div><small>Pending online</small><strong>${summary.pending}</strong><span>Awaiting confirmation</span></div>
+        <div><small>Available items</small><strong>${available.length}</strong><span>Priced and in stock</span></div>
+      </div>
+      ${sale ? commerceReceiptPreview(sale) : ''}
+      <div class="commerce-pos-layout">
+        <section class="commerce-catalog" aria-label="${label} catalogue">
+          <label class="commerce-search-label"><span>Search ${itemLabel}s</span><input id="commerceCatalogSearch" type="search" value="${escapeHtml(search)}" placeholder="Item or category"></label>
+          <div class="commerce-product-list">
+            ${available.length ? available.map((item, index) => {
+              const reference = commerceItemReference(section, item);
+              const inCart = cart.has(reference);
+              const searchText = [item.ItemName, item.ItemCode, item.Category, item.Size].map(clean).join(' ').toLowerCase();
+              return `<article class="commerce-product" data-commerce-search-text="${escapeHtml(searchText)}">
+                <div><strong>${escapeHtml(item.ItemName || reference)}</strong><span>${escapeHtml([item.Category, item.Size || item.Unit].filter(Boolean).join(' · '))}</span><small>${money(commerceItemPrice(item))} &middot; ${commerceItemStock(item)} available</small></div>
+                <div class="commerce-product-action">
+                  <select data-commerce-product-quantity="${index}" aria-label="Quantity for ${escapeHtml(item.ItemName || reference)}">${commerceQuantityOptions(commerceItemStock(item), 1)}</select>
+                  <button type="button" class="compact-icon-action commerce-add-button ${inCart ? 'is-added' : ''}" data-commerce-add="${escapeHtml(reference)}" data-commerce-quantity-index="${index}" aria-label="${inCart ? 'Added to cart' : `Add ${escapeHtml(item.ItemName || reference)} to cart`}" title="${inCart ? 'Added to cart' : 'Add to cart'}">${inCart ? '&#10003;' : '&#128722;'}</button>
+                </div>
+              </article>`;
+            }).join('') : `<p class="muted commerce-empty">No priced ${itemLabel}s are currently available. Add stock and a selling price first.</p>`}
+          </div>
+        </section>
+        <section class="commerce-cart" aria-label="Shopping cart">
+          <div class="commerce-cart-title"><div><small>Current sale</small><h4>Cart</h4></div><strong>${money(cartTotal)}</strong></div>
+          <div class="commerce-cart-lines">
+            ${cartEntries.length ? cartEntries.map(([reference, entry]) => `<article class="commerce-cart-line">
+              <div><strong>${escapeHtml(entry.item.ItemName || reference)}</strong><span>${money(commerceItemPrice(entry.item))} each</span></div>
+              <select data-commerce-cart-quantity="${escapeHtml(reference)}" aria-label="Cart quantity for ${escapeHtml(entry.item.ItemName || reference)}">${commerceQuantityOptions(commerceItemStock(entry.item), entry.quantity)}</select>
+              <strong>${money(commerceItemPrice(entry.item) * entry.quantity)}</strong>
+              <button type="button" class="compact-icon-action compact-delete-action" data-commerce-remove="${escapeHtml(reference)}" aria-label="Remove ${escapeHtml(entry.item.ItemName || reference)}" title="Remove item">&#128465;</button>
+            </article>`).join('') : '<p class="muted commerce-empty">Choose an item to begin this sale.</p>'}
+          </div>
+          <form id="commerceCheckoutForm" class="commerce-checkout-form">
+            <div class="commerce-customer-grid">
+              <label>Customer name <input name="CustomerName" value="${escapeHtml(draft.CustomerName)}" placeholder="Walk-in customer"></label>
+              <label>Phone <input name="CustomerPhone" value="${escapeHtml(draft.CustomerPhone)}" inputmode="tel"></label>
+              <label>Email <input name="CustomerEmail" type="email" value="${escapeHtml(draft.CustomerEmail)}" placeholder="Required for Paystack"></label>
+              <label>Payment method <select name="PaymentMethod" id="commercePaymentMethod">
+                ${['Cash', 'Bank Transfer', 'POS / Card', 'Paystack Online'].map((method) => `<option ${draft.PaymentMethod === method ? 'selected' : ''}>${method}</option>`).join('')}
+              </select></label>
+              <label id="commercePaymentReferenceField" ${['Bank Transfer', 'POS / Card'].includes(draft.PaymentMethod) ? '' : 'hidden'}>Payment reference <input name="PaymentReference" value="${escapeHtml(draft.PaymentReference)}" placeholder="Bank or POS reference"></label>
+            </div>
+            <div class="commerce-checkout-total"><span>Grand total</span><strong>${money(cartTotal)}</strong></div>
+            <div class="config-actionbar"><p class="status" data-commerce-status></p><button type="submit" id="commerceCheckoutButton" ${cartEntries.length ? '' : 'disabled'}>${draft.PaymentMethod === 'Paystack Online' ? 'Pay with Paystack' : 'Complete sale'}</button></div>
+          </form>
+        </section>
+      </div>
+      <details class="commerce-sales-history" ${recentSales.length ? '' : 'open'}>
+        <summary>Recent sales <span>${recentSales.length}</span></summary>
+        <div class="table-wrap"><table><thead><tr><th>Date</th><th>Receipt</th><th>Customer</th><th>Payment</th><th>Amount</th><th>Print</th></tr></thead><tbody>
+          ${recentSales.length ? recentSales.map((row) => `<tr><td>${escapeHtml(clean(row.PaidAt || row.SaleDate || row.CreatedAt).replace('T', ' ').slice(0, 19))}</td><td>${escapeHtml(row.SaleNo)}</td><td>${escapeHtml(row.CustomerName || 'Walk-in customer')}</td><td>${escapeHtml(row.PaymentMethod)}<br>${commerceSaleStatus(row)}</td><td>${money(row.Amount || row.GrossAmount)}</td><td><button type="button" class="compact-icon-action" data-commerce-print="${escapeHtml(row.SaleNo)}" aria-label="Print receipt ${escapeHtml(row.SaleNo)}" title="Print receipt" ${clean(row.PaymentStatus || row.Status).toLowerCase() === 'paid' ? '' : 'disabled'}>&#128424;</button></td></tr>`).join('') : '<tr><td colspan="6">No sales recorded yet.</td></tr>'}
+        </tbody></table></div>
+      </details>
+    </section>`;
+}
+
+function updateCommerceWorkspace(section, data) {
+  const current = document.getElementById('organizationCommercePOS');
+  if (!current || activeSection !== section) return;
+  current.outerHTML = renderOrganizationCommerceWorkspace(section, data);
+  bindOrganizationCommerceWorkspace(section, data);
+}
+
+function organizationCommerceReceiptSale(section, data, saleNo) {
+  const lastSale = organizationCommerceLastSale[section];
+  if (lastSale && clean(lastSale.SaleNo) === clean(saleNo)) return lastSale;
+  return (data.sales || []).find((row) => clean(row.SaleNo) === clean(saleNo));
+}
+
+function printOrganizationCommerceReceipt(sale = {}) {
+  if (!sale || clean(sale.PaymentStatus || sale.Status).toLowerCase() !== 'paid') return;
+  const receiptWindow = window.open('', '_blank', 'width=820,height=900');
+  if (!receiptWindow) {
+    setStatus(dashboardStatus, 'Allow pop-ups to view and print this receipt.', 'bad');
+    return;
+  }
+  receiptWindow.opener = null;
+  const organisation = clean(document.querySelector('[data-school-name]')?.textContent || staffBrand?.textContent) || 'Dynamax';
+  const logo = clean(document.querySelector('.nav-logo')?.getAttribute('src') || 'images/Logo.png');
+  const items = Array.isArray(sale.Items) ? sale.Items : [];
+  receiptWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(sale.SaleNo || 'Receipt')}</title><style>
+    @page{size:A5;margin:12mm}*{box-sizing:border-box}body{margin:0;background:#eef4f8;color:#18324d;font:13px/1.45 Arial,sans-serif}.receipt{position:relative;max-width:620px;min-height:760px;margin:18px auto;padding:28px;border-top:7px solid #0c8b78;background:#fff;box-shadow:0 14px 35px #173b5820;overflow:hidden}.watermark{position:absolute;inset:25% 22%;width:56%;height:50%;object-fit:contain;opacity:.045}.brand,.meta,.total,.footer{position:relative}.brand{display:flex;align-items:center;gap:14px;padding-bottom:18px;border-bottom:2px solid #164d7a}.brand img{width:58px;height:58px;object-fit:contain}.brand h1{margin:0;color:#123f6d;font-size:21px}.brand p{margin:3px 0;color:#60758c}.meta{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:18px 0;padding:13px;background:#eaf4ff}.meta strong,.meta span{display:block}.meta span{font-size:11px;color:#60758c}table{position:relative;width:100%;border-collapse:collapse;margin:18px 0}th,td{padding:9px;border-bottom:1px solid #d8e4ee;text-align:left}th{background:#123f6d;color:white;font-size:10px;text-transform:uppercase}.number{text-align:right}.total{display:flex;justify-content:flex-end;gap:20px;padding:13px;background:#e5f7f1;color:#08725c;font-size:18px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d8e4ee;color:#60758c;text-align:center}.print{position:fixed;top:10px;right:10px;padding:9px 13px;border:0;border-radius:7px;background:#1769e0;color:#fff;font-weight:bold;cursor:pointer}@media print{body{background:#fff}.receipt{min-height:auto;margin:0;padding:0;box-shadow:none}.print{display:none}}</style></head><body><button class="print" onclick="window.print()">Print / Save as PDF</button><main class="receipt">${logo ? `<img class="watermark" src="${escapeHtml(logo)}" alt="">` : ''}<header class="brand">${logo ? `<img src="${escapeHtml(logo)}" alt="">` : ''}<div><h1>${escapeHtml(organisation)}</h1><p>${escapeHtml(sale.Department || 'Sales')} payment receipt</p></div></header><section class="meta"><div><span>Receipt number</span><strong>${escapeHtml(sale.SaleNo)}</strong></div><div><span>Date</span><strong>${escapeHtml(clean(sale.PaidAt || sale.SaleDate).replace('T', ' ').slice(0, 19))}</strong></div><div><span>Customer</span><strong>${escapeHtml(sale.CustomerName || 'Walk-in customer')}</strong></div><div><span>Payment</span><strong>${escapeHtml(sale.PaymentMethod || '')}</strong></div>${sale.PaymentReference ? `<div><span>Reference</span><strong>${escapeHtml(sale.PaymentReference)}</strong></div>` : ''}</section><table><thead><tr><th>Item</th><th class="number">Qty</th><th class="number">Price</th><th class="number">Total</th></tr></thead><tbody>${items.map((item) => `<tr><td>${escapeHtml(item.ItemName || item.ItemCode)}</td><td class="number">${escapeHtml(item.Quantity)}</td><td class="number">${money(item.UnitPrice)}</td><td class="number">${money(item.Amount)}</td></tr>`).join('')}</tbody></table><div class="total"><span>Grand total</span><strong>${money(sale.Amount || sale.GrossAmount)}</strong></div><footer class="footer">Payment received with thanks &middot; Generated by Dynamax</footer></main></body></html>`);
+  receiptWindow.document.close();
+}
+
+function bindOrganizationCommerceWorkspace(section, data = {}) {
+  const workspace = document.getElementById('organizationCommercePOS');
+  if (!workspace) return;
+  const search = workspace.querySelector('#commerceCatalogSearch');
+  const filterProducts = () => {
+    const query = clean(search?.value).toLowerCase();
+    organizationCommerceSearch[section] = search?.value || '';
+    workspace.querySelectorAll('[data-commerce-search-text]').forEach((row) => {
+      row.hidden = Boolean(query) && !clean(row.dataset.commerceSearchText).includes(query);
+    });
+  };
+  search?.addEventListener('input', filterProducts);
+  filterProducts();
+  workspace.querySelectorAll('[data-commerce-add]').forEach((button) => button.addEventListener('click', () => {
+    const reference = button.dataset.commerceAdd;
+    const item = commerceInventory(section, data).find((row) => commerceItemReference(section, row) === reference);
+    if (!item) return;
+    const select = workspace.querySelector(`[data-commerce-product-quantity="${button.dataset.commerceQuantityIndex}"]`);
+    const quantity = Math.max(1, Number(select?.value || 1));
+    commerceCart(section).set(reference, { item, quantity });
+    updateCommerceWorkspace(section, data);
+  }));
+  workspace.querySelectorAll('[data-commerce-cart-quantity]').forEach((select) => select.addEventListener('change', () => {
+    const entry = commerceCart(section).get(select.dataset.commerceCartQuantity);
+    if (entry) entry.quantity = Math.max(1, Number(select.value || 1));
+    updateCommerceWorkspace(section, data);
+  }));
+  workspace.querySelectorAll('[data-commerce-remove]').forEach((button) => button.addEventListener('click', () => {
+    commerceCart(section).delete(button.dataset.commerceRemove);
+    updateCommerceWorkspace(section, data);
+  }));
+  const form = workspace.querySelector('#commerceCheckoutForm');
+  const method = form?.elements?.PaymentMethod;
+  const referenceField = workspace.querySelector('#commercePaymentReferenceField');
+  const checkoutButton = workspace.querySelector('#commerceCheckoutButton');
+  const syncPaymentFields = () => {
+    const value = clean(method?.value || 'Cash');
+    const referenceRequired = ['Bank Transfer', 'POS / Card'].includes(value);
+    referenceField.hidden = !referenceRequired;
+    if (referenceField.querySelector('input')) referenceField.querySelector('input').required = referenceRequired;
+    if (form?.elements?.CustomerEmail) form.elements.CustomerEmail.required = value === 'Paystack Online';
+    if (checkoutButton) checkoutButton.textContent = value === 'Paystack Online' ? 'Pay with Paystack' : 'Complete sale';
+  };
+  method?.addEventListener('change', syncPaymentFields);
+  syncPaymentFields();
+  form?.addEventListener('input', () => {
+    ['CustomerName', 'CustomerEmail', 'CustomerPhone', 'PaymentMethod', 'PaymentReference'].forEach((key) => {
+      if (form.elements[key]) organizationCommerceCustomerDraft[section][key] = form.elements[key].value;
+    });
+  });
+  form?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const status = form.querySelector('[data-commerce-status]');
+    const entries = [...commerceCart(section).entries()];
+    if (!entries.length) {
+      setStatus(status, 'Choose at least one item for this sale.', 'bad');
+      return;
+    }
+    const payload = Object.fromEntries(new FormData(form).entries());
+    payload.action = 'recordSale';
+    payload.section = section;
+    payload.Items = entries.map(([Reference, entry]) => ({ Reference, Quantity: entry.quantity }));
+    organizationCommerceSaleRequestIds[section] ||= newIdempotencyKey();
+    payload.SaleRequestId = organizationCommerceSaleRequestIds[section];
+    const endpoint = section === 'organizationStore' ? '/api/staff-stores' : '/api/staff-departments';
+    setButtonLoading(checkoutButton, true, payload.PaymentMethod === 'Paystack Online' ? 'Opening Paystack...' : 'Recording sale...', checkoutButton.textContent);
+    try {
+      const response = await staffFetch(endpoint, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': payload.SaleRequestId },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.ok) throw receivedResponseError(result.message || 'Could not record this sale.');
+      const authorizationUrl = clean(result.AuthorizationUrl || result.authorizationUrl || result.sale?.AuthorizationUrl);
+      organizationCommerceLastSale[section] = result.sale || null;
+      setStatus(status, result.message || 'Sale recorded.', 'ok');
+      if (authorizationUrl) {
+        window.location.assign(authorizationUrl);
+        return;
+      }
+      commerceCart(section).clear();
+      organizationCommerceSaleRequestIds[section] = '';
+      organizationCommerceCustomerDraft[section] = { CustomerName: '', CustomerEmail: '', CustomerPhone: '', PaymentMethod: 'Cash', PaymentReference: '' };
+      if (section === 'organizationStore') await loadStaffStore(section);
+      else await loadDepartmentOperations(section);
+    } catch (error) {
+      setStatus(status, error.message || String(error), 'bad');
+    } finally {
+      setButtonLoading(checkoutButton, false, '', organizationCommerceCustomerDraft[section].PaymentMethod === 'Paystack Online' ? 'Pay with Paystack' : 'Complete sale');
+    }
+  });
+  workspace.querySelectorAll('[data-commerce-print]').forEach((button) => button.addEventListener('click', () => {
+    printOrganizationCommerceReceipt(organizationCommerceReceiptSale(section, data, button.dataset.commercePrint));
+  }));
+}
+
 function renderStaffStore(section, store) {
   const organisationStore = section === 'organizationStore';
   const label = organisationStore ? 'Organisation Store' : (section === 'bookstore' ? 'Bookstore' : 'Uniform Store');
@@ -1405,6 +1726,7 @@ function renderStaffStore(section, store) {
   renderModuleSummary(section, store);
   panelEl.innerHTML = `
     <div class="workflow-intro"><div><p class="eyebrow">${organisationStore ? 'Retail operations' : 'School store'}</p><h2>${label}</h2><p class="muted">List items and prices, monitor paid orders, and record collection.</p></div></div>
+    ${organisationStore ? renderOrganizationCommerceWorkspace(section, store) : ''}
     <section class="config-card">
       <header class="config-card-heading"><div><small>Inventory setup</small><h3>Add or update an item</h3><p>Define how this product appears to ${storeAudience}.</p></div></header>
     <form id="staffStoreItemForm" class="workflow-form workflow-form-grid config-form">
@@ -1439,6 +1761,7 @@ function renderStaffStore(section, store) {
       <p>${money(order.Amount)} &middot; ${escapeHtml(order.PaidAt || order.CreatedAt || '')}</p>
       <button type="button" class="store-order-status ${collected ? 'is-collected' : ''}" data-store-order="${escapeHtml(order.OrderNo)}" data-store-status="${escapeHtml(nextStatus)}" aria-label="${escapeHtml(statusLabel)} for ${escapeHtml(order.DisplayName || order.AccountRef)}" ${collected ? 'disabled' : ''}>${escapeHtml(statusLabel)}</button></article>`;
     }).join('') : '<p class="muted">No paid orders yet.</p>'}</div>`;
+  if (organisationStore) bindOrganizationCommerceWorkspace(section, store);
   document.getElementById('staffStoreItemForm')?.addEventListener('submit', async (event) => {
     event.preventDefault(); const form = event.currentTarget; const status = form.querySelector('[data-store-status]');
     const payload = Object.fromEntries(new FormData(form).entries()); payload.Active = form.elements.Active.checked;
@@ -1508,6 +1831,7 @@ async function submitDepartmentAction(section, action, form) {
   const status = form.querySelector('[data-department-status]');
   const button = form.querySelector('button[type="submit"]');
   const payload = Object.fromEntries(new FormData(form).entries());
+  if (form.elements.Active?.type === 'checkbox') payload.Active = form.elements.Active.checked ? 'YES' : 'NO';
   setButtonLoading(button, true, 'Saving...', button.textContent);
   try {
     const response = await staffFetch('/api/staff-departments', {
@@ -1643,6 +1967,7 @@ function renderDepartmentOperations(section, data) {
   });
   panelEl.innerHTML = `
     <div class="workflow-intro"><div><p class="eyebrow">Department operations</p><h2>${label}</h2><p class="muted">${descriptions[section]}</p></div><button type="button" class="workflow-icon-action" id="refreshDepartmentOperations" aria-label="Refresh ${label}">Refresh</button></div>
+    ${section === 'restaurant' ? renderOrganizationCommerceWorkspace(section, data) : ''}
     ${section === 'tuckShop' ? `<nav class="department-workspace-links" aria-label="Tuck shop workspaces">
       <button type="button" class="active" data-department-jump="tuckShopPOS"><span aria-hidden="true">&#128722;</span> Student Purchase</button>
       <button type="button" data-department-jump="departmentInventoryWorkspace"><span aria-hidden="true">&#128230;</span> Inventory</button>
@@ -1713,7 +2038,8 @@ function renderDepartmentOperations(section, data) {
         <input type="hidden" name="OriginalItemName">
         <label>Item name<input name="ItemName" required></label><label>Category<input name="Category" value="${section === 'clinic' ? 'Medical Supply' : section === 'kitchen' ? 'Foodstuff' : section === 'restaurant' ? 'Food & Beverage' : 'General Item'}"></label>
         <label>Unit<input name="Unit" value="${section === 'kitchen' ? 'kg' : 'pcs'}" required></label><label>Opening/current quantity<input name="Quantity" type="number" min="0" step="0.01" value="0" required></label>
-        <label>Reorder level<input name="ReorderLevel" type="number" min="0" step="0.01" value="0"></label><label>Notes<input name="Notes"></label>
+        <label>Reorder level<input name="ReorderLevel" type="number" min="0" step="0.01" value="0"></label>${section === 'restaurant' ? '<label>Selling price<input name="SalePrice" type="number" min="0" step="0.01" value="0" required></label>' : ''}<label>Notes<input name="Notes"></label>
+        ${section === 'restaurant' ? '<label class="check-row commerce-inventory-active"><input name="Active" type="checkbox" checked> Available for sale</label>' : ''}
         <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" data-normal-text="Save item">Save item</button></div>
       </form>
     </section>
@@ -1725,7 +2051,10 @@ function renderDepartmentOperations(section, data) {
         <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" data-normal-text="Record movement">Record movement</button></div>
       </form>
     </section>
-    ${table(`${label} Inventory`, inventory, [...inventoryColumns(), { label: 'Edit', render: renderInventoryActions }])}
+    ${table(`${label} Inventory`, inventory, [...inventoryColumns(), ...(section === 'restaurant' ? [
+      { label: 'Sale Price', value: (row) => money(pick(row, ['SalePrice', 'Price'])) },
+      { label: 'For Sale', value: (row) => clean(row.Active || 'YES').toUpperCase() === 'NO' ? 'No' : 'Yes' }
+    ] : []), { label: 'Edit', render: renderInventoryActions }])}
     ${table('Low Stock', data.lowStock || [], inventoryColumns())}
     ${section === 'clinic' ? table('Clinic Records', records, [
       { label: 'Date', value: (row) => pick(row, ['Date']) }, { label: 'Student', value: (row) => pick(row, ['StudentName']) },
@@ -1742,6 +2071,7 @@ function renderDepartmentOperations(section, data) {
       { label: 'Type', value: (row) => pick(row, ['MovementType']) }, { label: 'Quantity', value: (row) => pick(row, ['Quantity']) },
       { label: 'Reason', value: (row) => pick(row, ['Reason']) }, { label: 'Recorded by', value: (row) => pick(row, ['RecordedBy']) }
     ])}`;
+  if (section === 'restaurant') bindOrganizationCommerceWorkspace(section, data);
   const recordsHandoff = takeRecordsDeskHandoff(section);
   const selectedAccountRef = recordsDeskHandoffReference(recordsHandoff);
   if (selectedAccountRef && section === 'clinic') {
@@ -1812,7 +2142,8 @@ function renderDepartmentOperations(section, data) {
     const row = inventory.find((item) => clean(item.ItemName) === button.dataset.editInventory);
     const form = document.getElementById('departmentInventoryForm');
     if (!row || !form) return;
-    ['ItemName', 'Category', 'Unit', 'Quantity', 'ReorderLevel', 'Notes'].forEach((key) => { if (form.elements[key]) form.elements[key].value = row[key] ?? ''; });
+    ['ItemName', 'Category', 'Unit', 'Quantity', 'ReorderLevel', 'SalePrice', 'Notes'].forEach((key) => { if (form.elements[key]) form.elements[key].value = row[key] ?? (key === 'SalePrice' ? row.Price : ''); });
+    if (form.elements.Active) form.elements.Active.checked = clean(row.Active || 'YES').toUpperCase() !== 'NO';
     form.elements.OriginalItemName.value = row.ItemName;
     form.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }));
@@ -4132,6 +4463,145 @@ async function loadExecutiveOffice() {
   }
 }
 
+async function studentConductRequest(action = 'list', payload = {}) {
+  const response = await staffFetch('/api/staff-conduct', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...payload })
+  });
+  const data = await response.json().catch(() => ({
+    ok: false,
+    message: 'The Student Conduct & Discipline Committee service did not return JSON.'
+  }));
+  if (!response.ok || !data.ok) {
+    throw new Error(data.message || 'The student conduct request could not be completed.');
+  }
+  return data;
+}
+
+function studentConductForm(data, selected = {}) {
+  const option = (value, selectedValue, label = value) =>
+    `<option value="${escapeHtml(value)}"${clean(value) === clean(selectedValue) ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+  return `
+    <form id="studentConductForm" class="student-conduct-form">
+      <input type="hidden" name="CaseId" value="${escapeHtml(selected.CaseId || '')}">
+      <label>Student
+        <select name="StudentRef" required>
+          <option value="">Choose student</option>
+          ${(data.students || []).map((row) => option(
+            row.StudentRef,
+            selected.StudentRef,
+            `${row.StudentName} · ${row.StudentRef}${row.ClassName ? ` · ${row.ClassName}` : ''}`
+          )).join('')}
+        </select>
+      </label>
+      <label>Incident date <input type="date" name="IncidentDate" value="${escapeHtml(selected.IncidentDate || new Date().toISOString().slice(0, 10))}" required></label>
+      <label>Category <select name="Category" required><option value="">Choose category</option>${(data.categories || []).map((value) => option(value, selected.Category)).join('')}</select></label>
+      <label>Severity <select name="Severity">${['Low', 'Moderate', 'High', 'Critical'].map((value) => option(value, selected.Severity || 'Moderate')).join('')}</select></label>
+      <label class="conduct-span-2">Incident summary <input name="Summary" maxlength="240" value="${escapeHtml(selected.Summary || '')}" required></label>
+      <label class="conduct-span-2">Detailed account <textarea name="Details" rows="3">${escapeHtml(selected.Details || '')}</textarea></label>
+      <label>Immediate action <textarea name="ImmediateAction" rows="2">${escapeHtml(selected.ImmediateAction || '')}</textarea></label>
+      <label>Sanction or corrective measure <textarea name="Sanction" rows="2">${escapeHtml(selected.Sanction || '')}</textarea></label>
+      <label>Hearing date <input type="date" name="HearingDate" value="${escapeHtml(selected.HearingDate || '')}"></label>
+      <label>Assigned officer <input name="AssignedTo" value="${escapeHtml(selected.AssignedTo || '')}"></label>
+      <label>Status <select name="Status">${(data.statuses || []).map((value) => option(value, selected.Status || 'Open')).join('')}</select></label>
+      <label class="checkbox-line conduct-parent-notified"><input type="checkbox" name="ParentNotified"${selected.ParentNotified ? ' checked' : ''}> Parent or guardian notified</label>
+      <label class="conduct-span-2">Resolution and follow-up <textarea name="Resolution" rows="3">${escapeHtml(selected.Resolution || '')}</textarea></label>
+      <div class="conduct-span-2 student-conduct-actions">
+        <button type="submit">${selected.CaseId ? 'Update case' : 'Record case'}</button>
+        ${selected.CaseId ? '<button type="button" class="secondary" id="cancelStudentConductEdit">Cancel edit</button>' : ''}
+      </div>
+      <p id="studentConductStatus" class="status conduct-span-2"></p>
+    </form>`;
+}
+
+function renderStudentConduct(selected = {}) {
+  if (activeSection !== 'studentConduct' || !studentConductData) return;
+  const data = studentConductData;
+  const summary = data.summary || {};
+  panelEl.innerHTML = `
+    <div class="workflow-intro">
+      <div><p class="eyebrow">Student welfare and accountability</p><h2>Student Conduct & Discipline Committee</h2>
+      <p class="muted">Record incidents, hearings, corrective measures, parent notifications and final resolutions in one protected register.</p></div>
+      <button type="button" id="refreshStudentConduct" class="compact-action">↻ Refresh</button>
+    </div>
+    <div class="metric-cards student-conduct-summary">
+      <div><small>Total cases</small><strong>${escapeHtml(summary.Total || 0)}</strong></div>
+      <div><small>Open</small><strong>${escapeHtml(summary.Open || 0)}</strong></div>
+      <div><small>Under review</small><strong>${escapeHtml(summary.UnderReview || 0)}</strong></div>
+      <div><small>High priority</small><strong>${escapeHtml(summary.HighPriority || 0)}</strong></div>
+      <div><small>Resolved</small><strong>${escapeHtml(summary.Resolved || 0)}</strong></div>
+    </div>
+    <div class="student-conduct-layout">
+      <section class="student-conduct-card">
+        <p class="eyebrow">${selected.CaseId ? 'Update committee case' : 'New committee case'}</p>
+        <h3>${selected.CaseId ? escapeHtml(selected.CaseId) : 'Record an incident'}</h3>
+        ${studentConductForm(data, selected)}
+      </section>
+      <section class="student-conduct-card conduct-register">
+        ${table('Conduct case register', data.cases || [], [
+          { label: 'Case', value: (row) => row.CaseId },
+          { label: 'Date', value: (row) => row.IncidentDate },
+          { label: 'Student', value: (row) => `${row.StudentName} · ${row.StudentRef}` },
+          { label: 'Category', value: (row) => row.Category },
+          { label: 'Severity', value: (row) => row.Severity },
+          { label: 'Status', value: (row) => row.Status },
+          { label: 'Actions', render: (row) => `
+            <span class="table-icon-actions">
+              <button type="button" class="compact-icon-action compact-edit-action" data-edit-conduct="${escapeHtml(row.CaseId)}" aria-label="Edit ${escapeHtml(row.CaseId)}" title="Edit case">&#9998;</button>
+              ${data.permissions?.canDelete ? `<button type="button" class="compact-icon-action compact-delete-action" data-delete-conduct="${escapeHtml(row.CaseId)}" aria-label="Delete ${escapeHtml(row.CaseId)}" title="Delete case">&#10005;</button>` : ''}
+            </span>` }
+        ])}
+      </section>
+    </div>`;
+  document.getElementById('refreshStudentConduct')?.addEventListener('click', loadStudentConduct);
+  document.getElementById('cancelStudentConductEdit')?.addEventListener('click', () => renderStudentConduct());
+  panelEl.querySelectorAll('[data-edit-conduct]').forEach((button) => button.addEventListener('click', () => {
+    const row = (data.cases || []).find((item) => clean(item.CaseId) === clean(button.dataset.editConduct));
+    if (row) renderStudentConduct(row);
+  }));
+  panelEl.querySelectorAll('[data-delete-conduct]').forEach((button) => button.addEventListener('click', async () => {
+    if (!window.confirm('Delete this conduct case? The deletion will be audited.')) return;
+    try {
+      await studentConductRequest('delete', { CaseId: button.dataset.deleteConduct });
+      await loadStudentConduct();
+    } catch (error) {
+      setStatus(document.getElementById('studentConductStatus'), error.message || String(error), 'bad');
+    }
+  }));
+  document.getElementById('studentConductForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submit = event.submitter;
+    const payload = Object.fromEntries(new FormData(form).entries());
+    payload.ParentNotified = form.elements.ParentNotified.checked;
+    setButtonLoading(submit, true, 'Saving...', selected.CaseId ? 'Update case' : 'Record case');
+    try {
+      const result = await studentConductRequest('save', payload);
+      setStatus(document.getElementById('studentConductStatus'), result.message, 'ok');
+      await loadStudentConduct();
+    } catch (error) {
+      setStatus(document.getElementById('studentConductStatus'), error.message || String(error), 'bad');
+      setButtonLoading(submit, false, '', selected.CaseId ? 'Update case' : 'Record case');
+    }
+  });
+}
+
+async function loadStudentConduct() {
+  if (activeSection !== 'studentConduct') return;
+  try {
+    const data = await studentConductRequest('list');
+    if (activeSection !== 'studentConduct') return;
+    studentConductData = data;
+    renderModuleSummary('studentConduct', data);
+    renderStudentConduct();
+  } catch (error) {
+    if (activeSection === 'studentConduct') {
+      panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+    }
+  }
+}
+
 function renderSection(active) {
   if (!dashboardData) return;
   panelEl.classList.toggle('school-store-panel', active === 'bookstore' || active === 'uniformStore' || active === 'organizationStore');
@@ -4148,6 +4618,9 @@ function renderSection(active) {
   } else if (active === 'staffUsers') {
     panelEl.innerHTML = '<p class="muted">Loading staff accounts...</p>';
     loadStaffUsers();
+  } else if (active === 'studentConduct') {
+    panelEl.innerHTML = '<p class="muted">Loading Student Conduct & Discipline Committee cases...</p>';
+    loadStudentConduct();
   } else if (active === 'payroll') {
     panelEl.innerHTML = '<p class="muted">Loading your payroll history...</p>';
     loadMyPayroll();
@@ -4917,7 +5390,7 @@ function renderStaffUsers() {
         <section class="config-group"><header><strong>Account identity</strong><small>Basic sign-in identity and organizational access.</small></header><div class="config-grid">
           <label>Username <span class="required">*</span><input name="Username" required></label>
           <label>Display name <span class="required">*</span><input name="DisplayName" required></label>
-          <label>Role <select name="Role" required>${['Super Admin','Principal','Senior Pastor','Head Minister','Admissions Officer','Accounts Officer','Management','Department User','Tuck Shop User','Clinic User','Kitchen User','Store User','Restaurant User','Front Desk','Pastor','Church Administrator','Membership Officer','Treasurer','Auditor'].map((role) => `<option>${role}</option>`).join('')}</select></label>
+          <label>Role <select name="Role" required>${['Super Admin','Principal','Senior Pastor','Head Minister','Admissions Officer','Student Welfare Officer','Accounts Officer','Management','Department User','Tuck Shop User','Clinic User','Kitchen User','Store User','Restaurant User','Front Desk','Pastor','Church Administrator','Membership Officer','Treasurer','Auditor'].map((role) => `<option>${role}</option>`).join('')}</select></label>
           <label>Department<input name="Department" placeholder="Required for Department User"></label>
           <label>Branch ID<input name="BranchId" placeholder="Blank allows all branches"></label>
           <label>School section<select name="SchoolSectionAccess"><option>All</option><option>Primary</option><option>Secondary</option></select></label>
