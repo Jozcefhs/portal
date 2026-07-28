@@ -49,6 +49,26 @@ test('a fresh staff session can replace the signed-out session', async () => {
   assert.equal(restored?.displayName, user.displayName);
 });
 
+test('switch user ends the session, purges user-scoped state, and stays on the staff login screen', () => {
+  const start = adminJs.indexOf('async function switchUserFromPortal');
+  const end = adminJs.indexOf("signOutButton.addEventListener", start);
+  const switchSource = adminJs.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.match(adminHtml, /id="staffSwitchUser"/);
+  assert.match(adminHtml, /id="staffSidebarSwitchUser"/);
+  assert.match(adminHtml, /id="staffPasswordSwitchUser"/);
+  assert.match(switchSource, /sessionRequest\('POST', \{ action: 'logout' \}\)/);
+  assert.match(switchSource, /showLogin\('Signed out\. Sign in with another staff account\.', 'ok'\)/);
+  assert.match(switchSource, /getElementById\('staffUsername'\)\.focus\(\)/);
+  assert.doesNotMatch(switchSource, /location\.(?:replace|assign)|location\.href/);
+  assert.match(adminJs, /staffSessionAbortController\.abort\(\)/);
+  assert.match(adminJs, /financeData = null/);
+  assert.match(adminJs, /staffUsersData = \[\]/);
+  assert.match(adminJs, /sessionStorage\.removeItem\('dynamaxRecordsDeskContext'\)/);
+  assert.match(adminJs, /panelEl\.replaceChildren\(\)/);
+  assert.match(adminJs, /document\.querySelectorAll\('dialog\[open\]'\)/);
+});
+
 test('new sessions use an unambiguous host-only cookie while legacy sessions remain readable', async () => {
   const token = await createStaffSession(env, user);
   const cookie = staffSessionCookie(token);

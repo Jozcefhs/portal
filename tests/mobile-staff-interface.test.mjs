@@ -42,6 +42,15 @@ test('desktop header sign-out uses a compact accessible icon', () => {
   assert.match(portalCss, /\.staff-header-signout\{display:grid;place-items:center;flex:0 0 38px;width:38px;height:38px;min-height:38px/);
 });
 
+test('switch user is available as an accessible compact account action', () => {
+  assert.match(adminHtml, /id="staffSwitchUser" class="dashboard-signout staff-header-signout" aria-label="Switch user" title="Switch user"[\s\S]*?<span aria-hidden="true">/);
+  assert.match(adminHtml, /id="staffSidebarSwitchUser" class="staff-sidebar-signout"[\s\S]*?Switch user/);
+  assert.match(adminHtml, /id="staffPasswordSwitchUser"[^>]*>Switch user<\/button>/);
+  assert.match(adminJs, /switchUserButton\.addEventListener\('click', switchUserFromPortal\)/);
+  assert.match(adminJs, /sidebarSwitchUserButton\.addEventListener\('click', switchUserFromPortal\)/);
+  assert.match(adminJs, /passwordSwitchUserButton\.addEventListener\('click', switchUserFromPortal\)/);
+});
+
 test('enrolled applications count as admitted rather than pending', () => {
   assert.match(adminJs, /function applicationIsAdmitted\(row\)[\s\S]*?\/admitted\|accepted\|approved\|enrolled\//);
   assert.match(adminJs, /label: 'Admitted', value: rows\.filter\(applicationIsAdmitted\)\.length/);
@@ -50,6 +59,7 @@ test('enrolled applications count as admitted rather than pending', () => {
 
 test('staff drawer exposes a dedicated sign-out action', () => {
   assert.match(adminHtml, /id="staffSidebarSignOut"/);
+  assert.match(adminHtml, /id="staffSidebarSwitchUser"/);
   assert.match(adminJs, /sidebarSignOutButton\.addEventListener\('click'/);
   assert.match(adminJs, /signOutFromPortal\(sidebarSignOutButton\)/);
 });

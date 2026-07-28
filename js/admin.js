@@ -17,7 +17,10 @@ const displayNameEl = document.getElementById('staffDisplayName');
 const roleEl = document.getElementById('staffRole');
 const welcomeTitle = document.getElementById('staffWelcomeTitle');
 const signOutButton = document.getElementById('staffSignOut');
+const switchUserButton = document.getElementById('staffSwitchUser');
 const sidebarSignOutButton = document.getElementById('staffSidebarSignOut');
+const sidebarSwitchUserButton = document.getElementById('staffSidebarSwitchUser');
+const passwordSwitchUserButton = document.getElementById('staffPasswordSwitchUser');
 const headerRefreshButton = document.getElementById('staffHeaderRefresh');
 const themeToggleButton = document.getElementById('staffThemeToggle');
 const themeToggleIcon = document.getElementById('staffThemeToggleIcon');
@@ -66,6 +69,7 @@ let financeDecisionBiometricVerified = false;
 let financeDecisionApprovalProof = '';
 let profilePhotoState = '';
 let staffBearerToken = '';
+let staffSessionAbortController = new AbortController();
 let organizationDepartmentWorkspaceTab = 'overview';
 let organizationDashboardChartsRequest = 0;
 let incomeAnalyticsData = null;
@@ -228,6 +232,7 @@ function warmPasskeyCredentialManager() {
 
 function staffFetch(input, init = {}) {
   const options = { ...init };
+  if (!options.signal) options.signal = staffSessionAbortController.signal;
   if (staffBearerToken) {
     const requestUrl = new URL(typeof input === 'string' ? input : input.url, window.location.href);
     if (requestUrl.origin === window.location.origin && requestUrl.pathname.startsWith('/api/')) {
@@ -550,22 +555,60 @@ function installSidebarSwipeGestures() {
   }, { passive: true });
 }
 
-function showLogin(message = '', type = '') {
+function clearStaffWorkspaceState() {
+  staffSessionAbortController.abort();
+  staffSessionAbortController = new AbortController();
+  window.clearTimeout(recordsDeskSearchTimer);
+  recordsDeskRequest += 1;
+  organizationDashboardChartsRequest += 1;
   setSidebarOpen(false);
   staffBearerToken = '';
   currentUser = null;
   dashboardData = null;
+  financeData = null;
+  staffUsersData = [];
+  staffAuditData = [];
+  staffApprovalAccounts = [];
+  approvalProfile = null;
+  approvalAssetState = { signature: '', stamp: '' };
+  pendingFinanceDecision = null;
+  financeDecisionBiometricVerified = false;
+  financeDecisionApprovalProof = '';
+  profilePhotoState = '';
+  incomeAnalyticsData = null;
+  incomeAnalyticsFilter = { period: 'monthly' };
+  organizationDepartmentWorkspaceTab = 'overview';
   activeSection = '';
   activeTabs = [];
+  recordsDeskHandoffContext = null;
   recordsDeskState = {
     query: '', type: 'all', availableTypes: [], results: [], totalMatches: 0,
     truncated: false, selectedKey: '', selectedBranchId: '', detail: null, loading: false, loadingDetail: false, error: ''
   };
+  try { sessionStorage.removeItem('dynamaxRecordsDeskContext'); } catch (_error) { /* Ignore private storage. */ }
+  tabsEl.replaceChildren();
+  summaryEl.replaceChildren();
+  dashboardChartsEl.replaceChildren();
+  panelEl.replaceChildren();
+  mobileNav.replaceChildren();
+  loginForm.reset();
+  passwordForm.reset();
+  staffProfileForm.reset();
+  financeDecisionForm.reset();
+  approvalSettingsForm.reset();
+  document.querySelectorAll('dialog[open]').forEach((dialog) => dialog.close());
+  displayNameEl.textContent = '';
+  roleEl.textContent = '';
+  renderProfilePhoto('', 'Staff');
+  delete document.documentElement.dataset.edition;
+}
+
+function showLogin(message = '', type = '') {
+  clearStaffWorkspaceState();
   dashboardEl.hidden = true;
   identityEl.hidden = true;
   approvalSettingsButton.hidden = true;
   mobileNav.hidden = true;
-  if (moduleDialog.open) moduleDialog.close();
   loginCard.hidden = false;
   setStatus(loginStatus, message, type);
   refreshPasskeyControls();
@@ -4315,8 +4358,32 @@ async function signOutFromPortal(button) {
   }
 }
 
+async function switchUserFromPortal() {
+  const buttons = [switchUserButton, sidebarSwitchUserButton, passwordSwitchUserButton].filter(Boolean);
+  buttons.forEach((button) => {
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+  });
+  try {
+    const { response, data } = await sessionRequest('POST', { action: 'logout' });
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Could not end the current staff session.');
+    showLogin('Signed out. Sign in with another staff account.', 'ok');
+    document.getElementById('staffUsername').focus();
+  } catch (error) {
+    setStatus(dashboardStatus, error.message || String(error), 'bad');
+  } finally {
+    buttons.forEach((button) => {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+    });
+  }
+}
+
 signOutButton.addEventListener('click', () => signOutFromPortal(signOutButton));
 sidebarSignOutButton.addEventListener('click', () => signOutFromPortal(sidebarSignOutButton));
+switchUserButton.addEventListener('click', switchUserFromPortal);
+sidebarSwitchUserButton.addEventListener('click', switchUserFromPortal);
+passwordSwitchUserButton.addEventListener('click', switchUserFromPortal);
 
 staffBrand.addEventListener('click', (event) => {
   const mobileDashboard = window.matchMedia('(max-width:680px)').matches

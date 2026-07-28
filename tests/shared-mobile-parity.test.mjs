@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260728-records-desk';
-const adminScriptVersion = '20260728-records-desk';
+const adminScriptVersion = '20260728-switch-user';
 const pageNames = [
   'admin.html',
   'application.html',
@@ -39,7 +39,7 @@ test('sidebar swipe gestures are edition-neutral and installed globally', () => 
   assert.match(adminJs, /openingGesture && deltaX >= 64/);
   assert.match(adminJs, /!openingGesture && deltaX <= -38/);
   assert.match(adminJs, /installSidebarSwipeGestures\(\);/);
-  const gestureSource = adminJs.slice(adminJs.indexOf('function installSidebarSwipeGestures'), adminJs.indexOf('function showLogin'));
+  const gestureSource = adminJs.slice(adminJs.indexOf('function installSidebarSwipeGestures'), adminJs.indexOf('function clearStaffWorkspaceState'));
   assert.doesNotMatch(gestureSource, /edition|isChurch|school/);
 });
 
@@ -69,7 +69,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v55-records-desk/);
+  assert.match(serviceWorker, /dynamax-v56-switch-user/);
   assert.match(serviceWorker, /'\/admin\.html'/);
   assert.match(serviceWorker, /'\/js\/admin\.js'/);
   assert.match(serviceWorker, /self\.skipWaiting\(\)/);

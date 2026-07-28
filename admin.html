@@ -27,6 +27,9 @@
         <span id="staffAvatar" class="staff-avatar" aria-hidden="true"><img id="staffAvatarImage" alt="" hidden><span id="staffAvatarFallback">S</span></span>
         <span class="staff-identity-copy"><strong id="staffDisplayName"></strong><small id="staffRole"></small></span>
       </button>
+      <button type="button" id="staffSwitchUser" class="dashboard-signout staff-header-signout" aria-label="Switch user" title="Switch user">
+        <span aria-hidden="true">&#8644;</span>
+      </button>
       <button type="button" id="staffSignOut" class="dashboard-signout staff-header-signout" aria-label="Sign out" title="Sign out">
         <span aria-hidden="true">&#8618;</span>
       </button>
@@ -71,6 +74,7 @@
             <button type="button" id="staffPasskeySetup" class="staff-passkey-setup" hidden>
               <span aria-hidden="true">◉</span> Set up biometric sign-in
             </button>
+            <button type="button" id="staffSidebarSwitchUser" class="staff-sidebar-signout"><span aria-hidden="true">&#8644;</span> Switch user</button>
             <button type="button" id="staffSidebarSignOut" class="staff-sidebar-signout"><span aria-hidden="true">↪</span> Sign out</button>
           </div>
           <div class="staff-sidebar-note">
@@ -115,6 +119,7 @@
       <label>New password<input id="staffNewPassword" type="password" minlength="6" autocomplete="new-password" required></label>
       <label>Confirm password<input id="staffConfirmPassword" type="password" minlength="6" autocomplete="new-password" required></label>
       <button id="staffPasswordButton" type="submit">Change Password</button>
+      <button id="staffPasswordSwitchUser" type="button" class="dashboard-signout">Switch user</button>
       <button id="staffPasswordSignOut" type="button" class="dashboard-signout">Sign Out Instead</button>
       <p id="staffPasswordStatus" class="status" role="status"></p>
     </form>
@@ -209,6 +214,6 @@
 
   <script src="js/site-config.js?v=20260718-personalized-ui"></script>
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
-  <script src="js/admin.js?v=20260728-records-desk"></script>
+  <script src="js/admin.js?v=20260728-switch-user"></script>
 </body>
 </html>
