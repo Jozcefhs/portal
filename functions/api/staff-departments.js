@@ -3,6 +3,7 @@ import { requireStaffSession } from '../lib/staff-auth.js';
 import { listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
 import { getWalletCardAccount, recordWalletPurchase } from './backend.js';
 import { escapeEmailHtml, sendConfiguredEmail } from '../lib/email-service.js';
+import { readJsonBody } from '../lib/request-security.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -144,7 +145,10 @@ function studentReference(row) {
 }
 
 async function scopedStudents(env, user) {
-  return visible(await listSchoolCollection(env, 'students'), user);
+  return visible(await listSchoolCollection(env, 'students', {
+    branchId: user.branchId,
+    schoolSectionAccess: user.schoolSectionAccess
+  }), user);
 }
 
 async function findScopedStudent(env, user, reference, cardId = '') {
@@ -258,7 +262,7 @@ export async function onRequestPost(context) {
     const { request, env } = context;
     requireFirestoreEnv(env);
     const user = await requireStaffSession(env, request);
-    const body = await request.json().catch(() => ({}));
+    const body = await readJsonBody(request, { maxBytes: 512 * 1024 });
     const section = clean(body.section);
     if (!CONFIG[section] || !(user.allowedSections || []).includes(section)) {
       const err = new Error('This staff account is not allowed to manage that department.'); err.status = 403; throw err;

@@ -1,71 +1,136 @@
-DCA Admissions Portal - v2.8.0
+Dynamax Web Portal
+==================
 
+This folder is the canonical static Cloudflare Pages portal plus its Pages
+Functions backend. The deployed product supports school, religious-
+organization and other-organization workspaces.
 
-Files included:
-1. verify.html and js/verify.js
-   - Parent verifies using the email address and verification code sent after payment.
+Architecture
+------------
 
-2. application.html and js/application.js
-   - Completed admission form submission.
+- HTML, CSS, JavaScript, images, icons, fonts and the manifest are static
+  Cloudflare Pages assets.
+- Only /api and /api/* invoke Pages Functions. See _routes.json.
+- Firestore is the primary application database.
+- Paystack, Brevo and Google document services are called only from backend
+  Functions; private credentials must never be put in browser JavaScript.
+- The Windows desktop suite uses /api/backend as an authenticated bridge.
 
-3. upload-documents.html and js/upload-documents.js
-   - Parent self-service upload page for one or many missing documents.
-   - Parents can select several files and upload them in one visit.
-   - Existing uploads are not silently replaced; parents must tick the replace option.
-   - Linked from index.html and success.html.
+Main public flows
+-----------------
 
-4. payments.html, payment-success.html, js/payments.js, and js/payment-success.js
-   - Parent can pay configured online fees, including Acceptance Fee.
-   - Paystack checkout is initialized from Cloudflare, not from browser JavaScript.
-   - Payment is recorded only after Paystack verification succeeds.
+- index.html: Dynamax landing/workspace selection and general preferences.
+- buy-form.html: admission-form purchase.
+- verify.html and application.html: application verification/submission.
+- upload-documents.html: controlled parent document uploads.
+- payments.html and payment-success.html: Paystack fee/wallet/store payments.
+- parent-dashboard.html: family/child dashboard.
+- register-organization.html: organization registration/subscription.
+- admin.html: secured staff web companion.
 
-5. functions/api/verify.js
-   - Cloudflare Pages Function for verification.
+Required Cloudflare variables
+-----------------------------
 
-6. functions/api/submit-application.js
-   - Cloudflare Pages Function for application submission.
+Core:
 
-7. functions/api/upload-document.js
-   - Cloudflare Pages Function for document upload.
+- FIREBASE_PROJECT_ID
+- FIREBASE_CLIENT_EMAIL
+- FIREBASE_PRIVATE_KEY (encrypted)
+- BACKEND_SHARED_SECRET (encrypted)
+- STAFF_SESSION_SECRET (encrypted)
+- ADMIN_WEB_PASSWORD (encrypted)
+- ADMIN_WEB_USERNAME (optional; defaults to admin)
 
-8. functions/api/payment-options.js, functions/api/init-payment.js, and functions/api/verify-payment.js
-   - Cloudflare Pages Functions for online fee lookup, Paystack initialization, and payment verification.
+Feature-specific:
 
-Required Cloudflare environment variables:
-- GOOGLE_APPS_SCRIPT_URL
-- GOOGLE_APPS_SCRIPT_SECRET
 - PAYSTACK_SECRET_KEY
+- BREVO_API_KEY
+- BREVO_SENDER_EMAIL
+- BREVO_SENDER_NAME
+- GOOGLE_APPS_SCRIPT_URL or GOOGLE_DOCUMENTS_URL
+- GOOGLE_APPS_SCRIPT_SECRET
+- TURNSTILE_SITE_KEY
+- TURNSTILE_SECRET_KEY
+- TURNSTILE_ALLOWED_HOSTNAMES
+- CANONICAL_PORTAL_URL
+- WEBAUTHN_RP_ID
+- WEBAUTHN_ORIGIN
+- WEBAUTHN_RP_NAME
+- DATA_BACKEND_MODE (only for an intentional legacy Google backend)
 
-Backend requirement:
-- Deploy DCA_Admission_Backend_v2_8_0_Unified.gs from the Admissions Suite docs folder.
-- In Apps Script, enable Project Settings > Show "appsscript.json" manifest file, then copy docs/appsscript.json from the Admissions Suite docs folder into the manifest.
-- Redeploy the Web App and approve the requested Google Drive permission. Parent document upload stores files in Drive.
-- The backend must include uploadParentDocument, updateApplicantIntelligence, getPayableFees, recordOnlinePayment, and accounts ledger actions.
-- Organisation editions use `settings/organisationProfile`; missing configuration defaults to the school edition. See `../suite/docs/ORGANISATION_EDITIONS.md` for the church foundation and feature boundaries.
-- In the FeeItems sheet, set the Acceptance Fee amount before parents start paying online. The default amount is 0 until updated.
+Set production and preview values separately. Encrypt all private values. Do
+not commit .dev.vars, .env files, Firebase service-account JSON, private keys,
+Paystack secrets, Brevo keys, shared secrets, passwords or session secrets.
 
-After replacing website files:
-- Commit and push to GitHub.
-- Wait for Cloudflare Pages deployment to complete.
-- Test with a fresh unused verification code.
+Payment setup
+-------------
 
-Expected behavior:
-- Verification code is not used up during verification.
-- Code is marked Used=YES only after successful application submission.
-- Duplicate submissions are blocked by VerificationCode, not by email.
-- Parent receives confirmation email.
-- Admissions team receives notification email.
-- Applicant sees success page with application reference.
-- Parent can later upload missing documents using verification email/code.
-- Reuploads are blocked unless the parent explicitly chooses to replace existing documents.
-- If uploads return DRIVE_AUTHORIZATION_REQUIRED, the Apps Script Web App has not been redeployed/authorized with Drive access.
-- Parent can pay online fees through Paystack.
-- Verified online Acceptance Fee payments automatically mark AcceptanceFeePaid=YES and appear in the Accounts ledger.
-- Wallet topups and wallet spends are accounted for:
-  - Topups create wallet-credit (liability) ledger entries as before.
-  - Wallet purchases now create a posted accounting journal (`SYS-WALLET-PURCHASE-*`) that debits `2200` (Student Wallet Liability), so the finance liability card reflects spend immediately.
-  - Purchase credit account defaults to store/revenue mapping (`4040` for store-like context, otherwise the mapped revenue account).
-- Finance surplus behavior:
-  - Gross Surplus = Net Revenue - Direct Costs.
-  - Net Surplus = Total Income - Total Expenses (includes Other Income).
-  - Therefore Net Surplus may be higher than Gross Surplus when there is positive Other Income.
+- Configure the Paystack secret as PAYSTACK_SECRET_KEY.
+- Configure the Paystack webhook:
+  https://<production-host>/api/paystack-webhook
+- The webhook signature is verified before processing.
+- Form purchases, general/student payments and church donations are
+  classified and checked against saved payment intent/metadata.
+- Initialization and verification are idempotent; retries repair deterministic
+  accounting records instead of creating a second transaction.
+
+Turnstile
+---------
+
+Turnstile remains disabled when both keys are absent. When enabled, both keys
+must be configured and the verified action must match. Add the production and
+approved preview/custom domains to TURNSTILE_ALLOWED_HOSTNAMES.
+
+Caching and request behavior
+----------------------------
+
+- Static files do not invoke Functions.
+- HTML revalidates; service-worker/version files are no-store.
+- CSS/JS use bounded revalidation and images use a longer static cache.
+- Public settings and class lists have short browser/HTTP TTLs and reuse
+  pending requests.
+- Authenticated and user-specific API responses are no-store.
+- Staff modules load on selection; inactive modules do not poll.
+- Desktop Applications auto-refresh is off by default and visible-only if the
+  user enables it.
+
+Firestore maintenance
+---------------------
+
+Enable TTL policies for ExpiresAt in:
+
+- requestIdempotency
+- staffLoginAttempts
+- staffPasskeyOptionAttempts
+- staffPasskeyChallenges
+- documentUploadOperations
+- outbound-email operation records that expose ExpiresAt
+
+Large collections must use page tokens. Unpaginated compatibility calls stop
+after a bounded number of pages and fail rather than silently truncating.
+Desktop backup export follows the returned cursor and page token.
+
+Verification
+------------
+
+Source verification may be run without compiling the desktop application:
+
+- node --check on changed JavaScript files
+- JSON parsing for _routes.json, manifest and configuration
+- Python ast.parse on changed .py files
+- node --test tests/*.test.mjs tests/payroll/*.test.mjs
+
+Do not build/package/compile the desktop app, deploy, or push unless the user
+explicitly requests it.
+
+Full assessment
+---------------
+
+See CLOUDFLARE_FREE_PLAN_OPTIMIZATION.md for:
+
+- route inventory and frontend callers
+- request/read estimates
+- changes implemented
+- Cloudflare dashboard actions
+- remaining risks
+- verification/deployment procedure

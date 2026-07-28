@@ -13,9 +13,28 @@ let currentEmail = '';
 let currentCode = '';
 let currentFees = [];
 let currentBreakdown = [];
+let paymentIdempotencyKey = '';
 const debugMode = new URLSearchParams(window.location.search).get('debug') === '1';
 
 const SCHOOL_FEES_TOTAL_CODE = 'SCHOOL_FEES_TOTAL';
+
+function newIdempotencyKey() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  const random = window.crypto?.getRandomValues
+    ? Array.from(window.crypto.getRandomValues(new Uint32Array(4)), (value) => value.toString(16)).join('')
+    : Math.random().toString(36).slice(2);
+  return `${Date.now().toString(36)}-${random}`;
+}
+
+function shouldReleaseIdempotencyKey(response, data) {
+  const status = Number(response?.status || 0);
+  if (response?.ok && data?.ok) return true;
+  if (status < 400 || status >= 500 || [408, 425, 429].includes(status)) return false;
+  if (status === 409 && /IDEMPOTENCY_(IN_PROGRESS|LOCKED|OWNERSHIP_LOST|OUTCOME_UNCERTAIN)|already being processed|outcome.+uncertain|unresolved request|no longer owned/i.test(
+    `${data?.code || ''} ${data?.message || ''}`
+  )) return false;
+  return status < 500;
+}
 
 function setStatus(message, type) {
   statusEl.textContent = message || '';
@@ -237,6 +256,7 @@ function buildPayableItems(fees, breakdown) {
 }
 
 function renderFees(account, fees, breakdown) {
+  paymentIdempotencyKey = '';
   currentFees = buildPayableItems(fees || [], breakdown || []);
   feeList.innerHTML = '';
   feePanel.hidden = false;
@@ -266,7 +286,10 @@ function renderFees(account, fees, breakdown) {
     input.value = fee.FeeCode;
     input.id = id;
     input.checked = index === 0;
-    input.addEventListener('change', updateWalletAmountVisibility);
+    input.addEventListener('change', () => {
+      paymentIdempotencyKey = '';
+      updateWalletAmountVisibility();
+    });
     const textWrap = document.createElement('span');
     const name = document.createElement('strong');
     const feePeriod = termText(fee);
@@ -295,13 +318,16 @@ lookupForm.addEventListener('submit', async (event) => {
   setStatus('Checking payable fees...', '');
 
   try {
+    const turnstile = window.DynamaxPublicApi?.getTurnstileToken
+      ? await window.DynamaxPublicApi.getTurnstileToken('payment_lookup')
+      : {};
     const response = await fetch('/api/payment-options', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: currentEmail, code: currentCode })
+      body: JSON.stringify({ email: currentEmail, code: currentCode, ...turnstile })
     });
     const data = await response.json();
-    if (!response.ok || !data.ok) {
+    if (!response.ok || !data?.ok) {
       throw new Error(data.message || 'Could not load payable fees.');
     }
     renderFees(data.account || {}, data.fees || [], data.schoolFeeBreakdown || []);
@@ -337,24 +363,39 @@ payBtn.addEventListener('click', async () => {
   payBtn.disabled = true;
   setStatus('Starting secure checkout...', '');
   try {
+    paymentIdempotencyKey = paymentIdempotencyKey || newIdempotencyKey();
+    const turnstile = window.DynamaxPublicApi?.getTurnstileToken
+      ? await window.DynamaxPublicApi.getTurnstileToken('init_payment')
+      : {};
     const response = await fetch('/api/init-payment', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': paymentIdempotencyKey
+      },
       body: JSON.stringify({
         email: currentEmail,
         code: currentCode,
         feeCode: fee.FeeCode,
         components: fee.Components || undefined,
-        amount: rules.show ? enteredAmount : undefined
+        amount: rules.show ? enteredAmount : undefined,
+        idempotencyKey: paymentIdempotencyKey,
+        ...turnstile
       })
     });
-    const data = await response.json();
-    if (!response.ok || !data.ok) {
-      throw new Error(data.message || 'Could not initialize payment.');
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.ok) {
+      if (shouldReleaseIdempotencyKey(response, data)) paymentIdempotencyKey = '';
+      throw new Error(data?.message || 'Could not initialize payment.');
     }
+    paymentIdempotencyKey = '';
     window.location.href = data.authorizationUrl;
   } catch (error) {
     setStatus(error.message, 'bad');
     payBtn.disabled = false;
   }
+});
+
+walletAmountInput?.addEventListener('input', () => {
+  if (!payBtn.disabled) paymentIdempotencyKey = '';
 });

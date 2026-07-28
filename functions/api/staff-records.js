@@ -28,6 +28,7 @@ import {
 } from '../lib/records-desk.js';
 import { listSchoolCollection, schoolCollectionPaths, schoolSectionFor } from '../lib/school-scope.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
+import { readJsonBody } from '../lib/request-security.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -49,6 +50,9 @@ const SEARCH_FIELDS = Object.freeze({
   members: ['MemberId', 'DisplayName', 'FirstName', 'MiddleName', 'Surname', 'Phone', 'Email', 'Ministry'],
   departments: ['DepartmentId', 'Name', 'DepartmentName', 'DepartmentType', 'AreaZone', 'Description']
 });
+const ROW_CACHE_TTL_MS = 5000;
+const ROW_CACHE_MAX_ENTRIES = 8;
+const rowsCache = new Map();
 
 function error(message, status = 400) {
   const failure = new Error(message);
@@ -109,21 +113,49 @@ function searchCard(type, row) {
 }
 
 async function rowsForType(env, user, type, branchId) {
+  const cacheKey = [
+    clean(env.FIREBASE_PROJECT_ID),
+    lower(user.username),
+    lower(user.edition),
+    lower(user.branchId),
+    lower(user.schoolSectionAccess || 'all'),
+    lower(branchId),
+    type
+  ].join('|');
+  const cached = rowsCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.rows;
+  let rows;
   if (type === 'students') {
-    return (await listSchoolCollection(env, 'students')).filter((row) => visibleSchoolRecord(row, user, branchId));
+    rows = (await listSchoolCollection(env, 'students', {
+      branchId: assignedBranch(user, branchId, true),
+      schoolSectionAccess: user.schoolSectionAccess
+    })).filter((row) => visibleSchoolRecord(row, user, branchId));
+  } else if (type === 'applicants') {
+    rows = (await listSchoolCollection(env, 'applications', {
+      branchId: assignedBranch(user, branchId, true),
+      schoolSectionAccess: user.schoolSectionAccess
+    })).filter((row) => visibleSchoolRecord(row, user, branchId));
+  } else if (type === 'staff') {
+    rows = (await listCollection(env, 'staffUsers'))
+      .filter((row) => visibleStaffDirectoryRecord(row, user, branchId))
+      .map((row) => {
+        const safe = { ...row };
+        delete safe.PasswordHash;
+        delete safe.Salt;
+        delete safe.ProfilePhotoDataUrl;
+        return safe;
+      });
+  } else {
+    const organisationBranch = resolveMembershipBranch(user, branchId);
+    rows = type === 'members'
+      ? await listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.members, organisationBranch))
+      : await listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.departments, organisationBranch));
   }
-  if (type === 'applicants') {
-    return (await listSchoolCollection(env, 'applications')).filter((row) => visibleSchoolRecord(row, user, branchId));
+  rowsCache.set(cacheKey, { rows, expiresAt: Date.now() + ROW_CACHE_TTL_MS });
+  while (rowsCache.size > ROW_CACHE_MAX_ENTRIES) {
+    rowsCache.delete(rowsCache.keys().next().value);
   }
-  if (type === 'staff') {
-    return (await listCollection(env, 'staffUsers'))
-      .filter((row) => visibleStaffDirectoryRecord(row, user, branchId));
-  }
-  const organisationBranch = resolveMembershipBranch(user, branchId);
-  if (type === 'members') {
-    return listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.members, organisationBranch));
-  }
-  return listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.departments, organisationBranch));
+  return rows;
 }
 
 async function writeAudit(env, user, action, details = {}) {
@@ -156,7 +188,7 @@ function requestedTypes(body, availableTypes) {
 
 async function searchRecords(env, user, body, capabilities) {
   const query = normalizeRecordsDeskQuery(body.query || body.search || body.Search);
-  if (query.length < 2) throw error('Enter at least two characters to search the Records Desk.');
+  if (query.length < 3) throw error('Enter at least three characters to search the Records Desk.');
   const availableTypes = allowedRecordsDeskTypes(capabilities);
   const types = requestedTypes(body, availableTypes);
   if (!types.length) throw error('Your current role cannot search the selected record type.', 403);
@@ -173,12 +205,6 @@ async function searchRecords(env, user, body, capabilities) {
     return rank || left.title.localeCompare(right.title);
   });
   const results = matches.slice(0, limit);
-  await writeAudit(env, user, 'SEARCH', {
-    BranchId: branchId,
-    Query: query,
-    EntityType: types.join(','),
-    ResultCount: matches.length
-  });
   return {
     ok: true,
     message: matches.length ? `${matches.length} matching record${matches.length === 1 ? '' : 's'} found.` : 'No matching records found.',
@@ -548,7 +574,7 @@ export async function onRequestPost({ request, env }) {
     const user = await requireStaffSession(env, request);
     const capabilities = recordsDeskCapabilities(user);
     if (!capabilities.enabled) throw error('This staff account is not allowed to use the Records Desk.', 403);
-    const body = await request.json().catch(() => ({}));
+    const body = await readJsonBody(request, { maxBytes: 128 * 1024 });
     const action = lower(body.action || 'search');
     const data = action === 'search'
       ? await searchRecords(env, user, body, capabilities)

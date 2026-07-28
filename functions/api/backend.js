@@ -1,5 +1,5 @@
-import { batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
-import { deleteSchoolDocument, getSchoolDocumentById, getSchoolStructure, listSchoolCollection, querySchoolCollection, safeScopeId, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
+import { batchCommitDocuments, batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, listCollectionPage, patchDocumentFields, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { deleteSchoolDocument, getSchoolDocumentById, getSchoolStructure, invalidateSchoolStructureCache, listSchoolCollection, querySchoolCollection, safeScopeId, schoolCollectionPaths, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass, classNamesMatch } from '../lib/class-names.js';
 import { categoryApplies, ensureStoreCategories, resolveStoreCategory, saveStoreCategory } from '../lib/store-categories.js';
 import {
@@ -11,7 +11,12 @@ import {
 import { calculateConfigurablePayroll, calculateLegacyPayroll } from '../lib/payroll/payroll-calculation-service.js';
 import { assertPayrollCanRegenerate, buildFinalizedRunSnapshot, validatePayrollForSubmission } from '../lib/payroll/payroll-run-guards.js';
 import { buildPayrollJournalLines } from '../lib/payroll/payroll-ledger-service.js';
-import { applyAuthoritativeActor, resolveAuthoritativeDesktopActor, secureTextEqual } from '../lib/backend-security.js';
+import {
+  applyAuthoritativeActor,
+  requireConfiguredDesktopSecret,
+  resolveAuthoritativeDesktopActorForEnv,
+  verifyDesktopSecret
+} from '../lib/backend-security.js';
 import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
 import { organizationProfileDocument, resolveOrganizationConfig } from '../lib/organization-config.js';
 import { handleChurchMembershipAction } from '../lib/church-membership.js';
@@ -21,6 +26,8 @@ import { handleChurchFundAction } from '../lib/church-funds.js';
 import { handleChurchOfferingAction } from '../lib/church-offerings.js';
 import { handleOrganizationDepartmentAction } from '../lib/organization-departments.js';
 import { handleExecutiveOfficeAction } from '../lib/executive-correspondence.js';
+import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
+import { readJsonBody } from '../lib/request-security.js';
 
 export const SCHOOL_FEES_TOTAL_CODE = 'SCHOOL_FEES_TOTAL';
 
@@ -35,8 +42,7 @@ function normalizeSchoolCode(value) {
 export async function getSchoolCode(env) {
   try {
     requireFirestoreEnv(env);
-    const rows = await listCollection(env, 'settings');
-    const profile = rows.find((row) => row.__id === 'schoolProfile') || rows.find((row) => clean(row.SchoolName));
+    const profile = await getDocument(env, 'settings', 'schoolProfile');
     return normalizeSchoolCode((profile && profile.SchoolCode) || env.SCHOOL_CODE);
   } catch (_err) {
     return normalizeSchoolCode(env.SCHOOL_CODE);
@@ -306,7 +312,7 @@ async function updateStudentProfile(env, body) {
   }
   if (body.DisplayName !== undefined) updated.ApplicantName = clean(body.DisplayName);
   updated.UpdatedAt = nowIso();
-  updated.UpdatedBy = clean(body.UpdatedBy || body.RecordedBy) || 'Student Register';
+  updated.UpdatedBy = clean(body.RecordedBy || body.UpdatedBy) || 'Student Register';
   const student = await saveStudent(env, updated);
   return { ok: true, message: 'Student profile updated.', student };
 }
@@ -557,30 +563,9 @@ function normalizeInventory(row) {
   };
 }
 
-const EXECUTIVE_BRIDGE_ACTIONS = new Set([
-  'getExecutiveOffice', 'searchExecutiveDirectory', 'listOfficialCorrespondence',
-  'saveOfficialCorrespondenceDraft', 'saveOfficialCorrespondenceTemplate',
-  'getOfficialCorrespondenceDocument', 'issueOfficialCorrespondence',
-  'sendOfficialCorrespondence', 'saveExecutiveDashboardPreferences'
-]);
-
 export function requireBackendSecret(env, body) {
-  const expected = clean(env.BACKEND_SHARED_SECRET || env.GOOGLE_APPS_SCRIPT_SECRET);
-  const action = clean(body.Action || body.action);
-  if (!expected) {
-    if (EXECUTIVE_BRIDGE_ACTIONS.has(action)) {
-      const err = new Error('The desktop Executive Office bridge is not configured.');
-      err.status = 503;
-      throw err;
-    }
-    return;
-  }
   const supplied = clean(body.Secret || body.secret);
-  if (!secureTextEqual(supplied, expected)) {
-    const err = new Error('Unauthorized.');
-    err.status = 401;
-    throw err;
-  }
+  return verifyDesktopSecret(env, supplied, 'desktop backend');
 }
 
 const VERIFIED_ACTOR_ACTIONS = new Set([
@@ -595,19 +580,41 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'getChurchServices', 'saveChurchService', 'saveChurchServiceOccurrence', 'recordChurchAttendance',
   'getChurchFunds', 'saveChurchFund', 'saveChurchFundMapping',
   'getChurchOfferings', 'saveChurchOffering', 'reconcileChurchOffering',
+  'getOrganizationDepartments', 'saveDepartment', 'deleteDepartment', 'savePosition',
+  'saveDepartmentMember', 'saveDepartmentMeeting', 'recordDepartmentAttendance',
+  'saveDepartmentOffering', 'markDepartmentOfferingPaid', 'saveSpecialProgram',
+  'registerProgramParticipant', 'saveForeignVisitor',
   'getExecutiveOffice', 'searchExecutiveDirectory', 'listOfficialCorrespondence',
   'saveOfficialCorrespondenceDraft', 'saveOfficialCorrespondenceTemplate',
   'getOfficialCorrespondenceDocument', 'issueOfficialCorrespondence',
-  'sendOfficialCorrespondence', 'saveExecutiveDashboardPreferences'
+  'sendOfficialCorrespondence', 'saveExecutiveDashboardPreferences',
+  'getAccountingRequisitionDocument', 'syncAccountingRevenue', 'saveChartAccount',
+  'saveAccountingJournal', 'saveAccountingExpense', 'saveAccountingBudget',
+  'saveAccountingBank', 'saveAccountingReconciliation', 'saveAccountingPeriod',
+  'saveAccountingOpeningBalance', 'saveAccountingVendor', 'saveAccountingSupplierBill',
+  'payAccountingSupplierBill', 'saveAccountingAsset', 'postAccountingDepreciation',
+  'saveAccountingAdjustment', 'saveAccountingApprovalLimit', 'saveAccountingCloseChecklist',
+  'importAccountingBankStatement', 'matchAccountingBankStatement',
+  // Desktop school finance, billing, commercial inventory, and admission mutations.
+  'updateStudentProfile', 'saveAdmissionClasses',
+  'saveFeeItem', 'deleteFeeItem', 'seedDefaultFeeItems',
+  'saveBillingCategory', 'deleteBillingCategory', 'updateStudentBillingCategory',
+  'generateSchoolFeeInvoices', 'recordManualPayment',
+  'saveWalletCard', 'recordWalletPurchase', 'recordCreditAction',
+  'saveStoreItem', 'saveStoreCategory', 'updateStoreOrderStatus',
+  'saveClinicInventoryItem', 'deleteClinicInventoryItem', 'recordClinicStockMovement',
+  'saveKitchenInventoryItem', 'deleteKitchenInventoryItem', 'recordKitchenStockMovement',
+  'updateApplicationStatus', 'updateApplicantIntelligence', 'updateApplicationDetails',
+  'enrollStudent', 'recordSale'
 ]);
 
 async function verifyDesktopActor(env, action, body) {
   if (!VERIFIED_ACTOR_ACTIONS.has(action)) return body;
-  const users = await listCollection(env, 'staffUsers').catch((error) => {
+  const actor = await resolveAuthoritativeDesktopActorForEnv(env, body).catch((error) => {
     error.status = error.status || 503;
     throw error;
   });
-  return applyAuthoritativeActor(body, resolveAuthoritativeDesktopActor(body, users, env));
+  return applyAuthoritativeActor(body, actor);
 }
 
 function normalizeMatchText(value) {
@@ -1731,19 +1738,22 @@ export async function getPayableFees(env, body = {}) {
   };
 }
 
-export async function getAccountsOverview(env) {
-  const [accounts, payments, invoices, feeItems, storedLedger, applications, students, settings, billingCategories] = await Promise.all([
-    listCollection(env, 'accounts'),
-    listCollection(env, 'payments'),
-    listCollection(env, 'invoices'),
-    listCollection(env, 'feeItems'),
-    listCollection(env, 'ledger'),
-    listSchoolCollection(env, 'applications'),
-    listSchoolCollection(env, 'students'),
-    listCollection(env, 'settings'),
-    listCollection(env, 'billingCategories')
+export async function getAccountsOverview(env, preloaded = {}, requestedScope = null) {
+  const provided = (key) => Array.isArray(preloaded?.[key]);
+  const [accounts, payments, invoices, feeItems, storedLedger, applications, students, schoolProfile, billingCategories] = await Promise.all([
+    provided('accounts') ? Promise.resolve(preloaded.accounts) : listCollection(env, 'accounts'),
+    provided('payments') ? Promise.resolve(preloaded.payments) : listCollection(env, 'payments'),
+    provided('invoices') ? Promise.resolve(preloaded.invoices) : listCollection(env, 'invoices'),
+    provided('feeItems') ? Promise.resolve(preloaded.feeItems) : listCollection(env, 'feeItems'),
+    provided('ledger') ? Promise.resolve(preloaded.ledger) : listCollection(env, 'ledger'),
+    provided('applications') ? Promise.resolve(preloaded.applications) : listSchoolCollection(env, 'applications', requestedScope),
+    provided('students') ? Promise.resolve(preloaded.students) : listSchoolCollection(env, 'students', requestedScope),
+    preloaded?.schoolProfile
+      ? Promise.resolve(preloaded.schoolProfile)
+      : getDocument(env, 'settings', 'schoolProfile').catch(() => null),
+    provided('billingCategories') ? Promise.resolve(preloaded.billingCategories) : listCollection(env, 'billingCategories')
   ]);
-  const schoolProfile = settings.find((row) => row.__id === 'schoolProfile') || settings.find((row) => clean(row.SchoolName)) || {};
+  const resolvedSchoolProfile = schoolProfile || {};
   const normalizedPayments = payments.map(normalizePayment);
   const normalizedInvoices = invoices.map(normalizeInvoice);
   const normalizedStoredLedger = storedLedger.map(normalizeLedger);
@@ -1782,8 +1792,8 @@ export async function getAccountsOverview(env) {
       Gender: clean(existing.Gender || normalized.Gender),
       EnrollmentCategory: clean(existing.EnrollmentCategory || normalized.EnrollmentCategory) || 'Returning',
       AcademicProgress: clean(existing.AcademicProgress || normalized.AcademicProgress) || 'Promoted',
-      AcademicSession: clean(existing.AcademicSession || normalized.AcademicSession || schoolProfile.CurrentAcademicSession),
-      Term: clean(existing.Term || normalized.Term || schoolProfile.CurrentTerm) || 'First Term',
+      AcademicSession: clean(existing.AcademicSession || normalized.AcademicSession || resolvedSchoolProfile.CurrentAcademicSession),
+      Term: clean(existing.Term || normalized.Term || resolvedSchoolProfile.CurrentTerm) || 'First Term',
       Status: clean(existing.Status || normalized.Status),
       ResultStatus: clean(existing.ResultStatus || normalized.ResultStatus),
       OfferSent: clean(existing.OfferSent || normalized.OfferSent),
@@ -1793,7 +1803,7 @@ export async function getAccountsOverview(env) {
     registerAccountAliases(key, accountRefsFrom(accountMap.get(key)));
   };
   const applicationCreatedMap = new Map();
-  applications.map((row) => normalizeApplication(row, schoolProfile)).forEach((app) => {
+  applications.map((row) => normalizeApplication(row, resolvedSchoolProfile)).forEach((app) => {
     const refs = accountRefsFrom(app);
     const createdAt = timestampMs(app.SubmittedAt || app.CreatedAt || app.UpdatedAt);
     refs.forEach((ref) => {
@@ -1801,7 +1811,7 @@ export async function getAccountsOverview(env) {
       if (key && createdAt) applicationCreatedMap.set(key, createdAt);
     });
   });
-  students.map((row) => normalizeStudent(row, schoolProfile)).forEach((student) => putAccount({
+  students.map((row) => normalizeStudent(row, resolvedSchoolProfile)).forEach((student) => putAccount({
     AccountRef: student.AdmissionNo || student.ApplicationReference,
     ApplicationReference: student.ApplicationReference,
     AdmissionNo: student.AdmissionNo,
@@ -1820,7 +1830,7 @@ export async function getAccountsOverview(env) {
   // Student register identity and eligibility fields are authoritative. Legacy
   // account rows may still say New Intake after a CSV import, so merge them second.
   accounts.map(normalizeAccount).forEach(putAccount);
-  applications.map((row) => normalizeApplication(row, schoolProfile)).forEach((app) => putAccount({
+  applications.map((row) => normalizeApplication(row, resolvedSchoolProfile)).forEach((app) => putAccount({
     AccountRef: app.AdmissionNo || app.AdmissionNumber || app.ApplicationReference || app.ApplicationID,
     ApplicationReference: app.ApplicationReference || app.ApplicationID,
     AdmissionNo: app.AdmissionNo || app.AdmissionNumber,
@@ -2063,7 +2073,7 @@ async function saveStoreItem(env, body) {
 }
 
 async function saveStoreCategoryAction(env, body) {
-  const category = await saveStoreCategory(env, body, clean(body.UpdatedBy || body.RecordedBy));
+  const category = await saveStoreCategory(env, body, clean(body.RecordedBy || body.UpdatedBy));
   return { ok: true, message: clean(body.Active).toUpperCase() === 'NO' ? 'Category deactivated. Existing references were preserved.' : 'Category saved.', category };
 }
 
@@ -2097,12 +2107,21 @@ async function updateStoreOrderStatus(env, body) {
 async function saveBrevoSettings(env, body) {
   const senderName = clean(body.BrevoSenderName || body.SenderName || body.senderName);
   const senderEmail = clean(body.BrevoSenderEmail || body.SenderEmail || body.senderEmail);
-  const apiKey = clean(body.BrevoApiKey || body.ApiKey || body.apiKey);
+  const submittedApiKey = clean(body.BrevoApiKey || body.ApiKey || body.apiKey);
+  const environmentApiKeyConfigured = Boolean(clean(env.BREVO_API_KEY));
   if (!senderEmail) {
     const err = new Error('Brevo sender email is required.');
     err.status = 400;
     throw err;
   }
+  if (submittedApiKey && !environmentApiKeyConfigured) {
+    const err = new Error('Brevo credentials must be added as the BREVO_API_KEY encrypted Cloudflare secret. The API key was not saved to the database.');
+    err.status = 503;
+    err.code = 'BREVO_ENV_SECRET_REQUIRED';
+    throw err;
+  }
+  const existing = await getDocument(env, 'settings', 'brevo').catch(() => null);
+  const legacyDatabaseKeyConfigured = Boolean(clean(existing?.BrevoApiKey));
   const now = nowIso();
   const payload = {
     BrevoSenderName: senderName,
@@ -2112,20 +2131,25 @@ async function saveBrevoSettings(env, body) {
     UpdatedAt: now,
     UpdatedBy: clean(body.UserRole || body.UpdatedBy || body.updatedBy) || 'Super Admin'
   };
-  if (apiKey) {
-    payload.BrevoApiKey = apiKey;
-    payload.ApiKeyUpdatedAt = now;
-  }
-  await upsertDocument(env, 'settings', 'brevo', payload);
+  // Use a field-mask patch so a pre-existing database key is not deleted
+  // automatically. New or submitted credentials are never written here.
+  await patchDocumentFields(env, 'settings', 'brevo', payload);
+  const credentialSource = environmentApiKeyConfigured
+    ? 'cloudflare-secret'
+    : (legacyDatabaseKeyConfigured ? 'legacy-database' : 'not-configured');
   return {
     ok: true,
-    message: 'Brevo settings saved to the database.',
+    message: credentialSource === 'legacy-database'
+      ? 'Brevo sender settings saved. Migrate the legacy database credential to the BREVO_API_KEY Cloudflare secret.'
+      : 'Brevo sender settings saved.',
     settings: {
       BrevoSenderName: senderName,
       BrevoSenderEmail: senderEmail,
       BrevoReplyToEmail: payload.BrevoReplyToEmail,
       BrevoReplyToName: payload.BrevoReplyToName,
-      HasBrevoApiKey: Boolean(apiKey)
+      HasBrevoApiKey: environmentApiKeyConfigured || legacyDatabaseKeyConfigured,
+      CredentialSource: credentialSource,
+      LegacyCredentialMigrationRequired: legacyDatabaseKeyConfigured && !environmentApiKeyConfigured
     }
   };
 }
@@ -2228,6 +2252,7 @@ async function saveSchoolProfile(env, body) {
     Branches: branches.length ? branches : [{ Id: 'main', Name: 'Main Branch' }], ActiveBranchId: activeBranchId,
     Sections: sections, UpdatedAt: nowIso(), UpdatedBy: profile.UpdatedBy
   });
+  invalidateSchoolStructureCache();
   await upsertDocument(env, 'settings', 'admissionDocuments', {
     Enabled: documentRequirements, UpdatedAt: nowIso(), UpdatedBy: profile.UpdatedBy
   });
@@ -2317,7 +2342,7 @@ async function updateApplicationStatus(env, body) {
   const now = nowIso();
   const updates = {
     Status: clean(body.Status || body.status) || pick(existing, ['Status', 'status']),
-    ReviewedBy: clean(body.ReviewedBy || body.reviewedBy) || 'Admissions Office',
+    ReviewedBy: clean(body.RecordedBy || body.ReviewedBy || body.reviewedBy) || 'Admissions Office',
     ReviewDate: now,
     UpdatedAt: now
   };
@@ -2336,7 +2361,10 @@ async function updateApplicationStatus(env, body) {
     if (body[key] !== undefined) updates[key] = body[key];
   });
   if (updates.Status === 'Paid' && !updates.AcceptanceFeePaid) updates.AcceptanceFeePaid = 'YES';
-  if (updates.AcceptanceFeePaid && !updates.AcceptanceFeePaidAt) updates.AcceptanceFeePaidAt = now;
+  if (yesNo(updates.AcceptanceFeePaid) === 'YES') {
+    if (!updates.AcceptanceFeePaidAt) updates.AcceptanceFeePaidAt = now;
+    updates.AcceptanceFeeReceivedBy = clean(body.RecordedBy) || updates.ReviewedBy;
+  }
   const saved = await saveApplication(env, { ...existing, ...updates });
 
   const admissionNo = updates.AdmissionNo || pick(existing, ['AdmissionNo']);
@@ -2397,8 +2425,12 @@ async function updateApplicantIntelligence(env, body) {
   const id = applicationIdFrom(body);
   const existing = id ? await findApplication(env, id) : null;
   if (!existing) throw applicationNotFound(id);
-  const ignored = new Set(['Secret', 'secret', 'Action', 'action', 'ApplicationID', 'ApplicationReference']);
-  const updates = { UpdatedAt: nowIso(), IntelligenceUpdatedBy: clean(body.UpdatedBy) || 'Admissions Office' };
+  const ignored = new Set([
+    'Secret', 'secret', 'Action', 'action', 'ApplicationID', 'ApplicationReference',
+    'UserUsername', 'userUsername', 'UserRole', 'UserDepartment', 'UserBranchId',
+    'UserSchoolSectionAccess', 'UserTabAccess', 'RecordedBy', 'UpdatedBy'
+  ]);
+  const updates = { UpdatedAt: nowIso(), IntelligenceUpdatedBy: clean(body.RecordedBy) || 'Admissions Office' };
   Object.entries(body || {}).forEach(([key, value]) => {
     if (!ignored.has(key)) updates[key] = value;
   });
@@ -2410,8 +2442,12 @@ async function updateApplicationDetails(env, body) {
   const id = applicationIdFrom(body);
   const existing = id ? await findApplication(env, id) : null;
   if (!existing) throw applicationNotFound(id);
-  const ignored = new Set(['Secret', 'secret', 'Action', 'action', 'id', '__id']);
-  const updates = { UpdatedAt: nowIso(), UpdatedBy: clean(body.UpdatedBy || body.UserRole) || 'Super Admin' };
+  const ignored = new Set([
+    'Secret', 'secret', 'Action', 'action', 'id', '__id',
+    'UserUsername', 'userUsername', 'UserRole', 'UserDepartment', 'UserBranchId',
+    'UserSchoolSectionAccess', 'UserTabAccess', 'RecordedBy', 'UpdatedBy'
+  ]);
+  const updates = { UpdatedAt: nowIso(), UpdatedBy: clean(body.RecordedBy) || 'Super Admin' };
   Object.entries(body || {}).forEach(([key, value]) => {
     if (!ignored.has(key)) updates[key] = value;
   });
@@ -2603,7 +2639,7 @@ async function enrollStudent(env, body) {
   if (!admissionNo) throw new Error('Admission number is missing.');
   const appRef = pick(existing, ['ApplicationReference', 'ApplicationID']);
   if (await findStudent(env, admissionNo, appRef)) throw new Error('A student record already exists for this application or admission number.');
-  const enrolledBy = clean(body.EnrolledBy || body.enrolledBy) || 'Admissions Office';
+  const enrolledBy = clean(body.RecordedBy || body.EnrolledBy || body.enrolledBy) || 'Admissions Office';
   const applicantName = pick(existing, ['ApplicantName', 'Name', 'DisplayName']);
   const admittedClass = canonicalConfiguredClass(pick(existing, ['ClassApplyingFor', 'ClassName']), await configuredClassNames(env));
   const student = await saveStudent(env, {
@@ -2702,6 +2738,35 @@ async function writeFormSaleAccountingJournal(env, sale) {
   });
 }
 
+async function completeFormSaleProcessing(env, sale, documentId) {
+  const amounts = formSaleFinancialAmounts(sale);
+  const savedId = safeDocumentId(documentId || sale.__id || sale.ReceiptNo);
+  await patchDocumentFields(env, 'formSales', savedId, {
+    ProcessingStatus: 'Processing',
+    ProcessingVersion: 2,
+    ProcessingStartedAt: sale.ProcessingStartedAt || nowIso(),
+    UpdatedAt: nowIso()
+  });
+  if (amounts.GatewayFee > 0) {
+    const chargeId = safeDocumentId(`PAYSTACK-FORM-FEE-${sale.PaymentReference || sale.ReceiptNo}`);
+    await upsertDocument(env, 'paymentGatewayCharges', chargeId, {
+      ChargeId: chargeId, Date: sale.PaymentDate,
+      Description: `Paystack admission-form transaction charge - ${sale.PaymentReference || sale.ReceiptNo}`,
+      Amount: amounts.GatewayFee, GrossCollection: amounts.GrossAmount, NetSettlement: amounts.NetAmount,
+      Treatment: 'DeductedBeforeRevenueRecognition', Status: 'Recorded',
+      Reference: sale.PaymentReference || sale.ReceiptNo, Source: 'Paystack Admission Form',
+      CreatedAt: sale.CreatedAt || nowIso(), UpdatedAt: nowIso()
+    });
+  }
+  await writeFormSaleAccountingJournal(env, { ...sale, ...amounts });
+  await patchDocumentFields(env, 'formSales', savedId, {
+    ProcessingStatus: 'Completed',
+    ProcessingVersion: 2,
+    ProcessingCompletedAt: nowIso(),
+    UpdatedAt: nowIso()
+  });
+}
+
 export async function recordSale(env, body) {
   const email = lower(body.Email || body.email);
   const code = clean(body.VerificationCode || body.verificationCode).toUpperCase();
@@ -2716,6 +2781,7 @@ export async function recordSale(env, body) {
       (await findOneByField(env, 'formSales', 'ReceiptNo', receiptNo).catch(() => null))
     : null;
   if (sameReceipt) {
+    await completeFormSaleProcessing(env, sameReceipt, sameReceipt.__id || receiptNo);
     return {
       ok: true,
       duplicate: true,
@@ -2755,29 +2821,25 @@ export async function recordSale(env, body) {
     ExpiryDate: body.ExpiryDate || '',
     Status: body.Status || 'PAID',
     Used: body.Used || 'NO',
+    RecordedBy: clean(body.RecordedBy) || 'Admissions Office',
+    RecordedByUsername: clean(body.UserUsername),
+    ProcessingStatus: 'Processing',
+    ProcessingVersion: 2,
+    ProcessingStartedAt: nowIso(),
     CreatedAt: nowIso(),
     UpdatedAt: nowIso()
   };
   const created = await createDocumentIfAbsent(env, 'formSales', safeDocumentId(sale.ReceiptNo), sale);
   if (!created.created) {
+    const existingSale = created.document || sale;
+    await completeFormSaleProcessing(env, existingSale, existingSale.__id || sale.ReceiptNo);
     return {
       ok: true, duplicate: true, message: 'Sale already recorded.',
-      receiptNo: sale.ReceiptNo, verificationCode: created.document?.VerificationCode || sale.VerificationCode,
-      email: created.document?.Email || sale.Email, expiryDate: created.document?.ExpiryDate || sale.ExpiryDate
+      receiptNo: sale.ReceiptNo, verificationCode: existingSale.VerificationCode || sale.VerificationCode,
+      email: existingSale.Email || sale.Email, expiryDate: existingSale.ExpiryDate || sale.ExpiryDate
     };
   }
-  if (sale.GatewayFee > 0) {
-    const chargeId = safeDocumentId(`PAYSTACK-FORM-FEE-${sale.PaymentReference || sale.ReceiptNo}`);
-    await upsertDocument(env, 'paymentGatewayCharges', chargeId, {
-      ChargeId: chargeId, Date: sale.PaymentDate,
-      Description: `Paystack admission-form transaction charge - ${sale.PaymentReference || sale.ReceiptNo}`,
-      Amount: sale.GatewayFee, GrossCollection: sale.GrossAmount, NetSettlement: sale.NetAmount,
-      Treatment: 'DeductedBeforeRevenueRecognition', Status: 'Recorded',
-      Reference: sale.PaymentReference || sale.ReceiptNo, Source: 'Paystack Admission Form',
-      CreatedAt: nowIso(), UpdatedAt: nowIso()
-    });
-  }
-  await writeFormSaleAccountingJournal(env, sale);
+  await completeFormSaleProcessing(env, sale, sale.ReceiptNo);
   return {
     ok: true,
     message: 'Sale saved.',
@@ -2923,7 +2985,7 @@ async function saveAdmissionClasses(env, body) {
     throw err;
   }
   const updatedAt = nowIso();
-  const updatedBy = clean(body.UpdatedBy || body.updatedBy) || 'Admissions Office';
+  const updatedBy = clean(body.RecordedBy || body.UpdatedBy || body.updatedBy) || 'Admissions Office';
   let saved = 0;
   const keepIds = new Set();
   for (const item of classes) {
@@ -3152,9 +3214,9 @@ async function removeStandaloneAcceptanceInvoices(env, payment) {
 }
 
 export async function recordManualPayment(env, body) {
-  const accountRef = clean(body.AccountRef || body.accountRef || body.ApplicationReference);
-  const feeCode = clean(body.FeeCode || body.feeCode);
-  const amount = asMoneyNumber(body.Amount || body.amount);
+  let accountRef = clean(body.AccountRef || body.accountRef || body.ApplicationReference);
+  let feeCode = clean(body.FeeCode || body.feeCode);
+  let amount = asMoneyNumber(body.Amount || body.amount);
   const reference = clean(body.Reference || body.reference || ledgerDocumentId('PAY'));
   if (!accountRef) {
     const err = new Error('AccountRef is required.');
@@ -3171,21 +3233,32 @@ export async function recordManualPayment(env, body) {
     err.status = 400;
     throw err;
   }
+  let existingPayment = await findPaymentByReference(env, reference);
+  let payment = existingPayment ? normalizePayment(existingPayment) : null;
+  let duplicate = Boolean(payment);
+  let paymentDocumentId = safeDocumentId(existingPayment?.__id || reference);
+  if (payment) {
+    accountRef = clean(payment.AccountRef || accountRef);
+    feeCode = clean(payment.FeeCode || feeCode);
+    amount = paymentCreditedAmount(payment) || amount;
+    if (!clean(payment.ProcessingStatus)) {
+      payment.ProcessingStatus = 'Processing';
+      payment.ProcessingVersion = 2;
+      payment.ProcessingStartedAt = nowIso();
+      await patchDocumentFields(env, 'payments', paymentDocumentId, {
+        ProcessingStatus: 'Processing',
+        ProcessingVersion: 2,
+        ProcessingStartedAt: payment.ProcessingStartedAt,
+        UpdatedAt: nowIso()
+      });
+    }
+  }
   const isTotalPayment = isSchoolFeesTotalCode(feeCode);
   const directFee = await getDocument(env, 'feeItems', safeDocumentId(feeCode)).catch(() => null);
   const configuredFees = isTotalPayment
     ? (await listCollection(env, 'feeItems')).map(normalizeFeeItem)
     : (directFee ? [normalizeFeeItem(directFee)] : []);
   const fee = configuredFees.find((item) => sameText(item.FeeCode, feeCode)) || normalizeFeeItem(body);
-  const existingPayment = await findPaymentByReference(env, reference);
-  if (existingPayment) {
-    const normalizedExisting = normalizePayment(existingPayment);
-    if (isAcceptanceFeeLike(normalizedExisting)) {
-      await removeStandaloneAcceptanceInvoices(env, normalizedExisting);
-      await refreshAccountFinancialSummary(env, normalizedExisting.AccountRef, [normalizedExisting.ApplicationReference]);
-    }
-    return { ok: true, message: 'Payment was already recorded.', duplicate: true, payment: normalizedExisting };
-  }
   const schoolFeeCodes = new Set(configuredFees.filter((item) => isSchoolFeeCategory(item.FeeCategory)).map((item) => normalizeReferenceText(item.FeeCode)));
   const student = await findStudentByAccountRef(env, accountRef);
   const paymentId = ledgerDocumentId('PAY');
@@ -3197,48 +3270,60 @@ export async function recordManualPayment(env, body) {
   const creditedAmount = gatewayFee > 0 ? Math.min(grossAmount, netAmount) : amount;
   const academicSession = clean(body.AcademicSession || (student && student.AcademicSession) || resolvedPeriodValue(fee.AcademicSession, ''));
   const term = clean(body.Term || (student && student.Term) || resolvedPeriodValue(fee.Term, ''));
-  const payment = {
-    PaymentId: paymentId,
-    AccountRef: accountRef,
-    AccountRefNormalized: normalizeReferenceText(accountRef),
-    ApplicationReference: clean(body.ApplicationReference || (student && student.ApplicationReference)),
-    AdmissionNo: clean(body.AdmissionNo || (student && student.AdmissionNo)),
-    BranchId: clean(body.BranchId || (student && student.BranchId) || 'main').toLowerCase() || 'main',
-    SchoolSection: clean(body.SchoolSection || (student && student.SchoolSection) || (student && schoolSectionFor(student))),
-    DisplayName: clean(body.DisplayName || (student && (student.DisplayName || student.ApplicantName))),
-    ClassName: clean(body.ClassName || (student && student.ClassName)),
-    StudentType: clean(body.StudentType || (student && student.StudentType) || fee.StudentType),
-    BillingCategory: clean(body.BillingCategory || (student && student.BillingCategory) || fee.BillingCategory) || 'Regular',
-    AcademicSession: academicSession,
-    Term: term,
-    FeeCode: feeCode,
-    FeeName: clean(body.FeeName || fee.FeeName || feeCode),
-    FeeCategory: clean(body.FeeCategory || fee.FeeCategory),
-    Amount: creditedAmount,
-    GrossAmount: grossAmount,
-    GatewayFee: gatewayFee,
-    NetAmount: netAmount,
-    Currency: clean(body.Currency || fee.Currency) || 'NGN',
-    Method: clean(body.Method) || 'Manual',
-    Gateway: clean(body.Gateway) || 'Manual',
-    Reference: reference,
-    GatewayReference: clean(body.GatewayReference),
-    Status: 'Paid',
-    PaidAt: clean(body.PaidAt) || nowIso(),
-    RecordedAt: nowIso(),
-    RecordedBy: clean(body.RecordedBy) || 'Accounts Office',
-    Channel: clean(body.Channel),
-    ReceiptNo: clean(body.ReceiptNo) || paymentId,
-    Metadata: clean(body.Metadata)
-  };
-  const paymentCreate = await createDocumentIfAbsent(env, 'payments', safeDocumentId(reference), {
-    ...payment,
-    ProcessingStatus: 'Processing'
-  });
-  if (!paymentCreate.created) {
-    return { ok: true, message: 'Payment was already recorded.', duplicate: true, payment: normalizePayment(paymentCreate.document || payment) };
+  if (!payment) {
+    payment = {
+      PaymentId: paymentId,
+      AccountRef: accountRef,
+      AccountRefNormalized: normalizeReferenceText(accountRef),
+      ApplicationReference: clean(body.ApplicationReference || (student && student.ApplicationReference)),
+      AdmissionNo: clean(body.AdmissionNo || (student && student.AdmissionNo)),
+      BranchId: clean(body.BranchId || (student && student.BranchId) || 'main').toLowerCase() || 'main',
+      SchoolSection: clean(body.SchoolSection || (student && student.SchoolSection) || (student && schoolSectionFor(student))),
+      DisplayName: clean(body.DisplayName || (student && (student.DisplayName || student.ApplicantName))),
+      ClassName: clean(body.ClassName || (student && student.ClassName)),
+      StudentType: clean(body.StudentType || (student && student.StudentType) || fee.StudentType),
+      BillingCategory: clean(body.BillingCategory || (student && student.BillingCategory) || fee.BillingCategory) || 'Regular',
+      AcademicSession: academicSession,
+      Term: term,
+      FeeCode: feeCode,
+      FeeName: clean(body.FeeName || fee.FeeName || feeCode),
+      FeeCategory: clean(body.FeeCategory || fee.FeeCategory),
+      Amount: creditedAmount,
+      GrossAmount: grossAmount,
+      GatewayFee: gatewayFee,
+      NetAmount: netAmount,
+      Currency: clean(body.Currency || fee.Currency) || 'NGN',
+      Method: clean(body.Method) || 'Manual',
+      Gateway: clean(body.Gateway) || 'Manual',
+      Reference: reference,
+      GatewayReference: clean(body.GatewayReference),
+      Status: 'Paid',
+      PaidAt: clean(body.PaidAt) || nowIso(),
+      RecordedAt: nowIso(),
+      RecordedBy: clean(body.RecordedBy) || 'Accounts Office',
+      Channel: clean(body.Channel),
+      ReceiptNo: clean(body.ReceiptNo) || paymentId,
+      Metadata: clean(body.Metadata),
+      ProcessingStatus: 'Processing',
+      ProcessingVersion: 2,
+      ProcessingStartedAt: nowIso()
+    };
+    const paymentCreate = await createDocumentIfAbsent(env, 'payments', safeDocumentId(reference), payment);
+    if (!paymentCreate.created) {
+      payment = normalizePayment(paymentCreate.document || payment);
+      existingPayment = paymentCreate.document || payment;
+      duplicate = true;
+      paymentDocumentId = safeDocumentId(paymentCreate.document?.__id || reference);
+      accountRef = clean(payment.AccountRef || accountRef);
+      feeCode = clean(payment.FeeCode || feeCode);
+    }
   }
+  const paymentCredit = paymentCreditedAmount(payment);
+  const paymentSession = clean(payment.AcademicSession || academicSession);
+  const paymentTerm = clean(payment.Term || term);
   const ledgerNo = `LED-${safeDocumentId(reference)}`;
+  const ledgerDocumentIdValue = safeDocumentId(ledgerNo);
+  const existingLedger = await getDocument(env, 'ledger', ledgerDocumentIdValue).catch(() => null);
   await upsertDocument(env, 'ledger', safeDocumentId(ledgerNo), {
     LedgerNo: ledgerNo,
     Date: payment.PaidAt,
@@ -3258,12 +3343,19 @@ export async function recordManualPayment(env, body) {
     Term: payment.Term,
     Description: payment.FeeName,
     Debit: 0,
-    Credit: creditedAmount,
+    Credit: paymentCredit,
     Currency: payment.Currency,
     Reference: reference,
     RecordedBy: payment.RecordedBy,
     Source: payment.Gateway || payment.Method,
     Metadata: payment.Metadata
+  });
+  payment.LedgerPostingStatus = 'Completed';
+  payment.ProcessingVersion = 2;
+  await patchDocumentFields(env, 'payments', paymentDocumentId, {
+    LedgerPostingStatus: 'Completed',
+    ProcessingVersion: 2,
+    UpdatedAt: nowIso()
   });
   await removeStandaloneAcceptanceInvoices(env, payment);
   const matchingInvoices = (await queryAccountRows(env, 'invoices', accountRef)).map(normalizeInvoice).filter((invoice) => {
@@ -3271,19 +3363,37 @@ export async function recordManualPayment(env, body) {
       (isSchoolFeesTotalPayment(payment)
         ? isSchoolFeeCategory(invoice.FeeCategory) || schoolFeeCodes.has(normalizeReferenceText(invoice.FeeCode))
         : sameText(invoice.FeeCode, feeCode)) &&
-      sameFinancialPeriod(invoice, academicSession, term) &&
+      sameFinancialPeriod(invoice, paymentSession, paymentTerm) &&
       normalizeMatchText(invoice.Status) !== 'paid';
   }).sort((a, b) => timestampMs(a.Date || a.CreatedAt) - timestampMs(b.Date || b.CreatedAt));
-  const invoiceAllocation = calculateInvoiceCreditAllocations(matchingInvoices, creditedAmount);
-  for (const allocation of invoiceAllocation.allocations) {
-    const invoice = allocation.invoice;
-    await upsertDocument(env, 'invoices', safeDocumentId(invoice.InvoiceId), {
-      ...invoice,
-      Credit: allocation.Credit,
-      Balance: allocation.Balance,
-      Status: allocation.Status,
-      UpdatedAt: nowIso()
-    });
+  const unfinishedPayment = normalizeMatchText(payment.ProcessingStatus) === 'processing';
+  const invoiceAllocationComplete = normalizeMatchText(payment.InvoiceAllocationStatus) === 'completed';
+  const shouldApplyInvoiceAllocation = !duplicate || (unfinishedPayment && !invoiceAllocationComplete) ||
+    (!existingLedger && !invoiceAllocationComplete);
+  if (shouldApplyInvoiceAllocation) {
+    const invoiceAllocation = calculateInvoiceCreditAllocations(matchingInvoices, paymentCredit);
+    payment.InvoiceAllocationStatus = 'Completed';
+    payment.InvoiceAllocationCompletedAt = nowIso();
+    const currentPaymentVersion = await getDocument(env, 'payments', paymentDocumentId).catch(() => null);
+    await batchUpsertDocuments(env, [
+      ...invoiceAllocation.allocations.map((allocation) => ({
+        collectionPath: 'invoices',
+        documentId: safeDocumentId(allocation.invoice.InvoiceId),
+        data: {
+          ...allocation.invoice,
+          Credit: allocation.Credit,
+          Balance: allocation.Balance,
+          Status: allocation.Status,
+          UpdatedAt: nowIso()
+        }
+      })),
+      {
+        collectionPath: 'payments',
+        documentId: paymentDocumentId,
+        data: { ...payment, UpdatedAt: nowIso() },
+        updateTime: currentPaymentVersion?.__updateTime
+      }
+    ]);
   }
   if (isAcceptanceFeeLike(payment)) {
     const appId = payment.ApplicationReference || payment.AccountRef;
@@ -3293,7 +3403,7 @@ export async function recordManualPayment(env, body) {
         ...app,
         AcceptanceFeePaid: 'YES',
         AcceptanceFeePaidAt: payment.PaidAt,
-        AcceptanceFeeAmount: creditedAmount,
+        AcceptanceFeeAmount: paymentCredit,
         AcceptanceFeeMethod: payment.Gateway || payment.Method,
         AcceptanceFeeReceiptNo: payment.ReceiptNo || payment.Reference,
         AcceptanceFeeReceivedBy: payment.RecordedBy,
@@ -3306,7 +3416,7 @@ export async function recordManualPayment(env, body) {
     await upsertDocument(env, 'paymentGatewayCharges', chargeId, {
       ChargeId: chargeId, Date: payment.PaidAt,
       Description: `Paystack transaction charge - ${payment.Reference || payment.PaymentId}`,
-      Amount: payment.GatewayFee, GrossCollection: payment.GrossAmount, NetSettlement: creditedAmount,
+      Amount: payment.GatewayFee, GrossCollection: payment.GrossAmount, NetSettlement: paymentCredit,
       Treatment: 'DeductedBeforeStudentCredit', Status: 'Recorded',
       Reference: payment.Reference || payment.PaymentId, Source: payment.Gateway || 'Paystack',
       CreatedAt: nowIso(), UpdatedAt: nowIso()
@@ -3332,15 +3442,17 @@ export async function recordManualPayment(env, body) {
     await refreshAccountFinancialSummary(env, accountRef, [payment.ApplicationReference]);
   }
   payment.ProcessingStatus = 'Completed';
+  payment.ProcessingVersion = 2;
   payment.CompletedAt = nowIso();
   payment.InvoicePostingStatus = invoicePostingWarning ? 'Warning' : (shouldGenerateSchoolInvoices ? 'Completed' : 'Not Required');
   payment.InvoicePostingWarning = invoicePostingWarning;
-  await upsertDocument(env, 'payments', safeDocumentId(reference), payment);
+  await upsertDocument(env, 'payments', paymentDocumentId, payment);
   return {
     ok: true,
     message: invoicePostingWarning
       ? `Payment recorded, but invoice posting needs attention: ${invoicePostingWarning}`
-      : 'Payment recorded in the database.',
+      : (duplicate ? 'Payment was already recorded; its dependent records were checked.' : 'Payment recorded in the database.'),
+    duplicate,
     payment,
     invoicePostingWarning
   };
@@ -5159,13 +5271,14 @@ async function importAccountingBankStatement(env, body) {
   const accountCode = clean(body.AccountCode || body.accountCode) || '1020';
   const rows = Array.isArray(body.Rows || body.rows) ? (body.Rows || body.rows) : [];
   if (!bankId || !rows.length) { const err = new Error('Bank account and statement rows are required.'); err.status = 400; throw err; }
+  if (rows.length > 500) { const err = new Error('Import at most 500 bank statement rows per request.'); err.status = 413; throw err; }
   const journals = await listCollection(env, 'accountingJournals');
   const cashMovements = [];
   journals.filter((j) => lower(j.Status) === 'posted').forEach((journal) => accountingLines(journal.Lines).filter((line) => clean(line.AccountCode) === accountCode).forEach((line) => {
     cashMovements.push({ JournalNo: clean(journal.JournalNo), Date: clean(journal.Date).slice(0, 10), Reference: clean(journal.Reference),
       Amount: asMoneyNumber(line.Debit) - asMoneyNumber(line.Credit), Description: clean(journal.Description) });
   }));
-  let imported = 0; let matched = 0;
+  let imported = 0; let matched = 0; const writes = [];
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index] || {};
     const date = clean(row.Date || row.date).slice(0, 10);
@@ -5179,9 +5292,10 @@ async function importAccountingBankStatement(env, body) {
     const payload = { StatementItemId: id, BankId: bankId, AccountCode: accountCode, Date: date, Reference: reference,
       Description: clean(row.Description || row.description || row.Narration || row.narration), Debit: debit, Credit: credit, Amount: amount,
       Status: exact ? 'Matched' : 'Unmatched', MatchedJournalNo: exact ? exact.JournalNo : '', ImportedAt: nowIso(), ImportedBy: clean(body.RecordedBy) };
-    await upsertDocument(env, 'accountingBankStatementItems', id, payload);
+    writes.push({ collectionPath: 'accountingBankStatementItems', documentId: id, data: payload });
     imported += 1; if (exact) matched += 1;
   }
+  await batchUpsertDocuments(env, writes);
   await writeAccountingAudit(env, 'IMPORT', 'Bank Statement', bankId, body, `${imported} rows; ${matched} matched`);
   return { ok: true, message: `Imported ${imported} statement row(s); ${matched} matched automatically.`, imported, matched };
 }
@@ -5517,6 +5631,16 @@ function payrollTotal(value) {
   return normalizedPayrollComponents(value).reduce((sum, row) => sum + row.Amount, 0);
 }
 
+const PAYROLL_BULK_ACTION_LIMIT = 15;
+const PAYROLL_GENERATION_PROFILE_LIMIT = 250;
+
+async function commitDocumentWritesInChunks(env, writes, size = 400) {
+  const items = Array.isArray(writes) ? writes : [];
+  for (let index = 0; index < items.length; index += size) {
+    await batchCommitDocuments(env, items.slice(index, index + size));
+  }
+}
+
 async function writePayrollAudit(env, action, entityType, entityId, body, details = '') {
   const auditId = ledgerDocumentId('PAYAUD');
   await upsertDocument(env, 'payrollAudit', safeDocumentId(auditId), {
@@ -5572,9 +5696,19 @@ async function createPayrollProfilesFromStaff(env, body) {
     listCollection(env, 'staffUsers'),
     listCollection(env, 'payrollProfiles')
   ]);
+  const orderedStaffUsers = [...staffUsers].sort((left, right) =>
+    lower(left.Username || left.__id).localeCompare(lower(right.Username || right.__id)));
+  const cursor = Math.floor(Math.max(0, Number(body.Cursor || body.cursor || body.StaffOffset || 0) || 0));
+  if (cursor >= orderedStaffUsers.length && orderedStaffUsers.length) {
+    const error = new Error('The payroll profile cursor is outside the staff list. Restart from cursor 0.');
+    error.status = 400;
+    error.code = 'PAYROLL_CURSOR_INVALID';
+    throw error;
+  }
+  const selectedStaff = orderedStaffUsers.slice(cursor, cursor + PAYROLL_BULK_ACTION_LIMIT);
   const existingUsernames = new Set(profiles.map((row) => lower(row.Username)).filter(Boolean));
   let created = 0; let skipped = 0; const failures = [];
-  for (const staff of staffUsers) {
+  for (const staff of selectedStaff) {
     const username = clean(staff.Username || staff.__id);
     if (!username || yesNo(staff.Active ?? 'YES') !== 'YES' || existingUsernames.has(lower(username))) {
       skipped += 1;
@@ -5601,17 +5735,32 @@ async function createPayrollProfilesFromStaff(env, body) {
   }
   await writePayrollAudit(env, 'BULK CREATE FROM STAFF', 'Payroll Profiles', 'staffUsers', body,
     `${created} created; ${skipped} skipped; ${failures.length} failed`);
+  const nextCursorValue = cursor + selectedStaff.length;
+  const complete = nextCursorValue >= orderedStaffUsers.length;
   return {
     ok: true,
-    message: `${created} payroll profile(s) created from active staff accounts; ${skipped} already linked or inactive${failures.length ? `; ${failures.length} failed` : ''}.`,
-    created, skipped, failures
+    message: `${created} payroll profile(s) created from active staff accounts; ${skipped} already linked or inactive${failures.length ? `; ${failures.length} failed` : ''}${complete ? '.' : `. Continue from cursor ${nextCursorValue}.`}`,
+    created, skipped, failures,
+    progress: {
+      complete,
+      partial: !complete,
+      cursor,
+      nextCursor: complete ? null : nextCursorValue,
+      processed: selectedStaff.length,
+      total: orderedStaffUsers.length,
+      limit: PAYROLL_BULK_ACTION_LIMIT
+    }
   };
 }
 
 async function importPayrollProfiles(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
-  const rows = Array.isArray(body.Profiles || body.profiles) ? (body.Profiles || body.profiles).slice(0, 500) : [];
-  if (!rows.length) { const err = new Error('Choose a payroll CSV containing at least one profile row.'); err.status = 400; throw err; }
+  const sourceRows = Array.isArray(body.Profiles || body.profiles) ? (body.Profiles || body.profiles) : [];
+  if (!sourceRows.length) { const err = new Error('Choose a payroll CSV containing at least one profile row.'); err.status = 400; throw err; }
+  if (sourceRows.length > 500) { const err = new Error('Import at most 500 payroll rows at a time.'); err.status = 413; throw err; }
+  const cursor = Math.floor(Math.max(0, Number(body.Cursor || body.cursor || body.ProfileOffset || 0) || 0));
+  if (cursor >= sourceRows.length) { const err = new Error('The payroll import cursor is outside the supplied rows. Restart from cursor 0.'); err.status = 400; err.code = 'PAYROLL_CURSOR_INVALID'; throw err; }
+  const rows = sourceRows.slice(cursor, cursor + PAYROLL_BULK_ACTION_LIMIT);
   const updateExisting = yesNo(body.UpdateExisting ?? body.updateExisting ?? 'YES') === 'YES';
   const profiles = await listCollection(env, 'payrollProfiles');
   const byUsername = new Map(profiles.map((row) => [lower(row.Username), row]).filter(([username]) => username));
@@ -5625,12 +5774,12 @@ async function importPayrollProfiles(env, body) {
     const requestedEmployeeId = clean(row.EmployeeId || row.employeeId);
     const employeeIdOwner = byEmployeeId.get(lower(requestedEmployeeId));
     if (seenUsernames.has(lower(username))) {
-      failures.push({ row: index + 2, username, message: 'Duplicate username in this CSV.' });
+      failures.push({ row: cursor + index + 2, username, message: 'Duplicate username in this CSV.' });
       continue;
     }
     seenUsernames.add(lower(username));
     if (employeeIdOwner && !sameText(employeeIdOwner.Username, username)) {
-      failures.push({ row: index + 2, username, message: `Employee ID ${requestedEmployeeId} belongs to another payroll profile.` });
+      failures.push({ row: cursor + index + 2, username, message: `Employee ID ${requestedEmployeeId} belongs to another payroll profile.` });
       continue;
     }
     if (existing && !updateExisting) { skipped += 1; continue; }
@@ -5645,15 +5794,26 @@ async function importPayrollProfiles(env, body) {
       byEmployeeId.set(lower(result.profile.EmployeeId), result.profile);
       if (existing) updated += 1; else created += 1;
     } catch (error) {
-      failures.push({ row: index + 2, username, message: error.message || String(error) });
+      failures.push({ row: cursor + index + 2, username, message: error.message || String(error) });
     }
   }
   await writePayrollAudit(env, 'BULK IMPORT', 'Payroll Profiles', 'CSV', body,
     `${created} created; ${updated} updated; ${skipped} skipped; ${failures.length} failed`);
+  const nextCursorValue = cursor + rows.length;
+  const complete = nextCursorValue >= sourceRows.length;
   return {
     ok: true,
-    message: `${created} payroll profile(s) created, ${updated} updated, ${skipped} skipped${failures.length ? `; ${failures.length} failed` : ''}.`,
-    created, updated, skipped, failures
+    message: `${created} payroll profile(s) created, ${updated} updated, ${skipped} skipped${failures.length ? `; ${failures.length} failed` : ''}${complete ? '.' : `. Continue from cursor ${nextCursorValue}.`}`,
+    created, updated, skipped, failures,
+    progress: {
+      complete,
+      partial: !complete,
+      cursor,
+      nextCursor: complete ? null : nextCursorValue,
+      processed: rows.length,
+      total: sourceRows.length,
+      limit: PAYROLL_BULK_ACTION_LIMIT
+    }
   };
 }
 
@@ -5707,6 +5867,12 @@ async function generatePayrollRun(env, body) {
   assertPayrollCanRegenerate(existing);
   const profiles = (await listCollection(env, 'payrollProfiles')).filter((row) => yesNo(row.Active ?? 'YES') === 'YES');
   if (!profiles.length) { const err = new Error('Create at least one active payroll profile first.'); err.status = 400; throw err; }
+  if (profiles.length > PAYROLL_GENERATION_PROFILE_LIMIT) {
+    const err = new Error(`A payroll run supports at most ${PAYROLL_GENERATION_PROFILE_LIMIT} active profiles per request. Reduce the run scope before generating.`);
+    err.status = 413;
+    err.code = 'PAYROLL_RUN_TOO_LARGE';
+    throw err;
+  }
   const existingItems = (await listCollection(env, 'payrollItems')).filter((row) => sameText(row.RunId, runId));
   const usesConfigurablePaye = profiles.some((row) => clean(row.CalculationMode).toUpperCase() === 'CONFIGURABLE_PAYE');
   const configuration = usesConfigurablePaye ? await getPayrollTaxConfiguration(env) : null;
@@ -5732,8 +5898,17 @@ async function generatePayrollRun(env, body) {
   }
   if (errors.length) { const err = new Error(`Payroll calculation stopped. ${errors.join(' | ')}`); err.status = 400; err.code = 'PAYROLL_VALIDATION_FAILED'; throw err; }
   const currentIds = new Set(calculatedItems.map((item) => lower(item.ItemId)));
-  for (const item of calculatedItems) await upsertDocument(env, 'payrollItems', safeDocumentId(item.ItemId), item);
-  for (const item of existingItems) if (!currentIds.has(lower(item.ItemId))) await deleteDocument(env, 'payrollItems', item.__id || safeDocumentId(item.ItemId));
+  const itemWrites = calculatedItems.map((item) => ({
+    collectionPath: 'payrollItems',
+    documentId: safeDocumentId(item.ItemId),
+    data: item
+  }));
+  existingItems.filter((item) => !currentIds.has(lower(item.ItemId))).forEach((item) => itemWrites.push({
+    collectionPath: 'payrollItems',
+    documentId: item.__id || safeDocumentId(item.ItemId),
+    operation: 'delete'
+  }));
+  await commitDocumentWritesInChunks(env, itemWrites);
   const versions = [...new Set(calculatedItems.map((item) => clean(item.CalculationVersion)))];
   const taxProfileIds = [...new Set(calculatedItems.map((item) => clean(item.TaxProfileId)).filter(Boolean))];
   const warnings = calculatedItems.flatMap((item) => (item.CalculationWarnings || []).map((warning) => `${item.DisplayName}: ${warning}`));
@@ -5775,7 +5950,11 @@ async function savePayrollRunStatus(env, body) {
   if (target === 'approved') {
     const finalizedAt = nowIso(); updated.ApprovedAt = finalizedAt; updated.ApprovedBy = clean(body.RecordedBy); updated.FinalizedAt = finalizedAt; updated.FinalizedBy = clean(body.RecordedBy);
     updated.ConfigurationSnapshot = buildFinalizedRunSnapshot(run, runItems, clean(body.RecordedBy), finalizedAt);
-    for (const item of runItems) await upsertDocument(env, 'payrollItems', item.__id || safeDocumentId(item.ItemId), { ...item, LockedAt: nowIso(), LockedBy: clean(body.RecordedBy), FinalizedSnapshot: item.ConfigurationSnapshot || null });
+    await commitDocumentWritesInChunks(env, runItems.map((item) => ({
+      collectionPath: 'payrollItems',
+      documentId: item.__id || safeDocumentId(item.ItemId),
+      data: { ...item, LockedAt: finalizedAt, LockedBy: clean(body.RecordedBy), FinalizedSnapshot: item.ConfigurationSnapshot || null }
+    })));
   }
   if (target === 'rejected') { updated.RejectedAt = nowIso(); updated.RejectedBy = clean(body.RecordedBy); updated.RejectionReason = clean(body.Reason); }
   if (target === 'posted') {
@@ -5912,6 +6091,8 @@ function withoutFirestoreMetadata(row = {}) {
   const copy = { ...row };
   delete copy.__id;
   delete copy.__name;
+  delete copy.__createTime;
+  delete copy.__updateTime;
   delete copy.__scopePath;
   return copy;
 }
@@ -6013,6 +6194,8 @@ async function routeAction(env, action, body = {}) {
       };
     case 'exportBackup': {
       requireAccountingRole(body, ['Super Admin']);
+      const backupCursor = Math.floor(Math.max(0, Number(body.Cursor || body.cursor || 0) || 0));
+      const backupPageToken = clean(body.PageToken || body.pageToken);
       const rootCollections = [
         'accounts', 'payments', 'paymentGatewayCharges', 'invoices', 'ledger', 'feeItems', 'billingCategories',
         'settings', 'formSales', 'staffUsers', 'staffSecurityAudit',
@@ -6037,20 +6220,73 @@ async function routeAction(env, action, body = {}) {
       ]);
       const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile });
       const structure = await getSchoolStructure(env);
+      const schoolPaths = (await Promise.all(schoolCollections.map((name) => schoolCollectionPaths(env, name)))).flat();
       const churchPaths = organization.Edition === 'church'
         ? (structure.Branches || [{ Id: 'main' }]).flatMap((branch) =>
           Object.values(CHURCH_COLLECTIONS).map((collection) => churchCollectionPath(collection, branch.Id || branch.id || 'main')))
         : [];
-      const [rootGroups, schoolGroups, churchGroups] = await Promise.all([
-        Promise.all(rootCollections.map((name) => listCollection(env, name).catch(() => []))),
-        Promise.all(schoolCollections.map((name) => listSchoolCollection(env, name).catch(() => []))),
-        Promise.all(churchPaths.map((path) => listCollection(env, path).catch(() => [])))
-      ]);
+      const descriptors = [
+        ...rootCollections.map((name) => ({ key: name, type: 'root', path: name })),
+        ...schoolPaths.map((path) => ({ key: path, type: 'root', path })),
+        ...churchPaths.map((path) => ({ key: path, type: 'root', path }))
+      ];
+      if (backupCursor >= descriptors.length && descriptors.length) {
+        const error = new Error('The backup cursor is outside the available collection range. Start a new backup from cursor 0.');
+        error.status = 400;
+        error.code = 'BACKUP_CURSOR_INVALID';
+        throw error;
+      }
+      const selected = descriptors.slice(backupCursor, backupCursor + 1);
       const collections = {};
-      rootCollections.forEach((name, index) => { collections[name] = rootGroups[index]; });
-      schoolCollections.forEach((name, index) => { collections[name] = schoolGroups[index]; });
-      churchPaths.forEach((path, index) => { collections[path] = churchGroups[index]; });
-      return { ok: true, message: 'Complete database backup prepared.', exportedAt: nowIso(), collections };
+      let continuationToken = '';
+      for (const descriptor of selected) {
+        const page = await listCollectionPage(env, descriptor.path, {
+          pageSize: 1000,
+          pageToken: backupPageToken
+        });
+        const rows = page.documents;
+        continuationToken = page.nextPageToken;
+        collections[descriptor.key] = descriptor.key === 'settings'
+          ? rows.map((row) => {
+              const copy = { ...row };
+              const redacted = [];
+              ['BrevoApiKey', 'ApiKey', 'Secret', 'PrivateKey', 'AccessToken'].forEach((field) => {
+                if (clean(copy[field])) {
+                  delete copy[field];
+                  redacted.push(field);
+                }
+              });
+              if (redacted.length) copy.__redactedFields = redacted;
+              return copy;
+            })
+          : rows;
+      }
+      const nextCursor = continuationToken ? backupCursor : backupCursor + selected.length;
+      const complete = !continuationToken && nextCursor >= descriptors.length;
+      return {
+        ok: true,
+        message: complete
+          ? 'Database backup completed.'
+          : continuationToken
+            ? `Backup page prepared for ${selected[0]?.key || 'collection'}. Continue the same collection.`
+            : `Backup collection prepared (${nextCursor} of ${descriptors.length}). Continue from cursor ${nextCursor}.`,
+        exportedAt: nowIso(),
+        collections,
+        backup: {
+          version: 2,
+          complete,
+          partial: !complete,
+          cursor: backupCursor,
+          nextCursor: complete ? null : nextCursor,
+          pageToken: backupPageToken || null,
+          nextPageToken: complete ? null : (continuationToken || null),
+          currentCollection: selected[0]?.key || '',
+          processedCollections: selected.length,
+          totalCollections: descriptors.length,
+          collectionLimit: 1,
+          pageSize: 1000
+        }
+      };
     }
     case 'getSystemHealth':
       return getSystemHealth(env, body);
@@ -6140,7 +6376,7 @@ async function routeAction(env, action, body = {}) {
         role: clean(body.UserRole),
         department: clean(body.UserDepartment),
         branchId: clean(body.UserBranchId),
-        allowedSections: ['members']
+        allowedSections: Array.isArray(body.UserTabAccess) ? body.UserTabAccess.map(clean).filter(Boolean) : []
       }, {
         ...body,
         action: ({
@@ -6438,47 +6674,69 @@ async function routeAction(env, action, body = {}) {
 }
 
 export async function onRequestPost(context) {
+  const metric = startRequestMetric(context.request, '/api/backend');
+  let action = '';
   try {
     const { request, env } = context;
     requireFirestoreEnv(env);
-    let body = await request.json().catch(() => ({}));
+    let body = await readJsonBody(request, { maxBytes: 16 * 1024 * 1024 });
     requireBackendSecret(env, body);
-    const action = clean(body.Action || body.action);
+    action = clean(body.Action || body.action);
     if (!action) {
-      return Response.json({ ok: false, message: 'Action is required.' }, { status: 400 });
+      const error = new Error('Action is required.');
+      error.status = 400;
+      throw error;
     }
     body = await verifyDesktopActor(env, action, body);
     const data = await routeAction(env, action, body);
-    return Response.json(data);
+    finishRequestMetric(metric, { status: 200, action });
+    return Response.json(data, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
     const status = err.status || 500;
     if (status >= 500) console.error('Firestore backend failure', err);
+    finishRequestMetric(metric, { status, action: action || 'unknown', outcome: err?.code || 'error' });
+    const configurationMessage = err?.code === 'BACKEND_SECRET_NOT_CONFIGURED'
+      ? String(err.message || 'The desktop backend is not configured.')
+      : '';
     return Response.json({
       ok: false,
-      message: status >= 500 ? 'The backend could not complete this operation.' : String(err && err.message ? err.message : err),
-      ...(err && err.code && status < 500 ? { code: err.code } : {})
-    }, { status });
+      message: configurationMessage || (status >= 500 ? 'The backend could not complete this operation.' : String(err && err.message ? err.message : err)),
+      ...(err && err.code ? { code: err.code } : {})
+    }, { status, headers: { 'Cache-Control': 'no-store' } });
   }
 }
 
 export async function onRequestGet(context) {
+  const metric = startRequestMetric(context.request, '/api/backend');
   try {
     const { request, env } = context;
     requireFirestoreEnv(env);
+    requireConfiguredDesktopSecret(env, 'desktop backend');
     const url = new URL(request.url);
     const action = clean(url.searchParams.get('action') || url.searchParams.get('Action'));
-    if (action && action !== 'ping') return Response.json({ ok: false, message: 'Backend actions require POST; credentials must not be placed in a URL.' }, { status: 405, headers: { Allow: 'POST' } });
+    if (action && action !== 'ping') {
+      finishRequestMetric(metric, { status: 405, action });
+      return Response.json({ ok: false, message: 'Backend actions require POST; credentials must not be placed in a URL.' }, {
+        status: 405,
+        headers: { Allow: 'POST', 'Cache-Control': 'no-store' }
+      });
+    }
+    finishRequestMetric(metric, { status: 200, action: 'readiness' });
     return Response.json({
       ok: true,
       message: 'Database backend is reachable.',
-      backend: 'firestore',
-      projectId: env.FIREBASE_PROJECT_ID
-    });
+      backend: 'firestore'
+    }, { headers: { 'Cache-Control': 'public, max-age=60, stale-while-revalidate=120' } });
   } catch (err) {
     console.error('Firestore backend health-check failure', err);
+    const status = Number(err?.status || 500);
+    finishRequestMetric(metric, { status, action: 'readiness', outcome: err?.code || 'error' });
     return Response.json({
       ok: false,
-      message: 'The backend health check failed.'
-    }, { status: 500 });
+      message: err?.code === 'BACKEND_SECRET_NOT_CONFIGURED'
+        ? String(err.message)
+        : 'The backend health check failed.',
+      ...(err?.code ? { code: err.code } : {})
+    }, { status, headers: { 'Cache-Control': 'no-store' } });
   }
 }

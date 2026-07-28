@@ -3,6 +3,7 @@ import { requireStaffSession } from '../lib/staff-auth.js';
 import { listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
 import { canonicalConfiguredClass } from '../lib/class-names.js';
 import { categoryApplies, ensureStoreCategories, resolveStoreCategory, saveStoreCategory } from '../lib/store-categories.js';
+import { readJsonBody } from '../lib/request-security.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -27,7 +28,7 @@ export async function onRequestPost(context) {
     const { request, env } = context;
     requireFirestoreEnv(env);
     const user = await requireStaffSession(env, request);
-    const body = await request.json().catch(() => ({}));
+    const body = await readJsonBody(request, { maxBytes: 512 * 1024 });
     const section = clean(body.section || body.Section);
     if (!['bookstore', 'uniformStore', 'organizationStore'].includes(section) || !(user.allowedSections || []).includes(section)) {
       const err = new Error('This staff account is not allowed to manage that store.'); err.status = 403; throw err;
@@ -70,7 +71,10 @@ export async function onRequestPost(context) {
         if (section === 'organizationStore') {
           allowed = [order.OrderNo, order.Reference, order.CustomerReference, order.Email, order.Phone].map(referenceKey).filter(Boolean);
         } else {
-          const students = await listSchoolCollection(env, 'students');
+          const students = await listSchoolCollection(env, 'students', {
+            branchId: user.branchId,
+            schoolSectionAccess: user.schoolSectionAccess
+          });
           const student = students.find((row) => [row.AccountRef, row.AdmissionNo, row.ApplicationReference].map(referenceKey).filter(Boolean).includes(referenceKey(order.AccountRef || order.AdmissionNo)));
           allowed = [order.AccountRef, order.AdmissionNo, student?.AccountRef, student?.AdmissionNo, student?.WalletCardId, student?.VerificationCode, student?.ParentLoginCode].map(referenceKey).filter(Boolean);
         }

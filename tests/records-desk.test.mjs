@@ -138,12 +138,12 @@ test('search normalization, matching and output limits remain bounded', () => {
   assert.equal(recordsDeskLimit('bad'), 24);
 });
 
-test('records API requires a live staff session, scopes every type, audits search and view, and gates finance', () => {
+test('records API requires a live staff session, scopes every type, audits record views, and gates finance', () => {
   assert.match(apiSource, /requireStaffSession\(env, request\)/);
   assert.match(apiSource, /recordsDeskCapabilities\(user\)/);
   assert.match(apiSource, /visibleSchoolRecord\(row, user, branchId\)/);
   assert.match(apiSource, /resolveMembershipBranch\(user, branchId\)/);
-  assert.match(apiSource, /query\.length < 2/);
+  assert.match(apiSource, /query\.length < 3/);
   assert.match(apiSource, /recordsDeskLimit\(body\.limit\)/);
   assert.match(apiSource, /capabilities\.canViewStudentFinance \? listCollection\(env, 'payments'\)/);
   assert.match(apiSource, /legacyStudentReferenceIsUnique\(env, row\)\.catch\(\(\) => false\)/);
@@ -152,7 +152,7 @@ test('records API requires a live staff session, scopes every type, audits searc
   assert.match(apiSource, /pageSize: '500'/);
   assert.match(apiSource, /remainingRequests = Math\.min\(12, Math\.max\(0, 38 - paths\.length\)\)/);
   assert.match(apiSource, /row\.ApplicationID,\s*row\.__id/);
-  assert.match(apiSource, /writeAudit\(env, user, 'SEARCH'/);
+  assert.doesNotMatch(apiSource, /writeAudit\(env, user, 'SEARCH'/);
   assert.match(apiSource, /writeAudit\(env, user, 'VIEW'/);
   assert.match(apiSource, /Cache-Control': 'no-store/);
   assert.doesNotMatch(apiSource, /BACKEND_SHARED_SECRET|GOOGLE_APPS_SCRIPT_SECRET/);
@@ -182,7 +182,7 @@ test('existing custom access derives Records Desk without widening its source pe
 
 test('records workspace is three-pane on desktop and list-to-detail on mobile', () => {
   assert.match(adminJs, /\['recordsDesk', 'Records Desk'\]/);
-  assert.match(adminJs, /recordsDeskSearchTimer = window\.setTimeout\(\(\) => searchRecordsDesk\(\{ keepFocus: true \}\), 320\)/);
+  assert.match(adminJs, /recordsDeskSearchTimer = window\.setTimeout\(\(\) => searchRecordsDesk\(\{ keepFocus: true \}\), 450\)/);
   assert.match(adminJs, /class="records-desk-shell\$\{recordsDeskState\.detail \|\| recordsDeskState\.loadingDetail \? ' detail-open' : ''\}"/);
   assert.match(adminJs, /sessionStorage\.setItem\('dynamaxRecordsDeskContext'/);
   assert.doesNotMatch(adminJs, /recordsDesk[\s\S]{0,200}recordManualPayment/);

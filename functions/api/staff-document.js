@@ -2,8 +2,9 @@
 
 import { deleteDocument, getDocument, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
-import { listSchoolCollection, upsertSchoolDocument } from '../lib/school-scope.js';
+import { getSchoolDocumentById, querySchoolCollection, upsertSchoolDocument } from '../lib/school-scope.js';
 import { resolveDocumentStorage } from '../lib/document-storage.js';
+import { readJsonBody } from '../lib/request-security.js';
 
 const DOCUMENTS = [
   ['BirthCertificate', 'Birth Certificate'],
@@ -40,6 +41,15 @@ function decodeBase64(value) {
 
 function safeFileName(value, fallback) {
   return clean(value || fallback).replace(/[^\x20-\x7e]|[\r\n"\\/:*?<>|]+/g, '_').slice(0, 160) || fallback;
+}
+
+function safeDocumentId(value) {
+  return clean(value)
+    .replace(/[\/\\?#\[\]]/g, '-')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/-+/g, '-')
+    .slice(0, 140);
 }
 
 async function loadDriveFile(env, url) {
@@ -111,8 +121,16 @@ async function handleRequest(context, body = null) {
       return Response.json({ ok: false, message: 'A valid application reference and document type are required.' }, { status: 400 });
     }
 
-    const applications = await listSchoolCollection(env, 'applications');
-    const application = applications.find((row) => lower(reference(row)) === lower(applicationReference));
+    let application = await getSchoolDocumentById(env, 'applications', safeDocumentId(applicationReference)).catch(() => null);
+    if (!application || lower(reference(application)) !== lower(applicationReference)) {
+      const matches = await Promise.all(['ApplicationReference', 'ApplicationID'].map((field) =>
+        querySchoolCollection(env, 'applications', {
+          filters: [{ field, op: '==', value: applicationReference }],
+          limit: 1
+        }).catch(() => [])
+      ));
+      application = matches.flat().find((row) => lower(reference(row)) === lower(applicationReference)) || null;
+    }
     if (!application) return Response.json({ ok: false, message: 'Application not found.' }, { status: 404 });
     if (user && user.role !== 'Super Admin') {
       const branchAllowed = !clean(user.branchId) || !clean(application.BranchId) || lower(user.branchId) === lower(application.BranchId);
@@ -162,6 +180,6 @@ export async function onRequestGet(context) {
 }
 
 export async function onRequestPost(context) {
-  const body = await context.request.json().catch(() => ({}));
+  const body = await readJsonBody(context.request, { maxBytes: 64 * 1024 });
   return handleRequest(context, body);
 }

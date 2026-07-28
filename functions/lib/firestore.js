@@ -1,6 +1,30 @@
 const FIRESTORE_SCOPE = 'https://www.googleapis.com/auth/datastore';
 let cachedToken = null;
 
+const DEFAULT_LIST_PAGE_SIZE = 1000;
+const MAX_LIST_PAGE_SIZE = 1000;
+const DEFAULT_MAX_LIST_PAGES = 5;
+
+function clean(value) {
+  return String(value ?? '').trim();
+}
+
+function firestoreEnvironmentKey(env) {
+  return `${clean(env.FIREBASE_PROJECT_ID)}|${clean(env.FIREBASE_CLIENT_EMAIL)}`;
+}
+
+function firestoreErrorStatus(data, responseStatus) {
+  const upstreamCode = clean(data?.error?.status).toUpperCase();
+  if (['FAILED_PRECONDITION', 'ABORTED', 'ALREADY_EXISTS'].includes(upstreamCode)) {
+    return {
+      status: 409,
+      code: 'FIRESTORE_WRITE_CONFLICT',
+      upstreamCode
+    };
+  }
+  return { status: Number(responseStatus || 500), code: '', upstreamCode };
+}
+
 function base64Url(input) {
   let bytes;
   if (typeof input === 'string') {
@@ -62,7 +86,8 @@ export function requireFirestoreEnv(env) {
 export async function getFirestoreAccessToken(env) {
   requireFirestoreEnv(env);
   const now = Date.now();
-  if (cachedToken && cachedToken.expiresAt > now + 60000) {
+  const environmentKey = firestoreEnvironmentKey(env);
+  if (cachedToken && cachedToken.environmentKey === environmentKey && cachedToken.expiresAt > now + 60000) {
     return cachedToken.accessToken;
   }
   const assertion = await signJwt(env);
@@ -79,8 +104,9 @@ export async function getFirestoreAccessToken(env) {
     throw new Error(data.error_description || data.error || 'Could not obtain the database access token.');
   }
   cachedToken = {
+    environmentKey,
     accessToken: data.access_token,
-    expiresAt: now + Number(data.expires_in || 3600) * 1000
+    expiresAt: Date.now() + Number(data.expires_in || 3600) * 1000
   };
   return cachedToken.accessToken;
 }
@@ -106,7 +132,10 @@ export async function firestoreRequest(env, path, options = {}) {
   if (!response.ok) {
     const message = data && data.error && data.error.message ? data.error.message : `Database request failed (${response.status})`;
     const error = new Error(message);
-    error.status = response.status;
+    const normalized = firestoreErrorStatus(data, response.status);
+    error.status = normalized.status;
+    error.code = normalized.code;
+    error.upstreamCode = normalized.upstreamCode;
     error.data = data;
     throw error;
   }
@@ -182,14 +211,46 @@ export function objectToFirestoreFields(data) {
   return fields;
 }
 
-export async function upsertDocument(env, collectionPath, documentId, data) {
+function appendWritePrecondition(params, options = {}) {
+  const precondition = options.currentDocument || options.precondition || {};
+  const updateTime = clean(options.updateTime || precondition.updateTime);
+  const hasExists = options.exists !== undefined || precondition.exists !== undefined;
+  if (updateTime) params.set('currentDocument.updateTime', updateTime);
+  else if (hasExists) params.set('currentDocument.exists', String(Boolean(options.exists ?? precondition.exists)));
+}
+
+function documentWritePath(collectionPath, documentId, options = {}) {
   const cleanCollection = String(collectionPath || '').replace(/^\/+|\/+$/g, '');
   const encodedId = encodeURIComponent(String(documentId || '').trim());
   if (!cleanCollection) throw new Error('Collection path is required.');
   if (!encodedId) throw new Error('Document ID is required.');
-  return firestoreRequest(env, `${cleanCollection}/${encodedId}`, {
+  const params = new URLSearchParams();
+  appendWritePrecondition(params, options);
+  const query = params.toString();
+  return `${cleanCollection}/${encodedId}${query ? `?${query}` : ''}`;
+}
+
+export async function upsertDocument(env, collectionPath, documentId, data, options = {}) {
+  return firestoreRequest(env, documentWritePath(collectionPath, documentId, options), {
     method: 'PATCH',
     body: JSON.stringify({ fields: objectToFirestoreFields(data) })
+  });
+}
+
+export async function patchDocumentFields(env, collectionPath, documentId, data, options = {}) {
+  const fields = objectToFirestoreFields(data);
+  const fieldPaths = Object.keys(fields);
+  if (!fieldPaths.length) throw new Error('At least one document field is required.');
+  const cleanCollection = String(collectionPath || '').replace(/^\/+|\/+$/g, '');
+  const encodedId = encodeURIComponent(String(documentId || '').trim());
+  if (!cleanCollection) throw new Error('Collection path is required.');
+  if (!encodedId) throw new Error('Document ID is required.');
+  const params = new URLSearchParams();
+  fieldPaths.forEach((fieldPath) => params.append('updateMask.fieldPaths', fieldPath));
+  appendWritePrecondition(params, options);
+  return firestoreRequest(env, `${cleanCollection}/${encodedId}?${params.toString()}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ fields })
   });
 }
 
@@ -290,14 +351,24 @@ export async function createDocumentIfAbsent(env, collectionPath, documentId, da
     });
     return { created: true, document: firestoreDocumentToObject(document) };
   } catch (error) {
-    if (error && [409, 412].includes(Number(error.status))) {
+    if (error && (error.upstreamCode === 'ALREADY_EXISTS' ||
+      (!error.upstreamCode && [409, 412].includes(Number(error.status))))) {
       return { created: false, document: await getDocument(env, collectionPath, id) };
     }
     throw error;
   }
 }
 
-export async function batchUpsertDocuments(env, writes) {
+function batchWritePrecondition(item = {}) {
+  const precondition = item.currentDocument || item.precondition || {};
+  const updateTime = clean(item.updateTime || precondition.updateTime);
+  const hasExists = item.exists !== undefined || precondition.exists !== undefined;
+  if (updateTime) return { updateTime };
+  if (hasExists) return { exists: Boolean(item.exists ?? precondition.exists) };
+  return null;
+}
+
+export async function batchCommitDocuments(env, writes) {
   const items = Array.isArray(writes) ? writes : [];
   if (!items.length) return { writeResults: [] };
   if (items.length > 500) throw new Error('A database batch may contain at most 500 writes.');
@@ -311,12 +382,19 @@ export async function batchUpsertDocuments(env, writes) {
       const collection = String(item.collectionPath || '').replace(/^\/+|\/+$/g, '');
       const id = encodeURIComponent(String(item.documentId || '').trim());
       if (!collection || !id) throw new Error('Every batch write requires a collection path and document ID.');
-      return {
-        update: {
-          name: `${resourceBase}/${collection}/${id}`,
-          fields: objectToFirestoreFields(item.data || {})
-        }
-      };
+      const resourceName = `${resourceBase}/${collection}/${id}`;
+      const operation = clean(item.operation || item.type).toLowerCase();
+      const write = operation === 'delete' || item.delete === true
+        ? { delete: resourceName }
+        : {
+            update: {
+              name: resourceName,
+              fields: objectToFirestoreFields(item.data || {})
+            }
+          };
+      const precondition = batchWritePrecondition(item);
+      if (precondition) write.currentDocument = precondition;
+      return write;
     })
   };
   const response = await fetch(`${base}:commit`, {
@@ -327,20 +405,83 @@ export async function batchUpsertDocuments(env, writes) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(data?.error?.message || `Database batch request failed (${response.status})`);
-    error.status = response.status;
+    const normalized = firestoreErrorStatus(data, response.status);
+    error.status = normalized.status;
+    error.code = normalized.code;
+    error.upstreamCode = normalized.upstreamCode;
     throw error;
   }
   return data;
 }
 
-export async function deleteDocument(env, collectionPath, documentId) {
-  const cleanCollection = String(collectionPath || '').replace(/^\/+|\/+$/g, '');
-  const encodedId = encodeURIComponent(String(documentId || '').trim());
-  if (!cleanCollection) throw new Error('Collection path is required.');
-  if (!encodedId) throw new Error('Document ID is required.');
-  return firestoreRequest(env, `${cleanCollection}/${encodedId}`, {
+export async function batchUpsertDocuments(env, writes) {
+  return batchCommitDocuments(env, writes);
+}
+
+export async function deleteDocument(env, collectionPath, documentId, options = {}) {
+  return firestoreRequest(env, documentWritePath(collectionPath, documentId, options), {
     method: 'DELETE'
   });
+}
+
+export async function updateDocumentIfCurrent(env, collectionPath, documentId, data, currentDocument = {}) {
+  const updateTime = clean(currentDocument.__updateTime || currentDocument.updateTime);
+  if (!updateTime) {
+    const error = new Error('The current database document version is required for a conditional update.');
+    error.status = 428;
+    error.code = 'FIRESTORE_VERSION_REQUIRED';
+    throw error;
+  }
+  try {
+    return await upsertDocument(env, collectionPath, documentId, data, { updateTime });
+  } catch (error) {
+    if ([409, 412].includes(Number(error?.status))) {
+      error.status = 409;
+      error.code = 'FIRESTORE_WRITE_CONFLICT';
+      error.message = 'This record changed while you were editing it. Reload and try again.';
+    }
+    throw error;
+  }
+}
+
+export async function patchDocumentFieldsIfCurrent(env, collectionPath, documentId, data, currentDocument = {}) {
+  const updateTime = clean(currentDocument.__updateTime || currentDocument.updateTime);
+  if (!updateTime) {
+    const error = new Error('The current database document version is required for a conditional update.');
+    error.status = 428;
+    error.code = 'FIRESTORE_VERSION_REQUIRED';
+    throw error;
+  }
+  try {
+    return await patchDocumentFields(env, collectionPath, documentId, data, { updateTime });
+  } catch (error) {
+    if ([409, 412].includes(Number(error?.status))) {
+      error.status = 409;
+      error.code = 'FIRESTORE_WRITE_CONFLICT';
+      error.message = 'This record changed while you were editing it. Reload and try again.';
+    }
+    throw error;
+  }
+}
+
+export async function deleteDocumentIfCurrent(env, collectionPath, documentId, currentDocument = {}) {
+  const updateTime = clean(currentDocument.__updateTime || currentDocument.updateTime);
+  if (!updateTime) {
+    const error = new Error('The current database document version is required for a conditional delete.');
+    error.status = 428;
+    error.code = 'FIRESTORE_VERSION_REQUIRED';
+    throw error;
+  }
+  try {
+    return await deleteDocument(env, collectionPath, documentId, { updateTime });
+  } catch (error) {
+    if ([409, 412].includes(Number(error?.status))) {
+      error.status = 409;
+      error.code = 'FIRESTORE_WRITE_CONFLICT';
+      error.message = 'This record changed before it could be deleted. Reload and try again.';
+    }
+    throw error;
+  }
 }
 
 function fromFirestoreValue(value) {
@@ -373,13 +514,61 @@ export function firestoreDocumentToObject(document) {
     out.__name = document.name;
     out.__id = document.name.split('/').pop();
   }
+  if (document && document.createTime) out.__createTime = document.createTime;
+  if (document && document.updateTime) out.__updateTime = document.updateTime;
   return out;
 }
 
+function listOptions(value) {
+  if (typeof value === 'string') return { query: value };
+  return value && typeof value === 'object' ? value : {};
+}
+
+function listQueryParams(options = {}) {
+  const params = new URLSearchParams(clean(options.query));
+  const requestedSize = Number(options.pageSize || params.get('pageSize') || DEFAULT_LIST_PAGE_SIZE);
+  params.set('pageSize', String(Math.min(MAX_LIST_PAGE_SIZE, Math.max(1, Number.isFinite(requestedSize) ? Math.floor(requestedSize) : DEFAULT_LIST_PAGE_SIZE))));
+  const pageToken = clean(options.pageToken);
+  if (pageToken) params.set('pageToken', pageToken);
+  else if (options.pageToken === '') params.delete('pageToken');
+  return params;
+}
+
+export async function listCollectionPage(env, collectionPath, options = {}) {
+  const normalized = listOptions(options);
+  const params = listQueryParams(normalized);
+  const data = await firestoreRequest(env, `${collectionPath}?${params.toString()}`);
+  const documents = (data.documents || []).map(firestoreDocumentToObject);
+  return {
+    documents,
+    rows: documents,
+    nextPageToken: clean(data.nextPageToken),
+    count: documents.length
+  };
+}
+
 export async function listCollection(env, collectionPath, query = '') {
-  const suffix = query ? `?${query}` : '';
-  const data = await firestoreRequest(env, `${collectionPath}${suffix}`);
-  return (data.documents || []).map(firestoreDocumentToObject);
+  const options = listOptions(query);
+  const explicitToken = options.pageToken !== undefined || new URLSearchParams(clean(options.query)).has('pageToken');
+  if (explicitToken || options.singlePage) {
+    return (await listCollectionPage(env, collectionPath, options)).documents;
+  }
+  const maxPagesValue = Number(options.maxPages || DEFAULT_MAX_LIST_PAGES);
+  const maxPages = Math.min(25, Math.max(1, Number.isFinite(maxPagesValue) ? Math.floor(maxPagesValue) : DEFAULT_MAX_LIST_PAGES));
+  const documents = [];
+  let pageToken = '';
+  for (let page = 0; page < maxPages; page += 1) {
+    const result = await listCollectionPage(env, collectionPath, { ...options, pageToken });
+    documents.push(...result.documents);
+    pageToken = result.nextPageToken;
+    if (!pageToken) return documents;
+  }
+  const error = new Error(`The database collection "${collectionPath}" is too large for an unpaginated request. Use listCollectionPage with nextPageToken.`);
+  error.status = 413;
+  error.code = 'FIRESTORE_PAGINATION_REQUIRED';
+  error.nextPageToken = pageToken;
+  error.partialCount = documents.length;
+  throw error;
 }
 
 export async function getDocument(env, collectionPath, documentId) {

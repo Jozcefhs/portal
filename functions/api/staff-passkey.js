@@ -14,13 +14,18 @@ import {
   staffSessionCookie
 } from '../lib/staff-auth.js';
 import {
-  deleteDocument,
+  createDocumentIfAbsent,
+  deleteDocumentIfCurrent,
   findOneByField,
   getDocument,
+  patchDocumentFieldsIfCurrent,
   queryCollection,
   requireFirestoreEnv,
+  updateDocumentIfCurrent,
   upsertDocument
 } from '../lib/firestore.js';
+import { consumePasskeyAuthenticationOptionAllowance } from '../lib/login-protection.js';
+import { readJsonBody } from '../lib/request-security.js';
 
 const encoder = new TextEncoder();
 const CEREMONY_SECONDS = 5 * 60;
@@ -37,8 +42,9 @@ function isActive(value) {
   return !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(value ?? true));
 }
 
-function response(data, status = 200, cookies = []) {
+function response(data, status = 200, cookies = [], extraHeaders = {}) {
   const headers = new Headers({ 'Cache-Control': 'no-store' });
+  Object.entries(extraHeaders || {}).forEach(([key, value]) => headers.set(key, String(value)));
   const values = Array.isArray(cookies) ? cookies : [cookies];
   values.filter(Boolean).forEach((cookie) => headers.append('Set-Cookie', cookie));
   return Response.json(data, { status, headers });
@@ -108,13 +114,39 @@ async function consumeCeremony(env, ceremonyId, expectedType) {
     throw error;
   }
   const ceremony = await getDocument(env, 'staffPasskeyChallenges', id);
-  if (ceremony) await deleteDocument(env, 'staffPasskeyChallenges', id);
+  if (!ceremony) {
+    const error = new Error('The biometric request expired. Please try again.');
+    error.status = 400;
+    throw error;
+  }
+  try {
+    await deleteDocumentIfCurrent(env, 'staffPasskeyChallenges', id, ceremony);
+  } catch (cause) {
+    if (![404, 409, 412].includes(Number(cause?.status)) && cause?.code !== 'FIRESTORE_WRITE_CONFLICT') throw cause;
+    const error = new Error('This biometric request was already used. Please try again.');
+    error.status = 409;
+    throw error;
+  }
   if (!ceremony || clean(ceremony.Type) !== expectedType || Date.parse(ceremony.ExpiresAt) <= Date.now()) {
     const error = new Error('The biometric request expired. Please try again.');
     error.status = 400;
     throw error;
   }
   return ceremony;
+}
+
+async function updateCredentialUsage(env, stored, counter) {
+  try {
+    await patchDocumentFieldsIfCurrent(env, 'staffPasskeys', stored.__id, {
+      Counter: Number(counter || 0),
+      LastUsedAt: new Date().toISOString()
+    }, stored);
+  } catch (cause) {
+    if (cause?.code !== 'FIRESTORE_WRITE_CONFLICT' && Number(cause?.status) !== 409) throw cause;
+    const error = new Error('This biometric credential was already used by another request. Please try again.');
+    error.status = 409;
+    throw error;
+  }
 }
 
 async function registrationOptions(request, env) {
@@ -172,7 +204,7 @@ async function verifyRegistration(request, env, body) {
   }
   const id = await documentIdForCredential(credential.id);
   const now = new Date().toISOString();
-  await upsertDocument(env, 'staffPasskeys', id, {
+  const passkey = {
     CredentialId: credential.id,
     PublicKey: bytesToBase64Url(credential.publicKey),
     Counter: Number(credential.counter || 0),
@@ -183,13 +215,34 @@ async function verifyRegistration(request, env, body) {
     DeviceType: verification.registrationInfo.credentialDeviceType,
     BackedUp: Boolean(verification.registrationInfo.credentialBackedUp),
     Active: true,
-    CreatedAt: now,
+    CreatedAt: duplicate?.CreatedAt || now,
     LastUsedAt: ''
-  });
+  };
+  if (duplicate) {
+    await updateDocumentIfCurrent(env, 'staffPasskeys', duplicate.__id || id, passkey, duplicate);
+  } else {
+    const claim = await createDocumentIfAbsent(env, 'staffPasskeys', id, passkey);
+    if (!claim.created) {
+      if (lower(claim.document?.Username) !== lower(user.username)) {
+        return response({ ok: false, message: 'This biometric credential is already linked to another staff account.' }, 409);
+      }
+      await updateDocumentIfCurrent(env, 'staffPasskeys', id, {
+        ...passkey,
+        CreatedAt: claim.document?.CreatedAt || now
+      }, claim.document);
+    }
+  }
   return response({ ok: true, message: 'Biometric sign-in is ready on this account.' });
 }
 
-async function authenticationOptions(request, env) {
+async function authenticationOptions(request, env, body) {
+  const allowance = await consumePasskeyAuthenticationOptionAllowance(env, body.username, request);
+  if (!allowance.allowed) {
+    const error = new Error('Too many biometric sign-in requests. Please wait and try again.');
+    error.status = 429;
+    error.retryAfter = allowance.retryAfter;
+    throw error;
+  }
   const rp = relyingPartySettings(request, env);
   const options = await generateAuthenticationOptions({
     rpID: rp.rpID,
@@ -263,10 +316,7 @@ async function verifyAuthentication(request, env, body) {
   if (!user) {
     return response({ ok: false, message: 'This staff account is inactive or no longer exists.' }, 401);
   }
-  const updated = { ...stored, Counter: verification.authenticationInfo.newCounter, LastUsedAt: new Date().toISOString() };
-  delete updated.__id;
-  delete updated.__name;
-  await upsertDocument(env, 'staffPasskeys', stored.__id, updated);
+  await updateCredentialUsage(env, stored, verification.authenticationInfo.newCounter);
   const access = await staffAccessFor(env, user);
   const token = await createStaffSession(env, user);
   return response({
@@ -306,10 +356,7 @@ async function verifyApproval(request, env, body) {
   if (!verification.verified) {
     return response({ ok: false, message: 'Biometric approval verification failed.' }, 401);
   }
-  const updated = { ...stored, Counter: verification.authenticationInfo.newCounter, LastUsedAt: new Date().toISOString() };
-  delete updated.__id;
-  delete updated.__name;
-  await upsertDocument(env, 'staffPasskeys', stored.__id, updated);
+  await updateCredentialUsage(env, stored, verification.authenticationInfo.newCounter);
   const proof = await createStaffApprovalProof(env, user, {
     recordId: ceremony.RecordId,
     recordType: ceremony.RecordType,
@@ -335,11 +382,11 @@ async function passkeyStatus(request, env) {
 export async function onRequestPost({ request, env }) {
   try {
     requireFirestoreEnv(env);
-    const body = await request.json().catch(() => ({}));
+    const body = await readJsonBody(request, { maxBytes: 256 * 1024 });
     const action = lower(body.action);
     if (action === 'registration-options') return registrationOptions(request, env);
     if (action === 'registration-verify') return verifyRegistration(request, env, body);
-    if (action === 'authentication-options') return authenticationOptions(request, env);
+    if (action === 'authentication-options') return authenticationOptions(request, env, body);
     if (action === 'authentication-verify') return verifyAuthentication(request, env, body);
     if (action === 'approval-options') return approvalOptions(request, env, body);
     if (action === 'approval-verify') return verifyApproval(request, env, body);
@@ -350,6 +397,6 @@ export async function onRequestPost({ request, env }) {
     return response({
       ok: false,
       message: isVerificationError ? 'Biometric verification failed. Please try again.' : (error.message || String(error))
-    }, error.status || (isVerificationError ? 400 : 500));
+    }, error.status || (isVerificationError ? 400 : 500), [], error.retryAfter ? { 'Retry-After': error.retryAfter } : {});
   }
 }

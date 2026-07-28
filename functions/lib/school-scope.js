@@ -5,6 +5,7 @@ function clean(value) { return String(value ?? '').trim(); }
 
 let cachedStructure = null;
 let cachedStructureUntil = 0;
+let cachedStructureKey = '';
 
 export function safeScopeId(value, fallback = 'main') {
   return clean(value || fallback).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || fallback;
@@ -22,7 +23,8 @@ export function schoolSectionFor(row = {}) {
 }
 
 export async function getSchoolStructure(env) {
-  if (cachedStructure && Date.now() < cachedStructureUntil) return cachedStructure;
+  const environmentKey = clean(env.FIREBASE_PROJECT_ID);
+  if (cachedStructure && cachedStructureKey === environmentKey && Date.now() < cachedStructureUntil) return cachedStructure;
   const saved = await getDocument(env, 'settings', 'schoolStructure').catch(() => null);
   const branches = Array.isArray(saved?.Branches) && saved.Branches.length
     ? saved.Branches.map((row) => typeof row === 'string' ? { Id: safeScopeId(row), Name: clean(row) } : {
@@ -37,22 +39,53 @@ export async function getSchoolStructure(env) {
     Sections: [...new Set(sections.length ? sections : ['primary', 'secondary'])],
     ActiveBranchId: safeScopeId(saved?.ActiveBranchId || branches[0]?.Id || 'main')
   };
+  cachedStructureKey = environmentKey;
   cachedStructureUntil = Date.now() + 15000;
   return cachedStructure;
+}
+
+export function invalidateSchoolStructureCache() {
+  cachedStructure = null;
+  cachedStructureKey = '';
+  cachedStructureUntil = 0;
 }
 
 export function scopedCollectionPath(collection, branchId, section) {
   return `schoolBranches/${safeScopeId(branchId)}/sections/${schoolSectionFor({ SchoolSection: section })}/${clean(collection)}`;
 }
 
-export async function listSchoolCollection(env, collection) {
+function accessScope(scope = {}) {
+  const branchId = clean(scope.branchId || scope.BranchId);
+  const rawSection = clean(scope.schoolSectionAccess || scope.SchoolSectionAccess || scope.section).toLowerCase();
+  const section = ['primary', 'secondary'].includes(rawSection) ? rawSection : '';
+  return {
+    branchId: branchId && branchId.toLowerCase() !== 'all' ? safeScopeId(branchId) : '',
+    section
+  };
+}
+
+function legacyRowAllowed(row, scope) {
+  if (scope.branchId && safeScopeId(row.BranchId || row.branchId || 'main') !== scope.branchId) return false;
+  if (scope.section && schoolSectionFor(row) !== scope.section) return false;
+  return true;
+}
+
+export async function listSchoolCollection(env, collection, requestedScope = null) {
   const structure = await getSchoolStructure(env);
+  const scope = accessScope(requestedScope || {});
+  const branches = scope.branchId
+    ? [{ Id: scope.branchId, Name: scope.branchId }]
+    : structure.Branches;
+  const sections = scope.section ? [scope.section] : structure.Sections;
   const paths = [clean(collection)];
-  structure.Branches.forEach((branch) => structure.Sections.forEach((section) => {
+  branches.forEach((branch) => sections.forEach((section) => {
     paths.push(scopedCollectionPath(collection, branch.Id, section));
   }));
-  const groups = await Promise.all(paths.map((path) => listCollection(env, path).catch(() => [])));
-  return groups.flatMap((rows, index) => rows.map((row) => ({ ...row, __scopePath: paths[index] })));
+  const uniquePaths = [...new Set(paths)];
+  const groups = await Promise.all(uniquePaths.map((path) => listCollection(env, path)));
+  return groups.flatMap((rows, index) => rows
+    .filter((row) => index !== 0 || legacyRowAllowed(row, scope))
+    .map((row) => ({ ...row, __scopePath: uniquePaths[index] })));
 }
 
 export async function schoolCollectionPaths(env, collection) {
@@ -76,7 +109,7 @@ export async function getSchoolDocumentById(env, collection, documentId) {
 export async function querySchoolCollection(env, collection, options = {}) {
   const paths = await schoolCollectionPaths(env, collection);
   const groups = await Promise.all(paths.map(async (path) => {
-    const rows = await queryCollection(env, path, options).catch(() => []);
+    const rows = await queryCollection(env, path, options);
     return rows.map((row) => ({ ...row, __scopePath: path }));
   }));
   return groups.flat();

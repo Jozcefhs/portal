@@ -563,7 +563,10 @@ async function metricData(env, scope, selectedIds, correspondenceRows = null) {
   let registrations = [];
   if (scope.edition === 'school') {
     if (['studentTotal', 'activeStudents', 'studentByClass'].some((id) => selected.has(id))) {
-      students = (await listSchoolCollection(env, 'students')).filter((row) => visibleSchoolRow(row, scope));
+      students = (await listSchoolCollection(env, 'students', {
+        branchId: scope.branchId,
+        schoolSectionAccess: scope.schoolSection
+      })).filter((row) => visibleSchoolRow(row, scope));
     }
     if (selected.has('classTotal')) classes = await listCollection(env, 'settings/academics/classes');
   } else {
@@ -649,7 +652,10 @@ async function searchDirectory(env, body, capabilities, scope) {
   if (!selected.length) throw inputError('Choose a directory type available to this executive account.', 403);
   const groups = await Promise.all(selected.map(async (type) => {
     if (type === 'student') {
-      return (await listSchoolCollection(env, 'students'))
+      return (await listSchoolCollection(env, 'students', {
+        branchId: scope.branchId,
+        schoolSectionAccess: scope.schoolSection
+      }))
         .filter((row) => visibleSchoolRow(row, scope))
         .map((row) => searchResult(
           type,

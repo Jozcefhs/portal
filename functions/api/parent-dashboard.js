@@ -5,6 +5,7 @@ import { getPayableFees } from './backend.js';
 import { getDocument, listCollection, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { getSchoolDocumentById, querySchoolCollection, upsertSchoolDocument } from '../lib/school-scope.js';
 import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
+import { readJsonBody } from '../lib/request-security.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -1368,7 +1369,7 @@ async function getChildPayable(env, body) {
 export async function onRequestPost(context) {
   try {
     const { request, env } = context;
-    const body = await request.json().catch(() => ({}));
+    const body = await readJsonBody(request, { maxBytes: 256 * 1024 });
     const action = clean(body.action || body.Action || 'getDashboard');
     let data;
     if (action === 'updateWalletRestrictions') {

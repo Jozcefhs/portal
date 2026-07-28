@@ -2,8 +2,14 @@
 // Verifies a Paystack admission form purchase, records the form sale, and sends the school email.
 
 import { getSchoolCode, recordSale as recordSaleInFirestore } from './backend.js';
-import { getDocument, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { createDocumentIfAbsent, getDocument, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
+import {
+  beginIdempotentRequest,
+  completeIdempotentRequest,
+  failIdempotentRequest,
+  readJsonBody
+} from '../lib/request-security.js';
 
 function extractMetadata(data) {
   const metadata = data && data.metadata;
@@ -16,6 +22,26 @@ function extractMetadata(data) {
     }
   }
   return metadata;
+}
+
+function clean(value) {
+  return String(value ?? '').trim();
+}
+
+function paymentType(value) {
+  return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function isAdmissionFormType(value) {
+  return ['admissionform', 'admissionformpurchase', 'formpurchase'].includes(paymentType(value));
+}
+
+function intentType(intent = {}) {
+  return clean(intent.PaymentType || intent.paymentType || intent.IntentType || intent.intentType);
+}
+
+function intentReference(intent = {}) {
+  return clean(intent.Reference || intent.reference || intent.PaymentReference || intent.paymentReference);
 }
 
 function makeVerificationCode() {
@@ -68,8 +94,7 @@ function escapeHtml(value) {
 async function getSettingsDocument(env, id) {
   try {
     requireFirestoreEnv(env);
-    const rows = await listCollection(env, 'settings');
-    return rows.find((row) => row.__id === id) || {};
+    return await getDocument(env, 'settings', id) || {};
   } catch (_err) {
     return {};
   }
@@ -87,7 +112,7 @@ function renderGreeting(template, applicantName, schoolName) {
 async function sendSchoolFormPurchaseEmail(env, sale) {
   const profile = await getSettingsDocument(env, 'schoolProfile');
   const brevo = await getSettingsDocument(env, 'brevo');
-  const apiKey = String(brevo.BrevoApiKey || env.BREVO_API_KEY || '').trim();
+  const apiKey = String(env.BREVO_API_KEY || '').trim();
   const senderEmail = String(brevo.BrevoSenderEmail || env.BREVO_SENDER_EMAIL || env.SCHOOL_EMAIL || '').trim();
   const schoolName = String(profile.SchoolName || env.SCHOOL_NAME || 'Integrated School Management Suite').trim();
   const senderName = String(brevo.BrevoSenderName || env.BREVO_SENDER_NAME || schoolName).trim();
@@ -191,9 +216,10 @@ async function recordSale(env, payload) {
 }
 
 export async function onRequestPost(context) {
+  let idempotency = null;
   try {
     const { request, env } = context;
-    const body = await request.json();
+    const body = await readJsonBody(request, { maxBytes: 64 * 1024 });
     const reference = String(body.reference || '').trim();
 
     if (!reference) {
@@ -213,10 +239,6 @@ export async function onRequestPost(context) {
 
     const tx = paystackData.data;
     const meta = extractMetadata(tx);
-    if (meta.paymentType && meta.paymentType !== 'AdmissionForm') {
-      return Response.json({ ok: false, message: 'This payment is not an admission form purchase.' }, { status: 400 });
-    }
-
     const origin = new URL(request.url).origin;
     const grossAmount = Number(tx.amount || 0) / 100;
     const gatewayFee = Math.max(0, Number(tx.fees || 0) / 100);
@@ -224,7 +246,19 @@ export async function onRequestPost(context) {
     const formAmount = Number(meta.formAmount || tx.requested_amount || grossAmount);
     const amountPaid = formatNairaAmount(netAmount);
     const intent = await getDocument(env, 'paymentIntents', String(tx.reference || reference).replace(/[\/\\?#\[\]]/g, '-')).catch(() => null);
+    const metadataPaymentType = clean(meta.paymentType || meta.PaymentType);
+    const storedIntentType = intentType(intent);
+    if (metadataPaymentType && storedIntentType && paymentType(metadataPaymentType) !== paymentType(storedIntentType)) {
+      return Response.json({ ok: false, message: 'The transaction metadata does not match its saved payment intent.' }, { status: 409 });
+    }
+    if (!isAdmissionFormType(metadataPaymentType || storedIntentType)) {
+      return Response.json({ ok: false, message: 'This payment is not an admission form purchase.' }, { status: 400 });
+    }
     if (intent) {
+      const savedReference = intentReference(intent);
+      if (savedReference && clean(tx.reference || reference).toLowerCase() !== savedReference.toLowerCase()) {
+        return Response.json({ ok: false, message: 'The verified transaction reference does not match the saved form-purchase intent.' }, { status: 409 });
+      }
       const requestedAmount = Number(tx.requested_amount || 0) / 100 || grossAmount;
       if (Math.abs(Number(intent.Amount || 0) - requestedAmount) > 0.01) {
         return Response.json({ ok: false, message: 'The verified amount does not match the initialized form purchase.' }, { status: 409 });
@@ -233,6 +267,21 @@ export async function onRequestPost(context) {
           String(intent.ParentEmail).trim().toLowerCase() !== String((tx.customer && tx.customer.email) || '').trim().toLowerCase()) {
         return Response.json({ ok: false, message: 'The verified form purchase belongs to a different parent email.' }, { status: 409 });
       }
+    }
+    if (!body.idempotencyKey && !body.IdempotencyKey && !request.headers.get('Idempotency-Key')) {
+      body.idempotencyKey = `verify-form:${String(reference).replace(/[^A-Za-z0-9._:-]/g, '-').slice(0, 140)}`;
+    }
+    idempotency = await beginIdempotentRequest(env, request, body, {
+      scope: 'verify-form-payment',
+      actor: String((tx.customer && tx.customer.email) || meta.email || tx.reference).trim().toLowerCase(),
+      ttlMinutes: 30 * 24 * 60,
+      fingerprintPayload: { reference: tx.reference || reference }
+    });
+    if (idempotency.replay) {
+      return Response.json(idempotency.response, {
+        status: idempotency.status || (idempotency.response?.ok === false ? 409 : 200),
+        headers: { 'Cache-Control': 'no-store', 'Idempotency-Replayed': 'true' }
+      });
     }
     const expiryDays = Number(env.ADMISSION_FORM_EXPIRY_DAYS || 30);
     const receiptNo = makeReceiptNo(tx.reference || reference, await getSchoolCode(env));
@@ -264,12 +313,18 @@ export async function onRequestPost(context) {
       recordData = result.data;
       if (recordData && recordData.ok) break;
       if (!String((recordData && recordData.message) || '').toLowerCase().includes('verification code already exists')) {
-        return Response.json(recordData || { ok: false, message: 'Could not record form sale.' }, { status: 400 });
+        const error = new Error(recordData?.message || 'Could not record form sale.');
+        error.status = result.response?.status >= 500 ? 502 : 400;
+        error.retryable = error.status >= 500;
+        throw error;
       }
     }
 
     if (!recordData || !recordData.ok) {
-      return Response.json({ ok: false, message: 'Could not generate a unique verification code. Please contact the Admissions Office.' }, { status: 500 });
+      const error = new Error('Could not generate a unique verification code. Please contact the Admissions Office.');
+      error.status = 503;
+      error.retryable = true;
+      throw error;
     }
 
     const verificationCode = recordData.verificationCode || recordData.VerificationCode || '';
@@ -284,12 +339,39 @@ export async function onRequestPost(context) {
         ReceiptNo: receiptNo
       });
     }
-    const emailResult = await sendSchoolFormPurchaseEmail(env, {
-      ...basePayload,
-      VerificationCode: verificationCode
-    }).catch((err) => ({ ok: false, message: String(err && err.message ? err.message : err) }));
+    const emailDeliveryId = `admission-form-${String(tx.reference || reference).replace(/[^A-Za-z0-9_.-]/g, '-').slice(0, 120)}`;
+    const emailClaim = await createDocumentIfAbsent(env, 'emailDeliveries', emailDeliveryId, {
+      DeliveryId: emailDeliveryId,
+      Type: 'AdmissionFormPurchase',
+      Reference: tx.reference || reference,
+      Recipient: basePayload.Email,
+      Status: 'Processing',
+      CreatedAt: new Date().toISOString(),
+      UpdatedAt: new Date().toISOString()
+    });
+    let emailResult = { ok: false, skipped: true, message: 'Receipt email was already processed.' };
+    if (emailClaim.created) {
+      emailResult = await sendSchoolFormPurchaseEmail(env, {
+        ...basePayload,
+        VerificationCode: verificationCode
+      }).catch((err) => ({ ok: false, message: String(err && err.message ? err.message : err) }));
+      await upsertDocument(env, 'emailDeliveries', emailDeliveryId, {
+        DeliveryId: emailDeliveryId,
+        Type: 'AdmissionFormPurchase',
+        Reference: tx.reference || reference,
+        Recipient: basePayload.Email,
+        Status: emailResult.ok ? 'Sent' : (emailResult.skipped ? 'Skipped' : 'Failed'),
+        ProviderStatus: Number(emailResult.status || 0),
+        ProviderMessage: String(emailResult.message || '').slice(0, 500),
+        CreatedAt: emailClaim.document?.CreatedAt || new Date().toISOString(),
+        UpdatedAt: new Date().toISOString(),
+        SentAt: emailResult.ok ? new Date().toISOString() : ''
+      });
+    } else if (String(emailClaim.document?.Status || '').toLowerCase() === 'sent') {
+      emailResult = { ok: true, duplicate: true, message: 'Receipt email was already sent.' };
+    }
 
-    return Response.json({
+    const responsePayload = {
       ok: true,
       message: recordData.duplicate ? 'Admission form purchase was already recorded.' : 'Admission form purchase verified and recorded.',
       applicantName: basePayload.ApplicantName,
@@ -306,8 +388,14 @@ export async function onRequestPost(context) {
       expiryDate: recordData.expiryDate || basePayload.ExpiryDate,
       schoolEmailSent: Boolean(emailResult && emailResult.ok),
       schoolEmailMessage: emailResult && emailResult.message ? String(emailResult.message).slice(0, 300) : ''
-    });
+    };
+    await completeIdempotentRequest(env, idempotency, responsePayload, 200);
+    return Response.json(responsePayload, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
-    return Response.json({ ok: false, message: String(err) }, { status: 500 });
+    if (idempotency?.owner) await failIdempotentRequest(context.env, idempotency, err);
+    return Response.json({ ok: false, message: err.message || String(err) }, {
+      status: err.status || 500,
+      headers: { 'Cache-Control': 'no-store' }
+    });
   }
 }

@@ -5,6 +5,7 @@ import {
   publicStaffApprovalProfile,
   saveStaffApprovalProfile
 } from '../lib/staff-approval-profile.js';
+import { readJsonBody } from '../lib/request-security.js';
 
 function response(data, status = 200) {
   return Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -25,7 +26,7 @@ export async function onRequestPost({ request, env }) {
   try {
     requireFirestoreEnv(env);
     const user = await requireStaffSession(env, request);
-    const body = await request.json().catch(() => ({}));
+    const body = await readJsonBody(request, { maxBytes: 1024 * 1024 });
     const profile = await saveStaffApprovalProfile(env, user, body);
     return response({ ok: true, message: 'Approval signature and stamp settings saved.', profile });
   } catch (error) {

@@ -1,8 +1,15 @@
 import { requireFirestoreEnv } from '../lib/firestore.js';
 import { initChurchDonationPayment } from '../lib/church-payments.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
+import {
+  beginIdempotentRequest,
+  completeIdempotentRequest,
+  failIdempotentRequest,
+  readJsonBody
+} from '../lib/request-security.js';
 
 export async function onRequestPost(context) {
+  let idempotency = null;
   try {
     const { request, env } = context;
     requireFirestoreEnv(env);
@@ -13,11 +20,25 @@ export async function onRequestPost(context) {
       throw error;
     }
 
-    const body = await request.json().catch(() => ({}));
-    return Response.json(await initChurchDonationPayment(env, user, body, new URL(request.url).origin), {
+    const body = await readJsonBody(request, { maxBytes: 256 * 1024 });
+    idempotency = await beginIdempotentRequest(env, request, body, {
+      scope: 'init-church-payment',
+      actor: user.username,
+      ttlMinutes: 2 * 24 * 60
+    });
+    if (idempotency.replay) {
+      return Response.json(idempotency.response, {
+        status: idempotency.status || (idempotency.response?.ok === false ? 409 : 200),
+        headers: { 'Cache-Control': 'no-store', 'Idempotency-Replayed': 'true' }
+      });
+    }
+    const result = await initChurchDonationPayment(env, user, body, new URL(request.url).origin);
+    await completeIdempotentRequest(env, idempotency, result, 200);
+    return Response.json(result, {
       headers: { 'Cache-Control': 'no-store' }
     });
   } catch (error) {
+    if (idempotency?.owner) await failIdempotentRequest(context.env, idempotency, error);
     return Response.json(
       { ok: false, message: error.message || String(error) },
       { status: error.status || 500, headers: { 'Cache-Control': 'no-store' } }

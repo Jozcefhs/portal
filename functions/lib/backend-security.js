@@ -1,3 +1,5 @@
+import { getDocument, listCollection } from './firestore.js';
+
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 
@@ -7,9 +9,31 @@ export function secureTextEqual(left, right) {
   let difference = a.length ^ b.length;
   const length = Math.max(a.length, b.length);
   for (let index = 0; index < length; index += 1) {
-    difference |= (a[index % (a.length || 1)] || 0) ^ (b[index % (b.length || 1)] || 0);
+    difference |= (a[index] || 0) ^ (b[index] || 0);
   }
   return difference === 0;
+}
+
+export function configuredDesktopSecret(env = {}) {
+  return clean(env.BACKEND_SHARED_SECRET || env.GOOGLE_APPS_SCRIPT_SECRET);
+}
+
+export function requireConfiguredDesktopSecret(env = {}, label = 'desktop backend') {
+  const secret = configuredDesktopSecret(env);
+  if (secret) return secret;
+  const error = new Error(`The ${label} is not configured. Add BACKEND_SHARED_SECRET in Cloudflare.`);
+  error.status = 503;
+  error.code = 'BACKEND_SECRET_NOT_CONFIGURED';
+  throw error;
+}
+
+export function verifyDesktopSecret(env = {}, supplied = '', label = 'desktop backend') {
+  const expected = requireConfiguredDesktopSecret(env, label);
+  if (secureTextEqual(supplied, expected)) return true;
+  const error = new Error('Unauthorized.');
+  error.status = 401;
+  error.code = 'BACKEND_SECRET_INVALID';
+  throw error;
 }
 
 export function isActiveStaffUser(user) {
@@ -36,6 +60,9 @@ export function resolveAuthoritativeDesktopActor(body = {}, users = [], env = {}
       department: clean(user.Department || user.department),
       branchId: clean(user.BranchId || user.branchId),
       schoolSectionAccess: clean(user.SchoolSectionAccess || user.schoolSectionAccess) || 'All',
+      tabAccess: Array.isArray(user.TabAccess || user.tabAccess)
+        ? (user.TabAccess || user.tabAccess).map(clean).filter(Boolean)
+        : clean(user.TabAccess || user.tabAccess).split(',').map(clean).filter(Boolean),
       source: 'staffUsers'
     };
   }
@@ -48,6 +75,7 @@ export function resolveAuthoritativeDesktopActor(body = {}, users = [], env = {}
       department: '',
       branchId: '',
       schoolSectionAccess: 'All',
+      tabAccess: [],
       source: 'environment-admin'
     };
   }
@@ -55,6 +83,27 @@ export function resolveAuthoritativeDesktopActor(body = {}, users = [], env = {}
   error.status = 403;
   error.code = user ? 'BACKEND_ACTOR_DISABLED' : 'BACKEND_ACTOR_NOT_FOUND';
   throw error;
+}
+
+function safeStaffId(value) {
+  return lower(value).replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120);
+}
+
+function staffIdentityMatches(user, identity) {
+  return [user?.Username, user?.username, user?.__id].some((value) => lower(value) === lower(identity));
+}
+
+export async function resolveAuthoritativeDesktopActorForEnv(env = {}, body = {}) {
+  const username = clean(body.UserUsername || body.userUsername);
+  if (!username) return resolveAuthoritativeDesktopActor(body, [], env);
+  const documentId = safeStaffId(username);
+  let direct = null;
+  if (documentId) direct = await getDocument(env, 'staffUsers', documentId);
+  if (direct && staffIdentityMatches(direct, username)) {
+    return resolveAuthoritativeDesktopActor(body, [direct], env);
+  }
+  const users = await listCollection(env, 'staffUsers');
+  return resolveAuthoritativeDesktopActor(body, users, env);
 }
 
 export function applyAuthoritativeActor(body, actor) {
@@ -65,6 +114,7 @@ export function applyAuthoritativeActor(body, actor) {
     UserDepartment: actor.department,
     UserBranchId: actor.branchId,
     UserSchoolSectionAccess: actor.schoolSectionAccess,
+    UserTabAccess: actor.tabAccess,
     RecordedBy: actor.displayName
   };
 }

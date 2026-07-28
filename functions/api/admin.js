@@ -97,8 +97,14 @@ export async function onRequestPost(context) {
       ,storeItems
       ,storeOrders
     ] = await Promise.all([
-      allowed.has('admissions') ? listSchoolCollection(env, 'applications') : Promise.resolve([]),
-      allowed.has('students') ? listSchoolCollection(env, 'students') : Promise.resolve([]),
+      allowed.has('admissions') ? listSchoolCollection(env, 'applications', {
+        branchId: user.branchId,
+        schoolSectionAccess: user.schoolSectionAccess
+      }) : Promise.resolve([]),
+      allowed.has('students') ? listSchoolCollection(env, 'students', {
+        branchId: user.branchId,
+        schoolSectionAccess: user.schoolSectionAccess
+      }) : Promise.resolve([]),
       allowed.has('formPurchases') ? listCollection(env, 'formSales') : Promise.resolve([]),
       allowed.has('accounts') ? listCollection(env, 'payments') : Promise.resolve([]),
       allowed.has('accounts') ? listCollection(env, 'invoices') : Promise.resolve([]),
@@ -116,15 +122,6 @@ export async function onRequestPost(context) {
       (allowed.has('bookstore') || allowed.has('uniformStore') || allowed.has('organizationStore')) ? listCollection(env, 'storeOrders') : Promise.resolve([])
     ]);
 
-    let accountOverview = null;
-    if (allowed.has('accounts')) {
-      try {
-        accountOverview = await getAccountsOverview(env);
-      } catch (_err) {
-        accountOverview = null;
-      }
-    }
-    const displayInvoices = reconcileInvoiceDisplay(invoices, accountOverview && accountOverview.ok ? accountOverview.accounts : []);
     const staffScope = (rows) => rows.filter((row) => {
       const rowBranch = clean(row.BranchId || 'main').toLowerCase();
       const branchAllowed = !clean(user.branchId) || rowBranch === clean(user.branchId).toLowerCase();
@@ -135,6 +132,25 @@ export async function onRequestPost(context) {
       const sectionAllowed = sectionAccess === 'all' || rowSection === sectionAccess;
       return branchAllowed && sectionAllowed;
     });
+    let accountOverview = null;
+    if (allowed.has('accounts')) {
+      try {
+        const overviewInputs = {
+          payments: staffScope(payments),
+          invoices: staffScope(invoices),
+          ledger: staffScope(ledger)
+        };
+        if (allowed.has('admissions')) overviewInputs.applications = applications;
+        if (allowed.has('students')) overviewInputs.students = students;
+        accountOverview = await getAccountsOverview(env, overviewInputs, {
+          branchId: user.branchId,
+          schoolSectionAccess: user.schoolSectionAccess
+        });
+      } catch (_err) {
+        accountOverview = null;
+      }
+    }
+    const displayInvoices = reconcileInvoiceDisplay(invoices, accountOverview && accountOverview.ok ? accountOverview.accounts : []);
     const visibleApplications = staffScope(applications);
     const visibleStudents = staffScope(students);
     const visibleFormSales = staffScope(formSales);

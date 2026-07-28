@@ -1,9 +1,25 @@
 // Cloudflare Pages Function: /api/upload-document
 // Lets parents upload missing admission documents using their verification email/code.
 
-import { listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
-import { listSchoolCollection, upsertSchoolDocument } from '../lib/school-scope.js';
+import {
+  createDocumentIfAbsent,
+  getDocument,
+  patchDocumentFields,
+  requireFirestoreEnv,
+  upsertDocument
+} from '../lib/firestore.js';
+import { querySchoolCollection, upsertSchoolDocument } from '../lib/school-scope.js';
 import { resolveDocumentStorage } from '../lib/document-storage.js';
+import {
+  beginIdempotentRequest,
+  completeIdempotentRequest,
+  failIdempotentRequest,
+  readJsonBody,
+  releaseIdempotentRequest,
+  verifyTurnstile
+} from '../lib/request-security.js';
+
+const UPLOAD_OPERATION_COLLECTION = 'documentUploadOperations';
 
 function clean(value) {
   return String(value || '').trim();
@@ -29,6 +45,19 @@ function safeDocumentId(value) {
     .replace(/_+/g, '_')
     .replace(/-+/g, '-')
     .slice(0, 140);
+}
+
+function uploadError(message, status = 500, code = '', options = {}) {
+  const error = new Error(message);
+  error.status = status;
+  error.code = code;
+  Object.assign(error, options);
+  return error;
+}
+
+async function sha256(value) {
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value)));
+  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 const DOCUMENT_FIELDS = [
@@ -60,9 +89,74 @@ function documentUploaded(app, documentType) {
   return ['yes', 'true', '1', 'uploaded', 'replaced'].includes(flag) || Boolean(documentUrl(app, documentType));
 }
 
+function uploadOperationState(operation = {}) {
+  return lower(operation.Status || 'prepared');
+}
+
+async function loadUploadOperation(env, operationId, expected = {}) {
+  const nowDate = new Date();
+  const now = nowDate.toISOString();
+  const claimed = await createDocumentIfAbsent(env, UPLOAD_OPERATION_COLLECTION, operationId, {
+    OperationId: operationId,
+    IdempotencyDocumentId: operationId,
+    RequestFingerprint: clean(expected.RequestFingerprint),
+    ApplicationReference: clean(expected.ApplicationReference),
+    DocumentType: clean(expected.DocumentType),
+    FileDigest: clean(expected.FileDigest),
+    FileName: clean(expected.FileName),
+    MimeType: clean(expected.MimeType),
+    ReplaceExisting: Boolean(expected.ReplaceExisting),
+    Status: 'Prepared',
+    DriveState: 'NotStarted',
+    MetadataState: 'Pending',
+    Attempt: 0,
+    CreatedAt: now,
+    UpdatedAt: now,
+    ExpiresAt: new Date(nowDate.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString()
+  });
+  const operation = claimed.document || {};
+  const immutableFields = ['RequestFingerprint', 'ApplicationReference', 'DocumentType', 'FileDigest'];
+  const mismatch = immutableFields.find((field) => clean(operation[field]) && clean(operation[field]) !== clean(expected[field]));
+  if (mismatch) {
+    throw uploadError(
+      'This upload operation is already bound to a different file or application.',
+      409,
+      'UPLOAD_OPERATION_CONFLICT'
+    );
+  }
+  return operation;
+}
+
+async function updateUploadOperation(env, operationId, fields = {}) {
+  return patchDocumentFields(env, UPLOAD_OPERATION_COLLECTION, operationId, {
+    ...fields,
+    UpdatedAt: new Date().toISOString()
+  });
+}
+
+function completedUploadResult(operation, definition, applicationReference) {
+  if (operation.Result && typeof operation.Result === 'object') return operation.Result;
+  const documentUrlValue = clean(operation.DocumentUrl);
+  if (!documentUrlValue) return null;
+  const previousDocumentUrl = clean(operation.PreviousDocumentUrl);
+  const replaced = Boolean(operation.ReplaceExisting && previousDocumentUrl);
+  return {
+    ok: true,
+    code: replaced ? 'DOCUMENT_REPLACED' : 'DOCUMENT_UPLOADED',
+    message: `${definition.label}${replaced ? ' replaced successfully.' : ' uploaded successfully.'}`,
+    documentUrl: documentUrlValue,
+    previousDocumentUrl,
+    applicationReference,
+    backend: 'firestore'
+  };
+}
+
 async function findFirestoreApplication(env, email, code) {
   requireFirestoreEnv(env);
-  const rows = await listSchoolCollection(env, 'applications');
+  const rows = await querySchoolCollection(env, 'applications', {
+    filters: [{ field: 'VerificationCode', op: '==', value: code }],
+    limit: 20
+  });
   return rows.find((row) => {
     const parent = row.parent && typeof row.parent === 'object' ? row.parent : {};
     const rowEmail = lower(pick(row, ['VerificationEmail', 'verificationEmail', 'ParentEmail', 'parentEmail', 'Email', 'email'], parent.email));
@@ -72,18 +166,25 @@ async function findFirestoreApplication(env, email, code) {
 }
 
 async function enabledDocumentFields(env) {
-  const rows = await listCollection(env, 'settings');
-  const settings = rows.find((row) => row.__id === 'admissionDocuments');
+  const settings = await getDocument(env, 'settings', 'admissionDocuments').catch(() => null);
   const enabled = settings && settings.Enabled && typeof settings.Enabled === 'object' ? settings.Enabled : {};
   return DOCUMENT_FIELDS.filter((item) => enabled[item.key] !== false);
 }
 
-async function saveFirestoreDocumentMetadata(env, app, definition, file, url, replaceExisting) {
+async function saveFirestoreDocumentMetadata(env, app, definition, file, url, replaceExisting, operationId) {
   const now = new Date().toISOString();
   const reference = clean(pick(app, ['ApplicationReference', 'applicationReference', 'ApplicationID', '__id']));
   if (!reference) throw new Error('The database application has no application reference.');
   const previousUrl = documentUrl(app, definition.key);
   const documents = app.documents && typeof app.documents === 'object' ? { ...app.documents } : {};
+  const currentEntry = documentEntry(app, definition.key);
+  if (clean(currentEntry.uploadOperationId) === clean(operationId) && clean(currentEntry.url) === clean(url)) {
+    return {
+      application: app,
+      previousUrl: clean(currentEntry.previousUrl),
+      alreadySaved: true
+    };
+  }
   documents[definition.key] = {
     type: definition.key,
     label: definition.label,
@@ -94,7 +195,8 @@ async function saveFirestoreDocumentMetadata(env, app, definition, file, url, re
     previousUrl,
     uploadedAt: now,
     uploadedBy: 'Parent',
-    storage: 'Google Drive'
+    storage: 'Google Drive',
+    uploadOperationId: clean(operationId)
   };
   const next = {
     ...app,
@@ -124,13 +226,28 @@ async function uploadViaAppsScript(storageUrl, payload) {
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(payload)
   });
-  return res.json();
+  const text = await res.text().catch(() => '');
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = {};
+  }
+  return {
+    ...(data && typeof data === 'object' ? data : {}),
+    httpOk: res.ok,
+    httpStatus: res.status,
+    rawMessage: clean(data?.message || text).slice(0, 1000)
+  };
 }
 
 export async function onRequestPost(context) {
+  let idempotency = null;
+  let driveAttemptStarted = false;
+  let driveOutcomeRecorded = false;
   try {
     const { request, env } = context;
-    const body = await request.json();
+    const body = await readJsonBody(request, { maxBytes: 12 * 1024 * 1024 });
 
     const email = String(body.email || '').trim().toLowerCase();
     const code = String(body.code || '').trim().toUpperCase();
@@ -151,6 +268,20 @@ export async function onRequestPost(context) {
     if (!fileName || !fileBase64) {
       return Response.json({ ok: false, message: 'Choose a file to upload.' }, { status: 400 });
     }
+    const base64Limit = Math.ceil((8 * 1024 * 1024) / 3) * 4 + 4;
+    if (fileBase64.length > base64Limit) {
+      return Response.json({ ok: false, message: 'The selected file exceeds the 8 MB upload limit.' }, {
+        status: 413,
+        headers: { 'Cache-Control': 'no-store' }
+      });
+    }
+    if (thumbnailBase64.length > 400000) {
+      return Response.json({ ok: false, message: 'The image preview is too large.' }, {
+        status: 413,
+        headers: { 'Cache-Control': 'no-store' }
+      });
+    }
+    await verifyTurnstile(env, request, body, 'upload_document');
     requireFirestoreEnv(env);
     const definition = documentDefinition(documentType);
     if (!definition) {
@@ -164,64 +295,353 @@ export async function onRequestPost(context) {
     if (!firestoreApp) {
       return Response.json({ ok: false, message: 'Application not found in the database for that email/code.' }, { status: 404 });
     }
-    const existingUrl = documentUrl(firestoreApp, definition.key);
-    if ((existingUrl || documentUploaded(firestoreApp, definition.key)) && !replaceExisting) {
-      return Response.json({
-        ok: false,
-        code: 'DOCUMENT_ALREADY_UPLOADED',
-        message: `${definition.label} has already been uploaded. Choose replace if Admissions Office asked you to send a newer copy.`,
-        existingUrl,
+    const applicationReference = clean(pick(firestoreApp, ['ApplicationReference', 'applicationReference', 'ApplicationID', '__id']));
+    if (!applicationReference) {
+      throw uploadError('The database application has no application reference.', 500, 'APPLICATION_REFERENCE_MISSING');
+    }
+    const [fileDigest, thumbnailDigest] = await Promise.all([
+      sha256(fileBase64),
+      thumbnailBase64 ? sha256(thumbnailBase64) : Promise.resolve('')
+    ]);
+    idempotency = await beginIdempotentRequest(env, request, body, {
+      scope: `upload-${definition.key}`,
+      actor: `${email}:${applicationReference}`,
+      ttlMinutes: 7 * 24 * 60,
+      leaseMinutes: 15,
+      fingerprintPayload: {
+        email,
+        applicationReference,
         documentType: definition.key,
-        documentLabel: definition.label
-      }, { status: 409 });
-    }
-    const storage = await resolveDocumentStorage(env);
-    if (!storage.url || !storage.secret) {
-      return Response.json({
-        ok: false,
-        message: 'Database application lookup succeeded, but Google Drive file storage is not configured.'
-      }, { status: 500 });
-    }
-
-    const payload = {
-      Secret: storage.secret,
-      Action: 'uploadParentDocument',
-      StorageOnly: 'YES',
-      ApplicationReference: pick(firestoreApp, ['ApplicationReference', 'applicationReference', 'ApplicationID', '__id']),
-      Email: email,
-      VerificationCode: code,
-      DocumentType: definition.key,
-      FileName: fileName,
-      MimeType: mimeType,
-      FileBase64: fileBase64,
-      ReplaceExisting: replaceExisting ? 'YES' : 'NO',
-      ExistingUrl: existingUrl
-    };
-
-    const data = await uploadViaAppsScript(storage.url, payload);
-    if (!data.ok) {
-      return Response.json(data, { status: 400 });
-    }
-    const saved = await saveFirestoreDocumentMetadata(env, firestoreApp, definition, { fileName, mimeType }, clean(data.documentUrl), replaceExisting);
-    if (definition.key === 'PassportPhotograph' && thumbnailBase64 && thumbnailBase64.length <= 400000) {
-      const reference = pick(firestoreApp, ['ApplicationReference', 'applicationReference', 'ApplicationID', '__id']);
-      await upsertDocument(env, 'applicationPassportThumbnails', safeDocumentId(reference), {
-        ApplicationReference: reference,
-        MimeType: thumbnailMimeType.toLowerCase().startsWith('image/') ? thumbnailMimeType : 'image/jpeg',
-        FileBase64: thumbnailBase64,
-        UpdatedAt: new Date().toISOString()
+        fileName,
+        mimeType,
+        fileDigest,
+        thumbnailDigest,
+        replaceExisting
+      }
+    });
+    if (idempotency.replay) {
+      if (idempotency.uncertain && idempotency.documentId) {
+        const durableOperation = await getDocument(
+          env,
+          UPLOAD_OPERATION_COLLECTION,
+          idempotency.documentId
+        ).catch(() => null);
+        const operationMatches = durableOperation
+          && clean(durableOperation.ApplicationReference) === applicationReference
+          && clean(durableOperation.DocumentType) === definition.key
+          && clean(durableOperation.FileDigest) === fileDigest;
+        if (operationMatches && ['completed', 'metadatasaved'].includes(uploadOperationState(durableOperation))) {
+          const reconciledResult = completedUploadResult(durableOperation, definition, applicationReference);
+          if (reconciledResult) {
+            return Response.json(reconciledResult, {
+              headers: {
+                'Cache-Control': 'no-store',
+                'Idempotency-Replayed': 'true',
+                'Idempotency-Reconciled': 'true'
+              }
+            });
+          }
+        }
+      }
+      return Response.json(idempotency.response, {
+        status: idempotency.status || (idempotency.response?.ok === false ? 409 : 200),
+        headers: { 'Cache-Control': 'no-store', 'Idempotency-Replayed': 'true' }
       });
     }
-    return Response.json({
+    if (!idempotency.enabled) {
+      throw uploadError(
+        'An Idempotency-Key header is required for document uploads.',
+        400,
+        'IDEMPOTENCY_KEY_REQUIRED'
+      );
+    }
+
+    const operationId = idempotency.documentId;
+    let operation = await loadUploadOperation(env, operationId, {
+      RequestFingerprint: idempotency.fingerprint,
+      ApplicationReference: applicationReference,
+      DocumentType: definition.key,
+      FileDigest: fileDigest,
+      FileName: fileName,
+      MimeType: mimeType,
+      ReplaceExisting: replaceExisting
+    });
+    let operationState = uploadOperationState(operation);
+    if (['completed', 'metadatasaved'].includes(operationState)) {
+      const replayResult = completedUploadResult(operation, definition, applicationReference);
+      if (!replayResult) {
+        throw uploadError(
+          'The upload metadata is marked as saved, but its durable result is incomplete. Admissions must reconcile this operation.',
+          503,
+          'UPLOAD_RECONCILIATION_REQUIRED',
+          { outcomeUncertain: true }
+        );
+      }
+      try {
+        await completeIdempotentRequest(env, idempotency, replayResult, 200);
+        await updateUploadOperation(env, operationId, {
+          Status: 'Completed',
+          IdempotencyState: 'Completed',
+          CompletedAt: new Date().toISOString()
+        }).catch(() => null);
+      } catch {
+        await updateUploadOperation(env, operationId, {
+          IdempotencyState: 'FinalizationPending'
+        }).catch(() => null);
+        await releaseIdempotentRequest(env, idempotency);
+      }
+      return Response.json(replayResult, {
+        headers: { 'Cache-Control': 'no-store', 'Idempotency-Replayed': 'true' }
+      });
+    }
+    if (['uploading', 'uploaduncertain', 'uncertain', 'metadataconflict'].includes(operationState)) {
+      throw uploadError(
+        'The Google Drive upload may already have been accepted. Automatic re-upload is suppressed to avoid a duplicate; Admissions must reconcile this operation.',
+        503,
+        'DRIVE_UPLOAD_OUTCOME_UNCERTAIN',
+        {
+          outcomeUncertain: true,
+          uncertaintyReason: clean(operation.UncertaintyReason || operation.MetadataConflictReason)
+        }
+      );
+    }
+    if (!['prepared', 'drivesaved'].includes(operationState)) {
+      throw uploadError(
+        `The durable upload operation is in the unresolved "${clean(operation.Status) || 'unknown'}" state. Automatic re-upload is suppressed.`,
+        503,
+        'UPLOAD_OPERATION_UNRESOLVED',
+        {
+          outcomeUncertain: true,
+          uncertaintyReason: clean(operation.UncertaintyReason || operation.MetadataConflictReason)
+        }
+      );
+    }
+
+    let savedDocumentUrl = '';
+    const existingUrl = documentUrl(firestoreApp, definition.key);
+    if (operationState === 'drivesaved') {
+      savedDocumentUrl = clean(operation.DocumentUrl);
+      if (!savedDocumentUrl) {
+        throw uploadError(
+          'Google Drive is marked as saved, but no durable file URL is available. Admissions must reconcile this operation.',
+          503,
+          'DRIVE_UPLOAD_RECONCILIATION_REQUIRED',
+          { outcomeUncertain: true }
+        );
+      }
+      driveOutcomeRecorded = true;
+    } else {
+      if ((existingUrl || documentUploaded(firestoreApp, definition.key)) && !replaceExisting) {
+        throw uploadError(
+          `${definition.label} has already been uploaded. Choose replace if Admissions Office asked you to send a newer copy.`,
+          409,
+          'DOCUMENT_ALREADY_UPLOADED'
+        );
+      }
+      const storage = await resolveDocumentStorage(env);
+      if (!storage.url || !storage.secret) {
+        throw uploadError(
+          'Database application lookup succeeded, but Google Drive file storage is not configured.',
+          503,
+          'DOCUMENT_STORAGE_NOT_CONFIGURED'
+        );
+      }
+      const attemptId = crypto.randomUUID();
+      const attempt = Math.max(0, Number(operation.Attempt || 0)) + 1;
+      operation = await updateUploadOperation(env, operationId, {
+        Status: 'Uploading',
+        DriveState: 'RequestStarted',
+        Attempt: attempt,
+        AttemptId: attemptId,
+        UploadStartedAt: new Date().toISOString(),
+        OutcomeUncertain: false
+      });
+      operationState = uploadOperationState(operation);
+
+      const payload = {
+        Secret: storage.secret,
+        Action: 'uploadParentDocument',
+        StorageOnly: 'YES',
+        OperationId: operationId,
+        UploadOperationId: operationId,
+        StorageOperationId: operationId,
+        UploadAttemptId: attemptId,
+        RequestFingerprint: idempotency.fingerprint,
+        ApplicationReference: applicationReference,
+        Email: email,
+        VerificationCode: code,
+        DocumentType: definition.key,
+        FileName: fileName,
+        MimeType: mimeType,
+        FileBase64: fileBase64,
+        ReplaceExisting: replaceExisting ? 'YES' : 'NO',
+        ExistingUrl: existingUrl
+      };
+
+      let data;
+      driveAttemptStarted = true;
+      try {
+        data = await uploadViaAppsScript(storage.url, payload);
+      } catch (error) {
+        const uncertaintyReason = `No authoritative response was received from document storage: ${clean(error?.message || error)}`.slice(0, 500);
+        await updateUploadOperation(env, operationId, {
+          Status: 'UploadUncertain',
+          DriveState: 'OutcomeUncertain',
+          OutcomeUncertain: true,
+          UncertaintyReason: uncertaintyReason,
+          UncertainAt: new Date().toISOString()
+        }).catch(() => null);
+        throw uploadError(
+          'Google Drive may have accepted the file, but no authoritative response was received. Automatic re-upload is suppressed.',
+          503,
+          'DRIVE_UPLOAD_OUTCOME_UNCERTAIN',
+          { outcomeUncertain: true, uncertaintyReason }
+        );
+      }
+
+      savedDocumentUrl = clean(data.documentUrl);
+      if (data.ok !== true || data.httpOk !== true || !savedDocumentUrl) {
+        const uncertaintyReason = clean(data.rawMessage || data.message || `Storage returned HTTP ${data.httpStatus || 'unknown'}`)
+          .slice(0, 500);
+        await updateUploadOperation(env, operationId, {
+          Status: 'UploadUncertain',
+          DriveState: 'OutcomeUncertain',
+          StorageHttpStatus: Number(data.httpStatus || 0),
+          OutcomeUncertain: true,
+          UncertaintyReason: uncertaintyReason,
+          UncertainAt: new Date().toISOString()
+        }).catch(() => null);
+        throw uploadError(
+          'Google Drive did not return an authoritative saved-file result. Automatic re-upload is suppressed to avoid a duplicate.',
+          503,
+          'DRIVE_UPLOAD_OUTCOME_UNCERTAIN',
+          { outcomeUncertain: true, uncertaintyReason }
+        );
+      }
+
+      try {
+        operation = await updateUploadOperation(env, operationId, {
+          Status: 'DriveSaved',
+          DriveState: 'Saved',
+          DocumentUrl: savedDocumentUrl,
+          StorageHttpStatus: Number(data.httpStatus || 200),
+          StorageMessage: clean(data.rawMessage || data.message).slice(0, 500),
+          DriveSavedAt: new Date().toISOString(),
+          OutcomeUncertain: false
+        });
+        operationState = uploadOperationState(operation);
+        driveOutcomeRecorded = true;
+      } catch (error) {
+        throw uploadError(
+          'Google Drive accepted the file, but its result could not be saved durably. Automatic re-upload is suppressed.',
+          503,
+          'DRIVE_RESULT_PERSISTENCE_FAILED',
+          {
+            outcomeUncertain: true,
+            uncertaintyReason: clean(error?.message || error)
+          }
+        );
+      }
+    }
+
+    const latestApplication = await findFirestoreApplication(env, email, code);
+    if (!latestApplication) {
+      throw uploadError(
+        'The application disappeared after Google Drive saved the file. Admissions must reconcile the saved file.',
+        503,
+        'UPLOAD_METADATA_TARGET_MISSING'
+      );
+    }
+    const latestEntry = documentEntry(latestApplication, definition.key);
+    const latestUrl = documentUrl(latestApplication, definition.key);
+    const metadataAlreadySaved = clean(latestEntry.uploadOperationId) === operationId
+      && clean(latestEntry.url) === savedDocumentUrl;
+    if (!metadataAlreadySaved && !replaceExisting && latestUrl && latestUrl !== savedDocumentUrl) {
+      const conflictReason = `${definition.label} was updated by another upload before this Drive result could be attached.`;
+      await updateUploadOperation(env, operationId, {
+        Status: 'MetadataConflict',
+        DriveState: 'Saved',
+        MetadataState: 'Conflict',
+        DocumentUrl: savedDocumentUrl,
+        ManualReconciliationRequired: true,
+        MetadataConflictReason: conflictReason
+      }).catch(() => null);
+      throw uploadError(
+        `${conflictReason} Automatic overwrite is suppressed; Admissions must reconcile the saved Drive file.`,
+        503,
+        'UPLOAD_METADATA_CONFLICT'
+      );
+    }
+
+    const saved = await saveFirestoreDocumentMetadata(
+      env,
+      latestApplication,
+      definition,
+      { fileName, mimeType },
+      savedDocumentUrl,
+      replaceExisting,
+      operationId
+    );
+    if (definition.key === 'PassportPhotograph' && thumbnailBase64 && thumbnailBase64.length <= 400000) {
+      await upsertDocument(env, 'applicationPassportThumbnails', safeDocumentId(applicationReference), {
+        ApplicationReference: applicationReference,
+        MimeType: thumbnailMimeType.toLowerCase().startsWith('image/') ? thumbnailMimeType : 'image/jpeg',
+        FileBase64: thumbnailBase64,
+        UploadOperationId: operationId,
+        UpdatedAt: new Date().toISOString()
+      }).catch(() => null);
+    }
+    const result = {
       ok: true,
       code: replaceExisting && saved.previousUrl ? 'DOCUMENT_REPLACED' : 'DOCUMENT_UPLOADED',
       message: `${definition.label}${replaceExisting && saved.previousUrl ? ' replaced successfully.' : ' uploaded successfully.'}`,
-      documentUrl: clean(data.documentUrl),
+      documentUrl: savedDocumentUrl,
       previousDocumentUrl: saved.previousUrl,
-      applicationReference: pick(firestoreApp, ['ApplicationReference', 'applicationReference', 'ApplicationID', '__id']),
+      applicationReference,
       backend: 'firestore'
+    };
+    await updateUploadOperation(env, operationId, {
+      Status: 'MetadataSaved',
+      DriveState: 'Saved',
+      MetadataState: 'Saved',
+      DocumentUrl: savedDocumentUrl,
+      PreviousDocumentUrl: clean(saved.previousUrl),
+      Result: result,
+      MetadataSavedAt: new Date().toISOString(),
+      OutcomeUncertain: false
     });
-  } catch (err) {
-    return Response.json({ ok: false, message: String(err) }, { status: 500 });
+    try {
+      await completeIdempotentRequest(env, idempotency, result, 200);
+      await updateUploadOperation(env, operationId, {
+        Status: 'Completed',
+        IdempotencyState: 'Completed',
+        CompletedAt: new Date().toISOString()
+      }).catch(() => null);
+    } catch {
+      await updateUploadOperation(env, operationId, {
+        IdempotencyState: 'FinalizationPending'
+      }).catch(() => null);
+      await releaseIdempotentRequest(env, idempotency);
+    }
+    return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
+  } catch (caught) {
+    const err = caught instanceof Error ? caught : uploadError(clean(caught) || 'The document upload failed.');
+    if (idempotency?.owner) {
+      if (err?.outcomeUncertain === true || (driveAttemptStarted && !driveOutcomeRecorded)) {
+        err.outcomeUncertain = true;
+        await failIdempotentRequest(context.env, idempotency, err);
+      } else {
+        await releaseIdempotentRequest(context.env, idempotency);
+      }
+    }
+    return Response.json({
+      ok: false,
+      code: clean(err?.code),
+      message: err.message || String(err),
+      outcomeUncertain: err?.outcomeUncertain === true
+    }, {
+      status: err.status || 500,
+      headers: { 'Cache-Control': 'no-store' }
+    });
   }
 }

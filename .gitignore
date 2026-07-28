@@ -1,1 +1,10 @@
 .wrangler/
+node_modules/.mf/
+.mf/
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+!.env.example
+dist/
+*.log

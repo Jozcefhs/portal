@@ -5,6 +5,13 @@ import { getPayableFees, getSchoolCode, SCHOOL_FEES_TOTAL_CODE } from './backend
 import { createDocumentIfAbsent, findOneByField, getDocument, requireFirestoreEnv } from '../lib/firestore.js';
 import { normalizeClassKey } from '../lib/class-names.js';
 import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
+import {
+  beginIdempotentRequest,
+  completeIdempotentRequest,
+  failIdempotentRequest,
+  readJsonBody,
+  verifyTurnstile
+} from '../lib/request-security.js';
 
 const PAYSTACK_INIT_URL = 'https://api.paystack.co/transaction/initialize';
 function cleanReference(value) {
@@ -123,9 +130,10 @@ function allocateSchoolFeePayment(components, amount) {
 }
 
 export async function onRequestPost(context) {
+  let idempotency = null;
   try {
     const { request, env } = context;
-    const body = await request.json();
+    const body = await readJsonBody(request, { maxBytes: 512 * 1024 });
     const email = String(body.email || '').trim().toLowerCase();
     const code = String(body.code || '').trim().toUpperCase();
     const feeCode = String(body.feeCode || '').trim();
@@ -137,9 +145,12 @@ export async function onRequestPost(context) {
     if (!email || !code || !feeCode) {
       return Response.json({ ok: false, message: 'Email, verification code, and fee are required.' }, { status: 400 });
     }
+    await verifyTurnstile(env, request, body, 'init_payment');
 
     if (!env.PAYSTACK_SECRET_KEY) {
-      return Response.json({ ok: false, message: 'Online payment is not configured yet.' }, { status: 500 });
+      const error = new Error('Online payment is not configured yet.');
+      error.status = 503;
+      throw error;
     }
 
     let feeData = null;
@@ -291,12 +302,31 @@ export async function onRequestPost(context) {
       : undefined;
 
     const account = payableAccount;
+    const {
+      turnstileToken: _turnstileToken,
+      turnstileAction: _turnstileAction,
+      idempotencyKey: _idempotencyKey,
+      ...idempotencyPayload
+    } = body;
+    idempotency = await beginIdempotentRequest(env, request, body, {
+      scope: 'init-payment',
+      actor: `${email}:${account.AccountRef || accountRef}`,
+      ttlMinutes: 2 * 24 * 60,
+      fingerprintPayload: idempotencyPayload
+    });
+    if (idempotency.replay) {
+      return Response.json(idempotency.response, {
+        status: idempotency.status || (idempotency.response?.ok === false ? 409 : 200),
+        headers: { 'Cache-Control': 'no-store', 'Idempotency-Replayed': 'true' }
+      });
+    }
     const origin = new URL(request.url).origin;
     const schoolCode = await getSchoolCode(env);
     const reference = cleanReference(`${schoolCode}-${feeCode}-${account.ApplicationReference || account.AccountRef}-${Date.now()}`);
     const callbackUrl = `${origin}/payment-success.html?reference=${encodeURIComponent(reference)}`;
     await createDocumentIfAbsent(env, 'paymentIntents', safeDocumentId(reference), {
       Reference: reference,
+      PaymentType: isWallet ? 'Wallet' : (isSchoolFeesTotal ? 'SchoolFeesTotal' : 'Fee'),
       AccountRef: account.AccountRef,
       AccountRefNormalized: safeDocumentId(account.AccountRef).toLowerCase(),
       ApplicationReference: account.ApplicationReference || '',
@@ -345,16 +375,24 @@ export async function onRequestPost(context) {
     });
     const paystackData = await paystackRes.json();
     if (!paystackData.status) {
-      return Response.json({ ok: false, message: paystackData.message || 'Could not start Paystack payment.' }, { status: 400 });
+      const error = new Error(paystackData.message || 'Could not start Paystack payment.');
+      error.status = 400;
+      throw error;
     }
 
-    return Response.json({
+    const result = {
       ok: true,
       message: 'Payment initialized.',
       authorizationUrl: paystackData.data.authorization_url,
       reference: paystackData.data.reference
-    });
+    };
+    await completeIdempotentRequest(env, idempotency, result, 200);
+    return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
-    return Response.json({ ok: false, message: String(err) }, { status: 500 });
+    if (idempotency?.owner) await failIdempotentRequest(context.env, idempotency, err);
+    return Response.json({ ok: false, message: err.message || String(err) }, {
+      status: err.status || 500,
+      headers: { 'Cache-Control': 'no-store' }
+    });
   }
 }

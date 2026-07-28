@@ -8,6 +8,25 @@ const classCompletedSelect = document.getElementById('classCompleted');
 
 let verified = null;
 let openClassesLoaded = false;
+let applicationIdempotencyKey = '';
+
+function newIdempotencyKey() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  const random = window.crypto?.getRandomValues
+    ? Array.from(window.crypto.getRandomValues(new Uint32Array(4)), (value) => value.toString(16)).join('')
+    : Math.random().toString(36).slice(2);
+  return `${Date.now().toString(36)}-${random}`;
+}
+
+function shouldReleaseIdempotencyKey(response, data) {
+  const status = Number(response?.status || 0);
+  if (response?.ok && data?.ok) return true;
+  if (status < 400 || status >= 500 || [408, 425, 429].includes(status)) return false;
+  if (status === 409 && /IDEMPOTENCY_(IN_PROGRESS|LOCKED|OWNERSHIP_LOST|OUTCOME_UNCERTAIN)|already being processed|outcome.+uncertain|unresolved request|no longer owned/i.test(
+    `${data?.code || ''} ${data?.message || ''}`
+  )) return false;
+  return status < 500;
+}
 
 function isLocalDev() {
   return ['localhost', '127.0.0.1', ''].includes(window.location.hostname) || window.location.protocol === 'file:';
@@ -99,15 +118,14 @@ function parseConfiguredClasses(values) {
 
 async function loadAdmissionClasses() {
   try {
-    const response = await fetch('/api/admission-classes');
-    const text = await response.text();
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (_err) {
-      throw new Error('Could not load available classes because the server returned an error page. Please try again.');
-    }
-    if (!response.ok || !data.ok) {
+    const data = window.DynamaxPublicApi?.getJson
+      ? await window.DynamaxPublicApi.getJson('/api/admission-classes', {
+          cacheKey: 'admission-classes',
+          invalidMessage: 'Could not load available classes because the server returned an error page. Please try again.',
+          errorMessage: 'Could not load available classes.'
+        })
+      : await fetch('/api/admission-classes', { cache: 'no-cache' }).then((response) => response.json());
+    if (!data.ok) {
       throw new Error(data.message || 'Could not load available classes.');
     }
     const openClasses = Array.isArray(data.classes) ? data.classes : [];
@@ -178,18 +196,27 @@ form.addEventListener('submit', async (event) => {
   }
 
   try {
+    applicationIdempotencyKey = applicationIdempotencyKey || newIdempotencyKey();
+    const turnstile = window.DynamaxPublicApi?.getTurnstileToken
+      ? await window.DynamaxPublicApi.getTurnstileToken('submit_application')
+      : {};
     const response = await fetch('/api/submit-application', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': applicationIdempotencyKey
+      },
       body: JSON.stringify({
         verification: verified,
-        application
+        application,
+        idempotencyKey: applicationIdempotencyKey,
+        ...turnstile
       })
     });
-
-    const data = await response.json();
-    if (!response.ok || !data.ok) {
-      throw new Error(data.message || 'Application submission failed.');
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.ok) {
+      if (shouldReleaseIdempotencyKey(response, data)) applicationIdempotencyKey = '';
+      throw new Error(data?.message || 'Application submission failed.');
     }
 
     const reference = data.applicationReference || data.reference || '';
@@ -200,6 +227,7 @@ form.addEventListener('submit', async (event) => {
     ].join(' ').replace(/\s+/g, ' ').trim();
 
     sessionStorage.removeItem('dcaAdmissionVerified');
+    applicationIdempotencyKey = '';
     sessionStorage.setItem('dcaApplicationSuccess', JSON.stringify({
       reference,
       applicantName,
@@ -221,4 +249,8 @@ form.addEventListener('submit', async (event) => {
     setStatus(error.message, 'bad');
     submitBtn.disabled = false;
   }
+});
+
+form.addEventListener('input', () => {
+  if (!submitBtn.disabled) applicationIdempotencyKey = '';
 });

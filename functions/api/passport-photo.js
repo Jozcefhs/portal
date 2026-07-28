@@ -1,9 +1,10 @@
 // Authenticated, lazy passport-photo proxy for Firestore applications.
 // Firestore remains authoritative; Google Drive only stores the private bytes.
 
-import { getDocument, listCollection, requireFirestoreEnv } from '../lib/firestore.js';
-import { listSchoolCollection } from '../lib/school-scope.js';
+import { getDocument, requireFirestoreEnv } from '../lib/firestore.js';
+import { getSchoolDocumentById, querySchoolCollection } from '../lib/school-scope.js';
 import { resolveDocumentStorage } from '../lib/document-storage.js';
+import { readJsonBody } from '../lib/request-security.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -83,12 +84,22 @@ export async function onRequestPost(context) {
   try {
     const { request, env } = context;
     requireFirestoreEnv(env);
-    const body = await request.json().catch(() => ({}));
+    const body = await readJsonBody(request, { maxBytes: 64 * 1024 });
     const reference = clean(body.applicationReference || body.ApplicationReference || body.accountRef || body.AccountRef);
     if (!reference) return Response.json({ ok: false, message: 'Application reference is required.' }, { status: 400 });
 
-    const applications = await listSchoolCollection(env, 'applications');
-    const application = applications.find((row) => sameText(applicationReference(row), reference) || sameText(row.__id, reference));
+    let application = await getSchoolDocumentById(env, 'applications', safeDocumentId(reference)).catch(() => null);
+    if (!application || (!sameText(applicationReference(application), reference) && !sameText(application.__id, reference))) {
+      const matches = await Promise.all(['ApplicationReference', 'ApplicationID'].map((field) =>
+        querySchoolCollection(env, 'applications', {
+          filters: [{ field, op: '==', value: reference }],
+          limit: 1
+        }).catch(() => [])
+      ));
+      application = matches.flat().find((row) =>
+        sameText(applicationReference(row), reference) || sameText(row.__id, reference)
+      ) || null;
+    }
     if (!application) return Response.json({ ok: false, message: 'Application was not found in the database.' }, { status: 404 });
 
     const suppliedSecret = clean(body.Secret || body.secret);

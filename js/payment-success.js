@@ -20,6 +20,39 @@ function formatMoney(amount, currency) {
   }).format(Number(amount || 0));
 }
 
+function shouldReleaseIdempotencyKey(response, data) {
+  const status = Number(response?.status || 0);
+  if (response?.ok && data?.ok) return true;
+  if (status < 400 || status >= 500 || [408, 425, 429].includes(status)) return false;
+  if (status === 409 && /IDEMPOTENCY_(IN_PROGRESS|LOCKED|OWNERSHIP_LOST|OUTCOME_UNCERTAIN)|already being processed|outcome.+uncertain|unresolved request|no longer owned/i.test(
+    `${data?.code || ''} ${data?.message || ''}`
+  )) return false;
+  return status < 500;
+}
+
+function verificationIdempotency(reference, isFormPurchase) {
+  const safeReference = String(reference || '').replace(/[^A-Za-z0-9._:-]/g, '-').slice(0, 120);
+  const storageKey = `dynamaxPaymentVerification:${isFormPurchase ? 'form' : 'general'}:${safeReference}`;
+  const deterministicKey = `payment-success:${isFormPurchase ? 'form' : 'general'}:${safeReference}`.slice(0, 160);
+  let key = '';
+  try {
+    key = sessionStorage.getItem(storageKey) || deterministicKey;
+    sessionStorage.setItem(storageKey, key);
+  } catch (_error) {
+    key = deterministicKey;
+  }
+  return {
+    key,
+    release() {
+      try {
+        sessionStorage.removeItem(storageKey);
+      } catch (_error) {
+        // Storage can be unavailable in hardened/private browser contexts.
+      }
+    }
+  };
+}
+
 async function verifyPayment() {
   const params = new URLSearchParams(window.location.search);
   const reference = params.get('reference') || params.get('trxref');
@@ -31,15 +64,21 @@ async function verifyPayment() {
 
   try {
     const isFormPurchase = paymentType.toLowerCase() === 'form';
+    const idempotency = verificationIdempotency(reference, isFormPurchase);
     const response = await fetch(isFormPurchase ? '/api/verify-form-payment' : '/api/verify-payment', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reference })
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idempotency.key
+      },
+      body: JSON.stringify({ reference, idempotencyKey: idempotency.key })
     });
-    const data = await response.json();
-    if (!response.ok || !data.ok) {
-      throw new Error(data.message || 'Payment could not be verified.');
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.ok) {
+      if (shouldReleaseIdempotencyKey(response, data)) idempotency.release();
+      throw new Error(data?.message || 'Payment could not be verified.');
     }
+    idempotency.release();
     setLead(isFormPurchase
       ? 'Your admission form purchase has been confirmed.'
       : 'Your payment has been confirmed.');

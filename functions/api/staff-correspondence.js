@@ -4,6 +4,7 @@ import {
   verifyStaffApprovalPassword
 } from '../lib/staff-auth.js';
 import { handleExecutiveOfficeAction } from '../lib/executive-correspondence.js';
+import { readJsonBody } from '../lib/request-security.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -19,7 +20,7 @@ export async function onRequestPost({ request, env }) {
   try {
     requireFirestoreEnv(env);
     const user = await requireStaffSession(env, request);
-    const body = await request.json().catch(() => ({}));
+    const body = await readJsonBody(request, { maxBytes: 2 * 1024 * 1024 });
     const action = lower(body.action || body.Action || 'bootstrap');
     let authorization = null;
     if (['issue', 'send'].includes(action)) {

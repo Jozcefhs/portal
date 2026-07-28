@@ -24,8 +24,10 @@ test('saved profile pictures replace the initials avatar', () => {
 test('staff can update only their own display profile through the authenticated session', () => {
   assert.match(sessionApi, /action === 'updateprofile'/);
   assert.match(sessionApi, /const sessionUser = await readStaffSession/);
-  assert.match(sessionApi, /ProfilePhotoDataUrl: profilePhoto\(body\.profilePhotoDataUrl\)/);
-  assert.match(sessionApi, /await upsertDocument\(env, 'staffUsers', existing\.__id, updated\)/);
+  assert.match(sessionApi, /const photo = profilePhoto\(body\.profilePhotoDataUrl\)/);
+  assert.match(sessionApi, /await batchUpsertDocuments\(env/);
+  assert.match(sessionApi, /collectionPath: 'staffProfileImages'/);
+  assert.match(sessionApi, /ProfilePhotoDataUrl: photo/);
   assert.match(sessionApi, /createStaffSession\(env, refreshedUser\)/);
 });
 
@@ -42,5 +44,5 @@ test('staff profile lookup accepts either the stored username or its database do
 test('the authenticated environment super admin can bootstrap a missing database profile', () => {
   assert.match(sessionApi, /function environmentAdminProfile\(env, sessionUser\)/);
   assert.match(sessionApi, /sessionUser\.role !== 'Super Admin'/);
-  assert.match(sessionApi, /findStaffUser\(users, sessionUser\.username\) \|\| environmentAdminProfile\(env, sessionUser\)/);
+  assert.match(sessionApi, /findStaffUserRecord\(env, sessionUser\.username\)\.catch\(\(\) => null\)\s*\|\| environmentAdminProfile\(env, sessionUser\)/);
 });

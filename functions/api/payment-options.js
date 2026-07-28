@@ -4,22 +4,27 @@
 import { getPayableFees } from './backend.js';
 import { requireFirestoreEnv } from '../lib/firestore.js';
 import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
+import { readJsonBody, verifyTurnstile } from '../lib/request-security.js';
 
 export async function onRequestPost(context) {
   try {
     const { request, env } = context;
-    const body = await request.json();
+    const body = await readJsonBody(request, { maxBytes: 64 * 1024 });
     const email = String(body.email || '').trim().toLowerCase();
     const code = String(body.code || '').trim().toUpperCase();
 
     if (!email || !code) {
       return Response.json({ ok: false, message: 'Email and verification code are required.' }, { status: 400 });
     }
+    await verifyTurnstile(env, request, body, 'payment_lookup');
 
     try {
       requireFirestoreEnv(env);
       const firestoreData = await getPayableFees(env, { Email: email, VerificationCode: code });
-      return Response.json(firestoreData, { status: 200 });
+      return Response.json(firestoreData, {
+        status: 200,
+        headers: { 'Cache-Control': 'no-store' }
+      });
     } catch (firestoreErr) {
       if (!legacyGoogleDataEnabled(env) || !env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) {
         return Response.json({ ok: false, message: firestoreErr.message || String(firestoreErr) }, { status: firestoreErr.status || 500 });
@@ -52,8 +57,14 @@ export async function onRequestPost(context) {
       }, { status: 502 });
     }
 
-    return Response.json(data, { status: data.ok ? 200 : 400 });
+    return Response.json(data, {
+      status: data.ok ? 200 : 400,
+      headers: { 'Cache-Control': 'no-store' }
+    });
   } catch (err) {
-    return Response.json({ ok: false, message: String(err) }, { status: 500 });
+    return Response.json({ ok: false, message: err.message || String(err) }, {
+      status: err.status || 500,
+      headers: { 'Cache-Control': 'no-store' }
+    });
   }
 }

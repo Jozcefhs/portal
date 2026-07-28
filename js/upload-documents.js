@@ -5,12 +5,46 @@ const button = document.getElementById('uploadBtn');
 const progressEl = document.getElementById('documentUploadProgress');
 const progressFillEl = document.getElementById('documentUploadProgressFill');
 const progressTextEl = document.getElementById('documentUploadProgressText');
+const uploadIdempotencyKeys = new Map();
+
+function newIdempotencyKey() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  const random = window.crypto?.getRandomValues
+    ? Array.from(window.crypto.getRandomValues(new Uint32Array(4)), (value) => value.toString(16)).join('')
+    : Math.random().toString(36).slice(2);
+  return `${Date.now().toString(36)}-${random}`;
+}
+
+function shouldReleaseIdempotencyKey(response, data) {
+  const status = Number(response?.status || 0);
+  if (response?.ok && data?.ok) return true;
+  if (status < 400 || status >= 500 || [408, 425, 429].includes(status)) return false;
+  if (status === 409 && /IDEMPOTENCY_(IN_PROGRESS|LOCKED|OWNERSHIP_LOST|OUTCOME_UNCERTAIN)|already being processed|outcome.+uncertain|unresolved request|no longer owned/i.test(
+    `${data?.code || ''} ${data?.message || ''}`
+  )) return false;
+  return status < 500;
+}
+
+function uploadIdentity(upload, email, code, replaceExisting) {
+  return [
+    email,
+    code,
+    upload.documentType,
+    upload.file.name,
+    upload.file.size,
+    upload.file.lastModified,
+    replaceExisting ? 'replace' : 'new'
+  ].join('|');
+}
 
 async function loadDocumentSettings() {
   try {
-    const response = await fetch('/api/admission-document-settings', { cache: 'no-store' });
-    const data = await response.json();
-    if (!response.ok || !data.ok) return;
+    const data = window.DynamaxPublicApi?.getJson
+      ? await window.DynamaxPublicApi.getJson('/api/admission-document-settings', {
+          cacheKey: 'admission-document-settings'
+        })
+      : await fetch('/api/admission-document-settings', { cache: 'no-cache' }).then((response) => response.json());
+    if (!data.ok) return;
     const enabled = new Set((data.documents || []).map((item) => item.key));
     document.querySelectorAll('[data-document-row]').forEach((row) => {
       const active = enabled.has(row.dataset.documentRow);
@@ -139,12 +173,21 @@ form.addEventListener('submit', async (event) => {
 
   for (const upload of uploads) {
     const pendingRow = addResult(`${upload.label}: uploading...`, 'pending');
+    const uploadKey = uploadIdentity(upload, email, code, replaceExisting);
     try {
       setProgress(processedCount, uploads.length, `Uploading ${upload.label}...`);
       const thumbnail = await passportThumbnail(upload.file, upload.documentType);
+      const idempotencyKey = uploadIdempotencyKeys.get(uploadKey) || newIdempotencyKey();
+      uploadIdempotencyKeys.set(uploadKey, idempotencyKey);
+      const turnstile = window.DynamaxPublicApi?.getTurnstileToken
+        ? await window.DynamaxPublicApi.getTurnstileToken('upload_document')
+        : {};
       const response = await fetch('/api/upload-document', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey
+        },
         body: JSON.stringify({
           email,
           code,
@@ -154,21 +197,25 @@ form.addEventListener('submit', async (event) => {
           fileBase64: await fileToBase64(upload.file),
           thumbnailBase64: thumbnail?.base64 || '',
           thumbnailMimeType: thumbnail?.mimeType || '',
-          replaceExisting
+          replaceExisting,
+          idempotencyKey,
+          ...turnstile
         })
       });
-
-      const data = await response.json();
-      if (!response.ok || !data.ok) {
-        if (data.code === 'DOCUMENT_ALREADY_UPLOADED') {
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.ok) {
+        if (data?.code === 'DOCUMENT_ALREADY_UPLOADED') {
           skippedCount += 1;
+          uploadIdempotencyKeys.delete(uploadKey);
           updateResult(pendingRow, `${upload.label}: already uploaded. Tick replace if Admissions Office requested a newer copy.`, 'bad');
           continue;
         }
-        throw new Error(data.message || 'Document upload failed.');
+        if (shouldReleaseIdempotencyKey(response, data)) uploadIdempotencyKeys.delete(uploadKey);
+        throw new Error(data?.message || 'Document upload failed.');
       }
 
       successCount += 1;
+      uploadIdempotencyKeys.delete(uploadKey);
       updateResult(pendingRow, `${upload.label}: ${data.message || 'Uploaded successfully.'}`, 'ok');
     } catch (error) {
       failedCount += 1;

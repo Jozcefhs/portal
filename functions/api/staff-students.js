@@ -2,6 +2,7 @@ import { listCollection, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { listSchoolCollection, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass } from '../lib/class-names.js';
+import { readJsonBody } from '../lib/request-security.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -25,12 +26,15 @@ export async function onRequestPost(context) {
     if (!(user.allowedSections || []).includes('students')) {
       const err = new Error('This staff account is not allowed to manage students.'); err.status = 403; throw err;
     }
-    const body = await request.json().catch(() => ({}));
+    const body = await readJsonBody(request, { maxBytes: 256 * 1024 });
     if (lower(body.action) !== 'update') {
       const err = new Error('Choose a valid student action.'); err.status = 400; throw err;
     }
     const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo);
-    const rows = await listSchoolCollection(env, 'students');
+    const rows = await listSchoolCollection(env, 'students', {
+      branchId: user.branchId,
+      schoolSectionAccess: user.schoolSectionAccess
+    });
     const existing = rows.find((row) => referenceMatches(row, accountRef) && visibleToUser(row, user));
     if (!existing) {
       const err = new Error('Student was not found in your current school section.'); err.status = 404; throw err;

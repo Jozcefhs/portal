@@ -1,4 +1,12 @@
-import { getDocument, listCollection, queryCollection, upsertDocument } from './firestore.js';
+import {
+  createDocumentIfAbsent,
+  getDocument,
+  listCollection,
+  patchDocumentFields,
+  patchDocumentFieldsIfCurrent,
+  queryCollection,
+  upsertDocument
+} from './firestore.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from './church-foundation.js';
 import { resolveOrganizationConfig } from './organization-config.js';
 import { resolveMembershipBranch } from './church-membership.js';
@@ -32,8 +40,8 @@ function makeReceiptNo(prefix = 'CHURCH') {
 function makeDonationId(seed = '') {
   const suffix = clean(seed)
     ? clean(seed).replace(/[^A-Za-z0-9._-]/g, '-').replace(/-+/g, '-').slice(0, 40)
-    : `${new Date().getTime().toString(36).toUpperCase()}`;
-  return safeChurchDocumentId(`DON-${suffix || clean(Math.random()).replace(/\./g, '')}`);
+    : crypto.randomUUID().replace(/-/g, '').slice(0, 20).toUpperCase();
+  return safeChurchDocumentId(`DON-${suffix}`);
 }
 
 function makeReference(seed = '') {
@@ -411,7 +419,7 @@ function settingsDocumentForDonation(settings = {}, env = {}) {
     || env.ORG_NAME || env.CHURCH_NAME || env.SCHOOL_NAME || 'Church').trim();
   const senderEmail = clean(settings.BrevoSenderEmail || env.BREVO_SENDER_EMAIL || env.SCHOOL_EMAIL || '').trim();
   const senderName = clean(settings.BrevoSenderName || env.BREVO_SENDER_NAME || name).trim();
-  const apiKey = clean(settings.BrevoApiKey || env.BREVO_API_KEY || '').trim();
+  const apiKey = clean(env.BREVO_API_KEY || '').trim();
   const profileName = clean(settings.Name || settings.OrganisationName || settings.OrganizationName || 'Church').trim();
   return { name, senderEmail, senderName, apiKey, profileName };
 }
@@ -548,25 +556,111 @@ export function buildDonationReceiptHtml(context, link = '') {
 
 async function sendSchoolEmail(env, settings, subject, textContent, htmlContent, toEmail, toName) {
   if (!settings?.apiKey || !settings.senderEmail || !toEmail) {
-    return { ok: false, skipped: true, message: 'Brevo API key, sender email, or recipient email is missing.' };
+    return { ok: false, skipped: true, retrySafe: true, message: 'Brevo API key, sender email, or recipient email is missing.' };
   }
-  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
-    method: 'POST',
-    headers: {
-      accept: 'application/json',
-      'api-key': settings.apiKey,
-      'content-type': 'application/json'
-    },
-    body: JSON.stringify({
-      sender: { name: settings.senderName, email: settings.senderEmail },
-      to: [{ email: toEmail, name: toName || toEmail }],
-      subject,
-      textContent,
-      htmlContent
-    })
-  });
+  let response;
+  try {
+    response = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        'api-key': settings.apiKey,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        sender: { name: settings.senderName, email: settings.senderEmail },
+        to: [{ email: toEmail, name: toName || toEmail }],
+        subject,
+        textContent,
+        htmlContent
+      })
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      uncertain: true,
+      retrySafe: false,
+      message: clean(error?.message || error) || 'No response was received from the email provider.'
+    };
+  }
   const detail = await response.text().catch(() => '');
-  return { ok: response.ok, status: response.status, message: detail };
+  let parsed = {};
+  try {
+    parsed = detail ? JSON.parse(detail) : {};
+  } catch {
+    parsed = {};
+  }
+  return {
+    ok: response.ok,
+    status: response.status,
+    uncertain: !response.ok && response.status >= 500,
+    retrySafe: !response.ok && response.status > 0 && response.status < 500,
+    messageId: clean(parsed.messageId || parsed.messageID || parsed.id),
+    message: clean(parsed.message || detail).slice(0, 1000)
+  };
+}
+
+function donationEmailStateFields(isPaymentRequest, status, details = {}) {
+  const prefix = isPaymentRequest ? 'PaymentLink' : 'Receipt';
+  const updatedAt = clean(details.updatedAt) || nowIso();
+  const fields = {
+    [`${prefix}DeliveryStatus`]: status,
+    [`${prefix}DeliveryUpdatedAt`]: updatedAt,
+    [`${prefix}DeliveryUncertain`]: status === 'Uncertain',
+    [`${prefix}DeliveryUncertaintyReason`]: status === 'Sent'
+      ? ''
+      : clean(details.reason).slice(0, 500)
+  };
+  if (details.attemptId) fields[`${prefix}DeliveryAttemptId`] = clean(details.attemptId);
+  if (details.messageId) fields[`${prefix}ProviderMessageId`] = clean(details.messageId);
+  return fields;
+}
+
+function sentDonationEmailFields(isPaymentRequest, recipient, sentAt, messageId = '') {
+  return {
+    ...(isPaymentRequest
+      ? {
+          PaymentLinkSentAt: sentAt,
+          PaymentLinkSentTo: clean(recipient)
+        }
+      : {
+          ReceiptStatus: 'Sent',
+          ReceiptSentAt: sentAt,
+          ReceiptSentTo: clean(recipient)
+        }),
+    ...donationEmailStateFields(isPaymentRequest, 'Sent', {
+      updatedAt: sentAt,
+      messageId
+    })
+  };
+}
+
+async function patchDonationEmailState(env, branchId, donationId, fields) {
+  if (!donationId) return false;
+  await patchDocumentFields(
+    env,
+    churchCollectionPath(CHURCH_COLLECTIONS.donations, branchId),
+    donationId,
+    { ...fields, UpdatedAt: nowIso() }
+  );
+  return true;
+}
+
+function uncertainDeliveryResult(donation, isPaymentRequest, purpose, reason, extra = {}) {
+  return {
+    ok: false,
+    skipped: false,
+    duplicate: true,
+    uncertain: true,
+    deliveryUncertain: true,
+    deliveryState: 'Uncertain',
+    purpose,
+    donation,
+    message: `${isPaymentRequest ? 'Payment link' : 'Receipt'} delivery is uncertain. Automatic resend was suppressed to avoid a duplicate.`,
+    uncertaintyReason: clean(reason).slice(0, 500),
+    ...extra
+  };
 }
 
 export async function sendChurchDonationReceipt(env, donation, options = {}) {
@@ -578,6 +672,179 @@ export async function sendChurchDonationReceipt(env, donation, options = {}) {
   const settings = settingsDocumentForDonation({ ...brevoSettings, ...(organizationProfile || {}) }, env);
   const paymentLink = clean(options.paymentLink || '');
   const isPaymentRequest = Boolean(paymentLink) && lower(donation.Status) !== 'paid';
+  if (isPaymentRequest && clean(donation.PaymentLinkSentAt)) {
+    return {
+      ok: true,
+      duplicate: true,
+      skipped: true,
+      purpose: 'payment-link',
+      sentAt: clean(donation.PaymentLinkSentAt),
+      donation,
+      message: 'Payment link was already sent.'
+    };
+  }
+  if (!isPaymentRequest && lower(donation.ReceiptStatus) === 'sent') {
+    return {
+      ok: true,
+      duplicate: true,
+      skipped: true,
+      purpose: 'receipt',
+      sentAt: clean(donation.ReceiptSentAt),
+      donation,
+      message: 'Receipt was already sent.'
+    };
+  }
+  if (!settings.apiKey || !settings.senderEmail || !clean(donation.DonorEmail)) {
+    return {
+      ok: false,
+      skipped: true,
+      retrySafe: true,
+      deliveryState: 'NotStarted',
+      purpose: isPaymentRequest ? 'payment-link' : 'receipt',
+      donation,
+      message: 'Brevo API key, sender email, or recipient email is missing.'
+    };
+  }
+
+  const branchId = clean(donation.BranchId || 'main').toLowerCase() || 'main';
+  const donationId = safeChurchDocumentId(donation.__id || donation.DonationId || donation.Reference);
+  const deliveryPurpose = isPaymentRequest ? 'payment-link' : 'receipt';
+  if (!donationId) {
+    return {
+      ok: false,
+      skipped: true,
+      retrySafe: true,
+      deliveryState: 'NotStarted',
+      purpose: deliveryPurpose,
+      donation,
+      message: 'The donation has no durable identifier, so email delivery was not started.'
+    };
+  }
+  const deliveryId = safeChurchDocumentId(`${branchId}-${donationId}-${deliveryPurpose}`);
+  const attemptId = crypto.randomUUID();
+  const startedAt = nowIso();
+  let emailClaim = await createDocumentIfAbsent(env, 'churchDonationEmailDeliveries', deliveryId, {
+    DeliveryId: deliveryId,
+    DonationId: clean(donation.DonationId || donation.__id),
+    BranchId: branchId,
+    Purpose: deliveryPurpose,
+    Recipient: clean(donation.DonorEmail),
+    Status: 'Sending',
+    Attempt: 1,
+    AttemptId: attemptId,
+    RetrySafe: false,
+    OutcomeUncertain: false,
+    CreatedAt: startedAt,
+    UpdatedAt: startedAt,
+    SendingStartedAt: startedAt
+  });
+  if (!emailClaim.created) {
+    const existing = emailClaim.document || {};
+    const status = lower(existing.Status);
+    const recipientChanged = clean(existing.Recipient)
+      && lower(existing.Recipient) !== lower(donation.DonorEmail);
+    if (status === 'sent') {
+      const sentAt = clean(existing.SentAt);
+      const deliveryFields = sentDonationEmailFields(isPaymentRequest, existing.Recipient || donation.DonorEmail, sentAt || nowIso(), existing.ProviderMessageId);
+      await patchDonationEmailState(env, branchId, donationId, deliveryFields).catch(() => null);
+      return {
+        ok: true,
+        duplicate: true,
+        skipped: true,
+        purpose: deliveryPurpose,
+        sentAt,
+        donation: { ...donation, ...deliveryFields },
+        message: `${isPaymentRequest ? 'Payment link' : 'Receipt'} was already sent.`
+      };
+    }
+    if (recipientChanged) {
+      const reason = `A previous attempt is bound to ${clean(existing.Recipient)}; the current recipient is different.`;
+      await patchDocumentFields(env, 'churchDonationEmailDeliveries', deliveryId, {
+        Status: 'Uncertain',
+        OutcomeUncertain: true,
+        RetrySafe: false,
+        UncertaintyReason: reason,
+        UpdatedAt: nowIso(),
+        UncertainAt: nowIso()
+      }).catch(() => null);
+      const stateFields = donationEmailStateFields(isPaymentRequest, 'Uncertain', { reason });
+      await patchDonationEmailState(env, branchId, donationId, stateFields).catch(() => null);
+      return uncertainDeliveryResult({ ...donation, ...stateFields }, isPaymentRequest, deliveryPurpose, reason);
+    }
+    if (status === 'uncertain') {
+      const reason = clean(existing.UncertaintyReason) || 'A previous email attempt did not reach a durable final state.';
+      const stateFields = donationEmailStateFields(isPaymentRequest, 'Uncertain', {
+        attemptId: existing.AttemptId,
+        reason
+      });
+      await patchDonationEmailState(env, branchId, donationId, stateFields).catch(() => null);
+      return uncertainDeliveryResult({ ...donation, ...stateFields }, isPaymentRequest, deliveryPurpose, reason);
+    }
+    if (['sending', 'processing'].includes(status)) {
+      const updatedAt = new Date(clean(existing.UpdatedAt || existing.CreatedAt)).getTime();
+      const stale = !Number.isFinite(updatedAt) || Date.now() - updatedAt >= 10 * 60 * 1000;
+      const reason = stale
+        ? 'A previous email send attempt exceeded its processing window without a durable provider result.'
+        : 'Another worker started this email delivery and its provider result is not yet known.';
+      if (stale) {
+        await patchDocumentFieldsIfCurrent(env, 'churchDonationEmailDeliveries', deliveryId, {
+          Status: 'Uncertain',
+          OutcomeUncertain: true,
+          RetrySafe: false,
+          UncertaintyReason: reason,
+          UpdatedAt: nowIso(),
+          UncertainAt: nowIso()
+        }, existing).catch(() => null);
+      }
+      const stateFields = donationEmailStateFields(isPaymentRequest, stale ? 'Uncertain' : 'Sending', {
+        attemptId: existing.AttemptId,
+        reason
+      });
+      await patchDonationEmailState(env, branchId, donationId, stateFields).catch(() => null);
+      return uncertainDeliveryResult(
+        { ...donation, ...stateFields },
+        isPaymentRequest,
+        deliveryPurpose,
+        reason,
+        { deliveryState: stale ? 'Uncertain' : 'Sending' }
+      );
+    }
+    if (status === 'failed' && existing.RetrySafe === true) {
+      const retryStartedAt = nowIso();
+      try {
+        const updated = await patchDocumentFieldsIfCurrent(env, 'churchDonationEmailDeliveries', deliveryId, {
+          Status: 'Sending',
+          Attempt: Math.max(1, Number(existing.Attempt || 1)) + 1,
+          AttemptId: attemptId,
+          RetrySafe: false,
+          OutcomeUncertain: false,
+          UncertaintyReason: '',
+          UpdatedAt: retryStartedAt,
+          SendingStartedAt: retryStartedAt
+        }, existing);
+        emailClaim = { created: false, document: updated };
+      } catch {
+        const reason = 'The delivery record changed while a retry was being claimed.';
+        return uncertainDeliveryResult(donation, isPaymentRequest, deliveryPurpose, reason, { deliveryState: 'Sending' });
+      }
+    } else {
+      const reason = clean(existing.UncertaintyReason) || `The existing delivery state "${clean(existing.Status) || 'unknown'}" is not safe to retry automatically.`;
+      await patchDocumentFields(env, 'churchDonationEmailDeliveries', deliveryId, {
+        Status: 'Uncertain',
+        OutcomeUncertain: true,
+        RetrySafe: false,
+        UncertaintyReason: reason,
+        UpdatedAt: nowIso(),
+        UncertainAt: nowIso()
+      }).catch(() => null);
+      const stateFields = donationEmailStateFields(isPaymentRequest, 'Uncertain', { reason });
+      await patchDonationEmailState(env, branchId, donationId, stateFields).catch(() => null);
+      return uncertainDeliveryResult({ ...donation, ...stateFields }, isPaymentRequest, deliveryPurpose, reason);
+    }
+  }
+
+  const sendingFields = donationEmailStateFields(isPaymentRequest, 'Sending', { attemptId });
+  await patchDonationEmailState(env, branchId, donationId, sendingFields).catch(() => null);
   const donationName = clean(options.donorName || donation.DonorName || 'Donor');
   const subjectTemplate = isPaymentRequest
     ? `Complete your donation - ${settings.profileName || settings.name}`
@@ -600,33 +867,88 @@ export async function sendChurchDonationReceipt(env, donation, options = {}) {
     : `Donation receipt\nPayment reference: ${payload.Reference}\nAmount: ${payload.Currency} ${payload.Amount}\nStatus: Paid`;
   const htmlContent = `${buildDonationReceiptHtml(payload, paymentLink)}`;
   const result = await sendSchoolEmail(env, settings, subject, content, htmlContent, payload.DonorEmail, donationName);
-  if (!result.ok || !clean(donation.DonationId || donation.__id)) return result;
+  if (!result.ok) {
+    const uncertain = result.uncertain === true || !result.retrySafe;
+    const status = uncertain ? 'Uncertain' : 'Failed';
+    const reason = clean(result.message) || (uncertain
+      ? 'The email provider did not return an authoritative delivery result.'
+      : 'The email provider rejected the request before accepting it.');
+    const failedAt = nowIso();
+    await patchDocumentFields(env, 'churchDonationEmailDeliveries', deliveryId, {
+      Status: status,
+      ProviderHttpStatus: Number(result.status || 0),
+      ProviderMessage: reason.slice(0, 500),
+      OutcomeUncertain: uncertain,
+      RetrySafe: !uncertain && result.retrySafe === true,
+      UncertaintyReason: uncertain ? reason.slice(0, 500) : '',
+      UpdatedAt: failedAt,
+      FailedAt: failedAt,
+      ...(uncertain ? { UncertainAt: failedAt } : {})
+    }).catch(() => null);
+    const stateFields = donationEmailStateFields(isPaymentRequest, status, {
+      attemptId,
+      reason: uncertain ? reason : ''
+    });
+    await patchDonationEmailState(env, branchId, donationId, stateFields).catch(() => null);
+    return {
+      ...result,
+      uncertain,
+      deliveryUncertain: uncertain,
+      deliveryState: status,
+      purpose: deliveryPurpose,
+      donation: { ...donation, ...stateFields },
+      message: uncertain
+        ? `${isPaymentRequest ? 'Payment link' : 'Receipt'} delivery is uncertain. Automatic resend was suppressed to avoid a duplicate.`
+        : result.message
+    };
+  }
 
   const sentAt = nowIso();
-  const updatedDonation = {
-    ...donation,
-    ...(isPaymentRequest
-      ? {
-        PaymentLinkSentAt: sentAt,
-        PaymentLinkSentTo: clean(payload.DonorEmail)
+  try {
+    await patchDocumentFields(env, 'churchDonationEmailDeliveries', deliveryId, {
+      Status: 'Sent',
+      ProviderHttpStatus: Number(result.status || 202),
+      ProviderMessageId: clean(result.messageId),
+      ProviderMessage: clean(result.message).slice(0, 500),
+      OutcomeUncertain: false,
+      RetrySafe: false,
+      UpdatedAt: sentAt,
+      SentAt: sentAt
+    });
+  } catch (error) {
+    const reason = `The email provider accepted the message, but the durable Sent state could not be saved: ${clean(error?.message || error)}`.slice(0, 500);
+    const stateFields = donationEmailStateFields(isPaymentRequest, 'Uncertain', { attemptId, reason });
+    await patchDonationEmailState(env, branchId, donationId, stateFields).catch(() => null);
+    return uncertainDeliveryResult(
+      { ...donation, ...stateFields },
+      isPaymentRequest,
+      deliveryPurpose,
+      reason,
+      {
+        duplicate: false,
+        providerAccepted: true,
+        status: result.status,
+        messageId: result.messageId
       }
-      : {
-        ReceiptStatus: 'Sent',
-        ReceiptSentAt: sentAt,
-        ReceiptSentTo: clean(payload.DonorEmail)
-      }),
-    UpdatedAt: sentAt
-  };
-  const branchId = clean(donation.BranchId || 'main').toLowerCase() || 'main';
-  const donationId = safeChurchDocumentId(donation.__id || donation.DonationId || donation.Reference);
-  delete updatedDonation.__id;
-  delete updatedDonation.__name;
-  await upsertDocument(env, churchCollectionPath(CHURCH_COLLECTIONS.donations, branchId), donationId, updatedDonation);
+    );
+  }
+
+  const deliveryFields = sentDonationEmailFields(isPaymentRequest, payload.DonorEmail, sentAt, result.messageId);
+  const donationStateSaved = await patchDonationEmailState(env, branchId, donationId, deliveryFields)
+    .then(() => true)
+    .catch(() => false);
   return {
     ...result,
-    purpose: isPaymentRequest ? 'payment-link' : 'receipt',
+    purpose: deliveryPurpose,
+    deliveryState: 'Sent',
+    deliveryUncertain: false,
     sentAt,
-    donation: updatedDonation
+    stateReconciliationPending: !donationStateSaved,
+    donation: {
+      ...donation,
+      ...deliveryFields,
+      UpdatedAt: sentAt
+    }
   };
 }
 
@@ -674,7 +996,7 @@ export async function initChurchDonationPayment(env, user, body = {}, requestUrl
 
   const organization = await getDocument(env, 'settings', 'organisationProfile').catch(() => ({}));
   const profile = resolveOrganizationConfig({ env, organizationProfile: organization });
-  const code = `${(profile.Code || 'CHURCH').toUpperCase().replace(/[^A-Z0-9]/g, '') || 'CHURCH'}-${makeReference(Math.floor(Math.random() * 1e6))}`;
+  const code = `${(profile.Code || 'CHURCH').toUpperCase().replace(/[^A-Z0-9]/g, '') || 'CHURCH'}-${makeReference(crypto.randomUUID())}`;
   const reference = clean(body.Reference || body.reference || code);
   donation.Reference = reference;
   donation.PaymentStatus = 'Pending';
@@ -730,7 +1052,11 @@ export async function initChurchDonationPayment(env, user, body = {}, requestUrl
 
   return {
     ok: true,
-    message: receipt?.ok ? 'Online donation link created and sent to donor.' : 'Online donation link created; receipt email could not be sent in this environment.',
+    message: receipt?.ok
+      ? 'Online donation link created and sent to donor.'
+      : (receipt?.deliveryUncertain
+          ? 'Online donation link created; email delivery is uncertain and automatic resend was suppressed.'
+          : 'Online donation link created; receipt email could not be sent in this environment.'),
     donation: donationWithSaved,
     authorizationUrl,
     reference,
@@ -749,8 +1075,7 @@ export async function markDonationPaidByReference(env, reference, payload = {}) 
   const existing = await findDonationInBranch(env, branchId, reference, clean(payload.DonationId || payload.donationId));
   if (!existing) return null;
 
-  const update = {
-    ...(existing || {}),
+  const paymentFields = {
     ...(payload || {}),
     BranchId: branchId,
     Status: 'Paid',
@@ -759,11 +1084,14 @@ export async function markDonationPaidByReference(env, reference, payload = {}) 
     UpdatedAt: nowIso(),
     UpdatedBy: clean(payload.UpdatedBy || (payload.actor || '').toString()) || existing.UpdatedBy || existing.UpdatedBy
   };
+  delete paymentFields.__id;
+  delete paymentFields.__name;
+  delete paymentFields.__createTime;
+  delete paymentFields.__updateTime;
+  const update = { ...(existing || {}), ...paymentFields };
   const path = churchCollectionPath(CHURCH_COLLECTIONS.donations, branchId);
   const donationId = safeChurchDocumentId(existing.__id || existing.DonationId || reference);
-  delete update.__id;
-  delete update.__name;
-  await upsertDocument(env, path, donationId, update);
+  await patchDocumentFields(env, path, donationId, paymentFields);
   return update;
 }
 
@@ -784,7 +1112,11 @@ async function sendChurchDonationReceiptAction(env, user, body = {}) {
   }
   return {
     ok: true,
-    message: result.ok ? 'Donation receipt sent.' : (result.skipped ? 'Receipt skipped (email not configured).' : 'Receipt could not be sent.'),
+    message: result.ok
+      ? 'Donation receipt sent.'
+      : (result.deliveryUncertain
+          ? 'Receipt delivery is uncertain; automatic resend was suppressed to avoid a duplicate.'
+          : (result.skipped ? 'Receipt skipped (email not configured).' : 'Receipt could not be sent.')),
     result,
     donation: capabilities?.canView
       ? publicDonationRow(result.donation || donation)

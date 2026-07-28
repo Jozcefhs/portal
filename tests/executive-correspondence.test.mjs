@@ -285,9 +285,12 @@ test('desktop bridge resolves an authoritative actor and requires its local pass
 test('desktop Executive Office bridge fails closed without its shared secret', () => {
   assert.throws(
     () => requireBackendSecret({}, { Action: 'getExecutiveOffice' }),
-    (error) => error.status === 503 && /bridge is not configured/i.test(error.message)
+    (error) => error.status === 503 && /backend is not configured/i.test(error.message)
   );
-  assert.doesNotThrow(() => requireBackendSecret({}, { Action: 'ping' }));
+  assert.throws(
+    () => requireBackendSecret({}, { Action: 'ping' }),
+    (error) => error.status === 503 && error.code === 'BACKEND_SECRET_NOT_CONFIGURED'
+  );
   assert.throws(
     () => requireBackendSecret(
       { BACKEND_SHARED_SECRET: 'configured-secret' },

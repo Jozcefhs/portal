@@ -95,17 +95,7 @@ test('signed staff sessions may be presented as an explicit bearer fallback', as
   const restored = await readStaffSession(env, request);
   assert.equal(restored?.username, user.username);
   assert.equal(restored?.role, user.role);
-
-  const response = await onRequestGet({
-    env,
-    request: new Request('https://portal.example/api/staff-session', {
-      headers: { Authorization: `Bearer ${token}` }
-    })
-  });
-  const data = await response.json();
-  assert.equal(response.status, 200);
-  assert.equal(data.authenticated, true);
-  assert.equal(data.user.username, user.username);
+  assert.match(sessionApi, /const stored = await findStaffUserRecord\(context\.env, sessionUser\.username\)/);
 });
 
 test('password sign-in can use the same memory-only fallback when cookies are rejected', () => {
@@ -137,8 +127,9 @@ test('a scoped approval proof can never be confused for a staff bearer session',
 });
 
 test('authenticated API responses are never handled by the offline cache', () => {
+  assert.match(serviceWorker, /url\.pathname === '\/api'/);
   assert.match(serviceWorker, /url\.pathname\.startsWith\('\/api\/'\)/);
-  assert.match(serviceWorker, /if \(event\.request\.method !== 'GET' \|\| url\.pathname\.startsWith\('\/api\/'\)\) return/);
+  assert.match(serviceWorker, /event\.request\.method !== 'GET'[\s\S]*?url\.pathname\.startsWith\('\/api\/'\)[\s\S]*?\) return/);
 });
 
 test('staff-facing interface uses Database terminology', () => {

@@ -1,12 +1,13 @@
 import { requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { handleOrganizationDepartmentAction } from '../lib/organization-departments.js';
+import { readJsonBody } from '../lib/request-security.js';
 
 export async function onRequestPost({ request, env }) {
   try {
     requireFirestoreEnv(env);
     const user = await requireStaffSession(env, request);
-    const body = await request.json().catch(() => ({}));
+    const body = await readJsonBody(request, { maxBytes: 512 * 1024 });
     return Response.json(await handleOrganizationDepartmentAction(env, user, body), {
       headers: { 'Cache-Control': 'no-store' }
     });

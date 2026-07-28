@@ -1,13 +1,36 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  applyAuthoritativeActor, isActiveStaffUser, resolveAuthoritativeDesktopActor, secureTextEqual
+  applyAuthoritativeActor,
+  configuredDesktopSecret,
+  isActiveStaffUser,
+  requireConfiguredDesktopSecret,
+  resolveAuthoritativeDesktopActor,
+  secureTextEqual,
+  verifyDesktopSecret
 } from '../../functions/lib/backend-security.js';
 
 test('shared-secret comparison accepts only an exact value', () => {
   assert.equal(secureTextEqual('school-secret', 'school-secret'), true);
   assert.equal(secureTextEqual('school-secret', 'school-secret-x'), false);
   assert.equal(secureTextEqual('', 'school-secret'), false);
+});
+
+test('desktop backend authentication fails closed when its secret is missing or invalid', () => {
+  assert.equal(configuredDesktopSecret({ BACKEND_SHARED_SECRET: 'primary-secret' }), 'primary-secret');
+  assert.equal(configuredDesktopSecret({ GOOGLE_APPS_SCRIPT_SECRET: 'legacy-secret' }), 'legacy-secret');
+  assert.throws(
+    () => requireConfiguredDesktopSecret({}),
+    (error) => error?.status === 503 && error?.code === 'BACKEND_SECRET_NOT_CONFIGURED'
+  );
+  assert.throws(
+    () => verifyDesktopSecret({ BACKEND_SHARED_SECRET: 'primary-secret' }, 'wrong-secret'),
+    (error) => error?.status === 401 && error?.code === 'BACKEND_SECRET_INVALID'
+  );
+  assert.equal(
+    verifyDesktopSecret({ BACKEND_SHARED_SECRET: 'primary-secret' }, 'primary-secret'),
+    true
+  );
 });
 
 test('authoritative staff record replaces client-supplied role and actor metadata', () => {

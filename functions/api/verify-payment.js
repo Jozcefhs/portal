@@ -2,14 +2,132 @@
 // Verifies Paystack payment and records it in the configured backend.
 
 import { postChurchDonationToAccounting, recordManualPayment } from './backend.js';
-import { createDocumentIfAbsent, getDocument, upsertDocument } from '../lib/firestore.js';
+import { batchUpsertDocuments, createDocumentIfAbsent, getDocument, upsertDocument } from '../lib/firestore.js';
 import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
 import { markDonationPaidByReference, sendChurchDonationReceipt } from '../lib/church-payments.js';
+import {
+  beginIdempotentRequest,
+  completeIdempotentRequest,
+  failIdempotentRequest,
+  readJsonBody
+} from '../lib/request-security.js';
 
 function safeId(value) { return String(value || '').replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140); }
 
 function clean(value) {
   return String(value || '').trim();
+}
+
+function paymentType(value) {
+  return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function isAdmissionFormType(value) {
+  return ['admissionform', 'admissionformpurchase', 'formpurchase'].includes(paymentType(value));
+}
+
+function intentType(intent = {}) {
+  return clean(intent.PaymentType || intent.paymentType || intent.IntentType || intent.intentType);
+}
+
+function intentReference(intent = {}) {
+  return clean(intent.Reference || intent.reference || intent.PaymentReference || intent.paymentReference);
+}
+
+function withoutFirestoreMetadata(document = {}) {
+  const payload = { ...document };
+  delete payload.__id;
+  delete payload.__name;
+  delete payload.__createTime;
+  delete payload.__updateTime;
+  return payload;
+}
+
+function storeItemDemand(items, storeType) {
+  const demand = new Map();
+  for (const item of items) {
+    const documentId = safeId(`${storeType}-${item.ItemCode}`);
+    const previous = demand.get(documentId);
+    demand.set(documentId, {
+      documentId,
+      itemCode: clean(item.ItemCode),
+      itemName: clean(item.ItemName || item.FeeName || item.ItemCode),
+      quantity: Number(previous?.quantity || 0) + Math.max(1, Number(item.Quantity || 1))
+    });
+  }
+  return [...demand.values()];
+}
+
+async function createPaidStoreOrder(env, orderData, items, storeType) {
+  const documentId = safeId(orderData.OrderNo);
+  if (await getDocument(env, 'storeOrders', documentId).catch(() => null)) {
+    return { created: false, warning: '' };
+  }
+
+  const demand = storeItemDemand(items, storeType);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const stockRows = await Promise.all(demand.map(async (entry) => ({
+      ...entry,
+      stock: await getDocument(env, 'storeItems', entry.documentId).catch(() => null)
+    })));
+    const unavailable = stockRows.filter(({ stock, quantity }) => !stock || Number(stock.Quantity || 0) < quantity);
+    if (unavailable.length) {
+      const issue = unavailable
+        .map(({ itemName, quantity, stock }) => `${itemName}: requested ${quantity}, available ${Number(stock?.Quantity || 0)}`)
+        .join('; ');
+      const created = await createDocumentIfAbsent(env, 'storeOrders', documentId, {
+        ...orderData,
+        InventoryStatus: 'Review Required',
+        InventoryIssue: issue
+      });
+      return {
+        created: created.created,
+        warning: created.created ? `Inventory review required for ${storeType}: ${issue}` : ''
+      };
+    }
+
+    const updatedAt = new Date().toISOString();
+    const writes = [
+      {
+        collectionPath: 'storeOrders',
+        documentId,
+        data: { ...orderData, InventoryStatus: 'Deducted' },
+        exists: false
+      },
+      ...stockRows.map(({ documentId: stockId, stock, quantity }) => ({
+        collectionPath: 'storeItems',
+        documentId: stock.__id || stockId,
+        data: {
+          ...withoutFirestoreMetadata(stock),
+          Quantity: Number(stock.Quantity || 0) - quantity,
+          UpdatedAt: updatedAt
+        },
+        updateTime: stock.__updateTime
+      }))
+    ];
+    try {
+      await batchUpsertDocuments(env, writes);
+      return { created: true, warning: '' };
+    } catch (error) {
+      if (![409, 412].includes(Number(error?.status))) throw error;
+      if (await getDocument(env, 'storeOrders', documentId).catch(() => null)) {
+        return { created: false, warning: '' };
+      }
+      if (attempt === 0) continue;
+      const created = await createDocumentIfAbsent(env, 'storeOrders', documentId, {
+        ...orderData,
+        InventoryStatus: 'Review Required',
+        InventoryIssue: 'Inventory changed during payment confirmation. Reconcile this order before collection.'
+      });
+      return {
+        created: created.created,
+        warning: created.created
+          ? `Inventory review required for ${storeType}: stock changed during payment confirmation.`
+          : ''
+      };
+    }
+  }
+  return { created: false, warning: '' };
 }
 
 function extractMetadata(data) {
@@ -35,9 +153,10 @@ async function recordInAppsScript(env, payload) {
 }
 
 export async function onRequestPost(context) {
+  let idempotency = null;
   try {
     const { request, env } = context;
-    const body = await request.json();
+    const body = await readJsonBody(request, { maxBytes: 64 * 1024 });
     const reference = String(body.reference || '').trim();
 
     if (!reference) {
@@ -61,12 +180,27 @@ export async function onRequestPost(context) {
 
     const tx = paystackData.data;
     const meta = extractMetadata(tx);
-    const isChurchDonation = clean(meta.paymentType).toLowerCase() === 'churchdonation';
     const amount = Number(tx.amount || 0) / 100;
     const gatewayFee = Math.max(0, Number(tx.fees || 0) / 100);
     const netAmount = Math.max(0, amount - gatewayFee);
     const intent = firestoreConfigured ? await getDocument(env, 'paymentIntents', safeId(tx.reference || reference)).catch(() => null) : null;
+    const metadataPaymentType = clean(meta.paymentType || meta.PaymentType);
+    const storedIntentType = intentType(intent);
+    if (metadataPaymentType && storedIntentType && paymentType(metadataPaymentType) !== paymentType(storedIntentType)) {
+      return Response.json({ ok: false, message: 'The transaction metadata does not match its saved payment intent.' }, { status: 409 });
+    }
+    if (isAdmissionFormType(metadataPaymentType) || isAdmissionFormType(storedIntentType)) {
+      return Response.json({
+        ok: false,
+        message: 'This is an admission form purchase and must be verified by the admission form payment verifier.'
+      }, { status: 400 });
+    }
+    const isChurchDonation = paymentType(metadataPaymentType || storedIntentType) === 'churchdonation';
     if (intent) {
+      const savedReference = intentReference(intent);
+      if (savedReference && clean(tx.reference || reference).toLowerCase() !== savedReference.toLowerCase()) {
+        return Response.json({ ok: false, message: 'The verified transaction reference does not match the saved payment intent.' }, { status: 409 });
+      }
       const requestedAmount = Number(tx.requested_amount || 0) / 100 || amount;
       if (Math.abs(Number(intent.Amount || 0) - requestedAmount) > 0.01) {
         return Response.json({ ok: false, message: 'The verified amount does not match the initialized payment.' }, { status: 409 });
@@ -75,6 +209,21 @@ export async function onRequestPost(context) {
           String(intent.AccountRef).trim().toLowerCase() !== String(meta.accountRef).trim().toLowerCase()) {
         return Response.json({ ok: false, message: 'The verified payment belongs to a different student account.' }, { status: 409 });
       }
+    }
+    if (!body.idempotencyKey && !body.IdempotencyKey && !request.headers.get('Idempotency-Key')) {
+      body.idempotencyKey = `verify:${safeId(reference)}`;
+    }
+    idempotency = await beginIdempotentRequest(env, request, body, {
+      scope: 'verify-payment',
+      actor: clean(meta.accountRef || meta.applicationReference || meta.donationId || tx.reference),
+      ttlMinutes: 30 * 24 * 60,
+      fingerprintPayload: { reference: tx.reference || reference }
+    });
+    if (idempotency.replay) {
+      return Response.json(idempotency.response, {
+        status: idempotency.status || (idempotency.response?.ok === false ? 409 : 200),
+        headers: { 'Cache-Control': 'no-store', 'Idempotency-Replayed': 'true' }
+      });
     }
 
     const paymentPayload = {
@@ -199,12 +348,12 @@ export async function onRequestPost(context) {
     if (!recordData || !recordData.ok) {
       const churchHandled = isChurchDonation && donation;
       if (!churchHandled) {
-        return Response.json({
-          ok: false,
-          message: recordErrors.length
-            ? `Payment confirmed, but backend recording failed. ${recordErrors.filter(Boolean).join(' | ')}`
-            : 'Payment confirmed, but it could not be recorded.'
-        }, { status: 400 });
+        const error = new Error(recordErrors.length
+          ? `Payment confirmed, but backend recording failed. ${recordErrors.filter(Boolean).join(' | ')}`
+          : 'Payment confirmed, but it could not be recorded.');
+        error.status = 502;
+        error.retryable = true;
+        throw error;
       }
     }
 
@@ -236,23 +385,15 @@ export async function onRequestPost(context) {
         for (const storeType of [...new Set(orderItems.map((item) => item.StoreType || 'Bookstore'))]) {
           const items = orderItems.filter((item) => (item.StoreType || 'Bookstore') === storeType);
           const orderNo = `${tx.reference}-${storeType === 'Uniform Store' ? 'UNIFORM' : 'BOOKS'}`;
-          const documentId = safeId(orderNo);
-          const orderCreate = await createDocumentIfAbsent(env, 'storeOrders', documentId, {
+          const orderResult = await createPaidStoreOrder(env, {
             OrderNo: orderNo, StoreType: storeType, AccountRef: meta.accountRef || meta.admissionNo,
             AccountRefNormalized: safeId(meta.accountRef || meta.admissionNo).toLowerCase(),
             AdmissionNo: meta.admissionNo || '', DisplayName: meta.displayName || '', ClassName: meta.className || '',
             BranchId: items[0]?.BranchId || 'main', SchoolSection: items[0]?.SchoolSection || '',
             ParentEmail: meta.verificationEmail || '', Items: items, Amount: items.reduce((sum, item) => sum + Number(item.Amount || 0), 0),
             PaymentReference: tx.reference, PaidAt: tx.paid_at || new Date().toISOString(), Status: 'Paid - Awaiting Collection', CreatedAt: new Date().toISOString()
-          });
-          if (!orderCreate.created) continue;
-          for (const item of items) {
-            const stock = await getDocument(env, 'storeItems', safeId(`${storeType}-${item.ItemCode}`)).catch(() => null);
-            if (!stock) continue;
-            const payload = { ...stock, Quantity: Math.max(0, Number(stock.Quantity || 0) - Number(item.Quantity || 1)), UpdatedAt: new Date().toISOString() };
-            delete payload.__id; delete payload.__name;
-            await upsertDocument(env, 'storeItems', stock.__id || safeId(`${storeType}-${item.ItemCode}`), payload);
-          }
+          }, items, storeType);
+          if (orderResult.warning) recordErrors.push(orderResult.warning);
         }
       }
       if (intent) {
@@ -268,7 +409,7 @@ export async function onRequestPost(context) {
     }
 
     const warningText = recordErrors.filter(Boolean).join(' | ');
-    return Response.json({
+    const result = {
       ok: true,
       message: warningText ? `Payment verified and recorded with warning: ${warningText}` : 'Payment verified and recorded.',
       payment: recordData?.payment || {},
@@ -283,8 +424,14 @@ export async function onRequestPost(context) {
       donationJournal: donationJournal || null,
       receipt: donationReceipt || null,
       receiptStatus: donationReceipt ? (donationReceipt.ok ? 'sent' : (donationReceipt.skipped ? 'skipped' : 'failed')) : null
-    });
+    };
+    await completeIdempotentRequest(env, idempotency, result, 200);
+    return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
-    return Response.json({ ok: false, message: String(err) }, { status: 500 });
+    if (idempotency?.owner) await failIdempotentRequest(context.env, idempotency, err);
+    return Response.json({ ok: false, message: err.message || String(err) }, {
+      status: err.status || 500,
+      headers: { 'Cache-Control': 'no-store' }
+    });
   }
 }

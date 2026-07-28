@@ -70,12 +70,14 @@ let financeDecisionApprovalProof = '';
 let profilePhotoState = '';
 let staffBearerToken = '';
 let staffSessionAbortController = new AbortController();
+let passkeyStatusRequest = null;
 let organizationDepartmentWorkspaceTab = 'overview';
 let organizationDashboardChartsRequest = 0;
 let incomeAnalyticsData = null;
 let incomeAnalyticsFilter = { period: 'monthly' };
 let recordsDeskRequest = 0;
 let recordsDeskSearchTimer = 0;
+let recordsDeskAbortController = null;
 let recordsDeskHandoffContext = null;
 let executiveOfficeData = null;
 let executiveOfficeTab = 'overview';
@@ -152,6 +154,20 @@ const tabIcons = {
 
 function clean(value) {
   return String(value ?? '').trim();
+}
+
+function newIdempotencyKey() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  const random = window.crypto?.getRandomValues
+    ? Array.from(window.crypto.getRandomValues(new Uint32Array(4)), (value) => value.toString(16)).join('')
+    : Math.random().toString(36).slice(2);
+  return `${Date.now().toString(36)}-${random}`;
+}
+
+function receivedResponseError(message) {
+  const error = new Error(message);
+  error.responseReceived = true;
+  return error;
 }
 
 function escapeHtml(value) {
@@ -367,15 +383,19 @@ async function refreshPasskeyControls() {
   passkeySetupButton.hidden = !supported || !preferred || !currentUser || Boolean(currentUser.mustChangePassword);
   passkeySetupButton.classList.remove('is-registered');
   if (passkeySetupButton.hidden) return;
+  const request = passkeyStatusRequest || passkeyRequest('status');
+  passkeyStatusRequest = request;
   passkeySetupButton.innerHTML = '<span aria-hidden="true">◉</span> Set up biometric sign-in';
   try {
-    const status = await passkeyRequest('status');
+    const status = await request;
     if (status.registered > 0) {
       passkeySetupButton.classList.add('is-registered');
       passkeySetupButton.innerHTML = '<span aria-hidden="true">✓</span> Add another biometric device';
     }
   } catch (_error) {
     // Dashboard access remains available if the optional status check fails.
+  } finally {
+    if (passkeyStatusRequest === request) passkeyStatusRequest = null;
   }
 }
 
@@ -568,6 +588,8 @@ function clearStaffWorkspaceState() {
   staffSessionAbortController.abort();
   staffSessionAbortController = new AbortController();
   window.clearTimeout(recordsDeskSearchTimer);
+  recordsDeskAbortController?.abort();
+  recordsDeskAbortController = null;
   recordsDeskRequest += 1;
   organizationDashboardChartsRequest += 1;
   setSidebarOpen(false);
@@ -651,7 +673,7 @@ function staffTabLabel(key, fallback = '') {
   return key === 'executiveOffice' ? executiveOfficeTitle() : fallback;
 }
 
-function showDashboard(user) {
+function showDashboard(user, options = {}) {
   currentUser = user;
   const displayName = user.displayName || user.username || 'Staff';
   const dashboardEdition = resolveDashboardEdition(user);
@@ -686,7 +708,7 @@ function showDashboard(user) {
     isExecutiveRole ||
     user.approvalEnabled
   );
-  refreshPasskeyControls();
+  if (options.refreshPasskeys !== false) refreshPasskeyControls();
 }
 
 async function continueAfterAuthentication(user) {
@@ -751,7 +773,7 @@ async function loadDashboard() {
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load staff dashboard.');
     dashboardData = data;
     currentUser = data.user || currentUser;
-    showDashboard(currentUser);
+    showDashboard(currentUser, { refreshPasskeys: false });
     const allowed = data.allowedSections || currentUser.allowedSections || [];
     const workspaceSections = ['overview', ...allowed];
     if (!activeSection || !workspaceSections.includes(activeSection)) activeSection = 'overview';
@@ -942,7 +964,7 @@ function renderModuleSummary(active, liveData = null) {
     const data = liveData || recordsDeskState;
     cards = [
       { icon, label: 'Record Types', value: (data.availableTypes || []).length, note: 'Allowed for this account' },
-      { icon: '\u{1F50D}', label: 'Matches', value: data.totalMatches || 0, note: clean(data.query) ? `Search: ${clean(data.query)}` : 'Enter two or more characters' },
+      { icon: '\u{1F50D}', label: 'Matches', value: data.totalMatches || 0, note: clean(data.query) ? `Search: ${clean(data.query)}` : 'Enter three or more characters' },
       { icon: '\u2713', label: 'Selected', value: data.detail ? 1 : 0, note: data.detail?.title || 'No record selected' },
       { icon: '\u{1F6E1}', label: 'Scope', value: currentUser?.branchId || 'All', note: currentUser?.schoolSectionAccess || currentUser?.edition || 'Current organisation' }
     ];
@@ -2293,20 +2315,22 @@ async function loadChurchFunds() {
   }
 }
 
-async function doOfferingAction(action, offeringId, reason = '') {
+async function doOfferingAction(action, offeringId, reason = '', idempotencyKey = '') {
   if (!offeringId) return;
+  const requestKey = clean(idempotencyKey) || newIdempotencyKey();
   const response = await staffFetch('/api/staff-offerings', {
     method: 'POST', credentials: 'same-origin', cache: 'no-store',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': requestKey },
     body: JSON.stringify({
       action,
       OfferingId: offeringId,
       BranchId: currentUser?.branchId || 'main',
-      Reason: reason
+      Reason: reason,
+      idempotencyKey: requestKey
     })
   });
   const data = await response.json();
-  if (!response.ok || !data.ok) throw new Error(data.message || 'Offering action failed.');
+  if (!response.ok || !data.ok) throw receivedResponseError(data.message || 'Offering action failed.');
   return data;
 }
 
@@ -2337,29 +2361,33 @@ function routeFundLabel(route, funds) {
 }
 
 async function doOfferingRouteAction(action, payload = {}) {
+  const idempotencyKey = clean(payload.idempotencyKey) || newIdempotencyKey();
   const response = await staffFetch('/api/staff-offerings', {
     method: 'POST', credentials: 'same-origin', cache: 'no-store',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify({
       action,
       BranchId: currentUser?.branchId || 'main',
-      ...payload
+      ...payload,
+      idempotencyKey
     })
   });
   const data = await response.json();
-  if (!response.ok || !data.ok) throw new Error(data.message || 'Offering route action failed.');
+  if (!response.ok || !data.ok) throw receivedResponseError(data.message || 'Offering route action failed.');
   return data;
 }
 async function churchDonationRequest(action, payload = {}) {
+  const idempotencyKey = clean(payload.idempotencyKey) || newIdempotencyKey();
   const response = await staffFetch('/api/staff-church-payments', {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify({
       action,
       BranchId: currentUser?.branchId || 'main',
-      ...payload
+      ...payload,
+      idempotencyKey
     })
   });
   const data = await response.json().catch(() => ({ ok: false, message: 'Church donation service did not return JSON.' }));
@@ -2367,20 +2395,22 @@ async function churchDonationRequest(action, payload = {}) {
     if (response.status === 401) {
       showLogin(data.message || 'Your staff session has expired.', 'bad');
     }
-    throw new Error(data.message || 'Church donation action failed.');
+    throw receivedResponseError(data.message || 'Church donation action failed.');
   }
   return data;
 }
 
 async function initChurchDonationPayment(payload = {}) {
+  const idempotencyKey = clean(payload.idempotencyKey) || newIdempotencyKey();
   const response = await staffFetch('/api/init-church-payment', {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify({
       ...payload,
-      BranchId: currentUser?.branchId || 'main'
+      BranchId: currentUser?.branchId || 'main',
+      idempotencyKey
     })
   });
   const data = await response.json().catch(() => ({ ok: false, message: 'Church donation online-init service did not return JSON.' }));
@@ -2388,7 +2418,7 @@ async function initChurchDonationPayment(payload = {}) {
     if (response.status === 401) {
       showLogin(data.message || 'Your staff session has expired.', 'bad');
     }
-    throw new Error(data.message || 'Could not initialize online church donation payment.');
+    throw receivedResponseError(data.message || 'Could not initialize online church donation payment.');
   }
   return data;
 }
@@ -2511,6 +2541,9 @@ async function loadChurchDonations() {
       const status = document.getElementById('churchDonationStatus');
       const button = form.querySelector('button[type="submit"]');
       const payload = Object.fromEntries(new FormData(form).entries());
+      const idempotencyKey = form.dataset.idempotencyKey || newIdempotencyKey();
+      form.dataset.idempotencyKey = idempotencyKey;
+      payload.idempotencyKey = idempotencyKey;
       payload.sendReceipt = 'yes';
       payload.Status = clean(payload.Status || '');
       setButtonLoading(button, true, 'Saving...', 'Save donation');
@@ -2518,19 +2551,34 @@ async function loadChurchDonations() {
         const saved = await churchDonationRequest('save', payload);
         setStatus(status, saved.message, 'ok');
         if ((clean(payload.PaymentMethod).toUpperCase() === 'ONLINE') && form.elements.sendOnlineEmail.checked) {
+          const paymentIdempotencyKey = form.dataset.paymentIdempotencyKey || newIdempotencyKey();
+          form.dataset.paymentIdempotencyKey = paymentIdempotencyKey;
           await initChurchDonationPayment({
             ...(payload || {}),
             action: 'init',
             DonationId: payload.DonationId || saved.donation?.DonationId,
-            Reference: saved.donation?.Reference || payload.Reference || ''
+            Reference: saved.donation?.Reference || payload.Reference || '',
+            idempotencyKey: paymentIdempotencyKey
           });
         }
+        delete form.dataset.idempotencyKey;
+        delete form.dataset.paymentIdempotencyKey;
         form.reset();
         await loadChurchDonations();
       } catch (error) {
+        if (error?.responseReceived) {
+          delete form.dataset.idempotencyKey;
+          delete form.dataset.paymentIdempotencyKey;
+        }
         setStatus(status, error.message || String(error), 'bad');
       } finally {
         setButtonLoading(button, false, 'Saving...', 'Save donation');
+      }
+    });
+    form?.addEventListener('input', () => {
+      if (!form.querySelector('button[type="submit"]')?.disabled) {
+        delete form.dataset.idempotencyKey;
+        delete form.dataset.paymentIdempotencyKey;
       }
     });
 
@@ -2539,6 +2587,8 @@ async function loadChurchDonations() {
       const donationId = clean(button.dataset.donationId);
       const row = (data.donations || []).find((item) => clean(item.DonationId || item.__id) === donationId);
       if (!donationId) return;
+      const idempotencyKey = button.dataset.idempotencyKey || newIdempotencyKey();
+      button.dataset.idempotencyKey = idempotencyKey;
       const normalText = button.textContent;
       setButtonLoading(button, true, `${action}...`, normalText);
       try {
@@ -2547,14 +2597,15 @@ async function loadChurchDonations() {
           const updated = await churchDonationRequest('setstatus', {
             DonationId: donationId,
             Status: status,
-            sendReceipt: button.dataset.sendReceipt || 'no'
+            sendReceipt: button.dataset.sendReceipt || 'no',
+            idempotencyKey
           });
           await loadChurchDonations();
           setStatus(document.getElementById('churchDonationStatus'), updated.message, 'ok');
           return;
         }
         if (action === 'sendreceipt') {
-          const updated = await churchDonationRequest('sendreceipt', { DonationId: donationId });
+          const updated = await churchDonationRequest('sendreceipt', { DonationId: donationId, idempotencyKey });
           await loadChurchDonations();
           setStatus(document.getElementById('churchDonationStatus'), updated.message, 'ok');
           return;
@@ -2571,13 +2622,15 @@ async function loadChurchDonations() {
             PaymentType: row?.PaymentType || 'Donation',
             ReceiptNo: row?.ReceiptNo,
             ReceiptSubject: row?.ReceiptSubject || 'Payment link for your donation',
-            ReceiptMessage: row?.ReceiptMessage || 'Click the link to complete your donation payment.'
+            ReceiptMessage: row?.ReceiptMessage || 'Click the link to complete your donation payment.',
+            idempotencyKey
           };
           const initialized = await initChurchDonationPayment(payload);
           await loadChurchDonations();
           setStatus(document.getElementById('churchDonationStatus'), initialized.message, 'ok');
         }
       } catch (error) {
+        if (error?.responseReceived) delete button.dataset.idempotencyKey;
         setStatus(document.getElementById('churchDonationStatus'), error.message || String(error), 'bad');
       } finally {
         setButtonLoading(button, false, `${action}...`, normalText);
@@ -2731,12 +2784,21 @@ async function loadChurchOfferings() {
         if (!offeringId) return;
         if ((actionLabel === 'approve' || actionLabel === 'reconcile' || actionLabel === 'post') && !window.confirm(`Confirm ${actionLabel} for ${offeringId}?`)) return;
         const reason = actionLabel === 'reject' ? window.prompt(`Optional reason for rejecting ${offeringId}`) : '';
+        const idempotencyKey = button.dataset.idempotencyKey || newIdempotencyKey();
+        button.dataset.idempotencyKey = idempotencyKey;
+        const normalMarkup = button.innerHTML;
+        button.disabled = true;
         try {
-          const data = await doOfferingAction(action, offeringId, reason);
+          const data = await doOfferingAction(action, offeringId, reason, idempotencyKey);
+          delete button.dataset.idempotencyKey;
           setStatus(dashboardStatus, data.message, 'ok');
           await loadChurchOfferings();
         } catch (error) {
+          if (error?.responseReceived) delete button.dataset.idempotencyKey;
           setStatus(dashboardStatus, error.message || String(error), 'bad');
+        } finally {
+          button.disabled = false;
+          button.innerHTML = normalMarkup;
         }
       });
     });
@@ -3104,8 +3166,8 @@ function renderRecordsDesk() {
     ? `<p class="status bad">${escapeHtml(recordsDeskState.error)}</p>`
     : !clean(recordsDeskState.query)
       ? '<p>Search by name, record number, email, phone or another permitted identifier.</p>'
-      : clean(recordsDeskState.query).length < 2
-        ? '<p>Enter at least two characters to begin.</p>'
+      : clean(recordsDeskState.query).length < 3
+        ? '<p>Enter at least three characters to begin.</p>'
         : recordsDeskState.results.length
           ? `<p>${escapeHtml(recordsDeskState.totalMatches)} matching record${recordsDeskState.totalMatches === 1 ? '' : 's'}${recordsDeskState.truncated ? ' · showing the first results' : ''}</p>`
           : '<p>No matching records found.</p>';
@@ -3114,7 +3176,7 @@ function renderRecordsDesk() {
       <div class="records-desk-heading"><span aria-hidden="true">\u{1F5C2}</span><div><small>Universal lookup</small><h2>Records Desk</h2></div></div>
       <form id="recordsDeskSearchForm" class="records-desk-search" role="search">
         <label for="recordsDeskSearch">Search permitted records</label>
-        <div><span aria-hidden="true">\u{1F50D}</span><input id="recordsDeskSearch" name="query" type="search" minlength="2" maxlength="120" autocomplete="off" placeholder="Name, ID, phone, email..." value="${escapeHtml(recordsDeskState.query)}"><button type="submit">Search</button></div>
+        <div><span aria-hidden="true">\u{1F50D}</span><input id="recordsDeskSearch" name="query" type="search" minlength="3" maxlength="120" autocomplete="off" placeholder="Name, ID, phone, email..." value="${escapeHtml(recordsDeskState.query)}"><button type="submit">Search</button></div>
       </form>
       <nav class="records-desk-type-list" aria-label="Record type filters">
         ${typeButtons.map(([key, label, icon]) => `<button type="button" data-record-filter="${escapeHtml(key)}" class="${recordsDeskState.type === key ? 'active' : ''}" aria-pressed="${recordsDeskState.type === key}"><span aria-hidden="true">${escapeHtml(icon)}</span><span>${escapeHtml(label)}</span></button>`).join('')}
@@ -3132,12 +3194,13 @@ function renderRecordsDesk() {
   renderModuleSummary('recordsDesk', recordsDeskState);
 }
 
-async function recordsDeskApi(payload) {
+async function recordsDeskApi(payload, signal) {
   const response = await staffFetch('/api/staff-records', {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
     headers: { 'Content-Type': 'application/json' },
+    signal,
     body: JSON.stringify(payload)
   });
   const data = await response.json().catch(() => ({ ok: false, message: 'The Records Desk did not return JSON.' }));
@@ -3151,7 +3214,10 @@ async function recordsDeskApi(payload) {
 
 async function searchRecordsDesk({ keepFocus = false } = {}) {
   const query = clean(recordsDeskState.query);
-  if (query.length < 2) {
+  recordsDeskAbortController?.abort();
+  recordsDeskAbortController = null;
+  if (query.length < 3) {
+    recordsDeskRequest += 1;
     recordsDeskState.results = [];
     recordsDeskState.totalMatches = 0;
     recordsDeskState.error = '';
@@ -3162,6 +3228,8 @@ async function searchRecordsDesk({ keepFocus = false } = {}) {
     return;
   }
   const requestId = ++recordsDeskRequest;
+  const controller = new AbortController();
+  recordsDeskAbortController = controller;
   recordsDeskState.loading = true;
   recordsDeskState.error = '';
   const message = document.getElementById('recordsDeskResultMessage');
@@ -3172,7 +3240,7 @@ async function searchRecordsDesk({ keepFocus = false } = {}) {
       query,
       type: recordsDeskState.type === 'all' ? '' : recordsDeskState.type,
       limit: 30
-    });
+    }, controller.signal);
     if (requestId !== recordsDeskRequest || activeSection !== 'recordsDesk') return;
     recordsDeskState.availableTypes = data.availableTypes || recordsDeskState.availableTypes;
     recordsDeskState.results = data.results || [];
@@ -3184,11 +3252,13 @@ async function searchRecordsDesk({ keepFocus = false } = {}) {
       recordsDeskState.detail = null;
     }
   } catch (failure) {
+    if (failure?.name === 'AbortError') return;
     if (requestId !== recordsDeskRequest || activeSection !== 'recordsDesk') return;
     recordsDeskState.results = [];
     recordsDeskState.totalMatches = 0;
     recordsDeskState.error = failure.message || String(failure);
   } finally {
+    if (recordsDeskAbortController === controller) recordsDeskAbortController = null;
     if (requestId === recordsDeskRequest && activeSection === 'recordsDesk') {
       recordsDeskState.loading = false;
       renderRecordsDesk();
@@ -3305,7 +3375,10 @@ function bindRecordsDeskEvents() {
   searchInput?.addEventListener('input', (event) => {
     recordsDeskState.query = event.currentTarget.value;
     window.clearTimeout(recordsDeskSearchTimer);
-    if (clean(recordsDeskState.query).length < 2) {
+    if (clean(recordsDeskState.query).length < 3) {
+      recordsDeskAbortController?.abort();
+      recordsDeskAbortController = null;
+      recordsDeskRequest += 1;
       recordsDeskState.results = [];
       recordsDeskState.totalMatches = 0;
       recordsDeskState.detail = null;
@@ -3314,11 +3387,11 @@ function bindRecordsDeskEvents() {
       const results = panelEl.querySelector('.records-desk-results');
       if (results) results.innerHTML = '';
       const message = document.getElementById('recordsDeskResultMessage');
-      if (message) message.innerHTML = `<p>${clean(recordsDeskState.query) ? 'Enter at least two characters to begin.' : 'Search by name, record number, email, phone or another permitted identifier.'}</p>`;
+      if (message) message.innerHTML = `<p>${clean(recordsDeskState.query) ? 'Enter at least three characters to begin.' : 'Search by name, record number, email, phone or another permitted identifier.'}</p>`;
       renderModuleSummary('recordsDesk', recordsDeskState);
       return;
     }
-    recordsDeskSearchTimer = window.setTimeout(() => searchRecordsDesk({ keepFocus: true }), 320);
+    recordsDeskSearchTimer = window.setTimeout(() => searchRecordsDesk({ keepFocus: true }), 450);
   });
   panelEl.querySelectorAll('[data-record-filter]').forEach((button) => button.addEventListener('click', () => {
     recordsDeskState.type = button.dataset.recordFilter;
@@ -3326,7 +3399,7 @@ function bindRecordsDeskEvents() {
     recordsDeskState.selectedBranchId = '';
     recordsDeskState.detail = null;
     renderRecordsDesk();
-    if (clean(recordsDeskState.query).length >= 2) searchRecordsDesk({ keepFocus: true });
+    if (clean(recordsDeskState.query).length >= 3) searchRecordsDesk({ keepFocus: true });
   }));
   panelEl.querySelectorAll('.records-desk-result').forEach((button) => button.addEventListener('click', () => {
     loadRecordsDeskDetail(button.dataset.recordType, button.dataset.recordId, button.dataset.recordBranch);
@@ -4240,20 +4313,23 @@ async function loadMyPayroll() {
 async function financeRequest(action, payload = {}, options = {}) {
   const headers = new Headers({ 'Content-Type': 'application/json' });
   const approvalProof = clean(options.approvalProof);
+  const isMutation = !['list', 'document'].includes(clean(action));
+  const idempotencyKey = isMutation ? (clean(payload.idempotencyKey) || newIdempotencyKey()) : '';
   if (approvalProof) headers.set('X-DIGC-Approval-Proof', approvalProof);
+  if (idempotencyKey) headers.set('Idempotency-Key', idempotencyKey);
   const response = await staffFetch('/api/finance-workflow', {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
     headers,
-    body: JSON.stringify({ action, ...payload })
+    body: JSON.stringify({ action, ...payload, ...(idempotencyKey ? { idempotencyKey } : {}) })
   });
   const data = await response.json().catch(() => ({ ok: false, message: 'Finance workflow did not return JSON.' }));
   if (response.status === 401) {
     showLogin(data.message || 'Your staff session has expired.', 'bad');
     throw new Error(data.message || 'Your staff session has expired.');
   }
-  if (!response.ok || !data.ok) throw new Error(data.message || 'Finance workflow request failed.');
+  if (!response.ok || !data.ok) throw receivedResponseError(data.message || 'Finance workflow request failed.');
   return data;
 }
 
@@ -4268,7 +4344,8 @@ function openFinanceDecision(button) {
     action,
     decision,
     recordType: button.dataset.recordType,
-    recordId: button.dataset.recordId
+    recordId: button.dataset.recordId,
+    idempotencyKey: newIdempotencyKey()
   };
   financeDecisionBiometricVerified = false;
   financeDecisionApprovalProof = '';
@@ -4350,7 +4427,8 @@ async function submitFinanceDecision(event) {
       notes: financeDecisionForm.elements.notes.value,
       approvalPassword: password,
       applySignature: financeDecisionForm.elements.applySignature.checked,
-      applyStamp: financeDecisionForm.elements.applyStamp.checked
+      applyStamp: financeDecisionForm.elements.applyStamp.checked,
+      idempotencyKey: context.idempotencyKey
     }, { approvalProof: financeDecisionApprovalProof });
     financeDecisionDialog.close();
     pendingFinanceDecision = null;
@@ -4359,6 +4437,7 @@ async function submitFinanceDecision(event) {
     setStatus(document.getElementById('financeWorkflowStatus'), data.message, 'ok');
     await loadFinanceWorkflow();
   } catch (error) {
+    if (error?.responseReceived) context.idempotencyKey = newIdempotencyKey();
     if (secureDecision && !password) {
       financeDecisionBiometricVerified = false;
       financeDecisionApprovalProof = '';
@@ -4663,18 +4742,25 @@ function bindMaterialRequisitionForm() {
     if (!form.reportValidity()) return;
     const button = form.querySelector('button[type="submit"]');
     const status = form.querySelector('[data-form-status]');
-    const payload = { ...formPayload(form), items: materialRequisitionItems(form) };
+    const idempotencyKey = form.dataset.idempotencyKey || newIdempotencyKey();
+    form.dataset.idempotencyKey = idempotencyKey;
+    const payload = { ...formPayload(form), items: materialRequisitionItems(form), idempotencyKey };
     setButtonLoading(button, true, 'Submitting...', 'Submit Material Requisition');
     setStatus(status, 'Saving to database...');
     try {
       await financeRequest('submitMaterialRequisition', payload);
+      delete form.dataset.idempotencyKey;
       setStatus(status, 'Material requisition submitted.', 'ok');
       await loadFinanceWorkflow();
     } catch (error) {
+      if (error?.responseReceived) delete form.dataset.idempotencyKey;
       setStatus(status, error.message || String(error), 'bad');
     } finally {
       setButtonLoading(button, false, 'Submitting...', 'Submit Material Requisition');
     }
+  });
+  form.addEventListener('input', () => {
+    if (!form.querySelector('button[type="submit"]')?.disabled) delete form.dataset.idempotencyKey;
   });
   updateMaterialRequisitionTable(form);
 }
@@ -4690,15 +4776,22 @@ function bindSubmissionForm(formId, action, successText) {
     if (!button.dataset.normalText) button.dataset.normalText = action === 'submitBill' ? 'Submit Supplier Bill' : 'Submit Requisition';
     setStatus(status, 'Saving to database...');
     try {
-      await financeRequest(action, formPayload(form));
+      const idempotencyKey = form.dataset.idempotencyKey || newIdempotencyKey();
+      form.dataset.idempotencyKey = idempotencyKey;
+      await financeRequest(action, { ...formPayload(form), idempotencyKey });
+      delete form.dataset.idempotencyKey;
       form.reset();
       setStatus(status, successText, 'ok');
       await loadFinanceWorkflow();
     } catch (error) {
+      if (error?.responseReceived) delete form.dataset.idempotencyKey;
       setStatus(status, error.message || String(error), 'bad');
     } finally {
       setButtonLoading(button, false, 'Submitting...', button.dataset.normalText);
     }
+  });
+  form.addEventListener('input', () => {
+    if (!form.querySelector('button[type="submit"]')?.disabled) delete form.dataset.idempotencyKey;
   });
 }
 
@@ -4993,7 +5086,9 @@ passkeyLoginButton.addEventListener('click', async () => {
   setButtonLoading(passkeyLoginButton, true, 'Checking your device...', 'Sign in with biometrics');
   setStatus(loginStatus, 'Follow your device prompt to sign in...');
   try {
-    const started = await passkeyRequest('authentication-options');
+    const started = await passkeyRequest('authentication-options', {
+      username: document.getElementById('staffUsername').value.trim()
+    });
     const credential = await getPasskeyCredential(started.options, 'optional');
     if (!credential) throw new Error('No biometric credential was returned.');
     const completed = await passkeyRequest('authentication-verify', {
@@ -5144,6 +5239,7 @@ staffProfileForm.addEventListener('submit', async (event) => {
 
 async function signOutFromPortal(button) {
   button.disabled = true;
+  staffBearerToken = '';
   try {
     await sessionRequest('POST', { action: 'logout' });
   } finally {
@@ -5155,6 +5251,7 @@ async function signOutFromPortal(button) {
 
 async function switchUserFromPortal() {
   const buttons = [switchUserButton, sidebarSwitchUserButton, passwordSwitchUserButton].filter(Boolean);
+  staffBearerToken = '';
   buttons.forEach((button) => {
     button.disabled = true;
     button.setAttribute('aria-busy', 'true');
@@ -5167,6 +5264,7 @@ async function switchUserFromPortal() {
   } catch (error) {
     setStatus(dashboardStatus, error.message || String(error), 'bad');
   } finally {
+    staffBearerToken = '';
     buttons.forEach((button) => {
       button.disabled = false;
       button.removeAttribute('aria-busy');

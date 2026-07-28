@@ -82,7 +82,10 @@ test('passkey API requires user verification and validates origin, RP ID and one
   assert.match(passkeyApi, /requireUserVerification: true/);
   assert.match(passkeyApi, /expectedOrigin: rp\.origin/);
   assert.match(passkeyApi, /expectedRPID: rp\.rpID/);
-  assert.match(passkeyApi, /deleteDocument\(env, 'staffPasskeyChallenges', id\)/);
+  assert.match(passkeyApi, /deleteDocumentIfCurrent\(env, 'staffPasskeyChallenges', id, ceremony\)/);
+  assert.match(passkeyApi, /\[404, 409, 412\]\.includes\(Number\(cause\?\.status\)\)/);
+  assert.match(passkeyApi, /FIRESTORE_WRITE_CONFLICT/);
+  assert.match(passkeyApi, /This biometric request was already used/);
   assert.match(passkeyApi, /already linked to another staff account/);
 });
 

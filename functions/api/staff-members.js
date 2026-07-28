@@ -1,6 +1,7 @@
 import { requireFirestoreEnv } from '../lib/firestore.js';
 import { handleChurchMembershipAction } from '../lib/church-membership.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
+import { readJsonBody } from '../lib/request-security.js';
 
 export async function onRequestPost(context) {
   try {
@@ -12,7 +13,7 @@ export async function onRequestPost(context) {
       error.status = 403;
       throw error;
     }
-    const body = await request.json().catch(() => ({}));
+    const body = await readJsonBody(request, { maxBytes: 2 * 1024 * 1024 });
     return Response.json(await handleChurchMembershipAction(env, user, body), {
       headers: { 'Cache-Control': 'no-store' }
     });

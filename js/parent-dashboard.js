@@ -36,6 +36,16 @@ let activeDashboardView = 'overview';
 const loadedPayables = new Set();
 const passportPhotoCache = new Map();
 const storeCart = new Map();
+let selectedChildLoadController = null;
+let dashboardLoadController = null;
+
+function newIdempotencyKey() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  const random = window.crypto?.getRandomValues
+    ? Array.from(window.crypto.getRandomValues(new Uint32Array(4)), (value) => value.toString(16)).join('')
+    : Math.random().toString(36).slice(2);
+  return `${Date.now().toString(36)}-${random}`;
+}
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -177,10 +187,11 @@ function renderChildren() {
       </span>
     `;
     button.addEventListener('click', () => {
+      if (selectedAccountRef === child.AccountRef) return;
       if (selectedAccountRef !== child.AccountRef) storeCart.clear();
       selectedAccountRef = child.AccountRef;
       renderDashboard();
-      loadPayablesForSelected(true);
+      loadPayablesForSelected();
     });
     childrenList.appendChild(button);
     schedulePassportPhoto(child, button.querySelector('.child-passport img'));
@@ -395,6 +406,7 @@ function renderSubscriptionSelector(child, title, fees, options = {}) {
   }
 
   function chooseFee() {
+    delete payButton.dataset.idempotencyKey;
     if (options.kind === 'bus') {
       selectedFee.current = fees.find((fee) => busRouteFor(fee) === routeSelect.value && busModeFor(fee) === modeSelect.value) || null;
     } else {
@@ -467,9 +479,12 @@ function renderDueNotifications(child) {
 async function loadPayablesForSelected(force = false) {
   const child = selectedChild();
   if (!child) return;
+  selectedChildLoadController?.abort();
   if (!force && loadedPayables.has(child.AccountRef)) return;
-  loadedPayables.delete(child.AccountRef);
-  loadedPayables.add(child.AccountRef);
+  const controller = new AbortController();
+  selectedChildLoadController = controller;
+  const accountRef = child.AccountRef;
+  loadedPayables.delete(accountRef);
   dashboard.payableItems = dashboard.payableItems || {};
   dashboard.payableErrors = dashboard.payableErrors || {};
   dashboard.dueNotifications = dashboard.dueNotifications || {};
@@ -478,8 +493,8 @@ async function loadPayablesForSelected(force = false) {
   dashboard.paymentRecords = dashboard.paymentRecords || {};
   dashboard.clinicVisits = dashboard.clinicVisits || {};
   dashboard.entranceResults = dashboard.entranceResults || {};
-  dashboard.payableItems[child.AccountRef] = [];
-  dashboard.payableErrors[child.AccountRef] = '';
+  dashboard.payableItems[accountRef] = [];
+  dashboard.payableErrors[accountRef] = '';
   renderPayableItems(child);
   renderDueNotifications(child);
   renderWallet(child);
@@ -497,6 +512,7 @@ async function loadPayablesForSelected(force = false) {
       method: 'POST',
       cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
       body: freshBody({
         action: 'getChildPayable',
         ...baseBody
@@ -506,6 +522,7 @@ async function loadPayablesForSelected(force = false) {
       method: 'POST',
       cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
       body: freshBody({
         action: 'getChildActivity',
         ...baseBody
@@ -514,6 +531,7 @@ async function loadPayablesForSelected(force = false) {
     const [payableResponse, activityResponse] = await Promise.all([payableRequest, activityRequest]);
     const payableData = await payableResponse.json();
     const activityData = await activityResponse.json();
+    if (controller.signal.aborted) return;
     if (!payableResponse.ok || !payableData.ok) {
       dashboard.payableErrors[child.AccountRef] = payableData.message || 'Could not load payable items.';
     } else {
@@ -552,11 +570,18 @@ async function loadPayablesForSelected(force = false) {
     } else {
       dashboard.payableErrors[child.AccountRef] = dashboard.payableErrors[child.AccountRef] || activityData.message || 'Could not load child activity.';
     }
+    if (payableResponse.ok && payableData.ok && activityResponse.ok && activityData.ok) {
+      loadedPayables.add(accountRef);
+    }
   } catch (error) {
+    if (error?.name === 'AbortError') return;
     dashboard.payableItems[child.AccountRef] = [];
     dashboard.dueNotifications[child.AccountRef] = [];
     dashboard.payableErrors[child.AccountRef] = error.message;
+  } finally {
+    if (selectedChildLoadController === controller) selectedChildLoadController = null;
   }
+  if (selectedAccountRef !== accountRef) return;
   renderPayableItems(child);
   renderDueNotifications(child);
   renderAccountCredit(child);
@@ -613,11 +638,25 @@ function paymentAmountFor(fee, container) {
 async function payItem(child, fee, container) {
   const amount = paymentAmountFor(fee, container);
   if (amount === null) return;
+  const payButton = container?.querySelector('button');
+  if (payButton?.disabled) return;
+  const idempotencyKey = payButton?.dataset.idempotencyKey || newIdempotencyKey();
+  if (payButton) {
+    payButton.dataset.idempotencyKey = idempotencyKey;
+    payButton.disabled = true;
+  }
+  let responseReceived = false;
   try {
     setPaymentStatus(container, 'Starting secure checkout...', '');
+    const turnstile = window.DynamaxPublicApi?.getTurnstileToken
+      ? await window.DynamaxPublicApi.getTurnstileToken('init_payment')
+      : {};
     const response = await fetch('/api/init-payment', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idempotencyKey
+      },
       body: JSON.stringify({
         ...authPayload(),
         accountRef: child.AccountRef,
@@ -625,16 +664,21 @@ async function payItem(child, fee, container) {
         scopePath: child.__scopePath || '',
         feeCode: fee.FeeCode,
         components: fee.Components || undefined,
-        amount: (isWalletFee(fee) || isYes(fee.AllowInstallment)) ? amount : undefined
+        amount: (isWalletFee(fee) || isYes(fee.AllowInstallment)) ? amount : undefined,
+        idempotencyKey,
+        ...turnstile
       })
     });
+    responseReceived = true;
     const data = await response.json();
     if (!response.ok || !data.ok) {
       throw new Error(data.message || 'Could not initialize payment.');
     }
     window.location.href = data.authorizationUrl;
   } catch (error) {
+    if (responseReceived && payButton) delete payButton.dataset.idempotencyKey;
     setPaymentStatus(container, error.message, 'bad');
+    if (payButton) payButton.disabled = false;
   }
 }
 
@@ -710,6 +754,9 @@ function renderPayableItems(child) {
       input.step = '0.01';
       input.value = defaultAmount;
       input.inputMode = 'decimal';
+      input.addEventListener('input', () => {
+        delete button.dataset.idempotencyKey;
+      });
       if (isWalletFee(fee) && isYes(fee.WalletLimitReached)) {
         input.disabled = true;
         input.value = '';
@@ -901,7 +948,8 @@ async function downloadAdmissionDocument(child, documentType, button) {
       link.remove();
       URL.revokeObjectURL(url);
     }, 1000);
-    await loadDashboard();
+    loadedPayables.delete(child.AccountRef);
+    await loadPayablesForSelected(true);
   } catch (error) {
     const message = error.message || String(error);
     setStatus(message, 'bad');
@@ -1075,14 +1123,28 @@ function renderStoreCart(child) {
   });
   checkoutStoreCartBtn.disabled = !entries.length;
   checkoutStoreCartBtn.textContent = entries.length ? `Checkout ${money(total)}` : 'Checkout Cart';
+  const cartFingerprint = entries.map(([key, entry]) => `${key}:${entry.quantity}`).join('|');
+  if (checkoutStoreCartBtn.dataset.cartFingerprint !== cartFingerprint) {
+    checkoutStoreCartBtn.dataset.cartFingerprint = cartFingerprint;
+    delete checkoutStoreCartBtn.dataset.idempotencyKey;
+  }
   checkoutStoreCartBtn.onclick = async () => {
     checkoutStoreCartBtn.disabled = true;
     if (storeCheckoutStatus) { storeCheckoutStatus.textContent = 'Connecting to Paystack...'; storeCheckoutStatus.className = 'status'; }
+    let responseReceived = false;
     try {
       const cart = entries.map(([, entry]) => ({ itemCode: entry.item.ItemCode, storeType: entry.item.StoreType, quantity: entry.quantity }));
+      const idempotencyKey = checkoutStoreCartBtn.dataset.idempotencyKey || newIdempotencyKey();
+      checkoutStoreCartBtn.dataset.idempotencyKey = idempotencyKey;
+      const turnstile = window.DynamaxPublicApi?.getTurnstileToken
+        ? await window.DynamaxPublicApi.getTurnstileToken('init_payment')
+        : {};
       const response = await fetch('/api/init-payment', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey
+        },
         body: JSON.stringify({
           ...authPayload(),
           accountRef: child.AccountRef,
@@ -1090,9 +1152,12 @@ function renderStoreCart(child) {
           scopePath: child.__scopePath || '',
           feeCode: 'STORE_CART',
           amount: total,
-          storeCart: cart
+          storeCart: cart,
+          idempotencyKey,
+          ...turnstile
         })
       });
+      responseReceived = true;
       const responseText = await response.text();
       let data = {};
       try { data = JSON.parse(responseText); } catch (_error) { throw new Error(`Checkout service returned an invalid response (HTTP ${response.status}). Please try again.`); }
@@ -1101,6 +1166,7 @@ function renderStoreCart(child) {
       if (storeCheckoutStatus) { storeCheckoutStatus.textContent = 'Opening Paystack secure checkout...'; storeCheckoutStatus.className = 'status ok'; }
       window.location.assign(data.authorizationUrl);
     } catch (error) {
+      if (responseReceived) delete checkoutStoreCartBtn.dataset.idempotencyKey;
       const message = String(error?.message || error || 'Could not start checkout.').replace(/^Error:\s*/, '');
       if (storeCheckoutStatus) { storeCheckoutStatus.textContent = message; storeCheckoutStatus.className = 'status bad'; }
       setStatus(message, 'bad'); checkoutStoreCartBtn.disabled = false;
@@ -1115,28 +1181,42 @@ async function loadDashboard() {
     setStatus('Email and verification code are required.', 'bad');
     return;
   }
+  dashboardLoadController?.abort();
+  selectedChildLoadController?.abort();
+  const controller = new AbortController();
+  dashboardLoadController = controller;
   setStatus('Loading dashboard...', '');
-  const response = await fetch('/api/parent-dashboard', {
-    method: 'POST',
-    cache: 'no-store',
-    headers: { 'Content-Type': 'application/json' },
-    body: freshBody({ action: 'getDashboard', ...payload })
-  });
-  const data = await response.json();
-  if (!response.ok || !data.ok) {
-    throw new Error(data.message || 'Could not load parent dashboard.');
+  try {
+    const response = await fetch('/api/parent-dashboard', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: freshBody({ action: 'getDashboard', ...payload })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || 'Could not load parent dashboard.');
+    }
+    if (controller.signal.aborted) return;
+    dashboard = data;
+    loadedPayables.clear();
+    selectedAccountRef = data.children?.some((child) => child.AccountRef === previousAccountRef)
+      ? previousAccountRef
+      : (data.children?.[0]?.AccountRef || '');
+    dashboardContent.hidden = false;
+    loginForm.hidden = true;
+    renderDashboard();
+    showDashboardView(activeDashboardView);
+    await loadPayablesForSelected();
+    if (controller.signal.aborted) return;
+    setStatus('Dashboard loaded.', 'ok');
+  } catch (error) {
+    if (error?.name === 'AbortError') return;
+    throw error;
+  } finally {
+    if (dashboardLoadController === controller) dashboardLoadController = null;
   }
-  dashboard = data;
-  loadedPayables.clear();
-  selectedAccountRef = data.children?.some((child) => child.AccountRef === previousAccountRef)
-    ? previousAccountRef
-    : (data.children?.[0]?.AccountRef || '');
-  dashboardContent.hidden = false;
-  loginForm.hidden = true;
-  renderDashboard();
-  showDashboardView(activeDashboardView);
-  await loadPayablesForSelected(true);
-  setStatus('Dashboard loaded.', 'ok');
 }
 
 loginForm.addEventListener('submit', async (event) => {
@@ -1180,7 +1260,13 @@ restrictionForm.addEventListener('submit', async (event) => {
     if (!response.ok || !data.ok) {
       throw new Error(data.message || 'Could not save wallet restrictions.');
     }
-    await loadDashboard();
+    Object.assign(child, {
+      WalletCardStatus: walletStatus.value,
+      WalletTxnLimit: txnLimit.value,
+      WalletDailyLimit: dailyLimit.value,
+      WalletPinThreshold: pinThreshold.value
+    });
+    renderWallet(child);
     setStatus('Wallet restrictions saved.', 'ok');
   } catch (error) {
     setStatus(error.message, 'bad');
@@ -1199,6 +1285,8 @@ if (refreshDashboardBtn) {
 
 if (signOutDashboardBtn) {
   signOutDashboardBtn.addEventListener('click', () => {
+    dashboardLoadController?.abort();
+    selectedChildLoadController?.abort();
     passportPhotoCache.forEach((objectUrl) => URL.revokeObjectURL(objectUrl));
     passportPhotoCache.clear();
     loadedPayables.clear();

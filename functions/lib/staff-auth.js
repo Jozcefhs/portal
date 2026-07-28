@@ -1,4 +1,4 @@
-import { getDocument, listCollection, upsertDocument } from './firestore.js';
+import { getDocument, listCollection, patchDocumentFields, upsertDocument } from './firestore.js';
 import { filterSectionsForFeatures, resolveOrganizationConfig } from './organization-config.js';
 
 const encoder = new TextEncoder();
@@ -8,6 +8,10 @@ const SESSION_SECONDS = 4 * 60 * 60;
 const APPROVAL_PROOF_COOKIE = 'staff_approval_proof';
 const APPROVAL_PROOF_SECONDS = 3 * 60;
 const WEB_PASSWORD_ITERATIONS = 10000;
+const WEB_PASSWORD_HASH_VERSION = 'pbkdf2-sha256-v1';
+const ACCESS_CONFIG_CACHE_MS = 15000;
+
+let accessConfigCache = null;
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -25,6 +29,26 @@ export function findStaffUser(users = [], identity = '') {
     row?.username,
     row?.__id
   ].some((value) => lower(value) === wanted)) || null;
+}
+
+function safeStaffId(value) {
+  return lower(value).replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120);
+}
+
+function staffIdentityMatches(user, identity) {
+  return [user?.Username, user?.username, user?.__id].some((value) => lower(value) === lower(identity));
+}
+
+export async function findStaffUserRecord(env, identity, options = {}) {
+  const wanted = lower(identity);
+  if (!wanted) return null;
+  const directId = safeStaffId(wanted);
+  if (directId) {
+    const direct = await getDocument(env, 'staffUsers', directId);
+    if (direct && staffIdentityMatches(direct, wanted)) return direct;
+  }
+  if (options.allowListFallback === false) return null;
+  return findStaffUser(await listCollection(env, 'staffUsers'), wanted);
 }
 
 function base64Url(value) {
@@ -60,7 +84,7 @@ function sessionSecret(env) {
   const secret = clean(env.STAFF_SESSION_SECRET || env.BACKEND_SHARED_SECRET || env.GOOGLE_APPS_SCRIPT_SECRET);
   if (!secret) {
     const err = new Error('Staff sessions are not configured. Add STAFF_SESSION_SECRET in Cloudflare.');
-    err.status = 500;
+    err.status = 503;
     throw err;
   }
   return secret;
@@ -100,6 +124,8 @@ async function verifiedSignedPayload(env, token) {
 }
 
 async function verifyDesktopPassword(user, password) {
+  const version = lower(user.PasswordHashVersion || user.passwordHashVersion || WEB_PASSWORD_HASH_VERSION);
+  if (version !== WEB_PASSWORD_HASH_VERSION) return false;
   const salt = clean(user.Salt || user.salt);
   const expected = lower(user.PasswordHash || user.passwordHash);
   if (!salt || !expected || !password) return false;
@@ -130,7 +156,12 @@ export async function hashStaffPassword(password, iterations = WEB_PASSWORD_ITER
   const bits = await crypto.subtle.deriveBits({
     name: 'PBKDF2', salt: encoder.encode(salt), iterations, hash: 'SHA-256'
   }, material, 256);
-  return { Salt: salt, PasswordHash: bytesToHex(bits), PasswordIterations: iterations };
+  return {
+    Salt: salt,
+    PasswordHash: bytesToHex(bits),
+    PasswordIterations: iterations,
+    PasswordHashVersion: WEB_PASSWORD_HASH_VERSION
+  };
 }
 
 function inferDepartment(user) {
@@ -212,11 +243,23 @@ export function allowedSectionsFor(user = {}, featureFlags = null) {
 }
 
 export async function staffAccessFor(env, user = {}) {
-  const [organizationProfile, legacyProfile] = await Promise.all([
-    getDocument(env, 'settings', 'organisationProfile').catch(() => null),
-    getDocument(env, 'settings', 'schoolProfile').catch(() => null)
-  ]);
-  const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile });
+  const environmentKey = `${clean(env.FIREBASE_PROJECT_ID)}|${clean(env.ORGANISATION_EDITION || env.ORGANIZATION_EDITION)}`;
+  const now = Date.now();
+  let organization;
+  if (accessConfigCache && accessConfigCache.environmentKey === environmentKey && accessConfigCache.expiresAt > now) {
+    organization = accessConfigCache.organization;
+  } else {
+    const [organizationProfile, legacyProfile] = await Promise.all([
+      getDocument(env, 'settings', 'organisationProfile').catch(() => null),
+      getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+    ]);
+    organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile });
+    accessConfigCache = {
+      environmentKey,
+      organization,
+      expiresAt: Date.now() + ACCESS_CONFIG_CACHE_MS
+    };
+  }
   return {
     edition: organization.Edition,
     featureFlags: organization.FeatureFlags,
@@ -227,13 +270,12 @@ export async function staffAccessFor(env, user = {}) {
 export async function authenticateStaff(env, username, password) {
   const wanted = lower(username);
   if (!wanted || !password) return null;
-  let users = [];
+  let user = null;
   try {
-    users = await listCollection(env, 'staffUsers');
+    user = await findStaffUserRecord(env, wanted);
   } catch (_err) {
-    users = [];
+    user = null;
   }
-  const user = findStaffUser(users, wanted);
   if (user) {
     const active = user.Active === undefined ? true : !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(user.Active));
     if (active && await verifyDesktopPassword(user, password)) {
@@ -241,7 +283,7 @@ export async function authenticateStaff(env, username, password) {
       const saved = { ...user, LastLoginAt: loginAt };
       delete saved.__id;
       delete saved.__name;
-      await upsertDocument(env, 'staffUsers', user.__id, saved);
+      await patchDocumentFields(env, 'staffUsers', user.__id, { LastLoginAt: loginAt });
       const auditId = `LOGIN-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
       await upsertDocument(env, 'staffSecurityAudit', auditId, {
         Timestamp: loginAt, Action: 'LOGIN', Username: clean(user.Username || user.__id),
@@ -288,13 +330,12 @@ export async function authenticateStaff(env, username, password) {
 export async function authenticateStaffPasskey(env, username) {
   const wanted = lower(username);
   if (!wanted) return null;
-  let users = [];
+  let user = null;
   try {
-    users = await listCollection(env, 'staffUsers');
+    user = await findStaffUserRecord(env, wanted);
   } catch (_err) {
-    users = [];
+    user = null;
   }
-  const user = findStaffUser(users, wanted);
   let authenticated = null;
   if (user) {
     const active = user.Active === undefined ? true : !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(user.Active));
@@ -303,7 +344,7 @@ export async function authenticateStaffPasskey(env, username) {
     const saved = { ...user, LastLoginAt: loginAt };
     delete saved.__id;
     delete saved.__name;
-    await upsertDocument(env, 'staffUsers', user.__id, saved);
+    await patchDocumentFields(env, 'staffUsers', user.__id, { LastLoginAt: loginAt });
     authenticated = publicUser(saved);
   } else if (wanted === lower(env.ADMIN_WEB_USERNAME || 'admin')) {
     authenticated = publicUser({
@@ -330,8 +371,7 @@ export async function authenticateStaffPasskey(env, username) {
 export async function verifyStaffApprovalPassword(env, username, password) {
   const wanted = lower(username);
   if (!wanted || !password) return false;
-  const users = await listCollection(env, 'staffUsers').catch(() => []);
-  const user = findStaffUser(users, wanted);
+  const user = await findStaffUserRecord(env, wanted).catch(() => null);
   if (user) {
     const active = user.Active === undefined ? true : !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(user.Active));
     if (!active) return false;
@@ -343,8 +383,10 @@ export async function verifyStaffApprovalPassword(env, username, password) {
 }
 
 export async function createStaffSession(env, user) {
+  const sessionUser = publicUser(user);
+  delete sessionUser.profilePhotoUrl;
   const payload = {
-    ...publicUser(user),
+    ...sessionUser,
     purpose: 'staff-session',
     exp: Math.floor(Date.now() / 1000) + SESSION_SECONDS
   };
@@ -419,8 +461,7 @@ export async function requireStaffSession(env, request) {
     throw err;
   }
   const envAdmin = lower(env.ADMIN_WEB_USERNAME || 'admin');
-  const users = await listCollection(env, 'staffUsers');
-  const current = findStaffUser(users, user.username);
+  const current = await findStaffUserRecord(env, user.username);
   if (current) {
     const active = current && (current.Active === undefined || !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(current.Active)));
     if (!active) {

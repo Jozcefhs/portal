@@ -1,4 +1,13 @@
-import { requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { batchUpsertDocuments, requireFirestoreEnv } from '../lib/firestore.js';
+import { requireConfiguredDesktopSecret, verifyDesktopSecret } from '../lib/backend-security.js';
+import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
+import { readJsonBody } from '../lib/request-security.js';
+
+const MAX_IMPORT_ROWS = 250;
+const IMPORT_BATCH_SIZE = 100;
+const MAX_IMPORT_BODY_BYTES = 2_000_000;
+const MAX_ROW_FIELDS = 200;
+const MAX_ROW_CHARACTERS = 100_000;
 
 const COLLECTION_ALIASES = {
   applications: 'applications',
@@ -134,64 +143,112 @@ function normalizeRow(row) {
   return out;
 }
 
-function getSecret(env) {
-  return clean(env.BACKEND_SHARED_SECRET || env.GOOGLE_APPS_SCRIPT_SECRET);
+async function readRequestBody(request) {
+  return readJsonBody(request, { maxBytes: MAX_IMPORT_BODY_BYTES });
 }
 
-async function readRequestBody(request) {
-  const contentType = request.headers.get('content-type') || '';
-  if (contentType.includes('application/json')) return request.json();
-  const text = await request.text();
-  return text ? JSON.parse(text) : {};
+function validateRow(row, index) {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) {
+    throw new Error(`Row ${index + 1} must be an object.`);
+  }
+  if (Object.keys(row).length > MAX_ROW_FIELDS) {
+    throw new Error(`Row ${index + 1} contains too many fields.`);
+  }
+  if (JSON.stringify(row).length > MAX_ROW_CHARACTERS) {
+    throw new Error(`Row ${index + 1} is too large.`);
+  }
+}
+
+function chunk(items, size) {
+  const groups = [];
+  for (let index = 0; index < items.length; index += size) groups.push(items.slice(index, index + size));
+  return groups;
 }
 
 export async function onRequestPost({ request, env }) {
+  const metric = startRequestMetric(request, '/api/import-firestore');
+  let received = 0;
   try {
     requireFirestoreEnv(env);
     const body = await readRequestBody(request);
-    const expectedSecret = getSecret(env);
     const providedSecret = clean(
       body.Secret ||
       body.secret ||
       request.headers.get('x-backend-secret') ||
       request.headers.get('x-import-secret')
     );
-    if (expectedSecret && providedSecret !== expectedSecret) {
-      return json({ ok: false, message: 'Unauthorized.' }, 401);
-    }
+    verifyDesktopSecret(env, providedSecret, 'database import endpoint');
 
     const collection = normalizeCollection(body.collection || body.Collection);
     if (!collection) {
-      return json({ ok: false, message: 'Unknown or unsupported collection.' }, 400);
+      const error = new Error('Unknown or unsupported collection.');
+      error.status = 400;
+      throw error;
     }
 
     const rows = Array.isArray(body.rows) ? body.rows : [];
+    received = rows.length;
     if (!rows.length) {
-      return json({ ok: false, message: 'No rows were supplied.' }, 400);
+      const error = new Error('No rows were supplied.');
+      error.status = 400;
+      throw error;
+    }
+    if (rows.length > MAX_IMPORT_ROWS) {
+      const error = new Error(`Import at most ${MAX_IMPORT_ROWS} rows per request. Split this file into smaller batches.`);
+      error.status = 413;
+      throw error;
     }
 
     const dryRun = Boolean(body.dryRun || body.DryRun);
     const imported = [];
     const failures = [];
+    const writes = [];
     for (let index = 0; index < rows.length; index += 1) {
-      const row = normalizeRow(rows[index]);
-      const documentId = documentIdFor(collection, row, index);
-      const payload = {
-        ...row,
-        UpdatedAt: row.UpdatedAt || new Date().toISOString()
-      };
-      if (dryRun) {
-        imported.push({ index, documentId });
-        continue;
-      }
       try {
-        await upsertDocument(env, collection, documentId, payload);
-        imported.push({ index, documentId });
+        validateRow(rows[index], index);
+        const row = normalizeRow(rows[index]);
+        const documentId = documentIdFor(collection, row, index);
+        if (!documentId) throw new Error('A document identifier could not be generated.');
+        const payload = {
+          ...row,
+          UpdatedAt: row.UpdatedAt || new Date().toISOString()
+        };
+        if (dryRun) imported.push({ index, documentId });
+        else writes.push({ index, documentId, collectionPath: collection, data: payload });
       } catch (error) {
-        failures.push({ index, documentId, message: error.message || String(error) });
+        failures.push({ index, documentId: '', message: error.message || 'The row is invalid.' });
       }
     }
 
+    if (!dryRun) {
+      for (const group of chunk(writes, IMPORT_BATCH_SIZE)) {
+        try {
+          await batchUpsertDocuments(env, group);
+          group.forEach(({ index, documentId }) => imported.push({ index, documentId }));
+        } catch (error) {
+          console.error('Database import batch failed', {
+            collection,
+            firstRow: group[0]?.index,
+            count: group.length,
+            status: Number(error?.status || 500)
+          });
+          group.forEach(({ index, documentId }) => failures.push({
+            index,
+            documentId,
+            message: 'This import batch could not be saved. Correct the data or retry this batch.'
+          }));
+        }
+      }
+    }
+
+    const status = failures.length ? 207 : 200;
+    finishRequestMetric(metric, {
+      status,
+      action: dryRun ? 'dry-run' : `import:${collection}`,
+      received: rows.length,
+      processed: imported.length,
+      outcome: failures.length ? 'partial' : 'ok'
+    });
     return json({
       ok: failures.length === 0,
       collection,
@@ -199,22 +256,32 @@ export async function onRequestPost({ request, env }) {
       received: rows.length,
       imported: imported.length,
       failed: failures.length,
-      failures: failures.slice(0, 20)
-    }, failures.length ? 207 : 200);
+      batchSize: IMPORT_BATCH_SIZE,
+      limits: { maxRows: MAX_IMPORT_ROWS, maxBodyBytes: MAX_IMPORT_BODY_BYTES },
+      failures: failures.sort((left, right) => left.index - right.index).slice(0, 20)
+    }, status);
   } catch (error) {
-    return json({ ok: false, message: error.message || String(error) }, 500);
+    const status = Number(error?.status || 500);
+    finishRequestMetric(metric, { status, action: 'import', received, outcome: error?.code || 'error' });
+    return json({ ok: false, message: error.message || String(error), ...(error?.code ? { code: error.code } : {}) }, status);
   }
 }
 
-export async function onRequestGet({ env }) {
+export async function onRequestGet({ request, env }) {
+  const metric = startRequestMetric(request, '/api/import-firestore');
   try {
     requireFirestoreEnv(env);
+    requireConfiguredDesktopSecret(env, 'database import endpoint');
+    finishRequestMetric(metric, { status: 200, action: 'readiness' });
     return json({
       ok: true,
       message: 'Database import endpoint is ready.',
-      collections: Object.values(COLLECTION_ALIASES).filter((value, index, list) => list.indexOf(value) === index)
+      collections: Object.values(COLLECTION_ALIASES).filter((value, index, list) => list.indexOf(value) === index),
+      limits: { maxRows: MAX_IMPORT_ROWS, batchSize: IMPORT_BATCH_SIZE, maxBodyBytes: MAX_IMPORT_BODY_BYTES }
     });
   } catch (error) {
-    return json({ ok: false, message: error.message || String(error) }, 500);
+    const status = Number(error?.status || 500);
+    finishRequestMetric(metric, { status, action: 'readiness', outcome: error?.code || 'error' });
+    return json({ ok: false, message: error.message || String(error), ...(error?.code ? { code: error.code } : {}) }, status);
   }
 }

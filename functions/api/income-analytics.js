@@ -1,6 +1,7 @@
 import { listCollection, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { buildIncomeAnalytics, journalMatchesIncomeBranch } from '../lib/income-analytics.js';
+import { readJsonBody } from '../lib/request-security.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -16,7 +17,7 @@ export async function onRequestPost(context) {
       error.status = 403;
       throw error;
     }
-    const body = await request.json().catch(() => ({}));
+    const body = await readJsonBody(request, { maxBytes: 256 * 1024 });
     const [chart, journals] = await Promise.all([
       listCollection(env, 'chartOfAccounts'),
       listCollection(env, 'accountingJournals')

@@ -25,13 +25,25 @@ const FALLBACK_CLASSES = [
   'SS 3 / Grade 12'
 ];
 
+function json(data, init = {}) {
+  return Response.json(data, {
+    ...init,
+    headers: {
+      ...(init.headers || {}),
+      'Cache-Control': init.status && init.status >= 400
+        ? 'no-store'
+        : 'public, max-age=300, stale-while-revalidate=600'
+    }
+  });
+}
+
 export async function onRequestGet(context) {
   try {
     const { env } = context;
     try {
       requireFirestoreEnv(env);
       const firestoreData = await getAdmissionClasses(env);
-      return Response.json({
+      return json({
         ok: true,
         classes: firestoreData.openClassOptions || firestoreData.openClasses || [],
         openClasses: firestoreData.openClasses || [],
@@ -41,12 +53,12 @@ export async function onRequestGet(context) {
       });
     } catch (firestoreErr) {
       if (!legacyGoogleDataEnabled(env)) {
-        return Response.json({ ok: false, message: firestoreErr.message || String(firestoreErr) }, { status: firestoreErr.status || 500 });
+        return json({ ok: false, message: firestoreErr.message || String(firestoreErr) }, { status: firestoreErr.status || 500 });
       }
     }
 
     if (!legacyGoogleDataEnabled(env) || !env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) {
-      return Response.json({ ok: true, classes: FALLBACK_CLASSES, fallback: true });
+      return json({ ok: true, classes: FALLBACK_CLASSES, fallback: true });
     }
 
     const url = new URL(env.GOOGLE_APPS_SCRIPT_URL);
@@ -59,13 +71,13 @@ export async function onRequestGet(context) {
     try {
       data = JSON.parse(text);
     } catch (_err) {
-      return Response.json({ ok: true, classes: FALLBACK_CLASSES, fallback: true, message: 'Admission classes fallback used because the Apps Script response was not JSON.' });
+      return json({ ok: true, classes: FALLBACK_CLASSES, fallback: true, message: 'Admission classes fallback used because the Apps Script response was not JSON.' });
     }
     if (!data.ok) {
-      return Response.json(data, { status: 400 });
+      return json(data, { status: 400 });
     }
 
-    return Response.json({
+    return json({
       ok: true,
       classes: data.openClassOptions || data.openClasses || [],
       openClasses: data.openClasses || [],
@@ -73,6 +85,6 @@ export async function onRequestGet(context) {
       formAmount: data.formAmount || ''
     });
   } catch (err) {
-    return Response.json({ ok: false, message: String(err) }, { status: 500 });
+    return json({ ok: false, message: err.message || String(err) }, { status: 500 });
   }
 }

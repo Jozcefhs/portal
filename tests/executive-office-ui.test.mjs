@@ -67,5 +67,5 @@ test('executive office remains responsive and readable in dark mode', () => {
   assert.match(portalCss, /html\[data-theme="dark"\] \.executive-directory-search>label\{color:#e7f1fb\}/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.executive-directory-email\{color:#e7f1fb\}/);
   assert.match(portalCss, /@media\(max-width:680px\)\{[\s\S]*?\.executive-directory-layout\{grid-template-columns:1fr/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260728-executive-office/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260728-quota-safety/);
 });

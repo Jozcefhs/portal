@@ -6,6 +6,12 @@ import {
   verifyStaffApprovalPassword
 } from '../lib/staff-auth.js';
 import { loadStaffApprovalProfile, publicStaffApprovalProfile } from '../lib/staff-approval-profile.js';
+import {
+  beginIdempotentRequest,
+  completeIdempotentRequest,
+  failIdempotentRequest,
+  readJsonBody
+} from '../lib/request-security.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -46,6 +52,37 @@ export function normalizeMaterialItems(input) {
 
 function safeId(value) {
   return clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140);
+}
+
+function documentVersion(document = {}) {
+  const version = clean(document.__updateTime);
+  if (version) return version;
+  const error = new Error('This finance record has no concurrency version. Refresh the list and try again.');
+  error.status = 409;
+  error.code = 'FINANCE_RECORD_VERSION_REQUIRED';
+  throw error;
+}
+
+function removeFirestoreMetadata(document = {}) {
+  delete document.__id;
+  delete document.__name;
+  delete document.__createTime;
+  delete document.__updateTime;
+  return document;
+}
+
+async function commitFinanceDecision(env, writes) {
+  try {
+    return await batchUpsertDocuments(env, writes);
+  } catch (error) {
+    if ([409, 412].includes(Number(error?.status)) || error?.code === 'FIRESTORE_WRITE_CONFLICT') {
+      const conflict = new Error('This finance request changed while it was being reviewed. Refresh the list before trying again.');
+      conflict.status = 409;
+      conflict.code = 'FINANCE_WRITE_CONFLICT';
+      throw conflict;
+    }
+    throw error;
+  }
 }
 
 function nowIso() {
@@ -346,8 +383,9 @@ async function reviewRecord(env, user, body, request) {
   const collection = isBill ? 'accountingSupplierBills' : 'accountingExpenses';
   const idField = isBill ? 'BillNo' : 'ExpenseNo';
   const id = clean(body.recordId);
-  const rows = await listCollection(env, collection);
-  const existing = rows.find((row) => same(row[idField], id) || same(row.__id, safeId(id)));
+  const direct = await getDocument(env, collection, safeId(id));
+  const existing = direct || (await listCollection(env, collection))
+    .find((row) => same(row[idField], id) || same(row.__id, safeId(id)));
   if (!existing) {
     const err = new Error('The selected finance request was not found.');
     err.status = 404;
@@ -411,15 +449,19 @@ async function reviewRecord(env, user, body, request) {
           ApprovalStampApplied: false
         })
   };
-  delete payload.__id;
-  delete payload.__name;
-  const writes = [{ collectionPath: collection, documentId: safeId(id), data: payload }];
+  removeFirestoreMetadata(payload);
+  const writes = [{
+    collectionPath: collection,
+    documentId: safeId(id),
+    data: payload,
+    updateTime: documentVersion(existing)
+  }];
   if (endorsement) writes.push({
     collectionPath: 'financeDocumentEndorsements',
     documentId: endorsementId(id, stage),
     data: endorsement
   });
-  await batchUpsertDocuments(env, writes);
+  await commitFinanceDecision(env, writes);
   if (decision === 'Rejected') {
     await deleteDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'approval')).catch(() => null);
     await deleteDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'admin')).catch(() => null);
@@ -439,7 +481,9 @@ async function accountsReview(env, user, body, request) {
   const collection = isBill ? 'accountingSupplierBills' : 'accountingExpenses';
   const idField = isBill ? 'BillNo' : 'ExpenseNo';
   const id = clean(body.recordId);
-  const existing = (await listCollection(env, collection)).find((row) => same(row[idField], id) || same(row.__id, safeId(id)));
+  const direct = await getDocument(env, collection, safeId(id));
+  const existing = direct || (await listCollection(env, collection))
+    .find((row) => same(row[idField], id) || same(row.__id, safeId(id)));
   if (!existing) {
     const err = new Error('The selected finance request was not found.');
     err.status = 404;
@@ -464,15 +508,19 @@ async function accountsReview(env, user, body, request) {
     AccountsReviewNotes: clean(body.notes),
     UpdatedAt: nowIso()
   };
-  delete payload.__id;
-  delete payload.__name;
-  const writes = [{ collectionPath: collection, documentId: safeId(id), data: payload }];
+  removeFirestoreMetadata(payload);
+  const writes = [{
+    collectionPath: collection,
+    documentId: safeId(id),
+    data: payload,
+    updateTime: documentVersion(existing)
+  }];
   if (endorsement) writes.push({
     collectionPath: 'financeDocumentEndorsements',
     documentId: endorsementId(id, 'accounts'),
     data: endorsement
   });
-  await batchUpsertDocuments(env, writes);
+  await commitFinanceDecision(env, writes);
   await writeAudit(env, user, 'ACCOUNTS REVIEW', isBill ? 'Supplier Bill' : 'Expense Requisition', id, clean(body.notes));
   return { ok: true, message: 'Marked as reviewed by Accounts. Post or pay it from the desktop Finance & Accounting tab.', record: payload };
 }
@@ -512,7 +560,8 @@ async function documentRecord(env, user, body) {
   const collection = isBill ? 'accountingSupplierBills' : 'accountingExpenses';
   const idField = isBill ? 'BillNo' : 'ExpenseNo';
   const id = clean(body.recordId);
-  const existing = (await listCollection(env, collection))
+  const direct = await getDocument(env, collection, safeId(id));
+  const existing = direct || (await listCollection(env, collection))
     .find((row) => same(row[idField], id) || same(row.__id, safeId(id)));
   if (!existing || !scopedRows([existing], user, capabilities(user)).length) {
     const err = new Error('The selected finance document was not found.');
@@ -536,12 +585,36 @@ async function documentRecord(env, user, body) {
 }
 
 export async function onRequestPost(context) {
+  let idempotency = null;
   try {
     const { request, env } = context;
     requireFirestoreEnv(env);
     const user = await requireStaffSession(env, request);
-    const body = await request.json().catch(() => ({}));
+    const body = await readJsonBody(request, { maxBytes: 1024 * 1024 });
     const action = lower(body.action || 'list');
+    const mutationActions = new Set([
+      'submitrequisition',
+      'submitmaterialrequisition',
+      'submitbill',
+      'review',
+      'accountsreview'
+    ]);
+    if (mutationActions.has(action)) {
+      idempotency = await beginIdempotentRequest(env, request, body, {
+        scope: `finance-${action}`,
+        actor: clean(user.username),
+        ttlMinutes: 30 * 24 * 60
+      });
+      if (idempotency.replay) {
+        return Response.json(idempotency.response, {
+          status: idempotency.status || (idempotency.response?.ok === false ? 409 : 200),
+          headers: {
+            'Cache-Control': 'no-store',
+            'Idempotency-Replayed': 'true'
+          }
+        });
+      }
+    }
     let data;
     if (action === 'list') data = await listWorkflow(env, user);
     else if (action === 'submitrequisition') data = await submitRequisition(env, user, body);
@@ -557,8 +630,10 @@ export async function onRequestPost(context) {
     }
     const headers = { 'Cache-Control': 'no-store' };
     if (action === 'review' || action === 'accountsreview') headers['Set-Cookie'] = clearStaffApprovalProofCookie();
+    if (mutationActions.has(action)) await completeIdempotentRequest(env, idempotency, data, 200);
     return Response.json(data, { headers });
   } catch (err) {
+    if (idempotency?.owner) await failIdempotentRequest(context.env, idempotency, err);
     return Response.json({ ok: false, message: err.message || String(err) }, {
       status: err.status || 500,
       headers: { 'Cache-Control': 'no-store' }

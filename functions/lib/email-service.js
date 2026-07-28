@@ -25,7 +25,7 @@ export async function sendConfiguredEmail(env, { toEmail, toName, subject, textC
     getDocument(env, 'settings', 'brevo').catch(() => ({})),
     getDocument(env, 'settings', 'schoolProfile').catch(() => ({}))
   ]);
-  const apiKey = clean(brevo?.BrevoApiKey || env.BREVO_API_KEY);
+  const apiKey = clean(env.BREVO_API_KEY);
   const senderEmail = clean(brevo?.BrevoSenderEmail || env.BREVO_SENDER_EMAIL || env.SCHOOL_EMAIL);
   const senderName = clean(brevo?.BrevoSenderName || env.BREVO_SENDER_NAME || profile?.SchoolName || env.SCHOOL_NAME || 'DIGC Suite');
   if (!apiKey || !validEmail(senderEmail)) {

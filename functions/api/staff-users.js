@@ -1,5 +1,6 @@
 import { batchUpsertDocuments, deleteDocument, getDocument, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { hashStaffPassword, requireStaffSession } from '../lib/staff-auth.js';
+import { readJsonBody } from '../lib/request-security.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -202,7 +203,7 @@ export async function onRequestPost(context) {
     requireFirestoreEnv(env);
     const actor = await requireStaffSession(env, request);
     ensureSuperAdmin(actor);
-    const body = await request.json().catch(() => ({}));
+    const body = await readJsonBody(request, { maxBytes: 4 * 1024 * 1024 });
     const action = lower(body.action || 'list');
     let result;
     if (action === 'list') {
