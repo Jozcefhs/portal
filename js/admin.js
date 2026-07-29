@@ -4008,7 +4008,7 @@ function inferredRecordsDeskTypes() {
   const edition = resolveDashboardEdition(currentUser || {});
   const school = edition === 'school';
   return [
-    school && ['students', 'accounts', 'clinic', 'tuckShop'].some((key) => allowed.has(key)) && 'students',
+    school && ['students', 'accounts', 'clinic', 'tuckShop', 'studentConduct'].some((key) => allowed.has(key)) && 'students',
     school && allowed.has('admissions') && 'applicants',
     allowed.has('staffUsers') && 'staff',
     !school && allowed.has('members') && 'members',
@@ -4054,7 +4054,7 @@ function renderRecordsDeskDetail(detail) {
   const activities = (detail.activities || []).map((group) => `<section class="records-desk-activity-card">
     <h3>${escapeHtml(group.title)}</h3>
     <div>${(group.rows || []).map((row) => `<article>
-      <span><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.meta || row.status || '')}</small></span>
+      <span><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.meta || row.status || '')}</small>${row.detail ? `<small>${escapeHtml(row.detail)}</small>` : ''}</span>
       ${row.amount === undefined ? '' : `<b>${escapeHtml(money(row.amount))}</b>`}
     </article>`).join('')}</div>
   </section>`).join('');
@@ -5257,11 +5257,13 @@ function renderStudentConduct(selected = {}) {
 async function loadStudentConduct() {
   if (activeSection !== 'studentConduct') return;
   try {
+    const handoff = takeRecordsDeskHandoff('studentConduct');
+    const reference = recordsDeskHandoffReference(handoff);
     const data = await studentConductRequest('list');
     if (activeSection !== 'studentConduct') return;
     studentConductData = data;
     renderModuleSummary('studentConduct', data);
-    renderStudentConduct();
+    renderStudentConduct(reference ? { StudentRef: reference } : {});
   } catch (error) {
     if (activeSection === 'studentConduct') {
       panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;

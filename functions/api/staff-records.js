@@ -234,6 +234,7 @@ function rowMatchesKeys(row, keys) {
     row.AdmissionNo,
     row.ApplicationReference,
     row.ApplicationID,
+    row.StudentRef,
     row.__id
   ].some((candidate) => recordReferencesMatch(candidate, { __id: key })));
 }
@@ -298,7 +299,8 @@ function studentActions(user, student) {
     allowed.has('students') && { id: 'student-profile', label: 'Edit profile', targetSection: 'students', context: { AccountRef: id } },
     allowed.has('accounts') && { id: 'student-finance', label: 'Open Finance', targetSection: 'accounts', context: { AccountRef: id } },
     allowed.has('clinic') && { id: 'student-clinic', label: 'Open Clinic', targetSection: 'clinic', context: { AccountRef: id } },
-    allowed.has('tuckShop') && { id: 'student-wallet', label: 'Open Wallet Purchase', targetSection: 'tuckShop', context: { AccountRef: id } }
+    allowed.has('tuckShop') && { id: 'student-wallet', label: 'Open Wallet Purchase', targetSection: 'tuckShop', context: { AccountRef: id } },
+    allowed.has('studentConduct') && { id: 'student-conduct', label: 'Open Conduct & Discipline', targetSection: 'studentConduct', context: { AccountRef: id } }
   ].filter(Boolean);
 }
 
@@ -306,18 +308,24 @@ async function studentDetail(env, user, row, capabilities) {
   const detail = studentDetailProjection(row, capabilities);
   const keys = referenceKeys(row);
   const allowed = new Set(user.allowedSections || []);
-  const [payments, invoices, ledger, clinicRecords, storeOrders] = await Promise.all([
+  const selectedBranch = lower(row.BranchId || 'main') || 'main';
+  const selectedSection = lower(schoolSectionFor(row));
+  const [payments, invoices, ledger, clinicRecords, storeOrders, conductRecords] = await Promise.all([
     capabilities.canViewStudentFinance ? listCollection(env, 'payments') : Promise.resolve([]),
     capabilities.canViewStudentFinance ? listCollection(env, 'invoices') : Promise.resolve([]),
     capabilities.canViewStudentFinance || capabilities.canViewStudentWallet ? listCollection(env, 'ledger') : Promise.resolve([]),
     capabilities.canViewStudentClinic ? listCollection(env, 'clinicRecords') : Promise.resolve([]),
     ['bookstore', 'uniformStore', 'tuckShop'].some((section) => allowed.has(section))
       ? listCollection(env, 'storeOrders')
+      : Promise.resolve([]),
+    capabilities.canViewStudentConduct
+      ? listSchoolCollection(env, 'studentConductCases', {
+        branchId: selectedBranch,
+        schoolSectionAccess: user.schoolSectionAccess
+      })
       : Promise.resolve([])
   ]);
-  const selectedBranch = lower(row.BranchId || 'main') || 'main';
-  const selectedSection = lower(schoolSectionFor(row));
-  const activityRows = [...payments, ...invoices, ...ledger, ...clinicRecords, ...storeOrders];
+  const activityRows = [...payments, ...invoices, ...ledger, ...clinicRecords, ...storeOrders, ...conductRecords];
   const hasLegacyActivity = activityRows.some((item) =>
     (!clean(item.BranchId) || !clean(item.SchoolSection || item.schoolSection)) &&
     rowMatchesKeys(item, keys));
@@ -385,6 +393,30 @@ async function studentDetail(env, user, row, capabilities) {
       amount: number(item.Amount || item.TotalAmount),
       status: clean(item.Status)
     }))));
+  }
+  if (capabilities.canViewStudentConduct) {
+    const cases = recent(scoped(conductRecords), ['IncidentDate', 'UpdatedAt', 'CreatedAt']);
+    activities.push({
+      title: 'Conduct & discipline',
+      rows: cases.length
+        ? cases.map((item) => ({
+          title: clean(item.Summary || item.Category || item.CaseId || 'Conduct case'),
+          meta: [
+            item.IncidentDate,
+            item.Category,
+            item.Severity ? `${clean(item.Severity)} severity` : '',
+            item.Status
+          ].map(clean).filter(Boolean).join(' · '),
+          detail: [
+            item.Sanction ? `Measure: ${clean(item.Sanction)}` : '',
+            item.Resolution ? `Resolution: ${clean(item.Resolution)}` : ''
+          ].filter(Boolean).join(' · ')
+        }))
+        : [{
+          title: 'No conduct cases recorded',
+          meta: 'No disciplinary record in your permitted school scope.'
+        }]
+    });
   }
   return {
     ...detail,

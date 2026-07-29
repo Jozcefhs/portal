@@ -33,6 +33,15 @@ test('record types are derived from the signed-in edition and allowed sections',
   assert.deepEqual(allowedRecordsDeskTypes(schoolAccounts), ['students']);
   assert.equal(schoolAccounts.canViewStudentFinance, true);
   assert.equal(schoolAccounts.canViewStudentClinic, false);
+  assert.equal(schoolAccounts.canViewStudentConduct, false);
+
+  const welfare = recordsDeskCapabilities({
+    edition: 'school',
+    role: 'Student Welfare Officer',
+    allowedSections: ['recordsDesk', 'studentConduct']
+  });
+  assert.deepEqual(allowedRecordsDeskTypes(welfare), ['students']);
+  assert.equal(welfare.canViewStudentConduct, true);
 
   const membershipOfficer = recordsDeskCapabilities({
     edition: 'faith',
@@ -163,6 +172,10 @@ test('records API requires a live staff session, scopes every type, audits recor
   assert.match(apiSource, /query\.length < 3/);
   assert.match(apiSource, /recordsDeskLimit\(body\.limit\)/);
   assert.match(apiSource, /capabilities\.canViewStudentFinance \? listCollection\(env, 'payments'\)/);
+  assert.match(apiSource, /capabilities\.canViewStudentConduct[\s\S]*?listSchoolCollection\(env, 'studentConductCases'/);
+  assert.match(apiSource, /title: 'Conduct & discipline'/);
+  assert.match(apiSource, /No conduct cases recorded/);
+  assert.match(apiSource, /row\.StudentRef/);
   assert.match(apiSource, /legacyStudentReferenceIsUnique\(env, row\)\.catch\(\(\) => false\)/);
   assert.match(apiSource, /if \(!itemBranch && !legacyReferenceIsSafe\) return false/);
   assert.match(apiSource, /if \(!itemSection && !legacyReferenceIsSafe\) return false/);
@@ -173,6 +186,13 @@ test('records API requires a live staff session, scopes every type, audits recor
   assert.match(apiSource, /writeAudit\(env, user, 'VIEW'/);
   assert.match(apiSource, /Cache-Control': 'no-store/);
   assert.doesNotMatch(apiSource, /BACKEND_SHARED_SECRET|GOOGLE_APPS_SCRIPT_SECRET/);
+});
+
+test('student conduct history is permission-gated and rendered in the student profile', () => {
+  assert.match(apiSource, /allowed\.has\('studentConduct'\).*Open Conduct & Discipline/);
+  assert.match(apiSource, /item\.Resolution \? `Resolution:/);
+  assert.match(adminJs, /row\.detail \? `<small>\$\{escapeHtml\(row\.detail\)\}<\/small>`/);
+  assert.match(adminJs, /takeRecordsDeskHandoff\('studentConduct'\)/);
 });
 
 test('role defaults expose Records Desk without weakening member privacy', () => {

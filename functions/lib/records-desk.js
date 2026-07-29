@@ -59,7 +59,7 @@ export function recordsDeskCapabilities(user = {}) {
     edition,
     canSearchStudents: enabled && schoolEdition &&
       (schoolExecutive ||
-      ['students', 'accounts', 'clinic', 'tuckShop'].some((section) => allowed.has(section))),
+      ['students', 'accounts', 'clinic', 'tuckShop', 'studentConduct'].some((section) => allowed.has(section))),
     canSearchApplicants: enabled && schoolEdition && allowed.has('admissions'),
     canSearchStaff: enabled && (
       (allowed.has('staffUsers') && role === 'Super Admin') ||
@@ -72,6 +72,7 @@ export function recordsDeskCapabilities(user = {}) {
     canViewStudentFinance: allowed.has('accounts'),
     canViewStudentClinic: allowed.has('clinic'),
     canViewStudentWallet: allowed.has('tuckShop') || allowed.has('accounts'),
+    canViewStudentConduct: schoolEdition && allowed.has('studentConduct'),
     canViewStaffSecurity: allowed.has('staffUsers') && clean(user.role) === 'Super Admin',
     canViewMemberContact: ministryExecutive || allowed.has('members'),
     canViewPastoralNotes: PASTORAL_ROLES.has(clean(user.role)),
