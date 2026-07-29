@@ -61,3 +61,12 @@ test('conduct APIs require authenticated, scoped school staff and support deskto
   assert.match(cssSource, /\.student-conduct-layout/);
 });
 
+test('conduct incident composer can search students by name, admission number, or class', () => {
+  assert.match(adminSource, /id="studentConductStudentSearch"/);
+  assert.match(adminSource, /Name, admission no\. or class/);
+  assert.match(adminSource, /searchText: lower\(\[row\.StudentName, row\.StudentRef, row\.ClassName\]/);
+  assert.match(adminSource, /No matching student/);
+  assert.match(adminSource, /select\.value = selectedRef/);
+  assert.match(cssSource, /\.student-conduct-student-search/);
+  assert.match(cssSource, /html\[data-theme="dark"\] \.student-conduct-student-search input/);
+});

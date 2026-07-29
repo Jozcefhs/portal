@@ -5086,13 +5086,14 @@ async function studentConductRequest(action = 'list', payload = {}) {
 function studentConductForm(data, selected = {}) {
   const option = (value, selectedValue, label = value) =>
     `<option value="${escapeHtml(value)}"${clean(value) === clean(selectedValue) ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+  const students = data.students || [];
   return `
     <form id="studentConductForm" class="student-conduct-form">
       <input type="hidden" name="CaseId" value="${escapeHtml(selected.CaseId || '')}">
       <label>Student
-        <select name="StudentRef" required>
-          <option value="">Choose student</option>
-          ${(data.students || []).map((row) => option(
+        <select id="studentConductStudent" name="StudentRef" required>
+          <option value="">${students.length ? 'Choose student' : 'No students available'}</option>
+          ${students.map((row) => option(
             row.StudentRef,
             selected.StudentRef,
             `${row.StudentName} · ${row.StudentRef}${row.ClassName ? ` · ${row.ClassName}` : ''}`
@@ -5119,6 +5120,56 @@ function studentConductForm(data, selected = {}) {
     </form>`;
 }
 
+function bindStudentConductStudentSearch(data) {
+  const search = document.getElementById('studentConductStudentSearch');
+  const select = document.getElementById('studentConductStudent');
+  const feedback = document.getElementById('studentConductStudentSearchStatus');
+  if (!search || !select || !feedback) return;
+  const students = (data.students || []).map((row) => ({
+    ref: clean(row.StudentRef),
+    name: clean(row.StudentName),
+    className: clean(row.ClassName),
+    searchText: lower([row.StudentName, row.StudentRef, row.ClassName].filter(Boolean).join(' '))
+  })).filter((row) => row.ref);
+  search.disabled = !students.length;
+
+  const update = () => {
+    const query = lower(search.value);
+    const selectedRef = clean(select.value);
+    const matching = query
+      ? students.filter((row) => row.searchText.includes(query))
+      : students;
+    const visible = [...matching];
+    const selectedStudent = students.find((row) => row.ref === selectedRef);
+    if (selectedStudent && !visible.some((row) => row.ref === selectedRef)) visible.unshift(selectedStudent);
+
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = students.length
+      ? (matching.length ? 'Choose student' : 'No matching student')
+      : 'No students available';
+    select.replaceChildren(placeholder);
+    visible.forEach((row) => {
+      const optionElement = document.createElement('option');
+      optionElement.value = row.ref;
+      optionElement.textContent = [row.name, row.ref, row.className].filter(Boolean).join(' · ');
+      select.append(optionElement);
+    });
+    select.value = selectedRef;
+    feedback.textContent = query
+      ? `${matching.length} matching student${matching.length === 1 ? '' : 's'}`
+      : `${students.length} student${students.length === 1 ? '' : 's'} available`;
+  };
+
+  search.addEventListener('input', update);
+  search.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowDown') return;
+    event.preventDefault();
+    select.focus();
+  });
+  update();
+}
+
 function renderStudentConduct(selected = {}) {
   if (activeSection !== 'studentConduct' || !studentConductData) return;
   const data = studentConductData;
@@ -5139,7 +5190,14 @@ function renderStudentConduct(selected = {}) {
     <div class="student-conduct-layout">
       <section class="student-conduct-card">
         <p class="eyebrow">${selected.CaseId ? 'Update committee case' : 'New committee case'}</p>
-        <h3>${selected.CaseId ? escapeHtml(selected.CaseId) : 'Record an incident'}</h3>
+        <div class="student-conduct-card-heading">
+          <h3>${selected.CaseId ? escapeHtml(selected.CaseId) : 'Record an incident'}</h3>
+          <label class="student-conduct-student-search">
+            <span>Find student</span>
+            <input id="studentConductStudentSearch" type="search" placeholder="Name, admission no. or class" autocomplete="off">
+            <small id="studentConductStudentSearchStatus" aria-live="polite"></small>
+          </label>
+        </div>
         ${studentConductForm(data, selected)}
       </section>
       <section class="student-conduct-card conduct-register">
@@ -5161,6 +5219,7 @@ function renderStudentConduct(selected = {}) {
   document.getElementById('refreshStudentConduct')?.addEventListener('click', (event) => {
     runButtonAction(event.currentTarget, 'Refreshing...', loadStudentConduct);
   });
+  bindStudentConductStudentSearch(data);
   document.getElementById('cancelStudentConductEdit')?.addEventListener('click', () => renderStudentConduct());
   panelEl.querySelectorAll('[data-edit-conduct]').forEach((button) => button.addEventListener('click', () => {
     const row = (data.cases || []).find((item) => clean(item.CaseId) === clean(button.dataset.editConduct));
