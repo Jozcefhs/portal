@@ -1961,8 +1961,10 @@ html[data-theme="dark"] .records-desk-handoff{border-color:#2b8f80;background:#1
 .student-conduct-card h3{margin:2px 0 14px;color:#102a43}
 .student-conduct-card-heading{display:flex;align-items:start;justify-content:space-between;gap:12px;margin-bottom:14px}
 .student-conduct-card-heading h3{margin:2px 0}
-.student-conduct-student-search{display:grid;flex:0 1 210px;gap:4px;color:#274762;font-size:10px;font-weight:700}
+.student-conduct-student-search{display:grid;flex:0 1 300px;gap:4px;color:#274762;font-size:10px;font-weight:700}
+.student-conduct-student-search-controls{display:flex;align-items:stretch;gap:6px}
 .student-conduct-student-search input{width:100%;min-height:36px;margin:0;padding:7px 10px;border:1px solid #b9c9d9;border-radius:9px;background:#f8fbfe;color:#102a43;font:500 12px/1.25 Arial,sans-serif}
+.student-conduct-student-search button{width:auto;min-height:36px;margin:0;padding:7px 12px;border-radius:9px;white-space:nowrap}
 .student-conduct-student-search small{min-height:13px;color:#647f96;font-size:9px;font-weight:500;text-align:right}
 .student-conduct-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .student-conduct-form label{display:flex;min-width:0;flex-direction:column;gap:5px;color:#274762;font-size:10px;font-weight:700}
@@ -1980,11 +1982,12 @@ html[data-theme="dark"] .student-conduct-card{border-color:#2c435a;background:#0
 html[data-theme="dark"] .student-conduct-card h3,html[data-theme="dark"] .student-conduct-form label{color:#e7f0f9}
 html[data-theme="dark"] .student-conduct-student-search{color:#e7f0f9}
 html[data-theme="dark"] .student-conduct-student-search input{border-color:#3b5670;background:#102438;color:#edf5ff}
+html[data-theme="dark"] .student-conduct-student-search button{border-color:#4b6b88}
 html[data-theme="dark"] .student-conduct-student-search small{color:#a8bdd0}
 html[data-theme="dark"] .student-conduct-form input,html[data-theme="dark"] .student-conduct-form select,html[data-theme="dark"] .student-conduct-form textarea{border-color:#344c63;background:#102438;color:#edf5ff}
 html[data-theme="dark"] .student-conduct-form .checkbox-line{border-color:#344c63;background:#13283c;color:#edf5ff}
 @media(max-width:980px){.student-conduct-summary{grid-template-columns:repeat(5,minmax(118px,1fr));overflow-x:auto}.student-conduct-layout{grid-template-columns:1fr}}
-@media(max-width:680px){.student-conduct-summary{margin-right:-14px}.student-conduct-card{padding:13px;border-radius:13px}.student-conduct-card-heading{display:grid}.student-conduct-student-search{width:100%;max-width:none}.student-conduct-form{grid-template-columns:1fr}.conduct-span-2{grid-column:auto}}
+@media(max-width:680px){.student-conduct-summary{margin-right:-14px}.student-conduct-card{padding:13px;border-radius:13px}.student-conduct-card-heading{display:grid}.student-conduct-student-search{width:100%;max-width:none}.student-conduct-student-search-controls{display:grid;grid-template-columns:minmax(0,1fr) auto}.student-conduct-form{grid-template-columns:1fr}.conduct-span-2{grid-column:auto}}
 
 /* Keep summary cards readable in one bounded row; overflow belongs to the row, not the page. */
 .metric-row,

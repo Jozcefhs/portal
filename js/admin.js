@@ -5122,9 +5122,10 @@ function studentConductForm(data, selected = {}) {
 
 function bindStudentConductStudentSearch(data) {
   const search = document.getElementById('studentConductStudentSearch');
+  const searchButton = document.getElementById('studentConductStudentSearchButton');
   const select = document.getElementById('studentConductStudent');
   const feedback = document.getElementById('studentConductStudentSearchStatus');
-  if (!search || !select || !feedback) return;
+  if (!search || !searchButton || !select || !feedback) return;
   const students = (data.students || []).map((row) => ({
     ref: clean(row.StudentRef),
     name: clean(row.StudentName),
@@ -5132,8 +5133,9 @@ function bindStudentConductStudentSearch(data) {
     searchText: lower([row.StudentName, row.StudentRef, row.ClassName].filter(Boolean).join(' '))
   })).filter((row) => row.ref);
   search.disabled = !students.length;
+  searchButton.disabled = !students.length;
 
-  const update = () => {
+  const update = ({ chooseSingle = false } = {}) => {
     const query = lower(search.value);
     const selectedRef = clean(select.value);
     const matching = query
@@ -5155,17 +5157,29 @@ function bindStudentConductStudentSearch(data) {
       optionElement.textContent = [row.name, row.ref, row.className].filter(Boolean).join(' · ');
       select.append(optionElement);
     });
-    select.value = selectedRef;
+    const matchedRef = chooseSingle && query && matching.length === 1
+      ? matching[0].ref
+      : selectedRef;
+    select.value = visible.some((row) => row.ref === matchedRef) ? matchedRef : '';
     feedback.textContent = query
-      ? `${matching.length} matching student${matching.length === 1 ? '' : 's'}`
+      ? (chooseSingle && matching.length === 1
+          ? `Selected ${matching[0].name}`
+          : `${matching.length} matching student${matching.length === 1 ? '' : 's'}`)
       : `${students.length} student${students.length === 1 ? '' : 's'} available`;
+    if (chooseSingle && matching.length > 1) select.focus();
   };
 
-  search.addEventListener('input', update);
+  const runSearch = () => update({ chooseSingle: true });
+  search.addEventListener('input', () => update());
+  searchButton.addEventListener('click', runSearch);
   search.addEventListener('keydown', (event) => {
-    if (event.key !== 'ArrowDown') return;
-    event.preventDefault();
-    select.focus();
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      runSearch();
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      select.focus();
+    }
   });
   update();
 }
@@ -5192,11 +5206,14 @@ function renderStudentConduct(selected = {}) {
         <p class="eyebrow">${selected.CaseId ? 'Update committee case' : 'New committee case'}</p>
         <div class="student-conduct-card-heading">
           <h3>${selected.CaseId ? escapeHtml(selected.CaseId) : 'Record an incident'}</h3>
-          <label class="student-conduct-student-search">
-            <span>Find student</span>
-            <input id="studentConductStudentSearch" type="search" placeholder="Name, admission no. or class" autocomplete="off">
+          <div class="student-conduct-student-search">
+            <label for="studentConductStudentSearch">Find student</label>
+            <div class="student-conduct-student-search-controls">
+              <input id="studentConductStudentSearch" type="search" placeholder="Name, admission no. or class" autocomplete="off">
+              <button type="button" id="studentConductStudentSearchButton">Search</button>
+            </div>
             <small id="studentConductStudentSearchStatus" aria-live="polite"></small>
-          </label>
+          </div>
         </div>
         ${studentConductForm(data, selected)}
       </section>
