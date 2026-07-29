@@ -115,3 +115,14 @@ test('department summary cards use one non-wrapping row per recording', () => {
   assert.match(portalCss, /\.department-summary-grid \.module-stat > \*\s*\{[\s\S]*?white-space:\s*nowrap/);
   assert.match(portalCss, /\.department-summary-grid \.module-stat \{[\s\S]*?width:\s*max-content/);
 });
+
+test('department charts retain readable text and surfaces in dark mode', () => {
+  assert.match(portalCss, /html\[data-theme="dark"\] \.department-chart-card\s*\{[^}]*background:\s*#111e2e;[^}]*color:\s*#edf4ff;/s);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.department-chart-card h3,[\s\S]*?\.vertical-bar-item strong\s*\{[^}]*color:\s*#f4f8ff;/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.vertical-bar-item small\s*\{[^}]*color:\s*#c7d5e5;/);
+});
+
+test('department workspace normalizes offering status without a missing helper crash', () => {
+  assert.match(adminJs, /function lower\(value\)\s*\{\s*return clean\(value\)\.toLowerCase\(\);\s*\}/);
+  assert.match(adminJs, /lower\(row\.RemittanceStatus\) === 'paid'/);
+});

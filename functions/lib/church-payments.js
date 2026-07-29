@@ -11,6 +11,7 @@ import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from '
 import { resolveOrganizationConfig } from './organization-config.js';
 import { resolveMembershipBranch } from './church-membership.js';
 import { resolveEmailSenderProfile } from './email-service.js';
+import QRCode from 'qrcode';
 
 const PAYSTACK_INIT_URL = 'https://api.paystack.co/transaction/initialize';
 
@@ -1127,6 +1128,41 @@ async function sendChurchDonationReceiptAction(env, user, body = {}) {
   };
 }
 
+function donationPaymentQrSvg(value = '') {
+  const qr = QRCode.create(clean(value), { errorCorrectionLevel: 'M' });
+  const margin = 3;
+  const size = qr.modules.size + (margin * 2);
+  const modules = [];
+  for (let row = 0; row < qr.modules.size; row += 1) {
+    for (let column = 0; column < qr.modules.size; column += 1) {
+      if (qr.modules.get(row, column)) modules.push(`M${column + margin} ${row + margin}h1v1h-1z`);
+    }
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" role="img" aria-label="Secure giving payment QR code" shape-rendering="crispEdges"><path fill="#fff" d="M0 0h${size}v${size}H0z"/><path fill="#071b2c" d="${modules.join('')}"/></svg>`;
+}
+
+export async function buildChurchDonationPaymentQr(env, user, body = {}) {
+  await requireDonationsEdition(env);
+  requireCapability(user, 'canInitiateOnline');
+  const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
+  const donation = await findDonationByIdOrReference(env, body, branchId);
+  const paymentLink = clean(donation.PaymentLink);
+  if (!paymentLink || !/^https:\/\/[A-Za-z0-9.-]+(?:\/|$)/.test(paymentLink)) {
+    inputError('Create the online payment link before generating its QR code.', 409);
+  }
+  if (lower(donation.Status) === 'paid') {
+    inputError('This gift is already paid; use its receipt instead.', 409);
+  }
+  return {
+    ok: true,
+    message: 'Secure giving QR code generated.',
+    branchId,
+    paymentLink,
+    qrSvg: donationPaymentQrSvg(paymentLink),
+    donation: publicDonationRow(donation)
+  };
+}
+
 export async function handleChurchDonationAction(env, user, body = {}) {
   const action = lower(body.Action || body.action || 'list');
   if (['list', 'getchurchdonations'].includes(action)) {
@@ -1140,6 +1176,9 @@ export async function handleChurchDonationAction(env, user, body = {}) {
   }
   if (['sendreceipt', 'sendchurchdonationreceipt'].includes(action)) {
     return sendChurchDonationReceiptAction(env, user, body);
+  }
+  if (['paymentqr', 'givingqr', 'generateqr'].includes(action)) {
+    return buildChurchDonationPaymentQr(env, user, body);
   }
   inputError('Choose a valid church donation action.');
 }
@@ -1155,5 +1194,6 @@ export default {
   markDonationPaidByReference,
   extractDonorEmailFromMetadata,
   donationSummary,
+  buildChurchDonationPaymentQr,
   handleChurchDonationAction
 };

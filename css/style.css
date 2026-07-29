@@ -1408,6 +1408,22 @@ html[data-theme="dark"] .staff-summary .module-summary-card:nth-child(4n+4) .mod
 .vertical-bar-track .coral { background: linear-gradient(#ff8f75, #ba472e); }
 .vertical-bar-item small { overflow: hidden; text-overflow: ellipsis; line-height: 1.15; }
 
+html[data-theme="dark"] .department-chart-card {
+  border-color: #33465c;
+  background: #111e2e;
+  color: #edf4ff;
+}
+html[data-theme="dark"] .department-chart-card h3,
+html[data-theme="dark"] .vertical-bar-item strong {
+  color: #f4f8ff;
+}
+html[data-theme="dark"] .vertical-bar-item small {
+  color: #c7d5e5;
+}
+html[data-theme="dark"] .vertical-bar-track {
+  background: #25364a;
+}
+
 .department-form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));

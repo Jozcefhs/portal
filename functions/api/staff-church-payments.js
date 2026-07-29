@@ -27,7 +27,7 @@ export async function onRequestPost(context) {
 
     const body = await readJsonBody(request, { maxBytes: 512 * 1024 });
     const action = clean(body.Action || body.action || '').toLowerCase();
-    const isMutation = !['list', 'getchurchdonations'].includes(action);
+    const isMutation = !['list', 'getchurchdonations', 'paymentqr', 'givingqr', 'generateqr'].includes(action);
     if (isMutation) {
       idempotency = await beginIdempotentRequest(env, request, body, {
         scope: `church-donation-${action || 'mutation'}`,

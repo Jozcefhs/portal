@@ -179,6 +179,10 @@ function clean(value) {
   return String(value ?? '').trim();
 }
 
+function lower(value) {
+  return clean(value).toLowerCase();
+}
+
 function newIdempotencyKey() {
   if (window.crypto?.randomUUID) return window.crypto.randomUUID();
   const random = window.crypto?.getRandomValues
@@ -3176,6 +3180,23 @@ function printChurchDonationReceipt(donation = {}) {
   receiptWindow.document.close();
 }
 
+function showChurchGivingQr(data = {}) {
+  const donation = data.donation || {};
+  const qrWindow = window.open('', '_blank', 'width=620,height=780');
+  if (!qrWindow) {
+    setStatus(document.getElementById('churchDonationStatus') || dashboardStatus, 'Allow pop-ups to view and print the giving QR code.', 'bad');
+    return;
+  }
+  qrWindow.opener = null;
+  const organisation = clean(donation.ChurchName || document.querySelector('[data-school-name]')?.textContent || staffBrand?.textContent) || 'Dynamax';
+  const donorName = clean(donation.DonorName) || 'Donor';
+  const givingType = clean(donation.PaymentType) || 'Gift';
+  const reference = clean(donation.Reference || donation.DonationId);
+  qrWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(givingType)} payment QR</title><style>
+    @page{size:A5;margin:12mm}*{box-sizing:border-box}body{margin:0;background:#edf3f8;color:#17314b;font:15px/1.5 Arial,sans-serif}.sheet{max-width:540px;margin:24px auto;padding:28px;border-top:7px solid #d49a00;border-radius:16px;background:#fff;box-shadow:0 14px 35px #173b5820;text-align:center}.eyebrow{margin:0;color:#087d68;font-size:12px;font-weight:bold;letter-spacing:1.3px;text-transform:uppercase}h1{margin:5px 0 4px;color:#164a78;font-size:25px}.amount{margin:0 0 18px;color:#36536e}.qr{width:min(330px,90%);margin:0 auto;padding:12px;border:1px solid #cbd9e7;border-radius:14px;background:#fff}.qr svg{display:block;width:100%;height:auto}.instruction{margin:18px auto 8px;max-width:390px}.reference{color:#637a90;font-size:12px}.actions{display:flex;justify-content:center;gap:8px;margin-top:20px}.actions button,.actions a{display:inline-flex;align-items:center;min-height:40px;padding:8px 14px;border:0;border-radius:8px;background:#1769e0;color:#fff;font-weight:bold;text-decoration:none;cursor:pointer}.actions a{background:#087d68}@media print{body{background:#fff}.sheet{margin:0;box-shadow:none}.actions{display:none}}</style></head><body><main class="sheet"><p class="eyebrow">Secure online giving</p><h1>${escapeHtml(organisation)}</h1><p class="amount">${escapeHtml(givingType)} for ${escapeHtml(donorName)} &middot; ${escapeHtml(money(donation.Amount || 0))}</p><div class="qr">${data.qrSvg || ''}</div><p class="instruction">Scan this code with a phone camera to open the secure payment page and complete the gift.</p><p class="reference">Reference: ${escapeHtml(reference)}</p><div class="actions"><button type="button" onclick="window.print()">Print QR</button><a href="${escapeHtml(data.paymentLink)}" target="_blank" rel="noopener">Open payment page</a></div></main></body></html>`);
+  qrWindow.document.close();
+}
+
 async function loadChurchDonations() {
   try {
     const methods = ['CASH', 'BANK TRANSFER', 'CHEQUE', 'POS', 'ONLINE', 'CARD', 'MOBILE MONEY'];
@@ -3276,8 +3297,11 @@ async function loadChurchDonations() {
             const printAction = status === 'paid'
               ? `<button type="button" class="compact-icon-action compact-print-action" data-print-donation="${escapeHtml(donationId)}" aria-label="View and print receipt ${escapeHtml(pick(row, ['ReceiptNo']) || donationId)}" title="View and print receipt"><span aria-hidden="true">&#128424;&#65038;</span></button>`
               : '';
-            return stateAction || printAction
-              ? `<span class="compact-row-actions">${stateAction}${printAction}</span>`
+            const qrAction = status === 'pending' && clean(pick(row, ['PaymentLink']))
+              ? `<button type="button" class="compact-icon-action" data-donation-qr="${escapeHtml(donationId)}" aria-label="Generate payment QR for ${escapeHtml(donationId)}" title="Generate payment QR"><span aria-hidden="true">&#9638;</span></button>`
+              : '';
+            return stateAction || printAction || qrAction
+              ? `<span class="compact-row-actions">${stateAction}${qrAction}${printAction}</span>`
               : '';
           }
         }
@@ -3341,6 +3365,21 @@ async function loadChurchDonations() {
       const donationId = clean(button.dataset.printDonation);
       const donation = (data.donations || []).find((item) => clean(item.DonationId || item.__id) === donationId);
       printChurchDonationReceipt(donation);
+    }));
+
+    panelEl.querySelectorAll('[data-donation-qr]').forEach((button) => button.addEventListener('click', async () => {
+      const donationId = clean(button.dataset.donationQr);
+      if (!donationId) return;
+      const normalText = button.textContent;
+      setButtonLoading(button, true, '', normalText);
+      try {
+        const qr = await churchDonationRequest('paymentqr', { DonationId: donationId });
+        showChurchGivingQr(qr);
+      } catch (error) {
+        setStatus(document.getElementById('churchDonationStatus') || dashboardStatus, error.message || String(error), 'bad');
+      } finally {
+        if (button.isConnected) setButtonLoading(button, false, '', normalText);
+      }
     }));
 
     panelEl.querySelectorAll('[data-donation-action]').forEach((button) => button.addEventListener('click', async () => {
