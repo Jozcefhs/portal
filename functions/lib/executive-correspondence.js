@@ -7,6 +7,7 @@ import {
 } from './firestore.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath } from './church-foundation.js';
 import { resolveOrganizationConfig } from './organization-config.js';
+import { staffRecordMatchesEdition } from './records-desk.js';
 import { listSchoolCollection, safeScopeId, schoolSectionFor } from './school-scope.js';
 import { escapeEmailHtml, sendConfiguredEmail } from './email-service.js';
 import { loadStaffApprovalProfile, publicStaffApprovalProfile } from './staff-approval-profile.js';
@@ -165,7 +166,8 @@ function visibleSchoolRow(row, scope) {
   return scope.schoolSection === 'all' || schoolSectionFor(row) === scope.schoolSection;
 }
 
-function visibleStaffRow(row, scope) {
+export function visibleExecutiveStaffRow(row, scope, user = {}) {
+  if (!staffRecordMatchesEdition(row, { ...user, edition: scope.edition })) return false;
   if (lower(row.BranchId || 'main') !== scope.branchId) return false;
   if (scope.edition !== 'school' || scope.schoolSection === 'all') return true;
   const section = lower(row.SchoolSectionAccess || row.SchoolSection || 'All');
@@ -547,11 +549,11 @@ async function saveMetricPreferences(env, user, scope, input) {
   return metricIds;
 }
 
-async function metricData(env, scope, selectedIds, correspondenceRows = null) {
+async function metricData(env, scope, selectedIds, correspondenceRows = null, user = {}) {
   const selected = new Set(selectedIds);
   const needStaff = ['staffTotal', 'activeStaff', 'staffByDepartment'].some((id) => selected.has(id));
   const staff = needStaff
-    ? (await listCollection(env, 'staffUsers')).filter((row) => visibleStaffRow(row, scope))
+    ? (await listCollection(env, 'staffUsers')).filter((row) => visibleExecutiveStaffRow(row, scope, user))
     : [];
   const correspondence = correspondenceRows || await loadScopedCorrespondence(env, scope);
   let students = [];
@@ -644,7 +646,7 @@ function requestedSearchTypes(body, capabilities) {
   return { available, selected: requested ? available.filter((type) => type === requested) : available };
 }
 
-async function searchDirectory(env, body, capabilities, scope) {
+async function searchDirectory(env, body, capabilities, scope, user = {}) {
   const query = lower(body.query || body.search).replace(/\s+/g, ' ').slice(0, 120);
   if (query.length < 2) throw inputError('Enter at least two characters to search the Executive Office directory.');
   const terms = query.split(' ').filter(Boolean);
@@ -677,7 +679,7 @@ async function searchDirectory(env, body, capabilities, scope) {
     }
     if (type === 'staff') {
       return (await listCollection(env, 'staffUsers'))
-        .filter((row) => visibleStaffRow(row, scope))
+        .filter((row) => visibleExecutiveStaffRow(row, scope, user))
         .map((row) => searchResult(
           type,
           row.Username || row.__id,
@@ -734,7 +736,7 @@ async function searchDirectory(env, body, capabilities, scope) {
   return { query, availableTypes: available, results };
 }
 
-async function authoritativeRecipientTokens(env, correspondence, scope) {
+async function authoritativeRecipientTokens(env, correspondence, scope, user = {}) {
   const type = lower(correspondence.RecipientType);
   const id = lower(correspondence.RecipientId);
   if (!id || !['student', 'staff', 'member', 'department', 'class'].includes(type)) return {};
@@ -745,7 +747,7 @@ async function authoritativeRecipientTokens(env, correspondence, scope) {
     canSearchMembers: scope.edition !== 'school',
     canSearchDepartments: scope.edition !== 'school'
   };
-  const rows = (await searchDirectory(env, { query: correspondence.RecipientId, type }, capabilities, scope)).results;
+  const rows = (await searchDirectory(env, { query: correspondence.RecipientId, type }, capabilities, scope, user)).results;
   const exact = rows.find((row) => lower(row.id) === id);
   if (!exact) throw inputError('The linked recipient is no longer available in this branch or section.', 404);
   const authoritativeTokens = Object.fromEntries(
@@ -817,7 +819,7 @@ async function loadBrandingContext(env, identity, correspondence, user, issuance
       edition: identity.Edition,
       branchId: correspondence.BranchId,
       schoolSection: correspondence.SchoolSection || ''
-    });
+    }, user);
   const issuedAt = clean(correspondence.IssuedAt || nowIso());
   const savedTokens = normalizeTokenValues(
     immutable && issuanceSnapshot?.TokenValues
@@ -1105,7 +1107,7 @@ async function issueCorrespondence(env, user, body, scope, identity, authorizati
       `${referencePrefix(identity, existing.Kind)}-${issuedAt.slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
     // This performs the scoped exact lookup. For transfer certificates it is
     // mandatory, so caller-supplied token text can never impersonate a student.
-    const authoritative = await authoritativeRecipientTokens(env, existing, scope);
+    const authoritative = await authoritativeRecipientTokens(env, existing, scope, user);
     const tokenValues = { ...normalizeTokenValues(existing.TokenValues), ...authoritative };
     if (existing.Kind === 'transfer-certificate' &&
         (!clean(tokenValues.STUDENT_NAME) || !clean(tokenValues.ADMISSION_NO) || !clean(tokenValues.CLASS))) {
@@ -1334,7 +1336,7 @@ async function bootstrap(env, user, scope, capabilities, identity) {
     approvalProfile: publicStaffApprovalProfile(approvalProfile || {}),
     metricPreferences: metricIds,
     availableMetrics: metricDefinitions(scope.edition),
-    metrics: await metricData(env, scope, metricIds, correspondence)
+    metrics: await metricData(env, scope, metricIds, correspondence, user)
   };
 }
 
@@ -1348,7 +1350,7 @@ export async function handleExecutiveOfficeAction(env, user, body = {}, options 
   const action = lower(body.action || body.Action || 'bootstrap');
   if (action === 'bootstrap') return bootstrap(env, user, scope, capabilities, identity);
   if (action === 'search') {
-    const directory = await searchDirectory(env, body, capabilities, scope);
+    const directory = await searchDirectory(env, body, capabilities, scope, user);
     await writeAudit(env, user, scope, 'DIRECTORY SEARCH', {
       SearchType: clean(body.type || body.targetType || directory.availableTypes.join(',')),
       ResultCount: directory.results.length,
@@ -1434,7 +1436,7 @@ export async function handleExecutiveOfficeAction(env, user, body = {}, options 
       message: 'Executive dashboard preferences saved.',
       metricPreferences: metricIds,
       availableMetrics: metricDefinitions(scope.edition),
-      metrics: await metricData(env, scope, metricIds)
+      metrics: await metricData(env, scope, metricIds, null, user)
     };
   }
   throw inputError('Choose a valid Executive Office action.');

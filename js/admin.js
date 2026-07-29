@@ -4349,6 +4349,7 @@ function renderExecutiveOverview() {
   const charts = executiveMetricCharts();
   const records = executiveCorrespondenceRows();
   const recent = records.slice(0, 5);
+  const canManageStaff = currentUser?.role === 'Super Admin' && activeTabs.some(([key]) => key === 'staffUsers');
   return `
     <section class="executive-overview-grid">
       <article class="executive-hero-card">
@@ -4361,7 +4362,7 @@ function renderExecutiveOverview() {
       </article>
       <article class="executive-quick-card">
         <small>People and structure</small><h3>Search the directory</h3><p>Find a permitted student, member, staff account, class or department without changing its source record.</p>
-        <button type="button" class="secondary" data-executive-open="directory">Open directory</button>
+        <div class="compact-row-actions"><button type="button" class="secondary" data-executive-open="directory">Open directory</button>${canManageStaff ? '<button type="button" data-executive-manage-staff>Manage staff accounts</button>' : ''}</div>
       </article>
     </section>
     <section class="department-chart-grid executive-chart-grid">
@@ -4699,6 +4700,7 @@ function bindExecutiveOfficeEvents() {
     if (button.dataset.executiveOpen === 'compose') executiveSelectedRecipient = null;
     switchExecutiveOfficeTab(button.dataset.executiveOpen);
   }));
+  panelEl.querySelector('[data-executive-manage-staff]')?.addEventListener('click', () => selectSection('staffUsers'));
   document.querySelector('[data-executive-metrics]')?.addEventListener('click', () => document.getElementById('executiveMetricsDialog')?.showModal());
   document.querySelector('[data-close-executive-metrics]')?.addEventListener('click', () => document.getElementById('executiveMetricsDialog')?.close());
   document.getElementById('executiveMetricsForm')?.addEventListener('submit', async (event) => {

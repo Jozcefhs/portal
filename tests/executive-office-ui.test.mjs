@@ -63,6 +63,8 @@ test('executive workspace provides configurable metrics, directories, templates,
   assert.match(adminJs, /name="directoryRecipientEmail"/);
   assert.match(adminJs, /payload\.directoryRecipientEmail\) \|\| executiveRecordEmail/);
   assert.doesNotMatch(adminJs, /\.filter\(\(metric\) => selected\.has\(metric\.id\)\)\s*\.slice\(0, 6\)/);
+  assert.match(adminJs, /data-executive-manage-staff>Manage staff accounts/);
+  assert.match(adminJs, /data-executive-manage-staff\]'\)\?\.addEventListener\('click', \(\) => selectSection\('staffUsers'\)\)/);
 });
 
 test('executive office remains responsive and readable in dark mode', () => {
@@ -79,5 +81,5 @@ test('executive office remains responsive and readable in dark mode', () => {
   assert.match(portalCss, /html\[data-theme="dark"\] \.executive-empty-chart\{[^}]*background:#112438;[^}]*color:#edf5ff\}/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.executive-empty-chart \.muted\{color:#b8cada!important\}/);
   assert.match(portalCss, /@media\(max-width:680px\)\{[\s\S]*?\.executive-directory-layout\{grid-template-columns:1fr/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260729-member-position-delete/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260729-executive-staff-scope/);
 });

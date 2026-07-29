@@ -12,7 +12,8 @@ import {
   normalizeExecutiveMetricPreferences,
   normalizeTemplate,
   validateTemplateWriteTarget,
-  renderTokenTemplate
+  renderTokenTemplate,
+  visibleExecutiveStaffRow
 } from '../functions/lib/executive-correspondence.js';
 import { requireBackendSecret } from '../functions/api/backend.js';
 import { featureFlagsForEdition } from '../functions/lib/organization-config.js';
@@ -79,6 +80,36 @@ test('executive Records Desk access includes safe staff search without staff sec
   assert.equal(seniorPastor.canSearchDepartments, true);
   assert.equal(seniorPastor.canSearchStaff, true);
   assert.equal(seniorPastor.canViewStaffSecurity, false);
+});
+
+test('executive staff counts and directory never cross organisation editions', () => {
+  const faithScope = { edition: 'faith', branchId: 'main', schoolSection: '' };
+  const faithExecutive = { edition: 'faith', username: 'faith.admin' };
+  assert.equal(visibleExecutiveStaffRow(
+    { Username: 'school.teacher', OrganisationEdition: 'school', BranchId: 'main' },
+    faithScope,
+    faithExecutive
+  ), false);
+  assert.equal(visibleExecutiveStaffRow(
+    { Username: 'faith.pastor', OrganisationEdition: 'church', BranchId: 'main' },
+    faithScope,
+    faithExecutive
+  ), true);
+  assert.equal(visibleExecutiveStaffRow(
+    { Username: 'faith.admin', BranchId: 'main' },
+    faithScope,
+    faithExecutive
+  ), true);
+  assert.equal(visibleExecutiveStaffRow(
+    { Username: 'legacy.school', BranchId: 'main' },
+    faithScope,
+    faithExecutive
+  ), false);
+  assert.equal(visibleExecutiveStaffRow(
+    { Username: 'other.branch', OrganisationEdition: 'faith', BranchId: 'abuja' },
+    faithScope,
+    faithExecutive
+  ), false);
 });
 
 test('official templates are plain text, token bounded, and edition aware', () => {
