@@ -11,6 +11,7 @@ import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from '
 import { resolveOrganizationConfig } from './organization-config.js';
 import { resolveMembershipBranch } from './church-membership.js';
 import { resolveEmailSenderProfile } from './email-service.js';
+import { getSchoolStructure } from './school-scope.js';
 import QRCode from 'qrcode';
 
 const PAYSTACK_INIT_URL = 'https://api.paystack.co/transaction/initialize';
@@ -61,6 +62,7 @@ function amountToNumber(value) {
 }
 
 const PAYMENT_METHODS = new Set(['CASH', 'BANK TRANSFER', 'CHEQUE', 'POS', 'ONLINE', 'CARD', 'MOBILE MONEY']);
+const PUBLIC_GIVING_TYPES = new Set(['Donation', 'Tithe', 'Offering', 'Seed', 'Building Fund', 'Thanksgiving', 'Other']);
 
 function normalizePaymentMethod(value) {
   const method = clean(value).toUpperCase();
@@ -1006,7 +1008,8 @@ export async function initChurchDonationPayment(env, user, body = {}, requestUrl
   donation.PaymentStatus = 'Pending';
   donation.Status = 'Pending';
 
-  const callbackUrl = `${requestUrl}/payment-success.html?type=church&reference=${encodeURIComponent(reference)}`;
+  const publicGiving = lower(body.PublicGiving || body.publicGiving) === 'yes';
+  const callbackUrl = `${requestUrl}/payment-success.html?type=church&reference=${encodeURIComponent(reference)}${publicGiving ? `&source=public-giving&branch=${encodeURIComponent(branchId)}` : ''}`;
   const paystackResponse = await fetch(PAYSTACK_INIT_URL, {
     method: 'POST',
     headers: {
@@ -1099,6 +1102,35 @@ export async function markDonationPaidByReference(env, reference, payload = {}) 
   return update;
 }
 
+export async function initPublicChurchDonationPayment(env, body = {}, requestUrl = '') {
+  await requireDonationsEdition(env);
+  if (clean(body.CompanyWebsite || body.companyWebsite)) inputError('The giving request could not be processed.', 400);
+  const structure = await getSchoolStructure(env);
+  const branchId = resolveMembershipBranch({}, body.BranchId || body.branchId || structure.ActiveBranchId || 'main');
+  if (!(structure.Branches || []).some((branch) => resolveMembershipBranch({}, branch.Id || branch.id || branch.Name) === branchId)) {
+    inputError('Choose a valid giving branch.', 400);
+  }
+  const suppliedType = clean(body.PaymentType || body.paymentType) || 'Donation';
+  const paymentType = [...PUBLIC_GIVING_TYPES].find((value) => lower(value) === lower(suppliedType));
+  if (!paymentType) inputError('Choose a valid gift type.', 400);
+  const publicUser = {
+    role: 'Super Admin',
+    username: 'public-giving',
+    displayName: 'Public giving page',
+    branchId
+  };
+  return initChurchDonationPayment(env, publicUser, {
+    DonorName: clean(body.DonorName || body.donorName).slice(0, 160),
+    DonorEmail: clean(body.DonorEmail || body.donorEmail).slice(0, 254),
+    Amount: body.Amount || body.amount,
+    Currency: clean(body.Currency || body.currency || 'NGN').slice(0, 3),
+    PaymentType: paymentType,
+    Notes: clean(body.Notes || body.notes).slice(0, 500),
+    BranchId: branchId,
+    PublicGiving: 'yes'
+  }, requestUrl);
+}
+
 async function sendChurchDonationReceiptAction(env, user, body = {}) {
   const capabilities = requireCapability(user, 'canSendReceipt');
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
@@ -1163,6 +1195,30 @@ export async function buildChurchDonationPaymentQr(env, user, body = {}) {
   };
 }
 
+export async function buildChurchGenericGivingQr(env, user, body = {}, requestOrigin = '') {
+  const organization = await requireDonationsEdition(env);
+  requireCapability(user, 'canInitiateOnline');
+  const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
+  const givingUrl = `${clean(requestOrigin).replace(/\/+$/, '')}/give.html?workspace=faith&branch=${encodeURIComponent(branchId)}`;
+  if (!/^https:\/\/[A-Za-z0-9.-]+(?:\/|$)/.test(givingUrl)) {
+    inputError('The public giving address is unavailable on this deployment.', 503);
+  }
+  return {
+    ok: true,
+    generic: true,
+    message: 'Reusable giving QR code generated.',
+    branchId,
+    givingUrl,
+    paymentLink: givingUrl,
+    qrSvg: donationPaymentQrSvg(givingUrl),
+    donation: {
+      ChurchName: organization.Name,
+      PaymentType: 'Donations & Offerings',
+      BranchId: branchId
+    }
+  };
+}
+
 export async function handleChurchDonationAction(env, user, body = {}) {
   const action = lower(body.Action || body.action || 'list');
   if (['list', 'getchurchdonations'].includes(action)) {
@@ -1189,11 +1245,13 @@ export default {
   saveChurchDonation,
   setChurchDonationStatus,
   initChurchDonationPayment,
+  initPublicChurchDonationPayment,
   sendChurchDonationReceipt,
   buildChurchPaymentInitMetadata,
   markDonationPaidByReference,
   extractDonorEmailFromMetadata,
   donationSummary,
   buildChurchDonationPaymentQr,
+  buildChurchGenericGivingQr,
   handleChurchDonationAction
 };

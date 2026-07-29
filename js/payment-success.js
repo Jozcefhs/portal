@@ -67,6 +67,9 @@ async function verifyPayment() {
   const reference = params.get('reference') || params.get('trxref');
   const paymentType = params.get('type') || '';
   const isCommerce = params.get('commerce') === '1';
+  const isChurchGiving = paymentType.toLowerCase() === 'church';
+  const isPublicGiving = isChurchGiving && params.get('source') === 'public-giving';
+  const branchId = params.get('branch') || 'main';
   const anotherLink = document.getElementById('anotherPaymentLink');
   const returnLink = document.getElementById('returnPortalLink');
   if (isCommerce) {
@@ -77,6 +80,17 @@ async function verifyPayment() {
     if (returnLink) {
       returnLink.href = 'admin?workspace=faith';
       returnLink.textContent = 'Return to organisation operations';
+    }
+  } else if (isChurchGiving) {
+    if (anotherLink) {
+      anotherLink.href = isPublicGiving
+        ? `give.html?workspace=faith&branch=${encodeURIComponent(branchId)}`
+        : 'admin?workspace=faith';
+      anotherLink.textContent = 'Make another donation';
+    }
+    if (returnLink) {
+      returnLink.href = isPublicGiving ? 'index.html' : 'admin?workspace=faith';
+      returnLink.textContent = isPublicGiving ? 'Return to Dynamax' : 'Return to organisation operations';
     }
   }
   if (!reference) {
@@ -105,11 +119,15 @@ async function verifyPayment() {
     idempotency.release();
     setLead(isFormPurchase
       ? 'Your admission form purchase has been confirmed.'
-      : (isCommerce ? 'The customer payment and sale have been confirmed.' : 'Your payment has been confirmed.'));
+      : (isCommerce
+          ? 'The customer payment and sale have been confirmed.'
+          : (isChurchGiving ? 'Your gift has been confirmed.' : 'Your payment has been confirmed.')));
     setStatus(
       isFormPurchase
         ? 'Admission form purchased successfully.'
-        : (isCommerce ? 'Sale payment verified and posted successfully.' : 'Payment verified successfully.'),
+        : (isCommerce
+            ? 'Sale payment verified and posted successfully.'
+            : (isChurchGiving ? 'Gift payment verified successfully.' : 'Payment verified successfully.')),
       'ok'
     );
     const details = document.createElement('div');
@@ -131,7 +149,7 @@ async function verifyPayment() {
           ['Amount', formatMoney(data.amount, data.currency)],
           ['Reference', data.reference || reference]
         ] : [
-          ['Fee', data.feeName || 'Online Payment'],
+          [isChurchGiving ? 'Gift' : 'Fee', data.feeName || (isChurchGiving ? 'Donation or offering' : 'Online Payment')],
           ['Amount', formatMoney(data.amount, data.currency)],
           ['Reference', data.reference || reference]
         ]);
@@ -150,7 +168,9 @@ async function verifyPayment() {
       ? 'Use this email address and verification code to register. A copy has also been sent to your email.'
       : (isCommerce
           ? 'The payment, stock movement, and Finance & Accounting entry have been recorded.'
-          : 'Your payment has been recorded with the Accounts Office.');
+          : (isChurchGiving
+              ? 'Your gift has been recorded. An official receipt will be sent to your email.'
+              : 'Your payment has been recorded with the Accounts Office.'));
     details.appendChild(note);
     if (isFormPurchase) {
       const link = document.createElement('p');

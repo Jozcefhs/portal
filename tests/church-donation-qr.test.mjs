@@ -22,3 +22,11 @@ test('giving QR is generated from the saved gateway link behind staff authorizat
   assert.match(payments, /Create the online payment link before generating its QR code\./);
   assert.match(api, /'paymentqr', 'givingqr', 'generateqr'/);
 });
+
+test('staff can generate a reusable public giving QR without creating a donation first', () => {
+  assert.match(adminJs, /id="genericChurchGivingQr"/);
+  assert.match(adminJs, /churchDonationRequest\('genericqr'\)/);
+  assert.match(payments, /export async function buildChurchGenericGivingQr/);
+  assert.match(payments, /\/give\.html\?workspace=faith&branch=/);
+  assert.match(api, /action === 'genericqr'/);
+});

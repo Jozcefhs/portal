@@ -1,6 +1,9 @@
 import { requireFirestoreEnv } from '../lib/firestore.js';
-import { initChurchDonationPayment } from '../lib/church-payments.js';
-import { handleChurchDonationAction } from '../lib/church-payments.js';
+import {
+  buildChurchGenericGivingQr,
+  handleChurchDonationAction,
+  initChurchDonationPayment
+} from '../lib/church-payments.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import {
   beginIdempotentRequest,
@@ -27,7 +30,7 @@ export async function onRequestPost(context) {
 
     const body = await readJsonBody(request, { maxBytes: 512 * 1024 });
     const action = clean(body.Action || body.action || '').toLowerCase();
-    const isMutation = !['list', 'getchurchdonations', 'paymentqr', 'givingqr', 'generateqr'].includes(action);
+    const isMutation = !['list', 'getchurchdonations', 'paymentqr', 'givingqr', 'generateqr', 'genericqr'].includes(action);
     if (isMutation) {
       idempotency = await beginIdempotentRequest(env, request, body, {
         scope: `church-donation-${action || 'mutation'}`,
@@ -43,7 +46,9 @@ export async function onRequestPost(context) {
     }
 
     let result;
-    if (['init', 'initchurchpayment', 'initdonation', 'initpayment', 'sendpaystack'].includes(action)) {
+    if (action === 'genericqr') {
+      result = await buildChurchGenericGivingQr(env, user, body, new URL(request.url).origin);
+    } else if (['init', 'initchurchpayment', 'initdonation', 'initpayment', 'sendpaystack'].includes(action)) {
       result = await initChurchDonationPayment(env, user, body, new URL(request.url).origin);
     } else {
       result = await handleChurchDonationAction(env, user, body);

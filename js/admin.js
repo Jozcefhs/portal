@@ -3182,6 +3182,7 @@ function printChurchDonationReceipt(donation = {}) {
 
 function showChurchGivingQr(data = {}) {
   const donation = data.donation || {};
+  const generic = Boolean(data.generic);
   const qrWindow = window.open('', '_blank', 'width=620,height=780');
   if (!qrWindow) {
     setStatus(document.getElementById('churchDonationStatus') || dashboardStatus, 'Allow pop-ups to view and print the giving QR code.', 'bad');
@@ -3193,7 +3194,7 @@ function showChurchGivingQr(data = {}) {
   const givingType = clean(donation.PaymentType) || 'Gift';
   const reference = clean(donation.Reference || donation.DonationId);
   qrWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(givingType)} payment QR</title><style>
-    @page{size:A5;margin:12mm}*{box-sizing:border-box}body{margin:0;background:#edf3f8;color:#17314b;font:15px/1.5 Arial,sans-serif}.sheet{max-width:540px;margin:24px auto;padding:28px;border-top:7px solid #d49a00;border-radius:16px;background:#fff;box-shadow:0 14px 35px #173b5820;text-align:center}.eyebrow{margin:0;color:#087d68;font-size:12px;font-weight:bold;letter-spacing:1.3px;text-transform:uppercase}h1{margin:5px 0 4px;color:#164a78;font-size:25px}.amount{margin:0 0 18px;color:#36536e}.qr{width:min(330px,90%);margin:0 auto;padding:12px;border:1px solid #cbd9e7;border-radius:14px;background:#fff}.qr svg{display:block;width:100%;height:auto}.instruction{margin:18px auto 8px;max-width:390px}.reference{color:#637a90;font-size:12px}.actions{display:flex;justify-content:center;gap:8px;margin-top:20px}.actions button,.actions a{display:inline-flex;align-items:center;min-height:40px;padding:8px 14px;border:0;border-radius:8px;background:#1769e0;color:#fff;font-weight:bold;text-decoration:none;cursor:pointer}.actions a{background:#087d68}@media print{body{background:#fff}.sheet{margin:0;box-shadow:none}.actions{display:none}}</style></head><body><main class="sheet"><p class="eyebrow">Secure online giving</p><h1>${escapeHtml(organisation)}</h1><p class="amount">${escapeHtml(givingType)} for ${escapeHtml(donorName)} &middot; ${escapeHtml(money(donation.Amount || 0))}</p><div class="qr">${data.qrSvg || ''}</div><p class="instruction">Scan this code with a phone camera to open the secure payment page and complete the gift.</p><p class="reference">Reference: ${escapeHtml(reference)}</p><div class="actions"><button type="button" onclick="window.print()">Print QR</button><a href="${escapeHtml(data.paymentLink)}" target="_blank" rel="noopener">Open payment page</a></div></main></body></html>`);
+    @page{size:A5;margin:12mm}*{box-sizing:border-box}body{margin:0;background:#edf3f8;color:#17314b;font:15px/1.5 Arial,sans-serif}.sheet{max-width:540px;margin:24px auto;padding:28px;border-top:7px solid #d49a00;border-radius:16px;background:#fff;box-shadow:0 14px 35px #173b5820;text-align:center}.eyebrow{margin:0;color:#087d68;font-size:12px;font-weight:bold;letter-spacing:1.3px;text-transform:uppercase}h1{margin:5px 0 4px;color:#164a78;font-size:25px}.amount{margin:0 0 18px;color:#36536e}.qr{width:min(330px,90%);margin:0 auto;padding:12px;border:1px solid #cbd9e7;border-radius:14px;background:#fff}.qr svg{display:block;width:100%;height:auto}.instruction{margin:18px auto 8px;max-width:390px}.reference{color:#637a90;font-size:12px}.actions{display:flex;justify-content:center;gap:8px;margin-top:20px}.actions button,.actions a{display:inline-flex;align-items:center;min-height:40px;padding:8px 14px;border:0;border-radius:8px;background:#1769e0;color:#fff;font-weight:bold;text-decoration:none;cursor:pointer}.actions a{background:#087d68}@media print{body{background:#fff}.sheet{margin:0;box-shadow:none}.actions{display:none}}</style></head><body><main class="sheet"><p class="eyebrow">${generic ? 'Reusable self-service giving' : 'Secure online giving'}</p><h1>${escapeHtml(organisation)}</h1><p class="amount">${generic ? 'Donations, tithes and offerings' : `${escapeHtml(givingType)} for ${escapeHtml(donorName)} &middot; ${escapeHtml(money(donation.Amount || 0))}`}</p><div class="qr">${data.qrSvg || ''}</div><p class="instruction">${generic ? 'Scan this reusable code to enter your details, choose a gift type and amount, then pay securely.' : 'Scan this code with a phone camera to open the secure payment page and complete the gift.'}</p>${reference ? `<p class="reference">Reference: ${escapeHtml(reference)}</p>` : ''}<div class="actions"><button type="button" onclick="window.print()">Print QR</button><a href="${escapeHtml(data.paymentLink)}" target="_blank" rel="noopener">${generic ? 'Open giving page' : 'Open payment page'}</a></div></main></body></html>`);
   qrWindow.document.close();
 }
 
@@ -3229,7 +3230,7 @@ async function loadChurchDonations() {
           <h2>Church Donations</h2>
           <p class="muted">Branch ${escapeHtml(data.branchId || 'main')} � ${summary.count || 0} entries � ${summary.paid || 0} paid � ${summary.pending || 0} pending</p>
         </div>
-        <button type="button" id="refreshChurchDonations">Refresh</button>
+        <span class="compact-row-actions"><button type="button" id="genericChurchGivingQr">▦ Generic Giving QR</button><button type="button" id="refreshChurchDonations">Refresh</button></span>
       </div>
       <div class="workflow-kpis">
         <div><small>Total</small><strong>${money(summary.totalAmount || 0)}</strong><span>All records</span></div>
@@ -3381,6 +3382,20 @@ async function loadChurchDonations() {
         if (button.isConnected) setButtonLoading(button, false, '', normalText);
       }
     }));
+
+    document.getElementById('genericChurchGivingQr')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      const normalText = button.textContent;
+      setButtonLoading(button, true, 'Generating…', normalText);
+      try {
+        const qr = await churchDonationRequest('genericqr');
+        showChurchGivingQr(qr);
+      } catch (error) {
+        setStatus(document.getElementById('churchDonationStatus') || dashboardStatus, error.message || String(error), 'bad');
+      } finally {
+        if (button.isConnected) setButtonLoading(button, false, 'Generating…', normalText);
+      }
+    });
 
     panelEl.querySelectorAll('[data-donation-action]').forEach((button) => button.addEventListener('click', async () => {
       const action = clean(button.dataset.donationAction);

@@ -7,6 +7,7 @@ import {
 
 const TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 const IDEMPOTENCY_COLLECTION = 'requestIdempotency';
+const REQUEST_ALLOWANCE_COLLECTION = 'requestRateLimits';
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,160}$/;
 const DEFAULT_IDEMPOTENCY_LEASE_SECONDS = 5 * 60;
 const MIN_IDEMPOTENCY_LEASE_SECONDS = 30;
@@ -35,6 +36,55 @@ function base64Url(bytes) {
 async function sha256(value) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value)));
   return base64Url(digest);
+}
+
+export async function consumeRequestAllowance(env, request, options = {}) {
+  const scope = safeScope(options.scope || 'public');
+  const maximum = Math.max(1, Math.min(1000, Number(options.maximum || 20)));
+  const windowSeconds = Math.max(60, Math.min(24 * 60 * 60, Number(options.windowSeconds || 15 * 60)));
+  const source = clean(request.headers.get('CF-Connecting-IP'))
+    || clean(request.headers.get('X-Forwarded-For')).split(',')[0].trim()
+    || `${clean(request.headers.get('User-Agent')).slice(0, 240)}|${clean(request.headers.get('Accept-Language')).slice(0, 80)}`
+    || 'unknown';
+  const documentId = `${scope}-${(await sha256(`${scope}:${source}`)).slice(0, 64)}`;
+  const now = Date.now();
+  let current = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (!current) current = await getDocument(env, REQUEST_ALLOWANCE_COLLECTION, documentId).catch(() => null);
+    const windowStarted = timestampMilliseconds(current?.WindowStartedAt);
+    const insideWindow = Boolean(windowStarted && now - windowStarted < windowSeconds * 1000);
+    const requests = insideWindow ? Math.max(0, Number(current?.Requests || 0)) : 0;
+    if (requests >= maximum) {
+      return {
+        allowed: false,
+        retryAfter: Math.max(1, Math.ceil(((windowStarted + (windowSeconds * 1000)) - now) / 1000))
+      };
+    }
+    const updatedAt = new Date(now).toISOString();
+    const payload = {
+      Scope: scope,
+      Requests: requests + 1,
+      WindowStartedAt: insideWindow ? clean(current?.WindowStartedAt) : updatedAt,
+      UpdatedAt: updatedAt,
+      ExpiresAt: new Date(now + (windowSeconds * 2000)).toISOString()
+    };
+    try {
+      if (current?.__updateTime) {
+        await patchDocumentFieldsIfCurrent(env, REQUEST_ALLOWANCE_COLLECTION, documentId, payload, current);
+      } else {
+        const created = await createDocumentIfAbsent(env, REQUEST_ALLOWANCE_COLLECTION, documentId, payload);
+        if (!created.created) {
+          current = created.document || null;
+          continue;
+        }
+      }
+      return { allowed: true, remaining: Math.max(0, maximum - requests - 1) };
+    } catch (error) {
+      if (Number(error?.status) !== 409 && error?.code !== 'FIRESTORE_WRITE_CONFLICT') throw error;
+      current = null;
+    }
+  }
+  throw httpError('Request protection is temporarily busy. Please try again.', 429, 'RATE_LIMIT_BUSY');
 }
 
 export async function secureSecretEqual(left, right) {
