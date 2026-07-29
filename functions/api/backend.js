@@ -5630,6 +5630,7 @@ export function buildGatewayCollectionsReport(
   }, charge.Reference || charge.Description));
   const onlineTransactions = [...transactionByReference.values()]
     .sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)));
+  const admissionFormSales = sales.sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)));
   const total = (rows, key) => asMoneyNumber(rows.reduce((sum, row) => sum + asMoneyNumber(row[key]), 0));
   const formCharges = charges.filter((row) => lower(row.Source).includes('form'));
   const feeCharges = charges.filter((row) => !lower(row.Source).includes('form'));
@@ -5644,7 +5645,10 @@ export function buildGatewayCollectionsReport(
       FeePaymentCharges: total(feeCharges, 'PaystackCharge'),
       FormPaymentCharges: total(formCharges, 'PaystackCharge')
     },
-    formSales: sales.sort((a, b) => clean(b.Date).localeCompare(clean(a.Date))),
+    // Keep the legacy field populated with the complete register so installed
+    // desktop builds receive the fix without requiring an immediate rebuild.
+    formSales: onlineTransactions,
+    admissionFormSales,
     onlineTransactions,
     gatewayCharges: charges.sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)))
   };

@@ -191,6 +191,8 @@ test('online collections register includes fee payments and church donations beh
       ['CHURCH/DON/2026/1', 'Example Donor', 'PS-DON-1', 30000, 450, 29550]
     ]
   );
+  assert.deepEqual(report.formSales, report.onlineTransactions);
+  assert.deepEqual(report.admissionFormSales, []);
 });
 
 test('paid church donations post gross income, net clearing and gateway charges once', () => {
