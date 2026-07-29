@@ -6,6 +6,7 @@ import { getDocument, listCollection, queryCollection, requireFirestoreEnv, upse
 import { getSchoolDocumentById, querySchoolCollection, upsertSchoolDocument } from '../lib/school-scope.js';
 import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
 import { readJsonBody } from '../lib/request-security.js';
+import { getWebBranding } from '../lib/web-branding.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -684,7 +685,7 @@ async function getSchoolProfile(env) {
     const [profile, documentBranding, webBranding] = await Promise.all([
       getDocument(env, 'settings', 'schoolProfile'),
       getDocument(env, 'settings', 'documentBranding').catch(() => null),
-      getDocument(env, 'settings', 'webBranding').catch(() => null)
+      getWebBranding(env).catch(() => null)
     ]);
     if (profile) {
       return {

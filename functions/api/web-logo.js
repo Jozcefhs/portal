@@ -1,4 +1,5 @@
-import { getDocument, requireFirestoreEnv } from '../lib/firestore.js';
+import { requireFirestoreEnv } from '../lib/firestore.js';
+import { getWebBranding } from '../lib/web-branding.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 
@@ -12,7 +13,7 @@ function decodeBase64(value) {
 export async function onRequestGet(context) {
   try {
     requireFirestoreEnv(context.env);
-    const branding = await getDocument(context.env, 'settings', 'webBranding');
+    const branding = await getWebBranding(context.env);
     const dataUrl = clean(branding && branding.WebLogoDataUrl);
     const match = dataUrl.match(/^data:(image\/(?:png|jpeg|webp));base64,(.+)$/i);
     if (!match) return new Response(null, { status: 404 });

@@ -12,6 +12,7 @@ import { resolveOrganizationConfig } from './organization-config.js';
 import { resolveMembershipBranch } from './church-membership.js';
 import { resolveEmailSenderProfile } from './email-service.js';
 import { getSchoolStructure } from './school-scope.js';
+import { getWebBranding } from './web-branding.js';
 import QRCode from 'qrcode';
 
 const PAYSTACK_INIT_URL = 'https://api.paystack.co/transaction/initialize';
@@ -435,7 +436,8 @@ function receiptLogoSource(webBranding = {}, organizationProfile = {}, env = {})
     .replace(/\/+$/, '');
   const embeddedLogo = clean(webBranding.WebLogoDataUrl);
   if (/^data:image\/(?:png|jpeg|webp);base64,/i.test(embeddedLogo)) {
-    return `${publicPortalUrl}/api/web-logo`;
+    const version = clean(webBranding.UpdatedAt);
+    return `${publicPortalUrl}/api/web-logo${version ? `?v=${encodeURIComponent(version)}` : ''}`;
   }
 
   const configuredLogo = clean(organizationProfile.BrandLogoUrl);
@@ -673,7 +675,7 @@ export async function sendChurchDonationReceipt(env, donation, options = {}) {
   const [brevoSettings, organizationProfile, webBranding] = await Promise.all([
     getDocument(env, 'settings', 'brevo').catch(() => ({})),
     getDocument(env, 'settings', 'organisationProfile').catch(() => ({})),
-    getDocument(env, 'settings', 'webBranding').catch(() => ({}))
+    getWebBranding(env).catch(() => ({}))
   ]);
   const settings = settingsDocumentForDonation(brevoSettings, organizationProfile || {}, env);
   const paymentLink = clean(options.paymentLink || '');

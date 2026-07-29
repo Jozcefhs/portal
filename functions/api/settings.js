@@ -9,6 +9,7 @@ import {
 } from '../lib/deployment-identity.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
+import { getWebBranding, saveWebBranding } from '../lib/web-branding.js';
 
 const PROFILE_CACHE_MS = 15000;
 let profileCache = null;
@@ -102,7 +103,7 @@ async function loadProfile(env) {
     const [saved, savedOrganization, branding] = await Promise.all([
       getDocument(env, 'settings', 'schoolProfile'),
       getDocument(env, 'settings', 'organisationProfile'),
-      getDocument(env, 'settings', 'webBranding')
+      getWebBranding(env)
     ]);
     if (saved) {
       Object.keys(profile).forEach((key) => {
@@ -250,7 +251,7 @@ export async function onRequestPost(context) {
         error.status = 400;
         throw error;
       }
-      await upsertDocument(env, 'settings', 'webBranding', { WebLogoDataUrl: webLogo, UpdatedAt: new Date().toISOString() });
+      await saveWebBranding(env, { WebLogoDataUrl: webLogo, UpdatedAt: new Date().toISOString() });
     }
     delete profile.WebLogoUrl;
     delete profile.WebLogoConfigured;

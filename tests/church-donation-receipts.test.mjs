@@ -101,6 +101,6 @@ test('pending online donation email is a payment request rather than a receipt',
 });
 
 test('configured web branding uses a public image endpoint that email clients can load', () => {
-  assert.match(paymentSource, /return `\$\{publicPortalUrl\}\/api\/web-logo`/);
+  assert.match(paymentSource, /return `\$\{publicPortalUrl\}\/api\/web-logo\$\{version/);
   assert.doesNotMatch(paymentSource, /if \(\/\^data:image[\s\S]{0,120}return embeddedLogo/);
 });

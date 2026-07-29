@@ -11,6 +11,7 @@ import { staffRecordMatchesEdition } from './records-desk.js';
 import { listSchoolCollection, safeScopeId, schoolSectionFor } from './school-scope.js';
 import { escapeEmailHtml, sendConfiguredEmail } from './email-service.js';
 import { loadStaffApprovalProfile, publicStaffApprovalProfile } from './staff-approval-profile.js';
+import { getWebBranding } from './web-branding.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -494,7 +495,7 @@ async function loadIdentity(env) {
     getDocument(env, 'settings', 'organisationProfile').catch(() => ({})),
     getDocument(env, 'settings', 'schoolProfile').catch(() => ({})),
     getDocument(env, 'settings', 'documentBranding').catch(() => ({})),
-    getDocument(env, 'settings', 'webBranding').catch(() => ({}))
+    getWebBranding(env).catch(() => ({}))
   ]);
   const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile: schoolProfile });
   const logoDataUrl = clean(documentBranding?.DocumentLogoDataUrl || webBranding?.WebLogoDataUrl);

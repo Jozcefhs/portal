@@ -33,6 +33,7 @@ import { handleOrganizationDepartmentAction } from '../lib/organization-departme
 import { assertOrganizationDepartmentWorkspaceAccess } from '../lib/organization-department-gate.js';
 import { handleExecutiveOfficeAction } from '../lib/executive-correspondence.js';
 import { handleStudentConductAction } from '../lib/student-conduct.js';
+import { getWebBranding, saveWebBranding } from '../lib/web-branding.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
 
@@ -2284,7 +2285,7 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
       error.status = 400;
       throw error;
     }
-    await upsertDocument(env, 'settings', 'webBranding', { WebLogoDataUrl: webLogo, UpdatedAt: nowIso() });
+    await saveWebBranding(env, { WebLogoDataUrl: webLogo, UpdatedAt: nowIso() });
   }
   if (body.DocumentLogoDataUrl !== undefined || body.DocumentSignatureDataUrl !== undefined) {
     const documentLogo = clean(body.DocumentLogoDataUrl);
@@ -2328,7 +2329,7 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
 async function getSchoolProfile(env) {
   const [profile, branding, storedStructure, documentSettings, organizationProfile] = await Promise.all([
     getDocument(env, 'settings', 'schoolProfile').catch(() => null),
-    getDocument(env, 'settings', 'webBranding').catch(() => null),
+    getWebBranding(env).catch(() => null),
     getDocument(env, 'settings', 'schoolStructure').catch(() => null),
     getDocument(env, 'settings', 'admissionDocuments').catch(() => null),
     getDocument(env, 'settings', 'organisationProfile').catch(() => null)
