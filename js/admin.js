@@ -3109,6 +3109,42 @@ async function initChurchDonationPayment(payload = {}) {
 }
 
 
+function printChurchDonationReceipt(donation = {}) {
+  if (!donation || clean(donation.Status).toLowerCase() !== 'paid') {
+    setStatus(document.getElementById('churchDonationStatus') || dashboardStatus, 'A receipt is available after the donation has been paid.', 'bad');
+    return;
+  }
+  const receiptWindow = window.open('', '_blank', 'width=820,height=900');
+  if (!receiptWindow) {
+    setStatus(document.getElementById('churchDonationStatus') || dashboardStatus, 'Allow pop-ups to view and print this receipt.', 'bad');
+    return;
+  }
+  receiptWindow.opener = null;
+  const organisation = clean(donation.ChurchName || document.querySelector('[data-school-name]')?.textContent || staffBrand?.textContent) || 'Dynamax';
+  const logoSource = clean(donation.ReceiptLogoSource || document.querySelector('.nav-logo')?.getAttribute('src') || 'images/Logo.png');
+  const logo = logoSource ? new URL(logoSource, window.location.href).href : '';
+  const currency = clean(donation.Currency || 'NGN').toUpperCase();
+  let formattedAmount = money(donation.Amount || 0);
+  try {
+    formattedAmount = new Intl.NumberFormat('en-NG', {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: 2
+    }).format(Number(donation.Amount || 0));
+  } catch {
+    formattedAmount = `${currency} ${Number(donation.Amount || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+  const receiptNo = clean(donation.ReceiptNo || donation.DonationId || donation.__id);
+  const reference = clean(donation.Reference || donation.PaymentReference || donation.DonationId);
+  const paidAt = clean(donation.PaidAt || donation.PaymentDate || donation.UpdatedAt || donation.Timestamp || donation.CreatedAt);
+  const receiptDate = paidAt ? paidAt.replace('T', ' ').replace('Z', '').slice(0, 19) : '';
+  const donorName = clean(donation.DonorName) || 'Anonymous donor';
+  const paymentDescription = [donation.PaymentType || 'Donation', donation.PaymentMethod].filter(Boolean).join(' · ');
+  receiptWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(receiptNo || 'Donation receipt')}</title><style>
+    @page{size:A5;margin:12mm}*{box-sizing:border-box}body{margin:0;background:#edf3f8;color:#17314b;font:13px/1.5 Arial,sans-serif}.receipt{position:relative;max-width:620px;min-height:760px;margin:18px auto;background:#fff;border-top:7px solid #d49a00;box-shadow:0 14px 35px #173b5820;overflow:hidden}.watermark{position:absolute;inset:23% 20%;width:60%;height:54%;object-fit:contain;opacity:.045}.brand,.content,.footer{position:relative}.brand{display:flex;align-items:center;gap:15px;padding:25px 28px;background:#164a78;color:#fff;border-bottom:4px solid #16a596}.brand img{width:62px;height:62px;padding:5px;border-radius:12px;background:#fff;object-fit:contain}.brand small{display:block;color:#95f2e6;font-weight:bold;letter-spacing:1.4px;text-transform:uppercase}.brand h1{margin:2px 0 0;font-size:21px}.content{padding:26px 28px}.acknowledgement{margin:0 0 18px;color:#36536e}.meta{width:100%;border-collapse:collapse}.meta th,.meta td{padding:10px 12px;border:1px solid #cfdeea;text-align:left}.meta th{width:37%;background:#e8f1fb;color:#164a78}.meta tr:nth-child(even) td{background:#eef9f7}.meta .amount-row th,.meta .amount-row td{background:#fff3cf;color:#08745f;font-size:16px}.paid{display:inline-block;padding:3px 10px;border-radius:999px;background:#dff5e9;color:#08745f;font-weight:bold}.thanks{margin:20px 0 0;padding:13px 15px;border-left:4px solid #16a596;background:#eef9f7;color:#28566a}.footer{padding:13px 28px;background:#164a78;color:#dbeafb;text-align:center}.print{position:fixed;top:10px;right:10px;padding:9px 13px;border:0;border-radius:7px;background:#1769e0;color:#fff;font-weight:bold;cursor:pointer}@media print{body{background:#fff}.receipt{min-height:auto;margin:0;box-shadow:none}.print{display:none}}</style></head><body><button class="print" onclick="window.print()">Print / Save as PDF</button><main class="receipt">${logo ? `<img class="watermark" src="${escapeHtml(logo)}" alt="">` : ''}<header class="brand">${logo ? `<img src="${escapeHtml(logo)}" alt="${escapeHtml(organisation)} logo">` : ''}<div><small>Official acknowledgement</small><h1>${escapeHtml(organisation)} donation receipt</h1></div></header><section class="content"><p class="acknowledgement">Dear ${escapeHtml(donorName)},<br>Thank you. Your gift has been received and recorded.</p><table class="meta"><tbody><tr><th>Donor</th><td>${escapeHtml(donorName)}</td></tr>${donation.DonorEmail ? `<tr><th>Email</th><td>${escapeHtml(donation.DonorEmail)}</td></tr>` : ''}<tr class="amount-row"><th>Amount</th><td><strong>${escapeHtml(formattedAmount)}</strong></td></tr><tr><th>Payment</th><td>${escapeHtml(paymentDescription)}</td></tr>${reference ? `<tr><th>Reference</th><td>${escapeHtml(reference)}</td></tr>` : ''}<tr><th>Receipt number</th><td>${escapeHtml(receiptNo)}</td></tr>${receiptDate ? `<tr><th>Payment date</th><td>${escapeHtml(receiptDate)}</td></tr>` : ''}<tr><th>Status</th><td><span class="paid">Paid</span></td></tr></tbody></table><p class="thanks">Thank you for your generosity. Please retain this receipt for your records.</p></section><footer class="footer">Verified donation receipt · Generated by Dynamax</footer></main></body></html>`);
+  receiptWindow.document.close();
+}
+
 async function loadChurchDonations() {
   try {
     const methods = ['CASH', 'BANK TRANSFER', 'CHEQUE', 'POS', 'ONLINE', 'CARD', 'MOBILE MONEY'];
@@ -3195,20 +3231,23 @@ async function loadChurchDonations() {
             const paymentLinkSentAt = clean(pick(row, ['PaymentLinkSentAt']));
             const paymentLinkSentTo = clean(pick(row, ['PaymentLinkSentTo']));
             const paymentLinkSent = Boolean(paymentLinkSentAt || paymentLinkSentTo);
+            let stateAction = '';
             if (receiptSent) {
-              return '<button type="button" class="table-action" disabled aria-disabled="true">Receipt sent</button>';
-            }
-            if (status === 'paid' && canSendReceipt) {
-              return `<button type="button" class="table-action" data-donation-action="sendreceipt" data-donation-id="${escapeHtml(donationId)}">Send receipt</button>`;
-            }
-            if (status === 'pending' && paymentLinkSent) {
+              stateAction = '<button type="button" class="table-action" disabled aria-disabled="true">Receipt sent</button>';
+            } else if (status === 'paid' && canSendReceipt) {
+              stateAction = `<button type="button" class="table-action" data-donation-action="sendreceipt" data-donation-id="${escapeHtml(donationId)}">Send receipt</button>`;
+            } else if (status === 'pending' && paymentLinkSent) {
               const sentDetail = [paymentLinkSentTo, paymentLinkSentAt].filter(Boolean).join(' · ');
-              return `<button type="button" class="table-action" disabled aria-disabled="true" title="${escapeHtml(sentDetail || 'Payment link sent')}">Payment link sent</button>`;
+              stateAction = `<button type="button" class="table-action" disabled aria-disabled="true" title="${escapeHtml(sentDetail || 'Payment link sent')}">Payment link sent</button>`;
+            } else if (status === 'pending' && canCollect) {
+              stateAction = `<button type="button" class="table-action" data-donation-action="sendpayment" data-donation-id="${escapeHtml(donationId)}">Send payment link</button>`;
             }
-            if (status === 'pending' && canCollect) {
-              return `<button type="button" class="table-action" data-donation-action="sendpayment" data-donation-id="${escapeHtml(donationId)}">Send payment link</button>`;
-            }
-            return '';
+            const printAction = status === 'paid'
+              ? `<button type="button" class="compact-icon-action compact-print-action" data-print-donation="${escapeHtml(donationId)}" aria-label="View and print receipt ${escapeHtml(pick(row, ['ReceiptNo']) || donationId)}" title="View and print receipt"><span aria-hidden="true">&#128424;&#65038;</span></button>`
+              : '';
+            return stateAction || printAction
+              ? `<span class="compact-row-actions">${stateAction}${printAction}</span>`
+              : '';
           }
         }
       ])}
@@ -3266,6 +3305,12 @@ async function loadChurchDonations() {
         delete form.dataset.paymentIdempotencyKey;
       }
     });
+
+    panelEl.querySelectorAll('[data-print-donation]').forEach((button) => button.addEventListener('click', () => {
+      const donationId = clean(button.dataset.printDonation);
+      const donation = (data.donations || []).find((item) => clean(item.DonationId || item.__id) === donationId);
+      printChurchDonationReceipt(donation);
+    }));
 
     panelEl.querySelectorAll('[data-donation-action]').forEach((button) => button.addEventListener('click', async () => {
       const action = clean(button.dataset.donationAction);

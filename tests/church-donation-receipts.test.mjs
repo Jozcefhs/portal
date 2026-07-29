@@ -6,13 +6,26 @@ import { buildDonationReceiptHtml } from '../functions/lib/church-payments.js';
 const adminJs = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
 const paymentSource = await readFile(new URL('../functions/lib/church-payments.js', import.meta.url), 'utf8');
 
-test('donation rows render one state-aware action button', () => {
+test('donation rows render one state-aware delivery button', () => {
   assert.match(adminJs, /if \(receiptSent\)[\s\S]*?>Receipt sent<\/button>/);
   assert.match(adminJs, /status === 'paid'[\s\S]*?>Send receipt<\/button>/);
   assert.match(adminJs, /paymentLinkSentAt[\s\S]*?status === 'pending' && paymentLinkSent[\s\S]*?>Payment link sent<\/button>/);
   assert.match(adminJs, /status === 'pending'[\s\S]*?>Send payment link<\/button>/);
   assert.match(adminJs, /const initialized = await initChurchDonationPayment\(payload\);\s*await loadChurchDonations\(\)/);
   assert.doesNotMatch(adminJs, /data-donation-action="setstatus"[\s\S]*?>Mark Paid<\/button>/);
+});
+
+test('paid donations have a branded printable receipt action', () => {
+  assert.match(adminJs, /status === 'paid'[\s\S]{0,500}data-print-donation=/);
+  assert.match(adminJs, /function printChurchDonationReceipt\(donation = \{\}\)/);
+  assert.match(adminJs, /clean\(donation\.Status\)\.toLowerCase\(\) !== 'paid'/);
+  assert.match(adminJs, /Official acknowledgement/);
+  assert.match(adminJs, /Your gift has been received and recorded\./);
+  assert.match(adminJs, /Print \/ Save as PDF/);
+  assert.match(adminJs, /onclick="window\.print\(\)"/);
+  assert.match(adminJs, /class="watermark"/);
+  assert.match(adminJs, /Allow pop-ups to view and print this receipt\./);
+  assert.match(adminJs, /querySelectorAll\('\[data-print-donation\]'\)/);
 });
 
 test('donation form keeps one aligned online-email option', () => {
