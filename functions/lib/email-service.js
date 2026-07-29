@@ -164,9 +164,101 @@ export function selectActiveBrevoSender(profile = {}, senders = []) {
   };
 }
 
+export function classifyBrevoFailure(status = 0, providerError = {}) {
+  const providerCode = clean(providerError?.code).toLowerCase();
+  const providerMessage = clean(providerError?.message).toLowerCase();
+  const combined = `${providerCode} ${providerMessage}`;
+  if (Number(status) === 401 || /\bunauthori[sz]ed\b|invalid api key|authentication/.test(combined)) {
+    return {
+      code: 'BREVO_CREDENTIAL_INVALID',
+      status: 503,
+      message: 'Brevo rejected the Cloudflare email credential. Replace the encrypted BREVO_API_KEY secret, then redeploy the portal.'
+    };
+  }
+  if (Number(status) === 403 || /permission_denied|permission denied|access denied/.test(combined)) {
+    return {
+      code: 'BREVO_PERMISSION_DENIED',
+      status: 503,
+      message: 'The Brevo credential does not have permission to send transactional email.'
+    };
+  }
+  if (/account_under_validation|account.*validation|account.*review/.test(combined)) {
+    return {
+      code: 'BREVO_ACCOUNT_UNDER_VALIDATION',
+      status: 503,
+      message: 'Brevo has placed this sender account under validation. Complete the account review in Brevo before sending again.'
+    };
+  }
+  if (/not_enough_credit|insufficient.*credit|not enough.*credit|quota.*exceed|credit.*exhaust/.test(combined)) {
+    return {
+      code: 'BREVO_CREDIT_EXHAUSTED',
+      status: 503,
+      message: 'The Brevo transactional-email credit is exhausted. Add email credit or upgrade the Brevo plan, then try again.'
+    };
+  }
+  if (/sender/.test(combined) && /(invalid|validat|authenticat|not valid|not found)/.test(combined)) {
+    return {
+      code: 'BREVO_SENDER_NOT_VALIDATED',
+      status: 503,
+      message: 'The configured sender is not active in Brevo. Validate it there or select another active organisation sender.'
+    };
+  }
+  if (/attachment/.test(combined) && /(invalid|size|large|limit|base64)/.test(combined)) {
+    return {
+      code: 'BREVO_ATTACHMENT_REJECTED',
+      status: 400,
+      message: 'Brevo rejected a signature or stamp attachment. Save a smaller PNG or JPG in User settings and send again.'
+    };
+  }
+  if (Number(status) === 429 || /rate.?limit|too many requests/.test(combined)) {
+    return {
+      code: 'BREVO_RATE_LIMITED',
+      status: 429,
+      message: 'Brevo is temporarily limiting email requests. Wait briefly, then send again.'
+    };
+  }
+  if (Number(status) >= 500) {
+    return {
+      code: 'BREVO_PROVIDER_UNAVAILABLE',
+      status: 502,
+      message: 'Brevo is temporarily unavailable. The document remains issued; try sending it again shortly.'
+    };
+  }
+  if (Number(status) === 400 || /invalid_parameter|missing_parameter|not_acceptable/.test(combined)) {
+    return {
+      code: 'BREVO_REQUEST_REJECTED',
+      status: 400,
+      message: 'Brevo rejected the email request. Confirm the recipient and active sender addresses, then try again.'
+    };
+  }
+  return {
+    code: 'BREVO_DELIVERY_REJECTED',
+    status: 502,
+    message: 'Brevo rejected the email before accepting it. Check the Brevo transactional log and try again.'
+  };
+}
+
+async function readBrevoError(response) {
+  const raw = await response.text().catch(() => '');
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : { message: raw };
+  } catch {
+    return { message: raw.slice(0, 500) };
+  }
+}
+
+function brevoFailureError(status, providerError) {
+  const failure = classifyBrevoFailure(status, providerError);
+  const error = new Error(failure.message);
+  error.status = failure.status;
+  error.code = failure.code;
+  return error;
+}
+
 async function resolveBrevoDeliverySender(apiKey, profile) {
-  if (!profile.useExecutiveProfile
-    || clean(profile.senderEmail).toLowerCase() === clean(profile.fallbackSenderEmail).toLowerCase()) {
+  if (!profile.useExecutiveProfile) {
     return {
       senderEmail: profile.senderEmail,
       senderName: profile.senderName,
@@ -178,7 +270,10 @@ async function resolveBrevoDeliverySender(apiKey, profile) {
     const response = await fetch('https://api.brevo.com/v3/senders', {
       headers: { accept: 'application/json', 'api-key': apiKey }
     });
-    if (!response.ok) return profile;
+    if (!response.ok) {
+      if (response.status === 429 || response.status >= 500) return profile;
+      throw brevoFailureError(response.status, await readBrevoError(response));
+    }
     const data = await response.json().catch(() => ({}));
     const selected = selectActiveBrevoSender(profile, data?.senders);
     if (selected.verified) return selected;
@@ -186,6 +281,7 @@ async function resolveBrevoDeliverySender(apiKey, profile) {
       'The Executive sender is not validated in Brevo, and no validated organisation sender is available.'
     );
     err.status = 503;
+    err.code = 'BREVO_SENDER_NOT_VALIDATED';
     throw err;
   } catch (error) {
     if (error?.status) throw error;
@@ -258,23 +354,22 @@ export async function sendConfiguredEmail(env, {
     body: JSON.stringify(payload)
   });
   if (!response.ok) {
-    const providerError = await response.json().catch(() => ({}));
-    const providerMessage = clean(providerError?.message).toLowerCase();
-    const invalidSender = /sender/.test(providerMessage)
-      && /(invalid|validat|authenticat|not valid)/.test(providerMessage);
+    const providerError = await readBrevoError(response);
+    const failure = classifyBrevoFailure(response.status, providerError);
     console.error(JSON.stringify({
       event: 'email_provider_rejected',
       status: response.status,
       code: clean(providerError?.code).slice(0, 80) || 'unknown',
       senderProfile: clean(senderProfile) || 'default',
       attachmentCount: normalizedAttachments.length,
-      invalidSender
+      failureCode: failure.code
     }));
-    const err = new Error(invalidSender
-      ? 'The configured sender is not validated in Brevo. Verify that sender or use the organisation sender.'
-      : 'The email service could not send this message. Please try again.');
-    err.status = 502;
-    throw err;
+    throw brevoFailureError(response.status, providerError);
   }
-  return { ok: true, status: response.status };
+  const providerResult = await response.json().catch(() => ({}));
+  return {
+    ok: true,
+    status: response.status,
+    providerMessageId: clean(providerResult?.messageId)
+  };
 }

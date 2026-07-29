@@ -8,14 +8,14 @@ function canonicalEdition(value) {
   return edition === 'church' ? 'faith' : edition;
 }
 
-export function webBrandingDocumentId(env = {}) {
+export function documentBrandingDocumentId(env = {}) {
   const identity = requiredDeploymentIdentity(env);
   return identity.edition === 'school'
-    ? 'webBranding'
-    : `webBranding-${identity.workspaceId}`;
+    ? 'documentBranding'
+    : `documentBranding-${identity.workspaceId}`;
 }
 
-export function webBrandingMatchesDeployment(env = {}, branding = {}) {
+export function documentBrandingMatchesDeployment(env = {}, branding = {}) {
   const identity = requiredDeploymentIdentity(env);
   return clean(branding?.WorkspaceId).toLowerCase() === identity.workspaceId
     && canonicalEdition(
@@ -25,14 +25,15 @@ export function webBrandingMatchesDeployment(env = {}, branding = {}) {
     ) === identity.edition;
 }
 
-export async function getWebBranding(env = {}) {
-  return getDocument(env, 'settings', webBrandingDocumentId(env));
+export async function getDocumentBranding(env = {}) {
+  return getDocument(env, 'settings', documentBrandingDocumentId(env));
 }
 
-export async function saveWebBranding(env = {}, values = {}) {
+export async function saveDocumentBranding(env = {}, values = {}) {
   const identity = requiredDeploymentIdentity(env);
-  return upsertDocument(env, 'settings', webBrandingDocumentId(env), {
-    WebLogoDataUrl: clean(values.WebLogoDataUrl),
+  return upsertDocument(env, 'settings', documentBrandingDocumentId(env), {
+    DocumentLogoDataUrl: clean(values.DocumentLogoDataUrl),
+    DocumentSignatureDataUrl: clean(values.DocumentSignatureDataUrl),
     UpdatedAt: clean(values.UpdatedAt) || new Date().toISOString(),
     WorkspaceId: identity.workspaceId,
     OrganisationEdition: identity.edition

@@ -11,7 +11,11 @@ import { staffRecordMatchesEdition } from './records-desk.js';
 import { listSchoolCollection, safeScopeId, schoolSectionFor } from './school-scope.js';
 import { escapeEmailHtml, sendConfiguredEmail } from './email-service.js';
 import { loadStaffApprovalProfile, publicStaffApprovalProfile } from './staff-approval-profile.js';
-import { getWebBranding } from './web-branding.js';
+import { getWebBranding, webBrandingMatchesDeployment } from './web-branding.js';
+import {
+  documentBrandingMatchesDeployment,
+  getDocumentBranding
+} from './document-branding.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -494,12 +498,22 @@ async function loadIdentity(env) {
   const [organizationProfile, schoolProfile, documentBranding, webBranding] = await Promise.all([
     getDocument(env, 'settings', 'organisationProfile').catch(() => ({})),
     getDocument(env, 'settings', 'schoolProfile').catch(() => ({})),
-    getDocument(env, 'settings', 'documentBranding').catch(() => ({})),
+    getDocumentBranding(env).catch(() => ({})),
     getWebBranding(env).catch(() => ({}))
   ]);
   const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile: schoolProfile });
-  const logoDataUrl = clean(documentBranding?.DocumentLogoDataUrl || webBranding?.WebLogoDataUrl);
-  const configuredLogo = logoDataUrl ? '/api/web-logo' : clean(organizationProfile?.BrandLogoUrl);
+  const validDocumentBranding = documentBrandingMatchesDeployment(env, documentBranding)
+    ? documentBranding
+    : {};
+  const validWebBranding = webBrandingMatchesDeployment(env, webBranding)
+    ? webBranding
+    : {};
+  const documentLogoDataUrl = clean(validDocumentBranding?.DocumentLogoDataUrl);
+  const webLogoDataUrl = clean(validWebBranding?.WebLogoDataUrl);
+  const logoDataUrl = documentLogoDataUrl || webLogoDataUrl;
+  const configuredLogo = documentLogoDataUrl
+    ? '/api/document-logo'
+    : (webLogoDataUrl ? '/api/web-logo' : clean(organizationProfile?.BrandLogoUrl));
   return {
     ...organization,
     Address: clean(schoolProfile?.SchoolAddress || organizationProfile?.Address),

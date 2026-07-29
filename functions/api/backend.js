@@ -38,6 +38,7 @@ import { assertOrganizationDepartmentWorkspaceAccess } from '../lib/organization
 import { handleExecutiveOfficeAction } from '../lib/executive-correspondence.js';
 import { handleStudentConductAction } from '../lib/student-conduct.js';
 import { getWebBranding, saveWebBranding } from '../lib/web-branding.js';
+import { saveDocumentBranding } from '../lib/document-branding.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
 
@@ -2301,7 +2302,7 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
         throw error;
       }
     }
-    await upsertDocument(env, 'settings', 'documentBranding', {
+    await saveDocumentBranding(env, {
       DocumentLogoDataUrl: documentLogo,
       DocumentSignatureDataUrl: documentSignature,
       UpdatedAt: nowIso()

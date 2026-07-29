@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
+  classifyBrevoFailure,
   resolveEmailSenderProfile,
   selectActiveBrevoSender
 } from '../functions/lib/email-service.js';
@@ -145,6 +146,33 @@ test('active executive sender remains the delivery sender', () => {
   assert.equal(selected.verified, true);
 });
 
+test('Brevo failures are converted to safe and actionable delivery messages', () => {
+  assert.deepEqual(
+    classifyBrevoFailure(401, { code: 'unauthorized', message: 'Key not found' }),
+    {
+      code: 'BREVO_CREDENTIAL_INVALID',
+      status: 503,
+      message: 'Brevo rejected the Cloudflare email credential. Replace the encrypted BREVO_API_KEY secret, then redeploy the portal.'
+    }
+  );
+  assert.equal(
+    classifyBrevoFailure(402, { code: 'not_enough_credit' }).code,
+    'BREVO_CREDIT_EXHAUSTED'
+  );
+  assert.equal(
+    classifyBrevoFailure(400, { code: 'invalid_parameter', message: 'sender is not valid' }).code,
+    'BREVO_SENDER_NOT_VALIDATED'
+  );
+  assert.equal(
+    classifyBrevoFailure(400, { code: 'invalid_parameter', message: 'attachment too large' }).code,
+    'BREVO_ATTACHMENT_REJECTED'
+  );
+  assert.equal(
+    classifyBrevoFailure(429, { message: 'Too many requests' }).code,
+    'BREVO_RATE_LIMITED'
+  );
+});
+
 test('backend stores school and organisation sender identities in separate fields', async () => {
   const backend = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
   const churchPayments = await readFile(new URL('../functions/lib/church-payments.js', import.meta.url), 'utf8');
@@ -156,4 +184,14 @@ test('backend stores school and organisation sender identities in separate field
   assert.match(churchPayments, /resolveEmailSenderProfile\(env, \{ brevo, organizationProfile \}\)/);
   assert.doesNotMatch(churchPayments, /env\.SCHOOL_EMAIL/);
   assert.doesNotMatch(churchPayments, /env\.BREVO_SENDER_EMAIL/);
+});
+
+test('executive delivery verifies the configured sender even when it matches the shared sender', async () => {
+  const emailSource = await readFile(new URL('../functions/lib/email-service.js', import.meta.url), 'utf8');
+  assert.match(emailSource, /fetch\('https:\/\/api\.brevo\.com\/v3\/senders'/);
+  assert.doesNotMatch(
+    emailSource,
+    /clean\(profile\.senderEmail\)\.toLowerCase\(\) === clean\(profile\.fallbackSenderEmail\)\.toLowerCase\(\)/
+  );
+  assert.match(emailSource, /throw brevoFailureError\(response\.status, providerError\)/);
 });

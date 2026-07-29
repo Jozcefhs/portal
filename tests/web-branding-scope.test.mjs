@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { webBrandingDocumentId } from '../functions/lib/web-branding.js';
+import {
+  webBrandingDocumentId,
+  webBrandingMatchesDeployment
+} from '../functions/lib/web-branding.js';
 
 const faithEnv = {
   DYNAMAX_WORKSPACE_ID: 'faith',
@@ -18,6 +21,25 @@ test('school keeps the legacy branding document while other workspaces use isola
     DYNAMAX_WORKSPACE_ID: 'association-main',
     ORGANISATION_EDITION: 'organization'
   }), 'webBranding-association-main');
+});
+
+test('legacy branding without deployment identity is not trusted for official letters', () => {
+  assert.equal(webBrandingMatchesDeployment(faithEnv, {
+    WebLogoDataUrl: 'data:image/png;base64,CHURCH'
+  }), false);
+  assert.equal(webBrandingMatchesDeployment(faithEnv, {
+    WorkspaceId: 'faith',
+    OrganisationEdition: 'faith',
+    WebLogoDataUrl: 'data:image/png;base64,CHURCH'
+  }), true);
+  assert.equal(webBrandingMatchesDeployment({
+    DYNAMAX_WORKSPACE_ID: 'school',
+    ORGANISATION_EDITION: 'school'
+  }, {
+    WorkspaceId: 'faith',
+    OrganisationEdition: 'faith',
+    WebLogoDataUrl: 'data:image/png;base64,CHURCH'
+  }), false);
 });
 
 test('church receipts and the public logo endpoint load only deployment-scoped branding', async () => {
