@@ -324,6 +324,35 @@ test('official correspondence sends the email-safe layout with bounded endorseme
   assert.match(emailSource, /payload\.replyTo = \{ email: replyToEmail/);
 });
 
+test('email correspondence uses a table layout, visible watermark, and one generated signature block', () => {
+  const printable = buildPrintableCorrespondence({
+    CorrespondenceId: 'COR-LEGACY-1',
+    Reference: 'DIGC-COR-1',
+    Kind: 'external-agency',
+    RecipientName: 'Rosemary Ethan',
+    IssuedAt: '2026-07-29T12:00:00.000Z',
+    IssuedBy: 'Jozcefhs',
+    IssuerTitle: 'Super Admin'
+  }, {
+    Name: 'Dunamis International Gospel Centre',
+    Address: 'The Lord’s Garden',
+    Email: 'office@example.com',
+    Phone: '0800',
+    LogoUrl: 'https://portal.example/images/church-logo.png'
+  }, {
+    subject: 'Official message',
+    body: 'The\n\nDear Sir/Madam,\n\nThe official message.\n\nYours faithfully,\nJozcefhs\nSuper Admin'
+  });
+
+  assert.match(printable.emailHtml, /<table role="presentation"/);
+  assert.match(printable.emailHtml, /padding:30px 40px 34px/);
+  assert.match(printable.emailHtml, /opacity:\.055/);
+  assert.match(printable.emailHtml, /Yours faithfully,/);
+  assert.equal((printable.emailHtml.match(/Jozcefhs/g) || []).length, 1);
+  assert.doesNotMatch(printable.emailHtml, /<p>The<\/p>/);
+  assert.equal((printable.fullText.match(/Jozcefhs/g) || []).length, 1);
+});
+
 test('web issue and send verify the current password server-side and never accept the desktop secret', () => {
   assert.match(endpoint, /requireStaffSession\(env, request\)/);
   assert.match(endpoint, /verifyStaffApprovalPassword\(env, user\.username, password\)/);

@@ -56,7 +56,7 @@ const BUILT_IN_TEMPLATES = Object.freeze([
     Name: 'Official letter',
     Kind: 'official-letter',
     SubjectTemplate: '{{SUBJECT}}',
-    BodyTemplate: 'Dear {{RECIPIENT_NAME}},\n\n[Write the official message here.]\n\nYours faithfully,\n{{SIGNATORY_NAME}}\n{{SIGNATORY_TITLE}}',
+    BodyTemplate: 'Dear {{RECIPIENT_NAME}},\n\n[Write the official message here.]',
     Editions: ['school', 'faith', 'church', 'organization']
   }),
   Object.freeze({
@@ -72,7 +72,7 @@ const BUILT_IN_TEMPLATES = Object.freeze([
     Name: 'Recommendation letter',
     Kind: 'recommendation',
     SubjectTemplate: 'Recommendation for {{RECIPIENT_NAME}}',
-    BodyTemplate: 'To whom it may concern,\n\n[Write the recommendation here.]\n\nThis recommendation is issued by {{ORGANISATION_NAME}} for official use.\n\nYours faithfully,\n{{SIGNATORY_NAME}}\n{{SIGNATORY_TITLE}}',
+    BodyTemplate: 'To whom it may concern,\n\n[Write the recommendation here.]\n\nThis recommendation is issued by {{ORGANISATION_NAME}} for official use.',
     Editions: ['school', 'faith', 'church', 'organization']
   }),
   Object.freeze({
@@ -80,7 +80,7 @@ const BUILT_IN_TEMPLATES = Object.freeze([
     Name: 'Ministry or agency letter',
     Kind: 'external-agency',
     SubjectTemplate: '{{SUBJECT}}',
-    BodyTemplate: 'The {{RECIPIENT_TITLE}}\n{{RECIPIENT_ORGANISATION}}\n{{RECIPIENT_ADDRESS}}\n\nDear Sir/Madam,\n\n[Write the official message here.]\n\nYours faithfully,\n{{SIGNATORY_NAME}}\n{{SIGNATORY_TITLE}}',
+    BodyTemplate: 'Dear Sir/Madam,\n\n[Write the official message here.]',
     Editions: ['school', 'faith', 'church', 'organization']
   })
 ]);
@@ -878,15 +878,54 @@ function dataImageAttachment(source, filename) {
   };
 }
 
+function escapeRegex(value) {
+  return String(value ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeRenderedLetterBody(body, correspondence = {}) {
+  let normalized = String(body || '').replace(/\r\n?/g, '\n').trim();
+  const recipientPrefix = [
+    clean(correspondence.RecipientTitle) ? `The ${clean(correspondence.RecipientTitle)}` : 'The',
+    clean(correspondence.RecipientOrganisation),
+    clean(correspondence.RecipientAddress)
+  ].filter(Boolean).join('\n');
+  if (recipientPrefix) {
+    normalized = normalized.replace(
+      new RegExp(`^${escapeRegex(recipientPrefix)}\\s*\\n+`, 'i'),
+      ''
+    );
+  }
+  const issuedBy = clean(correspondence.IssuedBy);
+  const issuerTitle = clean(correspondence.IssuerTitle);
+  if (issuedBy && issuerTitle) {
+    normalized = normalized.replace(
+      new RegExp(
+        `(?:\\n{2,}|^)(?:Yours faithfully|Yours sincerely|Respectfully),?\\s*\\n+${escapeRegex(issuedBy)}\\s*\\n+${escapeRegex(issuerTitle)}\\s*$`,
+        'i'
+      ),
+      ''
+    ).trim();
+  }
+  return normalized;
+}
+
+function renderedParagraphs(body) {
+  return String(body || '').split(/\n{2,}/)
+    .filter((paragraph) => clean(paragraph))
+    .map((paragraph) => `<p>${paragraph.split(/\n/).map(escapeEmailHtml).join('<br>')}</p>`).join('');
+}
+
 export function buildPrintableCorrespondence(correspondence, identity, rendered, endorsement = {}) {
   const reference = clean(correspondence.Reference || correspondence.CorrespondenceId);
   const documentTypeTitle = correspondence.Kind === 'transfer-certificate' ? 'Transfer Certificate' : 'Official Correspondence';
-  const paragraphs = String(rendered.body || '').split(/\n{2,}/)
-    .map((paragraph) => `<p>${paragraph.split(/\n/).map(escapeEmailHtml).join('<br>')}</p>`).join('');
+  const normalizedBody = normalizeRenderedLetterBody(rendered.body, correspondence);
+  const paragraphs = renderedParagraphs(normalizedBody);
   const logoSource = identity.LogoUrl || identity.LogoDataUrl;
   const publicLogoSource = /^https:\/\//i.test(clean(identity.LogoUrl)) ? clean(identity.LogoUrl) : '';
   const logo = imageTag(logoSource, identity.Name, 'brand-logo');
-  const emailLogo = imageTag(publicLogoSource, identity.Name, 'brand-logo');
+  const emailLogo = publicLogoSource
+    ? `<img src="${escapeEmailHtml(publicLogoSource)}" alt="${escapeEmailHtml(identity.Name)}" width="72" height="72" style="display:block; width:72px; height:72px; object-fit:contain; border:0;">`
+    : '';
   const watermarkImage = cssImageUrl(logoSource);
   const watermarkStyle = watermarkImage
     ? `background-image:linear-gradient(rgba(255,255,255,.93),rgba(255,255,255,.93)),${watermarkImage};background-position:center 55%;background-repeat:no-repeat;background-size:360px auto;`
@@ -920,16 +959,80 @@ export function buildPrintableCorrespondence(correspondence, identity, rendered,
     correspondence.RecipientName,
     correspondence.RecipientOrganisation,
     correspondence.RecipientAddress
-  ].map(clean).filter(Boolean).join('\n'))}</div><h2 class="subject">${escapeEmailHtml(rendered.subject)}</h2>${paragraphs}<div class="endorsement"><div class="signatory">${signature}<strong>${escapeEmailHtml(correspondence.IssuedBy)}</strong><br>${escapeEmailHtml(correspondence.IssuerTitle)}</div>${stamp}</div></main><footer class="footer">Official document · ${escapeEmailHtml(reference)} · ${escapeEmailHtml(identity.Name)}</footer></article></body></html>`;
-  let emailHtml = html;
-  if (logo !== emailLogo) emailHtml = emailHtml.replace(logo, emailLogo);
-  if (!publicLogoSource && watermarkStyle) emailHtml = emailHtml.replace(watermarkStyle, '');
-  if (signature && clean(endorsement.SignatureDataUrl).startsWith('data:')) {
-    emailHtml = emailHtml.replace(signature, attachmentNotice);
-  } else if (attachmentNotice) {
-    emailHtml = emailHtml.replace('<div class="signatory">', `<div class="signatory">${attachmentNotice}`);
-  }
-  if (stamp && clean(endorsement.StampDataUrl).startsWith('data:')) emailHtml = emailHtml.replace(stamp, '');
+  ].map(clean).filter(Boolean).join('\n'))}</div><h2 class="subject">${escapeEmailHtml(rendered.subject)}</h2>${paragraphs}<div class="endorsement"><div><div style="margin-bottom:12px">Yours faithfully,</div><div class="signatory">${signature}<strong>${escapeEmailHtml(correspondence.IssuedBy)}</strong><br>${escapeEmailHtml(correspondence.IssuerTitle)}</div></div>${stamp}</div></main><footer class="footer">Official document · ${escapeEmailHtml(reference)} · ${escapeEmailHtml(identity.Name)}</footer></article></body></html>`;
+  const recipient = [
+    correspondence.RecipientTitle,
+    correspondence.RecipientName,
+    correspondence.RecipientOrganisation,
+    correspondence.RecipientAddress
+  ].map(clean).filter(Boolean).join('<br>');
+  const publicSignatureSource = /^https:\/\//i.test(clean(endorsement.SignatureDataUrl))
+    ? clean(endorsement.SignatureDataUrl)
+    : '';
+  const publicStampSource = /^https:\/\//i.test(clean(endorsement.StampDataUrl))
+    ? clean(endorsement.StampDataUrl)
+    : '';
+  const emailSignature = signature && publicSignatureSource
+    ? `<img src="${escapeEmailHtml(publicSignatureSource)}" alt="Signature" width="190" style="display:block; width:190px; max-width:100%; max-height:72px; object-fit:contain; margin:0 0 5px; border:0;">`
+    : attachmentNotice;
+  const emailStamp = stamp && publicStampSource
+    ? `<img src="${escapeEmailHtml(publicStampSource)}" alt="Official stamp" width="120" style="display:inline-block; width:120px; max-width:100%; max-height:95px; object-fit:contain; border:0;">`
+    : '';
+  const emailWatermark = publicLogoSource
+    ? `<div aria-hidden="true" style="position:absolute; left:50%; top:53%; width:300px; margin-left:-150px; margin-top:-150px; text-align:center; opacity:.055;"><img src="${escapeEmailHtml(publicLogoSource)}" alt="" width="300" style="display:block; width:300px; max-width:70%; height:auto; margin:0 auto; border:0;"></div>`
+    : '';
+  const emailHtml = `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%; max-width:760px; margin:22px auto; border-collapse:collapse; border:1px solid #cbd9e7; background:#ffffff; color:#15283f; font-family:Arial,sans-serif;">
+    <tr><td style="padding:0;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%; border-collapse:collapse;"><tr>
+        <td width="33%" height="7" style="width:33%; height:7px; line-height:7px; font-size:0; background:#0b4a78;">&nbsp;</td>
+        <td width="34%" height="7" style="width:34%; height:7px; line-height:7px; font-size:0; background:#0d9488;">&nbsp;</td>
+        <td width="33%" height="7" style="width:33%; height:7px; line-height:7px; font-size:0; background:#d39a18;">&nbsp;</td>
+      </tr></table>
+    </td></tr>
+    <tr><td style="padding:20px 30px 18px; border-bottom:2px solid #194f7d;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%; border-collapse:collapse;">
+        <tr>
+          <td width="78" style="width:78px; vertical-align:middle;">${emailLogo}</td>
+          <td align="center" style="text-align:center; vertical-align:middle;">
+            <h1 style="margin:0 0 4px; color:#123f68; font-size:24px; line-height:1.2;">${escapeEmailHtml(identity.Name)}</h1>
+            <div style="color:#587086; font-size:14px; line-height:1.5;">${escapeEmailHtml(identity.Address)}</div>
+            <div style="color:#587086; font-size:14px; line-height:1.5;">${escapeEmailHtml([identity.Email, identity.Phone].filter(Boolean).join(' · '))}</div>
+          </td>
+          <td width="78" style="width:78px;">&nbsp;</td>
+        </tr>
+      </table>
+    </td></tr>
+    <tr><td style="padding:12px 30px; background:#eef6ff;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%; border-collapse:collapse;">
+        <tr>
+          <td align="left" style="color:#173f65;"><strong>Reference:</strong> ${escapeEmailHtml(reference)}</td>
+          <td align="right" style="color:#173f65; text-align:right;"><strong>Date:</strong> ${escapeEmailHtml(clean(correspondence.IssuedAt || correspondence.UpdatedAt).slice(0, 10))}</td>
+        </tr>
+      </table>
+    </td></tr>
+    <tr><td style="position:relative; padding:30px 40px 34px; background:#ffffff;">
+      ${emailWatermark}
+      <div style="position:relative; z-index:1;">
+        ${recipient ? `<div style="margin:0 0 24px; color:#15283f; font-size:16px; line-height:1.55;">${recipient}</div>` : ''}
+        <h2 style="margin:0 0 25px; color:#15283f; text-align:center; text-transform:uppercase; text-decoration:underline; font-size:20px; line-height:1.35;">${escapeEmailHtml(rendered.subject)}</h2>
+        <div style="color:#15283f; font-size:16px; line-height:1.62;">${paragraphs}</div>
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%; margin-top:44px; border-collapse:collapse;">
+          <tr>
+            <td style="width:65%; vertical-align:bottom;">
+              <div style="margin-bottom:12px; color:#15283f;">Yours faithfully,</div>
+              ${emailSignature}
+              <div style="width:240px; padding-top:8px; border-top:1px solid #536b84; color:#15283f;">
+                <strong>${escapeEmailHtml(correspondence.IssuedBy)}</strong><br>
+                <span>${escapeEmailHtml(correspondence.IssuerTitle)}</span>
+              </div>
+            </td>
+            <td align="right" style="width:35%; text-align:right; vertical-align:bottom;">${emailStamp}</td>
+          </tr>
+        </table>
+      </div>
+    </td></tr>
+    <tr><td align="center" style="padding:12px 30px; background:#123f68; color:#ffffff; font-size:12px; text-align:center;">Official document · ${escapeEmailHtml(reference)} · ${escapeEmailHtml(identity.Name)}</td></tr>
+  </table>`;
   const text = [
     identity.Name,
     identity.Address,
@@ -942,7 +1045,7 @@ export function buildPrintableCorrespondence(correspondence, identity, rendered,
     '',
     rendered.subject.toUpperCase(),
     '',
-    rendered.body,
+    normalizedBody,
     '',
     correspondence.IssuedBy,
     correspondence.IssuerTitle
