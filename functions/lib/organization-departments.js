@@ -1,7 +1,9 @@
 import { batchUpsertDocuments, deleteDocument, getDocument, listCollection, upsertDocument } from './firestore.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from './church-foundation.js';
 import {
+  assertImmutableRecordIdentity,
   importChurchMembers,
+  recordWritePrecondition,
   resolveMembershipBranch,
   saveChurchMember,
   stripFirestoreMetadata,
@@ -85,13 +87,28 @@ async function saveDepartment(env, user, body, branchId) {
   requireCapability(user, 'canManageDepartments');
   const department = normalizedDepartment(body.department || body, branchId);
   const id = safeChurchDocumentId(department.DepartmentId);
-  const existing = await getDocument(env, path('departments', branchId), id).catch(() => null);
+  const existing = await getDocument(env, path('departments', branchId), id);
+  assertImmutableRecordIdentity(
+    'Department ID',
+    department.DepartmentId,
+    body.OriginalDepartmentId || body.originalDepartmentId,
+    existing?.DepartmentId
+  );
+  if (existing && !belongsToBranch(existing, branchId)) {
+    throw inputError('The department record belongs to another branch.', 409);
+  }
   const payload = {
     ...(existing || {}), ...department, CreatedAt: existing?.CreatedAt || nowIso(),
     CreatedBy: existing?.CreatedBy || actor(user), UpdatedAt: nowIso(), UpdatedBy: actor(user)
   };
   delete payload.__id; delete payload.__name;
-  await upsertDocument(env, path('departments', branchId), id, payload);
+  await upsertDocument(
+    env,
+    path('departments', branchId),
+    id,
+    payload,
+    recordWritePrecondition(existing)
+  );
   await audit(env, branchId, user, existing ? 'UPDATE' : 'CREATE', 'Department', department.DepartmentId, department.Name);
   return { message: existing ? 'Department updated.' : 'Department created.' };
 }
@@ -172,12 +189,33 @@ async function savePosition(env, user, body, branchId) {
   const Name = clean(body.Name || body.PositionName);
   if (!PositionId || !DepartmentId || !Name) throw inputError('Position ID, department and name are required.');
   const id = safeChurchDocumentId(`${DepartmentId}--${PositionId}`);
-  const existing = await getDocument(env, path('departmentPositions', branchId), id).catch(() => null);
+  const [department, existing] = await Promise.all([
+    getDocument(env, path('departments', branchId), safeChurchDocumentId(DepartmentId)),
+    getDocument(env, path('departmentPositions', branchId), id)
+  ]);
+  if (!department || !belongsToBranch(department, branchId)) {
+    throw inputError('The selected department does not exist in this branch.', 404);
+  }
+  assertImmutableRecordIdentity(
+    'Position ID',
+    PositionId,
+    body.OriginalPositionId || body.originalPositionId,
+    existing?.PositionId
+  );
+  assertImmutableRecordIdentity(
+    'Position department',
+    DepartmentId,
+    body.OriginalDepartmentId || body.originalDepartmentId,
+    existing?.DepartmentId
+  );
+  if (existing && !belongsToBranch(existing, branchId)) {
+    throw inputError('The position record belongs to another branch.', 409);
+  }
   await upsertDocument(env, path('departmentPositions', branchId), id, {
     ...(existing || {}), PositionId, DepartmentId, Name, Description: clean(body.Description),
     Active: yes(body.Active ?? 'YES') ? 'YES' : 'NO', BranchId: branchId,
     CreatedAt: existing?.CreatedAt || nowIso(), UpdatedAt: nowIso(), UpdatedBy: actor(user)
-  });
+  }, recordWritePrecondition(existing));
   await audit(env, branchId, user, existing ? 'UPDATE' : 'CREATE', 'Position', PositionId, `${DepartmentId} | ${Name}`);
   return { message: existing ? 'Position updated.' : 'Position created.' };
 }

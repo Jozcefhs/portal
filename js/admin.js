@@ -2301,10 +2301,82 @@ async function organizationDepartmentAction(action, payload = {}) {
 
 function departmentFormPayload(form) {
   const payload = Object.fromEntries(new FormData(form).entries());
+  form.querySelectorAll('[name]:disabled').forEach((input) => {
+    payload[input.name] = input.value;
+  });
   form.querySelectorAll('input[type="checkbox"][name]').forEach((input) => {
     payload[input.name] = input.checked ? (input.value || 'YES') : 'NO';
   });
   return payload;
+}
+
+function resetOrganizationRecordEditor(form, focus = false) {
+  if (!form) return;
+  form.reset();
+  form.querySelectorAll('input[name^="Original"]').forEach((input) => {
+    input.value = '';
+  });
+  const idInput = form.elements[form.dataset.recordIdField];
+  if (idInput) {
+    idInput.readOnly = false;
+    idInput.removeAttribute('aria-readonly');
+  }
+  const parentInput = form.elements[form.dataset.recordParentField];
+  if (parentInput) {
+    parentInput.disabled = false;
+    parentInput.removeAttribute('aria-disabled');
+  }
+  const heading = form.querySelector('[data-record-editor-heading], h3');
+  const submitButton = form.querySelector('button[type="submit"]');
+  const cancelButton = form.querySelector('[data-cancel-record-edit]');
+  if (heading) heading.textContent = form.dataset.createHeading || 'Create record';
+  if (submitButton) submitButton.textContent = form.dataset.createLabel || 'Save';
+  if (cancelButton) cancelButton.hidden = true;
+  delete form.dataset.editing;
+  if (focus) idInput?.focus();
+}
+
+function beginOrganizationRecordEdit(form, row, {
+  fields = [],
+  originalFields = {},
+  heading = 'Edit record',
+  submitLabel = 'Update record',
+  focusField = ''
+} = {}) {
+  if (!form || !row) return;
+  resetOrganizationRecordEditor(form);
+  fields.forEach((field) => {
+    const input = form.elements[field];
+    if (!input) return;
+    const value = clean(row[field]);
+    if (input.type === 'checkbox') {
+      input.checked = !['no', 'false', '0', 'inactive'].includes(lower(value || 'YES'));
+    } else {
+      input.value = value;
+    }
+  });
+  Object.entries(originalFields).forEach(([field, value]) => {
+    if (form.elements[field]) form.elements[field].value = clean(value);
+  });
+  const idInput = form.elements[form.dataset.recordIdField];
+  if (idInput) {
+    idInput.readOnly = true;
+    idInput.setAttribute('aria-readonly', 'true');
+  }
+  const parentInput = form.elements[form.dataset.recordParentField];
+  if (parentInput) {
+    parentInput.disabled = true;
+    parentInput.setAttribute('aria-disabled', 'true');
+  }
+  const headingNode = form.querySelector('[data-record-editor-heading], h3');
+  const submitButton = form.querySelector('button[type="submit"]');
+  const cancelButton = form.querySelector('[data-cancel-record-edit]');
+  if (headingNode) headingNode.textContent = heading;
+  if (submitButton) submitButton.textContent = submitLabel;
+  if (cancelButton) cancelButton.hidden = false;
+  form.dataset.editing = 'true';
+  form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  (form.elements[focusField] || idInput)?.focus();
 }
 
 function departmentOptions(rows, selected = '') {
@@ -2495,13 +2567,14 @@ function organizedDepartmentWorkspace(data) {
         <input type="file" id="departmentsCsvFile" accept=".csv,text/csv" hidden>
       </div>` : ''}
       <div class="department-form-grid department-two-column-grid">
-        <form id="organizationDepartmentEditor" class="workflow-card compact-form department-editor-card" data-department-action="saveDepartment">
-          <h3>Create or edit department</h3>
+        <form id="organizationDepartmentEditor" class="workflow-card compact-form department-editor-card" data-department-action="saveDepartment" data-record-id-field="DepartmentId" data-create-heading="Create a department" data-create-label="Save department">
+          <h3>Create a department</h3>
+          <input type="hidden" name="OriginalDepartmentId">
           <input name="DepartmentId" placeholder="Department ID" required><input name="Name" placeholder="Department name" required>
           <select name="DepartmentType"><option>Department</option><option>Home Church</option><option>Home Cell</option><option>Foreign Desk</option></select>
-          <input name="AreaZone" placeholder="Area / zone"><input name="Description" placeholder="Description">
+          <input name="AreaZone" placeholder="Area / zone"><input name="MeetingFrequency" placeholder="Meeting frequency"><input name="Description" placeholder="Description">
           <label class="inline-check"><input type="checkbox" name="Active" value="YES" checked><span>Active</span></label>
-          <button type="submit" data-loading-text="Saving department...">Save department</button>
+          <div class="compact-row-actions"><button type="submit" data-loading-text="Saving department...">Save department</button><button type="button" class="secondary compact-action" data-cancel-record-edit hidden>Cancel edit</button></div>
         </form>
         <aside class="workflow-card department-guidance-card"><span aria-hidden="true">⌂</span><div><h3>Structure guidance</h3><p>Use departments for ministry teams, Home Church or Home Cell for area-based groups, and Foreign Desk for international visitors.</p><ul><li>Give every record a stable Department ID.</li><li>Add an area or zone for home churches.</li><li>Deactivate records that should remain in history.</li></ul></div></aside>
       </div>
@@ -2510,7 +2583,7 @@ function organizedDepartmentWorkspace(data) {
         { label: 'Type', value: (row) => row.DepartmentType },
         { label: 'Area / zone', value: (row) => row.AreaZone },
         { label: 'Status', value: (row) => row.Active },
-        { label: 'Actions', render: (row) => `<span class="compact-row-actions"><button class="compact-icon-action" data-edit-department="${escapeHtml(row.DepartmentId || row.__id)}" title="Edit department" aria-label="Edit ${escapeHtml(row.Name)}">✎</button><button class="compact-icon-action compact-delete-action" data-delete-department="${escapeHtml(row.DepartmentId || row.__id)}" title="Delete department" aria-label="Delete ${escapeHtml(row.Name)}">✕</button></span>` }
+        ...(canManageDepartments ? [{ label: 'Actions', render: (row) => `<span class="compact-row-actions"><button type="button" class="compact-icon-action" data-edit-department="${escapeHtml(row.DepartmentId || row.__id)}" title="Edit department" aria-label="Edit ${escapeHtml(row.Name)}">✎</button><button type="button" class="compact-icon-action compact-delete-action" data-delete-department="${escapeHtml(row.DepartmentId || row.__id)}" title="Delete department" aria-label="Delete ${escapeHtml(row.Name)}">✕</button></span>` }] : [])
       ])}
     </section>
 
@@ -2526,8 +2599,9 @@ function organizedDepartmentWorkspace(data) {
         <span>1. Register the member. 2. Create a position if needed. 3. Assign the member to a department.</span>
       </div>
       <div class="department-form-grid department-three-column-grid">
-        <form class="workflow-card compact-form department-member-create-card" data-department-action="saveChurchMember">
+        <form id="organizationMemberEditor" class="workflow-card compact-form department-member-create-card" data-department-action="saveChurchMember" data-record-id-field="MemberId" data-create-heading="Register a member" data-create-label="Create member">
           <h3>Register a member</h3>
+          <input type="hidden" name="OriginalMemberId">
           <input name="MemberId" value="MEM-${Date.now()}" placeholder="Member ID" required>
           <input name="DisplayName" placeholder="Full display name" required>
           <div class="department-member-name-grid">
@@ -2539,9 +2613,9 @@ function organizedDepartmentWorkspace(data) {
           <select name="Gender"><option value="">Gender (optional)</option><option>Male</option><option>Female</option></select>
           <input name="MembershipDate" type="date" value="${new Date().toISOString().slice(0, 10)}">
           <select name="MembershipStatus"><option>Active</option><option>Visitor</option><option>Inactive</option><option>Transferred</option></select>
-          <button type="submit">Create member</button>
+          <div class="compact-row-actions"><button type="submit">Create member</button><button type="button" class="secondary compact-action" data-cancel-record-edit hidden>Cancel edit</button></div>
         </form>
-        <form class="workflow-card compact-form" data-department-action="savePosition"><h3>Create a position</h3><select name="DepartmentId" required>${departmentOptions(departments)}</select><input name="PositionId" placeholder="Position ID" required><input name="Name" placeholder="Position name" required><button type="submit">Save position</button></form>
+        <form id="organizationPositionEditor" class="workflow-card compact-form" data-department-action="savePosition" data-record-id-field="PositionId" data-record-parent-field="DepartmentId" data-create-heading="Create a position" data-create-label="Save position"><h3>Create a position</h3><input type="hidden" name="OriginalPositionId"><input type="hidden" name="OriginalDepartmentId"><select name="DepartmentId" required>${departmentOptions(departments)}</select><input name="PositionId" placeholder="Position ID" required><input name="Name" placeholder="Position name" required><input name="Description" placeholder="Description"><label class="inline-check"><input type="checkbox" name="Active" value="YES" checked><span>Active</span></label><div class="compact-row-actions"><button type="submit">Save position</button><button type="button" class="secondary compact-action" data-cancel-record-edit hidden>Cancel edit</button></div></form>
         <form class="workflow-card compact-form department-member-assignment-form" data-department-action="saveDepartmentMember"><h3>Assign a member</h3><select name="DepartmentId" required>${departmentOptions(departments)}</select><select name="MemberId" required${members.length ? '' : ' disabled'}>${memberOptions}</select><select name="PositionId">${positionOptions}</select><input name="JoinedDate" type="date" value="${new Date().toISOString().slice(0, 10)}"><select name="Status"><option>Active</option><option>Inactive</option></select><button type="submit"${departments.length && members.length ? '' : ' disabled'}>Assign member</button>${departments.length ? '' : '<small class="muted">Create a department before assigning members.</small>'}${members.length ? '' : '<small class="muted">Register the first member before making an assignment.</small>'}</form>
       </div>
       ${table('Registered members', members, [
@@ -2549,7 +2623,14 @@ function organizedDepartmentWorkspace(data) {
         { label: 'Name', value: (row) => row.DisplayName },
         { label: 'Phone', value: (row) => row.Phone },
         { label: 'Email', value: (row) => row.Email },
-        { label: 'Status', value: (row) => row.MembershipStatus }
+        { label: 'Status', value: (row) => row.MembershipStatus },
+        ...(canManageMembers ? [{ label: 'Actions', render: (row) => `<button type="button" class="compact-icon-action" data-edit-member="${escapeHtml(row.MemberId || row.__id)}" title="Edit member" aria-label="Edit ${escapeHtml(row.DisplayName || row.MemberId || 'member')}">✎</button>` }] : [])
+      ])}
+      ${table('Department positions', positions, [
+        { label: 'Department', value: (row) => row.DepartmentName || row.DepartmentId },
+        { label: 'Position', value: (row) => row.Name || row.PositionName || row.PositionId },
+        { label: 'Status', value: (row) => row.Active },
+        ...(canManageDepartments ? [{ label: 'Actions', render: (row) => `<button type="button" class="compact-icon-action" data-edit-position="${escapeHtml(row.PositionId || row.__id)}" data-position-department="${escapeHtml(row.DepartmentId)}" title="Edit position" aria-label="Edit ${escapeHtml(row.Name || row.PositionName || row.PositionId || 'position')}">✎</button>` }] : [])
       ])}
       ${table('Department members and positions', departmentMembers, [
         { label: 'Department', value: (row) => row.DepartmentName || row.DepartmentId },
@@ -2685,11 +2766,13 @@ async function loadOrganizationDepartments() {
       const form = document.getElementById('organizationDepartmentEditor');
       if (department && form) {
         setOrganizationDepartmentWorkspaceTab('departments');
-        ['DepartmentId', 'Name', 'DepartmentType', 'AreaZone', 'Description'].forEach((field) => {
-          if (form.elements[field]) form.elements[field].value = clean(department[field]);
+        beginOrganizationRecordEdit(form, department, {
+          fields: ['DepartmentId', 'Name', 'DepartmentType', 'AreaZone', 'MeetingFrequency', 'Description', 'Active'],
+          originalFields: { OriginalDepartmentId: department.DepartmentId || department.__id },
+          heading: 'Edit department',
+          submitLabel: 'Update department',
+          focusField: 'Name'
         });
-        form.elements.Active.checked = !['no', 'false', '0', 'inactive'].includes(lower(department.Active || 'YES'));
-        form.elements.Name.focus();
       }
     } else if (selectedMemberId) {
       setOrganizationDepartmentWorkspaceTab('members');
@@ -2727,6 +2810,7 @@ async function loadOrganizationDepartments() {
         setStatus(status, 'Saving...');
         const result = await organizationDepartmentAction(form.dataset.departmentAction, departmentFormPayload(form));
         setStatus(status, result.message || 'Saved.', 'good');
+        if (form.matches('[data-record-id-field]')) resetOrganizationRecordEditor(form);
         await loadOrganizationDepartments();
       } catch (error) {
         setStatus(status, error.message || String(error), 'bad');
@@ -2740,12 +2824,48 @@ async function loadOrganizationDepartments() {
       const form = document.getElementById('organizationDepartmentEditor');
       if (!department || !form) return;
       setOrganizationDepartmentWorkspaceTab('departments');
-      ['DepartmentId', 'Name', 'DepartmentType', 'AreaZone', 'Description'].forEach((field) => {
-        if (form.elements[field]) form.elements[field].value = clean(department[field]);
+      beginOrganizationRecordEdit(form, department, {
+        fields: ['DepartmentId', 'Name', 'DepartmentType', 'AreaZone', 'MeetingFrequency', 'Description', 'Active'],
+        originalFields: { OriginalDepartmentId: department.DepartmentId || department.__id },
+        heading: 'Edit department',
+        submitLabel: 'Update department',
+        focusField: 'Name'
       });
-      form.elements.Active.checked = !['no', 'false', '0', 'inactive'].includes(lower(department.Active || 'YES'));
-      form.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      form.elements.Name.focus();
+    }));
+    panelEl.querySelectorAll('[data-edit-member]').forEach((button) => button.addEventListener('click', () => {
+      const member = (data.members || []).find((row) => clean(row.MemberId || row.__id) === clean(button.dataset.editMember));
+      const form = document.getElementById('organizationMemberEditor');
+      if (!member || !form) return;
+      setOrganizationDepartmentWorkspaceTab('members');
+      beginOrganizationRecordEdit(form, member, {
+        fields: ['MemberId', 'DisplayName', 'FirstName', 'Surname', 'Phone', 'Email', 'Gender', 'MembershipDate', 'MembershipStatus'],
+        originalFields: { OriginalMemberId: member.MemberId || member.__id },
+        heading: 'Edit member',
+        submitLabel: 'Update member',
+        focusField: 'DisplayName'
+      });
+    }));
+    panelEl.querySelectorAll('[data-edit-position]').forEach((button) => button.addEventListener('click', () => {
+      const position = (data.departmentPositions || []).find((row) =>
+        clean(row.PositionId || row.__id) === clean(button.dataset.editPosition)
+        && clean(row.DepartmentId) === clean(button.dataset.positionDepartment));
+      const form = document.getElementById('organizationPositionEditor');
+      if (!position || !form) return;
+      setOrganizationDepartmentWorkspaceTab('members');
+      beginOrganizationRecordEdit(form, position, {
+        fields: ['DepartmentId', 'PositionId', 'Name', 'Description', 'Active'],
+        originalFields: {
+          OriginalPositionId: position.PositionId || position.__id,
+          OriginalDepartmentId: position.DepartmentId
+        },
+        heading: 'Edit position',
+        submitLabel: 'Update position',
+        focusField: 'Name'
+      });
+    }));
+    panelEl.querySelectorAll('[data-cancel-record-edit]').forEach((button) => button.addEventListener('click', () => {
+      resetOrganizationRecordEditor(button.closest('form'), true);
+      setStatus(status, 'Edit cancelled.');
     }));
     panelEl.querySelectorAll('[data-delete-department]').forEach((button) => button.addEventListener('click', async () => {
       if (!window.confirm('Delete this department? Departments with members or meetings cannot be deleted.')) return;

@@ -9,11 +9,30 @@ import { resolveOrganizationConfig } from './organization-config.js';
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 const nowIso = () => new Date().toISOString();
-const inputError = (message) => {
+const inputError = (message, status = 400) => {
   const error = new Error(message);
-  error.status = 400;
+  error.status = status;
   return error;
 };
+
+export function assertImmutableRecordIdentity(label, currentValue, originalValue = '', storedValue = '') {
+  const current = clean(currentValue);
+  const original = clean(originalValue);
+  const stored = clean(storedValue);
+  if (original && original !== current) {
+    throw inputError(`${clean(label) || 'Record ID'} cannot be changed while editing.`, 409);
+  }
+  if (stored && stored !== current) {
+    throw inputError(`${clean(label) || 'Record ID'} conflicts with an existing record.`, 409);
+  }
+  return current;
+}
+
+export function recordWritePrecondition(existing = null) {
+  if (!existing) return { exists: false };
+  const updateTime = clean(existing.__updateTime);
+  return updateTime ? { updateTime } : { exists: true };
+}
 
 export function validatedCsvImportRows(value, recordName = 'record') {
   const rows = Array.isArray(value) ? value : [];
@@ -240,7 +259,15 @@ export async function saveChurchMember(env, user, body = {}) {
   const member = normalizeChurchMember(incoming, branchId);
   const memberPath = churchCollectionPath(CHURCH_COLLECTIONS.members, branchId);
   const id = safeChurchDocumentId(member.MemberId);
-  const existing = await getDocument(env, memberPath, id).catch(() => null);
+  const existing = await getDocument(env, memberPath, id);
+  const originalMemberId = clean(
+    body.OriginalMemberId || body.originalMemberId ||
+    incoming.OriginalMemberId || incoming.originalMemberId
+  );
+  assertImmutableRecordIdentity('Member ID', member.MemberId, originalMemberId, existing?.MemberId);
+  if (existing && resolveMembershipBranch({}, existing.BranchId || branchId) !== branchId) {
+    throw inputError('The member record belongs to another branch.', 409);
+  }
   if (member.HouseholdId) {
     const household = await getDocument(
       env,
@@ -263,7 +290,7 @@ export async function saveChurchMember(env, user, body = {}) {
     UpdatedBy: actorName(user)
   };
   delete payload.__id; delete payload.__name;
-  await upsertDocument(env, memberPath, id, payload);
+  await upsertDocument(env, memberPath, id, payload, recordWritePrecondition(existing));
   await writeMembershipAudit(env, branchId, user, existing ? 'UPDATE' : 'CREATE', 'Member', member.MemberId, member.DisplayName);
   return {
     ok: true,

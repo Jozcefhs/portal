@@ -1937,3 +1937,60 @@ html[data-theme="dark"] .student-conduct-form input,html[data-theme="dark"] .stu
 html[data-theme="dark"] .student-conduct-form .checkbox-line{border-color:#344c63;background:#13283c;color:#edf5ff}
 @media(max-width:980px){.student-conduct-summary{grid-template-columns:repeat(5,minmax(118px,1fr));overflow-x:auto}.student-conduct-layout{grid-template-columns:1fr}}
 @media(max-width:680px){.student-conduct-summary{margin-right:-14px}.student-conduct-card{padding:13px;border-radius:13px}.student-conduct-form{grid-template-columns:1fr}.conduct-span-2{grid-column:auto}}
+
+/* Keep summary cards readable in one bounded row; overflow belongs to the row, not the page. */
+.metric-row,
+.workflow-kpis,
+.commerce-summary-grid,
+.records-desk-metrics,
+.student-conduct-summary{
+  --summary-card-basis:clamp(145px,18vw,210px);
+  display:flex;
+  flex-wrap:nowrap;
+  gap:10px;
+  width:100%;
+  max-width:100%;
+  min-width:0;
+  padding-bottom:7px;
+  overflow-x:auto;
+  overflow-y:hidden;
+  overscroll-behavior-x:contain;
+  scroll-padding-inline:2px;
+  scroll-snap-type:x proximity;
+  scrollbar-width:thin;
+  scrollbar-color:#91a8bd transparent;
+  touch-action:pan-x pan-y;
+  -webkit-overflow-scrolling:touch;
+}
+.metric-row>div,
+.workflow-kpis>div,
+.commerce-summary-grid>div,
+.records-desk-metrics>div,
+.student-conduct-summary>div{
+  flex:1 0 var(--summary-card-basis);
+  min-width:var(--summary-card-basis);
+  max-width:none;
+  scroll-snap-align:start;
+}
+.metric-row:has(>.credit-note){
+  display:grid;
+  grid-template-columns:repeat(4,minmax(var(--summary-card-basis),1fr));
+}
+.metric-row:has(>.credit-note)>.credit-note{grid-column:1/-1}
+.metric-row:focus-visible,
+.workflow-kpis:focus-visible,
+.commerce-summary-grid:focus-visible,
+.records-desk-metrics:focus-visible,
+.student-conduct-summary:focus-visible{
+  outline:2px solid var(--blue);
+  outline-offset:3px;
+}
+.workflow-kpis{--summary-card-basis:clamp(165px,19vw,220px)}
+.commerce-summary-grid{--summary-card-basis:clamp(150px,17vw,205px)}
+.records-desk-metrics{--summary-card-basis:clamp(135px,15vw,180px)}
+.student-conduct-summary{--summary-card-basis:clamp(145px,17vw,190px)}
+html[data-theme="dark"] .metric-row,
+html[data-theme="dark"] .workflow-kpis,
+html[data-theme="dark"] .commerce-summary-grid,
+html[data-theme="dark"] .records-desk-metrics,
+html[data-theme="dark"] .student-conduct-summary{scrollbar-color:#526d82 transparent}
