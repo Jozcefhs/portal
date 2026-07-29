@@ -3000,9 +3000,48 @@ async function loadChurchFunds() {
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load church funds.');
     if (activeSection !== 'funds') return;
     renderModuleSummary('funds', data);
+    const capabilities = data.capabilities || {};
+    const revenueAccounts = (data.chart || []).filter((row) => clean(row.Type).toLowerCase() === 'revenue');
+    const givingTypeForm = capabilities.canManageGivingTypes ? `
+      <section class="config-group">
+        <header><strong>Giving types and individual income accounts</strong><small>Each giving source must point to a different Revenue account.</small></header>
+        <form id="churchGivingTypeForm" class="workflow-form config-form">
+          <input type="hidden" name="GivingTypeId">
+          <div class="config-grid">
+            <label>Giving type <input name="Name" placeholder="e.g. Prophet Offering" required></label>
+            <label>Revenue account
+              <select name="RevenueAccountCode" required>
+                ${revenueAccounts.map((account) => `<option value="${escapeHtml(account.Code)}">${escapeHtml(account.Code)} - ${escapeHtml(account.Name)}</option>`).join('')}
+              </select>
+            </label>
+            <label>Available online
+              <select name="AllowOnline"><option value="YES">Yes</option><option value="NO">No</option></select>
+            </label>
+            <label>Status
+              <select name="Active"><option value="YES">Active</option><option value="NO">Inactive</option></select>
+            </label>
+          </div>
+          <label>Notes <input name="Notes" placeholder="Optional description"></label>
+          <div class="config-dialog-actions">
+            <p class="status" id="churchGivingTypeStatus"></p>
+            <button type="reset" class="secondary">Clear</button>
+            <button type="submit">Save giving type</button>
+          </div>
+        </form>
+      </section>` : '';
     panelEl.innerHTML = `
-      <div class="workflow-intro"><div><p class="eyebrow">Church finance setup</p><h2>Funds & Accounting Mappings</h2><p class="muted">Branch ${escapeHtml(data.branchId || 'main')} Â· ${data.funds.length} funds Â· ${data.mappings.length} mappings</p></div><button type="button" id="refreshChurchFunds">Refresh</button></div>
-      <p class="muted">Fund setup is managed in the desktop suite. Mappings use the shared Chart of Accounts and do not create a separate church ledger.</p>
+      <div class="workflow-intro"><div><p class="eyebrow">Church finance setup</p><h2>Funds, Giving Types & Accounting Mappings</h2><p class="muted">Branch ${escapeHtml(data.branchId || 'main')} · ${data.funds.length} funds · ${(data.givingTypes || []).length} giving types · ${data.mappings.length} fund mappings</p></div><button type="button" id="refreshChurchFunds">Refresh</button></div>
+      <p class="muted">Funds describe what money is reserved for. Giving types describe its source and post to their own Revenue accounts.</p>
+      ${givingTypeForm}
+      ${table('Giving Types & Income Accounts', data.givingTypes || [], [
+        { label: 'Giving type', value: (row) => pick(row, ['Name']) },
+        { label: 'Account', value: (row) => [pick(row, ['RevenueAccountCode']), pick(row, ['RevenueAccountName'])].filter(Boolean).join(' - ') },
+        { label: 'Online', value: (row) => pick(row, ['AllowOnline']) },
+        { label: 'Status', value: (row) => pick(row, ['Active']) },
+        { label: 'Edit', render: (row) => capabilities.canManageGivingTypes
+          ? `<button type="button" class="compact-icon-action compact-edit-action" data-edit-giving-type="${escapeHtml(pick(row, ['GivingTypeId', '__id']))}" aria-label="Edit ${escapeHtml(pick(row, ['Name']))}" title="Edit giving type"><span aria-hidden="true">&#9998;</span></button>`
+          : '' }
+      ])}
       ${table('Funds', data.funds || [], [
         { label: 'Fund ID', value: (row) => pick(row, ['FundId', '__id']) },
         { label: 'Name', value: (row) => pick(row, ['Name']) },
@@ -3027,6 +3066,48 @@ async function loadChurchFunds() {
         { label: 'Actor', value: (row) => pick(row, ['Actor']) },
         { label: 'Details', value: (row) => pick(row, ['Details']) }
       ])}`;
+    const givingTypeFormElement = document.getElementById('churchGivingTypeForm');
+    givingTypeFormElement?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = givingTypeFormElement.querySelector('button[type="submit"]');
+      const status = document.getElementById('churchGivingTypeStatus');
+      const payload = Object.fromEntries(new FormData(givingTypeFormElement).entries());
+      setButtonLoading(button, true, 'Saving...', 'Save giving type');
+      try {
+        const saved = await staffFetch('/api/staff-funds', {
+          method: 'POST',
+          credentials: 'same-origin',
+          cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'saveGivingType',
+            BranchId: currentUser?.branchId || 'main',
+            ...payload
+          })
+        });
+        const result = await saved.json();
+        if (!saved.ok || !result.ok) throw new Error(result.message || 'Could not save giving type.');
+        setStatus(status, result.message, 'ok');
+        await loadChurchFunds();
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+      } finally {
+        setButtonLoading(button, false, 'Saving...', 'Save giving type');
+      }
+    });
+    panelEl.querySelectorAll('[data-edit-giving-type]').forEach((button) => button.addEventListener('click', () => {
+      const row = (data.givingTypes || []).find((item) =>
+        clean(item.GivingTypeId || item.__id) === clean(button.dataset.editGivingType)
+      );
+      if (!row || !givingTypeFormElement) return;
+      ['GivingTypeId', 'Name', 'RevenueAccountCode', 'AllowOnline', 'Active', 'Notes'].forEach((field) => {
+        if (givingTypeFormElement.elements[field]) {
+          givingTypeFormElement.elements[field].value = clean(row[field]);
+        }
+      });
+      givingTypeFormElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      givingTypeFormElement.elements.Name?.focus();
+    }));
     document.getElementById('refreshChurchFunds')?.addEventListener('click', (event) => {
       runButtonAction(event.currentTarget, 'Refreshing...', loadChurchFunds);
     });
@@ -3202,7 +3283,6 @@ async function loadChurchDonations() {
   try {
     const methods = ['CASH', 'BANK TRANSFER', 'CHEQUE', 'POS', 'ONLINE', 'CARD', 'MOBILE MONEY'];
     const currencies = ['NGN', 'USD', 'GBP', 'EUR', 'KES', 'GHS'];
-    const paymentTypes = ['Donation', 'Tithe', 'Offering', 'Seed', 'Building Fund', 'Other'];
     const response = await staffFetch('/api/staff-church-payments', {
       method: 'POST',
       credentials: 'same-origin',
@@ -3217,7 +3297,11 @@ async function loadChurchDonations() {
 
     const summary = data.summary || {};
     const capabilities = data.capabilities || {};
+    const paymentTypes = (data.givingTypes || []).map((row) => clean(row.Name)).filter(Boolean);
     const byMethod = summary.byMethod || {};
+    const givingSourceRows = Object.entries(summary.byType || {})
+      .map(([Name, Amount]) => ({ Name, Amount: Number(Amount || 0) }))
+      .sort((left, right) => right.Amount - left.Amount);
     const methodCards = Object.entries(byMethod)
       .sort((left, right) => clean(right[0]).localeCompare(clean(left[0])))
       .map(([method, value]) => `<div><small>${escapeHtml(method || 'Unknown')}</small><strong>${money(value)}</strong><span>Collected</span></div>`)
@@ -3239,6 +3323,9 @@ async function loadChurchDonations() {
         <div><small>Pending records</small><strong>${escapeHtml(summary.pending || 0)}</strong><span>Awaiting processing</span></div>
       </div>
       ${methodCards ? `<div class="workflow-kpis">${methodCards}</div>` : ''}
+      <div class="church-dashboard-grid giving-source-chart">
+        ${verticalBars('Giving by source', givingSourceRows, 'Name', 'Amount', 'teal')}
+      </div>
       <section class="config-group">
         <header><strong>New donation entry</strong><small>Record offline and online payments, then optionally send confirmation and link.</small></header>
         <form id="churchDonationForm" class="workflow-form config-form">
@@ -3248,7 +3335,7 @@ async function loadChurchDonations() {
             <label>Amount <input name="Amount" type="number" min="0.01" step="0.01" required></label>
             <label>Currency <select name="Currency">${currencies.map((currency) => `<option value="${escapeHtml(currency)}">${escapeHtml(currency)}</option>`).join('')}</select></label>
             <label>Method <select name="PaymentMethod">${methods.map((method) => `<option value="${escapeHtml(method)}">${escapeHtml(method)}</option>`).join('')}</select></label>
-            <label>Payment type <select name="PaymentType">${paymentTypes.map((paymentType) => `<option value="${escapeHtml(paymentType)}">${escapeHtml(paymentType)}</option>`).join('')}</select></label>
+            <label>Giving type <select name="PaymentType">${paymentTypes.map((paymentType) => `<option value="${escapeHtml(paymentType)}">${escapeHtml(paymentType)}</option>`).join('')}</select></label>
             <label>Receipt subject (after payment) <input name="ReceiptSubject" value="Thank you for your donation"></label>
             <label>Receipt message (after payment) <input name="ReceiptMessage" value="Your gift was received."></label>
           </div>
@@ -3472,6 +3559,9 @@ async function loadChurchOfferings() {
     if (activeSection !== 'offerings') return;
     renderModuleSummary('offerings', data);
     const summary = data.summary || {};
+    const offeringSourceRows = Object.entries(summary.byType || {})
+      .map(([Name, Amount]) => ({ Name, Amount: Number(Amount || 0) }))
+      .sort((left, right) => right.Amount - left.Amount);
     const capabilities = data.capabilities || {};
     const approvalRoutes = data.approvalRoutes || [];
     const canManageApprovalRoutes = Boolean(capabilities.canManageApprovalRoutes);
@@ -3543,6 +3633,9 @@ async function loadChurchOfferings() {
         <div><small>Approved</small><strong>${escapeHtml(summary.approved || 0)}</strong><span>Ready for posting</span></div>
         <div><small>Posted</small><strong>${escapeHtml(summary.posted || 0)}</strong><span>Accounting transfer created</span></div>
       </div>
+      <div class="church-dashboard-grid giving-source-chart">
+        ${verticalBars('Offering batches by giving type', offeringSourceRows, 'Name', 'Amount', 'gold')}
+      </div>
       ${routeFormSection}
       ${routeTableSection}
       <p class="muted">Capture and reconciliation are managed in the desktop suite. Reconciliation locks the batch and prepares a journal preview; it still requires approval before posting to accounting.</p>
@@ -3551,6 +3644,7 @@ async function loadChurchOfferings() {
         { label: 'Batch', value: (row) => pick(row, ['BatchReference']) },
         { label: 'Service', value: (row) => pick(row, ['ServiceName', 'ServiceOccurrenceId']) },
         { label: 'Fund', value: (row) => pick(row, ['FundName', 'FundId']) },
+        { label: 'Giving type', value: (row) => pick(row, ['GivingTypeName', 'GivingTypeId']) || 'Offering' },
         { label: 'Cash', value: (row) => money(pick(row, ['CashAmount'])) },
         { label: 'Non-cash', value: (row) => money(Number(row.TotalAmount || 0) - Number(row.CashAmount || 0)) },
         { label: 'Total', value: (row) => money(pick(row, ['TotalAmount'])) },

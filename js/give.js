@@ -4,6 +4,7 @@ const givingStatus = document.getElementById('publicGivingStatus');
 const givingOrganisation = document.getElementById('givingOrganisation');
 const givingLogo = document.getElementById('givingLogo');
 const givingBranch = document.getElementById('givingBranch');
+const givingType = document.getElementById('givingType');
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -27,6 +28,28 @@ function setGivingBusy(busy) {
 
 const requestedBranch = clean(new URLSearchParams(window.location.search).get('branch')).toLowerCase();
 givingBranch.value = /^[a-z0-9._-]{1,80}$/.test(requestedBranch) ? requestedBranch : 'main';
+
+async function loadGivingTypes() {
+  try {
+    const response = await fetch(
+      `/api/public-church-payment?branch=${encodeURIComponent(givingBranch.value)}`,
+      { credentials: 'same-origin', cache: 'no-store' }
+    );
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load giving types.');
+    givingType.innerHTML = (data.givingTypes || []).map((row) =>
+      `<option value="${clean(row.Name).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')}">${clean(row.Name).replace(/&/g, '&amp;').replace(/</g, '&lt;')}</option>`
+    ).join('');
+    if (!givingType.options.length) throw new Error('No online giving type is active.');
+  } catch (error) {
+    givingType.innerHTML = '<option value="">Giving is temporarily unavailable</option>';
+    givingType.disabled = true;
+    givingButton.disabled = true;
+    setGivingStatus(error.message || String(error), 'bad');
+  }
+}
+
+loadGivingTypes();
 
 window.siteProfileReady.then((profile) => {
   const name = clean(profile.OrganisationName || profile.OrganizationName || profile.SchoolName) || 'Dynamax';

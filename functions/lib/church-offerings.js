@@ -7,7 +7,11 @@ import {
 } from './church-foundation.js';
 import { resolveOrganizationConfig } from './organization-config.js';
 import { resolveMembershipBranch } from './church-membership.js';
-import { effectiveFundMapping } from './church-funds.js';
+import {
+  effectiveFundMapping,
+  ensureGivingTypes,
+  resolveGivingType
+} from './church-funds.js';
 import { saveAccountingJournal } from '../api/backend.js';
 
 const clean = (value) => String(value ?? '').trim();
@@ -117,9 +121,11 @@ export function normalizeChurchOffering(input = {}, branchId = 'main') {
   const offeringId = clean(input.OfferingId || input.offeringId);
   const batchReference = clean(input.BatchReference || input.batchReference || input.BatchNo || input.batchNo);
   const fundId = clean(input.FundId || input.fundId);
+  const givingTypeId = clean(input.GivingTypeId || input.givingTypeId || 'OFFERING');
   if (!offeringId) throw inputError('OfferingId is required.');
   if (!batchReference) throw inputError('Batch reference is required.');
   if (!fundId) throw inputError('FundId is required.');
+  if (!givingTypeId) throw inputError('GivingTypeId is required.');
   const date = validDate(input.Date || input.date);
   const currency = clean(input.Currency || input.currency).toUpperCase() || 'NGN';
   if (!/^[A-Z]{3}$/.test(currency)) throw inputError('Offering currency must use a three-letter currency code.');
@@ -153,6 +159,9 @@ export function normalizeChurchOffering(input = {}, branchId = 'main') {
     ServiceOccurrenceId: clean(input.ServiceOccurrenceId || input.serviceOccurrenceId),
     ServiceId: clean(input.ServiceId || input.serviceId),
     FundId: fundId,
+    GivingTypeId: givingTypeId,
+    GivingTypeName: clean(input.GivingTypeName || input.givingTypeName || input.PaymentType || input.paymentType),
+    RevenueAccountCode: clean(input.RevenueAccountCode || input.revenueAccountCode),
     Currency: currency,
     ...components,
     TotalAmount: componentTotal,
@@ -210,10 +219,13 @@ export function offeringSummary(offerings = []) {
     if (lower(row.ApprovalStatus) === 'pending') result.pendingApproval += 1;
     if (lower(row.Status) === 'reconciled') result.reconciled += 1;
     else result.draft += 1;
+    const givingType = clean(row.GivingTypeName || row.PaymentType || 'Offering');
+    result.byType[givingType] = amount((result.byType[givingType] || 0) + amount(row.TotalAmount));
     return result;
   }, {
     count: 0, total: 0, cash: 0, nonCash: 0,
-    draft: 0, reconciled: 0, pendingApproval: 0, approved: 0, posted: 0
+    draft: 0, reconciled: 0, pendingApproval: 0, approved: 0, posted: 0,
+    byType: {}
   });
 }
 
@@ -294,12 +306,31 @@ async function writeOfferingAccountingAudit(env, user, journal, details = '') {
 }
 
 async function offeringReferenceData(env, branchId) {
-  const [funds, mappings, occurrences] = await Promise.all([
+  const [funds, mappings, occurrences, givingSetup] = await Promise.all([
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.funds, branchId)).catch(() => []),
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.fundMappings, branchId)).catch(() => []),
-    listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.serviceOccurrences, branchId)).catch(() => [])
+    listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.serviceOccurrences, branchId)).catch(() => []),
+    ensureGivingTypes(env, branchId)
   ]);
-  return { funds, mappings, occurrences };
+  return { funds, mappings, occurrences, givingTypes: givingSetup.givingTypes };
+}
+
+function givingTypeMapping(offering = {}, givingTypes = [], fundMapping = null) {
+  if (!fundMapping) return null;
+  const givingType = resolveGivingType(
+    givingTypes,
+    offering.GivingTypeId || offering.GivingTypeName || offering.PaymentType || 'OFFERING'
+  );
+  const revenueAccountCode = clean(
+    offering.RevenueAccountCode || givingType?.RevenueAccountCode || fundMapping.IncomeAccountCode
+  );
+  if (!revenueAccountCode) return null;
+  return {
+    ...fundMapping,
+    IncomeAccountCode: revenueAccountCode,
+    GivingTypeId: clean(givingType?.GivingTypeId || offering.GivingTypeId),
+    GivingTypeName: clean(givingType?.Name || offering.GivingTypeName || 'Offering')
+  };
 }
 
 function parseRouteStatus(value, fallback = 'YES') {
@@ -534,9 +565,22 @@ export async function listChurchOfferings(env, user, body = {}) {
     }, capabilities);
   }).map((row) => ({
     ...row,
+    GivingTypeName: clean(
+      row.GivingTypeName ||
+      resolveGivingType(references.givingTypes, row.GivingTypeId || 'OFFERING')?.Name ||
+      'Offering'
+    ),
+    RevenueAccountCode: clean(
+      row.RevenueAccountCode ||
+      resolveGivingType(references.givingTypes, row.GivingTypeId || 'OFFERING')?.RevenueAccountCode
+    ),
     FundName: clean(fundsById.get(clean(row.FundId))?.Name),
     ServiceName: clean(occurrencesById.get(clean(row.ServiceOccurrenceId))?.ServiceName),
-    HasAccountingMapping: Boolean(effectiveFundMapping(references.mappings, row.FundId, row.Date))
+    HasAccountingMapping: Boolean(givingTypeMapping(
+      row,
+      references.givingTypes,
+      effectiveFundMapping(references.mappings, row.FundId, row.Date)
+    ))
   })).sort((a, b) => `${clean(b.Date)}|${clean(b.UpdatedAt)}`.localeCompare(`${clean(a.Date)}|${clean(a.UpdatedAt)}`));
   return {
     ok: true,
@@ -546,6 +590,7 @@ export async function listChurchOfferings(env, user, body = {}) {
     approvalRoutes: routes.map((route, index) => normalizeOfferingApprovalRoute(route, branchId, index)),
     summary: offeringSummary(rows),
     funds: references.funds.filter((row) => lower(row.Active || 'YES') !== 'no'),
+    givingTypes: references.givingTypes.filter((row) => lower(row.Active || 'YES') !== 'no'),
     occurrences: references.occurrences,
     audit: audit.sort((a, b) => clean(b.Timestamp).localeCompare(clean(a.Timestamp))).slice(0, 100)
   };
@@ -583,6 +628,13 @@ export async function saveChurchOffering(env, user, body = {}) {
   if (!fund || lower(fund.Active || 'YES') === 'no') throw inputError('The selected fund does not exist or is inactive.');
   if (clean(fund.StartDate) && offering.Date < clean(fund.StartDate)) throw inputError('The offering date is before the fund start date.');
   if (clean(fund.EndDate) && offering.Date > clean(fund.EndDate)) throw inputError('The offering date is after the fund end date.');
+  const givingType = resolveGivingType(references.givingTypes, offering.GivingTypeId);
+  if (!givingType || lower(givingType.Active || 'YES') === 'no') {
+    throw inputError('The selected giving type does not exist or is inactive.');
+  }
+  offering.GivingTypeId = clean(givingType.GivingTypeId || givingType.__id);
+  offering.GivingTypeName = clean(givingType.Name);
+  offering.RevenueAccountCode = clean(givingType.RevenueAccountCode);
   if (offering.ServiceOccurrenceId) {
     const occurrence = references.occurrences.find((row) =>
       clean(row.OccurrenceId || row.__id) === offering.ServiceOccurrenceId
@@ -625,7 +677,12 @@ export async function reconcileChurchOffering(env, user, body = {}) {
   const mappings = await listCollection(
     env, churchCollectionPath(CHURCH_COLLECTIONS.fundMappings, branchId)
   ).catch(() => []);
-  const mapping = effectiveFundMapping(mappings, existing.FundId, existing.Date);
+  const { givingTypes } = await ensureGivingTypes(env, branchId);
+  const mapping = givingTypeMapping(
+    existing,
+    givingTypes,
+    effectiveFundMapping(mappings, existing.FundId, existing.Date)
+  );
   if (!mapping) throw inputError('No active accounting mapping covers this fund and offering date.');
   const journalDraft = buildOfferingJournalDraft(existing, mapping);
   const payload = {
@@ -745,7 +802,12 @@ export async function postChurchOfferingToAccounting(env, user, body = {}) {
     return { ok: true, duplicate: true, message: 'Offering was already posted.', offering };
   }
   const mappings = await listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.fundMappings, branchId)).catch(() => []);
-  const mapping = effectiveFundMapping(mappings, offering.FundId, offering.Date);
+  const { givingTypes } = await ensureGivingTypes(env, branchId);
+  const mapping = givingTypeMapping(
+    offering,
+    givingTypes,
+    effectiveFundMapping(mappings, offering.FundId, offering.Date)
+  );
   if (!mapping) throw inputError('No active accounting mapping covers this fund and offering date.');
   const draft = buildOfferingJournalDraft(offering, mapping);
   const journal = await saveAccountingJournal(env, {

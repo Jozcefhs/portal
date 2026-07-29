@@ -1402,6 +1402,7 @@ html[data-theme="dark"] .staff-summary .module-summary-card:nth-child(4n+4) .mod
 
 .vertical-bar-track i { display: block; width: 72%; border-radius: 7px 7px 2px 2px; min-height: 2px; }
 .vertical-bar-track .blue { background: linear-gradient(#2f8cff, #1459bb); }
+.vertical-bar-track .teal { background: linear-gradient(#2ed1c2, #087d68); }
 .vertical-bar-track .gold { background: linear-gradient(#ffc857, #c68100); }
 .vertical-bar-track .emerald { background: linear-gradient(#38d5aa, #087d68); }
 .vertical-bar-track .purple { background: linear-gradient(#b48cff, #7141ad); }
@@ -1422,6 +1423,16 @@ html[data-theme="dark"] .vertical-bar-item small {
 }
 html[data-theme="dark"] .vertical-bar-track {
   background: #25364a;
+}
+
+.giving-source-chart {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin: 1rem 0;
+}
+
+.giving-source-chart .department-chart-card {
+  min-height: 285px;
 }
 
 .department-form-grid {

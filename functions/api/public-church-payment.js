@@ -1,5 +1,8 @@
 import { requireFirestoreEnv } from '../lib/firestore.js';
-import { initPublicChurchDonationPayment } from '../lib/church-payments.js';
+import {
+  getPublicChurchGivingTypes,
+  initPublicChurchDonationPayment
+} from '../lib/church-payments.js';
 import {
   beginIdempotentRequest,
   completeIdempotentRequest,
@@ -12,6 +15,27 @@ import {
 
 function clean(value) {
   return String(value ?? '').trim();
+}
+
+export async function onRequestGet(context) {
+  try {
+    const { request, env } = context;
+    requireFirestoreEnv(env);
+    const url = new URL(request.url);
+    const result = await getPublicChurchGivingTypes(env, clean(url.searchParams.get('branch')));
+    return Response.json(result, {
+      headers: {
+        'Cache-Control': 'public, max-age=60',
+        'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
+        'X-Content-Type-Options': 'nosniff'
+      }
+    });
+  } catch (error) {
+    return Response.json({ ok: false, message: error.message || String(error) }, {
+      status: error.status || 500,
+      headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }
+    });
+  }
 }
 
 export async function onRequestPost(context) {

@@ -26,6 +26,7 @@ export const CHURCH_COLLECTIONS = Object.freeze({
   serviceAudit: 'churchServiceAudit',
   funds: 'churchFunds',
   fundMappings: 'churchFundMappings',
+  givingTypes: 'churchGivingTypes',
   fundAudit: 'churchFundAudit',
   donationAudit: 'churchDonationAudit',
   offeringApprovalRoutes: 'churchOfferingApprovalRoutes',
@@ -59,6 +60,9 @@ export function normalizeOfferingDraft(input = {}) {
     BranchId: safeScopeId(input.BranchId || input.branchId || 'main'),
     ServiceId: clean(input.ServiceId || input.serviceId),
     FundId: clean(input.FundId || input.fundId),
+    GivingTypeId: clean(input.GivingTypeId || input.givingTypeId),
+    GivingTypeName: clean(input.GivingTypeName || input.givingTypeName || input.PaymentType || input.paymentType),
+    RevenueAccountCode: clean(input.RevenueAccountCode || input.revenueAccountCode),
     Date: clean(input.Date || input.date),
     Currency: clean(input.Currency || input.currency) || 'NGN',
     TotalAmount: totalAmount,
@@ -82,6 +86,9 @@ export function buildOfferingJournalDraft(offeringInput, mapping = {}) {
   );
   if (!debitAccount || !creditAccount) throw new Error('Offering debit and credit account mappings are required.');
   const journalNo = offering.JournalNo || `SYS-OFFERING-${safeId(offering.OfferingId)}`;
+  const givingTypeName = clean(
+    mapping.GivingTypeName || offering.GivingTypeName || 'Offering'
+  );
   return {
     JournalNo: journalNo,
     Date: offering.Date,
@@ -89,13 +96,16 @@ export function buildOfferingJournalDraft(offeringInput, mapping = {}) {
     Reference: offering.OfferingId,
     Source: 'Church Offering',
     SourceId: offering.OfferingId,
+    GivingTypeId: clean(mapping.GivingTypeId || offering.GivingTypeId),
+    GivingTypeName: givingTypeName,
+    RevenueAccountCode: creditAccount,
     Department: clean(mapping.Department) || 'Church',
     CostCentre: clean(mapping.CostCentre) || offering.BranchId,
     Status: 'Draft',
     Lines: [
       {
         AccountCode: debitAccount,
-        Description: 'Offering receipt',
+        Description: `${givingTypeName} receipt`,
         Debit: offering.TotalAmount,
         Credit: 0,
         Department: clean(mapping.Department) || 'Church',
@@ -103,7 +113,7 @@ export function buildOfferingJournalDraft(offeringInput, mapping = {}) {
       },
       {
         AccountCode: creditAccount,
-        Description: clean(mapping.IncomeDescription) || 'Offering income',
+        Description: clean(mapping.IncomeDescription) || `${givingTypeName} income`,
         Debit: 0,
         Credit: offering.TotalAmount,
         Department: clean(mapping.Department) || 'Church',

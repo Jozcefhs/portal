@@ -25,9 +25,26 @@ export function fundCapabilities(user = {}) {
     canView: VIEW_ROLES.has(role),
     canManageFunds: MANAGE_ROLES.has(role),
     canManageMappings: MANAGE_ROLES.has(role),
+    canManageGivingTypes: MANAGE_ROLES.has(role),
     canViewAudit: VIEW_ROLES.has(role)
   };
 }
+
+export const DEFAULT_GIVING_TYPES = Object.freeze([
+  Object.freeze({ GivingTypeId: 'OFFERING', Name: 'Offering', RevenueAccountCode: '4140', AllowOnline: 'YES' }),
+  Object.freeze({ GivingTypeId: 'DONATION', Name: 'Donation', RevenueAccountCode: '4150', AllowOnline: 'YES' }),
+  Object.freeze({ GivingTypeId: 'TITHE', Name: 'Tithe', RevenueAccountCode: '4160', AllowOnline: 'YES' }),
+  Object.freeze({ GivingTypeId: 'PROPHET-OFFERING', Name: 'Prophet Offering', RevenueAccountCode: '4170', AllowOnline: 'YES' }),
+  Object.freeze({ GivingTypeId: 'PROPHETESS-OFFERING', Name: 'Prophetess Offering', RevenueAccountCode: '4180', AllowOnline: 'YES' }),
+  Object.freeze({ GivingTypeId: 'SEED', Name: 'Seed', RevenueAccountCode: '4190', AllowOnline: 'YES' }),
+  Object.freeze({ GivingTypeId: 'THANKSGIVING', Name: 'Thanksgiving', RevenueAccountCode: '4200', AllowOnline: 'YES' }),
+  Object.freeze({ GivingTypeId: 'BUILDING-FUND', Name: 'Building Fund', RevenueAccountCode: '4210', AllowOnline: 'YES' }),
+  Object.freeze({ GivingTypeId: 'OTHER-GIVING', Name: 'Other Giving', RevenueAccountCode: '4220', AllowOnline: 'YES' })
+]);
+
+const DEFAULT_GIVING_ACCOUNT_NAMES = new Map(
+  DEFAULT_GIVING_TYPES.map((row) => [row.RevenueAccountCode, `${row.Name} Income`])
+);
 
 function yesNo(value, fallback = 'YES') {
   const normalized = lower(value);
@@ -106,6 +123,25 @@ export function normalizeFundMapping(input = {}, branchId = 'main') {
   };
 }
 
+export function normalizeGivingType(input = {}, branchId = 'main') {
+  const name = clean(input.Name || input.name || input.GivingTypeName || input.givingTypeName);
+  const givingTypeId = clean(input.GivingTypeId || input.givingTypeId) ||
+    name.toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const revenueAccountCode = clean(input.RevenueAccountCode || input.revenueAccountCode);
+  if (!givingTypeId) throw inputError('GivingTypeId is required.');
+  if (!name) throw inputError('Giving type name is required.');
+  if (!revenueAccountCode) throw inputError('A revenue account is required for every giving type.');
+  return {
+    GivingTypeId: givingTypeId,
+    BranchId: resolveMembershipBranch({}, branchId),
+    Name: name,
+    RevenueAccountCode: revenueAccountCode,
+    AllowOnline: yesNo(input.AllowOnline ?? input.allowOnline ?? 'YES'),
+    Active: yesNo(input.Active ?? input.active ?? 'YES'),
+    Notes: clean(input.Notes || input.notes)
+  };
+}
+
 function activeChartAccount(chart = [], code) {
   return (chart || []).find((row) =>
     clean(row.Code || row.__id) === clean(code) && yesNo(row.Active ?? 'YES') === 'YES'
@@ -123,6 +159,89 @@ export function validateFundMappingAccounts(mapping, chart = []) {
     ...mapping,
     DebitAccountName: clean(debit.Name),
     IncomeAccountName: clean(income.Name)
+  };
+}
+
+export function validateGivingTypeAccount(givingType, chart = [], givingTypes = []) {
+  const account = activeChartAccount(chart, givingType.RevenueAccountCode);
+  if (!account) {
+    throw inputError(`Revenue account ${givingType.RevenueAccountCode} does not exist or is inactive.`);
+  }
+  if (lower(account.Type) !== 'revenue') {
+    throw inputError(`Giving account ${givingType.RevenueAccountCode} must be a Revenue account.`);
+  }
+  const duplicate = (givingTypes || []).find((row) =>
+    lower(row.Active ?? 'YES') !== 'no' &&
+    clean(row.RevenueAccountCode) === givingType.RevenueAccountCode &&
+    lower(row.GivingTypeId || row.__id) !== lower(givingType.GivingTypeId)
+  );
+  if (duplicate) {
+    throw inputError(
+      `Revenue account ${givingType.RevenueAccountCode} is already assigned to ${clean(duplicate.Name || duplicate.GivingTypeId)}.`
+    );
+  }
+  return { ...givingType, RevenueAccountName: clean(account.Name) };
+}
+
+export function resolveGivingType(givingTypes = [], value = '') {
+  const target = lower(value);
+  if (!target) return null;
+  return (givingTypes || []).find((row) =>
+    lower(row.GivingTypeId || row.__id) === target || lower(row.Name) === target
+  ) || null;
+}
+
+export async function ensureGivingTypes(env, branchId = 'main') {
+  const path = churchCollectionPath(CHURCH_COLLECTIONS.givingTypes, branchId);
+  const [existingTypes, chart] = await Promise.all([
+    listCollection(env, path).catch(() => []),
+    listCollection(env, 'chartOfAccounts').catch(() => [])
+  ]);
+  const chartCodes = new Set(chart.map((row) => clean(row.Code || row.__id)));
+  const typesById = new Map(existingTypes.map((row) => [lower(row.GivingTypeId || row.__id), row]));
+  for (const standard of DEFAULT_GIVING_TYPES) {
+    if (!chartCodes.has(standard.RevenueAccountCode)) {
+      const accountName = DEFAULT_GIVING_ACCOUNT_NAMES.get(standard.RevenueAccountCode);
+      await upsertDocument(env, 'chartOfAccounts', standard.RevenueAccountCode, {
+        Code: standard.RevenueAccountCode,
+        Name: accountName,
+        Type: 'Revenue',
+        Group: 'Giving Income',
+        NormalBalance: 'Credit',
+        Active: 'YES',
+        System: 'YES',
+        CreatedAt: nowIso(),
+        UpdatedAt: nowIso()
+      });
+      chart.push({
+        Code: standard.RevenueAccountCode,
+        Name: accountName,
+        Type: 'Revenue',
+        Group: 'Giving Income',
+        NormalBalance: 'Credit',
+        Active: 'YES'
+      });
+      chartCodes.add(standard.RevenueAccountCode);
+    }
+    if (!typesById.has(lower(standard.GivingTypeId))) {
+      const payload = {
+        ...standard,
+        BranchId: resolveMembershipBranch({}, branchId),
+        Active: 'YES',
+        RevenueAccountName: DEFAULT_GIVING_ACCOUNT_NAMES.get(standard.RevenueAccountCode),
+        CreatedAt: nowIso(),
+        CreatedBy: 'System',
+        UpdatedAt: nowIso(),
+        UpdatedBy: 'System'
+      };
+      await upsertDocument(env, path, safeChurchDocumentId(standard.GivingTypeId), payload);
+      existingTypes.push(payload);
+      typesById.set(lower(standard.GivingTypeId), payload);
+    }
+  }
+  return {
+    givingTypes: existingTypes.sort((a, b) => clean(a.Name).localeCompare(clean(b.Name))),
+    chart
   };
 }
 
@@ -183,14 +302,15 @@ export async function listChurchFunds(env, user, body = {}) {
   await requireFundsEdition(env);
   const capabilities = requireCapability(user, 'canView');
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
-  const [funds, mappings, chart, audit] = await Promise.all([
+  const [funds, mappings, givingSetup, audit] = await Promise.all([
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.funds, branchId)).catch(() => []),
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.fundMappings, branchId)).catch(() => []),
-    listCollection(env, 'chartOfAccounts').catch(() => []),
+    ensureGivingTypes(env, branchId),
     capabilities.canViewAudit
       ? listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.fundAudit, branchId)).catch(() => [])
       : Promise.resolve([])
   ]);
+  const chart = givingSetup.chart;
   const publicChart = chart.filter((row) => yesNo(row.Active ?? 'YES') === 'YES').map((row) => ({
     Code: clean(row.Code || row.__id),
     Name: clean(row.Name),
@@ -204,8 +324,48 @@ export async function listChurchFunds(env, user, body = {}) {
     capabilities,
     funds: funds.sort((a, b) => clean(a.Name).localeCompare(clean(b.Name))),
     mappings: mappings.sort((a, b) => clean(a.FundId).localeCompare(clean(b.FundId))),
+    givingTypes: givingSetup.givingTypes,
     chart: publicChart,
     audit: audit.sort((a, b) => clean(b.Timestamp).localeCompare(clean(a.Timestamp))).slice(0, 100)
+  };
+}
+
+export async function saveGivingType(env, user, body = {}) {
+  await requireFundsEdition(env);
+  requireCapability(user, 'canManageGivingTypes');
+  const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
+  const { givingTypes, chart } = await ensureGivingTypes(env, branchId);
+  const givingType = normalizeGivingType(
+    body.givingType || body.GivingType || body,
+    branchId
+  );
+  const validated = validateGivingTypeAccount(givingType, chart, givingTypes);
+  const path = churchCollectionPath(CHURCH_COLLECTIONS.givingTypes, branchId);
+  const id = safeChurchDocumentId(validated.GivingTypeId);
+  const existing = await getDocument(env, path, id).catch(() => null);
+  const payload = {
+    ...(existing || {}),
+    ...validated,
+    CreatedAt: existing?.CreatedAt || nowIso(),
+    CreatedBy: existing?.CreatedBy || actorName(user),
+    UpdatedAt: nowIso(),
+    UpdatedBy: actorName(user)
+  };
+  delete payload.__id; delete payload.__name;
+  await upsertDocument(env, path, id, payload);
+  await writeFundAudit(
+    env,
+    branchId,
+    user,
+    existing ? 'UPDATE' : 'CREATE',
+    'Giving Type',
+    payload.GivingTypeId,
+    `${payload.Name} -> ${payload.RevenueAccountCode}`
+  );
+  return {
+    ok: true,
+    message: existing ? 'Giving type updated.' : 'Giving type created.',
+    givingType: payload
   };
 }
 
@@ -266,5 +426,6 @@ export async function handleChurchFundAction(env, user, body = {}) {
   if (['list', 'getchurchfunds'].includes(action)) return listChurchFunds(env, user, body);
   if (['savefund', 'savechurchfund'].includes(action)) return saveChurchFund(env, user, body);
   if (['savemapping', 'savechurchfundmapping'].includes(action)) return saveFundMapping(env, user, body);
+  if (['savegivingtype', 'savechurchgivingtype'].includes(action)) return saveGivingType(env, user, body);
   throw inputError('Choose a valid church fund action.');
 }

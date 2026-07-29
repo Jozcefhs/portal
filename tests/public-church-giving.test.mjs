@@ -52,11 +52,14 @@ test('public giving API is bounded, rate limited and replay safe', () => {
 });
 
 test('public gifts are branch checked and restricted to recognised gift types', () => {
-  assert.match(payments, /const PUBLIC_GIVING_TYPES = new Set/);
+  assert.match(payments, /ensureGivingTypes\(env, branchId\)/);
+  assert.match(payments, /resolveGivingType\(givingTypes/);
+  assert.match(payments, /export async function getPublicChurchGivingTypes/);
+  assert.match(publicApi, /export async function onRequestGet/);
   assert.match(payments, /export async function initPublicChurchDonationPayment/);
   assert.match(payments, /await getSchoolStructure\(env\)/);
   assert.match(payments, /Choose a valid giving branch\./);
-  assert.match(payments, /Choose a valid gift type\./);
+  assert.match(payments, /Choose a valid online gift type\./);
   assert.match(payments, /PublicGiving: 'yes'/);
   assert.match(payments, /source=public-giving&branch=/);
 });

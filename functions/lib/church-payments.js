@@ -13,6 +13,7 @@ import { resolveMembershipBranch } from './church-membership.js';
 import { resolveEmailSenderProfile } from './email-service.js';
 import { getSchoolStructure } from './school-scope.js';
 import { getWebBranding } from './web-branding.js';
+import { ensureGivingTypes, resolveGivingType } from './church-funds.js';
 import QRCode from 'qrcode';
 
 const PAYSTACK_INIT_URL = 'https://api.paystack.co/transaction/initialize';
@@ -63,8 +64,6 @@ function amountToNumber(value) {
 }
 
 const PAYMENT_METHODS = new Set(['CASH', 'BANK TRANSFER', 'CHEQUE', 'POS', 'ONLINE', 'CARD', 'MOBILE MONEY']);
-const PUBLIC_GIVING_TYPES = new Set(['Donation', 'Tithe', 'Offering', 'Seed', 'Building Fund', 'Thanksgiving', 'Other']);
-
 function normalizePaymentMethod(value) {
   const method = clean(value).toUpperCase();
   if (!method) return 'CASH';
@@ -202,19 +201,35 @@ export function donationSummary(rows = []) {
     }
     const method = clean(row.PaymentMethod || 'CASH').toUpperCase();
     memo.byMethod[method] = (memo.byMethod[method] || 0) + amount;
+    if (status === 'paid') {
+      const givingType = clean(row.PaymentType || row.GivingTypeName || 'Donation');
+      memo.byType[givingType] = (memo.byType[givingType] || 0) + amount;
+      memo.byTypeCount[givingType] = (memo.byTypeCount[givingType] || 0) + 1;
+    }
     return memo;
-  }, { count: 0, paid: 0, pending: 0, paidAmount: 0, pendingAmount: 0, totalAmount: 0, byMethod: {} });
+  }, {
+    count: 0,
+    paid: 0,
+    pending: 0,
+    paidAmount: 0,
+    pendingAmount: 0,
+    totalAmount: 0,
+    byMethod: {},
+    byType: {},
+    byTypeCount: {}
+  });
 }
 
 export async function listChurchDonations(env, user, body = {}) {
   await requireDonationsEdition(env);
   const capabilities = requireCapability(user, 'canView');
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
-  const [donations, audit] = await Promise.all([
+  const [donations, audit, givingSetup] = await Promise.all([
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.donations, branchId)).catch(() => []),
     capabilities.canViewAudit
       ? listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.donationAudit, branchId)).catch(() => [])
-      : Promise.resolve([])
+      : Promise.resolve([]),
+    ensureGivingTypes(env, branchId)
   ]);
   const sorted = donations
     .map(publicDonationRow)
@@ -223,6 +238,7 @@ export async function listChurchDonations(env, user, body = {}) {
     ok: true,
     branchId,
     capabilities,
+    givingTypes: givingSetup.givingTypes.filter((row) => lower(row.Active || 'YES') !== 'no'),
     donations: sorted,
     audit: audit.sort((a, b) => clean(b.Timestamp).localeCompare(clean(a.Timestamp))).slice(0, 100),
     summary: donationSummary(sorted)
@@ -320,6 +336,18 @@ export async function saveChurchDonation(env, user, body = {}) {
   const capabilities = requireCapability(user, 'canCollect');
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
   const donation = normalizeDonationInput(body.donation || body.Donation || body, branchId);
+  const { givingTypes } = await ensureGivingTypes(env, branchId);
+  const givingType = resolveGivingType(
+    givingTypes,
+    donation.GivingTypeId || donation.PaymentType
+  );
+  if (!givingType || lower(givingType.Active || 'YES') === 'no') {
+    inputError('Choose an active giving type.', 400);
+  }
+  donation.GivingTypeId = clean(givingType.GivingTypeId || givingType.__id);
+  donation.GivingTypeName = clean(givingType.Name);
+  donation.PaymentType = clean(givingType.Name);
+  donation.RevenueAccountCode = clean(givingType.RevenueAccountCode);
   const path = churchCollectionPath(CHURCH_COLLECTIONS.donations, branchId);
   const id = safeChurchDocumentId(donation.DonationId);
   const existing = await getDocument(env, path, id).catch(() => null);
@@ -981,11 +1009,25 @@ export async function initChurchDonationPayment(env, user, body = {}, requestUrl
   }
 
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
+  const { givingTypes } = await ensureGivingTypes(env, branchId);
+  const givingType = resolveGivingType(
+    givingTypes,
+    body.GivingTypeId || body.givingTypeId || body.PaymentType || body.paymentType || 'Donation'
+  );
+  if (!givingType || lower(givingType.Active || 'YES') === 'no') {
+    inputError('Choose an active giving type.', 400);
+  }
+  if (lower(body.PublicGiving || body.publicGiving) === 'yes' && lower(givingType.AllowOnline || 'YES') === 'no') {
+    inputError('The selected giving type is not available for online giving.', 400);
+  }
   const donation = normalizeDonationInput({
     ...(body || {}),
     PaymentMethod: 'ONLINE',
-    PaymentType: clean(body.PaymentType || body.paymentType || 'Donation')
+    PaymentType: clean(givingType.Name)
   }, branchId);
+  donation.GivingTypeId = clean(givingType.GivingTypeId || givingType.__id);
+  donation.GivingTypeName = clean(givingType.Name);
+  donation.RevenueAccountCode = clean(givingType.RevenueAccountCode);
 
   const metadata = {
     paymentType: 'ChurchDonation',
@@ -1122,8 +1164,15 @@ export async function initPublicChurchDonationPayment(env, body = {}, requestUrl
     inputError('Choose a valid giving branch.', 400);
   }
   const suppliedType = clean(body.PaymentType || body.paymentType) || 'Donation';
-  const paymentType = [...PUBLIC_GIVING_TYPES].find((value) => lower(value) === lower(suppliedType));
-  if (!paymentType) inputError('Choose a valid gift type.', 400);
+  const { givingTypes } = await ensureGivingTypes(env, branchId);
+  const givingType = resolveGivingType(givingTypes, body.GivingTypeId || body.givingTypeId || suppliedType);
+  if (
+    !givingType ||
+    lower(givingType.Active || 'YES') === 'no' ||
+    lower(givingType.AllowOnline || 'YES') === 'no'
+  ) {
+    inputError('Choose a valid online gift type.', 400);
+  }
   const publicUser = {
     role: 'Super Admin',
     username: 'public-giving',
@@ -1135,11 +1184,42 @@ export async function initPublicChurchDonationPayment(env, body = {}, requestUrl
     DonorEmail: clean(body.DonorEmail || body.donorEmail).slice(0, 254),
     Amount: body.Amount || body.amount,
     Currency: clean(body.Currency || body.currency || 'NGN').slice(0, 3),
-    PaymentType: paymentType,
+    GivingTypeId: clean(givingType.GivingTypeId || givingType.__id),
+    PaymentType: clean(givingType.Name),
     Notes: clean(body.Notes || body.notes).slice(0, 500),
     BranchId: branchId,
     PublicGiving: 'yes'
   }, requestUrl);
+}
+
+export async function getPublicChurchGivingTypes(env, branchHint = '') {
+  const organization = await requireDonationsEdition(env);
+  const structure = await getSchoolStructure(env);
+  const branchId = resolveMembershipBranch(
+    {},
+    branchHint || structure.ActiveBranchId || 'main'
+  );
+  if (!(structure.Branches || []).some((branch) =>
+    resolveMembershipBranch({}, branch.Id || branch.id || branch.Name) === branchId
+  )) {
+    inputError('Choose a valid giving branch.', 400);
+  }
+  const { givingTypes } = await ensureGivingTypes(env, branchId);
+  return {
+    ok: true,
+    branchId,
+    organisationName: clean(organization.Name),
+    givingTypes: givingTypes
+      .filter((row) =>
+        lower(row.Active || 'YES') !== 'no' &&
+        lower(row.AllowOnline || 'YES') !== 'no'
+      )
+      .map((row) => ({
+        GivingTypeId: clean(row.GivingTypeId || row.__id),
+        Name: clean(row.Name)
+      }))
+      .sort((a, b) => a.Name.localeCompare(b.Name))
+  };
 }
 
 async function sendChurchDonationReceiptAction(env, user, body = {}) {
@@ -1257,6 +1337,7 @@ export default {
   setChurchDonationStatus,
   initChurchDonationPayment,
   initPublicChurchDonationPayment,
+  getPublicChurchGivingTypes,
   sendChurchDonationReceipt,
   buildChurchPaymentInitMetadata,
   markDonationPaidByReference,

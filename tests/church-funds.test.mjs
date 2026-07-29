@@ -2,10 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  DEFAULT_GIVING_TYPES,
   effectiveFundMapping,
   fundCapabilities,
   normalizeChurchFund,
   normalizeFundMapping,
+  normalizeGivingType,
+  resolveGivingType,
+  validateGivingTypeAccount,
   validateFundMappingAccounts
 } from '../functions/lib/church-funds.js';
 import { buildOfferingJournalDraft } from '../functions/lib/church-foundation.js';
@@ -15,7 +19,36 @@ test('fund capabilities keep setup changes with treasury roles', () => {
   assert.equal(fundCapabilities({ role: 'Pastor' }).canManageFunds, false);
   assert.equal(fundCapabilities({ role: 'Treasurer' }).canManageFunds, true);
   assert.equal(fundCapabilities({ role: 'Treasurer' }).canManageMappings, true);
+  assert.equal(fundCapabilities({ role: 'Treasurer' }).canManageGivingTypes, true);
   assert.equal(fundCapabilities({ role: 'Membership Officer' }).canView, false);
+});
+
+test('default giving types have individual income accounts', () => {
+  const required = ['Offering', 'Donation', 'Tithe', 'Prophet Offering', 'Prophetess Offering'];
+  const matching = DEFAULT_GIVING_TYPES.filter((row) => required.includes(row.Name));
+  assert.deepEqual(matching.map((row) => row.Name), required);
+  assert.equal(new Set(matching.map((row) => row.RevenueAccountCode)).size, required.length);
+});
+
+test('giving types resolve by name or id and require a unique revenue account', () => {
+  const type = normalizeGivingType({
+    GivingTypeId: 'FIRST-FRUIT',
+    Name: 'First Fruit',
+    RevenueAccountCode: '4230'
+  }, 'Lagos');
+  const validated = validateGivingTypeAccount(type, [
+    { Code: '4230', Name: 'First Fruit Income', Type: 'Revenue', Active: 'YES' }
+  ], []);
+  assert.equal(validated.BranchId, 'lagos');
+  assert.equal(validated.RevenueAccountName, 'First Fruit Income');
+  assert.equal(resolveGivingType([validated], 'first fruit').GivingTypeId, 'FIRST-FRUIT');
+  assert.equal(resolveGivingType([validated], 'first-fruit').Name, 'First Fruit');
+  assert.throws(() => validateGivingTypeAccount(type, [
+    { Code: '4230', Name: 'Cash', Type: 'Asset', Active: 'YES' }
+  ], []), /Revenue account/);
+  assert.throws(() => validateGivingTypeAccount(type, [
+    { Code: '4230', Name: 'First Fruit Income', Type: 'Revenue', Active: 'YES' }
+  ], [{ GivingTypeId: 'HARVEST', Name: 'Harvest', RevenueAccountCode: '4230', Active: 'YES' }]), /already assigned/);
 });
 
 test('church funds normalize branch, type, currency, and lifecycle dates', () => {

@@ -87,8 +87,17 @@ test('offering summary keeps cash and non-cash totals separate', () => {
     { Status: 'Reconciled', TotalAmount: 8000, CashAmount: 0, ApprovalStatus: 'Approved', AccountingStatus: 'Posted' }
   ]), {
     count: 2, total: 23000, cash: 12000, nonCash: 11000, draft: 1,
-    reconciled: 1, pendingApproval: 0, approved: 1, posted: 1
+    reconciled: 1, pendingApproval: 0, approved: 1, posted: 1,
+    byType: { Offering: 23000 }
   });
+});
+
+test('offering summary separates giving sources', () => {
+  const summary = offeringSummary([
+    { GivingTypeName: 'Offering', TotalAmount: 12000, CashAmount: 12000 },
+    { GivingTypeName: 'Tithe', TotalAmount: 8000, CashAmount: 0 }
+  ]);
+  assert.deepEqual(summary.byType, { Offering: 12000, Tithe: 8000 });
 });
 
 test('offering approval route resolution prefers fund-specific active route and defaults by sort', () => {

@@ -237,6 +237,26 @@ test('pending donations do not enter accounting and paid cash donations remain b
   );
 });
 
+test('a giving type posts to its assigned individual income account', () => {
+  const journal = buildChurchDonationAccountingJournal({
+    DonationId: 'DON-TITHE',
+    Status: 'Paid',
+    PaymentMethod: 'BANK TRANSFER',
+    PaymentType: 'Tithe',
+    Amount: 25000
+  }, {}, {
+    GivingTypeId: 'TITHE',
+    Name: 'Tithe',
+    RevenueAccountCode: '4160'
+  });
+  assert.equal(journal.GivingTypeId, 'TITHE');
+  assert.equal(journal.RevenueAccountCode, '4160');
+  assert.deepEqual(
+    journal.Lines.map((line) => [line.AccountCode, line.Debit, line.Credit]),
+    [['1020', 25000, 0], ['4160', 0, 25000]]
+  );
+});
+
 test('a padded account reference cannot receive another student payment', () => {
   const payment = { AccountRef: 'DCA/26/001', Credit: 92843.92 };
   assert.equal(financialRowMatchesAccount(payment, {

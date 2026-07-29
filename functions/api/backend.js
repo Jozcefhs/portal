@@ -27,7 +27,11 @@ import {
 import { handleChurchMembershipAction } from '../lib/church-membership.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath } from '../lib/church-foundation.js';
 import { handleChurchServiceAction } from '../lib/church-services.js';
-import { handleChurchFundAction } from '../lib/church-funds.js';
+import {
+  ensureGivingTypes,
+  handleChurchFundAction,
+  resolveGivingType
+} from '../lib/church-funds.js';
 import { handleChurchOfferingAction } from '../lib/church-offerings.js';
 import { handleOrganizationDepartmentAction } from '../lib/organization-departments.js';
 import { assertOrganizationDepartmentWorkspaceAccess } from '../lib/organization-department-gate.js';
@@ -4441,7 +4445,7 @@ async function listChurchDonationsForAccounting(env) {
   })));
 }
 
-export function buildChurchDonationAccountingJournal(donation = {}, settlement = {}) {
+export function buildChurchDonationAccountingJournal(donation = {}, settlement = {}, givingType = {}) {
   const status = lower(settlement.Status || donation.Status || donation.PaymentStatus);
   const sourceId = clean(
     settlement.Reference || donation.Reference || donation.GatewayReference
@@ -4466,6 +4470,12 @@ export function buildChurchDonationAccountingJournal(donation = {}, settlement =
   const gatewayFee = Math.max(0, asMoneyNumber(grossAmount - netAmount));
   const branchId = clean(donation.BranchId || settlement.BranchId || 'main').toLowerCase() || 'main';
   const description = clean(donation.PaymentType || settlement.PaymentType || 'Donation');
+  const revenueAccountCode = clean(
+    givingType.RevenueAccountCode ||
+    donation.RevenueAccountCode ||
+    settlement.RevenueAccountCode ||
+    '4080'
+  );
   const journalNo = `SYS-DON-${safeDocumentId(sourceId)}`;
   const lines = [
     {
@@ -4488,7 +4498,7 @@ export function buildChurchDonationAccountingJournal(donation = {}, settlement =
     });
   }
   lines.push({
-    AccountCode: '4080',
+    AccountCode: revenueAccountCode,
     Debit: 0,
     Credit: grossAmount,
     Description: `${description} income`,
@@ -4504,6 +4514,13 @@ export function buildChurchDonationAccountingJournal(donation = {}, settlement =
     Reference: sourceId,
     Source: 'Church Donation',
     SourceId: sourceId,
+    GivingTypeId: clean(
+      givingType.GivingTypeId || donation.GivingTypeId || settlement.GivingTypeId
+    ),
+    GivingTypeName: clean(
+      givingType.Name || donation.GivingTypeName || description
+    ),
+    RevenueAccountCode: revenueAccountCode,
     Department: 'Donations',
     CostCentre: branchId,
     RecordedBy: clean(donation.UpdatedBy || settlement.RecordedBy || 'System'),
@@ -4517,7 +4534,13 @@ export function buildChurchDonationAccountingJournal(donation = {}, settlement =
 }
 
 export async function postChurchDonationToAccounting(env, donation = {}, settlement = {}) {
-  const journal = buildChurchDonationAccountingJournal(donation, settlement);
+  const branchId = clean(donation.BranchId || settlement.BranchId || 'main').toLowerCase() || 'main';
+  const { givingTypes } = await ensureGivingTypes(env, branchId);
+  const givingType = resolveGivingType(
+    givingTypes,
+    donation.GivingTypeId || settlement.GivingTypeId || donation.PaymentType || settlement.PaymentType
+  );
+  const journal = buildChurchDonationAccountingJournal(donation, settlement, givingType || {});
   if (!journal) return null;
   await seedAccountingChart(env);
   return saveAccountingJournal(env, journal, true);
@@ -4668,9 +4691,19 @@ async function syncRevenueToAccounting(env) {
   ]);
   const existing = new Set(journals.map((row) => clean(row.JournalNo || row.__id)));
   const journalsByNo = new Map(journals.map((row) => [clean(row.JournalNo || row.__id), row]));
+  const givingTypesByBranch = new Map();
   let created = 0;
   for (const donation of churchDonations) {
-    const journal = buildChurchDonationAccountingJournal(donation);
+    const branchId = clean(donation.BranchId || 'main').toLowerCase() || 'main';
+    if (!givingTypesByBranch.has(branchId)) {
+      const setup = await ensureGivingTypes(env, branchId);
+      givingTypesByBranch.set(branchId, setup.givingTypes);
+    }
+    const givingType = resolveGivingType(
+      givingTypesByBranch.get(branchId),
+      donation.GivingTypeId || donation.PaymentType
+    );
+    const journal = buildChurchDonationAccountingJournal(donation, {}, givingType || {});
     if (!journal) continue;
     const prior = journalsByNo.get(journal.JournalNo);
     if (prior && journalLineSignature(prior.Lines) === journalLineSignature(journal.Lines) &&
