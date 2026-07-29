@@ -1,4 +1,4 @@
-const CACHE = 'dynamax-v67-donation-receipt-print';
+const CACHE = 'dynamax-v68-member-position-delete';
 const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/parent-dashboard.html', '/register-organization.html', '/css/style.css', '/js/preferences.js', '/js/action-feedback.js', '/js/launcher.js', '/js/site-config.js', '/js/admin.js', '/js/parent-dashboard.js', '/js/register-organization.js', '/images/Logo.png'];
 
 self.addEventListener('install', (event) => {

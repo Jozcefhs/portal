@@ -2628,13 +2628,13 @@ function organizedDepartmentWorkspace(data) {
         { label: 'Phone', value: (row) => row.Phone },
         { label: 'Email', value: (row) => row.Email },
         { label: 'Status', value: (row) => row.MembershipStatus },
-        ...(canManageMembers ? [{ label: 'Actions', render: (row) => `<button type="button" class="compact-icon-action compact-edit-action" data-edit-member="${escapeHtml(row.MemberId || row.__id)}" title="Edit member" aria-label="Edit ${escapeHtml(row.DisplayName || row.MemberId || 'member')}">✎</button>` }] : [])
+        ...(canManageMembers ? [{ label: 'Actions', render: (row) => `<span class="compact-row-actions"><button type="button" class="compact-icon-action compact-edit-action" data-edit-member="${escapeHtml(row.MemberId || row.__id)}" title="Edit member" aria-label="Edit ${escapeHtml(row.DisplayName || row.MemberId || 'member')}">✎</button><button type="button" class="compact-icon-action compact-delete-action" data-delete-member="${escapeHtml(row.MemberId || row.__id)}" data-member-name="${escapeHtml(row.DisplayName || row.MemberId || 'member')}" title="Delete member profile" aria-label="Delete ${escapeHtml(row.DisplayName || row.MemberId || 'member')}">✕</button></span>` }] : [])
       ])}
       ${table('Department positions', positions, [
         { label: 'Department', value: (row) => row.DepartmentName || row.DepartmentId },
         { label: 'Position', value: (row) => row.Name || row.PositionName || row.PositionId },
         { label: 'Status', value: (row) => row.Active },
-        ...(canManageDepartments ? [{ label: 'Actions', render: (row) => `<button type="button" class="compact-icon-action compact-edit-action" data-edit-position="${escapeHtml(row.PositionId || row.__id)}" data-position-department="${escapeHtml(row.DepartmentId)}" title="Edit position" aria-label="Edit ${escapeHtml(row.Name || row.PositionName || row.PositionId || 'position')}">✎</button>` }] : [])
+        ...(canManageDepartments ? [{ label: 'Actions', render: (row) => `<span class="compact-row-actions"><button type="button" class="compact-icon-action compact-edit-action" data-edit-position="${escapeHtml(row.PositionId || row.__id)}" data-position-department="${escapeHtml(row.DepartmentId)}" title="Edit position" aria-label="Edit ${escapeHtml(row.Name || row.PositionName || row.PositionId || 'position')}">✎</button><button type="button" class="compact-icon-action compact-delete-action" data-delete-position="${escapeHtml(row.PositionId || row.__id)}" data-position-department="${escapeHtml(row.DepartmentId)}" data-position-name="${escapeHtml(row.Name || row.PositionName || row.PositionId || 'position')}" title="Delete position" aria-label="Delete ${escapeHtml(row.Name || row.PositionName || row.PositionId || 'position')}">✕</button></span>` }] : [])
       ])}
       ${table('Department members and positions', departmentMembers, [
         { label: 'Department', value: (row) => row.DepartmentName || row.DepartmentId },
@@ -2880,6 +2880,37 @@ async function loadOrganizationDepartments() {
         });
       }
       catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    }));
+    panelEl.querySelectorAll('[data-delete-member]').forEach((button) => button.addEventListener('click', async () => {
+      const memberName = clean(button.dataset.memberName) || 'this member';
+      if (!window.confirm(`Permanently delete ${memberName}'s member profile? Remove the member from every department first.`)) return;
+      try {
+        await runButtonAction(button, 'Deleting...', async () => {
+          const result = await organizationDepartmentAction('deleteMember', {
+            MemberId: button.dataset.deleteMember
+          });
+          setStatus(status, result.message || 'Member profile deleted.', 'good');
+          await loadOrganizationDepartments();
+        });
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+      }
+    }));
+    panelEl.querySelectorAll('[data-delete-position]').forEach((button) => button.addEventListener('click', async () => {
+      const positionName = clean(button.dataset.positionName) || 'this position';
+      if (!window.confirm(`Delete ${positionName}? Reassign or remove any member using this position first.`)) return;
+      try {
+        await runButtonAction(button, 'Deleting...', async () => {
+          const result = await organizationDepartmentAction('deletePosition', {
+            PositionId: button.dataset.deletePosition,
+            DepartmentId: button.dataset.positionDepartment
+          });
+          setStatus(status, result.message || 'Department position deleted.', 'good');
+          await loadOrganizationDepartments();
+        });
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+      }
     }));
     panelEl.querySelectorAll('[data-remove-department-member]').forEach((button) => button.addEventListener('click', async () => {
       if (button.disabled) return;

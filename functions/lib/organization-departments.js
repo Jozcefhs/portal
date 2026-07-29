@@ -220,6 +220,82 @@ async function savePosition(env, user, body, branchId) {
   return { message: existing ? 'Position updated.' : 'Position created.' };
 }
 
+async function deleteMember(env, user, body, branchId) {
+  requireCapability(user, 'canManageMembers');
+  const memberId = clean(body.MemberId);
+  const id = safeChurchDocumentId(memberId);
+  if (!id) throw inputError('Member ID is required.');
+  const memberPath = path('members', branchId);
+  const [existing, assignments] = await Promise.all([
+    getDocument(env, memberPath, id),
+    listCollection(env, path('departmentMembers', branchId))
+  ]);
+  if (!existing || !belongsToBranch(existing, branchId)) {
+    throw inputError('Member was not found in this branch.', 404);
+  }
+  if (assignments.some((row) => safeChurchDocumentId(row.MemberId) === id)) {
+    throw inputError('Remove this member from every department before deleting the member profile.', 409);
+  }
+  const auditWrite = departmentAuditWrite(
+    branchId,
+    user,
+    'DELETE',
+    'Member',
+    memberId,
+    authoritativeMemberName(existing)
+  );
+  await batchUpsertDocuments(env, [
+    {
+      collectionPath: memberPath,
+      documentId: id,
+      operation: 'delete',
+      ...(existing.__updateTime ? { updateTime: existing.__updateTime } : { exists: true })
+    },
+    auditWrite
+  ]);
+  return { message: 'Member profile deleted.' };
+}
+
+async function deletePosition(env, user, body, branchId) {
+  requireCapability(user, 'canManageDepartments');
+  const positionId = clean(body.PositionId);
+  const departmentId = clean(body.DepartmentId);
+  if (!positionId || !departmentId) throw inputError('Position ID and department are required.');
+  const id = safeChurchDocumentId(`${departmentId}--${positionId}`);
+  const positionPath = path('departmentPositions', branchId);
+  const [existing, assignments] = await Promise.all([
+    getDocument(env, positionPath, id),
+    listCollection(env, path('departmentMembers', branchId))
+  ]);
+  if (!existing || !belongsToBranch(existing, branchId)) {
+    throw inputError('Position was not found in this branch.', 404);
+  }
+  const inUse = assignments.some((row) =>
+    safeChurchDocumentId(row.DepartmentId) === safeChurchDocumentId(departmentId)
+    && safeChurchDocumentId(row.PositionId) === safeChurchDocumentId(positionId));
+  if (inUse) {
+    throw inputError('Reassign or remove every member using this position before deleting it.', 409);
+  }
+  const auditWrite = departmentAuditWrite(
+    branchId,
+    user,
+    'DELETE',
+    'Position',
+    positionId,
+    `${departmentId} | ${clean(existing.Name || existing.PositionName)}`
+  );
+  await batchUpsertDocuments(env, [
+    {
+      collectionPath: positionPath,
+      documentId: id,
+      operation: 'delete',
+      ...(existing.__updateTime ? { updateTime: existing.__updateTime } : { exists: true })
+    },
+    auditWrite
+  ]);
+  return { message: 'Department position deleted.' };
+}
+
 function authoritativeMemberName(member = {}) {
   return clean(member.DisplayName || [
     member.Title,
@@ -530,6 +606,8 @@ export async function handleOrganizationDepartmentAction(env, user, body = {}) {
   else if (action === 'importdepartments') result = await importDepartments(env, user, body, branchId);
   else if (action === 'deletedepartment') result = await deleteDepartment(env, user, body, branchId);
   else if (action === 'saveposition') result = await savePosition(env, user, body, branchId);
+  else if (action === 'deletemember') result = await deleteMember(env, user, body, branchId);
+  else if (action === 'deleteposition') result = await deletePosition(env, user, body, branchId);
   else if (action === 'savedepartmentmember') result = await saveDepartmentMember(env, user, body, branchId);
   else if (action === 'removedepartmentmember') result = await removeDepartmentMember(env, user, body, branchId);
   else if (action === 'savemeeting') result = await saveMeeting(env, user, body, branchId);

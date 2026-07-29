@@ -35,9 +35,18 @@ function renderWithCapabilities(capabilities) {
   vm.runInContext(`${rendererSource}\nglobalThis.renderDepartmentWorkspace = organizedDepartmentWorkspace;`, context);
   return context.renderDepartmentWorkspace({
     capabilities,
-    departments: [],
-    departmentPositions: [],
-    members: [],
+    departments: [{ DepartmentId: 'CHOIR', Name: 'Choir', Active: 'YES' }],
+    departmentPositions: [{
+      DepartmentId: 'CHOIR',
+      PositionId: 'LEAD',
+      Name: 'Choir Lead',
+      Active: 'YES'
+    }],
+    members: [{
+      MemberId: 'MEM-001',
+      DisplayName: 'Ada Okafor',
+      MembershipStatus: 'Active'
+    }],
     departmentMembers: [{
       MembershipId: 'CHOIR--MEM-001',
       DepartmentId: 'CHOIR',
@@ -67,6 +76,8 @@ test('department and member administrators retain their relevant import and remo
   assert.match(html, /id="importMembersCsv"/);
   assert.match(html, /id="membersCsvFile"/);
   assert.match(html, /data-remove-department-member="CHOIR--MEM-001"/);
+  assert.match(html, /data-delete-member="MEM-001"/);
+  assert.match(html, /data-delete-position="LEAD"/);
 });
 
 test('capabilities independently gate department and member controls', () => {
@@ -77,6 +88,8 @@ test('capabilities independently gate department and member controls', () => {
   assert.match(departmentManagerHtml, /id="importDepartmentsCsv"/);
   assert.doesNotMatch(departmentManagerHtml, /id="importMembersCsv"/);
   assert.doesNotMatch(departmentManagerHtml, /data-remove-department-member=/);
+  assert.doesNotMatch(departmentManagerHtml, /data-delete-member=/);
+  assert.match(departmentManagerHtml, /data-delete-position="LEAD"/);
 
   const memberManagerHtml = renderWithCapabilities({
     canManageDepartments: false,
@@ -85,6 +98,8 @@ test('capabilities independently gate department and member controls', () => {
   assert.doesNotMatch(memberManagerHtml, /id="importDepartmentsCsv"/);
   assert.match(memberManagerHtml, /id="importMembersCsv"/);
   assert.match(memberManagerHtml, /data-remove-department-member="CHOIR--MEM-001"/);
+  assert.match(memberManagerHtml, /data-delete-member="MEM-001"/);
+  assert.doesNotMatch(memberManagerHtml, /data-delete-position=/);
 });
 
 test('view-only users receive readable member assignments without forbidden action controls', () => {
@@ -99,4 +114,6 @@ test('view-only users receive readable member assignments without forbidden acti
   assert.doesNotMatch(html, /id="importDepartmentsCsv"/);
   assert.doesNotMatch(html, /id="importMembersCsv"/);
   assert.doesNotMatch(html, /data-remove-department-member=/);
+  assert.doesNotMatch(html, /data-delete-member=/);
+  assert.doesNotMatch(html, /data-delete-position=/);
 });

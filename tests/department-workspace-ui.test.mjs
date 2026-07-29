@@ -38,6 +38,10 @@ test('department workspace preserves forms, registers and direct editing', () =>
   assert.match(adminJs, /class="compact-icon-action compact-edit-action" data-edit-department=/);
   assert.match(adminJs, /class="compact-icon-action compact-edit-action" data-edit-member=/);
   assert.match(adminJs, /class="compact-icon-action compact-edit-action" data-edit-position=/);
+  assert.match(adminJs, /class="compact-icon-action compact-delete-action" data-delete-member=/);
+  assert.match(adminJs, /class="compact-icon-action compact-delete-action" data-delete-position=/);
+  assert.match(adminJs, /organizationDepartmentAction\('deleteMember'/);
+  assert.match(adminJs, /organizationDepartmentAction\('deletePosition'/);
   assert.match(adminJs, /organizationDepartmentEditor/);
   assert.match(adminJs, /Department register/);
   assert.match(adminJs, /Attendance register/);

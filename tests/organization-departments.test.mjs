@@ -135,6 +135,18 @@ test('department membership can be removed without deleting the master member re
   assert.match(departmentSource, /action === 'removedepartmentmember'/);
 });
 
+test('member and position deletion is guarded, branch scoped, audited and routed', () => {
+  assert.match(departmentSource, /async function deleteMember/);
+  assert.match(departmentSource, /Remove this member from every department before deleting the member profile/);
+  assert.match(departmentSource, /async function deletePosition/);
+  assert.match(departmentSource, /Reassign or remove every member using this position before deleting it/);
+  assert.match(departmentSource, /departmentAuditWrite\([\s\S]*?'DELETE'[\s\S]*?'Member'/);
+  assert.match(departmentSource, /departmentAuditWrite\([\s\S]*?'DELETE'[\s\S]*?'Position'/);
+  assert.match(departmentSource, /operation:\s*'delete'/);
+  assert.match(departmentSource, /action === 'deletemember'/);
+  assert.match(departmentSource, /action === 'deleteposition'/);
+});
+
 test('department workspace supports validated batch imports for members and departments', () => {
   assert.match(departmentSource, /importChurchMembers/);
   assert.match(departmentSource, /\['importmembers', 'importchurchmembers'\]\.includes\(action\)/);
