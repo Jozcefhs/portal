@@ -162,7 +162,7 @@ form.addEventListener('submit', async (event) => {
     return;
   }
 
-  button.disabled = true;
+  if (!window.DynamaxActionFeedback.begin(button, 'Uploading documents...')) return;
   setStatus(`Uploading ${uploads.length} document(s), please wait...`, '');
   setProgress(0, uploads.length, `Uploading 0 of ${uploads.length} document(s)...`);
 
@@ -233,7 +233,7 @@ form.addEventListener('submit', async (event) => {
     form.reset();
   }
 
-  button.disabled = false;
+  window.DynamaxActionFeedback.end(button);
   setTimeout(() => {
     if (!failedCount && !skippedCount) resetProgress();
   }, 1200);

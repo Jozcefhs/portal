@@ -39,6 +39,31 @@ const CONFIG = {
   tuckShop: { label: 'Tuck Shop', inventory: 'tuckShopInventory', movements: 'tuckShopMovements', prefix: 'TUK', category: 'General Item', unit: 'pcs' }
 };
 
+const IDEMPOTENT_ACTIONS = Object.freeze({
+  'tuckShop:recordwalletpurchase': 'staff-department-wallet-purchase',
+  'clinic:sendclinicreport': 'staff-department-clinic-report-email',
+  'clinic:sendmarketlist': 'staff-department-clinic-market-list-email',
+  'kitchen:sendmarketlist': 'staff-department-kitchen-market-list-email',
+  'restaurant:sendmarketlist': 'staff-department-restaurant-market-list-email',
+  'restaurant:recordsale': 'restaurant-record-sale'
+});
+
+export function staffDepartmentIdempotencyOptions(action, section, user = {}) {
+  const scope = IDEMPOTENT_ACTIONS[`${clean(section)}:${lower(action)}`];
+  if (!scope) return null;
+  return {
+    scope,
+    actor: scope === 'restaurant-record-sale'
+      ? clean(user.username)
+      : [
+          editionKey(user.edition || user.OrganisationEdition),
+          lower(user.branchId || 'main'),
+          lower(user.username || user.displayName || 'staff')
+        ].join(':'),
+    ttlMinutes: 30 * 24 * 60
+  };
+}
+
 function scopeFields(user) {
   return {
     BranchId: clean(user.branchId) || 'main',
@@ -300,16 +325,15 @@ export async function onRequestPost(context) {
       const err = new Error('This staff account is not allowed to manage that department.'); err.status = 403; throw err;
     }
     const action = lower(body.action || 'list');
-    if (action === 'recordsale') {
-      if (section !== 'restaurant') {
-        const err = new Error('Direct commerce payments are available only in the Restaurant workspace.');
-        err.status = 403;
-        throw err;
-      }
+    if (action === 'recordsale' && section !== 'restaurant') {
+      const err = new Error('Direct commerce payments are available only in the Restaurant workspace.');
+      err.status = 403;
+      throw err;
+    }
+    const idempotencyOptions = staffDepartmentIdempotencyOptions(action, section, user);
+    if (idempotencyOptions) {
       idempotency = await beginIdempotentRequest(env, request, body, {
-        scope: 'restaurant-record-sale',
-        actor: user.username,
-        ttlMinutes: 30 * 24 * 60
+        ...idempotencyOptions
       });
       if (idempotency.replay) {
         return Response.json(idempotency.response, {
@@ -354,6 +378,7 @@ export async function onRequestPost(context) {
       sendmarketlist: 'Market list sent to the supplier.',
       recordsale: actionResult?.message || 'Restaurant payment recorded.'
     })[action] || 'Department action completed.';
+    if (idempotencyOptions) await completeIdempotentRequest(env, idempotency, data, 200);
     return Response.json(data);
   } catch (err) {
     if (idempotency?.owner) await failIdempotentRequest(context.env, idempotency, err);

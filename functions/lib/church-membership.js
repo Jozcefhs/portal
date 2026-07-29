@@ -15,6 +15,23 @@ const inputError = (message) => {
   return error;
 };
 
+export function validatedCsvImportRows(value, recordName = 'record') {
+  const rows = Array.isArray(value) ? value : [];
+  if (!rows.length) {
+    throw inputError(`Choose a CSV containing at least one ${clean(recordName)} row.`);
+  }
+  if (rows.length > 499) {
+    throw inputError(`A CSV import may contain at most 499 ${clean(recordName)} rows.`);
+  }
+  return rows;
+}
+
+export function stripFirestoreMetadata(record = {}) {
+  return Object.fromEntries(
+    Object.entries(record || {}).filter(([key]) => !String(key).startsWith('__'))
+  );
+}
+
 export const CHURCH_STAFF_ROLES = Object.freeze([
   'Pastor',
   'Church Administrator',
@@ -259,16 +276,11 @@ export async function importChurchMembers(env, user, body = {}) {
   await requireChurchEdition(env);
   const capabilities = requireCapability(user, 'canEditMembers');
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
-  const rows = Array.isArray(body.members) ? body.members.slice(0, 499) : [];
-  if (!rows.length) {
-    const error = new Error('Choose a CSV containing at least one member row.');
-    error.status = 400;
-    throw error;
-  }
+  const rows = validatedCsvImportRows(body.members, 'member');
   const path = churchCollectionPath(CHURCH_COLLECTIONS.members, branchId);
   const [existingMembers, households] = await Promise.all([
-    listCollection(env, path).catch(() => []),
-    listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.households, branchId)).catch(() => [])
+    listCollection(env, path),
+    listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.households, branchId))
   ]);
   const existingById = new Map(existingMembers.map((row) => [safeChurchDocumentId(row.MemberId || row.__id), row]));
   const householdIds = new Set(households.map((row) => safeChurchDocumentId(row.HouseholdId || row.__id)));
@@ -287,7 +299,7 @@ export async function importChurchMembers(env, user, body = {}) {
       collectionPath: path,
       documentId: id,
       data: {
-        ...(existing || {}),
+        ...stripFirestoreMetadata(existing),
         ...member,
         CreatedAt: existing?.CreatedAt || nowIso(),
         CreatedBy: existing?.CreatedBy || actorName(user),

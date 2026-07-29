@@ -118,9 +118,29 @@ test('department-member assignments reject missing, cross-branch and cross-depar
 test('department endpoint exposes member creation while preserving membership and branch guards', () => {
   assert.match(
     departmentSource,
-    /import\s+\{\s*resolveMembershipBranch,\s*saveChurchMember\s*\}\s+from '\.\/church-membership\.js'/
+    /import\s+\{[^}]*resolveMembershipBranch[^}]*saveChurchMember[^}]*\}\s+from '\.\/church-membership\.js'/
   );
   assert.match(departmentSource, /\['savemember', 'savechurchmember'\]\.includes\(action\)/);
   assert.match(departmentSource, /requireCapability\(user, 'canManageMembers'\)/);
   assert.match(departmentSource, /saveChurchMember\(env, user, \{ \.\.\.body, BranchId: branchId \}\)/);
+});
+
+test('department membership can be removed without deleting the master member record', () => {
+  assert.match(departmentSource, /async function removeDepartmentMember/);
+  assert.match(departmentSource, /requireCapability\(user, 'canManageMembers'\)/);
+  assert.match(departmentSource, /operation:\s*'delete'/);
+  assert.match(departmentSource, /batchUpsertDocuments\(env,\s*\[\s*\{/);
+  assert.match(departmentSource, /departmentAuditWrite\([\s\S]*?'REMOVE'/);
+  assert.doesNotMatch(departmentSource, /deleteDocument\(env, path\('members', branchId\), membershipId\)/);
+  assert.match(departmentSource, /action === 'removedepartmentmember'/);
+});
+
+test('department workspace supports validated batch imports for members and departments', () => {
+  assert.match(departmentSource, /importChurchMembers/);
+  assert.match(departmentSource, /\['importmembers', 'importchurchmembers'\]\.includes\(action\)/);
+  assert.match(departmentSource, /async function importDepartments/);
+  assert.match(departmentSource, /validatedCsvImportRows\(body\.departments, 'department'\)/);
+  assert.match(departmentSource, /Duplicate DepartmentId in import/);
+  assert.match(departmentSource, /batchUpsertDocuments\(env, writes\)/);
+  assert.match(departmentSource, /action === 'importdepartments'/);
 });

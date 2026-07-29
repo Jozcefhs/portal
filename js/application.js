@@ -185,7 +185,7 @@ form.addEventListener('submit', async (event) => {
     return;
   }
 
-  submitBtn.disabled = true;
+  if (!window.DynamaxActionFeedback.begin(submitBtn, 'Submitting application...')) return;
   showUploadOverlay();
   setStatus('Uploading your application, please wait...', '');
 
@@ -247,7 +247,7 @@ form.addEventListener('submit', async (event) => {
   } catch (error) {
     hideUploadOverlay();
     setStatus(error.message, 'bad');
-    submitBtn.disabled = false;
+    window.DynamaxActionFeedback.end(submitBtn);
   }
 });
 

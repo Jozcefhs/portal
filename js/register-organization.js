@@ -22,10 +22,10 @@ function shouldReleaseIdempotencyKey(response, data) {
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
+  const button = event.submitter || form.querySelector('button[type="submit"]');
+  if (!window.DynamaxActionFeedback.begin(button, 'Submitting registration...')) return;
   statusNode.className = 'status';
   statusNode.textContent = 'Submitting registration...';
-  const button = form.querySelector('button[type="submit"]');
-  button.disabled = true;
   try {
     const payload = Object.fromEntries(new FormData(form).entries());
     registrationIdempotencyKey = registrationIdempotencyKey || newIdempotencyKey();
@@ -57,7 +57,7 @@ form.addEventListener('submit', async (event) => {
     statusNode.className = 'status bad';
     statusNode.textContent = error.message || String(error);
   } finally {
-    button.disabled = false;
+    window.DynamaxActionFeedback.end(button);
   }
 });
 

@@ -118,6 +118,17 @@ function setLoginLoading(loading) {
   loadDashboardBtn.textContent = loading ? 'Opening dashboard...' : 'Open Dashboard';
 }
 
+function setActionLoading(button, loading, loadingText = 'Working...', normalText = '') {
+  if (!button) return;
+  const restingText = normalText || button.dataset.normalText || button.textContent;
+  if (loading) button.dataset.normalText = restingText;
+  button.disabled = loading;
+  button.classList.toggle('is-loading', loading);
+  button.setAttribute('aria-busy', loading ? 'true' : 'false');
+  button.textContent = loading ? loadingText : restingText;
+  if (!loading) delete button.dataset.normalText;
+}
+
 function money(value) {
   const amount = Number(String(value || '0').replace(/,/g, ''));
   return new Intl.NumberFormat('en-NG', {
@@ -643,7 +654,7 @@ async function payItem(child, fee, container) {
   const idempotencyKey = payButton?.dataset.idempotencyKey || newIdempotencyKey();
   if (payButton) {
     payButton.dataset.idempotencyKey = idempotencyKey;
-    payButton.disabled = true;
+    setActionLoading(payButton, true, 'Opening checkout...');
   }
   let responseReceived = false;
   try {
@@ -678,7 +689,7 @@ async function payItem(child, fee, container) {
   } catch (error) {
     if (responseReceived && payButton) delete payButton.dataset.idempotencyKey;
     setPaymentStatus(container, error.message, 'bad');
-    if (payButton) payButton.disabled = false;
+    setActionLoading(payButton, false);
   }
 }
 
@@ -908,8 +919,7 @@ async function downloadAdmissionDocument(child, documentType, button) {
   const originalLabel = button.textContent;
   const card = button.closest('.activity-item');
   const actionStatus = card?.querySelector('.document-download-status');
-  button.disabled = true;
-  button.textContent = 'Preparing download...';
+  setActionLoading(button, true, 'Preparing download...', originalLabel);
   if (actionStatus) {
     actionStatus.textContent = 'Preparing the original customized PDF...';
     actionStatus.classList.remove('bad', 'good');
@@ -957,8 +967,8 @@ async function downloadAdmissionDocument(child, documentType, button) {
       actionStatus.textContent = message;
       actionStatus.classList.add('bad');
     }
-    button.disabled = false;
-    button.textContent = originalLabel;
+  } finally {
+    if (button.isConnected) setActionLoading(button, false, '', originalLabel);
   }
 }
 
@@ -1129,7 +1139,9 @@ function renderStoreCart(child) {
     delete checkoutStoreCartBtn.dataset.idempotencyKey;
   }
   checkoutStoreCartBtn.onclick = async () => {
-    checkoutStoreCartBtn.disabled = true;
+    if (checkoutStoreCartBtn.disabled) return;
+    const normalText = checkoutStoreCartBtn.textContent;
+    setActionLoading(checkoutStoreCartBtn, true, 'Connecting to Paystack...', normalText);
     if (storeCheckoutStatus) { storeCheckoutStatus.textContent = 'Connecting to Paystack...'; storeCheckoutStatus.className = 'status'; }
     let responseReceived = false;
     try {
@@ -1169,7 +1181,8 @@ function renderStoreCart(child) {
       if (responseReceived) delete checkoutStoreCartBtn.dataset.idempotencyKey;
       const message = String(error?.message || error || 'Could not start checkout.').replace(/^Error:\s*/, '');
       if (storeCheckoutStatus) { storeCheckoutStatus.textContent = message; storeCheckoutStatus.className = 'status bad'; }
-      setStatus(message, 'bad'); checkoutStoreCartBtn.disabled = false;
+      setStatus(message, 'bad');
+      setActionLoading(checkoutStoreCartBtn, false, '', normalText);
     }
   };
 }
@@ -1235,11 +1248,15 @@ loginForm.addEventListener('submit', async (event) => {
 
 restrictionForm.addEventListener('submit', async (event) => {
   event.preventDefault();
+  const button = event.submitter || restrictionForm.querySelector('button[type="submit"]');
+  if (button?.disabled) return;
   const child = selectedChild();
   if (!child) {
     setStatus('Select a child first.', 'bad');
     return;
   }
+  const normalText = button?.textContent || 'Save wallet restrictions';
+  setActionLoading(button, true, 'Saving...', normalText);
   try {
     setStatus('Saving wallet restrictions...', '');
     const response = await fetch('/api/parent-dashboard', {
@@ -1270,15 +1287,22 @@ restrictionForm.addEventListener('submit', async (event) => {
     setStatus('Wallet restrictions saved.', 'ok');
   } catch (error) {
     setStatus(error.message, 'bad');
+  } finally {
+    setActionLoading(button, false, '', normalText);
   }
 });
 
 if (refreshDashboardBtn) {
   refreshDashboardBtn.addEventListener('click', async () => {
+    if (refreshDashboardBtn.disabled) return;
+    const normalText = refreshDashboardBtn.textContent;
+    setActionLoading(refreshDashboardBtn, true, 'Refreshing...', normalText);
     try {
       await loadDashboard();
     } catch (error) {
       setStatus(error.message, 'bad');
+    } finally {
+      setActionLoading(refreshDashboardBtn, false, '', normalText);
     }
   });
 }

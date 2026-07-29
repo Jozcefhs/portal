@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { staffDepartmentIdempotencyOptions } from '../functions/api/staff-departments.js';
 
 const portalRoot = new URL('../', import.meta.url);
 const [api, adminApi, adminJs, backend, emailService] = await Promise.all([
@@ -90,4 +91,46 @@ test('clinic, kitchen and restaurant market lists are emailed and audited withou
   assert.match(adminJs, /id="marketListForm"/);
   assert.match(emailService, /env\.BREVO_API_KEY/);
   assert.doesNotMatch(emailService, /return \{[^}]*apiKey/);
+});
+
+test('irreversible wallet and email actions have workspace-scoped durable idempotency', () => {
+  const user = {
+    username: 'Cashier.One',
+    branchId: 'North Branch',
+    edition: 'school'
+  };
+  assert.deepEqual(
+    staffDepartmentIdempotencyOptions('recordWalletPurchase', 'tuckShop', user),
+    {
+      scope: 'staff-department-wallet-purchase',
+      actor: 'school:north branch:cashier.one',
+      ttlMinutes: 30 * 24 * 60
+    }
+  );
+  assert.equal(
+    staffDepartmentIdempotencyOptions('sendClinicReport', 'clinic', user)?.scope,
+    'staff-department-clinic-report-email'
+  );
+  assert.equal(
+    staffDepartmentIdempotencyOptions('sendMarketList', 'kitchen', user)?.scope,
+    'staff-department-kitchen-market-list-email'
+  );
+  assert.equal(
+    staffDepartmentIdempotencyOptions('sendMarketList', 'restaurant', user)?.scope,
+    'staff-department-restaurant-market-list-email'
+  );
+  assert.deepEqual(
+    staffDepartmentIdempotencyOptions('recordSale', 'restaurant', user),
+    {
+      scope: 'restaurant-record-sale',
+      actor: 'Cashier.One',
+      ttlMinutes: 30 * 24 * 60
+    }
+  );
+  assert.equal(staffDepartmentIdempotencyOptions('lookupWallet', 'tuckShop', user), null);
+  assert.equal(staffDepartmentIdempotencyOptions('sendMarketList', 'tuckShop', user), null);
+  assert.match(api, /if \(idempotencyOptions\) await completeIdempotentRequest\(env, idempotency, data, 200\)/);
+  assert.match(api, /if \(idempotency\.replay\)/);
+  assert.match(api, /Idempotency-Replayed/);
+  assert.match(api, /if \(idempotency\?\.owner\) await failIdempotentRequest/);
 });

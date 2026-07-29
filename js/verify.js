@@ -36,7 +36,7 @@ form.addEventListener('submit', async (event) => {
     return;
   }
 
-  button.disabled = true;
+  if (!window.DynamaxActionFeedback.begin(button, 'Verifying...')) return;
   setStatus('Verifying, please wait...', '');
 
   let verifiedSuccessfully = false;
@@ -79,7 +79,7 @@ form.addEventListener('submit', async (event) => {
   } catch (error) {
     setStatus(error.message, 'bad');
   } finally {
-    if (!verifiedSuccessfully) button.disabled = false;
+    if (!verifiedSuccessfully) window.DynamaxActionFeedback.end(button);
   }
 });
 

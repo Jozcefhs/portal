@@ -30,6 +30,7 @@ import { handleChurchServiceAction } from '../lib/church-services.js';
 import { handleChurchFundAction } from '../lib/church-funds.js';
 import { handleChurchOfferingAction } from '../lib/church-offerings.js';
 import { handleOrganizationDepartmentAction } from '../lib/organization-departments.js';
+import { assertOrganizationDepartmentWorkspaceAccess } from '../lib/organization-department-gate.js';
 import { handleExecutiveOfficeAction } from '../lib/executive-correspondence.js';
 import { handleStudentConductAction } from '../lib/student-conduct.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
@@ -605,8 +606,8 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'getChurchServices', 'saveChurchService', 'saveChurchServiceOccurrence', 'recordChurchAttendance',
   'getChurchFunds', 'saveChurchFund', 'saveChurchFundMapping',
   'getChurchOfferings', 'saveChurchOffering', 'reconcileChurchOffering',
-  'getOrganizationDepartments', 'saveDepartment', 'deleteDepartment', 'savePosition',
-  'saveDepartmentMember', 'saveDepartmentMeeting', 'recordDepartmentAttendance',
+  'getOrganizationDepartments', 'saveDepartment', 'importOrganizationMembers', 'importDepartments', 'deleteDepartment', 'savePosition',
+  'saveDepartmentMember', 'removeDepartmentMember', 'saveDepartmentMeeting', 'recordDepartmentAttendance',
   'saveDepartmentOffering', 'markDepartmentOfferingPaid', 'saveSpecialProgram',
   'registerProgramParticipant', 'saveForeignVisitor',
   'getExecutiveOffice', 'searchExecutiveDirectory', 'listOfficialCorrespondence',
@@ -6443,31 +6444,40 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null) {
       }, body);
     case 'getOrganizationDepartments':
     case 'saveDepartment':
+    case 'importOrganizationMembers':
+    case 'importDepartments':
     case 'deleteDepartment':
     case 'savePosition':
     case 'saveDepartmentMember':
+    case 'removeDepartmentMember':
     case 'saveDepartmentMeeting':
     case 'recordDepartmentAttendance':
     case 'saveDepartmentOffering':
     case 'markDepartmentOfferingPaid':
     case 'saveSpecialProgram':
     case 'registerProgramParticipant':
-    case 'saveForeignVisitor':
-      return handleOrganizationDepartmentAction(env, {
+    case 'saveForeignVisitor': {
+      const departmentActor = {
         username: clean(body.UserUsername),
         displayName: clean(body.RecordedBy),
         role: clean(body.UserRole),
         department: clean(body.UserDepartment),
         branchId: clean(body.UserBranchId),
+        edition: deploymentIdentity?.edition,
         allowedSections: Array.isArray(body.UserTabAccess) ? body.UserTabAccess.map(clean).filter(Boolean) : []
-      }, {
+      };
+      assertOrganizationDepartmentWorkspaceAccess(deploymentIdentity, departmentActor);
+      return handleOrganizationDepartmentAction(env, departmentActor, {
         ...body,
         action: ({
           getOrganizationDepartments: 'list',
           saveDepartment: 'saveDepartment',
+          importOrganizationMembers: 'importMembers',
+          importDepartments: 'importDepartments',
           deleteDepartment: 'deleteDepartment',
           savePosition: 'savePosition',
           saveDepartmentMember: 'saveDepartmentMember',
+          removeDepartmentMember: 'removeDepartmentMember',
           saveDepartmentMeeting: 'saveMeeting',
           recordDepartmentAttendance: 'recordAttendance',
           saveDepartmentOffering: 'saveOffering',
@@ -6477,6 +6487,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null) {
           saveForeignVisitor: 'saveForeignVisitor'
         })[action]
       });
+    }
     case 'getChurchServices':
     case 'saveChurchService':
     case 'saveChurchServiceOccurrence':

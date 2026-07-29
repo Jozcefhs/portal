@@ -1,6 +1,12 @@
-import { deleteDocument, getDocument, listCollection, upsertDocument } from './firestore.js';
+import { batchUpsertDocuments, deleteDocument, getDocument, listCollection, upsertDocument } from './firestore.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from './church-foundation.js';
-import { resolveMembershipBranch, saveChurchMember } from './church-membership.js';
+import {
+  importChurchMembers,
+  resolveMembershipBranch,
+  saveChurchMember,
+  stripFirestoreMetadata,
+  validatedCsvImportRows
+} from './church-membership.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -43,12 +49,21 @@ function path(name, branchId) {
 }
 
 async function audit(env, branchId, user, action, entityType, entityId, details = '') {
+  const write = departmentAuditWrite(branchId, user, action, entityType, entityId, details);
+  await upsertDocument(env, write.collectionPath, write.documentId, write.data);
+}
+
+function departmentAuditWrite(branchId, user, action, entityType, entityId, details = '') {
   const id = `DEP-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-  await upsertDocument(env, path('departmentAudit', branchId), id, {
-    AuditId: id, Timestamp: nowIso(), Action: clean(action), EntityType: clean(entityType),
-    EntityId: clean(entityId), Details: clean(details), BranchId: branchId,
-    Actor: actor(user), ActorRole: role(user), ActorUsername: clean(user.username || user.Username)
-  });
+  return {
+    collectionPath: path('departmentAudit', branchId),
+    documentId: id,
+    data: {
+      AuditId: id, Timestamp: nowIso(), Action: clean(action), EntityType: clean(entityType),
+      EntityId: clean(entityId), Details: clean(details), BranchId: branchId,
+      Actor: actor(user), ActorRole: role(user), ActorUsername: clean(user.username || user.Username)
+    }
+  };
 }
 
 export function normalizedDepartment(input = {}, branchId = 'main') {
@@ -79,6 +94,58 @@ async function saveDepartment(env, user, body, branchId) {
   await upsertDocument(env, path('departments', branchId), id, payload);
   await audit(env, branchId, user, existing ? 'UPDATE' : 'CREATE', 'Department', department.DepartmentId, department.Name);
   return { message: existing ? 'Department updated.' : 'Department created.' };
+}
+
+async function importDepartments(env, user, body, branchId) {
+  requireCapability(user, 'canManageDepartments');
+  const rows = validatedCsvImportRows(body.departments, 'department');
+  const collectionPath = path('departments', branchId);
+  const existingRows = await listCollection(env, collectionPath);
+  const existingById = new Map(existingRows.map((row) => [
+    safeChurchDocumentId(row.DepartmentId || row.__id),
+    row
+  ]));
+  const seen = new Set();
+  const writes = rows.map((row) => {
+    const department = normalizedDepartment(row, branchId);
+    const id = safeChurchDocumentId(department.DepartmentId);
+    if (seen.has(id)) throw inputError(`Duplicate DepartmentId in import: ${department.DepartmentId}`);
+    seen.add(id);
+    const existing = existingById.get(id);
+    return {
+      collectionPath,
+      documentId: id,
+      data: {
+        ...stripFirestoreMetadata(existing),
+        ...department,
+        CreatedAt: existing?.CreatedAt || nowIso(),
+        CreatedBy: existing?.CreatedBy || actor(user),
+        UpdatedAt: nowIso(),
+        UpdatedBy: actor(user),
+        ImportSource: 'CSV'
+      }
+    };
+  });
+  const imported = writes.length;
+  const auditId = `DEP-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  writes.push({
+    collectionPath: path('departmentAudit', branchId),
+    documentId: auditId,
+    data: {
+      AuditId: auditId,
+      Timestamp: nowIso(),
+      Action: 'IMPORT',
+      EntityType: 'Department',
+      EntityId: `${imported} records`,
+      Details: 'CSV department import',
+      BranchId: branchId,
+      Actor: actor(user),
+      ActorRole: role(user),
+      ActorUsername: clean(user.username || user.Username)
+    }
+  });
+  await batchUpsertDocuments(env, writes);
+  return { message: `${imported} department record(s) imported.`, imported };
 }
 
 async function deleteDepartment(env, user, body, branchId) {
@@ -210,6 +277,39 @@ async function saveDepartmentMember(env, user, body, branchId) {
   });
   await audit(env, branchId, user, existing ? 'UPDATE' : 'ASSIGN', 'Department Member', membershipId);
   return { message: existing ? 'Department member updated.' : 'Member assigned to department.' };
+}
+
+async function removeDepartmentMember(env, user, body, branchId) {
+  requireCapability(user, 'canManageMembers');
+  const membershipId = safeChurchDocumentId(
+    body.MembershipId || (
+      clean(body.DepartmentId) && clean(body.MemberId)
+        ? `${clean(body.DepartmentId)}--${clean(body.MemberId)}`
+        : ''
+    )
+  );
+  if (!membershipId) throw inputError('Department membership ID is required.');
+  const membershipPath = path('departmentMembers', branchId);
+  const existing = await getDocument(env, membershipPath, membershipId);
+  if (!existing) throw inputError('Department membership was not found.', 404);
+  const auditWrite = departmentAuditWrite(
+    branchId,
+    user,
+    'REMOVE',
+    'Department Member',
+    membershipId,
+    `${clean(existing.DisplayName || existing.MemberId)} | ${clean(existing.DepartmentName || existing.DepartmentId)}`
+  );
+  await batchUpsertDocuments(env, [
+    {
+      collectionPath: membershipPath,
+      documentId: membershipId,
+      operation: 'delete',
+      ...(existing.__updateTime ? { updateTime: existing.__updateTime } : { exists: true })
+    },
+    auditWrite
+  ]);
+  return { message: 'Member removed from department.' };
 }
 
 async function saveMeeting(env, user, body, branchId) {
@@ -384,10 +484,16 @@ export async function handleOrganizationDepartmentAction(env, user, body = {}) {
     requireCapability(user, 'canManageMembers');
     result = await saveChurchMember(env, user, { ...body, BranchId: branchId });
   }
+  else if (['importmembers', 'importchurchmembers'].includes(action)) {
+    requireCapability(user, 'canManageMembers');
+    result = await importChurchMembers(env, user, { ...body, BranchId: branchId });
+  }
   else if (action === 'savedepartment') result = await saveDepartment(env, user, body, branchId);
+  else if (action === 'importdepartments') result = await importDepartments(env, user, body, branchId);
   else if (action === 'deletedepartment') result = await deleteDepartment(env, user, body, branchId);
   else if (action === 'saveposition') result = await savePosition(env, user, body, branchId);
   else if (action === 'savedepartmentmember') result = await saveDepartmentMember(env, user, body, branchId);
+  else if (action === 'removedepartmentmember') result = await removeDepartmentMember(env, user, body, branchId);
   else if (action === 'savemeeting') result = await saveMeeting(env, user, body, branchId);
   else if (action === 'recordattendance') result = await recordAttendance(env, user, body, branchId);
   else if (action === 'saveoffering') result = await saveDepartmentOffering(env, user, body, branchId);

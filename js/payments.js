@@ -314,7 +314,7 @@ lookupForm.addEventListener('submit', async (event) => {
   currentEmail = document.getElementById('email').value.trim().toLowerCase();
   currentCode = document.getElementById('code').value.trim().toUpperCase();
   feePanel.hidden = true;
-  lookupBtn.disabled = true;
+  if (!window.DynamaxActionFeedback.begin(lookupBtn, 'Checking fees...')) return;
   setStatus('Checking payable fees...', '');
 
   try {
@@ -335,7 +335,7 @@ lookupForm.addEventListener('submit', async (event) => {
   } catch (error) {
     setStatus(error.message, 'bad');
   } finally {
-    lookupBtn.disabled = false;
+    window.DynamaxActionFeedback.end(lookupBtn);
   }
 });
 
@@ -360,7 +360,7 @@ payBtn.addEventListener('click', async () => {
     return;
   }
 
-  payBtn.disabled = true;
+  if (!window.DynamaxActionFeedback.begin(payBtn, 'Starting checkout...')) return;
   setStatus('Starting secure checkout...', '');
   try {
     paymentIdempotencyKey = paymentIdempotencyKey || newIdempotencyKey();
@@ -392,7 +392,7 @@ payBtn.addEventListener('click', async () => {
     window.location.href = data.authorizationUrl;
   } catch (error) {
     setStatus(error.message, 'bad');
-    payBtn.disabled = false;
+    window.DynamaxActionFeedback.end(payBtn);
   }
 });
 

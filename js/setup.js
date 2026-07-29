@@ -103,6 +103,8 @@ async function loadProfile(password = '') {
 
 setupLoginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
+  const button = event.submitter || setupLoginForm.querySelector('button[type="submit"]');
+  if (!window.DynamaxActionFeedback.begin(button, 'Unlocking settings...')) return;
   try {
     setLoginStatus('Checking password...', '');
     unlockedPassword = document.getElementById('setupPassword').value;
@@ -113,6 +115,8 @@ setupLoginForm.addEventListener('submit', async (event) => {
   } catch (error) {
     unlockedPassword = '';
     setLoginStatus(error.message, 'bad');
+  } finally {
+    if (button?.isConnected) window.DynamaxActionFeedback.end(button);
   }
 });
 
@@ -162,10 +166,9 @@ function resizeLogo(file) {
 
 setupForm.addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (!window.DynamaxActionFeedback.begin(saveSetupButton, 'Saving changes...')) return;
   try {
     setStatus('Saving setup...', '');
-    saveSetupButton.disabled = true;
-    saveSetupButton.textContent = 'Saving...';
     const response = await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -180,8 +183,7 @@ setupForm.addEventListener('submit', async (event) => {
   } catch (error) {
     setStatus(error.message, 'bad');
   } finally {
-    saveSetupButton.disabled = false;
-    saveSetupButton.textContent = 'Save changes';
+    window.DynamaxActionFeedback.end(saveSetupButton);
   }
 });
 

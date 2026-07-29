@@ -222,10 +222,22 @@ function setStatus(element, message, type = '') {
 }
 
 function setButtonLoading(button, loading, loadingText, normalText) {
+  if (!button) return;
   button.disabled = loading;
   button.classList.toggle('is-loading', loading);
   button.setAttribute('aria-busy', loading ? 'true' : 'false');
   button.textContent = loading ? loadingText : normalText;
+}
+
+async function runButtonAction(button, loadingText, action, normalText = '') {
+  if (!button || button.disabled || button.getAttribute('aria-busy') === 'true') return undefined;
+  const restingText = normalText || clean(button.textContent) || 'Continue';
+  setButtonLoading(button, true, loadingText || 'Working...', restingText);
+  try {
+    return await action();
+  } finally {
+    if (button.isConnected) setButtonLoading(button, false, loadingText || 'Working...', restingText);
+  }
 }
 
 function setDashboardRefreshLoading(loading) {
@@ -1764,20 +1776,40 @@ function renderStaffStore(section, store) {
   if (organisationStore) bindOrganizationCommerceWorkspace(section, store);
   document.getElementById('staffStoreItemForm')?.addEventListener('submit', async (event) => {
     event.preventDefault(); const form = event.currentTarget; const status = form.querySelector('[data-store-status]');
+    const button = event.submitter || form.querySelector('button[type="submit"]');
+    if (button?.disabled) return;
     const payload = Object.fromEntries(new FormData(form).entries()); payload.Active = form.elements.Active.checked;
     const match = activeCategories.find((row) => clean(row.Name).toLowerCase() === clean(payload.Category).toLowerCase());
     if (!match && !window.confirm(`Create "${payload.Category}" as a new ${label} category?`)) return;
     payload.CategoryId = match?.CategoryId || ''; payload.CreateCategoryIfMissing = !match;
+    const normalText = clean(button?.textContent) || 'Save item';
+    setButtonLoading(button, true, 'Saving...', normalText);
     try {
       const response = await staffFetch('/api/staff-stores', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'saveItem', section, ...payload }) });
       const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.message || 'Could not save store item.');
       setStatus(status, data.message, 'ok'); await loadStaffStore(section);
-    } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    } catch (error) {
+      setStatus(status, error.message || String(error), 'bad');
+    } finally {
+      if (button?.isConnected) setButtonLoading(button, false, 'Saving...', normalText);
+    }
   });
   const categoryForm = document.getElementById('storeCategoryForm');
   categoryForm?.addEventListener('submit', async (event) => {
-    event.preventDefault(); const form = event.currentTarget; const status = form.querySelector('[data-category-status]'); const payload = Object.fromEntries(new FormData(form).entries()); payload.Active = form.elements.Active.checked ? 'YES' : 'NO';
-    try { const response = await staffFetch('/api/staff-stores', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'saveCategory', section, ...payload }) }); const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.message || 'Could not save category.'); setStatus(status, data.message, 'ok'); await loadStaffStore(section); } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    event.preventDefault(); const form = event.currentTarget; const status = form.querySelector('[data-category-status]'); const button = event.submitter || form.querySelector('button[type="submit"]');
+    if (button?.disabled) return;
+    const payload = Object.fromEntries(new FormData(form).entries()); payload.Active = form.elements.Active.checked ? 'YES' : 'NO';
+    const normalText = clean(button?.textContent) || 'Save category';
+    setButtonLoading(button, true, 'Saving...', normalText);
+    try {
+      const response = await staffFetch('/api/staff-stores', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'saveCategory', section, ...payload }) });
+      const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.message || 'Could not save category.');
+      setStatus(status, data.message, 'ok'); await loadStaffStore(section);
+    } catch (error) {
+      setStatus(status, error.message || String(error), 'bad');
+    } finally {
+      if (button?.isConnected) setButtonLoading(button, false, 'Saving...', normalText);
+    }
   });
   panelEl.querySelectorAll('[data-edit-category]').forEach((button) => button.addEventListener('click', () => { const row = categories.find((item) => item.CategoryId === button.dataset.editCategory); if (!row || !categoryForm) return; categoryForm.elements.CategoryId.value = row.CategoryId; categoryForm.elements.Name.value = row.Name; categoryForm.elements.Active.checked = clean(row.Active || 'YES') !== 'NO'; categoryForm.scrollIntoView({ behavior: 'smooth', block: 'center' }); }));
   panelEl.querySelectorAll('[data-category-active]').forEach((checkbox) => checkbox.addEventListener('change', async () => {
@@ -1815,11 +1847,16 @@ function renderStaffStore(section, store) {
         : "Scan or enter the student's card ID, admission number, or parent verification code.")
       : '';
     if (button.dataset.storeStatus === 'Collected' && !clean(collectionReference)) return;
-    button.disabled = true;
+    const normalText = clean(button.textContent) || 'Update order';
+    setButtonLoading(button, true, 'Updating...', normalText);
     try {
       const response = await staffFetch('/api/staff-stores', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateOrder', section, OrderNo: button.dataset.storeOrder, Status: button.dataset.storeStatus, CollectionReference: collectionReference }) });
       const data = await response.json(); if (!response.ok || !data.ok) throw new Error(data.message || 'Could not update order.'); await loadStaffStore(section);
-    } catch (error) { setStatus(dashboardStatus, error.message || String(error), 'bad'); button.disabled = false; }
+    } catch (error) {
+      setStatus(dashboardStatus, error.message || String(error), 'bad');
+    } finally {
+      if (button.isConnected) setButtonLoading(button, false, 'Updating...', normalText);
+    }
   }));
 }
 
@@ -1830,9 +1867,11 @@ async function loadStaffStore(section) {
 async function submitDepartmentAction(section, action, form) {
   const status = form.querySelector('[data-department-status]');
   const button = form.querySelector('button[type="submit"]');
+  if (button?.disabled) return;
   const payload = Object.fromEntries(new FormData(form).entries());
   if (form.elements.Active?.type === 'checkbox') payload.Active = form.elements.Active.checked ? 'YES' : 'NO';
-  setButtonLoading(button, true, 'Saving...', button.textContent);
+  const normalText = clean(button?.textContent) || 'Save';
+  setButtonLoading(button, true, 'Saving...', normalText);
   try {
     const response = await staffFetch('/api/staff-departments', {
       method: 'POST',
@@ -1847,19 +1886,25 @@ async function submitDepartmentAction(section, action, form) {
   } catch (error) {
     setStatus(status, error.message || String(error), 'bad');
   } finally {
-    setButtonLoading(button, false, 'Saving...', button.dataset.normalText || 'Save');
+    if (button?.isConnected) setButtonLoading(button, false, 'Saving...', normalText);
   }
 }
 
-async function requestDepartmentAction(section, action, payload = {}) {
+async function requestDepartmentAction(section, action, payload = {}, idempotencyKey = '') {
+  const headers = { 'Content-Type': 'application/json' };
+  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
   const response = await staffFetch('/api/staff-departments', {
     method: 'POST',
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, section, ...payload })
+    headers,
+    body: JSON.stringify({ action, section, ...payload, ...(idempotencyKey ? { idempotencyKey } : {}) })
   });
-  const data = await response.json();
-  if (!response.ok || !data.ok) throw new Error(data.message || 'Could not complete the department action.');
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.ok) {
+    const error = new Error(data.message || 'Could not complete the department action.');
+    error.responseReceived = true;
+    throw error;
+  }
   renderDepartmentOperations(section, data);
   setStatus(dashboardStatus, data.message, 'ok');
   return data;
@@ -1914,8 +1959,7 @@ async function scanTuckShopNfc(form, button) {
   const normalText = button.textContent;
   const controller = new AbortController();
   try {
-    button.disabled = true;
-    button.textContent = 'Waiting for card...';
+    setButtonLoading(button, true, 'Waiting for card...', normalText);
     setStatus(status, 'Allow NFC access if prompted, then hold the student card near this device.', 'ok');
     const reader = new NDEFReader();
     reader.addEventListener('readingerror', () => {
@@ -1924,8 +1968,7 @@ async function scanTuckShopNfc(form, button) {
     reader.addEventListener('reading', (event) => {
       const cardId = walletCardIdFromNfc(event);
       controller.abort();
-      button.disabled = false;
-      button.textContent = normalText;
+      setButtonLoading(button, false, 'Waiting for card...', normalText);
       if (!cardId) {
         setStatus(status, 'The NFC card was detected, but it did not contain a usable card ID.', 'bad');
         return;
@@ -1936,8 +1979,7 @@ async function scanTuckShopNfc(form, button) {
     }, { once: true });
     await reader.scan({ signal: controller.signal });
   } catch (error) {
-    button.disabled = false;
-    button.textContent = normalText;
+    setButtonLoading(button, false, 'Waiting for card...', normalText);
     if (error?.name === 'AbortError') return;
     setStatus(status, error?.name === 'NotAllowedError'
       ? 'NFC permission was not granted. Allow NFC access or enter the card ID manually.'
@@ -2087,7 +2129,9 @@ function renderDepartmentOperations(section, data) {
       walletLookupForm.elements.AccountRef.focus();
     }
   }
-  document.getElementById('refreshDepartmentOperations')?.addEventListener('click', () => loadDepartmentOperations(section));
+  document.getElementById('refreshDepartmentOperations')?.addEventListener('click', (event) => {
+    runButtonAction(event.currentTarget, 'Refreshing...', () => loadDepartmentOperations(section));
+  });
   panelEl.querySelectorAll('[data-department-jump]').forEach((button) => button.addEventListener('click', () => {
     panelEl.querySelectorAll('[data-department-jump]').forEach((item) => item.classList.toggle('active', item === button));
     document.getElementById(button.dataset.departmentJump)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2096,7 +2140,8 @@ function renderDepartmentOperations(section, data) {
   document.getElementById('walletLookupForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget; const status = form.querySelector('[data-department-status]');
-    try { await requestDepartmentAction(section, 'lookupWallet', Object.fromEntries(new FormData(form).entries())); }
+    const button = event.submitter || form.querySelector('button[type="submit"]');
+    try { await runButtonAction(button, 'Looking up...', () => requestDepartmentAction(section, 'lookupWallet', Object.fromEntries(new FormData(form).entries()))); }
     catch (error) { setStatus(status, error.message || String(error), 'bad'); }
   });
   const nfcButton = document.getElementById('tuckShopNfcScan');
@@ -2110,19 +2155,41 @@ function renderDepartmentOperations(section, data) {
   document.getElementById('walletPurchaseForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget; const status = form.querySelector('[data-department-status]');
-    try { await requestDepartmentAction(section, 'recordWalletPurchase', Object.fromEntries(new FormData(form).entries())); }
-    catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    const button = event.submitter || form.querySelector('button[type="submit"]');
+    const idempotencyKey = form.dataset.idempotencyKey || newIdempotencyKey();
+    form.dataset.idempotencyKey = idempotencyKey;
+    try {
+      await runButtonAction(button, 'Recording purchase...', () => requestDepartmentAction(section, 'recordWalletPurchase', Object.fromEntries(new FormData(form).entries()), idempotencyKey));
+      delete form.dataset.idempotencyKey;
+    } catch (error) {
+      if (error?.responseReceived) delete form.dataset.idempotencyKey;
+      setStatus(status, error.message || String(error), 'bad');
+    }
+    form.addEventListener('input', () => {
+      if (!button?.disabled) delete form.dataset.idempotencyKey;
+    }, { once: true });
   });
-  document.getElementById('prepareClinicReport')?.addEventListener('click', async () => {
+  document.getElementById('prepareClinicReport')?.addEventListener('click', async (event) => {
     const form = document.getElementById('clinicReportForm'); const status = form.querySelector('[data-department-status]');
-    try { await requestDepartmentAction(section, 'prepareClinicReport', Object.fromEntries(new FormData(form).entries())); }
+    try { await runButtonAction(event.currentTarget, 'Preparing...', () => requestDepartmentAction(section, 'prepareClinicReport', Object.fromEntries(new FormData(form).entries()))); }
     catch (error) { setStatus(status, error.message || String(error), 'bad'); }
   });
   document.getElementById('clinicReportForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget; const status = form.querySelector('[data-department-status]');
-    try { await requestDepartmentAction(section, 'sendClinicReport', Object.fromEntries(new FormData(form).entries())); }
-    catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    const button = event.submitter || form.querySelector('button[type="submit"]');
+    const idempotencyKey = form.dataset.idempotencyKey || newIdempotencyKey();
+    form.dataset.idempotencyKey = idempotencyKey;
+    try {
+      await runButtonAction(button, 'Sending report...', () => requestDepartmentAction(section, 'sendClinicReport', Object.fromEntries(new FormData(form).entries()), idempotencyKey));
+      delete form.dataset.idempotencyKey;
+    } catch (error) {
+      if (error?.responseReceived) delete form.dataset.idempotencyKey;
+      setStatus(status, error.message || String(error), 'bad');
+    }
+    form.addEventListener('input', () => {
+      if (!button?.disabled) delete form.dataset.idempotencyKey;
+    }, { once: true });
   });
   document.getElementById('marketListForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -2133,8 +2200,19 @@ function renderDepartmentOperations(section, data) {
       Unit: row.querySelector('[data-unit]').dataset.unit,
       OrderQuantity: row.querySelector('input[type="number"]').value
     }));
-    try { await requestDepartmentAction(section, 'sendMarketList', payload); }
-    catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    const button = event.submitter || form.querySelector('button[type="submit"]');
+    const idempotencyKey = form.dataset.idempotencyKey || newIdempotencyKey();
+    form.dataset.idempotencyKey = idempotencyKey;
+    try {
+      await runButtonAction(button, 'Sending list...', () => requestDepartmentAction(section, 'sendMarketList', payload, idempotencyKey));
+      delete form.dataset.idempotencyKey;
+    } catch (error) {
+      if (error?.responseReceived) delete form.dataset.idempotencyKey;
+      setStatus(status, error.message || String(error), 'bad');
+    }
+    form.addEventListener('input', () => {
+      if (!button?.disabled) delete form.dataset.idempotencyKey;
+    }, { once: true });
   });
   document.getElementById('departmentInventoryForm')?.addEventListener('submit', (event) => { event.preventDefault(); submitDepartmentAction(section, 'saveItem', event.currentTarget); });
   document.getElementById('departmentMovementForm')?.addEventListener('submit', (event) => { event.preventDefault(); submitDepartmentAction(section, 'recordMovement', event.currentTarget); });
@@ -2191,7 +2269,9 @@ async function loadChurchMembership() {
         { label: 'Phone', value: (row) => pick(row, ['Phone']) },
         { label: 'Status', value: (row) => pick(row, ['Status']) }
       ])}`;
-    document.getElementById('refreshChurchMembers')?.addEventListener('click', loadChurchMembership);
+    document.getElementById('refreshChurchMembers')?.addEventListener('click', (event) => {
+      runButtonAction(event.currentTarget, 'Refreshing...', loadChurchMembership);
+    });
   } catch (error) {
     if (activeSection === 'members') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
   }
@@ -2220,7 +2300,11 @@ async function organizationDepartmentAction(action, payload = {}) {
 }
 
 function departmentFormPayload(form) {
-  return Object.fromEntries(new FormData(form).entries());
+  const payload = Object.fromEntries(new FormData(form).entries());
+  form.querySelectorAll('input[type="checkbox"][name]').forEach((input) => {
+    payload[input.name] = input.checked ? (input.value || 'YES') : 'NO';
+  });
+  return payload;
 }
 
 function departmentOptions(rows, selected = '') {
@@ -2234,6 +2318,8 @@ function departmentWorkspace(data) {
   const departments = data.departments || [];
   const positions = data.departmentPositions || [];
   const members = data.members || [];
+  const capabilities = data.capabilities || {};
+  const canManageMembers = Boolean(capabilities.canManageMembers);
   const meetings = data.departmentMeetings || [];
   const offerings = data.departmentOfferings || [];
   const programs = data.specialPrograms || [];
@@ -2262,8 +2348,8 @@ function departmentWorkspace(data) {
         <input name="DepartmentId" placeholder="Department ID" required><input name="Name" placeholder="Department name" required>
         <select name="DepartmentType"><option>Department</option><option>Home Church</option><option>Home Cell</option><option>Foreign Desk</option></select>
         <input name="AreaZone" placeholder="Area / zone"><input name="Description" placeholder="Description">
-        <label class="inline-check"><input type="checkbox" name="Active" value="YES" checked> Active</label>
-        <button type="submit">Save department</button>
+        <label class="inline-check"><input type="checkbox" name="Active" value="YES" checked><span>Active</span></label>
+        <button type="submit" data-loading-text="Saving department...">Save department</button>
       </form>
       <form class="workflow-card compact-form" data-department-action="savePosition">
         <h3>Position</h3><select name="DepartmentId" required>${departmentOptions(departments)}</select>
@@ -2322,7 +2408,10 @@ function departmentWorkspace(data) {
       { label: 'Department', value: (row) => row.DepartmentName || row.DepartmentId },
       { label: 'Member', value: (row) => row.DisplayName || row.MemberId },
       { label: 'Position', value: (row) => row.PositionName || row.PositionId },
-      { label: 'Status', value: (row) => row.Status }
+      { label: 'Status', value: (row) => row.Status },
+      ...(canManageMembers ? [
+        { label: 'Actions', render: (row) => `<button type="button" class="compact-icon-action compact-delete-action" data-remove-department-member="${escapeHtml(row.MembershipId || row.__id || `${row.DepartmentId || ''}--${row.MemberId || ''}`)}" data-member-name="${escapeHtml(row.DisplayName || row.MemberId || 'member')}" data-department-name="${escapeHtml(row.DepartmentName || row.DepartmentId || 'department')}" title="Remove from department" aria-label="Remove ${escapeHtml(row.DisplayName || row.MemberId || 'member')} from ${escapeHtml(row.DepartmentName || row.DepartmentId || 'department')}">&times;</button>` }
+      ] : [])
     ])}
     ${table('Department offerings and remittance', offerings, [
       { label: 'Date', value: (row) => row.Date },
@@ -2344,6 +2433,9 @@ function organizedDepartmentWorkspace(data) {
   const departments = data.departments || [];
   const positions = data.departmentPositions || [];
   const members = data.members || [];
+  const capabilities = data.capabilities || {};
+  const canManageDepartments = Boolean(capabilities.canManageDepartments);
+  const canManageMembers = Boolean(capabilities.canManageMembers);
   const departmentMembers = data.departmentMembers || [];
   const meetings = data.departmentMeetings || [];
   const attendance = data.departmentAttendance || [];
@@ -2397,14 +2489,19 @@ function organizedDepartmentWorkspace(data) {
 
     <section class="organization-workspace-panel" data-organization-workspace-panel="departments"${panelState('departments')}>
       <div class="department-panel-heading"><div><small>Organisation structure</small><h3>Departments</h3></div><p>Create, update or deactivate departments, home churches and the Foreign Desk.</p></div>
+      ${canManageDepartments ? `<div class="department-import-actions">
+        <button type="button" class="secondary compact-action" id="downloadDepartmentCsvTemplate">Download CSV template</button>
+        <button type="button" class="compact-action" id="importDepartmentsCsv">Import departments</button>
+        <input type="file" id="departmentsCsvFile" accept=".csv,text/csv" hidden>
+      </div>` : ''}
       <div class="department-form-grid department-two-column-grid">
         <form id="organizationDepartmentEditor" class="workflow-card compact-form department-editor-card" data-department-action="saveDepartment">
           <h3>Create or edit department</h3>
           <input name="DepartmentId" placeholder="Department ID" required><input name="Name" placeholder="Department name" required>
           <select name="DepartmentType"><option>Department</option><option>Home Church</option><option>Home Cell</option><option>Foreign Desk</option></select>
           <input name="AreaZone" placeholder="Area / zone"><input name="Description" placeholder="Description">
-          <label class="inline-check"><input type="checkbox" name="Active" value="YES" checked> Active</label>
-          <button type="submit">Save department</button>
+          <label class="inline-check"><input type="checkbox" name="Active" value="YES" checked><span>Active</span></label>
+          <button type="submit" data-loading-text="Saving department...">Save department</button>
         </form>
         <aside class="workflow-card department-guidance-card"><span aria-hidden="true">⌂</span><div><h3>Structure guidance</h3><p>Use departments for ministry teams, Home Church or Home Cell for area-based groups, and Foreign Desk for international visitors.</p><ul><li>Give every record a stable Department ID.</li><li>Add an area or zone for home churches.</li><li>Deactivate records that should remain in history.</li></ul></div></aside>
       </div>
@@ -2419,6 +2516,11 @@ function organizedDepartmentWorkspace(data) {
 
     <section class="organization-workspace-panel" data-organization-workspace-panel="members"${panelState('members')}>
       <div class="department-panel-heading"><div><small>People and responsibilities</small><h3>Members & Positions</h3></div><p>Register people, define positions and assign members to department responsibilities.</p></div>
+      ${canManageMembers ? `<div class="department-import-actions">
+        <button type="button" class="secondary compact-action" id="downloadMemberCsvTemplate">Download CSV template</button>
+        <button type="button" class="compact-action" id="importMembersCsv">Import members</button>
+        <input type="file" id="membersCsvFile" accept=".csv,text/csv" hidden>
+      </div>` : ''}
       <div class="department-member-onboarding">
         <strong>New here?</strong>
         <span>1. Register the member. 2. Create a position if needed. 3. Assign the member to a department.</span>
@@ -2453,7 +2555,10 @@ function organizedDepartmentWorkspace(data) {
         { label: 'Department', value: (row) => row.DepartmentName || row.DepartmentId },
         { label: 'Member', value: (row) => row.DisplayName || row.MemberId },
         { label: 'Position', value: (row) => row.PositionName || row.PositionId },
-        { label: 'Status', value: (row) => row.Status }
+        { label: 'Status', value: (row) => row.Status },
+        ...(canManageMembers ? [
+          { label: 'Actions', render: (row) => `<button type="button" class="compact-icon-action compact-delete-action" data-remove-department-member="${escapeHtml(row.MembershipId || row.__id || `${row.DepartmentId || ''}--${row.MemberId || ''}`)}" data-member-name="${escapeHtml(row.DisplayName || row.MemberId || 'member')}" data-department-name="${escapeHtml(row.DepartmentName || row.DepartmentId || 'department')}" title="Remove from department" aria-label="Remove ${escapeHtml(row.DisplayName || row.MemberId || 'member')} from ${escapeHtml(row.DepartmentName || row.DepartmentId || 'department')}">&times;</button>` }
+        ] : [])
       ])}
     </section>
 
@@ -2527,11 +2632,47 @@ async function loadOrganizationDepartments() {
     if (activeSection !== 'members') return;
     panelEl.innerHTML = organizedDepartmentWorkspace(data);
     const status = document.getElementById('organizationDepartmentStatus');
-    document.getElementById('refreshOrganizationDepartments')?.addEventListener('click', loadOrganizationDepartments);
+    document.getElementById('refreshOrganizationDepartments')?.addEventListener('click', (event) => {
+      runButtonAction(event.currentTarget, 'Refreshing...', loadOrganizationDepartments);
+    });
     panelEl.querySelectorAll('[data-organization-workspace-tab]').forEach((button) => button.addEventListener('click', () => {
       setOrganizationDepartmentWorkspaceTab(button.dataset.organizationWorkspaceTab);
     }));
     setOrganizationDepartmentWorkspaceTab(organizationDepartmentWorkspaceTab);
+    document.getElementById('downloadDepartmentCsvTemplate')?.addEventListener('click', () => {
+      downloadCsvFile(
+        'departments_import_template.csv',
+        'DepartmentId,Name,DepartmentType,AreaZone,Description,MeetingFrequency,Active\nCHOIR,Choir,Department,,Music ministry,Weekly,YES\n'
+      );
+    });
+    document.getElementById('downloadMemberCsvTemplate')?.addEventListener('click', () => {
+      downloadCsvFile(
+        'members_import_template.csv',
+        'MemberId,DisplayName,FirstName,Surname,Phone,Email,Gender,MembershipDate,MembershipStatus\nMEM-001,Ada Okafor,Ada,Okafor,+2348000000000,ada@example.com,Female,2026-07-29,Active\n'
+      );
+    });
+    document.getElementById('importDepartmentsCsv')?.addEventListener('click', () => {
+      document.getElementById('departmentsCsvFile')?.click();
+    });
+    document.getElementById('importMembersCsv')?.addEventListener('click', () => {
+      document.getElementById('membersCsvFile')?.click();
+    });
+    document.getElementById('departmentsCsvFile')?.addEventListener('change', (event) => {
+      importOrganizationCsv(event, {
+        action: 'importDepartments',
+        payloadKey: 'departments',
+        buttonId: 'importDepartmentsCsv',
+        loadingText: 'Importing departments...'
+      }, status);
+    });
+    document.getElementById('membersCsvFile')?.addEventListener('change', (event) => {
+      importOrganizationCsv(event, {
+        action: 'importMembers',
+        payloadKey: 'members',
+        buttonId: 'importMembersCsv',
+        loadingText: 'Importing members...'
+      }, status);
+    });
     const recordsHandoff = takeRecordsDeskHandoff('members');
     const selectedDepartmentId = clean(recordsHandoff?.context?.DepartmentId);
     const selectedMemberId = clean(recordsHandoff?.context?.MemberId);
@@ -2576,12 +2717,23 @@ async function loadOrganizationDepartments() {
     });
     panelEl.querySelectorAll('[data-department-action]').forEach((form) => form.addEventListener('submit', async (event) => {
       event.preventDefault();
+      const submitButton = form.querySelector('button[type="submit"]');
+      if (form.dataset.submitting === 'true' || submitButton?.disabled) return;
+      const normalText = clean(submitButton?.textContent) || 'Save';
+      const loadingText = clean(submitButton?.dataset.loadingText) || 'Saving...';
+      form.dataset.submitting = 'true';
+      if (submitButton) setButtonLoading(submitButton, true, loadingText, normalText);
       try {
         setStatus(status, 'Saving...');
         const result = await organizationDepartmentAction(form.dataset.departmentAction, departmentFormPayload(form));
         setStatus(status, result.message || 'Saved.', 'good');
         await loadOrganizationDepartments();
-      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+      } finally {
+        delete form.dataset.submitting;
+        if (submitButton?.isConnected) setButtonLoading(submitButton, false, loadingText, normalText);
+      }
     }));
     panelEl.querySelectorAll('[data-edit-department]').forEach((button) => button.addEventListener('click', () => {
       const department = (data.departments || []).find((row) => clean(row.DepartmentId || row.__id) === clean(button.dataset.editDepartment));
@@ -2597,13 +2749,43 @@ async function loadOrganizationDepartments() {
     }));
     panelEl.querySelectorAll('[data-delete-department]').forEach((button) => button.addEventListener('click', async () => {
       if (!window.confirm('Delete this department? Departments with members or meetings cannot be deleted.')) return;
-      try { await organizationDepartmentAction('deleteDepartment', { DepartmentId: button.dataset.deleteDepartment }); await loadOrganizationDepartments(); }
+      try {
+        await runButtonAction(button, 'Deleting...', async () => {
+          await organizationDepartmentAction('deleteDepartment', { DepartmentId: button.dataset.deleteDepartment });
+          await loadOrganizationDepartments();
+        });
+      }
       catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    }));
+    panelEl.querySelectorAll('[data-remove-department-member]').forEach((button) => button.addEventListener('click', async () => {
+      if (button.disabled) return;
+      const memberName = clean(button.dataset.memberName) || 'this member';
+      const departmentName = clean(button.dataset.departmentName) || 'this department';
+      if (!window.confirm(`Remove ${memberName} from ${departmentName}? The member's main record will be kept.`)) return;
+      const normalText = clean(button.textContent) || '×';
+      setButtonLoading(button, true, '', normalText);
+      try {
+        setStatus(status, `Removing ${memberName} from ${departmentName}...`);
+        const result = await organizationDepartmentAction('removeDepartmentMember', {
+          MembershipId: button.dataset.removeDepartmentMember
+        });
+        setStatus(status, result.message || 'Member removed from department.', 'good');
+        await loadOrganizationDepartments();
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+      } finally {
+        if (button.isConnected) setButtonLoading(button, false, '', normalText);
+      }
     }));
     panelEl.querySelectorAll('[data-mark-offering-paid]').forEach((button) => button.addEventListener('click', async () => {
       const reference = window.prompt('Enter the remittance reference:');
       if (reference === null) return;
-      try { await organizationDepartmentAction('markOfferingPaid', { OfferingId: button.dataset.markOfferingPaid, RemittanceReference: reference }); await loadOrganizationDepartments(); }
+      try {
+        await runButtonAction(button, 'Posting...', async () => {
+          await organizationDepartmentAction('markOfferingPaid', { OfferingId: button.dataset.markOfferingPaid, RemittanceReference: reference });
+          await loadOrganizationDepartments();
+        });
+      }
       catch (error) { setStatus(status, error.message || String(error), 'bad'); }
     }));
   } catch (error) {
@@ -2640,7 +2822,9 @@ async function loadChurchServices() {
         { label: 'Type', value: (row) => pick(row, ['AttendanceType']) },
         { label: 'Check-in', value: (row) => pick(row, ['CheckInAt']) }
       ])}`;
-    document.getElementById('refreshChurchServices')?.addEventListener('click', loadChurchServices);
+    document.getElementById('refreshChurchServices')?.addEventListener('click', (event) => {
+      runButtonAction(event.currentTarget, 'Refreshing...', loadChurchServices);
+    });
   } catch (error) {
     if (activeSection === 'services') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
   }
@@ -2684,7 +2868,9 @@ async function loadChurchFunds() {
         { label: 'Actor', value: (row) => pick(row, ['Actor']) },
         { label: 'Details', value: (row) => pick(row, ['Details']) }
       ])}`;
-    document.getElementById('refreshChurchFunds')?.addEventListener('click', loadChurchFunds);
+    document.getElementById('refreshChurchFunds')?.addEventListener('click', (event) => {
+      runButtonAction(event.currentTarget, 'Refreshing...', loadChurchFunds);
+    });
   } catch (error) {
     if (activeSection === 'funds') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
   }
@@ -3012,7 +3198,9 @@ async function loadChurchDonations() {
       }
     }));
 
-    document.getElementById('refreshChurchDonations')?.addEventListener('click', loadChurchDonations);
+    document.getElementById('refreshChurchDonations')?.addEventListener('click', (event) => {
+      runButtonAction(event.currentTarget, 'Refreshing...', loadChurchDonations);
+    });
   } catch (error) {
     if (activeSection === 'donations') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
   }
@@ -3148,6 +3336,7 @@ async function loadChurchOfferings() {
       ])}`;
     panelEl.querySelectorAll('[data-offering-action]').forEach((button) => {
       button.addEventListener('click', async () => {
+        if (button.disabled) return;
         const offeringId = button.getAttribute('data-offering-id');
         const action = button.getAttribute('data-offering-action');
         const actionLabel = {
@@ -3162,7 +3351,7 @@ async function loadChurchOfferings() {
         const idempotencyKey = button.dataset.idempotencyKey || newIdempotencyKey();
         button.dataset.idempotencyKey = idempotencyKey;
         const normalMarkup = button.innerHTML;
-        button.disabled = true;
+        setButtonLoading(button, true, '', clean(button.textContent));
         try {
           const data = await doOfferingAction(action, offeringId, reason, idempotencyKey);
           delete button.dataset.idempotencyKey;
@@ -3172,8 +3361,10 @@ async function loadChurchOfferings() {
           if (error?.responseReceived) delete button.dataset.idempotencyKey;
           setStatus(dashboardStatus, error.message || String(error), 'bad');
         } finally {
-          button.disabled = false;
-          button.innerHTML = normalMarkup;
+          if (button.isConnected) {
+            setButtonLoading(button, false, '', '');
+            button.innerHTML = normalMarkup;
+          }
         }
       });
     });
@@ -3200,9 +3391,11 @@ async function loadChurchOfferings() {
         if (routeAction === 'deactivate') {
           if (!window.confirm(`Deactivate route ${routeId}? It will not be used for new assignments.`)) return;
           try {
-            const data = await doOfferingRouteAction('deactivateofferingroute', { RouteId: routeId });
-            setStatus(dashboardStatus, data.message, 'ok');
-            await loadChurchOfferings();
+            await runButtonAction(button, 'Deactivating...', async () => {
+              const data = await doOfferingRouteAction('deactivateofferingroute', { RouteId: routeId });
+              setStatus(dashboardStatus, data.message, 'ok');
+              await loadChurchOfferings();
+            });
           } catch (error) {
             setStatus(dashboardStatus, error.message || String(error), 'bad');
           }
@@ -3211,9 +3404,11 @@ async function loadChurchOfferings() {
         if (routeAction === 'delete') {
           if (!window.confirm(`Delete route ${routeId}?`)) return;
           try {
-            const data = await doOfferingRouteAction('deleteofferingroute', { RouteId: routeId });
-            setStatus(dashboardStatus, data.message, 'ok');
-            await loadChurchOfferings();
+            await runButtonAction(button, 'Deleting...', async () => {
+              const data = await doOfferingRouteAction('deleteofferingroute', { RouteId: routeId });
+              setStatus(dashboardStatus, data.message, 'ok');
+              await loadChurchOfferings();
+            });
           } catch (error) {
             setStatus(dashboardStatus, error.message || String(error), 'bad');
           }
@@ -3259,7 +3454,9 @@ async function loadChurchOfferings() {
       form.reset();
       setStatus(form.querySelector('[data-offering-route-status]'), '', '');
     });
-    document.getElementById('refreshChurchOfferings')?.addEventListener('click', loadChurchOfferings);
+    document.getElementById('refreshChurchOfferings')?.addEventListener('click', (event) => {
+      runButtonAction(event.currentTarget, 'Refreshing...', loadChurchOfferings);
+    });
   } catch (error) {
     if (activeSection === 'offerings') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
   }
@@ -4294,7 +4491,9 @@ async function searchExecutiveDirectory() {
 }
 
 function bindExecutiveOfficeEvents() {
-  document.getElementById('refreshExecutiveOffice')?.addEventListener('click', loadExecutiveOffice);
+  document.getElementById('refreshExecutiveOffice')?.addEventListener('click', (event) => {
+    runButtonAction(event.currentTarget, 'Refreshing...', loadExecutiveOffice);
+  });
   panelEl.querySelectorAll('[data-executive-tab]').forEach((button) => button.addEventListener('click', () => switchExecutiveOfficeTab(button.dataset.executiveTab)));
   panelEl.querySelectorAll('[data-executive-open]').forEach((button) => button.addEventListener('click', () => {
     if (button.dataset.executiveOpen === 'compose') executiveSelectedRecipient = null;
@@ -4450,6 +4649,7 @@ function bindExecutiveOfficeEvents() {
   });
   composer?.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (composer.dataset.submitting === 'true') return;
     const action = event.submitter?.dataset.correspondenceAction || 'saveDraft';
     const payload = executiveComposerPayload(composer);
     const status = document.getElementById('executiveComposerStatus');
@@ -4463,7 +4663,12 @@ function bindExecutiveOfficeEvents() {
       return;
     }
     const button = event.submitter;
+    if (!button || button.disabled) return;
     const normalText = button.textContent;
+    const actionButtons = [...composer.querySelectorAll('button[type="submit"], [data-save-executive-template]')];
+    const disabledStates = new Map(actionButtons.map((item) => [item, item.disabled]));
+    composer.dataset.submitting = 'true';
+    actionButtons.forEach((item) => { item.disabled = true; });
     setButtonLoading(button, true, action === 'saveDraft' ? 'Saving...' : action === 'send' ? 'Sending...' : 'Issuing...', normalText);
     try {
       let data;
@@ -4487,7 +4692,12 @@ function bindExecutiveOfficeEvents() {
       switchExecutiveOfficeTab('register');
     } catch (error) {
       setStatus(status, error.message || String(error), 'bad');
-      setButtonLoading(button, false, '', normalText);
+    } finally {
+      delete composer.dataset.submitting;
+      if (button.isConnected) setButtonLoading(button, false, '', normalText);
+      disabledStates.forEach((wasDisabled, item) => {
+        if (item.isConnected && item !== button) item.disabled = wasDisabled;
+      });
     }
   });
   updateExecutiveComposerVisibility();
@@ -4598,7 +4808,9 @@ function renderStudentConduct(selected = {}) {
         ])}
       </section>
     </div>`;
-  document.getElementById('refreshStudentConduct')?.addEventListener('click', loadStudentConduct);
+  document.getElementById('refreshStudentConduct')?.addEventListener('click', (event) => {
+    runButtonAction(event.currentTarget, 'Refreshing...', loadStudentConduct);
+  });
   document.getElementById('cancelStudentConductEdit')?.addEventListener('click', () => renderStudentConduct());
   panelEl.querySelectorAll('[data-edit-conduct]').forEach((button) => button.addEventListener('click', () => {
     const row = (data.cases || []).find((item) => clean(item.CaseId) === clean(button.dataset.editConduct));
@@ -4607,8 +4819,10 @@ function renderStudentConduct(selected = {}) {
   panelEl.querySelectorAll('[data-delete-conduct]').forEach((button) => button.addEventListener('click', async () => {
     if (!window.confirm('Delete this conduct case? The deletion will be audited.')) return;
     try {
-      await studentConductRequest('delete', { CaseId: button.dataset.deleteConduct });
-      await loadStudentConduct();
+      await runButtonAction(button, 'Deleting...', async () => {
+        await studentConductRequest('delete', { CaseId: button.dataset.deleteConduct });
+        await loadStudentConduct();
+      });
     } catch (error) {
       setStatus(document.getElementById('studentConductStatus'), error.message || String(error), 'bad');
     }
@@ -5333,7 +5547,9 @@ function bindSubmissionForm(formId, action, successText) {
 }
 
 function bindFinanceWorkflowEvents() {
-  document.getElementById('refreshFinanceWorkflow')?.addEventListener('click', loadFinanceWorkflow);
+  document.getElementById('refreshFinanceWorkflow')?.addEventListener('click', (event) => {
+    runButtonAction(event.currentTarget, 'Refreshing...', loadFinanceWorkflow);
+  });
   panelEl.querySelectorAll('[data-open-dialog]').forEach((button) => {
     button.addEventListener('click', () => document.getElementById(button.dataset.openDialog)?.showModal());
   });
@@ -5487,7 +5703,9 @@ function openStaffUserDialog(username = '') {
 
 function bindStaffUserEvents() {
   document.getElementById('newStaffUser')?.addEventListener('click', () => openStaffUserDialog());
-  document.getElementById('refreshStaffUsers')?.addEventListener('click', loadStaffUsers);
+  document.getElementById('refreshStaffUsers')?.addEventListener('click', (event) => {
+    runButtonAction(event.currentTarget, 'Refreshing...', loadStaffUsers);
+  });
   document.getElementById('uploadStaffCsv')?.addEventListener('click', () => document.getElementById('staffCsvFile').click());
   document.getElementById('staffCsvTemplate')?.addEventListener('click', downloadStaffCsvTemplate);
   document.getElementById('staffCsvFile')?.addEventListener('change', importStaffCsv);
@@ -5550,6 +5768,42 @@ function parseCsv(text) {
   return rows.slice(1).map((values) => Object.fromEntries(headers.map((header, index) => [header, clean(values[index])])));
 }
 
+function downloadCsvFile(fileName, content) {
+  const url = URL.createObjectURL(new Blob([`\uFEFF${content}`], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+async function importOrganizationCsv(event, options, status) {
+  const input = event.currentTarget;
+  const file = input.files?.[0];
+  if (!file) return;
+  const button = document.getElementById(options.buttonId);
+  const normalText = clean(button?.textContent) || 'Import';
+  if (button?.disabled) {
+    input.value = '';
+    return;
+  }
+  if (button) setButtonLoading(button, true, options.loadingText || 'Importing...', normalText);
+  try {
+    const rows = parseCsv(await file.text());
+    if (!rows.length) throw new Error('The CSV has no data rows. Download the template and try again.');
+    if (rows.length > 499) throw new Error('Import a maximum of 499 records at a time.');
+    setStatus(status, `${options.loadingText || 'Importing...'} (${rows.length} records)`);
+    const result = await organizationDepartmentAction(options.action, { [options.payloadKey]: rows });
+    setStatus(status, result.message || `${rows.length} record(s) imported.`, 'good');
+    await loadOrganizationDepartments();
+  } catch (error) {
+    setStatus(status, error.message || String(error), 'bad');
+  } finally {
+    input.value = '';
+    if (button?.isConnected) setButtonLoading(button, false, options.loadingText || 'Importing...', normalText);
+  }
+}
+
 function downloadStaffCsvTemplate() {
   const content = 'Username,DisplayName,Role,Department,BranchId,SchoolSectionAccess,Password,Active,MustChangePassword,ApprovalEnabled,ApprovalMaxAmount,ApprovalAccounts,TabAccess\nexample.user,Example User,Front Desk,Administration,main,All,ChangeMe123,YES,YES,NO,0,"6010,6090","admissions,students"\n';
   const url = URL.createObjectURL(new Blob([content], { type: 'text/csv' }));
@@ -5557,8 +5811,17 @@ function downloadStaffCsvTemplate() {
 }
 
 async function importStaffCsv(event) {
-  const file = event.target.files?.[0];
+  const input = event.currentTarget;
+  const file = input.files?.[0];
   if (!file) return;
+  if (input.dataset.importing === 'true') {
+    input.value = '';
+    return;
+  }
+  const button = document.getElementById('uploadStaffCsv');
+  const normalText = clean(button?.textContent) || 'Upload Staff CSV';
+  input.dataset.importing = 'true';
+  if (button) setButtonLoading(button, true, 'Importing staff...', normalText);
   try {
     const users = parseCsv(await file.text());
     if (!users.length) throw new Error('The CSV has no staff data rows. Download the template and try again.');
@@ -5575,7 +5838,9 @@ async function importStaffCsv(event) {
   } catch (error) {
     setStatus(document.getElementById('staffUsersStatus'), error.message || String(error), 'bad');
   } finally {
-    event.target.value = '';
+    delete input.dataset.importing;
+    input.value = '';
+    if (button?.isConnected) setButtonLoading(button, false, 'Importing staff...', normalText);
   }
 }
 
@@ -5663,9 +5928,7 @@ passkeySetupButton.addEventListener('click', async () => {
   } catch (error) {
     setStatus(dashboardStatus, friendlyPasskeyError(error), 'bad');
   } finally {
-    passkeySetupButton.disabled = false;
-    passkeySetupButton.classList.remove('is-loading');
-    passkeySetupButton.removeAttribute('aria-busy');
+    setButtonLoading(passkeySetupButton, false, 'Opening device security...', originalText);
   }
 });
 

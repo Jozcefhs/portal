@@ -65,7 +65,7 @@ async function loadAdmissionClasses() {
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  button.disabled = true;
+  if (!window.DynamaxActionFeedback.begin(button, 'Starting checkout...')) return;
   setStatus('Starting secure checkout...', '');
 
   const payload = {
@@ -101,7 +101,7 @@ form.addEventListener('submit', async (event) => {
     window.location.href = data.authorizationUrl;
   } catch (error) {
     setStatus(error.message, 'bad');
-    button.disabled = false;
+    window.DynamaxActionFeedback.end(button);
   }
 });
 
