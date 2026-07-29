@@ -2152,12 +2152,6 @@ async function saveBrevoSettings(env, body, deploymentIdentity = null) {
     err.status = 400;
     throw err;
   }
-  if (submittedApiKey && !environmentApiKeyConfigured) {
-    const err = new Error('Brevo credentials must be added as the BREVO_API_KEY encrypted Cloudflare secret. The API key was not saved to the database.');
-    err.status = 503;
-    err.code = 'BREVO_ENV_SECRET_REQUIRED';
-    throw err;
-  }
   const existing = await getDocument(env, 'settings', 'brevo').catch(() => null);
   const legacyDatabaseKeyConfigured = Boolean(clean(existing?.BrevoApiKey));
   const now = nowIso();
@@ -2196,7 +2190,9 @@ async function saveBrevoSettings(env, body, deploymentIdentity = null) {
     ok: true,
     message: credentialSource === 'legacy-database'
       ? 'Brevo sender settings saved. Migrate the legacy database credential to the BREVO_API_KEY Cloudflare secret.'
-      : 'Brevo sender settings saved.',
+      : (credentialSource === 'not-configured'
+        ? 'Brevo sender settings saved, but online delivery still needs the BREVO_API_KEY encrypted Cloudflare secret.'
+        : 'Brevo sender settings saved.'),
     settings: {
       BrevoSenderName: senderName,
       BrevoSenderEmail: senderEmail,
@@ -2209,7 +2205,8 @@ async function saveBrevoSettings(env, body, deploymentIdentity = null) {
       SenderScope: payload.SenderScope,
       HasBrevoApiKey: environmentApiKeyConfigured || legacyDatabaseKeyConfigured,
       CredentialSource: credentialSource,
-      LegacyCredentialMigrationRequired: legacyDatabaseKeyConfigured && !environmentApiKeyConfigured
+      LegacyCredentialMigrationRequired: legacyDatabaseKeyConfigured && !environmentApiKeyConfigured,
+      SubmittedCredentialIgnored: Boolean(submittedApiKey)
     }
   };
 }
@@ -6952,6 +6949,7 @@ export async function onRequestPost(context) {
     if (status >= 500) console.error('Firestore backend failure', err);
     finishRequestMetric(metric, { status, action: action || 'unknown', outcome: err?.code || 'error' });
     const configurationMessage = err?.code === 'BACKEND_SECRET_NOT_CONFIGURED'
+      || err?.code === 'BREVO_ENV_SECRET_REQUIRED'
       || String(err?.code || '').startsWith('DEPLOYMENT_')
       ? String(err.message || 'The desktop backend is not configured.')
       : '';

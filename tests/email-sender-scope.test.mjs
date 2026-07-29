@@ -186,6 +186,20 @@ test('backend stores school and organisation sender identities in separate field
   assert.doesNotMatch(churchPayments, /env\.BREVO_SENDER_EMAIL/);
 });
 
+test('backend safely ignores submitted Brevo credentials and reports secret readiness', async () => {
+  const backend = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
+
+  assert.doesNotMatch(
+    backend,
+    /if \(submittedApiKey && !environmentApiKeyConfigured\) \{[\s\S]*?throw err;[\s\S]*?\}/
+  );
+  assert.match(backend, /SubmittedCredentialIgnored: Boolean\(submittedApiKey\)/);
+  assert.match(
+    backend,
+    /online delivery still needs the BREVO_API_KEY encrypted Cloudflare secret/
+  );
+});
+
 test('executive delivery verifies the configured sender even when it matches the shared sender', async () => {
   const emailSource = await readFile(new URL('../functions/lib/email-service.js', import.meta.url), 'utf8');
   assert.match(emailSource, /fetch\('https:\/\/api\.brevo\.com\/v3\/senders'/);
