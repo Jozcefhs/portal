@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import { resolveEmailSenderProfile } from '../functions/lib/email-service.js';
+import {
+  resolveEmailSenderProfile,
+  selectActiveBrevoSender
+} from '../functions/lib/email-service.js';
 
 const faithEnv = {
   ORGANISATION_EDITION: 'faith',
@@ -99,6 +102,47 @@ test('faith executive sender uses the organisation executive identity', () => {
 
   assert.equal(resolved.senderEmail, 'senior-pastor@example.test');
   assert.equal(resolved.senderName, 'Senior Pastor');
+  assert.equal(resolved.fallbackSenderEmail, 'church@example.test');
+  assert.equal(resolved.fallbackSenderName, 'Church Office');
+  assert.equal(resolved.useExecutiveProfile, true);
+});
+
+test('unvalidated executive sender falls back to the active organisation sender', () => {
+  const selected = selectActiveBrevoSender({
+    senderEmail: 'senior-pastor@example.test',
+    senderName: 'Senior Pastor',
+    fallbackSenderEmail: 'church@example.test',
+    fallbackSenderName: 'Church Office'
+  }, [
+    { email: 'senior-pastor@example.test', active: false },
+    { email: 'church@example.test', active: true }
+  ]);
+
+  assert.equal(selected.senderEmail, 'church@example.test');
+  assert.equal(selected.senderName, 'Senior Pastor');
+  assert.equal(selected.replyToEmail, 'senior-pastor@example.test');
+  assert.equal(selected.replyToName, 'Senior Pastor');
+  assert.equal(selected.usedFallback, true);
+  assert.equal(selected.verified, true);
+});
+
+test('active executive sender remains the delivery sender', () => {
+  const selected = selectActiveBrevoSender({
+    senderEmail: 'senior-pastor@example.test',
+    senderName: 'Senior Pastor',
+    fallbackSenderEmail: 'church@example.test',
+    fallbackSenderName: 'Church Office',
+    replyToEmail: 'office@example.test',
+    replyToName: 'Office'
+  }, [
+    { email: 'senior-pastor@example.test', active: true },
+    { email: 'church@example.test', active: true }
+  ]);
+
+  assert.equal(selected.senderEmail, 'senior-pastor@example.test');
+  assert.equal(selected.replyToEmail, 'office@example.test');
+  assert.equal(selected.usedFallback, false);
+  assert.equal(selected.verified, true);
 });
 
 test('backend stores school and organisation sender identities in separate fields', async () => {

@@ -101,10 +101,13 @@ export function resolveEmailSenderProfile(env = {}, {
   return {
     senderEmail,
     senderName,
+    fallbackSenderEmail: sharedSenderEmail,
+    fallbackSenderName: sharedSenderName,
     replyToEmail,
     replyToName,
     organization,
-    scope: organisationScoped ? 'organisation' : 'school'
+    scope: organisationScoped ? 'organisation' : 'school',
+    useExecutiveProfile
   };
 }
 
@@ -123,6 +126,71 @@ function normalizeAttachments(attachments) {
       || (!content && !/^https:\/\//i.test(url))) return null;
     return content ? { name, content } : { name, url };
   }).filter(Boolean);
+}
+
+export function selectActiveBrevoSender(profile = {}, senders = []) {
+  const activeEmails = new Set((Array.isArray(senders) ? senders : [])
+    .filter((sender) => sender?.active === true && validEmail(sender?.email))
+    .map((sender) => clean(sender.email).toLowerCase()));
+  const senderEmail = clean(profile.senderEmail);
+  const fallbackSenderEmail = clean(profile.fallbackSenderEmail);
+  if (activeEmails.has(senderEmail.toLowerCase())) {
+    return {
+      senderEmail,
+      senderName: clean(profile.senderName),
+      replyToEmail: clean(profile.replyToEmail),
+      replyToName: clean(profile.replyToName),
+      usedFallback: false,
+      verified: true
+    };
+  }
+  if (validEmail(fallbackSenderEmail) && activeEmails.has(fallbackSenderEmail.toLowerCase())) {
+    return {
+      senderEmail: fallbackSenderEmail,
+      senderName: clean(profile.senderName) || clean(profile.fallbackSenderName),
+      replyToEmail: clean(profile.replyToEmail) || senderEmail,
+      replyToName: clean(profile.replyToName) || clean(profile.senderName),
+      usedFallback: true,
+      verified: true
+    };
+  }
+  return {
+    senderEmail,
+    senderName: clean(profile.senderName),
+    replyToEmail: clean(profile.replyToEmail),
+    replyToName: clean(profile.replyToName),
+    usedFallback: false,
+    verified: false
+  };
+}
+
+async function resolveBrevoDeliverySender(apiKey, profile) {
+  if (!profile.useExecutiveProfile
+    || clean(profile.senderEmail).toLowerCase() === clean(profile.fallbackSenderEmail).toLowerCase()) {
+    return {
+      senderEmail: profile.senderEmail,
+      senderName: profile.senderName,
+      replyToEmail: profile.replyToEmail,
+      replyToName: profile.replyToName
+    };
+  }
+  try {
+    const response = await fetch('https://api.brevo.com/v3/senders', {
+      headers: { accept: 'application/json', 'api-key': apiKey }
+    });
+    if (!response.ok) return profile;
+    const data = await response.json().catch(() => ({}));
+    const selected = selectActiveBrevoSender(profile, data?.senders);
+    if (selected.verified) return selected;
+    const err = new Error(
+      'The Executive sender is not validated in Brevo, and no validated organisation sender is available.'
+    );
+    err.status = 503;
+    throw err;
+  } catch (error) {
+    if (error?.status) throw error;
+    return profile;
+  }
 }
 
 export async function sendConfiguredEmail(env, {
@@ -147,18 +215,13 @@ export async function sendConfiguredEmail(env, {
   ]);
   // Sender identities are deliberately scoped by edition. A faith or generic
   // organisation deployment never falls through to school sender fields.
-  const {
-    senderEmail,
-    senderName,
-    replyToEmail,
-    replyToName,
-    organization
-  } = resolveEmailSenderProfile(env, {
+  const senderProfileConfig = resolveEmailSenderProfile(env, {
     brevo,
     organizationProfile,
     schoolProfile,
     senderProfile
   });
+  const { organization } = senderProfileConfig;
   // Prefer the encrypted environment secret. Existing installations may still
   // have a legacy server-side credential while they complete the migration;
   // it is consumed only inside the Worker and is never returned to clients.
@@ -168,11 +231,17 @@ export async function sendConfiguredEmail(env, {
     err.status = 503;
     throw err;
   }
-  if (!validEmail(senderEmail)) {
+  if (!validEmail(senderProfileConfig.senderEmail)) {
     const err = new Error('The existing sender email could not be resolved for this organisation.');
     err.status = 503;
     throw err;
   }
+  const {
+    senderEmail,
+    senderName,
+    replyToEmail,
+    replyToName
+  } = await resolveBrevoDeliverySender(apiKey, senderProfileConfig);
   const normalizedAttachments = normalizeAttachments(attachments);
   const payload = {
     sender: { name: senderName, email: senderEmail },
@@ -189,7 +258,21 @@ export async function sendConfiguredEmail(env, {
     body: JSON.stringify(payload)
   });
   if (!response.ok) {
-    const err = new Error('The email service could not send this message. Please try again.');
+    const providerError = await response.json().catch(() => ({}));
+    const providerMessage = clean(providerError?.message).toLowerCase();
+    const invalidSender = /sender/.test(providerMessage)
+      && /(invalid|validat|authenticat|not valid)/.test(providerMessage);
+    console.error(JSON.stringify({
+      event: 'email_provider_rejected',
+      status: response.status,
+      code: clean(providerError?.code).slice(0, 80) || 'unknown',
+      senderProfile: clean(senderProfile) || 'default',
+      attachmentCount: normalizedAttachments.length,
+      invalidSender
+    }));
+    const err = new Error(invalidSender
+      ? 'The configured sender is not validated in Brevo. Verify that sender or use the organisation sender.'
+      : 'The email service could not send this message. Please try again.');
     err.status = 502;
     throw err;
   }
