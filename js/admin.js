@@ -38,6 +38,7 @@ const tabConfig = [
   ['services', 'Services & Attendance'],
   ['funds', 'Funds & Mappings'],
   ['offerings', 'Offerings'],
+  ['donations', 'Donations'],
   ['accounts', 'Accounts'],
   ['financeRequests', 'Bills & Requisitions'],
   ['payroll', 'My Payroll'],
@@ -608,6 +609,236 @@ async function doOfferingRouteAction(action, payload = {}) {
   if (!response.ok || !data.ok) throw new Error(data.message || 'Offering route action failed.');
   return data;
 }
+async function churchDonationRequest(action, payload = {}) {
+  const response = await fetch('/api/staff-church-payments', {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action,
+      BranchId: currentUser?.branchId || 'main',
+      ...payload
+    })
+  });
+  const data = await response.json().catch(() => ({ ok: false, message: 'Church donation service did not return JSON.' }));
+  if (!response.ok || !data.ok) {
+    if (response.status === 401) {
+      showLogin(data.message || 'Your staff session has expired.', 'bad');
+    }
+    throw new Error(data.message || 'Church donation action failed.');
+  }
+  return data;
+}
+
+async function initChurchDonationPayment(payload = {}) {
+  const response = await fetch('/api/init-church-payment', {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...payload,
+      BranchId: currentUser?.branchId || 'main'
+    })
+  });
+  const data = await response.json().catch(() => ({ ok: false, message: 'Church donation online-init service did not return JSON.' }));
+  if (!response.ok || !data.ok) {
+    if (response.status === 401) {
+      showLogin(data.message || 'Your staff session has expired.', 'bad');
+    }
+    throw new Error(data.message || 'Could not initialize online church donation payment.');
+  }
+  return data;
+}
+
+
+async function loadChurchDonations() {
+  try {
+    const methods = ['CASH', 'BANK TRANSFER', 'CHEQUE', 'POS', 'ONLINE', 'CARD', 'MOBILE MONEY'];
+    const currencies = ['NGN', 'USD', 'GBP', 'EUR', 'KES', 'GHS'];
+    const paymentTypes = ['Donation', 'Tithe', 'Offering', 'Seed', 'Building Fund', 'Other'];
+    const response = await fetch('/api/staff-church-payments', {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'list', BranchId: currentUser?.branchId || 'main' })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load church donations.');
+    if (activeSection !== 'donations') return;
+
+    const summary = data.summary || {};
+    const capabilities = data.capabilities || {};
+    const byMethod = summary.byMethod || {};
+    const methodCards = Object.entries(byMethod)
+      .sort((left, right) => clean(right[0]).localeCompare(clean(left[0])))
+      .map(([method, value]) => `<div><small>${escapeHtml(method || 'Unknown')}</small><strong>${money(value)}</strong><span>Collected</span></div>`)
+      .join('');
+
+    panelEl.innerHTML = `
+      <div class="workflow-intro">
+        <div>
+          <p class="eyebrow">Giving counter</p>
+          <h2>Church Donations</h2>
+          <p class="muted">Branch ${escapeHtml(data.branchId || 'main')} • ${summary.count || 0} entries • ${summary.paid || 0} paid • ${summary.pending || 0} pending</p>
+        </div>
+        <button type="button" id="refreshChurchDonations">Refresh</button>
+      </div>
+      <div class="workflow-kpis">
+        <div><small>Total</small><strong>${money(summary.totalAmount || 0)}</strong><span>All records</span></div>
+        <div><small>Paid</small><strong>${money((summary.paid || 0) > 0 ? summary.paidAmount || summary.totalAmount : 0)}</strong><span>Recorded as paid</span></div>
+        <div><small>Pending</small><strong>${money((summary.pending || 0) > 0 ? summary.pendingAmount || 0 : 0)}</strong><span>Awaiting settlement</span></div>
+        <div><small>Pending records</small><strong>${escapeHtml(summary.pending || 0)}</strong><span>Awaiting processing</span></div>
+      </div>
+      ${methodCards ? `<div class="workflow-kpis">${methodCards}</div>` : ''}
+      <section class="config-group">
+        <header><strong>New donation entry</strong><small>Record offline and online payments, then optionally send confirmation and link.</small></header>
+        <form id="churchDonationForm" class="workflow-form config-form">
+          <div class="config-grid">
+            <label>Donor name <input name="DonorName" required></label>
+            <label>Donor email <input name="DonorEmail" type="email" required></label>
+            <label>Amount <input name="Amount" type="number" min="0.01" step="0.01" required></label>
+            <label>Currency <select name="Currency">${currencies.map((currency) => `<option value="${escapeHtml(currency)}">${escapeHtml(currency)}</option>`).join('')}</select></label>
+            <label>Method <select name="PaymentMethod">${methods.map((method) => `<option value="${escapeHtml(method)}">${escapeHtml(method)}</option>`).join('')}</select></label>
+            <label>Payment type <select name="PaymentType">${paymentTypes.map((paymentType) => `<option value="${escapeHtml(paymentType)}">${escapeHtml(paymentType)}</option>`).join('')}</select></label>
+            <label>Receipt subject <input name="ReceiptSubject" value="Thank you for your donation"></label>
+            <label>Receipt message <input name="ReceiptMessage" value="Your gift was received."></label>
+          </div>
+          <label>Notes
+            <textarea name="Notes" rows="2" placeholder="Optional notes for donation records."></textarea>
+          </label>
+          <label class="check-row config-switch"><input name="sendReceipt" type="checkbox" checked> Send receipt now</label>
+          <label class="check-row config-switch"><input name="sendOnlineEmail" type="checkbox" checked> Send online payment link for this donation</label>
+          <div class="config-dialog-actions">
+            <p class="status" id="churchDonationStatus"></p>
+            <button type="submit">Save donation</button>
+          </div>
+        </form>
+      </section>
+      ${table('Donations', data.donations || [], [
+        { label: 'Receipt', value: (row) => pick(row, ['ReceiptNo', '__id']) },
+        { label: 'Donor', value: (row) => pick(row, ['DonorName']) },
+        { label: 'Email', value: (row) => pick(row, ['DonorEmail']) },
+        { label: 'Amount', value: (row) => money(pick(row, ['Amount'])) },
+        { label: 'Method', value: (row) => pick(row, ['PaymentMethod']) },
+        { label: 'Type', value: (row) => pick(row, ['PaymentType']) },
+        { label: 'Reference', value: (row) => pick(row, ['Reference', 'DonationId']) },
+        { label: 'Status', value: (row) => pick(row, ['Status']) },
+        {
+          label: 'Actions',
+          render: (row) => {
+            const donationId = pick(row, ['DonationId', '__id']);
+            const status = clean(pick(row, ['Status'])).toLowerCase();
+            const method = clean(pick(row, ['PaymentMethod'])).toUpperCase();
+            if (!donationId) return 'No id';
+            const canSendReceipt = capabilities.canSendReceipt;
+            const canCollect = capabilities.canCollect;
+            const sendReceipt = canSendReceipt
+              ? `<button type="button" class="table-action" data-donation-action="sendreceipt" data-donation-id="${escapeHtml(donationId)}">Send Receipt</button>`
+              : '';
+            const markPaid = canCollect && status !== 'paid'
+              ? `<button type="button" class="table-action" data-donation-action="setstatus" data-donation-id="${escapeHtml(donationId)}" data-status="Paid">Mark Paid</button>`
+              : '';
+            const sendPayment = canCollect && method === 'ONLINE'
+              ? `<button type="button" class="table-action" data-donation-action="sendpayment" data-donation-id="${escapeHtml(donationId)}">Send payment link</button>`
+              : '';
+            return `${sendReceipt} ${markPaid} ${sendPayment}`.trim();
+          }
+        }
+      ])}
+      ${table('Donation Audit', data.audit || [], [
+        { label: 'Time', value: (row) => pick(row, ['Timestamp']) },
+        { label: 'Action', value: (row) => pick(row, ['Action']) },
+        { label: 'Receipt', value: (row) => pick(row, ['DonationId']) },
+        { label: 'Actor', value: (row) => pick(row, ['Actor']) },
+        { label: 'Details', value: (row) => pick(row, ['Details']) }
+      ])}`;
+
+    const form = document.getElementById('churchDonationForm');
+    form?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const status = document.getElementById('churchDonationStatus');
+      const button = form.querySelector('button[type="submit"]');
+      const payload = Object.fromEntries(new FormData(form).entries());
+      payload.sendReceipt = form.elements.sendReceipt.checked ? 'yes' : 'no';
+      payload.Status = clean(payload.Status || '');
+      setButtonLoading(button, true, 'Saving...', 'Save donation');
+      try {
+        const saved = await churchDonationRequest('save', payload);
+        setStatus(status, saved.message, 'ok');
+        if ((clean(payload.PaymentMethod).toUpperCase() === 'ONLINE') && form.elements.sendOnlineEmail.checked) {
+          await initChurchDonationPayment({
+            ...(payload || {}),
+            action: 'init',
+            DonationId: payload.DonationId || saved.donation?.DonationId,
+            Reference: saved.donation?.Reference || payload.Reference || ''
+          });
+        }
+        form.reset();
+        await loadChurchDonations();
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+      } finally {
+        setButtonLoading(button, false, 'Saving...', 'Save donation');
+      }
+    });
+
+    panelEl.querySelectorAll('[data-donation-action]').forEach((button) => button.addEventListener('click', async () => {
+      const action = clean(button.dataset.donationAction);
+      const donationId = clean(button.dataset.donationId);
+      const row = (data.donations || []).find((item) => clean(item.DonationId || item.__id) === donationId);
+      if (!donationId) return;
+      const normalText = button.textContent;
+      setButtonLoading(button, true, `${action}...`, normalText);
+      try {
+        if (action === 'setstatus') {
+          const status = clean(button.dataset.status);
+          const updated = await churchDonationRequest('setstatus', {
+            DonationId: donationId,
+            Status: status,
+            sendReceipt: button.dataset.sendReceipt || 'no'
+          });
+          await loadChurchDonations();
+          setStatus(document.getElementById('churchDonationStatus'), updated.message, 'ok');
+          return;
+        }
+        if (action === 'sendreceipt') {
+          const updated = await churchDonationRequest('sendreceipt', { DonationId: donationId });
+          await loadChurchDonations();
+          setStatus(document.getElementById('churchDonationStatus'), updated.message, 'ok');
+          return;
+        }
+        if (action === 'sendpayment') {
+          const payload = {
+            action: 'init',
+            DonationId: donationId,
+            DonorName: row?.DonorName,
+            DonorEmail: row?.DonorEmail,
+            Amount: row?.Amount,
+            Currency: row?.Currency || 'NGN',
+            PaymentMethod: 'ONLINE',
+            PaymentType: row?.PaymentType || 'Donation',
+            ReceiptNo: row?.ReceiptNo,
+            ReceiptSubject: row?.ReceiptSubject || 'Payment link for your donation',
+            ReceiptMessage: row?.ReceiptMessage || 'Click the link to complete your donation payment.'
+          };
+          const initialized = await initChurchDonationPayment(payload);
+          setStatus(document.getElementById('churchDonationStatus'), initialized.message, 'ok');
+        }
+      } catch (error) {
+        setStatus(document.getElementById('churchDonationStatus'), error.message || String(error), 'bad');
+      } finally {
+        setButtonLoading(button, false, `${action}...`, normalText);
+      }
+    }));
+
+    document.getElementById('refreshChurchDonations')?.addEventListener('click', loadChurchDonations);
+  } catch (error) {
+    if (activeSection === 'donations') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+  }
+}
 
 async function loadChurchOfferings() {
   try {
@@ -896,6 +1127,9 @@ function renderSection(active) {
   } else if (active === 'funds') {
     panelEl.innerHTML = '<p class="muted">Loading church funds and accounting mappings...</p>';
     loadChurchFunds();
+  } else if (active === 'donations') {
+    panelEl.innerHTML = '<p class="muted">Loading church donation records...</p>';
+    loadChurchDonations();
   } else if (active === 'offerings') {
     panelEl.innerHTML = '<p class="muted">Loading church offering batches...</p>';
     loadChurchOfferings();

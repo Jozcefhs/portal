@@ -4,8 +4,13 @@
 import { recordManualPayment } from './backend.js';
 import { createDocumentIfAbsent, getDocument, upsertDocument } from '../lib/firestore.js';
 import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
+import { markDonationPaidByReference, sendChurchDonationReceipt } from '../lib/church-payments.js';
 
 function safeId(value) { return String(value || '').replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140); }
+
+function clean(value) {
+  return String(value || '').trim();
+}
 
 function extractMetadata(data) {
   const metadata = data && data.metadata;
@@ -56,6 +61,7 @@ export async function onRequestPost(context) {
 
     const tx = paystackData.data;
     const meta = extractMetadata(tx);
+    const isChurchDonation = clean(meta.paymentType).toLowerCase() === 'churchdonation';
     const amount = Number(tx.amount || 0) / 100;
     const gatewayFee = Math.max(0, Number(tx.fees || 0) / 100);
     const netAmount = Math.max(0, amount - gatewayFee);
@@ -70,6 +76,7 @@ export async function onRequestPost(context) {
         return Response.json({ ok: false, message: 'The verified payment belongs to a different student account.' }, { status: 409 });
       }
     }
+
     const paymentPayload = {
       Secret: env.GOOGLE_APPS_SCRIPT_SECRET,
       Action: 'recordOnlinePayment',
@@ -86,6 +93,7 @@ export async function onRequestPost(context) {
       FeeCategory: meta.feeCategory || '',
       PaymentType: meta.paymentType || '',
       FeeItems: meta.feeItems ? JSON.stringify(meta.feeItems) : '',
+      StoreCart: meta.storeCart ? JSON.stringify(meta.storeCart) : '',
       Amount: amount,
       GrossAmount: amount,
       GatewayFee: gatewayFee,
@@ -109,7 +117,7 @@ export async function onRequestPost(context) {
 
     let recordData = null;
     const recordErrors = [];
-    if (firestoreConfigured) {
+    if (firestoreConfigured && !isChurchDonation) {
       try {
         const firestoreData = await recordManualPayment(env, paymentPayload);
         if (firestoreData && firestoreData.ok) {
@@ -121,7 +129,7 @@ export async function onRequestPost(context) {
         recordErrors.push(`Firestore: ${err && err.message ? err.message : String(err)}`);
       }
     }
-    if (appsScriptConfigured) {
+    if (appsScriptConfigured && (!firestoreConfigured || !isChurchDonation)) {
       try {
         const sheetData = await recordInAppsScript(env, paymentPayload);
         if (sheetData && sheetData.ok) {
@@ -133,11 +141,53 @@ export async function onRequestPost(context) {
         recordErrors.push(`Google Sheets: ${err && err.message ? err.message : String(err)}`);
       }
     }
+
+    let donation = null;
+    let donationReceipt = null;
+    if (isChurchDonation) {
+      try {
+        donation = await markDonationPaidByReference(env, tx.reference || reference, {
+          BranchId: meta.branchId || meta.BranchId,
+          DonationId: meta.donationId || meta.DonationId,
+          PaymentMethod: 'ONLINE',
+          Status: 'Paid',
+          PaidAt: tx.paid_at || tx.paidAt || new Date().toISOString(),
+          Gateway: 'Paystack',
+          GatewayReference: tx.reference,
+          UpdatedBy: 'Paystack Verification'
+        });
+        if (donation) {
+          donationReceipt = await sendChurchDonationReceipt(env, donation, {
+            donorName: donation.DonorName,
+            subject: clean(meta.receiptSubject || meta.subject || donation.ReceiptSubject || 'Payment confirmation - Church Donation'),
+            message: clean(meta.receiptMessage || meta.message || donation.ReceiptMessage || 'Thank you for your support.'),
+            paymentLink: ''
+          }).catch((error) => ({ ok: false, message: error?.message || String(error) }));
+          if (donationReceipt?.ok) {
+            recordErrors.push('');
+          } else if (donationReceipt?.skipped) {
+            recordErrors.push('Church donation receipt was not sent because email is not configured.');
+          } else {
+            recordErrors.push(`Church receipt: ${donationReceipt?.message || 'unable to send payment receipt'}`);
+          }
+        } else {
+          recordErrors.push('Church donation record was not found for the payment reference.');
+        }
+      } catch (err) {
+        recordErrors.push(`Church donation: ${err?.message || String(err)}`);
+      }
+    }
+
     if (!recordData || !recordData.ok) {
-      return Response.json({
-        ok: false,
-        message: recordErrors.length ? `Payment confirmed, but backend recording failed. ${recordErrors.join(' | ')}` : 'Payment confirmed, but it could not be recorded.'
-      }, { status: 400 });
+      const churchHandled = isChurchDonation && donation;
+      if (!churchHandled) {
+        return Response.json({
+          ok: false,
+          message: recordErrors.length
+            ? `Payment confirmed, but backend recording failed. ${recordErrors.filter(Boolean).join(' | ')}`
+            : 'Payment confirmed, but it could not be recorded.'
+        }, { status: 400 });
+      }
     }
 
     if (firestoreConfigured) {
@@ -199,17 +249,21 @@ export async function onRequestPost(context) {
       }
     }
 
+    const warningText = recordErrors.filter(Boolean).join(' | ');
     return Response.json({
       ok: true,
-      message: recordErrors.length ? `Payment verified and recorded with warning: ${recordErrors.join(' | ')}` : 'Payment verified and recorded.',
-      payment: recordData.payment || {},
+      message: warningText ? `Payment verified and recorded with warning: ${warningText}` : 'Payment verified and recorded.',
+      payment: recordData?.payment || {},
+      donation: donation || null,
       reference: tx.reference,
       amount,
       grossAmount: amount,
       gatewayFee,
       netAmount,
       currency: tx.currency || 'NGN',
-      feeName: meta.feeName || 'Online Payment'
+      feeName: isChurchDonation ? 'Church Donation' : (meta.feeName || 'Online Payment'),
+      receipt: donationReceipt || null,
+      receiptStatus: donationReceipt ? (donationReceipt.ok ? 'sent' : (donationReceipt.skipped ? 'skipped' : 'failed')) : null
     });
   } catch (err) {
     return Response.json({ ok: false, message: String(err) }, { status: 500 });

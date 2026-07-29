@@ -35,7 +35,8 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     members: true,
     services: true,
     funds: true,
-    offerings: true
+    offerings: true,
+    donations: true
   })
 });
 
@@ -120,7 +121,8 @@ const SECTION_FEATURES = Object.freeze({
   members: 'members',
   services: 'services',
   funds: 'funds',
-  offerings: 'offerings'
+  offerings: 'offerings',
+  donations: 'donations'
 });
 
 export function filterSectionsForFeatures(sections, featureFlags) {

@@ -135,7 +135,7 @@ export function allowedSectionsFor(user = {}, featureFlags = null) {
     featureFlags
   );
   const roleSections = {
-    'Super Admin': ['admissions', 'formPurchases', 'students', 'accounts', 'members', 'services', 'funds', 'offerings', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'staffUsers'],
+    'Super Admin': ['admissions', 'formPurchases', 'students', 'accounts', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'staffUsers'],
     'Admissions Officer': ['admissions', 'formPurchases', 'students', 'financeRequests', 'payroll'],
     'Accounts Officer': ['students', 'accounts', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
     Management: ['admissions', 'formPurchases', 'students', 'accounts', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
@@ -143,11 +143,11 @@ export function allowedSectionsFor(user = {}, featureFlags = null) {
     'Clinic User': ['clinic', 'financeRequests', 'payroll'],
     'Kitchen User': ['kitchen', 'financeRequests', 'payroll'],
     'Front Desk': ['admissions', 'formPurchases', 'students', 'financeRequests', 'payroll'],
-    Pastor: ['members', 'services', 'funds', 'offerings'],
-    'Church Administrator': ['members', 'services', 'funds', 'offerings', 'financeRequests', 'payroll'],
+    Pastor: ['members', 'services', 'funds', 'offerings', 'donations'],
+    'Church Administrator': ['members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll'],
     'Membership Officer': ['members', 'services'],
-    Treasurer: ['funds', 'offerings', 'financeRequests', 'payroll'],
-    Auditor: ['funds', 'offerings', 'financeRequests']
+    Treasurer: ['funds', 'offerings', 'donations', 'financeRequests', 'payroll'],
+    Auditor: ['funds', 'offerings', 'donations', 'financeRequests']
   };
   if (role === 'Department User') {
     if (department.includes('clinic')) return filterSectionsForFeatures(['clinic', 'financeRequests', 'payroll'], featureFlags);
