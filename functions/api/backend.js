@@ -5502,7 +5502,13 @@ export function buildAccountingReport(chart, journals, expenses, budgets, filter
   };
 }
 
-export function buildGatewayCollectionsReport(formSales = [], gatewayCharges = [], filter = {}) {
+export function buildGatewayCollectionsReport(
+  formSales = [],
+  gatewayCharges = [],
+  filter = {},
+  payments = [],
+  donations = []
+) {
   const charges = gatewayCharges.filter((row) => accountingRowMatches(row, filter)).map((row) => ({
     Date: clean(row.Date || row.CreatedAt).slice(0, 10),
     Reference: clean(row.Reference || row.ChargeId || row.__id),
@@ -5531,6 +5537,99 @@ export function buildGatewayCollectionsReport(formSales = [], gatewayCharges = [
       Currency: clean(row.Currency) || 'NGN'
     };
   });
+  const chargeByReference = new Map(
+    charges
+      .filter((row) => clean(row.Reference))
+      .map((row) => [lower(row.Reference), row])
+  );
+  const transactionByReference = new Map();
+  const addTransaction = (row, fallbackKey = '') => {
+    const reference = clean(row.Reference);
+    const key = lower(reference || fallbackKey || `${row.ReceiptNo}|${row.Date}|${row.GrossCollection}`);
+    if (!key || transactionByReference.has(key)) return;
+    transactionByReference.set(key, {
+      Date: clean(row.Date).slice(0, 10),
+      ReceiptNo: clean(row.ReceiptNo),
+      ApplicantName: clean(row.ApplicantName),
+      PaymentMethod: clean(row.PaymentMethod),
+      Reference: reference,
+      GrossCollection: asMoneyNumber(row.GrossCollection),
+      PaystackCharge: asMoneyNumber(row.PaystackCharge),
+      NetRevenue: asMoneyNumber(row.NetRevenue),
+      Currency: clean(row.Currency) || 'NGN',
+      Source: clean(row.Source)
+    });
+  };
+  sales.forEach((row) => addTransaction({ ...row, Source: 'Admission Form' }));
+  payments
+    .filter((row) => accountingRowMatches({
+      ...row,
+      Date: row.PaidAt || row.PaymentDate || row.Date || row.CreatedAt
+    }, filter))
+    .map(normalizePayment)
+    .forEach((payment) => {
+      const reference = clean(payment.Reference || payment.GatewayReference || payment.PaymentId);
+      const charge = chargeByReference.get(lower(reference)) || {};
+      const online = Boolean(clean(charge.Reference))
+        || /paystack|online|card/i.test(`${payment.Gateway} ${payment.Method}`);
+      if (!online) return;
+      const gross = asMoneyNumber(charge.GrossCollection || payment.GrossAmount || payment.Amount);
+      const fee = asMoneyNumber(charge.PaystackCharge || payment.GatewayFee);
+      const net = asMoneyNumber(charge.NetSettlement || paymentCreditedAmount(payment) || Math.max(0, gross - fee));
+      addTransaction({
+        Date: payment.Date || payment.PaidAt || payment.PaymentDate,
+        ReceiptNo: payment.ReceiptNo || payment.PaymentId,
+        ApplicantName: payment.DisplayName || payment.ApplicantName || payment.AccountRef || payment.AdmissionNo,
+        PaymentMethod: payment.Gateway || payment.Method || 'Online',
+        Reference: reference,
+        GrossCollection: gross,
+        PaystackCharge: fee,
+        NetRevenue: net,
+        Currency: payment.Currency,
+        Source: 'Fee Payment'
+      });
+    });
+  donations
+    .filter((row) => lower(row.Status) === 'paid' && accountingRowMatches({
+      ...row,
+      Date: row.PaidAt || row.Date || row.UpdatedAt || row.CreatedAt
+    }, filter))
+    .forEach((donation) => {
+      const reference = clean(donation.Reference || donation.GatewayReference || donation.DonationId || donation.__id);
+      const charge = chargeByReference.get(lower(reference)) || {};
+      const online = Boolean(clean(charge.Reference))
+        || /paystack|online|card/i.test(`${donation.Gateway} ${donation.PaymentMethod}`);
+      if (!online) return;
+      const gross = asMoneyNumber(charge.GrossCollection || donation.GrossAmount || donation.Amount);
+      const fee = asMoneyNumber(charge.PaystackCharge || donation.GatewayFee);
+      const net = asMoneyNumber(charge.NetSettlement || donation.NetAmount || Math.max(0, gross - fee));
+      addTransaction({
+        Date: donation.PaidAt || donation.Date || donation.UpdatedAt || donation.CreatedAt,
+        ReceiptNo: donation.ReceiptNo || donation.DonationId,
+        ApplicantName: donation.DonorName || donation.DonorEmail || 'Donor',
+        PaymentMethod: donation.Gateway || donation.PaymentMethod || 'Online',
+        Reference: reference,
+        GrossCollection: gross,
+        PaystackCharge: fee,
+        NetRevenue: net,
+        Currency: donation.Currency,
+        Source: 'Church Donation'
+      });
+    });
+  charges.forEach((charge) => addTransaction({
+    Date: charge.Date,
+    ReceiptNo: charge.Reference || charge.Source,
+    ApplicantName: charge.Source || 'Online payer',
+    PaymentMethod: 'Paystack',
+    Reference: charge.Reference,
+    GrossCollection: charge.GrossCollection,
+    PaystackCharge: charge.PaystackCharge,
+    NetRevenue: charge.NetSettlement,
+    Currency: charge.Currency || 'NGN',
+    Source: charge.Source
+  }, charge.Reference || charge.Description));
+  const onlineTransactions = [...transactionByReference.values()]
+    .sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)));
   const total = (rows, key) => asMoneyNumber(rows.reduce((sum, row) => sum + asMoneyNumber(row[key]), 0));
   const formCharges = charges.filter((row) => lower(row.Source).includes('form'));
   const feeCharges = charges.filter((row) => !lower(row.Source).includes('form'));
@@ -5546,6 +5645,7 @@ export function buildGatewayCollectionsReport(formSales = [], gatewayCharges = [
       FormPaymentCharges: total(formCharges, 'PaystackCharge')
     },
     formSales: sales.sort((a, b) => clean(b.Date).localeCompare(clean(a.Date))),
+    onlineTransactions,
     gatewayCharges: charges.sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)))
   };
 }
@@ -5595,7 +5695,7 @@ async function getAccountingOverview(env, body = {}) {
   const reports = buildAccountingReport(chart, journals, expenses, budgets, filter, invoices);
   reports.receivablesAgeing = buildReceivablesAgeing(invoices, payments, filter.DateTo || nowIso().slice(0, 10));
   reports.payablesAgeing = buildAgeing(supplierBills, filter.DateTo || nowIso().slice(0, 10), 'payable');
-  const gatewayReport = buildGatewayCollectionsReport(formSales, gatewayCharges, filter);
+  const gatewayReport = buildGatewayCollectionsReport(formSales, gatewayCharges, filter, payments, donations);
   return { ok: true, message: 'Finance and accounting records loaded.', synchronized, filter, chart, journals, expenses, budgets, banks, reconciliations, periods, audit,
     vendors, supplierBills, supplierPayments, assets, adjustments, approvalLimits, closeChecklist, bankStatementItems,
     payrollProfiles, payrollRuns, payrollItems, payrollPayments, payrollAudit, payrollTaxProfiles: payrollTaxProfilesWithUsage, payrollTaxOverrides,

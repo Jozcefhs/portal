@@ -130,6 +130,67 @@ test('finance reports expose gross collections, Paystack charges, and net form r
     report.formSales.map((row) => [row.GrossCollection, row.PaystackCharge, row.NetRevenue]),
     [[10300, 300, 10000]]
   );
+  assert.deepEqual(
+    report.onlineTransactions.map((row) => [row.ApplicantName, row.Reference, row.GrossCollection]),
+    [['Test Applicant', 'PS-FORM-1', 10300]]
+  );
+});
+
+test('online collections register includes fee payments and church donations behind the totals', () => {
+  const report = buildGatewayCollectionsReport([], [{
+    ChargeId: 'PAYSTACK-FEE-PS-DON-1',
+    Date: '2026-07-27',
+    Reference: 'PS-DON-1',
+    Source: 'Church Donation / Paystack',
+    GrossCollection: 30000,
+    Amount: 450,
+    NetSettlement: 29550,
+    Status: 'Recorded'
+  }, {
+    ChargeId: 'PAYSTACK-FEE-PS-FEE-1',
+    Date: '2026-07-28',
+    Reference: 'PS-FEE-1',
+    Source: 'Paystack',
+    GrossCollection: 750000,
+    Amount: 7500,
+    NetSettlement: 742500,
+    Status: 'Recorded'
+  }], {}, [{
+    PaymentId: 'PAY-1',
+    ReceiptNo: 'RCT-FEE-1',
+    DisplayName: 'Example Student',
+    PaidAt: '2026-07-28T09:00:00.000Z',
+    Gateway: 'Paystack',
+    Reference: 'PS-FEE-1',
+    GrossAmount: 750000,
+    GatewayFee: 7500,
+    NetAmount: 742500,
+    Currency: 'NGN'
+  }], [{
+    DonationId: 'DON-1',
+    ReceiptNo: 'CHURCH/DON/2026/1',
+    DonorName: 'Example Donor',
+    PaidAt: '2026-07-27T09:00:00.000Z',
+    PaymentMethod: 'ONLINE',
+    Gateway: 'Paystack',
+    Reference: 'PS-DON-1',
+    Status: 'Paid',
+    GrossAmount: 30000,
+    GatewayFee: 450,
+    NetAmount: 29550,
+    Currency: 'NGN'
+  }]);
+
+  assert.equal(report.summary.GrossCollections, 780000);
+  assert.deepEqual(
+    report.onlineTransactions.map((row) => [
+      row.ReceiptNo, row.ApplicantName, row.Reference, row.GrossCollection, row.PaystackCharge, row.NetRevenue
+    ]),
+    [
+      ['RCT-FEE-1', 'Example Student', 'PS-FEE-1', 750000, 7500, 742500],
+      ['CHURCH/DON/2026/1', 'Example Donor', 'PS-DON-1', 30000, 450, 29550]
+    ]
+  );
 });
 
 test('paid church donations post gross income, net clearing and gateway charges once', () => {
