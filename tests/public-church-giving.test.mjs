@@ -11,7 +11,8 @@ const [
   staffApi,
   adminJs,
   paymentSuccess,
-  requestSecurity
+  requestSecurity,
+  paymentVerification
 ] = await Promise.all([
   readFile(new URL('give.html', portalRoot), 'utf8'),
   readFile(new URL('js/give.js', portalRoot), 'utf8'),
@@ -20,7 +21,8 @@ const [
   readFile(new URL('functions/api/staff-church-payments.js', portalRoot), 'utf8'),
   readFile(new URL('js/admin.js', portalRoot), 'utf8'),
   readFile(new URL('js/payment-success.js', portalRoot), 'utf8'),
-  readFile(new URL('functions/lib/request-security.js', portalRoot), 'utf8')
+  readFile(new URL('functions/lib/request-security.js', portalRoot), 'utf8'),
+  readFile(new URL('functions/api/verify-payment.js', portalRoot), 'utf8')
 ]);
 
 test('public giving page collects donor details before opening Paystack', () => {
@@ -57,6 +59,14 @@ test('public gifts are branch checked and restricted to recognised gift types', 
   assert.match(payments, /Choose a valid gift type\./);
   assert.match(payments, /PublicGiving: 'yes'/);
   assert.match(payments, /source=public-giving&branch=/);
+});
+
+test('self-service giving skips the redundant payment-link email', () => {
+  assert.match(payments, /const shouldSendPaymentLinkEmail = !publicGiving/);
+  assert.match(payments, /const paymentLinkDelivery = shouldSendPaymentLinkEmail\s*\?\s*await sendChurchDonationReceipt/);
+  assert.match(payments, /!shouldSendPaymentLinkEmail\s*\?\s*'Secure donation payment page created\.'/);
+  assert.match(payments, /receipt: paymentLinkDelivery/);
+  assert.match(paymentVerification, /sendChurchDonationReceipt\(env, donation,[\s\S]*?paymentLink: ''/);
 });
 
 test('staff can print a reusable branch-scoped generic giving QR', () => {

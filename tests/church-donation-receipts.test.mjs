@@ -40,6 +40,7 @@ test('successful receipt delivery is persisted and pending payment links stay di
   assert.match(paymentSource, /ReceiptStatus: 'Sent'/);
   assert.match(paymentSource, /ReceiptSentAt: sentAt/);
   assert.match(paymentSource, /PaymentLinkSentAt: sentAt/);
+  assert.match(paymentSource, /const shouldSendPaymentLinkEmail = !publicGiving/);
   assert.match(paymentSource, /if \(lower\(donation\.Status\) !== 'paid'\) return null/);
   assert.match(paymentSource, /A receipt can only be sent after the donation is paid\./);
 });

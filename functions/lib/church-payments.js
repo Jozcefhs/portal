@@ -1050,26 +1050,35 @@ export async function initChurchDonationPayment(env, user, body = {}, requestUrl
     PaymentStatus: 'Pending'
   }, user);
 
-  const receipt = await sendChurchDonationReceipt(env, donationWithSaved, {
-    paymentLink: authorizationUrl,
-    subject: clean(body.subject || body.ReceiptSubject || body.receiptSubject || ''),
-    message: clean(body.message || body.ReceiptMessage || body.receiptMessage || ''),
-    donorName: donationWithSaved.DonorName
-  }).catch((error) => ({ ok: false, message: error?.message || String(error) }));
+  // A self-service donor is redirected straight to Paystack, so emailing the
+  // same payment link is redundant. Staff-created pending donations retain
+  // their payment-link delivery workflow.
+  const shouldSendPaymentLinkEmail = !publicGiving;
+  const paymentLinkDelivery = shouldSendPaymentLinkEmail
+    ? await sendChurchDonationReceipt(env, donationWithSaved, {
+      paymentLink: authorizationUrl,
+      subject: clean(body.subject || body.ReceiptSubject || body.receiptSubject || ''),
+      message: clean(body.message || body.ReceiptMessage || body.receiptMessage || ''),
+      donorName: donationWithSaved.DonorName
+    }).catch((error) => ({ ok: false, message: error?.message || String(error) }))
+    : null;
 
   await writeDonationAudit(env, branchId, user, 'ONLINE INIT', donationWithSaved.DonationId, `Reference ${reference} created`);
 
   return {
     ok: true,
-    message: receipt?.ok
-      ? 'Online donation link created and sent to donor.'
-      : (receipt?.deliveryUncertain
-          ? 'Online donation link created; email delivery is uncertain and automatic resend was suppressed.'
-          : 'Online donation link created; receipt email could not be sent in this environment.'),
+    message: !shouldSendPaymentLinkEmail
+      ? 'Secure donation payment page created.'
+      : (paymentLinkDelivery?.ok
+          ? 'Online donation link created and sent to donor.'
+          : (paymentLinkDelivery?.deliveryUncertain
+              ? 'Online donation link created; email delivery is uncertain and automatic resend was suppressed.'
+              : 'Online donation link created; payment-link email could not be sent in this environment.')),
     donation: donationWithSaved,
     authorizationUrl,
     reference,
-    receipt
+    receipt: paymentLinkDelivery,
+    paymentLinkDelivery
   };
 }
 
