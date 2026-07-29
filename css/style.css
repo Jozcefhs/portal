@@ -820,6 +820,7 @@ html[data-theme="dark"] .staff-page .admin-table tbody tr.selected .student-edit
 }
 .compact-icon-action>span{display:block;line-height:1}
 .compact-edit-action{color:#976500!important}
+html:not([data-theme="dark"]) .compact-edit-action{background:#fff4d6!important;color:#714900!important}
 .compact-edit-action:hover{background:#fff2cf!important;color:#704a00!important}
 .compact-delete-action{color:#c6283d!important}
 .compact-delete-action:hover{background:#fff0f2!important;color:#96172b!important}

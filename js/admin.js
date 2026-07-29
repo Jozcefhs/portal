@@ -2583,7 +2583,7 @@ function organizedDepartmentWorkspace(data) {
         { label: 'Type', value: (row) => row.DepartmentType },
         { label: 'Area / zone', value: (row) => row.AreaZone },
         { label: 'Status', value: (row) => row.Active },
-        ...(canManageDepartments ? [{ label: 'Actions', render: (row) => `<span class="compact-row-actions"><button type="button" class="compact-icon-action" data-edit-department="${escapeHtml(row.DepartmentId || row.__id)}" title="Edit department" aria-label="Edit ${escapeHtml(row.Name)}">✎</button><button type="button" class="compact-icon-action compact-delete-action" data-delete-department="${escapeHtml(row.DepartmentId || row.__id)}" title="Delete department" aria-label="Delete ${escapeHtml(row.Name)}">✕</button></span>` }] : [])
+        ...(canManageDepartments ? [{ label: 'Actions', render: (row) => `<span class="compact-row-actions"><button type="button" class="compact-icon-action compact-edit-action" data-edit-department="${escapeHtml(row.DepartmentId || row.__id)}" title="Edit department" aria-label="Edit ${escapeHtml(row.Name)}">✎</button><button type="button" class="compact-icon-action compact-delete-action" data-delete-department="${escapeHtml(row.DepartmentId || row.__id)}" title="Delete department" aria-label="Delete ${escapeHtml(row.Name)}">✕</button></span>` }] : [])
       ])}
     </section>
 
@@ -2624,13 +2624,13 @@ function organizedDepartmentWorkspace(data) {
         { label: 'Phone', value: (row) => row.Phone },
         { label: 'Email', value: (row) => row.Email },
         { label: 'Status', value: (row) => row.MembershipStatus },
-        ...(canManageMembers ? [{ label: 'Actions', render: (row) => `<button type="button" class="compact-icon-action" data-edit-member="${escapeHtml(row.MemberId || row.__id)}" title="Edit member" aria-label="Edit ${escapeHtml(row.DisplayName || row.MemberId || 'member')}">✎</button>` }] : [])
+        ...(canManageMembers ? [{ label: 'Actions', render: (row) => `<button type="button" class="compact-icon-action compact-edit-action" data-edit-member="${escapeHtml(row.MemberId || row.__id)}" title="Edit member" aria-label="Edit ${escapeHtml(row.DisplayName || row.MemberId || 'member')}">✎</button>` }] : [])
       ])}
       ${table('Department positions', positions, [
         { label: 'Department', value: (row) => row.DepartmentName || row.DepartmentId },
         { label: 'Position', value: (row) => row.Name || row.PositionName || row.PositionId },
         { label: 'Status', value: (row) => row.Active },
-        ...(canManageDepartments ? [{ label: 'Actions', render: (row) => `<button type="button" class="compact-icon-action" data-edit-position="${escapeHtml(row.PositionId || row.__id)}" data-position-department="${escapeHtml(row.DepartmentId)}" title="Edit position" aria-label="Edit ${escapeHtml(row.Name || row.PositionName || row.PositionId || 'position')}">✎</button>` }] : [])
+        ...(canManageDepartments ? [{ label: 'Actions', render: (row) => `<button type="button" class="compact-icon-action compact-edit-action" data-edit-position="${escapeHtml(row.PositionId || row.__id)}" data-position-department="${escapeHtml(row.DepartmentId)}" title="Edit position" aria-label="Edit ${escapeHtml(row.Name || row.PositionName || row.PositionId || 'position')}">✎</button>` }] : [])
       ])}
       ${table('Department members and positions', departmentMembers, [
         { label: 'Department', value: (row) => row.DepartmentName || row.DepartmentId },

@@ -35,6 +35,9 @@ test('department workspace preserves forms, registers and direct editing', () =>
     'saveForeignVisitor'
   ].forEach((action) => assert.match(adminJs, new RegExp(`data-department-action="${action}"`)));
   assert.match(adminJs, /data-edit-department=/);
+  assert.match(adminJs, /class="compact-icon-action compact-edit-action" data-edit-department=/);
+  assert.match(adminJs, /class="compact-icon-action compact-edit-action" data-edit-member=/);
+  assert.match(adminJs, /class="compact-icon-action compact-edit-action" data-edit-position=/);
   assert.match(adminJs, /organizationDepartmentEditor/);
   assert.match(adminJs, /Department register/);
   assert.match(adminJs, /Attendance register/);
@@ -94,4 +97,8 @@ test('department workspace is responsive and supports dark mode', () => {
   assert.match(portalCss, /\.department-member-onboarding/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.department-member-onboarding/);
   assert.match(portalCss, /@media \(max-width: 640px\)[\s\S]*?\.organization-workspace-tabs/);
+});
+
+test('edit icons have a visible light-mode treatment', () => {
+  assert.match(portalCss, /html:not\(\[data-theme="dark"\]\) \.compact-edit-action\{background:#fff4d6!important;color:#714900!important\}/);
 });
