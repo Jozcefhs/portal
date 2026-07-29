@@ -101,4 +101,8 @@ test('web and desktop request boundaries use the authoritative deployment gate',
     backendSource,
     /edition:\s*deploymentIdentity\?\.edition[\s\S]*?assertOrganizationDepartmentWorkspaceAccess\(deploymentIdentity, departmentActor\)[\s\S]*?handleOrganizationDepartmentAction/
   );
+  assert.match(
+    backendSource,
+    /const departmentAction = \(\{[\s\S]*?getOrganizationDepartments: 'list'[\s\S]*?Action: departmentAction,[\s\S]*?action: departmentAction/
+  );
 });

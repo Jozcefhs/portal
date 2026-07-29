@@ -6620,25 +6620,30 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null) {
         allowedSections: Array.isArray(body.UserTabAccess) ? body.UserTabAccess.map(clean).filter(Boolean) : []
       };
       assertOrganizationDepartmentWorkspaceAccess(deploymentIdentity, departmentActor);
+      const departmentAction = ({
+        getOrganizationDepartments: 'list',
+        saveDepartment: 'saveDepartment',
+        importOrganizationMembers: 'importMembers',
+        importDepartments: 'importDepartments',
+        deleteDepartment: 'deleteDepartment',
+        savePosition: 'savePosition',
+        saveDepartmentMember: 'saveDepartmentMember',
+        removeDepartmentMember: 'removeDepartmentMember',
+        saveDepartmentMeeting: 'saveMeeting',
+        recordDepartmentAttendance: 'recordAttendance',
+        saveDepartmentOffering: 'saveOffering',
+        markDepartmentOfferingPaid: 'markOfferingPaid',
+        saveSpecialProgram: 'saveProgram',
+        registerProgramParticipant: 'registerParticipant',
+        saveForeignVisitor: 'saveForeignVisitor'
+      })[action];
       return handleOrganizationDepartmentAction(env, departmentActor, {
         ...body,
-        action: ({
-          getOrganizationDepartments: 'list',
-          saveDepartment: 'saveDepartment',
-          importOrganizationMembers: 'importMembers',
-          importDepartments: 'importDepartments',
-          deleteDepartment: 'deleteDepartment',
-          savePosition: 'savePosition',
-          saveDepartmentMember: 'saveDepartmentMember',
-          removeDepartmentMember: 'removeDepartmentMember',
-          saveDepartmentMeeting: 'saveMeeting',
-          recordDepartmentAttendance: 'recordAttendance',
-          saveDepartmentOffering: 'saveOffering',
-          markDepartmentOfferingPaid: 'markOfferingPaid',
-          saveSpecialProgram: 'saveProgram',
-          registerProgramParticipant: 'registerParticipant',
-          saveForeignVisitor: 'saveForeignVisitor'
-        })[action]
+        // The organisation handler accepts both legacy `Action` and modern
+        // `action`. Normalise both so the original desktop command cannot
+        // override the mapped operation.
+        Action: departmentAction,
+        action: departmentAction
       });
     }
     case 'getChurchServices':
