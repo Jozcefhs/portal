@@ -53,6 +53,15 @@ function verificationIdempotency(reference, isFormPurchase) {
   };
 }
 
+function publicVerificationError(error, reference) {
+  const status = Number(error?.status || 0);
+  const message = String(error?.message || '').trim();
+  const internalFailure = status >= 500
+    || /cannot read propert|undefined|null|typeerror|referenceerror|syntaxerror/i.test(message);
+  if (!internalFailure) return message || 'Payment could not be verified.';
+  return `Payment confirmation is temporarily unavailable. If you were charged, do not pay again. Refresh this page or contact the Accounts Office with reference ${reference}.`;
+}
+
 async function verifyPayment() {
   const params = new URLSearchParams(window.location.search);
   const reference = params.get('reference') || params.get('trxref');
@@ -89,7 +98,9 @@ async function verifyPayment() {
     const data = await response.json().catch(() => null);
     if (!response.ok || !data?.ok) {
       if (shouldReleaseIdempotencyKey(response, data)) idempotency.release();
-      throw new Error(data?.message || 'Payment could not be verified.');
+      const error = new Error(data?.message || 'Payment could not be verified.');
+      error.status = response.status;
+      throw error;
     }
     idempotency.release();
     setLead(isFormPurchase
@@ -153,7 +164,13 @@ async function verifyPayment() {
     box.appendChild(details);
   } catch (error) {
     setLead('We could not confirm your payment automatically.');
-    setStatus(error.message, 'bad');
+    const internalFailure = Number(error?.status || 0) >= 500
+      || /cannot read propert|undefined|null|typeerror|referenceerror|syntaxerror/i.test(String(error?.message || ''));
+    if (internalFailure && anotherLink) {
+      anotherLink.hidden = true;
+      document.getElementById('anotherPaymentRow')?.setAttribute('hidden', '');
+    }
+    setStatus(publicVerificationError(error, reference), 'bad');
   }
 }
 

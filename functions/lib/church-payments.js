@@ -10,6 +10,7 @@ import {
 import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from './church-foundation.js';
 import { resolveOrganizationConfig } from './organization-config.js';
 import { resolveMembershipBranch } from './church-membership.js';
+import { resolveEmailSenderProfile } from './email-service.js';
 
 const PAYSTACK_INIT_URL = 'https://api.paystack.co/transaction/initialize';
 
@@ -414,14 +415,16 @@ export async function setChurchDonationStatus(env, user, body = {}, status) {
   };
 }
 
-function settingsDocumentForDonation(settings = {}, env = {}) {
-  const name = clean(settings.Name || settings.OrganisationName || settings.OrganizationName
-    || env.ORG_NAME || env.CHURCH_NAME || env.SCHOOL_NAME || 'Church').trim();
-  const senderEmail = clean(settings.BrevoSenderEmail || env.BREVO_SENDER_EMAIL || env.SCHOOL_EMAIL || '').trim();
-  const senderName = clean(settings.BrevoSenderName || env.BREVO_SENDER_NAME || name).trim();
-  const apiKey = clean(env.BREVO_API_KEY || '').trim();
-  const profileName = clean(settings.Name || settings.OrganisationName || settings.OrganizationName || 'Church').trim();
-  return { name, senderEmail, senderName, apiKey, profileName };
+function settingsDocumentForDonation(brevo = {}, organizationProfile = {}, env = {}) {
+  const resolved = resolveEmailSenderProfile(env, { brevo, organizationProfile });
+  const name = clean(resolved.organization?.Name || env.ORGANISATION_NAME || env.ORGANIZATION_NAME || 'Church');
+  return {
+    name,
+    senderEmail: resolved.senderEmail,
+    senderName: resolved.senderName,
+    apiKey: clean(env.BREVO_API_KEY || brevo?.BrevoApiKey),
+    profileName: name
+  };
 }
 
 function receiptLogoSource(webBranding = {}, organizationProfile = {}, env = {}) {
@@ -669,7 +672,7 @@ export async function sendChurchDonationReceipt(env, donation, options = {}) {
     getDocument(env, 'settings', 'organisationProfile').catch(() => ({})),
     getDocument(env, 'settings', 'webBranding').catch(() => ({}))
   ]);
-  const settings = settingsDocumentForDonation({ ...brevoSettings, ...(organizationProfile || {}) }, env);
+  const settings = settingsDocumentForDonation(brevoSettings, organizationProfile || {}, env);
   const paymentLink = clean(options.paymentLink || '');
   const isPaymentRequest = Boolean(paymentLink) && lower(donation.Status) !== 'paid';
   if (isPaymentRequest && clean(donation.PaymentLinkSentAt)) {

@@ -2131,7 +2131,7 @@ async function updateStoreOrderStatus(env, body) {
   return { ok: true, message: `Order marked ${status}.`, order: payload };
 }
 
-async function saveBrevoSettings(env, body) {
+async function saveBrevoSettings(env, body, deploymentIdentity = null) {
   const senderName = clean(body.BrevoSenderName || body.SenderName || body.senderName);
   const senderEmail = clean(body.BrevoSenderEmail || body.SenderEmail || body.senderEmail);
   const submittedApiKey = clean(body.BrevoApiKey || body.ApiKey || body.apiKey);
@@ -2140,6 +2140,7 @@ async function saveBrevoSettings(env, body) {
   const executiveSenderEmail = clean(body.ExecutiveSenderEmail || body.executiveSenderEmail);
   const executiveReplyToEmail = clean(body.ExecutiveReplyToEmail || body.executiveReplyToEmail);
   const executiveReplyToName = clean(body.ExecutiveReplyToName || body.executiveReplyToName);
+  const organisationScoped = ['faith', 'organization'].includes(clean(deploymentIdentity?.edition).toLowerCase());
   if (!senderEmail) {
     const err = new Error('Brevo sender email is required.');
     err.status = 400;
@@ -2154,7 +2155,16 @@ async function saveBrevoSettings(env, body) {
   const existing = await getDocument(env, 'settings', 'brevo').catch(() => null);
   const legacyDatabaseKeyConfigured = Boolean(clean(existing?.BrevoApiKey));
   const now = nowIso();
-  const payload = {
+  const senderFields = organisationScoped ? {
+    OrganisationSenderName: senderName,
+    OrganisationSenderEmail: senderEmail,
+    OrganisationReplyToEmail: clean(body.BrevoReplyToEmail || body.ReplyToEmail),
+    OrganisationReplyToName: clean(body.BrevoReplyToName || body.ReplyToName),
+    OrganisationExecutiveSenderName: executiveSenderName,
+    OrganisationExecutiveSenderEmail: executiveSenderEmail,
+    OrganisationExecutiveReplyToEmail: executiveReplyToEmail,
+    OrganisationExecutiveReplyToName: executiveReplyToName
+  } : {
     BrevoSenderName: senderName,
     BrevoSenderEmail: senderEmail,
     BrevoReplyToEmail: clean(body.BrevoReplyToEmail || body.ReplyToEmail),
@@ -2162,7 +2172,11 @@ async function saveBrevoSettings(env, body) {
     ExecutiveSenderName: executiveSenderName,
     ExecutiveSenderEmail: executiveSenderEmail,
     ExecutiveReplyToEmail: executiveReplyToEmail,
-    ExecutiveReplyToName: executiveReplyToName,
+    ExecutiveReplyToName: executiveReplyToName
+  };
+  const payload = {
+    ...senderFields,
+    SenderScope: organisationScoped ? 'organisation' : 'school',
     UpdatedAt: now,
     UpdatedBy: clean(body.UserRole || body.UpdatedBy || body.updatedBy) || 'Super Admin'
   };
@@ -2180,12 +2194,13 @@ async function saveBrevoSettings(env, body) {
     settings: {
       BrevoSenderName: senderName,
       BrevoSenderEmail: senderEmail,
-      BrevoReplyToEmail: payload.BrevoReplyToEmail,
-      BrevoReplyToName: payload.BrevoReplyToName,
-      ExecutiveSenderName: payload.ExecutiveSenderName,
-      ExecutiveSenderEmail: payload.ExecutiveSenderEmail,
-      ExecutiveReplyToEmail: payload.ExecutiveReplyToEmail,
-      ExecutiveReplyToName: payload.ExecutiveReplyToName,
+      BrevoReplyToEmail: clean(body.BrevoReplyToEmail || body.ReplyToEmail),
+      BrevoReplyToName: clean(body.BrevoReplyToName || body.ReplyToName),
+      ExecutiveSenderName: executiveSenderName,
+      ExecutiveSenderEmail: executiveSenderEmail,
+      ExecutiveReplyToEmail: executiveReplyToEmail,
+      ExecutiveReplyToName: executiveReplyToName,
+      SenderScope: payload.SenderScope,
       HasBrevoApiKey: environmentApiKeyConfigured || legacyDatabaseKeyConfigured,
       CredentialSource: credentialSource,
       LegacyCredentialMigrationRequired: legacyDatabaseKeyConfigured && !environmentApiKeyConfigured
@@ -6690,7 +6705,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null) {
     case 'matchAccountingBankStatement':
       return matchAccountingBankStatement(env, body);
     case 'saveBrevoSettings':
-      return saveBrevoSettings(env, body);
+      return saveBrevoSettings(env, body, deploymentIdentity);
     case 'saveSchoolProfile':
       return saveSchoolProfile(env, body, deploymentIdentity);
     case 'getSchoolProfile':

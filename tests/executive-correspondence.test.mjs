@@ -286,9 +286,10 @@ test('official correspondence sends the email-safe layout with bounded endorseme
   assert.match(emailSource, /content\.length > 1500000/);
   assert.match(emailSource, /getDocument\(env, 'settings', 'organisationProfile'\)/);
   assert.match(emailSource, /env\.BREVO_API_KEY \|\| brevo\?\.BrevoApiKey/);
-  assert.match(emailSource, /organizationProfile\?\.BrevoSenderEmail/);
   assert.match(emailSource, /schoolProfile\?\.BrevoSenderEmail/);
   assert.match(emailSource, /brevo\?\.ExecutiveSenderEmail/);
+  assert.match(emailSource, /brevo\?\.OrganisationSenderEmail/);
+  assert.match(emailSource, /brevo\?\.OrganisationExecutiveSenderEmail/);
   assert.match(emailSource, /payload\.replyTo = \{ email: replyToEmail/);
 });
 

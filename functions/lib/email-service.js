@@ -1,4 +1,5 @@
 import { getDocument } from './firestore.js';
+import { resolveOrganizationConfig } from './organization-config.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -6,6 +7,105 @@ function clean(value) {
 
 function validEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean(value));
+}
+
+export function resolveEmailSenderProfile(env = {}, {
+  brevo = {},
+  organizationProfile = {},
+  schoolProfile = {},
+  senderProfile = ''
+} = {}) {
+  const organization = resolveOrganizationConfig({
+    env,
+    organizationProfile,
+    legacyProfile: schoolProfile
+  });
+  const organisationScoped = organization.Edition !== 'school';
+  const sharedSenderEmail = clean(organisationScoped
+    ? (
+        brevo?.OrganisationSenderEmail
+        || organizationProfile?.OrganisationSenderEmail
+        || env.ORGANISATION_SENDER_EMAIL
+        || env.ORGANIZATION_SENDER_EMAIL
+        || env.CHURCH_EMAIL
+      )
+    : (
+        brevo?.BrevoSenderEmail
+        || schoolProfile?.BrevoSenderEmail
+        || env.BREVO_SENDER_EMAIL
+        || env.SCHOOL_EMAIL
+      ));
+  const sharedSenderName = clean(organisationScoped
+    ? (
+        brevo?.OrganisationSenderName
+        || organizationProfile?.OrganisationSenderName
+        || env.ORGANISATION_SENDER_NAME
+        || env.ORGANIZATION_SENDER_NAME
+        || organization.Name
+      )
+    : (
+        brevo?.BrevoSenderName
+        || schoolProfile?.BrevoSenderName
+        || env.BREVO_SENDER_NAME
+        || schoolProfile?.SchoolName
+        || env.SCHOOL_NAME
+        || organization.Name
+      )) || 'Dynamax';
+  const useExecutiveProfile = clean(senderProfile).toLowerCase() === 'executive';
+  const senderEmail = clean(useExecutiveProfile
+    ? (organisationScoped
+        ? (brevo?.OrganisationExecutiveSenderEmail || organizationProfile?.OrganisationExecutiveSenderEmail || sharedSenderEmail)
+        : (brevo?.ExecutiveSenderEmail || schoolProfile?.ExecutiveSenderEmail || sharedSenderEmail))
+    : sharedSenderEmail);
+  const senderName = clean(useExecutiveProfile
+    ? (organisationScoped
+        ? (brevo?.OrganisationExecutiveSenderName || organizationProfile?.OrganisationExecutiveSenderName || sharedSenderName)
+        : (brevo?.ExecutiveSenderName || schoolProfile?.ExecutiveSenderName || sharedSenderName))
+    : sharedSenderName);
+  const replyToEmail = clean(useExecutiveProfile
+    ? (organisationScoped
+        ? (
+            brevo?.OrganisationExecutiveReplyToEmail
+            || organizationProfile?.OrganisationExecutiveReplyToEmail
+            || brevo?.OrganisationReplyToEmail
+            || organizationProfile?.OrganisationReplyToEmail
+          )
+        : (
+            brevo?.ExecutiveReplyToEmail
+            || schoolProfile?.ExecutiveReplyToEmail
+            || brevo?.BrevoReplyToEmail
+            || schoolProfile?.BrevoReplyToEmail
+          ))
+    : (organisationScoped
+        ? (brevo?.OrganisationReplyToEmail || organizationProfile?.OrganisationReplyToEmail)
+        : (brevo?.BrevoReplyToEmail || schoolProfile?.BrevoReplyToEmail)));
+  const replyToName = clean(useExecutiveProfile
+    ? (organisationScoped
+        ? (
+            brevo?.OrganisationExecutiveReplyToName
+            || organizationProfile?.OrganisationExecutiveReplyToName
+            || brevo?.OrganisationReplyToName
+            || organizationProfile?.OrganisationReplyToName
+            || senderName
+          )
+        : (
+            brevo?.ExecutiveReplyToName
+            || schoolProfile?.ExecutiveReplyToName
+            || brevo?.BrevoReplyToName
+            || schoolProfile?.BrevoReplyToName
+            || senderName
+          ))
+    : (organisationScoped
+        ? (brevo?.OrganisationReplyToName || organizationProfile?.OrganisationReplyToName || senderName)
+        : (brevo?.BrevoReplyToName || schoolProfile?.BrevoReplyToName || senderName)));
+  return {
+    senderEmail,
+    senderName,
+    replyToEmail,
+    replyToName,
+    organization,
+    scope: organisationScoped ? 'organisation' : 'school'
+  };
 }
 
 export function escapeEmailHtml(value) {
@@ -45,41 +145,24 @@ export async function sendConfiguredEmail(env, {
     getDocument(env, 'settings', 'organisationProfile').catch(() => ({})),
     getDocument(env, 'settings', 'schoolProfile').catch(() => ({}))
   ]);
+  // Sender identities are deliberately scoped by edition. A faith or generic
+  // organisation deployment never falls through to school sender fields.
+  const {
+    senderEmail,
+    senderName,
+    replyToEmail,
+    replyToName,
+    organization
+  } = resolveEmailSenderProfile(env, {
+    brevo,
+    organizationProfile,
+    schoolProfile,
+    senderProfile
+  });
   // Prefer the encrypted environment secret. Existing installations may still
   // have a legacy server-side credential while they complete the migration;
   // it is consumed only inside the Worker and is never returned to clients.
   const apiKey = clean(env.BREVO_API_KEY || brevo?.BrevoApiKey);
-  const sharedSenderEmail = clean(
-    brevo?.BrevoSenderEmail
-    || organizationProfile?.BrevoSenderEmail
-    || schoolProfile?.BrevoSenderEmail
-    || env.BREVO_SENDER_EMAIL
-    || env.SCHOOL_EMAIL
-  );
-  const sharedSenderName = clean(
-    brevo?.BrevoSenderName
-    || organizationProfile?.BrevoSenderName
-    || schoolProfile?.BrevoSenderName
-    || env.BREVO_SENDER_NAME
-    || organizationProfile?.Name
-    || organizationProfile?.OrganisationName
-    || schoolProfile?.SchoolName
-    || env.SCHOOL_NAME
-    || 'Dynamax'
-  );
-  const useExecutiveProfile = clean(senderProfile).toLowerCase() === 'executive';
-  const senderEmail = clean(useExecutiveProfile
-    ? (brevo?.ExecutiveSenderEmail || organizationProfile?.ExecutiveSenderEmail || sharedSenderEmail)
-    : sharedSenderEmail);
-  const senderName = clean(useExecutiveProfile
-    ? (brevo?.ExecutiveSenderName || organizationProfile?.ExecutiveSenderName || sharedSenderName)
-    : sharedSenderName);
-  const replyToEmail = clean(useExecutiveProfile
-    ? (brevo?.ExecutiveReplyToEmail || organizationProfile?.ExecutiveReplyToEmail || brevo?.BrevoReplyToEmail || organizationProfile?.BrevoReplyToEmail)
-    : (brevo?.BrevoReplyToEmail || organizationProfile?.BrevoReplyToEmail));
-  const replyToName = clean(useExecutiveProfile
-    ? (brevo?.ExecutiveReplyToName || organizationProfile?.ExecutiveReplyToName || brevo?.BrevoReplyToName || organizationProfile?.BrevoReplyToName || senderName)
-    : (brevo?.BrevoReplyToName || organizationProfile?.BrevoReplyToName || senderName));
   if (!apiKey) {
     const err = new Error('The existing email-service credential is unavailable in this portal environment.');
     err.status = 503;
@@ -94,7 +177,7 @@ export async function sendConfiguredEmail(env, {
   const payload = {
     sender: { name: senderName, email: senderEmail },
     to: [{ email: recipient, name: clean(toName) || recipient }],
-    subject: clean(subject) || 'Message from school',
+    subject: clean(subject) || `Message from ${organization.Name || 'Dynamax'}`,
     textContent: clean(textContent),
     htmlContent: clean(htmlContent)
   };

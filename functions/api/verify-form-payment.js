@@ -4,6 +4,7 @@
 import { getSchoolCode, recordSale as recordSaleInFirestore } from './backend.js';
 import { createDocumentIfAbsent, getDocument, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
+import { paymentIntentReference, paymentIntentType } from '../lib/payment-intent.js';
 import {
   beginIdempotentRequest,
   completeIdempotentRequest,
@@ -34,14 +35,6 @@ function paymentType(value) {
 
 function isAdmissionFormType(value) {
   return ['admissionform', 'admissionformpurchase', 'formpurchase'].includes(paymentType(value));
-}
-
-function intentType(intent = {}) {
-  return clean(intent.PaymentType || intent.paymentType || intent.IntentType || intent.intentType);
-}
-
-function intentReference(intent = {}) {
-  return clean(intent.Reference || intent.reference || intent.PaymentReference || intent.paymentReference);
 }
 
 function makeVerificationCode() {
@@ -247,7 +240,7 @@ export async function onRequestPost(context) {
     const amountPaid = formatNairaAmount(netAmount);
     const intent = await getDocument(env, 'paymentIntents', String(tx.reference || reference).replace(/[\/\\?#\[\]]/g, '-')).catch(() => null);
     const metadataPaymentType = clean(meta.paymentType || meta.PaymentType);
-    const storedIntentType = intentType(intent);
+    const storedIntentType = paymentIntentType(intent);
     if (metadataPaymentType && storedIntentType && paymentType(metadataPaymentType) !== paymentType(storedIntentType)) {
       return Response.json({ ok: false, message: 'The transaction metadata does not match its saved payment intent.' }, { status: 409 });
     }
@@ -255,7 +248,7 @@ export async function onRequestPost(context) {
       return Response.json({ ok: false, message: 'This payment is not an admission form purchase.' }, { status: 400 });
     }
     if (intent) {
-      const savedReference = intentReference(intent);
+      const savedReference = paymentIntentReference(intent);
       if (savedReference && clean(tx.reference || reference).toLowerCase() !== savedReference.toLowerCase()) {
         return Response.json({ ok: false, message: 'The verified transaction reference does not match the saved form-purchase intent.' }, { status: 409 });
       }
