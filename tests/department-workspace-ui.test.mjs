@@ -102,3 +102,12 @@ test('department workspace is responsive and supports dark mode', () => {
 test('edit icons have a visible light-mode treatment', () => {
   assert.match(portalCss, /html:not\(\[data-theme="dark"\]\) \.compact-edit-action\{background:#fff4d6!important;color:#714900!important\}/);
 });
+
+test('department summary cards use one non-wrapping row per recording', () => {
+  assert.equal((adminJs.match(/<span>\$\{escapeHtml\(row\.Members\)\} members<\/span>/g) || []).length, 2);
+  assert.equal((adminJs.match(/<span>\$\{escapeHtml\(row\.Meetings\)\} meetings<\/span>/g) || []).length, 2);
+  assert.equal((adminJs.match(/<small>\$\{escapeHtml\(row\.Attendance\)\} attendance<\/small>/g) || []).length, 2);
+  assert.equal((adminJs.match(/<small>\$\{money\(row\.Offerings\)\} offerings<\/small>/g) || []).length, 2);
+  assert.match(portalCss, /\.department-summary-grid \.module-stat > \*\s*\{[\s\S]*?white-space:\s*nowrap/);
+  assert.match(portalCss, /\.department-summary-grid \.module-stat \{[\s\S]*?width:\s*max-content/);
+});

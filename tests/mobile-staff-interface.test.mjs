@@ -99,7 +99,8 @@ test('summary-card contents are centered on desktop as well as mobile', () => {
 test('overview and department summary cards stay in one scrollable row', () => {
   assert.match(portalCss, /\.staff-page \.staff-summary\{display:flex;flex-wrap:nowrap;[\s\S]*?overflow-x:auto;/);
   assert.match(portalCss, /\.department-summary-grid \{[\s\S]*?display: flex;[\s\S]*?flex-wrap: nowrap;[\s\S]*?overflow-x: auto;/);
-  assert.match(portalCss, /\.department-summary-grid \.module-stat \{[\s\S]*?flex: 1 0 180px;[\s\S]*?min-width: 180px;[\s\S]*?scroll-snap-align: start;/);
+  assert.match(portalCss, /\.department-summary-grid \.module-stat \{[\s\S]*?flex: 0 0 auto;[\s\S]*?width: max-content;[\s\S]*?min-width: 200px;[\s\S]*?scroll-snap-align: start;/);
+  assert.match(portalCss, /\.department-summary-grid \.module-stat > \*\s*\{[\s\S]*?white-space: nowrap;/);
 });
 
 test('sidebar keeps account actions visible and database status last', () => {

@@ -2401,8 +2401,10 @@ function departmentWorkspace(data) {
   const departmentCards = departmentSummary.map((row, index) => `
     <article class="module-stat tone-${(index % 5) + 1}">
       <strong>${escapeHtml(row.Name)}</strong>
-      <span>${escapeHtml(row.Members)} members · ${escapeHtml(row.Meetings)} meetings</span>
-      <small>${escapeHtml(row.Attendance)} attendance · ${money(row.Offerings)} offerings</small>
+      <span>${escapeHtml(row.Members)} members</span>
+      <span>${escapeHtml(row.Meetings)} meetings</span>
+      <small>${escapeHtml(row.Attendance)} attendance</small>
+      <small>${money(row.Offerings)} offerings</small>
     </article>`).join('');
   return `
     <div class="workflow-intro"><div><p class="eyebrow">People and participation</p><h2>Departments</h2><p class="muted">Manage departments, positions, members, meetings, attendance, offerings and programs.</p></div><button type="button" id="refreshOrganizationDepartments" class="compact-action">↻ Refresh</button></div>
@@ -2537,8 +2539,10 @@ function organizedDepartmentWorkspace(data) {
   const departmentCards = departmentSummary.map((row, index) => `
     <article class="module-stat tone-${(index % 5) + 1}">
       <strong>${escapeHtml(row.Name)}</strong>
-      <span>${escapeHtml(row.Members)} members · ${escapeHtml(row.Meetings)} meetings</span>
-      <small>${escapeHtml(row.Attendance)} attendance · ${money(row.Offerings)} offerings</small>
+      <span>${escapeHtml(row.Members)} members</span>
+      <span>${escapeHtml(row.Meetings)} meetings</span>
+      <small>${escapeHtml(row.Attendance)} attendance</small>
+      <small>${money(row.Offerings)} offerings</small>
     </article>`).join('');
 
   return `
