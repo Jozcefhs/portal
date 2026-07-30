@@ -18,6 +18,10 @@ import {
   verifyDesktopSecret
 } from '../lib/backend-security.js';
 import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
+import {
+  requireAppsScriptWebAppUrl,
+  selectDocumentStorageUrl
+} from '../lib/document-storage.js';
 import { organizationProfileDocument, resolveOrganizationConfig } from '../lib/organization-config.js';
 import {
   assertExpectedDeploymentIdentity,
@@ -2259,7 +2263,7 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
     ShowResultsOnline: yesNo(body.ShowResultsOnline ?? body.showResultsOnline ?? 'NO') || 'NO',
     OfferDocumentBodyTemplate: clean(body.OfferDocumentBodyTemplate || body.offerDocumentBodyTemplate),
     AdmissionDocumentBodyTemplate: clean(body.AdmissionDocumentBodyTemplate || body.admissionDocumentBodyTemplate),
-    GoogleDocumentsUrl: clean(body.GoogleDocumentsUrl || body.googleDocumentsUrl),
+    GoogleDocumentsUrl: requireAppsScriptWebAppUrl(body.GoogleDocumentsUrl || body.googleDocumentsUrl),
     SubscriptionPlan: clean(body.SubscriptionPlan || body.subscriptionPlan) || 'Starter',
     UserLimit: Math.max(1, Number(body.UserLimit || body.userLimit || 5) || 5),
     UpdatedAt: nowIso(),
@@ -2370,7 +2374,13 @@ async function getSchoolProfile(env) {
       OrganisationName: organization.Name,
       OrganisationCode: organization.Code,
       FeatureFlags: organization.FeatureFlags,
-      GoogleDocumentsUrl: clean(organizationProfile?.GoogleDocumentsUrl || profile?.GoogleDocumentsUrl),
+      GoogleDocumentsUrl: selectDocumentStorageUrl({
+        environmentUrl: env.GOOGLE_APPS_SCRIPT_URL,
+        alternateEnvironmentUrl: env.GOOGLE_DOCUMENTS_URL,
+        organizationUrl: organizationProfile?.GoogleDocumentsUrl,
+        schoolUrl: profile?.GoogleDocumentsUrl,
+        edition: organization.Edition
+      }).url,
       SubscriptionPlan: clean(organizationProfile?.Plan || profile?.SubscriptionPlan) || 'Starter',
       UserLimit: Math.max(1, Number(organizationProfile?.UserLimit || profile?.UserLimit || 5) || 5),
       SchoolBranches: (structure.Branches || []).map((row) => clean(typeof row === 'string' ? row : row.Name || row.Id)).filter(Boolean).join(', '),

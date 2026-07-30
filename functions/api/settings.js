@@ -1,5 +1,9 @@
 import { getDocument, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { secureTextEqual } from '../lib/backend-security.js';
+import {
+  requireAppsScriptWebAppUrl,
+  selectDocumentStorageUrl
+} from '../lib/document-storage.js';
 import { organizationProfileDocument, resolveOrganizationConfig } from '../lib/organization-config.js';
 import {
   assertDeploymentEditionSelection,
@@ -41,6 +45,11 @@ function defaultProfile(env) {
   const organization = resolveOrganizationConfig({
     env: { ...env, ORGANISATION_EDITION: deployment.edition, ORGANIZATION_EDITION: '' }
   });
+  const documentStorage = selectDocumentStorageUrl({
+    environmentUrl: env.GOOGLE_APPS_SCRIPT_URL,
+    alternateEnvironmentUrl: env.GOOGLE_DOCUMENTS_URL,
+    edition: deployment.edition
+  });
   return {
     WorkspaceId: deployment.workspaceId,
     OrganisationEdition: organization.Edition,
@@ -73,7 +82,7 @@ function defaultProfile(env) {
     CurrentTerm: clean(env.CURRENT_TERM) || 'First Term',
     DeclarationStatement: clean(env.DECLARATION_STATEMENT) || 'I declare that the information supplied in this application is complete and correct.',
     ProductKeyMode: clean(env.PRODUCT_KEY_MODE) || 'off',
-    GoogleDocumentsUrl: clean(env.GOOGLE_DOCUMENTS_URL) || '',
+    GoogleDocumentsUrl: documentStorage.url,
     SubscriptionPlan: clean(env.SUBSCRIPTION_PLAN) || 'Starter',
     UserLimit: Math.max(1, Number(env.USER_LIMIT || 5) || 5),
     TurnstileSiteKey: clean(env.TURNSTILE_SITE_KEY),
@@ -98,13 +107,15 @@ function invalidateProfileCache() {
 async function loadProfile(env) {
   const deployment = requiredDeploymentIdentity(env);
   let profile = defaultProfile(env);
+  let savedOrganization = null;
   try {
     requireFirestoreEnv(env);
-    const [saved, savedOrganization, branding] = await Promise.all([
+    const [saved, storedOrganization, branding] = await Promise.all([
       getDocument(env, 'settings', 'schoolProfile'),
       getDocument(env, 'settings', 'organisationProfile'),
       getWebBranding(env)
     ]);
+    savedOrganization = storedOrganization;
     if (saved) {
       Object.keys(profile).forEach((key) => {
         if (saved[key] !== undefined) profile[key] = saved[key];
@@ -134,6 +145,13 @@ async function loadProfile(env) {
     // Public pages should still load with environment/default values if Firestore is unavailable.
   }
   profile.TurnstileSiteKey = clean(env.TURNSTILE_SITE_KEY);
+  profile.GoogleDocumentsUrl = selectDocumentStorageUrl({
+    environmentUrl: env.GOOGLE_APPS_SCRIPT_URL,
+    alternateEnvironmentUrl: env.GOOGLE_DOCUMENTS_URL,
+    organizationUrl: savedOrganization?.GoogleDocumentsUrl,
+    schoolUrl: profile.GoogleDocumentsUrl,
+    edition: deployment.edition
+  }).url;
   delete profile.__name;
   delete profile.__id;
   delete profile.__createTime;
@@ -239,7 +257,7 @@ export async function onRequestPost(context) {
       CurrentTerm: clean(incoming.CurrentTerm) || 'First Term',
       DeclarationStatement: clean(incoming.DeclarationStatement) || 'I declare that the information supplied in this application is complete and correct.',
       ProductKeyMode: ['off', 'required'].includes(clean(incoming.ProductKeyMode)) ? clean(incoming.ProductKeyMode) : 'off',
-      GoogleDocumentsUrl: clean(incoming.GoogleDocumentsUrl),
+      GoogleDocumentsUrl: requireAppsScriptWebAppUrl(incoming.GoogleDocumentsUrl),
       SubscriptionPlan: clean(incoming.SubscriptionPlan) || 'Starter',
       UserLimit: Math.max(1, Number(incoming.UserLimit || existing.UserLimit || 5) || 5),
       UpdatedAt: new Date().toISOString()

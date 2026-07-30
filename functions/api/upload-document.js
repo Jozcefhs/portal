@@ -500,6 +500,30 @@ export async function onRequestPost(context) {
       }
 
       savedDocumentUrl = clean(data.documentUrl);
+      const storageStatus = Number(data.httpStatus || 0);
+      const authoritativeRejection = data.ok === false
+        || (storageStatus >= 400 && storageStatus < 500);
+      if (authoritativeRejection) {
+        const storageCode = clean(data.code) || 'DOCUMENT_STORAGE_REJECTED';
+        const storageMessage = clean(data.rawMessage || data.message)
+          || 'Google Drive document storage rejected the upload.';
+        driveOutcomeRecorded = true;
+        await updateUploadOperation(env, operationId, {
+          Status: 'Prepared',
+          DriveState: 'Rejected',
+          StorageHttpStatus: storageStatus,
+          LastStorageErrorCode: storageCode,
+          LastStorageError: storageMessage.slice(0, 500),
+          LastRejectedAt: new Date().toISOString(),
+          OutcomeUncertain: false
+        }).catch(() => null);
+        throw uploadError(
+          storageMessage,
+          424,
+          storageCode,
+          { outcomeUncertain: false }
+        );
+      }
       if (data.ok !== true || data.httpOk !== true || !savedDocumentUrl) {
         const uncertaintyReason = clean(data.rawMessage || data.message || `Storage returned HTTP ${data.httpStatus || 'unknown'}`)
           .slice(0, 500);

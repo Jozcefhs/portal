@@ -252,14 +252,14 @@
             <div>
               <p class="settings-eyebrow">External storage</p>
               <h2>Google document storage</h2>
-              <p>Configure the organisation-owned Google Drive or Apps Script URL used for uploaded documents.</p>
+              <p>Configure the deployed Apps Script Web App that securely stores uploaded files in the organisation's Google Drive.</p>
             </div>
           </div>
           <div class="settings-fields">
             <div class="settings-field">
-              <label for="googleDocumentsUrl">Google document storage URL</label>
-              <input id="googleDocumentsUrl" name="GoogleDocumentsUrl" type="url" placeholder="https://drive.google.com/... or Apps Script /exec URL">
-              <small class="settings-help">Leave blank to use the server environment configuration.</small>
+              <label for="googleDocumentsUrl">Google Apps Script Web App URL</label>
+              <input id="googleDocumentsUrl" name="GoogleDocumentsUrl" type="url" placeholder="https://script.google.com/macros/s/.../exec">
+              <small class="settings-help">Use the deployed Web App URL ending in /exec. A Drive folder link will not work. Leave blank to use the server environment configuration.</small>
             </div>
           </div>
         </section>

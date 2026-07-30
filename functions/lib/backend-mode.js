@@ -1,3 +1,5 @@
+import { normalizeAppsScriptWebAppUrl } from './document-storage.js';
+
 function clean(value) {
   return String(value ?? '').trim().toLowerCase();
 }
@@ -10,5 +12,8 @@ export function legacyGoogleDataEnabled(env = {}) {
 }
 
 export function googleDocumentStorageConfigured(env = {}) {
-  return Boolean(String(env.GOOGLE_APPS_SCRIPT_URL || '').trim() && String(env.GOOGLE_APPS_SCRIPT_SECRET || '').trim());
+  return Boolean(
+    normalizeAppsScriptWebAppUrl(env.GOOGLE_APPS_SCRIPT_URL || env.GOOGLE_DOCUMENTS_URL)
+    && String(env.GOOGLE_APPS_SCRIPT_SECRET || '').trim()
+  );
 }
