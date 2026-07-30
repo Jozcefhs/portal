@@ -240,14 +240,12 @@ function dialogMarkup(mode, student = {}) {
   const enrollment = mode === 'enroll';
   const studentName = clean(student.title || student.StudentName || student.studentName);
   const studentId = clean(student.id || student.AccountRef || student.studentId);
-  const defaultExpiry = new Date();
-  defaultExpiry.setFullYear(defaultExpiry.getFullYear() + 1);
   const studentIdentity = studentName && studentId && studentName !== studentId
     ? `${studentName} · ${studentId}`
     : (studentName || studentId);
   return `<dialog class="student-face-dialog" data-student-face-dialog aria-modal="true" aria-labelledby="studentFaceDialogTitle">
     <header>
-      <div><small>${enrollment ? 'Consent-based biometric enrollment' : 'Staff-assisted student lookup'}</small>
+      <div><small>${enrollment ? 'Authorized biometric enrollment' : 'Staff-assisted student lookup'}</small>
         <h2 id="studentFaceDialogTitle">${enrollment ? 'Student face enrollment' : 'Find student by face'}</h2>
         ${enrollment ? `<p>${escapeHtml(studentIdentity)}</p>` : ''}
       </div>
@@ -263,13 +261,6 @@ function dialogMarkup(mode, student = {}) {
       <p>Keep one face centred and blink once when prompted.</p>
     </div>
     <progress data-face-progress value="0" max="${SAMPLE_COUNT}" hidden></progress>
-    ${enrollment ? `<fieldset class="student-face-consent">
-      <legend>Parent or guardian consent</legend>
-      <label>Guardian name <span aria-hidden="true">*</span><input name="consentGuardianName" autocomplete="off" required></label>
-      <label>Consent reference <span aria-hidden="true">*</span><input name="consentReference" placeholder="Form, email or approval reference" autocomplete="off" required></label>
-      <label>Consent expiry <input name="consentExpiresAt" type="date" value="${defaultExpiry.toISOString().slice(0, 10)}" required></label>
-      <label class="student-face-consent-check"><input name="consentGranted" type="checkbox"> I confirm that documented guardian consent and the school's required privacy review are in place.</label>
-    </fieldset>` : ''}
     <p class="student-face-status" data-face-status>Checking whether this school and staff account can use face lookup...</p>
     <div class="student-face-match" data-face-match hidden></div>
     <footer>
@@ -279,22 +270,6 @@ function dialogMarkup(mode, student = {}) {
       <button type="button" class="secondary" data-face-close>${enrollment ? 'Close' : 'Use manual search'}</button>
     </footer>
   </dialog>`;
-}
-
-function validateConsent(dialog) {
-  const guardian = clean(dialog.querySelector('[name="consentGuardianName"]')?.value);
-  const reference = clean(dialog.querySelector('[name="consentReference"]')?.value);
-  const expiresAt = clean(dialog.querySelector('[name="consentExpiresAt"]')?.value);
-  const granted = Boolean(dialog.querySelector('[name="consentGranted"]')?.checked);
-  if (!granted || guardian.length < 3 || reference.length < 3 || !expiresAt) {
-    throw new Error('Record the guardian name, consent reference and expiry, then confirm consent.');
-  }
-  return {
-    consentGranted: true,
-    consentGuardianName: guardian,
-    consentReference: reference,
-    consentExpiresAt
-  };
 }
 
 function renderPossibleMatch(dialog, match, onMatch) {
@@ -367,7 +342,6 @@ export async function openStudentFaceLookup(options = {}) {
     if (captureButton.disabled) return;
     setBusy(captureButton, true, mode === 'enroll' ? 'Enrolling...' : 'Scanning...');
     try {
-      const consent = mode === 'enroll' ? validateConsent(dialog) : {};
       const human = await loadHuman(dialog);
       const descriptor = await captureDescriptor(dialog, human);
       stopCamera(video);
@@ -377,8 +351,7 @@ export async function openStudentFaceLookup(options = {}) {
           branchId,
           modelId: MODEL_ID,
           descriptor,
-          sampleCount: SAMPLE_COUNT,
-          ...consent
+          sampleCount: SAMPLE_COUNT
         });
         status = { ...status, enrolled: true };
         revokeButton.hidden = false;

@@ -29,6 +29,7 @@ import {
   studentFaceLookupConfigured,
   studentFaceLookupEnabled,
   studentFaceMatchSettings,
+  studentFaceTemplateExpiresAt,
   validateFaceDescriptor
 } from '../lib/student-face-templates.js';
 
@@ -279,42 +280,20 @@ async function status(env, user, body) {
   const saved = await getDocument(env, path, documentId).catch(() => null);
   if (saved && faceTemplateIsUsable(saved)) {
     result.enrolled = true;
-    result.consentExpiresAt = clean(saved.ConsentExpiresAt);
+    result.templateExpiresAt = clean(saved.TemplateExpiresAt);
     result.enrolledAt = clean(saved.EnrolledAt);
     result.sampleCount = Number(saved.SampleCount || 0);
   } else if (saved) {
     result.expired = true;
-    result.enrollmentMessage = 'The saved face enrollment is inactive or its consent has expired. Re-enroll with current consent.';
+    result.enrollmentMessage = 'The saved face enrollment is inactive or its retention period has ended. Re-enroll to renew it.';
   }
   return result;
-}
-
-function consentExpiry(body = {}) {
-  const now = Date.now();
-  const supplied = Date.parse(clean(body.consentExpiresAt));
-  if (!Number.isFinite(supplied)) {
-    throw error('Enter a valid biometric consent expiry date.');
-  }
-  const expiry = supplied;
-  if (expiry <= now) throw error('The biometric consent expiry must be in the future.');
-  const latest = new Date();
-  latest.setFullYear(latest.getFullYear() + 2);
-  if (expiry > latest.getTime()) throw error('Biometric consent can be recorded for a maximum of two years.');
-  return new Date(expiry).toISOString();
 }
 
 async function enroll(env, user, body) {
   ensureConfigured(env);
   if (!canManageTemplates(user)) {
     throw error('This staff account cannot enroll student face templates.', 403);
-  }
-  if (body.consentGranted !== true) {
-    throw error('Recorded parent or guardian consent is required before face enrollment.');
-  }
-  const consentReference = clean(body.consentReference);
-  const consentGuardianName = clean(body.consentGuardianName);
-  if (consentReference.length < 3 || consentGuardianName.length < 3) {
-    throw error('Enter the guardian name and consent reference before enrollment.');
   }
   const modelId = clean(body.modelId);
   if (modelId !== STUDENT_FACE_MODEL_ID) {
@@ -356,11 +335,7 @@ async function enroll(env, user, body) {
     TemplateVersion: STUDENT_FACE_TEMPLATE_VERSION,
     SampleCount: sampleCount,
     Active: true,
-    ConsentGranted: true,
-    ConsentReference: consentReference,
-    ConsentGuardianName: consentGuardianName,
-    ConsentGrantedAt: timestamp,
-    ConsentExpiresAt: consentExpiry(body),
+    TemplateExpiresAt: studentFaceTemplateExpiresAt(env, Date.parse(timestamp)),
     EnrolledAt: existing?.EnrolledAt || timestamp,
     EnrolledBy: existing?.EnrolledBy || clean(user.displayName || user.username),
     UpdatedAt: timestamp,

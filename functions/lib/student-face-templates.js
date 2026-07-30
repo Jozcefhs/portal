@@ -7,6 +7,7 @@ export const STUDENT_FACE_DESCRIPTOR_MIN_LENGTH = STUDENT_FACE_DESCRIPTOR_LENGTH
 export const STUDENT_FACE_DESCRIPTOR_MAX_LENGTH = STUDENT_FACE_DESCRIPTOR_LENGTH;
 export const STUDENT_FACE_DEFAULT_THRESHOLD = 0.68;
 export const STUDENT_FACE_DEFAULT_MARGIN = 0.08;
+export const STUDENT_FACE_DEFAULT_RETENTION_DAYS = 365;
 
 function base64UrlEncode(bytes) {
   let binary = '';
@@ -54,6 +55,20 @@ export function studentFaceMatchSettings(env = {}) {
       0.3
     )
   };
+}
+
+export function studentFaceTemplateRetentionDays(env = {}) {
+  const configured = Number(env.STUDENT_FACE_TEMPLATE_RETENTION_DAYS);
+  if (!Number.isInteger(configured)) return STUDENT_FACE_DEFAULT_RETENTION_DAYS;
+  return Math.max(30, Math.min(730, configured));
+}
+
+export function studentFaceTemplateExpiresAt(env = {}, now = Date.now()) {
+  const timestamp = Number(now);
+  if (!Number.isFinite(timestamp)) throw new Error('The face-template enrollment time is invalid.');
+  return new Date(
+    timestamp + (studentFaceTemplateRetentionDays(env) * 24 * 60 * 60 * 1000)
+  ).toISOString();
 }
 
 export function validateFaceDescriptor(value, expectedLength = 0) {
@@ -174,10 +189,7 @@ export function faceTemplateIsUsable(record = {}, now = new Date()) {
     clean(record.Active).toLowerCase()
   );
   if (!active) return false;
-  if (record.ConsentGranted !== true && !['yes', 'true', '1'].includes(
-    clean(record.ConsentGranted).toLowerCase()
-  )) return false;
-  const expiry = Date.parse(clean(record.ConsentExpiresAt));
+  const expiry = Date.parse(clean(record.TemplateExpiresAt));
   return Number.isFinite(expiry) && expiry > now.getTime();
 }
 

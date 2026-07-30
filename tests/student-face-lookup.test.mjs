@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 import {
   STUDENT_FACE_DEFAULT_MARGIN,
+  STUDENT_FACE_DEFAULT_RETENTION_DAYS,
   STUDENT_FACE_DEFAULT_THRESHOLD,
   STUDENT_FACE_DESCRIPTOR_MAX_LENGTH,
   STUDENT_FACE_DESCRIPTOR_MIN_LENGTH,
@@ -18,6 +19,8 @@ import {
   studentFaceLookupEnabled,
   studentFaceMatchSettings,
   studentFaceTemplateAad,
+  studentFaceTemplateExpiresAt,
+  studentFaceTemplateRetentionDays,
   validateFaceDescriptor
 } from '../functions/lib/student-face-templates.js';
 import { recordsDeskCapabilities } from '../functions/lib/records-desk.js';
@@ -39,10 +42,9 @@ const descriptor = (value = 0, length = STUDENT_FACE_DESCRIPTOR_MIN_LENGTH) =>
     Math.round((value + (((index % 17) - 8) * 0.0001)) * 1e6) / 1e6
   );
 
-const activeConsent = (overrides = {}) => ({
+const activeTemplate = (overrides = {}) => ({
   Active: true,
-  ConsentGranted: true,
-  ConsentExpiresAt: '2099-12-31T23:59:59.000Z',
+  TemplateExpiresAt: '2099-12-31T23:59:59.000Z',
   ...overrides
 });
 
@@ -159,6 +161,21 @@ test('feature configuration is opt-in and match settings remain within conservat
     STUDENT_FACE_MATCH_THRESHOLD: 1,
     STUDENT_FACE_MATCH_MARGIN: 0
   }), { threshold: 0.95, margin: 0.02 });
+
+  assert.equal(studentFaceTemplateRetentionDays({}), STUDENT_FACE_DEFAULT_RETENTION_DAYS);
+  assert.equal(studentFaceTemplateRetentionDays({
+    STUDENT_FACE_TEMPLATE_RETENTION_DAYS: '7'
+  }), 30);
+  assert.equal(studentFaceTemplateRetentionDays({
+    STUDENT_FACE_TEMPLATE_RETENTION_DAYS: '999'
+  }), 730);
+  assert.equal(
+    studentFaceTemplateExpiresAt(
+      { STUDENT_FACE_TEMPLATE_RETENTION_DAYS: '30' },
+      Date.parse('2026-07-30T00:00:00.000Z')
+    ),
+    '2026-08-29T00:00:00.000Z'
+  );
 });
 
 test('matching rejects weak and ambiguous candidates and accepts a clearly separated candidate', () => {
@@ -166,17 +183,17 @@ test('matching rejects weak and ambiguous candidates and accepts a clearly separ
   const strong = {
     id: 'strong',
     descriptor: descriptor(0.2),
-    record: activeConsent()
+    record: activeTemplate()
   };
   const closeRunnerUp = {
     id: 'close-runner-up',
     descriptor: descriptor(0.205),
-    record: activeConsent()
+    record: activeTemplate()
   };
   const weak = {
     id: 'weak',
     descriptor: descriptor(0.4),
-    record: activeConsent()
+    record: activeTemplate()
   };
 
   assert.equal(faceDescriptorSimilarity(query, query), 1);
@@ -207,26 +224,25 @@ test('matching rejects weak and ambiguous candidates and accepts a clearly separ
   assert.equal(ambiguous.runnerUp.id, 'close-runner-up');
 });
 
-test('revoked, unconsented and expired templates cannot participate in matching', () => {
+test('inactive and retention-expired templates cannot participate in matching', () => {
   const now = new Date('2026-07-30T12:00:00.000Z');
-  assert.equal(faceTemplateIsUsable(activeConsent(), now), true);
-  assert.equal(faceTemplateIsUsable(activeConsent({ Active: false }), now), false);
-  assert.equal(faceTemplateIsUsable(activeConsent({ ConsentGranted: false }), now), false);
-  assert.equal(faceTemplateIsUsable(activeConsent({ ConsentExpiresAt: '' }), now), false);
-  assert.equal(faceTemplateIsUsable(activeConsent({
-    ConsentExpiresAt: '2026-07-29T23:59:59.000Z'
+  assert.equal(faceTemplateIsUsable(activeTemplate(), now), true);
+  assert.equal(faceTemplateIsUsable(activeTemplate({ Active: false }), now), false);
+  assert.equal(faceTemplateIsUsable(activeTemplate({ TemplateExpiresAt: '' }), now), false);
+  assert.equal(faceTemplateIsUsable(activeTemplate({
+    TemplateExpiresAt: '2026-07-29T23:59:59.000Z'
   }), now), false);
 
   const result = bestFaceTemplateMatch(descriptor(0), [
     {
       id: 'expired-identical',
       descriptor: descriptor(0),
-      record: activeConsent({ ConsentExpiresAt: '2026-07-29T23:59:59.000Z' })
+      record: activeTemplate({ TemplateExpiresAt: '2026-07-29T23:59:59.000Z' })
     },
     {
       id: 'active-weaker',
       descriptor: descriptor(0.2),
-      record: activeConsent()
+      record: activeTemplate()
     }
   ], { threshold: 0.7, margin: 0.08 });
   assert.equal(result.outcome, 'matched');
@@ -312,13 +328,13 @@ test('the browser UI keeps frames on-device, requires a live blink and always st
   );
 });
 
-test('lookup is explicitly initiated, consented enrollment is documented, and a human confirms every match', () => {
+test('lookup and enrollment are explicitly initiated without consent fields, and a human confirms every match', () => {
   assert.match(uiSource, /data-face-start disabled>Start camera/);
-  assert.match(uiSource, /Parent or guardian consent/);
-  assert.match(uiSource, /name="consentGuardianName"/);
-  assert.match(uiSource, /name="consentReference"/);
-  assert.match(uiSource, /name="consentExpiresAt"/);
-  assert.match(uiSource, /name="consentGranted"/);
+  assert.match(uiSource, /Authorized biometric enrollment/);
+  assert.doesNotMatch(uiSource, /Parent or guardian consent/);
+  assert.doesNotMatch(uiSource, /consentGuardianName|consentReference|consentExpiresAt|consentGranted/);
+  assert.doesNotMatch(endpointSource, /ConsentGranted|ConsentReference|ConsentGuardianName|ConsentExpiresAt/);
+  assert.match(endpointSource, /TemplateExpiresAt: studentFaceTemplateExpiresAt/);
   assert.match(uiSource, /data-face-confirm>Confirm and open/);
   assert.match(uiSource, /Use manual search/);
   assert.match(uiSource, /credentials: 'same-origin'/);
@@ -335,5 +351,5 @@ test('lookup is explicitly initiated, consented enrollment is documented, and a 
   assert.match(cssSource, /\.student-face-dialog/);
   assert.match(cssSource, /html\[data-theme="dark"\] \.student-face-dialog/);
   assert.match(cssSource, /@media\(max-width:680px\)/);
-  assert.match(adminHtmlSource, /20260730-student-face-lookup/);
+  assert.match(adminHtmlSource, /20260730-face-direct-enrollment/);
 });

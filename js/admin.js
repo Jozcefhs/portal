@@ -4024,7 +4024,7 @@ function recordsDeskFaceLookupAllowed() {
 
 async function openRecordsDeskFaceLookup(options = {}) {
   try {
-    const module = await import('./student-face-lookup.js?v=20260730-face-lookup');
+    const module = await import('./student-face-lookup.js?v=20260730-face-direct-enrollment');
     await module.openStudentFaceLookup(options);
   } catch (failure) {
     recordsDeskState.error = failure.message || String(failure);
@@ -6134,7 +6134,7 @@ function renderStaffUsers() {
         <section class="config-group"><header><strong>Web companion access</strong><small>Leave all clear to use the selected role's default tabs.</small></header><div class="approval-account-list config-option-list config-option-grid">${tabConfig.map(([key, label]) => `<label class="check-row"><input type="checkbox" name="TabAccessOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}</div></section>
         <section class="config-group"><header><strong>Security</strong><small>Password and account-state controls.</small></header><div class="config-grid">
           <label>New or reset password<input name="Password" type="password" minlength="6" autocomplete="new-password"><small>Required for a new account. Leave blank when editing unless resetting it.</small></label>
-          <div class="config-toggle-stack"><label class="check-row"><input name="Active" type="checkbox" checked> Account active</label><label class="check-row"><input name="MustChangePassword" type="checkbox" checked> Require password change at next sign-in</label>${schoolEdition ? '<label class="check-row sensitive-access-toggle"><input name="BiometricLookupEnabled" type="checkbox"> Allow consent-based student face lookup</label>' : ''}</div>
+          <div class="config-toggle-stack"><label class="check-row"><input name="Active" type="checkbox" checked> Account active</label><label class="check-row"><input name="MustChangePassword" type="checkbox" checked> Require password change at next sign-in</label>${schoolEdition ? '<label class="check-row sensitive-access-toggle"><input name="BiometricLookupEnabled" type="checkbox"> Allow student face lookup</label>' : ''}</div>
         </div></section>
         <div class="config-dialog-actions"><p class="status" data-user-form-status></p><button type="submit">Save staff account</button></div>
       </form>

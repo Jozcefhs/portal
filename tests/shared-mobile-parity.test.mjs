@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260730-student-face-lookup';
-const adminScriptVersion = '20260730-student-face-lookup';
+const adminScriptVersion = '20260730-face-direct-enrollment';
 const parentScriptVersion = '20260729-action-feedback';
 const pageNames = [
   'admin.html',
