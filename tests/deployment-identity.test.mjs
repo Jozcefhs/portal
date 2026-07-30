@@ -131,7 +131,9 @@ test('backend validates authenticated expected identity before database-backed r
   const expectedCheck = backendSource.indexOf('assertExpectedDeploymentIdentity(env, expectedIdentity);');
   const profileCheck = backendSource.indexOf('await loadDeploymentIdentity(env, { identity: configuredIdentity });');
   const actorCheck = backendSource.indexOf('await verifyDesktopActor(env, action, body);');
-  const route = backendSource.indexOf('await routeAction(env, action, body, deploymentIdentity);');
+  const route = backendSource.indexOf(
+    'await routeAction(env, action, body, deploymentIdentity, new URL(request.url).origin);'
+  );
   assert.ok(secretCheck >= 0);
   assert.ok(expectedCheck > secretCheck);
   assert.ok(profileCheck > expectedCheck);

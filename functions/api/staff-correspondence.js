@@ -34,11 +34,16 @@ export async function onRequestPost({ request, env }) {
     }
     const data = await handleExecutiveOfficeAction(env, user, body, {
       authorization,
-      sourcePlatform: 'Web Executive Office'
+      sourcePlatform: 'Web Executive Office',
+      publicOrigin: new URL(request.url).origin
     });
     return response(data);
   } catch (error) {
-    return response({ ok: false, message: error.message || String(error) }, error.status || 500);
+    return response({
+      ok: false,
+      message: error.message || String(error),
+      ...(error?.code ? { code: clean(error.code) } : {})
+    }, error.status || 500);
   }
 }
 

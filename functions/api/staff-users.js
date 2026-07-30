@@ -8,6 +8,7 @@ function lower(value) { return clean(value).toLowerCase(); }
 function safeId(value) { return lower(value).replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120); }
 function nowIso() { return new Date().toISOString(); }
 function activeValue(value) { return !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(value)); }
+function explicitOptIn(value) { return ['yes', 'true', '1', 'enabled', 'on'].includes(lower(value)); }
 
 function publicUser(row) {
   return {
@@ -25,6 +26,7 @@ function publicUser(row) {
     ApprovalEnabled: row.ApprovalEnabled === undefined ? false : activeValue(row.ApprovalEnabled),
     ApprovalMaxAmount: Number(row.ApprovalMaxAmount || 0) || 0,
     ApprovalAccounts: Array.isArray(row.ApprovalAccounts) ? row.ApprovalAccounts : clean(row.ApprovalAccounts).split(',').map(clean).filter(Boolean),
+    BiometricLookupEnabled: explicitOptIn(row.BiometricLookupEnabled),
     TabAccess: Array.isArray(row.TabAccess) ? row.TabAccess : clean(row.TabAccess).split(',').map(clean).filter(Boolean),
     Active: row.Active === undefined ? true : activeValue(row.Active),
     MustChangePassword: row.MustChangePassword === undefined ? false : activeValue(row.MustChangePassword),
@@ -120,6 +122,7 @@ async function saveUser(env, actor, body) {
     ApprovalEnabled: role === 'Super Admin' ? true : activeValue(body.ApprovalEnabled ?? false),
     ApprovalMaxAmount: Math.max(0, Number(body.ApprovalMaxAmount || 0) || 0),
     ApprovalAccounts: Array.isArray(body.ApprovalAccounts) ? body.ApprovalAccounts.map(clean).filter(Boolean) : clean(body.ApprovalAccounts).split(',').map(clean).filter(Boolean),
+    BiometricLookupEnabled: explicitOptIn(body.BiometricLookupEnabled),
     TabAccess: Array.isArray(body.TabAccess) ? body.TabAccess.map(clean).filter(Boolean) : clean(body.TabAccess).split(',').map(clean).filter(Boolean),
     Active: active,
     MustChangePassword: password ? activeValue(body.MustChangePassword === undefined ? true : body.MustChangePassword) : activeValue(existing?.MustChangePassword || false),
@@ -175,6 +178,7 @@ async function importUsers(env, actor, body) {
         ApprovalEnabled: role === 'Super Admin' ? true : activeValue(row.ApprovalEnabled ?? false),
         ApprovalMaxAmount: Math.max(0, Number(row.ApprovalMaxAmount || 0) || 0),
         ApprovalAccounts: clean(row.ApprovalAccounts).split(/[;,]/).map(clean).filter(Boolean),
+        BiometricLookupEnabled: explicitOptIn(row.BiometricLookupEnabled),
         TabAccess: clean(row.TabAccess).split(/[;,]/).map(clean).filter(Boolean),
         Active: requestedActive,
         MustChangePassword: activeValue(row.MustChangePassword === undefined ? true : row.MustChangePassword),

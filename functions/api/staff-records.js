@@ -295,12 +295,26 @@ function activity(title, rows) {
 function studentActions(user, student) {
   const allowed = new Set(user.allowedSections || []);
   const id = clean(student.AdmissionNo || student.AccountRef || student.__id);
+  const faceLookupEnabled = user.biometricLookupEnabled === true ||
+    ['yes', 'true', '1', 'enabled'].includes(lower(user.biometricLookupEnabled));
+  const canManageFaceTemplate = faceLookupEnabled &&
+    ['Super Admin', 'Principal', 'Admissions Officer'].includes(clean(user.role));
   return [
     allowed.has('students') && { id: 'student-profile', label: 'Edit profile', targetSection: 'students', context: { AccountRef: id } },
     allowed.has('accounts') && { id: 'student-finance', label: 'Open Finance', targetSection: 'accounts', context: { AccountRef: id } },
     allowed.has('clinic') && { id: 'student-clinic', label: 'Open Clinic', targetSection: 'clinic', context: { AccountRef: id } },
     allowed.has('tuckShop') && { id: 'student-wallet', label: 'Open Wallet Purchase', targetSection: 'tuckShop', context: { AccountRef: id } },
-    allowed.has('studentConduct') && { id: 'student-conduct', label: 'Open Conduct & Discipline', targetSection: 'studentConduct', context: { AccountRef: id } }
+    allowed.has('studentConduct') && { id: 'student-conduct', label: 'Open Conduct & Discipline', targetSection: 'studentConduct', context: { AccountRef: id } },
+    canManageFaceTemplate && {
+      id: 'student-face-enroll',
+      label: 'Face enrollment',
+      context: {
+        AccountRef: id,
+        StudentName: clean(student.DisplayName || student.ApplicantName || student.StudentName || student.Name),
+        BranchId: clean(student.BranchId || 'main'),
+        SchoolSection: schoolSectionFor(student)
+      }
+    }
   ].filter(Boolean);
 }
 

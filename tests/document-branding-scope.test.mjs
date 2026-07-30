@@ -44,7 +44,7 @@ test('Executive correspondence and settings use scoped document branding', async
   assert.match(executiveSource, /getDocumentBranding\(env\)/);
   assert.match(executiveSource, /documentBrandingMatchesDeployment\(env, documentBranding\)/);
   assert.match(executiveSource, /webBrandingMatchesDeployment\(env, webBranding\)/);
-  assert.match(executiveSource, /documentLogoDataUrl\s*\?\s*'\/api\/document-logo'/);
+  assert.match(executiveSource, /documentLogoDataUrl\s*\?\s*`\/api\/document-logo\$\{versionSuffix\}`/);
   assert.doesNotMatch(executiveSource, /getDocument\(env, 'settings', 'documentBranding'\)/);
   assert.match(backendSource, /saveDocumentBranding\(env,/);
   assert.match(endpointSource, /documentBrandingMatchesDeployment\(context\.env, documentBranding\)/);

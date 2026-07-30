@@ -13,6 +13,7 @@ import {
   normalizeTemplate,
   validateTemplateWriteTarget,
   renderTokenTemplate,
+  snapshotIdentityMatchesDeployment,
   visibleExecutiveStaffRow
 } from '../functions/lib/executive-correspondence.js';
 import { requireBackendSecret } from '../functions/api/backend.js';
@@ -228,6 +229,7 @@ test('issuance snapshots copy identity, branding, recipient and tokens for stabl
   correspondence.RecipientName = 'Changed Student';
   correspondence.TokenValues.CLASS = 'SSS 3';
   assert.equal(snapshot.Identity.Name, 'Dynamax School');
+  assert.equal(snapshot.SnapshotVersion, 2);
   assert.equal(snapshot.Identity.LogoUrl, 'https://portal.example/images/logo.png');
   assert.equal(snapshot.Recipient.RecipientName, 'Ada Grace');
   assert.equal(snapshot.TokenValues.CLASS, 'JSS 1');
@@ -242,6 +244,30 @@ test('public asset URLs are absolute for email clients', () => {
     absolutePublicAssetUrl({}, 'http://legacy.example/logo.png'),
     'https://legacy.example/logo.png'
   );
+  assert.equal(
+    absolutePublicAssetUrl({}, '/api/document-logo', 'https://destinychristianacademy.pages.dev'),
+    'https://destinychristianacademy.pages.dev/api/document-logo'
+  );
+  assert.equal(
+    absolutePublicAssetUrl({}, '/api/document-logo', 'https://digc-suite.pages.dev'),
+    'https://digc-suite.pages.dev/api/document-logo'
+  );
+  assert.equal(absolutePublicAssetUrl({}, '/api/document-logo'), '');
+});
+
+test('issuance snapshot identity cannot cross deployment boundaries', () => {
+  assert.equal(snapshotIdentityMatchesDeployment(
+    { Edition: 'school', WorkspaceId: 'school-main', Code: 'DCA' },
+    { Edition: 'school', WorkspaceId: 'school-main', Code: 'DCA' }
+  ), true);
+  assert.equal(snapshotIdentityMatchesDeployment(
+    { Edition: 'faith', WorkspaceId: 'faith-main', Code: 'DIGC' },
+    { Edition: 'school', WorkspaceId: 'school-main', Code: 'DCA' }
+  ), false);
+  assert.equal(snapshotIdentityMatchesDeployment(
+    { Edition: 'school', WorkspaceId: 'faith-main', Code: 'DIGC' },
+    { Edition: 'school', WorkspaceId: 'school-main', Code: 'DCA' }
+  ), false);
 });
 
 test('dashboard preferences discard unknown metrics and remain bounded', () => {
@@ -324,7 +350,7 @@ test('official correspondence sends the email-safe layout with bounded endorseme
   assert.match(emailSource, /payload\.replyTo = \{ email: replyToEmail/);
 });
 
-test('email correspondence uses a table layout, visible watermark, and one generated signature block', () => {
+test('email correspondence uses a table layout, aligned background watermark, and one generated signature block', () => {
   const printable = buildPrintableCorrespondence({
     CorrespondenceId: 'COR-LEGACY-1',
     Reference: 'DIGC-COR-1',
@@ -346,7 +372,9 @@ test('email correspondence uses a table layout, visible watermark, and one gener
 
   assert.match(printable.emailHtml, /<table role="presentation"/);
   assert.match(printable.emailHtml, /padding:30px 40px 34px/);
-  assert.match(printable.emailHtml, /opacity:\.055/);
+  assert.match(printable.emailHtml, /background-position:center center/);
+  assert.match(printable.emailHtml, /background-repeat:no-repeat/);
+  assert.doesNotMatch(printable.emailHtml, /position:absolute/);
   assert.match(printable.emailHtml, /Yours faithfully,/);
   assert.equal((printable.emailHtml.match(/Jozcefhs/g) || []).length, 1);
   assert.doesNotMatch(printable.emailHtml, /<p>The<\/p>/);
@@ -370,6 +398,9 @@ test('desktop bridge resolves an authoritative actor and requires its local pass
   assert.match(backend, /method: 'Desktop password'/);
   assert.match(backendSecurity, /schoolSectionAccess: clean\(user\.SchoolSectionAccess/);
   assert.match(backendSecurity, /UserSchoolSectionAccess: actor\.schoolSectionAccess/);
+  assert.match(backend, /publicOrigin\s*[,}]/);
+  assert.match(backend, /routeAction\(env, action, body, deploymentIdentity, new URL\(request\.url\)\.origin\)/);
+  assert.match(endpoint, /publicOrigin: new URL\(request\.url\)\.origin/);
 });
 
 test('desktop Executive Office bridge fails closed without its shared secret', () => {
@@ -402,4 +433,7 @@ test('issued rendering is snapshot based and issue/send transitions are idempote
     executiveSource,
     /Issued documents must never[\s\S]*const authoritative = immutable[\s\S]*\? \{\}/
   );
+  assert.match(executiveSource, /Status: 'Uncertain'/);
+  assert.match(executiveSource, /Automatic resend is paused to prevent a duplicate email/);
+  assert.match(executiveSource, /ProviderMessageId: providerMessageId/);
 });

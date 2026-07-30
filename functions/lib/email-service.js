@@ -257,26 +257,50 @@ function brevoFailureError(status, providerError) {
   return error;
 }
 
+function configuredDeliverySender(profile, useFallback = false) {
+  const senderEmail = clean(useFallback ? profile.fallbackSenderEmail : profile.senderEmail);
+  if (!validEmail(senderEmail)) return null;
+  return {
+    senderEmail,
+    // Preserve the Executive/Principal office display name even when the
+    // already-working shared organisation address is used for delivery.
+    senderName: clean(profile.senderName)
+      || clean(useFallback ? profile.fallbackSenderName : profile.senderName),
+    replyToEmail: clean(profile.replyToEmail)
+      || (useFallback ? clean(profile.senderEmail) : ''),
+    replyToName: clean(profile.replyToName) || clean(profile.senderName),
+    usedFallback: useFallback,
+    verified: false
+  };
+}
+
 async function resolveBrevoDeliverySender(apiKey, profile) {
-  if (!profile.useExecutiveProfile) {
-    return {
-      senderEmail: profile.senderEmail,
-      senderName: profile.senderName,
-      replyToEmail: profile.replyToEmail,
-      replyToName: profile.replyToName
-    };
+  const configured = configuredDeliverySender(profile);
+  const fallback = configuredDeliverySender(profile, true);
+  const sameAsShared = clean(profile.senderEmail).toLowerCase()
+    === clean(profile.fallbackSenderEmail).toLowerCase();
+  // Most Executive offices intentionally reuse the organisation sender. That
+  // address is already proven by every other email workflow, so do not make
+  // this one feature depend on Brevo's separate sender-list permission.
+  if (!profile.useExecutiveProfile || sameAsShared) {
+    return configured;
   }
   try {
     const response = await fetch('https://api.brevo.com/v3/senders', {
       headers: { accept: 'application/json', 'api-key': apiKey }
     });
     if (!response.ok) {
-      if (response.status === 429 || response.status >= 500) return profile;
+      // Some restricted transactional keys can send email but cannot list
+      // account senders. Use the known shared sender and let the SMTP endpoint
+      // provide the authoritative result.
+      if (fallback) return fallback;
+      if (response.status === 429 || response.status >= 500) return configured;
       throw brevoFailureError(response.status, await readBrevoError(response));
     }
     const data = await response.json().catch(() => ({}));
     const selected = selectActiveBrevoSender(profile, data?.senders);
     if (selected.verified) return selected;
+    if (fallback) return fallback;
     const err = new Error(
       'The Executive sender is not validated in Brevo, and no validated organisation sender is available.'
     );
@@ -285,8 +309,40 @@ async function resolveBrevoDeliverySender(apiKey, profile) {
     throw err;
   } catch (error) {
     if (error?.status) throw error;
-    return profile;
+    return fallback || configured;
   }
+}
+
+async function submitBrevoEmail(apiKey, payload) {
+  let response;
+  try {
+    response = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: { accept: 'application/json', 'api-key': apiKey, 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  } catch (cause) {
+    const error = new Error(
+      'The email provider did not confirm whether it accepted this message. Automatic resend is paused to prevent a duplicate.'
+    );
+    error.status = 503;
+    error.code = 'EMAIL_DELIVERY_UNCERTAIN';
+    error.deliveryUncertain = true;
+    error.cause = cause;
+    throw error;
+  }
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      providerError: await readBrevoError(response)
+    };
+  }
+  return {
+    ok: true,
+    status: response.status,
+    providerResult: await response.json().catch(() => ({}))
+  };
 }
 
 export async function sendConfiguredEmail(env, {
@@ -348,28 +404,41 @@ export async function sendConfiguredEmail(env, {
   };
   if (validEmail(replyToEmail)) payload.replyTo = { email: replyToEmail, name: replyToName || senderName };
   if (normalizedAttachments.length) payload.attachment = normalizedAttachments;
-  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
-    method: 'POST',
-    headers: { accept: 'application/json', 'api-key': apiKey, 'content-type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  if (!response.ok) {
-    const providerError = await readBrevoError(response);
-    const failure = classifyBrevoFailure(response.status, providerError);
+  let delivery = await submitBrevoEmail(apiKey, payload);
+  let attachmentFallback = false;
+  if (!delivery.ok && normalizedAttachments.length) {
+    const initialFailure = classifyBrevoFailure(delivery.status, delivery.providerError);
+    if (['BREVO_REQUEST_REJECTED', 'BREVO_ATTACHMENT_REJECTED'].includes(initialFailure.code)) {
+      console.warn(JSON.stringify({
+        event: 'email_attachment_fallback',
+        status: delivery.status,
+        senderProfile: clean(senderProfile) || 'default',
+        attachmentCount: normalizedAttachments.length,
+        failureCode: initialFailure.code
+      }));
+      const fallbackPayload = { ...payload };
+      delete fallbackPayload.attachment;
+      delivery = await submitBrevoEmail(apiKey, fallbackPayload);
+      attachmentFallback = delivery.ok;
+    }
+  }
+  if (!delivery.ok) {
+    const providerError = delivery.providerError;
+    const failure = classifyBrevoFailure(delivery.status, providerError);
     console.error(JSON.stringify({
       event: 'email_provider_rejected',
-      status: response.status,
+      status: delivery.status,
       code: clean(providerError?.code).slice(0, 80) || 'unknown',
       senderProfile: clean(senderProfile) || 'default',
       attachmentCount: normalizedAttachments.length,
       failureCode: failure.code
     }));
-    throw brevoFailureError(response.status, providerError);
+    throw brevoFailureError(delivery.status, providerError);
   }
-  const providerResult = await response.json().catch(() => ({}));
   return {
     ok: true,
-    status: response.status,
-    providerMessageId: clean(providerResult?.messageId)
+    status: delivery.status,
+    providerMessageId: clean(delivery.providerResult?.messageId),
+    attachmentFallback
   };
 }

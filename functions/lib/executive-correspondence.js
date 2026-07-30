@@ -480,21 +480,32 @@ function metricResult(definition, value = 0, series = []) {
   };
 }
 
-export function absolutePublicAssetUrl(env = {}, value = '') {
-  const publicPortalUrl = clean(
+function safePublicOrigin(value) {
+  try {
+    const url = new URL(clean(value));
+    if (url.protocol !== 'https:' && url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') return '';
+    return url.origin;
+  } catch {
+    return '';
+  }
+}
+
+export function absolutePublicAssetUrl(env = {}, value = '', requestOrigin = '') {
+  const publicPortalUrl = safePublicOrigin(
+    requestOrigin ||
     env.PUBLIC_PORTAL_URL ||
     env.CANONICAL_PORTAL_URL ||
     env.PORTAL_BASE_URL ||
-    env.PUBLIC_BASE_URL ||
-    'https://digc-suite.pages.dev'
-  ).replace(/\/+$/, '');
+    env.PUBLIC_BASE_URL
+  );
   const source = clean(value) || '/images/Logo.png';
   if (/^https:\/\//i.test(source)) return source;
   if (/^http:\/\//i.test(source)) return source.replace(/^http:/i, 'https:');
+  if (!publicPortalUrl) return '';
   return `${publicPortalUrl}/${source.replace(/^\/+/, '')}`;
 }
 
-async function loadIdentity(env) {
+async function loadIdentity(env, requestOrigin = '') {
   const [organizationProfile, schoolProfile, documentBranding, webBranding] = await Promise.all([
     getDocument(env, 'settings', 'organisationProfile').catch(() => ({})),
     getDocument(env, 'settings', 'schoolProfile').catch(() => ({})),
@@ -511,17 +522,24 @@ async function loadIdentity(env) {
   const documentLogoDataUrl = clean(validDocumentBranding?.DocumentLogoDataUrl);
   const webLogoDataUrl = clean(validWebBranding?.WebLogoDataUrl);
   const logoDataUrl = documentLogoDataUrl || webLogoDataUrl;
+  const logoUpdatedAt = clean(
+    documentLogoDataUrl
+      ? validDocumentBranding?.UpdatedAt
+      : validWebBranding?.UpdatedAt
+  );
+  const versionSuffix = logoUpdatedAt ? `?v=${encodeURIComponent(logoUpdatedAt)}` : '';
   const configuredLogo = documentLogoDataUrl
-    ? '/api/document-logo'
-    : (webLogoDataUrl ? '/api/web-logo' : clean(organizationProfile?.BrandLogoUrl));
+    ? `/api/document-logo${versionSuffix}`
+    : (webLogoDataUrl ? `/api/web-logo${versionSuffix}` : clean(organizationProfile?.BrandLogoUrl));
+  const schoolEdition = lower(organization.Edition) === 'school';
   return {
     ...organization,
-    Address: clean(schoolProfile?.SchoolAddress || organizationProfile?.Address),
-    Email: clean(schoolProfile?.SchoolEmail || organizationProfile?.Email),
-    Phone: clean(schoolProfile?.SchoolPhone || organizationProfile?.Phone),
-    CurrentAcademicSession: clean(schoolProfile?.CurrentAcademicSession),
+    Address: clean(schoolEdition ? schoolProfile?.SchoolAddress : organizationProfile?.Address),
+    Email: clean(schoolEdition ? schoolProfile?.SchoolEmail : organizationProfile?.Email),
+    Phone: clean(schoolEdition ? schoolProfile?.SchoolPhone : organizationProfile?.Phone),
+    CurrentAcademicSession: clean(schoolEdition ? schoolProfile?.CurrentAcademicSession : ''),
     LogoDataUrl: logoDataUrl,
-    LogoUrl: absolutePublicAssetUrl(env, configuredLogo)
+    LogoUrl: absolutePublicAssetUrl(env, configuredLogo, requestOrigin)
   };
 }
 
@@ -783,10 +801,11 @@ async function loadCorrespondence(env, id, scope) {
 
 export function buildIssuanceSnapshot(identity = {}, correspondence = {}) {
   return {
-    SnapshotVersion: 1,
+    SnapshotVersion: 2,
     CorrespondenceId: clean(correspondence.CorrespondenceId || correspondence.__id),
     IssuedAt: clean(correspondence.IssuedAt),
     Identity: {
+      WorkspaceId: clean(identity.WorkspaceId),
       Name: clean(identity.Name),
       Code: clean(identity.Code),
       Edition: lower(identity.Edition),
@@ -816,12 +835,37 @@ async function loadIssuanceSnapshot(env, correspondence) {
   return getDocument(env, SNAPSHOT_COLLECTION, safeId(id)).catch(() => null);
 }
 
+export function snapshotIdentityMatchesDeployment(snapshotIdentity = {}, identity = {}) {
+  const snapshotEdition = lower(snapshotIdentity.Edition);
+  const deploymentEdition = lower(identity.Edition);
+  if (!snapshotEdition || !deploymentEdition || snapshotEdition !== deploymentEdition) return false;
+  const snapshotWorkspaceId = lower(snapshotIdentity.WorkspaceId);
+  const deploymentWorkspaceId = lower(identity.WorkspaceId);
+  if (snapshotWorkspaceId && deploymentWorkspaceId && snapshotWorkspaceId !== deploymentWorkspaceId) return false;
+  const snapshotCode = lower(snapshotIdentity.Code);
+  const deploymentCode = lower(identity.Code);
+  if (snapshotCode && deploymentCode && snapshotCode !== deploymentCode) return false;
+  return true;
+}
+
 async function loadBrandingContext(env, identity, correspondence, user, issuanceSnapshot = null) {
   const immutable = ['issued', 'sent'].includes(lower(correspondence.Status));
-  const snapshotIdentity = immutable && issuanceSnapshot?.Identity ? issuanceSnapshot.Identity : null;
+  const snapshotIdentity = immutable &&
+    issuanceSnapshot?.Identity &&
+    snapshotIdentityMatchesDeployment(issuanceSnapshot.Identity, identity)
+    ? issuanceSnapshot.Identity
+    : null;
   const snapshotRecipient = immutable && issuanceSnapshot?.Recipient ? issuanceSnapshot.Recipient : null;
   const effectiveIdentity = snapshotIdentity
-    ? { ...identity, ...snapshotIdentity }
+    ? {
+        ...identity,
+        ...snapshotIdentity,
+        // Visual branding is deployment-scoped operational data. Always use
+        // the currently validated logo so a legacy cross-workspace URL cannot
+        // leak into a newly rendered email.
+        LogoDataUrl: clean(identity.LogoDataUrl),
+        LogoUrl: clean(identity.LogoUrl)
+      }
     : identity;
   const effectiveCorrespondence = snapshotRecipient
     ? { ...correspondence, ...snapshotRecipient }
@@ -963,7 +1007,7 @@ export function buildPrintableCorrespondence(correspondence, identity, rendered,
     correspondence.StampApplied && dataImageAttachment(endorsement.StampDataUrl, 'stamp') ? 'Official stamp applied' : ''
   ].filter(Boolean);
   const attachmentNotice = attachmentLabels.length
-    ? `<div class="attachment-note">${escapeEmailHtml(attachmentLabels.join(' · '))}<br><small>The applied endorsement image${emailAttachments.length === 1 ? ' is' : 's are'} attached to this email.</small></div>`
+    ? `<div class="attachment-note">${escapeEmailHtml(attachmentLabels.join(' · '))}<br><small>The endorsements are retained with the official document record.</small></div>`
     : '';
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeEmailHtml(rendered.subject)}</title>
 <style>
@@ -992,8 +1036,8 @@ export function buildPrintableCorrespondence(correspondence, identity, rendered,
   const emailStamp = stamp && publicStampSource
     ? `<img src="${escapeEmailHtml(publicStampSource)}" alt="Official stamp" width="120" style="display:inline-block; width:120px; max-width:100%; max-height:95px; object-fit:contain; border:0;">`
     : '';
-  const emailWatermark = publicLogoSource
-    ? `<div aria-hidden="true" style="position:absolute; left:50%; top:53%; width:300px; margin-left:-150px; margin-top:-150px; text-align:center; opacity:.055;"><img src="${escapeEmailHtml(publicLogoSource)}" alt="" width="300" style="display:block; width:300px; max-width:70%; height:auto; margin:0 auto; border:0;"></div>`
+  const emailWatermarkStyle = publicLogoSource
+    ? `background-image:linear-gradient(rgba(255,255,255,.94),rgba(255,255,255,.94)),url('${escapeEmailHtml(publicLogoSource)}'); background-position:center center; background-repeat:no-repeat; background-size:300px auto;`
     : '';
   const emailHtml = `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%; max-width:760px; margin:22px auto; border-collapse:collapse; border:1px solid #cbd9e7; background:#ffffff; color:#15283f; font-family:Arial,sans-serif;">
     <tr><td style="padding:0;">
@@ -1024,9 +1068,8 @@ export function buildPrintableCorrespondence(correspondence, identity, rendered,
         </tr>
       </table>
     </td></tr>
-    <tr><td style="position:relative; padding:30px 40px 34px; background:#ffffff;">
-      ${emailWatermark}
-      <div style="position:relative; z-index:1;">
+    <tr><td style="padding:30px 40px 34px; background-color:#ffffff; ${emailWatermarkStyle}">
+      <div>
         ${recipient ? `<div style="margin:0 0 24px; color:#15283f; font-size:16px; line-height:1.55;">${recipient}</div>` : ''}
         <h2 style="margin:0 0 25px; color:#15283f; text-align:center; text-transform:uppercase; text-decoration:underline; font-size:20px; line-height:1.35;">${escapeEmailHtml(rendered.subject)}</h2>
         <div style="color:#15283f; font-size:16px; line-height:1.62;">${paragraphs}</div>
@@ -1111,6 +1154,8 @@ async function writeAudit(env, user, scope, action, details = {}) {
     SchoolSection: scope.schoolSection,
     AuthMethod: clean(details.AuthMethod),
     DeliveryStatus: clean(details.DeliveryStatus),
+    ProviderMessageId: clean(details.ProviderMessageId),
+    AttachmentFallback: details.AttachmentFallback === true,
     SourcePlatform: clean(details.SourcePlatform || 'Web Executive Office')
   });
 }
@@ -1173,6 +1218,17 @@ async function abandonTransition(env, transition) {
   await deleteDocument(env, TRANSITION_COLLECTION, transition.transitionId).catch(() => {});
 }
 
+async function markTransitionUncertain(env, transition, values = {}) {
+  if (!transition?.acquired || !transition.transitionId) return;
+  await upsertDocument(env, TRANSITION_COLLECTION, transition.transitionId, {
+    ...(transition.document || {}),
+    ...values,
+    TransitionId: transition.transitionId,
+    Status: 'Uncertain',
+    LastAttemptAt: clean(values.LastAttemptAt) || nowIso()
+  });
+}
+
 async function issueCorrespondence(env, user, body, scope, identity, authorization) {
   if (!authorization?.method) throw inputError('Confirm issuance with your current password.', 403);
   const requestedId = clean(body.CorrespondenceId || body.correspondenceId);
@@ -1212,8 +1268,8 @@ async function issueCorrespondence(env, user, body, scope, identity, authorizati
     const actor = clean(user.displayName || user.username);
     const role = canonicalExecutiveRole(user.role);
     const profile = await loadStaffApprovalProfile(env, user.username).catch(() => null);
-    const applySignature = body.applySignature === true;
-    const applyStamp = body.applyStamp === true;
+    const applySignature = body.applySignature === true || body.ApplySignature === true;
+    const applyStamp = body.applyStamp === true || body.ApplyStamp === true;
     if (applySignature && !clean(profile?.SignatureDataUrl)) throw inputError('Save your signature in User settings before applying it.');
     if (applyStamp && !clean(profile?.StampDataUrl)) throw inputError('Save your stamp in User settings before applying it.');
     if (existing.Kind === 'transfer-certificate' &&
@@ -1349,11 +1405,18 @@ async function sendCorrespondence(env, user, body, scope, identity, authorizatio
         alreadySent: true
       };
     }
+    if (lower(transition.document.Status) === 'uncertain') {
+      throw inputError(
+        'The provider did not confirm the previous delivery. Automatic resend is paused to prevent a duplicate email; check the Brevo log before retrying.',
+        409
+      );
+    }
     throw inputError('This correspondence is already being sent. Refresh before trying again.', 409);
   }
   const printable = await printableFor(env, user, identity, existing);
+  let delivery = null;
   try {
-    await sendConfiguredEmail(env, {
+    delivery = await sendConfiguredEmail(env, {
       toEmail: recipientEmail,
       toName: existing.RecipientName,
       subject: printable.subject,
@@ -1364,26 +1427,38 @@ async function sendCorrespondence(env, user, body, scope, identity, authorizatio
     });
   } catch (error) {
     const failedAt = nowIso();
+    const uncertain = error?.deliveryUncertain === true || clean(error?.code) === 'EMAIL_DELIVERY_UNCERTAIN';
     const failed = {
       ...existing,
       RecipientEmail: recipientEmail,
-      DeliveryStatus: 'Failed',
+      DeliveryStatus: uncertain ? 'Uncertain' : 'Failed',
       LastDeliveryAttemptAt: failedAt,
       UpdatedAt: failedAt
     };
     delete failed.__id;
     delete failed.__name;
     await upsertDocument(env, CORRESPONDENCE_COLLECTION, safeId(failed.CorrespondenceId), failed);
-    await writeAudit(env, user, scope, 'SEND FAILED', {
+    await writeAudit(env, user, scope, uncertain ? 'SEND UNCERTAIN' : 'SEND FAILED', {
       CorrespondenceId: failed.CorrespondenceId,
       AuthMethod: authorization.method,
-      DeliveryStatus: 'Failed',
+      DeliveryStatus: failed.DeliveryStatus,
       SourcePlatform: authorization.sourcePlatform
     });
-    await abandonTransition(env, transition);
+    if (uncertain) {
+      await markTransitionUncertain(env, transition, {
+        CorrespondenceId: failed.CorrespondenceId,
+        RecipientEmail: recipientEmail,
+        LastAttemptAt: failedAt,
+        FailureCode: clean(error?.code)
+      });
+    } else {
+      await abandonTransition(env, transition);
+    }
     throw error;
   }
   const sentAt = nowIso();
+  const providerMessageId = clean(delivery?.providerMessageId);
+  const attachmentFallback = delivery?.attachmentFallback === true;
   const sent = {
     ...existing,
     RecipientEmail: recipientEmail,
@@ -1392,6 +1467,8 @@ async function sendCorrespondence(env, user, body, scope, identity, authorizatio
     SentAt: sentAt,
     SentBy: clean(user.displayName || user.username),
     SentByUsername: clean(user.username),
+    ProviderMessageId: providerMessageId,
+    AttachmentFallback: attachmentFallback,
     UpdatedAt: sentAt,
     UpdatedBy: clean(user.displayName || user.username),
     AuthorizationMethod: authorization.method
@@ -1406,6 +1483,8 @@ async function sendCorrespondence(env, user, body, scope, identity, authorizatio
     SentAt: sentAt,
     SentBy: sent.SentBy,
     SentByUsername: sent.SentByUsername,
+    ProviderMessageId: providerMessageId,
+    AttachmentFallback: attachmentFallback,
     CompletedAt: sentAt
   });
   await upsertDocument(env, CORRESPONDENCE_COLLECTION, safeId(sent.CorrespondenceId), sent);
@@ -1413,9 +1492,11 @@ async function sendCorrespondence(env, user, body, scope, identity, authorizatio
     CorrespondenceId: sent.CorrespondenceId,
     AuthMethod: authorization.method,
     DeliveryStatus: 'Sent',
+    ProviderMessageId: providerMessageId,
+    AttachmentFallback: attachmentFallback,
     SourcePlatform: authorization.sourcePlatform
   });
-  return { correspondence: sent, printable };
+  return { correspondence: sent, printable, attachmentFallback };
 }
 
 async function bootstrap(env, user, scope, capabilities, identity) {
@@ -1459,7 +1540,7 @@ async function bootstrap(env, user, scope, capabilities, identity) {
 }
 
 export async function handleExecutiveOfficeAction(env, user, body = {}, options = {}) {
-  const identity = await loadIdentity(env);
+  const identity = await loadIdentity(env, options.publicOrigin);
   if (identity.FeatureFlags?.executiveOffice === false) {
     throw inputError('The Executive Office feature is disabled for this subscription.', 403);
   }
@@ -1537,8 +1618,11 @@ export async function handleExecutiveOfficeAction(env, user, body = {}, options 
       ok: true,
       message: result.alreadySent
         ? 'Official correspondence was already sent; no duplicate email was sent.'
-        : 'Official correspondence sent.',
+        : result.attachmentFallback
+          ? 'Official correspondence sent. Brevo accepted it without the optional endorsement-image attachments; the signed and stamped status remains on the official record.'
+          : 'Official correspondence sent.',
       alreadySent: Boolean(result.alreadySent),
+      attachmentFallback: Boolean(result.attachmentFallback),
       correspondence: publicCorrespondence(result.correspondence),
       printable: result.printable
     };

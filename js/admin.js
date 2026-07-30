@@ -4016,6 +4016,22 @@ function inferredRecordsDeskTypes() {
   ].filter(Boolean);
 }
 
+function recordsDeskFaceLookupAllowed() {
+  return resolveDashboardEdition(currentUser || {}) === 'school' &&
+    yes(currentUser?.biometricLookupEnabled) &&
+    recordsDeskState.availableTypes.includes('students');
+}
+
+async function openRecordsDeskFaceLookup(options = {}) {
+  try {
+    const module = await import('./student-face-lookup.js?v=20260730-face-lookup');
+    await module.openStudentFaceLookup(options);
+  } catch (failure) {
+    recordsDeskState.error = failure.message || String(failure);
+    renderRecordsDesk();
+  }
+}
+
 function recordsDeskResultKey(type, id, branchId = '') {
   return `${clean(type)}::${clean(id)}::${clean(branchId).toLowerCase()}`;
 }
@@ -4091,6 +4107,9 @@ function renderRecordsDesk() {
         : recordsDeskState.results.length
           ? `<p>${escapeHtml(recordsDeskState.totalMatches)} matching record${recordsDeskState.totalMatches === 1 ? '' : 's'}${recordsDeskState.truncated ? ' · showing the first results' : ''}</p>`
           : '<p>No matching records found.</p>';
+  const faceLookupButton = recordsDeskFaceLookupAllowed()
+    ? '<button type="button" class="records-desk-face-action" id="recordsDeskFaceLookup"><span aria-hidden="true">📷</span><span>Face lookup</span></button>'
+    : '';
   panelEl.innerHTML = `<section class="records-desk-shell${recordsDeskState.detail || recordsDeskState.loadingDetail ? ' detail-open' : ''}">
     <aside class="records-desk-filters">
       <div class="records-desk-heading"><span aria-hidden="true">\u{1F5C2}</span><div><small>Universal lookup</small><h2>Records Desk</h2></div></div>
@@ -4098,6 +4117,7 @@ function renderRecordsDesk() {
         <label for="recordsDeskSearch">Search permitted records</label>
         <div><span aria-hidden="true">\u{1F50D}</span><input id="recordsDeskSearch" name="query" type="search" minlength="3" maxlength="120" autocomplete="off" placeholder="Name, ID, phone, email..." value="${escapeHtml(recordsDeskState.query)}"><button type="submit">Search</button></div>
       </form>
+      ${faceLookupButton}
       <nav class="records-desk-type-list" aria-label="Record type filters">
         ${typeButtons.map(([key, label, icon]) => `<button type="button" data-record-filter="${escapeHtml(key)}" class="${recordsDeskState.type === key ? 'active' : ''}" aria-pressed="${recordsDeskState.type === key}"><span aria-hidden="true">${escapeHtml(icon)}</span><span>${escapeHtml(label)}</span></button>`).join('')}
       </nav>
@@ -4218,6 +4238,23 @@ async function loadRecordsDeskDetail(type, id, branchId = '') {
 }
 
 function openRecordsDeskAction(action) {
+  if (action?.id === 'student-face-enroll') {
+    openRecordsDeskFaceLookup({
+      mode: 'enroll',
+      student: {
+        id: clean(action.context?.AccountRef || recordsDeskState.detail?.id),
+        title: clean(action.context?.StudentName || recordsDeskState.detail?.title),
+        branchId: clean(action.context?.BranchId || recordsDeskState.detail?.branchId),
+        schoolSection: clean(action.context?.SchoolSection || recordsDeskState.detail?.schoolSection)
+      },
+      onEnrollmentChange: () => loadRecordsDeskDetail(
+        recordsDeskState.detail?.type,
+        recordsDeskState.detail?.id,
+        recordsDeskState.detail?.branchId
+      )
+    });
+    return;
+  }
   if (!action?.targetSection || !activeTabs.some(([key]) => key === action.targetSection)) return;
   const handoff = {
     source: 'recordsDesk',
@@ -4312,6 +4349,12 @@ function bindRecordsDeskEvents() {
       return;
     }
     recordsDeskSearchTimer = window.setTimeout(() => searchRecordsDesk({ keepFocus: true }), 450);
+  });
+  document.getElementById('recordsDeskFaceLookup')?.addEventListener('click', () => {
+    openRecordsDeskFaceLookup({
+      mode: 'lookup',
+      onMatch: (match) => loadRecordsDeskDetail('students', match.id, match.branchId)
+    });
   });
   panelEl.querySelectorAll('[data-record-filter]').forEach((button) => button.addEventListener('click', () => {
     recordsDeskState.type = button.dataset.recordFilter;
@@ -6044,6 +6087,7 @@ function renderStaffUsers() {
   if (activeSection !== 'staffUsers') return;
   const activeUsers = staffUsersData.filter((user) => yes(user.Active)).length;
   const admins = staffUsersData.filter((user) => user.Role === 'Super Admin' && yes(user.Active)).length;
+  const schoolEdition = resolveDashboardEdition(currentUser || {}) === 'school';
   panelEl.innerHTML = `
     <div class="workflow-intro">
       <div><p class="eyebrow">Identity & access</p><h2>Staff & Permissions</h2><p class="muted">Shared database accounts for desktop and web access</p></div>
@@ -6090,7 +6134,7 @@ function renderStaffUsers() {
         <section class="config-group"><header><strong>Web companion access</strong><small>Leave all clear to use the selected role's default tabs.</small></header><div class="approval-account-list config-option-list config-option-grid">${tabConfig.map(([key, label]) => `<label class="check-row"><input type="checkbox" name="TabAccessOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}</div></section>
         <section class="config-group"><header><strong>Security</strong><small>Password and account-state controls.</small></header><div class="config-grid">
           <label>New or reset password<input name="Password" type="password" minlength="6" autocomplete="new-password"><small>Required for a new account. Leave blank when editing unless resetting it.</small></label>
-          <div class="config-toggle-stack"><label class="check-row"><input name="Active" type="checkbox" checked> Account active</label><label class="check-row"><input name="MustChangePassword" type="checkbox" checked> Require password change at next sign-in</label></div>
+          <div class="config-toggle-stack"><label class="check-row"><input name="Active" type="checkbox" checked> Account active</label><label class="check-row"><input name="MustChangePassword" type="checkbox" checked> Require password change at next sign-in</label>${schoolEdition ? '<label class="check-row sensitive-access-toggle"><input name="BiometricLookupEnabled" type="checkbox"> Allow consent-based student face lookup</label>' : ''}</div>
         </div></section>
         <div class="config-dialog-actions"><p class="status" data-user-form-status></p><button type="submit">Save staff account</button></div>
       </form>
@@ -6121,10 +6165,14 @@ function openStaffUserDialog(username = '') {
     form.querySelectorAll('[name="TabAccessOption"]').forEach((input) => { input.checked = allowedTabs.has(input.value); });
     form.elements.Active.checked = yes(user.Active);
     form.elements.MustChangePassword.checked = yes(user.MustChangePassword);
+    if (form.elements.BiometricLookupEnabled) {
+      form.elements.BiometricLookupEnabled.checked = yes(user.BiometricLookupEnabled);
+    }
   } else {
     form.elements.Active.checked = true;
     form.elements.MustChangePassword.checked = true;
     form.elements.ApprovalEnabled.checked = false;
+    if (form.elements.BiometricLookupEnabled) form.elements.BiometricLookupEnabled.checked = false;
   }
   dialog.showModal();
 }
@@ -6163,6 +6211,9 @@ function bindStaffUserEvents() {
     payload.Active = form.elements.Active.checked;
     payload.MustChangePassword = form.elements.MustChangePassword.checked;
     payload.ApprovalEnabled = form.elements.ApprovalEnabled.checked;
+    if (form.elements.BiometricLookupEnabled) {
+      payload.BiometricLookupEnabled = form.elements.BiometricLookupEnabled.checked;
+    }
     payload.ApprovalAccounts = Array.from(form.querySelectorAll('[name="ApprovalAccountOption"]:checked')).map((input) => input.value);
     payload.TabAccess = Array.from(form.querySelectorAll('[name="TabAccessOption"]:checked')).map((input) => input.value);
     setButtonLoading(button, true, 'Saving...', 'Save Staff Account');
@@ -6233,7 +6284,7 @@ async function importOrganizationCsv(event, options, status) {
 }
 
 function downloadStaffCsvTemplate() {
-  const content = 'Username,DisplayName,Role,Department,BranchId,SchoolSectionAccess,Password,Active,MustChangePassword,ApprovalEnabled,ApprovalMaxAmount,ApprovalAccounts,TabAccess\nexample.user,Example User,Front Desk,Administration,main,All,ChangeMe123,YES,YES,NO,0,"6010,6090","admissions,students"\n';
+  const content = 'Username,DisplayName,Role,Department,BranchId,SchoolSectionAccess,Password,Active,MustChangePassword,ApprovalEnabled,ApprovalMaxAmount,ApprovalAccounts,BiometricLookupEnabled,TabAccess\nexample.user,Example User,Front Desk,Administration,main,All,ChangeMe123,YES,YES,NO,0,"6010,6090",NO,"admissions,students"\n';
   const url = URL.createObjectURL(new Blob([content], { type: 'text/csv' }));
   const link = document.createElement('a'); link.href = url; link.download = 'staff_upload_template.csv'; link.click(); URL.revokeObjectURL(url);
 }

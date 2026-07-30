@@ -188,6 +188,9 @@ function publicUser(user) {
     approvalAccounts: Array.isArray(user.ApprovalAccounts || user.approvalAccounts)
       ? (user.ApprovalAccounts || user.approvalAccounts).map(clean).filter(Boolean)
       : clean(user.ApprovalAccounts || user.approvalAccounts).split(',').map(clean).filter(Boolean),
+    biometricLookupEnabled: !['no', 'false', '0', ''].includes(
+      lower(user.BiometricLookupEnabled ?? user.biometricLookupEnabled ?? false)
+    ),
     tabAccess: Array.isArray(user.TabAccess || user.tabAccess)
       ? (user.TabAccess || user.tabAccess).map(clean).filter(Boolean)
       : clean(user.TabAccess || user.tabAccess).split(',').map(clean).filter(Boolean),

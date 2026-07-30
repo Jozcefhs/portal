@@ -1,4 +1,5 @@
 .wrangler/
+.npm-cache/
 node_modules/.mf/
 .mf/
 .dev.vars

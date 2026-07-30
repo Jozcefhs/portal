@@ -59,6 +59,13 @@ Feature-specific:
 - WEBAUTHN_RP_ID
 - WEBAUTHN_ORIGIN
 - WEBAUTHN_RP_NAME
+- STUDENT_FACE_LOOKUP_ENABLED (school-only; off unless explicitly set to true)
+- FACE_TEMPLATE_ENCRYPTION_KEY (encrypted; minimum 24 characters)
+- FACE_TEMPLATE_KEY_VERSION (optional; defaults to v1)
+- FACE_TEMPLATE_PREVIOUS_KEYS (optional encrypted JSON keyring for rotation)
+- STUDENT_FACE_MATCH_THRESHOLD (optional; calibrate before production use)
+- STUDENT_FACE_MATCH_MARGIN (optional; calibrate before production use)
+- STUDENT_FACE_MAX_GALLERY (optional direct-match cap; defaults to 250)
 - DATA_BACKEND_MODE (only for an intentional legacy Google backend)
 
 Set production and preview values separately. Encrypt all private values. Do
@@ -90,6 +97,29 @@ Turnstile
 Turnstile remains disabled when both keys are absent. When enabled, both keys
 must be configured and the verified action must match. Add the production and
 approved preview/custom domains to TURNSTILE_ALLOWED_HOSTNAMES.
+
+Student face lookup
+-------------------
+
+Student face lookup is a school-only, consent-based Records Desk aid. It is
+not authentication, automatic attendance, discipline, payment approval or
+surveillance. Camera frames stay in the browser; only a mathematical template
+is transmitted. Stored templates are AES-GCM encrypted and bound to the
+workspace, branch, school section, student, model and key version.
+
+Before enabling it:
+
+- complete the required privacy/DPIA review and document guardian consent;
+- keep name and admission-number search available as an equal alternative;
+- configure the feature flag and encryption secret listed above;
+- add a Cloudflare Rate Limiting binding named STUDENT_FACE_RATE_LIMITER;
+- grant "Allow consent-based student face lookup" only to selected staff;
+- calibrate threshold/margin with a representative consenting pilot; and
+- define withdrawal, expiry, student-exit and key-rotation procedures.
+
+Enrollment and removal are limited to authorised managers. A match returns a
+minimal possible-student card and requires staff confirmation before the
+existing permission-filtered Records Desk profile opens.
 
 Caching and request behavior
 ----------------------------

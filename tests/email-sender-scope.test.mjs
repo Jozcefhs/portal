@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   classifyBrevoFailure,
   resolveEmailSenderProfile,
+  sendConfiguredEmail,
   selectActiveBrevoSender
 } from '../functions/lib/email-service.js';
 
@@ -200,12 +201,110 @@ test('backend safely ignores submitted Brevo credentials and reports secret read
   );
 });
 
-test('executive delivery verifies the configured sender even when it matches the shared sender', async () => {
+test('executive delivery reuses the proven shared sender without a sender-list dependency', async () => {
   const emailSource = await readFile(new URL('../functions/lib/email-service.js', import.meta.url), 'utf8');
   assert.match(emailSource, /fetch\('https:\/\/api\.brevo\.com\/v3\/senders'/);
-  assert.doesNotMatch(
+  assert.match(
     emailSource,
-    /clean\(profile\.senderEmail\)\.toLowerCase\(\) === clean\(profile\.fallbackSenderEmail\)\.toLowerCase\(\)/
+    /clean\(profile\.senderEmail\)\.toLowerCase\(\)\s*===\s*clean\(profile\.fallbackSenderEmail\)\.toLowerCase\(\)/
   );
-  assert.match(emailSource, /throw brevoFailureError\(response\.status, providerError\)/);
+  assert.match(emailSource, /if \(!profile\.useExecutiveProfile \|\| sameAsShared\)/);
+  assert.match(emailSource, /if \(fallback\) return fallback/);
+});
+
+test('optional endorsement attachments cannot block an otherwise valid Executive email', async () => {
+  const emailSource = await readFile(new URL('../functions/lib/email-service.js', import.meta.url), 'utf8');
+  assert.match(emailSource, /event: 'email_attachment_fallback'/);
+  assert.match(emailSource, /delete fallbackPayload\.attachment/);
+  assert.match(emailSource, /attachmentFallback = delivery\.ok/);
+  assert.match(emailSource, /EMAIL_DELIVERY_UNCERTAIN/);
+  assert.match(emailSource, /Automatic resend is paused to prevent a duplicate/);
+});
+
+test('a confirmed attachment rejection retries once without attachments', async () => {
+  const originalFetch = globalThis.fetch;
+  const submitted = [];
+  globalThis.fetch = async (url, options = {}) => {
+    assert.equal(url, 'https://api.brevo.com/v3/smtp/email');
+    submitted.push(JSON.parse(options.body));
+    if (submitted.length === 1) {
+      return new Response(JSON.stringify({
+        code: 'invalid_parameter',
+        message: 'attachment too large'
+      }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ messageId: '<executive-accepted@example.test>' }), {
+      status: 201,
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  try {
+    const result = await sendConfiguredEmail({
+      ORGANISATION_EDITION: 'school',
+      ORGANISATION_NAME: 'Example School',
+      BREVO_API_KEY: 'test-key',
+      BREVO_SENDER_EMAIL: 'office@example.test',
+      BREVO_SENDER_NAME: 'Example School'
+    }, {
+      toEmail: 'recipient@example.test',
+      subject: 'Official correspondence',
+      textContent: 'Official correspondence',
+      htmlContent: '<p>Official correspondence</p>',
+      attachments: [{
+        name: 'signature.png',
+        content: 'aW1hZ2U='
+      }]
+    });
+
+    assert.equal(submitted.length, 2);
+    assert.equal(submitted[0].attachment.length, 1);
+    assert.equal(Object.hasOwn(submitted[1], 'attachment'), false);
+    assert.equal(result.attachmentFallback, true);
+    assert.equal(result.providerMessageId, '<executive-accepted@example.test>');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('an ambiguous provider connection result is never retried automatically', async () => {
+  const originalFetch = globalThis.fetch;
+  let attempts = 0;
+  globalThis.fetch = async () => {
+    attempts += 1;
+    throw new TypeError('connection closed');
+  };
+  try {
+    await assert.rejects(
+      sendConfiguredEmail({
+        ORGANISATION_EDITION: 'school',
+        ORGANISATION_NAME: 'Example School',
+        BREVO_API_KEY: 'test-key',
+        BREVO_SENDER_EMAIL: 'office@example.test',
+        BREVO_SENDER_NAME: 'Example School'
+      }, {
+        toEmail: 'recipient@example.test',
+        subject: 'Official correspondence',
+        textContent: 'Official correspondence',
+        htmlContent: '<p>Official correspondence</p>',
+        attachments: [{
+          name: 'signature.png',
+          content: 'aW1hZ2U='
+        }]
+      }),
+      (error) => error.code === 'EMAIL_DELIVERY_UNCERTAIN' &&
+        error.deliveryUncertain === true
+    );
+    assert.equal(attempts, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('desktop backend returns safe Executive email diagnostics instead of a generic failure', async () => {
+  const backend = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
+  assert.match(backend, /String\(err\?\.code \|\| ''\)\.startsWith\('BREVO_'\)/);
+  assert.match(backend, /String\(err\?\.code \|\| ''\)\.startsWith\('EMAIL_'\)/);
 });

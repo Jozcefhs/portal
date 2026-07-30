@@ -1,5 +1,6 @@
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
+const enabledValue = (value) => ['yes', 'true', '1', 'enabled'].includes(lower(value));
 
 export const RECORD_DESK_TYPES = Object.freeze([
   'students',
@@ -73,6 +74,9 @@ export function recordsDeskCapabilities(user = {}) {
     canViewStudentClinic: allowed.has('clinic'),
     canViewStudentWallet: allowed.has('tuckShop') || allowed.has('accounts'),
     canViewStudentConduct: schoolEdition && allowed.has('studentConduct'),
+    canUseStudentFaceLookup: enabled && schoolEdition && enabledValue(user.biometricLookupEnabled),
+    canManageStudentFaceTemplates: enabled && schoolEdition && enabledValue(user.biometricLookupEnabled) &&
+      ['Super Admin', 'Principal', 'Admissions Officer'].includes(role),
     canViewStaffSecurity: allowed.has('staffUsers') && clean(user.role) === 'Super Admin',
     canViewMemberContact: ministryExecutive || allowed.has('members'),
     canViewPastoralNotes: PASTORAL_ROLES.has(clean(user.role)),

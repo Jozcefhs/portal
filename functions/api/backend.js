@@ -6381,7 +6381,7 @@ async function getSystemHealth(env, body) {
   };
 }
 
-async function routeAction(env, action, body = {}, deploymentIdentity = null) {
+async function routeAction(env, action, body = {}, deploymentIdentity = null, publicOrigin = '') {
   switch (action) {
     case 'ping': {
       const identity = {
@@ -6579,7 +6579,8 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null) {
         authorization: requiresDecisionProof
           ? { method: 'Desktop password', sourcePlatform: 'Desktop Executive Office' }
           : null,
-        sourcePlatform: 'Desktop Executive Office'
+        sourcePlatform: 'Desktop Executive Office',
+        publicOrigin
       });
     }
     case 'getChurchMembership':
@@ -6941,7 +6942,7 @@ export async function onRequestPost(context) {
     requireFirestoreEnv(env);
     const deploymentIdentity = await loadDeploymentIdentity(env, { identity: configuredIdentity });
     body = await verifyDesktopActor(env, action, body);
-    const data = await routeAction(env, action, body, deploymentIdentity);
+    const data = await routeAction(env, action, body, deploymentIdentity, new URL(request.url).origin);
     finishRequestMetric(metric, { status: 200, action });
     return Response.json(data, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
@@ -6950,6 +6951,8 @@ export async function onRequestPost(context) {
     finishRequestMetric(metric, { status, action: action || 'unknown', outcome: err?.code || 'error' });
     const configurationMessage = err?.code === 'BACKEND_SECRET_NOT_CONFIGURED'
       || err?.code === 'BREVO_ENV_SECRET_REQUIRED'
+      || String(err?.code || '').startsWith('BREVO_')
+      || String(err?.code || '').startsWith('EMAIL_')
       || String(err?.code || '').startsWith('DEPLOYMENT_')
       ? String(err.message || 'The desktop backend is not configured.')
       : '';

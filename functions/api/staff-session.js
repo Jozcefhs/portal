@@ -96,6 +96,9 @@ function authoritativeSessionUser(record, sessionUser, profilePhotoUrl = '') {
     approvalEnabled: !['no', 'false', '0', ''].includes(lower(record.ApprovalEnabled ?? sessionUser.approvalEnabled ?? false)),
     approvalMaxAmount: Number(record.ApprovalMaxAmount || sessionUser.approvalMaxAmount || 0) || 0,
     approvalAccounts: list(record.ApprovalAccounts ?? sessionUser.approvalAccounts),
+    biometricLookupEnabled: !['no', 'false', '0', ''].includes(
+      lower(record.BiometricLookupEnabled ?? sessionUser.biometricLookupEnabled ?? false)
+    ),
     tabAccess: list(record.TabAccess ?? sessionUser.tabAccess),
     mustChangePassword: record.MustChangePassword === undefined
       ? Boolean(sessionUser.mustChangePassword)
