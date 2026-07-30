@@ -81,10 +81,11 @@ function finalFinanceStatus(status) {
   return ['paid', 'posted', 'processed', 'voided', 'cancelled', 'canceled'].includes(lower(status));
 }
 
-export function buildRequisitionResubmission(existing = {}, body = {}, user = {}, timestamp = nowIso()) {
-  if (!clean(existing.ExpenseNo || existing.__id)) {
-    const err = new Error('The selected requisition was not found.');
-    err.status = 404;
+function assertRequisitionResubmittable(existing = {}) {
+  if (clean(existing.AdminReviewedAt)) {
+    const err = new Error('An administratively approved requisition cannot be edited or resubmitted.');
+    err.status = 409;
+    err.code = 'REQUISITION_ADMIN_APPROVAL_LOCKED';
     throw err;
   }
   if (finalFinanceStatus(existing.Status)) {
@@ -92,6 +93,15 @@ export function buildRequisitionResubmission(existing = {}, body = {}, user = {}
     err.status = 409;
     throw err;
   }
+}
+
+export function buildRequisitionResubmission(existing = {}, body = {}, user = {}, timestamp = nowIso()) {
+  if (!clean(existing.ExpenseNo || existing.__id)) {
+    const err = new Error('The selected requisition was not found.');
+    err.status = 404;
+    throw err;
+  }
+  assertRequisitionResubmittable(existing);
 
   const isMaterial = lower(existing.RequisitionType) === 'material';
   const description = clean(body.description ?? body.Description);
@@ -463,6 +473,7 @@ async function resubmitRequisition(env, user, body) {
     err.status = 404;
     throw err;
   }
+  assertRequisitionResubmittable(existing);
   const clientVersion = clean(body.recordVersion);
   if (!clientVersion || clientVersion !== clean(existing.__updateTime)) {
     const err = new Error('This requisition changed after it was loaded. Refresh the list before resubmitting it.');

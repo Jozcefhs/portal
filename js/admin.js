@@ -5709,10 +5709,14 @@ function financeRecordRow(record, type, capabilities) {
     : pick(record, ['Description']) || 'Requisition';
   const description = pick(record, ['Description']);
   const accountsReviewed = clean(record.AccountsReviewStatus).toLowerCase() === 'reviewed';
+  const administrativelyApproved = Boolean(clean(record.AdminReviewedAt));
   let actions = `<button type="button" class="compact-icon-action compact-print-action" data-print-finance-record="${escapeHtml(id)}" data-record-type="${type}" aria-label="View and print ${escapeHtml(id)}" title="View and print"><span aria-hidden="true">&#128424;&#65038;</span></button>`;
-  if (type === 'requisition' && capabilities.canAdminOverride &&
-      !['paid', 'posted', 'processed', 'voided', 'cancelled', 'canceled'].includes(clean(status).toLowerCase())) {
-    actions += `<button type="button" class="compact-icon-action compact-edit-action" data-edit-requisition="${escapeHtml(id)}" aria-label="Edit and resubmit ${escapeHtml(id)}" title="Edit and resubmit"><span aria-hidden="true">&#9998;</span></button>`;
+  if (type === 'requisition' && capabilities.canAdminOverride) {
+    if (administrativelyApproved) {
+      actions += `<button type="button" class="compact-icon-action compact-edit-action" disabled aria-label="Editing locked after administrative approval for ${escapeHtml(id)}" title="Editing locked after administrative approval"><span aria-hidden="true">&#9998;</span></button>`;
+    } else if (!['paid', 'posted', 'processed', 'voided', 'cancelled', 'canceled'].includes(clean(status).toLowerCase())) {
+      actions += `<button type="button" class="compact-icon-action compact-edit-action" data-edit-requisition="${escapeHtml(id)}" aria-label="Edit and resubmit ${escapeHtml(id)}" title="Edit and resubmit"><span aria-hidden="true">&#9998;</span></button>`;
+    }
   }
   if (capabilities.canApprove && clean(status).toLowerCase() === 'submitted') {
     actions += `<button type="button" class="compact-icon-action compact-approve-action" data-workflow-action="review" data-decision="Approved" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Approve ${escapeHtml(id)}" title="Approve"><span aria-hidden="true">&#10003;</span></button>`;

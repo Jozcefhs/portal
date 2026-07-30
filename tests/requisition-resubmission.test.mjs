@@ -95,9 +95,43 @@ test('final finance records cannot be edited and resubmitted', () => {
   }, admin), /cannot be edited and resubmitted/i);
 });
 
+test('administratively approved standard requisitions cannot be edited and resubmitted', () => {
+  assert.throws(() => buildRequisitionResubmission({
+    ExpenseNo: 'WEB-REQ-ADMIN-APPROVED',
+    Status: 'Approved',
+    Description: 'Administratively approved request',
+    Amount: 5000,
+    AdminReviewedAt: '2026-07-30T11:30:00.000Z',
+    AdminReviewedBy: 'System Administrator'
+  }, {
+    description: 'Changed after administrative approval',
+    amount: 6000
+  }, admin), (error) => {
+    assert.equal(error.status, 409);
+    assert.equal(error.code, 'REQUISITION_ADMIN_APPROVAL_LOCKED');
+    assert.match(error.message, /administratively approved requisition cannot be edited or resubmitted/i);
+    return true;
+  });
+});
+
+test('administratively approved material requisitions cannot be edited and resubmitted', () => {
+  assert.throws(() => buildRequisitionResubmission({
+    ExpenseNo: 'WEB-MAT-ADMIN-APPROVED',
+    RequisitionType: 'Material',
+    Status: 'Approved',
+    Description: 'Administratively approved materials',
+    AdminReviewedAt: '2026-07-30T11:45:00.000Z',
+    MaterialItems: [{ SNo: 1, Item: 'Paper', Specification: 'A4', Quantity: 2, UnitPrice: 2500, Total: 5000 }]
+  }, {
+    description: 'Changed after administrative approval',
+    items: [{ item: 'Ink', specification: 'Black', quantity: 1, unitPrice: 6000 }]
+  }, admin), /administratively approved requisition cannot be edited or resubmitted/i);
+});
+
 test('finance workflow exposes a Super Admin edit and resubmit action with concurrency and audit controls', () => {
   assert.match(workflowApi, /clean\(user\.role\) !== 'Super Admin'/);
   assert.match(workflowApi, /!existing \|\| !scopedRows\(\[existing\], user, capabilities\(user\)\)\.length/);
+  assert.match(workflowApi, /assertRequisitionResubmittable\(existing\);\s*const clientVersion/);
   assert.match(workflowApi, /clientVersion !== clean\(existing\.__updateTime\)/);
   assert.match(workflowApi, /collectionPath: 'accountingExpenseRevisions'/);
   assert.match(workflowApi, /const audit = auditWrite\([\s\S]*?'EDIT AND RESUBMIT'[\s\S]*?timestamp,\s*existing\s*\)/);
@@ -112,4 +146,6 @@ test('web companion gives Super Admin a populated edit-and-resubmit form', () =>
   assert.match(adminJs, /recordVersion/);
   assert.match(adminJs, /resubmitRequisition/);
   assert.match(adminJs, /Resubmission archives this revision and resets approval and Accounts review/);
+  assert.match(adminJs, /const administrativelyApproved = Boolean\(clean\(record\.AdminReviewedAt\)\)/);
+  assert.match(adminJs, /administrativelyApproved[\s\S]*?disabled aria-label="Editing locked after administrative approval/);
 });
