@@ -5,6 +5,11 @@ import { requireStaffSession } from '../lib/staff-auth.js';
 import { getSchoolDocumentById, querySchoolCollection, upsertSchoolDocument } from '../lib/school-scope.js';
 import { resolveDocumentStorage } from '../lib/document-storage.js';
 import { readJsonBody } from '../lib/request-security.js';
+import {
+  admissionApplicationScopePath,
+  admissionThumbnailDocumentId,
+  safeStoredDocument
+} from '../lib/document-files.js';
 
 const DOCUMENTS = [
   ['BirthCertificate', 'Birth Certificate'],
@@ -18,6 +23,49 @@ const DOCUMENTS = [
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
 
+export function applicationDocumentScope(application = {}) {
+  const scopePath = admissionApplicationScopePath(application.__scopePath);
+  const match = /^schoolBranches\/([^/]+)\/sections\/(primary|secondary)\/applications$/i.exec(scopePath);
+  const pathBranchId = lower(match?.[1]);
+  const pathSchoolSection = lower(match?.[2]);
+  const fieldBranchId = lower(application.BranchId || application.branchId);
+  const fieldSchoolSection = lower(application.SchoolSection || application.schoolSection);
+  const branchConflict = Boolean(pathBranchId && fieldBranchId && pathBranchId !== fieldBranchId);
+  const sectionConflict = Boolean(
+    pathSchoolSection &&
+    fieldSchoolSection &&
+    pathSchoolSection !== fieldSchoolSection
+  );
+  return {
+    branchId: fieldBranchId || pathBranchId,
+    schoolSection: fieldSchoolSection || pathSchoolSection,
+    valid: !branchConflict && !sectionConflict
+  };
+}
+
+export function staffCanAccessApplicationDocument(user = {}, application = {}) {
+  if (lower(user.role || user.Role) === 'super admin') return true;
+  const scope = applicationDocumentScope(application);
+  if (!scope.valid) return false;
+
+  const assignedBranch = lower(user.branchId || user.BranchId);
+  if (assignedBranch && assignedBranch !== 'all') {
+    if (!scope.branchId || assignedBranch !== scope.branchId) return false;
+  }
+
+  const assignedSection = lower(
+    user.schoolSectionAccess ||
+    user.SchoolSectionAccess ||
+    user.schoolSection ||
+    user.SchoolSection ||
+    'all'
+  );
+  if (assignedSection && assignedSection !== 'all') {
+    if (!scope.schoolSection || assignedSection !== scope.schoolSection) return false;
+  }
+  return true;
+}
+
 function reference(row) {
   return clean(row.ApplicationReference || row.applicationReference || row.ApplicationID || row.applicationId || row.__id);
 }
@@ -30,6 +78,17 @@ function documentEntry(row, key) {
 function documentUrl(row, key) {
   const entry = documentEntry(row, key);
   return clean(entry.url || row[`Doc${key}Url`] || row[`${key}Url`] || row[`${key}Link`]);
+}
+
+function legacyThumbnailBelongsToApplication(thumbnail, application) {
+  if (!thumbnail) return false;
+  const applicationScope = admissionApplicationScopePath(application.__scopePath) || 'applications';
+  const savedScope = admissionApplicationScopePath(thumbnail.ApplicationScopePath);
+  if (savedScope) return lower(savedScope) === lower(applicationScope);
+  if (applicationScope === 'applications') return true;
+  const thumbnailOperationId = clean(thumbnail.UploadOperationId);
+  const applicationOperationId = clean(documentEntry(application, 'PassportPhotograph').uploadOperationId);
+  return Boolean(thumbnailOperationId && applicationOperationId && thumbnailOperationId === applicationOperationId);
 }
 
 function decodeBase64(value) {
@@ -50,6 +109,17 @@ function safeDocumentId(value) {
     .replace(/_+/g, '_')
     .replace(/-+/g, '-')
     .slice(0, 140);
+}
+
+function uniqueApplications(rows = []) {
+  const seen = new Set();
+  return rows.filter((row) => {
+    if (!row) return false;
+    const key = `${clean(row.__scopePath)}|${clean(row.__id || reference(row))}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 async function loadDriveFile(env, url) {
@@ -113,6 +183,11 @@ async function handleRequest(context, body = null) {
 
     const requestUrl = new URL(request.url);
     const applicationReference = clean((body && (body.ApplicationReference || body.applicationReference)) || requestUrl.searchParams.get('applicationReference'));
+    const requestedScopePath = clean(
+      (body && (body.ScopePath || body.scopePath))
+      || requestUrl.searchParams.get('scopePath')
+    );
+    const applicationScopePath = admissionApplicationScopePath(requestedScopePath);
     const key = clean((body && (body.DocumentType || body.documentType)) || requestUrl.searchParams.get('documentType'));
     const requestedMode = clean((body && (body.Mode || body.mode)) || requestUrl.searchParams.get('mode'));
     const mode = lower(requestedMode) === 'download' ? 'attachment' : 'inline';
@@ -120,23 +195,36 @@ async function handleRequest(context, body = null) {
     if (!applicationReference || !definition) {
       return Response.json({ ok: false, message: 'A valid application reference and document type are required.' }, { status: 400 });
     }
-
-    let application = await getSchoolDocumentById(env, 'applications', safeDocumentId(applicationReference)).catch(() => null);
-    if (!application || lower(reference(application)) !== lower(applicationReference)) {
-      const matches = await Promise.all(['ApplicationReference', 'ApplicationID'].map((field) =>
-        querySchoolCollection(env, 'applications', {
-          filters: [{ field, op: '==', value: applicationReference }],
-          limit: 1
-        }).catch(() => [])
-      ));
-      application = matches.flat().find((row) => lower(reference(row)) === lower(applicationReference)) || null;
+    if (requestedScopePath && !applicationScopePath) {
+      return Response.json({ ok: false, message: 'The application scope is invalid.' }, { status: 400 });
     }
+
+    const direct = applicationScopePath
+      ? await getDocument(env, applicationScopePath, safeDocumentId(applicationReference)).catch(() => null)
+      : await getSchoolDocumentById(env, 'applications', safeDocumentId(applicationReference)).catch(() => null);
+    const directApplication = direct
+      ? { ...direct, __scopePath: direct.__scopePath || applicationScopePath || 'applications' }
+      : null;
+    let candidates = directApplication && lower(reference(directApplication)) === lower(applicationReference)
+      ? [directApplication]
+      : [];
+    if (!candidates.length || !applicationScopePath) {
+      const queried = await querySchoolCollection(env, 'applications', {
+        filters: [
+          { field: 'ApplicationReference', op: '==', value: applicationReference },
+          { field: 'ApplicationID', op: '==', value: applicationReference }
+        ],
+        filterJoin: 'OR',
+        limit: 20,
+        ...(applicationScopePath ? { scopePath: applicationScopePath } : {})
+      }).catch(() => []);
+      candidates = uniqueApplications([...candidates, ...queried])
+        .filter((row) => lower(reference(row)) === lower(applicationReference));
+    }
+    const application = candidates.length === 1 ? candidates[0] : null;
     if (!application) return Response.json({ ok: false, message: 'Application not found.' }, { status: 404 });
-    if (user && user.role !== 'Super Admin') {
-      const branchAllowed = !clean(user.branchId) || !clean(application.BranchId) || lower(user.branchId) === lower(application.BranchId);
-      const section = lower(user.schoolSectionAccess || 'all');
-      const sectionAllowed = section === 'all' || !clean(application.SchoolSection) || section === lower(application.SchoolSection);
-      if (!branchAllowed || !sectionAllowed) return Response.json({ ok: false, message: 'This application belongs to another school branch or section.' }, { status: 403 });
+    if (user && !staffCanAccessApplicationDocument(user, application)) {
+      return Response.json({ ok: false, message: 'This application belongs to another school branch or section.' }, { status: 403 });
     }
     const storedUrl = documentUrl(application, key);
     if (!storedUrl) return Response.json({ ok: false, message: `${definition[1]} has not been uploaded.` }, { status: 404 });
@@ -155,18 +243,38 @@ async function handleRequest(context, body = null) {
       delete updated.__id; delete updated.__name;
       await recalculateDocuments(env, updated);
       await upsertSchoolDocument(env, 'applications', application.__id || applicationReference, updated);
-      if (key === 'PassportPhotograph') await deleteDocument(env, 'applicationPassportThumbnails', application.__id || applicationReference).catch(() => {});
+      if (key === 'PassportPhotograph') {
+        const thumbnailReference = reference(application);
+        const applicationScope = admissionApplicationScopePath(application.__scopePath) || 'applications';
+        const scopedThumbnailId = await admissionThumbnailDocumentId(thumbnailReference, applicationScope);
+        await deleteDocument(env, 'applicationPassportThumbnails', scopedThumbnailId).catch(() => {});
+        const legacyThumbnailId = safeDocumentId(thumbnailReference);
+        const legacyThumbnail = await getDocument(
+          env,
+          'applicationPassportThumbnails',
+          legacyThumbnailId
+        ).catch(() => null);
+        if (legacyThumbnailBelongsToApplication(legacyThumbnail, application)) {
+          await deleteDocument(env, 'applicationPassportThumbnails', legacyThumbnailId).catch(() => {});
+        }
+      }
       return Response.json({ ok: true, message: `${definition[1]} deleted. The Drive file was moved to trash.` }, { headers: { 'Cache-Control': 'no-store' } });
     }
     const file = await loadDriveFile(env, storedUrl);
-    const fileName = safeFileName(file.fileName || metadata.fileName, `${key}.bin`);
-    const mimeType = clean(file.mimeType || metadata.mimeType) || 'application/octet-stream';
+    const stored = safeStoredDocument(
+      file.fileName || metadata.fileName || `${key}.bin`,
+      file.fileBase64
+    );
+    const fileName = safeFileName(stored.fileName, `${key}.bin`);
+    const mimeType = stored.mimeType;
+    const disposition = stored.valid && stored.inlineSafe ? mode : 'attachment';
     return new Response(decodeBase64(file.fileBase64), {
       status: 200,
       headers: {
         'Content-Type': mimeType,
-        'Content-Disposition': `${mode}; filename="${fileName}"`,
+        'Content-Disposition': `${disposition}; filename="${fileName}"`,
         'Cache-Control': 'private, no-store',
+        'Content-Security-Policy': "sandbox; default-src 'none'; object-src 'none'; script-src 'none'",
         'X-Content-Type-Options': 'nosniff'
       }
     });

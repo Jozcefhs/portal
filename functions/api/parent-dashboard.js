@@ -3,10 +3,23 @@
 
 import { getPayableFees } from './backend.js';
 import { getDocument, listCollection, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
-import { getSchoolDocumentById, querySchoolCollection, upsertSchoolDocument } from '../lib/school-scope.js';
+import {
+  querySchoolCollection,
+  schoolCollectionPaths,
+  schoolSectionFor,
+  upsertSchoolDocument
+} from '../lib/school-scope.js';
 import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { getWebBranding } from '../lib/web-branding.js';
+import {
+  aggregateSchoolFeeDueInvoices,
+  listNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+  notifyParentPaymentDue,
+  notifyParentPaymentReceived
+} from '../lib/notifications.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -14,6 +27,12 @@ function clean(value) {
 
 function lower(value) {
   return clean(value).toLowerCase();
+}
+
+export function parentChildIdentity(child = {}) {
+  const scopePath = clean(child.__scopePath).replace(/^\/+|\/+$/g, '').toLowerCase();
+  const accountRef = lower(child.AccountRef);
+  return `${scopePath}|${accountRef}`;
 }
 
 function asMoneyNumber(value) {
@@ -79,6 +98,61 @@ function timestampMs(value) {
   if (!Number.isNaN(date.getTime())) return date.getTime();
   const dateOnly = new Date(`${text}T00:00:00`);
   return Number.isNaN(dateOnly.getTime()) ? 0 : dateOnly.getTime();
+}
+
+function scopedRecordBranch(row = {}) {
+  const explicit = clean(row.BranchId || row.branchId);
+  if (explicit) return lower(explicit);
+  const match = clean(row.__scopePath).match(/schoolBranches\/([^/]+)/i);
+  return lower(match?.[1] || 'main');
+}
+
+function scopedRecordSection(row = {}) {
+  const explicit = clean(row.SchoolSection || row.schoolSection);
+  if (explicit) return lower(explicit);
+  const match = clean(row.__scopePath).match(/\/sections\/([^/]+)/i);
+  return lower(match?.[1] || schoolSectionFor(row));
+}
+
+function parentNotificationRecipient(email, children = []) {
+  const scopes = (children || []).flatMap((child) => {
+    const branchId = scopedRecordBranch(child);
+    const schoolSection = scopedRecordSection(child);
+    return accountKeys(child).map((accountRef) => ({
+      accountRef: lower(accountRef),
+      branchId,
+      schoolSection
+    }));
+  });
+  return {
+    audience: 'Parent',
+    recipientKey: lower(email),
+    email: lower(email),
+    accountRefs: [...new Set((children || []).flatMap((child) => accountKeys(child)).map(lower).filter(Boolean))],
+    branchIds: [...new Set((children || []).map(scopedRecordBranch).filter(Boolean))],
+    schoolSections: [...new Set((children || []).map(scopedRecordSection).filter(Boolean))],
+    scopes
+  };
+}
+
+async function parentNotifications(env, email, children) {
+  return listNotifications(env, parentNotificationRecipient(email, children), { limit: 60 })
+    .catch(() => ({ notifications: [], unreadCount: 0 }));
+}
+
+export function parentPayableNotificationIdentity(payable = {}) {
+  const account = payable?.account || {};
+  return {
+    accountRef: clean(account.AccountRef || account.AdmissionNo || account.ApplicationReference),
+    email: lower(account.Email || account.ParentEmail || account.VerificationEmail),
+    branchId: scopedRecordBranch(account),
+    schoolSection: scopedRecordSection(account)
+  };
+}
+
+function payableNotificationPeriod(configured, current) {
+  const value = clean(configured);
+  return !value || ['all', '*'].includes(lower(value)) ? clean(current) : value;
 }
 
 function sameText(left, right) {
@@ -163,12 +237,34 @@ export function parentOwnsApplication(application, email) {
   ].some((value) => lower(value) === wantedEmail);
 }
 
-export function findParentOwnedApplication(applications, accountRef, email) {
-  return (applications || []).find((row) => parentOwnsApplication(row, email) && applicationKeys(row)
-    .some((ref) => sameText(ref, accountRef) || referencesMatch(ref, accountRef))) || null;
+export function findParentOwnedApplication(applications, accountRef, email, scopePath = '') {
+  const suppliedScopePath = clean(scopePath);
+  const requestedScopePath = identityScopePathForCollection(scopePath, 'applications');
+  if (suppliedScopePath && !requestedScopePath) return null;
+  const matches = (applications || []).filter((row) => {
+    if (!parentOwnsApplication(row, email)) return false;
+    if (requestedScopePath &&
+        lower(identityScopePathForCollection(row, 'applications')) !== lower(requestedScopePath)) {
+      return false;
+    }
+    return applicationKeys(row)
+      .some((ref) => sameText(ref, accountRef) || referencesMatch(ref, accountRef));
+  });
+  return matches.length === 1 ? matches[0] : null;
 }
 
-function applicationMatchesChild(application, child) {
+function applicationScopeMatchesChild(application, child) {
+  const applicationScope = identityScopePathForCollection(application, 'applications');
+  const childScope = identityScopePathForCollection(child, 'applications');
+  if (applicationScope || childScope) {
+    return Boolean(applicationScope && childScope && sameText(applicationScope, childScope));
+  }
+  return sameText(scopedRecordBranch(application), scopedRecordBranch(child)) &&
+    sameText(scopedRecordSection(application), scopedRecordSection(child));
+}
+
+export function applicationMatchesChild(application, child) {
+  if (!application || !child || !applicationScopeMatchesChild(application, child)) return false;
   const appKeys = applicationKeys(application);
   const childKeys = accountKeys(child);
   const applicationAdmission = pick(application, ['AdmissionNo', 'admissionNo']);
@@ -189,7 +285,11 @@ function applicationMatchesChild(application, child) {
     normalizedPersonName(applicationName) === normalizedPersonName(childName) &&
     applicationEmail === childEmail);
   if (identityMatches) return true;
-  return child.SourceType === 'Application' && appKeys.some((appKey) => childKeys.some((childKey) => sameText(appKey, childKey) || referencesMatch(appKey, childKey)));
+  return appKeys.some((appKey) => childKeys.some((childKey) => sameText(appKey, childKey) || referencesMatch(appKey, childKey)));
+}
+
+export function findScopedChildApplication(applications, child) {
+  return (applications || []).find((application) => applicationMatchesChild(application, child)) || null;
 }
 
 function studentLoginCode(student) {
@@ -244,15 +344,106 @@ function validatedIdentityScopePath(value, collection) {
   return pattern.test(path) ? path : '';
 }
 
-async function getSelectedIdentityRow(env, collection, accountRef, scopePath = '') {
+function identityScopePathForCollection(value, collection) {
+  const path = clean(value && typeof value === 'object' ? value.__scopePath : value)
+    .replace(/^\/+|\/+$/g, '');
+  if (!path) return '';
+  if (/^(?:students|applications)$/i.test(path)) return collection;
+  return validatedIdentityScopePath(
+    path.replace(/\/(?:students|applications)$/i, `/${collection}`),
+    collection
+  );
+}
+
+function scopedPathIdentity(scopePath = '') {
+  const match = clean(scopePath)
+    .replace(/^\/+|\/+$/g, '')
+    .match(/^schoolBranches\/([^/]+)\/sections\/(primary|secondary)\/[^/]+$/i);
+  return match ? {
+    branchId: lower(match[1]),
+    schoolSection: lower(match[2])
+  } : null;
+}
+
+export function selectedChildActivityScope(scopePath, collection, child = {}) {
+  const requestedScopePath = clean(scopePath);
+  const validatedScopePath = validatedIdentityScopePath(requestedScopePath, collection);
+  if (!requestedScopePath || !validatedScopePath) return null;
+  const scopedIdentity = scopedPathIdentity(validatedScopePath);
+  const branchId = scopedIdentity?.branchId || clean(child.BranchId || child.branchId);
+  const schoolSection = scopedIdentity?.schoolSection || clean(child.SchoolSection || child.schoolSection);
+  if (!branchId || !schoolSection) return null;
+  return {
+    scopePath: validatedScopePath,
+    branchId: lower(branchId),
+    schoolSection: lower(schoolSection)
+  };
+}
+
+export function recordMatchesSelectedChildScope(row = {}, selectedScope = {}) {
+  const pathIdentity = scopedPathIdentity(row.__scopePath);
+  const branchId = pathIdentity?.branchId || clean(row.BranchId || row.branchId);
+  const schoolSection = pathIdentity?.schoolSection || clean(row.SchoolSection || row.schoolSection);
+  if (!branchId || !schoolSection || !selectedScope.branchId || !selectedScope.schoolSection) return false;
+  return lower(branchId) === lower(selectedScope.branchId) &&
+    lower(schoolSection) === lower(selectedScope.schoolSection);
+}
+
+function selectedIdentityCandidateKey(row, collection) {
+  const scopePath = identityScopePathForCollection(row, collection);
+  const documentId = clean(row?.__id || row?.__name);
+  if (documentId) return `${lower(scopePath)}|${lower(documentId.split('/').pop())}`;
+  return `${lower(scopePath)}|${JSON.stringify(row || {})}`;
+}
+
+export async function getSelectedIdentityRow(env, collection, accountRef, scopePath = '', options = {}) {
   const documentId = safeDocumentId(accountRef);
   if (!documentId) return null;
+  const readDocument = options.getDocument || getDocument;
+  const getCollectionPaths = options.schoolCollectionPaths || schoolCollectionPaths;
+  const queryIdentityRows = options.querySchoolCollection || querySchoolCollection;
+  const requestedScopePath = clean(scopePath);
   const path = validatedIdentityScopePath(scopePath, collection);
-  if (path) {
-    const row = await getDocument(env, path, documentId).catch(() => null);
-    if (row) return { ...row, __scopePath: path };
+  if (requestedScopePath && !path) return null;
+  const paths = path ? [path] : await getCollectionPaths(env, collection).catch(() => []);
+  const directMatches = (await Promise.all(paths.map(async (candidatePath) => {
+    const row = await readDocument(env, candidatePath, documentId).catch(() => null);
+    return row ? { ...row, __scopePath: candidatePath } : null;
+  }))).filter(Boolean);
+  const referenceFields = collection === 'applications'
+    ? ['ApplicationReference', 'ApplicationID', 'AdmissionNo', 'AccountRef']
+    : ['AdmissionNo', 'AccountRef', 'ApplicationReference', 'ApplicationID'];
+  const referenceValues = [...new Set([
+    clean(accountRef),
+    clean(accountRef).toUpperCase(),
+    clean(accountRef).toLowerCase()
+  ].filter(Boolean))];
+  let referenceMatches;
+  try {
+    const groups = await Promise.all(referenceFields.map((field) => queryIdentityRows(env, collection, {
+      filters: [{
+        field,
+        op: referenceValues.length === 1 ? '==' : 'in',
+        value: referenceValues.length === 1 ? referenceValues[0] : referenceValues
+      }],
+      limit: 2,
+      ...(path ? { scopePath: path } : {})
+    })));
+    referenceMatches = groups.flat();
+  } catch (_error) {
+    // Without a complete uniqueness check, a direct credential must not bind
+    // to whichever branch or section happens to be returned first.
+    return null;
   }
-  return getSchoolDocumentById(env, collection, documentId).catch(() => null);
+  const matches = new Map();
+  [...directMatches, ...referenceMatches].forEach((row) => {
+    if (!row) return;
+    const candidate = clean(row.__scopePath)
+      ? row
+      : { ...row, __scopePath: path || collection };
+    matches.set(selectedIdentityCandidateKey(candidate, collection), candidate);
+  });
+  return matches.size === 1 ? [...matches.values()][0] : null;
 }
 
 async function querySchoolIdentity(env, collection, email, code) {
@@ -373,8 +564,8 @@ function normalizeStudent(row, profile = {}) {
     ClassArm: pick(row, ['ClassArm', 'classArm', 'Arm', 'arm']),
     StudentType: pick(row, ['StudentType', 'studentType']),
     Gender: pick(row, ['Gender', 'gender', 'Sex', 'sex']),
-    BranchId: pick(row, ['BranchId', 'branchId']),
-    SchoolSection: pick(row, ['SchoolSection', 'schoolSection']),
+    BranchId: scopedRecordBranch(row),
+    SchoolSection: scopedRecordSection(row),
     ParentEmail: lower(pick(row, ['ParentEmail', 'parentEmail', 'Email', 'email', 'VerificationEmail', 'FatherEmail', 'MotherEmail', 'GuardianEmail'])),
     ParentPhone: pick(row, ['ParentPhone', 'parentPhone']),
     VerificationCode: studentLoginCode(row),
@@ -405,8 +596,8 @@ function normalizeApplicationChild(row, profile = {}) {
     ClassName: pick(row, ['ClassApplyingFor', 'classApplyingFor', 'ClassAdmitted', 'classAdmitted', 'ClassName', 'className']),
     StudentType: pick(row, ['StudentType', 'studentType'], 'Day Student'),
     Gender: pick(row, ['Gender', 'gender', 'Sex', 'sex']),
-    BranchId: pick(row, ['BranchId', 'branchId']),
-    SchoolSection: pick(row, ['SchoolSection', 'schoolSection']),
+    BranchId: scopedRecordBranch(row),
+    SchoolSection: scopedRecordSection(row),
     ParentEmail: lower(pick(row, ['ParentEmail', 'parentEmail', 'VerificationEmail', 'verificationEmail', 'Email', 'email'])),
     ParentPhone: pick(row, ['ParentPhone', 'parentPhone', 'Phone', 'phone']),
     WalletCardStatus: 'Not Issued',
@@ -461,6 +652,8 @@ function normalizeLedger(row) {
 function normalizeInvoice(row) {
   return {
     Date: toDisplayDate(pick(row, ['Date', 'date', 'CreatedAt', 'createdAt'])),
+    CreatedAt: pick(row, ['CreatedAt', 'createdAt', 'Date', 'date']),
+    InvoiceId: pick(row, ['InvoiceId', 'invoiceId', 'Reference', 'reference', '__id']),
     AccountRef: pick(row, ['AccountRef', 'accountRef', 'AdmissionNo', 'admissionNo']),
     FeeCode: pick(row, ['FeeCode', 'feeCode']),
     FeeName: pick(row, ['FeeName', 'feeName']),
@@ -470,9 +663,12 @@ function normalizeInvoice(row) {
     Debit: asMoneyNumber(pick(row, ['Debit', 'debit', 'Amount', 'amount'])),
     Credit: asMoneyNumber(pick(row, ['Credit', 'credit', 'PaidAmount', 'paidAmount'])),
     Balance: asMoneyNumber(pick(row, ['Balance', 'balance', 'BalanceAmount', 'balanceAmount'])),
+    Currency: pick(row, ['Currency', 'currency'], 'NGN'),
     DueDate: toDisplayDate(pick(row, ['DueDate', 'dueDate', 'PaymentDueDate', 'paymentDueDate'])),
     Status: pick(row, ['Status', 'status']),
-    Reference: pick(row, ['InvoiceId', 'invoiceId', 'Reference', 'reference', '__id'])
+    Reference: pick(row, ['InvoiceId', 'invoiceId', 'Reference', 'reference', '__id']),
+    BranchId: scopedRecordBranch(row),
+    SchoolSection: scopedRecordSection(row)
   };
 }
 
@@ -493,7 +689,9 @@ function normalizePayment(row) {
     Status: pick(row, ['Status', 'status']),
     Gateway: pick(row, ['Gateway', 'gateway']),
     Method: pick(row, ['Method', 'method']),
-    Reference: pick(row, ['Reference', 'reference', 'TransactionReference', 'transactionReference', 'PaymentId', 'paymentId', '__id'])
+    Reference: pick(row, ['Reference', 'reference', 'TransactionReference', 'transactionReference', 'PaymentId', 'paymentId', '__id']),
+    BranchId: scopedRecordBranch(row),
+    SchoolSection: scopedRecordSection(row)
   };
 }
 
@@ -548,11 +746,15 @@ function parentOwnsStudent(student, email, applications, matchingApplications = 
   const wantedEmail = lower(email);
   if (lower(student.ParentEmail) === wantedEmail) return true;
   const appRef = pick(student, ['ApplicationReference', 'applicationReference']);
-  if (appRef && matchingApplications.some((app) => sameText(pick(app, ['ApplicationReference', 'applicationReference', '__id']), appRef))) {
+  if (appRef && matchingApplications.some((app) =>
+    applicationScopeMatchesChild(app, student) &&
+    sameText(pick(app, ['ApplicationReference', 'applicationReference', '__id']), appRef))) {
     return true;
   }
   return applications.some((app) => {
-    const sameRef = appRef && sameText(pick(app, ['ApplicationReference', 'applicationReference', '__id']), appRef);
+    const sameRef = appRef &&
+      applicationScopeMatchesChild(app, student) &&
+      sameText(pick(app, ['ApplicationReference', 'applicationReference', '__id']), appRef);
     const emailMatch = [
       pick(app, ['VerificationEmail', 'verificationEmail']),
       pick(app, ['ParentEmail', 'parentEmail']),
@@ -818,6 +1020,7 @@ async function resolveParentAdmissionApplication(env, body, email, code, account
       for (const field of ['AdmissionNo', 'admissionNo', 'AdmissionNumber']) {
         const matches = await querySchoolCollection(env, 'applications', {
           filters: [{ field, op: '==', value: clean(student.AdmissionNo || student.AccountRef) }],
+          scopePath: applicationScope,
           limit: 1
         }).catch(() => []);
         if (matches[0]) return matches[0];
@@ -825,7 +1028,11 @@ async function resolveParentAdmissionApplication(env, body, email, code, account
     }
   }
   const identitySources = await authenticateFamily();
-  return findParentOwnedApplication(identitySources.applications, accountRef, email);
+  const applicationScope = identityScopePathForCollection(
+    body.scopePath || body.ScopePath,
+    'applications'
+  );
+  return findParentOwnedApplication(identitySources.applications, accountRef, email, applicationScope);
 }
 
 async function getParentAdmissionDocument(env, body) {
@@ -1114,7 +1321,6 @@ async function getDashboard(env, body) {
   const { applications, matchingApplications } = await assertParentAccess(sources, email, code);
   const allStudents = (sources.students || []).map((row) => normalizeStudent(row, schoolProfile));
   const children = allStudents.filter((student) => parentOwnsStudent(student, email, applications, matchingApplications));
-  const childRefs = new Set(children.flatMap((child) => accountKeys(child).map((key) => lower(key))));
   const parentApplications = applications.filter((app) => {
     const emailMatch = [
       pick(app, ['VerificationEmail', 'verificationEmail']),
@@ -1126,17 +1332,13 @@ async function getDashboard(env, body) {
   });
   parentApplications
     .map((row) => normalizeApplicationChild(row, schoolProfile))
-    .filter((child) => child.AccountRef && !childRefs.has(lower(child.AccountRef)))
+    .filter((candidate) => candidate.AccountRef &&
+      !children.some((child) => applicationMatchesChild(candidate, child)))
     .forEach((child) => {
       children.push(child);
-      accountKeys(child).forEach((key) => childRefs.add(lower(key)));
     });
   children.forEach((child) => {
-    const linkedApplication = parentApplications.find((app) => {
-      const ref = pick(app, ['ApplicationReference', 'applicationReference', 'ApplicationID', 'applicationId', '__id']);
-      return referencesMatch(ref, child.ApplicationReference) || sameText(ref, child.ApplicationReference) ||
-        referencesMatch(ref, child.AccountRef) || sameText(ref, child.AccountRef);
-    });
+    const linkedApplication = findScopedChildApplication(parentApplications, child);
     if (linkedApplication && passportPhotoUrl(linkedApplication)) {
       child.PassportPhotoAvailable = true;
       child.PassportPhotoApplicationReference = pick(linkedApplication, ['ApplicationReference', 'applicationReference', 'ApplicationID', 'applicationId', '__id']);
@@ -1156,6 +1358,7 @@ async function getDashboard(env, body) {
   const accountSummaries = {};
 
   for (const child of children) {
+    const identity = parentChildIdentity(child);
     const keys = accountKeys(child);
     const childLedger = ledger.filter((entry) => financialReferenceMatches(entry.AccountRef, child));
     const walletEntries = ledger.filter((entry) => {
@@ -1168,19 +1371,21 @@ async function getDashboard(env, body) {
     child.TotalCredit = accountSummary.TotalCredit;
     child.OutstandingBalance = accountSummary.OutstandingBalance;
     child.CreditBalance = accountSummary.CreditBalance;
-    accountSummaries[child.AccountRef] = accountSummary;
-    walletActivity[child.AccountRef] = walletEntries;
-    paymentRecords[child.AccountRef] = paymentHistoryForChild(child, payments, ledger);
-    payableItems[child.AccountRef] = [];
-    dueNotifications[child.AccountRef] = invoiceDueNotifications(invoices, keys, accountSummary, child);
-    clinicVisits[child.AccountRef] = clinic.filter((record) => {
+    accountSummaries[identity] = accountSummary;
+    walletActivity[identity] = walletEntries;
+    paymentRecords[identity] = paymentHistoryForChild(child, payments, ledger);
+    payableItems[identity] = [];
+    dueNotifications[identity] = invoiceDueNotifications(invoices, keys, accountSummary, child);
+    clinicVisits[identity] = clinic.filter((record) => {
       return financialReferenceMatches(record.AdmissionNo, child);
     }).sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)));
-    const resultSource = applications.find((app) => applicationMatchesChild(app, child)) ||
+    const resultSource = findScopedChildApplication(applications, child) ||
       (child.SourceType === 'Application' ? child : null);
     const result = buildEntranceResult(resultSource, schoolProfile);
-    entranceResults[child.AccountRef] = result ? [result] : [];
+    entranceResults[identity] = result ? [result] : [];
   }
+
+  const notificationData = await parentNotifications(env, email, children);
 
   return {
     ok: true,
@@ -1196,6 +1401,9 @@ async function getDashboard(env, body) {
     resultDisplayMode: lower(schoolProfile.ResultDisplayMode) === 'percentage' ? 'percentage' : 'subjects',
     entranceResults,
     clinicVisits,
+    notifications: notificationData.notifications,
+    notificationUnreadCount: notificationData.unreadCount,
+    unreadCount: notificationData.unreadCount,
     storeCatalog: (sources.storeItems || []).filter((row) => isYes(row.Active === undefined ? 'YES' : row.Active) && asMoneyNumber(row.Quantity) > 0),
     storeOrders: (sources.storeOrders || []).filter((row) => children.some((child) => financialReferenceMatches(row.AccountRef || row.AdmissionNo, child)))
   };
@@ -1207,7 +1415,14 @@ async function getChildActivity(env, body) {
   const accountRef = clean(body.accountRef || body.AccountRef || body.AdmissionNo);
   const sourceType = lower(body.sourceType || body.SourceType);
   const collection = sourceType === 'application' ? 'applications' : 'students';
-  const selectedRow = await getSelectedIdentityRow(env, collection, accountRef, body.scopePath || body.ScopePath);
+  const requestedScopeValue = clean(body.scopePath || body.ScopePath);
+  const requestedScopePath = validatedIdentityScopePath(requestedScopeValue, collection);
+  if (!requestedScopeValue || !requestedScopePath) {
+    const err = new Error('The selected child scope is required. Reload the parent dashboard and try again.');
+    err.status = 400;
+    throw err;
+  }
+  const selectedRow = await getSelectedIdentityRow(env, collection, accountRef, requestedScopeValue);
   const schoolProfile = await getSchoolProfile(env);
   let child = null;
   let applications = [];
@@ -1231,12 +1446,23 @@ async function getChildActivity(env, body) {
     const identitySources = await loadParentSources(env, 'identity', body);
     const access = await assertParentAccess(identitySources, email, code);
     applications = access.applications;
-    child = (identitySources.students || [])
+    const scopedStudents = (identitySources.students || [])
+      .filter((row) => !requestedScopeValue ||
+        (requestedScopePath && lower(row.__scopePath) === lower(requestedScopePath)))
       .map((row) => normalizeStudent(row, schoolProfile))
-      .find((row) => parentOwnsStudent(row, email, applications, access.matchingApplications) && financialReferenceMatches(accountRef, row));
+      .filter((row) =>
+        parentOwnsStudent(row, email, applications, access.matchingApplications) &&
+        financialReferenceMatches(accountRef, row)
+      );
+    child = scopedStudents.length === 1 ? scopedStudents[0] : null;
     if (!child) {
-      child = applications.map((row) => normalizeApplicationChild(row, schoolProfile))
-        .find((row) => financialReferenceMatches(accountRef, row));
+      const applicationScopePath = identityScopePathForCollection(requestedScopePath, 'applications');
+      const scopedApplications = applications
+        .filter((row) => !requestedScopeValue ||
+          (applicationScopePath && lower(row.__scopePath) === lower(applicationScopePath)))
+        .map((row) => normalizeApplicationChild(row, schoolProfile))
+        .filter((row) => financialReferenceMatches(accountRef, row));
+      child = scopedApplications.length === 1 ? scopedApplications[0] : null;
     }
   }
   if (!child) {
@@ -1244,6 +1470,15 @@ async function getChildActivity(env, body) {
     err.status = 404;
     throw err;
   }
+  const selectedScope = selectedChildActivityScope(requestedScopeValue, collection, child);
+  if (!selectedScope ||
+      lower(identityScopePathForCollection(child, collection)) !== lower(selectedScope.scopePath)) {
+    const err = new Error('The selected child scope could not be verified.');
+    err.status = 404;
+    throw err;
+  }
+  child.BranchId = selectedScope.branchId;
+  child.SchoolSection = selectedScope.schoolSection;
   const keys = accountKeys(child);
   const [ledgerRows, invoiceRows, paymentRows, clinicRows, summaryRows, linkedApplication, storeItems, storeOrderRows] = await Promise.all([
     queryRowsForReferences(env, 'ledger', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
@@ -1252,62 +1487,131 @@ async function getChildActivity(env, body) {
     queryRowsForReferences(env, 'clinicRecords', ['AdmissionNo'], keys),
     Promise.all(keys.slice(0, 3).map((key) => getDocument(env, 'accountSummaries', safeDocumentId(key)).catch(() => null))),
     child.ApplicationReference
-      ? getSelectedIdentityRow(env, 'applications', child.ApplicationReference)
+      ? getSelectedIdentityRow(
+          env,
+          'applications',
+          child.ApplicationReference,
+          identityScopePathForCollection(child, 'applications')
+        )
       : Promise.resolve(null),
     listCollection(env, 'storeItems').catch(() => []),
     queryRowsForReferences(env, 'storeOrders', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys)
   ]);
-  if (linkedApplication && !applications.some((row) => applicationMatchesChild(row, child))) {
+  if (linkedApplication && !findScopedChildApplication(applications, child)) {
     applications.push(linkedApplication);
   }
-  const ledger = ledgerRows.map(normalizeLedger);
-  const invoices = invoiceRows.map(normalizeInvoice);
-  const payments = paymentRows.map(normalizePayment);
-  const clinic = clinicRows.map(normalizeClinicRecord);
+  const scopedLedgerRows = ledgerRows.filter((row) => recordMatchesSelectedChildScope(row, selectedScope));
+  const scopedInvoiceRows = invoiceRows.filter((row) => recordMatchesSelectedChildScope(row, selectedScope));
+  const scopedPaymentRows = paymentRows.filter((row) => recordMatchesSelectedChildScope(row, selectedScope));
+  const scopedClinicRows = clinicRows.filter((row) => recordMatchesSelectedChildScope(row, selectedScope));
+  const scopedSummaryRows = summaryRows.filter((row) =>
+    row && recordMatchesSelectedChildScope(row, selectedScope));
+  const scopedStoreOrderRows = storeOrderRows.filter((row) =>
+    recordMatchesSelectedChildScope(row, selectedScope));
+  const ledger = scopedLedgerRows.map(normalizeLedger);
+  const invoices = scopedInvoiceRows.map(normalizeInvoice);
+  const payments = scopedPaymentRows.map(normalizePayment);
+  const clinic = scopedClinicRows.map(normalizeClinicRecord);
   const walletEntries = ledger.filter((entry) => financialReferenceMatches(entry.AccountRef, child) && lower(entry.FeeCategory) === 'wallet')
     .sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)));
   const childLedger = ledger.filter((entry) => financialReferenceMatches(entry.AccountRef, child));
-  const accountSummary = accountSummaryForKeys(summaryRows.filter(Boolean), keys, childLedger, invoices);
+  const accountSummary = accountSummaryForKeys(scopedSummaryRows, keys, childLedger, invoices);
   child.TotalDebit = accountSummary.TotalDebit;
   child.TotalCredit = accountSummary.TotalCredit;
   child.OutstandingBalance = accountSummary.OutstandingBalance;
   child.CreditBalance = accountSummary.CreditBalance;
-  const resultSource = applications.find((app) => applicationMatchesChild(app, child)) ||
+  const resultSource = findScopedChildApplication(applications, child) ||
     (child.SourceType === 'Application' ? child : null);
   const result = buildEntranceResult(resultSource, schoolProfile);
+  const childPayments = paymentHistoryForChild(child, payments, ledger);
+  const childDueNotifications = invoiceDueNotifications(invoices, keys, accountSummary, child);
+  const childInvoices = invoices
+    .filter((invoice) => financialReferenceMatches(invoice.AccountRef || invoice.AdmissionNo || invoice.ApplicationReference, child));
+  const dueInvoiceSources = [
+    ...childInvoices.filter((invoice) => !isSchoolFee(invoice)),
+    ...aggregateSchoolFeeDueInvoices(childInvoices)
+  ];
+  await Promise.all([
+    ...payments
+      .filter((payment) => financialReferenceMatches(payment.AccountRef || payment.AdmissionNo || payment.ApplicationReference, child))
+      .map((payment) => notifyParentPaymentReceived(env, {
+        ...payment,
+        ParentEmail: email,
+        BranchId: payment.BranchId || child.BranchId,
+        SchoolSection: payment.SchoolSection || child.SchoolSection
+      }).catch(() => null)),
+    ...dueInvoiceSources
+      .map((invoice) => notifyParentPaymentDue(env, {
+        ...invoice,
+        InvoiceId: invoice.InvoiceId || invoice.Reference,
+        ParentEmail: email,
+        BranchId: invoice.BranchId || child.BranchId,
+        SchoolSection: invoice.SchoolSection || child.SchoolSection
+      }).catch(() => null))
+  ]);
+  const notificationData = await parentNotifications(env, email, [child]);
   return {
     ok: true,
     accountRef: child.AccountRef,
     walletActivity: walletEntries,
     walletBalance: walletBalance(walletEntries),
     accountSummary,
-    paymentRecords: paymentHistoryForChild(child, payments, ledger),
-    dueNotifications: invoiceDueNotifications(invoices, keys, accountSummary, child),
+    paymentRecords: childPayments,
+    dueNotifications: childDueNotifications,
+    notifications: notificationData.notifications,
+    notificationUnreadCount: notificationData.unreadCount,
+    unreadCount: notificationData.unreadCount,
     clinicVisits: clinic.filter((record) => financialReferenceMatches(record.AdmissionNo, child)).sort((a, b) => clean(b.Date).localeCompare(clean(a.Date))),
     showResultsOnline: schoolResultsAreVisible(schoolProfile),
     resultDisplayMode: lower(schoolProfile.ResultDisplayMode) === 'percentage' ? 'percentage' : 'subjects',
     entranceResults: result ? [result] : [],
     storeCatalog: (storeItems || []).filter((row) => isYes(row.Active === undefined ? 'YES' : row.Active) && asMoneyNumber(row.Quantity) > 0),
-    storeOrders: (storeOrderRows || []).filter((row) => financialReferenceMatches(row.AccountRef || row.AdmissionNo, child))
+    storeOrders: scopedStoreOrderRows.filter((row) =>
+      financialReferenceMatches(row.AccountRef || row.AdmissionNo || row.ApplicationReference, child))
   };
 }
 
 async function updateWalletRestrictions(env, body) {
   const email = lower(body.email || body.ParentEmail || body.Email);
   requireFirestoreEnv(env);
-  const sources = await loadParentSources(env, 'full', body);
-  const { applications } = await assertParentAccess(sources, email, body.code || body.VerificationCode);
-  const students = (sources.students || []).map(normalizeStudent);
   const accountRef = clean(body.accountRef || body.AccountRef || body.AdmissionNo);
-  const student = students.find((row) => {
-    return parentOwnsStudent(row, email, applications) &&
-      accountKeys(row).some((key) => sameText(key, accountRef));
-  });
-  if (!student) {
+  const requestedScopeValue = clean(body.scopePath || body.ScopePath);
+  const requestedScopePath = validatedIdentityScopePath(requestedScopeValue, 'students');
+  if (!requestedScopeValue || !requestedScopePath) {
+    const err = new Error('The selected child scope is required. Reload the parent dashboard and try again.');
+    err.status = 400;
+    throw err;
+  }
+  const selectedRow = await getSelectedIdentityRow(env, 'students', accountRef, requestedScopePath);
+  if (!selectedRow) {
     const err = new Error('The selected child was not found for this parent account.');
     err.status = 404;
     throw err;
   }
+  const sources = await loadParentSources(env, 'identity', body);
+  const { applications, matchingApplications } = await assertParentAccess(
+    sources,
+    email,
+    body.code || body.VerificationCode
+  );
+  const student = normalizeStudent(selectedRow);
+  const selectedScope = selectedChildActivityScope(requestedScopePath, 'students', student);
+  const selectedStudentMatches = parentOwnsStudent(
+    student,
+    email,
+    applications,
+    matchingApplications
+  ) && accountKeys(student).some((key) =>
+    sameText(key, accountRef) || referencesMatch(key, accountRef));
+  if (!selectedScope ||
+      lower(identityScopePathForCollection(student, 'students')) !== lower(selectedScope.scopePath) ||
+      !selectedStudentMatches) {
+    const err = new Error('The selected child was not found for this parent account.');
+    err.status = 404;
+    throw err;
+  }
+  student.BranchId = selectedScope.branchId;
+  student.SchoolSection = selectedScope.schoolSection;
   const status = clean(body.walletCardStatus || body.WalletCardStatus || 'Active');
   const updates = {
     ...student,
@@ -1318,7 +1622,12 @@ async function updateWalletRestrictions(env, body) {
     WalletRestrictionUpdatedBy: 'Parent',
     WalletRestrictionUpdatedAt: nowIso()
   };
-  await upsertSchoolDocument(env, 'students', safeDocumentId(student.AdmissionNo || student.AccountRef), updates);
+  await upsertSchoolDocument(
+    env,
+    'students',
+    safeDocumentId(student.__id || student.AdmissionNo || student.AccountRef),
+    updates
+  );
   return { ok: true, message: 'Wallet restrictions saved.' };
 }
 
@@ -1334,6 +1643,7 @@ async function getChildPayable(env, body) {
   if (!items.some(isWalletFee) && clean(payable.account && payable.account.AdmissionNo)) {
     items.push(walletTopupItem(payable.account));
   }
+  const notificationIdentity = parentPayableNotificationIdentity(payable);
   const itemNotices = items
     .filter((item) => clean(item.DueDate))
     .map((item) => ({
@@ -1349,8 +1659,8 @@ async function getChildPayable(env, body) {
       PreviousFeePaymentApplied: item.PreviousFeePaymentApplied || '',
       BalanceAmount: item.BalanceAmount || item.Amount,
       Currency: item.Currency || 'NGN',
-      AcademicSession: item.AcademicSession || '',
-      Term: item.Term || '',
+      AcademicSession: payableNotificationPeriod(item.AcademicSession, payable.account?.AcademicSession),
+      Term: payableNotificationPeriod(item.Term, payable.account?.Term),
       DueDate: item.DueDate,
       DueStatus: dueStatus(item.DueDate),
       AllowInstallment: item.AllowInstallment || '',
@@ -1358,13 +1668,56 @@ async function getChildPayable(env, body) {
       MaxAmount: item.MaxAmount || '',
       Components: item.Components || []
     }));
+  await Promise.all(itemNotices.map((notice) => notifyParentPaymentDue(env, {
+    ...notice,
+    InvoiceId: notice.FeeCode,
+    AccountRef: notificationIdentity.accountRef,
+    ParentEmail: notificationIdentity.email,
+    BranchId: notificationIdentity.branchId,
+    SchoolSection: notificationIdentity.schoolSection
+  }).catch(() => null)));
+  const notificationData = await parentNotifications(env, notificationIdentity.email, [{
+    AccountRef: notificationIdentity.accountRef,
+    BranchId: notificationIdentity.branchId,
+    SchoolSection: notificationIdentity.schoolSection
+  }]);
   return {
     ok: true,
     message: 'Payable items loaded.',
-    accountRef: clean(body.accountRef || body.AccountRef || body.AdmissionNo),
+    accountRef: notificationIdentity.accountRef,
     payableItems: items,
-    dueNotifications: itemNotices
+    dueNotifications: itemNotices,
+    notifications: notificationData.notifications,
+    notificationUnreadCount: notificationData.unreadCount,
+    unreadCount: notificationData.unreadCount
   };
+}
+
+async function getParentNotifications(env, body) {
+  const dashboard = await getDashboard(env, body);
+  return {
+    ok: true,
+    notifications: dashboard.notifications || [],
+    unreadCount: Number(dashboard.notificationUnreadCount || dashboard.unreadCount || 0)
+  };
+}
+
+async function markParentNotificationRead(env, body) {
+  const email = lower(body.email || body.ParentEmail || body.Email);
+  const current = await getParentNotifications(env, body);
+  const notificationId = clean(body.notificationId || body.NotificationId);
+  const markAll = body.all === true || body.All === true || lower(body.action || body.Action) === 'markallnotificationsread';
+  if (markAll) {
+    await markAllNotificationsRead(env, current.notifications, email);
+  } else {
+    if (!notificationId || !current.notifications.some((row) => clean(row.NotificationId || row.__id) === notificationId)) {
+      const error = new Error('This notification is not available to this parent account.');
+      error.status = 404;
+      throw error;
+    }
+    await markNotificationRead(env, notificationId, email);
+  }
+  return getParentNotifications(env, body);
 }
 
 export async function onRequestPost(context) {
@@ -1375,6 +1728,10 @@ export async function onRequestPost(context) {
     let data;
     if (action === 'updateWalletRestrictions') {
       data = await updateWalletRestrictions(env, body);
+    } else if (action === 'getNotifications') {
+      data = await getParentNotifications(env, body);
+    } else if (action === 'markNotificationRead' || action === 'markAllNotificationsRead') {
+      data = await markParentNotificationRead(env, body);
     } else if (action === 'getChildActivity') {
       data = await getChildActivity(env, body);
     } else if (action === 'getChildPayable') {

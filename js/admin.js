@@ -1347,16 +1347,17 @@ function uploadedDocument(row, key) {
 
 function renderAdmissionDocuments(row) {
   const reference = pick(row, ['ApplicationReference', 'ApplicationID', '__id']);
+  const scopePath = clean(row.__scopePath);
   const uploaded = admissionDocuments.map(([key, label]) => {
     const item = uploadedDocument(row, key);
     return item ? { ...item, label } : null;
   }).filter(Boolean);
   if (!uploaded.length) return '<span class="muted">None uploaded</span>';
   const links = uploaded.map((item) => {
-    const query = `applicationReference=${encodeURIComponent(reference)}&documentType=${encodeURIComponent(item.key)}`;
+    const query = `applicationReference=${encodeURIComponent(reference)}&documentType=${encodeURIComponent(item.key)}&scopePath=${encodeURIComponent(scopePath)}`;
     const canDelete = ['Super Admin', 'Admissions Officer'].includes(clean(currentUser?.role));
     const fileName = item.fileName || `${reference}-${item.key}`;
-    return `<div class="document-action-row"><span>${escapeHtml(item.label)}</span><button type="button" class="payslip-download document-file-action" data-protected-file="${escapeHtml(`/api/staff-document?${query}&mode=view`)}" data-file-mode="view" data-file-name="${escapeHtml(fileName)}">View</button><button type="button" class="payslip-download document-file-action" data-protected-file="${escapeHtml(`/api/staff-document?${query}&mode=download`)}" data-file-mode="download" data-file-name="${escapeHtml(fileName)}">Download</button>${canDelete ? `<button type="button" class="document-delete compact-icon-action compact-delete-action" data-delete-document="${escapeHtml(item.key)}" data-application-reference="${escapeHtml(reference)}" aria-label="Delete ${escapeHtml(item.label)}" title="Delete document"><span aria-hidden="true">&#128465;&#65038;</span></button>` : ''}</div>`;
+    return `<div class="document-action-row"><span>${escapeHtml(item.label)}</span><button type="button" class="payslip-download document-file-action" data-protected-file="${escapeHtml(`/api/staff-document?${query}&mode=view`)}" data-file-mode="view" data-file-name="${escapeHtml(fileName)}">View</button><button type="button" class="payslip-download document-file-action" data-protected-file="${escapeHtml(`/api/staff-document?${query}&mode=download`)}" data-file-mode="download" data-file-name="${escapeHtml(fileName)}">Download</button>${canDelete ? `<button type="button" class="document-delete compact-icon-action compact-delete-action" data-delete-document="${escapeHtml(item.key)}" data-application-reference="${escapeHtml(reference)}" data-application-scope="${escapeHtml(scopePath)}" aria-label="Delete ${escapeHtml(item.label)}" title="Delete document"><span aria-hidden="true">&#128465;&#65038;</span></button>` : ''}</div>`;
   }).join('');
   return `<details class="document-actions"><summary>${uploaded.length} document${uploaded.length === 1 ? '' : 's'}</summary>${links}</details>`;
 }
@@ -5465,6 +5466,7 @@ function bindDocumentDeleteEvents() {
   bindProtectedFileEvents(panelEl);
   panelEl.querySelectorAll('[data-delete-document]').forEach((button) => button.addEventListener('click', async () => {
     const applicationReference = button.dataset.applicationReference;
+    const scopePath = button.dataset.applicationScope || '';
     const documentType = button.dataset.deleteDocument;
     if (!window.confirm('Delete this uploaded document? The file will be moved to Google Drive trash.')) return;
     const normalMarkup = button.innerHTML;
@@ -5472,7 +5474,7 @@ function bindDocumentDeleteEvents() {
     try {
       const response = await staffFetch('/api/staff-document', {
         method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'delete', applicationReference, documentType })
+        body: JSON.stringify({ action: 'delete', applicationReference, scopePath, documentType })
       });
       const data = await response.json().catch(() => ({ ok: false, message: 'Document service did not return JSON.' }));
       if (!response.ok || !data.ok) throw new Error(data.message || 'Document could not be deleted.');
@@ -5708,6 +5710,10 @@ function financeRecordRow(record, type, capabilities) {
   const description = pick(record, ['Description']);
   const accountsReviewed = clean(record.AccountsReviewStatus).toLowerCase() === 'reviewed';
   let actions = `<button type="button" class="compact-icon-action compact-print-action" data-print-finance-record="${escapeHtml(id)}" data-record-type="${type}" aria-label="View and print ${escapeHtml(id)}" title="View and print"><span aria-hidden="true">&#128424;&#65038;</span></button>`;
+  if (type === 'requisition' && capabilities.canAdminOverride &&
+      !['paid', 'posted', 'processed', 'voided', 'cancelled', 'canceled'].includes(clean(status).toLowerCase())) {
+    actions += `<button type="button" class="compact-icon-action compact-edit-action" data-edit-requisition="${escapeHtml(id)}" aria-label="Edit and resubmit ${escapeHtml(id)}" title="Edit and resubmit"><span aria-hidden="true">&#9998;</span></button>`;
+  }
   if (capabilities.canApprove && clean(status).toLowerCase() === 'submitted') {
     actions += `<button type="button" class="compact-icon-action compact-approve-action" data-workflow-action="review" data-decision="Approved" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Approve ${escapeHtml(id)}" title="Approve"><span aria-hidden="true">&#10003;</span></button>`;
     actions += `<button type="button" class="compact-icon-action compact-reject-action" data-workflow-action="review" data-decision="Rejected" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Reject ${escapeHtml(id)}" title="Reject"><span aria-hidden="true">&#10005;</span></button>`;
@@ -5803,7 +5809,8 @@ function renderFinanceWorkflow() {
       <dialog id="requisitionDialog" class="workflow-dialog">
         <div class="workflow-dialog-header"><div><small>${escapeHtml(department)}</small><h2>New Expense Requisition</h2></div><button type="button" data-close-dialog aria-label="Close">×</button></div>
         <form id="requisitionForm" class="workflow-form">
-          <h3>Expense Requisition</h3>
+          <input name="recordId" type="hidden"><input name="recordVersion" type="hidden">
+          <h3 data-requisition-form-heading>Expense Requisition</h3>
           <label>Description <span class="required">*</span><textarea name="description" rows="3" required></textarea></label>
           <label>Amount <span class="required">*</span><input name="amount" type="number" min="1" step="0.01" inputmode="decimal" required></label>
           <label>Preferred vendor<input name="vendor"></label>
@@ -5811,14 +5818,15 @@ function renderFinanceWorkflow() {
           <label>Reference<input name="reference"></label>
           <label>Supporting document URL<input name="attachmentUrl" type="url"></label>
           <label>Notes<textarea name="notes" rows="2"></textarea></label>
-          <button type="submit">Submit Requisition</button>
+          <button type="submit" data-create-label="Submit Requisition">Submit Requisition</button>
           <p class="status" data-form-status></p>
         </form>
       </dialog>
       <dialog id="materialRequisitionDialog" class="workflow-dialog material-requisition-dialog">
         <div class="workflow-dialog-header"><div><small>${escapeHtml(department)}</small><h2>New Material Requisition</h2></div><button type="button" data-close-dialog aria-label="Close">&times;</button></div>
         <form id="materialRequisitionForm" class="workflow-form">
-          <h3>Material Items</h3>
+          <input name="recordId" type="hidden"><input name="recordVersion" type="hidden">
+          <h3 data-requisition-form-heading>Material Items</h3>
           <label>Description <span class="required">*</span><textarea name="description" rows="2" required placeholder="State the purpose of this material request"></textarea></label>
           <p class="muted">List every requested item. Line totals and the requisition total are calculated automatically.</p>
           <div class="admin-table-wrap material-entry-wrap">
@@ -5843,7 +5851,7 @@ function renderFinanceWorkflow() {
           <label>Reference<input name="reference"></label>
           <label>Supporting document URL<input name="attachmentUrl" type="url"></label>
           <label>Notes<textarea name="notes" rows="2"></textarea></label>
-          <button type="submit">Submit Material Requisition</button>
+          <button type="submit" data-create-label="Submit Material Requisition">Submit Material Requisition</button>
           <p class="status" data-form-status></p>
         </form>
       </dialog>
@@ -5938,6 +5946,76 @@ function updateMaterialRequisitionTable(form) {
   form.querySelector('[data-material-grand-total]').textContent = money(grandTotal);
 }
 
+function resetRequisitionEditor(form) {
+  if (!form) return;
+  form.reset();
+  form.elements.recordId.value = '';
+  form.elements.recordVersion.value = '';
+  const isMaterial = form.id === 'materialRequisitionForm';
+  const heading = form.querySelector('[data-requisition-form-heading]');
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (heading) heading.textContent = isMaterial ? 'Material Items' : 'Expense Requisition';
+  if (submitButton) submitButton.textContent = submitButton.dataset.createLabel ||
+    (isMaterial ? 'Submit Material Requisition' : 'Submit Requisition');
+  setStatus(form.querySelector('[data-form-status]'), '');
+  if (isMaterial) {
+    const itemsBody = form.querySelector('[data-material-items]');
+    itemsBody.innerHTML = materialEntryRow(1);
+    updateMaterialRequisitionTable(form);
+  }
+  delete form.dataset.idempotencyKey;
+}
+
+function setRequisitionEditorValue(form, name, value) {
+  const input = form?.elements?.[name];
+  if (input) input.value = clean(value);
+}
+
+function openRequisitionEditor(record) {
+  if (!record) return;
+  const isMaterial = clean(record.RequisitionType).toLowerCase() === 'material';
+  const form = document.getElementById(isMaterial ? 'materialRequisitionForm' : 'requisitionForm');
+  const dialog = form?.closest('dialog');
+  if (!form || !dialog) return;
+  resetRequisitionEditor(form);
+  const id = pick(record, ['ExpenseNo', '__id']);
+  setRequisitionEditorValue(form, 'recordId', id);
+  setRequisitionEditorValue(form, 'recordVersion', record.__updateTime);
+  setRequisitionEditorValue(form, 'description', record.Description);
+  setRequisitionEditorValue(form, 'vendor', record.Vendor);
+  setRequisitionEditorValue(form, 'date', clean(record.Date).slice(0, 10));
+  setRequisitionEditorValue(form, 'reference', record.Reference);
+  setRequisitionEditorValue(form, 'attachmentUrl', record.AttachmentUrl);
+  setRequisitionEditorValue(form, 'notes', record.Notes);
+  if (isMaterial) {
+    const items = Array.isArray(record.MaterialItems) && record.MaterialItems.length
+      ? record.MaterialItems
+      : [{}];
+    const itemsBody = form.querySelector('[data-material-items]');
+    itemsBody.innerHTML = items.map((item, index) => materialEntryRow(index + 1)).join('');
+    items.forEach((item, index) => {
+      const row = itemsBody.querySelectorAll('[data-material-row]')[index];
+      row.querySelector('[data-material-field="item"]').value = clean(item.Item ?? item.item);
+      row.querySelector('[data-material-field="specification"]').value = clean(item.Specification ?? item.specification);
+      row.querySelector('[data-material-field="quantity"]').value = Number(item.Quantity ?? item.quantity ?? 0) || '';
+      row.querySelector('[data-material-field="unitPrice"]').value = Number(item.UnitPrice ?? item.unitPrice ?? 0) || '';
+    });
+    updateMaterialRequisitionTable(form);
+  } else {
+    setRequisitionEditorValue(form, 'amount', record.Amount);
+  }
+  const revision = Number(record.RevisionNumber || 1);
+  const heading = form.querySelector('[data-requisition-form-heading]');
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (heading) heading.textContent = `Edit and resubmit ${id}`;
+  if (submitButton) submitButton.textContent = 'Resubmit Requisition';
+  setStatus(
+    form.querySelector('[data-form-status]'),
+    `Editing revision ${revision}. Resubmission archives this revision and resets approval and Accounts review.`
+  );
+  dialog.showModal();
+}
+
 function bindMaterialRequisitionForm() {
   const form = document.getElementById('materialRequisitionForm');
   if (!form) return;
@@ -5967,18 +6045,21 @@ function bindMaterialRequisitionForm() {
     const idempotencyKey = form.dataset.idempotencyKey || newIdempotencyKey();
     form.dataset.idempotencyKey = idempotencyKey;
     const payload = { ...formPayload(form), items: materialRequisitionItems(form), idempotencyKey };
-    setButtonLoading(button, true, 'Submitting...', 'Submit Material Requisition');
+    const resubmitting = Boolean(clean(payload.recordId));
+    const buttonLabel = resubmitting ? 'Resubmit Requisition' : 'Submit Material Requisition';
+    setButtonLoading(button, true, 'Submitting...', buttonLabel);
     setStatus(status, 'Saving to database...');
     try {
-      await financeRequest('submitMaterialRequisition', payload);
+      if (resubmitting) await financeRequest('resubmitRequisition', payload);
+      else await financeRequest('submitMaterialRequisition', payload);
       delete form.dataset.idempotencyKey;
-      setStatus(status, 'Material requisition submitted.', 'ok');
+      setStatus(status, resubmitting ? 'Requisition edited and resubmitted.' : 'Material requisition submitted.', 'ok');
       await loadFinanceWorkflow();
     } catch (error) {
       if (error?.responseReceived) delete form.dataset.idempotencyKey;
       setStatus(status, error.message || String(error), 'bad');
     } finally {
-      setButtonLoading(button, false, 'Submitting...', 'Submit Material Requisition');
+      setButtonLoading(button, false, 'Submitting...', buttonLabel);
     }
   });
   form.addEventListener('input', () => {
@@ -5994,16 +6075,23 @@ function bindSubmissionForm(formId, action, successText) {
     event.preventDefault();
     const button = form.querySelector('button[type="submit"]');
     const status = form.querySelector('[data-form-status]');
-    setButtonLoading(button, true, 'Submitting...', button.dataset.normalText || button.textContent);
-    if (!button.dataset.normalText) button.dataset.normalText = action === 'submitBill' ? 'Submit Supplier Bill' : 'Submit Requisition';
+    const initiallyResubmitting = action === 'submitRequisition' && clean(form.elements.recordId?.value);
+    button.dataset.normalText = initiallyResubmitting
+      ? 'Resubmit Requisition'
+      : action === 'submitBill' ? 'Submit Supplier Bill' : 'Submit Requisition';
+    setButtonLoading(button, true, 'Submitting...', button.dataset.normalText);
     setStatus(status, 'Saving to database...');
     try {
       const idempotencyKey = form.dataset.idempotencyKey || newIdempotencyKey();
       form.dataset.idempotencyKey = idempotencyKey;
-      await financeRequest(action, { ...formPayload(form), idempotencyKey });
+      const payload = { ...formPayload(form), idempotencyKey };
+      const effectiveAction = action === 'submitRequisition' && clean(payload.recordId)
+        ? 'resubmitRequisition'
+        : action;
+      await financeRequest(effectiveAction, payload);
       delete form.dataset.idempotencyKey;
       form.reset();
-      setStatus(status, successText, 'ok');
+      setStatus(status, effectiveAction === 'resubmitRequisition' ? 'Requisition edited and resubmitted.' : successText, 'ok');
       await loadFinanceWorkflow();
     } catch (error) {
       if (error?.responseReceived) delete form.dataset.idempotencyKey;
@@ -6022,7 +6110,13 @@ function bindFinanceWorkflowEvents() {
     runButtonAction(event.currentTarget, 'Refreshing...', loadFinanceWorkflow);
   });
   panelEl.querySelectorAll('[data-open-dialog]').forEach((button) => {
-    button.addEventListener('click', () => document.getElementById(button.dataset.openDialog)?.showModal());
+    button.addEventListener('click', () => {
+      const dialog = document.getElementById(button.dataset.openDialog);
+      if (['requisitionDialog', 'materialRequisitionDialog'].includes(button.dataset.openDialog)) {
+        resetRequisitionEditor(dialog?.querySelector('form'));
+      }
+      dialog?.showModal();
+    });
   });
   panelEl.querySelectorAll('[data-close-dialog]').forEach((button) => {
     button.addEventListener('click', () => button.closest('dialog')?.close());
@@ -6053,6 +6147,13 @@ function bindFinanceWorkflowEvents() {
   });
   panelEl.querySelectorAll('[data-workflow-action]').forEach((button) => {
     button.addEventListener('click', () => openFinanceDecision(button));
+  });
+  panelEl.querySelectorAll('[data-edit-requisition]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const record = (financeData?.requisitions || []).find((row) =>
+        clean(pick(row, ['ExpenseNo', '__id'])) === clean(button.dataset.editRequisition));
+      openRequisitionEditor(record);
+    });
   });
 }
 

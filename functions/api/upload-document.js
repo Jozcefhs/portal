@@ -8,7 +8,16 @@ import {
   requireFirestoreEnv,
   upsertDocument
 } from '../lib/firestore.js';
-import { querySchoolCollection, upsertSchoolDocument } from '../lib/school-scope.js';
+import {
+  querySchoolCollection,
+  upsertSchoolDocument
+} from '../lib/school-scope.js';
+import {
+  admissionApplicationScopePath,
+  admissionThumbnailDocumentId,
+  validateAdmissionDocumentFile,
+  validateAdmissionThumbnail
+} from '../lib/document-files.js';
 import { resolveDocumentStorage } from '../lib/document-storage.js';
 import {
   beginIdempotentRequest,
@@ -36,6 +45,113 @@ function pick(row, names, fallback = '') {
     }
   }
   return fallback;
+}
+
+function identityValues(row, names, fallback = '') {
+  const values = names
+    .map((name) => row && row[name])
+    .concat(fallback)
+    .map(clean)
+    .filter(Boolean);
+  return [...new Set(values)];
+}
+
+function identityReference(value) {
+  return lower(value).replace(/[^a-z0-9]/g, '');
+}
+
+function uniqueIdentityRows(rows = []) {
+  const seen = new Set();
+  return rows.filter((row) => {
+    const key = [
+      clean(row?.__scopePath),
+      clean(row?.__id || row?.__name),
+      clean(row?.ApplicationReference || row?.applicationReference || row?.AdmissionNo)
+    ].join('|');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function applicationUploadIdentityMatches(row, email, code) {
+  if (!applicationUploadEmailMatches(row, email)) return false;
+  const codes = identityValues(row, ['VerificationCode', 'verificationCode'])
+    .map((value) => value.toUpperCase());
+  return codes.includes(clean(code).toUpperCase());
+}
+
+export function applicationUploadEmailMatches(row, email) {
+  const parent = row?.parent && typeof row.parent === 'object' ? row.parent : {};
+  const emails = identityValues(row, [
+    'VerificationEmail', 'verificationEmail',
+    'ParentEmail', 'parentEmail',
+    'Email', 'email',
+    'FatherEmail', 'fatherEmail',
+    'MotherEmail', 'motherEmail',
+    'GuardianEmail', 'guardianEmail'
+  ], [parent.email, parent.Email]);
+  return emails.map(lower).includes(lower(email));
+}
+
+export function studentUploadIdentityMatches(row, email, code) {
+  const parent = row?.parent && typeof row.parent === 'object' ? row.parent : {};
+  const emails = identityValues(row, [
+    'ParentEmail', 'parentEmail',
+    'VerificationEmail', 'verificationEmail',
+    'Email', 'email',
+    'FatherEmail', 'fatherEmail',
+    'MotherEmail', 'motherEmail',
+    'GuardianEmail', 'guardianEmail'
+  ], [parent.email, parent.Email]);
+  const codes = identityValues(row, [
+    'ParentLoginCode', 'parentLoginCode',
+    'VerificationCode', 'verificationCode',
+    'LoginCode', 'loginCode'
+  ]).map((value) => value.toUpperCase());
+  return emails.map(lower).includes(lower(email)) && codes.includes(clean(code).toUpperCase());
+}
+
+export function linkedUploadApplication(applications, student, options = {}) {
+  const studentReferences = identityValues(student, [
+    'ApplicationReference', 'applicationReference',
+    'ApplicationID', 'applicationId',
+    'AdmissionNo', 'admissionNo', 'AdmissionNumber',
+    'AccountRef', 'accountRef'
+  ]).map(identityReference).filter(Boolean);
+  if (!studentReferences.length) return null;
+  const matches = (applications || []).filter((row) => {
+    const applicationReferences = identityValues(row, [
+      'ApplicationReference', 'applicationReference',
+      'ApplicationID', 'applicationId',
+      'AdmissionNo', 'admissionNo', 'AdmissionNumber',
+      'AccountRef', 'accountRef',
+      '__id'
+    ]).map(identityReference).filter(Boolean);
+    return applicationReferences.some((value) => studentReferences.includes(value))
+      && applicationUploadScopeMatches(row, options.scopePath)
+      && (!clean(options.email) || applicationUploadEmailMatches(row, options.email));
+  });
+  return matches.length === 1 ? matches[0] : null;
+}
+
+export function applicationUploadReferenceMatches(row, reference) {
+  const wanted = identityReference(reference);
+  if (!wanted) return true;
+  return identityValues(row, [
+    'ApplicationReference', 'applicationReference',
+    'ApplicationID', 'applicationId',
+    'AdmissionNo', 'admissionNo', 'AdmissionNumber',
+    'AccountRef', 'accountRef',
+    '__id'
+  ]).map(identityReference).includes(wanted);
+}
+
+function applicationUploadScopeMatches(row, scopePath) {
+  const wanted = admissionApplicationScopePath(scopePath);
+  if (!wanted) return true;
+  const rowScope = admissionApplicationScopePath(row?.__scopePath) || 'applications';
+  return lower(rowScope) === lower(wanted);
 }
 
 function safeDocumentId(value) {
@@ -101,6 +217,7 @@ async function loadUploadOperation(env, operationId, expected = {}) {
     IdempotencyDocumentId: operationId,
     RequestFingerprint: clean(expected.RequestFingerprint),
     ApplicationReference: clean(expected.ApplicationReference),
+    ApplicationScopePath: clean(expected.ApplicationScopePath),
     DocumentType: clean(expected.DocumentType),
     FileDigest: clean(expected.FileDigest),
     FileName: clean(expected.FileName),
@@ -115,8 +232,14 @@ async function loadUploadOperation(env, operationId, expected = {}) {
     ExpiresAt: new Date(nowDate.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString()
   });
   const operation = claimed.document || {};
-  const immutableFields = ['RequestFingerprint', 'ApplicationReference', 'DocumentType', 'FileDigest'];
-  const mismatch = immutableFields.find((field) => clean(operation[field]) && clean(operation[field]) !== clean(expected[field]));
+  const immutableFields = [
+    'RequestFingerprint',
+    'ApplicationReference',
+    'ApplicationScopePath',
+    'DocumentType',
+    'FileDigest'
+  ];
+  const mismatch = immutableFields.find((field) => clean(operation[field]) !== clean(expected[field]));
   if (mismatch) {
     throw uploadError(
       'This upload operation is already bound to a different file or application.',
@@ -151,18 +274,122 @@ function completedUploadResult(operation, definition, applicationReference) {
   };
 }
 
-async function findFirestoreApplication(env, email, code) {
-  requireFirestoreEnv(env);
-  const rows = await querySchoolCollection(env, 'applications', {
-    filters: [{ field: 'VerificationCode', op: '==', value: code }],
-    limit: 20
+export async function findFirestoreApplication(env, email, code, options = {}) {
+  const requireEnv = options.requireFirestoreEnv || requireFirestoreEnv;
+  const queryRows = options.querySchoolCollection || querySchoolCollection;
+  const targetReference = clean(options.targetReference);
+  const requestedTargetScopePath = clean(options.targetScopePath);
+  const targetScopePath = admissionApplicationScopePath(requestedTargetScopePath);
+  requireEnv(env);
+  if (requestedTargetScopePath && !targetScopePath) return null;
+
+  const queryByFields = async (collection, fields, wantedValues, limit = 20, scopePath = '') => {
+    const distinctValues = [...new Set((wantedValues || []).map(clean).filter(Boolean))];
+    if (!distinctValues.length || !fields.length) return [];
+    const maxValuesPerQuery = Math.max(1, Math.floor(30 / fields.length));
+    const rows = [];
+    for (let index = 0; index < distinctValues.length; index += maxValuesPerQuery) {
+      const values = distinctValues.slice(index, index + maxValuesPerQuery);
+      const filters = fields.map((field) => values.length === 1
+        ? { field, op: '==', value: values[0] }
+        : { field, op: 'in', value: values });
+      rows.push(...await queryRows(env, collection, {
+        filters,
+        filterJoin: 'OR',
+        limit,
+        ...(scopePath ? { scopePath } : {})
+      }));
+    }
+    return uniqueIdentityRows(rows);
+  };
+
+  const applicationReferenceFields = [
+    'ApplicationReference', 'applicationReference',
+    'ApplicationID', 'applicationId',
+    'AdmissionNo', 'admissionNo', 'AdmissionNumber',
+    'AccountRef', 'accountRef'
+  ];
+  const findTargetApplication = async () => {
+    if (!targetReference) return null;
+    const targetCandidates = await queryByFields(
+      'applications',
+      applicationReferenceFields,
+      [targetReference, targetReference.toUpperCase(), targetReference.toLowerCase()],
+      20,
+      targetScopePath
+    );
+    const matches = targetCandidates.filter((row) => (
+      applicationUploadReferenceMatches(row, targetReference) &&
+      applicationUploadEmailMatches(row, email) &&
+      applicationUploadScopeMatches(row, targetScopePath)
+    ));
+    if (!targetScopePath && matches.length !== 1) return null;
+    return matches[0] || null;
+  };
+  if (options.authenticated === true) return findTargetApplication();
+
+  const normalizedCode = clean(code).toUpperCase();
+  const queriedApplications = await queryByFields(
+    'applications',
+    ['VerificationCode', 'verificationCode'],
+    [normalizedCode, normalizedCode.toLowerCase()]
+  );
+  const authenticatedApplications = queriedApplications
+    .filter((row) => applicationUploadIdentityMatches(row, email, code));
+  if (!targetReference && authenticatedApplications.length > 1) {
+    throw uploadError(
+      'These credentials are linked to more than one child. Open the parent dashboard, select the child, and upload the document there.',
+      409,
+      'UPLOAD_CHILD_SELECTION_REQUIRED'
+    );
+  }
+  const authenticatedApplication = authenticatedApplications[0] || null;
+
+  if (authenticatedApplication && !targetReference) return authenticatedApplication;
+  let student = null;
+  if (!authenticatedApplication) {
+    const queriedStudents = await queryByFields('students', [
+      'ParentLoginCode', 'parentLoginCode',
+      'VerificationCode', 'verificationCode',
+      'LoginCode', 'loginCode'
+    ], [normalizedCode, normalizedCode.toLowerCase()]);
+    const authenticatedStudents = queriedStudents
+      .filter((row) => studentUploadIdentityMatches(row, email, code));
+    if (!targetReference && authenticatedStudents.length > 1) {
+      throw uploadError(
+        'These credentials are linked to more than one child. Open the parent dashboard, select the child, and upload the document there.',
+        409,
+        'UPLOAD_CHILD_SELECTION_REQUIRED'
+      );
+    }
+    student = authenticatedStudents[0] || null;
+  }
+  if (targetReference && (authenticatedApplication || student)) {
+    if (targetScopePath && authenticatedApplication &&
+      applicationUploadReferenceMatches(authenticatedApplication, targetReference)
+      && applicationUploadScopeMatches(authenticatedApplication, targetScopePath)) {
+      return authenticatedApplication;
+    }
+    return findTargetApplication();
+  }
+  if (!student) return null;
+  const studentScopePath = admissionApplicationScopePath(student.__scopePath);
+  if (clean(student.__scopePath) && !studentScopePath) return null;
+  const studentReferences = identityValues(student, [
+    'ApplicationReference', 'applicationReference',
+    'ApplicationID', 'applicationId',
+    'AdmissionNo', 'admissionNo', 'AdmissionNumber',
+    'AccountRef', 'accountRef'
+  ]);
+  const linkedApplications = await queryByFields('applications', applicationReferenceFields, studentReferences.flatMap((reference) => [
+    reference,
+    reference.toUpperCase(),
+    reference.toLowerCase()
+  ]), 20, studentScopePath);
+  return linkedUploadApplication(linkedApplications, student, {
+    email,
+    scopePath: studentScopePath
   });
-  return rows.find((row) => {
-    const parent = row.parent && typeof row.parent === 'object' ? row.parent : {};
-    const rowEmail = lower(pick(row, ['VerificationEmail', 'verificationEmail', 'ParentEmail', 'parentEmail', 'Email', 'email'], parent.email));
-    const rowCode = clean(pick(row, ['VerificationCode', 'verificationCode'])).toUpperCase();
-    return rowEmail === email && rowCode === code;
-  }) || null;
 }
 
 async function enabledDocumentFields(env) {
@@ -251,12 +478,17 @@ export async function onRequestPost(context) {
 
     const email = String(body.email || '').trim().toLowerCase();
     const code = String(body.code || '').trim().toUpperCase();
+    const targetApplicationReference = clean(
+      body.applicationReference
+      || body.targetApplicationReference
+      || body.accountRef
+    );
     const documentType = String(body.documentType || '').trim();
-    const fileName = String(body.fileName || '').trim();
-    const mimeType = String(body.mimeType || 'application/octet-stream').trim();
+    let fileName = String(body.fileName || '').trim();
+    let mimeType = String(body.mimeType || 'application/octet-stream').trim();
     const fileBase64 = String(body.fileBase64 || '').trim();
     const thumbnailBase64 = String(body.thumbnailBase64 || '').trim();
-    const thumbnailMimeType = String(body.thumbnailMimeType || 'image/jpeg').trim();
+    let thumbnailMimeType = String(body.thumbnailMimeType || 'image/jpeg').trim();
     const replaceExisting = Boolean(body.replaceExisting);
 
     if (!email || !code) {
@@ -291,26 +523,52 @@ export async function onRequestPost(context) {
     if (!enabledFields.some((item) => item.key === definition.key)) {
       return Response.json({ ok: false, message: `${definition.label} is not currently requested by the school.` }, { status: 409 });
     }
-    const firestoreApp = await findFirestoreApplication(env, email, code);
+    try {
+      const validatedFile = validateAdmissionDocumentFile({
+        fileName,
+        fileBase64,
+        documentType: definition.key
+      });
+      fileName = validatedFile.fileName;
+      mimeType = validatedFile.mimeType;
+      if (thumbnailBase64) {
+        if (definition.key !== 'PassportPhotograph') {
+          throw new Error('Image previews are accepted only with passport photographs.');
+        }
+        thumbnailMimeType = validateAdmissionThumbnail(thumbnailBase64).mimeType;
+      }
+    } catch (error) {
+      throw uploadError(error?.message || 'The uploaded file is invalid.', 400, 'INVALID_DOCUMENT_FILE');
+    }
+    const firestoreApp = await findFirestoreApplication(env, email, code, {
+      targetReference: targetApplicationReference,
+      targetScopePath: body.scopePath || body.ScopePath
+    });
     if (!firestoreApp) {
-      return Response.json({ ok: false, message: 'Application not found in the database for that email/code.' }, { status: 404 });
+      return Response.json({
+        ok: false,
+        message: 'No application matched that email and verification or parent login code. Do not enter an admission number.'
+      }, { status: 404 });
     }
     const applicationReference = clean(pick(firestoreApp, ['ApplicationReference', 'applicationReference', 'ApplicationID', '__id']));
     if (!applicationReference) {
       throw uploadError('The database application has no application reference.', 500, 'APPLICATION_REFERENCE_MISSING');
     }
-    const [fileDigest, thumbnailDigest] = await Promise.all([
+    const applicationScopePath = admissionApplicationScopePath(firestoreApp.__scopePath) || 'applications';
+    const [fileDigest, thumbnailDigest, applicationScopeDigest] = await Promise.all([
       sha256(fileBase64),
-      thumbnailBase64 ? sha256(thumbnailBase64) : Promise.resolve('')
+      thumbnailBase64 ? sha256(thumbnailBase64) : Promise.resolve(''),
+      sha256(applicationScopePath)
     ]);
     idempotency = await beginIdempotentRequest(env, request, body, {
       scope: `upload-${definition.key}`,
-      actor: `${email}:${applicationReference}`,
+      actor: `${email}:${applicationReference}:${applicationScopeDigest.slice(0, 32)}`,
       ttlMinutes: 7 * 24 * 60,
       leaseMinutes: 15,
       fingerprintPayload: {
         email,
         applicationReference,
+        applicationScopePath,
         documentType: definition.key,
         fileName,
         mimeType,
@@ -328,6 +586,7 @@ export async function onRequestPost(context) {
         ).catch(() => null);
         const operationMatches = durableOperation
           && clean(durableOperation.ApplicationReference) === applicationReference
+          && lower(durableOperation.ApplicationScopePath) === lower(applicationScopePath)
           && clean(durableOperation.DocumentType) === definition.key
           && clean(durableOperation.FileDigest) === fileDigest;
         if (operationMatches && ['completed', 'metadatasaved'].includes(uploadOperationState(durableOperation))) {
@@ -360,6 +619,7 @@ export async function onRequestPost(context) {
     let operation = await loadUploadOperation(env, operationId, {
       RequestFingerprint: idempotency.fingerprint,
       ApplicationReference: applicationReference,
+      ApplicationScopePath: applicationScopePath,
       DocumentType: definition.key,
       FileDigest: fileDigest,
       FileName: fileName,
@@ -568,7 +828,11 @@ export async function onRequestPost(context) {
       }
     }
 
-    const latestApplication = await findFirestoreApplication(env, email, code);
+    const latestApplication = await findFirestoreApplication(env, email, code, {
+      targetReference: applicationReference,
+      targetScopePath: applicationScopePath,
+      authenticated: true
+    });
     if (!latestApplication) {
       throw uploadError(
         'The application disappeared after Google Drive saved the file. Admissions must reconcile the saved file.',
@@ -607,8 +871,13 @@ export async function onRequestPost(context) {
       operationId
     );
     if (definition.key === 'PassportPhotograph' && thumbnailBase64 && thumbnailBase64.length <= 400000) {
-      await upsertDocument(env, 'applicationPassportThumbnails', safeDocumentId(applicationReference), {
+      const thumbnailDocumentId = await admissionThumbnailDocumentId(
+        applicationReference,
+        applicationScopePath
+      );
+      await upsertDocument(env, 'applicationPassportThumbnails', thumbnailDocumentId, {
         ApplicationReference: applicationReference,
+        ApplicationScopePath: applicationScopePath,
         MimeType: thumbnailMimeType.toLowerCase().startsWith('image/') ? thumbnailMimeType : 'image/jpeg',
         FileBase64: thumbnailBase64,
         UploadOperationId: operationId,

@@ -6,6 +6,7 @@ import {
   verifyStaffApprovalPassword
 } from '../lib/staff-auth.js';
 import { loadStaffApprovalProfile, publicStaffApprovalProfile } from '../lib/staff-approval-profile.js';
+import { notifyStaffRequisitionSubmitted } from '../lib/notifications.js';
 import {
   beginIdempotentRequest,
   completeIdempotentRequest,
@@ -69,6 +70,122 @@ function removeFirestoreMetadata(document = {}) {
   delete document.__createTime;
   delete document.__updateTime;
   return document;
+}
+
+function requisitionRevisionNumber(existing = {}) {
+  const current = Number(existing.RevisionNumber || 1);
+  return Number.isInteger(current) && current > 0 ? current : 1;
+}
+
+function finalFinanceStatus(status) {
+  return ['paid', 'posted', 'processed', 'voided', 'cancelled', 'canceled'].includes(lower(status));
+}
+
+export function buildRequisitionResubmission(existing = {}, body = {}, user = {}, timestamp = nowIso()) {
+  if (!clean(existing.ExpenseNo || existing.__id)) {
+    const err = new Error('The selected requisition was not found.');
+    err.status = 404;
+    throw err;
+  }
+  if (finalFinanceStatus(existing.Status)) {
+    const err = new Error(`A ${existing.Status} requisition cannot be edited and resubmitted.`);
+    err.status = 409;
+    throw err;
+  }
+
+  const isMaterial = lower(existing.RequisitionType) === 'material';
+  const description = clean(body.description ?? body.Description);
+  const value = isMaterial
+    ? amount(normalizeMaterialItems(body.items ?? body.MaterialItems).reduce((sum, item) => sum + item.Total, 0))
+    : amount(body.amount ?? body.Amount);
+  const materialItems = isMaterial ? normalizeMaterialItems(body.items ?? body.MaterialItems) : [];
+  if (!description) {
+    const err = new Error('A description is required for the requisition.');
+    err.status = 400;
+    throw err;
+  }
+  if (isMaterial) {
+    if (!materialItems.length) {
+      const err = new Error('Add at least one material item.');
+      err.status = 400;
+      throw err;
+    }
+    const invalidItem = materialItems.find((item) =>
+      !item.Item || !item.Specification || item.Quantity <= 0 || item.UnitPrice <= 0);
+    if (invalidItem) {
+      const err = new Error(`Complete item, specification, quantity and unit price for line ${invalidItem.SNo}.`);
+      err.status = 400;
+      throw err;
+    }
+  } else if (value <= 0) {
+    const err = new Error('An amount greater than zero is required.');
+    err.status = 400;
+    throw err;
+  }
+
+  const priorRevision = requisitionRevisionNumber(existing);
+  const nextRevision = priorRevision + 1;
+  const priorSnapshot = removeFirestoreMetadata({ ...existing });
+  const expenseNo = clean(existing.ExpenseNo || existing.__id);
+  const revisionId = safeId(`${expenseNo}-REV-${String(priorRevision).padStart(3, '0')}`);
+  const revisedBy = actor(user);
+  const payload = removeFirestoreMetadata({
+    ...existing,
+    Date: clean(body.date ?? body.Date) || existing.Date || dateToday(),
+    Vendor: clean(body.vendor ?? body.Vendor),
+    Description: description,
+    Amount: value,
+    ...(isMaterial ? { MaterialItems: materialItems } : {}),
+    Reference: clean(body.reference ?? body.Reference),
+    AttachmentUrl: clean(body.attachmentUrl ?? body.AttachmentUrl),
+    Notes: clean(body.notes ?? body.Notes),
+    Status: 'Submitted',
+    RevisionNumber: nextRevision,
+    OriginalRequestedAt: clean(existing.OriginalRequestedAt || existing.RequestedAt || existing.CreatedAt),
+    PreviousStatus: clean(existing.Status || 'Submitted'),
+    LastRevisionId: revisionId,
+    ResubmittedAt: timestamp,
+    ResubmittedBy: revisedBy,
+    ResubmittedByUsername: clean(user.username),
+    UpdatedAt: timestamp,
+    UpdatedBy: revisedBy,
+    ReviewNotes: '',
+    ApprovedAt: '',
+    ApprovedBy: '',
+    ApprovedByUsername: '',
+    ApprovalSignatureApplied: false,
+    ApprovalStampApplied: false,
+    ApprovalAuthenticationMethod: '',
+    RejectedAt: '',
+    RejectedBy: '',
+    AdminReviewedAt: '',
+    AdminReviewedBy: '',
+    AdminReviewedByUsername: '',
+    AdminSignatureApplied: false,
+    AdminStampApplied: false,
+    AdminAuthenticationMethod: '',
+    AccountsReviewStatus: '',
+    AccountsReviewedBy: '',
+    AccountsReviewedByUsername: '',
+    AccountsReviewedAt: '',
+    AccountsSignatureApplied: false,
+    AccountsStampApplied: false,
+    AccountsAuthenticationMethod: '',
+    AccountsReviewNotes: ''
+  });
+  const revision = {
+    RevisionId: revisionId,
+    ExpenseNo: expenseNo,
+    RevisionNumber: priorRevision,
+    ArchivedAt: timestamp,
+    ArchivedBy: revisedBy,
+    ArchivedByUsername: clean(user.username),
+    StatusAtArchive: clean(existing.Status || 'Submitted'),
+    BranchId: clean(existing.BranchId || user.branchId) || 'main',
+    SchoolSection: clean(existing.SchoolSection || user.schoolSectionAccess || 'Secondary'),
+    Snapshot: priorSnapshot
+  };
+  return { payload, revision, revisionId, priorRevision, nextRevision };
 }
 
 async function commitFinanceDecision(env, writes) {
@@ -168,22 +285,36 @@ function scopedRows(rows, user, access) {
   return schoolRows.filter((row) => same(row.Department, department));
 }
 
-async function writeAudit(env, user, action, recordType, recordId, details = '') {
+function auditWrite(user, action, recordType, recordId, details = '', timestamp = nowIso(), scope = {}) {
   const id = requestNumber('WEB-AUDIT');
-  await upsertDocument(env, 'accountingAudit', safeId(id), {
-    AuditId: id,
-    Timestamp: nowIso(),
-    Action: action,
-    RecordType: recordType,
-    RecordId: recordId,
-    Details: clean(details),
-    User: actor(user),
-    UserRole: user.role,
-    Department: userDepartment(user),
-    BranchId: clean(user.branchId) || 'main',
-    SchoolSection: clean(user.schoolSectionAccess) === 'All' ? 'Secondary' : clean(user.schoolSectionAccess || 'Secondary'),
-    SourcePlatform: 'Web'
-  });
+  return {
+    collectionPath: 'accountingAudit',
+    documentId: safeId(id),
+    data: {
+      AuditId: id,
+      Timestamp: timestamp,
+      Action: action,
+      RecordType: recordType,
+      RecordId: recordId,
+      Details: clean(details),
+      User: actor(user),
+      UserRole: user.role,
+      Department: userDepartment(user),
+      BranchId: clean(scope.BranchId || scope.branchId || user.branchId) || 'main',
+      SchoolSection: clean(
+        scope.SchoolSection
+        || scope.schoolSection
+        || (clean(user.schoolSectionAccess) === 'All' ? 'Secondary' : user.schoolSectionAccess)
+        || 'Secondary'
+      ),
+      SourcePlatform: 'Web'
+    }
+  };
+}
+
+async function writeAudit(env, user, action, recordType, recordId, details = '') {
+  const write = auditWrite(user, action, recordType, recordId, details);
+  await upsertDocument(env, write.collectionPath, write.documentId, write.data);
 }
 
 async function listWorkflow(env, user) {
@@ -243,6 +374,7 @@ async function submitRequisition(env, user, body) {
     AttachmentUrl: clean(body.attachmentUrl || body.AttachmentUrl),
     Notes: clean(body.notes || body.Notes),
     Status: 'Submitted',
+    RevisionNumber: 1,
     RequestedBy: actor(user),
     RequestedAt: nowIso(),
     CreatedAt: nowIso(),
@@ -253,6 +385,7 @@ async function submitRequisition(env, user, body) {
   };
   await upsertDocument(env, 'accountingExpenses', safeId(expenseNo), payload);
   await writeAudit(env, user, 'CREATE', 'Expense Requisition', expenseNo, `${department}: ${description}`);
+  await notifyStaffRequisitionSubmitted(env, payload, actor(user)).catch(() => null);
   return { ok: true, message: 'Requisition submitted for approval.', requisition: payload };
 }
 
@@ -295,6 +428,7 @@ async function submitMaterialRequisition(env, user, body) {
     AttachmentUrl: clean(body.attachmentUrl || body.AttachmentUrl),
     Notes: clean(body.notes || body.Notes),
     Status: 'Submitted',
+    RevisionNumber: 1,
     RequestedBy: actor(user),
     RequestedAt: nowIso(),
     CreatedAt: nowIso(),
@@ -305,7 +439,90 @@ async function submitMaterialRequisition(env, user, body) {
   };
   await upsertDocument(env, 'accountingExpenses', safeId(expenseNo), payload);
   await writeAudit(env, user, 'CREATE', 'Material Requisition', expenseNo, `${department}: ${items.length} item(s), ${value}`);
+  await notifyStaffRequisitionSubmitted(env, payload, actor(user)).catch(() => null);
   return { ok: true, message: 'Material requisition submitted for approval.', requisition: payload };
+}
+
+async function resubmitRequisition(env, user, body) {
+  if (clean(user.role) !== 'Super Admin') {
+    const err = new Error('Only Super Admin can edit and resubmit an existing requisition.');
+    err.status = 403;
+    throw err;
+  }
+  const id = clean(body.recordId || body.ExpenseNo);
+  if (!id) {
+    const err = new Error('Select a requisition to edit and resubmit.');
+    err.status = 400;
+    throw err;
+  }
+  const direct = await getDocument(env, 'accountingExpenses', safeId(id));
+  const existing = direct || (await listCollection(env, 'accountingExpenses'))
+    .find((row) => same(row.ExpenseNo, id) || same(row.__id, safeId(id)));
+  if (!existing || !scopedRows([existing], user, capabilities(user)).length) {
+    const err = new Error('The selected requisition was not found.');
+    err.status = 404;
+    throw err;
+  }
+  const clientVersion = clean(body.recordVersion);
+  if (!clientVersion || clientVersion !== clean(existing.__updateTime)) {
+    const err = new Error('This requisition changed after it was loaded. Refresh the list before resubmitting it.');
+    err.status = 409;
+    err.code = 'FINANCE_WRITE_CONFLICT';
+    throw err;
+  }
+  const timestamp = nowIso();
+  const { payload, revision, revisionId, nextRevision } =
+    buildRequisitionResubmission(existing, body, user, timestamp);
+  const audit = auditWrite(
+    user,
+    'EDIT AND RESUBMIT',
+    'Expense Requisition',
+    id,
+    `Revision ${nextRevision}; previous status ${clean(existing.Status || 'Submitted')}; archived as ${revisionId}`,
+    timestamp,
+    existing
+  );
+  await commitFinanceDecision(env, [
+    {
+      collectionPath: 'accountingExpenseRevisions',
+      documentId: revisionId,
+      data: revision,
+      exists: false
+    },
+    {
+      collectionPath: 'accountingExpenses',
+      documentId: safeId(id),
+      data: payload,
+      updateTime: documentVersion(existing)
+    },
+    {
+      collectionPath: 'financeDocumentEndorsements',
+      documentId: endorsementId(id, 'approval'),
+      operation: 'delete'
+    },
+    {
+      collectionPath: 'financeDocumentEndorsements',
+      documentId: endorsementId(id, 'admin'),
+      operation: 'delete'
+    },
+    {
+      collectionPath: 'financeDocumentEndorsements',
+      documentId: endorsementId(id, 'accounts'),
+      operation: 'delete'
+    },
+    audit
+  ]);
+  await notifyStaffRequisitionSubmitted(env, payload, actor(user)).catch(() => null);
+  return {
+    ok: true,
+    message: `Requisition edited and resubmitted as revision ${nextRevision}.`,
+    requisition: payload,
+    revision: {
+      RevisionId: revisionId,
+      RevisionNumber: revision.RevisionNumber,
+      ArchivedAt: revision.ArchivedAt
+    }
+  };
 }
 
 async function submitBill(env, user, body) {
@@ -595,6 +812,7 @@ export async function onRequestPost(context) {
     const mutationActions = new Set([
       'submitrequisition',
       'submitmaterialrequisition',
+      'resubmitrequisition',
       'submitbill',
       'review',
       'accountsreview'
@@ -619,6 +837,7 @@ export async function onRequestPost(context) {
     if (action === 'list') data = await listWorkflow(env, user);
     else if (action === 'submitrequisition') data = await submitRequisition(env, user, body);
     else if (action === 'submitmaterialrequisition') data = await submitMaterialRequisition(env, user, body);
+    else if (action === 'resubmitrequisition') data = await resubmitRequisition(env, user, body);
     else if (action === 'submitbill') data = await submitBill(env, user, body);
     else if (action === 'review') data = await reviewRecord(env, user, body, request);
     else if (action === 'accountsreview') data = await accountsReview(env, user, body, request);

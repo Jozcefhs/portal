@@ -354,7 +354,7 @@ test('finance requests use one-row records, icon decisions, printing, and a repe
 test('parents can search the eligible school-store catalog', () => {
   assert.match(parentDashboardHtml, /id="storeSearch" type="search"/);
   assert.match(parentDashboardHtml, /id="storeSearchSummary"[\s\S]*?aria-live="polite"/);
-  assert.match(parentDashboardJs, /const eligibleCatalog = \(dashboard\.storeCatalog \|\| \[\]\)\.filter/);
+  assert.match(parentDashboardJs, /const eligibleCatalog = \(dashboard\.storeCatalogByChild\?\.\[identity\] \|\| \[\]\)\.filter/);
   assert.match(parentDashboardJs, /item\.ItemName,[\s\S]*?item\.Category,[\s\S]*?item\.Size,[\s\S]*?item\.ClassName,[\s\S]*?item\.StoreType/);
   assert.match(parentDashboardJs, /\.join\(' '\)\.toLowerCase\(\)\.includes\(query\)/);
   assert.match(parentDashboardJs, /storeSearch\?\.addEventListener\('input'/);

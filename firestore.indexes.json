@@ -41,6 +41,122 @@
         { "fieldPath": "Status", "order": "ASCENDING" },
         { "fieldPath": "CreatedAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "TargetRoles", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "CreatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "TargetUsernames", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "CreatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "TargetEmails", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "CreatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "TargetAccountRefs", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "CreatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "TargetRoles", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "SchoolSection", "order": "ASCENDING" },
+        { "fieldPath": "CreatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "TargetUsernames", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "SchoolSection", "order": "ASCENDING" },
+        { "fieldPath": "CreatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "TargetEmails", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "SchoolSection", "order": "ASCENDING" },
+        { "fieldPath": "CreatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "TargetAccountRefs", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "SchoolSection", "order": "ASCENDING" },
+        { "fieldPath": "CreatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "TargetRoles", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "CreatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "TargetUsernames", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "CreatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "TargetRoles", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "SchoolSection", "order": "ASCENDING" },
+        { "fieldPath": "CreatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "TargetUsernames", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "SchoolSection", "order": "ASCENDING" },
+        { "fieldPath": "CreatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notificationReads",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "RecipientKey", "order": "ASCENDING" },
+        { "fieldPath": "NotificationId", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

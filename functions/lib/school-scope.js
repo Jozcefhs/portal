@@ -106,10 +106,30 @@ export async function getSchoolDocumentById(env, collection, documentId) {
   return groups.find(Boolean) || null;
 }
 
+function validatedCollectionScopePath(value, collection) {
+  const path = clean(value).replace(/^\/+|\/+$/g, '');
+  const collectionName = clean(collection);
+  if (!path) return '';
+  if (path === collectionName) return path;
+  const escapedCollection = collectionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(
+    `^schoolBranches/[a-z0-9._-]+/sections/(?:primary|secondary)/${escapedCollection}$`,
+    'i'
+  );
+  return pattern.test(path) ? path : '';
+}
+
 export async function querySchoolCollection(env, collection, options = {}) {
-  const paths = await schoolCollectionPaths(env, collection);
+  const requestedScopePath = clean(options.scopePath);
+  const scopePath = validatedCollectionScopePath(requestedScopePath, collection);
+  if (requestedScopePath && !scopePath) {
+    throw new Error(`Invalid ${clean(collection)} collection scope.`);
+  }
+  const paths = scopePath ? [scopePath] : await schoolCollectionPaths(env, collection);
+  const queryOptions = { ...options };
+  delete queryOptions.scopePath;
   const groups = await Promise.all(paths.map(async (path) => {
-    const rows = await queryCollection(env, path, options);
+    const rows = await queryCollection(env, path, queryOptions);
     return rows.map((row) => ({ ...row, __scopePath: path }));
   }));
   return groups.flat();

@@ -5,6 +5,11 @@ import { getDocument, requireFirestoreEnv } from '../lib/firestore.js';
 import { getSchoolDocumentById, querySchoolCollection } from '../lib/school-scope.js';
 import { resolveDocumentStorage } from '../lib/document-storage.js';
 import { readJsonBody } from '../lib/request-security.js';
+import {
+  admissionApplicationScopePath,
+  admissionThumbnailDocumentId,
+  validateAdmissionThumbnail
+} from '../lib/document-files.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -33,9 +38,15 @@ function safeDocumentId(value) {
   return clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').replace(/_+/g, '_').replace(/-+/g, '-').slice(0, 140);
 }
 
-function passportUrl(row) {
+function passportEntry(row) {
   const documents = row && row.documents && typeof row.documents === 'object' ? row.documents : {};
-  const passport = documents.PassportPhotograph && typeof documents.PassportPhotograph === 'object' ? documents.PassportPhotograph : {};
+  return documents.PassportPhotograph && typeof documents.PassportPhotograph === 'object'
+    ? documents.PassportPhotograph
+    : {};
+}
+
+function passportUrl(row) {
+  const passport = passportEntry(row);
   return clean(passport.url || row.DocPassportPhotographUrl || row.PassportPhotographUrl || row.PassportPhotographLink);
 }
 
@@ -53,6 +64,27 @@ function decodeBase64(value) {
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes;
+}
+
+function uniqueApplications(rows = []) {
+  const seen = new Set();
+  return rows.filter((row) => {
+    if (!row) return false;
+    const key = `${clean(row.__scopePath)}|${clean(row.__id || applicationReference(row))}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function legacyThumbnailBelongsToApplication(thumbnail, application, scopePath) {
+  if (!thumbnail) return false;
+  const savedScope = admissionApplicationScopePath(thumbnail.ApplicationScopePath);
+  if (savedScope) return lower(savedScope) === lower(scopePath);
+  if (scopePath === 'applications') return true;
+  const thumbnailOperationId = clean(thumbnail.UploadOperationId);
+  const applicationOperationId = clean(passportEntry(application).uploadOperationId);
+  return Boolean(thumbnailOperationId && applicationOperationId && thumbnailOperationId === applicationOperationId);
 }
 
 async function loadDriveFile(env, documentUrl) {
@@ -87,19 +119,37 @@ export async function onRequestPost(context) {
     const body = await readJsonBody(request, { maxBytes: 64 * 1024 });
     const reference = clean(body.applicationReference || body.ApplicationReference || body.accountRef || body.AccountRef);
     if (!reference) return Response.json({ ok: false, message: 'Application reference is required.' }, { status: 400 });
-
-    let application = await getSchoolDocumentById(env, 'applications', safeDocumentId(reference)).catch(() => null);
-    if (!application || (!sameText(applicationReference(application), reference) && !sameText(application.__id, reference))) {
-      const matches = await Promise.all(['ApplicationReference', 'ApplicationID'].map((field) =>
-        querySchoolCollection(env, 'applications', {
-          filters: [{ field, op: '==', value: reference }],
-          limit: 1
-        }).catch(() => [])
-      ));
-      application = matches.flat().find((row) =>
-        sameText(applicationReference(row), reference) || sameText(row.__id, reference)
-      ) || null;
+    const requestedScopePath = clean(body.scopePath || body.ScopePath);
+    const targetScopePath = admissionApplicationScopePath(requestedScopePath);
+    if (requestedScopePath && !targetScopePath) {
+      return Response.json({ ok: false, message: 'The application scope is invalid.' }, { status: 400 });
     }
+
+    const direct = targetScopePath
+      ? await getDocument(env, targetScopePath, safeDocumentId(reference)).catch(() => null)
+      : await getSchoolDocumentById(env, 'applications', safeDocumentId(reference)).catch(() => null);
+    const directApplication = direct
+      ? { ...direct, __scopePath: direct.__scopePath || targetScopePath || 'applications' }
+      : null;
+    let candidates = directApplication &&
+      (sameText(applicationReference(directApplication), reference) || sameText(directApplication.__id, reference))
+      ? [directApplication]
+      : [];
+    if (!candidates.length || !targetScopePath) {
+      const queried = await querySchoolCollection(env, 'applications', {
+        filters: [
+          { field: 'ApplicationReference', op: '==', value: reference },
+          { field: 'ApplicationID', op: '==', value: reference }
+        ],
+        filterJoin: 'OR',
+        limit: 20,
+        ...(targetScopePath ? { scopePath: targetScopePath } : {})
+      }).catch(() => []);
+      candidates = uniqueApplications([...candidates, ...queried]).filter((row) =>
+        sameText(applicationReference(row), reference) || sameText(row.__id, reference)
+      );
+    }
+    const application = candidates.length === 1 ? candidates[0] : null;
     if (!application) return Response.json({ ok: false, message: 'Application was not found in the database.' }, { status: 404 });
 
     const suppliedSecret = clean(body.Secret || body.secret);
@@ -114,17 +164,38 @@ export async function onRequestPost(context) {
 
     const url = passportUrl(application);
     if (!url) return Response.json({ ok: false, message: 'No passport photograph has been uploaded.' }, { status: 404 });
-    const thumbnail = await getDocument(env, 'applicationPassportThumbnails', safeDocumentId(applicationReference(application)));
+    const scopePath = admissionApplicationScopePath(application.__scopePath) || 'applications';
+    const referenceValue = applicationReference(application);
+    const scopedThumbnailId = await admissionThumbnailDocumentId(referenceValue, scopePath);
+    let thumbnail = await getDocument(env, 'applicationPassportThumbnails', scopedThumbnailId).catch(() => null);
+    if (!thumbnail) {
+      const legacyThumbnail = await getDocument(
+        env,
+        'applicationPassportThumbnails',
+        safeDocumentId(referenceValue)
+      ).catch(() => null);
+      if (legacyThumbnailBelongsToApplication(legacyThumbnail, application, scopePath)) {
+        thumbnail = legacyThumbnail;
+      }
+    }
     if (thumbnail && clean(thumbnail.FileBase64)) {
-      return new Response(decodeBase64(thumbnail.FileBase64), {
-        status: 200,
-        headers: {
-          'Content-Type': clean(thumbnail.MimeType) || 'image/jpeg',
-          'Content-Disposition': 'inline',
-          'Cache-Control': 'private, max-age=300',
-          'X-Content-Type-Options': 'nosniff'
-        }
-      });
+      let validatedThumbnail = null;
+      try {
+        validatedThumbnail = validateAdmissionThumbnail(thumbnail.FileBase64);
+      } catch {
+        validatedThumbnail = null;
+      }
+      if (validatedThumbnail) {
+        return new Response(decodeBase64(thumbnail.FileBase64), {
+          status: 200,
+          headers: {
+            'Content-Type': validatedThumbnail.mimeType,
+            'Content-Disposition': 'inline',
+            'Cache-Control': 'private, max-age=300',
+            'X-Content-Type-Options': 'nosniff'
+          }
+        });
+      }
     }
     const file = await loadDriveFile(env, url);
     const mimeType = clean(file.mimeType) || 'application/octet-stream';

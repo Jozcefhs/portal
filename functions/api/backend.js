@@ -45,6 +45,11 @@ import { getWebBranding, saveWebBranding } from '../lib/web-branding.js';
 import { saveDocumentBranding } from '../lib/document-branding.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
+import {
+  aggregateSchoolFeeDueInvoices,
+  notifyParentPaymentDue,
+  notifyParentPaymentReceived
+} from '../lib/notifications.js';
 
 export const SCHOOL_FEES_TOTAL_CODE = 'SCHOOL_FEES_TOTAL';
 
@@ -1057,6 +1062,7 @@ function isGeneralFeeCredit(row) {
 }
 
 async function findStudentForApplication(env, app) {
+  const studentScopePath = identityScopePathForCollection(app, 'students');
   const refs = [
     accountRefFromApplication(app),
     app.ApplicationReference,
@@ -1065,14 +1071,28 @@ async function findStudentForApplication(env, app) {
     app.AdmissionNumber
   ].map(clean).filter(Boolean);
   for (const ref of refs) {
-    const found = await findStudent(env, ref, ref);
-    if (found) return normalizeStudent(found);
+    if (studentScopePath) {
+      const direct = await getSelectedIdentityRow(env, 'students', ref, studentScopePath);
+      if (direct) return normalizeStudent(direct);
+      for (const field of ['AdmissionNo', 'AccountRef', 'ApplicationReference']) {
+        const rows = await querySchoolCollection(env, 'students', {
+          filters: [{ field, op: '==', value: ref }],
+          limit: 2,
+          scopePath: studentScopePath
+        });
+        if (rows.length === 1) return normalizeStudent(rows[0]);
+      }
+    } else {
+      const found = await findStudent(env, ref, ref);
+      if (found) return normalizeStudent(found);
+    }
   }
   const appName = normalizeReferenceText(displayNameFromApplication(app));
   const appEmail = normalizeMatchText(app.VerificationEmail || app.ParentEmail || app.Email || '');
   if (!appName || !appEmail) return null;
   const candidates = await querySchoolCollection(env, 'students', {
-    filters: [{ field: 'ParentEmail', op: '==', value: lower(appEmail) }]
+    filters: [{ field: 'ParentEmail', op: '==', value: lower(appEmail) }],
+    ...(studentScopePath ? { scopePath: studentScopePath } : {})
   });
   const found = candidates.map(normalizeStudent).find((student) => {
     const studentName = normalizeReferenceText(student.DisplayName || student.ApplicantName || '');
@@ -1313,13 +1333,42 @@ function validatedIdentityScopePath(value, collection) {
   return pattern.test(path) ? path : '';
 }
 
+function identityScopePathForCollection(value, collection) {
+  const path = clean(value && typeof value === 'object' ? value.__scopePath : value)
+    .replace(/^\/+|\/+$/g, '');
+  if (!path) return '';
+  if (/^(?:students|applications)$/i.test(path)) return collection;
+  return validatedIdentityScopePath(
+    path.replace(/\/(?:students|applications)$/i, `/${collection}`),
+    collection
+  );
+}
+
+function identityRecordBranch(row = {}) {
+  const explicit = clean(row.BranchId || row.branchId);
+  if (explicit) return safeScopeId(explicit);
+  const match = clean(row.__scopePath).match(/schoolBranches\/([^/]+)/i);
+  return safeScopeId(match?.[1] || 'main');
+}
+
+function identityRecordSection(row = {}) {
+  const match = clean(row.__scopePath).match(/\/sections\/([^/]+)/i);
+  return schoolSectionFor({
+    ...row,
+    SchoolSection: clean(row.SchoolSection || row.schoolSection || match?.[1])
+  });
+}
+
 async function getSelectedIdentityRow(env, collection, accountRef, scopePath = '') {
   const documentId = safeDocumentId(accountRef);
   if (!documentId) return null;
+  const requestedScopePath = clean(scopePath);
   const path = validatedIdentityScopePath(scopePath, collection);
+  if (requestedScopePath && !path) return null;
   if (path) {
     const row = await getDocument(env, path, documentId).catch(() => null);
     if (row) return { ...row, __scopePath: path };
+    return null;
   }
   return getSchoolDocumentById(env, collection, documentId).catch(() => null);
 }
@@ -1343,8 +1392,29 @@ export async function getPayableFees(env, body = {}) {
   }
 
   const directCollection = requestedSourceType === 'application' ? 'applications' : 'students';
+  const requestedDirectScopePath = requestedScopePath
+    ? validatedIdentityScopePath(requestedScopePath, directCollection)
+    : '';
+  if (requestedScopePath && !requestedDirectScopePath) {
+    const err = new Error('The selected child scope is invalid.');
+    err.status = 400;
+    throw err;
+  }
+  const requestedStudentScopePath = identityScopePathForCollection(
+    requestedDirectScopePath,
+    'students'
+  );
+  const requestedApplicationScopePath = identityScopePathForCollection(
+    requestedDirectScopePath,
+    'applications'
+  );
   const directIdentity = requestedAccountRef
-    ? await getSelectedIdentityRow(env, directCollection, requestedAccountRef, requestedScopePath)
+    ? await getSelectedIdentityRow(
+        env,
+        directCollection,
+        requestedAccountRef,
+        requestedDirectScopePath
+      )
     : null;
   const directIdentityValid = directIdentity && directCollection === 'applications'
     ? lower(directIdentity.VerificationEmail || directIdentity.ParentEmail || directIdentity.Email) === email &&
@@ -1386,26 +1456,62 @@ export async function getPayableFees(env, body = {}) {
     throw err;
   }
 
-  let app = loginApp;
+  const rowsInScope = (rows, scopePath) => {
+    if (!requestedScopePath) return rows;
+    if (!scopePath) return [];
+    return rows.filter((row) => lower(row.__scopePath) === lower(scopePath));
+  };
+  const uniqueMatch = (rows, predicate) => {
+    const matches = rows.filter(predicate);
+    return matches.length === 1 ? matches[0] : null;
+  };
+
+  let app = requestedAccountRef ? null : loginApp;
   let accountRef = requestedAccountRef || accountRefFromApplication(loginApp || {}) || loginStudent?.AdmissionNo || loginStudent?.AccountRef || '';
-  let student = requestedAccountRef ? findStudentByAccountRefInRows(students, requestedAccountRef) : (loginStudent || null);
+  let student = requestedAccountRef
+    ? uniqueMatch(
+        rowsInScope(students, requestedStudentScopePath),
+        (row) => Boolean(findStudentByAccountRefInRows([row], requestedAccountRef))
+      )
+    : (loginStudent || null);
   let selectedApplication = null;
   if (student && student.ApplicationReference && !applications.length) {
-    const linked = await getSelectedIdentityRow(env, 'applications', student.ApplicationReference);
+    const linked = await getSelectedIdentityRow(
+      env,
+      'applications',
+      student.ApplicationReference,
+      identityScopePathForCollection(student, 'applications')
+    );
     if (linked) applications.push(normalizeApplication(linked));
   }
   if (requestedAccountRef) {
-    selectedApplication = applications.find((row) => {
-      return sameText(row.ApplicationReference || row.ApplicationID || row.__id, requestedAccountRef) ||
+    selectedApplication = uniqueMatch(
+      rowsInScope(applications, requestedApplicationScopePath),
+      (row) => (
+        sameText(row.ApplicationReference || row.ApplicationID || row.__id, requestedAccountRef) ||
         referencesMatch(row.ApplicationReference || row.ApplicationID || row.__id, requestedAccountRef) ||
         sameText(row.AdmissionNo || row.AdmissionNumber, requestedAccountRef) ||
-        referencesMatch(row.AdmissionNo || row.AdmissionNumber, requestedAccountRef);
-    }) || null;
+        referencesMatch(row.AdmissionNo || row.AdmissionNumber, requestedAccountRef)
+      )
+    );
   }
   if (student) {
     const parentEmailMatches = lower(student.ParentEmail || student.Email) === email;
     const studentAppRef = clean(student.ApplicationReference);
-    const linkedApplication = studentAppRef ? applications.find((row) => sameText(row.ApplicationReference || row.ApplicationID || row.__id, studentAppRef) || referencesMatch(row.ApplicationReference || row.ApplicationID || row.__id, studentAppRef)) : null;
+    const studentApplicationScopePath = identityScopePathForCollection(student, 'applications');
+    const linkedApplication = studentAppRef
+      ? uniqueMatch(
+          studentApplicationScopePath
+            ? applications.filter((row) =>
+                lower(row.__scopePath) === lower(studentApplicationScopePath)
+              )
+            : applications,
+          (row) => (
+            sameText(row.ApplicationReference || row.ApplicationID || row.__id, studentAppRef) ||
+            referencesMatch(row.ApplicationReference || row.ApplicationID || row.__id, studentAppRef)
+          )
+        )
+      : null;
     const linkedEmailMatches = linkedApplication && [linkedApplication.VerificationEmail, linkedApplication.ParentEmail, linkedApplication.Email]
       .some((value) => lower(value) === email);
     const selectedEmailMatches = selectedApplication && [selectedApplication.VerificationEmail, selectedApplication.ParentEmail, selectedApplication.Email]
@@ -1415,11 +1521,7 @@ export async function getPayableFees(env, body = {}) {
       err.status = 403;
       throw err;
     }
-    if (linkedApplication) {
-      app = linkedApplication;
-    } else if (selectedApplication) {
-      app = selectedApplication;
-    }
+    app = linkedApplication || selectedApplication || null;
   } else if (selectedApplication) {
     const selectedEmailMatches = [selectedApplication.VerificationEmail, selectedApplication.ParentEmail, selectedApplication.Email]
       .some((value) => lower(value) === email);
@@ -1753,6 +1855,7 @@ export async function getPayableFees(env, body = {}) {
 
   const schoolFeeBreakdown = fees.filter((fee) => !isWalletFee(fee) && normalizeMatchText(fee.FeeCategory || 'School Fee') === 'school fee');
   const schoolFeeTotal = schoolFeeBreakdown.reduce((total, fee) => total + asMoneyNumber(fee.Amount), 0);
+  const identityScope = student || selectedApplication || app || billingApp;
   return {
     ok: true,
     message: 'Payable fees loaded from the database.',
@@ -1767,6 +1870,9 @@ export async function getPayableFees(env, body = {}) {
       AcademicSession: billingApp.AcademicSession || '',
       Term: billingApp.Term || '',
       Email: app.VerificationEmail || email,
+      BranchId: identityRecordBranch(identityScope),
+      SchoolSection: identityRecordSection(identityScope),
+      ScopePath: clean(identityScope.__scopePath),
       BillingSource: student ? 'Students' : 'Applications'
     },
     fees,
@@ -3515,6 +3621,7 @@ export async function recordManualPayment(env, body) {
   payment.InvoicePostingStatus = invoicePostingWarning ? 'Warning' : (shouldGenerateSchoolInvoices ? 'Completed' : 'Not Required');
   payment.InvoicePostingWarning = invoicePostingWarning;
   await upsertDocument(env, 'payments', paymentDocumentId, payment);
+  await notifyParentPaymentReceived(env, payment).catch(() => null);
   return {
     ok: true,
     message: invoicePostingWarning
@@ -3615,6 +3722,7 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
   }, 0));
   let created = 0;
   let updated = 0;
+  const generatedInvoices = [];
   for (const fee of fees) {
     const invoiceSession = resolvedPeriodValue(fee.AcademicSession, billingSession);
     const invoiceTerm = resolvedPeriodValue(fee.Term, billingTerm);
@@ -3629,13 +3737,24 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
         sameFinancialPeriod(invoice, invoiceSession, invoiceTerm);
     });
     const invoiceId = duplicate ? duplicate.InvoiceId : ledgerDocumentId('INV');
-    await upsertDocument(env, 'invoices', safeDocumentId(invoiceId), {
+    const invoicePayload = {
       ...(duplicate || {}),
       InvoiceId: invoiceId,
       AccountRef: accountRef,
       AccountRefNormalized: normalizeReferenceText(accountRef),
       ApplicationReference: student.ApplicationReference || '',
       AdmissionNo: student.AdmissionNo || '',
+      ParentEmail: clean(
+        student.ParentEmail
+        || student.VerificationEmail
+        || student.Email
+      ).toLowerCase(),
+      BranchId: clean(student.BranchId || body.BranchId || 'main').toLowerCase() || 'main',
+      SchoolSection: clean(
+        student.SchoolSection
+        || body.SchoolSection
+        || schoolSectionFor(student)
+      ).toLowerCase(),
       DisplayName: student.DisplayName || student.ApplicantName || '',
       ClassName: student.ClassName || '',
       StudentType: student.StudentType || '',
@@ -3656,10 +3775,16 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
       CreatedAt: duplicate?.CreatedAt || nowIso(),
       UpdatedAt: nowIso(),
       RecordedBy: clean(body.RecordedBy) || duplicate?.RecordedBy || 'Accounts Office'
-    });
+    };
+    await upsertDocument(env, 'invoices', safeDocumentId(invoiceId), invoicePayload);
+    generatedInvoices.push(invoicePayload);
     if (duplicate) updated += 1;
     else created += 1;
   }
+  await Promise.all(
+    aggregateSchoolFeeDueInvoices(generatedInvoices)
+      .map((invoice) => notifyParentPaymentDue(env, invoice).catch(() => null))
+  );
   await refreshAccountFinancialSummary(env, accountRef, linkedReferences);
   return { ok: true, message: `${created} school fee invoice item(s) generated, ${updated} updated.`, created, updated };
 }

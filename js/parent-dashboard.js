@@ -29,15 +29,33 @@ const refreshDashboardBtn = document.getElementById('refreshDashboardBtn');
 const signOutDashboardBtn = document.getElementById('signOutDashboardBtn');
 const dashboardNav = document.getElementById('dashboardNav');
 const dashboardViewPanels = Array.from(document.querySelectorAll('[data-dashboard-view]'));
+const parentDocumentUploadForm = document.getElementById('parentDocumentUploadForm');
+const parentDocumentTarget = document.getElementById('parentDocumentTarget');
+const parentUploadDocumentsBtn = document.getElementById('parentUploadDocumentsBtn');
+const parentReplaceExistingDocument = document.getElementById('parentReplaceExistingDocument');
+const parentDocumentUploadStatus = document.getElementById('parentDocumentUploadStatus');
+const parentDocumentUploadResults = document.getElementById('parentDocumentUploadResults');
+const parentDocumentUploadProgress = document.getElementById('parentDocumentUploadProgress');
+const parentDocumentUploadProgressFill = document.getElementById('parentDocumentUploadProgressFill');
+const parentDocumentUploadProgressText = document.getElementById('parentDocumentUploadProgressText');
+const parentNotificationsBtn = document.getElementById('parentNotificationsBtn');
+const parentNotificationBadge = document.getElementById('parentNotificationBadge');
+const parentNotificationPanel = document.getElementById('parentNotificationPanel');
+const parentNotificationList = document.getElementById('parentNotificationList');
+const parentNotificationStatus = document.getElementById('parentNotificationStatus');
+const markAllParentNotificationsReadBtn = document.getElementById('markAllParentNotificationsReadBtn');
 
 let dashboard = null;
-let selectedAccountRef = '';
+let selectedChildKey = '';
 let activeDashboardView = 'overview';
 const loadedPayables = new Set();
 const passportPhotoCache = new Map();
 const storeCart = new Map();
+const parentDocumentIdempotencyKeys = new Map();
 let selectedChildLoadController = null;
 let dashboardLoadController = null;
+let parentNotifications = [];
+const PARENT_DOCUMENT_MAX_FILE_SIZE = 8 * 1024 * 1024;
 
 function newIdempotencyKey() {
   if (window.crypto?.randomUUID) return window.crypto.randomUUID();
@@ -64,11 +82,93 @@ function childCardHue(index) {
   return Math.round((207 + index * 137.508) % 360);
 }
 
+function childIdentity(child) {
+  const scopePath = String(child?.__scopePath || '').trim().replace(/^\/+|\/+$/g, '').toLowerCase();
+  const accountRef = String(child?.AccountRef || '').trim().toLowerCase();
+  return `${scopePath}|${accountRef}`;
+}
+
+function childResult(map, child, fallback) {
+  const value = map?.[childIdentity(child)];
+  return value === undefined ? fallback : value;
+}
+
+function setChildResult(map, child, value) {
+  map[childIdentity(child)] = value;
+  return value;
+}
+
+function normalizeChildResultMaps(data) {
+  const children = Array.isArray(data?.children) ? data.children : [];
+  const referenceCounts = new Map();
+  children.forEach((child) => {
+    const reference = String(child?.AccountRef || '').trim().toLowerCase();
+    referenceCounts.set(reference, (referenceCounts.get(reference) || 0) + 1);
+  });
+
+  const fields = [
+    'walletActivity',
+    'paymentRecords',
+    'accountSummaries',
+    'payableItems',
+    'payableErrors',
+    'dueNotifications',
+    'clinicVisits',
+    'entranceResults'
+  ];
+  fields.forEach((field) => {
+    const source = data?.[field] && typeof data[field] === 'object' ? data[field] : {};
+    const scoped = {};
+    children.forEach((child) => {
+      const identity = childIdentity(child);
+      if (Object.prototype.hasOwnProperty.call(source, identity)) {
+        scoped[identity] = source[identity];
+        return;
+      }
+      const accountRef = String(child?.AccountRef || '').trim();
+      if (
+        referenceCounts.get(accountRef.toLowerCase()) === 1
+        && Object.prototype.hasOwnProperty.call(source, accountRef)
+      ) {
+        scoped[identity] = source[accountRef];
+      }
+    });
+    data[field] = scoped;
+  });
+
+  data.storeCatalogByChild = data.storeCatalogByChild || {};
+  data.storeOrdersByChild = data.storeOrdersByChild || {};
+  data.resultSettingsByChild = data.resultSettingsByChild || {};
+  children.forEach((child) => {
+    const identity = childIdentity(child);
+    const reference = String(child?.AccountRef || '').trim().toLowerCase();
+    const uniqueReference = referenceCounts.get(reference) === 1;
+    if (uniqueReference && !Object.prototype.hasOwnProperty.call(data.storeCatalogByChild, identity)) {
+      data.storeCatalogByChild[identity] = Array.isArray(data.storeCatalog) ? data.storeCatalog : [];
+    }
+    if (uniqueReference && !Object.prototype.hasOwnProperty.call(data.storeOrdersByChild, identity)) {
+      data.storeOrdersByChild[identity] = (Array.isArray(data.storeOrders) ? data.storeOrders : [])
+        .filter((order) => String(order.AccountRef || order.AdmissionNo || '').trim().toLowerCase() === reference);
+    }
+    if (uniqueReference && !Object.prototype.hasOwnProperty.call(data.resultSettingsByChild, identity)) {
+      data.resultSettingsByChild[identity] = {
+        showResultsOnline: data.showResultsOnline,
+        resultDisplayMode: data.resultDisplayMode
+      };
+    }
+  });
+}
+
+function passportPhotoCacheKey(child, reference) {
+  return `${childIdentity(child)}|${String(reference || '').trim().toLowerCase()}`;
+}
+
 async function loadPassportPhoto(child, image) {
   const reference = child.PassportPhotoApplicationReference || child.ApplicationReference || child.AccountRef;
   if (!child.PassportPhotoAvailable || !reference || !image) return;
-  if (passportPhotoCache.has(reference)) {
-    image.src = passportPhotoCache.get(reference);
+  const cacheKey = passportPhotoCacheKey(child, reference);
+  if (passportPhotoCache.has(cacheKey)) {
+    image.src = passportPhotoCache.get(cacheKey);
     image.hidden = false;
     return;
   }
@@ -76,11 +176,15 @@ async function loadPassportPhoto(child, image) {
     const response = await fetch('/api/passport-photo', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: freshBody({ ...authPayload(), applicationReference: reference })
+      body: freshBody({
+        ...authPayload(),
+        applicationReference: reference,
+        scopePath: child.__scopePath || ''
+      })
     });
     if (!response.ok) return;
     const objectUrl = URL.createObjectURL(await response.blob());
-    passportPhotoCache.set(reference, objectUrl);
+    passportPhotoCache.set(cacheKey, objectUrl);
     image.src = objectUrl;
     image.hidden = false;
   } catch (_error) {
@@ -145,7 +249,142 @@ function authPayload() {
 }
 
 function selectedChild() {
-  return (dashboard?.children || []).find((child) => child.AccountRef === selectedAccountRef) || null;
+  return (dashboard?.children || []).find((child) => childIdentity(child) === selectedChildKey) || null;
+}
+
+function parentDocumentApplicationReference(child) {
+  return String(child?.ApplicationReference || child?.PassportPhotoApplicationReference || child?.AccountRef || '').trim();
+}
+
+function resetParentDocumentSelection() {
+  parentDocumentUploadForm?.reset();
+  if (parentDocumentUploadResults) parentDocumentUploadResults.innerHTML = '';
+  if (parentDocumentUploadStatus) {
+    parentDocumentUploadStatus.textContent = '';
+    parentDocumentUploadStatus.className = 'status';
+  }
+  if (parentDocumentUploadProgress) parentDocumentUploadProgress.hidden = true;
+  if (parentDocumentUploadProgressFill) parentDocumentUploadProgressFill.style.width = '0%';
+  if (parentDocumentUploadProgressText) parentDocumentUploadProgressText.textContent = 'Preparing upload...';
+}
+
+function renderParentDocumentTarget(child) {
+  if (!parentDocumentTarget) return;
+  const reference = parentDocumentApplicationReference(child);
+  parentDocumentTarget.textContent = child
+    ? `Uploading for: ${child.DisplayName || 'Selected student'}${reference ? ` (${reference})` : ''}`
+    : 'Select a student before uploading documents.';
+}
+
+function parentNotificationId(notification) {
+  return String(
+    notification?.NotificationId
+    || notification?.notificationId
+    || notification?.Id
+    || notification?.id
+    || notification?.__id
+    || ''
+  ).trim();
+}
+
+function parentNotificationIsRead(notification) {
+  const value = notification?.Read ?? notification?.read ?? notification?.IsRead ?? notification?.isRead;
+  return value === true || ['yes', 'true', '1', 'read'].includes(String(value || '').trim().toLowerCase());
+}
+
+function setParentNotificationStatus(message, type = '') {
+  if (!parentNotificationStatus) return;
+  parentNotificationStatus.textContent = message || '';
+  parentNotificationStatus.className = `status ${type}`.trim();
+}
+
+function renderParentNotifications() {
+  if (!parentNotificationList) return;
+  const unreadCount = parentNotifications.filter((item) => !parentNotificationIsRead(item)).length;
+  if (parentNotificationBadge) {
+    parentNotificationBadge.textContent = unreadCount > 99 ? '99+' : String(unreadCount);
+    parentNotificationBadge.hidden = unreadCount === 0;
+  }
+  parentNotificationList.innerHTML = parentNotifications.length
+    ? ''
+    : '<p class="muted">You have no notifications at the moment.</p>';
+  parentNotifications.forEach((notification) => {
+    const isRead = parentNotificationIsRead(notification);
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = `parent-notification-item${isRead ? '' : ' unread'}`;
+    const title = notification.Title || notification.title || notification.Type || notification.type || 'School notification';
+    const message = notification.Message || notification.message || notification.Body || notification.body || '';
+    const date = notification.DisplayDate || notification.displayDate || notification.CreatedAt || notification.createdAt || notification.Date || notification.date || '';
+    row.innerHTML = `
+      <span>
+        <strong>${escapeHtml(title)}</strong>
+        <span>${escapeHtml(message)}</span>
+      </span>
+      <small>${escapeHtml(date)}</small>
+    `;
+    if (!isRead) {
+      row.setAttribute('aria-label', `${title}. Mark as read`);
+      row.addEventListener('click', () => markParentNotificationRead(parentNotificationId(notification), false, row));
+    } else {
+      row.disabled = true;
+    }
+    parentNotificationList.appendChild(row);
+  });
+  if (markAllParentNotificationsReadBtn) {
+    markAllParentNotificationsReadBtn.disabled = unreadCount === 0;
+  }
+}
+
+async function loadParentNotifications() {
+  if (!dashboard || !parentNotificationList) return;
+  try {
+    const response = await fetch('/api/parent-dashboard', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: freshBody({
+        action: 'getNotifications',
+        ...authPayload(),
+        accountRefs: (dashboard.children || []).map((child) => child.AccountRef).filter(Boolean)
+      })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load notifications.');
+    parentNotifications = data.notifications || [];
+    renderParentNotifications();
+    setParentNotificationStatus('', '');
+  } catch (error) {
+    parentNotifications = [];
+    renderParentNotifications();
+    setParentNotificationStatus(error.message, 'bad');
+  }
+}
+
+async function markParentNotificationRead(notificationId, all = false, button = null) {
+  if (!all && !notificationId) return;
+  const restingText = button?.textContent || '';
+  setActionLoading(button, true, 'Updating...', restingText);
+  try {
+    const response = await fetch('/api/parent-dashboard', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: freshBody({
+        action: 'markNotificationRead',
+        ...authPayload(),
+        notificationId,
+        all
+      })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Could not update the notification.');
+    await loadParentNotifications();
+  } catch (error) {
+    setParentNotificationStatus(error.message, 'bad');
+  } finally {
+    if (button?.isConnected) setActionLoading(button, false, '', restingText);
+  }
 }
 
 function showDashboardView(view, scrollToContent = false) {
@@ -179,9 +418,10 @@ function renderChildren() {
   childrenList.innerHTML = '';
   const children = dashboard?.children || [];
   children.forEach((child, index) => {
+    const identity = childIdentity(child);
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'child-card' + (child.AccountRef === selectedAccountRef ? ' selected' : '');
+    button.className = 'child-card' + (identity === selectedChildKey ? ' selected' : '');
     button.style.setProperty('--child-hue', String(childCardHue(index)));
     button.innerHTML = `
       <span class="child-card-layout">
@@ -198,9 +438,10 @@ function renderChildren() {
       </span>
     `;
     button.addEventListener('click', () => {
-      if (selectedAccountRef === child.AccountRef) return;
-      if (selectedAccountRef !== child.AccountRef) storeCart.clear();
-      selectedAccountRef = child.AccountRef;
+      if (selectedChildKey === identity) return;
+      storeCart.clear();
+      resetParentDocumentSelection();
+      selectedChildKey = identity;
       renderDashboard();
       loadPayablesForSelected();
     });
@@ -222,7 +463,7 @@ function renderWallet(child) {
   dailyLimit.value = child.WalletDailyLimit || '';
   pinThreshold.value = child.WalletPinThreshold || '';
 
-  const entries = dashboard.walletActivity?.[child.AccountRef] || [];
+  const entries = childResult(dashboard.walletActivity, child, []);
   walletLedger.innerHTML = entries.length ? '' : '<p class="muted">No wallet activity found.</p>';
   if (entries.length > 5) {
     const details = document.createElement('details');
@@ -256,7 +497,7 @@ function renderWallet(child) {
 }
 
 function accountSummaryFor(child) {
-  const summary = dashboard.accountSummaries?.[child.AccountRef] || child || {};
+  const summary = childResult(dashboard.accountSummaries, child, child || {});
   const totalDebit = Number(String(summary.TotalDebit || '0').replace(/,/g, ''));
   const totalCredit = Number(String(summary.TotalCredit || '0').replace(/,/g, ''));
   const outstanding = Number(String(summary.OutstandingBalance || '0').replace(/,/g, ''));
@@ -469,7 +710,7 @@ function activityTarget(container, records, label) {
 }
 
 function renderDueNotifications(child) {
-  const records = dashboard.dueNotifications?.[child.AccountRef] || [];
+  const records = childResult(dashboard.dueNotifications, child, []);
   dueNotifications.innerHTML = records.length ? '' : '<p class="muted">No payment due date notifications at the moment.</p>';
   records.forEach((record) => {
     const item = document.createElement('div');
@@ -490,12 +731,12 @@ function renderDueNotifications(child) {
 async function loadPayablesForSelected(force = false) {
   const child = selectedChild();
   if (!child) return;
+  const identity = childIdentity(child);
   selectedChildLoadController?.abort();
-  if (!force && loadedPayables.has(child.AccountRef)) return;
+  if (!force && loadedPayables.has(identity)) return;
   const controller = new AbortController();
   selectedChildLoadController = controller;
-  const accountRef = child.AccountRef;
-  loadedPayables.delete(accountRef);
+  loadedPayables.delete(identity);
   dashboard.payableItems = dashboard.payableItems || {};
   dashboard.payableErrors = dashboard.payableErrors || {};
   dashboard.dueNotifications = dashboard.dueNotifications || {};
@@ -504,8 +745,11 @@ async function loadPayablesForSelected(force = false) {
   dashboard.paymentRecords = dashboard.paymentRecords || {};
   dashboard.clinicVisits = dashboard.clinicVisits || {};
   dashboard.entranceResults = dashboard.entranceResults || {};
-  dashboard.payableItems[accountRef] = [];
-  dashboard.payableErrors[accountRef] = '';
+  dashboard.storeCatalogByChild = dashboard.storeCatalogByChild || {};
+  dashboard.storeOrdersByChild = dashboard.storeOrdersByChild || {};
+  dashboard.resultSettingsByChild = dashboard.resultSettingsByChild || {};
+  setChildResult(dashboard.payableItems, child, []);
+  setChildResult(dashboard.payableErrors, child, '');
   renderPayableItems(child);
   renderDueNotifications(child);
   renderWallet(child);
@@ -517,7 +761,9 @@ async function loadPayablesForSelected(force = false) {
       ...authPayload(),
       accountRef: child.AccountRef,
       sourceType: child.SourceType || 'Student',
-      scopePath: child.__scopePath || ''
+      scopePath: child.__scopePath || '',
+      branchId: child.BranchId || 'main',
+      schoolSection: child.SchoolSection || 'secondary'
     };
     const payableRequest = fetch('/api/parent-dashboard', {
       method: 'POST',
@@ -544,15 +790,15 @@ async function loadPayablesForSelected(force = false) {
     const activityData = await activityResponse.json();
     if (controller.signal.aborted) return;
     if (!payableResponse.ok || !payableData.ok) {
-      dashboard.payableErrors[child.AccountRef] = payableData.message || 'Could not load payable items.';
+      setChildResult(dashboard.payableErrors, child, payableData.message || 'Could not load payable items.');
     } else {
-      dashboard.payableItems[child.AccountRef] = payableData.payableItems || [];
-      dashboard.dueNotifications[child.AccountRef] = payableData.dueNotifications || [];
+      setChildResult(dashboard.payableItems, child, payableData.payableItems || []);
+      setChildResult(dashboard.dueNotifications, child, payableData.dueNotifications || []);
     }
     if (activityResponse.ok && activityData.ok) {
-      const payableNotices = dashboard.dueNotifications[child.AccountRef] || [];
+      const payableNotices = childResult(dashboard.dueNotifications, child, []);
       const activityNotices = activityData.dueNotifications || [];
-      dashboard.dueNotifications[child.AccountRef] = [...new Map(
+      setChildResult(dashboard.dueNotifications, child, [...new Map(
         [...payableNotices, ...activityNotices].map((notice) => [[
           notice.FeeCode,
           notice.FeeName,
@@ -560,39 +806,41 @@ async function loadPayablesForSelected(force = false) {
           notice.AcademicSession,
           notice.Term
         ].map((value) => String(value || '').trim().toLowerCase()).join('|'), notice])
-      ).values()];
-      if (typeof activityData.showResultsOnline === 'boolean') {
-        dashboard.showResultsOnline = activityData.showResultsOnline;
-      }
-      if (activityData.resultDisplayMode) {
-        dashboard.resultDisplayMode = activityData.resultDisplayMode;
-      }
-      dashboard.walletActivity[child.AccountRef] = activityData.walletActivity || [];
+      ).values()]);
+      dashboard.resultSettingsByChild[identity] = {
+        showResultsOnline: activityData.showResultsOnline,
+        resultDisplayMode: activityData.resultDisplayMode
+      };
+      setChildResult(dashboard.walletActivity, child, activityData.walletActivity || []);
       if (activityData.accountSummary) {
-        dashboard.accountSummaries[child.AccountRef] = activityData.accountSummary;
+        setChildResult(dashboard.accountSummaries, child, activityData.accountSummary);
         Object.assign(child, activityData.accountSummary);
       }
-      dashboard.paymentRecords[child.AccountRef] = activityData.paymentRecords || [];
-      dashboard.clinicVisits[child.AccountRef] = activityData.clinicVisits || [];
-      dashboard.entranceResults[child.AccountRef] = activityData.entranceResults || [];
-      dashboard.storeCatalog = activityData.storeCatalog || [];
-      dashboard.storeOrders = activityData.storeOrders || [];
+      setChildResult(dashboard.paymentRecords, child, activityData.paymentRecords || []);
+      setChildResult(dashboard.clinicVisits, child, activityData.clinicVisits || []);
+      setChildResult(dashboard.entranceResults, child, activityData.entranceResults || []);
+      dashboard.storeCatalogByChild[identity] = activityData.storeCatalog || [];
+      dashboard.storeOrdersByChild[identity] = activityData.storeOrders || [];
       child.WalletBalance = activityData.walletBalance ?? child.WalletBalance;
     } else {
-      dashboard.payableErrors[child.AccountRef] = dashboard.payableErrors[child.AccountRef] || activityData.message || 'Could not load child activity.';
+      setChildResult(
+        dashboard.payableErrors,
+        child,
+        childResult(dashboard.payableErrors, child, '') || activityData.message || 'Could not load child activity.'
+      );
     }
     if (payableResponse.ok && payableData.ok && activityResponse.ok && activityData.ok) {
-      loadedPayables.add(accountRef);
+      loadedPayables.add(identity);
     }
   } catch (error) {
     if (error?.name === 'AbortError') return;
-    dashboard.payableItems[child.AccountRef] = [];
-    dashboard.dueNotifications[child.AccountRef] = [];
-    dashboard.payableErrors[child.AccountRef] = error.message;
+    setChildResult(dashboard.payableItems, child, []);
+    setChildResult(dashboard.dueNotifications, child, []);
+    setChildResult(dashboard.payableErrors, child, error.message);
   } finally {
     if (selectedChildLoadController === controller) selectedChildLoadController = null;
   }
-  if (selectedAccountRef !== accountRef) return;
+  if (selectedChildKey !== identity) return;
   renderPayableItems(child);
   renderDueNotifications(child);
   renderAccountCredit(child);
@@ -694,14 +942,15 @@ async function payItem(child, fee, container) {
 }
 
 function renderPayableItems(child) {
-  const records = dashboard.payableItems?.[child.AccountRef] || [];
+  const identity = childIdentity(child);
+  const records = childResult(dashboard.payableItems, child, []);
   const busFees = records.filter(isBusFee);
   const clubFees = records.filter(isClubFee);
   const otherFees = records.filter(isOtherOptionalFee);
   const directRecords = records.filter((fee) => !isBusFee(fee) && !isClubFee(fee) && !isOtherOptionalFee(fee));
   const optionalRecords = [...busFees, ...clubFees, ...otherFees];
-  const payableError = dashboard.payableErrors?.[child.AccountRef] || '';
-  const loading = !loadedPayables.has(child.AccountRef);
+  const payableError = childResult(dashboard.payableErrors, child, '');
+  const loading = !loadedPayables.has(identity);
   payableItems.innerHTML = directRecords.length ? '' : `<p class="${payableError ? 'status bad' : 'muted'}">${payableError || (loading ? 'Loading payable items...' : 'There are no regular online payment items due at the moment.')}</p>`;
   optionalPayments.innerHTML = optionalRecords.length ? '' : `<p class="${payableError ? 'status bad' : 'muted'}">${payableError || (loading ? 'Loading optional payments...' : 'There are no optional payment items available at the moment.')}</p>`;
   if (optionalRecords.length) {
@@ -791,7 +1040,7 @@ function renderPayableItems(child) {
 }
 
 function renderClinic(child) {
-  const records = dashboard.clinicVisits?.[child.AccountRef] || [];
+  const records = childResult(dashboard.clinicVisits, child, []);
   if (!records.length) {
     clinicRecords.innerHTML = '<p class="muted">No clinic visits found.</p>';
     return;
@@ -810,7 +1059,7 @@ function renderClinic(child) {
 }
 
 function renderPayments(child) {
-  const records = dashboard.paymentRecords?.[child.AccountRef] || [];
+  const records = childResult(dashboard.paymentRecords, child, []);
   if (!records.length) {
     paymentRecords.innerHTML = '<p class="muted">No payment records found.</p>';
     return;
@@ -832,21 +1081,24 @@ function renderPayments(child) {
   });
 }
 
-function resultDisplayMode() {
-  return dashboard?.resultDisplayMode || window.SCHOOL_PROFILE?.ResultDisplayMode || 'subjects';
+function resultDisplayMode(child) {
+  return dashboard?.resultSettingsByChild?.[childIdentity(child)]?.resultDisplayMode
+    || window.SCHOOL_PROFILE?.ResultDisplayMode
+    || 'subjects';
 }
 
-function resultsOnlineEnabled() {
-  if (typeof dashboard?.showResultsOnline === 'boolean') {
-    return dashboard.showResultsOnline;
+function resultsOnlineEnabled(child) {
+  const value = dashboard?.resultSettingsByChild?.[childIdentity(child)]?.showResultsOnline;
+  if (typeof value === 'boolean') {
+    return value;
   }
   const profileValue = String(window.SCHOOL_PROFILE?.ShowResultsOnline || '').trim().toUpperCase();
   return profileValue === 'YES';
 }
 
 function renderEntranceResults(child) {
-  const records = dashboard.entranceResults?.[child.AccountRef] || [];
-  if (!resultsOnlineEnabled() && records.length === 0) {
+  const records = childResult(dashboard.entranceResults, child, []);
+  if (!resultsOnlineEnabled(child) && records.length === 0) {
     entranceResults.innerHTML = '<p class="muted">Entrance results are not currently enabled for online viewing.</p>';
     if (entranceResultPanel) entranceResultPanel.hidden = activeDashboardView !== 'results';
     return;
@@ -858,7 +1110,7 @@ function renderEntranceResults(child) {
     const percentage = record.ResultPercentage ? `${record.ResultPercentage}%` : '';
     const status = record.ResultStatus || 'Pending';
     const date = record.ResultUpdatedAt || record.ResultSentAt || '';
-    if (resultDisplayMode() === 'percentage') {
+    if (resultDisplayMode(child) === 'percentage') {
       item.innerHTML = `
         <strong>${status}</strong>
         <span>${[percentage || 'Percentage not recorded', date].filter(Boolean).join(' | ')}</span>
@@ -958,7 +1210,7 @@ async function downloadAdmissionDocument(child, documentType, button) {
       link.remove();
       URL.revokeObjectURL(url);
     }, 1000);
-    loadedPayables.delete(child.AccountRef);
+    loadedPayables.delete(childIdentity(child));
     await loadPayablesForSelected(true);
   } catch (error) {
     const message = error.message || String(error);
@@ -974,12 +1226,13 @@ async function downloadAdmissionDocument(child, documentType, button) {
 
 function renderDashboard() {
   const children = dashboard?.children || [];
-  if (!selectedAccountRef && children.length) {
-    selectedAccountRef = children[0].AccountRef;
+  if (!selectedChildKey && children.length) {
+    selectedChildKey = childIdentity(children[0]);
   }
   renderChildren();
   const child = selectedChild();
   if (!child) return;
+  renderParentDocumentTarget(child);
   renderDueNotifications(child);
   renderPayableItems(child);
   renderAccountCredit(child);
@@ -989,6 +1242,225 @@ function renderDashboard() {
   renderClinic(child);
   renderStores(child);
 }
+
+function parentDocumentFileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
+    reader.onerror = () => reject(new Error('Could not read the selected file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function parentPassportThumbnail(file, documentType) {
+  if (documentType !== 'PassportPhotograph' || !String(file.type || '').toLowerCase().startsWith('image/')) return null;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, 240 / bitmap.width, 280 / bitmap.height);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    return {
+      mimeType: 'image/jpeg',
+      base64: canvas.toDataURL('image/jpeg', 0.82).split(',')[1] || ''
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
+function selectedParentDocumentUploads() {
+  return Array.from(document.querySelectorAll('input[type="file"][data-parent-document-type]'))
+    .map((input) => ({
+      documentType: input.dataset.parentDocumentType,
+      label: input.closest('.document-upload-row')?.querySelector('label')?.textContent.trim() || 'Document',
+      input,
+      file: input.files?.[0] || null
+    }))
+    .filter((upload) => upload.file);
+}
+
+function parentDocumentUploadIdentity(upload, child, replaceExisting) {
+  return [
+    authPayload().email,
+    childIdentity(child),
+    parentDocumentApplicationReference(child),
+    upload.documentType,
+    upload.file.name,
+    upload.file.size,
+    upload.file.lastModified,
+    replaceExisting ? 'replace' : 'new'
+  ].join('|');
+}
+
+function parentDocumentResult(message, type = '') {
+  const row = document.createElement('div');
+  row.className = `upload-result ${type}`.trim();
+  row.textContent = message;
+  parentDocumentUploadResults?.appendChild(row);
+  return row;
+}
+
+function updateParentDocumentResult(row, message, type = '') {
+  if (!row) return;
+  row.className = `upload-result ${type}`.trim();
+  row.textContent = message;
+}
+
+function setParentDocumentProgress(done, total, message = '') {
+  if (!parentDocumentUploadProgress) return;
+  parentDocumentUploadProgress.hidden = false;
+  if (parentDocumentUploadProgressFill) {
+    parentDocumentUploadProgressFill.style.width = `${total ? Math.round((done / total) * 100) : 0}%`;
+  }
+  if (parentDocumentUploadProgressText) {
+    parentDocumentUploadProgressText.textContent = message || `${done} of ${total} document(s) processed`;
+  }
+}
+
+function setParentDocumentStatus(message, type = '') {
+  if (!parentDocumentUploadStatus) return;
+  parentDocumentUploadStatus.textContent = message || '';
+  parentDocumentUploadStatus.className = `status ${type}`.trim();
+}
+
+function releaseParentDocumentIdempotencyKey(response, data) {
+  const status = Number(response?.status || 0);
+  if (response?.ok && data?.ok) return true;
+  if (status < 400 || status >= 500 || [408, 425, 429].includes(status)) return false;
+  if (status === 409 && /IDEMPOTENCY_(IN_PROGRESS|LOCKED|OWNERSHIP_LOST|OUTCOME_UNCERTAIN)|already being processed|outcome.+uncertain|unresolved request|no longer owned/i.test(
+    `${data?.code || ''} ${data?.message || ''}`
+  )) return false;
+  return true;
+}
+
+async function loadParentDocumentSettings() {
+  if (!parentDocumentUploadForm) return;
+  try {
+    const data = window.DynamaxPublicApi?.getJson
+      ? await window.DynamaxPublicApi.getJson('/api/admission-document-settings', {
+          cacheKey: 'parent-admission-document-settings'
+        })
+      : await fetch('/api/admission-document-settings', { cache: 'no-cache' }).then((response) => response.json());
+    if (!data?.ok) return;
+    const enabled = new Set((data.documents || []).map((item) => item.key));
+    document.querySelectorAll('[data-parent-document-row]').forEach((row) => {
+      const active = enabled.has(row.dataset.parentDocumentRow);
+      row.hidden = !active;
+      row.querySelector('input[type="file"]')?.toggleAttribute('disabled', !active);
+    });
+  } catch (_error) {
+    // Retain the built-in admission document list while settings are temporarily unavailable.
+  }
+}
+
+parentDocumentUploadForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const child = selectedChild();
+  const applicationReference = parentDocumentApplicationReference(child);
+  const uploads = selectedParentDocumentUploads();
+  const replaceExisting = Boolean(parentReplaceExistingDocument?.checked);
+  parentDocumentUploadResults.innerHTML = '';
+  setParentDocumentStatus('', '');
+
+  if (!child || !applicationReference) {
+    setParentDocumentStatus('Select a student with an admission application before uploading.', 'bad');
+    return;
+  }
+  if (!uploads.length) {
+    setParentDocumentStatus('Choose at least one document to upload.', 'bad');
+    return;
+  }
+  const tooLarge = uploads.find((upload) => upload.file.size > PARENT_DOCUMENT_MAX_FILE_SIZE);
+  if (tooLarge) {
+    setParentDocumentStatus(`${tooLarge.label} is too large. Maximum allowed size is 8 MB.`, 'bad');
+    return;
+  }
+
+  const buttonLabel = parentUploadDocumentsBtn.textContent;
+  setActionLoading(parentUploadDocumentsBtn, true, 'Uploading documents...', buttonLabel);
+  setParentDocumentStatus(`Uploading ${uploads.length} document(s) for ${child.DisplayName || 'the selected student'}...`);
+  setParentDocumentProgress(0, uploads.length);
+  let uploaded = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (let index = 0; index < uploads.length; index += 1) {
+    const upload = uploads[index];
+    const result = parentDocumentResult(`${upload.label}: uploading...`, 'pending');
+    const identity = parentDocumentUploadIdentity(upload, child, replaceExisting);
+    const idempotencyKey = parentDocumentIdempotencyKeys.get(identity) || newIdempotencyKey();
+    parentDocumentIdempotencyKeys.set(identity, idempotencyKey);
+    try {
+      setParentDocumentProgress(index, uploads.length, `Uploading ${upload.label}...`);
+      const thumbnail = await parentPassportThumbnail(upload.file, upload.documentType);
+      const turnstile = window.DynamaxPublicApi?.getTurnstileToken
+        ? await window.DynamaxPublicApi.getTurnstileToken('upload_document')
+        : {};
+      const response = await fetch('/api/upload-document', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey
+        },
+        body: JSON.stringify({
+          ...authPayload(),
+          applicationReference,
+          accountRef: child.AccountRef,
+          sourceType: child.SourceType || 'Student',
+          scopePath: child.__scopePath || '',
+          documentType: upload.documentType,
+          fileName: upload.file.name,
+          mimeType: upload.file.type || 'application/octet-stream',
+          fileBase64: await parentDocumentFileToBase64(upload.file),
+          thumbnailBase64: thumbnail?.base64 || '',
+          thumbnailMimeType: thumbnail?.mimeType || '',
+          replaceExisting,
+          idempotencyKey,
+          ...turnstile
+        })
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.ok) {
+        if (data?.code === 'DOCUMENT_ALREADY_UPLOADED') {
+          skipped += 1;
+          parentDocumentIdempotencyKeys.delete(identity);
+          updateParentDocumentResult(result, `${upload.label}: already uploaded. Tick replace if Admissions requested a newer copy.`, 'bad');
+          continue;
+        }
+        if (releaseParentDocumentIdempotencyKey(response, data)) parentDocumentIdempotencyKeys.delete(identity);
+        throw new Error(data?.message || 'Document upload failed.');
+      }
+      uploaded += 1;
+      parentDocumentIdempotencyKeys.delete(identity);
+      upload.input.value = '';
+      updateParentDocumentResult(result, `${upload.label}: ${data.message || 'Uploaded successfully.'}`, 'ok');
+      if (upload.documentType === 'PassportPhotograph') {
+        const photoReference = child.PassportPhotoApplicationReference || applicationReference;
+        const cacheKey = passportPhotoCacheKey(child, photoReference);
+        const cachedPhoto = passportPhotoCache.get(cacheKey);
+        if (cachedPhoto) URL.revokeObjectURL(cachedPhoto);
+        passportPhotoCache.delete(cacheKey);
+        child.PassportPhotoAvailable = true;
+        child.PassportPhotoApplicationReference = applicationReference;
+      }
+    } catch (error) {
+      failed += 1;
+      updateParentDocumentResult(result, `${upload.label}: ${error.message}`, 'bad');
+    } finally {
+      setParentDocumentProgress(index + 1, uploads.length);
+    }
+  }
+
+  setParentDocumentStatus(
+    `Completed with ${uploaded} uploaded, ${skipped} skipped and ${failed} failed.`,
+    failed ? 'bad' : 'ok'
+  );
+  setActionLoading(parentUploadDocumentsBtn, false, '', buttonLabel);
+  if (uploaded) renderChildren();
+});
 
 function storeItemMatchesChild(item, child) {
   const all = (value) => !value || ['all', '*'].includes(String(value).trim().toLowerCase());
@@ -1025,7 +1497,8 @@ function normalizePortalClass(value) {
 
 function renderStores(child) {
   if (!schoolStores || !storeOrders) return;
-  const eligibleCatalog = (dashboard.storeCatalog || []).filter((item) => storeItemMatchesChild(item, child));
+  const identity = childIdentity(child);
+  const eligibleCatalog = (dashboard.storeCatalogByChild?.[identity] || []).filter((item) => storeItemMatchesChild(item, child));
   const query = String(storeSearch?.value || '').trim().toLowerCase();
   const catalog = query
     ? eligibleCatalog.filter((item) => [
@@ -1104,7 +1577,7 @@ function renderStores(child) {
     schoolStores.appendChild(section);
   });
   renderStoreCart(child);
-  const orders = (dashboard.storeOrders || []).filter((order) => String(order.AccountRef || order.AdmissionNo).toLowerCase() === String(child.AccountRef).toLowerCase());
+  const orders = dashboard.storeOrdersByChild?.[identity] || [];
   storeOrders.innerHTML = orders.length ? '' : '<p class="muted">No store orders recorded for this student.</p>';
   orders.forEach((order) => {
     const row = document.createElement('div'); row.className = 'activity-item';
@@ -1188,7 +1661,7 @@ function renderStoreCart(child) {
 }
 
 async function loadDashboard() {
-  const previousAccountRef = selectedAccountRef;
+  const previousChildKey = selectedChildKey;
   const payload = authPayload();
   if (!payload.email || !payload.code) {
     setStatus('Email and verification code are required.', 'bad');
@@ -1213,15 +1686,17 @@ async function loadDashboard() {
     }
     if (controller.signal.aborted) return;
     dashboard = data;
+    normalizeChildResultMaps(dashboard);
     loadedPayables.clear();
-    selectedAccountRef = data.children?.some((child) => child.AccountRef === previousAccountRef)
-      ? previousAccountRef
-      : (data.children?.[0]?.AccountRef || '');
+    selectedChildKey = data.children?.some((child) => childIdentity(child) === previousChildKey)
+      ? previousChildKey
+      : (data.children?.[0] ? childIdentity(data.children[0]) : '');
     dashboardContent.hidden = false;
     loginForm.hidden = true;
     renderDashboard();
     showDashboardView(activeDashboardView);
     await loadPayablesForSelected();
+    void loadParentNotifications();
     if (controller.signal.aborted) return;
     setStatus('Dashboard loaded.', 'ok');
   } catch (error) {
@@ -1267,6 +1742,10 @@ restrictionForm.addEventListener('submit', async (event) => {
         action: 'updateWalletRestrictions',
         ...authPayload(),
         accountRef: child.AccountRef,
+        sourceType: child.SourceType || 'Student',
+        scopePath: child.__scopePath || '',
+        branchId: child.BranchId || 'main',
+        schoolSection: child.SchoolSection || 'secondary',
         walletCardStatus: walletStatus.value,
         walletTxnLimit: txnLimit.value,
         walletDailyLimit: dailyLimit.value,
@@ -1314,8 +1793,13 @@ if (signOutDashboardBtn) {
     passportPhotoCache.forEach((objectUrl) => URL.revokeObjectURL(objectUrl));
     passportPhotoCache.clear();
     loadedPayables.clear();
+    parentDocumentIdempotencyKeys.clear();
+    parentNotifications = [];
+    renderParentNotifications();
+    if (parentNotificationPanel) parentNotificationPanel.hidden = true;
+    parentNotificationsBtn?.setAttribute('aria-expanded', 'false');
     dashboard = null;
-    selectedAccountRef = '';
+    selectedChildKey = '';
     storeCart.clear();
     activeDashboardView = 'overview';
     dashboardContent.hidden = true;
@@ -1326,6 +1810,19 @@ if (signOutDashboardBtn) {
   });
 }
 
+parentNotificationsBtn?.addEventListener('click', () => {
+  const opening = Boolean(parentNotificationPanel?.hidden);
+  if (parentNotificationPanel) parentNotificationPanel.hidden = !opening;
+  parentNotificationsBtn.setAttribute('aria-expanded', opening ? 'true' : 'false');
+  if (opening) void loadParentNotifications();
+});
+
+markAllParentNotificationsReadBtn?.addEventListener('click', () => {
+  if (!markAllParentNotificationsReadBtn.disabled) {
+    void markParentNotificationRead('', true, markAllParentNotificationsReadBtn);
+  }
+});
+
 if (dashboardNav) {
   dashboardNav.addEventListener('click', (event) => {
     const button = event.target.closest('[data-dashboard-target]');
@@ -1335,6 +1832,8 @@ if (dashboardNav) {
     if (child && button.dataset.dashboardTarget === 'results') renderEntranceResults(child);
   });
 }
+
+loadParentDocumentSettings();
 
 window.addEventListener('school-profile-ready', () => {
   const child = selectedChild();
