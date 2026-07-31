@@ -106,15 +106,17 @@ function sourceLabel(journal, account = {}) {
   const givingType = clean(journal.GivingTypeName || journal.givingTypeName);
   if (givingType) return givingType;
   const text = lower(`${journal.Source} ${journal.Description}`);
-  if (text.includes('donation')) return 'Donations';
-  if (text.includes('offering')) return 'Offerings';
+  const accountLabel = clean(account.name).replace(/\s+(?:income|revenue)$/i, '').trim();
+  if (text.includes('donation') || text.includes('offering')) {
+    return accountLabel || (text.includes('offering') ? 'Offerings' : 'Donations');
+  }
   if (text.includes('admission form') || text.includes('form sale')) return 'Admission Forms';
   if (text.includes('wallet purchase') || text.includes('tuck')) return 'Wallet Purchases';
   if (text.includes('restaurant') || text.includes('catering')) return 'Restaurant';
   if (text.includes('store') || text.includes('book') || text.includes('uniform')) return 'Store Sales';
   if (text.includes('program')) return 'Programmes';
   if (text.includes('fee') || text.includes('invoice') || text.includes('tuition')) return 'Fees';
-  return clean(account.name) || clean(journal.Source) || 'Other Income';
+  return accountLabel || clean(journal.Source) || 'Other Income';
 }
 
 function paymentChannel(journal) {

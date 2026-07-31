@@ -15,6 +15,8 @@ const chart = [
   { Code: '4000', Name: 'School Fee Revenue', Type: 'Revenue' },
   { Code: '4040', Name: 'Store Revenue', Type: 'Revenue' },
   { Code: '4080', Name: 'Donations', Type: 'Revenue' },
+  { Code: '4160', Name: 'Tithe Income', Type: 'Revenue' },
+  { Code: '4190', Name: 'Seed Income', Type: 'Revenue' },
   { Code: '6060', Name: 'Gateway Charges', Type: 'Expense' }
 ];
 
@@ -97,6 +99,24 @@ test('church income is grouped by its giving type instead of one generic donatio
     ['Seed', 3000]
   ]);
   assert.deepEqual(report.transactions.map((row) => row.source).sort(), ['Seed', 'Tithe']);
+});
+
+test('legacy church journals infer their giving source from separate revenue accounts', () => {
+  const legacyChurchJournals = [
+    {
+      JournalNo: 'OLD-TITHE', Date: '2026-07-14', Status: 'Posted', Source: 'Church Donation',
+      Lines: [{ AccountCode: '1030', Debit: 9000 }, { AccountCode: '4160', Credit: 9000 }]
+    },
+    {
+      JournalNo: 'OLD-SEED', Date: '2026-07-15', Status: 'Posted', Source: 'Church Donation',
+      Lines: [{ AccountCode: '1010', Debit: 4000 }, { AccountCode: '4190', Credit: 4000 }]
+    }
+  ];
+  const report = buildIncomeAnalytics(chart, legacyChurchJournals, { period: 'monthly' }, '2026-07-28');
+  assert.deepEqual(report.sources.map((row) => [row.label, row.value]), [
+    ['Tithe', 9000],
+    ['Seed', 4000]
+  ]);
 });
 
 test('account, department and payment-route filters affect every report output', () => {
