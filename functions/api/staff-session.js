@@ -58,10 +58,7 @@ function environmentAdminProfile(env, sessionUser) {
     __id: safeStaffId(configuredUsername),
     Username: configuredUsername,
     LoginUsername: configuredUsername,
-<<<<<<< HEAD
     LoginUsernameKey: lower(configuredUsername),
-=======
->>>>>>> eee5a6a8b0af4b3a2f1e4f754aa29bb1f3f9e752
     DisplayName: clean(sessionUser.displayName || env.ADMIN_WEB_DISPLAY_NAME || 'Super Admin'),
     Role: 'Super Admin',
     Department: clean(sessionUser.department),
@@ -299,12 +296,8 @@ export async function onRequestPost(context) {
       const existingId = lower(existing.__id);
       const conflict = users.find((row) =>
         lower(row.__id) !== existingId &&
-<<<<<<< HEAD
         [row.LoginUsernameKey, row.LoginUsername, row.Username, row.__id]
           .some((value) => lower(value) === lower(loginUsername)));
-=======
-        [row.LoginUsername, row.Username, row.__id].some((value) => lower(value) === lower(loginUsername)));
->>>>>>> eee5a6a8b0af4b3a2f1e4f754aa29bb1f3f9e752
       if (conflict) return response({ ok: false, message: 'That login username is already in use.' }, 409);
 
       const newPassword = String(body.newPassword || '');
@@ -320,10 +313,7 @@ export async function onRequestPost(context) {
       const updated = {
         ...existing,
         LoginUsername: loginUsername,
-<<<<<<< HEAD
         LoginUsernameKey: lower(loginUsername),
-=======
->>>>>>> eee5a6a8b0af4b3a2f1e4f754aa29bb1f3f9e752
         ...passwordFields,
         ...(newPassword ? { MustChangePassword: false, PasswordChangedAt: changedAt } : {}),
         LoginUsernameChangedAt: lower(priorLoginUsername) === lower(loginUsername)
