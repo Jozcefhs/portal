@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
-import { findStaffUser } from '../functions/lib/staff-auth.js';
+import { findStaffLoginUser, findStaffUser } from '../functions/lib/staff-auth.js';
 
 const adminHtml = fs.readFileSync(new URL('../admin.html', import.meta.url), 'utf8');
 const adminJs = fs.readFileSync(new URL('../js/admin.js', import.meta.url), 'utf8');
@@ -45,4 +45,30 @@ test('the authenticated environment super admin can bootstrap a missing database
   assert.match(sessionApi, /function environmentAdminProfile\(env, sessionUser\)/);
   assert.match(sessionApi, /sessionUser\.role !== 'Super Admin'/);
   assert.match(sessionApi, /findStaffUserRecord\(env, sessionUser\.username\)\.catch\(\(\) => null\)\s*\|\| environmentAdminProfile\(env, sessionUser\)/);
+});
+
+test('staff can securely change their own login details from the web profile', () => {
+  assert.match(adminHtml, /id="staffLoginDetailsForm"/);
+  assert.match(adminHtml, /id="staffProfileLoginUsername"[\s\S]*?autocomplete="username"/);
+  assert.match(adminHtml, /id="staffProfileCurrentPassword"[\s\S]*?autocomplete="current-password"/);
+  assert.match(adminJs, /action: 'updateLoginDetails'/);
+  assert.match(sessionApi, /action === 'updatelogindetails'/);
+  assert.match(sessionApi, /verifyStaffApprovalPassword\(env, sessionUser\.username, currentPassword\)/);
+  assert.match(sessionApi, /That login username is already in use/);
+  assert.match(sessionApi, /newPassword && newPassword\.length < 6/);
+  assert.match(sessionApi, /newPassword \? await hashStaffPassword\(newPassword\) : \{\}/);
+  assert.match(sessionApi, /Action: 'UPDATE OWN LOGIN DETAILS'/);
+  assert.match(sessionApi, /createStaffSession\(env, refreshedUser\)/);
+});
+
+test('login usernames remain separate from immutable staff identity', () => {
+  const user = { __id: 'staff-one', Username: 'staff.one', LoginUsername: 'new.login' };
+  assert.equal(findStaffLoginUser([user], 'new.login'), user);
+  assert.equal(findStaffLoginUser([user], 'staff.one'), null);
+  assert.match(staffAuth, /loginUsername: clean\(user\.LoginUsername/);
+  assert.match(staffAuth, /findStaffLoginRecord\(env, wanted\)/);
+});
+
+test('ordinary password changes cannot bypass current-password verification', () => {
+  assert.match(sessionApi, /if \(!sessionUser\.mustChangePassword\)[\s\S]*?Use Edit Profile to change your login details/);
 });

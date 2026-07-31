@@ -31,6 +31,18 @@ export function findStaffUser(users = [], identity = '') {
   ].some((value) => lower(value) === wanted)) || null;
 }
 
+export function findStaffLoginUser(users = [], identity = '') {
+  const wanted = lower(identity);
+  if (!wanted) return null;
+  return users.find((row) => {
+    const explicitLogin = clean(row?.LoginUsername || row?.loginUsername);
+    const identities = explicitLogin
+      ? [explicitLogin]
+      : [row?.Username, row?.username, row?.__id];
+    return identities.some((value) => lower(value) === wanted);
+  }) || null;
+}
+
 function safeStaffId(value) {
   return lower(value).replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120);
 }
@@ -49,6 +61,17 @@ export async function findStaffUserRecord(env, identity, options = {}) {
   }
   if (options.allowListFallback === false) return null;
   return findStaffUser(await listCollection(env, 'staffUsers'), wanted);
+}
+
+export async function findStaffLoginRecord(env, identity) {
+  const wanted = lower(identity);
+  if (!wanted) return null;
+  const direct = await findStaffUserRecord(env, wanted, { allowListFallback: false });
+  if (direct) {
+    const effectiveLogin = clean(direct.LoginUsername || direct.loginUsername || direct.Username || direct.username || direct.__id);
+    if (lower(effectiveLogin) === wanted) return direct;
+  }
+  return findStaffLoginUser(await listCollection(env, 'staffUsers'), wanted);
 }
 
 function base64Url(value) {
@@ -177,6 +200,7 @@ function inferDepartment(user) {
 function publicUser(user) {
   return {
     username: clean(user.Username || user.username || user.__id),
+    loginUsername: clean(user.LoginUsername || user.loginUsername || user.Username || user.username || user.__id),
     displayName: clean(user.DisplayName || user.displayName || user.Username || user.username || user.__id),
     profilePhotoUrl: clean(user.ProfilePhotoDataUrl || user.profilePhotoUrl),
     role: clean(user.Role || user.role) || 'Front Desk',
@@ -276,7 +300,7 @@ export async function authenticateStaff(env, username, password) {
   if (!wanted || !password) return null;
   let user = null;
   try {
-    user = await findStaffUserRecord(env, wanted);
+    user = await findStaffLoginRecord(env, wanted);
   } catch (_err) {
     user = null;
   }

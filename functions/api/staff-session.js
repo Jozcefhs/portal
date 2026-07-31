@@ -7,9 +7,10 @@ import {
   findStaffUserRecord,
   readStaffSession,
   staffSessionCookie,
-  staffAccessFor
+  staffAccessFor,
+  verifyStaffApprovalPassword
 } from '../lib/staff-auth.js';
-import { batchUpsertDocuments, getDocument, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { batchUpsertDocuments, getDocument, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { hashStaffPassword } from '../lib/staff-auth.js';
 import {
   checkStaffLoginAllowed,
@@ -56,6 +57,7 @@ function environmentAdminProfile(env, sessionUser) {
   return {
     __id: safeStaffId(configuredUsername),
     Username: configuredUsername,
+    LoginUsername: configuredUsername,
     DisplayName: clean(sessionUser.displayName || env.ADMIN_WEB_DISPLAY_NAME || 'Super Admin'),
     Role: 'Super Admin',
     Department: clean(sessionUser.department),
@@ -87,6 +89,7 @@ function authoritativeSessionUser(record, sessionUser, profilePhotoUrl = '') {
     : clean(value).split(',').map(clean).filter(Boolean);
   return {
     username: clean(record.Username || record.__id || sessionUser.username),
+    loginUsername: clean(record.LoginUsername || sessionUser.loginUsername || record.Username || sessionUser.username),
     displayName: clean(record.DisplayName || sessionUser.displayName || record.Username || sessionUser.username),
     profilePhotoUrl: clean(profilePhotoUrl || record.ProfilePhotoDataUrl || sessionUser.profilePhotoUrl),
     role,
@@ -216,8 +219,12 @@ export async function onRequestPost(context) {
     if (action === 'changepassword') {
       const sessionUser = await readStaffSession(env, request);
       if (!sessionUser) return response({ ok: false, message: 'Your staff session has expired.' }, 401);
+      if (!sessionUser.mustChangePassword) {
+        return response({ ok: false, message: 'Use Edit Profile to change your login details.' }, 403);
+      }
       const password = String(body.password || '');
       if (password !== String(body.confirmPassword || '')) return response({ ok: false, message: 'Passwords do not match.' }, 400);
+      if (password.length < 6) return response({ ok: false, message: 'Password must contain at least 6 characters.' }, 400);
       const existing = await findStaffUserRecord(env, sessionUser.username).catch(() => null)
         || environmentAdminProfile(env, sessionUser);
       if (!existing) return response({ ok: false, message: 'The database staff account was not found.' }, 404);
@@ -243,6 +250,7 @@ export async function onRequestPost(context) {
       await upsertDocument(env, 'staffUsers', existing.__id, updated);
       const refreshedUser = {
         username: String(existing.Username || existing.__id || sessionUser.username).trim(),
+        loginUsername: String(existing.LoginUsername || existing.Username || existing.__id || sessionUser.username).trim(),
         displayName: String(existing.DisplayName || existing.Username || sessionUser.displayName).trim(),
         profilePhotoUrl: String(profileImage?.ProfilePhotoDataUrl || existing.ProfilePhotoDataUrl || sessionUser.profilePhotoUrl || '').trim(),
         role: String(existing.Role || sessionUser.role || 'Front Desk').trim(),
@@ -258,6 +266,102 @@ export async function onRequestPost(context) {
         200,
         staffSessionCookie(refreshedToken)
       );
+    }
+    if (action === 'updatelogindetails') {
+      const sessionUser = await readStaffSession(env, request);
+      if (!sessionUser) return response({ ok: false, message: 'Your staff session has expired.' }, 401);
+      const existing = await findStaffUserRecord(env, sessionUser.username).catch(() => null)
+        || environmentAdminProfile(env, sessionUser);
+      if (!existing) return response({ ok: false, message: 'The database staff account was not found.' }, 404);
+      if (!isActiveStaffRecord(existing)) {
+        return response(
+          { ok: false, message: 'This staff account has been disabled.' },
+          401,
+          [clearStaffSessionCookie(), clearLegacyStaffSessionCookie(), clearStaffApprovalProofCookie()]
+        );
+      }
+      const currentPassword = String(body.currentPassword || '');
+      if (!currentPassword || !(await verifyStaffApprovalPassword(env, sessionUser.username, currentPassword))) {
+        return response({ ok: false, message: 'The current password is incorrect.' }, 401);
+      }
+      const loginUsername = clean(body.loginUsername);
+      if (!/^[a-z0-9][a-z0-9._@-]{2,79}$/i.test(loginUsername)) {
+        return response({
+          ok: false,
+          message: 'Login username must be 3 to 80 characters and use only letters, numbers, dots, underscores, @ or hyphens.'
+        }, 400);
+      }
+      const users = await listCollection(env, 'staffUsers');
+      const existingId = lower(existing.__id);
+      const conflict = users.find((row) =>
+        lower(row.__id) !== existingId &&
+        [row.LoginUsername, row.Username, row.__id].some((value) => lower(value) === lower(loginUsername)));
+      if (conflict) return response({ ok: false, message: 'That login username is already in use.' }, 409);
+
+      const newPassword = String(body.newPassword || '');
+      const confirmPassword = String(body.confirmPassword || '');
+      if (newPassword !== confirmPassword) return response({ ok: false, message: 'New passwords do not match.' }, 400);
+      if (newPassword && newPassword.length < 6) {
+        return response({ ok: false, message: 'New password must contain at least 6 characters.' }, 400);
+      }
+      const passwordFields = newPassword ? await hashStaffPassword(newPassword) : {};
+      const changedAt = new Date().toISOString();
+      const canonicalUsername = clean(existing.Username || existing.__id || sessionUser.username);
+      const priorLoginUsername = clean(existing.LoginUsername || canonicalUsername);
+      const updated = {
+        ...existing,
+        LoginUsername: loginUsername,
+        ...passwordFields,
+        ...(newPassword ? { MustChangePassword: false, PasswordChangedAt: changedAt } : {}),
+        LoginUsernameChangedAt: lower(priorLoginUsername) === lower(loginUsername)
+          ? clean(existing.LoginUsernameChangedAt)
+          : changedAt,
+        UpdatedAt: changedAt,
+        UpdatedBy: sessionUser.displayName || sessionUser.username
+      };
+      delete updated.__id;
+      delete updated.__name;
+      const auditId = `STAFF-LOGIN-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+      await batchUpsertDocuments(env, [
+        {
+          collectionPath: 'staffUsers',
+          documentId: existing.__id,
+          data: updated
+        },
+        {
+          collectionPath: 'staffSecurityAudit',
+          documentId: auditId,
+          data: {
+            AuditId: auditId,
+            Timestamp: changedAt,
+            Action: 'UPDATE OWN LOGIN DETAILS',
+            Username: canonicalUsername,
+            Actor: sessionUser.displayName || sessionUser.username,
+            ActorUsername: sessionUser.username,
+            SourcePlatform: 'Web',
+            Details: [
+              lower(priorLoginUsername) === lower(loginUsername) ? '' : 'Login username changed',
+              newPassword ? 'Password changed' : ''
+            ].filter(Boolean).join(' | ') || 'Login details confirmed'
+          }
+        }
+      ]);
+      const profileImage = await getDocument(env, 'staffProfileImages', existing.__id).catch(() => null);
+      const refreshedUser = authoritativeSessionUser(
+        updated,
+        { ...sessionUser, loginUsername, mustChangePassword: false },
+        profileImage?.ProfilePhotoDataUrl
+      );
+      const refreshedToken = await createStaffSession(env, refreshedUser);
+      const access = await staffAccessFor(env, refreshedUser);
+      return response({
+        ok: true,
+        authenticated: true,
+        message: newPassword
+          ? 'Login username and password updated successfully.'
+          : 'Login username updated successfully.',
+        user: { ...refreshedUser, ...access }
+      }, 200, staffSessionCookie(refreshedToken));
     }
     const attempt = await checkStaffLoginAllowed(env, body.username, request);
     if (!attempt.allowed) {
