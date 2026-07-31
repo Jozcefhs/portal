@@ -71,8 +71,11 @@ export async function findStaffLoginRecord(env, identity) {
     const effectiveLogin = clean(direct.LoginUsername || direct.loginUsername || direct.Username || direct.username || direct.__id);
     if (lower(effectiveLogin) === wanted) return direct;
   }
+<<<<<<< HEAD
   const indexed = await findOneByField(env, 'staffUsers', 'LoginUsernameKey', wanted);
   if (indexed) return indexed;
+=======
+>>>>>>> eee5a6a8b0af4b3a2f1e4f754aa29bb1f3f9e752
   return findStaffLoginUser(await listCollection(env, 'staffUsers'), wanted);
 }
 

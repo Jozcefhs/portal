@@ -57,7 +57,10 @@ test('staff can securely change their own login details from the web profile', (
   assert.match(sessionApi, /That login username is already in use/);
   assert.match(sessionApi, /newPassword && newPassword\.length < 6/);
   assert.match(sessionApi, /newPassword \? await hashStaffPassword\(newPassword\) : \{\}/);
+<<<<<<< HEAD
   assert.match(sessionApi, /LoginUsernameKey: lower\(loginUsername\)/);
+=======
+>>>>>>> eee5a6a8b0af4b3a2f1e4f754aa29bb1f3f9e752
   assert.match(sessionApi, /Action: 'UPDATE OWN LOGIN DETAILS'/);
   assert.match(sessionApi, /createStaffSession\(env, refreshedUser\)/);
 });
@@ -68,9 +71,12 @@ test('login usernames remain separate from immutable staff identity', () => {
   assert.equal(findStaffLoginUser([user], 'staff.one'), null);
   assert.match(staffAuth, /loginUsername: clean\(user\.LoginUsername/);
   assert.match(staffAuth, /findStaffLoginRecord\(env, wanted\)/);
+<<<<<<< HEAD
   assert.match(staffAuth, /findOneByField\(env, 'staffUsers', 'LoginUsernameKey', wanted\)/);
   assert.match(staffAuth, /!configuredHasPassword && wanted === envUsername/);
   assert.match(staffAuth, /if \(user\)[\s\S]*?return verifyDesktopPassword\(user, password\)/);
+=======
+>>>>>>> eee5a6a8b0af4b3a2f1e4f754aa29bb1f3f9e752
 });
 
 test('ordinary password changes cannot bypass current-password verification', () => {
