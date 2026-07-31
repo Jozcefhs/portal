@@ -3837,11 +3837,13 @@ function renderIncomeBars(rows = []) {
   if (!rows.some((row) => Math.abs(Number(row.value || 0)) > 0.005)) {
     return '<div class="income-empty-chart"><span aria-hidden="true">▥</span><p>No posted income was recorded for this period.</p></div>';
   }
-  return `<div class="income-bar-chart" role="img" aria-label="Income over time">${rows.map((row) => {
-    const height = Math.max(3, Math.round(Math.abs(Number(row.value || 0)) / maximum * 100));
-    return `<div class="income-bar-item" title="${escapeHtml(row.label)}: ${escapeHtml(money(row.value))}">
-      <strong>${escapeHtml(compactMoney(row.value))}</strong>
-      <div><i style="height:${height}%"></i></div>
+  return `<div class="income-bar-chart" style="--income-buckets:${rows.length}" role="img" aria-label="Income over time">${rows.map((row) => {
+    const numeric = Number(row.value || 0);
+    const hasIncome = Math.abs(numeric) > 0.005;
+    const height = hasIncome ? Math.max(3, Math.round(Math.abs(numeric) / maximum * 100)) : 0;
+    return `<div class="income-bar-item${hasIncome ? '' : ' is-zero'}" title="${escapeHtml(row.label)}: ${escapeHtml(money(row.value))}">
+      <strong${hasIncome ? '' : ' aria-hidden="true"'}>${hasIncome ? escapeHtml(compactMoney(row.value)) : ''}</strong>
+      <div>${hasIncome ? `<i style="height:${height}%"></i>` : ''}</div>
       <small>${escapeHtml(row.label)}</small>
     </div>`;
   }).join('')}</div>`;

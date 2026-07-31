@@ -102,7 +102,9 @@ export function resolveIncomePeriod(filter = {}, today = new Date()) {
   };
 }
 
-function sourceLabel(journal) {
+function sourceLabel(journal, account = {}) {
+  const givingType = clean(journal.GivingTypeName || journal.givingTypeName);
+  if (givingType) return givingType;
   const text = lower(`${journal.Source} ${journal.Description}`);
   if (text.includes('donation')) return 'Donations';
   if (text.includes('offering')) return 'Offerings';
@@ -112,7 +114,7 @@ function sourceLabel(journal) {
   if (text.includes('store') || text.includes('book') || text.includes('uniform')) return 'Store Sales';
   if (text.includes('program')) return 'Programmes';
   if (text.includes('fee') || text.includes('invoice') || text.includes('tuition')) return 'Fees';
-  return clean(journal.Source) || 'Other Income';
+  return clean(account.name) || clean(journal.Source) || 'Other Income';
 }
 
 function paymentChannel(journal) {
@@ -209,7 +211,6 @@ export function buildIncomeAnalytics(chart = [], journals = [], filter = {}, tod
   const allRecords = posted.flatMap((journal) => {
     const date = dateOnly(journal.Date || journal.date || journal.CreatedAt);
     const channel = paymentChannel(journal);
-    const source = sourceLabel(journal);
     const departments = journalDepartments(journal);
     const branches = journalBranches(journal);
     const revenueLines = journalLines(journal.Lines || journal.lines).filter((line) => {
@@ -218,6 +219,7 @@ export function buildIncomeAnalytics(chart = [], journals = [], filter = {}, tod
     });
     return revenueLines.map((line) => {
       const account = accounts.get(clean(line.AccountCode || line.accountCode));
+      const source = sourceLabel(journal, account);
       return {
         journalNo: clean(journal.JournalNo || journal.__id),
         date,

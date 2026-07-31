@@ -80,6 +80,25 @@ test('income analytics uses posted revenue lines without counting settlement twi
   assert.equal(report.transactions.some((row) => row.journalNo === 'DRAFT-1'), false);
 });
 
+test('church income is grouped by its giving type instead of one generic donation source', () => {
+  const churchJournals = [
+    {
+      JournalNo: 'TITHE-1', Date: '2026-07-12', Status: 'Posted', Source: 'Church Donation',
+      GivingTypeName: 'Tithe', Lines: [{ AccountCode: '1030', Debit: 7000 }, { AccountCode: '4080', Credit: 7000 }]
+    },
+    {
+      JournalNo: 'SEED-1', Date: '2026-07-13', Status: 'Posted', Source: 'Church Donation',
+      GivingTypeName: 'Seed', Lines: [{ AccountCode: '1010', Debit: 3000 }, { AccountCode: '4080', Credit: 3000 }]
+    }
+  ];
+  const report = buildIncomeAnalytics(chart, churchJournals, { period: 'monthly' }, '2026-07-28');
+  assert.deepEqual(report.sources.map((row) => [row.label, row.value]), [
+    ['Tithe', 7000],
+    ['Seed', 3000]
+  ]);
+  assert.deepEqual(report.transactions.map((row) => row.source).sort(), ['Seed', 'Tithe']);
+});
+
 test('account, department and payment-route filters affect every report output', () => {
   const store = buildIncomeAnalytics(chart, journals, {
     period: 'monthly', accountCode: '4040', department: 'Tuck Shop', channel: 'Wallet'
@@ -107,8 +126,11 @@ test('staff portal exposes the responsive income analytics workspace', async () 
   assert.match(adminJs, /\/api\/income-analytics/);
   assert.match(adminJs, /Income by source/);
   assert.match(adminJs, /Settlement route/);
+  assert.match(adminJs, /--income-buckets/);
+  assert.match(adminJs, /hasIncome \? escapeHtml\(compactMoney\(row\.value\)\) : ''/);
   assert.match(adminJs, /exportIncomeAnalyticsCsv/);
   assert.match(css, /\.income-bar-chart/);
+  assert.match(css, /grid-template-columns:repeat\(var\(--income-buckets\),minmax\(0,1fr\)\)/);
   assert.match(css, /\.income-donut/);
   assert.match(css, /@media print/);
   assert.match(auth, /'incomeAnalytics'/);

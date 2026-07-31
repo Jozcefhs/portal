@@ -887,8 +887,8 @@ html:not([data-theme="dark"]) .compact-edit-action{background:#fff4d6!important;
 .income-report-period span{font-size:12px;letter-spacing:.02em}.income-report-period strong{grid-row:1/3;grid-column:2;font-size:30px}.income-report-period small{opacity:.82}
 .income-card-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:12px}
 .income-card-heading h3{margin:2px 0 0}.income-card-heading>span{color:#71859b;font-size:11px;text-align:right}
-.income-bar-chart{display:flex;align-items:stretch;gap:8px;height:270px;overflow-x:auto;padding:8px 2px 2px;scrollbar-width:thin}
-.income-bar-item{display:grid;grid-template-rows:28px 1fr 34px;flex:1 0 54px;min-width:54px;gap:5px;text-align:center}
+.income-bar-chart{display:grid;grid-template-columns:repeat(var(--income-buckets),minmax(0,1fr));align-items:stretch;gap:4px;height:270px;overflow:hidden;padding:8px 2px 2px}
+.income-bar-item{display:grid;grid-template-rows:28px 1fr 34px;min-width:0;gap:5px;text-align:center}
 .income-bar-item>strong{align-self:end;overflow:hidden;color:#52667c;font-size:9px;text-overflow:ellipsis;white-space:nowrap}
 .income-bar-item>div{display:flex;align-items:flex-end;justify-content:center;overflow:hidden;border-radius:9px 9px 3px 3px;background:#eef3f7}
 .income-bar-item i{display:block;width:68%;min-height:3px;border-radius:7px 7px 2px 2px;background:linear-gradient(180deg,#42d7ba,#0b9b79);box-shadow:0 3px 8px rgba(11,155,121,.22)}
@@ -943,7 +943,7 @@ html[data-theme="dark"] .income-legend>div{border-color:#2c4055}
   .income-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
   .income-filter-grid label{font-size:10px}.income-filter-grid input,.income-filter-grid select{min-height:35px;padding:5px 7px;font-size:11px}
   .income-report-period{padding:15px}.income-report-period strong{font-size:21px}.income-report-period span{font-size:10px}
-  .income-bar-chart{height:230px}.income-bar-item{flex-basis:48px;min-width:48px}
+  .income-bar-chart{grid-template-columns:repeat(var(--income-buckets),minmax(48px,1fr));height:230px;overflow-x:auto;scrollbar-width:thin}.income-bar-item{min-width:48px}
   .income-distribution-grid{grid-template-columns:1fr}
   .income-donut-layout{grid-template-columns:125px minmax(0,1fr);gap:12px}
   .income-donut strong{font-size:11px}.income-legend>div{font-size:10px}.income-legend strong{font-size:10px}
@@ -956,7 +956,7 @@ html[data-theme="dark"] .income-legend>div{border-color:#2c4055}
   .staff-topbar,.staff-sidebar,.staff-mobile-nav,.staff-sidebar-scrim,.staff-summary,.income-report-actions,.income-filter-card{display:none!important}
   .staff-shell,.staff-dashboard,.staff-app-layout,.staff-main-content,.staff-panel{display:block!important;width:100%!important;max-width:none!important;margin:0!important;padding:0!important;border:0!important;box-shadow:none!important}
   .income-analytics{gap:10px}.income-chart-card,.income-distribution-card,.income-transactions{break-inside:avoid;border-color:#bdcad8}
-  .income-bar-chart{overflow:visible;height:220px}.income-bar-item{min-width:24px;flex-basis:24px}.income-transactions .admin-table-wrap{max-height:none;overflow:visible}
+  .income-bar-chart{grid-template-columns:repeat(var(--income-buckets),minmax(0,1fr));overflow:visible;height:220px}.income-bar-item{min-width:0}.income-transactions .admin-table-wrap{max-height:none;overflow:visible}
 }
 
 /* Complete dark-theme coverage for shared forms, configuration surfaces, and dialogs. */
