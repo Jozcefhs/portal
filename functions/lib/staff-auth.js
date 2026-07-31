@@ -1,4 +1,4 @@
-import { getDocument, listCollection, patchDocumentFields, upsertDocument } from './firestore.js';
+import { findOneByField, getDocument, listCollection, patchDocumentFields, upsertDocument } from './firestore.js';
 import { filterSectionsForFeatures, resolveOrganizationConfig } from './organization-config.js';
 
 const encoder = new TextEncoder();
@@ -31,6 +31,18 @@ export function findStaffUser(users = [], identity = '') {
   ].some((value) => lower(value) === wanted)) || null;
 }
 
+export function findStaffLoginUser(users = [], identity = '') {
+  const wanted = lower(identity);
+  if (!wanted) return null;
+  return users.find((row) => {
+    const explicitLogin = clean(row?.LoginUsername || row?.loginUsername);
+    const identities = explicitLogin
+      ? [explicitLogin]
+      : [row?.Username, row?.username, row?.__id];
+    return identities.some((value) => lower(value) === wanted);
+  }) || null;
+}
+
 function safeStaffId(value) {
   return lower(value).replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120);
 }
@@ -49,6 +61,19 @@ export async function findStaffUserRecord(env, identity, options = {}) {
   }
   if (options.allowListFallback === false) return null;
   return findStaffUser(await listCollection(env, 'staffUsers'), wanted);
+}
+
+export async function findStaffLoginRecord(env, identity) {
+  const wanted = lower(identity);
+  if (!wanted) return null;
+  const direct = await findStaffUserRecord(env, wanted, { allowListFallback: false });
+  if (direct) {
+    const effectiveLogin = clean(direct.LoginUsername || direct.loginUsername || direct.Username || direct.username || direct.__id);
+    if (lower(effectiveLogin) === wanted) return direct;
+  }
+  const indexed = await findOneByField(env, 'staffUsers', 'LoginUsernameKey', wanted);
+  if (indexed) return indexed;
+  return findStaffLoginUser(await listCollection(env, 'staffUsers'), wanted);
 }
 
 function base64Url(value) {
@@ -177,6 +202,7 @@ function inferDepartment(user) {
 function publicUser(user) {
   return {
     username: clean(user.Username || user.username || user.__id),
+    loginUsername: clean(user.LoginUsername || user.loginUsername || user.Username || user.username || user.__id),
     displayName: clean(user.DisplayName || user.displayName || user.Username || user.username || user.__id),
     profilePhotoUrl: clean(user.ProfilePhotoDataUrl || user.profilePhotoUrl),
     role: clean(user.Role || user.role) || 'Front Desk',
@@ -276,7 +302,7 @@ export async function authenticateStaff(env, username, password) {
   if (!wanted || !password) return null;
   let user = null;
   try {
-    user = await findStaffUserRecord(env, wanted);
+    user = await findStaffLoginRecord(env, wanted);
   } catch (_err) {
     user = null;
   }
@@ -299,18 +325,25 @@ export async function authenticateStaff(env, username, password) {
 
   const envUsername = lower(env.ADMIN_WEB_USERNAME || 'admin');
   const envPassword = clean(env.ADMIN_WEB_PASSWORD);
-  if (wanted === envUsername && envPassword && secureEqual(password, envPassword)) {
+  const configuredRecord = wanted === envUsername
+    ? await findStaffUserRecord(env, envUsername).catch(() => null)
+    : null;
+  const configuredHasPassword = Boolean(
+    clean(configuredRecord?.PasswordHash || configuredRecord?.passwordHash) &&
+    clean(configuredRecord?.Salt || configuredRecord?.salt)
+  );
+  if (!configuredHasPassword && wanted === envUsername && envPassword && secureEqual(password, envPassword)) {
     let recoveredUser = null;
-    if (user && clean(user.Role) === 'Super Admin') {
+    if (configuredRecord && clean(configuredRecord.Role) === 'Super Admin') {
       const recoveredAt = new Date().toISOString();
-      recoveredUser = { ...user, ...(await hashStaffPassword(password)), MustChangePassword: false, PasswordChangedAt: recoveredAt,
+      recoveredUser = { ...configuredRecord, ...(await hashStaffPassword(password)), MustChangePassword: false, PasswordChangedAt: recoveredAt,
         UpdatedAt: recoveredAt, UpdatedBy: 'Cloudflare Admin Recovery', LastLoginAt: recoveredAt };
       delete recoveredUser.__id; delete recoveredUser.__name;
-      await upsertDocument(env, 'staffUsers', user.__id, recoveredUser);
+      await upsertDocument(env, 'staffUsers', configuredRecord.__id, recoveredUser);
       const recoveryAuditId = `RECOVERY-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
       await upsertDocument(env, 'staffSecurityAudit', recoveryAuditId, {
-        Timestamp: recoveredAt, Action: 'PASSWORD RECOVERY', Username: clean(user.Username || user.__id),
-        Role: 'Super Admin', Department: inferDepartment(user), SourcePlatform: 'Web Environment Admin'
+        Timestamp: recoveredAt, Action: 'PASSWORD RECOVERY', Username: clean(configuredRecord.Username || configuredRecord.__id),
+        Role: 'Super Admin', Department: inferDepartment(configuredRecord), SourcePlatform: 'Web Environment Admin'
       });
     }
     const envUser = {
@@ -379,7 +412,7 @@ export async function verifyStaffApprovalPassword(env, username, password) {
   if (user) {
     const active = user.Active === undefined ? true : !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(user.Active));
     if (!active) return false;
-    if (await verifyDesktopPassword(user, password)) return true;
+    return verifyDesktopPassword(user, password);
   }
   const envUsername = lower(env.ADMIN_WEB_USERNAME || 'admin');
   return wanted === envUsername && Boolean(clean(env.ADMIN_WEB_PASSWORD)) &&

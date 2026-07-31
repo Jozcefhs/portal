@@ -532,10 +532,13 @@ function renderProfilePhoto(dataUrl = '', displayName = '') {
 function openStaffProfile() {
   if (!currentUser) return;
   staffProfileForm.reset();
+  document.getElementById('staffLoginDetailsForm').reset();
   profilePhotoState = clean(currentUser.profilePhotoUrl);
   document.getElementById('staffProfileDisplayName').value = currentUser.displayName || currentUser.username || '';
+  document.getElementById('staffProfileLoginUsername').value = currentUser.loginUsername || currentUser.username || '';
   renderProfilePhoto(profilePhotoState, currentUser.displayName || currentUser.username);
   setStatus(document.getElementById('staffProfileStatus'), '');
+  setStatus(document.getElementById('staffLoginDetailsStatus'), '');
   staffProfileDialog.showModal();
 }
 
@@ -6618,6 +6621,42 @@ staffProfileForm.addEventListener('submit', async (event) => {
     setStatus(document.getElementById('staffProfileStatus'), error.message || String(error), 'bad');
   } finally {
     setButtonLoading(button, false, 'Saving...', 'Save profile');
+  }
+});
+
+document.getElementById('staffLoginDetailsForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = document.getElementById('staffLoginDetailsSave');
+  const status = document.getElementById('staffLoginDetailsStatus');
+  const loginUsername = clean(document.getElementById('staffProfileLoginUsername').value);
+  const currentPassword = document.getElementById('staffProfileCurrentPassword').value;
+  const newPassword = document.getElementById('staffProfileNewPassword').value;
+  const confirmPassword = document.getElementById('staffProfileConfirmPassword').value;
+  if (newPassword !== confirmPassword) {
+    setStatus(status, 'New passwords do not match.', 'bad');
+    return;
+  }
+  setButtonLoading(button, true, 'Updating...', 'Update login details');
+  setStatus(status, 'Verifying your current password...');
+  try {
+    const { response, data } = await sessionRequest('POST', {
+      action: 'updateLoginDetails',
+      loginUsername,
+      currentPassword,
+      newPassword,
+      confirmPassword
+    });
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Login details could not be updated.');
+    form.elements.currentPassword.value = '';
+    form.elements.newPassword.value = '';
+    form.elements.confirmPassword.value = '';
+    showDashboard(data.user);
+    setStatus(status, data.message, 'ok');
+  } catch (error) {
+    setStatus(status, error.message || String(error), 'bad');
+  } finally {
+    setButtonLoading(button, false, 'Updating...', 'Update login details');
   }
 });
 

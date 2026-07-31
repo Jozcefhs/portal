@@ -147,6 +147,28 @@
       <button type="submit" id="staffProfileSave">Save profile</button>
       <p id="staffProfileStatus" class="status" role="status"></p>
     </form>
+    <form id="staffLoginDetailsForm" class="workflow-form staff-login-details-form">
+      <div class="profile-security-heading">
+        <small>Account security</small>
+        <h3>Login details</h3>
+        <p class="muted">Change the username used to sign in and, if needed, set a new password. Your internal staff identity and records remain unchanged.</p>
+      </div>
+      <label>Login username <span class="required">*</span>
+        <input id="staffProfileLoginUsername" name="loginUsername" minlength="3" maxlength="80" autocomplete="username" required>
+      </label>
+      <label>Current password <span class="required">*</span>
+        <input id="staffProfileCurrentPassword" name="currentPassword" type="password" autocomplete="current-password" required>
+      </label>
+      <label>New password
+        <input id="staffProfileNewPassword" name="newPassword" type="password" minlength="6" autocomplete="new-password">
+        <small class="muted">Leave blank to keep the current password.</small>
+      </label>
+      <label>Confirm new password
+        <input id="staffProfileConfirmPassword" name="confirmPassword" type="password" minlength="6" autocomplete="new-password">
+      </label>
+      <button type="submit" id="staffLoginDetailsSave">Update login details</button>
+      <p id="staffLoginDetailsStatus" class="status" role="status"></p>
+    </form>
   </dialog>
 
   <dialog id="staffApprovalSettingsDialog" class="workflow-dialog staff-approval-settings-dialog">
