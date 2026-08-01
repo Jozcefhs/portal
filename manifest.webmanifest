@@ -7,5 +7,5 @@
   "background_color": "#071b38",
   "theme_color": "#0b4bc8",
   "description": "Management software for schools, religious bodies and other organisations",
-  "icons": [{ "src": "/images/Logo.png", "sizes": "any", "type": "image/png", "purpose": "any maskable" }]
+  "icons": [{ "src": "/images/Logo.png?v=20260801-transparent-app-logo", "sizes": "any", "type": "image/png", "purpose": "any" }]
 }
