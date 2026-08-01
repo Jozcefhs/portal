@@ -478,7 +478,7 @@ function renderParentNotificationSettings(data = parentNotificationMeta) {
   document.getElementById('disableParentPush').disabled = !thisDevice;
   document.getElementById('testParentPush').disabled = !thisDevice;
   document.getElementById('parentNotificationDevices').innerHTML = (data.subscriptions || []).length
-    ? `<strong>Subscribed devices</strong>${data.subscriptions.map((row) => `<span><span><b>${escapeHtml(row.DeviceName || 'Browser device')}</b><small>${escapeHtml(row.LastSeenAt ? new Date(row.LastSeenAt).toLocaleString() : '')}${row.DeviceId === window.DynamaxWebPush?.deviceId?.() ? ' · This device' : ''}</small></span><button type="button" data-remove-parent-push-device="${escapeHtml(row.DeviceId)}">Remove</button></span>`).join('')}`
+    ? `<strong>Subscribed devices</strong>${data.subscriptions.map((row) => `<span><span><b>${escapeHtml(row.DeviceName || 'Browser device')}</b><small>${escapeHtml(row.LastSeenAt ? new Date(row.LastSeenAt).toLocaleString() : '')}${row.DeviceId === window.DynamaxWebPush?.deviceId?.() ? ' · This device' : ''}</small></span><button type="button" class="notification-device-delete" data-remove-parent-push-device="${escapeHtml(row.DeviceId)}" aria-label="Delete ${escapeHtml(row.DeviceName || 'browser device')}" title="Delete device">&#128465;</button></span>`).join('')}`
     : '<span>No browser devices are subscribed.</span>';
 }
 

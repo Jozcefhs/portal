@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#0f3d66"><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="app-icon.svg">
   <script src="js/preferences.js?v=20260726-biometric"></script>
   <link rel="stylesheet" href="css/style.css?v=20260801-compact-parent-notifications">
-  <link rel="stylesheet" href="css/notifications.css?v=20260801-notification-delete">
+  <link rel="stylesheet" href="css/notifications.css?v=20260801-compact-notification-preferences">
 </head>
 <body>
   <main class="page-wrap">
@@ -224,11 +224,11 @@
       </section>
       <section data-parent-notification-panel="settings" hidden>
         <form id="parentNotificationSettingsForm" class="notification-settings-form">
-          <div class="notification-push-card"><div><strong>Browser push</strong><span id="parentPushStatus">Checking this device…</span></div><div><button type="button" id="enableParentPush">Enable on this device</button><button type="button" id="disableParentPush">Remove this device</button><button type="button" id="testParentPush">Send test</button></div></div>
+          <div class="notification-push-card"><div><strong>Browser push</strong><span id="parentPushStatus">Checking this device…</span></div><div><button type="button" id="enableParentPush">Enable on this device</button><button type="button" id="disableParentPush" class="notification-device-delete" aria-label="Delete this device" title="Delete this device">&#128465;</button><button type="button" id="testParentPush">Send test</button></div></div>
           <div id="parentNotificationDevices" class="notification-device-list" aria-label="Subscribed devices"></div>
-          <fieldset><legend>Categories</legend><div id="parentNotificationCategories" class="notification-category-grid"></div></fieldset>
-          <fieldset><legend>Quiet hours</legend><label><input type="checkbox" name="QuietHoursEnabled"> Enable quiet hours</label><label>From <input type="time" name="QuietHoursStart"></label><label>To <input type="time" name="QuietHoursEnd"></label><label>Timezone <input name="Timezone" maxlength="80"></label></fieldset>
-          <fieldset><legend>Channels</legend><label><input type="checkbox" name="InApp"> In-app</label><label><input type="checkbox" name="Push"> Browser push</label></fieldset>
+          <fieldset class="notification-category-settings"><legend>Categories</legend><div id="parentNotificationCategories" class="notification-category-grid"></div></fieldset>
+          <fieldset class="notification-quiet-settings"><legend>Quiet hours</legend><label><input type="checkbox" name="QuietHoursEnabled"> Enable quiet hours</label><label>From <input type="time" name="QuietHoursStart"></label><label>To <input type="time" name="QuietHoursEnd"></label><label>Timezone <input name="Timezone" maxlength="80"></label></fieldset>
+          <fieldset class="notification-channel-settings"><legend>Channels</legend><label><input type="checkbox" name="InApp"> In-app</label><label><input type="checkbox" name="Push"> Browser push</label></fieldset>
           <button type="submit">Save preferences</button><p id="parentNotificationSettingsStatus" class="notification-settings-status" role="status"></p>
         </form>
       </section>
@@ -239,6 +239,6 @@
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/pwa-install.js?v=20260729-action-feedback"></script>
   <script src="js/web-push.js?v=20260801-mobile-push"></script>
-  <script src="js/parent-dashboard.js?v=20260801-compact-parent-notifications"></script>
+  <script src="js/parent-dashboard.js?v=20260801-compact-notification-preferences"></script>
 </body>
 </html>

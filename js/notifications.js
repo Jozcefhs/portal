@@ -43,12 +43,12 @@
         <form class="notification-settings-form">
           <div class="notification-push-card">
             <div><strong>Browser push</strong><span data-push-status>Checking this device…</span></div>
-            <div><button type="button" data-enable-push>Enable on this device</button><button type="button" data-disable-push>Remove this device</button><button type="button" data-test-push>Send test</button></div>
+            <div><button type="button" data-enable-push>Enable on this device</button><button type="button" class="notification-device-delete" data-disable-push aria-label="Delete this device" title="Delete this device">&#128465;</button><button type="button" data-test-push>Send test</button></div>
           </div>
           <div class="notification-device-list" aria-label="Subscribed devices"></div>
-          <fieldset><legend>Categories</legend><div class="notification-category-grid"></div></fieldset>
-          <fieldset><legend>Quiet hours</legend><label><input type="checkbox" name="QuietHoursEnabled"> Enable quiet hours</label><label>From <input type="time" name="QuietHoursStart"></label><label>To <input type="time" name="QuietHoursEnd"></label><label>Timezone <input name="Timezone" maxlength="80"></label></fieldset>
-          <fieldset><legend>Channels</legend><label><input type="checkbox" name="InApp"> In-app notifications</label><label><input type="checkbox" name="Push"> Browser push</label></fieldset>
+          <fieldset class="notification-category-settings"><legend>Categories</legend><div class="notification-category-grid"></div></fieldset>
+          <fieldset class="notification-quiet-settings"><legend>Quiet hours</legend><label><input type="checkbox" name="QuietHoursEnabled"> Enable quiet hours</label><label>From <input type="time" name="QuietHoursStart"></label><label>To <input type="time" name="QuietHoursEnd"></label><label>Timezone <input name="Timezone" maxlength="80"></label></fieldset>
+          <fieldset class="notification-channel-settings"><legend>Channels</legend><label><input type="checkbox" name="InApp"> In-app notifications</label><label><input type="checkbox" name="Push"> Browser push</label></fieldset>
           <fieldset class="notification-system-settings" hidden><legend>Organisation defaults</legend><label>Before due (days) <input name="FeeDueIntervals"></label><label>After due (days) <input name="FeeOverdueIntervals"></label><label>Submission reviewer roles <input name="SubmittedRoles"></label><label>Processing roles <input name="ProcessingRoles"></label><label>Management roles <input name="ManagementRoles"></label><label class="notification-template-field">Templates (JSON) <textarea name="Templates" rows="8"></textarea></label><button type="button" data-save-system-settings>Save organisation defaults</button></fieldset>
           <button type="submit">Save preferences</button><p class="notification-settings-status" role="status"></p>
         </form>
@@ -198,7 +198,7 @@
     form.querySelector('[data-disable-push]').disabled = !thisDevice;
     form.querySelector('[data-test-push]').disabled = !thisDevice;
     form.querySelector('.notification-device-list').innerHTML = (data.subscriptions || []).length
-      ? `<strong>Subscribed devices</strong>${data.subscriptions.map((row) => `<span><span><b>${html(row.DeviceName || 'Browser device')}</b><small>${html(row.LastSeenAt ? new Date(row.LastSeenAt).toLocaleString() : '')}${row.DeviceId === window.DynamaxWebPush?.deviceId?.() ? ' · This device' : ''}</small></span><button type="button" data-remove-push-device="${html(row.DeviceId)}">Remove</button></span>`).join('')}`
+      ? `<strong>Subscribed devices</strong>${data.subscriptions.map((row) => `<span><span><b>${html(row.DeviceName || 'Browser device')}</b><small>${html(row.LastSeenAt ? new Date(row.LastSeenAt).toLocaleString() : '')}${row.DeviceId === window.DynamaxWebPush?.deviceId?.() ? ' · This device' : ''}</small></span><button type="button" class="notification-device-delete" data-remove-push-device="${html(row.DeviceId)}" aria-label="Delete ${html(row.DeviceName || 'browser device')}" title="Delete device">&#128465;</button></span>`).join('')}`
       : '<span>No browser devices are subscribed.</span>';
   }
 

@@ -470,8 +470,9 @@ test('read-state queries use the exact visible notification ids in bounded chunk
 });
 
 test('staff and parent notification interfaces are wired to protected APIs', async () => {
-  const [adminHtml, notificationJs, notificationCss, parentDashboardJs, styleCss, staffApi, parentApi, backendApi, indexes] = await Promise.all([
+  const [adminHtml, parentHtml, notificationJs, notificationCss, parentDashboardJs, styleCss, staffApi, parentApi, backendApi, indexes] = await Promise.all([
     readFile(new URL('../admin.html', import.meta.url), 'utf8'),
+    readFile(new URL('../parent-dashboard.html', import.meta.url), 'utf8'),
     readFile(new URL('../js/notifications.js', import.meta.url), 'utf8'),
     readFile(new URL('../css/notifications.css', import.meta.url), 'utf8'),
     readFile(new URL('../js/parent-dashboard.js', import.meta.url), 'utf8'),
@@ -493,6 +494,12 @@ test('staff and parent notification interfaces are wired to protected APIs', asy
   assert.match(notificationJs, /Tap once to receive alerts even when this page is closed/);
   assert.match(notificationCss, /\.notification-push-prompt\{display:flex/);
   assert.match(notificationCss, /\.notification-delete-action\{/);
+  assert.match(notificationCss, /@media \(max-width:720px\)[\s\S]*?\.notification-settings-form label\{[^}]*font-size:9px/);
+  assert.match(notificationCss, /\.notification-category-grid\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(notificationJs, /class="notification-device-delete"[^>]*data-remove-push-device/);
+  assert.doesNotMatch(notificationJs, /data-remove-push-device="[^\n]*">Remove</);
+  assert.match(parentHtml, /id="disableParentPush" class="notification-device-delete"/);
+  assert.match(parentDashboardJs, /class="notification-device-delete"[^>]*data-remove-parent-push-device/);
   assert.match(parentApi, /action === 'archiveNotification'/);
   assert.match(parentDashboardJs, /new Date\(dateValue\)/);
   assert.match(styleCss, /\.parent-notification-item strong\{font-size:12px/);
