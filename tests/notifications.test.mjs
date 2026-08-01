@@ -470,9 +470,10 @@ test('read-state queries use the exact visible notification ids in bounded chunk
 });
 
 test('staff and parent notification interfaces are wired to protected APIs', async () => {
-  const [adminHtml, notificationJs, staffApi, parentApi, backendApi, indexes] = await Promise.all([
+  const [adminHtml, notificationJs, notificationCss, staffApi, parentApi, backendApi, indexes] = await Promise.all([
     readFile(new URL('../admin.html', import.meta.url), 'utf8'),
     readFile(new URL('../js/notifications.js', import.meta.url), 'utf8'),
+    readFile(new URL('../css/notifications.css', import.meta.url), 'utf8'),
     readFile(new URL('../functions/api/staff-notifications.js', import.meta.url), 'utf8'),
     readFile(new URL('../functions/api/parent-dashboard.js', import.meta.url), 'utf8'),
     readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8'),
@@ -480,6 +481,7 @@ test('staff and parent notification interfaces are wired to protected APIs', asy
   ]);
   assert.match(adminHtml, /js\/notifications\.js/);
   assert.match(notificationJs, /\/api\/staff-notifications/);
+  assert.match(notificationCss, /\.notification-trigger \.notification-badge\{[^}]*height:20px[^}]*font-size:11px[^}]*line-height:1/);
   assert.match(staffApi, /requireStaffSession/);
   assert.match(parentApi, /action === 'getNotifications'/);
   assert.match(parentApi, /action === 'markNotificationRead'/);
