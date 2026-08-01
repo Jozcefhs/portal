@@ -8,4 +8,5 @@ node_modules/.mf/
 .env.*
 !.env.example
 dist/
+.pages-deploy/
 *.log
