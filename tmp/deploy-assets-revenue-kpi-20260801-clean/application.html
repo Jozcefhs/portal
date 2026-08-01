@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admission Application Form</title>
+  <script src="js/preferences.js?v=20260726-biometric"></script>
+  <link rel="stylesheet" href="css/style.css?v=20260730-student-face-lookup">
+</head>
+<body>
+  <main class="page-wrap">
+    <section class="card">
+      <div class="form-header">
+        <img src="images/Logo.png" alt="School logo" class="logo small" onerror="this.style.display='none'">
+        <div>
+          <h1 data-school-name>School Portal</h1>
+          <p class="muted" data-school-address></p>
+          <h2>Admission Application Form</h2>
+        </div>
+      </div>
+
+      <div id="verifiedBox" class="verified-box"></div>
+
+      <form id="applicationForm">
+        <fieldset>
+          <legend>Applicant / Student Information</legend>
+          <div class="grid two">
+            <div>
+              <label for="surname">Surname <span class="required">*</span></label>
+              <input id="surname" name="Surname" required>
+            </div>
+            <div>
+              <label for="firstName">First Name <span class="required">*</span></label>
+              <input id="firstName" name="FirstName" required>
+            </div>
+            <div>
+              <label for="middleName">Middle Name</label>
+              <input id="middleName" name="MiddleName">
+            </div>
+            <div>
+              <label for="gender">Gender <span class="required">*</span></label>
+              <select id="gender" name="Gender" required>
+                <option value="">Select</option>
+                <option>Male</option>
+                <option>Female</option>
+              </select>
+            </div>
+            <div>
+              <label for="dob">Date of Birth <span class="required">*</span></label>
+              <input id="dob" name="DateOfBirth" type="date" required>
+            </div>
+            <div>
+              <label for="religion">Religion <span class="required">*</span></label>
+              <select id="religion" name="Religion" required>
+                <option value="">Select religion</option>
+                <option>Christianity</option>
+                <option>Islam</option>
+                <option>Others</option>
+              </select>
+            </div>
+            <div>
+              <label for="classApplying">Class Applying For <span class="required">*</span></label>
+              <select id="classApplying" name="ClassApplyingFor" required>
+                <option value="">Loading available classes...</option>
+              </select>
+            </div>
+            <div>
+              <label for="nationality">Nationality</label>
+              <input id="nationality" name="Nationality" value="Nigerian">
+            </div>
+            <div>
+              <label for="stateOfOrigin">State of Origin</label>
+              <input id="stateOfOrigin" name="StateOfOrigin">
+            </div>
+            <div>
+              <label for="lga">LGA</label>
+              <input id="lga" name="LGA">
+            </div>
+            <div>
+              <label for="nin">National Identification Number (NIN)</label>
+              <input id="nin" name="NIN" minlength="11" maxlength="11" inputmode="numeric" placeholder="Optional">
+            </div>
+            <div>
+              <label for="previousSchool">Previous School</label>
+              <input id="previousSchool" name="PreviousSchool">
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Parent / Guardian Information</legend>
+          <div class="grid two">
+            <div class="full">
+              <label for="parentEmail">Parent Dashboard Email <span class="required">*</span></label>
+              <input id="parentEmail" name="ParentEmail" type="email" required>
+            </div>
+            <div>
+              <label for="fatherName">Father's Name</label>
+              <input id="fatherName" name="FatherName">
+            </div>
+            <div>
+              <label for="fatherPhone">Father's Phone</label>
+              <input id="fatherPhone" name="FatherPhone" type="tel">
+            </div>
+            <div>
+              <label for="fatherEmail">Father's Email</label>
+              <input id="fatherEmail" name="FatherEmail" type="email">
+            </div>
+            <div>
+              <label for="fatherOccupation">Father's Occupation</label>
+              <input id="fatherOccupation" name="FatherOccupation">
+            </div>
+            <div>
+              <label for="fatherOfficeAddress">Father's Office Address</label>
+              <input id="fatherOfficeAddress" name="FatherOfficeAddress">
+            </div>
+            <div>
+              <label for="motherName">Mother's Name</label>
+              <input id="motherName" name="MotherName">
+            </div>
+            <div>
+              <label for="motherPhone">Mother's Phone</label>
+              <input id="motherPhone" name="MotherPhone" type="tel">
+            </div>
+            <div>
+              <label for="motherEmail">Mother's Email</label>
+              <input id="motherEmail" name="MotherEmail" type="email">
+            </div>
+            <div>
+              <label for="motherOccupation">Mother's Occupation</label>
+              <input id="motherOccupation" name="MotherOccupation">
+            </div>
+            <div>
+              <label for="motherOfficeAddress">Mother's Office Address</label>
+              <input id="motherOfficeAddress" name="MotherOfficeAddress">
+            </div>
+            <div>
+              <label for="guardianName">Guardian's Name, if applicable</label>
+              <input id="guardianName" name="GuardianName">
+            </div>
+            <div>
+              <label for="guardianPhone">Guardian's Phone</label>
+              <input id="guardianPhone" name="GuardianPhone" type="tel">
+            </div>
+            <div>
+              <label for="livingWith">With whom is the applicant living?</label>
+              <select id="livingWith" name="LivingWith">
+                <option value="">Select</option>
+                <option>Parents</option>
+                <option>Guardian</option>
+                <option>Step parent</option>
+                <option>Single parent</option>
+                <option>Others</option>
+              </select>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Contact and Residential Details</legend>
+          <div class="grid two">
+            <div class="full">
+              <label for="homeAddress">Residential Address <span class="required">*</span></label>
+              <textarea id="homeAddress" name="ResidentialAddress" rows="3" required></textarea>
+            </div>
+            <div>
+              <label for="city">City / Area</label>
+              <input id="city" name="CityArea">
+            </div>
+            <div>
+              <label for="stateResidence">State of Residence</label>
+              <input id="stateResidence" name="StateOfResidence" value="FCT Abuja">
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Medical / Emergency Information</legend>
+          <div class="grid two">
+            <div>
+              <label for="bloodGroup">Blood Group</label>
+              <input id="bloodGroup" name="BloodGroup">
+            </div>
+            <div>
+              <label for="genotype">Genotype</label>
+              <input id="genotype" name="Genotype">
+            </div>
+            <div class="full">
+              <label for="medicalCondition">Known Medical Condition / Allergy</label>
+              <textarea id="medicalCondition" name="MedicalCondition" rows="3" placeholder="Write None if not applicable"></textarea>
+            </div>
+            <div>
+              <label for="emergencyName">Emergency Contact Name</label>
+              <input id="emergencyName" name="EmergencyContactName">
+            </div>
+            <div>
+              <label for="emergencyPhone">Emergency Contact Phone</label>
+              <input id="emergencyPhone" name="EmergencyContactPhone" type="tel">
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Admission Preferences</legend>
+          <div class="grid two">
+            <div>
+              <label for="classCompleted">Class Completed</label>
+              <select id="classCompleted" name="ClassCompleted">
+                <option value="">Select highest class completed</option>
+              </select>
+            </div>
+            <div>
+              <label for="studentType">Student Type <span class="required">*</span></label>
+              <select id="studentType" name="StudentType" required>
+                <option value="">Select</option>
+                <option>Day Student</option>
+                <option>Boarding Student</option>
+              </select>
+            </div>
+            <div>
+              <label for="session">Academic Session <span class="required">*</span></label>
+              <input id="session" name="AcademicSession" placeholder="2026/2027" required>
+            </div>
+            <div>
+              <label for="testimonial">Transfer Certificate / Testimonial</label>
+              <select id="testimonial" name="TransferCertificate">
+                <option value="">Select</option>
+                <option>Available</option>
+                <option>Not available</option>
+              </select>
+            </div>
+            <div class="full">
+              <label for="howHeard">How did you hear about this school?</label>
+              <input id="howHeard" name="HowHeard">
+            </div>
+            <div class="full">
+              <label for="reasonForChoosing">Reason for choosing this school</label>
+              <textarea id="reasonForChoosing" name="ReasonForChoosingSchool" rows="3"></textarea>
+            </div>
+          </div>
+        </fieldset>
+        
+
+        <fieldset>
+          <legend>School Background</legend>
+          <p class="muted">This helps us know how to give the applicant any needed additional attention.</p>
+          <div class="grid two">
+            <div class="full">
+              <label>Has the applicant ever been expelled, dismissed, suspended, or refused admission to another school? <span class="required">*</span></label>
+              <div class="radio-options">
+                <label><input type="radio" name="ExpelledOrRefusedAdmission" value="Yes" required> Yes</label>
+                <label><input type="radio" name="ExpelledOrRefusedAdmission" value="No"> No</label>
+              </div>
+              <input name="ExpelledOrRefusedAdmissionDetails" placeholder="If yes, explain here">
+            </div>
+            <div class="full">
+              <label>Has the applicant ever had disciplinary difficulty at school? <span class="required">*</span></label>
+              <div class="radio-options">
+                <label><input type="radio" name="DisciplinaryDifficulty" value="Yes" required> Yes</label>
+                <label><input type="radio" name="DisciplinaryDifficulty" value="No"> No</label>
+              </div>
+              <input name="DisciplinaryDifficultyDetails" placeholder="If yes, provide details">
+            </div>
+            <div class="full">
+              <label>Does the applicant have a juvenile arrest record? <span class="required">*</span></label>
+              <div class="radio-options">
+                <label><input type="radio" name="JuvenileArrestRecord" value="Yes" required> Yes</label>
+                <label><input type="radio" name="JuvenileArrestRecord" value="No"> No</label>
+              </div>
+              <input name="JuvenileArrestRecordDetails" placeholder="If yes, explain here">
+            </div>
+            <div class="full">
+              <label>Has the applicant failed an academic subject in school? <span class="required">*</span></label>
+              <div class="radio-options">
+                <label><input type="radio" name="FailedAcademicSubject" value="Yes" required> Yes</label>
+                <label><input type="radio" name="FailedAcademicSubject" value="No"> No</label>
+              </div>
+              <input name="FailedAcademicSubjectDetails" placeholder="If yes, explain here">
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Declaration</legend>
+          <div class="terms-text" data-declaration-statement>
+            <p>I declare that I am the parent or authorized guardian of the applicant and that all information provided is true to the best of my knowledge.</p>
+            <p>I pledge to comply with all admission requirements and to meet my financial obligations to the school promptly, usually before each resumption.</p>
+            <p>I understand that the school operates according to its approved principles, standards, vision, and mission, and I give permission for my child/ward to be instructed in line with those standards.</p>
+            <p>I give permission for my child/ward to take part in school activities, including co-curricular activities and school-sponsored trips or excursions outside the school premises as scheduled by the school.</p>
+            <p>I agree to support and comply with all school regulations on behalf of the applicant and authorize the school to apply discipline in accordance with its policies.</p>
+          </div>
+          <label class="check-row">
+            <input type="checkbox" name="DeclarationAccepted" value="YES" required>
+            <span>I understand and accept the terms stated on this application. <span class="required">*</span></span>
+          </label>
+        </fieldset>
+
+        <button type="submit" id="submitBtn">Submit Application</button>
+        <p id="submitStatus" class="status" aria-live="polite"></p>
+      </form>
+    </section>
+  </main>
+  <div id="uploadOverlay">
+    <div class="upload-box">
+      <h2>Uploading your application...</h2>
+
+      <div class="upload-bar">
+        <div class="upload-bar-fill"></div>
+      </div>
+
+      <p>Please wait while we securely save your information.</p>
+      <p><strong>Do not close this page or press Back.</strong></p>
+    </div>
+  </div>
+  <script src="js/site-config.js?v=20260728-quota-safety"></script>
+  <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
+  <script src="js/application.js?v=20260729-action-feedback"></script>
+</body>
+</html>

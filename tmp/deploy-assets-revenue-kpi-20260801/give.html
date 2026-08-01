@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Send a secure donation, offering or other gift online.">
+  <title>Secure Online Giving</title>
+  <meta name="theme-color" content="#071b38">
+  <link rel="icon" href="images/Logo.png">
+  <script src="js/preferences.js?v=20260726-biometric"></script>
+  <link rel="stylesheet" href="css/style.css?v=20260730-student-face-lookup">
+</head>
+<body class="giving-page">
+  <main class="giving-shell">
+    <section class="giving-brand-panel">
+      <a href="index.html" class="giving-product">
+        <img id="givingLogo" src="images/Logo.png" alt="">
+        <span><strong id="givingOrganisation">Dynamax</strong><small>Secure online giving</small></span>
+      </a>
+      <div class="giving-brand-copy">
+        <p>Donations &amp; offerings</p>
+        <h1>Give securely.<br><strong>Make an impact.</strong></h1>
+        <span>Complete your gift through our secure Paystack payment page. A receipt will be sent after payment is confirmed.</span>
+      </div>
+      <div class="giving-trust-list">
+        <span>✓ Encrypted payment</span>
+        <span>✓ Automatic confirmation</span>
+        <span>✓ Official receipt</span>
+      </div>
+    </section>
+
+    <section class="giving-form-panel" aria-labelledby="givingTitle">
+      <header>
+        <p>Self-service giving</p>
+        <h2 id="givingTitle">Send your gift</h2>
+        <span>Enter your details and choose what you are giving towards.</span>
+      </header>
+      <form id="publicGivingForm" class="giving-form">
+        <input type="hidden" name="BranchId" id="givingBranch" value="main">
+        <label class="giving-honeypot" aria-hidden="true">Website
+          <input name="CompanyWebsite" tabindex="-1" autocomplete="off">
+        </label>
+        <label>Full name
+          <input name="DonorName" autocomplete="name" maxlength="160" required>
+        </label>
+        <label>Email address
+          <input name="DonorEmail" type="email" autocomplete="email" maxlength="254" required>
+        </label>
+        <div class="giving-form-row">
+          <label>Gift type
+            <select name="PaymentType" id="givingType" required>
+              <option value="">Loading giving types…</option>
+            </select>
+          </label>
+          <label>Currency
+            <select name="Currency" required>
+              <option value="NGN">NGN — Nigerian Naira</option>
+              <option value="USD">USD — US Dollar</option>
+              <option value="GBP">GBP — British Pound</option>
+              <option value="EUR">EUR — Euro</option>
+              <option value="GHS">GHS — Ghanaian Cedi</option>
+              <option value="KES">KES — Kenyan Shilling</option>
+            </select>
+          </label>
+        </div>
+        <label>Amount
+          <span class="giving-amount-input"><span aria-hidden="true">¤</span><input name="Amount" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="0.00" required></span>
+        </label>
+        <label>Optional note
+          <textarea name="Notes" rows="3" maxlength="500" placeholder="Purpose, programme or a short note"></textarea>
+        </label>
+        <p id="publicGivingStatus" class="status" role="status" aria-live="polite"></p>
+        <button type="submit" id="publicGivingButton">Continue to secure payment</button>
+        <p class="giving-disclaimer">Payment is recorded only after Paystack confirms a successful transaction.</p>
+      </form>
+    </section>
+  </main>
+  <script src="js/site-config.js?v=20260728-quota-safety"></script>
+  <script src="js/give.js?v=20260729-public-giving"></script>
+</body>
+</html>
