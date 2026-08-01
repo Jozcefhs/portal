@@ -2,6 +2,15 @@ import { batchUpsertDocuments, deleteDocument, getDocument, listCollection, requ
 import { hashStaffPassword, requireStaffSession } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { staffRecordMatchesEdition } from '../lib/records-desk.js';
+import {
+  accountingChartForEdition,
+  accountingCodeAllowedForEdition
+} from '../lib/accounting-edition-scope.js';
+import {
+  filterSectionsForFeatures,
+  normalizeOrganizationEdition,
+  staffRoleAllowedForEdition
+} from '../lib/organization-config.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -10,14 +19,48 @@ function nowIso() { return new Date().toISOString(); }
 function activeValue(value) { return !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(value)); }
 function explicitOptIn(value) { return ['yes', 'true', '1', 'enabled', 'on'].includes(lower(value)); }
 
-function publicUser(row) {
+const WEB_SECTION_KEYS = new Set([
+  'recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students',
+  'studentConduct', 'members', 'services', 'funds', 'offerings', 'donations',
+  'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic',
+  'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore',
+  'restaurant', 'staffUsers'
+]);
+
+function listValue(value, separator = ',') {
+  return Array.isArray(value)
+    ? value.map(clean).filter(Boolean)
+    : clean(value).split(separator).map(clean).filter(Boolean);
+}
+
+function scopedApprovalAccounts(value, edition) {
+  return listValue(value, /[;,]/).filter((code) => accountingCodeAllowedForEdition(code, edition));
+}
+
+function scopedTabAccess(value, actor) {
+  return filterSectionsForFeatures(listValue(value, /[;,]/), actor.featureFlags)
+    .filter((section) => WEB_SECTION_KEYS.has(section));
+}
+
+function ensureRoleAvailable(role, edition) {
+  if (staffRoleAllowedForEdition(role, edition)) return;
+  const err = new Error(`${role} is a school-only role and is not available in this organisation.`);
+  err.status = 400;
+  throw err;
+}
+
+function publicUser(row, edition = 'school', featureFlags = null) {
+  const normalizedEdition = normalizeOrganizationEdition(edition);
   return {
     Username: clean(row.Username || row.username || row.__id),
+    LoginUsername: clean(row.LoginUsername || row.loginUsername || row.Username || row.username || row.__id),
     DisplayName: clean(row.DisplayName || row.displayName),
     Role: clean(row.Role || row.role) || 'Front Desk',
     Department: clean(row.Department || row.department),
     BranchId: clean(row.BranchId || row.branchId),
-    SchoolSectionAccess: clean(row.SchoolSectionAccess || row.schoolSectionAccess) || 'All',
+    SchoolSectionAccess: normalizedEdition === 'school'
+      ? (clean(row.SchoolSectionAccess || row.schoolSectionAccess) || 'All')
+      : '',
     OrganisationEdition: clean(
       row.OrganisationEdition || row.organisationEdition
         || row.OrganizationEdition || row.organizationEdition
@@ -25,9 +68,10 @@ function publicUser(row) {
     ),
     ApprovalEnabled: row.ApprovalEnabled === undefined ? false : activeValue(row.ApprovalEnabled),
     ApprovalMaxAmount: Number(row.ApprovalMaxAmount || 0) || 0,
-    ApprovalAccounts: Array.isArray(row.ApprovalAccounts) ? row.ApprovalAccounts : clean(row.ApprovalAccounts).split(',').map(clean).filter(Boolean),
-    BiometricLookupEnabled: explicitOptIn(row.BiometricLookupEnabled),
-    TabAccess: Array.isArray(row.TabAccess) ? row.TabAccess : clean(row.TabAccess).split(',').map(clean).filter(Boolean),
+    ApprovalAccounts: scopedApprovalAccounts(row.ApprovalAccounts, normalizedEdition),
+    BiometricLookupEnabled: explicitOptIn(row.BiometricLookupEnabled) && normalizedEdition === 'school',
+    TabAccess: filterSectionsForFeatures(listValue(row.TabAccess), featureFlags)
+      .filter((section) => WEB_SECTION_KEYS.has(section)),
     Active: row.Active === undefined ? true : activeValue(row.Active),
     MustChangePassword: row.MustChangePassword === undefined ? false : activeValue(row.MustChangePassword),
     CreatedAt: clean(row.CreatedAt),
@@ -66,8 +110,8 @@ async function listUsers(env, actor) {
   const rows = await listCollection(env, 'staffUsers');
   return rows
     .filter((row) => staffRecordMatchesEdition(row, actor))
-    .map(publicUser)
-    .sort((a, b) => a.Username.localeCompare(b.Username));
+    .map((row) => publicUser(row, actor.edition, actor.featureFlags))
+    .sort((a, b) => a.LoginUsername.localeCompare(b.LoginUsername));
 }
 
 async function listSecurityAudit(env) {
@@ -99,6 +143,8 @@ async function saveUser(env, actor, body) {
   const rows = await listCollection(env, 'staffUsers');
   const existing = rows.find((row) => lower(row.Username || row.__id) === lower(username));
   const role = clean(body.Role || body.role) || 'Front Desk';
+  const edition = normalizeOrganizationEdition(actor.edition);
+  ensureRoleAvailable(role, edition);
   const department = clean(body.Department || body.department);
   const active = activeValue(body.Active === undefined ? true : body.Active);
   await enforceUserLimit(env, rows, existing, active);
@@ -113,17 +159,21 @@ async function saveUser(env, actor, body) {
   const payload = {
     ...(existing || {}),
     Username: username,
+    LoginUsername: clean(existing?.LoginUsername || username),
+    LoginUsernameKey: lower(existing?.LoginUsername || username),
     DisplayName: clean(body.DisplayName || body.displayName) || username,
     Role: role,
     Department: department,
     OrganisationEdition: clean(actor.edition) || 'school',
     BranchId: clean(body.BranchId || body.branchId),
-    SchoolSectionAccess: clean(body.SchoolSectionAccess || body.schoolSectionAccess) || 'All',
+    SchoolSectionAccess: edition === 'school'
+      ? (clean(body.SchoolSectionAccess || body.schoolSectionAccess) || 'All')
+      : 'All',
     ApprovalEnabled: role === 'Super Admin' ? true : activeValue(body.ApprovalEnabled ?? false),
     ApprovalMaxAmount: Math.max(0, Number(body.ApprovalMaxAmount || 0) || 0),
-    ApprovalAccounts: Array.isArray(body.ApprovalAccounts) ? body.ApprovalAccounts.map(clean).filter(Boolean) : clean(body.ApprovalAccounts).split(',').map(clean).filter(Boolean),
-    BiometricLookupEnabled: explicitOptIn(body.BiometricLookupEnabled),
-    TabAccess: Array.isArray(body.TabAccess) ? body.TabAccess.map(clean).filter(Boolean) : clean(body.TabAccess).split(',').map(clean).filter(Boolean),
+    ApprovalAccounts: scopedApprovalAccounts(body.ApprovalAccounts, edition),
+    BiometricLookupEnabled: explicitOptIn(body.BiometricLookupEnabled) && edition === 'school',
+    TabAccess: scopedTabAccess(body.TabAccess, actor),
     Active: active,
     MustChangePassword: password ? activeValue(body.MustChangePassword === undefined ? true : body.MustChangePassword) : activeValue(existing?.MustChangePassword || false),
     ...passwordFields,
@@ -136,13 +186,14 @@ async function saveUser(env, actor, body) {
   delete payload.__name;
   await upsertDocument(env, 'staffUsers', id, payload);
   await audit(env, actor, existing ? 'UPDATE USER' : 'CREATE USER', username, `${role}${department ? ` | ${department}` : ''}`);
-  return { ok: true, message: existing ? 'Staff account updated.' : 'Staff account created.', user: publicUser(payload) };
+  return { ok: true, message: existing ? 'Staff account updated.' : 'Staff account created.', user: publicUser(payload, edition, actor.featureFlags) };
 }
 
 async function importUsers(env, actor, body) {
   const users = Array.isArray(body.users) ? body.users.slice(0, 500) : [];
   if (!users.length) { const err = new Error('Choose a CSV containing at least one staff row.'); err.status = 400; throw err; }
   const existingRows = await listCollection(env, 'staffUsers');
+  const edition = normalizeOrganizationEdition(actor.edition);
   const profile = await getDocument(env, 'settings', 'organisationProfile').catch(() => null);
   const legacy = await getDocument(env, 'settings', 'schoolProfile').catch(() => null);
   const userLimit = Math.max(1, Number(profile?.UserLimit || legacy?.UserLimit || env.USER_LIMIT || 5) || 5);
@@ -161,6 +212,7 @@ async function importUsers(env, actor, body) {
       const password = String(row.Password || row.password || '');
       if (!existing && !password) throw new Error('Password is required for a new staff account.');
       const role = clean(row.Role || row.role) || 'Front Desk';
+      ensureRoleAvailable(role, edition);
       const department = clean(row.Department || row.department);
       if (role === 'Department User' && !department) throw new Error('Department is required for a Department User.');
       const requestedActive = activeValue(row.Active === undefined ? true : row.Active);
@@ -170,16 +222,20 @@ async function importUsers(env, actor, body) {
       if (!existing && requestedActive) plannedActive += 1;
       const payload = {
         ...(existing || {}), Username: username,
+        LoginUsername: clean(existing?.LoginUsername || username),
+        LoginUsernameKey: lower(existing?.LoginUsername || username),
         DisplayName: clean(row.DisplayName || row.displayName) || username,
         Role: role, Department: department,
         OrganisationEdition: clean(actor.edition) || 'school',
         BranchId: clean(row.BranchId || row.branchId),
-        SchoolSectionAccess: clean(row.SchoolSectionAccess || row.schoolSectionAccess) || 'All',
+        SchoolSectionAccess: edition === 'school'
+          ? (clean(row.SchoolSectionAccess || row.schoolSectionAccess) || 'All')
+          : 'All',
         ApprovalEnabled: role === 'Super Admin' ? true : activeValue(row.ApprovalEnabled ?? false),
         ApprovalMaxAmount: Math.max(0, Number(row.ApprovalMaxAmount || 0) || 0),
-        ApprovalAccounts: clean(row.ApprovalAccounts).split(/[;,]/).map(clean).filter(Boolean),
-        BiometricLookupEnabled: explicitOptIn(row.BiometricLookupEnabled),
-        TabAccess: clean(row.TabAccess).split(/[;,]/).map(clean).filter(Boolean),
+        ApprovalAccounts: scopedApprovalAccounts(row.ApprovalAccounts, edition),
+        BiometricLookupEnabled: explicitOptIn(row.BiometricLookupEnabled) && edition === 'school',
+        TabAccess: scopedTabAccess(row.TabAccess, actor),
         Active: requestedActive,
         MustChangePassword: activeValue(row.MustChangePassword === undefined ? true : row.MustChangePassword),
         ...(password ? await hashStaffPassword(password) : {}),
@@ -223,7 +279,8 @@ export async function onRequestPost(context) {
     let result;
     if (action === 'list') {
       const [users, audit, accounts] = await Promise.all([listUsers(env, actor), listSecurityAudit(env), listCollection(env, 'chartOfAccounts')]);
-      result = { ok: true, users, audit, approvalAccounts: accounts.filter((row) => activeValue(row.Active === undefined ? true : row.Active)).map((row) => ({ Code: clean(row.Code || row.__id), Name: clean(row.Name) })).filter((row) => row.Code).sort((a, b) => a.Code.localeCompare(b.Code)) };
+      const scopedAccounts = accountingChartForEdition(accounts, actor.edition);
+      result = { ok: true, users, audit, approvalAccounts: scopedAccounts.filter((row) => activeValue(row.Active === undefined ? true : row.Active)).map((row) => ({ Code: clean(row.Code || row.__id), Name: clean(row.Name) })).filter((row) => row.Code).sort((a, b) => a.Code.localeCompare(b.Code)) };
     }
     else if (action === 'save') result = await saveUser(env, actor, body);
     else if (action === 'delete') result = await deleteUser(env, actor, body);

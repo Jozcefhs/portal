@@ -6414,6 +6414,18 @@ async function saveStaffUserFromDesktop(env, body) {
   if (!username) { const err = new Error('Username is required.'); err.status = 400; throw err; }
   const users = await listCollection(env, 'staffUsers');
   const existing = users.find((row) => sameText(row.Username || row.__id, username));
+  const loginUsername = clean(
+    incoming.LoginUsername || incoming.loginUsername || existing?.LoginUsername || username
+  );
+  const conflictingLogin = users.find((row) => (
+    !sameText(row.Username || row.__id, username)
+    && [row.LoginUsername, row.Username, row.__id].some((value) => sameText(value, loginUsername))
+  ));
+  if (conflictingLogin) {
+    const err = new Error('That login username is already assigned to another staff account.');
+    err.status = 409;
+    throw err;
+  }
   const role = clean(incoming.Role || incoming.role) || 'Front Desk';
   const department = clean(incoming.Department || incoming.department);
   const active = incoming.Active === undefined ? true : staffUserIsActive(incoming);
@@ -6425,6 +6437,8 @@ async function saveStaffUserFromDesktop(env, body) {
   const payload = {
     ...(existing || {}),
     Username: username,
+    LoginUsername: loginUsername,
+    LoginUsernameKey: lower(loginUsername),
     DisplayName: clean(incoming.DisplayName) || username,
     Role: role,
     Department: department,

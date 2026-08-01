@@ -7,6 +7,7 @@ const adminHtml = fs.readFileSync(new URL('../admin.html', import.meta.url), 'ut
 const adminJs = fs.readFileSync(new URL('../js/admin.js', import.meta.url), 'utf8');
 const sessionApi = fs.readFileSync(new URL('../functions/api/staff-session.js', import.meta.url), 'utf8');
 const staffAuth = fs.readFileSync(new URL('../functions/lib/staff-auth.js', import.meta.url), 'utf8');
+const backendApi = fs.readFileSync(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
 
 test('signed-in identity opens the current user profile editor', () => {
   assert.match(adminHtml, /id="staffProfileTrigger"[\s\S]*?aria-label="Edit my profile"/);
@@ -78,6 +79,9 @@ test('login usernames remain separate from immutable staff identity', () => {
   assert.match(staffAuth, /findOneByField\(env, 'staffUsers', 'LoginUsernameKey', wanted\)/);
   assert.match(staffAuth, /!configuredHasPassword && wanted === envUsername/);
   assert.match(staffAuth, /if \(user\)[\s\S]*?return verifyDesktopPassword\(user, password\)/);
+  assert.match(backendApi, /LoginUsername: loginUsername/);
+  assert.match(backendApi, /LoginUsernameKey: lower\(loginUsername\)/);
+  assert.match(backendApi, /That login username is already assigned to another staff account/);
 });
 
 test('ordinary password changes cannot bypass current-password verification', () => {

@@ -1,4 +1,5 @@
 import { findOneByField, getDocument, listCollection, patchDocumentFields, upsertDocument } from './firestore.js';
+import { accountingCodeAllowedForEdition } from './accounting-edition-scope.js';
 import { filterSectionsForFeatures, resolveOrganizationConfig } from './organization-config.js';
 
 const encoder = new TextEncoder();
@@ -297,6 +298,22 @@ export async function staffAccessFor(env, user = {}) {
   };
 }
 
+export function staffUserForAccess(user = {}, access = {}) {
+  const edition = clean(access.edition) || 'school';
+  const list = (value) => Array.isArray(value)
+    ? value.map(clean).filter(Boolean)
+    : clean(value).split(',').map(clean).filter(Boolean);
+  return {
+    ...user,
+    ...access,
+    schoolSectionAccess: edition === 'school' ? clean(user.schoolSectionAccess) || 'All' : '',
+    approvalAccounts: list(user.approvalAccounts)
+      .filter((code) => accountingCodeAllowedForEdition(code, edition)),
+    biometricLookupEnabled: edition === 'school' && Boolean(user.biometricLookupEnabled),
+    tabAccess: filterSectionsForFeatures(list(user.tabAccess), access.featureFlags)
+  };
+}
+
 export async function authenticateStaff(env, username, password) {
   const wanted = lower(username);
   if (!wanted || !password) return null;
@@ -518,7 +535,7 @@ export async function requireStaffSession(env, request) {
     throw err;
   }
   const access = await staffAccessFor(env, user);
-  return { ...user, ...access };
+  return staffUserForAccess(user, access);
 }
 
 export function staffSessionCookie(token) {

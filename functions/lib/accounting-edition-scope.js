@@ -15,6 +15,13 @@ export const SCHOOL_ONLY_REVENUE_ACCOUNT_CODES = Object.freeze([
 
 export const SCHOOL_ONLY_ACCOUNT_CODES = Object.freeze([
   '1100', // Student Accounts Receivable
+  '2200', // Student Wallet Liability
+  '3000', // Accumulated School Fund
+  '5000', // Academic Direct Costs
+  '5010', // Boarding Direct Costs
+  '5020', // Transport Direct Costs
+  '5030', // Kitchen and Feeding Direct Costs
+  '6040', // Marketing and Admissions
   ...SCHOOL_ONLY_REVENUE_ACCOUNT_CODES
 ]);
 

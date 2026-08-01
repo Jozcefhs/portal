@@ -11,6 +11,8 @@ import {
 
 const chart = [
   { Code: '1100', Name: 'Student Accounts Receivable' },
+  { Code: '2200', Name: 'Student Wallet Liability' },
+  { Code: '3000', Name: 'Accumulated School Fund' },
   { Code: '4000', Name: 'Tuition and School Fee Revenue' },
   { Code: '4040', Name: 'Books and Uniform Revenue' },
   { Code: '4080', Name: 'Grants and Donations' },
@@ -26,6 +28,10 @@ test('church accounting hides school-only accounts but retains general organisat
   );
   assert.equal(SCHOOL_ONLY_REVENUE_ACCOUNT_CODES.includes('4110'), true);
   assert.equal(SCHOOL_ONLY_ACCOUNT_CODES.includes('1100'), true);
+  for (const code of ['2200', '3000', '5000', '5010', '5020', '5030', '6040']) {
+    assert.equal(SCHOOL_ONLY_ACCOUNT_CODES.includes(code), true);
+    assert.equal(accountingCodeAllowedForEdition(code, 'faith'), false);
+  }
   assert.equal(accountingCodeAllowedForEdition('1100', 'faith'), false);
   assert.equal(accountingCodeAllowedForEdition('4000', 'faith'), false);
   assert.equal(accountingCodeAllowedForEdition('4140', 'faith'), true);

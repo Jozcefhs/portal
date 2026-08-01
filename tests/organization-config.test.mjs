@@ -2,13 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  SCHOOL_ONLY_SECTION_KEYS,
+  SCHOOL_ONLY_STAFF_ROLES,
   featureFlagsForEdition,
   filterSectionsForFeatures,
   normalizeOrganizationEdition,
   organizationProfileDocument,
-  resolveOrganizationConfig
+  resolveOrganizationConfig,
+  staffRoleAllowedForEdition
 } from '../functions/lib/organization-config.js';
-import { allowedSectionsFor } from '../functions/lib/staff-auth.js';
+import { allowedSectionsFor, staffUserForAccess } from '../functions/lib/staff-auth.js';
 import {
   buildOfferingJournalDraft,
   CHURCH_ACCOUNTING_TARGET,
@@ -103,6 +106,29 @@ test('school-only modules cannot be re-enabled by church feature overrides', () 
   for (const feature of ['admissions', 'students', 'stores', 'clinic', 'kitchen']) {
     assert.equal(flags[feature], false);
   }
+});
+
+test('church staff configuration rejects school-only roles and section permissions', () => {
+  for (const role of SCHOOL_ONLY_STAFF_ROLES) {
+    assert.equal(staffRoleAllowedForEdition(role, 'faith'), false);
+    assert.equal(staffRoleAllowedForEdition(role, 'school'), true);
+  }
+  assert.equal(staffRoleAllowedForEdition('Church Administrator', 'faith'), true);
+  const flags = featureFlagsForEdition('faith');
+  const scoped = staffUserForAccess({
+    schoolSectionAccess: 'Primary',
+    approvalAccounts: ['1100', '4140'],
+    biometricLookupEnabled: true,
+    tabAccess: [...SCHOOL_ONLY_SECTION_KEYS, 'offerings']
+  }, {
+    edition: 'faith',
+    featureFlags: flags,
+    allowedSections: ['offerings']
+  });
+  assert.equal(scoped.schoolSectionAccess, '');
+  assert.deepEqual(scoped.approvalAccounts, ['4140']);
+  assert.equal(scoped.biometricLookupEnabled, false);
+  assert.deepEqual(scoped.tabAccess, ['offerings']);
 });
 
 test('organisation document stores canonical edition identity and flags', () => {

@@ -235,7 +235,7 @@ test('every staff module uses a corresponding navigation icon', () => {
 });
 
 test('selected modules replace overview content with a full-height workspace', () => {
-  assert.match(adminJs, /const tabs = \[\['overview', 'Dashboard'\], \.\.\.tabConfig/);
+  assert.match(adminJs, /const tabs = \[\['overview', 'Dashboard'\], \.\.\.webTabsForEdition\(\)/);
   assert.match(adminJs, /welcomeEl\.hidden = !overview/);
   assert.match(adminJs, /dashboardStatus\.hidden = !overview/);
   assert.match(adminJs, /panelEl\.hidden = overview/);

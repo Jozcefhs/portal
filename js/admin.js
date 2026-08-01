@@ -148,6 +148,36 @@ const tabConfig = [
   ['staffUsers', 'Staff & Permissions']
 ];
 
+const schoolOnlyWebSections = new Set([
+  'admissions', 'formPurchases', 'students', 'studentConduct', 'accounts',
+  'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'
+]);
+
+const staffRoleOptions = [
+  'Super Admin', 'Principal', 'Senior Pastor', 'Head Minister',
+  'Admissions Officer', 'Student Welfare Officer', 'Accounts Officer',
+  'Management', 'Department User', 'Tuck Shop User', 'Clinic User',
+  'Kitchen User', 'Store User', 'Restaurant User', 'Front Desk', 'Pastor',
+  'Church Administrator', 'Membership Officer', 'Treasurer', 'Auditor'
+];
+
+const schoolOnlyStaffRoles = new Set([
+  'Principal', 'Admissions Officer', 'Student Welfare Officer',
+  'Tuck Shop User', 'Clinic User', 'Kitchen User'
+]);
+
+function webTabsForEdition(edition = resolveDashboardEdition(currentUser || {})) {
+  return edition === 'school'
+    ? tabConfig
+    : tabConfig.filter(([key]) => !schoolOnlyWebSections.has(key));
+}
+
+function staffRolesForEdition(edition = resolveDashboardEdition(currentUser || {})) {
+  return edition === 'school'
+    ? staffRoleOptions
+    : staffRoleOptions.filter((role) => !schoolOnlyStaffRoles.has(role));
+}
+
 const tabIcons = {
   overview: '\u2302',
   recordsDesk: '\u{1F5C2}',
@@ -1161,7 +1191,7 @@ function renderModuleSummary(active, liveData = null) {
 }
 
 function renderTabs(allowed) {
-  const tabs = [['overview', 'Dashboard'], ...tabConfig.filter(([key]) => allowed.includes(key))];
+  const tabs = [['overview', 'Dashboard'], ...webTabsForEdition().filter(([key]) => allowed.includes(key))];
   activeTabs = tabs;
   tabsEl.innerHTML = tabs.map(([key, label]) => {
     label = staffTabLabel(key, label);
@@ -6217,6 +6247,8 @@ function renderStaffUsers() {
   const activeUsers = staffUsersData.filter((user) => yes(user.Active)).length;
   const admins = staffUsersData.filter((user) => user.Role === 'Super Admin' && yes(user.Active)).length;
   const schoolEdition = resolveDashboardEdition(currentUser || {}) === 'school';
+  const availableRoles = staffRolesForEdition();
+  const permissionTabs = webTabsForEdition();
   panelEl.innerHTML = `
     <div class="workflow-intro">
       <div><p class="eyebrow">Identity & access</p><h2>Staff & Permissions</h2><p class="muted">Shared database accounts for desktop and web access</p></div>
@@ -6233,7 +6265,7 @@ function renderStaffUsers() {
       ${staffUsersData.length ? staffUsersData.map((user) => `
         <article class="staff-user-row">
           <div class="staff-user-avatar">${escapeHtml((user.DisplayName || user.Username || 'U').split(/\s+/).slice(0,2).map((part) => part[0]).join('').toUpperCase())}</div>
-          <div class="staff-user-copy"><strong>${escapeHtml(user.DisplayName || user.Username)}</strong><span>@${escapeHtml(user.Username)} • ${escapeHtml(user.Role)}</span><small>${escapeHtml(user.Department || 'No department')} • ${escapeHtml(user.BranchId || 'All branches')} / ${escapeHtml(user.SchoolSectionAccess || 'All sections')}${yes(user.MustChangePassword) ? ' • Password change required' : ''}</small></div>
+          <div class="staff-user-copy"><strong>${escapeHtml(user.DisplayName || user.LoginUsername || user.Username)}</strong><span>@${escapeHtml(user.LoginUsername || user.Username)} • ${escapeHtml(user.Role)}</span><small>${escapeHtml(user.Department || 'No department')} • ${escapeHtml(user.BranchId || 'All branches')}${schoolEdition ? ` / ${escapeHtml(user.SchoolSectionAccess || 'All sections')}` : ''}${yes(user.MustChangePassword) ? ' • Password change required' : ''}</small></div>
           <span class="workflow-status ${yes(user.Active) ? 'status-approved' : 'status-rejected'}">${yes(user.Active) ? 'Active' : 'Disabled'}</span>
           <div class="staff-user-actions"><button type="button" class="compact-icon-action compact-edit-action" data-edit-user="${escapeHtml(user.Username)}" aria-label="Edit ${escapeHtml(user.DisplayName || user.Username)}" title="Edit staff account"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action compact-delete-action" data-delete-user="${escapeHtml(user.Username)}" aria-label="Delete ${escapeHtml(user.DisplayName || user.Username)}" title="Delete staff account"><span aria-hidden="true">&#128465;&#65038;</span></button></div>
         </article>
@@ -6251,16 +6283,16 @@ function renderStaffUsers() {
         <section class="config-group"><header><strong>Account identity</strong><small>Basic sign-in identity and organizational access.</small></header><div class="config-grid">
           <label>Username <span class="required">*</span><input name="Username" required></label>
           <label>Display name <span class="required">*</span><input name="DisplayName" required></label>
-          <label>Role <select name="Role" required>${['Super Admin','Principal','Senior Pastor','Head Minister','Admissions Officer','Student Welfare Officer','Accounts Officer','Management','Department User','Tuck Shop User','Clinic User','Kitchen User','Store User','Restaurant User','Front Desk','Pastor','Church Administrator','Membership Officer','Treasurer','Auditor'].map((role) => `<option>${role}</option>`).join('')}</select></label>
+          <label>Role <select name="Role" required>${availableRoles.map((role) => `<option>${role}</option>`).join('')}</select></label>
           <label>Department<input name="Department" placeholder="Required for Department User"></label>
           <label>Branch ID<input name="BranchId" placeholder="Blank allows all branches"></label>
-          <label>School section<select name="SchoolSectionAccess"><option>All</option><option>Primary</option><option>Secondary</option></select></label>
+          ${schoolEdition ? '<label>School section<select name="SchoolSectionAccess"><option>All</option><option>Primary</option><option>Secondary</option></select></label>' : ''}
         </div></section>
         <section class="config-group"><header><strong>Finance approval</strong><small>Approval is blocked unless explicitly enabled by an administrator.</small></header><div class="config-grid">
           <label class="check-row config-switch"><input name="ApprovalEnabled" type="checkbox"> Allow this user to approve finance documents</label>
           <label>Maximum approval amount<input name="ApprovalMaxAmount" type="number" min="0" step="0.01" value="0"><small>Zero blocks approval. Super Admin is unrestricted.</small></label>
         </div><div class="approval-account-list config-option-list"><strong>Accounts this user may approve directly from</strong>${staffApprovalAccounts.length ? staffApprovalAccounts.map((account) => `<label class="check-row"><input type="checkbox" name="ApprovalAccountOption" value="${escapeHtml(account.Code)}"> ${escapeHtml(account.Code)} - ${escapeHtml(account.Name || '')}</label>`).join('') : '<small>Create active Chart of Accounts entries in the desktop Finance tab first.</small>'}</div></section>
-        <section class="config-group"><header><strong>Web companion access</strong><small>Leave all clear to use the selected role's default tabs.</small></header><div class="approval-account-list config-option-list config-option-grid">${tabConfig.map(([key, label]) => `<label class="check-row"><input type="checkbox" name="TabAccessOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}</div></section>
+        <section class="config-group"><header><strong>Web companion access</strong><small>Leave all clear to use the selected role's default tabs.</small></header><div class="approval-account-list config-option-list config-option-grid">${permissionTabs.map(([key, label]) => `<label class="check-row"><input type="checkbox" name="TabAccessOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}</div></section>
         <section class="config-group"><header><strong>Security</strong><small>Password and account-state controls.</small></header><div class="config-grid">
           <label>New or reset password<input name="Password" type="password" minlength="6" autocomplete="new-password"><small>Required for a new account. Leave blank when editing unless resetting it.</small></label>
           <div class="config-toggle-stack"><label class="check-row"><input name="Active" type="checkbox" checked> Account active</label><label class="check-row"><input name="MustChangePassword" type="checkbox" checked> Require password change at next sign-in</label>${schoolEdition ? '<label class="check-row sensitive-access-toggle"><input name="BiometricLookupEnabled" type="checkbox"> Allow student face lookup</label>' : ''}</div>
@@ -6285,7 +6317,9 @@ function openStaffUserDialog(username = '') {
     form.elements.Role.value = user.Role;
     form.elements.Department.value = user.Department || '';
     form.elements.BranchId.value = user.BranchId || '';
-    form.elements.SchoolSectionAccess.value = user.SchoolSectionAccess || 'All';
+    if (form.elements.SchoolSectionAccess) {
+      form.elements.SchoolSectionAccess.value = user.SchoolSectionAccess || 'All';
+    }
     form.elements.ApprovalEnabled.checked = yes(user.ApprovalEnabled);
     form.elements.ApprovalMaxAmount.value = user.ApprovalMaxAmount || 0;
     const allowedAccounts = new Set(user.ApprovalAccounts || []);
@@ -6413,7 +6447,10 @@ async function importOrganizationCsv(event, options, status) {
 }
 
 function downloadStaffCsvTemplate() {
-  const content = 'Username,DisplayName,Role,Department,BranchId,SchoolSectionAccess,Password,Active,MustChangePassword,ApprovalEnabled,ApprovalMaxAmount,ApprovalAccounts,BiometricLookupEnabled,TabAccess\nexample.user,Example User,Front Desk,Administration,main,All,ChangeMe123,YES,YES,NO,0,"6010,6090",NO,"admissions,students"\n';
+  const schoolEdition = resolveDashboardEdition(currentUser || {}) === 'school';
+  const content = schoolEdition
+    ? 'Username,DisplayName,Role,Department,BranchId,SchoolSectionAccess,Password,Active,MustChangePassword,ApprovalEnabled,ApprovalMaxAmount,ApprovalAccounts,BiometricLookupEnabled,TabAccess\nexample.user,Example User,Front Desk,Administration,main,All,ChangeMe123,YES,YES,NO,0,"6010,6090",NO,"admissions,students"\n'
+    : 'Username,DisplayName,Role,Department,BranchId,Password,Active,MustChangePassword,ApprovalEnabled,ApprovalMaxAmount,ApprovalAccounts,TabAccess\nexample.user,Example User,Church Administrator,Administration,main,ChangeMe123,YES,YES,NO,0,"6010,6090","members,services,offerings"\n';
   const url = URL.createObjectURL(new Blob([content], { type: 'text/csv' }));
   const link = document.createElement('a'); link.href = url; link.download = 'staff_upload_template.csv'; link.click(); URL.revokeObjectURL(url);
 }

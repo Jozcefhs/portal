@@ -8,6 +8,7 @@ import {
   readStaffSession,
   staffSessionCookie,
   staffAccessFor,
+  staffUserForAccess,
   verifyStaffApprovalPassword
 } from '../lib/staff-auth.js';
 import { batchUpsertDocuments, getDocument, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
@@ -136,7 +137,7 @@ export async function onRequestGet(context) {
     return response({
       ok: true,
       authenticated: Boolean(user),
-      user: user ? { ...user, ...access } : null
+      user: user ? staffUserForAccess(user, access) : null
     });
   } catch (err) {
     const status = err.status || 500;
@@ -214,7 +215,7 @@ export async function onRequestPost(context) {
         ok: true,
         authenticated: true,
         message: 'Profile updated.',
-        user: { ...refreshedUser, ...access }
+        user: staffUserForAccess(refreshedUser, access)
       }, 200, staffSessionCookie(refreshedToken));
     }
     if (action === 'changepassword') {
@@ -263,7 +264,7 @@ export async function onRequestPost(context) {
       const refreshedToken = await createStaffSession(env, refreshedUser);
       const access = await staffAccessFor(env, refreshedUser);
       return response(
-        { ok: true, authenticated: true, message: 'Password changed successfully.', user: { ...refreshedUser, ...access } },
+        { ok: true, authenticated: true, message: 'Password changed successfully.', user: staffUserForAccess(refreshedUser, access) },
         200,
         staffSessionCookie(refreshedToken)
       );
@@ -363,7 +364,7 @@ export async function onRequestPost(context) {
         message: newPassword
           ? 'Login username and password updated successfully.'
           : 'Login username updated successfully.',
-        user: { ...refreshedUser, ...access }
+        user: staffUserForAccess(refreshedUser, access)
       }, 200, staffSessionCookie(refreshedToken));
     }
     const attempt = await checkStaffLoginAllowed(env, body.username, request);
@@ -398,7 +399,7 @@ export async function onRequestPost(context) {
       authenticated: true,
       message: 'Signed in.',
       sessionToken: token,
-      user: { ...user, ...access }
+      user: staffUserForAccess(user, access)
     }, 200, staffSessionCookie(token));
   } catch (err) {
     return response({ ok: false, message: err.message || String(err) }, err.status || 500);

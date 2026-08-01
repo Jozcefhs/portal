@@ -2,6 +2,18 @@ const clean = (value) => String(value ?? '').trim();
 
 export const ORGANIZATION_EDITIONS = Object.freeze(['school', 'faith', 'organization']);
 
+export const SCHOOL_ONLY_SECTION_KEYS = Object.freeze([
+  'admissions', 'formPurchases', 'students', 'studentConduct', 'accounts',
+  'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'
+]);
+
+export const SCHOOL_ONLY_STAFF_ROLES = Object.freeze([
+  'Principal', 'Admissions Officer', 'Student Welfare Officer',
+  'Tuck Shop User', 'Clinic User', 'Kitchen User'
+]);
+
+const SCHOOL_ONLY_ROLE_SET = new Set(SCHOOL_ONLY_STAFF_ROLES);
+
 const NON_SCHOOL_DISABLED_FEATURES = new Set([
   'admissions', 'students', 'studentConduct', 'parentPortal',
   'stores', 'clinic', 'kitchen'
@@ -88,6 +100,11 @@ export function normalizeOrganizationEdition(value) {
   if (['church', 'religious', 'religious body', 'religious organisation', 'religious organization'].includes(normalized)) return 'faith';
   if (normalized === 'other') return 'organization';
   return ORGANIZATION_EDITIONS.includes(normalized) ? normalized : 'school';
+}
+
+export function staffRoleAllowedForEdition(role, edition) {
+  return normalizeOrganizationEdition(edition) === 'school'
+    || !SCHOOL_ONLY_ROLE_SET.has(clean(role));
 }
 
 function explicitOrganizationEdition(value) {

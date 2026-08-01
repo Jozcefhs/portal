@@ -6,9 +6,10 @@ import { featureFlagsForEdition } from '../functions/lib/organization-config.js'
 import { allowedSectionsFor } from '../functions/lib/staff-auth.js';
 
 const portalRoot = new URL('../', import.meta.url);
-const [adminJs, adminApi, storeApi, departmentApi, categorySource, portalCss] = await Promise.all([
+const [adminJs, adminApi, staffUsersApi, storeApi, departmentApi, categorySource, portalCss] = await Promise.all([
   readFile(new URL('js/admin.js', portalRoot), 'utf8'),
   readFile(new URL('functions/api/admin.js', portalRoot), 'utf8'),
+  readFile(new URL('functions/api/staff-users.js', portalRoot), 'utf8'),
   readFile(new URL('functions/api/staff-stores.js', portalRoot), 'utf8'),
   readFile(new URL('functions/api/staff-departments.js', portalRoot), 'utf8'),
   readFile(new URL('functions/lib/store-categories.js', portalRoot), 'utf8'),
@@ -28,6 +29,17 @@ test('religious organisations receive dedicated store and restaurant modules wit
   assert.equal(sections.includes('uniformStore'), false);
   assert.equal(sections.includes('tuckShop'), false);
   assert.equal(sections.includes('kitchen'), false);
+});
+
+test('church staff editor removes school modules, roles and accounting permissions', () => {
+  assert.match(adminJs, /function webTabsForEdition/);
+  assert.match(adminJs, /tabConfig\.filter\(\(\[key\]\) => !schoolOnlyWebSections\.has\(key\)\)/);
+  assert.match(adminJs, /function staffRolesForEdition/);
+  assert.match(adminJs, /\$\{schoolEdition \? '<label>School section/);
+  assert.match(adminJs, /permissionTabs\.map/);
+  assert.match(staffUsersApi, /accountingChartForEdition\(accounts, actor\.edition\)/);
+  assert.match(staffUsersApi, /ensureRoleAvailable\(role, edition\)/);
+  assert.match(staffUsersApi, /LoginUsername: clean\(row\.LoginUsername/);
 });
 
 test('church store uses its own catalogue scope and customer-facing language', () => {
