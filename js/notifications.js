@@ -84,7 +84,9 @@
           <small>${html(row.Category || row.Type || 'System')}</small><strong>${html(row.Title || 'Notification')}</strong>
           <span>${html(row.Message || '')}</span><time datetime="${html(row.CreatedAt || '')}">${html(row.CreatedAt ? new Date(row.CreatedAt).toLocaleString() : '')}</time>
         </span>
-      </button>${full ? `<button type="button" class="notification-archive-action" data-archive-notification>${row.Archived ? 'Restore' : 'Archive'}</button>` : ''}
+      </button>${full
+        ? `<button type="button" class="notification-archive-action" data-archive-notification>${row.Archived ? 'Restore' : 'Archive'}</button>`
+        : `<button type="button" class="notification-delete-action" data-delete-notification aria-label="Delete ${html(row.Title || 'notification')} from tray" title="Delete from tray">&times;</button>`}
     </article>`;
   }
 
@@ -225,6 +227,10 @@
     const item = event.target.closest('[data-notification-id]');
     if (!item) return;
     const row = sourceRecords.find((entry) => entry.NotificationId === item.dataset.notificationId);
+    if (event.target.closest('[data-delete-notification]')) {
+      await update('archive', { notificationId: item.dataset.notificationId });
+      return;
+    }
     if (event.target.closest('[data-archive-notification]')) {
       await update(row?.Archived ? 'unarchive' : 'archive', { notificationId: item.dataset.notificationId });
       await loadHistory(false);

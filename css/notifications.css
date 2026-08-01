@@ -11,6 +11,7 @@
 .notification-list{display:grid}
 .notification-item{display:flex;align-items:flex-start;width:100%;padding:0;border:0;border-bottom:1px solid #e5ecf2;background:transparent;color:inherit;text-align:left}
 .notification-open{display:grid;grid-template-columns:10px minmax(0,1fr);gap:10px;flex:1;min-width:0;padding:13px 16px;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}
+.notification-delete-action{align-self:center;display:grid;place-items:center;flex:0 0 30px;width:30px;height:30px;margin:10px 10px 10px 0;padding:0;border:1px solid #d7e1ea;border-radius:50%;background:#fff;color:#7b8997;font-size:20px;line-height:1;cursor:pointer}.notification-delete-action:hover,.notification-delete-action:focus-visible{border-color:#d6263f;background:#fff1f3;color:#b71932}
 .notification-item:hover,.notification-item:focus-visible{background:#f1f6fb}
 .notification-item-dot{width:8px;height:8px;margin-top:5px;border-radius:50%;background:#1769e0}
 .notification-item.is-read .notification-item-dot{background:#aebac6}
@@ -50,6 +51,7 @@ html[data-theme="dark"] .notification-item:hover,html[data-theme="dark"] .notifi
 .theme-dark .notification-item:hover,.theme-dark .notification-item:focus-visible{background:#17314b}
 html[data-theme="dark"] .notification-item-copy span,.theme-dark .notification-item-copy span{color:#c2d2e2}
 html[data-theme="dark"] .notification-item-copy time,.theme-dark .notification-item-copy time{color:#8fa6bc}
+html[data-theme="dark"] .notification-delete-action,.theme-dark .notification-delete-action{border-color:#3b526b;background:#172d43;color:#c2d2e2}html[data-theme="dark"] .notification-delete-action:hover,.theme-dark .notification-delete-action:hover{border-color:#e15a6d;background:#442431;color:#fff}
 html[data-theme="dark"] .notification-push-prompt,.theme-dark .notification-push-prompt{border-color:#285c53;background:#143a38}html[data-theme="dark"] .notification-push-prompt small,.theme-dark .notification-push-prompt small{color:#c2d2e2}
 @media (max-width:720px){
   .notification-popover{position:fixed;top:64px;right:8px;left:8px;width:auto;max-height:calc(100vh - 84px)}

@@ -336,6 +336,8 @@ function renderParentNotifications() {
     : '<p class="muted">You have no notifications at the moment.</p>';
   parentNotifications.forEach((notification) => {
     const isRead = parentNotificationIsRead(notification);
+    const item = document.createElement('article');
+    item.className = 'parent-notification-row';
     const row = document.createElement('button');
     row.type = 'button';
     row.className = `parent-notification-item${isRead ? '' : ' unread'}`;
@@ -354,7 +356,22 @@ function renderParentNotifications() {
       if (!isRead) await markParentNotificationRead(parentNotificationId(notification), false, row);
       openParentNotificationAction(notification.ActionUrl || notification.actionUrl);
     });
-    parentNotificationList.appendChild(row);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'parent-notification-delete';
+    remove.textContent = '\u00d7';
+    remove.title = 'Delete from tray';
+    remove.setAttribute('aria-label', `Delete ${title} from tray`);
+    remove.addEventListener('click', async () => {
+      try {
+        const data = await parentNotificationRequest('archiveNotification', { notificationId: parentNotificationId(notification) });
+        parentNotifications = data.notifications || [];
+        renderParentNotifications();
+        setParentNotificationStatus('Notification removed from the tray.', 'good');
+      } catch (error) { setParentNotificationStatus(error.message, 'bad'); }
+    });
+    item.append(row, remove);
+    parentNotificationList.appendChild(item);
   });
   if (markAllParentNotificationsReadBtn) {
     markAllParentNotificationsReadBtn.disabled = unreadCount === 0;

@@ -486,8 +486,12 @@ test('staff and parent notification interfaces are wired to protected APIs', asy
   assert.match(notificationCss, /\.notification-trigger \.notification-badge:not\(\[hidden\]\)\{display:grid\}/);
   assert.match(notificationCss, /\.staff-identity \.notification-popover \.notification-item-copy,[\s\S]*?\.notification-item-dot\{display:block\}/);
   assert.match(notificationJs, /data-notification-enable-push/);
+  assert.match(notificationJs, /data-delete-notification/);
+  assert.match(notificationJs, /update\('archive', \{ notificationId: item\.dataset\.notificationId \}\)/);
   assert.match(notificationJs, /Tap once to receive alerts even when this page is closed/);
   assert.match(notificationCss, /\.notification-push-prompt\{display:flex/);
+  assert.match(notificationCss, /\.notification-delete-action\{/);
+  assert.match(parentApi, /action === 'archiveNotification'/);
   assert.match(staffApi, /requireStaffSession/);
   assert.match(parentApi, /action === 'getNotifications'/);
   assert.match(parentApi, /action === 'markNotificationRead'/);

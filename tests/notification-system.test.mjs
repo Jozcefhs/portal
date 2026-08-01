@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
+  archiveNotification,
   createNotification,
   normalizeNotification,
   notificationTargetsRecipient,
@@ -36,6 +37,18 @@ test('central notification creation is idempotent', async () => {
   const input = { EventKey: 'same-event', Audience: 'Staff', TargetUsernames: ['admin'], Title: 'Once', Message: 'Only once', Channels: ['InApp'] };
   assert.equal((await createNotification({}, input, { createDocumentIfAbsent })).created, true);
   assert.equal((await createNotification({}, input, { createDocumentIfAbsent })).created, false);
+});
+
+test('deleting from the tray archives only the recipient read state', async () => {
+  const writes = [];
+  const state = await archiveNotification({}, 'NOTIF-1', 'Admin', true, {
+    getDocument: async (_env, collection) => collection === 'notifications' ? { NotificationId: 'NOTIF-1' } : null,
+    upsertDocument: async (_env, collection, id, document) => { writes.push({ collection, id, document }); }
+  });
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].collection, 'notificationReads');
+  assert.equal(state.RecipientKey, 'admin');
+  assert.ok(state.ArchivedAt);
 });
 
 test('notification creation exposes the real push delivery result', async () => {
