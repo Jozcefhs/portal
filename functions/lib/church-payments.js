@@ -14,6 +14,11 @@ import { resolveEmailSenderProfile } from './email-service.js';
 import { getSchoolStructure } from './school-scope.js';
 import { getWebBranding } from './web-branding.js';
 import { ensureGivingTypes, resolveGivingType } from './church-funds.js';
+import {
+  ACCOUNTING_BASE_CURRENCY,
+  convertedDonationBaseAmount,
+  normalizeDonationCurrency
+} from './currency-conversion.js';
 import QRCode from 'qrcode';
 
 const PAYSTACK_INIT_URL = 'https://api.paystack.co/transaction/initialize';
@@ -95,10 +100,11 @@ function normalizeDonationInput(input = {}, branchId = 'main') {
   if (!Number.isFinite(amount) || amount <= 0) {
     inputError('Donation amount must be greater than zero.');
   }
-  const currency = clean(input.Currency || input.currency).toUpperCase() || 'NGN';
-  if (!/^[A-Z]{3}$/.test(currency)) {
-    inputError('Currency must be a three-letter code.');
-  }
+  const conversion = normalizeDonationCurrency({ ...input, Amount: amount }, {
+    baseCurrency: ACCOUNTING_BASE_CURRENCY,
+    allowMissingRate: true,
+    rateSource: 'Manual staff rate'
+  });
   const donorName = clean(input.DonorName || input.donorName);
   if (!donorName) inputError('Donor name is required.');
   const donorEmail = normalizeEmail(input.DonorEmail || input.donorEmail);
@@ -111,7 +117,7 @@ function normalizeDonationInput(input = {}, branchId = 'main') {
     DonorName: donorName,
     DonorEmail: donorEmail,
     Amount: amount,
-    Currency: currency,
+    ...conversion,
     PaymentMethod: paymentMethod,
     PaymentType: clean(input.PaymentType || input.paymentType) || 'Donation',
     Notes: clean(input.Notes || input.notes),
@@ -189,21 +195,29 @@ function publicDonationRow(row = {}) {
 export function donationSummary(rows = []) {
   return rows.reduce((memo, row) => {
     const status = lower(row.Status || 'pending');
-    const amount = Number(row.Amount || 0);
-    memo.totalAmount += amount;
+    const originalAmount = Number(row.Amount || 0);
+    const currency = clean(row.TransactionCurrency || row.Currency || ACCOUNTING_BASE_CURRENCY).toUpperCase();
+    const baseAmount = convertedDonationBaseAmount(row, ACCOUNTING_BASE_CURRENCY);
+    memo.byCurrency[currency] = (memo.byCurrency[currency] || 0) + originalAmount;
     memo.count += 1;
+    if (baseAmount === null) {
+      memo.awaitingRate += 1;
+      memo.awaitingRateByCurrency[currency] = (memo.awaitingRateByCurrency[currency] || 0) + originalAmount;
+    } else {
+      memo.totalAmount += baseAmount;
+    }
     if (status === 'paid') {
       memo.paid += 1;
-      memo.paidAmount += amount;
+      if (baseAmount !== null) memo.paidAmount += baseAmount;
     } else {
       memo.pending += 1;
-      memo.pendingAmount += amount;
+      if (baseAmount !== null) memo.pendingAmount += baseAmount;
     }
     const method = clean(row.PaymentMethod || 'CASH').toUpperCase();
-    memo.byMethod[method] = (memo.byMethod[method] || 0) + amount;
-    if (status === 'paid') {
+    if (baseAmount !== null) memo.byMethod[method] = (memo.byMethod[method] || 0) + baseAmount;
+    if (status === 'paid' && baseAmount !== null) {
       const givingType = clean(row.PaymentType || row.GivingTypeName || 'Donation');
-      memo.byType[givingType] = (memo.byType[givingType] || 0) + amount;
+      memo.byType[givingType] = (memo.byType[givingType] || 0) + baseAmount;
       memo.byTypeCount[givingType] = (memo.byTypeCount[givingType] || 0) + 1;
     }
     return memo;
@@ -214,6 +228,10 @@ export function donationSummary(rows = []) {
     paidAmount: 0,
     pendingAmount: 0,
     totalAmount: 0,
+    baseCurrency: ACCOUNTING_BASE_CURRENCY,
+    awaitingRate: 0,
+    awaitingRateByCurrency: {},
+    byCurrency: {},
     byMethod: {},
     byType: {},
     byTypeCount: {}
@@ -336,6 +354,9 @@ export async function saveChurchDonation(env, user, body = {}) {
   const capabilities = requireCapability(user, 'canCollect');
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
   const donation = normalizeDonationInput(body.donation || body.Donation || body, branchId);
+  if (donation.PaymentMethod !== 'ONLINE' && donation.ConversionStatus !== 'Converted') {
+    inputError(`Enter the ${ACCOUNTING_BASE_CURRENCY} exchange rate before recording an offline foreign-currency donation.`);
+  }
   const { givingTypes } = await ensureGivingTypes(env, branchId);
   const givingType = resolveGivingType(
     givingTypes,
@@ -459,6 +480,62 @@ function settingsDocumentForDonation(brevo = {}, organizationProfile = {}, env =
   };
 }
 
+export async function setChurchDonationConversion(env, user, body = {}) {
+  await requireDonationsEdition(env);
+  requireCapability(user, 'canCollect');
+  const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
+  const existing = await findDonationByIdOrReference(env, body, branchId);
+  const sourceId = clean(
+    existing.Reference || existing.GatewayReference || existing.DonationId || existing.ReceiptNo || existing.__id
+  );
+  const postedJournals = sourceId
+    ? await queryCollection(env, 'accountingJournals', {
+      filters: [{ field: 'SourceId', op: '==', value: sourceId }],
+      limit: 2
+    })
+    : [];
+  if (postedJournals.some((journal) => lower(journal.Status || 'posted') === 'posted')) {
+    inputError('This donation is already posted to accounting. Use an adjusting journal instead of changing its frozen rate.', 409);
+  }
+
+  const conversion = normalizeDonationCurrency({
+    ...existing,
+    ExchangeRate: body.ExchangeRate ?? body.exchangeRate,
+    ExchangeRateDate: body.ExchangeRateDate || body.exchangeRateDate || existing.PaidAt || existing.CreatedAt,
+    ExchangeRateSource: clean(body.ExchangeRateSource || body.exchangeRateSource) || `Manual rate entered by ${actorName(user)}`
+  }, {
+    baseCurrency: ACCOUNTING_BASE_CURRENCY,
+    allowMissingRate: false,
+    rateSource: `Manual rate entered by ${actorName(user)}`
+  });
+
+  const now = nowIso();
+  const donationId = safeChurchDocumentId(existing.__id || existing.DonationId || existing.Reference);
+  const path = churchCollectionPath(CHURCH_COLLECTIONS.donations, branchId);
+  const updated = {
+    ...existing,
+    ...conversion,
+    UpdatedAt: now,
+    UpdatedBy: actorName(user)
+  };
+  delete updated.__id;
+  delete updated.__name;
+  await upsertDocument(env, path, donationId, updated);
+  await writeDonationAudit(
+    env,
+    branchId,
+    user,
+    'SET EXCHANGE RATE',
+    updated.DonationId,
+    `1 ${updated.TransactionCurrency} = ${updated.BaseCurrency} ${updated.ExchangeRate}; base amount ${updated.BaseCurrency} ${updated.BaseAmount}`
+  );
+  return {
+    ok: true,
+    message: `Exchange rate frozen. ${updated.TransactionCurrency} ${updated.Amount} = ${updated.BaseCurrency} ${updated.BaseAmount}.`,
+    donation: publicDonationRow(updated)
+  };
+}
+
 function receiptLogoSource(webBranding = {}, organizationProfile = {}, env = {}) {
   const publicPortalUrl = clean(env.PUBLIC_PORTAL_URL || env.CANONICAL_PORTAL_URL || 'https://digc-suite.pages.dev')
     .replace(/\/+$/, '');
@@ -530,6 +607,17 @@ export function buildDonationReceiptHtml(context, link = '') {
     [isPaymentRequest ? 'Payment Reference' : 'Reference', context.Reference || context.ReceiptNo || context.DonationId || ''],
     ['Status', context.Status || 'Pending']
   ];
+  const transactionCurrency = clean(context.TransactionCurrency || context.Currency || ACCOUNTING_BASE_CURRENCY).toUpperCase();
+  const baseCurrency = clean(context.BaseCurrency || ACCOUNTING_BASE_CURRENCY).toUpperCase();
+  const baseAmount = convertedDonationBaseAmount(context, baseCurrency);
+  if (transactionCurrency !== baseCurrency && baseAmount !== null) {
+    lineItems.splice(3, 0,
+      [`${baseCurrency} Equivalent`, formatMoney(baseAmount, baseCurrency)],
+      ['Exchange Rate', `1 ${transactionCurrency} = ${baseCurrency} ${context.ExchangeRate}`]
+    );
+  } else if (transactionCurrency !== baseCurrency) {
+    lineItems.splice(3, 0, ['Conversion', `Awaiting ${baseCurrency} exchange rate`]);
+  }
   if (!isPaymentRequest && context.ReceiptNo) {
     lineItems.splice(5, 0, ['Receipt Number', context.ReceiptNo]);
   }
@@ -1020,7 +1108,12 @@ export async function initChurchDonationPayment(env, user, body = {}, requestUrl
   if (lower(body.PublicGiving || body.publicGiving) === 'yes' && lower(givingType.AllowOnline || 'YES') === 'no') {
     inputError('The selected giving type is not available for online giving.', 400);
   }
+  const existingDonationId = clean(body.DonationId || body.donationId);
+  const existingDonation = existingDonationId
+    ? await findDonationInBranch(env, branchId, clean(body.Reference || body.reference), existingDonationId).catch(() => null)
+    : null;
   const donation = normalizeDonationInput({
+    ...(existingDonation || {}),
     ...(body || {}),
     PaymentMethod: 'ONLINE',
     PaymentType: clean(givingType.Name)
@@ -1038,6 +1131,11 @@ export async function initChurchDonationPayment(env, user, body = {}, requestUrl
     paymentTypeName: donation.PaymentType,
     currency: donation.Currency,
     amount: donation.Amount,
+    baseCurrency: donation.BaseCurrency,
+    baseAmount: donation.BaseAmount,
+    exchangeRate: donation.ExchangeRate,
+    exchangeRateDate: donation.ExchangeRateDate,
+    conversionStatus: donation.ConversionStatus,
     subject: clean(body.ReceiptSubject || body.receiptSubject || ''),
     message: clean(body.ReceiptMessage || body.receiptMessage || ''),
     notes: donation.Notes,
@@ -1321,6 +1419,9 @@ export async function handleChurchDonationAction(env, user, body = {}) {
   if (['setstatus', 'markpaid', 'updatestatus'].includes(action)) {
     return setChurchDonationStatus(env, user, body, body.Status || body.status);
   }
+  if (['setconversion', 'setexchangerate', 'freezeconversion'].includes(action)) {
+    return setChurchDonationConversion(env, user, body);
+  }
   if (['sendreceipt', 'sendchurchdonationreceipt'].includes(action)) {
     return sendChurchDonationReceiptAction(env, user, body);
   }
@@ -1335,6 +1436,7 @@ export default {
   listChurchDonations,
   saveChurchDonation,
   setChurchDonationStatus,
+  setChurchDonationConversion,
   initChurchDonationPayment,
   initPublicChurchDonationPayment,
   getPublicChurchGivingTypes,

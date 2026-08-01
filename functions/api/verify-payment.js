@@ -192,6 +192,18 @@ export async function onRequestPost(context) {
     const resolvedPaymentType = paymentType(metadataPaymentType || storedIntentType);
     const isChurchDonation = resolvedPaymentType === 'churchdonation';
     const isOrganizationCommerce = resolvedPaymentType === 'organizationcommerce';
+    if (isChurchDonation) {
+      const requestedCurrency = clean(meta.currency || meta.Currency).toUpperCase();
+      const settledCurrency = clean(tx.currency || 'NGN').toUpperCase();
+      if (requestedCurrency && requestedCurrency !== settledCurrency) {
+        return Response.json({ ok: false, message: 'The verified donation currency does not match the initialized payment.' }, { status: 409 });
+      }
+      const requestedDonationAmount = Number(meta.amount || meta.Amount || 0);
+      const settledRequestedAmount = Number(tx.requested_amount || tx.amount || 0) / 100;
+      if (requestedDonationAmount > 0 && Math.abs(requestedDonationAmount - settledRequestedAmount) > 0.01) {
+        return Response.json({ ok: false, message: 'The verified donation amount does not match the initialized payment.' }, { status: 409 });
+      }
+    }
     if (isOrganizationCommerce && !intent) {
       return Response.json({
         ok: false,
@@ -337,6 +349,7 @@ export async function onRequestPost(context) {
           GrossAmount: amount,
           GatewayFee: gatewayFee,
           NetAmount: netAmount,
+          Currency: clean(tx.currency || 'NGN').toUpperCase(),
           Gateway: 'Paystack',
           GatewayReference: tx.reference,
           UpdatedBy: 'Paystack Verification'
@@ -364,6 +377,7 @@ export async function onRequestPost(context) {
               GrossAmount: amount,
               GatewayFee: gatewayFee,
               NetAmount: netAmount,
+              Currency: clean(tx.currency || 'NGN').toUpperCase(),
               PaidAt: tx.paid_at || tx.paidAt || new Date().toISOString()
             });
           } catch (accountingError) {

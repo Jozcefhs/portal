@@ -8,7 +8,7 @@
   <meta name="theme-color" content="#071b38">
   <link rel="icon" href="images/Logo.png">
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260801-batch-department-assignment">
+  <link rel="stylesheet" href="css/style.css?v=20260801-currency-conversion">
 </head>
 <body class="giving-page">
   <main class="giving-shell">
@@ -53,7 +53,7 @@
             </select>
           </label>
           <label>Currency
-            <select name="Currency" required>
+            <select name="Currency" id="givingCurrency" required>
               <option value="NGN">NGN — Nigerian Naira</option>
               <option value="USD">USD — US Dollar</option>
               <option value="GBP">GBP — British Pound</option>
@@ -61,6 +61,7 @@
               <option value="GHS">GHS — Ghanaian Cedi</option>
               <option value="KES">KES — Kenyan Shilling</option>
             </select>
+            <small id="givingCurrencyNote">Accounting base currency: NGN.</small>
           </label>
         </div>
         <label>Amount
@@ -76,6 +77,6 @@
     </section>
   </main>
   <script src="js/site-config.js?v=20260728-quota-safety"></script>
-  <script src="js/give.js?v=20260729-public-giving"></script>
+  <script src="js/give.js?v=20260801-currency-conversion"></script>
 </body>
 </html>

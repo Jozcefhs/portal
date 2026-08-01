@@ -102,13 +102,18 @@ export async function onRequestPost(context) {
     } else {
       result = await handleChurchDonationAction(env, user, body);
     }
+    const conversionAction = ['setconversion', 'setexchangerate', 'freezeconversion'].includes(action);
+    const convertedPaidDonation = conversionAction
+      && ['paid', 'completed'].includes(clean(result?.donation?.Status || result?.donation?.PaymentStatus).toLowerCase());
     if (
       result?.donation
-      && ['save', 'savedonation', 'add', 'setstatus', 'markpaid', 'updatestatus'].includes(action)
-      && isPaidOfflineDonation(result.donation)
+      && ['save', 'savedonation', 'add', 'setstatus', 'markpaid', 'updatestatus', 'setconversion', 'setexchangerate', 'freezeconversion'].includes(action)
+      && (isPaidOfflineDonation(result.donation) || convertedPaidDonation)
     ) {
       try {
-        const journal = await postPaidOfflineDonation(env, result.donation);
+        const journal = conversionAction
+          ? await postChurchDonationToAccounting(env, result.donation)
+          : await postPaidOfflineDonation(env, result.donation);
         result.accountingStatus = journal ? 'Posted' : 'Not applicable';
         if (journal) result.message = `${result.message} Accounting posted.`;
       } catch (error) {

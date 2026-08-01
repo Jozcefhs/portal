@@ -5,6 +5,8 @@ const givingOrganisation = document.getElementById('givingOrganisation');
 const givingLogo = document.getElementById('givingLogo');
 const givingBranch = document.getElementById('givingBranch');
 const givingType = document.getElementById('givingType');
+const givingCurrency = document.getElementById('givingCurrency');
+const givingCurrencyNote = document.getElementById('givingCurrencyNote');
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -50,6 +52,16 @@ async function loadGivingTypes() {
 }
 
 loadGivingTypes();
+
+function updateGivingCurrencyNote() {
+  const currency = clean(givingCurrency?.value || 'NGN').toUpperCase();
+  if (givingCurrencyNote) givingCurrencyNote.textContent = currency === 'NGN'
+    ? 'Accounting base currency: NGN.'
+    : `Your payment remains ${currency}. The church will freeze the applicable NGN exchange rate before it enters combined income totals.`;
+}
+
+givingCurrency?.addEventListener('change', updateGivingCurrencyNote);
+updateGivingCurrencyNote();
 
 window.siteProfileReady.then((profile) => {
   const name = clean(profile.OrganisationName || profile.OrganizationName || profile.SchoolName) || 'Dynamax';

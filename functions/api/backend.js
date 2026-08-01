@@ -42,6 +42,12 @@ import {
   resolveGivingType
 } from '../lib/church-funds.js';
 import { handleChurchOfferingAction } from '../lib/church-offerings.js';
+import {
+  ACCOUNTING_BASE_CURRENCY,
+  convertedDonationBaseAmount,
+  normalizeCurrencyCode,
+  roundMoney
+} from '../lib/currency-conversion.js';
 import { handleOrganizationDepartmentAction } from '../lib/organization-departments.js';
 import { assertOrganizationDepartmentWorkspaceAccess } from '../lib/organization-department-gate.js';
 import { handleExecutiveOfficeAction } from '../lib/executive-correspondence.js';
@@ -4601,11 +4607,42 @@ export function buildChurchDonationAccountingJournal(donation = {}, settlement =
     settlement.Reference || donation.Reference || donation.GatewayReference
       || donation.DonationId || donation.ReceiptNo || donation.__id
   );
-  const grossAmount = asMoneyNumber(
+  const originalGrossAmount = asMoneyNumber(
     settlement.GrossAmount || donation.GrossAmount || donation.Amount
   );
   if (status !== 'paid' && status !== 'completed') return null;
-  if (!sourceId || grossAmount <= 0) return null;
+  if (!sourceId || originalGrossAmount <= 0) return null;
+
+  const donationCurrency = normalizeCurrencyCode(
+    donation.TransactionCurrency || donation.Currency,
+    ACCOUNTING_BASE_CURRENCY
+  );
+  const settlementCurrencyText = clean(settlement.TransactionCurrency || settlement.Currency).toUpperCase();
+  const transactionCurrency = normalizeCurrencyCode(settlementCurrencyText || donationCurrency, donationCurrency);
+  if (settlementCurrencyText && transactionCurrency !== donationCurrency) {
+    const error = new Error('The settled donation currency does not match the currency recorded when payment was initialized.');
+    error.status = 409;
+    throw error;
+  }
+  const baseCurrency = normalizeCurrencyCode(donation.BaseCurrency, ACCOUNTING_BASE_CURRENCY);
+  if (baseCurrency !== ACCOUNTING_BASE_CURRENCY) {
+    const error = new Error(`Accounting journals must be posted in ${ACCOUNTING_BASE_CURRENCY}.`);
+    error.status = 409;
+    throw error;
+  }
+  const storedBaseAmount = convertedDonationBaseAmount(donation, ACCOUNTING_BASE_CURRENCY);
+  const exchangeRate = transactionCurrency === baseCurrency ? 1 : Number(donation.ExchangeRate);
+  if (transactionCurrency !== baseCurrency && (!Number.isFinite(exchangeRate) || exchangeRate <= 0 || storedBaseAmount === null)) {
+    const error = new Error(`Enter and freeze the ${baseCurrency} exchange rate before posting this ${transactionCurrency} donation.`);
+    error.status = 409;
+    throw error;
+  }
+  const originalDonationAmount = asMoneyNumber(donation.Amount);
+  const baseGrossAmount = transactionCurrency === baseCurrency
+    ? originalGrossAmount
+    : (Math.abs(originalGrossAmount - originalDonationAmount) <= 0.01
+        ? storedBaseAmount
+        : roundMoney(originalGrossAmount * exchangeRate));
 
   const method = clean(settlement.PaymentMethod || donation.PaymentMethod || donation.Method);
   const gateway = clean(settlement.Gateway || donation.Gateway);
@@ -4620,9 +4657,13 @@ export function buildChurchDonationAccountingJournal(donation = {}, settlement =
     : 0;
   const suppliedNet = online
     ? asMoneyNumber(settlement.NetAmount ?? donation.NetAmount)
-    : grossAmount;
-  const netAmount = Math.min(grossAmount, suppliedNet > 0 ? suppliedNet : Math.max(0, grossAmount - suppliedFee));
-  const gatewayFee = Math.max(0, asMoneyNumber(grossAmount - netAmount));
+    : originalGrossAmount;
+  const originalNetAmount = Math.min(originalGrossAmount, suppliedNet > 0 ? suppliedNet : Math.max(0, originalGrossAmount - suppliedFee));
+  const originalGatewayFee = Math.max(0, asMoneyNumber(originalGrossAmount - originalNetAmount));
+  const baseNetAmount = transactionCurrency === baseCurrency
+    ? originalNetAmount
+    : roundMoney(originalNetAmount * exchangeRate);
+  const baseGatewayFee = Math.max(0, asMoneyNumber(baseGrossAmount - baseNetAmount));
   const branchId = clean(donation.BranchId || settlement.BranchId || 'main').toLowerCase() || 'main';
   const description = clean(donation.PaymentType || settlement.PaymentType || 'Donation');
   const revenueAccountCode = clean(
@@ -4635,17 +4676,17 @@ export function buildChurchDonationAccountingJournal(donation = {}, settlement =
   const lines = [
     {
       AccountCode: online ? '1030' : accountingCashAccountFor(method, gateway),
-      Debit: netAmount,
+      Debit: baseNetAmount,
       Credit: 0,
       Description: online ? 'Online donation net settlement' : `${method || 'Donation'} received`,
       Department: 'Donations',
       CostCentre: branchId
     }
   ];
-  if (gatewayFee > 0) {
+  if (baseGatewayFee > 0) {
     lines.push({
       AccountCode: '6060',
-      Debit: gatewayFee,
+      Debit: baseGatewayFee,
       Credit: 0,
       Description: 'Donation payment processing charge',
       Department: 'Donations',
@@ -4655,7 +4696,7 @@ export function buildChurchDonationAccountingJournal(donation = {}, settlement =
   lines.push({
     AccountCode: revenueAccountCode,
     Debit: 0,
-    Credit: grossAmount,
+    Credit: baseGrossAmount,
     Description: `${description} income`,
     Department: 'Donations',
     CostCentre: branchId
@@ -4678,13 +4719,25 @@ export function buildChurchDonationAccountingJournal(donation = {}, settlement =
     RevenueAccountCode: revenueAccountCode,
     PaymentMethod: method || (online ? 'ONLINE' : ''),
     Gateway: gateway,
-    Currency: clean(settlement.Currency || donation.Currency || 'NGN').toUpperCase(),
+    Currency: baseCurrency,
+    TransactionCurrency: transactionCurrency,
+    OriginalCurrency: transactionCurrency,
+    OriginalAmount: originalGrossAmount,
+    OriginalGrossAmount: originalGrossAmount,
+    OriginalNetAmount: originalNetAmount,
+    OriginalGatewayFee: originalGatewayFee,
+    BaseCurrency: baseCurrency,
+    BaseAmount: baseGrossAmount,
+    ExchangeRate: exchangeRate,
+    ExchangeRateDate: clean(donation.ExchangeRateDate || settlement.ExchangeRateDate),
+    ExchangeRateSource: clean(donation.ExchangeRateSource || settlement.ExchangeRateSource) || (transactionCurrency === baseCurrency ? 'Base currency' : ''),
+    ConversionStatus: 'Converted',
     Department: 'Donations',
     CostCentre: branchId,
     RecordedBy: clean(donation.UpdatedBy || settlement.RecordedBy || 'System'),
     Lines: lines,
-    TotalDebit: grossAmount,
-    TotalCredit: grossAmount,
+    TotalDebit: baseGrossAmount,
+    TotalCredit: baseGrossAmount,
     CreatedAt: clean(donation.PaidAt || donation.UpdatedAt || donation.CreatedAt || nowIso()),
     UpdatedAt: nowIso(),
     System: 'YES'
@@ -4788,6 +4841,18 @@ export async function saveAccountingJournal(env, body, system = false) {
     PaymentMethod: clean(body.PaymentMethod || body.paymentMethod || body.Method || body.method || existing.PaymentMethod),
     Gateway: clean(body.Gateway || body.gateway || existing.Gateway),
     Currency: clean(body.Currency || body.currency || existing.Currency).toUpperCase(),
+    TransactionCurrency: clean(body.TransactionCurrency || body.transactionCurrency || existing.TransactionCurrency).toUpperCase(),
+    OriginalCurrency: clean(body.OriginalCurrency || body.originalCurrency || existing.OriginalCurrency).toUpperCase(),
+    OriginalAmount: asMoneyNumber(body.OriginalAmount ?? body.originalAmount ?? existing.OriginalAmount),
+    OriginalGrossAmount: asMoneyNumber(body.OriginalGrossAmount ?? body.originalGrossAmount ?? existing.OriginalGrossAmount),
+    OriginalNetAmount: asMoneyNumber(body.OriginalNetAmount ?? body.originalNetAmount ?? existing.OriginalNetAmount),
+    OriginalGatewayFee: asMoneyNumber(body.OriginalGatewayFee ?? body.originalGatewayFee ?? existing.OriginalGatewayFee),
+    BaseCurrency: clean(body.BaseCurrency || body.baseCurrency || existing.BaseCurrency).toUpperCase(),
+    BaseAmount: asMoneyNumber(body.BaseAmount ?? body.baseAmount ?? existing.BaseAmount),
+    ExchangeRate: Number(body.ExchangeRate ?? body.exchangeRate ?? existing.ExchangeRate) || 0,
+    ExchangeRateDate: clean(body.ExchangeRateDate || body.exchangeRateDate || existing.ExchangeRateDate),
+    ExchangeRateSource: clean(body.ExchangeRateSource || body.exchangeRateSource || existing.ExchangeRateSource),
+    ConversionStatus: clean(body.ConversionStatus || body.conversionStatus || existing.ConversionStatus),
     Department: clean(body.Department || body.department),
     CostCentre: clean(body.CostCentre || body.costCentre),
     AcademicSession: clean(body.AcademicSession || body.academicSession),

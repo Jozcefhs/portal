@@ -250,6 +250,17 @@ function money(value) {
     : clean(value);
 }
 
+function moneyInCurrency(value, currency = 'NGN') {
+  const amount = Number(String(value ?? '0').replace(/[,\s]/g, ''));
+  const code = clean(currency || 'NGN').toUpperCase();
+  if (!Number.isFinite(amount)) return clean(value);
+  try {
+    return new Intl.NumberFormat('en-NG', { style: 'currency', currency: code }).format(amount);
+  } catch {
+    return `${code} ${amount.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+}
+
 function setStatus(element, message, type = '') {
   element.textContent = message || '';
   element.className = type ? `status ${type}` : 'status';
@@ -3543,6 +3554,13 @@ function printChurchDonationReceipt(donation = {}) {
   } catch {
     formattedAmount = `${currency} ${Number(donation.Amount || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
+  const baseCurrency = clean(donation.BaseCurrency || 'NGN').toUpperCase();
+  const baseAmount = clean(donation.BaseAmount);
+  if (currency !== baseCurrency) {
+    formattedAmount = baseAmount
+      ? `${formattedAmount} · ${moneyInCurrency(baseAmount, baseCurrency)} equivalent at 1 ${currency} = ${baseCurrency} ${donation.ExchangeRate}`
+      : `${formattedAmount} · Awaiting ${baseCurrency} exchange rate`;
+  }
   const receiptNo = clean(donation.ReceiptNo || donation.DonationId || donation.__id);
   const reference = clean(donation.Reference || donation.PaymentReference || donation.DonationId);
   const paidAt = clean(donation.PaidAt || donation.PaymentDate || donation.UpdatedAt || donation.Timestamp || donation.CreatedAt);
@@ -3570,6 +3588,10 @@ function showChurchGivingQr(data = {}) {
   qrWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(givingType)} payment QR</title><style>
     @page{size:A5;margin:12mm}*{box-sizing:border-box}body{margin:0;background:#edf3f8;color:#17314b;font:15px/1.5 Arial,sans-serif}.sheet{max-width:540px;margin:24px auto;padding:28px;border-top:7px solid #d49a00;border-radius:16px;background:#fff;box-shadow:0 14px 35px #173b5820;text-align:center}.eyebrow{margin:0;color:#087d68;font-size:12px;font-weight:bold;letter-spacing:1.3px;text-transform:uppercase}h1{margin:5px 0 4px;color:#164a78;font-size:25px}.amount{margin:0 0 18px;color:#36536e}.qr{width:min(330px,90%);margin:0 auto;padding:12px;border:1px solid #cbd9e7;border-radius:14px;background:#fff}.qr svg{display:block;width:100%;height:auto}.instruction{margin:18px auto 8px;max-width:390px}.reference{color:#637a90;font-size:12px}.actions{display:flex;justify-content:center;gap:8px;margin-top:20px}.actions button,.actions a{display:inline-flex;align-items:center;min-height:40px;padding:8px 14px;border:0;border-radius:8px;background:#1769e0;color:#fff;font-weight:bold;text-decoration:none;cursor:pointer}.actions a{background:#087d68}@media print{body{background:#fff}.sheet{margin:0;box-shadow:none}.actions{display:none}}</style></head><body><main class="sheet"><p class="eyebrow">${generic ? 'Reusable self-service giving' : 'Secure online giving'}</p><h1>${escapeHtml(organisation)}</h1><p class="amount">${generic ? 'Donations, tithes and offerings' : `${escapeHtml(givingType)} for ${escapeHtml(donorName)} &middot; ${escapeHtml(money(donation.Amount || 0))}`}</p><div class="qr">${data.qrSvg || ''}</div><p class="instruction">${generic ? 'Scan this reusable code to enter your details, choose a gift type and amount, then pay securely.' : 'Scan this code with a phone camera to open the secure payment page and complete the gift.'}</p>${reference ? `<p class="reference">Reference: ${escapeHtml(reference)}</p>` : ''}<div class="actions"><button type="button" onclick="window.print()">Print QR</button><a href="${escapeHtml(data.paymentLink)}" target="_blank" rel="noopener">${generic ? 'Open giving page' : 'Open payment page'}</a></div></main></body></html>`);
   qrWindow.document.close();
+  if (!generic) {
+    const amountLine = qrWindow.document.querySelector('.amount');
+    if (amountLine) amountLine.textContent = `${givingType} for ${donorName} · ${moneyInCurrency(donation.Amount || 0, donation.TransactionCurrency || donation.Currency || 'NGN')}`;
+  }
 }
 
 async function loadChurchDonations() {
@@ -3599,6 +3621,9 @@ async function loadChurchDonations() {
       .sort((left, right) => clean(right[0]).localeCompare(clean(left[0])))
       .map(([method, value]) => `<div><small>${escapeHtml(method || 'Unknown')}</small><strong>${money(value)}</strong><span>Collected</span></div>`)
       .join('');
+    const awaitingRateText = Number(summary.awaitingRate || 0)
+      ? `${Number(summary.awaitingRate)} foreign-currency gift${Number(summary.awaitingRate) === 1 ? '' : 's'} awaiting an NGN rate`
+      : 'All foreign-currency gifts converted';
 
     panelEl.innerHTML = `
       <div class="workflow-intro">
@@ -3610,10 +3635,10 @@ async function loadChurchDonations() {
         <span class="compact-row-actions"><button type="button" id="genericChurchGivingQr">▦ Generic Giving QR</button>${capabilities.canCollect ? '<button type="button" id="syncChurchDonationAccounting">Sync paid giving</button>' : ''}<button type="button" id="refreshChurchDonations">Refresh</button></span>
       </div>
       <div class="workflow-kpis">
-        <div><small>Total</small><strong>${money(summary.totalAmount || 0)}</strong><span>All records</span></div>
+        <div><small>NGN equivalent</small><strong>${money(summary.totalAmount || 0)}</strong><span>Converted records only</span></div>
         <div><small>Paid</small><strong>${money((summary.paid || 0) > 0 ? summary.paidAmount || summary.totalAmount : 0)}</strong><span>Recorded as paid</span></div>
         <div><small>Pending</small><strong>${money((summary.pending || 0) > 0 ? summary.pendingAmount || 0 : 0)}</strong><span>Awaiting settlement</span></div>
-        <div><small>Pending records</small><strong>${escapeHtml(summary.pending || 0)}</strong><span>Awaiting processing</span></div>
+        <div><small>Exchange rates</small><strong>${escapeHtml(summary.awaitingRate || 0)}</strong><span>${escapeHtml(awaitingRateText)}</span></div>
       </div>
       ${methodCards ? `<div class="workflow-kpis">${methodCards}</div>` : ''}
       <div class="church-dashboard-grid giving-source-chart">
@@ -3627,6 +3652,9 @@ async function loadChurchDonations() {
             <label>Donor email <input name="DonorEmail" type="email" required></label>
             <label>Amount <input name="Amount" type="number" min="0.01" step="0.01" required></label>
             <label>Currency <select name="Currency">${currencies.map((currency) => `<option value="${escapeHtml(currency)}">${escapeHtml(currency)}</option>`).join('')}</select></label>
+            <label id="churchDonationExchangeRateField">NGN per 1 foreign currency <input name="ExchangeRate" type="number" min="0.000001" step="0.000001" value="1"><small data-exchange-rate-help>NGN donations use a rate of 1.</small></label>
+            <label id="churchDonationExchangeRateDateField">Rate date <input name="ExchangeRateDate" type="date" value="${new Date().toISOString().slice(0, 10)}"></label>
+            <input name="ExchangeRateSource" type="hidden" value="Manual staff rate">
             <label>Method <select name="PaymentMethod">${methods.map((method) => `<option value="${escapeHtml(method)}">${escapeHtml(method)}</option>`).join('')}</select></label>
             <label>Giving type <select name="PaymentType">${paymentTypes.map((paymentType) => `<option value="${escapeHtml(paymentType)}">${escapeHtml(paymentType)}</option>`).join('')}</select></label>
             <label>Receipt subject (after payment) <input name="ReceiptSubject" value="Thank you for your donation"></label>
@@ -3646,7 +3674,18 @@ async function loadChurchDonations() {
         { label: 'Receipt', value: (row) => pick(row, ['ReceiptNo', '__id']) },
         { label: 'Donor', value: (row) => pick(row, ['DonorName']) },
         { label: 'Email', value: (row) => pick(row, ['DonorEmail']) },
-        { label: 'Amount', value: (row) => money(pick(row, ['Amount'])) },
+        { label: 'Original amount', value: (row) => moneyInCurrency(pick(row, ['Amount']), pick(row, ['TransactionCurrency', 'Currency']) || 'NGN') },
+        { label: 'NGN equivalent', value: (row) => {
+          const currency = clean(pick(row, ['TransactionCurrency', 'Currency']) || 'NGN').toUpperCase();
+          const baseText = clean(pick(row, ['BaseAmount']));
+          const baseAmount = Number(baseText);
+          if (currency !== 'NGN' && (!baseText || !Number.isFinite(baseAmount) || baseAmount <= 0)) return 'Awaiting rate';
+          return money(currency === 'NGN' && !baseText ? pick(row, ['Amount']) : baseAmount);
+        } },
+        { label: 'Conversion', value: (row) => {
+          const currency = clean(pick(row, ['TransactionCurrency', 'Currency']) || 'NGN').toUpperCase();
+          return currency === 'NGN' ? 'Base currency' : (pick(row, ['ExchangeRate']) ? `1 ${currency} = NGN ${pick(row, ['ExchangeRate'])} · ${pick(row, ['ExchangeRateDate'])}` : 'Rate required');
+        } },
         { label: 'Method', value: (row) => pick(row, ['PaymentMethod']) },
         { label: 'Type', value: (row) => pick(row, ['PaymentType']) },
         { label: 'Reference', value: (row) => pick(row, ['Reference', 'DonationId']) },
@@ -3664,6 +3703,8 @@ async function loadChurchDonations() {
             const paymentLinkSentAt = clean(pick(row, ['PaymentLinkSentAt']));
             const paymentLinkSentTo = clean(pick(row, ['PaymentLinkSentTo']));
             const paymentLinkSent = Boolean(paymentLinkSentAt || paymentLinkSentTo);
+            const transactionCurrency = clean(pick(row, ['TransactionCurrency', 'Currency']) || 'NGN').toUpperCase();
+            const converted = transactionCurrency === 'NGN' || Number(pick(row, ['BaseAmount'])) > 0;
             let stateAction = '';
             if (receiptSent) {
               stateAction = '<button type="button" class="table-action" disabled aria-disabled="true">Receipt sent</button>';
@@ -3681,8 +3722,11 @@ async function loadChurchDonations() {
             const qrAction = status === 'pending' && clean(pick(row, ['PaymentLink']))
               ? `<button type="button" class="compact-icon-action" data-donation-qr="${escapeHtml(donationId)}" aria-label="Generate payment QR for ${escapeHtml(donationId)}" title="Generate payment QR"><span aria-hidden="true">&#9638;</span></button>`
               : '';
-            return stateAction || printAction || qrAction
-              ? `<span class="compact-row-actions">${stateAction}${qrAction}${printAction}</span>`
+            const rateAction = !converted && canCollect
+              ? `<button type="button" class="table-action" data-donation-rate="${escapeHtml(donationId)}" data-donation-currency="${escapeHtml(transactionCurrency)}">Set NGN rate</button>`
+              : '';
+            return stateAction || printAction || qrAction || rateAction
+              ? `<span class="compact-row-actions">${rateAction}${stateAction}${qrAction}${printAction}</span>`
               : '';
           }
         }
@@ -3696,6 +3740,33 @@ async function loadChurchDonations() {
       ])}`;
 
     const form = document.getElementById('churchDonationForm');
+    const syncDonationConversionFields = () => {
+      if (!form) return;
+      const currency = clean(form.elements.Currency?.value || 'NGN').toUpperCase();
+      const rateInput = form.elements.ExchangeRate;
+      const dateInput = form.elements.ExchangeRateDate;
+      const help = form.querySelector('[data-exchange-rate-help]');
+      const foreign = currency !== 'NGN';
+      if (rateInput) {
+        const previousCurrency = clean(rateInput.dataset.currency);
+        rateInput.disabled = !foreign;
+        rateInput.required = foreign;
+        if (!foreign) rateInput.value = '1';
+        else if (rateInput.value === '1' || (previousCurrency && previousCurrency !== currency)) rateInput.value = '';
+        rateInput.dataset.currency = currency;
+      }
+      if (dateInput) {
+        dateInput.disabled = !foreign;
+        dateInput.required = foreign;
+        if (foreign && !dateInput.value) dateInput.value = new Date().toISOString().slice(0, 10);
+      }
+      if (help) help.textContent = foreign
+        ? `Enter the NGN value of 1 ${currency}. This rate will be frozen for audit.`
+        : 'NGN donations use a rate of 1.';
+    };
+    form?.elements.Currency?.addEventListener('change', syncDonationConversionFields);
+    form?.addEventListener('reset', () => setTimeout(syncDonationConversionFields, 0));
+    syncDonationConversionFields();
     form?.addEventListener('submit', async (event) => {
       event.preventDefault();
       const status = document.getElementById('churchDonationStatus');
@@ -3746,6 +3817,39 @@ async function loadChurchDonations() {
       const donationId = clean(button.dataset.printDonation);
       const donation = (data.donations || []).find((item) => clean(item.DonationId || item.__id) === donationId);
       printChurchDonationReceipt(donation);
+    }));
+
+    panelEl.querySelectorAll('[data-donation-rate]').forEach((button) => button.addEventListener('click', async () => {
+      const donationId = clean(button.dataset.donationRate);
+      const currency = clean(button.dataset.donationCurrency).toUpperCase();
+      const row = (data.donations || []).find((item) => clean(item.DonationId || item.__id) === donationId);
+      const entered = window.prompt(`Enter the NGN value of 1 ${currency}. The rate will be frozen for this donation:`, '');
+      if (entered === null) return;
+      const exchangeRate = Number(clean(entered).replace(/,/g, ''));
+      if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
+        setStatus(document.getElementById('churchDonationStatus') || dashboardStatus, 'Enter a valid exchange rate greater than zero.', 'bad');
+        return;
+      }
+      const normalText = button.textContent;
+      setButtonLoading(button, true, 'Saving rate...', normalText);
+      try {
+        const updated = await churchDonationRequest('setconversion', {
+          DonationId: donationId,
+          ExchangeRate: exchangeRate,
+          ExchangeRateDate: clean(row?.PaidAt || row?.CreatedAt).slice(0, 10) || new Date().toISOString().slice(0, 10),
+          ExchangeRateSource: 'Manual staff rate'
+        });
+        await loadChurchDonations();
+        setStatus(
+          document.getElementById('churchDonationStatus') || dashboardStatus,
+          updated.message,
+          updated.accountingStatus === 'Pending' ? 'bad' : 'ok'
+        );
+      } catch (error) {
+        setStatus(document.getElementById('churchDonationStatus') || dashboardStatus, error.message || String(error), 'bad');
+      } finally {
+        if (button.isConnected) setButtonLoading(button, false, 'Saving rate...', normalText);
+      }
     }));
 
     panelEl.querySelectorAll('[data-donation-qr]').forEach((button) => button.addEventListener('click', async () => {
@@ -3832,6 +3936,12 @@ async function loadChurchDonations() {
             DonorEmail: row?.DonorEmail,
             Amount: row?.Amount,
             Currency: row?.Currency || 'NGN',
+            TransactionCurrency: row?.TransactionCurrency || row?.Currency || 'NGN',
+            BaseCurrency: row?.BaseCurrency || 'NGN',
+            BaseAmount: row?.BaseAmount,
+            ExchangeRate: row?.ExchangeRate,
+            ExchangeRateDate: row?.ExchangeRateDate,
+            ExchangeRateSource: row?.ExchangeRateSource,
             PaymentMethod: 'ONLINE',
             PaymentType: row?.PaymentType || 'Donation',
             ReceiptNo: row?.ReceiptNo,
@@ -4194,6 +4304,9 @@ function renderIncomeAnalytics(data) {
     ['monthly', 'Monthly'],
     ['quarterly', 'Quarterly']
   ].map(([key, label]) => `<button type="button" data-income-period="${key}" class="${period.mode === key ? 'active' : ''}">${label}</button>`).join('');
+  const excludedCurrencyNotice = Number(data.summary?.excludedUnconvertedTransactions || 0)
+    ? `<p class="status bad">${escapeHtml(data.summary.excludedUnconvertedTransactions)} posted foreign-currency journal${Number(data.summary.excludedUnconvertedTransactions) === 1 ? '' : 's'} excluded because no frozen NGN conversion is available.</p>`
+    : '';
   panelEl.innerHTML = `
     <div class="income-analytics" id="incomeAnalyticsReport">
       <div class="workflow-intro income-report-heading">
@@ -4214,6 +4327,7 @@ function renderIncomeAnalytics(data) {
         </form>
       </section>
       <div class="income-report-period"><span>${escapeHtml(period.dateFrom)} to ${escapeHtml(period.dateTo)}</span><strong>${escapeHtml(money(data.summary?.totalIncome))}</strong><small>${escapeHtml(data.summary?.transactionCount || 0)} transaction${Number(data.summary?.transactionCount) === 1 ? '' : 's'}</small></div>
+      ${excludedCurrencyNotice}
       <section class="income-chart-card"><div class="income-card-heading"><div><p class="eyebrow">Income dynamics</p><h3>Income over time</h3></div><span>Hover or tap a bar for the exact value</span></div>${renderIncomeBars(data.timeline || [])}</section>
       <section class="income-distribution-grid">
         ${renderIncomeDistribution('Income by source', data.sources || [])}
@@ -4229,6 +4343,8 @@ function renderIncomeAnalytics(data) {
           { label: 'Department', value: (row) => row.department },
           { label: 'Route', value: (row) => row.channel },
           { label: 'Income Account', value: (row) => row.accounts },
+          { label: 'Original amount', value: (row) => row.transactionCurrency && row.transactionCurrency !== row.baseCurrency && row.originalAmount ? moneyInCurrency(row.originalAmount, row.transactionCurrency) : '—' },
+          { label: 'Rate', value: (row) => row.transactionCurrency && row.transactionCurrency !== row.baseCurrency ? `1 ${row.transactionCurrency} = ${row.baseCurrency} ${row.exchangeRate} · ${row.exchangeRateDate}` : '—' },
           { label: 'Amount', value: (row) => money(row.amount) }
         ])}
       </section>
@@ -4262,10 +4378,12 @@ function csvCell(value) {
 
 function exportIncomeAnalyticsCsv() {
   const rows = incomeAnalyticsData?.transactions || [];
-  const headings = ['Date', 'Reference', 'Description', 'Source', 'Department', 'Payment Route', 'Income Account', 'Amount'];
+  const headings = ['Date', 'Reference', 'Description', 'Source', 'Department', 'Payment Route', 'Income Account', 'Original Amount', 'Original Currency', 'Exchange Rate', 'Rate Date', 'Rate Source', 'Base Currency', 'Base Amount'];
   const content = [headings, ...rows.map((row) => [
     row.date, row.reference || row.journalNo, row.description, row.source,
-    row.department, row.channel, row.accounts, Number(row.amount || 0).toFixed(2)
+    row.department, row.channel, row.accounts, Number(row.originalAmount || 0).toFixed(2),
+    row.transactionCurrency || 'NGN', Number(row.exchangeRate || 1), row.exchangeRateDate,
+    row.exchangeRateSource, row.baseCurrency || 'NGN', Number(row.amount || 0).toFixed(2)
   ])].map((row) => row.map(csvCell).join(',')).join('\r\n');
   const url = URL.createObjectURL(new Blob([`\uFEFF${content}`], { type: 'text/csv;charset=utf-8' }));
   const link = document.createElement('a');

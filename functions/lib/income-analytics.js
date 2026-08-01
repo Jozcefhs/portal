@@ -1,3 +1,8 @@
+import {
+  ACCOUNTING_BASE_CURRENCY,
+  journalUsesAccountingBaseCurrency
+} from './currency-conversion.js';
+
 function clean(value) {
   return String(value ?? '').trim();
 }
@@ -213,7 +218,9 @@ export function buildIncomeAnalytics(chart = [], journals = [], filter = {}, tod
     clean(row.Code || row.code || row.__id),
     { code: clean(row.Code || row.code || row.__id), name: clean(row.Name || row.name), type: lower(row.Type || row.type) }
   ]));
-  const posted = (journals || []).filter((journal) => lower(journal.Status || journal.status) === 'posted');
+  const postedJournals = (journals || []).filter((journal) => lower(journal.Status || journal.status) === 'posted');
+  const excludedCurrencyJournals = postedJournals.filter((journal) => !journalUsesAccountingBaseCurrency(journal));
+  const posted = postedJournals.filter((journal) => journalUsesAccountingBaseCurrency(journal));
   const allRecords = posted.flatMap((journal) => {
     const date = dateOnly(journal.Date || journal.date || journal.CreatedAt);
     const channel = paymentChannel(journal);
@@ -238,6 +245,12 @@ export function buildIncomeAnalytics(chart = [], journals = [], filter = {}, tod
         branches,
         accountCode: account.code,
         accountName: account.name || account.code,
+        baseCurrency: clean(journal.BaseCurrency || journal.Currency || ACCOUNTING_BASE_CURRENCY).toUpperCase(),
+        transactionCurrency: clean(journal.TransactionCurrency || journal.OriginalCurrency || journal.Currency || ACCOUNTING_BASE_CURRENCY).toUpperCase(),
+        originalAmount: amount(journal.OriginalAmount || journal.OriginalGrossAmount),
+        exchangeRate: Number(journal.ExchangeRate || 0),
+        exchangeRateDate: clean(journal.ExchangeRateDate),
+        exchangeRateSource: clean(journal.ExchangeRateSource),
         amount: amount(line.Credit) - amount(line.Debit)
       };
     });
@@ -282,7 +295,9 @@ export function buildIncomeAnalytics(chart = [], journals = [], filter = {}, tod
       transactionCount,
       averageIncome: transactionCount ? amount(total / transactionCount) : 0,
       previousTotal: amount(previousTotal),
-      comparisonPercent: Number(comparisonPercent.toFixed(1))
+      comparisonPercent: Number(comparisonPercent.toFixed(1)),
+      baseCurrency: ACCOUNTING_BASE_CURRENCY,
+      excludedUnconvertedTransactions: excludedCurrencyJournals.length
     },
     timeline: timelineBuckets(period, currentRows),
     sources: groupedRows(currentRows, 'source'),
