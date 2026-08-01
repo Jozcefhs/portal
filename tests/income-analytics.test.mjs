@@ -83,6 +83,27 @@ test('income analytics uses posted revenue lines without counting settlement twi
   assert.equal(report.transactions.some((row) => row.journalNo === 'DRAFT-1'), false);
 });
 
+test('empty new months open the latest month containing posted income', () => {
+  const report = buildIncomeAnalytics(chart, journals, { period: 'monthly' }, '2026-08-01');
+
+  assert.equal(report.period.dateFrom, '2026-07-01');
+  assert.equal(report.period.dateTo, '2026-07-31');
+  assert.equal(report.period.usedLatestAvailable, true);
+  assert.equal(report.summary.totalIncome, 112500);
+  assert.equal(report.summary.transactionCount, 3);
+});
+
+test('an explicitly selected empty period remains empty', () => {
+  const report = buildIncomeAnalytics(chart, journals, {
+    period: 'custom', dateFrom: '2026-08-01', dateTo: '2026-08-31'
+  }, '2026-08-01');
+
+  assert.equal(report.period.dateFrom, '2026-08-01');
+  assert.equal(report.period.dateTo, '2026-08-31');
+  assert.equal(report.period.usedLatestAvailable, undefined);
+  assert.equal(report.summary.totalIncome, 0);
+});
+
 test('church income is grouped by its giving type instead of one generic donation source', () => {
   const churchJournals = [
     {
@@ -185,6 +206,7 @@ test('staff portal exposes the responsive income analytics workspace', async () 
   assert.match(adminJs, /--income-buckets/);
   assert.match(adminJs, /hasIncome \? escapeHtml\(compactMoney\(row\.value\)\) : ''/);
   assert.match(adminJs, /exportIncomeAnalyticsCsv/);
+  assert.match(adminJs, /There is no posted income in the current month yet/);
   assert.match(css, /\.income-bar-chart/);
   assert.match(css, /grid-template-columns:repeat\(var\(--income-buckets\),minmax\(0,1fr\)\)/);
   assert.match(css, /\.income-donut/);

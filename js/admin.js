@@ -4318,6 +4318,9 @@ function renderIncomeAnalytics(data) {
   const excludedCurrencyNotice = Number(data.summary?.excludedUnconvertedTransactions || 0)
     ? `<p class="status bad">${escapeHtml(data.summary.excludedUnconvertedTransactions)} posted foreign-currency journal${Number(data.summary.excludedUnconvertedTransactions) === 1 ? '' : 's'} excluded because no frozen NGN conversion is available.</p>`
     : '';
+  const latestAvailableNotice = period.usedLatestAvailable
+    ? `<p class="status">There is no posted income in the current month yet. Showing the latest month with posted income (${escapeHtml(period.dateFrom)} to ${escapeHtml(period.dateTo)}).</p>`
+    : '';
   panelEl.innerHTML = `
     <div class="income-analytics" id="incomeAnalyticsReport">
       <div class="workflow-intro income-report-heading">
@@ -4338,6 +4341,7 @@ function renderIncomeAnalytics(data) {
         </form>
       </section>
       <div class="income-report-period"><span>${escapeHtml(period.dateFrom)} to ${escapeHtml(period.dateTo)}</span><strong>${escapeHtml(money(data.summary?.totalIncome))}</strong><small>${escapeHtml(data.summary?.transactionCount || 0)} transaction${Number(data.summary?.transactionCount) === 1 ? '' : 's'}</small></div>
+      ${latestAvailableNotice}
       ${excludedCurrencyNotice}
       <section class="income-chart-card"><div class="income-card-heading"><div><p class="eyebrow">Income dynamics</p><h3>Income over time</h3></div><span>Hover or tap a bar for the exact value</span></div>${renderIncomeBars(data.timeline || [])}</section>
       <section class="income-distribution-grid">

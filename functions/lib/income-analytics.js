@@ -213,7 +213,6 @@ function uniqueSorted(values) {
 }
 
 export function buildIncomeAnalytics(chart = [], journals = [], filter = {}, today = new Date()) {
-  const period = resolveIncomePeriod(filter, today);
   const accounts = new Map((chart || []).map((row) => [
     clean(row.Code || row.code || row.__id),
     { code: clean(row.Code || row.code || row.__id), name: clean(row.Name || row.name), type: lower(row.Type || row.type) }
@@ -266,6 +265,17 @@ export function buildIncomeAnalytics(chart = [], journals = [], filter = {}, tod
     (!channelFilter || lower(row.channel) === channelFilter) &&
     (!sourceFilter || lower(row.source) === sourceFilter);
   const dimensionRows = allRecords.filter(matchesDimensions);
+  let period = resolveIncomePeriod(filter, today);
+  const isImplicitMonthlyView = (!clean(filter.period) || lower(filter.period) === 'monthly')
+    && !clean(filter.anchorDate) && !clean(filter.dateFrom) && !clean(filter.dateTo);
+  const currentMonthHasIncome = dimensionRows.some((row) => periodContains(row.date, period.dateFrom, period.dateTo));
+  if (isImplicitMonthlyView && !currentMonthHasIncome && dimensionRows.length) {
+    const latestIncomeDate = dimensionRows.reduce((latest, row) => row.date > latest ? row.date : latest, '');
+    period = {
+      ...resolveIncomePeriod({ ...filter, anchorDate: latestIncomeDate }, latestIncomeDate),
+      usedLatestAvailable: true
+    };
+  }
   const currentRows = dimensionRows.filter((row) => periodContains(row.date, period.dateFrom, period.dateTo));
   const previousRows = dimensionRows.filter((row) => periodContains(row.date, period.previousDateFrom, period.previousDateTo));
   const total = currentRows.reduce((sum, row) => sum + row.amount, 0);
