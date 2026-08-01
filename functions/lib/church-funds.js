@@ -5,6 +5,10 @@ import {
   safeChurchDocumentId
 } from './church-foundation.js';
 import { resolveOrganizationConfig } from './organization-config.js';
+import {
+  accountingChartForEdition,
+  accountingCodeAllowedForEdition
+} from './accounting-edition-scope.js';
 import { resolveMembershipBranch } from './church-membership.js';
 
 const clean = (value) => String(value ?? '').trim();
@@ -278,6 +282,7 @@ async function requireFundsEdition(env) {
     error.status = 403;
     throw error;
   }
+  return organization;
 }
 
 const actorName = (user = {}) => clean(user.displayName || user.DisplayName || user.username || user.Username || 'Unknown staff');
@@ -299,7 +304,7 @@ async function writeFundAudit(env, branchId, user, action, entityType, entityId,
 }
 
 export async function listChurchFunds(env, user, body = {}) {
-  await requireFundsEdition(env);
+  const organization = await requireFundsEdition(env);
   const capabilities = requireCapability(user, 'canView');
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
   const [funds, mappings, givingSetup, audit] = await Promise.all([
@@ -310,7 +315,13 @@ export async function listChurchFunds(env, user, body = {}) {
       ? listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.fundAudit, branchId)).catch(() => [])
       : Promise.resolve([])
   ]);
-  const chart = givingSetup.chart;
+  const chart = accountingChartForEdition(givingSetup.chart, organization.Edition);
+  const visibleMappings = mappings.filter((row) =>
+    accountingCodeAllowedForEdition(row.IncomeAccountCode, organization.Edition)
+  );
+  const visibleGivingTypes = givingSetup.givingTypes.filter((row) =>
+    accountingCodeAllowedForEdition(row.RevenueAccountCode, organization.Edition)
+  );
   const publicChart = chart.filter((row) => yesNo(row.Active ?? 'YES') === 'YES').map((row) => ({
     Code: clean(row.Code || row.__id),
     Name: clean(row.Name),
@@ -323,15 +334,15 @@ export async function listChurchFunds(env, user, body = {}) {
     branchId,
     capabilities,
     funds: funds.sort((a, b) => clean(a.Name).localeCompare(clean(b.Name))),
-    mappings: mappings.sort((a, b) => clean(a.FundId).localeCompare(clean(b.FundId))),
-    givingTypes: givingSetup.givingTypes,
+    mappings: visibleMappings.sort((a, b) => clean(a.FundId).localeCompare(clean(b.FundId))),
+    givingTypes: visibleGivingTypes,
     chart: publicChart,
     audit: audit.sort((a, b) => clean(b.Timestamp).localeCompare(clean(a.Timestamp))).slice(0, 100)
   };
 }
 
 export async function saveGivingType(env, user, body = {}) {
-  await requireFundsEdition(env);
+  const organization = await requireFundsEdition(env);
   requireCapability(user, 'canManageGivingTypes');
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
   const { givingTypes, chart } = await ensureGivingTypes(env, branchId);
@@ -339,7 +350,8 @@ export async function saveGivingType(env, user, body = {}) {
     body.givingType || body.GivingType || body,
     branchId
   );
-  const validated = validateGivingTypeAccount(givingType, chart, givingTypes);
+  const scopedChart = accountingChartForEdition(chart, organization.Edition);
+  const validated = validateGivingTypeAccount(givingType, scopedChart, givingTypes);
   const path = churchCollectionPath(CHURCH_COLLECTIONS.givingTypes, branchId);
   const id = safeChurchDocumentId(validated.GivingTypeId);
   const existing = await getDocument(env, path, id).catch(() => null);
@@ -390,7 +402,7 @@ export async function saveChurchFund(env, user, body = {}) {
 }
 
 export async function saveFundMapping(env, user, body = {}) {
-  await requireFundsEdition(env);
+  const organization = await requireFundsEdition(env);
   requireCapability(user, 'canManageMappings');
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
   const mapping = normalizeFundMapping(body.mapping || body.Mapping || body, branchId);
@@ -400,7 +412,10 @@ export async function saveFundMapping(env, user, body = {}) {
     safeChurchDocumentId(mapping.FundId)
   ).catch(() => null);
   if (!fund) throw inputError('The selected fund does not exist in this branch.');
-  const chart = await listCollection(env, 'chartOfAccounts').catch(() => []);
+  const chart = accountingChartForEdition(
+    await listCollection(env, 'chartOfAccounts').catch(() => []),
+    organization.Edition
+  );
   const validated = validateFundMappingAccounts(mapping, chart);
   const path = churchCollectionPath(CHURCH_COLLECTIONS.fundMappings, branchId);
   const id = safeChurchDocumentId(validated.MappingId);

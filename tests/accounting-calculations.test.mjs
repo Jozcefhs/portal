@@ -492,6 +492,34 @@ test('legacy ledger rows with blank session/term still report as revenue in peri
   assert.equal(reportForDifferentPeriod.dashboard.GrossRevenue, 0);
 });
 
+test('custom church revenue groups contribute to dashboard income totals', () => {
+  const chart = [
+    { Code: '1010', Name: 'Cash on Hand', Type: 'Asset', Group: 'Cash and Bank', Direction: 'Debit' },
+    { Code: '4140', Name: 'Offering Income', Type: 'Revenue', Group: 'Church Revenue', Direction: 'Credit' },
+    { Code: '4160', Name: 'Tithe Income', Type: 'Revenue', Group: '', Direction: 'Credit' },
+    { Code: '4090', Name: 'Other Income', Type: 'Revenue', Group: 'other income', Direction: 'Credit' },
+    { Code: '4100', Name: 'Concessions', Type: 'Revenue', Group: 'Contra Revenue', Direction: 'Debit' }
+  ];
+  const report = buildAccountingReport(chart, [{
+    Date: '2026-08-01',
+    Status: 'Posted',
+    Lines: [
+      { AccountCode: '1010', Debit: 155000, Credit: 0 },
+      { AccountCode: '4140', Debit: 0, Credit: 100000 },
+      { AccountCode: '4160', Debit: 0, Credit: 50000 },
+      { AccountCode: '4090', Debit: 0, Credit: 10000 },
+      { AccountCode: '4100', Debit: 5000, Credit: 0 }
+    ]
+  }], [], [], {});
+
+  assert.equal(report.dashboard.GrossRevenue, 150000);
+  assert.equal(report.dashboard.OtherIncome, 10000);
+  assert.equal(report.dashboard.Concessions, 5000);
+  assert.equal(report.dashboard.NetRevenue, 145000);
+  assert.equal(report.dashboard.TotalIncome, 155000);
+  assert.equal(report.dashboard.GrossSurplus, 145000);
+});
+
 test('cash position includes all cash-and-bank accounts, not only default codes', () => {
   const chart = [
     { Code: '1010', Name: 'Cash on Hand', Type: 'Asset', Group: 'Cash and Bank', Direction: 'Debit' },

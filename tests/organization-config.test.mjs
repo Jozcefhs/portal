@@ -92,6 +92,19 @@ test('known feature overrides are normalized and unknown flags are discarded', (
   assert.equal(Object.hasOwn(flags, 'inventedFeature'), false);
 });
 
+test('school-only modules cannot be re-enabled by church feature overrides', () => {
+  const flags = featureFlagsForEdition('church', {
+    admissions: true,
+    students: true,
+    stores: true,
+    clinic: true,
+    kitchen: true
+  });
+  for (const feature of ['admissions', 'students', 'stores', 'clinic', 'kitchen']) {
+    assert.equal(flags[feature], false);
+  }
+});
+
 test('organisation document stores canonical edition identity and flags', () => {
   const document = organizationProfileDocument({
     Edition: 'church',

@@ -2,6 +2,11 @@ const clean = (value) => String(value ?? '').trim();
 
 export const ORGANIZATION_EDITIONS = Object.freeze(['school', 'faith', 'organization']);
 
+const NON_SCHOOL_DISABLED_FEATURES = new Set([
+  'admissions', 'students', 'studentConduct', 'parentPortal',
+  'stores', 'clinic', 'kitchen'
+]);
+
 export const EDITION_FEATURE_DEFAULTS = Object.freeze({
   school: Object.freeze({
     branches: true,
@@ -99,7 +104,9 @@ export function featureFlagsForEdition(edition, overrides = {}) {
   const supplied = overrides && typeof overrides === 'object' && !Array.isArray(overrides) ? overrides : {};
   return Object.fromEntries(Object.entries(defaults).map(([feature, enabled]) => [
     feature,
-    Object.prototype.hasOwnProperty.call(supplied, feature)
+    normalizedEdition !== 'school' && NON_SCHOOL_DISABLED_FEATURES.has(feature)
+      ? false
+      : Object.prototype.hasOwnProperty.call(supplied, feature)
       ? booleanValue(supplied[feature], enabled)
       : enabled
   ]));

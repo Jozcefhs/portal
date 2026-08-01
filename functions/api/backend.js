@@ -24,6 +24,11 @@ import {
 } from '../lib/document-storage.js';
 import { organizationProfileDocument, resolveOrganizationConfig } from '../lib/organization-config.js';
 import {
+  accountingChartForEdition,
+  accountingCodeAllowedForEdition,
+  accountingJournalsForEdition
+} from '../lib/accounting-edition-scope.js';
+import {
   assertExpectedDeploymentIdentity,
   loadDeploymentIdentity,
   requiredDeploymentIdentity
@@ -55,6 +60,18 @@ export const SCHOOL_FEES_TOTAL_CODE = 'SCHOOL_FEES_TOTAL';
 
 function clean(value) {
   return String(value ?? '').trim();
+}
+
+function accountingEditionForRequest(env, body = {}) {
+  return resolveOrganizationConfig({
+    env,
+    organizationProfile: {
+      Edition: clean(
+        body.OrganisationEdition || body.OrganizationEdition
+          || body.organisationEdition || body.organizationEdition
+      )
+    }
+  }).Edition;
 }
 
 function expectedDeploymentIdentityFromRequest(request, body = {}) {
@@ -4802,7 +4819,8 @@ export async function saveAccountingJournal(env, body, system = false) {
     await seedAccountingChart(env);
     chartRows = await listCollection(env, 'chartOfAccounts');
   }
-  const activeCodes = new Set(chartRows
+  const edition = accountingEditionForRequest(env, body);
+  const activeCodes = new Set(accountingChartForEdition(chartRows, edition)
     .filter((row) => yesNo(row.Active || 'YES') === 'YES')
     .map((row) => clean(row.Code || row.__id)));
   const invalidCode = payload.Lines.find((line) => !activeCodes.has(clean(line.AccountCode)));
@@ -5039,6 +5057,12 @@ async function saveChartAccount(env, body) {
   const code = clean(body.Code || body.code);
   if (!code || !clean(body.Name || body.name) || !clean(body.Type || body.type)) {
     const err = new Error('Account code, name and type are required.'); err.status = 400; throw err;
+  }
+  const edition = accountingEditionForRequest(env, body);
+  if (!accountingCodeAllowedForEdition(code, edition)) {
+    const err = new Error(`Account ${code} is reserved for the school edition and is not available in this organisation.`);
+    err.status = 400;
+    throw err;
   }
   const existing = (await listCollection(env, 'chartOfAccounts')).find((row) => sameText(row.Code, code) || sameText(row.__id, code)) || {};
   const payload = {
@@ -5647,9 +5671,19 @@ export function buildAccountingReport(chart, journals, expenses, budgets, filter
   const trialBalance = aggregateAccountingBalances(chart, periodJournals);
   const asOfTrialBalance = aggregateAccountingBalances(chart, asOfJournals);
   const revenueRows = trialBalance.filter((row) => lower(row.Type) === 'revenue');
-  const grossRevenue = revenueRows.filter((row) => clean(row.Group) === 'Operating Revenue').reduce((sum, row) => sum + row.Credit - row.Debit, 0);
-  const otherIncome = revenueRows.filter((row) => clean(row.Group) === 'Other Income').reduce((sum, row) => sum + row.Credit - row.Debit, 0);
-  const concessions = revenueRows.filter((row) => row.AccountCode === '4100').reduce((sum, row) => sum + row.Debit - row.Credit, 0);
+  const otherIncomeRows = revenueRows.filter((row) => sameText(row.Group, 'Other Income'));
+  const contraRevenueRows = revenueRows.filter((row) =>
+    sameText(row.Group, 'Contra Revenue') || row.AccountCode === '4100'
+  );
+  // Custom revenue groups are common in non-school editions (for example,
+  // Church Revenue). Treat every revenue account that is not explicitly
+  // classified as Other Income or Contra Revenue as gross operating revenue.
+  const grossRevenueRows = revenueRows.filter((row) =>
+    !otherIncomeRows.includes(row) && !contraRevenueRows.includes(row)
+  );
+  const grossRevenue = grossRevenueRows.reduce((sum, row) => sum + row.Credit - row.Debit, 0);
+  const otherIncome = otherIncomeRows.reduce((sum, row) => sum + row.Credit - row.Debit, 0);
+  const concessions = contraRevenueRows.reduce((sum, row) => sum + row.Debit - row.Credit, 0);
   const netRevenue = grossRevenue - concessions;
   const totalIncome = netRevenue + otherIncome;
   const expenseRows = trialBalance.filter((row) => lower(row.Type) === 'expense');
@@ -5835,6 +5869,7 @@ export function buildGatewayCollectionsReport(
 }
 
 async function getAccountingOverview(env, body = {}) {
+  const edition = accountingEditionForRequest(env, body);
   if (isDepartmentAccountingUser(body)) {
     const department = accountingDepartment(body);
     if (!department) { const err = new Error('A department must be assigned to this user.'); err.status = 403; throw err; }
@@ -5845,7 +5880,7 @@ async function getAccountingOverview(env, body = {}) {
     ]);
     return {
       ok: true, message: `${department} requisitions and bills loaded.`, synchronized: 0,
-      chart, expenses: expenses.filter((row) => sameText(row.Department, department)),
+      chart: accountingChartForEdition(chart, edition), expenses: expenses.filter((row) => sameText(row.Department, department)),
       budgets: budgets.filter((row) => sameText(row.Department, department)), vendors,
       supplierBills: supplierBills.filter((row) => sameText(row.Department, department)),
       journals: [], banks: [], reconciliations: [], periods: [], audit: [], supplierPayments: [], assets: [], adjustments: [],
@@ -5872,15 +5907,17 @@ async function getAccountingOverview(env, body = {}) {
     listChurchDonationsForAccounting(env)
   ]);
   const filter = accountingFilter(body);
+  const scopedChart = accountingChartForEdition(chart, edition);
+  const scopedJournals = accountingJournalsForEdition(journals, edition);
   const finalizedPayrollRunIds = new Set(payrollRuns.filter((row) => ['approved', 'posted', 'part paid', 'paid', 'finalized'].includes(lower(row.Status))).map((row) => lower(row.RunId)));
   const taxProfileUsage = {};
   payrollItems.filter((row) => finalizedPayrollRunIds.has(lower(row.RunId))).forEach((row) => { const id = clean(row.TaxProfileId || row.ConfigurationSnapshot?.TaxProfile?.ProfileId); if (id) taxProfileUsage[id] = (taxProfileUsage[id] || 0) + 1; });
   const payrollTaxProfilesWithUsage = payrollTaxProfiles.map((row) => ({ ...row, UsageCount: taxProfileUsage[clean(row.ProfileId || row.__id)] || 0 }));
-  const reports = buildAccountingReport(chart, journals, expenses, budgets, filter, invoices);
+  const reports = buildAccountingReport(scopedChart, scopedJournals, expenses, budgets, filter, invoices);
   reports.receivablesAgeing = buildReceivablesAgeing(invoices, payments, filter.DateTo || nowIso().slice(0, 10));
   reports.payablesAgeing = buildAgeing(supplierBills, filter.DateTo || nowIso().slice(0, 10), 'payable');
   const gatewayReport = buildGatewayCollectionsReport(formSales, gatewayCharges, filter, payments, donations);
-  return { ok: true, message: 'Finance and accounting records loaded.', synchronized, filter, chart, journals, expenses, budgets, banks, reconciliations, periods, audit,
+  return { ok: true, message: 'Finance and accounting records loaded.', synchronized, filter, chart: scopedChart, journals: scopedJournals, expenses, budgets, banks, reconciliations, periods, audit,
     vendors, supplierBills, supplierPayments, assets, adjustments, approvalLimits, closeChecklist, bankStatementItems,
     payrollProfiles, payrollRuns, payrollItems, payrollPayments, payrollAudit, payrollTaxProfiles: payrollTaxProfilesWithUsage, payrollTaxOverrides,
     payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings, donations, gatewayReport, reports };
