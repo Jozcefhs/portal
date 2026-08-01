@@ -1,14 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 
 import {
   attendanceDocumentId,
   attendanceSummary,
   normalizeAttendance,
+  normalizeAttendanceCount,
   normalizeChurchService,
   normalizeServiceOccurrence,
   serviceCapabilities
 } from '../functions/lib/church-services.js';
+
+const adminJs = fs.readFileSync(new URL('../js/admin.js', import.meta.url), 'utf8');
+const serviceApi = fs.readFileSync(new URL('../functions/lib/church-services.js', import.meta.url), 'utf8');
 
 test('church service capabilities separate schedule management from attendance recording', () => {
   assert.equal(serviceCapabilities({ role: 'Pastor' }).canManageServices, true);
@@ -97,4 +102,29 @@ test('attendance summaries distinguish members, visitors, and first-time visitor
     },
     { total: 3, members: 1, visitors: 2, firstTime: 1 }
   );
+});
+
+test('an aggregate headcount is validated and remains the occurrence total', () => {
+  assert.equal(normalizeAttendanceCount('275'), 275);
+  assert.equal(normalizeAttendanceCount(0), 0);
+  assert.throws(() => normalizeAttendanceCount('-1'), /whole number/);
+  assert.throws(() => normalizeAttendanceCount('2.5'), /whole number/);
+  const result = attendanceSummary(
+    [{ OccurrenceId: 'OCC-002', AttendanceCount: 275 }],
+    [{ OccurrenceId: 'OCC-002', AttendanceType: 'Member', MemberId: 'MEM-1' }]
+  );
+  assert.equal(result[0].TotalAttendance, 275);
+  assert.equal(result[0].MemberAttendance, 1);
+});
+
+test('the web services workspace records occurrences, totals, and individual check-ins', () => {
+  assert.match(adminJs, /id="churchOccurrenceForm"/);
+  assert.match(adminJs, /churchServiceAction\('saveOccurrence', payload\)/);
+  assert.match(adminJs, /id="churchAttendanceTotalForm"/);
+  assert.match(adminJs, /name="AttendanceCount" type="number"/);
+  assert.match(adminJs, /churchServiceAction\('recordAttendanceTotal', payload\)/);
+  assert.match(adminJs, /id="churchAttendanceForm"/);
+  assert.match(adminJs, /churchServiceAction\('recordAttendance', payload\)/);
+  assert.match(serviceApi, /recordChurchAttendanceTotal/);
+  assert.match(serviceApi, /AttendanceCountRecordedAt/);
 });

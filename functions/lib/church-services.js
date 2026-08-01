@@ -114,6 +114,16 @@ export function normalizeAttendance(input = {}, branchId = 'main') {
   };
 }
 
+export function normalizeAttendanceCount(value) {
+  const raw = clean(value);
+  if (!/^\d+$/.test(raw)) throw inputError('Number of attendance must be a whole number of zero or more.');
+  const count = Number(raw);
+  if (!Number.isSafeInteger(count) || count > 1000000) {
+    throw inputError('Number of attendance must be between 0 and 1,000,000.');
+  }
+  return count;
+}
+
 export function attendanceSummary(occurrences = [], attendance = []) {
   const totals = new Map();
   for (const row of attendance) {
@@ -126,12 +136,19 @@ export function attendanceSummary(occurrences = [], attendance = []) {
     if (row.FirstTimeVisitor === true || ['yes', 'true', '1'].includes(lower(row.FirstTimeVisitor))) current.FirstTimeVisitors += 1;
     totals.set(key, current);
   }
-  return (occurrences || []).map((row) => ({
-    ...row,
-    ...(totals.get(clean(row.OccurrenceId)) || {
+  return (occurrences || []).map((row) => {
+    const counted = totals.get(clean(row.OccurrenceId)) || {
       TotalAttendance: 0, MemberAttendance: 0, VisitorAttendance: 0, FirstTimeVisitors: 0
-    })
-  }));
+    };
+    const recordedTotal = /^\d+$/.test(clean(row.AttendanceCount)) ? Number(row.AttendanceCount) : null;
+    return {
+      ...row,
+      ...counted,
+      TotalAttendance: recordedTotal === null
+        ? counted.TotalAttendance
+        : Math.max(recordedTotal, counted.TotalAttendance)
+    };
+  });
 }
 
 function requireCapability(user, capability) {
@@ -303,11 +320,47 @@ export async function recordChurchAttendance(env, user, body = {}) {
   };
 }
 
+export async function recordChurchAttendanceTotal(env, user, body = {}) {
+  await requireServicesEdition(env);
+  requireCapability(user, 'canRecordAttendance');
+  const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
+  const incoming = body.attendance || body.Attendance || body;
+  const occurrenceId = clean(incoming.OccurrenceId || incoming.occurrenceId);
+  const path = churchCollectionPath(CHURCH_COLLECTIONS.serviceOccurrences, branchId);
+  const id = safeChurchDocumentId(occurrenceId);
+  if (!id) throw inputError('OccurrenceId is required for attendance.');
+  const occurrence = await getDocument(env, path, id).catch(() => null);
+  if (!occurrence) throw inputError('The selected service occurrence does not exist in this branch.');
+  if (lower(occurrence.Status) === 'cancelled') throw inputError('Attendance cannot be recorded for a cancelled occurrence.');
+  const attendanceCount = normalizeAttendanceCount(incoming.AttendanceCount ?? incoming.attendanceCount);
+  const recordedAt = nowIso();
+  const payload = {
+    ...occurrence,
+    AttendanceCount: attendanceCount,
+    AttendanceCountRecordedAt: recordedAt,
+    AttendanceCountRecordedBy: actorName(user),
+    UpdatedAt: recordedAt,
+    UpdatedBy: actorName(user)
+  };
+  delete payload.__id; delete payload.__name;
+  await upsertDocument(env, path, id, payload);
+  await writeServiceAudit(
+    env, branchId, user, 'RECORD TOTAL', 'Attendance', occurrenceId,
+    `${clean(occurrence.ServiceName || occurrence.ServiceId)} | ${attendanceCount} attendee(s)`
+  );
+  return {
+    ok: true,
+    message: `Attendance total recorded: ${attendanceCount}.`,
+    occurrence: payload
+  };
+}
+
 export async function handleChurchServiceAction(env, user, body = {}) {
   const action = lower(body.Action || body.action || 'list');
   if (['list', 'getchurchservices'].includes(action)) return listChurchServices(env, user, body);
   if (['saveservice', 'savechurchservice'].includes(action)) return saveChurchService(env, user, body);
   if (['saveoccurrence', 'savechurchserviceoccurrence'].includes(action)) return saveServiceOccurrence(env, user, body);
   if (['recordattendance', 'recordchurchattendance'].includes(action)) return recordChurchAttendance(env, user, body);
+  if (['recordattendancetotal', 'recordchurchattendancetotal'].includes(action)) return recordChurchAttendanceTotal(env, user, body);
   throw inputError('Choose a valid church service or attendance action.');
 }

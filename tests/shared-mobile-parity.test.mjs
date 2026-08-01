@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260801-nowrap-tables';
-const adminScriptVersion = '20260801-church-edition-scope';
+const adminScriptVersion = '20260801-service-attendance';
 const parentScriptVersion = '20260730-parent-document-upload';
 const pageNames = [
   'admin.html',
@@ -71,7 +71,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v73-nowrap-tables/);
+  assert.match(serviceWorker, /dynamax-v74-service-attendance/);
   assert.match(serviceWorker, /'\/give\.html'/);
   assert.match(serviceWorker, /'\/js\/give\.js'/);
   assert.match(serviceWorker, /'\/js\/action-feedback\.js'/);

@@ -2986,6 +2986,21 @@ async function loadOrganizationDepartments() {
   }
 }
 
+async function churchServiceAction(action, payload = {}) {
+  const response = await staffFetch('/api/staff-services', {
+    method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action,
+      BranchId: currentUser?.branchId || 'main',
+      ...payload
+    })
+  });
+  const data = await response.json();
+  if (!response.ok || !data.ok) throw new Error(data.message || 'The service or attendance record could not be saved.');
+  return data;
+}
+
 async function loadChurchServices() {
   try {
     const response = await staffFetch('/api/staff-services', {
@@ -2997,8 +3012,59 @@ async function loadChurchServices() {
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load church services.');
     if (activeSection !== 'services') return;
     renderModuleSummary('services', data);
+    const capabilities = data.capabilities || {};
+    const services = (data.services || []).filter((row) => clean(row.Active || 'YES').toLowerCase() !== 'no');
+    const occurrences = (data.occurrences || []).filter((row) => clean(row.Status).toLowerCase() !== 'cancelled');
+    const members = data.members || [];
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const serviceOptions = services.map((row) => `<option value="${escapeHtml(pick(row, ['ServiceId', '__id']))}">${escapeHtml(pick(row, ['Name', 'ServiceName', 'ServiceId']))}</option>`).join('');
+    const occurrenceOptions = occurrences.map((row) => `<option value="${escapeHtml(pick(row, ['OccurrenceId', '__id']))}">${escapeHtml([pick(row, ['Date']), pick(row, ['ServiceName', 'ServiceId']), pick(row, ['StartTime'])].filter(Boolean).join(' · '))}</option>`).join('');
+    const memberOptions = members.map((row) => `<option value="${escapeHtml(pick(row, ['MemberId', '__id']))}">${escapeHtml([pick(row, ['DisplayName']), pick(row, ['MemberId', '__id'])].filter(Boolean).join(' · '))}</option>`).join('');
+    const occurrenceForm = capabilities.canManageOccurrences
+      ? services.length ? `
+        <form id="churchOccurrenceForm" class="workflow-card compact-form">
+          <h3>Record service occurrence</h3>
+          <label>Service<select name="ServiceId" required><option value="">Choose service</option>${serviceOptions}</select></label>
+          <label>Date<input name="Date" type="date" value="${escapeHtml(today)}" required></label>
+          <label>Start time<input name="StartTime" type="time"></label>
+          <label>End time<input name="EndTime" type="time"></label>
+          <label>Location<input name="Location" placeholder="Service venue"></label>
+          <label>Theme<input name="Theme" placeholder="Optional theme"></label>
+          <label>Minister<input name="Minister" placeholder="Minister in charge"></label>
+          <label>Status<select name="Status"><option>Scheduled</option><option>In Progress</option><option>Completed</option></select></label>
+          <label>Notes<input name="Notes" placeholder="Optional notes"></label>
+          <button type="submit">Save occurrence</button>
+          <p class="status" data-service-form-status></p>
+        </form>` : '<article class="workflow-card"><h3>Record service occurrence</h3><p class="muted">Create an active service definition in the desktop app before recording an occurrence.</p></article>'
+      : '';
+    const attendanceForms = capabilities.canRecordAttendance
+      ? occurrences.length ? `
+        <form id="churchAttendanceTotalForm" class="workflow-card compact-form">
+          <h3>Record attendance total</h3>
+          <p class="muted">Use the headcount when individual names are not required.</p>
+          <label>Service occurrence<select name="OccurrenceId" required><option value="">Choose occurrence</option>${occurrenceOptions}</select></label>
+          <label>Number of attendance<input name="AttendanceCount" type="number" min="0" max="1000000" step="1" required></label>
+          <button type="submit">Save attendance total</button>
+          <p class="status" data-service-form-status></p>
+        </form>
+        <form id="churchAttendanceForm" class="workflow-card compact-form">
+          <h3>Individual attendance check-in</h3>
+          <label>Service occurrence<select name="OccurrenceId" required><option value="">Choose occurrence</option>${occurrenceOptions}</select></label>
+          <label>Attendance type<select name="AttendanceType"><option value="Member">Member</option><option value="Visitor">Visitor</option></select></label>
+          <label>Member<select name="MemberId"><option value="">Choose member</option>${memberOptions}</select></label>
+          <label>Visitor name<input name="DisplayName" placeholder="Required for a visitor"></label>
+          <label>Phone<input name="Phone" type="tel"></label>
+          <label>Email<input name="Email" type="email"></label>
+          <label>First-time visitor<select name="FirstTimeVisitor"><option value="NO">No</option><option value="YES">Yes</option></select></label>
+          <label>Notes<input name="Notes" placeholder="Optional notes"></label>
+          <button type="submit">Record check-in</button>
+          <p class="status" data-service-form-status></p>
+        </form>` : '<article class="workflow-card"><h3>Record attendance</h3><p class="muted">Record a service occurrence before entering attendance.</p></article>'
+      : '';
     panelEl.innerHTML = `
       <div class="workflow-intro"><div><p class="eyebrow">Gatherings</p><h2>Services & Attendance</h2><p class="muted">Branch ${escapeHtml(data.branchId || 'main')} · ${data.services.length} service definitions · ${data.attendance.length} check-ins</p></div><button type="button" id="refreshChurchServices">Refresh</button></div>
+      <div class="department-form-grid church-service-recording">${occurrenceForm}${attendanceForms}</div>
       ${table('Service Occurrences', data.occurrences || [], [
         { label: 'Date', value: (row) => pick(row, ['Date']) },
         { label: 'Service', value: (row) => pick(row, ['ServiceName', 'ServiceId']) },
@@ -3006,6 +3072,7 @@ async function loadChurchServices() {
         { label: 'Status', value: (row) => pick(row, ['Status']) },
         { label: 'Members', value: (row) => pick(row, ['MemberAttendance']) },
         { label: 'Visitors', value: (row) => pick(row, ['VisitorAttendance']) },
+        { label: 'Recorded number', value: (row) => pick(row, ['AttendanceCount']) },
         { label: 'Total', value: (row) => pick(row, ['TotalAttendance']) }
       ])}
       ${table('Recent Attendance', (data.attendance || []).slice(0, 100), [
@@ -3015,6 +3082,76 @@ async function loadChurchServices() {
         { label: 'Type', value: (row) => pick(row, ['AttendanceType']) },
         { label: 'Check-in', value: (row) => pick(row, ['CheckInAt']) }
       ])}`;
+    const occurrenceFormElement = document.getElementById('churchOccurrenceForm');
+    occurrenceFormElement?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const button = form.querySelector('button[type="submit"]');
+      const status = form.querySelector('[data-service-form-status]');
+      const payload = Object.fromEntries(new FormData(form).entries());
+      payload.OccurrenceId = `OCC-${clean(payload.Date).replace(/-/g, '')}-${newIdempotencyKey().slice(0, 8).toUpperCase()}`;
+      setButtonLoading(button, true, 'Saving...', 'Save occurrence');
+      try {
+        const result = await churchServiceAction('saveOccurrence', payload);
+        await loadChurchServices();
+        setStatus(dashboardStatus, result.message, 'ok');
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+        if (button.isConnected) setButtonLoading(button, false, 'Saving...', 'Save occurrence');
+      }
+    });
+    const totalForm = document.getElementById('churchAttendanceTotalForm');
+    totalForm?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const button = form.querySelector('button[type="submit"]');
+      const status = form.querySelector('[data-service-form-status]');
+      const payload = Object.fromEntries(new FormData(form).entries());
+      setButtonLoading(button, true, 'Saving...', 'Save attendance total');
+      try {
+        const result = await churchServiceAction('recordAttendanceTotal', payload);
+        await loadChurchServices();
+        setStatus(dashboardStatus, result.message, 'ok');
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+        if (button.isConnected) setButtonLoading(button, false, 'Saving...', 'Save attendance total');
+      }
+    });
+    const attendanceForm = document.getElementById('churchAttendanceForm');
+    const syncAttendanceFields = () => {
+      if (!attendanceForm) return;
+      const isMember = attendanceForm.elements.AttendanceType.value === 'Member';
+      attendanceForm.elements.MemberId.disabled = !isMember;
+      attendanceForm.elements.MemberId.required = isMember;
+      attendanceForm.elements.DisplayName.disabled = isMember;
+      attendanceForm.elements.DisplayName.required = !isMember;
+      attendanceForm.elements.FirstTimeVisitor.disabled = isMember;
+    };
+    attendanceForm?.elements.AttendanceType.addEventListener('change', syncAttendanceFields);
+    syncAttendanceFields();
+    attendanceForm?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const button = form.querySelector('button[type="submit"]');
+      const status = form.querySelector('[data-service-form-status]');
+      const payload = Object.fromEntries(new FormData(form).entries());
+      if (payload.AttendanceType === 'Visitor') {
+        payload.MemberId = '';
+        payload.VisitorReference = `VIS-${newIdempotencyKey()}`;
+      } else {
+        payload.DisplayName = '';
+        payload.FirstTimeVisitor = 'NO';
+      }
+      setButtonLoading(button, true, 'Recording...', 'Record check-in');
+      try {
+        const result = await churchServiceAction('recordAttendance', payload);
+        await loadChurchServices();
+        setStatus(dashboardStatus, result.message, 'ok');
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+        if (button.isConnected) setButtonLoading(button, false, 'Recording...', 'Record check-in');
+      }
+    });
     document.getElementById('refreshChurchServices')?.addEventListener('click', (event) => {
       runButtonAction(event.currentTarget, 'Refreshing...', loadChurchServices);
     });
