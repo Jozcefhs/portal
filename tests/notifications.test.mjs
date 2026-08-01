@@ -482,6 +482,8 @@ test('staff and parent notification interfaces are wired to protected APIs', asy
   assert.match(adminHtml, /js\/notifications\.js/);
   assert.match(notificationJs, /\/api\/staff-notifications/);
   assert.match(notificationCss, /\.notification-trigger \.notification-badge\{[^}]*height:20px[^}]*font-size:11px[^}]*line-height:1/);
+  assert.match(notificationCss, /@media \(max-width:680px\)[\s\S]*?\.notification-trigger>span:first-child\{display:block/);
+  assert.match(notificationCss, /\.notification-trigger \.notification-badge:not\(\[hidden\]\)\{display:grid\}/);
   assert.match(staffApi, /requireStaffSession/);
   assert.match(parentApi, /action === 'getNotifications'/);
   assert.match(parentApi, /action === 'markNotificationRead'/);

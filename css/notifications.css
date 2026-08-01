@@ -53,3 +53,9 @@ html[data-theme="dark"] .notification-item-copy time,.theme-dark .notification-i
   .notification-popover{position:fixed;top:64px;right:8px;left:8px;width:auto;max-height:calc(100vh - 84px)}
   .notification-history-shell>[data-notification-panel],.notification-history-shell>header{padding-left:14px;padding-right:14px}.notification-push-card{align-items:flex-start;flex-direction:column}
 }
+@media (max-width:680px){
+  .notification-centre{flex:0 0 40px;width:40px}
+  .notification-trigger{display:grid;width:40px;height:40px;min-height:40px;padding:0!important;border-color:rgba(255,255,255,.25);background:rgba(255,255,255,.12);color:#fff}
+  .notification-trigger>span:first-child{display:block;font-size:20px;line-height:1}
+  .notification-trigger .notification-badge:not([hidden]){display:grid}
+}
