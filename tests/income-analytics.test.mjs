@@ -9,6 +9,7 @@ import {
 
 const chart = [
   { Code: '1010', Name: 'Cash on Hand', Type: 'Asset' },
+  { Code: '1020', Name: 'Main Bank Account', Type: 'Asset' },
   { Code: '1030', Name: 'Online Payment Clearing', Type: 'Asset' },
   { Code: '1100', Name: 'Receivables', Type: 'Asset' },
   { Code: '2200', Name: 'Wallet Liability', Type: 'Liability' },
@@ -117,6 +118,41 @@ test('legacy church journals infer their giving source from separate revenue acc
     ['Tithe', 9000],
     ['Seed', 4000]
   ]);
+});
+
+test('donation settlement routes stay separate for every payment method', () => {
+  const methods = ['CASH', 'BANK TRANSFER', 'CHEQUE', 'POS', 'ONLINE', 'CARD', 'MOBILE MONEY'];
+  const accountCodes = {
+    CASH: '1010',
+    'BANK TRANSFER': '1020',
+    CHEQUE: '1020',
+    POS: '1020',
+    ONLINE: '1030',
+    CARD: '1020',
+    'MOBILE MONEY': '1020'
+  };
+  const routeJournals = methods.map((method, index) => ({
+    JournalNo: `ROUTE-${index + 1}`,
+    Date: `2026-07-${String(index + 1).padStart(2, '0')}`,
+    Status: 'Posted',
+    Source: 'Church Donation',
+    GivingTypeName: 'Thanksgiving',
+    PaymentMethod: method,
+    Lines: [
+      { AccountCode: accountCodes[method], Debit: 1000 },
+      { AccountCode: '4080', Credit: 1000 }
+    ]
+  }));
+  const report = buildIncomeAnalytics(chart, routeJournals, { period: 'monthly' }, '2026-07-28');
+  assert.deepEqual(Object.fromEntries(report.channels.map((row) => [row.label, row.value])), {
+    Cash: 1000,
+    'Bank Transfer': 1000,
+    Cheque: 1000,
+    POS: 1000,
+    Online: 1000,
+    Card: 1000,
+    'Mobile Money': 1000
+  });
 });
 
 test('account, department and payment-route filters affect every report output', () => {

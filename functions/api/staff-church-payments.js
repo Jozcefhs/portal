@@ -4,6 +4,7 @@ import {
   handleChurchDonationAction,
   initChurchDonationPayment
 } from '../lib/church-payments.js';
+import { postChurchDonationToAccounting } from './backend.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import {
   beginIdempotentRequest,
@@ -14,6 +15,52 @@ import {
 
 function clean(value) {
   return String(value ?? '').trim();
+}
+
+function isPaidOfflineDonation(donation = {}) {
+  const status = clean(donation.Status || donation.PaymentStatus).toLowerCase();
+  const method = clean(donation.PaymentMethod || donation.Method).toUpperCase();
+  return ['paid', 'completed'].includes(status) && method !== 'ONLINE';
+}
+
+async function postPaidOfflineDonation(env, donation = {}) {
+  if (!isPaidOfflineDonation(donation)) return null;
+  return postChurchDonationToAccounting(env, donation);
+}
+
+async function syncPaidOfflineDonations(env, user, body = {}) {
+  const listed = await handleChurchDonationAction(env, user, { ...body, action: 'list' });
+  if (!listed.capabilities?.canCollect) {
+    const error = new Error('This staff account is not allowed to sync donation accounting.');
+    error.status = 403;
+    throw error;
+  }
+
+  const eligible = (listed.donations || []).filter(isPaidOfflineDonation);
+  const failed = [];
+  let confirmed = 0;
+  for (const donation of eligible) {
+    try {
+      const journal = await postPaidOfflineDonation(env, donation);
+      if (journal) confirmed += 1;
+    } catch (error) {
+      failed.push({
+        DonationId: clean(donation.DonationId || donation.__id),
+        message: error?.message || String(error)
+      });
+    }
+  }
+
+  return {
+    ok: true,
+    message: failed.length
+      ? `Accounting confirmed for ${confirmed} paid offline donation(s); ${failed.length} still need attention.`
+      : `Accounting confirmed for ${confirmed} paid offline donation(s).`,
+    eligible: eligible.length,
+    confirmed,
+    failedCount: failed.length,
+    failed
+  };
 }
 
 export async function onRequestPost(context) {
@@ -50,8 +97,25 @@ export async function onRequestPost(context) {
       result = await buildChurchGenericGivingQr(env, user, body, new URL(request.url).origin);
     } else if (['init', 'initchurchpayment', 'initdonation', 'initpayment', 'sendpaystack'].includes(action)) {
       result = await initChurchDonationPayment(env, user, body, new URL(request.url).origin);
+    } else if (action === 'syncaccounting') {
+      result = await syncPaidOfflineDonations(env, user, body);
     } else {
       result = await handleChurchDonationAction(env, user, body);
+    }
+    if (
+      result?.donation
+      && ['save', 'savedonation', 'add', 'setstatus', 'markpaid', 'updatestatus'].includes(action)
+      && isPaidOfflineDonation(result.donation)
+    ) {
+      try {
+        const journal = await postPaidOfflineDonation(env, result.donation);
+        result.accountingStatus = journal ? 'Posted' : 'Not applicable';
+        if (journal) result.message = `${result.message} Accounting posted.`;
+      } catch (error) {
+        result.accountingStatus = 'Pending';
+        result.accountingMessage = error?.message || String(error);
+        result.message = `${result.message} Accounting is pending; use Sync paid giving to retry.`;
+      }
     }
     if (isMutation) await completeIdempotentRequest(env, idempotency, result, 200);
     return Response.json(result, {

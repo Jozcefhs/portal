@@ -4592,7 +4592,12 @@ export function buildChurchDonationAccountingJournal(donation = {}, settlement =
 
   const method = clean(settlement.PaymentMethod || donation.PaymentMethod || donation.Method);
   const gateway = clean(settlement.Gateway || donation.Gateway);
-  const online = lower(`${method} ${gateway}`).match(/online|paystack|gateway|card|mobile money/);
+  const normalizedMethod = lower(method);
+  const normalizedGateway = lower(gateway);
+  const online = normalizedMethod === 'online'
+    || normalizedGateway.includes('online')
+    || normalizedGateway.includes('paystack')
+    || normalizedGateway.includes('gateway');
   const suppliedFee = online
     ? Math.max(0, asMoneyNumber(settlement.GatewayFee ?? donation.GatewayFee))
     : 0;
@@ -4654,6 +4659,9 @@ export function buildChurchDonationAccountingJournal(donation = {}, settlement =
       givingType.Name || donation.GivingTypeName || description
     ),
     RevenueAccountCode: revenueAccountCode,
+    PaymentMethod: method || (online ? 'ONLINE' : ''),
+    Gateway: gateway,
+    Currency: clean(settlement.Currency || donation.Currency || 'NGN').toUpperCase(),
     Department: 'Donations',
     CostCentre: branchId,
     RecordedBy: clean(donation.UpdatedBy || settlement.RecordedBy || 'System'),
@@ -4757,6 +4765,12 @@ export async function saveAccountingJournal(env, body, system = false) {
     Reference: clean(body.Reference || body.reference),
     Source: clean(body.Source || body.source) || (system ? 'System' : 'Manual Journal'),
     SourceId: clean(body.SourceId || body.sourceId),
+    GivingTypeId: clean(body.GivingTypeId || body.givingTypeId || existing.GivingTypeId),
+    GivingTypeName: clean(body.GivingTypeName || body.givingTypeName || existing.GivingTypeName),
+    RevenueAccountCode: clean(body.RevenueAccountCode || body.revenueAccountCode || existing.RevenueAccountCode),
+    PaymentMethod: clean(body.PaymentMethod || body.paymentMethod || body.Method || body.method || existing.PaymentMethod),
+    Gateway: clean(body.Gateway || body.gateway || existing.Gateway),
+    Currency: clean(body.Currency || body.currency || existing.Currency).toUpperCase(),
     Department: clean(body.Department || body.department),
     CostCentre: clean(body.CostCentre || body.costCentre),
     AcademicSession: clean(body.AcademicSession || body.academicSession),

@@ -120,17 +120,21 @@ function sourceLabel(journal, account = {}) {
 }
 
 function paymentChannel(journal) {
+  const text = lower(`${journal.PaymentMethod} ${journal.Method} ${journal.Gateway}`);
+  if (text.includes('mobile money')) return 'Mobile Money';
+  if (text.includes('bank transfer') || text.includes('transfer')) return 'Bank Transfer';
+  if (text.includes('cheque') || text.includes('check')) return 'Cheque';
+  if (text.includes('pos')) return 'POS';
+  if (text.includes('online') || text.includes('paystack') || text.includes('gateway')) return 'Online';
+  if (text.includes('card')) return 'Card';
+  if (text.includes('cash')) return 'Cash';
+  if (text.includes('wallet')) return 'Wallet';
   const debitCodes = new Set(journalLines(journal.Lines).filter((line) => amount(line.Debit) > 0).map((line) => clean(line.AccountCode)));
   if (debitCodes.has('1030')) return 'Online';
   if (debitCodes.has('1010')) return 'Cash';
   if (debitCodes.has('1020')) return 'Bank Transfer';
   if (debitCodes.has('2200')) return 'Wallet';
   if (debitCodes.has('1100')) return 'Receivable';
-  const text = lower(`${journal.PaymentMethod} ${journal.Method} ${journal.Gateway}`);
-  if (text.includes('online') || text.includes('paystack') || text.includes('card')) return 'Online';
-  if (text.includes('cash')) return 'Cash';
-  if (text.includes('wallet')) return 'Wallet';
-  if (text.includes('bank') || text.includes('transfer')) return 'Bank Transfer';
   return 'Other';
 }
 

@@ -3318,7 +3318,7 @@ async function loadChurchDonations() {
           <h2>Church Donations</h2>
           <p class="muted">Branch ${escapeHtml(data.branchId || 'main')} � ${summary.count || 0} entries � ${summary.paid || 0} paid � ${summary.pending || 0} pending</p>
         </div>
-        <span class="compact-row-actions"><button type="button" id="genericChurchGivingQr">▦ Generic Giving QR</button><button type="button" id="refreshChurchDonations">Refresh</button></span>
+        <span class="compact-row-actions"><button type="button" id="genericChurchGivingQr">▦ Generic Giving QR</button>${capabilities.canCollect ? '<button type="button" id="syncChurchDonationAccounting">Sync paid giving</button>' : ''}<button type="button" id="refreshChurchDonations">Refresh</button></span>
       </div>
       <div class="workflow-kpis">
         <div><small>Total</small><strong>${money(summary.totalAmount || 0)}</strong><span>All records</span></div>
@@ -3485,6 +3485,25 @@ async function loadChurchDonations() {
         setStatus(document.getElementById('churchDonationStatus') || dashboardStatus, error.message || String(error), 'bad');
       } finally {
         if (button.isConnected) setButtonLoading(button, false, 'Generating…', normalText);
+      }
+    });
+
+    document.getElementById('syncChurchDonationAccounting')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      const normalText = button.textContent;
+      setButtonLoading(button, true, 'Syncing...', normalText);
+      try {
+        const result = await churchDonationRequest('syncaccounting');
+        await loadChurchDonations();
+        setStatus(
+          document.getElementById('churchDonationStatus') || dashboardStatus,
+          result.message,
+          result.failedCount ? 'bad' : 'ok'
+        );
+      } catch (error) {
+        setStatus(document.getElementById('churchDonationStatus') || dashboardStatus, error.message || String(error), 'bad');
+      } finally {
+        if (button.isConnected) setButtonLoading(button, false, 'Syncing...', normalText);
       }
     });
 

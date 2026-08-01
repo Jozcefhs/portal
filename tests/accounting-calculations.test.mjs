@@ -214,12 +214,39 @@ test('paid church donations post gross income, net clearing and gateway charges 
 
   assert.equal(journal.JournalNo, 'SYS-DON-PS-DON-1');
   assert.equal(journal.Source, 'Church Donation');
+  assert.equal(journal.PaymentMethod, 'ONLINE');
+  assert.equal(journal.Gateway, 'Paystack');
   assert.equal(journal.TotalDebit, 100000);
   assert.equal(journal.TotalCredit, 100000);
   assert.deepEqual(
     journal.Lines.map((line) => [line.AccountCode, line.Debit, line.Credit]),
     [['1030', 98500, 0], ['6060', 1500, 0], ['4080', 0, 100000]]
   );
+});
+
+test('every donation-page payment method posts to accounting without changing its route label', () => {
+  const expectedCashAccount = new Map([
+    ['CASH', '1010'],
+    ['BANK TRANSFER', '1020'],
+    ['CHEQUE', '1020'],
+    ['POS', '1020'],
+    ['ONLINE', '1030'],
+    ['CARD', '1020'],
+    ['MOBILE MONEY', '1020']
+  ]);
+
+  for (const [method, accountCode] of expectedCashAccount) {
+    const journal = buildChurchDonationAccountingJournal({
+      DonationId: `DON-${method.replace(/\s+/g, '-')}`,
+      Status: 'Paid',
+      PaymentMethod: method,
+      Amount: 7500,
+      DonorName: `${method} Donor`
+    });
+    assert.equal(journal.PaymentMethod, method);
+    assert.equal(journal.Lines[0].AccountCode, accountCode);
+    assert.equal(journal.TotalDebit, journal.TotalCredit);
+  }
 });
 
 test('pending donations do not enter accounting and paid cash donations remain balanced', () => {
