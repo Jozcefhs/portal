@@ -1750,15 +1750,28 @@ async function updateParentNotificationConfiguration(env, body, request) {
   } else if (action === 'unsubscribepush') {
     await removePushSubscription(env, email, clean(body.deviceId || body.DeviceId));
   } else if (action === 'testpush') {
+    const deviceId = clean(body.deviceId || body.DeviceId);
+    const subscriptions = await listPushSubscriptions(env, email);
+    if (!deviceId || !subscriptions.some((row) => clean(row.DeviceId) === deviceId)) {
+      const error = new Error('Enable push on this device before sending a test notification.');
+      error.status = 409;
+      throw error;
+    }
     const child = dashboard.children?.[0] || {};
-    await createNotification(env, {
-      EventKey: `test-push:parent:${email}:${clean(body.deviceId || 'all')}:${Date.now()}`,
+    const testResult = await createNotification(env, {
+      EventKey: `test-push:parent:${email}:${deviceId}:${Date.now()}`,
       Type: 'Test Push', Category: 'System', Audience: 'Parent', Channels: ['Push'],
       TargetEmails: [email], Title: 'Notifications are working',
       Message: 'This device can receive Dynamax browser notifications.',
       ActionUrl: 'parent-dashboard.html', BranchId: child.BranchId || 'main',
       SchoolSection: child.SchoolSection, CreatedBy: email
-    }, { ignorePreferences: true });
+    }, { ignorePreferences: true, deviceId });
+    if (!testResult.pushDeliveries.some((delivery) => delivery.status === 'Delivered')) {
+      const failure = testResult.pushDeliveries.find((delivery) => delivery.error);
+      const error = new Error(failure?.error || 'The push service did not deliver the test notification. Reconnect this device and try again.');
+      error.status = 502;
+      throw error;
+    }
   }
   return getParentNotifications(env, body);
 }

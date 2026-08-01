@@ -38,6 +38,28 @@ test('central notification creation is idempotent', async () => {
   assert.equal((await createNotification({}, input, { createDocumentIfAbsent })).created, false);
 });
 
+test('notification creation exposes the real push delivery result', async () => {
+  const env = {
+    FIREBASE_WEB_API_KEY: 'api-key',
+    FIREBASE_PROJECT_ID: 'school-project',
+    FIREBASE_APP_ID: 'app-id',
+    FIREBASE_MESSAGING_SENDER_ID: 'sender-id',
+    FCM_VAPID_KEY: 'vapid-key'
+  };
+  const result = await createNotification(env, {
+    EventKey: 'push-result:test',
+    Audience: 'Staff',
+    Channels: ['Push'],
+    TargetUsernames: ['admin'],
+    Title: 'Push test',
+    Message: 'Delivery status test'
+  }, {
+    createDocumentIfAbsent: async (_env, _collection, _id, document) => ({ created: true, document }),
+    dispatchNotificationPush: async () => [{ status: 'Delivered', deliveryId: 'DEL-1' }]
+  });
+  assert.deepEqual(result.pushDeliveries, [{ status: 'Delivered', deliveryId: 'DEL-1' }]);
+});
+
 test('payment confirmation targets every known active parent email', () => {
   const row = parentPaymentNotification({ Reference: 'PAY-1', AccountRef: 'STD-1', ParentEmails: ['one@example.com', 'two@example.com'], Amount: 5000 });
   assert.deepEqual(row.TargetEmails, ['one@example.com', 'two@example.com']);
@@ -166,6 +188,9 @@ test('push permission is requested only by the explicit enable operation', async
   const source = await readFile(new URL('../js/web-push.js', import.meta.url), 'utf8');
   assert.match(source, /async function enable/);
   assert.equal((source.match(/Notification\.requestPermission\(\)/g) || []).length, 1);
+  assert.match(source, /messagingModule\.isSupported\(\)/);
+  assert.match(source, /getApps\(\)\.find/);
+  assert.doesNotMatch(source, /getApps\(\)\[0\]/);
 });
 
 test('denied push permission returns a user-facing error without breaking in-app use', async () => {
@@ -178,6 +203,19 @@ test('invalid FCM subscriptions are removed after provider rejection', async () 
   const source = await readFile(new URL('../functions/lib/firebase-messaging.js', import.meta.url), 'utf8');
   assert.match(source, /error\.invalidToken/);
   assert.match(source, /deleteDocument\(env, 'notificationSubscriptions'/);
+  assert.match(source, /allSubscriptions\.filter\(\(row\) => clean\(row\.DeviceId\) === clean\(options\.deviceId\)\)/);
+  assert.doesNotMatch(source, /fcm_options:\s*\{\s*link:\s*clean\(notification\.ActionUrl/);
+});
+
+test('test push endpoints reject missing devices and surface delivery failures', async () => {
+  const [staff, parent] = await Promise.all([
+    readFile(new URL('../functions/api/staff-notifications.js', import.meta.url), 'utf8'),
+    readFile(new URL('../functions/api/parent-dashboard.js', import.meta.url), 'utf8')
+  ]);
+  for (const source of [staff, parent]) {
+    assert.match(source, /Enable push on this device before sending a test notification/);
+    assert.match(source, /testResult\.pushDeliveries\.some\(\(delivery\) => delivery\.status === 'Delivered'\)/);
+  }
 });
 
 test('parent and staff notification APIs retain protected authentication', async () => {

@@ -359,6 +359,25 @@ function renderParentNotifications() {
   if (markAllParentNotificationsReadBtn) {
     markAllParentNotificationsReadBtn.disabled = unreadCount === 0;
   }
+  renderParentPushPrompt();
+}
+
+function renderParentPushPrompt() {
+  const prompt = document.getElementById('parentPushPrompt');
+  const button = document.getElementById('enableParentPushPrompt');
+  const copy = document.getElementById('parentPushPromptCopy');
+  if (!prompt || !button || !copy) return;
+  const permission = window.DynamaxWebPush?.permission?.() || 'unsupported';
+  const thisDevice = (parentNotificationMeta.subscriptions || []).find((row) => row.DeviceId === window.DynamaxWebPush?.deviceId?.());
+  prompt.hidden = Boolean(thisDevice) || parentNotificationMeta.messaging?.enabled !== true;
+  button.hidden = permission === 'denied' || permission === 'unsupported';
+  copy.textContent = permission === 'denied'
+    ? 'Notifications are blocked. Allow them for this site in browser settings, then reload.'
+    : permission === 'granted'
+      ? 'Permission is allowed, but this device is not connected. Tap to reconnect it.'
+      : permission === 'unsupported'
+        ? 'This browser cannot receive push. On iPhone or iPad, add this site to the Home Screen and open it there.'
+        : 'Tap once to receive alerts even when this page is closed.';
 }
 
 async function loadParentNotifications() {
@@ -433,7 +452,9 @@ function renderParentNotificationSettings(data = parentNotificationMeta) {
   parentNotificationSettingsForm.elements.Push.checked = settings.Channels?.Push !== false;
   document.getElementById('parentNotificationCategories').innerHTML = Object.entries(settings.Categories).map(([name, enabled]) => `<label><input type="checkbox" name="Category:${escapeHtml(name)}" ${enabled !== false ? 'checked' : ''}> ${escapeHtml(name)}</label>`).join('');
   const thisDevice = (data.subscriptions || []).find((row) => row.DeviceId === window.DynamaxWebPush?.deviceId?.());
-  document.getElementById('parentPushStatus').textContent = thisDevice ? `Enabled: ${thisDevice.DeviceName || 'this device'}` : `Status: ${window.DynamaxWebPush?.permission?.() || 'unsupported'}`;
+  document.getElementById('parentPushStatus').textContent = data.messaging?.enabled !== true
+    ? 'Push is not configured for this deployment.'
+    : thisDevice ? `Enabled: ${thisDevice.DeviceName || 'this device'}` : `Status: ${window.DynamaxWebPush?.permission?.() || 'unsupported'}`;
   document.getElementById('enableParentPush').disabled = !data.messaging?.enabled || Boolean(thisDevice);
   document.getElementById('disableParentPush').disabled = !thisDevice;
   document.getElementById('testParentPush').disabled = !thisDevice;
@@ -1946,13 +1967,21 @@ parentNotificationSettingsForm?.addEventListener('submit', async (event) => {
     renderParentNotificationSettings(data); status.textContent = 'Preferences saved.';
   } catch (error) { status.textContent = error.message; }
 });
-document.getElementById('enableParentPush')?.addEventListener('click', async () => {
+async function enableParentPushOnThisDevice() {
   const status = document.getElementById('parentNotificationSettingsStatus');
   try {
     await window.DynamaxWebPush.enable(parentNotificationMeta.messaging, (subscription) => parentNotificationRequest('subscribePush', { subscription }));
-    status.textContent = 'Browser push enabled on this device.'; renderParentNotificationSettings(parentNotificationMeta);
-  } catch (error) { status.textContent = error.message; }
-});
+    status.textContent = 'Push notifications are enabled on this device.';
+    renderParentNotificationSettings(parentNotificationMeta);
+    renderParentPushPrompt();
+  } catch (error) {
+    status.textContent = error.message;
+    const copy = document.getElementById('parentPushPromptCopy');
+    if (copy) copy.textContent = error.message;
+  }
+}
+document.getElementById('enableParentPush')?.addEventListener('click', enableParentPushOnThisDevice);
+document.getElementById('enableParentPushPrompt')?.addEventListener('click', enableParentPushOnThisDevice);
 document.getElementById('disableParentPush')?.addEventListener('click', async () => {
   const status = document.getElementById('parentNotificationSettingsStatus');
   try { await window.DynamaxWebPush.disable((deviceId) => parentNotificationRequest('unsubscribePush', { deviceId })); status.textContent = 'This device was removed.'; renderParentNotificationSettings(parentNotificationMeta); } catch (error) { status.textContent = error.message; }

@@ -168,15 +168,28 @@ export async function onRequestPost(context) {
     } else if (action === 'unsubscribepush') {
       await removePushSubscription(env, user.username, clean(body.deviceId || body.DeviceId));
     } else if (action === 'testpush') {
-      await createNotification(env, {
-        EventKey: `test-push:${clean(user.username).toLowerCase()}:${clean(body.deviceId || 'all')}:${Date.now()}`,
+      const deviceId = clean(body.deviceId || body.DeviceId);
+      const subscriptions = await listPushSubscriptions(env, user.username);
+      if (!deviceId || !subscriptions.some((row) => clean(row.DeviceId) === deviceId)) {
+        const error = new Error('Enable push on this device before sending a test notification.');
+        error.status = 409;
+        throw error;
+      }
+      const testResult = await createNotification(env, {
+        EventKey: `test-push:${clean(user.username).toLowerCase()}:${deviceId}:${Date.now()}`,
         Type: 'Test Push', Category: 'System', Audience: 'Staff', Channels: ['Push'],
         TargetUsernames: [user.username], Title: 'Notifications are working',
         Message: 'This device can receive Dynamax browser notifications.',
         ActionUrl: 'admin.html?section=notifications', BranchId: user.branchId,
         SchoolSection: clean(user.schoolSectionAccess) === 'All' ? '' : user.schoolSectionAccess,
         CreatedBy: user.username
-      }, { ignorePreferences: true });
+      }, { ignorePreferences: true, deviceId });
+      if (!testResult.pushDeliveries.some((delivery) => delivery.status === 'Delivered')) {
+        const failure = testResult.pushDeliveries.find((delivery) => delivery.error);
+        const error = new Error(failure?.error || 'The push service did not deliver the test notification. Reconnect this device and try again.');
+        error.status = 502;
+        throw error;
+      }
     } else {
       const error = new Error('Unsupported notification action.');
       error.status = 400;

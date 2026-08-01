@@ -105,6 +105,16 @@ function invalidTokenResponse(status, data) {
 
 async function sendToFcm(env, token, notification) {
   const accessToken = await getGoogleAccessToken(env, MESSAGING_SCOPE);
+  let actionLink = '';
+  const baseUrl = clean(env.PORTAL_BASE_URL || env.PUBLIC_BASE_URL);
+  try {
+    const candidate = new URL(clean(notification.ActionUrl || '/'), baseUrl || undefined);
+    if (candidate.protocol === 'https:') actionLink = candidate.href;
+  } catch {}
+  const webpush = {
+    headers: { Urgency: clean(notification.Severity).toLowerCase() === 'urgent' ? 'high' : 'normal' }
+  };
+  if (actionLink) webpush.fcm_options = { link: actionLink };
   const response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/messages:send`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
@@ -117,10 +127,7 @@ async function sendToFcm(env, token, notification) {
           category: clean(notification.Category || notification.Type),
           actionUrl: clean(notification.ActionUrl || '/')
         },
-        webpush: {
-          headers: { Urgency: clean(notification.Severity).toLowerCase() === 'urgent' ? 'high' : 'normal' },
-          fcm_options: { link: clean(notification.ActionUrl || '/') }
-        }
+        webpush
       }
     })
   });
@@ -135,7 +142,10 @@ async function sendToFcm(env, token, notification) {
 }
 
 export async function deliverPushNotification(env, notification, recipientKey, options = {}) {
-  const subscriptions = options.subscriptions || await listPushSubscriptions(env, recipientKey, { includeToken: true });
+  const allSubscriptions = options.subscriptions || await listPushSubscriptions(env, recipientKey, { includeToken: true });
+  const subscriptions = clean(options.deviceId)
+    ? allSubscriptions.filter((row) => clean(row.DeviceId) === clean(options.deviceId))
+    : allSubscriptions;
   const results = [];
   for (const subscription of subscriptions) {
     const deliveryId = deliveryDocumentId(notification.NotificationId, 'push', recipientKey, subscription.DeviceId);

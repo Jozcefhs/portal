@@ -176,12 +176,18 @@ export async function createNotification(env, input, options = {}) {
   }, options.now || nowIso());
   const create = options.createDocumentIfAbsent || createDocumentIfAbsent;
   const result = await create(env, 'notifications', record.NotificationId, record);
+  let pushDeliveries = [];
   if ((result?.created || options.retryDelivery !== false) && publicMessagingConfig(env).enabled && record.Channels.includes('Push') && options.deliver !== false) {
-    await dispatchNotificationPush(env, record, options).catch(() => []);
+    const dispatch = options.dispatchNotificationPush || dispatchNotificationPush;
+    pushDeliveries = await dispatch(env, record, options).catch((error) => [{
+      status: 'Failed',
+      error: clean(error?.message || error || 'Push delivery failed.')
+    }]);
   }
   return {
     created: Boolean(result?.created),
-    notification: result?.document ? { ...result.document, ...record } : record
+    notification: result?.document ? { ...result.document, ...record } : record,
+    pushDeliveries
   };
 }
 
@@ -280,7 +286,7 @@ export async function dispatchNotificationPush(env, notification, options = {}) 
     const settings = await loadNotificationSettings(env, notification.Audience, recipientKey);
     if (!options.ignorePreferences && (settings.Channels.Push === false || settings.Categories[category(notification.Category)] === false)) continue;
     if (!options.ignorePreferences && quietHoursActive(settings, options.date || new Date()) && lower(notification.Severity) !== 'urgent') continue;
-    results.push(...await deliverPushNotification(env, notification, recipientKey));
+    results.push(...await deliverPushNotification(env, notification, recipientKey, { deviceId: clean(options.deviceId) }));
   }
   return results;
 }

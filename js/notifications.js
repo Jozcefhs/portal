@@ -11,6 +11,10 @@
     </button>
     <section class="notification-popover" aria-label="Notifications" hidden>
       <header class="notification-popover-header"><strong>Notifications</strong><button type="button" class="notification-mark-all">Mark all read</button></header>
+      <div class="notification-push-prompt" hidden>
+        <p><strong>Mobile alerts are off</strong><small data-notification-push-copy>Enable push to receive alerts when this page is closed.</small></p>
+        <button type="button" data-notification-enable-push>Enable push</button>
+      </div>
       <div class="notification-list"><p class="notification-empty">No notifications yet.</p></div>
       <footer><button type="button" class="notification-view-all">View all notifications</button></footer>
     </section>`;
@@ -57,6 +61,8 @@
   const popover = centre.querySelector('.notification-popover');
   const list = centre.querySelector('.notification-list');
   const markAll = centre.querySelector('.notification-mark-all');
+  const pushPrompt = centre.querySelector('.notification-push-prompt');
+  const pushPromptButton = centre.querySelector('[data-notification-enable-push]');
   const historyList = dialog.querySelector('.notification-history-list');
   const loadMore = dialog.querySelector('.notification-load-more');
   let records = [];
@@ -156,6 +162,18 @@
   function renderSettings(data = {}) {
     const form = dialog.querySelector('.notification-settings-form');
     const settings = data.settings || {};
+    const permission = window.DynamaxWebPush?.permission?.() || 'unsupported';
+    const thisDevice = (data.subscriptions || []).find((row) => row.DeviceId === window.DynamaxWebPush?.deviceId?.());
+    const pushConfigured = data.messaging?.enabled === true;
+    pushPrompt.hidden = Boolean(thisDevice) || !pushConfigured;
+    pushPromptButton.hidden = permission === 'denied' || permission === 'unsupported';
+    pushPrompt.querySelector('[data-notification-push-copy]').textContent = permission === 'denied'
+      ? 'Notifications are blocked. Allow them for this site in browser settings, then reload.'
+      : permission === 'granted'
+        ? 'Permission is allowed, but this device is not connected. Tap to reconnect it.'
+        : permission === 'unsupported'
+          ? 'This browser cannot receive push. On iPhone or iPad, add this site to the Home Screen and open it there.'
+          : 'Tap once to receive alerts even when this page is closed.';
     if (!settings.Categories) return;
     form.elements.QuietHoursEnabled.checked = settings.QuietHoursEnabled === true;
     form.elements.QuietHoursStart.value = settings.QuietHoursStart || '21:00';
@@ -171,9 +189,9 @@
     form.elements.ManagementRoles.value = (settings.WorkflowRecipients?.ManagementRoles || ['Super Admin', 'Management']).join(', ');
     form.querySelector('.notification-system-settings').hidden = !data.canManageSystemSettings;
     form.querySelector('.notification-category-grid').innerHTML = Object.entries(settings.Categories).map(([name, enabled]) => `<label><input type="checkbox" name="Category:${html(name)}" ${enabled !== false ? 'checked' : ''}> ${html(name)}</label>`).join('');
-    const permission = window.DynamaxWebPush?.permission?.() || 'unsupported';
-    const thisDevice = (data.subscriptions || []).find((row) => row.DeviceId === window.DynamaxWebPush?.deviceId?.());
-    form.querySelector('[data-push-status]').textContent = thisDevice ? `Enabled: ${thisDevice.DeviceName || 'this device'}` : `Status: ${permission}`;
+    form.querySelector('[data-push-status]').textContent = !pushConfigured
+      ? 'Push is not configured for this deployment.'
+      : thisDevice ? `Enabled: ${thisDevice.DeviceName || 'this device'}` : `Status: ${permission}`;
     form.querySelector('[data-enable-push]').disabled = !data.messaging?.enabled || Boolean(thisDevice);
     form.querySelector('[data-disable-push]').disabled = !thisDevice;
     form.querySelector('[data-test-push]').disabled = !thisDevice;
@@ -221,6 +239,21 @@
   markAll.addEventListener('click', () => update('markAllRead').catch(() => {}));
 
   const settingsForm = dialog.querySelector('.notification-settings-form');
+  async function enablePushOnThisDevice() {
+    const status = settingsForm.querySelector('.notification-settings-status');
+    pushPromptButton.disabled = true;
+    status.textContent = 'Connecting this device...';
+    try {
+      await window.DynamaxWebPush.enable(currentData.messaging, (subscription) => update('subscribePush', { subscription }));
+      status.textContent = 'Push notifications are enabled on this device.';
+    } catch (error) {
+      status.textContent = error.message;
+      pushPrompt.querySelector('[data-notification-push-copy]').textContent = error.message;
+    } finally {
+      pushPromptButton.disabled = false;
+    }
+  }
+  pushPromptButton.addEventListener('click', enablePushOnThisDevice);
   settingsForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const categories = {};
@@ -238,17 +271,16 @@
       status.textContent = 'Preferences saved.';
     } catch (error) { status.textContent = error.message; }
   });
-  settingsForm.querySelector('[data-enable-push]').addEventListener('click', async () => {
-    const status = settingsForm.querySelector('.notification-settings-status');
-    try {
-      await window.DynamaxWebPush.enable(currentData.messaging, (subscription) => update('subscribePush', { subscription }));
-      status.textContent = 'Browser push enabled on this device.';
-    } catch (error) { status.textContent = error.message; }
-  });
+  settingsForm.querySelector('[data-enable-push]').addEventListener('click', enablePushOnThisDevice);
   settingsForm.querySelector('[data-disable-push]').addEventListener('click', async () => {
     await window.DynamaxWebPush.disable((deviceId) => update('unsubscribePush', { deviceId })).catch((error) => { settingsForm.querySelector('.notification-settings-status').textContent = error.message; });
   });
-  settingsForm.querySelector('[data-test-push]').addEventListener('click', () => update('testPush', { deviceId: window.DynamaxWebPush.deviceId() }).catch((error) => { settingsForm.querySelector('.notification-settings-status').textContent = error.message; }));
+  settingsForm.querySelector('[data-test-push]').addEventListener('click', async () => {
+    const status = settingsForm.querySelector('.notification-settings-status');
+    status.textContent = 'Sending test notification...';
+    try { await update('testPush', { deviceId: window.DynamaxWebPush.deviceId() }); status.textContent = 'Test push delivered to this device.'; }
+    catch (error) { status.textContent = error.message; }
+  });
   settingsForm.querySelector('.notification-device-list').addEventListener('click', async (event) => {
     const button = event.target.closest('[data-remove-push-device]');
     if (!button) return;

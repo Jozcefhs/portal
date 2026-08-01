@@ -6,6 +6,7 @@
 .notification-popover[hidden]{display:none}
 .notification-popover-header{position:sticky;z-index:1;top:0;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid #dce6ef;background:inherit}
 .notification-popover-header strong{font-size:15px}
+.notification-push-prompt{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 14px;border-bottom:1px solid #bfe4da;background:#eef8f5}.notification-push-prompt[hidden]{display:none}.notification-push-prompt p{display:grid;gap:3px;margin:0}.notification-push-prompt strong,.notification-push-prompt small{display:block}.notification-push-prompt strong{font-size:12px}.notification-push-prompt small{color:#526b83;font-size:10px;line-height:1.35}.notification-push-prompt button{flex:0 0 auto;padding:8px 10px;border:0;border-radius:7px;background:#078c72;color:#fff;font-size:11px;font-weight:800;cursor:pointer}.notification-push-prompt button:disabled{opacity:.55;cursor:wait}
 .notification-mark-all{width:auto!important;min-height:0!important;padding:6px 9px!important;border:0!important;background:transparent!important;color:#1769e0!important;font-size:11px!important}
 .notification-list{display:grid}
 .notification-item{display:flex;align-items:flex-start;width:100%;padding:0;border:0;border-bottom:1px solid #e5ecf2;background:transparent;color:inherit;text-align:left}
@@ -49,6 +50,7 @@ html[data-theme="dark"] .notification-item:hover,html[data-theme="dark"] .notifi
 .theme-dark .notification-item:hover,.theme-dark .notification-item:focus-visible{background:#17314b}
 html[data-theme="dark"] .notification-item-copy span,.theme-dark .notification-item-copy span{color:#c2d2e2}
 html[data-theme="dark"] .notification-item-copy time,.theme-dark .notification-item-copy time{color:#8fa6bc}
+html[data-theme="dark"] .notification-push-prompt,.theme-dark .notification-push-prompt{border-color:#285c53;background:#143a38}html[data-theme="dark"] .notification-push-prompt small,.theme-dark .notification-push-prompt small{color:#c2d2e2}
 @media (max-width:720px){
   .notification-popover{position:fixed;top:64px;right:8px;left:8px;width:auto;max-height:calc(100vh - 84px)}
   .notification-history-shell>[data-notification-panel],.notification-history-shell>header{padding-left:14px;padding-right:14px}.notification-push-card{align-items:flex-start;flex-direction:column}
@@ -58,6 +60,9 @@ html[data-theme="dark"] .notification-item-copy time,.theme-dark .notification-i
   .notification-trigger{display:grid;width:40px;height:40px;min-height:40px;padding:0!important;border-color:rgba(255,255,255,.25);background:rgba(255,255,255,.12);color:#fff}
   .notification-trigger>span:first-child{display:block;font-size:20px;line-height:1}
   .notification-trigger .notification-badge:not([hidden]){display:grid}
+  .staff-identity .notification-popover .notification-push-prompt p,
+  .staff-identity .notification-popover .notification-push-prompt strong,
+  .staff-identity .notification-popover .notification-push-prompt small{display:block}
   .staff-identity .notification-popover .notification-item-copy,
   .staff-identity .notification-popover .notification-item-dot{display:block}
 }

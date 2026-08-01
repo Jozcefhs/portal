@@ -485,6 +485,9 @@ test('staff and parent notification interfaces are wired to protected APIs', asy
   assert.match(notificationCss, /@media \(max-width:680px\)[\s\S]*?\.notification-trigger>span:first-child\{display:block/);
   assert.match(notificationCss, /\.notification-trigger \.notification-badge:not\(\[hidden\]\)\{display:grid\}/);
   assert.match(notificationCss, /\.staff-identity \.notification-popover \.notification-item-copy,[\s\S]*?\.notification-item-dot\{display:block\}/);
+  assert.match(notificationJs, /data-notification-enable-push/);
+  assert.match(notificationJs, /Tap once to receive alerts even when this page is closed/);
+  assert.match(notificationCss, /\.notification-push-prompt\{display:flex/);
   assert.match(staffApi, /requireStaffSession/);
   assert.match(parentApi, /action === 'getNotifications'/);
   assert.match(parentApi, /action === 'markNotificationRead'/);
