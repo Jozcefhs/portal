@@ -55,6 +55,14 @@ test('profile pictures reload from the canonical staff document after a new logi
   assert.match(sessionApi, /loadStaffProfileImage\(env, staffRecord \|\| \{\}, user\)/);
 });
 
+test('dashboard hydration does not erase the separately loaded profile picture', () => {
+  assert.match(adminJs, /const dashboardUser = data\.user \|\| \{\}/);
+  assert.match(
+    adminJs,
+    /profilePhotoUrl: clean\(dashboardUser\.profilePhotoUrl\) \|\| clean\(currentUser\?\.profilePhotoUrl\)/
+  );
+});
+
 test('the authenticated environment super admin can bootstrap a missing database profile', () => {
   assert.match(sessionApi, /function environmentAdminProfile\(env, sessionUser\)/);
   assert.match(sessionApi, /sessionUser\.role !== 'Super Admin'/);

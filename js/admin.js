@@ -856,7 +856,15 @@ async function loadDashboard() {
     }
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load staff dashboard.');
     dashboardData = data;
-    currentUser = data.user || currentUser;
+    const dashboardUser = data.user || {};
+    currentUser = {
+      ...currentUser,
+      ...dashboardUser,
+      // Profile images live in staffProfileImages and are hydrated by the
+      // session endpoint. The general dashboard response intentionally omits
+      // that large data URL, so do not let it erase the hydrated avatar.
+      profilePhotoUrl: clean(dashboardUser.profilePhotoUrl) || clean(currentUser?.profilePhotoUrl)
+    };
     showDashboard(currentUser, { refreshPasskeys: false });
     const allowed = data.allowedSections || currentUser.allowedSections || [];
     const workspaceSections = ['overview', ...allowed];
