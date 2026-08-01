@@ -343,7 +343,9 @@ function renderParentNotifications() {
     row.className = `parent-notification-item${isRead ? '' : ' unread'}`;
     const title = notification.Title || notification.title || notification.Type || notification.type || 'School notification';
     const message = notification.Message || notification.message || notification.Body || notification.body || '';
-    const date = notification.DisplayDate || notification.displayDate || notification.CreatedAt || notification.createdAt || notification.Date || notification.date || '';
+    const dateValue = notification.DisplayDate || notification.displayDate || notification.CreatedAt || notification.createdAt || notification.Date || notification.date || '';
+    const parsedDate = dateValue ? new Date(dateValue) : null;
+    const date = parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate.toLocaleString() : dateValue;
     row.innerHTML = `
       <span>
         <strong>${escapeHtml(title)}</strong>

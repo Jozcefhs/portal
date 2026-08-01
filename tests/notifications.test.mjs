@@ -470,10 +470,12 @@ test('read-state queries use the exact visible notification ids in bounded chunk
 });
 
 test('staff and parent notification interfaces are wired to protected APIs', async () => {
-  const [adminHtml, notificationJs, notificationCss, staffApi, parentApi, backendApi, indexes] = await Promise.all([
+  const [adminHtml, notificationJs, notificationCss, parentDashboardJs, styleCss, staffApi, parentApi, backendApi, indexes] = await Promise.all([
     readFile(new URL('../admin.html', import.meta.url), 'utf8'),
     readFile(new URL('../js/notifications.js', import.meta.url), 'utf8'),
     readFile(new URL('../css/notifications.css', import.meta.url), 'utf8'),
+    readFile(new URL('../js/parent-dashboard.js', import.meta.url), 'utf8'),
+    readFile(new URL('../css/style.css', import.meta.url), 'utf8'),
     readFile(new URL('../functions/api/staff-notifications.js', import.meta.url), 'utf8'),
     readFile(new URL('../functions/api/parent-dashboard.js', import.meta.url), 'utf8'),
     readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8'),
@@ -492,6 +494,9 @@ test('staff and parent notification interfaces are wired to protected APIs', asy
   assert.match(notificationCss, /\.notification-push-prompt\{display:flex/);
   assert.match(notificationCss, /\.notification-delete-action\{/);
   assert.match(parentApi, /action === 'archiveNotification'/);
+  assert.match(parentDashboardJs, /new Date\(dateValue\)/);
+  assert.match(styleCss, /\.parent-notification-item strong\{font-size:12px/);
+  assert.match(styleCss, /\.parent-notification-item>span>span\{[^}]*font-size:10px/);
   assert.match(staffApi, /requireStaffSession/);
   assert.match(parentApi, /action === 'getNotifications'/);
   assert.match(parentApi, /action === 'markNotificationRead'/);
