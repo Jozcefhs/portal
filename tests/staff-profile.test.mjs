@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 import { findStaffLoginUser, findStaffUser } from '../functions/lib/staff-auth.js';
+import { staffProfileImageIds } from '../functions/api/staff-session.js';
 
 const adminHtml = fs.readFileSync(new URL('../admin.html', import.meta.url), 'utf8');
 const adminJs = fs.readFileSync(new URL('../js/admin.js', import.meta.url), 'utf8');
@@ -40,6 +41,18 @@ test('staff profile lookup accepts either the stored username or its database do
   }];
   assert.equal(findStaffUser(rows, 'DIGC Super Admin'), rows[0]);
   assert.equal(findStaffUser(rows, 'ADMIN'), rows[0]);
+});
+
+test('profile pictures reload from the canonical staff document after a new login', () => {
+  assert.deepEqual(
+    staffProfileImageIds(
+      { __id: 'admin', Username: 'DIGC Super Admin', LoginUsername: 'admin' },
+      { username: 'DIGC Super Admin', loginUsername: 'admin' }
+    ),
+    ['admin', 'digc-super-admin']
+  );
+  assert.match(sessionApi, /const staffRecord = await findStaffUserRecord\(env, user\.username\)\.catch\(\(\) => null\)/);
+  assert.match(sessionApi, /loadStaffProfileImage\(env, staffRecord \|\| \{\}, user\)/);
 });
 
 test('the authenticated environment super admin can bootstrap a missing database profile', () => {

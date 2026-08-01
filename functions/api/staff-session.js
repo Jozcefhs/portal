@@ -51,6 +51,24 @@ function safeStaffId(value) {
   return lower(value).replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120);
 }
 
+export function staffProfileImageIds(record = {}, user = {}) {
+  return [...new Set([
+    clean(record.__id),
+    safeStaffId(record.Username),
+    safeStaffId(record.LoginUsername),
+    safeStaffId(user.username),
+    safeStaffId(user.loginUsername)
+  ].filter(Boolean))];
+}
+
+async function loadStaffProfileImage(env, record = {}, user = {}) {
+  for (const profileId of staffProfileImageIds(record, user)) {
+    const profileImage = await getDocument(env, 'staffProfileImages', profileId).catch(() => null);
+    if (clean(profileImage?.ProfilePhotoDataUrl)) return profileImage;
+  }
+  return null;
+}
+
 function environmentAdminProfile(env, sessionUser) {
   const configuredUsername = clean(env.ADMIN_WEB_USERNAME || 'admin');
   if (sessionUser.role !== 'Super Admin' || lower(sessionUser.username) !== lower(configuredUsername)) return null;
@@ -124,10 +142,7 @@ export async function onRequestGet(context) {
       error.status = 401;
       throw error;
     }
-    const profileId = clean(stored?.__id || authoritativeRecord.__id || safeStaffId(sessionUser.username));
-    const profileImage = profileId
-      ? await getDocument(context.env, 'staffProfileImages', profileId).catch(() => null)
-      : null;
+    const profileImage = await loadStaffProfileImage(context.env, authoritativeRecord, sessionUser);
     const user = authoritativeSessionUser(
       authoritativeRecord,
       sessionUser,
@@ -178,6 +193,8 @@ export async function onRequestPost(context) {
       if (!displayName) return response({ ok: false, message: 'Display name is required.' }, 400);
       const updatedAt = new Date().toISOString();
       const photo = profilePhoto(body.profilePhotoDataUrl);
+      const staffDocumentId = clean(existing.__id || safeStaffId(existing.Username || sessionUser.username));
+      if (!staffDocumentId) return response({ ok: false, message: 'The staff profile identifier is invalid.' }, 400);
       const updated = {
         ...existing,
         DisplayName: displayName,
@@ -190,12 +207,12 @@ export async function onRequestPost(context) {
       await batchUpsertDocuments(env, [
         {
           collectionPath: 'staffUsers',
-          documentId: existing.__id,
+          documentId: staffDocumentId,
           data: updated
         },
         {
           collectionPath: 'staffProfileImages',
-          documentId: existing.__id,
+          documentId: staffDocumentId,
           data: {
             Username: clean(existing.Username || sessionUser.username),
             ProfilePhotoDataUrl: photo,
@@ -238,7 +255,7 @@ export async function onRequestPost(context) {
         );
       }
       const passwordFields = await hashStaffPassword(password);
-      const profileImage = await getDocument(env, 'staffProfileImages', existing.__id).catch(() => null);
+      const profileImage = await loadStaffProfileImage(env, existing, sessionUser);
       const updated = {
         ...existing,
         ...passwordFields,
@@ -350,7 +367,7 @@ export async function onRequestPost(context) {
           }
         }
       ]);
-      const profileImage = await getDocument(env, 'staffProfileImages', existing.__id).catch(() => null);
+      const profileImage = await loadStaffProfileImage(env, existing, sessionUser);
       const refreshedUser = authoritativeSessionUser(
         updated,
         { ...sessionUser, loginUsername, mustChangePassword: false },
@@ -390,7 +407,8 @@ export async function onRequestPost(context) {
       return response({ ok: false, message: 'Invalid username/password or inactive account.' }, 401);
     }
     await clearStaffLoginFailures(env, body.username, request, attempt);
-    const profileImage = await getDocument(env, 'staffProfileImages', safeStaffId(user.username)).catch(() => null);
+    const staffRecord = await findStaffUserRecord(env, user.username).catch(() => null);
+    const profileImage = await loadStaffProfileImage(env, staffRecord || {}, user);
     if (profileImage?.ProfilePhotoDataUrl) user.profilePhotoUrl = clean(profileImage.ProfilePhotoDataUrl);
     const token = await createStaffSession(env, user);
     const access = await staffAccessFor(env, user);
