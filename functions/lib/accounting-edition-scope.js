@@ -13,13 +13,18 @@ export const SCHOOL_ONLY_REVENUE_ACCOUNT_CODES = Object.freeze([
   '4110'  // Acceptance Fee Revenue
 ]);
 
-const SCHOOL_ONLY_REVENUE_CODES = new Set(SCHOOL_ONLY_REVENUE_ACCOUNT_CODES);
+export const SCHOOL_ONLY_ACCOUNT_CODES = Object.freeze([
+  '1100', // Student Accounts Receivable
+  ...SCHOOL_ONLY_REVENUE_ACCOUNT_CODES
+]);
+
+const SCHOOL_ONLY_CODES = new Set(SCHOOL_ONLY_ACCOUNT_CODES);
 const clean = (value) => String(value ?? '').trim();
 
 export function excludedAccountingCodesForEdition(edition) {
   return normalizeOrganizationEdition(edition) === 'school'
     ? new Set()
-    : new Set(SCHOOL_ONLY_REVENUE_CODES);
+    : new Set(SCHOOL_ONLY_CODES);
 }
 
 export function accountingCodeAllowedForEdition(code, edition) {

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  SCHOOL_ONLY_ACCOUNT_CODES,
   SCHOOL_ONLY_REVENUE_ACCOUNT_CODES,
   accountingChartForEdition,
   accountingCodeAllowedForEdition,
@@ -9,6 +10,7 @@ import {
 } from '../functions/lib/accounting-edition-scope.js';
 
 const chart = [
+  { Code: '1100', Name: 'Student Accounts Receivable' },
   { Code: '4000', Name: 'Tuition and School Fee Revenue' },
   { Code: '4040', Name: 'Books and Uniform Revenue' },
   { Code: '4080', Name: 'Grants and Donations' },
@@ -17,12 +19,14 @@ const chart = [
   { Code: '4140', Name: 'Offering Income' }
 ];
 
-test('church accounting hides school revenue codes but retains general organisation income', () => {
+test('church accounting hides school-only accounts but retains general organisation income', () => {
   assert.deepEqual(
     accountingChartForEdition(chart, 'church').map((row) => row.Code),
     ['4080', '4090', '4120', '4140']
   );
   assert.equal(SCHOOL_ONLY_REVENUE_ACCOUNT_CODES.includes('4110'), true);
+  assert.equal(SCHOOL_ONLY_ACCOUNT_CODES.includes('1100'), true);
+  assert.equal(accountingCodeAllowedForEdition('1100', 'faith'), false);
   assert.equal(accountingCodeAllowedForEdition('4000', 'faith'), false);
   assert.equal(accountingCodeAllowedForEdition('4140', 'faith'), true);
 });
