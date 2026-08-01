@@ -1661,6 +1661,87 @@ html[data-theme="dark"] .vertical-bar-track {
   margin-bottom: 1rem;
 }
 
+.department-batch-assignment {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid #cbdbe8;
+  border-left: 4px solid #15936f;
+  border-radius: 13px;
+  background: #fff;
+}
+.department-batch-heading,
+.department-batch-tools,
+.department-batch-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .8rem;
+}
+.department-batch-heading h3,
+.department-batch-heading p { margin: .15rem 0; }
+.department-batch-heading > div > small { color: #08775f; font-weight: 800; text-transform: uppercase; }
+.department-batch-heading > strong { flex: 0 0 auto; color: #1769e0; }
+.department-batch-controls { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: .75rem; margin-top: .9rem; }
+.department-batch-controls label,
+.department-batch-tools label { display: grid; gap: .35rem; margin: 0; }
+.department-batch-controls input,
+.department-batch-controls select,
+.department-batch-tools input { min-height: 38px; margin: 0; }
+.department-batch-tools { margin-top: .8rem; }
+.department-batch-tools label { flex: 1 1 300px; }
+.department-batch-tools > div { display: flex; flex: 0 0 auto; gap: .45rem; }
+.department-batch-tools button { width: auto; margin: 0; }
+.department-batch-people {
+  display: grid;
+  grid-template-columns: repeat(2,minmax(0,1fr));
+  gap: .45rem;
+  max-height: 360px;
+  margin-top: .75rem;
+  padding: .65rem;
+  overflow: auto;
+  border: 1px solid #d8e3ec;
+  border-radius: 10px;
+  background: #f8fbfd;
+  overscroll-behavior: contain;
+}
+.department-batch-person {
+  display: grid;
+  grid-template-columns: 16px minmax(0,1fr) auto;
+  gap: .6rem;
+  min-height: 52px;
+  margin: 0;
+  padding: .55rem .65rem;
+  border: 1px solid #dce5ed;
+  border-radius: 9px;
+  background: #fff;
+}
+.department-batch-person span,
+.department-batch-person strong,
+.department-batch-person small { display: block; min-width: 0; }
+.department-batch-person strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.department-batch-person small { margin-top: .15rem; color: #718096; font-weight: 400; }
+.department-batch-person em { align-self: center; color: #08775f; font-size: 9px; font-style: normal; font-weight: 800; white-space: nowrap; }
+.department-batch-person.is-assigned { border-color: #a7d9c7; background: #eaf8f2; }
+.department-batch-actions { margin-top: .8rem; }
+.department-batch-actions .status { flex: 1; margin: 0; }
+.department-batch-actions button { flex: 0 0 auto; width: auto; margin: 0; }
+html[data-theme="dark"] .department-batch-assignment,
+html[data-theme="dark"] .department-batch-person { border-color: #354b62; background: #13283d; color: #edf5ff; }
+html[data-theme="dark"] .department-batch-people { border-color: #354b62; background: #102235; }
+html[data-theme="dark"] .department-batch-person.is-assigned { border-color: #28765f; background: #153c34; }
+
+@media (max-width:680px) {
+  .department-batch-heading,
+  .department-batch-tools,
+  .department-batch-actions { align-items: stretch; flex-direction: column; }
+  .department-batch-heading > strong { align-self: flex-start; }
+  .department-batch-controls,
+  .department-batch-people { grid-template-columns: 1fr; }
+  .department-batch-tools > div,
+  .department-batch-actions button { width: 100%; }
+  .department-batch-tools button { flex: 1; }
+}
+
 .department-guidance-card {
   display: flex;
   align-items: flex-start;

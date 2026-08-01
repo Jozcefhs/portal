@@ -2545,6 +2545,12 @@ function organizedDepartmentWorkspace(data) {
   const departments = data.departments || [];
   const positions = data.departmentPositions || [];
   const members = data.members || [];
+  const assignablePeople = data.assignablePeople || members.map((row) => ({
+    PersonKey: `member:${row.MemberId || row.__id}`,
+    PersonType: 'Member',
+    DisplayName: row.DisplayName || row.MemberId,
+    Detail: row.MembershipStatus || 'Member'
+  }));
   const capabilities = data.capabilities || {};
   const canManageDepartments = Boolean(capabilities.canManageDepartments);
   const canManageMembers = Boolean(capabilities.canManageMembers);
@@ -2573,6 +2579,12 @@ function organizedDepartmentWorkspace(data) {
     : '<option value="">No registered members — create one first</option>';
   const meetingOptions = `<option value="">Choose meeting</option>${meetings.map((row) => `<option value="${escapeHtml(row.MeetingId)}">${escapeHtml(`${row.Date || ''} · ${row.Title || row.MeetingId}`)}</option>`).join('')}`;
   const positionOptions = `<option value="">No position</option>${positions.map((row) => `<option value="${escapeHtml(row.PositionId)}" data-department-id="${escapeHtml(row.DepartmentId)}">${escapeHtml(row.Name)}</option>`).join('')}`;
+  const batchPeopleOptions = assignablePeople.map((row) => `
+    <label class="department-batch-person check-row" data-batch-person-row data-person-search="${escapeHtml(lower(`${row.DisplayName || ''} ${row.PersonType || ''} ${row.Detail || ''} ${row.PersonId || ''}`))}">
+      <input type="checkbox" name="PersonKey" value="${escapeHtml(row.PersonKey)}">
+      <span><strong>${escapeHtml(row.DisplayName || row.PersonId)}</strong><small>${escapeHtml([row.PersonType, row.Detail].filter(Boolean).join(' · '))}</small></span>
+      <em data-person-assignment-state></em>
+    </label>`).join('');
   const programOptions = `<option value="">Choose program</option>${programs.map((row) => `<option value="${escapeHtml(row.ProgramId)}">${escapeHtml(row.Name)}</option>`).join('')}`;
   const departmentCards = departmentSummary.map((row, index) => `
     <article class="module-stat tone-${(index % 5) + 1}">
@@ -2660,6 +2672,21 @@ function organizedDepartmentWorkspace(data) {
         <form id="organizationPositionEditor" class="workflow-card compact-form" data-department-action="savePosition" data-record-id-field="PositionId" data-record-parent-field="DepartmentId" data-create-heading="Create a position" data-create-label="Save position"><h3>Create a position</h3><input type="hidden" name="OriginalPositionId"><input type="hidden" name="OriginalDepartmentId"><select name="DepartmentId" required>${departmentOptions(departments)}</select><input name="PositionId" placeholder="Position ID" required><input name="Name" placeholder="Position name" required><input name="Description" placeholder="Description"><label class="inline-check"><input type="checkbox" name="Active" value="YES" checked><span>Active</span></label><div class="compact-row-actions"><button type="submit">Save position</button><button type="button" class="secondary compact-action" data-cancel-record-edit hidden>Cancel edit</button></div></form>
         <form class="workflow-card compact-form department-member-assignment-form" data-department-action="saveDepartmentMember"><h3>Assign a member</h3><select name="DepartmentId" required>${departmentOptions(departments)}</select><select name="MemberId" required${members.length ? '' : ' disabled'}>${memberOptions}</select><select name="PositionId">${positionOptions}</select><input name="JoinedDate" type="date" value="${new Date().toISOString().slice(0, 10)}"><select name="Status"><option>Active</option><option>Inactive</option></select><button type="submit"${departments.length && members.length ? '' : ' disabled'}>Assign member</button>${departments.length ? '' : '<small class="muted">Create a department before assigning members.</small>'}${members.length ? '' : '<small class="muted">Register the first member before making an assignment.</small>'}</form>
       </div>
+      ${canManageMembers ? `
+        <form id="departmentBatchAssignmentForm" class="workflow-card department-batch-assignment">
+          <div class="department-batch-heading"><div><small>Batch assignment</small><h3>Assign multiple members or staff</h3><p>Select a department to display everyone available for assignment.</p></div><strong data-batch-selected-count>0 selected</strong></div>
+          <div class="department-batch-controls">
+            <label>Department<select name="DepartmentId" required>${departmentOptions(departments)}</select></label>
+            <label>Joined date<input name="JoinedDate" type="date" value="${new Date().toISOString().slice(0, 10)}"></label>
+            <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
+          </div>
+          <div class="department-batch-tools" data-batch-people-tools hidden>
+            <label>Find a person<input type="search" id="departmentBatchPersonSearch" placeholder="Search members or staff"></label>
+            <div><button type="button" class="secondary compact-action" data-batch-select-all>Select all</button><button type="button" class="secondary compact-action" data-batch-clear>Clear</button></div>
+          </div>
+          <div id="departmentBatchPeople" class="department-batch-people" hidden>${batchPeopleOptions || '<p class="muted">No eligible members or staff accounts were found.</p>'}</div>
+          <div class="department-batch-actions"><p class="status" data-batch-assignment-status></p><button type="submit" disabled>Assign selected people</button></div>
+        </form>` : ''}
       ${table('Registered members', members, [
         { label: 'Member ID', value: (row) => row.MemberId || row.__id },
         { label: 'Name', value: (row) => row.DisplayName },
@@ -2676,7 +2703,8 @@ function organizedDepartmentWorkspace(data) {
       ])}
       ${table('Department members and positions', departmentMembers, [
         { label: 'Department', value: (row) => row.DepartmentName || row.DepartmentId },
-        { label: 'Member', value: (row) => row.DisplayName || row.MemberId },
+        { label: 'Person', value: (row) => row.DisplayName || row.MemberId || row.StaffUsername },
+        { label: 'Type', value: (row) => row.PersonType || (row.StaffId ? 'Staff' : 'Member') },
         { label: 'Position', value: (row) => row.PositionName || row.PositionId },
         { label: 'Status', value: (row) => row.Status },
         ...(canManageMembers ? [
@@ -2840,6 +2868,100 @@ async function loadOrganizationDepartments() {
       departmentSelect?.addEventListener('change', syncPositions);
       syncPositions();
     });
+    const batchAssignmentForm = document.getElementById('departmentBatchAssignmentForm');
+    if (batchAssignmentForm) {
+      const departmentSelect = batchAssignmentForm.elements.DepartmentId;
+      const peopleContainer = document.getElementById('departmentBatchPeople');
+      const peopleTools = batchAssignmentForm.querySelector('[data-batch-people-tools]');
+      const searchInput = document.getElementById('departmentBatchPersonSearch');
+      const submitButton = batchAssignmentForm.querySelector('button[type="submit"]');
+      const selectedCount = batchAssignmentForm.querySelector('[data-batch-selected-count]');
+      const personRows = [...batchAssignmentForm.querySelectorAll('[data-batch-person-row]')];
+      const assignmentKey = (row) => clean(row.PersonKey) || (
+        clean(row.PersonType).toLowerCase() === 'staff' || clean(row.StaffId)
+          ? `staff:${clean(row.StaffId || row.StaffUsername)}`
+          : `member:${clean(row.MemberId)}`
+      );
+      const updateBatchSelection = () => {
+        const chosen = personRows.filter((row) => {
+          const input = row.querySelector('input[name="PersonKey"]');
+          return input?.checked && !input.disabled;
+        }).length;
+        if (selectedCount) selectedCount.textContent = `${chosen} selected`;
+        if (submitButton) submitButton.disabled = !clean(departmentSelect?.value) || chosen === 0;
+      };
+      const syncBatchPeople = () => {
+        const departmentId = clean(departmentSelect?.value);
+        const existing = new Set((data.departmentMembers || [])
+          .filter((row) => clean(row.DepartmentId) === departmentId)
+          .map((row) => lower(assignmentKey(row)))
+          .filter(Boolean));
+        if (peopleContainer) peopleContainer.hidden = !departmentId;
+        if (peopleTools) peopleTools.hidden = !departmentId;
+        if (searchInput) searchInput.value = '';
+        personRows.forEach((row) => {
+          row.hidden = false;
+          const input = row.querySelector('input[name="PersonKey"]');
+          const alreadyAssigned = Boolean(departmentId && existing.has(lower(input?.value)));
+          if (input) {
+            input.checked = alreadyAssigned;
+            input.disabled = !departmentId || alreadyAssigned;
+          }
+          row.classList.toggle('is-assigned', alreadyAssigned);
+          const state = row.querySelector('[data-person-assignment-state]');
+          if (state) state.textContent = alreadyAssigned ? 'Already assigned' : '';
+        });
+        updateBatchSelection();
+      };
+      departmentSelect?.addEventListener('change', syncBatchPeople);
+      searchInput?.addEventListener('input', () => {
+        const query = lower(searchInput.value);
+        personRows.forEach((row) => { row.hidden = Boolean(query && !clean(row.dataset.personSearch).includes(query)); });
+      });
+      batchAssignmentForm.querySelector('[data-batch-select-all]')?.addEventListener('click', () => {
+        personRows.forEach((row) => {
+          const input = row.querySelector('input[name="PersonKey"]');
+          if (!row.hidden && input && !input.disabled) input.checked = true;
+        });
+        updateBatchSelection();
+      });
+      batchAssignmentForm.querySelector('[data-batch-clear]')?.addEventListener('click', () => {
+        personRows.forEach((row) => {
+          const input = row.querySelector('input[name="PersonKey"]');
+          if (input && !input.disabled) input.checked = false;
+        });
+        updateBatchSelection();
+      });
+      personRows.forEach((row) => row.querySelector('input[name="PersonKey"]')?.addEventListener('change', updateBatchSelection));
+      batchAssignmentForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (batchAssignmentForm.dataset.submitting === 'true' || submitButton?.disabled) return;
+        const PersonKeys = personRows.map((row) => row.querySelector('input[name="PersonKey"]'))
+          .filter((input) => input?.checked && !input.disabled)
+          .map((input) => input.value);
+        if (!PersonKeys.length) {
+          setStatus(batchAssignmentForm.querySelector('[data-batch-assignment-status]'), 'Select at least one member or staff account.', 'bad');
+          return;
+        }
+        batchAssignmentForm.dataset.submitting = 'true';
+        setButtonLoading(submitButton, true, 'Assigning...', 'Assign selected people');
+        try {
+          const result = await organizationDepartmentAction('batchAssignDepartmentPeople', {
+            DepartmentId: departmentSelect.value,
+            JoinedDate: batchAssignmentForm.elements.JoinedDate.value,
+            Status: batchAssignmentForm.elements.Status.value,
+            PersonKeys
+          });
+          await loadOrganizationDepartments();
+          setStatus(dashboardStatus, result.message || 'Selected people assigned.', 'good');
+        } catch (error) {
+          setStatus(batchAssignmentForm.querySelector('[data-batch-assignment-status]'), error.message || String(error), 'bad');
+          delete batchAssignmentForm.dataset.submitting;
+          if (submitButton.isConnected) setButtonLoading(submitButton, false, 'Assigning...', 'Assign selected people');
+        }
+      });
+      syncBatchPeople();
+    }
     panelEl.querySelectorAll('[data-department-action]').forEach((form) => form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const submitButton = form.querySelector('button[type="submit"]');

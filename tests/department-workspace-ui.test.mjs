@@ -70,6 +70,17 @@ test('members can be registered before they are assigned to a department', () =>
   assert.match(adminJs, /clean\(option\.dataset\.departmentId\) === departmentId/);
 });
 
+test('members and staff can be selected with checkboxes for batch department assignment', () => {
+  assert.match(adminJs, /id="departmentBatchAssignmentForm"/);
+  assert.match(adminJs, /Assign multiple members or staff/);
+  assert.match(adminJs, /name="PersonKey"/);
+  assert.match(adminJs, /peopleContainer\.hidden = !departmentId/);
+  assert.match(adminJs, /data-batch-select-all/);
+  assert.match(adminJs, /organizationDepartmentAction\('batchAssignDepartmentPeople'/);
+  assert.match(portalCss, /\.department-batch-people\s*\{[\s\S]*?overflow:\s*auto/);
+  assert.match(portalCss, /\.department-batch-person\s*\{[\s\S]*?grid-template-columns/);
+});
+
 test('department assignments expose a guarded remove action that preserves the member record', () => {
   assert.match(adminJs, /data-remove-department-member=/);
   assert.match(adminJs, /The member's main record will be kept/);

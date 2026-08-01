@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
   authoritativeDepartmentMemberAssignment,
+  departmentAssignablePeople,
   departmentCapabilities,
   departmentSummaries,
   normalizedDepartment
@@ -155,4 +156,28 @@ test('department workspace supports validated batch imports for members and depa
   assert.match(departmentSource, /Duplicate DepartmentId in import/);
   assert.match(departmentSource, /batchUpsertDocuments\(env, writes\)/);
   assert.match(departmentSource, /action === 'importdepartments'/);
+});
+
+test('batch department assignment combines church members with eligible church staff', () => {
+  const people = departmentAssignablePeople(
+    [{ MemberId: 'MEM-001', DisplayName: 'Ada Member', MembershipStatus: 'Active' }],
+    [
+      { __id: 'church-admin', Username: 'church.admin', DisplayName: 'Ben Staff', Role: 'Church Administrator', BranchId: 'main', OrganisationEdition: 'faith', Active: 'YES' },
+      { __id: 'school-user', Username: 'teacher', DisplayName: 'School Teacher', Role: 'Teacher', BranchId: 'main', OrganisationEdition: 'school', Active: 'YES' },
+      { __id: 'inactive-user', Username: 'inactive', DisplayName: 'Inactive Staff', Role: 'Pastor', BranchId: 'main', OrganisationEdition: 'faith', Active: 'NO' }
+    ],
+    'main',
+    { edition: 'faith', username: 'admin' }
+  );
+  assert.deepEqual(people.map((row) => row.PersonKey), ['member:MEM-001', 'staff:church-admin']);
+  assert.deepEqual(people.map((row) => row.PersonType), ['Member', 'Staff']);
+});
+
+test('batch assignment is branch scoped, validated, atomic, and audited', () => {
+  assert.match(departmentSource, /async function batchAssignDepartmentPeople/);
+  assert.match(departmentSource, /Assign a maximum of 200 people at a time/);
+  assert.match(departmentSource, /staffRecordMatchesEdition\(row, user\)/);
+  assert.match(departmentSource, /batchUpsertDocuments\(env, writes\)/);
+  assert.match(departmentSource, /'BATCH ASSIGN'/);
+  assert.match(departmentSource, /action === 'batchassigndepartmentpeople'/);
 });

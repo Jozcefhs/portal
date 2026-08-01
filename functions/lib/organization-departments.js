@@ -9,6 +9,7 @@ import {
   stripFirestoreMetadata,
   validatedCsvImportRows
 } from './church-membership.js';
+import { staffRecordMatchesEdition } from './records-desk.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -38,6 +39,41 @@ export function departmentCapabilities(user = {}) {
     canManagePrograms: MANAGE_ROLES.has(role(user)),
     canManageForeignVisitors: MANAGE_ROLES.has(role(user)) || role(user) === 'Membership Officer'
   };
+}
+
+function activeStaffRecord(row = {}) {
+  return !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(row.Active ?? 'YES'));
+}
+
+export function departmentAssignablePeople(members = [], staffUsers = [], branchId = 'main', user = {}) {
+  const normalizedBranch = resolveMembershipBranch({}, branchId);
+  const memberRows = (members || []).map((row) => {
+    const personId = clean(row.MemberId || row.__id);
+    return {
+      PersonKey: `member:${personId}`,
+      PersonId: personId,
+      PersonType: 'Member',
+      DisplayName: authoritativeMemberName(row),
+      Detail: clean(row.MembershipStatus) || 'Member'
+    };
+  }).filter((row) => row.PersonId && row.DisplayName);
+  const staffRows = (staffUsers || []).filter((row) =>
+    activeStaffRecord(row)
+    && staffRecordMatchesEdition(row, user)
+    && resolveMembershipBranch({}, row.BranchId || 'main') === normalizedBranch
+  ).map((row) => {
+    const sourceId = clean(row.__id || row.Username || row.LoginUsername);
+    return {
+      PersonKey: `staff:${sourceId}`,
+      PersonId: clean(row.Username || row.LoginUsername || sourceId),
+      SourceId: sourceId,
+      PersonType: 'Staff',
+      DisplayName: clean(row.DisplayName || row.Username || row.LoginUsername || sourceId),
+      Detail: [clean(row.Role), clean(row.Department)].filter(Boolean).join(' · ') || 'Staff'
+    };
+  }).filter((row) => row.SourceId && row.DisplayName);
+  return [...memberRows, ...staffRows].sort((a, b) =>
+    a.DisplayName.localeCompare(b.DisplayName) || a.PersonType.localeCompare(b.PersonType));
 }
 
 function requireCapability(user, capability) {
@@ -393,6 +429,108 @@ async function saveDepartmentMember(env, user, body, branchId) {
   return { message: existing ? 'Department member updated.' : 'Member assigned to department.' };
 }
 
+async function batchAssignDepartmentPeople(env, user, body, branchId) {
+  requireCapability(user, 'canManageMembers');
+  const DepartmentId = clean(body.DepartmentId);
+  const personKeys = [...new Set((Array.isArray(body.PersonKeys) ? body.PersonKeys : []).map(clean).filter(Boolean))];
+  if (!DepartmentId) throw inputError('Choose a department for the batch assignment.');
+  if (!personKeys.length) throw inputError('Select at least one member or staff account.');
+  if (personKeys.length > 200) throw inputError('Assign a maximum of 200 people at a time.');
+  const [department, members, staffUsers, existingAssignments] = await Promise.all([
+    getDocument(env, path('departments', branchId), safeChurchDocumentId(DepartmentId)),
+    listCollection(env, path('members', branchId)),
+    listCollection(env, 'staffUsers'),
+    listCollection(env, path('departmentMembers', branchId))
+  ]);
+  if (!department || !belongsToBranch(department, branchId)) throw inputError('Department was not found in this branch.', 404);
+  const authoritativeDepartmentId = clean(department.DepartmentId || DepartmentId);
+  const departmentName = clean(department.Name || department.DepartmentName);
+  const membersById = new Map(members.map((row) => [safeChurchDocumentId(row.MemberId || row.__id), row]));
+  const eligibleStaff = staffUsers.filter((row) =>
+    activeStaffRecord(row)
+    && staffRecordMatchesEdition(row, user)
+    && resolveMembershipBranch({}, row.BranchId || 'main') === branchId
+  );
+  const staffById = new Map(eligibleStaff.map((row) => [safeChurchDocumentId(row.__id || row.Username), row]));
+  const existingById = new Map(existingAssignments.map((row) => [safeChurchDocumentId(row.MembershipId || row.__id), row]));
+  const joinedDate = clean(body.JoinedDate);
+  const status = clean(body.Status) || 'Active';
+  let created = 0;
+  let updated = 0;
+  const writes = personKeys.map((personKey) => {
+    const separator = personKey.indexOf(':');
+    const personType = lower(separator >= 0 ? personKey.slice(0, separator) : '');
+    const sourceId = clean(separator >= 0 ? personKey.slice(separator + 1) : '');
+    if (!sourceId || !['member', 'staff'].includes(personType)) throw inputError(`Invalid person selection: ${personKey}`);
+    let membershipId;
+    let assignment;
+    if (personType === 'member') {
+      const member = membersById.get(safeChurchDocumentId(sourceId));
+      if (!member) throw inputError(`Member was not found in this branch: ${sourceId}`, 404);
+      assignment = authoritativeDepartmentMemberAssignment({
+        DepartmentId: authoritativeDepartmentId,
+        MemberId: clean(member.MemberId || sourceId),
+        JoinedDate: joinedDate,
+        Status: status
+      }, branchId, department, member, null);
+      membershipId = safeChurchDocumentId(`${authoritativeDepartmentId}--${assignment.MemberId}`);
+      assignment.PersonKey = `member:${assignment.MemberId}`;
+      assignment.PersonType = 'Member';
+    } else {
+      const staff = staffById.get(safeChurchDocumentId(sourceId));
+      if (!staff) throw inputError(`Staff account was not found in this church branch: ${sourceId}`, 404);
+      const staffId = clean(staff.__id || sourceId);
+      const staffUsername = clean(staff.Username || staff.LoginUsername || staffId);
+      membershipId = safeChurchDocumentId(`${authoritativeDepartmentId}--staff--${staffId}`);
+      assignment = {
+        DepartmentId: authoritativeDepartmentId,
+        DepartmentName: departmentName,
+        MemberId: '',
+        StaffId: staffId,
+        StaffUsername: staffUsername,
+        DisplayName: clean(staff.DisplayName || staffUsername),
+        PersonKey: `staff:${staffId}`,
+        PersonType: 'Staff',
+        PositionId: '',
+        PositionName: '',
+        JoinedDate: joinedDate,
+        Status: status,
+        BranchId: branchId
+      };
+    }
+    const existing = existingById.get(membershipId);
+    if (existing) updated += 1;
+    else created += 1;
+    return {
+      collectionPath: path('departmentMembers', branchId),
+      documentId: membershipId,
+      data: {
+        ...stripFirestoreMetadata(existing),
+        ...assignment,
+        MembershipId: membershipId,
+        CreatedAt: existing?.CreatedAt || nowIso(),
+        CreatedBy: existing?.CreatedBy || actor(user),
+        UpdatedAt: nowIso(),
+        UpdatedBy: actor(user)
+      }
+    };
+  });
+  writes.push(departmentAuditWrite(
+    branchId,
+    user,
+    'BATCH ASSIGN',
+    'Department Member',
+    authoritativeDepartmentId,
+    `${created} assigned | ${updated} already assigned or updated`
+  ));
+  await batchUpsertDocuments(env, writes);
+  return {
+    assigned: created,
+    updated,
+    message: `${created} person(s) assigned to ${departmentName}${updated ? `; ${updated} existing assignment(s) updated.` : '.'}`
+  };
+}
+
 async function removeDepartmentMember(env, user, body, branchId) {
   requireCapability(user, 'canManageMembers');
   const membershipId = safeChurchDocumentId(
@@ -580,10 +718,14 @@ export async function listOrganizationDepartments(env, user, body = {}) {
   const names = ['members', 'departments', 'departmentPositions', 'departmentMembers', 'departmentMeetings',
     'departmentAttendance', 'departmentOfferings', 'specialPrograms', 'programRegistrations',
     'foreignVisitors', 'departmentAudit'];
-  const rows = await Promise.all(names.map((name) => listCollection(env, path(name, branchId)).catch(() => [])));
+  const [rows, staffUsers] = await Promise.all([
+    Promise.all(names.map((name) => listCollection(env, path(name, branchId)).catch(() => []))),
+    listCollection(env, 'staffUsers').catch(() => [])
+  ]);
   const data = Object.fromEntries(names.map((name, index) => [name, rows[index]]));
   return {
     ok: true, branchId, capabilities, ...data,
+    assignablePeople: departmentAssignablePeople(data.members, staffUsers, branchId, user),
     summaries: departmentSummaries(data.departments, data.departmentMembers, data.departmentMeetings,
       data.departmentAttendance, data.departmentOfferings, data.programRegistrations)
   };
@@ -609,6 +751,7 @@ export async function handleOrganizationDepartmentAction(env, user, body = {}) {
   else if (action === 'deletemember') result = await deleteMember(env, user, body, branchId);
   else if (action === 'deleteposition') result = await deletePosition(env, user, body, branchId);
   else if (action === 'savedepartmentmember') result = await saveDepartmentMember(env, user, body, branchId);
+  else if (action === 'batchassigndepartmentpeople') result = await batchAssignDepartmentPeople(env, user, body, branchId);
   else if (action === 'removedepartmentmember') result = await removeDepartmentMember(env, user, body, branchId);
   else if (action === 'savemeeting') result = await saveMeeting(env, user, body, branchId);
   else if (action === 'recordattendance') result = await recordAttendance(env, user, body, branchId);
