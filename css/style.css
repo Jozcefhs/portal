@@ -638,6 +638,24 @@ html[data-theme="dark"] .material-entry-table output{color:#fff}
 .staff-page .staff-summary .student-summary-card{min-width:150px}.student-summary-card small{display:flex;align-items:center;justify-content:center;gap:5px;margin-top:5px;color:#526174;font-size:9px}.student-summary-card small b{color:var(--finance-navy);font-size:11px}.student-summary-card small i{width:1px;height:11px;background:#c9d4df}
 .workflow-kpis{gap:7px;margin:11px 0}.workflow-kpis>div{padding:9px;border-radius:8px}.workflow-kpis strong{margin:3px 0;font-size:18px}.workflow-kpis small,.workflow-kpis span{font-size:9px}
 .admin-table-wrap{max-height:420px;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}.admin-table thead{position:sticky;top:0;z-index:1}.workflow-record-list,.staff-user-list{max-height:440px;overflow:auto;padding-right:5px;overscroll-behavior:contain;scrollbar-gutter:stable}
+/* Keep shared workspace tables readable: columns retain their content width and the wrapper scrolls. */
+.admin-table-wrap{
+  overflow-x:auto;
+  overflow-y:auto;
+  overscroll-behavior-x:contain;
+  -webkit-overflow-scrolling:touch;
+}
+.admin-table{
+  width:max-content;
+  min-width:100%;
+  table-layout:auto;
+}
+.admin-table th,
+.admin-table td{
+  white-space:nowrap;
+  overflow-wrap:normal;
+  word-break:normal;
+}
 .document-actions summary{cursor:pointer;color:var(--blue);font-weight:700;white-space:nowrap}.document-action-row{display:grid;grid-template-columns:minmax(130px,1fr) auto auto auto;gap:7px;align-items:center;min-width:360px;padding:7px 0;border-bottom:1px solid var(--line)}.document-action-row:last-child{border-bottom:0}.document-action-row a{display:inline-block;padding:5px 7px;border-radius:5px;background:#eaf2ff;color:var(--blue);font-size:11px;font-weight:700;text-decoration:none}.document-action-row .document-delete{padding:5px 7px;border:0;border-radius:5px;background:#b42318;color:#fff;font-size:11px;font-weight:700}
 @media (max-width:680px){.staff-page .staff-summary div{min-height:54px;padding:8px}.staff-page .staff-summary strong{font-size:17px}.workflow-kpis>div{padding:8px}.workflow-kpis strong{font-size:17px}.admin-table-wrap{max-height:58vh}.workflow-record-list,.staff-user-list{max-height:58vh}.web-logo-picker{align-items:flex-start}.web-logo-picker img{width:72px;height:60px}}
 .staff-page{min-height:100vh;min-height:100dvh}.staff-page .staff-shell{min-height:calc(100vh - 68px);min-height:calc(100dvh - 68px)}.staff-page .staff-dashboard,.staff-app-layout{min-height:inherit}.staff-main-content{min-height:calc(100vh - 68px);min-height:calc(100dvh - 68px)}
