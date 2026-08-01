@@ -209,6 +209,21 @@ function uploadOperationState(operation = {}) {
   return lower(operation.Status || 'prepared');
 }
 
+export function canResumeSavedUploadOperation(operation = {}, application = {}, documentType = '') {
+  if (uploadOperationState(operation) !== 'metadataconflict') return false;
+  const savedUrl = clean(operation.DocumentUrl);
+  if (!savedUrl) return false;
+  const operationId = clean(operation.OperationId || operation.IdempotencyDocumentId);
+  const currentEntry = documentEntry(application, documentType);
+  const currentUrl = documentUrl(application, documentType);
+  if (!currentUrl) return true;
+  return Boolean(
+    operationId
+    && clean(currentEntry.uploadOperationId) === operationId
+    && clean(currentEntry.url) === savedUrl
+  );
+}
+
 async function loadUploadOperation(env, operationId, expected = {}) {
   const nowDate = new Date();
   const now = nowDate.toISOString();
@@ -654,6 +669,17 @@ export async function onRequestPost(context) {
         headers: { 'Cache-Control': 'no-store', 'Idempotency-Replayed': 'true' }
       });
     }
+    if (canResumeSavedUploadOperation(operation, firestoreApp, definition.key)) {
+      operation = await updateUploadOperation(env, operationId, {
+        Status: 'DriveSaved',
+        DriveState: 'Saved',
+        MetadataState: 'Pending',
+        ManualReconciliationRequired: false,
+        MetadataConflictReason: '',
+        RecoveredAt: new Date().toISOString()
+      });
+      operationState = uploadOperationState(operation);
+    }
     if (['uploading', 'uploaduncertain', 'uncertain', 'metadataconflict'].includes(operationState)) {
       throw uploadError(
         'The Google Drive upload may already have been accepted. Automatic re-upload is suppressed to avoid a duplicate; Admissions must reconcile this operation.',
@@ -931,7 +957,8 @@ export async function onRequestPost(context) {
       ok: false,
       code: clean(err?.code),
       message: err.message || String(err),
-      outcomeUncertain: err?.outcomeUncertain === true
+      outcomeUncertain: err?.outcomeUncertain === true,
+      uploadOperationId: clean(idempotency?.documentId)
     }, {
       status: err.status || 500,
       headers: { 'Cache-Control': 'no-store' }

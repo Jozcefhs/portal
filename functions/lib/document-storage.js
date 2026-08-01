@@ -47,9 +47,9 @@ export function selectDocumentStorageUrl({
     ? [['organisation profile', organizationUrl], ['school profile', schoolUrl]]
     : [['school profile', schoolUrl], ['organisation profile', organizationUrl]];
   const candidates = [
+    ...storedCandidates,
     ['server environment', environmentUrl],
-    ['server environment alias', alternateEnvironmentUrl],
-    ...storedCandidates
+    ['server environment alias', alternateEnvironmentUrl]
   ];
   for (const [source, candidate] of candidates) {
     const url = normalizeAppsScriptWebAppUrl(candidate);

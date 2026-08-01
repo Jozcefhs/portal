@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import {
   applicationUploadReferenceMatches,
   applicationUploadIdentityMatches,
+  canResumeSavedUploadOperation,
   findFirestoreApplication,
   linkedUploadApplication,
   studentUploadIdentityMatches
@@ -233,6 +234,48 @@ test('post-Drive metadata lookup remains pinned to the selected application', as
   assert.match(
     source,
     /const latestApplication = await findFirestoreApplication\(env, email, code, \{\s*targetReference: applicationReference,\s*targetScopePath: applicationScopePath,\s*authenticated: true\s*\}\)/
+  );
+});
+
+test('a metadata conflict resumes only when its saved Drive URL can be attached safely', () => {
+  const operation = {
+    Status: 'MetadataConflict',
+    OperationId: 'upload-operation-1',
+    DocumentUrl: 'https://drive.google.com/file/d/saved-file/view'
+  };
+  assert.equal(
+    canResumeSavedUploadOperation(operation, {}, 'PreviousSchoolReport'),
+    true
+  );
+  assert.equal(
+    canResumeSavedUploadOperation(operation, {
+      documents: {
+        PreviousSchoolReport: {
+          url: operation.DocumentUrl,
+          uploadOperationId: operation.OperationId
+        }
+      }
+    }, 'PreviousSchoolReport'),
+    true
+  );
+  assert.equal(
+    canResumeSavedUploadOperation(operation, {
+      documents: {
+        PreviousSchoolReport: {
+          url: 'https://drive.google.com/file/d/newer-file/view',
+          uploadOperationId: 'newer-operation'
+        }
+      }
+    }, 'PreviousSchoolReport'),
+    false
+  );
+  assert.equal(
+    canResumeSavedUploadOperation({ ...operation, DocumentUrl: '' }, {}, 'PreviousSchoolReport'),
+    false
+  );
+  assert.equal(
+    canResumeSavedUploadOperation({ ...operation, Status: 'UploadUncertain' }, {}, 'PreviousSchoolReport'),
+    false
   );
 });
 

@@ -21,15 +21,27 @@ test('document storage accepts only a deployed Apps Script /exec URL', () => {
   );
 });
 
-test('server-managed Apps Script endpoint takes priority over a saved profile override', () => {
+test('school profile Apps Script endpoint takes priority over server fallbacks', () => {
   assert.deepEqual(selectDocumentStorageUrl({
     environmentUrl: SCHOOL_SCRIPT,
     organizationUrl: PROFILE_SCRIPT,
     schoolUrl: PROFILE_SCRIPT,
     edition: 'school'
   }), {
-    url: SCHOOL_SCRIPT,
-    source: 'server environment'
+    url: PROFILE_SCRIPT,
+    source: 'school profile'
+  });
+});
+
+test('faith workspaces prefer their organisation profile endpoint', () => {
+  assert.deepEqual(selectDocumentStorageUrl({
+    environmentUrl: SCHOOL_SCRIPT,
+    organizationUrl: PROFILE_SCRIPT,
+    schoolUrl: SCHOOL_SCRIPT,
+    edition: 'faith'
+  }), {
+    url: PROFILE_SCRIPT,
+    source: 'organisation profile'
   });
 });
 
@@ -48,6 +60,18 @@ test('invalid saved Drive URL is ignored in favour of the valid server endpoint'
   assert.equal(storage.url, SCHOOL_SCRIPT);
   assert.equal(storage.source, 'server environment');
   assert.equal(storage.configured, true);
+});
+
+test('invalid saved Apps Script values do not shadow the server fallback', () => {
+  assert.deepEqual(selectDocumentStorageUrl({
+    environmentUrl: SCHOOL_SCRIPT,
+    organizationUrl: 'https://drive.google.com/drive/folders/example',
+    schoolUrl: 'not a web app URL',
+    edition: 'school'
+  }), {
+    url: SCHOOL_SCRIPT,
+    source: 'server environment'
+  });
 });
 
 test('a valid profile endpoint remains a fallback when no server URL is configured', async () => {
