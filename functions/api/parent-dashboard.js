@@ -13,13 +13,21 @@ import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { getWebBranding } from '../lib/web-branding.js';
 import {
-  aggregateSchoolFeeDueInvoices,
+  archiveNotification,
+  createNotification,
   listNotifications,
+  loadNotificationSettings,
   markAllNotificationsRead,
   markNotificationRead,
-  notifyParentPaymentDue,
-  notifyParentPaymentReceived
+  notificationTargetsRecipient,
+  saveNotificationSettings
 } from '../lib/notifications.js';
+import {
+  listPushSubscriptions,
+  publicMessagingConfig,
+  removePushSubscription,
+  savePushSubscription
+} from '../lib/firebase-messaging.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -114,7 +122,7 @@ function scopedRecordSection(row = {}) {
   return lower(match?.[1] || schoolSectionFor(row));
 }
 
-function parentNotificationRecipient(email, children = []) {
+function parentNotificationRecipient(email, children = [], schoolId = '') {
   const scopes = (children || []).flatMap((child) => {
     const branchId = scopedRecordBranch(child);
     const schoolSection = scopedRecordSection(child);
@@ -126,6 +134,7 @@ function parentNotificationRecipient(email, children = []) {
   });
   return {
     audience: 'Parent',
+    schoolId: lower(schoolId),
     recipientKey: lower(email),
     email: lower(email),
     accountRefs: [...new Set((children || []).flatMap((child) => accountKeys(child)).map(lower).filter(Boolean))],
@@ -136,7 +145,7 @@ function parentNotificationRecipient(email, children = []) {
 }
 
 async function parentNotifications(env, email, children) {
-  return listNotifications(env, parentNotificationRecipient(email, children), { limit: 60 })
+  return listNotifications(env, parentNotificationRecipient(email, children, env.DYNAMAX_WORKSPACE_ID), { limit: 60 })
     .catch(() => ({ notifications: [], unreadCount: 0 }));
 }
 
@@ -1525,30 +1534,6 @@ async function getChildActivity(env, body) {
   const result = buildEntranceResult(resultSource, schoolProfile);
   const childPayments = paymentHistoryForChild(child, payments, ledger);
   const childDueNotifications = invoiceDueNotifications(invoices, keys, accountSummary, child);
-  const childInvoices = invoices
-    .filter((invoice) => financialReferenceMatches(invoice.AccountRef || invoice.AdmissionNo || invoice.ApplicationReference, child));
-  const dueInvoiceSources = [
-    ...childInvoices.filter((invoice) => !isSchoolFee(invoice)),
-    ...aggregateSchoolFeeDueInvoices(childInvoices)
-  ];
-  await Promise.all([
-    ...payments
-      .filter((payment) => financialReferenceMatches(payment.AccountRef || payment.AdmissionNo || payment.ApplicationReference, child))
-      .map((payment) => notifyParentPaymentReceived(env, {
-        ...payment,
-        ParentEmail: email,
-        BranchId: payment.BranchId || child.BranchId,
-        SchoolSection: payment.SchoolSection || child.SchoolSection
-      }).catch(() => null)),
-    ...dueInvoiceSources
-      .map((invoice) => notifyParentPaymentDue(env, {
-        ...invoice,
-        InvoiceId: invoice.InvoiceId || invoice.Reference,
-        ParentEmail: email,
-        BranchId: invoice.BranchId || child.BranchId,
-        SchoolSection: invoice.SchoolSection || child.SchoolSection
-      }).catch(() => null))
-  ]);
   const notificationData = await parentNotifications(env, email, [child]);
   return {
     ok: true,
@@ -1668,14 +1653,6 @@ async function getChildPayable(env, body) {
       MaxAmount: item.MaxAmount || '',
       Components: item.Components || []
     }));
-  await Promise.all(itemNotices.map((notice) => notifyParentPaymentDue(env, {
-    ...notice,
-    InvoiceId: notice.FeeCode,
-    AccountRef: notificationIdentity.accountRef,
-    ParentEmail: notificationIdentity.email,
-    BranchId: notificationIdentity.branchId,
-    SchoolSection: notificationIdentity.schoolSection
-  }).catch(() => null)));
   const notificationData = await parentNotifications(env, notificationIdentity.email, [{
     AccountRef: notificationIdentity.accountRef,
     BranchId: notificationIdentity.branchId,
@@ -1695,10 +1672,26 @@ async function getChildPayable(env, body) {
 
 async function getParentNotifications(env, body) {
   const dashboard = await getDashboard(env, body);
+  const email = lower(body.email || body.ParentEmail || body.Email);
+  const recipient = parentNotificationRecipient(email, dashboard.children || [], env.DYNAMAX_WORKSPACE_ID);
+  const options = {
+    limit: Number(body.limit || 50),
+    before: clean(body.before),
+    category: clean(body.category),
+    unread: body.unread === true,
+    archived: body.archived === true
+  };
+  const [data, settings, subscriptions] = await Promise.all([
+    listNotifications(env, recipient, options),
+    loadNotificationSettings(env, 'Parent', email),
+    listPushSubscriptions(env, email)
+  ]);
   return {
     ok: true,
-    notifications: dashboard.notifications || [],
-    unreadCount: Number(dashboard.notificationUnreadCount || dashboard.unreadCount || 0)
+    ...data,
+    settings,
+    subscriptions,
+    messaging: publicMessagingConfig(env)
   };
 }
 
@@ -1720,6 +1713,56 @@ async function markParentNotificationRead(env, body) {
   return getParentNotifications(env, body);
 }
 
+async function updateParentNotificationState(env, body) {
+  const email = lower(body.email || body.ParentEmail || body.Email);
+  const dashboard = await getDashboard(env, body);
+  const recipient = parentNotificationRecipient(email, dashboard.children || [], env.DYNAMAX_WORKSPACE_ID);
+  const notificationId = clean(body.notificationId || body.NotificationId);
+  const notification = await getDocument(env, 'notifications', notificationId);
+  if (!notification || !notificationTargetsRecipient(notification, recipient)) {
+    const error = new Error('This notification is not available to this parent account.');
+    error.status = 404;
+    throw error;
+  }
+  const action = lower(body.action || body.Action);
+  if (action === 'archivenotification' || action === 'unarchivenotification') {
+    await archiveNotification(env, notificationId, email, action === 'archivenotification');
+  } else {
+    await markNotificationRead(env, notificationId, email);
+  }
+  return getParentNotifications(env, body);
+}
+
+async function updateParentNotificationConfiguration(env, body, request) {
+  const email = lower(body.email || body.ParentEmail || body.Email);
+  const dashboard = await getDashboard(env, body);
+  const action = lower(body.action || body.Action);
+  if (action === 'savenotificationsettings') {
+    await saveNotificationSettings(env, 'Parent', email, body.settings || body.Settings || {});
+  } else if (action === 'subscribepush') {
+    await savePushSubscription(env, {
+      ...(body.subscription || body.Subscription || body),
+      SchoolId: env.DYNAMAX_WORKSPACE_ID,
+      Audience: 'Parent',
+      RecipientKey: email,
+      UserAgent: request.headers.get('User-Agent') || ''
+    });
+  } else if (action === 'unsubscribepush') {
+    await removePushSubscription(env, email, clean(body.deviceId || body.DeviceId));
+  } else if (action === 'testpush') {
+    const child = dashboard.children?.[0] || {};
+    await createNotification(env, {
+      EventKey: `test-push:parent:${email}:${clean(body.deviceId || 'all')}:${Date.now()}`,
+      Type: 'Test Push', Category: 'System', Audience: 'Parent', Channels: ['Push'],
+      TargetEmails: [email], Title: 'Notifications are working',
+      Message: 'This device can receive Dynamax browser notifications.',
+      ActionUrl: 'parent-dashboard.html', BranchId: child.BranchId || 'main',
+      SchoolSection: child.SchoolSection, CreatedBy: email
+    }, { ignorePreferences: true });
+  }
+  return getParentNotifications(env, body);
+}
+
 export async function onRequestPost(context) {
   try {
     const { request, env } = context;
@@ -1730,8 +1773,14 @@ export async function onRequestPost(context) {
       data = await updateWalletRestrictions(env, body);
     } else if (action === 'getNotifications') {
       data = await getParentNotifications(env, body);
-    } else if (action === 'markNotificationRead' || action === 'markAllNotificationsRead') {
+    } else if (action === 'markAllNotificationsRead') {
       data = await markParentNotificationRead(env, body);
+    } else if (action === 'markNotificationRead') {
+      data = await updateParentNotificationState(env, body);
+    } else if (action === 'archiveNotification' || action === 'unarchiveNotification') {
+      data = await updateParentNotificationState(env, body);
+    } else if (['saveNotificationSettings', 'subscribePush', 'unsubscribePush', 'testPush'].includes(action)) {
+      data = await updateParentNotificationConfiguration(env, body, request);
     } else if (action === 'getChildActivity') {
       data = await getChildActivity(env, body);
     } else if (action === 'getChildPayable') {

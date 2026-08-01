@@ -484,7 +484,8 @@ test('staff and parent notification interfaces are wired to protected APIs', asy
   assert.match(parentApi, /action === 'getNotifications'/);
   assert.match(parentApi, /action === 'markNotificationRead'/);
   assert.match(backendApi, /notifyParentPaymentReceived\(env, payment\)/);
-  assert.match(backendApi, /aggregateSchoolFeeDueInvoices\(generatedInvoices\)/);
+  assert.match(backendApi, /invoiceReminderFields\(invoicePayload, notificationSettings\)/);
+  assert.doesNotMatch(parentApi, /notifyParentPayment(?:Due|Received)/);
   assert.doesNotMatch(backendApi, /notifyParentPaymentDue\(env, invoicePayload\)/);
   assert.doesNotMatch(parentApi, /BranchId:\s*body\.branchId/);
   assert.doesNotMatch(parentApi, /SchoolSection:\s*body\.schoolSection/);

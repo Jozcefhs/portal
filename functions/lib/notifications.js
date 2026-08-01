@@ -1,9 +1,14 @@
 import {
   createDocumentIfAbsent,
   getDocument,
+  listCollection,
   queryCollection,
   upsertDocument
 } from './firestore.js';
+import {
+  deliverPushNotification,
+  publicMessagingConfig
+} from './firebase-messaging.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -41,6 +46,36 @@ function shortHash(value) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+export const NOTIFICATION_CATEGORIES = Object.freeze([
+  'Fees', 'Payments', 'Requisitions', 'Attendance', 'Academics', 'Announcements', 'System'
+]);
+
+export const DEFAULT_NOTIFICATION_SETTINGS = Object.freeze({
+  Timezone: 'Africa/Lagos',
+  FeeDueIntervals: [14, 7, 3, 1, 0],
+  FeeOverdueIntervals: [1, 7, 14, 30],
+  QuietHoursEnabled: false,
+  QuietHoursStart: '21:00',
+  QuietHoursEnd: '06:00',
+  Channels: { InApp: true, Push: true },
+  Categories: Object.fromEntries(NOTIFICATION_CATEGORIES.map((category) => [category, true])),
+  Templates: {}
+});
+
+function category(value) {
+  const wanted = lower(value);
+  return NOTIFICATION_CATEGORIES.find((item) => lower(item) === wanted) || 'System';
+}
+
+function channels(value) {
+  const requested = values(value).map(lower);
+  if (!requested.length) return ['InApp', 'Push'];
+  const result = [];
+  if (requested.some((item) => ['inapp', 'in-app'].includes(item))) result.push('InApp');
+  if (requested.includes('push')) result.push('Push');
+  return result.length ? result : ['InApp'];
 }
 
 function amount(value) {
@@ -81,35 +116,179 @@ export function normalizeNotification(input = {}, createdAt = nowIso()) {
     NotificationId: notificationId,
     EventKey: eventKey,
     Type: clean(input.Type || input.type || 'General'),
+    Category: category(input.Category || input.category || input.Type || input.type),
+    Channels: channels(input.Channels || input.channels),
+    Severity: clean(input.Severity || input.severity || 'Normal'),
     Audience: audience === 'staff' ? 'Staff' : 'Parent',
     TargetRoles: values(input.TargetRoles || input.targetRoles),
     TargetUsernames: lowerValues(input.TargetUsernames || input.targetUsernames),
+    TargetDepartments: lowerValues(input.TargetDepartments || input.targetDepartments),
     TargetEmails: lowerValues(input.TargetEmails || input.targetEmails),
     TargetAccountRefs: lowerValues(input.TargetAccountRefs || input.targetAccountRefs),
     Title: title,
     Message: message,
+    Body: message,
     ActionUrl: clean(input.ActionUrl || input.actionUrl),
+    Route: clean(input.Route || input.route || input.ActionUrl || input.actionUrl),
     RecordType: clean(input.RecordType || input.recordType),
     RecordId: clean(input.RecordId || input.recordId),
+    RelatedEntityType: clean(input.RelatedEntityType || input.relatedEntityType || input.RecordType || input.recordType),
+    RelatedEntityId: clean(input.RelatedEntityId || input.relatedEntityId || input.RecordId || input.recordId),
     DueDate: clean(input.DueDate || input.dueDate),
+    ScheduleStage: clean(input.ScheduleStage || input.scheduleStage),
+    TemplateKey: clean(input.TemplateKey || input.templateKey),
+    TemplateVersion: clean(input.TemplateVersion || input.templateVersion || '1'),
+    ActorType: clean(input.ActorType || input.actorType || 'System'),
+    ActorId: clean(input.ActorId || input.actorId || input.CreatedBy || input.createdBy || 'System'),
+    SchoolId: lower(input.SchoolId || input.schoolId),
     BranchId: lower(input.BranchId || input.branchId || 'main') || 'main',
     SchoolSection: lower(input.SchoolSection || input.schoolSection),
     CreatedAt: clean(input.CreatedAt || input.createdAt || createdAt),
-    CreatedBy: clean(input.CreatedBy || input.createdBy || 'System')
+    ScheduledAt: clean(input.ScheduledAt || input.scheduledAt),
+    SentAt: clean(input.SentAt || input.sentAt || input.CreatedAt || input.createdAt || createdAt),
+    CreatedBy: clean(input.CreatedBy || input.createdBy || 'System'),
+    ExpiresAt: clean(input.ExpiresAt || input.expiresAt),
+    DeliveryStatus: clean(input.DeliveryStatus || input.deliveryStatus || 'Created'),
+    ReadStatus: 'Per recipient'
   };
 }
 
 export async function createNotification(env, input, options = {}) {
-  const record = normalizeNotification(input, options.now || nowIso());
+  let prepared = { ...input };
+  const templateKey = clean(input?.TemplateKey || input?.templateKey);
+  if (templateKey) {
+    const settings = await loadNotificationSettings(env).catch(() => DEFAULT_NOTIFICATION_SETTINGS);
+    const template = settings.Templates?.[templateKey];
+    if (template && typeof template === 'object') {
+      const data = input.TemplateData && typeof input.TemplateData === 'object' ? input.TemplateData : {};
+      const interpolate = (value) => clean(value).replace(/\{([a-zA-Z0-9_]+)\}/g, (match, key) => data[key] === undefined ? match : clean(data[key]));
+      prepared = {
+        ...prepared,
+        Title: interpolate(template.Title || prepared.Title),
+        Message: interpolate(template.Message || prepared.Message),
+        TemplateVersion: clean(template.Version || prepared.TemplateVersion || '1')
+      };
+    }
+  }
+  const record = normalizeNotification({
+    ...prepared,
+    SchoolId: clean(prepared?.SchoolId || prepared?.schoolId || env?.DYNAMAX_WORKSPACE_ID)
+  }, options.now || nowIso());
   const create = options.createDocumentIfAbsent || createDocumentIfAbsent;
   const result = await create(env, 'notifications', record.NotificationId, record);
+  if ((result?.created || options.retryDelivery !== false) && publicMessagingConfig(env).enabled && record.Channels.includes('Push') && options.deliver !== false) {
+    await dispatchNotificationPush(env, record, options).catch(() => []);
+  }
   return {
     created: Boolean(result?.created),
     notification: result?.document ? { ...result.document, ...record } : record
   };
 }
 
+function notificationSettingsId(audience, recipientKey) {
+  const key = `${lower(audience)}:${lower(recipientKey)}`;
+  return `PREF-${safeId(key).slice(0, 130)}-${shortHash(key)}`;
+}
+
+function mergeNotificationSettings(system = {}, user = {}) {
+  return {
+    ...DEFAULT_NOTIFICATION_SETTINGS,
+    ...system,
+    ...user,
+    Channels: { ...DEFAULT_NOTIFICATION_SETTINGS.Channels, ...(system.Channels || {}), ...(user.Channels || {}) },
+    Categories: { ...DEFAULT_NOTIFICATION_SETTINGS.Categories, ...(system.Categories || {}), ...(user.Categories || {}) },
+    Templates: { ...(system.Templates || {}), ...(user.Templates || {}) },
+    FeeDueIntervals: values(user.FeeDueIntervals || system.FeeDueIntervals || DEFAULT_NOTIFICATION_SETTINGS.FeeDueIntervals).map(Number).filter(Number.isFinite),
+    FeeOverdueIntervals: values(user.FeeOverdueIntervals || system.FeeOverdueIntervals || DEFAULT_NOTIFICATION_SETTINGS.FeeOverdueIntervals).map(Number).filter(Number.isFinite)
+  };
+}
+
+export async function loadNotificationSettings(env, audience = '', recipientKey = '') {
+  const [system, user] = await Promise.all([
+    getDocument(env, 'notificationSettings', 'system').catch(() => null),
+    recipientKey ? getDocument(env, 'notificationSettings', notificationSettingsId(audience, recipientKey)).catch(() => null) : null
+  ]);
+  return mergeNotificationSettings(system || {}, user || {});
+}
+
+export async function saveNotificationSettings(env, audience, recipientKey, input = {}) {
+  const key = lower(recipientKey);
+  if (!key) throw new Error('A notification settings recipient is required.');
+  const existing = await loadNotificationSettings(env, audience, key);
+  const allowedCategories = Object.fromEntries(NOTIFICATION_CATEGORIES.map((name) => [name, input.Categories?.[name] !== undefined ? Boolean(input.Categories[name]) : existing.Categories[name] !== false]));
+  const record = {
+    SettingsId: notificationSettingsId(audience, key),
+    SchoolId: lower(env.DYNAMAX_WORKSPACE_ID),
+    Audience: clean(audience),
+    RecipientKey: key,
+    Timezone: clean(input.Timezone || existing.Timezone || DEFAULT_NOTIFICATION_SETTINGS.Timezone),
+    QuietHoursEnabled: input.QuietHoursEnabled === true,
+    QuietHoursStart: /^\d{2}:\d{2}$/.test(clean(input.QuietHoursStart)) ? clean(input.QuietHoursStart) : existing.QuietHoursStart,
+    QuietHoursEnd: /^\d{2}:\d{2}$/.test(clean(input.QuietHoursEnd)) ? clean(input.QuietHoursEnd) : existing.QuietHoursEnd,
+    Channels: {
+      InApp: input.Channels?.InApp !== false,
+      Push: input.Channels?.Push !== false
+    },
+    Categories: allowedCategories,
+    UpdatedAt: nowIso()
+  };
+  await upsertDocument(env, 'notificationSettings', record.SettingsId, record);
+  return mergeNotificationSettings({}, record);
+}
+
+function timeInZone(timezone, date = new Date()) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(date);
+    return Number(parts.find((item) => item.type === 'hour')?.value || 0) * 60 + Number(parts.find((item) => item.type === 'minute')?.value || 0);
+  } catch {
+    return date.getUTCHours() * 60 + date.getUTCMinutes();
+  }
+}
+
+export function quietHoursActive(settings, date = new Date()) {
+  if (!settings.QuietHoursEnabled) return false;
+  const minutes = (value) => {
+    const [hour, minute] = clean(value).split(':').map(Number);
+    return hour * 60 + minute;
+  };
+  const current = timeInZone(settings.Timezone, date);
+  const start = minutes(settings.QuietHoursStart);
+  const end = minutes(settings.QuietHoursEnd);
+  return start <= end ? current >= start && current < end : current >= start || current < end;
+}
+
+async function staffRecipientsForNotification(env, notification) {
+  const recipients = new Set(lowerValues(notification.TargetUsernames));
+  const roles = lowerValues(notification.TargetRoles);
+  const departments = lowerValues(notification.TargetDepartments);
+  if (roles.length || departments.length) {
+    const users = await listCollection(env, 'staffUsers').catch(() => []);
+    users.filter((user) => user.Active !== false && lower(user.Active || 'YES') !== 'no')
+      .filter((user) => roles.includes(lower(user.Role)) || departments.includes(lower(user.Department)))
+      .filter((user) => sameScope(notification, { branchId: user.BranchId, schoolSectionAccess: user.SchoolSectionAccess || user.SchoolSection }))
+      .forEach((user) => recipients.add(lower(user.Username || user.__id)));
+  }
+  return [...recipients].filter(Boolean);
+}
+
+export async function dispatchNotificationPush(env, notification, options = {}) {
+  const recipients = lower(notification.Audience) === 'staff'
+    ? await staffRecipientsForNotification(env, notification)
+    : lowerValues(notification.TargetEmails);
+  const results = [];
+  for (const recipientKey of recipients) {
+    const settings = await loadNotificationSettings(env, notification.Audience, recipientKey);
+    if (!options.ignorePreferences && (settings.Channels.Push === false || settings.Categories[category(notification.Category)] === false)) continue;
+    if (!options.ignorePreferences && quietHoursActive(settings, options.date || new Date()) && lower(notification.Severity) !== 'urgent') continue;
+    results.push(...await deliverPushNotification(env, notification, recipientKey));
+  }
+  return results;
+}
+
 function sameScope(notification, recipient = {}) {
+  const wantedSchool = lower(recipient.schoolId || recipient.SchoolId);
+  const notificationSchool = lower(notification.SchoolId);
+  if (wantedSchool && notificationSchool && wantedSchool !== notificationSchool) return false;
   const wantedBranches = lowerValues([
     ...(Array.isArray(recipient.branchIds) ? recipient.branchIds : []),
     recipient.branchId,
@@ -198,9 +377,11 @@ export function notificationTargetsRecipient(notification = {}, recipient = {}) 
     if (!sameScope(notification, recipient)) return false;
     const username = lower(recipient.username || recipient.Username);
     const role = lower(recipient.role || recipient.Role);
+    const department = lower(recipient.department || recipient.Department);
     const usernames = lowerValues(notification.TargetUsernames);
     const roles = lowerValues(notification.TargetRoles);
-    return (username && usernames.includes(username)) || (role && roles.includes(role));
+    const departments = lowerValues(notification.TargetDepartments);
+    return Boolean((username && usernames.includes(username)) || (role && roles.includes(role)) || (department && departments.includes(department)));
   }
   if (audience === 'parent') {
     const email = lower(recipient.email || recipient.ParentEmail || recipient.Email);
@@ -240,8 +421,10 @@ async function queryTargetedNotifications(env, recipient, query, limit) {
   if (audience === 'staff') {
     const username = lower(recipient.username || recipient.Username);
     const role = clean(recipient.role || recipient.Role);
+    const department = lower(recipient.department || recipient.Department);
     if (username) lookups.push({ field: 'TargetUsernames', value: username });
     if (role) lookups.push({ field: 'TargetRoles', value: role });
+    if (department) lookups.push({ field: 'TargetDepartments', value: department });
   } else if (audience === 'parent') {
     const email = lower(recipient.email || recipient.ParentEmail || recipient.Email);
     if (email) lookups.push({ field: 'TargetEmails', value: email });
@@ -351,6 +534,10 @@ async function readStatesForNotifications(env, recipientKey, notificationIds, qu
 }
 
 export async function listNotifications(env, recipient, options = {}) {
+  recipient = {
+    ...(recipient || {}),
+    schoolId: lower(recipient?.schoolId || recipient?.SchoolId || env?.DYNAMAX_WORKSPACE_ID)
+  };
   const recipientKey = lower(
     recipient.recipientKey || recipient.RecipientKey ||
     recipient.username || recipient.Username ||
@@ -359,12 +546,18 @@ export async function listNotifications(env, recipient, options = {}) {
   if (!recipientKey) throw new Error('A notification recipient is required.');
   const query = options.queryCollection || queryCollection;
   const get = options.getDocument || getDocument;
-  const limit = Math.max(1, Math.min(100, Number(options.limit || 50)));
-  const rows = await queryTargetedNotifications(env, recipient, query, limit);
+  const preferences = options.preferences || (options.respectPreferences === false
+    ? DEFAULT_NOTIFICATION_SETTINGS
+    : await loadNotificationSettings(env, recipient.audience || recipient.Audience, recipientKey));
+  const requestedLimit = Math.max(1, Math.min(100, Number(options.limit || 50)));
+  const rows = await queryTargetedNotifications(env, recipient, query, Math.min(100, requestedLimit + 1));
   const visible = rows
     .filter((row) => notificationTargetsRecipient(row, recipient))
+    .filter((row) => preferences.Channels?.InApp !== false && preferences.Categories?.[category(row.Category || row.Type)] !== false)
+    .filter((row) => !options.category || lower(row.Category || row.Type) === lower(options.category))
+    .filter((row) => !options.before || clean(row.CreatedAt) < clean(options.before))
     .sort((left, right) => clean(right.CreatedAt).localeCompare(clean(left.CreatedAt)))
-    .slice(0, limit);
+    .slice(0, requestedLimit + 1);
   const reads = visible.length
     ? await readStatesForNotifications(
         env,
@@ -375,14 +568,22 @@ export async function listNotifications(env, recipient, options = {}) {
       )
     : [];
   const readById = new Map(reads.map((row) => [clean(row.NotificationId), row]));
-  const notifications = visible.map((row) => ({
+  let notifications = visible.map((row) => ({
       ...row,
       Read: readById.has(clean(row.NotificationId)),
-      ReadAt: clean(readById.get(clean(row.NotificationId))?.ReadAt)
+      ReadAt: clean(readById.get(clean(row.NotificationId))?.ReadAt),
+      Archived: Boolean(clean(readById.get(clean(row.NotificationId))?.ArchivedAt)),
+      ArchivedAt: clean(readById.get(clean(row.NotificationId))?.ArchivedAt)
     }));
+  notifications = notifications.filter((row) => options.archived === true ? row.Archived : !row.Archived);
+  if (options.unread === true) notifications = notifications.filter((row) => !row.Read);
+  const hasMore = notifications.length > requestedLimit;
+  notifications = notifications.slice(0, requestedLimit);
   return {
     notifications,
-    unreadCount: notifications.filter((row) => !row.Read).length
+    unreadCount: notifications.filter((row) => !row.Read).length,
+    hasMore,
+    nextCursor: hasMore ? clean(notifications[notifications.length - 1]?.CreatedAt) : ''
   };
 }
 
@@ -398,13 +599,39 @@ export async function markNotificationRead(env, notificationId, recipientKey, op
     throw error;
   }
   const readAt = clean(options.now || nowIso());
+  const existing = await get(env, 'notificationReads', notificationReadDocumentId(id, key)).catch(() => null);
   const read = {
+    ...(existing || {}),
     NotificationId: id,
     RecipientKey: key,
     ReadAt: readAt
   };
   await upsert(env, 'notificationReads', notificationReadDocumentId(id, key), read);
   return read;
+}
+
+export async function archiveNotification(env, notificationId, recipientKey, archived = true, options = {}) {
+  const get = options.getDocument || getDocument;
+  const upsert = options.upsertDocument || upsertDocument;
+  const id = clean(notificationId);
+  const key = lower(recipientKey);
+  const notification = await get(env, 'notifications', id);
+  if (!notification) {
+    const error = new Error('Notification not found.');
+    error.status = 404;
+    throw error;
+  }
+  const documentId = notificationReadDocumentId(id, key);
+  const existing = await get(env, 'notificationReads', documentId).catch(() => null);
+  const state = {
+    ...(existing || {}),
+    NotificationId: id,
+    RecipientKey: key,
+    ReadAt: clean(existing?.ReadAt || nowIso()),
+    ArchivedAt: archived ? nowIso() : ''
+  };
+  await upsert(env, 'notificationReads', documentId, state);
+  return state;
 }
 
 export async function markAllNotificationsRead(env, notifications, recipientKey, options = {}) {
@@ -439,7 +666,85 @@ export function staffRequisitionNotification(requisition = {}, submittedBy = '')
 }
 
 export async function notifyStaffRequisitionSubmitted(env, requisition, submittedBy = '', options = {}) {
-  return createNotification(env, staffRequisitionNotification(requisition, submittedBy), options);
+  return notifyStaffRequisitionEvent(env, requisition, 'Submitted', submittedBy, options);
+}
+
+function requisitionEventText(requisition, event) {
+  const id = clean(requisition.ExpenseNo || requisition.BillNo || requisition.RequisitionNo || requisition.RecordId);
+  const department = clean(requisition.Department) || 'A department';
+  const notes = clean(requisition.ReviewNotes || requisition.AccountsReviewNotes);
+  const descriptions = {
+    Submitted: `${department} submitted ${id || 'a requisition'} for ${money(requisition.Amount)}.`,
+    Approved: `${id || 'The requisition'} was approved for ${money(requisition.Amount)}.`,
+    Rejected: `${id || 'The requisition'} was rejected${notes ? `: ${notes}` : '.'}`,
+    Pushed: `${id || 'The requisition'} was pushed to Accounts for desktop processing.`,
+    Posted: `${id || 'The requisition'} was posted to accounting${clean(requisition.JournalNo) ? ` as ${clean(requisition.JournalNo)}` : ''}.`,
+    Updated: `${id || 'The requisition'} has an important workflow update.`
+  };
+  return descriptions[event] || descriptions.Updated;
+}
+
+function requisitionEventRecipients(requisition, event, settings) {
+  const configured = settings.WorkflowRecipients || {};
+  const configuredSubmitted = values(configured.SubmittedRoles);
+  const configuredProcessing = values(configured.ProcessingRoles);
+  const configuredManagement = values(configured.ManagementRoles);
+  const submittedRoles = configuredSubmitted.length ? configuredSubmitted : ['Super Admin', 'Accounts Officer', 'Management'];
+  const processingRoles = configuredProcessing.length ? configuredProcessing : ['Super Admin', 'Accounts Officer'];
+  const managementRoles = configuredManagement.length ? configuredManagement : ['Super Admin', 'Management'];
+  const requester = clean(requisition.RequestedByUsername || requisition.SubmittedByUsername || requisition.CreatedByUsername);
+  if (event === 'Submitted') return { roles: submittedRoles, usernames: [] };
+  if (event === 'Approved') return { roles: processingRoles, usernames: [requester].filter(Boolean) };
+  if (event === 'Rejected') return { roles: [], usernames: [requester].filter(Boolean) };
+  if (event === 'Pushed') return { roles: processingRoles, usernames: [requester].filter(Boolean) };
+  if (event === 'Posted') return { roles: managementRoles, usernames: [requester].filter(Boolean) };
+  return { roles: managementRoles, usernames: [requester].filter(Boolean) };
+}
+
+export async function notifyStaffRequisitionEvent(env, requisition = {}, event = 'Updated', actorName = '', options = {}) {
+  const settings = await loadNotificationSettings(env);
+  return createNotification(env, staffRequisitionEventNotification(requisition, event, actorName, settings), options);
+}
+
+export function staffRequisitionEventNotification(requisition = {}, event = 'Updated', actorName = '', settings = DEFAULT_NOTIFICATION_SETTINGS) {
+  const normalizedEvent = ['Submitted', 'Approved', 'Rejected', 'Pushed', 'Posted'].includes(clean(event)) ? clean(event) : 'Updated';
+  const recordId = clean(requisition.ExpenseNo || requisition.BillNo || requisition.RequisitionNo || requisition.RecordId);
+  const eventMoment = clean(
+    normalizedEvent === 'Submitted' ? (requisition.ResubmittedAt || requisition.RequestedAt) :
+    normalizedEvent === 'Approved' ? requisition.ApprovedAt :
+    normalizedEvent === 'Rejected' ? requisition.RejectedAt :
+    normalizedEvent === 'Pushed' ? requisition.AccountsReviewedAt :
+    normalizedEvent === 'Posted' ? requisition.PostedAt : requisition.UpdatedAt
+  ) || clean(requisition.UpdatedAt || nowIso());
+  const recipients = requisitionEventRecipients(requisition, normalizedEvent, settings);
+  return {
+    EventKey: `requisition-${lower(normalizedEvent)}:${lower(requisition.BranchId || 'main')}:${lower(requisition.SchoolSection || 'all')}:${recordId}:${eventMoment}`,
+    Type: `Requisition ${normalizedEvent}`,
+    Category: 'Requisitions',
+    Channels: ['InApp', 'Push'],
+    Audience: 'Staff',
+    TargetRoles: recipients.roles,
+    TargetUsernames: recipients.usernames,
+    Title: `Requisition ${lower(normalizedEvent)}`,
+    TemplateKey: `requisition_${lower(normalizedEvent)}`,
+    TemplateData: {
+      recordId,
+      amount: money(requisition.Amount),
+      department: clean(requisition.Department),
+      status: normalizedEvent,
+      notes: clean(requisition.ReviewNotes || requisition.AccountsReviewNotes)
+    },
+    Message: requisitionEventText(requisition, normalizedEvent),
+    ActionUrl: 'admin.html?section=financeRequests',
+    RecordType: clean(requisition.BillNo) ? 'Supplier Bill' : 'Requisition',
+    RecordId: recordId,
+    BranchId: requisition.BranchId || 'main',
+    SchoolSection: requisition.SchoolSection,
+    ActorType: 'Staff',
+    ActorId: actorName,
+    CreatedAt: eventMoment,
+    CreatedBy: actorName || 'System'
+  };
 }
 
 export function parentPaymentNotification(payment = {}) {
@@ -451,9 +756,17 @@ export function parentPaymentNotification(payment = {}) {
     EventKey: `payment-received:${lower(payment.BranchId || 'main')}:${lower(payment.SchoolSection || 'all')}:${reference || payment.PaidAt}:${accountRef}`,
     Type: 'Payment Received',
     Audience: 'Parent',
-    TargetEmails: [payment.ParentEmail || payment.VerificationEmail || payment.Email].filter(Boolean),
+    TargetEmails: [...values(payment.ParentEmails), payment.ParentEmail || payment.VerificationEmail || payment.Email].filter(Boolean),
+    Category: 'Payments',
+    Channels: ['InApp', 'Push'],
     TargetAccountRefs: [accountRef].filter(Boolean),
     Title: 'Payment received',
+    TemplateKey: 'payment_received',
+    TemplateData: {
+      amount: money(payment.Amount || payment.Credit, payment.Currency),
+      fee: clean(payment.FeeName || payment.Description || 'your child account'),
+      reference
+    },
     Message: `${money(payment.Amount || payment.Credit, payment.Currency)} was received for ${clean(payment.FeeName || payment.Description || 'your child account')}.`,
     ActionUrl: 'parent-dashboard.html?tab=payments',
     RecordType: 'Payment',
@@ -526,20 +839,30 @@ export function parentPaymentDueNotification(invoice = {}) {
   const accountRef = clean(invoice.AccountRef || invoice.AdmissionNo || invoice.ApplicationReference);
   const period = [lower(invoice.AcademicSession), lower(invoice.Term)].filter(Boolean).join(':');
   return {
-    EventKey: `payment-due:${lower(invoice.BranchId || 'main')}:${lower(invoice.SchoolSection || 'all')}:${lower(invoiceId)}:${period}:${lower(invoice.DueDate)}:${lower(accountRef)}`,
+    EventKey: `payment-due:${lower(invoice.BranchId || 'main')}:${lower(invoice.SchoolSection || 'all')}:${lower(invoiceId)}:${period}:${lower(invoice.DueDate)}:${lower(accountRef)}:${lower(invoice.ScheduleStage || 'due')}`,
     Type: 'Payment Due',
+    Category: 'Fees',
+    Channels: ['InApp', 'Push'],
     Audience: 'Parent',
-    TargetEmails: [invoice.ParentEmail || invoice.VerificationEmail || invoice.Email].filter(Boolean),
+    TargetEmails: [...values(invoice.ParentEmails), invoice.ParentEmail || invoice.VerificationEmail || invoice.Email].filter(Boolean),
     TargetAccountRefs: [accountRef].filter(Boolean),
     Title: 'Payment due date',
-    Message: `${clean(invoice.FeeName || invoice.Description || 'A school charge')} of ${money(invoice.Balance || invoice.Amount, invoice.Currency)} is due ${clean(invoice.DueDate) ? `on ${clean(invoice.DueDate)}` : 'soon'}.`,
+    TemplateKey: lower(invoice.ScheduleStage).startsWith('overdue') ? 'fee_overdue' : 'fee_due',
+    TemplateData: {
+      amount: money(invoice.Balance || invoice.Amount, invoice.Currency),
+      fee: clean(invoice.FeeName || invoice.Description || 'A school charge'),
+      dueDate: clean(invoice.DueDate),
+      stage: clean(invoice.ScheduleStage)
+    },
+    Message: clean(invoice.NotificationMessage) || `${clean(invoice.FeeName || invoice.Description || 'A school charge')} of ${money(invoice.Balance || invoice.Amount, invoice.Currency)} ${lower(invoice.ScheduleStage).startsWith('overdue') ? `was due on ${clean(invoice.DueDate)}` : clean(invoice.DueDate) ? `is due on ${clean(invoice.DueDate)}` : 'is due soon'}.`,
     ActionUrl: 'parent-dashboard.html?tab=payments',
     RecordType: 'Invoice',
     RecordId: invoiceId,
     DueDate: invoice.DueDate,
+    ScheduleStage: invoice.ScheduleStage,
     BranchId: invoice.BranchId || 'main',
     SchoolSection: invoice.SchoolSection,
-    CreatedAt: invoice.CreatedAt || invoice.Date,
+    CreatedAt: invoice.NotificationCreatedAt || (clean(invoice.ScheduleStage) ? nowIso() : (invoice.CreatedAt || invoice.Date)),
     CreatedBy: invoice.RecordedBy || 'Accounts Office'
   };
 }

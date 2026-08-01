@@ -44,10 +44,18 @@ const parentNotificationPanel = document.getElementById('parentNotificationPanel
 const parentNotificationList = document.getElementById('parentNotificationList');
 const parentNotificationStatus = document.getElementById('parentNotificationStatus');
 const markAllParentNotificationsReadBtn = document.getElementById('markAllParentNotificationsReadBtn');
+const manageParentNotificationsBtn = document.getElementById('manageParentNotificationsBtn');
+const parentNotificationDialog = document.getElementById('parentNotificationDialog');
+const parentNotificationHistory = document.getElementById('parentNotificationHistory');
+const parentNotificationSettingsForm = document.getElementById('parentNotificationSettingsForm');
 
 let dashboard = null;
 let selectedChildKey = '';
 let activeDashboardView = 'overview';
+const notificationLinkedView = new URLSearchParams(window.location.search).get('tab') || new URLSearchParams(window.location.search).get('view');
+if (['overview', 'payments', 'optional', 'results', 'documents', 'wallet', 'clinic', 'stores'].includes(notificationLinkedView)) {
+  activeDashboardView = notificationLinkedView;
+}
 const loadedPayables = new Set();
 const passportPhotoCache = new Map();
 const storeCart = new Map();
@@ -55,6 +63,8 @@ const parentDocumentIdempotencyKeys = new Map();
 let selectedChildLoadController = null;
 let dashboardLoadController = null;
 let parentNotifications = [];
+let parentNotificationMeta = {};
+let parentNotificationHistoryRows = [];
 const PARENT_DOCUMENT_MAX_FILE_SIZE = 8 * 1024 * 1024;
 
 function newIdempotencyKey() {
@@ -298,6 +308,22 @@ function setParentNotificationStatus(message, type = '') {
   parentNotificationStatus.className = `status ${type}`.trim();
 }
 
+function openParentNotificationAction(actionUrl) {
+  if (!actionUrl) return;
+  try {
+    const target = new URL(actionUrl, window.location.href);
+    if (target.origin === window.location.origin) {
+      const view = target.searchParams.get('tab') || target.searchParams.get('view');
+      if (view) showDashboardView(view, true);
+      parentNotificationPanel.hidden = true;
+      parentNotificationsBtn?.setAttribute('aria-expanded', 'false');
+      parentNotificationDialog?.close();
+      return;
+    }
+    if (target.protocol === 'https:') window.open(target.href, '_blank', 'noopener,noreferrer');
+  } catch {}
+}
+
 function renderParentNotifications() {
   if (!parentNotificationList) return;
   const unreadCount = parentNotifications.filter((item) => !parentNotificationIsRead(item)).length;
@@ -323,12 +349,11 @@ function renderParentNotifications() {
       </span>
       <small>${escapeHtml(date)}</small>
     `;
-    if (!isRead) {
-      row.setAttribute('aria-label', `${title}. Mark as read`);
-      row.addEventListener('click', () => markParentNotificationRead(parentNotificationId(notification), false, row));
-    } else {
-      row.disabled = true;
-    }
+    row.setAttribute('aria-label', isRead ? title : `${title}. Mark as read`);
+    row.addEventListener('click', async () => {
+      if (!isRead) await markParentNotificationRead(parentNotificationId(notification), false, row);
+      openParentNotificationAction(notification.ActionUrl || notification.actionUrl);
+    });
     parentNotificationList.appendChild(row);
   });
   if (markAllParentNotificationsReadBtn) {
@@ -345,12 +370,14 @@ async function loadParentNotifications() {
       headers: { 'Content-Type': 'application/json' },
       body: freshBody({
         action: 'getNotifications',
+        limit: 100,
         ...authPayload(),
         accountRefs: (dashboard.children || []).map((child) => child.AccountRef).filter(Boolean)
       })
     });
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load notifications.');
+    parentNotificationMeta = data;
     parentNotifications = data.notifications || [];
     renderParentNotifications();
     setParentNotificationStatus('', '');
@@ -359,6 +386,60 @@ async function loadParentNotifications() {
     renderParentNotifications();
     setParentNotificationStatus(error.message, 'bad');
   }
+}
+
+async function parentNotificationRequest(action, extra = {}) {
+  const response = await fetch('/api/parent-dashboard', {
+    method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+    body: freshBody({ action, ...authPayload(), ...extra })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.ok) throw new Error(data.message || 'Could not update notifications.');
+  parentNotificationMeta = data;
+  return data;
+}
+
+function parentHistoryMarkup(row) {
+  const id = parentNotificationId(row);
+  return `<article class="notification-item${parentNotificationIsRead(row) ? ' is-read' : ''}" data-parent-notification-id="${escapeHtml(id)}">
+    <button type="button" class="notification-open"><span class="notification-item-dot"></span><span class="notification-item-copy"><small>${escapeHtml(row.Category || row.Type || 'System')}</small><strong>${escapeHtml(row.Title || 'Notification')}</strong><span>${escapeHtml(row.Message || '')}</span><time>${escapeHtml(row.CreatedAt ? new Date(row.CreatedAt).toLocaleString() : '')}</time></span></button>
+    <button type="button" class="notification-archive-action" data-parent-archive>${row.Archived ? 'Restore' : 'Archive'}</button>
+  </article>`;
+}
+
+async function loadParentNotificationHistory(append = false) {
+  const cursor = append ? parentNotificationMeta.nextCursor : '';
+  const data = await parentNotificationRequest('getNotifications', {
+    limit: 40,
+    before: cursor,
+    category: document.getElementById('parentNotificationCategory').value,
+    unread: document.getElementById('parentNotificationUnread').checked,
+    archived: document.getElementById('parentNotificationArchived').checked
+  });
+  parentNotificationHistoryRows = append ? [...parentNotificationHistoryRows, ...(data.notifications || [])] : (data.notifications || []);
+  parentNotificationHistory.innerHTML = parentNotificationHistoryRows.length ? parentNotificationHistoryRows.map(parentHistoryMarkup).join('') : '<p class="notification-empty">No notifications match these filters.</p>';
+  document.getElementById('loadMoreParentNotifications').hidden = !data.hasMore;
+  renderParentNotificationSettings(data);
+}
+
+function renderParentNotificationSettings(data = parentNotificationMeta) {
+  if (!parentNotificationSettingsForm || !data.settings?.Categories) return;
+  const settings = data.settings;
+  parentNotificationSettingsForm.elements.QuietHoursEnabled.checked = settings.QuietHoursEnabled === true;
+  parentNotificationSettingsForm.elements.QuietHoursStart.value = settings.QuietHoursStart || '21:00';
+  parentNotificationSettingsForm.elements.QuietHoursEnd.value = settings.QuietHoursEnd || '06:00';
+  parentNotificationSettingsForm.elements.Timezone.value = settings.Timezone || 'Africa/Lagos';
+  parentNotificationSettingsForm.elements.InApp.checked = settings.Channels?.InApp !== false;
+  parentNotificationSettingsForm.elements.Push.checked = settings.Channels?.Push !== false;
+  document.getElementById('parentNotificationCategories').innerHTML = Object.entries(settings.Categories).map(([name, enabled]) => `<label><input type="checkbox" name="Category:${escapeHtml(name)}" ${enabled !== false ? 'checked' : ''}> ${escapeHtml(name)}</label>`).join('');
+  const thisDevice = (data.subscriptions || []).find((row) => row.DeviceId === window.DynamaxWebPush?.deviceId?.());
+  document.getElementById('parentPushStatus').textContent = thisDevice ? `Enabled: ${thisDevice.DeviceName || 'this device'}` : `Status: ${window.DynamaxWebPush?.permission?.() || 'unsupported'}`;
+  document.getElementById('enableParentPush').disabled = !data.messaging?.enabled || Boolean(thisDevice);
+  document.getElementById('disableParentPush').disabled = !thisDevice;
+  document.getElementById('testParentPush').disabled = !thisDevice;
+  document.getElementById('parentNotificationDevices').innerHTML = (data.subscriptions || []).length
+    ? `<strong>Subscribed devices</strong>${data.subscriptions.map((row) => `<span><span><b>${escapeHtml(row.DeviceName || 'Browser device')}</b><small>${escapeHtml(row.LastSeenAt ? new Date(row.LastSeenAt).toLocaleString() : '')}${row.DeviceId === window.DynamaxWebPush?.deviceId?.() ? ' · This device' : ''}</small></span><button type="button" data-remove-parent-push-device="${escapeHtml(row.DeviceId)}">Remove</button></span>`).join('')}`
+    : '<span>No browser devices are subscribed.</span>';
 }
 
 async function markParentNotificationRead(notificationId, all = false, button = null) {
@@ -1822,6 +1903,71 @@ markAllParentNotificationsReadBtn?.addEventListener('click', () => {
     void markParentNotificationRead('', true, markAllParentNotificationsReadBtn);
   }
 });
+
+manageParentNotificationsBtn?.addEventListener('click', async () => {
+  parentNotificationDialog?.showModal();
+  try { await loadParentNotificationHistory(false); } catch (error) { setParentNotificationStatus(error.message, 'bad'); }
+});
+document.getElementById('closeParentNotificationDialog')?.addEventListener('click', () => parentNotificationDialog?.close());
+document.querySelectorAll('[data-parent-notification-view]').forEach((button) => button.addEventListener('click', () => {
+  document.querySelectorAll('[data-parent-notification-view]').forEach((item) => item.classList.toggle('is-active', item === button));
+  document.querySelectorAll('[data-parent-notification-panel]').forEach((panel) => { panel.hidden = panel.dataset.parentNotificationPanel !== button.dataset.parentNotificationView; });
+}));
+['parentNotificationCategory', 'parentNotificationUnread', 'parentNotificationArchived'].forEach((id) => document.getElementById(id)?.addEventListener('change', () => loadParentNotificationHistory(false).catch((error) => setParentNotificationStatus(error.message, 'bad'))));
+document.getElementById('refreshParentNotificationHistory')?.addEventListener('click', () => loadParentNotificationHistory(false).catch((error) => setParentNotificationStatus(error.message, 'bad')));
+document.getElementById('loadMoreParentNotifications')?.addEventListener('click', () => loadParentNotificationHistory(true).catch((error) => setParentNotificationStatus(error.message, 'bad')));
+parentNotificationHistory?.addEventListener('click', async (event) => {
+  const item = event.target.closest('[data-parent-notification-id]');
+  if (!item) return;
+  const row = parentNotificationHistoryRows.find((record) => parentNotificationId(record) === item.dataset.parentNotificationId);
+  try {
+    if (event.target.closest('[data-parent-archive]')) {
+      await parentNotificationRequest(row?.Archived ? 'unarchiveNotification' : 'archiveNotification', { notificationId: item.dataset.parentNotificationId });
+      await loadParentNotificationHistory(false);
+    } else {
+      if (row && !parentNotificationIsRead(row)) await parentNotificationRequest('markNotificationRead', { notificationId: item.dataset.parentNotificationId });
+      openParentNotificationAction(row?.ActionUrl || row?.actionUrl);
+    }
+  } catch (error) { document.getElementById('parentNotificationSettingsStatus').textContent = error.message; }
+});
+parentNotificationSettingsForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const categories = {};
+  parentNotificationSettingsForm.querySelectorAll('[name^="Category:"]').forEach((input) => { categories[input.name.slice(9)] = input.checked; });
+  const status = document.getElementById('parentNotificationSettingsStatus');
+  try {
+    const data = await parentNotificationRequest('saveNotificationSettings', { settings: {
+      QuietHoursEnabled: parentNotificationSettingsForm.elements.QuietHoursEnabled.checked,
+      QuietHoursStart: parentNotificationSettingsForm.elements.QuietHoursStart.value,
+      QuietHoursEnd: parentNotificationSettingsForm.elements.QuietHoursEnd.value,
+      Timezone: parentNotificationSettingsForm.elements.Timezone.value,
+      Channels: { InApp: parentNotificationSettingsForm.elements.InApp.checked, Push: parentNotificationSettingsForm.elements.Push.checked }, Categories: categories
+    } });
+    renderParentNotificationSettings(data); status.textContent = 'Preferences saved.';
+  } catch (error) { status.textContent = error.message; }
+});
+document.getElementById('enableParentPush')?.addEventListener('click', async () => {
+  const status = document.getElementById('parentNotificationSettingsStatus');
+  try {
+    await window.DynamaxWebPush.enable(parentNotificationMeta.messaging, (subscription) => parentNotificationRequest('subscribePush', { subscription }));
+    status.textContent = 'Browser push enabled on this device.'; renderParentNotificationSettings(parentNotificationMeta);
+  } catch (error) { status.textContent = error.message; }
+});
+document.getElementById('disableParentPush')?.addEventListener('click', async () => {
+  const status = document.getElementById('parentNotificationSettingsStatus');
+  try { await window.DynamaxWebPush.disable((deviceId) => parentNotificationRequest('unsubscribePush', { deviceId })); status.textContent = 'This device was removed.'; renderParentNotificationSettings(parentNotificationMeta); } catch (error) { status.textContent = error.message; }
+});
+document.getElementById('testParentPush')?.addEventListener('click', async () => {
+  const status = document.getElementById('parentNotificationSettingsStatus');
+  try { await parentNotificationRequest('testPush', { deviceId: window.DynamaxWebPush.deviceId() }); status.textContent = 'Test notification sent.'; } catch (error) { status.textContent = error.message; }
+});
+document.getElementById('parentNotificationDevices')?.addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-remove-parent-push-device]');
+  if (!button) return;
+  const status = document.getElementById('parentNotificationSettingsStatus');
+  try { const data = await parentNotificationRequest('unsubscribePush', { deviceId: button.dataset.removeParentPushDevice }); renderParentNotificationSettings(data); status.textContent = 'Device removed.'; } catch (error) { status.textContent = error.message; }
+});
+window.addEventListener('dynamax:foreground-notification', () => { if (dashboard) void loadParentNotifications(); });
 
 if (dashboardNav) {
   dashboardNav.addEventListener('click', (event) => {

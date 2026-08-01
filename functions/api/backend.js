@@ -57,10 +57,11 @@ import { saveDocumentBranding } from '../lib/document-branding.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
 import {
-  aggregateSchoolFeeDueInvoices,
-  notifyParentPaymentDue,
-  notifyParentPaymentReceived
+  loadNotificationSettings,
+  notifyParentPaymentReceived,
+  notifyStaffRequisitionEvent
 } from '../lib/notifications.js';
+import { invoiceReminderFields } from '../lib/notification-reminders.js';
 
 export const SCHOOL_FEES_TOTAL_CODE = 'SCHOOL_FEES_TOTAL';
 
@@ -3477,6 +3478,13 @@ export async function recordManualPayment(env, body) {
       BranchId: clean(body.BranchId || (student && student.BranchId) || 'main').toLowerCase() || 'main',
       SchoolSection: clean(body.SchoolSection || (student && student.SchoolSection) || (student && schoolSectionFor(student))),
       DisplayName: clean(body.DisplayName || (student && (student.DisplayName || student.ApplicantName))),
+      ParentEmail: clean(body.ParentEmail || (student && (student.ParentEmail || student.VerificationEmail || student.Email))).toLowerCase(),
+      ParentEmails: [...new Set([
+        ...(Array.isArray(body.ParentEmails) ? body.ParentEmails : []),
+        ...(Array.isArray(student?.ParentEmails) ? student.ParentEmails : []),
+        body.ParentEmail, student?.ParentEmail, student?.VerificationEmail, student?.Email,
+        student?.FatherEmail, student?.MotherEmail, student?.GuardianEmail
+      ].map((value) => clean(value).toLowerCase()).filter(Boolean))],
       ClassName: clean(body.ClassName || (student && student.ClassName)),
       StudentType: clean(body.StudentType || (student && student.StudentType) || fee.StudentType),
       BillingCategory: clean(body.BillingCategory || (student && student.BillingCategory) || fee.BillingCategory) || 'Regular',
@@ -3568,6 +3576,7 @@ export async function recordManualPayment(env, body) {
   const shouldApplyInvoiceAllocation = !duplicate || (unfinishedPayment && !invoiceAllocationComplete) ||
     (!existingLedger && !invoiceAllocationComplete);
   if (shouldApplyInvoiceAllocation) {
+    const notificationSettings = await loadNotificationSettings(env);
     const invoiceAllocation = calculateInvoiceCreditAllocations(matchingInvoices, paymentCredit);
     payment.InvoiceAllocationStatus = 'Completed';
     payment.InvoiceAllocationCompletedAt = nowIso();
@@ -3581,7 +3590,12 @@ export async function recordManualPayment(env, body) {
           Credit: allocation.Credit,
           Balance: allocation.Balance,
           Status: allocation.Status,
-          UpdatedAt: nowIso()
+          UpdatedAt: nowIso(),
+          ...invoiceReminderFields({
+            ...allocation.invoice,
+            Balance: allocation.Balance,
+            Status: allocation.Status
+          }, notificationSettings)
         }
       })),
       {
@@ -3746,6 +3760,7 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
   let created = 0;
   let updated = 0;
   const generatedInvoices = [];
+  const notificationSettings = await loadNotificationSettings(env);
   for (const fee of fees) {
     const invoiceSession = resolvedPeriodValue(fee.AcademicSession, billingSession);
     const invoiceTerm = resolvedPeriodValue(fee.Term, billingTerm);
@@ -3772,6 +3787,11 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
         || student.VerificationEmail
         || student.Email
       ).toLowerCase(),
+      ParentEmails: [...new Set([
+        ...(Array.isArray(student.ParentEmails) ? student.ParentEmails : []),
+        student.ParentEmail, student.VerificationEmail, student.Email,
+        student.FatherEmail, student.MotherEmail, student.GuardianEmail
+      ].map((value) => clean(value).toLowerCase()).filter(Boolean))],
       BranchId: clean(student.BranchId || body.BranchId || 'main').toLowerCase() || 'main',
       SchoolSection: clean(
         student.SchoolSection
@@ -3799,15 +3819,12 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
       UpdatedAt: nowIso(),
       RecordedBy: clean(body.RecordedBy) || duplicate?.RecordedBy || 'Accounts Office'
     };
+    Object.assign(invoicePayload, invoiceReminderFields(invoicePayload, notificationSettings));
     await upsertDocument(env, 'invoices', safeDocumentId(invoiceId), invoicePayload);
     generatedInvoices.push(invoicePayload);
     if (duplicate) updated += 1;
     else created += 1;
   }
-  await Promise.all(
-    aggregateSchoolFeeDueInvoices(generatedInvoices)
-      .map((invoice) => notifyParentPaymentDue(env, invoice).catch(() => null))
-  );
   await refreshAccountFinancialSummary(env, accountRef, linkedReferences);
   return { ok: true, message: `${created} school fee invoice item(s) generated, ${updated} updated.`, created, updated };
 }
@@ -5185,6 +5202,10 @@ async function saveAccountingExpense(env, body) {
   }
   await upsertDocument(env, 'accountingExpenses', safeDocumentId(expenseNo), payload);
   await writeAccountingAudit(env, existing.ExpenseNo ? 'UPDATE' : 'CREATE', 'Expense', expenseNo, body, requestedStatus);
+  if (lower(existing.Status) !== lower(requestedStatus) && ['approved', 'rejected', 'posted'].includes(lower(requestedStatus))) {
+    const event = lower(requestedStatus) === 'posted' ? 'Posted' : lower(requestedStatus) === 'approved' ? 'Approved' : 'Rejected';
+    await notifyStaffRequisitionEvent(env, payload, event, clean(body.RecordedBy || body.recordedBy)).catch(() => null);
+  }
   return { ok: true, message: `Expense saved as ${requestedStatus}.`, expense: payload };
 }
 

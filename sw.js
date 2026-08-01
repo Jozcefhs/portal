@@ -1,5 +1,5 @@
-const CACHE = 'dynamax-v76-currency-conversion';
-const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/parent-dashboard.html', '/register-organization.html', '/give.html', '/css/style.css', '/js/preferences.js', '/js/action-feedback.js', '/js/launcher.js', '/js/site-config.js', '/js/admin.js', '/js/give.js', '/js/parent-dashboard.js', '/js/register-organization.js', '/images/Logo.png'];
+const CACHE = 'dynamax-v77-notifications';
+const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/parent-dashboard.html', '/register-organization.html', '/give.html', '/css/style.css', '/css/notifications.css', '/js/preferences.js', '/js/action-feedback.js', '/js/launcher.js', '/js/site-config.js', '/js/admin.js', '/js/give.js', '/js/notifications.js', '/js/web-push.js', '/js/parent-dashboard.js', '/js/register-organization.js', '/images/Logo.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -47,4 +47,29 @@ self.addEventListener('fetch', (event) => {
       return Response.error();
     })
   );
+});
+
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try { payload = event.data ? event.data.json() : {}; } catch { payload = { notification: { body: event.data?.text?.() || '' } }; }
+  const notification = payload.notification || {};
+  const data = payload.data || {};
+  const title = notification.title || data.title || 'Dynamax notification';
+  event.waitUntil(self.registration.showNotification(title, {
+    body: notification.body || data.message || '',
+    icon: '/images/Logo.png',
+    badge: '/images/Logo.png',
+    tag: data.notificationId || undefined,
+    data: { actionUrl: data.actionUrl || notification.click_action || '/' }
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = new URL(event.notification.data?.actionUrl || '/', self.location.origin).href;
+  event.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {
+    const existing = windows.find((client) => client.url === target || client.url.startsWith(target));
+    if (existing) return existing.focus();
+    return clients.openWindow(target);
+  }));
 });

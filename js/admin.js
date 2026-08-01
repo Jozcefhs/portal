@@ -53,6 +53,7 @@ const moduleDialog = document.getElementById('staffModuleDialog');
 const moduleGrid = document.getElementById('staffModuleGrid');
 const moduleCloseButton = document.getElementById('staffModuleClose');
 const requestedWorkspace = new URLSearchParams(window.location.search).get('workspace')?.trim().toLowerCase() || '';
+const requestedSection = new URLSearchParams(window.location.search).get('section')?.trim() || '';
 
 let currentUser = null;
 let dashboardData = null;
@@ -859,7 +860,9 @@ async function loadDashboard() {
     showDashboard(currentUser, { refreshPasskeys: false });
     const allowed = data.allowedSections || currentUser.allowedSections || [];
     const workspaceSections = ['overview', ...allowed];
-    if (!activeSection || !workspaceSections.includes(activeSection)) activeSection = 'overview';
+    if (!activeSection || !workspaceSections.includes(activeSection)) {
+      activeSection = workspaceSections.includes(requestedSection) ? requestedSection : 'overview';
+    }
     renderTabs(allowed);
     renderWorkspace(activeSection);
     renderSection(activeSection);

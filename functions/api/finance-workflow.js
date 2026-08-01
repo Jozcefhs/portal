@@ -6,7 +6,7 @@ import {
   verifyStaffApprovalPassword
 } from '../lib/staff-auth.js';
 import { loadStaffApprovalProfile, publicStaffApprovalProfile } from '../lib/staff-approval-profile.js';
-import { notifyStaffRequisitionSubmitted } from '../lib/notifications.js';
+import { notifyStaffRequisitionEvent, notifyStaffRequisitionSubmitted } from '../lib/notifications.js';
 import {
   beginIdempotentRequest,
   completeIdempotentRequest,
@@ -386,6 +386,7 @@ async function submitRequisition(env, user, body) {
     Status: 'Submitted',
     RevisionNumber: 1,
     RequestedBy: actor(user),
+    RequestedByUsername: clean(user.username),
     RequestedAt: nowIso(),
     CreatedAt: nowIso(),
     UpdatedAt: nowIso(),
@@ -440,6 +441,7 @@ async function submitMaterialRequisition(env, user, body) {
     Status: 'Submitted',
     RevisionNumber: 1,
     RequestedBy: actor(user),
+    RequestedByUsername: clean(user.username),
     RequestedAt: nowIso(),
     CreatedAt: nowIso(),
     UpdatedAt: nowIso(),
@@ -566,6 +568,7 @@ async function submitBill(env, user, body) {
     AttachmentUrl: clean(body.attachmentUrl || body.AttachmentUrl),
     Notes: clean(body.notes || body.Notes),
     Status: 'Submitted',
+    RequestedByUsername: clean(user.username),
     CreatedAt: nowIso(),
     CreatedBy: actor(user),
     UpdatedAt: nowIso(),
@@ -575,6 +578,7 @@ async function submitBill(env, user, body) {
   };
   await upsertDocument(env, 'accountingSupplierBills', safeId(billNo), payload);
   await writeAudit(env, user, 'CREATE', 'Supplier Bill', billNo, `${department}: ${description}`);
+  await notifyStaffRequisitionEvent(env, payload, 'Submitted', actor(user)).catch(() => null);
   return { ok: true, message: 'Supplier bill submitted for approval.', bill: payload };
 }
 
@@ -695,6 +699,7 @@ async function reviewRecord(env, user, body, request) {
     await deleteDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'admin')).catch(() => null);
   }
   await writeAudit(env, user, decision.toUpperCase(), isBill ? 'Supplier Bill' : 'Expense Requisition', id, clean(body.notes));
+  await notifyStaffRequisitionEvent(env, payload, decision, actor(user)).catch(() => null);
   return { ok: true, message: `${isBill ? 'Supplier bill' : 'Requisition'} ${decision.toLowerCase()}.`, record: payload };
 }
 
@@ -750,6 +755,7 @@ async function accountsReview(env, user, body, request) {
   });
   await commitFinanceDecision(env, writes);
   await writeAudit(env, user, 'ACCOUNTS REVIEW', isBill ? 'Supplier Bill' : 'Expense Requisition', id, clean(body.notes));
+  await notifyStaffRequisitionEvent(env, payload, 'Pushed', actor(user)).catch(() => null);
   return { ok: true, message: 'Marked as reviewed by Accounts. Post or pay it from the desktop Finance & Accounting tab.', record: payload };
 }
 

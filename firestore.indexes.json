@@ -19,6 +19,14 @@
       ]
     },
     {
+      "collectionGroup": "invoices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ReminderEligible", "order": "ASCENDING" },
+        { "fieldPath": "NextReminderDate", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "storeOrders",
       "queryScope": "COLLECTION",
       "fields": [
@@ -62,6 +70,14 @@
       "collectionGroup": "notifications",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "TargetDepartments", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "CreatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "TargetEmails", "arrayConfig": "CONTAINS" },
         { "fieldPath": "CreatedAt", "order": "DESCENDING" }
       ]
@@ -98,6 +114,16 @@
       "collectionGroup": "notifications",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "TargetDepartments", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "SchoolSection", "order": "ASCENDING" },
+        { "fieldPath": "CreatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "TargetEmails", "arrayConfig": "CONTAINS" },
         { "fieldPath": "BranchId", "order": "ASCENDING" },
         { "fieldPath": "SchoolSection", "order": "ASCENDING" },
@@ -136,6 +162,15 @@
       "collectionGroup": "notifications",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "TargetDepartments", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "BranchId", "order": "ASCENDING" },
+        { "fieldPath": "CreatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "TargetRoles", "arrayConfig": "CONTAINS" },
         { "fieldPath": "SchoolSection", "order": "ASCENDING" },
         { "fieldPath": "CreatedAt", "order": "DESCENDING" }
@@ -146,6 +181,15 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "TargetUsernames", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "SchoolSection", "order": "ASCENDING" },
+        { "fieldPath": "CreatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "TargetDepartments", "arrayConfig": "CONTAINS" },
         { "fieldPath": "SchoolSection", "order": "ASCENDING" },
         { "fieldPath": "CreatedAt", "order": "DESCENDING" }
       ]

@@ -7,6 +7,7 @@
   <meta name="theme-color" content="#0f3d66"><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="app-icon.svg">
   <script src="js/preferences.js?v=20260726-biometric"></script>
   <link rel="stylesheet" href="css/style.css?v=20260801-currency-conversion">
+  <link rel="stylesheet" href="css/notifications.css?v=20260801-notifications">
 </head>
 <body>
   <main class="page-wrap">
@@ -51,6 +52,7 @@
               <p class="muted">Payment confirmations, due dates and school updates.</p>
             </div>
             <button type="button" id="markAllParentNotificationsReadBtn" class="secondary">Mark all as read</button>
+            <button type="button" id="manageParentNotificationsBtn" class="secondary">View all & settings</button>
           </div>
           <div id="parentNotificationList" class="parent-notification-list">
             <p class="muted">Loading notifications...</p>
@@ -208,9 +210,31 @@
     </section>
   </main>
 
+  <dialog id="parentNotificationDialog" class="notification-history-dialog">
+    <div class="notification-history-shell">
+      <header><div><small>COMMUNICATION CENTRE</small><h2>Notifications</h2></div><button type="button" id="closeParentNotificationDialog" aria-label="Close">&times;</button></header>
+      <nav class="notification-history-tabs"><button type="button" class="is-active" data-parent-notification-view="history">History</button><button type="button" data-parent-notification-view="settings">Preferences & devices</button></nav>
+      <section data-parent-notification-panel="history">
+        <div class="notification-history-filters"><label>Category<select id="parentNotificationCategory"><option value="">All categories</option><option>Fees</option><option>Payments</option><option>Requisitions</option><option>Attendance</option><option>Academics</option><option>Announcements</option><option>System</option></select></label><label><input type="checkbox" id="parentNotificationUnread"> Unread only</label><label><input type="checkbox" id="parentNotificationArchived"> Archived</label><button type="button" id="refreshParentNotificationHistory">Refresh</button></div>
+        <div id="parentNotificationHistory" class="notification-history-list"></div><button type="button" id="loadMoreParentNotifications" class="notification-load-more" hidden>Load older notifications</button>
+      </section>
+      <section data-parent-notification-panel="settings" hidden>
+        <form id="parentNotificationSettingsForm" class="notification-settings-form">
+          <div class="notification-push-card"><div><strong>Browser push</strong><span id="parentPushStatus">Checking this device…</span></div><div><button type="button" id="enableParentPush">Enable on this device</button><button type="button" id="disableParentPush">Remove this device</button><button type="button" id="testParentPush">Send test</button></div></div>
+          <div id="parentNotificationDevices" class="notification-device-list" aria-label="Subscribed devices"></div>
+          <fieldset><legend>Categories</legend><div id="parentNotificationCategories" class="notification-category-grid"></div></fieldset>
+          <fieldset><legend>Quiet hours</legend><label><input type="checkbox" name="QuietHoursEnabled"> Enable quiet hours</label><label>From <input type="time" name="QuietHoursStart"></label><label>To <input type="time" name="QuietHoursEnd"></label><label>Timezone <input name="Timezone" maxlength="80"></label></fieldset>
+          <fieldset><legend>Channels</legend><label><input type="checkbox" name="InApp"> In-app</label><label><input type="checkbox" name="Push"> Browser push</label></fieldset>
+          <button type="submit">Save preferences</button><p id="parentNotificationSettingsStatus" class="notification-settings-status" role="status"></p>
+        </form>
+      </section>
+    </div>
+  </dialog>
+
   <script src="js/site-config.js?v=20260728-quota-safety"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/pwa-install.js?v=20260729-action-feedback"></script>
-  <script src="js/parent-dashboard.js?v=20260730-parent-document-upload"></script>
+  <script src="js/web-push.js?v=20260801-notifications"></script>
+  <script src="js/parent-dashboard.js?v=20260801-notifications"></script>
 </body>
 </html>
