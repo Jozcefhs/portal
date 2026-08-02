@@ -165,8 +165,10 @@ img{max-width:100%}
   fieldset{padding:12px;margin:14px 0}
   input,select,textarea,button,.btn{font-size:16px}
   button,.btn{min-height:44px;padding:11px 14px}
-  .dashboard-login button,.dashboard-actions button,#restrictionForm button{width:fit-content}
-  .dashboard-actions{display:block;margin-bottom:10px}
+  .dashboard-login button,#restrictionForm button{width:fit-content}
+  .dashboard-actions{display:flex;align-items:center;justify-content:flex-start;flex-wrap:nowrap;gap:5px;margin-bottom:10px}
+  .dashboard-actions button{width:auto;min-height:36px;margin:0;padding:7px 8px;font-size:10px;line-height:1.1;white-space:nowrap}
+  .dashboard-actions .parent-notification-button{flex:0 0 36px;width:36px;min-height:36px;padding:0;font-size:16px}
   .child-list{grid-template-columns:1fr;gap:8px;margin:10px 0 14px}
   .child-card{width:100%;min-height:86px}
   .dashboard-grid{gap:10px}

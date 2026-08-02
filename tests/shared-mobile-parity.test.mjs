@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
-const sharedVersion = '20260801-transparent-app-logo';
+const sharedVersion = '20260802-parent-mobile-actions';
 const adminScriptVersion = '20260801-income-latest-period';
 const parentScriptVersion = '20260801-compact-notification-preferences';
 const pageNames = [
@@ -62,6 +62,12 @@ test('action buttons fit their contents instead of stretching across cards and f
   assert.doesNotMatch(portalCss, /\.workflow-form button\{width:100%/);
 });
 
+test('parent mobile dashboard actions keep the bell and compact buttons on one row', () => {
+  assert.match(portalCss, /@media \(max-width:680px\)[\s\S]*?\.dashboard-actions\{display:flex;[^}]*flex-wrap:nowrap/);
+  assert.match(portalCss, /\.dashboard-actions button\{[^}]*font-size:10px[^}]*white-space:nowrap/);
+  assert.match(portalCss, /\.dashboard-actions \.parent-notification-button\{[^}]*width:36px/);
+});
+
 test('all portal pages reference the current shared stylesheet version', () => {
   pages.forEach((html, index) => {
     assert.match(html, new RegExp(`css/style\\.css\\?v=${sharedVersion}`), `${pageNames[index]} should use the shared stylesheet version`);
@@ -71,7 +77,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v84-income-latest-period/);
+  assert.match(serviceWorker, /dynamax-v85-parent-mobile-actions/);
   assert.match(serviceWorker, /'\/give\.html'/);
   assert.match(serviceWorker, /'\/js\/give\.js'/);
   assert.match(serviceWorker, /'\/js\/action-feedback\.js'/);
