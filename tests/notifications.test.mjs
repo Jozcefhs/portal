@@ -581,6 +581,8 @@ test('staff and parent notification interfaces are wired to protected APIs', asy
   assert.match(notificationCss, /\.notification-audience-policy-grid\{/);
   assert.match(notificationCss, /\.notification-settings-form input\[type=checkbox\]\{[^}]*width:16px[^}]*height:16px/);
   assert.match(notificationCss, /\.notification-audience-policy label\{[^}]*grid-template-columns:16px minmax\(0,1fr\)/);
+  assert.match(notificationCss, /\.notification-push-card button,\.notification-settings-form>button\{[^}]*width:fit-content!important/);
+  assert.match(notificationCss, /\.notification-settings-form>button\{justify-self:start\}/);
   assert.doesNotMatch(parentHtml, /id="parentNotificationCategory"[\s\S]*?<option>Requisitions<\/option>[\s\S]*?<\/select>/);
   assert.doesNotMatch(parentHtml, /Preferences & devices|parentNotificationSettingsForm|disableParentPush/);
   assert.doesNotMatch(parentDashboardJs, /saveNotificationSettings|data-remove-parent-push-device/);
