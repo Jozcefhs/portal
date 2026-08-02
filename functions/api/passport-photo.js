@@ -10,6 +10,7 @@ import {
   admissionThumbnailDocumentId,
   validateAdmissionThumbnail
 } from '../lib/document-files.js';
+import { findFirestoreApplication } from './upload-document.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -57,6 +58,21 @@ function parentOwnsApplication(row, email, code) {
     .filter(Boolean);
   const rowCode = clean(pick(row, ['VerificationCode', 'verificationCode'])).toUpperCase();
   return emails.includes(email) && rowCode === code;
+}
+
+export async function parentCanAccessPassportApplication(env, application, email, code, options = {}) {
+  if (parentOwnsApplication(application, email, code)) return true;
+  const resolveApplication = options.findFirestoreApplication || findFirestoreApplication;
+  const reference = applicationReference(application);
+  const scopePath = admissionApplicationScopePath(application?.__scopePath) || 'applications';
+  if (!reference || !email || !code) return false;
+  const authorized = await resolveApplication(env, email, code, {
+    targetReference: reference,
+    targetScopePath: scopePath
+  }).catch(() => null);
+  if (!authorized || !sameText(applicationReference(authorized), reference)) return false;
+  const authorizedScope = admissionApplicationScopePath(authorized.__scopePath) || 'applications';
+  return sameText(authorizedScope, scopePath);
 }
 
 function decodeBase64(value) {
@@ -157,7 +173,7 @@ export async function onRequestPost(context) {
     if (!staffAuthorized) {
       const email = lower(body.email || body.ParentEmail || body.Email);
       const code = clean(body.code || body.VerificationCode).toUpperCase();
-      if (!email || !code || !parentOwnsApplication(application, email, code)) {
+      if (!email || !code || !await parentCanAccessPassportApplication(env, application, email, code)) {
         return Response.json({ ok: false, message: 'Unauthorized passport photograph request.' }, { status: 403 });
       }
     }
