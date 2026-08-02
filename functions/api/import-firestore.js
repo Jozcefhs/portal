@@ -54,6 +54,9 @@ const COLLECTION_ALIASES = {
   organizationcommercemovements: 'organizationCommerceMovements',
   organisationcommercemovements: 'organizationCommerceMovements',
   organization_commerce_movements: 'organizationCommerceMovements',
+  organizationcommerceemaildeliveries: 'organizationCommerceEmailDeliveries',
+  organisationcommerceemaildeliveries: 'organizationCommerceEmailDeliveries',
+  organization_commerce_email_deliveries: 'organizationCommerceEmailDeliveries',
   auditlogs: 'auditLogs',
   audit_logs: 'auditLogs'
 };
@@ -77,6 +80,7 @@ const ID_FIELDS = {
   restaurantMovements: ['MovementNo', 'MovementId', 'MovementID', 'Reference'],
   organizationCommerceSales: ['SaleNo', 'SaleId', 'Reference', 'PaymentReference'],
   organizationCommerceMovements: ['MovementNo', 'SaleNo', 'Reference'],
+  organizationCommerceEmailDeliveries: ['DeliveryId', 'SaleNo'],
   auditLogs: ['LogId', 'LogID', 'Reference']
 };
 

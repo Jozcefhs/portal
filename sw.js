@@ -1,5 +1,5 @@
-const CACHE = 'dynamax-v97-store-item-edit';
-const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/parent-dashboard.html', '/register-organization.html', '/give.html', '/css/style.css', '/css/notifications.css', '/js/preferences.js', '/js/action-feedback.js', '/js/launcher.js', '/js/site-config.js', '/js/admin.js', '/js/give.js', '/js/notifications.js', '/js/web-push.js', '/js/parent-dashboard.js', '/js/register-organization.js', '/images/Logo.png'];
+const CACHE = 'dynamax-v98-organization-store-checkout';
+const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/parent-dashboard.html', '/register-organization.html', '/give.html', '/store.html', '/css/style.css', '/css/notifications.css', '/css/store.css', '/js/preferences.js', '/js/action-feedback.js', '/js/launcher.js', '/js/site-config.js', '/js/admin.js', '/js/give.js', '/js/store.js', '/js/notifications.js', '/js/web-push.js', '/js/parent-dashboard.js', '/js/register-organization.js', '/images/Logo.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

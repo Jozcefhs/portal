@@ -300,7 +300,9 @@ export async function onRequestPost(context) {
           Reference: tx.reference,
           PaidAt: tx.paid_at || tx.paidAt || new Date().toISOString(),
           PaymentMethod: 'Paystack Online'
-        });
+        }, typeof context.waitUntil === 'function'
+          ? { waitUntil: (task) => context.waitUntil(task) }
+          : {});
         if (commerceResult?.ok) {
           recordData = { ok: true, payment: commerceResult.sale };
         } else {

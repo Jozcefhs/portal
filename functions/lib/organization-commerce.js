@@ -3,8 +3,13 @@ import {
   createDocumentIfAbsent,
   getDocument,
   listCollection,
+  patchDocumentFields,
   upsertDocument
 } from './firestore.js';
+import {
+  sendOrganizationCommercePaymentLinkEmail,
+  sendOrganizationCommerceReceiptEmail
+} from './organization-commerce-email.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -14,6 +19,105 @@ const money = (value) => {
   return Number.isFinite(parsed) ? Math.round((parsed + Number.EPSILON) * 100) / 100 : 0;
 };
 const safeId = (value) => clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140);
+const validEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean(value));
+const COMMERCE_EMAIL_DELIVERIES = 'organizationCommerceEmailDeliveries';
+
+async function commerceEmailTask(env, sale = {}, type = 'receipt', deliveryId = '') {
+  const prefix = type === 'payment-link' ? 'PaymentLinkEmail' : 'ReceiptEmail';
+  let result;
+  try {
+    result = type === 'payment-link'
+      ? await sendOrganizationCommercePaymentLinkEmail(env, sale)
+      : await sendOrganizationCommerceReceiptEmail(env, sale);
+  } catch (deliveryError) {
+    const failedAt = nowIso();
+    const errorMessage = clean(deliveryError?.message || deliveryError).slice(0, 500);
+    await Promise.allSettled([
+      patchDocumentFields(env, COMMERCE_CONFIG.organizationStore.sales, safeId(sale.SaleNo), {
+      [`${prefix}Status`]: 'Failed',
+        [`${prefix}Error`]: errorMessage,
+        UpdatedAt: failedAt
+      }),
+      patchDocumentFields(env, COMMERCE_EMAIL_DELIVERIES, deliveryId, {
+        Status: 'Failed', Error: errorMessage, UpdatedAt: failedAt
+      })
+    ]);
+    return { ok: false, message: deliveryError?.message || String(deliveryError), deliveryUncertain: true };
+  }
+  const deliveredAt = nowIso();
+  const status = result.ok ? 'Sent' : (result.skipped ? 'Skipped' : 'Failed');
+  const tracking = await Promise.allSettled([
+    patchDocumentFields(env, COMMERCE_CONFIG.organizationStore.sales, safeId(sale.SaleNo), {
+      [`${prefix}Status`]: status,
+      [`${prefix}At`]: result.ok ? deliveredAt : '',
+      [`${prefix}ProviderId`]: clean(result.providerMessageId),
+      [`${prefix}Error`]: result.ok ? '' : clean(result.message),
+      UpdatedAt: deliveredAt
+    }),
+    patchDocumentFields(env, COMMERCE_EMAIL_DELIVERIES, deliveryId, {
+      Status: status,
+      ProviderId: clean(result.providerMessageId),
+      Error: result.ok ? '' : clean(result.message),
+      DeliveredAt: result.ok ? deliveredAt : '',
+      UpdatedAt: deliveredAt
+    })
+  ]);
+  return { ...result, trackingPersisted: tracking.every((entry) => entry.status === 'fulfilled') };
+}
+
+async function scheduleCommerceEmail(env, sale = {}, type = 'receipt', options = {}) {
+  if (!clean(sale.CustomerEmail)) return { ok: false, skipped: true, message: 'Customer email was not provided.' };
+  const prefix = type === 'payment-link' ? 'PaymentLinkEmail' : 'ReceiptEmail';
+  if (lower(sale[`${prefix}Status`]) === 'sent') return { ok: true, replayed: true };
+  const deliveryId = safeId(`${sale.SaleNo}-${type}`);
+  let claim;
+  try {
+    claim = await createDocumentIfAbsent(env, COMMERCE_EMAIL_DELIVERIES, deliveryId, {
+      DeliveryId: deliveryId,
+      SaleNo: clean(sale.SaleNo),
+      Type: type,
+      RecipientEmail: lower(sale.CustomerEmail),
+      BranchId: clean(sale.BranchId || 'main'),
+      OrganisationEdition: canonicalEdition(sale.OrganisationEdition),
+      Status: 'Queued',
+      CreatedAt: nowIso(),
+      UpdatedAt: nowIso()
+    });
+  } catch (trackingError) {
+    return {
+      ok: false,
+      deliveryUncertain: true,
+      type,
+      message: `Email delivery could not be queued: ${clean(trackingError?.message || trackingError)}`
+    };
+  }
+  if (!claim.created) {
+    const claimedStatus = lower(claim.document?.Status || 'queued');
+    return {
+      ok: claimedStatus === 'sent',
+      queued: claimedStatus === 'queued',
+      replayed: true,
+      deliveryUncertain: !['sent', 'queued'].includes(claimedStatus),
+      type
+    };
+  }
+  const task = commerceEmailTask(env, sale, type, deliveryId);
+  if (typeof options.waitUntil === 'function') {
+    try {
+      options.waitUntil(task);
+      return { ok: true, queued: true, type };
+    } catch {
+      return task;
+    }
+  }
+  return task;
+}
+
+function commerceEmailNotice(delivery = {}, label = 'Email') {
+  if (delivery.skipped) return '';
+  if (delivery.ok || delivery.queued) return ` ${label} queued.`;
+  return ` ${label} could not be queued: ${clean(delivery.message) || 'delivery tracking is unavailable'}.`;
+}
 
 export const COMMERCE_CONFIG = Object.freeze({
   organizationStore: Object.freeze({
@@ -192,13 +296,15 @@ function baseSale(section, body, user, cart, id, method) {
   const scope = scopeFor(user);
   const total = money(cart.reduce((sum, item) => sum + item.Amount, 0));
   if (total <= 0) throw error('The sale total must be greater than zero.');
+  const customerEmail = lower(body.CustomerEmail || body.customerEmail || body.Email || body.email);
+  if (customerEmail && !validEmail(customerEmail)) throw error('Enter a valid customer email address.');
   return {
     SaleNo: id,
     SaleType: section,
     Department: config.label,
     ...scope,
     CustomerName: clean(body.CustomerName || body.customerName) || 'Walk-in customer',
-    CustomerEmail: lower(body.CustomerEmail || body.customerEmail || body.Email || body.email),
+    CustomerEmail: customerEmail,
     CustomerPhone: clean(body.CustomerPhone || body.customerPhone || body.Phone || body.phone),
     Items: cart,
     ItemCount: cart.reduce((sum, item) => sum + item.Quantity, 0),
@@ -210,6 +316,7 @@ function baseSale(section, body, user, cart, id, method) {
     PaymentStatus: method === 'Paystack Online' ? 'Pending' : 'Paid',
     Status: method === 'Paystack Online' ? 'Pending Payment' : 'Paid',
     InventoryStatus: method === 'Paystack Online' ? 'Pending Payment' : 'Deducted',
+    CheckoutSource: lower(body.CheckoutSource || body.checkoutSource) === 'public store' ? 'Public Store' : 'Staff Point of Sale',
     SaleDate: clean(body.SaleDate || body.saleDate) || nowIso(),
     RecordedBy: clean(user.displayName || user.DisplayName || user.username || user.Username),
     RecordedByUsername: clean(user.username || user.Username),
@@ -334,14 +441,32 @@ export async function listOrganizationCommerceSales(env, section, user) {
     .slice(0, 200);
 }
 
-export async function recordManualOrganizationCommerceSale(env, section, body = {}, user = {}) {
+export async function listPublicOrganizationStoreItems(env, branchId = 'main', edition = 'faith') {
+  const rows = await scopedInventory(env, 'organizationStore', { branchId, edition });
+  return rows
+    .filter((row) => clean(row.Active || 'YES').toUpperCase() !== 'NO')
+    .map((row) => ({
+      ItemCode: clean(row.ItemCode || row.__id),
+      ItemName: clean(row.ItemName || row.__id),
+      Category: clean(row.Category),
+      Size: clean(row.Size),
+      Unit: clean(row.Unit || 'pcs'),
+      Price: money(row.Price ?? row.SalePrice),
+      Quantity: Math.max(0, Math.floor(money(row.Quantity)))
+    }))
+    .filter((row) => row.ItemCode && row.ItemName && row.Price > 0 && row.Quantity > 0)
+    .sort((left, right) => left.ItemName.localeCompare(right.ItemName));
+}
+
+export async function recordManualOrganizationCommerceSale(env, section, body = {}, user = {}, options = {}) {
   const method = normalizeCommercePaymentMethod(body.PaymentMethod || body.paymentMethod);
   if (method === 'Paystack Online') throw error('Use online payment initialization for a Paystack sale.');
   const id = saleId(body, section);
   const previous = await existingSale(env, id);
   if (previous) {
     if (lower(previous.PaymentStatus) === 'paid') {
-      return { ok: true, replayed: true, message: 'This sale was already paid and recorded.', sale: previous };
+      const emailDelivery = await scheduleCommerceEmail(env, previous, 'receipt', options);
+      return { ok: true, replayed: true, message: 'This sale was already paid and recorded.', sale: previous, emailDelivery };
     }
     throw error('A sale with this request reference already exists.', 409);
   }
@@ -370,10 +495,12 @@ export async function recordManualOrganizationCommerceSale(env, section, body = 
       exists: false
     }
   ]);
-  return { ok: true, message: `${configFor(section).label} payment received and sale recorded.`, sale, journal };
+  const emailDelivery = await scheduleCommerceEmail(env, sale, 'receipt', options);
+  const emailMessage = sale.CustomerEmail ? commerceEmailNotice(emailDelivery, 'Receipt email') : '';
+  return { ok: true, message: `${configFor(section).label} payment received and sale recorded.${emailMessage}`, sale, journal, emailDelivery };
 }
 
-export async function initializeOnlineOrganizationCommerceSale(env, request, section, body = {}, user = {}) {
+export async function initializeOnlineOrganizationCommerceSale(env, request, section, body = {}, user = {}, options = {}) {
   if (!clean(env.PAYSTACK_SECRET_KEY)) throw error('Paystack is not configured for online sales.', 503);
   const email = lower(body.CustomerEmail || body.customerEmail || body.Email || body.email);
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -382,17 +509,20 @@ export async function initializeOnlineOrganizationCommerceSale(env, request, sec
   const id = saleId(body, section);
   const previous = await existingSale(env, id);
   if (previous?.AuthorizationUrl && lower(previous.PaymentStatus) === 'pending') {
+    const emailDelivery = await scheduleCommerceEmail(env, previous, 'payment-link', options);
     return {
       ok: true,
       replayed: true,
       message: 'The existing secure payment link was returned.',
       sale: previous,
       authorizationUrl: previous.AuthorizationUrl,
-      reference: previous.PaymentReference
+      reference: previous.PaymentReference,
+      emailDelivery
     };
   }
   if (previous && lower(previous.PaymentStatus) === 'paid') {
-    return { ok: true, replayed: true, message: 'This sale is already paid.', sale: previous };
+    const emailDelivery = await scheduleCommerceEmail(env, previous, 'receipt', options);
+    return { ok: true, replayed: true, message: 'This sale is already paid.', sale: previous, emailDelivery };
   }
   const cart = await authoritativeCart(env, section, body, user);
   const sale = baseSale(section, body, user, cart, id, 'Paystack Online');
@@ -405,13 +535,15 @@ export async function initializeOnlineOrganizationCommerceSale(env, request, sec
     sale
   );
   if (!created.created && created.document?.AuthorizationUrl) {
+    const emailDelivery = await scheduleCommerceEmail(env, created.document, 'payment-link', options);
     return {
       ok: true,
       replayed: true,
       message: 'The existing secure payment link was returned.',
       sale: created.document,
       authorizationUrl: created.document.AuthorizationUrl,
-      reference: created.document.PaymentReference
+      reference: created.document.PaymentReference,
+      emailDelivery
     };
   }
   const intent = {
@@ -428,6 +560,12 @@ export async function initializeOnlineOrganizationCommerceSale(env, request, sec
   };
   await createDocumentIfAbsent(env, 'paymentIntents', safeId(reference), intent);
   const origin = new URL(request.url).origin;
+  const publicCheckout = sale.CheckoutSource === 'Public Store';
+  const callbackParams = new URLSearchParams({ reference, commerce: '1' });
+  if (publicCheckout) {
+    callbackParams.set('source', 'public-store');
+    callbackParams.set('branch', sale.BranchId);
+  }
   const response = await fetch('https://api.paystack.co/transaction/initialize', {
     method: 'POST',
     headers: {
@@ -439,7 +577,7 @@ export async function initializeOnlineOrganizationCommerceSale(env, request, sec
       amount: Math.round(sale.Amount * 100),
       currency: sale.Currency,
       reference,
-      callback_url: `${origin}/payment-success.html?reference=${encodeURIComponent(reference)}&commerce=1`,
+      callback_url: `${origin}/payment-success.html?${callbackParams.toString()}`,
       metadata: {
         paymentType: 'OrganizationCommerce',
         commerceSaleId: id,
@@ -464,23 +602,26 @@ export async function initializeOnlineOrganizationCommerceSale(env, request, sec
     UpdatedAt: nowIso()
   };
   await upsertDocument(env, COMMERCE_CONFIG.organizationStore.sales, safeId(id), updated);
+  const emailDelivery = await scheduleCommerceEmail(env, updated, 'payment-link', options);
   return {
     ok: true,
-    message: 'Secure payment initialized.',
+    message: `Secure payment initialized.${commerceEmailNotice(emailDelivery, 'Payment link email')}`,
     sale: updated,
     authorizationUrl: updated.AuthorizationUrl,
-    reference: updated.PaymentReference
+    reference: updated.PaymentReference,
+    emailDelivery
   };
 }
 
-export async function finalizeOnlineOrganizationCommerceSale(env, intent = {}, settlement = {}) {
+export async function finalizeOnlineOrganizationCommerceSale(env, intent = {}, settlement = {}, options = {}) {
   const id = clean(intent.SaleId || settlement.SaleId);
   const section = clean(intent.SaleType || settlement.SaleType);
   if (!id || !COMMERCE_CONFIG[section]) throw error('The commerce payment intent is incomplete.', 409);
   let sale = await existingSale(env, id);
   if (!sale) throw error('The pending commerce sale was not found.', 404);
   if (lower(sale.PaymentStatus) === 'paid') {
-    return { ok: true, replayed: true, message: 'This online sale was already completed.', sale };
+    const emailDelivery = await scheduleCommerceEmail(env, sale, 'receipt', options);
+    return { ok: true, replayed: true, message: 'This online sale was already completed.', sale, emailDelivery };
   }
   const gross = money(settlement.GrossAmount);
   if (Math.abs(gross - money(sale.Amount)) > 0.01) {
@@ -533,19 +674,23 @@ export async function finalizeOnlineOrganizationCommerceSale(env, intent = {}, s
           exists: false
         }
       ]);
+      const emailDelivery = await scheduleCommerceEmail(env, paidSale, 'receipt', options);
+      const receiptNotice = commerceEmailNotice(emailDelivery, 'Receipt email');
       return {
         ok: true,
         message: paidSale.InventoryStatus === 'Review Required'
-          ? `Payment recorded. Inventory requires review: ${paidSale.InventoryIssue}`
-          : 'Online payment received and sale completed.',
+          ? `Payment recorded. Inventory requires review: ${paidSale.InventoryIssue}.${receiptNotice}`
+          : `Online payment received and sale completed.${receiptNotice}`,
         sale: paidSale,
-        journal
+        journal,
+        emailDelivery
       };
     } catch (writeError) {
       if (![409, 412].includes(Number(writeError?.status))) throw writeError;
       sale = await existingSale(env, id);
       if (lower(sale?.PaymentStatus) === 'paid') {
-        return { ok: true, replayed: true, message: 'This online sale was already completed.', sale };
+        const emailDelivery = await scheduleCommerceEmail(env, sale, 'receipt', options);
+        return { ok: true, replayed: true, message: 'This online sale was already completed.', sale, emailDelivery };
       }
       if (attempt === 0) continue;
       throw error('The sale changed while payment was being completed. Reload and reconcile it.', 409);

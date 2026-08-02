@@ -113,7 +113,7 @@ test('commerce accounting and complete backup include the new records', () => {
   assert.match(backendApi, /\['4120', 'Organisation Store Revenue'/);
   assert.match(backendApi, /\['4130', 'Restaurant and Catering Revenue'/);
   assert.match(backendApi, /'restaurantInventory', 'restaurantMovements'/);
-  assert.match(backendApi, /'organizationCommerceSales', 'organizationCommerceMovements'/);
+  assert.match(backendApi, /'organizationCommerceSales', 'organizationCommerceMovements', 'organizationCommerceEmailDeliveries'/);
 });
 
 test('faith store and restaurant expose a compact sale workspace with payment choices and receipts', () => {

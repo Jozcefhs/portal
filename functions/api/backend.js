@@ -6730,7 +6730,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
         'clinicInventory', 'clinicMovements', 'kitchenInventory', 'kitchenMovements',
         'restaurantInventory', 'restaurantMovements',
         'tuckShopPurchases', 'storeItems', 'storeOrders', 'storeCategories',
-        'organizationCommerceSales', 'organizationCommerceMovements'
+        'organizationCommerceSales', 'organizationCommerceMovements', 'organizationCommerceEmailDeliveries'
       ];
       const schoolCollections = ['applications', 'students'];
       const [organizationProfile, legacyProfile] = await Promise.all([

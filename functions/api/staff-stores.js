@@ -15,12 +15,26 @@ import {
   normalizeCommercePaymentMethod,
   recordManualOrganizationCommerceSale
 } from '../lib/organization-commerce.js';
+import QRCode from 'qrcode';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
 function safeId(value) { return clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140); }
 function yes(value) { return ['yes', 'true', '1', 'active'].includes(lower(value)); }
 function referenceKey(value) { return lower(value).split(/[^a-z0-9]+/).filter(Boolean).map((part) => /^\d+$/.test(part) ? String(Number(part)) : part).join('|'); }
+
+function storeQrSvg(value = '') {
+  const qr = QRCode.create(clean(value), { errorCorrectionLevel: 'M' });
+  const margin = 3;
+  const size = qr.modules.size + (margin * 2);
+  const modules = [];
+  for (let row = 0; row < qr.modules.size; row += 1) {
+    for (let column = 0; column < qr.modules.size; column += 1) {
+      if (qr.modules.get(row, column)) modules.push(`M${column + margin} ${row + margin}h1v1h-1z`);
+    }
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" role="img" aria-label="Public organisation store QR code" shape-rendering="crispEdges"><path fill="#fff" d="M0 0h${size}v${size}H0z"/><path fill="#071b2c" d="${modules.join('')}"/></svg>`;
+}
 
 function storeForSection(section) {
   if (section === 'uniformStore') return 'Uniform Store';
@@ -47,6 +61,30 @@ export async function onRequestPost(context) {
     }
     const storeType = storeForSection(section);
     const action = lower(body.action || 'list');
+    if (action === 'genericqr') {
+      if (section !== 'organizationStore') {
+        const err = new Error('The public store QR code is available only in the Organisation Store workspace.');
+        err.status = 403;
+        throw err;
+      }
+      const origin = new URL(request.url).origin.replace(/\/+$/, '');
+      const branchId = clean(user.branchId).toLowerCase() || 'main';
+      const storeUrl = `${origin}/store.html?branch=${encodeURIComponent(branchId)}`;
+      if (!/^https:\/\/[A-Za-z0-9.-]+(?:\/|$)/.test(storeUrl)) {
+        const err = new Error('The public store address is unavailable on this deployment.');
+        err.status = 503;
+        throw err;
+      }
+      return Response.json({
+        ok: true,
+        generic: true,
+        message: 'Reusable public store QR code generated.',
+        branchId,
+        storeUrl,
+        paymentLink: storeUrl,
+        qrSvg: storeQrSvg(storeUrl)
+      }, { headers: { 'Cache-Control': 'no-store' } });
+    }
     if (action === 'savecategory' || action === 'deactivatecategory') {
       const category = await saveStoreCategory(env, { ...body, StoreType: storeType, Active: action === 'deactivatecategory' ? 'NO' : body.Active }, user.displayName || user.username);
       return Response.json({ ok: true, message: action === 'deactivatecategory' ? 'Category deactivated. Existing references were preserved.' : 'Category saved.', category });
@@ -110,9 +148,12 @@ export async function onRequestPost(context) {
         });
       }
       const method = normalizeCommercePaymentMethod(body.PaymentMethod);
+      const emailOptions = typeof context.waitUntil === 'function'
+        ? { waitUntil: (task) => context.waitUntil(task) }
+        : {};
       const result = method === 'Paystack Online'
-        ? await initializeOnlineOrganizationCommerceSale(env, request, section, body, user)
-        : await recordManualOrganizationCommerceSale(env, section, body, user);
+        ? await initializeOnlineOrganizationCommerceSale(env, request, section, body, user, emailOptions)
+        : await recordManualOrganizationCommerceSale(env, section, body, user, emailOptions);
       await completeIdempotentRequest(env, idempotency, result, 200);
       return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
     }

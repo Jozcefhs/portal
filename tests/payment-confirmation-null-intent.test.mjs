@@ -44,5 +44,5 @@ test('confirmation page hides duplicate-payment action for internal verification
   assert.match(confirmationClient, /Number\(error\?\.status \|\| 0\) >= 500/);
   assert.match(confirmationClient, /anotherPaymentRow/);
   assert.match(confirmationClient, /anotherLink\.hidden = true/);
-  assert.match(confirmationHtml, /payment-success\.js\?v=20260729-public-giving-return/);
+  assert.match(confirmationHtml, /payment-success\.js\?v=20260802-public-store-return/);
 });

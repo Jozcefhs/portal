@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Browse organisation store items and pay securely online.">
+  <title>Organisation Store</title>
+  <meta name="theme-color" content="#071b38">
+  <link rel="icon" href="images/Logo.png">
+  <script src="js/preferences.js?v=20260726-biometric"></script>
+  <link rel="stylesheet" href="css/store.css?v=20260802-public-store">
+</head>
+<body class="public-store-page">
+  <main class="public-store-shell">
+    <header class="public-store-header">
+      <a href="index.html" class="public-store-brand">
+        <img id="publicStoreLogo" src="images/Logo.png" alt="">
+        <span><strong id="publicStoreOrganisation">Dynamax</strong><small>Organisation Store</small></span>
+      </a>
+      <div>
+        <p>Self-service shopping</p>
+        <h1>Choose items and pay securely</h1>
+        <span>Build your order here. Your secure payment link and receipt will also be sent to your email.</span>
+      </div>
+    </header>
+
+    <div class="public-store-layout">
+      <section class="public-store-catalogue" aria-labelledby="storeCatalogueTitle">
+        <div class="public-store-section-heading">
+          <div><p>Available now</p><h2 id="storeCatalogueTitle">Store items</h2></div>
+          <span id="publicStoreItemCount">0 items</span>
+        </div>
+        <label class="public-store-search">Search items
+          <input id="publicStoreSearch" type="search" placeholder="Item or category" autocomplete="off">
+        </label>
+        <div id="publicStoreProducts" class="public-store-products" aria-live="polite">
+          <p class="public-store-empty">Loading available items&hellip;</p>
+        </div>
+      </section>
+
+      <aside class="public-store-checkout" aria-labelledby="publicStoreCartTitle">
+        <div class="public-store-cart-heading">
+          <div><p>Your order</p><h2 id="publicStoreCartTitle">Cart</h2></div>
+          <strong id="publicStoreTotal">&#8358;0.00</strong>
+        </div>
+        <div id="publicStoreCart" class="public-store-cart-lines">
+          <p class="public-store-empty">Choose an item to begin.</p>
+        </div>
+        <form id="publicStoreCheckoutForm" class="public-store-form">
+          <input type="hidden" id="publicStoreBranch" name="BranchId" value="main">
+          <label class="public-store-honeypot" aria-hidden="true">Website<input name="CompanyWebsite" tabindex="-1" autocomplete="off"></label>
+          <label>Full name<input name="CustomerName" autocomplete="name" maxlength="160" required></label>
+          <label>Email address<input name="CustomerEmail" type="email" autocomplete="email" maxlength="254" required><small>The payment link and paid receipt are sent here.</small></label>
+          <label>Phone number <span>(optional)</span><input name="CustomerPhone" type="tel" autocomplete="tel" maxlength="40"></label>
+          <div class="public-store-payment-note"><span aria-hidden="true">&#128274;</span><div><strong>Secure Paystack payment</strong><small>Items are deducted from stock only after payment succeeds.</small></div></div>
+          <p id="publicStoreStatus" class="public-store-status" role="status" aria-live="polite"></p>
+          <button type="submit" id="publicStoreCheckoutButton" disabled>Continue to secure payment</button>
+        </form>
+      </aside>
+    </div>
+  </main>
+  <script src="js/site-config.js?v=20260728-quota-safety"></script>
+  <script src="js/store.js?v=20260802-public-store"></script>
+</body>
+</html>

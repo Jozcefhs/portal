@@ -67,6 +67,7 @@ async function verifyPayment() {
   const reference = params.get('reference') || params.get('trxref');
   const paymentType = params.get('type') || '';
   const isCommerce = params.get('commerce') === '1';
+  const isPublicStore = isCommerce && params.get('source') === 'public-store';
   const isChurchGiving = paymentType.toLowerCase() === 'church';
   const isPublicGiving = isChurchGiving && params.get('source') === 'public-giving';
   const branchId = params.get('branch') || 'main';
@@ -74,12 +75,14 @@ async function verifyPayment() {
   const returnLink = document.getElementById('returnPortalLink');
   if (isCommerce) {
     if (anotherLink) {
-      anotherLink.href = 'admin?workspace=faith';
-      anotherLink.textContent = 'Record another sale';
+      anotherLink.href = isPublicStore
+        ? `store.html?branch=${encodeURIComponent(branchId)}`
+        : 'admin?workspace=faith';
+      anotherLink.textContent = isPublicStore ? 'Return to the store' : 'Record another sale';
     }
     if (returnLink) {
-      returnLink.href = 'admin?workspace=faith';
-      returnLink.textContent = 'Return to organisation operations';
+      returnLink.href = isPublicStore ? 'index.html' : 'admin?workspace=faith';
+      returnLink.textContent = isPublicStore ? 'Return to organisation portal' : 'Return to organisation operations';
     }
   } else if (isChurchGiving) {
     if (anotherLink) {
@@ -120,13 +123,13 @@ async function verifyPayment() {
     setLead(isFormPurchase
       ? 'Your admission form purchase has been confirmed.'
       : (isCommerce
-          ? 'The customer payment and sale have been confirmed.'
+          ? (isPublicStore ? 'Your store payment and purchase have been confirmed.' : 'The customer payment and sale have been confirmed.')
           : (isChurchGiving ? 'Your gift has been confirmed.' : 'Your payment has been confirmed.')));
     setStatus(
       isFormPurchase
         ? 'Admission form purchased successfully.'
         : (isCommerce
-            ? 'Sale payment verified and posted successfully.'
+            ? (isPublicStore ? 'Store payment verified successfully.' : 'Sale payment verified and posted successfully.')
             : (isChurchGiving ? 'Gift payment verified successfully.' : 'Payment verified successfully.')),
       'ok'
     );
@@ -167,7 +170,9 @@ async function verifyPayment() {
     note.textContent = isFormPurchase
       ? 'Use this email address and verification code to register. A copy has also been sent to your email.'
       : (isCommerce
-          ? 'The payment, stock movement, and Finance & Accounting entry have been recorded.'
+          ? (isPublicStore
+              ? 'Your order has been recorded and a receipt will be sent to your email.'
+              : 'The payment, stock movement, and Finance & Accounting entry have been recorded.')
           : (isChurchGiving
               ? 'Your gift has been recorded. An official receipt will be sent to your email.'
               : 'Your payment has been recorded with the Accounts Office.'));

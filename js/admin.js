@@ -1571,14 +1571,31 @@ function commerceSaleStatus(sale = {}) {
 
 function commerceReceiptPreview(sale = {}) {
   const items = Array.isArray(sale.Items) ? sale.Items : [];
+  const paid = clean(sale.PaymentStatus || sale.Status).toLowerCase() === 'paid';
+  const paymentUrl = clean(sale.AuthorizationUrl);
   return `
     <aside class="commerce-receipt-preview" aria-live="polite">
-      <div><small>Payment recorded</small><strong>${escapeHtml(sale.SaleNo || 'Sale')}</strong><span>${escapeHtml(sale.CustomerName || 'Walk-in customer')} &middot; ${money(sale.Amount || sale.GrossAmount)}</span></div>
+      <div><small>${paid ? 'Payment recorded' : 'Payment link sent'}</small><strong>${escapeHtml(sale.SaleNo || 'Sale')}</strong><span>${escapeHtml(sale.CustomerName || 'Walk-in customer')} &middot; ${money(sale.Amount || sale.GrossAmount)}${!paid && sale.CustomerEmail ? ` &middot; ${escapeHtml(sale.CustomerEmail)}` : ''}</span></div>
       <div class="inline-action-group">
-        <button type="button" class="compact-icon-action" data-commerce-print="${escapeHtml(sale.SaleNo || '')}" title="View and print receipt" aria-label="View and print receipt">&#128424;</button>
+        ${paid ? `<button type="button" class="compact-icon-action" data-commerce-print="${escapeHtml(sale.SaleNo || '')}" title="View and print receipt" aria-label="View and print receipt">&#128424;</button>` : ''}
+        ${!paid && /^https:\/\/[A-Za-z0-9.-]+(?:\/|$)/.test(paymentUrl) ? `<button type="button" class="compact-icon-action" data-commerce-open-payment="${escapeHtml(paymentUrl)}" title="Open secure payment page" aria-label="Open secure payment page">&#8599;</button>` : ''}
       </div>
       ${items.length ? `<small>${escapeHtml(items.map((item) => `${item.ItemName} x ${item.Quantity}`).join(', '))}</small>` : ''}
     </aside>`;
+}
+
+function showOrganizationStoreQr(data = {}, qrWindow = null) {
+  const viewer = qrWindow || window.open('', '_blank', 'width=620,height=780');
+  if (!viewer) {
+    setStatus(dashboardStatus, 'Allow pop-ups to view and print the public store QR code.', 'bad');
+    return;
+  }
+  viewer.opener = null;
+  const organisation = clean(document.querySelector('[data-school-name]')?.textContent || staffBrand?.textContent) || 'Dynamax';
+  viewer.document.open();
+  viewer.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(organisation)} store QR</title><style>
+    @page{size:A5;margin:12mm}*{box-sizing:border-box}body{margin:0;background:#edf3f8;color:#17314b;font:15px/1.5 Arial,sans-serif}.sheet{max-width:540px;margin:24px auto;padding:28px;border-top:7px solid #0b8f76;border-radius:16px;background:#fff;box-shadow:0 14px 35px #173b5820;text-align:center}.eyebrow{margin:0;color:#087d68;font-size:12px;font-weight:bold;letter-spacing:1.3px;text-transform:uppercase}h1{margin:5px 0 4px;color:#164a78;font-size:25px}.subtitle{margin:0 0 18px;color:#36536e}.qr{width:min(330px,90%);margin:0 auto;padding:12px;border:1px solid #cbd9e7;border-radius:14px;background:#fff}.qr svg{display:block;width:100%;height:auto}.instruction{margin:18px auto 8px;max-width:390px}.actions{display:flex;justify-content:center;gap:8px;margin-top:20px}.actions button,.actions a{display:inline-flex;align-items:center;width:fit-content;min-height:40px;padding:8px 14px;border:0;border-radius:8px;background:#1769e0;color:#fff;font-weight:bold;text-decoration:none;cursor:pointer}.actions a{background:#087d68}@media print{body{background:#fff}.sheet{margin:0;box-shadow:none}.actions{display:none}}</style></head><body><main class="sheet"><p class="eyebrow">Reusable self-service store</p><h1>${escapeHtml(organisation)}</h1><p class="subtitle">Organisation Store</p><div class="qr">${data.qrSvg || ''}</div><p class="instruction">Scan this reusable code to browse available items, build an order and pay securely online.</p><div class="actions"><button type="button" onclick="window.print()">Print QR</button><a href="${escapeHtml(data.storeUrl || data.paymentLink)}" target="_blank" rel="noopener">Open store</a></div></main></body></html>`);
+  viewer.document.close();
 }
 
 function renderOrganizationCommerceWorkspace(section, data = {}) {
@@ -1601,7 +1618,7 @@ function renderOrganizationCommerceWorkspace(section, data = {}) {
     <section class="config-card organization-commerce-workspace" id="organizationCommercePOS" data-commerce-section="${section}">
       <header class="config-card-heading commerce-heading">
         <div><small>Sales and payments</small><h3>${label} Point of Sale</h3><p>Build a cart, receive payment and issue a branded receipt.</p></div>
-        <span class="workspace-feature-icon" aria-hidden="true">&#128722;</span>
+        <div class="inline-action-group">${section === 'organizationStore' ? '<button type="button" id="organizationStoreQrButton">&#9638; Public store QR</button>' : ''}<span class="workspace-feature-icon" aria-hidden="true">&#128722;</span></div>
       </header>
       <div class="commerce-summary-grid">
         <div><small>Today's sales</small><strong>${money(summary.todayAmount)}</strong><span>${summary.todayTransactions} transaction(s)</span></div>
@@ -1649,7 +1666,7 @@ function renderOrganizationCommerceWorkspace(section, data = {}) {
               <label id="commercePaymentReferenceField" ${['Bank Transfer', 'POS / Card'].includes(draft.PaymentMethod) ? '' : 'hidden'}>Payment reference <input name="PaymentReference" value="${escapeHtml(draft.PaymentReference)}" placeholder="Bank or POS reference"></label>
             </div>
             <div class="commerce-checkout-total"><span>Grand total</span><strong>${money(cartTotal)}</strong></div>
-            <div class="config-actionbar"><p class="status" data-commerce-status></p><button type="submit" id="commerceCheckoutButton" ${cartEntries.length ? '' : 'disabled'}>${draft.PaymentMethod === 'Paystack Online' ? 'Pay with Paystack' : 'Complete sale'}</button></div>
+            <div class="config-actionbar"><p class="status" data-commerce-status></p><button type="submit" id="commerceCheckoutButton" ${cartEntries.length ? '' : 'disabled'}>${draft.PaymentMethod === 'Paystack Online' ? 'Send payment link' : 'Complete sale'}</button></div>
           </form>
         </section>
       </div>
@@ -1694,6 +1711,34 @@ function printOrganizationCommerceReceipt(sale = {}) {
 function bindOrganizationCommerceWorkspace(section, data = {}) {
   const workspace = document.getElementById('organizationCommercePOS');
   if (!workspace) return;
+  const qrButton = workspace.querySelector('#organizationStoreQrButton');
+  qrButton?.addEventListener('click', async () => {
+    const normalMarkup = qrButton.innerHTML;
+    const viewer = window.open('', '_blank', 'width=620,height=780');
+    if (!viewer) {
+      setStatus(dashboardStatus, 'Allow pop-ups to view and print the public store QR code.', 'bad');
+      return;
+    }
+    viewer.document.write('<!doctype html><title>Preparing store QR</title><p style="font:14px Arial;padding:24px">Preparing reusable store QR code&hellip;</p>');
+    viewer.document.close();
+    setButtonLoading(qrButton, true, 'Preparing...', normalMarkup);
+    try {
+      const response = await staffFetch('/api/staff-stores', {
+        method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'genericQr', section: 'organizationStore' })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.ok) throw receivedResponseError(result.message || 'Could not generate the public store QR code.');
+      showOrganizationStoreQr(result, viewer);
+    } catch (error) {
+      viewer.close();
+      setStatus(dashboardStatus, error.message || String(error), 'bad');
+    } finally {
+      setButtonLoading(qrButton, false, '', normalMarkup);
+      qrButton.innerHTML = normalMarkup;
+    }
+  });
   const search = workspace.querySelector('#commerceCatalogSearch');
   const filterProducts = () => {
     const query = clean(search?.value).toLowerCase();
@@ -1732,7 +1777,7 @@ function bindOrganizationCommerceWorkspace(section, data = {}) {
     referenceField.hidden = !referenceRequired;
     if (referenceField.querySelector('input')) referenceField.querySelector('input').required = referenceRequired;
     if (form?.elements?.CustomerEmail) form.elements.CustomerEmail.required = value === 'Paystack Online';
-    if (checkoutButton) checkoutButton.textContent = value === 'Paystack Online' ? 'Pay with Paystack' : 'Complete sale';
+    if (checkoutButton) checkoutButton.textContent = value === 'Paystack Online' ? 'Send payment link' : 'Complete sale';
   };
   method?.addEventListener('change', syncPaymentFields);
   syncPaymentFields();
@@ -1756,7 +1801,7 @@ function bindOrganizationCommerceWorkspace(section, data = {}) {
     organizationCommerceSaleRequestIds[section] ||= newIdempotencyKey();
     payload.SaleRequestId = organizationCommerceSaleRequestIds[section];
     const endpoint = section === 'organizationStore' ? '/api/staff-stores' : '/api/staff-departments';
-    setButtonLoading(checkoutButton, true, payload.PaymentMethod === 'Paystack Online' ? 'Opening Paystack...' : 'Recording sale...', checkoutButton.textContent);
+    setButtonLoading(checkoutButton, true, payload.PaymentMethod === 'Paystack Online' ? 'Emailing link...' : 'Recording sale...', checkoutButton.textContent);
     try {
       const response = await staffFetch(endpoint, {
         method: 'POST',
@@ -1766,13 +1811,8 @@ function bindOrganizationCommerceWorkspace(section, data = {}) {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.ok) throw receivedResponseError(result.message || 'Could not record this sale.');
-      const authorizationUrl = clean(result.AuthorizationUrl || result.authorizationUrl || result.sale?.AuthorizationUrl);
       organizationCommerceLastSale[section] = result.sale || null;
       setStatus(status, result.message || 'Sale recorded.', 'ok');
-      if (authorizationUrl) {
-        window.location.assign(authorizationUrl);
-        return;
-      }
       commerceCart(section).clear();
       organizationCommerceSaleRequestIds[section] = '';
       organizationCommerceCustomerDraft[section] = { CustomerName: '', CustomerEmail: '', CustomerPhone: '', PaymentMethod: 'Cash', PaymentReference: '' };
@@ -1781,9 +1821,13 @@ function bindOrganizationCommerceWorkspace(section, data = {}) {
     } catch (error) {
       setStatus(status, error.message || String(error), 'bad');
     } finally {
-      setButtonLoading(checkoutButton, false, '', organizationCommerceCustomerDraft[section].PaymentMethod === 'Paystack Online' ? 'Pay with Paystack' : 'Complete sale');
+      setButtonLoading(checkoutButton, false, '', organizationCommerceCustomerDraft[section].PaymentMethod === 'Paystack Online' ? 'Send payment link' : 'Complete sale');
     }
   });
+  workspace.querySelectorAll('[data-commerce-open-payment]').forEach((button) => button.addEventListener('click', () => {
+    const paymentUrl = clean(button.dataset.commerceOpenPayment);
+    if (/^https:\/\/[A-Za-z0-9.-]+(?:\/|$)/.test(paymentUrl)) window.open(paymentUrl, '_blank', 'noopener');
+  }));
   workspace.querySelectorAll('[data-commerce-print]').forEach((button) => button.addEventListener('click', () => {
     printOrganizationCommerceReceipt(organizationCommerceReceiptSale(section, data, button.dataset.commercePrint));
   }));
