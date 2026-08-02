@@ -50,6 +50,11 @@ test('church store uses its own catalogue scope and customer-facing language', (
   assert.match(adminJs, /\['organizationStore', 'Organisation Store'\]/);
   assert.match(adminJs, /organisationStore \? 'customers and storekeepers'/);
   assert.match(adminJs, /organisationStore \? 'Available for sale'/);
+  assert.match(adminJs, /data-edit-store-item/);
+  assert.match(adminJs, /name="ItemId"/);
+  assert.match(adminJs, /textContent = 'Update item'/);
+  assert.match(storeApi, /existing \? 'Store item updated\.' : 'Store item saved\.'/);
+  assert.match(storeApi, /Store item not found or is outside your permitted workspace/);
 });
 
 test('restaurant manages separate inventory, movements, low stock and supplier market lists', () => {

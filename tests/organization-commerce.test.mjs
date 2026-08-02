@@ -85,6 +85,11 @@ test('store and restaurant mutations require staff access, stable idempotency an
   assert.match(storeApi, /beginIdempotentRequest/);
   assert.match(storeApi, /action === 'recordsale'/);
   assert.match(storeApi, /recordManualOrganizationCommerceSale/);
+  assert.match(storeApi, /const itemId = clean\(body\.ItemId/);
+  assert.match(storeApi, /const codeChanged = Boolean\(existing\)/);
+  assert.match(storeApi, /batchCommitDocuments\(env/);
+  assert.match(storeApi, /operation: 'delete'/);
+  assert.match(storeApi, /Item code \$\{itemCode\} is already in use/);
   assert.match(departmentApi, /beginIdempotentRequest/);
   assert.match(departmentApi, /action === 'recordsale'/);
   assert.match(departmentApi, /section !== 'restaurant'/);

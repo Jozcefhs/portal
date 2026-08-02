@@ -1,4 +1,4 @@
-import { listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { batchCommitDocuments, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
 import { canonicalConfiguredClass } from '../lib/class-names.js';
@@ -52,23 +52,45 @@ export async function onRequestPost(context) {
       return Response.json({ ok: true, message: action === 'deactivatecategory' ? 'Category deactivated. Existing references were preserved.' : 'Category saved.', category });
     }
     if (action === 'saveitem') {
+      const itemId = clean(body.ItemId || body.itemId);
       const itemCode = clean(body.ItemCode);
       const itemName = clean(body.ItemName);
       if (!itemCode || !itemName) { const err = new Error('Item code and item name are required.'); err.status = 400; throw err; }
+      const scopedItems = visible(await listCollection(env, 'storeItems'), user)
+        .filter((row) => clean(row.StoreType) === storeType);
+      const existing = itemId ? scopedItems.find((row) => clean(row.__id) === itemId) : null;
+      if (itemId && !existing) { const err = new Error('Store item not found or is outside your permitted workspace.'); err.status = 404; throw err; }
+      const duplicate = scopedItems.find((row) => lower(row.ItemCode) === lower(itemCode) && clean(row.__id) !== clean(existing?.__id));
+      if (duplicate) { const err = new Error(`Item code ${itemCode} is already in use. Edit that item instead.`); err.status = 409; throw err; }
       const configuredClasses = await listCollection(env, 'settings/academics/classes').catch(() => []);
       const category = await resolveStoreCategory(env, body, storeType);
       const payload = {
+        ...(existing || {}),
         StoreType: storeType, ItemCode: itemCode, ItemName: itemName,
         CategoryId: category.CategoryId, Category: category.Name, Size: clean(body.Size), Gender: section === 'organizationStore' ? 'All' : (clean(body.Gender) || 'All'),
         ClassName: section === 'organizationStore' ? 'All' : canonicalConfiguredClass(clean(body.ClassName) || 'All', configuredClasses), Price: Math.max(0, Number(body.Price || 0) || 0),
         Quantity: Math.max(0, Math.floor(Number(body.Quantity || 0) || 0)), Active: yes(body.Active ?? true) ? 'YES' : 'NO',
-        BranchId: clean(user.branchId) || 'main',
-        OrganisationEdition: clean(user.edition || user.OrganisationEdition) || 'school',
-        SchoolSection: clean(user.schoolSectionAccess) === 'All' ? 'Secondary' : clean(user.schoolSectionAccess || 'Secondary'),
+        BranchId: clean(existing?.BranchId || user.branchId) || 'main',
+        OrganisationEdition: clean(existing?.OrganisationEdition || user.edition || user.OrganisationEdition) || 'school',
+        SchoolSection: clean(existing?.SchoolSection) || (clean(user.schoolSectionAccess) === 'All' ? 'Secondary' : clean(user.schoolSectionAccess || 'Secondary')),
         UpdatedAt: new Date().toISOString(), UpdatedBy: user.displayName || user.username
       };
-      await upsertDocument(env, 'storeItems', safeId(`${storeType}-${itemCode}-${payload.BranchId}-${payload.SchoolSection}`), payload);
-      return Response.json({ ok: true, message: 'Store item saved.', item: payload });
+      delete payload.__id;
+      delete payload.__name;
+      const desiredDocumentId = safeId(`${storeType}-${itemCode}-${payload.BranchId}-${payload.SchoolSection}`);
+      const codeChanged = Boolean(existing) && lower(existing.ItemCode) !== lower(itemCode);
+      const targetConflict = codeChanged && scopedItems.find((row) => clean(row.__id) === desiredDocumentId && clean(row.__id) !== clean(existing.__id));
+      if (targetConflict) { const err = new Error('The updated item code conflicts with another stored item identity. Choose a different code.'); err.status = 409; throw err; }
+      const documentId = codeChanged ? desiredDocumentId : (clean(existing?.__id) || desiredDocumentId);
+      if (codeChanged) {
+        await batchCommitDocuments(env, [
+          { collectionPath: 'storeItems', documentId, data: payload },
+          { collectionPath: 'storeItems', documentId: existing.__id, operation: 'delete' }
+        ]);
+      } else {
+        await upsertDocument(env, 'storeItems', documentId, payload);
+      }
+      return Response.json({ ok: true, message: existing ? 'Store item updated.' : 'Store item saved.', item: { ...payload, __id: documentId } });
     }
     if (action === 'recordsale') {
       if (section !== 'organizationStore') {

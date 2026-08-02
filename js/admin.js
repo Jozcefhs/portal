@@ -1801,12 +1801,12 @@ function renderStaffStore(section, store) {
     ${organisationStore ? renderOrganizationCommerceWorkspace(section, store) : ''}
     <section class="config-card">
       <header class="config-card-heading"><div><small>Inventory setup</small><h3>Add or update an item</h3><p>Define how this product appears to ${storeAudience}.</p></div></header>
-    <form id="staffStoreItemForm" class="workflow-form workflow-form-grid config-form">
+    <form id="staffStoreItemForm" class="workflow-form workflow-form-grid config-form"><input type="hidden" name="ItemId">
       <label>Item code<input name="ItemCode" required></label><label>Item name<input name="ItemName" required></label>
       <label>Category<input name="Category" list="storeCategoryOptions" autocomplete="off" required><datalist id="storeCategoryOptions">${activeCategories.map((row) => `<option value="${escapeHtml(row.Name)}"></option>`).join('')}</datalist></label><label>Variant / size<input name="Size"></label>
       ${organisationStore ? '' : '<label>Gender<select name="Gender"><option>All</option><option>Male</option><option>Female</option></select></label><label>Class<input name="ClassName" value="All"></label>'}
       <label>Price<input name="Price" type="number" min="0" step="0.01" required></label><label>Stock quantity<input name="Quantity" type="number" min="0" step="1" required></label>
-      <div class="config-actionbar"><label class="check-row"><input name="Active" type="checkbox" checked> ${organisationStore ? 'Available for sale' : 'Available to parents'}</label><p class="status" data-store-status></p><button type="submit">Save item</button></div>
+      <div class="config-actionbar"><label class="check-row"><input name="Active" type="checkbox" checked> ${organisationStore ? 'Available for sale' : 'Available to parents'}</label><p class="status" data-store-status></p><span class="inline-action-group"><button type="button" data-cancel-store-edit hidden>Cancel edit</button><button type="submit">Save item</button></span></div>
     </form>
     </section>
     <details class="workflow-card config-details"><summary><span>Category management<small>Add, rename or deactivate reusable product categories.</small></span></summary>
@@ -1819,7 +1819,8 @@ function renderStaffStore(section, store) {
     ${table(`${label} Items`, store.items || [], [
       { label: 'Code', value: (row) => pick(row, ['ItemCode', '__id']) }, { label: 'Item', value: (row) => pick(row, ['ItemName']) },
       { label: 'Category / Size', value: (row) => [pick(row, ['Category']), pick(row, ['Size'])].filter(Boolean).join(' / ') },
-      { label: 'Price', value: (row) => money(pick(row, ['Price'])) }, { label: 'Stock', value: (row) => pick(row, ['Quantity']) }
+      { label: 'Price', value: (row) => money(pick(row, ['Price'])) }, { label: 'Stock', value: (row) => pick(row, ['Quantity']) },
+      { label: 'Actions', render: (row) => `<button type="button" class="compact-icon-action compact-edit-action" data-edit-store-item="${escapeHtml(row.__id)}" aria-label="Edit ${escapeHtml(row.ItemName || row.ItemCode || 'store item')}" title="Edit item"><span aria-hidden="true">&#9998;</span></button>` }
     ])}
     <h2>Paid Orders & Collection</h2><div class="workflow-record-list">${(store.orders || []).length ? (store.orders || []).map((order) => {
       const orderStatus = clean(order.Status || 'Paid - Awaiting Collection');
@@ -1834,7 +1835,17 @@ function renderStaffStore(section, store) {
       <button type="button" class="store-order-status ${collected ? 'is-collected' : ''}" data-store-order="${escapeHtml(order.OrderNo)}" data-store-status="${escapeHtml(nextStatus)}" aria-label="${escapeHtml(statusLabel)} for ${escapeHtml(order.DisplayName || order.AccountRef)}" ${collected ? 'disabled' : ''}>${escapeHtml(statusLabel)}</button></article>`;
     }).join('') : '<p class="muted">No paid orders yet.</p>'}</div>`;
   if (organisationStore) bindOrganizationCommerceWorkspace(section, store);
-  document.getElementById('staffStoreItemForm')?.addEventListener('submit', async (event) => {
+  const itemForm = document.getElementById('staffStoreItemForm');
+  const resetStoreItemForm = () => {
+    if (!itemForm) return;
+    itemForm.reset();
+    itemForm.elements.ItemId.value = '';
+    itemForm.elements.Active.checked = true;
+    itemForm.querySelector('button[type="submit"]').textContent = 'Save item';
+    itemForm.querySelector('[data-cancel-store-edit]').hidden = true;
+    setStatus(itemForm.querySelector('[data-store-status]'), '');
+  };
+  itemForm?.addEventListener('submit', async (event) => {
     event.preventDefault(); const form = event.currentTarget; const status = form.querySelector('[data-store-status]');
     const button = event.submitter || form.querySelector('button[type="submit"]');
     if (button?.disabled) return;
@@ -1854,6 +1865,26 @@ function renderStaffStore(section, store) {
       if (button?.isConnected) setButtonLoading(button, false, 'Saving...', normalText);
     }
   });
+  itemForm?.querySelector('[data-cancel-store-edit]')?.addEventListener('click', resetStoreItemForm);
+  panelEl.querySelectorAll('[data-edit-store-item]').forEach((button) => button.addEventListener('click', () => {
+    const row = (store.items || []).find((item) => clean(item.__id) === clean(button.dataset.editStoreItem));
+    if (!row || !itemForm) return;
+    itemForm.elements.ItemId.value = clean(row.__id);
+    itemForm.elements.ItemCode.value = clean(row.ItemCode);
+    itemForm.elements.ItemName.value = clean(row.ItemName);
+    itemForm.elements.Category.value = clean(row.Category);
+    itemForm.elements.Size.value = clean(row.Size);
+    itemForm.elements.Price.value = commerceNumber(row.Price);
+    itemForm.elements.Quantity.value = commerceItemStock(row);
+    itemForm.elements.Active.checked = clean(row.Active || 'YES').toUpperCase() !== 'NO';
+    if (itemForm.elements.Gender) itemForm.elements.Gender.value = clean(row.Gender || 'All');
+    if (itemForm.elements.ClassName) itemForm.elements.ClassName.value = clean(row.ClassName || 'All');
+    itemForm.querySelector('button[type="submit"]').textContent = 'Update item';
+    itemForm.querySelector('[data-cancel-store-edit]').hidden = false;
+    setStatus(itemForm.querySelector('[data-store-status]'), `Editing ${clean(row.ItemName || row.ItemCode)}.`);
+    itemForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    itemForm.elements.ItemName.focus({ preventScroll: true });
+  }));
   const categoryForm = document.getElementById('storeCategoryForm');
   categoryForm?.addEventListener('submit', async (event) => {
     event.preventDefault(); const form = event.currentTarget; const status = form.querySelector('[data-category-status]'); const button = event.submitter || form.querySelector('button[type="submit"]');
