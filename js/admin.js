@@ -5685,6 +5685,24 @@ function studentConductForm(data, selected = {}) {
     </form>`;
 }
 
+function studentConductClosedCaseView(selected = {}) {
+  const field = (label, value) => `<article class="workflow-record"><div class="workflow-record-heading"><strong>${escapeHtml(label)}</strong></div><p>${escapeHtml(clean(value) || 'Not recorded')}</p></article>`;
+  return `
+    <div class="workflow-record-list" aria-label="Closed conduct case details">
+      <p class="status ok">This case is closed and read-only. Its recorded details cannot be changed.</p>
+      ${field('Student', [selected.StudentName, selected.StudentRef].filter(Boolean).join(' Â· '))}
+      ${field('Incident', [selected.IncidentDate, selected.Category, selected.Severity].filter(Boolean).join(' Â· '))}
+      ${field('Summary', selected.Summary)}
+      ${field('Detailed account', selected.Details)}
+      ${field('Immediate action', selected.ImmediateAction)}
+      ${field('Sanction or corrective measure', selected.Sanction)}
+      ${field('Hearing and assignment', [selected.HearingDate, selected.AssignedTo].filter(Boolean).join(' Â· '))}
+      ${field('Parent or guardian notified', selected.ParentNotified ? 'Yes' : 'No')}
+      ${field('Resolution and follow-up', selected.Resolution)}
+      <div class="student-conduct-actions"><button type="button" class="secondary" id="cancelStudentConductEdit">Close view</button></div>
+    </div>`;
+}
+
 function bindStudentConductStudentSearch(data) {
   const search = document.getElementById('studentConductStudentSearch');
   const searchButton = document.getElementById('studentConductStudentSearchButton');
@@ -5753,6 +5771,7 @@ function renderStudentConduct(selected = {}) {
   if (activeSection !== 'studentConduct' || !studentConductData) return;
   const data = studentConductData;
   const summary = data.summary || {};
+  const selectedClosed = lower(selected.Status) === 'closed';
   panelEl.innerHTML = `
     <div class="workflow-intro">
       <div><p class="eyebrow">Student welfare and accountability</p><h2>Student Conduct & Discipline Committee</h2>
@@ -5768,19 +5787,19 @@ function renderStudentConduct(selected = {}) {
     </div>
     <div class="student-conduct-layout">
       <section class="student-conduct-card">
-        <p class="eyebrow">${selected.CaseId ? 'Update committee case' : 'New committee case'}</p>
+        <p class="eyebrow">${selectedClosed ? 'Closed committee case' : (selected.CaseId ? 'Update committee case' : 'New committee case')}</p>
         <div class="student-conduct-card-heading">
           <h3>${selected.CaseId ? escapeHtml(selected.CaseId) : 'Record an incident'}</h3>
-          <div class="student-conduct-student-search">
+          ${selectedClosed ? '' : `<div class="student-conduct-student-search">
             <label for="studentConductStudentSearch">Find student</label>
             <div class="student-conduct-student-search-controls">
               <input id="studentConductStudentSearch" type="search" placeholder="Name, admission no. or class" autocomplete="off">
               <button type="button" id="studentConductStudentSearchButton">Search</button>
             </div>
             <small id="studentConductStudentSearchStatus" aria-live="polite"></small>
-          </div>
+          </div>`}
         </div>
-        ${studentConductForm(data, selected)}
+        ${selectedClosed ? studentConductClosedCaseView(selected) : studentConductForm(data, selected)}
       </section>
       <section class="student-conduct-card conduct-register">
         ${table('Conduct case register', data.cases || [], [
@@ -5792,7 +5811,9 @@ function renderStudentConduct(selected = {}) {
           { label: 'Status', value: (row) => row.Status },
           { label: 'Actions', render: (row) => `
             <span class="table-icon-actions">
-              <button type="button" class="compact-icon-action compact-edit-action" data-edit-conduct="${escapeHtml(row.CaseId)}" aria-label="Edit ${escapeHtml(row.CaseId)}" title="Edit case">&#9998;</button>
+              ${lower(row.Status) === 'closed'
+                ? `<button type="button" class="compact-icon-action" data-view-conduct="${escapeHtml(row.CaseId)}" aria-label="View closed case ${escapeHtml(row.CaseId)}" title="Closed case · View only">&#128274;</button>`
+                : `<button type="button" class="compact-icon-action compact-edit-action" data-edit-conduct="${escapeHtml(row.CaseId)}" aria-label="Edit ${escapeHtml(row.CaseId)}" title="Edit case">&#9998;</button>`}
               ${data.permissions?.canDelete ? `<button type="button" class="compact-icon-action compact-delete-action" data-delete-conduct="${escapeHtml(row.CaseId)}" aria-label="Delete ${escapeHtml(row.CaseId)}" title="Delete case">&#10005;</button>` : ''}
             </span>` }
         ])}
@@ -5805,6 +5826,10 @@ function renderStudentConduct(selected = {}) {
   document.getElementById('cancelStudentConductEdit')?.addEventListener('click', () => renderStudentConduct());
   panelEl.querySelectorAll('[data-edit-conduct]').forEach((button) => button.addEventListener('click', () => {
     const row = (data.cases || []).find((item) => clean(item.CaseId) === clean(button.dataset.editConduct));
+    if (row) renderStudentConduct(row);
+  }));
+  panelEl.querySelectorAll('[data-view-conduct]').forEach((button) => button.addEventListener('click', () => {
+    const row = (data.cases || []).find((item) => clean(item.CaseId) === clean(button.dataset.viewConduct));
     if (row) renderStudentConduct(row);
   }));
   panelEl.querySelectorAll('[data-delete-conduct]').forEach((button) => button.addEventListener('click', async () => {

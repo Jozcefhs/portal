@@ -43,6 +43,10 @@ function active(value) {
   return !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(value));
 }
 
+export function studentConductCaseIsClosed(value = {}) {
+  return lower(value && typeof value === 'object' ? value.Status : value) === 'closed';
+}
+
 function caseId(value = '') {
   const supplied = clean(value).replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 100);
   return supplied || `SCDC-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
@@ -212,11 +216,31 @@ async function saveCase(env, user, body = {}) {
   const existing = requestedId
     ? cases.find((row) => lower(row.CaseId || row.__id) === lower(requestedId))
     : null;
+  if (requestedId && !existing) {
+    throw error('The conduct case was not found in your permitted school scope.', 404);
+  }
+  if (studentConductCaseIsClosed(existing)) {
+    throw error('This conduct case is closed and cannot be edited.', 409);
+  }
   const conductCase = normalizeStudentConductCase(body, student, existing);
   conductCase.ReportedBy = existing?.ReportedBy || clean(user.displayName || user.DisplayName || user.username || user.Username);
   conductCase.ReportedByUsername = existing?.ReportedByUsername || clean(user.username || user.Username);
   conductCase.CreatedAt = existing?.CreatedAt || nowIso();
-  const saved = await upsertSchoolDocument(env, COLLECTION, conductCase.CaseId, conductCase);
+  let saved;
+  try {
+    saved = await upsertSchoolDocument(
+      env,
+      COLLECTION,
+      conductCase.CaseId,
+      conductCase,
+      existing ? { updateTime: clean(existing.__updateTime) } : { exists: false }
+    );
+  } catch (writeError) {
+    if ([409, 412].includes(Number(writeError?.status))) {
+      throw error('This conduct case changed while it was being edited. Reload the register before trying again.', 409);
+    }
+    throw writeError;
+  }
   await audit(env, user, existing ? 'UPDATE' : 'CREATE', saved);
   return { ok: true, message: existing ? 'Conduct case updated.' : 'Conduct case recorded.', conductCase: publicCase(saved) };
 }
@@ -243,4 +267,3 @@ export async function handleStudentConductAction(env, user, body = {}) {
   if (['delete', 'deletestudentconductcase'].includes(action)) return deleteCase(env, user, body);
   throw error('Choose a valid student conduct action.');
 }
-

@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 import {
   normalizeStudentConductCase,
+  studentConductCaseIsClosed,
   STUDENT_CONDUCT_CATEGORIES,
   STUDENT_CONDUCT_STATUSES
 } from '../functions/lib/student-conduct.js';
@@ -11,7 +12,8 @@ import { featureFlagsForEdition, filterSectionsForFeatures } from '../functions/
 import { allowedSectionsFor } from '../functions/lib/staff-auth.js';
 
 const portalRoot = new URL('../', import.meta.url);
-const [apiSource, backendSource, adminSource, cssSource] = await Promise.all([
+const [conductSource, apiSource, backendSource, adminSource, cssSource] = await Promise.all([
+  readFile(new URL('functions/lib/student-conduct.js', portalRoot), 'utf8'),
   readFile(new URL('functions/api/staff-conduct.js', portalRoot), 'utf8'),
   readFile(new URL('functions/api/backend.js', portalRoot), 'utf8'),
   readFile(new URL('js/admin.js', portalRoot), 'utf8'),
@@ -49,6 +51,20 @@ test('conduct cases normalize the committee record and validate controlled field
   assert.throws(() => normalizeStudentConductCase({
     IncidentDate: 'bad', Category: 'Unknown', Summary: 'Case'
   }, { AdmissionNo: 'DCA/26/001' }), /incident date/i);
+});
+
+test('closed conduct cases are read-only in the register and rejected by every save path', () => {
+  assert.equal(studentConductCaseIsClosed('Closed'), true);
+  assert.equal(studentConductCaseIsClosed({ Status: 'closed' }), true);
+  assert.equal(studentConductCaseIsClosed({ Status: 'Resolved' }), false);
+  assert.match(conductSource, /studentConductCaseIsClosed\(existing\)/);
+  assert.match(conductSource, /This conduct case is closed and cannot be edited\./);
+  assert.match(conductSource, /existing \? \{ updateTime: clean\(existing\.__updateTime\) \} : \{ exists: false \}/);
+  assert.match(backendSource, /handleStudentConductAction/);
+  assert.match(adminSource, /lower\(row\.Status\) === 'closed'/);
+  assert.match(adminSource, /data-view-conduct/);
+  assert.match(adminSource, /Closed case · View only/);
+  assert.match(adminSource, /This case is closed and read-only/);
 });
 
 test('conduct APIs require authenticated, scoped school staff and support desktop parity', () => {

@@ -135,7 +135,7 @@ export async function querySchoolCollection(env, collection, options = {}) {
   return groups.flat();
 }
 
-export async function upsertSchoolDocument(env, collection, documentId, data) {
+export async function upsertSchoolDocument(env, collection, documentId, data, options = {}) {
   const structure = await getSchoolStructure(env);
   const copy = { ...(data || {}) };
   const existingPath = clean(copy.__scopePath);
@@ -146,7 +146,7 @@ export async function upsertSchoolDocument(env, collection, documentId, data) {
   copy.BranchId = branchId;
   copy.SchoolSection = section;
   const path = existingPath || scopedCollectionPath(collection, branchId, section);
-  await upsertDocument(env, path, documentId, copy);
+  await upsertDocument(env, path, documentId, copy, options);
   return { ...copy, __scopePath: path };
 }
 
