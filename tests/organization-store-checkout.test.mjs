@@ -7,6 +7,7 @@ const [
   storeHtml,
   storeJs,
   storeCss,
+  storeCompactCss,
   staffCss,
   publicApi,
   commerce,
@@ -19,6 +20,7 @@ const [
   readFile(new URL('store.html', portalRoot), 'utf8'),
   readFile(new URL('js/store.js', portalRoot), 'utf8'),
   readFile(new URL('css/store.css', portalRoot), 'utf8'),
+  readFile(new URL('css/store-compact.css', portalRoot), 'utf8'),
   readFile(new URL('css/style.css', portalRoot), 'utf8'),
   readFile(new URL('functions/api/public-organization-store.js', portalRoot), 'utf8'),
   readFile(new URL('functions/lib/organization-commerce.js', portalRoot), 'utf8'),
@@ -41,6 +43,24 @@ test('public organisation store exposes a compact searchable catalogue and autho
   assert.match(storeJs, /'Idempotency-Key': idempotencyKey/);
   assert.match(storeJs, /Items: \[\.\.\.cart\.entries\(\)\]/);
   assert.match(storeCss, /width:fit-content/);
+  assert.doesNotMatch(storeHtml, /<small>Organisation Store<\/small>/);
+  assert.match(storeHtml, /store-compact\.css\?v=20260802-compact-sticky-header/);
+  assert.match(storeHtml, /id="publicStoreCartShortcut"/);
+  assert.match(storeHtml, /class="public-store-header" id="publicStoreHeader"/);
+  assert.match(storeHtml, /id="publicStoreCheckout" tabindex="-1"/);
+  assert.match(storeHtml, /js\/store\.js\?v=20260802-cart-shortcut/);
+  assert.match(storeCompactCss, /\.public-store-header\s*\{[\s\S]*?position: sticky;[\s\S]*?top: 0;[\s\S]*?z-index: 20;/);
+  assert.match(storeCompactCss, /@media \(max-width: 820px\)[\s\S]*?\.public-store-header\s*\{[\s\S]*?gap: 6px;[\s\S]*?padding: 10px 12px;/);
+  assert.match(storeCompactCss, /\.public-store-header > div:last-child > span\s*\{\s*display: none;/);
+  assert.match(storeCompactCss, /\.public-store-cart-shortcut\s*\{[\s\S]*?position: absolute;[\s\S]*?right: 0;[\s\S]*?bottom: 0;/);
+  assert.match(storeCompactCss, /\.public-store-search\s*\{[\s\S]*?position: sticky;[\s\S]*?top: calc\(var\(--public-store-header-height\) \+ 5px\);/);
+  assert.match(storeCompactCss, /\.public-store-layout\s*\{\s*overflow: visible;/);
+  assert.match(storeJs, /function syncStoreStickyOffset\(\)/);
+  assert.match(storeJs, /--public-store-header-height/);
+  assert.match(storeJs, /new ResizeObserver\(syncStoreStickyOffset\)/);
+  assert.match(storeJs, /storeCartBadge\.textContent = String\(itemCount\)/);
+  assert.match(storeJs, /storeCartShortcut\.disabled = !itemCount/);
+  assert.match(storeJs, /storeCheckout\.scrollIntoView\(\{ behavior: 'smooth', block: 'start' \}\)/);
   assert.match(staffCss, /\.commerce-product-list\{max-height:269px;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable\}/);
   assert.match(staffCss, /\.commerce-product\{height:62px;min-height:62px;box-sizing:border-box\}/);
   assert.match(staffCss, /@media\(max-width:680px\)\{\.commerce-product-list\{max-height:269px\}\}/);
@@ -98,4 +118,5 @@ test('public store payment confirmation returns customers to the store and queue
   assert.match(serviceWorker, /'\/store\.html'/);
   assert.match(serviceWorker, /'\/js\/store\.js'/);
   assert.match(serviceWorker, /'\/css\/store\.css'/);
+  assert.match(serviceWorker, /'\/css\/store-compact\.css'/);
 });

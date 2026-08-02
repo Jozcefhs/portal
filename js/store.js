@@ -9,8 +9,24 @@ const storeStatus = document.getElementById('publicStoreStatus');
 const storeBranch = document.getElementById('publicStoreBranch');
 const storeOrganisation = document.getElementById('publicStoreOrganisation');
 const storeLogo = document.getElementById('publicStoreLogo');
+const storeHeader = document.getElementById('publicStoreHeader');
+const storeCartShortcut = document.getElementById('publicStoreCartShortcut');
+const storeCartBadge = document.getElementById('publicStoreCartBadge');
+const storeCheckout = document.getElementById('publicStoreCheckout');
 const cart = new Map();
 let inventory = [];
+
+function syncStoreStickyOffset() {
+  const height = Math.ceil(storeHeader.getBoundingClientRect().height);
+  document.documentElement.style.setProperty('--public-store-header-height', `${height}px`);
+}
+
+syncStoreStickyOffset();
+window.addEventListener('resize', syncStoreStickyOffset);
+if ('ResizeObserver' in window) {
+  const stickyHeaderObserver = new ResizeObserver(syncStoreStickyOffset);
+  stickyHeaderObserver.observe(storeHeader);
+}
 
 const clean = (value) => String(value ?? '').trim();
 const escapeHtml = (value) => clean(value).replace(/[&<>"']/g, (char) => ({
@@ -63,9 +79,13 @@ function renderProducts() {
 
 function renderCart() {
   const entries = [...cart.entries()];
+  const itemCount = entries.reduce((sum, [, entry]) => sum + entry.quantity, 0);
   storeCartLines.innerHTML = entries.length ? entries.map(([reference, entry]) => `<article class="public-store-cart-line"><div><strong>${escapeHtml(entry.item.ItemName)}</strong><span>${escapeHtml(money(Number(entry.item.Price || 0) * entry.quantity))}</span></div><input type="number" min="1" max="${Number(entry.item.Quantity || 1)}" step="1" value="${entry.quantity}" data-store-cart-quantity="${escapeHtml(reference)}" aria-label="Quantity for ${escapeHtml(entry.item.ItemName)}"><button type="button" data-remove-store-item="${escapeHtml(reference)}" aria-label="Remove ${escapeHtml(entry.item.ItemName)}" title="Remove item">&#128465;</button></article>`).join('') : '<p class="public-store-empty">Choose an item to begin.</p>';
   storeTotal.textContent = money(cartTotal());
   storeButton.disabled = !entries.length;
+  storeCartBadge.textContent = String(itemCount);
+  storeCartShortcut.disabled = !itemCount;
+  storeCartShortcut.setAttribute('aria-label', itemCount ? `View cart and checkout, ${itemCount} item${itemCount === 1 ? '' : 's'}` : 'Cart is empty');
   storeCartLines.querySelectorAll('[data-store-cart-quantity]').forEach((input) => input.addEventListener('change', () => {
     const entry = cart.get(input.dataset.storeCartQuantity);
     if (!entry) return;
@@ -80,6 +100,12 @@ function renderCart() {
     renderCart();
   }));
 }
+
+storeCartShortcut.addEventListener('click', () => {
+  if (!cart.size) return;
+  storeCheckout.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  window.setTimeout(() => storeCheckout.focus({ preventScroll: true }), 250);
+});
 
 const requestedBranch = clean(new URLSearchParams(window.location.search).get('branch')).toLowerCase();
 storeBranch.value = /^[a-z0-9][a-z0-9._-]{0,79}$/.test(requestedBranch) ? requestedBranch : 'main';
@@ -154,6 +180,7 @@ window.siteProfileReady.then((profile) => {
   document.title = `${name} Organisation Store`;
   const logo = clean(profile.WebLogoUrl);
   if (logo) storeLogo.src = logo;
+  syncStoreStickyOffset();
 }).catch(() => null);
 
 loadStore();

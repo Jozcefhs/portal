@@ -9,18 +9,23 @@
   <link rel="icon" href="images/Logo.png">
   <script src="js/preferences.js?v=20260726-biometric"></script>
   <link rel="stylesheet" href="css/store.css?v=20260802-public-store">
+  <link rel="stylesheet" href="css/store-compact.css?v=20260802-compact-sticky-header">
 </head>
 <body class="public-store-page">
   <main class="public-store-shell">
-    <header class="public-store-header">
+    <header class="public-store-header" id="publicStoreHeader">
       <a href="index.html" class="public-store-brand">
         <img id="publicStoreLogo" src="images/Logo.png" alt="">
-        <span><strong id="publicStoreOrganisation">Dynamax</strong><small>Organisation Store</small></span>
+        <span><strong id="publicStoreOrganisation">Dynamax</strong></span>
       </a>
       <div>
         <p>Self-service shopping</p>
         <h1>Choose items and pay securely</h1>
         <span>Build your order here. Your secure payment link and receipt will also be sent to your email.</span>
+        <button type="button" id="publicStoreCartShortcut" class="public-store-cart-shortcut" aria-label="Cart is empty" disabled>
+          <span aria-hidden="true">&#128722;</span>
+          <strong id="publicStoreCartBadge" aria-hidden="true">0</strong>
+        </button>
       </div>
     </header>
 
@@ -38,7 +43,7 @@
         </div>
       </section>
 
-      <aside class="public-store-checkout" aria-labelledby="publicStoreCartTitle">
+      <aside class="public-store-checkout" id="publicStoreCheckout" tabindex="-1" aria-labelledby="publicStoreCartTitle">
         <div class="public-store-cart-heading">
           <div><p>Your order</p><h2 id="publicStoreCartTitle">Cart</h2></div>
           <strong id="publicStoreTotal">&#8358;0.00</strong>
@@ -60,6 +65,6 @@
     </div>
   </main>
   <script src="js/site-config.js?v=20260728-quota-safety"></script>
-  <script src="js/store.js?v=20260802-public-store"></script>
+  <script src="js/store.js?v=20260802-cart-shortcut"></script>
 </body>
 </html>
