@@ -29,7 +29,8 @@
 .notification-history-shell{display:flex;flex-direction:column;height:100%;background:#fff}
 .notification-history-shell>header{display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid #dce6ef}
 .notification-history-shell>header small{color:#087d64;font-weight:800;letter-spacing:.1em}.notification-history-shell h2{margin:3px 0 0}
-.notification-history-shell>header button{width:38px;height:38px;border:0;border-radius:50%;background:#edf2f7;font-size:24px;cursor:pointer}
+.notification-history-shell>header button{display:grid;place-items:center;flex:0 0 auto;box-sizing:border-box;width:38px;height:38px;margin:0;padding:0;border:1px solid #b9cad9;border-radius:50%;background:#edf2f7;color:#173b5d;font-family:Arial,sans-serif;font-size:24px;font-weight:800;line-height:1;cursor:pointer}
+.notification-history-shell>header button:hover,.notification-history-shell>header button:focus-visible{border-color:#cf2943;background:#fff0f3;color:#ad1730;outline:3px solid #cf294326;outline-offset:2px}
 .parent-password-dialog{width:min(520px,calc(100vw - 24px));height:auto;max-height:calc(100dvh - 32px)}
 .parent-password-dialog form{display:grid;gap:8px;min-height:0;overflow:auto;padding:18px 24px}.parent-password-dialog form label{font-weight:700}.parent-password-dialog .dialog-form-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}.parent-password-dialog .dialog-form-actions button{width:auto;margin:0}
 .notification-history-tabs{display:flex;gap:4px;padding:10px 24px 0;border-bottom:1px solid #dce6ef}

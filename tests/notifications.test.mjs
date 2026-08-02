@@ -559,6 +559,8 @@ test('staff and parent notification interfaces are wired to protected APIs', asy
   assert.match(adminHtml, /js\/notifications\.js/);
   assert.match(notificationJs, /\/api\/staff-notifications/);
   assert.match(notificationCss, /\.notification-trigger \.notification-badge\{[^}]*height:20px[^}]*font-size:11px[^}]*line-height:1/);
+  assert.match(notificationCss, /\.notification-history-shell>header button\{[^}]*border:1px solid #b9cad9[^}]*color:#173b5d[^}]*font-weight:800/);
+  assert.match(notificationCss, /\.notification-history-shell>header button:hover,[^}]*color:#ad1730/);
   assert.match(notificationCss, /@media \(max-width:680px\)[\s\S]*?\.notification-trigger>span:first-child\{display:block/);
   assert.match(notificationCss, /\.notification-trigger \.notification-badge:not\(\[hidden\]\)\{display:grid\}/);
   assert.match(notificationCss, /\.staff-identity \.notification-popover \.notification-item-copy,[\s\S]*?\.notification-item-dot\{display:block\}/);
