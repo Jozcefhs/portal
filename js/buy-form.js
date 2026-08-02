@@ -49,6 +49,8 @@ async function loadAdmissionClasses() {
     const data = window.DynamaxPublicApi?.getJson
       ? await window.DynamaxPublicApi.getJson('/api/admission-classes', {
           cacheKey: 'admission-classes',
+          cache: false,
+          force: true,
           invalidMessage: 'Could not load available classes because the server returned an error page. Please try again.',
           errorMessage: 'Could not load available classes.'
         })

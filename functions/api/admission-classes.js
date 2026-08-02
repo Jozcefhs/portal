@@ -30,9 +30,7 @@ function json(data, init = {}) {
     ...init,
     headers: {
       ...(init.headers || {}),
-      'Cache-Control': init.status && init.status >= 400
-        ? 'no-store'
-        : 'public, max-age=300, stale-while-revalidate=600'
+      'Cache-Control': 'no-store'
     }
   });
 }

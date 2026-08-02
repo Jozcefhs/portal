@@ -13,6 +13,7 @@ const dobDay = document.getElementById('dobDay');
 let verified = null;
 let openClassesLoaded = false;
 let applicationIdempotencyKey = '';
+let admissionClassSettings = new Map();
 
 function option(value, label = value) {
   const item = document.createElement('option');
@@ -23,6 +24,54 @@ function option(value, label = value) {
 
 function daysInMonth(year, month) {
   return new Date(Number(year), Number(month), 0).getDate();
+}
+
+function configuredMinimumAge(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const number = Number(text);
+  return Number.isInteger(number) && number >= 0 && number <= 120 ? number : null;
+}
+
+function applicantAge(dateOfBirth, referenceDate = new Date()) {
+  const match = String(dateOfBirth || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const birthDate = new Date(year, month - 1, day);
+  if (
+    birthDate.getFullYear() !== year
+    || birthDate.getMonth() !== month - 1
+    || birthDate.getDate() !== day
+    || birthDate > referenceDate
+  ) return null;
+  let age = referenceDate.getFullYear() - year;
+  if (
+    referenceDate.getMonth() + 1 < month
+    || (referenceDate.getMonth() + 1 === month && referenceDate.getDate() < day)
+  ) age -= 1;
+  return age;
+}
+
+function selectedClassSetting() {
+  return admissionClassSettings.get(String(classSelect?.value || '').trim().toLowerCase()) || null;
+}
+
+function validateAdmissionAge() {
+  if (!dobDay) return true;
+  const setting = selectedClassSetting();
+  const minimumAge = configuredMinimumAge(
+    setting?.MinimumAge ?? setting?.minimumAge
+      ?? setting?.MinimumAdmissionAge ?? setting?.minimumAdmissionAge
+  );
+  if (minimumAge === null || !dobInput?.value || !classSelect?.value) return true;
+  const age = applicantAge(dobInput.value);
+  const message = age !== null && age < minimumAge
+    ? `The applicant must be at least ${minimumAge} year${minimumAge === 1 ? '' : 's'} old to apply for ${classSelect.value}.`
+    : '';
+  dobDay.setCustomValidity(message);
+  return !message;
 }
 
 function syncDateOfBirth() {
@@ -40,6 +89,7 @@ function syncDateOfBirth() {
   dobInput.value = year && month && day
     ? `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
     : '';
+  if (!dobDay.validationMessage) validateAdmissionAge();
 }
 
 function installDateOfBirthPicker() {
@@ -103,7 +153,13 @@ function disableForm() {
   });
 }
 
-function setClassOptions(classes) {
+function setClassOptions(classes, settings = []) {
+  admissionClassSettings = new Map(
+    (Array.isArray(settings) ? settings : [])
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => [normalizeClassName(item).toLowerCase(), item])
+      .filter(([className]) => className)
+  );
   classSelect.innerHTML = '';
   const placeholder = document.createElement('option');
   placeholder.value = '';
@@ -113,7 +169,14 @@ function setClassOptions(classes) {
   classes.forEach((className) => {
     const option = document.createElement('option');
     option.value = className;
-    option.textContent = className;
+    const setting = admissionClassSettings.get(String(className).trim().toLowerCase());
+    const minimumAge = configuredMinimumAge(
+      setting?.MinimumAge ?? setting?.minimumAge
+        ?? setting?.MinimumAdmissionAge ?? setting?.minimumAdmissionAge
+    );
+    option.textContent = minimumAge === null
+      ? className
+      : `${className} (minimum age ${minimumAge})`;
     classSelect.appendChild(option);
   });
 
@@ -168,6 +231,8 @@ async function loadAdmissionClasses() {
     const data = window.DynamaxPublicApi?.getJson
       ? await window.DynamaxPublicApi.getJson('/api/admission-classes', {
           cacheKey: 'admission-classes',
+          cache: false,
+          force: true,
           invalidMessage: 'Could not load available classes because the server returned an error page. Please try again.',
           errorMessage: 'Could not load available classes.'
         })
@@ -177,10 +242,10 @@ async function loadAdmissionClasses() {
     }
     const openClasses = Array.isArray(data.classes) ? data.classes : [];
     const configured = parseConfiguredClasses(data.allClasses || openClasses || data.classes || []);
-    setClassOptions(openClasses);
+    setClassOptions(openClasses, data.allClasses || []);
     setCompletedClassOptions(configured);
   } catch (error) {
-    setClassOptions([]);
+    setClassOptions([], []);
     setCompletedClassOptions([]);
     setStatus(error.message, 'bad');
   }
@@ -229,6 +294,12 @@ form.addEventListener('submit', async (event) => {
 
   if (!openClassesLoaded || !classSelect.value) {
     setStatus('Select a class currently open for admission.', 'bad');
+    return;
+  }
+
+  syncDateOfBirth();
+  if (!validateAdmissionAge() || !form.reportValidity()) {
+    setStatus(dobDay.validationMessage || 'Complete all required application fields.', 'bad');
     return;
   }
 
@@ -300,4 +371,9 @@ form.addEventListener('submit', async (event) => {
 
 form.addEventListener('input', () => {
   if (!submitBtn.disabled) applicationIdempotencyKey = '';
+});
+
+classSelect.addEventListener('change', () => {
+  dobDay.setCustomValidity('');
+  validateAdmissionAge();
 });

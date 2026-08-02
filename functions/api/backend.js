@@ -62,6 +62,7 @@ import {
   notifyStaffRequisitionEvent
 } from '../lib/notifications.js';
 import { invoiceReminderFields } from '../lib/notification-reminders.js';
+import { normalizeMinimumAdmissionAge } from '../lib/admission-age.js';
 
 export const SCHOOL_FEES_TOTAL_CODE = 'SCHOOL_FEES_TOTAL';
 
@@ -3083,12 +3084,16 @@ async function getFormSales(env) {
 }
 
 function normalizeAdmissionClass(row) {
+  const minimumAge = normalizeMinimumAdmissionAge(pick(row, [
+    'minimumAge', 'MinimumAge', 'minimumAdmissionAge', 'MinimumAdmissionAge'
+  ]));
   return {
     ...row,
     ClassName: pick(row, ['className', 'ClassName', '__id']),
     FormAmount: asMoneyNumber(pick(row, ['formAmount', 'FormAmount'])),
     Active: yesNo(pick(row, ['active', 'Active'])),
-    SortOrder: asMoneyNumber(pick(row, ['sortOrder', 'SortOrder'], 100))
+    SortOrder: asMoneyNumber(pick(row, ['sortOrder', 'SortOrder'], 100)),
+    MinimumAge: minimumAge === null ? '' : minimumAge
   };
 }
 
@@ -3192,12 +3197,21 @@ async function saveAdmissionClasses(env, body) {
   for (const item of classes) {
     const className = clean(item.ClassName || item.className || item);
     if (!className) continue;
+    const rawMinimumAge = item.MinimumAge ?? item.minimumAge
+      ?? item.MinimumAdmissionAge ?? item.minimumAdmissionAge ?? '';
+    const minimumAge = normalizeMinimumAdmissionAge(rawMinimumAge);
+    if (clean(rawMinimumAge) && minimumAge === null) {
+      const err = new Error(`Minimum admission age for ${className} must be a whole number from 0 to 120.`);
+      err.status = 400;
+      throw err;
+    }
     const documentId = safeDocumentId(className);
     const payload = {
       ClassName: className,
       FormAmount: asMoneyNumber(item.FormAmount || item.formAmount || formAmount),
       Active: yesNo(item.Active ?? item.active ?? 'NO') || 'NO',
       SortOrder: asMoneyNumber(item.SortOrder || item.sortOrder || saved + 1),
+      MinimumAge: minimumAge === null ? '' : minimumAge,
       UpdatedAt: updatedAt,
       UpdatedBy: updatedBy
     };

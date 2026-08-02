@@ -351,5 +351,5 @@ test('lookup and enrollment are explicitly initiated without consent fields, and
   assert.match(cssSource, /\.student-face-dialog/);
   assert.match(cssSource, /html\[data-theme="dark"\] \.student-face-dialog/);
   assert.match(cssSource, /@media\(max-width:680px\)/);
-  assert.match(adminHtmlSource, /20260801-currency-conversion/);
+  assert.match(adminHtmlSource, /20260802-parent-notification-layout/);
 });

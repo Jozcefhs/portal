@@ -6,7 +6,7 @@ import {
   listCollection,
   requireFirestoreEnv
 } from '../lib/firestore.js';
-import { getSchoolCode } from './backend.js';
+import { getAdmissionClasses, getSchoolCode } from './backend.js';
 import {
   getSchoolStructure,
   listSchoolCollection,
@@ -21,6 +21,7 @@ import {
   readJsonBody,
   verifyTurnstile
 } from '../lib/request-security.js';
+import { evaluateAdmissionAge } from '../lib/admission-age.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -122,11 +123,44 @@ async function reserveApplicationReference(env, initialReference, email) {
   throw error;
 }
 
+async function assertAdmissionAgeRequirement(env, application) {
+  const className = clean(application.ClassApplyingFor || application.classApplyingFor);
+  if (!className) {
+    const error = new Error('Select a class currently open for admission.');
+    error.status = 400;
+    throw error;
+  }
+  const settings = await getAdmissionClasses(env);
+  const classConfig = (settings.classes || []).find((item) => (
+    lower(item.ClassName || item.className) === lower(className)
+  ));
+  if (!classConfig || lower(classConfig.Active || classConfig.active) !== 'yes') {
+    const error = new Error(`${className} is no longer open for admission. Select another class.`);
+    error.status = 400;
+    throw error;
+  }
+  const result = evaluateAdmissionAge(
+    classConfig,
+    application.DateOfBirth || application.dateOfBirth
+  );
+  if (!result.ok) {
+    const error = new Error(result.message);
+    error.status = 400;
+    throw error;
+  }
+  return result;
+}
+
 async function submitToFirestore(env, email, code, receiptNo, application) {
   requireFirestoreEnv(env);
   const sales = await listCollection(env, 'formSales');
   const sale = sales.find((row) => lower(row.Email) === email && clean(row.VerificationCode).toUpperCase() === code);
   if (!sale) return null;
+
+  await assertAdmissionAgeRequirement(env, {
+    ...application,
+    ClassApplyingFor: clean(application.ClassApplyingFor || sale.ClassApplyingFor)
+  });
 
   const applications = await listSchoolCollection(env, 'applications');
   const alreadySubmitted = applications.find((row) => (
