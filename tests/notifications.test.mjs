@@ -561,6 +561,9 @@ test('staff and parent notification interfaces are wired to protected APIs', asy
   assert.match(notificationCss, /\.notification-trigger \.notification-badge\{[^}]*height:20px[^}]*font-size:11px[^}]*line-height:1/);
   assert.match(notificationCss, /\.notification-history-shell>header button\{[^}]*border:1px solid #b9cad9[^}]*color:#173b5d[^}]*font-weight:800/);
   assert.match(notificationCss, /\.notification-history-shell>header button:hover,[^}]*color:#ad1730/);
+  assert.match(notificationCss, /data-theme="dark"\] \.notification-compose-form>label[^}]*color:#eef6ff/);
+  assert.match(notificationCss, /data-theme="dark"\] \.notification-compose-status[^}]*color:#abc0d4/);
+  assert.match(notificationCss, /data-theme="dark"\] \.notification-compose-form input::placeholder[^}]*color:#9db2c7/);
   assert.match(notificationCss, /@media \(max-width:680px\)[\s\S]*?\.notification-trigger>span:first-child\{display:block/);
   assert.match(notificationCss, /\.notification-trigger \.notification-badge:not\(\[hidden\]\)\{display:grid\}/);
   assert.match(notificationCss, /\.staff-identity \.notification-popover \.notification-item-copy,[\s\S]*?\.notification-item-dot\{display:block\}/);
