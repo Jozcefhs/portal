@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
-const sharedVersion = '20260802-parent-mobile-actions';
+const sharedVersion = '20260802-parent-notification-layout';
 const adminScriptVersion = '20260801-income-latest-period';
 const parentScriptVersion = '20260802-parent-password-session';
 const notificationVersion = '20260802-parent-password-session';
@@ -69,6 +69,14 @@ test('parent mobile dashboard actions keep the bell and compact buttons on one r
   assert.match(portalCss, /\.dashboard-actions \.parent-notification-button\{[^}]*width:36px/);
 });
 
+test('parent mobile notification heading stacks compact actions below compact text', () => {
+  assert.match(portalCss, /@media \(max-width:680px\)[\s\S]*?\.parent-notification-heading\{display:grid;grid-template-columns:max-content max-content/);
+  assert.match(portalCss, /\.parent-notification-heading>div\{grid-column:1\/-1/);
+  assert.match(portalCss, /\.parent-notification-heading h2\{font-size:14px/);
+  assert.match(portalCss, /\.parent-notification-heading p\{[^}]*font-size:9px/);
+  assert.match(portalCss, /\.parent-notification-heading>button\{[^}]*font-size:8px/);
+});
+
 test('all portal pages reference the current shared stylesheet version', () => {
   pages.forEach((html, index) => {
     assert.match(html, new RegExp(`css/style\\.css\\?v=${sharedVersion}`), `${pageNames[index]} should use the shared stylesheet version`);
@@ -81,7 +89,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v87-parent-password-session/);
+  assert.match(serviceWorker, /dynamax-v88-parent-notification-layout/);
   assert.match(serviceWorker, /'\/give\.html'/);
   assert.match(serviceWorker, /'\/js\/give\.js'/);
   assert.match(serviceWorker, /'\/js\/action-feedback\.js'/);
