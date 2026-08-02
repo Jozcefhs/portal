@@ -2402,6 +2402,32 @@ html[data-theme="dark"] .giving-page{background:radial-gradient(circle at 12% 12
 .commerce-heading>.inline-action-group{align-items:center;flex-wrap:nowrap}.commerce-heading>.inline-action-group>button{flex:0 0 auto;width:fit-content;min-height:35px;margin:0;padding:7px 11px;white-space:nowrap;font-size:10px}.commerce-receipt-preview [data-commerce-open-payment]{color:#08775f}
 @media(max-width:520px){.commerce-heading>.inline-action-group{align-items:flex-end;flex-direction:column-reverse}.commerce-heading>.inline-action-group>button{font-size:9px}.commerce-heading .workspace-feature-icon{width:34px;height:34px}}
 
+/* Logos render directly on their surrounding surface; never supply a white plate. */
+img.logo,
+img.nav-logo,
+.launcher-logo,
+.launcher-logo img,
+.settings-logo-wrap,
+.settings-logo,
+.settings-logo-preview,
+.settings-logo-preview img,
+.web-logo-picker img,
+.registration-brand img,
+.giving-product img {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.settings-logo-preview,
+.web-logo-picker img,
+.giving-product img {
+  border-color: transparent !important;
+}
+.web-logo-picker img,
+.giving-product img {
+  padding: 0;
+  border-radius: 0;
+}
+
 /* Keep exactly four organisation-store products visible before local scrolling. */
 .commerce-product-list{max-height:269px;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable}
 .commerce-product{height:62px;min-height:62px;box-sizing:border-box}
