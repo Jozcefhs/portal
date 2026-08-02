@@ -6,6 +6,7 @@ import {
   processScheduledSchoolAnnouncements,
   processSchoolAnnouncementPushQueue
 } from '../lib/school-announcements.js';
+import { processScheduledChurchAnnouncements } from '../lib/church-announcements.js';
 
 const clean = (value) => String(value ?? '').trim();
 
@@ -35,10 +36,21 @@ async function run(context) {
       today: clean(body.today),
       limit: Number(body.limit || 250)
     });
-    const announcements = await processScheduledSchoolAnnouncements(context.env, {
+    const schoolAnnouncements = await processScheduledSchoolAnnouncements(context.env, {
       now: clean(body.now),
       limit: Number(body.limit || 100)
     });
+    const churchAnnouncements = await processScheduledChurchAnnouncements(context.env, {
+      now: clean(body.now),
+      limit: Number(body.limit || 100)
+    });
+    const announcements = {
+      processed: Number(schoolAnnouncements.processed || 0) + Number(churchAnnouncements.processed || 0),
+      sent: Number(schoolAnnouncements.sent || 0) + Number(churchAnnouncements.sent || 0),
+      failed: Number(schoolAnnouncements.failed || 0) + Number(churchAnnouncements.failed || 0),
+      school: schoolAnnouncements,
+      church: churchAnnouncements
+    };
     const announcementPush = await processSchoolAnnouncementPushQueue(context.env, {
       now: clean(body.now),
       limit: Number(body.pushJobLimit || 1)

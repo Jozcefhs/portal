@@ -72,7 +72,7 @@ test('composer, protected endpoint and scheduler are wired together', async () =
   assert.match(ui, /name="Staff"/);
   assert.match(ui, /update\('sendAnnouncement'/);
   assert.match(ui, /Sent and scheduled messages/);
-  assert.match(ui, /schoolManagementInterface/);
+  assert.match(ui, /allowedByInterface/);
   assert.match(css, /\.notification-compose-form\{/);
   assert.match(css, /\.notification-announcement-history\{/);
   assert.match(api, /action === 'sendannouncement'/);

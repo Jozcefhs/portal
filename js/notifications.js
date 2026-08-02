@@ -2,7 +2,12 @@
   const identity = document.getElementById('staffIdentity');
   const profile = document.getElementById('staffProfileTrigger');
   if (!identity || !profile) return;
-  const managedCategories = ['Fees', 'Payments', 'Requisitions', 'Attendance', 'Academics', 'Announcements', 'System'];
+  const schoolCategories = ['Fees', 'Payments', 'Requisitions', 'Attendance', 'Academics', 'Announcements', 'System'];
+  const churchCategories = ['Offerings', 'Donations', 'Services', 'Funds', 'Attendance', 'Announcements', 'System'];
+  const managedCategories = [...new Set([...schoolCategories, ...churchCategories])];
+  const initialEdition = document.documentElement.dataset.edition === 'church' ? 'church' : 'school';
+  const categoryOptions = (edition) => (edition === 'church' ? churchCategories : schoolCategories)
+    .map((category) => `<option>${category}</option>`).join('');
   const audiencePolicyMarkup = (audience, label) => {
     const categories = audience === 'Parent'
       ? managedCategories.filter((category) => category !== 'Requisitions')
@@ -16,7 +21,7 @@
         </div>
         <div class="notification-policy-group">
           <h4>Notification types</h4>
-          <div class="notification-policy-categories">${categories.map((category) => `<label><input type="checkbox" data-policy-category="${category}"><span>${category}</span></label>`).join('')}</div>
+          <div class="notification-policy-categories">${categories.map((category) => `<label data-policy-category-row="${category}"><input type="checkbox" data-policy-category="${category}"><span>${category}</span></label>`).join('')}</div>
         </div>
       </section>`;
   };
@@ -50,7 +55,7 @@
       </nav>
       <section data-notification-panel="history">
         <div class="notification-history-filters">
-          <label>Category<select data-notification-category><option value="">All categories</option><option>Fees</option><option>Payments</option><option>Requisitions</option><option>Attendance</option><option>Academics</option><option>Announcements</option><option>System</option></select></label>
+          <label>Category<select data-notification-category><option value="">All categories</option>${categoryOptions(initialEdition)}</select></label>
           <label><input type="checkbox" data-notification-unread> Unread only</label>
           <label><input type="checkbox" data-notification-archived> Archived</label>
           <button type="button" data-notification-refresh>Refresh</button>
@@ -60,10 +65,10 @@
       </section>
       <section data-notification-panel="compose" hidden>
         <form class="notification-compose-form">
-          <div class="notification-compose-heading"><div><small>SCHOOL ANNOUNCEMENT</small><h3>Compose notification message</h3><p>Messages for student groups are delivered to their linked parent accounts.</p></div></div>
+          <div class="notification-compose-heading"><div><small data-announcement-edition-label>SCHOOL ANNOUNCEMENT</small><h3>Compose notification message</h3><p data-announcement-help>Messages for student groups are delivered to their linked parent accounts.</p></div></div>
           <label class="notification-compose-wide">Title<input name="Title" maxlength="160" required placeholder="For example: Resumption information"></label>
           <label class="notification-compose-wide">Message<textarea name="Message" maxlength="2000" rows="5" required placeholder="Write the message recipients should receive."></textarea></label>
-          <fieldset><legend>Who should receive it?</legend><div class="notification-compose-options"><label><input type="checkbox" name="DayStudents"><span>Day students' parents</span></label><label><input type="checkbox" name="BoardingStudents"><span>Boarding students' parents</span></label><label><input type="checkbox" name="Staff"><span>Staff</span></label></div></fieldset>
+          <fieldset><legend>Who should receive it?</legend><div class="notification-compose-options"><label data-recipient-option="DayStudents"><input type="checkbox" name="DayStudents"><span>Day students' parents</span></label><label data-recipient-option="BoardingStudents"><input type="checkbox" name="BoardingStudents"><span>Boarding students' parents</span></label><label data-recipient-option="Members" hidden><input type="checkbox" name="Members"><span>Church members</span></label><label data-recipient-option="Staff"><input type="checkbox" name="Staff"><span>Staff</span></label></div></fieldset>
           <fieldset><legend>Delivery channels</legend><div class="notification-compose-options"><label><input type="checkbox" name="InApp" checked><span>In-app notification</span></label><label><input type="checkbox" name="Push" checked><span>Browser push</span></label></div></fieldset>
           <label>Delivery time<input type="datetime-local" name="ScheduledAt"><small>Leave blank to send immediately.</small></label>
           <div class="notification-compose-actions"><button type="submit">Send or schedule</button><button type="reset" class="notification-secondary-action">Clear</button></div>
@@ -80,7 +85,7 @@
           <div class="notification-device-list" aria-label="Subscribed devices"></div>
           <fieldset class="notification-quiet-settings"><legend>Personal quiet hours</legend><label><input type="checkbox" name="QuietHoursEnabled"> Enable quiet hours</label><label>From <input type="time" name="QuietHoursStart"></label><label>To <input type="time" name="QuietHoursEnd"></label><label>Timezone <input name="Timezone" maxlength="80"></label></fieldset>
           <button type="submit">Save quiet hours</button>
-          <fieldset class="notification-system-settings" hidden><legend>School notification policy</legend><p class="notification-policy-help">Choose the channels and notification types available to each group of app users.</p><div class="notification-audience-policy-grid">${audiencePolicyMarkup('Parent', 'Parent portal users')}${audiencePolicyMarkup('Staff', 'Staff app users')}</div><label>Before due (days) <input name="FeeDueIntervals"></label><label>After due (days) <input name="FeeOverdueIntervals"></label><label>Submission reviewer roles <input name="SubmittedRoles"></label><label>Processing roles <input name="ProcessingRoles"></label><label>Management roles <input name="ManagementRoles"></label><label class="notification-template-field">Templates (JSON) <textarea name="Templates" rows="8"></textarea></label><button type="button" data-save-system-settings>Save school notification policy</button></fieldset>
+          <fieldset class="notification-system-settings" hidden><legend data-system-policy-title>School notification policy</legend><p class="notification-policy-help" data-system-policy-help>Choose the channels and notification types available to each group of app users.</p><div class="notification-audience-policy-grid">${audiencePolicyMarkup('Parent', 'Parent portal users')}${audiencePolicyMarkup('Member', 'Church members')}${audiencePolicyMarkup('Staff', 'Staff app users')}</div><label data-school-policy-only>Before due (days) <input name="FeeDueIntervals"></label><label data-school-policy-only>After due (days) <input name="FeeOverdueIntervals"></label><label data-school-policy-only>Submission reviewer roles <input name="SubmittedRoles"></label><label data-school-policy-only>Processing roles <input name="ProcessingRoles"></label><label data-school-policy-only>Management roles <input name="ManagementRoles"></label><label class="notification-template-field">Templates (JSON) <textarea name="Templates" rows="8"></textarea></label><button type="button" data-save-system-settings>Save school notification policy</button></fieldset>
           <p class="notification-settings-status" role="status"></p>
         </form>
       </section>
@@ -104,12 +109,61 @@
   let currentData = {};
   let loading = false;
   let lastLoadedAt = 0;
+  let activeEdition = '';
 
   const html = (value) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
   const request = (input, init = {}) => typeof staffFetch === 'function'
     ? staffFetch(input, init)
     : fetch(input, { credentials: 'same-origin', ...init });
+
+  function editionFor(data = {}) {
+    const supplied = String(data.edition || '').trim().toLowerCase();
+    return supplied === 'church' || document.documentElement.dataset.edition === 'church' ? 'church' : 'school';
+  }
+
+  function configureEdition(data = {}) {
+    const edition = editionFor(data);
+    if (edition === activeEdition) return edition;
+    activeEdition = edition;
+    const church = edition === 'church';
+    const categories = church ? churchCategories : schoolCategories;
+    const categorySelect = dialog.querySelector('[data-notification-category]');
+    const selectedCategory = categorySelect.value;
+    categorySelect.innerHTML = `<option value="">All categories</option>${categoryOptions(edition)}`;
+    categorySelect.value = categories.includes(selectedCategory) ? selectedCategory : '';
+    dialog.querySelector('[data-announcement-edition-label]').textContent = church ? 'CHURCH ANNOUNCEMENT' : 'SCHOOL ANNOUNCEMENT';
+    dialog.querySelector('[data-announcement-help]').textContent = church
+      ? 'Messages for members use contact details in the church member register.'
+      : 'Messages for student groups are delivered to their linked parent accounts.';
+    dialog.querySelector('[data-recipient-option="DayStudents"]').hidden = church;
+    dialog.querySelector('[data-recipient-option="BoardingStudents"]').hidden = church;
+    dialog.querySelector('[data-recipient-option="Members"]').hidden = !church;
+    dialog.querySelector('[data-recipient-option="Staff"] span').textContent = church ? 'Church staff' : 'Staff';
+    composeForm.elements.Title.placeholder = church
+      ? 'For example: Sunday service update'
+      : 'For example: Resumption information';
+    dialog.querySelector('[data-system-policy-title]').textContent = church ? 'Church notification policy' : 'School notification policy';
+    dialog.querySelector('[data-system-policy-help]').textContent = church
+      ? 'Choose the channels and church notification types available to members and church staff.'
+      : 'Choose the channels and notification types available to each group of app users.';
+    dialog.querySelectorAll('[data-school-policy-only]').forEach((element) => { element.hidden = church; });
+    dialog.querySelectorAll('[data-policy-audience]').forEach((section) => {
+      const audience = section.dataset.policyAudience;
+      section.hidden = church ? audience === 'Parent' : audience === 'Member';
+      section.querySelectorAll('[data-policy-category-row]').forEach((row) => {
+        row.hidden = !categories.includes(row.dataset.policyCategoryRow);
+      });
+      const title = section.querySelector('h3');
+      if (title && audience === 'Staff') title.textContent = church ? 'Church staff users' : 'Staff app users';
+    });
+    dialog.querySelector('[data-save-system-settings]').textContent = church
+      ? 'Save church notification policy'
+      : 'Save school notification policy';
+    return edition;
+  }
+
+  configureEdition({ edition: initialEdition });
 
   function itemMarkup(row, full = false) {
     return `<article class="notification-item${row.Read ? ' is-read' : ''}" data-notification-id="${html(row.NotificationId)}">
@@ -128,11 +182,14 @@
     const hasRecipientSummary = row.RecipientSummary && typeof row.RecipientSummary === 'object';
     const recipients = row.RecipientSummary || {};
     const selected = row.Recipients || {};
+    const church = String(row.Edition || activeEdition).toLowerCase() === 'church';
+    const primarySelected = church ? selected.Members : selected.DayStudents;
+    const primaryCount = church ? Number(recipients.Members || 0) : Number(recipients.DayStudents || 0);
     const groups = (hasRecipientSummary ? [
-      selected.DayStudents ? `${Number(recipients.DayStudents || 0)} day student${Number(recipients.DayStudents || 0) === 1 ? '' : 's'}` : '',
-      selected.BoardingStudents ? `${Number(recipients.BoardingStudents || 0)} boarding student${Number(recipients.BoardingStudents || 0) === 1 ? '' : 's'}` : '',
-      selected.Staff ? `${Number(recipients.Staff || 0)} staff` : ''
-    ] : [selected.DayStudents ? 'Day students' : '', selected.BoardingStudents ? 'Boarding students' : '', selected.Staff ? 'Staff' : ''])
+      primarySelected ? `${primaryCount} ${church ? 'church member' : 'day student'}${primaryCount === 1 ? '' : 's'}` : '',
+      !church && selected.BoardingStudents ? `${Number(recipients.BoardingStudents || 0)} boarding student${Number(recipients.BoardingStudents || 0) === 1 ? '' : 's'}` : '',
+      selected.Staff ? `${Number(recipients.Staff || 0)} ${church ? 'church staff' : 'staff'}` : ''
+    ] : [primarySelected ? (church ? 'Church members' : 'Day students') : '', !church && selected.BoardingStudents ? 'Boarding students' : '', selected.Staff ? (church ? 'Church staff' : 'Staff') : ''])
       .filter(Boolean).join(' · ') || 'Recipient count pending';
     const deliveryTime = row.Status === 'Scheduled' ? row.ScheduledAt : row.SentAt || row.CreatedAt;
     return `<article class="notification-announcement-record">
@@ -144,9 +201,11 @@
 
   function renderAnnouncements(data = {}) {
     const roleText = String(document.getElementById('staffRole')?.textContent || '').trim().toLowerCase();
-    const schoolManagementInterface = document.documentElement.dataset.edition === 'school' &&
-      ['super admin', 'management'].some((role) => roleText.startsWith(role));
-    const allowed = data.canComposeAnnouncements === true || schoolManagementInterface;
+    const edition = configureEdition(data);
+    const allowedByInterface = edition === 'church'
+      ? ['super admin', 'pastor', 'senior pastor', 'head minister', 'church administrator'].some((role) => roleText.startsWith(role))
+      : ['super admin', 'management'].some((role) => roleText.startsWith(role));
+    const allowed = data.canComposeAnnouncements === true || allowedByInterface;
     composeTab.hidden = !allowed;
     if (!allowed && dialog.querySelector('[data-notification-view="compose"]').classList.contains('is-active')) {
       dialog.querySelector('[data-notification-view="history"]').click();
@@ -154,11 +213,12 @@
     const announcements = Array.isArray(data.announcements) ? data.announcements : [];
     announcementHistory.innerHTML = announcements.length
       ? announcements.map(announcementMarkup).join('')
-      : '<p class="notification-empty">No school announcements have been sent yet.</p>';
+      : `<p class="notification-empty">No ${edition === 'church' ? 'church' : 'school'} announcements have been sent yet.</p>`;
   }
 
   function render(data = {}) {
     currentData = { ...currentData, ...data };
+    configureEdition(currentData);
     records = Array.isArray(data.notifications) ? data.notifications : [];
     const unread = Number(data.unreadCount || 0);
     badge.textContent = unread > 99 ? '99+' : String(unread);
@@ -249,6 +309,7 @@
   }
 
   function renderSettings(data = {}) {
+    const edition = configureEdition(data);
     const form = dialog.querySelector('.notification-settings-form');
     const settings = data.settings || {};
     const permission = window.DynamaxWebPush?.permission?.() || 'unsupported';
@@ -275,7 +336,9 @@
     form.elements.ProcessingRoles.value = (settings.WorkflowRecipients?.ProcessingRoles || ['Super Admin', 'Accounts Officer']).join(', ');
     form.elements.ManagementRoles.value = (settings.WorkflowRecipients?.ManagementRoles || ['Super Admin', 'Management']).join(', ');
     form.querySelector('.notification-system-settings').hidden = !data.canManageSystemSettings;
-    dialog.querySelector('[data-notification-settings-tab]').textContent = data.canManageSystemSettings ? 'School settings & devices' : 'Devices';
+    dialog.querySelector('[data-notification-settings-tab]').textContent = data.canManageSystemSettings
+      ? `${edition === 'church' ? 'Church' : 'School'} settings & devices`
+      : 'Devices';
     form.querySelectorAll('[data-policy-audience]').forEach((section) => {
       const policy = settings.AudiencePolicies?.[section.dataset.policyAudience] || {};
       section.querySelectorAll('[data-policy-channel]').forEach((input) => {
@@ -321,19 +384,27 @@
   composeForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const status = composeForm.querySelector('.notification-compose-status');
-    const recipients = {
+    const church = activeEdition === 'church';
+    const recipients = church ? {
+      Members: composeForm.elements.Members.checked,
+      Staff: composeForm.elements.Staff.checked
+    } : {
       DayStudents: composeForm.elements.DayStudents.checked,
       BoardingStudents: composeForm.elements.BoardingStudents.checked,
       Staff: composeForm.elements.Staff.checked
     };
-    const recipientNames = [recipients.DayStudents ? 'day students' : '', recipients.BoardingStudents ? 'boarding students' : '', recipients.Staff ? 'staff' : ''].filter(Boolean);
+    const recipientNames = (church
+      ? [recipients.Members ? 'church members' : '', recipients.Staff ? 'church staff' : '']
+      : [recipients.DayStudents ? 'day students' : '', recipients.BoardingStudents ? 'boarding students' : '', recipients.Staff ? 'staff' : ''])
+      .filter(Boolean);
     if (!recipientNames.length) { status.textContent = 'Select at least one recipient group.'; return; }
     const policies = currentData.settings?.AudiencePolicies || {};
     const blockedAudiences = [];
-    if ((recipients.DayStudents || recipients.BoardingStudents) && policies.Parent?.Categories?.Announcements === false) blockedAudiences.push('parent portal users');
-    if (recipients.Staff && policies.Staff?.Categories?.Announcements === false) blockedAudiences.push('staff app users');
+    if (church && recipients.Members && policies.Member?.Categories?.Announcements === false) blockedAudiences.push('church members');
+    if (!church && (recipients.DayStudents || recipients.BoardingStudents) && policies.Parent?.Categories?.Announcements === false) blockedAudiences.push('parent portal users');
+    if (recipients.Staff && policies.Staff?.Categories?.Announcements === false) blockedAudiences.push(church ? 'church staff' : 'staff app users');
     if (blockedAudiences.length) {
-      status.textContent = `Announcements are disabled for ${blockedAudiences.join(' and ')} in School settings.`;
+      status.textContent = `Announcements are disabled for ${blockedAudiences.join(' and ')} in ${church ? 'Church' : 'School'} settings.`;
       return;
     }
     const scheduledValue = composeForm.elements.ScheduledAt.value;
@@ -440,25 +511,31 @@
       const templates = JSON.parse(settingsForm.elements.Templates.value || '{}');
       const audiencePolicies = {};
       settingsForm.querySelectorAll('[data-policy-audience]').forEach((section) => {
+        if (section.hidden) return;
         const channels = {};
         const categories = {};
         section.querySelectorAll('[data-policy-channel]').forEach((input) => { channels[input.dataset.policyChannel] = input.checked; });
-        section.querySelectorAll('[data-policy-category]').forEach((input) => { categories[input.dataset.policyCategory] = input.checked; });
+        section.querySelectorAll('[data-policy-category]').forEach((input) => {
+          if (!input.closest('[data-policy-category-row]').hidden) categories[input.dataset.policyCategory] = input.checked;
+        });
         audiencePolicies[section.dataset.policyAudience] = { Channels: channels, Categories: categories };
       });
-      await update('saveSystemSettings', { settings: {
+      const systemSettings = {
         Timezone: settingsForm.elements.Timezone.value,
+        Templates: templates,
+        AudiencePolicies: audiencePolicies
+      };
+      if (activeEdition !== 'church') Object.assign(systemSettings, {
         FeeDueIntervals: settingsForm.elements.FeeDueIntervals.value,
         FeeOverdueIntervals: settingsForm.elements.FeeOverdueIntervals.value,
-        Templates: templates,
         WorkflowRecipients: {
           SubmittedRoles: settingsForm.elements.SubmittedRoles.value.split(',').map((value) => value.trim()).filter(Boolean),
           ProcessingRoles: settingsForm.elements.ProcessingRoles.value.split(',').map((value) => value.trim()).filter(Boolean),
           ManagementRoles: settingsForm.elements.ManagementRoles.value.split(',').map((value) => value.trim()).filter(Boolean)
-        },
-        AudiencePolicies: audiencePolicies
-      } });
-      status.textContent = 'School notification policy saved.';
+        }
+      });
+      await update('saveSystemSettings', { settings: systemSettings });
+      status.textContent = `${activeEdition === 'church' ? 'Church' : 'School'} notification policy saved.`;
     } catch (error) { status.textContent = error instanceof SyntaxError ? 'Templates must be valid JSON.' : error.message; }
   });
 
@@ -467,5 +544,8 @@
     if (!identity.hidden) load(true);
     else { popover.hidden = true; trigger.setAttribute('aria-expanded', 'false'); }
   }).observe(identity, { attributes: true, attributeFilter: ['hidden'] });
+  new MutationObserver(() => configureEdition({
+    edition: document.documentElement.dataset.edition === 'church' ? 'church' : 'school'
+  })).observe(document.documentElement, { attributes: true, attributeFilter: ['data-edition'] });
   window.setInterval(() => load(), 30000);
 })();

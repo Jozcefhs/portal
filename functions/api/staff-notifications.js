@@ -24,9 +24,21 @@ import {
   listSchoolAnnouncements,
   processSchoolAnnouncementPushQueue
 } from '../lib/school-announcements.js';
+import {
+  canManageChurchAnnouncements,
+  createChurchAnnouncement,
+  listChurchAnnouncements
+} from '../lib/church-announcements.js';
 
 function clean(value) {
   return String(value ?? '').trim();
+}
+
+function notificationEdition(user = {}) {
+  const edition = clean(user.edition || user.OrganisationEdition || user.OrganizationEdition).toLowerCase();
+  return ['church', 'faith', 'organization', 'organisation'].includes(edition) || user.featureFlags?.members === true
+    ? 'church'
+    : 'school';
 }
 
 function recipientFor(user, env = {}) {
@@ -79,7 +91,7 @@ function workflowRecipients(value, fallback = {}) {
 }
 
 function audiencePolicies(value = {}, fallback = {}) {
-  return Object.fromEntries(['Parent', 'Staff'].map((audience) => {
+  return Object.fromEntries(['Parent', 'Member', 'Staff'].map((audience) => {
     const input = value?.[audience] && typeof value[audience] === 'object' ? value[audience] : {};
     const existing = fallback?.[audience] && typeof fallback[audience] === 'object' ? fallback[audience] : {};
     return [audience, {
@@ -106,15 +118,23 @@ async function saveSystemSettings(env, user, input = {}) {
     throw error;
   }
   const existing = await getDocument(env, 'notificationSettings', 'system').catch(() => null) || {};
+  const edition = notificationEdition(user);
   const record = {
     ...existing,
     SettingsId: 'system',
     SchoolId: clean(env.DYNAMAX_WORKSPACE_ID).toLowerCase(),
+    Edition: edition,
     Timezone: clean(input.Timezone || existing.Timezone || 'Africa/Lagos'),
-    FeeDueIntervals: intervals(input.FeeDueIntervals, [14, 7, 3, 1, 0]),
-    FeeOverdueIntervals: intervals(input.FeeOverdueIntervals, [30, 14, 7, 1]),
+    FeeDueIntervals: edition === 'church'
+      ? existing.FeeDueIntervals || [14, 7, 3, 1, 0]
+      : intervals(input.FeeDueIntervals, [14, 7, 3, 1, 0]),
+    FeeOverdueIntervals: edition === 'church'
+      ? existing.FeeOverdueIntervals || [30, 14, 7, 1]
+      : intervals(input.FeeOverdueIntervals, [30, 14, 7, 1]),
     Templates: templates(input.Templates, existing.Templates || {}),
-    WorkflowRecipients: workflowRecipients(input.WorkflowRecipients, existing.WorkflowRecipients || {}),
+    WorkflowRecipients: edition === 'church'
+      ? existing.WorkflowRecipients || {}
+      : workflowRecipients(input.WorkflowRecipients, existing.WorkflowRecipients || {}),
     AudiencePolicies: audiencePolicies(input.AudiencePolicies, existing.AudiencePolicies || {}),
     UpdatedAt: new Date().toISOString(),
     UpdatedBy: user.username
@@ -128,12 +148,17 @@ async function loadForUser(env, user, options = {}) {
 }
 
 async function responseData(env, user, options = {}) {
-  const canComposeAnnouncements = canManageSchoolAnnouncements(user);
+  const edition = notificationEdition(user);
+  const canComposeAnnouncements = edition === 'church'
+    ? canManageChurchAnnouncements(user)
+    : canManageSchoolAnnouncements(user);
   const [data, settings, subscriptions, announcements] = await Promise.all([
     loadForUser(env, user, options),
     loadNotificationSettings(env, 'Staff', user.username),
     listPushSubscriptions(env, user.username),
-    canComposeAnnouncements ? listSchoolAnnouncements(env) : Promise.resolve([])
+    canComposeAnnouncements
+      ? edition === 'church' ? listChurchAnnouncements(env) : listSchoolAnnouncements(env)
+      : Promise.resolve([])
   ]);
   return {
     ...data,
@@ -141,6 +166,7 @@ async function responseData(env, user, options = {}) {
     subscriptions,
     announcements,
     messaging: publicMessagingConfig(env),
+    edition,
     canManageSystemSettings: clean(user.role) === 'Super Admin',
     canComposeAnnouncements
   };
@@ -202,14 +228,19 @@ export async function onRequestPost(context) {
     } else if (action === 'savesystemsettings') {
       await saveSystemSettings(env, user, body.settings || body.Settings || {});
     } else if (action === 'sendannouncement') {
-      announcementResult = await createSchoolAnnouncement(env, user, body.announcement || body.Announcement || {});
+      announcementResult = notificationEdition(user) === 'church'
+        ? await createChurchAnnouncement(env, user, body.announcement || body.Announcement || {})
+        : await createSchoolAnnouncement(env, user, body.announcement || body.Announcement || {});
     } else if (action === 'processannouncementpush') {
-      if (!canManageSchoolAnnouncements(user)) {
-        const error = new Error('Only authorised school management can deliver announcements.');
+      if (!canManageSchoolAnnouncements(user) && !canManageChurchAnnouncements(user)) {
+        const error = new Error('Only authorised organisation leaders can deliver announcements.');
         error.status = 403;
         throw error;
       }
-      const announcementPush = await processSchoolAnnouncementPushQueue(env, { limit: 1 });
+      const announcementPush = await processSchoolAnnouncementPushQueue(env, {
+        limit: 1,
+        edition: notificationEdition(user)
+      });
       return response({ ok: true, announcementPush });
     } else if (action === 'subscribepush') {
       await savePushSubscription(env, {

@@ -329,6 +329,7 @@ export async function listSchoolAnnouncements(env, options = {}) {
   const limit = Math.min(100, Math.max(1, Number(options.limit || 40)));
   const rows = await listCollection(env, 'notificationAnnouncements').catch(() => []);
   return rows
+    .filter((row) => lower(row.Edition) !== 'church')
     .filter((row) => !schoolId || !clean(row.SchoolId) || lower(row.SchoolId) === schoolId)
     .sort((left, right) => clean(right.CreatedAt).localeCompare(clean(left.CreatedAt)))
     .slice(0, limit);
@@ -342,6 +343,7 @@ export async function processScheduledSchoolAnnouncements(env, options = {}) {
   }).catch(() => []);
   const schoolId = lower(env.DYNAMAX_WORKSPACE_ID);
   const due = scheduled
+    .filter((row) => lower(row.Edition) !== 'church')
     .filter((row) => !schoolId || !clean(row.SchoolId) || lower(row.SchoolId) === schoolId)
     .filter((row) => lower(row.Status) === 'scheduled' && clean(row.ScheduledAt) && row.ScheduledAt <= now);
   const results = [];
@@ -367,6 +369,7 @@ export async function processScheduledSchoolAnnouncements(env, options = {}) {
 
 export async function processSchoolAnnouncementPushQueue(env, options = {}) {
   const schoolId = lower(env.DYNAMAX_WORKSPACE_ID);
+  const requestedEdition = lower(options.edition);
   const now = clean(options.now) || new Date().toISOString();
   const limit = Math.min(5, Math.max(1, Number(options.limit || 1)));
   const [pendingJobs, failedJobs, processingJobs] = await Promise.all([
@@ -383,6 +386,9 @@ export async function processSchoolAnnouncementPushQueue(env, options = {}) {
   const staleBefore = new Date(new Date(now).getTime() - 10 * 60 * 1000).toISOString();
   const eligible = [...pendingJobs, ...failedJobs, ...processingJobs.filter((row) => clean(row.UpdatedAt) < staleBefore)]
     .filter((row) => !schoolId || !clean(row.SchoolId) || lower(row.SchoolId) === schoolId)
+    .filter((row) => !requestedEdition || (requestedEdition === 'church'
+      ? lower(row.Edition) === 'church'
+      : lower(row.Edition) !== 'church'))
     .filter((row) => ['pending', 'failed'].includes(lower(row.Status)) && Number(row.FailureCount || 0) < 5)
     .sort((left, right) => clean(left.CreatedAt).localeCompare(clean(right.CreatedAt)));
   const jobs = eligible.slice(0, limit);

@@ -49,7 +49,8 @@ function nowIso() {
 }
 
 export const NOTIFICATION_CATEGORIES = Object.freeze([
-  'Fees', 'Payments', 'Requisitions', 'Attendance', 'Academics', 'Announcements', 'System'
+  'Fees', 'Payments', 'Requisitions', 'Attendance', 'Academics',
+  'Offerings', 'Donations', 'Services', 'Funds', 'Announcements', 'System'
 ]);
 
 export const DEFAULT_NOTIFICATION_SETTINGS = Object.freeze({
@@ -102,8 +103,8 @@ export function notificationDocumentId(eventKey) {
 
 export function normalizeNotification(input = {}, createdAt = nowIso()) {
   const audience = lower(input.Audience || input.audience);
-  if (!['staff', 'parent'].includes(audience)) {
-    throw new Error('Notification audience must be Staff or Parent.');
+  if (!['staff', 'parent', 'member'].includes(audience)) {
+    throw new Error('Notification audience must be Staff, Parent or Member.');
   }
   const eventKey = clean(input.EventKey || input.eventKey || input.NotificationId || input.notificationId);
   const title = clean(input.Title || input.title);
@@ -119,7 +120,7 @@ export function normalizeNotification(input = {}, createdAt = nowIso()) {
     Category: category(input.Category || input.category || input.Type || input.type),
     Channels: channels(input.Channels || input.channels),
     Severity: clean(input.Severity || input.severity || 'Normal'),
-    Audience: audience === 'staff' ? 'Staff' : 'Parent',
+    Audience: audience === 'staff' ? 'Staff' : audience === 'member' ? 'Member' : 'Parent',
     TargetRoles: values(input.TargetRoles || input.targetRoles),
     TargetUsernames: lowerValues(input.TargetUsernames || input.targetUsernames),
     TargetDepartments: lowerValues(input.TargetDepartments || input.targetDepartments),
@@ -200,7 +201,7 @@ function notificationAudiencePolicies(system = {}) {
   const configured = system.AudiencePolicies && typeof system.AudiencePolicies === 'object'
     ? system.AudiencePolicies
     : {};
-  return Object.fromEntries(['Parent', 'Staff'].map((audience) => {
+  return Object.fromEntries(['Parent', 'Member', 'Staff'].map((audience) => {
     const policy = configured[audience] && typeof configured[audience] === 'object'
       ? configured[audience]
       : {};
@@ -223,7 +224,7 @@ function notificationAudiencePolicies(system = {}) {
 
 export function notificationSettingsForAudience(system = {}, user = {}, audience = '') {
   const audiencePolicies = notificationAudiencePolicies(system);
-  const managedAudience = ['Parent', 'Staff'].find((name) => lower(name) === lower(audience));
+  const managedAudience = ['Parent', 'Member', 'Staff'].find((name) => lower(name) === lower(audience));
   const managedPolicy = managedAudience ? audiencePolicies[managedAudience] : null;
   return {
     ...DEFAULT_NOTIFICATION_SETTINGS,
@@ -433,6 +434,11 @@ export function notificationTargetsRecipient(notification = {}, recipient = {}) 
       return emailMatches || (scope.accountRef && targetRefs.includes(scope.accountRef));
     });
   }
+  if (audience === 'member') {
+    if (!sameScope(notification, recipient)) return false;
+    const email = lower(recipient.email || recipient.MemberEmail || recipient.Email);
+    return Boolean(email && lowerValues(notification.TargetEmails).includes(email));
+  }
   return false;
 }
 
@@ -483,6 +489,9 @@ async function queryTargetedNotifications(env, recipient, query, limit) {
         });
       });
     });
+  } else if (audience === 'member') {
+    const email = lower(recipient.email || recipient.MemberEmail || recipient.Email);
+    if (email) lookups.push({ field: 'TargetEmails', value: email });
   }
   if (!lookups.length) return [];
   const perTargetLimit = Math.max(25, Math.min(200, Number(limit || 50) * 2));

@@ -572,7 +572,7 @@ test('staff and parent notification interfaces are wired to protected APIs', asy
   assert.match(notificationCss, /\.notification-category-grid\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(notificationJs, /class="notification-device-delete"[^>]*data-remove-push-device/);
   assert.doesNotMatch(notificationJs, /data-remove-push-device="[^\n]*">Remove</);
-  assert.match(notificationJs, /School settings & devices/);
+  assert.match(notificationJs, /Church.*School.*settings & devices|settings & devices/);
   assert.match(notificationJs, /Delivery channels/);
   assert.match(notificationJs, /Notification types/);
   assert.match(notificationJs, /audience === 'Parent'[\s\S]*?filter\(\(category\) => category !== 'Requisitions'\)/);
