@@ -2401,3 +2401,8 @@ html[data-theme="dark"] .giving-page{background:radial-gradient(circle at 12% 12
 /* Organisation Store public-link controls */
 .commerce-heading>.inline-action-group{align-items:center;flex-wrap:nowrap}.commerce-heading>.inline-action-group>button{flex:0 0 auto;width:fit-content;min-height:35px;margin:0;padding:7px 11px;white-space:nowrap;font-size:10px}.commerce-receipt-preview [data-commerce-open-payment]{color:#08775f}
 @media(max-width:520px){.commerce-heading>.inline-action-group{align-items:flex-end;flex-direction:column-reverse}.commerce-heading>.inline-action-group>button{font-size:9px}.commerce-heading .workspace-feature-icon{width:34px;height:34px}}
+
+/* Keep exactly four organisation-store products visible before local scrolling. */
+.commerce-product-list{max-height:269px;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable}
+.commerce-product{height:62px;min-height:62px;box-sizing:border-box}
+@media(max-width:680px){.commerce-product-list{max-height:269px}}

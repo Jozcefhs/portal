@@ -7,6 +7,7 @@ const [
   storeHtml,
   storeJs,
   storeCss,
+  staffCss,
   publicApi,
   commerce,
   commerceEmail,
@@ -18,6 +19,7 @@ const [
   readFile(new URL('store.html', portalRoot), 'utf8'),
   readFile(new URL('js/store.js', portalRoot), 'utf8'),
   readFile(new URL('css/store.css', portalRoot), 'utf8'),
+  readFile(new URL('css/style.css', portalRoot), 'utf8'),
   readFile(new URL('functions/api/public-organization-store.js', portalRoot), 'utf8'),
   readFile(new URL('functions/lib/organization-commerce.js', portalRoot), 'utf8'),
   readFile(new URL('functions/lib/organization-commerce-email.js', portalRoot), 'utf8'),
@@ -39,6 +41,9 @@ test('public organisation store exposes a compact searchable catalogue and autho
   assert.match(storeJs, /'Idempotency-Key': idempotencyKey/);
   assert.match(storeJs, /Items: \[\.\.\.cart\.entries\(\)\]/);
   assert.match(storeCss, /width:fit-content/);
+  assert.match(staffCss, /\.commerce-product-list\{max-height:269px;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable\}/);
+  assert.match(staffCss, /\.commerce-product\{height:62px;min-height:62px;box-sizing:border-box\}/);
+  assert.match(staffCss, /@media\(max-width:680px\)\{\.commerce-product-list\{max-height:269px\}\}/);
 });
 
 test('public store API is edition-bound, rate limited, replay safe and uses server inventory prices', () => {
