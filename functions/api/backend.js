@@ -1406,11 +1406,12 @@ export function shouldResolveStudentForPayable(application = {}, requestedSource
 export async function getPayableFees(env, body = {}) {
   const email = lower(body.Email || body.email);
   const code = clean(body.VerificationCode || body.code).toUpperCase();
+  const authenticatedParent = lower(body.AuthenticatedParentEmail) === email;
   const requestedAccountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo || body.admissionNo);
   const requestedSourceType = normalizeMatchText(body.SourceType || body.sourceType);
   const requestedScopePath = clean(body.ScopePath || body.scopePath || body.__scopePath);
-  if (!email || !code) {
-    const err = new Error('Email and verification code are required.');
+  if (!email || (!code && !authenticatedParent)) {
+    const err = new Error('Email and password or verification code are required.');
     err.status = 400;
     throw err;
   }
@@ -1442,10 +1443,10 @@ export async function getPayableFees(env, body = {}) {
     : null;
   const directIdentityValid = directIdentity && directCollection === 'applications'
     ? lower(directIdentity.VerificationEmail || directIdentity.ParentEmail || directIdentity.Email) === email &&
-      clean(directIdentity.VerificationCode).toUpperCase() === code
+      (authenticatedParent || clean(directIdentity.VerificationCode).toUpperCase() === code)
     : directIdentity &&
       lower(directIdentity.ParentEmail || directIdentity.Email || directIdentity.VerificationEmail) === email &&
-      studentLoginCodes(directIdentity).includes(code);
+      (authenticatedParent || studentLoginCodes(directIdentity).includes(code));
   const [firestoreApplications, sheetApplications, firestoreStudents, sheetStudents, firestoreSales, sheetSales] = directIdentityValid
     ? [
       directCollection === 'applications' ? [directIdentity] : [],
@@ -1468,8 +1469,10 @@ export async function getPayableFees(env, body = {}) {
   const applications = [...firestoreApplications, ...sheetApplications].map(normalizeApplication);
   const students = [...firestoreStudents, ...sheetStudents].map(normalizeStudent);
   const sales = [...firestoreSales, ...sheetSales];
-  const loginApp = applications.find((row) => lower(row.VerificationEmail || row.Email || row.ParentEmail) === email && clean(row.VerificationCode).toUpperCase() === code);
-  const loginStudent = students.find((row) => lower(row.ParentEmail || row.Email || row.VerificationEmail) === email && studentLoginCodes(row).includes(code));
+  const loginApp = applications.find((row) => lower(row.VerificationEmail || row.Email || row.ParentEmail) === email &&
+    (authenticatedParent || clean(row.VerificationCode).toUpperCase() === code));
+  const loginStudent = students.find((row) => lower(row.ParentEmail || row.Email || row.VerificationEmail) === email &&
+    (authenticatedParent || studentLoginCodes(row).includes(code)));
   const saleMatch = sales.some((row) => {
     return lower(pick(row, ['Email', 'email'])) === email &&
       clean(pick(row, ['VerificationCode', 'verificationCode'])).toUpperCase() === code;

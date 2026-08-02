@@ -19,6 +19,7 @@ import {
   validateAdmissionThumbnail
 } from '../lib/document-files.js';
 import { resolveDocumentStorage } from '../lib/document-storage.js';
+import { readParentSession, verifyStoredParentPassword } from '../lib/parent-auth.js';
 import {
   beginIdempotentRequest,
   completeIdempotentRequest,
@@ -341,7 +342,24 @@ export async function findFirestoreApplication(env, email, code, options = {}) {
     if (!targetScopePath && matches.length !== 1) return null;
     return matches[0] || null;
   };
-  if (options.authenticated === true) return findTargetApplication();
+  if (options.authenticated === true) {
+    if (targetReference) return findTargetApplication();
+    const authenticatedApplications = await queryByFields('applications', [
+      'VerificationEmail', 'verificationEmail',
+      'ParentEmail', 'parentEmail',
+      'Email', 'email'
+    ], [email, email.toUpperCase()], 20);
+    const ownedApplications = uniqueIdentityRows(authenticatedApplications)
+      .filter((row) => applicationUploadEmailMatches(row, email));
+    if (ownedApplications.length > 1) {
+      throw uploadError(
+        'This parent account is linked to more than one child. Open the parent dashboard, select the child, and upload the document there.',
+        409,
+        'UPLOAD_CHILD_SELECTION_REQUIRED'
+      );
+    }
+    return ownedApplications[0] || null;
+  }
 
   const normalizedCode = clean(code).toUpperCase();
   const queriedApplications = await queryByFields(
@@ -491,8 +509,9 @@ export async function onRequestPost(context) {
     const { request, env } = context;
     const body = await readJsonBody(request, { maxBytes: 12 * 1024 * 1024 });
 
-    const email = String(body.email || '').trim().toLowerCase();
-    const code = String(body.code || '').trim().toUpperCase();
+    const session = await readParentSession(env, request);
+    const email = String(session?.email || body.email || '').trim().toLowerCase();
+    const code = String(body.code || '').trim();
     const targetApplicationReference = clean(
       body.applicationReference
       || body.targetApplicationReference
@@ -506,8 +525,8 @@ export async function onRequestPost(context) {
     let thumbnailMimeType = String(body.thumbnailMimeType || 'image/jpeg').trim();
     const replaceExisting = Boolean(body.replaceExisting);
 
-    if (!email || !code) {
-      return Response.json({ ok: false, message: 'Email and verification code are required.' }, { status: 400 });
+    if (!email || (!session && !code)) {
+      return Response.json({ ok: false, message: 'Email and password or verification code are required.' }, { status: 400 });
     }
     if (!documentType) {
       return Response.json({ ok: false, message: 'Select the document you are uploading.' }, { status: 400 });
@@ -555,9 +574,16 @@ export async function onRequestPost(context) {
     } catch (error) {
       throw uploadError(error?.message || 'The uploaded file is invalid.', 400, 'INVALID_DOCUMENT_FILE');
     }
+    const storedPassword = session
+      ? { configured: false, valid: false }
+      : await verifyStoredParentPassword(env, email, code);
+    if (storedPassword.configured && !storedPassword.valid) {
+      return Response.json({ ok: false, message: 'Invalid parent email or password.' }, { status: 401 });
+    }
     const firestoreApp = await findFirestoreApplication(env, email, code, {
       targetReference: targetApplicationReference,
-      targetScopePath: body.scopePath || body.ScopePath
+      targetScopePath: body.scopePath || body.ScopePath,
+      authenticated: Boolean(session || storedPassword.valid)
     });
     if (!firestoreApp) {
       return Response.json({

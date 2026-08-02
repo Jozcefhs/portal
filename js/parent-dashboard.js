@@ -27,6 +27,10 @@ const dailyLimit = document.getElementById('dailyLimit');
 const pinThreshold = document.getElementById('pinThreshold');
 const refreshDashboardBtn = document.getElementById('refreshDashboardBtn');
 const signOutDashboardBtn = document.getElementById('signOutDashboardBtn');
+const changeParentPasswordBtn = document.getElementById('changeParentPasswordBtn');
+const changeParentPasswordDialog = document.getElementById('changeParentPasswordDialog');
+const changeParentPasswordForm = document.getElementById('changeParentPasswordForm');
+const changeParentPasswordStatus = document.getElementById('changeParentPasswordStatus');
 const dashboardNav = document.getElementById('dashboardNav');
 const dashboardViewPanels = Array.from(document.querySelectorAll('[data-dashboard-view]'));
 const parentDocumentUploadForm = document.getElementById('parentDocumentUploadForm');
@@ -253,7 +257,7 @@ function money(value) {
 function authPayload() {
   return {
     email: document.getElementById('parentEmail').value.trim().toLowerCase(),
-    code: document.getElementById('verificationCode').value.trim().toUpperCase()
+    code: document.getElementById('verificationCode').value.trim()
   };
 }
 
@@ -1765,18 +1769,17 @@ function renderStoreCart(child) {
   };
 }
 
-async function loadDashboard() {
+async function loadDashboard({ sessionOnly = false, silent = false } = {}) {
   const previousChildKey = selectedChildKey;
-  const payload = authPayload();
-  if (!payload.email || !payload.code) {
-    setStatus('Email and verification code are required.', 'bad');
-    return;
+  const payload = sessionOnly ? {} : authPayload();
+  if (!sessionOnly && (!payload.email || !payload.code)) {
+    throw new Error('Email and password or verification code are required.');
   }
   dashboardLoadController?.abort();
   selectedChildLoadController?.abort();
   const controller = new AbortController();
   dashboardLoadController = controller;
-  setStatus('Loading dashboard...', '');
+  if (!silent) setStatus(sessionOnly ? 'Restoring dashboard...' : 'Loading dashboard...', '');
   try {
     const response = await fetch('/api/parent-dashboard', {
       method: 'POST',
@@ -1791,6 +1794,8 @@ async function loadDashboard() {
     }
     if (controller.signal.aborted) return;
     dashboard = data;
+    if (data.parentEmail) document.getElementById('parentEmail').value = data.parentEmail;
+    document.getElementById('verificationCode').value = '';
     normalizeChildResultMaps(dashboard);
     loadedPayables.clear();
     selectedChildKey = data.children?.some((child) => childIdentity(child) === previousChildKey)
@@ -1804,6 +1809,7 @@ async function loadDashboard() {
     void loadParentNotifications();
     if (controller.signal.aborted) return;
     setStatus('Dashboard loaded.', 'ok');
+    return true;
   } catch (error) {
     if (error?.name === 'AbortError') return;
     throw error;
@@ -1882,7 +1888,7 @@ if (refreshDashboardBtn) {
     const normalText = refreshDashboardBtn.textContent;
     setActionLoading(refreshDashboardBtn, true, 'Refreshing...', normalText);
     try {
-      await loadDashboard();
+      await loadDashboard({ sessionOnly: true });
     } catch (error) {
       setStatus(error.message, 'bad');
     } finally {
@@ -1892,7 +1898,19 @@ if (refreshDashboardBtn) {
 }
 
 if (signOutDashboardBtn) {
-  signOutDashboardBtn.addEventListener('click', () => {
+  signOutDashboardBtn.addEventListener('click', async () => {
+    const normalText = signOutDashboardBtn.textContent;
+    setActionLoading(signOutDashboardBtn, true, 'Signing out...', normalText);
+    try {
+      await fetch('/api/parent-dashboard', {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: freshBody({ action: 'signOut' })
+      });
+    } catch (_error) {
+      // Local cleanup still completes if the network is temporarily unavailable.
+    }
     dashboardLoadController?.abort();
     selectedChildLoadController?.abort();
     passportPhotoCache.forEach((objectUrl) => URL.revokeObjectURL(objectUrl));
@@ -1914,6 +1932,61 @@ if (signOutDashboardBtn) {
     window.location.replace('index.html');
   });
 }
+
+changeParentPasswordBtn?.addEventListener('click', () => {
+  changeParentPasswordForm?.reset();
+  const emailInput = document.getElementById('changeParentEmail');
+  if (emailInput) emailInput.value = dashboard?.parentEmail || document.getElementById('parentEmail').value;
+  if (changeParentPasswordStatus) {
+    changeParentPasswordStatus.textContent = '';
+    changeParentPasswordStatus.className = 'status';
+  }
+  changeParentPasswordDialog?.showModal();
+});
+
+function closeParentPasswordDialog() {
+  changeParentPasswordForm?.reset();
+  changeParentPasswordDialog?.close();
+}
+
+document.getElementById('closeChangeParentPasswordDialog')?.addEventListener('click', closeParentPasswordDialog);
+document.getElementById('cancelChangeParentPassword')?.addEventListener('click', closeParentPasswordDialog);
+
+changeParentPasswordForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = event.submitter || document.getElementById('saveParentPasswordBtn');
+  if (button?.disabled) return;
+  const currentPassword = document.getElementById('currentParentPassword').value;
+  const newPassword = document.getElementById('newParentPassword').value;
+  const confirmPassword = document.getElementById('confirmParentPassword').value;
+  if (newPassword !== confirmPassword) {
+    changeParentPasswordStatus.textContent = 'The new password and confirmation do not match.';
+    changeParentPasswordStatus.className = 'status bad';
+    return;
+  }
+  const normalText = button?.textContent || 'Save Password';
+  setActionLoading(button, true, 'Saving...', normalText);
+  changeParentPasswordStatus.textContent = 'Changing password...';
+  changeParentPasswordStatus.className = 'status';
+  try {
+    const response = await fetch('/api/parent-dashboard', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: freshBody({ action: 'changeParentPassword', currentPassword, newPassword, confirmPassword })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Could not change the password.');
+    changeParentPasswordStatus.textContent = data.message || 'Password changed.';
+    changeParentPasswordStatus.className = 'status ok';
+    window.setTimeout(closeParentPasswordDialog, 900);
+  } catch (error) {
+    changeParentPasswordStatus.textContent = error.message;
+    changeParentPasswordStatus.className = 'status bad';
+  } finally {
+    setActionLoading(button, false, '', normalText);
+  }
+});
 
 parentNotificationsBtn?.addEventListener('click', () => {
   const opening = Boolean(parentNotificationPanel?.hidden);
@@ -1976,6 +2049,19 @@ if (dashboardNav) {
 }
 
 loadParentDocumentSettings();
+
+(async function restoreParentSession() {
+  setLoginLoading(true);
+  try {
+    await loadDashboard({ sessionOnly: true, silent: true });
+  } catch (_error) {
+    dashboardContent.hidden = true;
+    loginForm.hidden = false;
+    setStatus('', '');
+  } finally {
+    setLoginLoading(false);
+  }
+}());
 
 window.addEventListener('school-profile-ready', () => {
   const child = selectedChild();

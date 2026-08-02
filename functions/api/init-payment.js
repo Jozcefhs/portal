@@ -2,6 +2,7 @@
 // Initializes Paystack checkout from the backend so the secret key stays private.
 
 import { getPayableFees, getSchoolCode, SCHOOL_FEES_TOTAL_CODE } from './backend.js';
+import { readParentSession, verifyStoredParentPassword } from '../lib/parent-auth.js';
 import { createDocumentIfAbsent, findOneByField, getDocument, requireFirestoreEnv } from '../lib/firestore.js';
 import { normalizeClassKey } from '../lib/class-names.js';
 import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
@@ -134,18 +135,27 @@ export async function onRequestPost(context) {
   try {
     const { request, env } = context;
     const body = await readJsonBody(request, { maxBytes: 512 * 1024 });
-    const email = String(body.email || '').trim().toLowerCase();
-    const code = String(body.code || '').trim().toUpperCase();
+    const session = await readParentSession(env, request);
+    const email = String(session?.email || body.email || '').trim().toLowerCase();
+    const code = String(body.code || '').trim();
     const feeCode = String(body.feeCode || '').trim();
     const accountRef = String(body.accountRef || body.AccountRef || '').trim();
     const sourceType = String(body.sourceType || body.SourceType || '').trim();
     const scopePath = String(body.scopePath || body.ScopePath || '').trim();
     const requestedAmount = Number(String(body.amount || '0').replace(/,/g, ''));
 
-    if (!email || !code || !feeCode) {
-      return Response.json({ ok: false, message: 'Email, verification code, and fee are required.' }, { status: 400 });
+    if (!email || (!session && !code) || !feeCode) {
+      return Response.json({ ok: false, message: 'Email, password or verification code, and fee are required.' }, { status: 400 });
     }
     await verifyTurnstile(env, request, body, 'init_payment');
+
+    const storedPassword = session
+      ? { configured: false, valid: false }
+      : await verifyStoredParentPassword(env, email, code);
+    if (storedPassword.configured && !storedPassword.valid) {
+      return Response.json({ ok: false, message: 'Invalid parent email or password.' }, { status: 401 });
+    }
+    const authenticatedParentEmail = session?.email || (storedPassword.valid ? email : '');
 
     if (!env.PAYSTACK_SECRET_KEY) {
       const error = new Error('Online payment is not configured yet.');
@@ -159,11 +169,15 @@ export async function onRequestPost(context) {
       feeData = await getPayableFees(env, {
         Email: email,
         VerificationCode: code,
+        AuthenticatedParentEmail: authenticatedParentEmail,
         AccountRef: accountRef,
         SourceType: sourceType,
         ScopePath: scopePath
       });
     } catch (firestoreErr) {
+      if (authenticatedParentEmail) {
+        return Response.json({ ok: false, message: firestoreErr.message || String(firestoreErr) }, { status: firestoreErr.status || 500 });
+      }
       if (!legacyGoogleDataEnabled(env) || !env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) {
         return Response.json({ ok: false, message: firestoreErr.message || String(firestoreErr) }, { status: firestoreErr.status || 500 });
       }

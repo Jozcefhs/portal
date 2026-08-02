@@ -13,6 +13,14 @@ import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { getWebBranding } from '../lib/web-branding.js';
 import {
+  clearParentSessionCookie,
+  createParentSession,
+  parentSessionCookie,
+  readParentSession,
+  saveParentPassword,
+  verifyStoredParentPassword
+} from '../lib/parent-auth.js';
+import {
   archiveNotification,
   createNotification,
   listNotifications,
@@ -490,10 +498,17 @@ async function loadParentSources(env, scope = 'full', identity = {}) {
   const [firestoreApplications, firestoreStudents, firestoreSales] = await Promise.all([
     querySchoolIdentity(env, 'applications', email, code),
     querySchoolIdentity(env, 'students', email, code),
-    queryCollection(env, 'formSales', {
-      filters: [{ field: 'VerificationCode', op: '==', value: code }],
-      limit: 10
-    }).catch(() => [])
+    email
+      ? queryCollection(env, 'formSales', {
+          filters: [{ field: 'Email', op: '==', value: email }],
+          limit: 20
+        }).catch(() => [])
+      : (code
+          ? queryCollection(env, 'formSales', {
+              filters: [{ field: 'VerificationCode', op: '==', value: code }],
+              limit: 10
+            }).catch(() => [])
+          : Promise.resolve([]))
   ]);
   const references = uniqueRows([...firestoreApplications, ...firestoreStudents]).flatMap((row) => [
     row.AccountRef, row.AdmissionNo, row.ApplicationReference, row.ApplicationID, row.__id
@@ -716,34 +731,58 @@ function normalizeClinicRecord(row) {
   };
 }
 
-async function assertParentAccess(sources, email, code) {
+async function assertParentAccess(env, sources, email, secret, sessionEmail = '') {
   const wantedEmail = lower(email);
-  const wantedCode = clean(code).toUpperCase();
-  if (!wantedEmail || !wantedCode) {
-    const err = new Error('Parent email and verification code are required.');
+  const wantedSecret = String(secret || '').trim();
+  const wantedCode = wantedSecret.toUpperCase();
+  if (!wantedEmail) {
+    const err = new Error('Parent email is required.');
     err.status = 400;
     throw err;
   }
 
   const sales = sources.sales || [];
   const applications = sources.applications || [];
-  const saleMatch = sales.some((row) => {
-    return lower(pick(row, ['Email', 'email'])) === wantedEmail &&
-      clean(pick(row, ['VerificationCode', 'verificationCode'])).toUpperCase() === wantedCode;
-  });
   const matchingApplications = applications.filter((row) => {
     return [
       pick(row, ['VerificationEmail', 'verificationEmail']),
       pick(row, ['ParentEmail', 'parentEmail']),
       pick(row, ['Email', 'email'])
-    ].some((value) => lower(value) === wantedEmail) &&
-      clean(pick(row, ['VerificationCode', 'verificationCode'])).toUpperCase() === wantedCode;
+    ].some((value) => lower(value) === wantedEmail);
   });
-  const studentMatch = (sources.students || []).map(normalizeStudent).some((row) => {
-    return lower(row.ParentEmail) === wantedEmail && studentLoginCode(row) === wantedCode;
-  });
-  if (!saleMatch && matchingApplications.length === 0 && !studentMatch) {
-    const err = new Error('Invalid parent email or verification code.');
+  const matchingStudents = (sources.students || []).map(normalizeStudent)
+    .filter((row) => lower(row.ParentEmail) === wantedEmail);
+  const matchingSales = sales.filter((row) => lower(pick(row, ['Email', 'email'])) === wantedEmail);
+  if (!matchingSales.length && !matchingApplications.length && !matchingStudents.length) {
+    const err = new Error('No parent account was found for that email address.');
+    err.status = 401;
+    throw err;
+  }
+
+  if (lower(sessionEmail) !== wantedEmail) {
+    if (!wantedSecret) {
+      const err = new Error('Parent password or verification code is required.');
+      err.status = 401;
+      throw err;
+    }
+    const storedPassword = await verifyStoredParentPassword(env, wantedEmail, wantedSecret);
+    const legacyMatch = !storedPassword.configured && (
+      matchingSales.some((row) => clean(pick(row, ['VerificationCode', 'verificationCode'])).toUpperCase() === wantedCode)
+      || matchingApplications.some((row) => clean(pick(row, ['VerificationCode', 'verificationCode'])).toUpperCase() === wantedCode)
+      || matchingStudents.some((row) => studentLoginCode(row) === wantedCode)
+    );
+    if (!storedPassword.valid && !legacyMatch) {
+      const err = new Error(storedPassword.configured
+        ? 'Invalid parent email or password.'
+        : 'Invalid parent email or verification code.');
+      err.status = 401;
+      throw err;
+    }
+  }
+
+  const studentMatch = matchingStudents.length > 0;
+  if (!matchingSales.length && matchingApplications.length === 0 && !studentMatch) {
+    const err = new Error('This parent account has no linked student or application.');
     err.status = 401;
     throw err;
   }
@@ -996,7 +1035,7 @@ async function resolveParentAdmissionApplication(env, body, email, code, account
   const authenticateFamily = () => {
     if (!familyAccessPromise) {
       familyAccessPromise = loadParentSources(env, 'identity', body).then(async (sources) => {
-        await assertParentAccess(sources, email, code);
+        await assertParentAccess(env, sources, email, code, body.__parentSessionEmail);
         return sources;
       });
     }
@@ -1320,13 +1359,20 @@ function invoiceDueNotifications(invoices, keys, accountSummary = null, child = 
 
 async function getDashboard(env, body, options = {}) {
   const email = lower(body.email || body.ParentEmail || body.Email);
-  const code = clean(body.code || body.VerificationCode).toUpperCase();
+  const secret = String(body.code || body.VerificationCode || '').trim();
+  const code = secret.toUpperCase();
   // The initial request only establishes the family/child list. Financial,
   // clinic and store details are loaded for the selected child immediately
   // afterwards, avoiding a duplicate full-data scan on every refresh.
   const sources = await loadParentSources(env, 'identity', body);
   const schoolProfile = await getSchoolProfile(env);
-  const { applications, matchingApplications } = await assertParentAccess(sources, email, code);
+  const { applications, matchingApplications } = await assertParentAccess(
+    env,
+    sources,
+    email,
+    secret,
+    body.__parentSessionEmail
+  );
   const allStudents = (sources.students || []).map((row) => normalizeStudent(row, schoolProfile));
   const children = allStudents.filter((student) => parentOwnsStudent(student, email, applications, matchingApplications));
   const parentApplications = applications.filter((app) => {
@@ -1400,6 +1446,7 @@ async function getDashboard(env, body, options = {}) {
   return {
     ok: true,
     message: 'Parent dashboard loaded.',
+    parentEmail: email,
     children,
     walletActivity,
     paymentRecords,
@@ -1454,7 +1501,7 @@ async function getChildActivity(env, body) {
   }
   if (!child) {
     const identitySources = await loadParentSources(env, 'identity', body);
-    const access = await assertParentAccess(identitySources, email, code);
+    const access = await assertParentAccess(env, identitySources, email, code, body.__parentSessionEmail);
     applications = access.applications;
     const scopedStudents = (identitySources.students || [])
       .filter((row) => !requestedScopeValue ||
@@ -1576,9 +1623,11 @@ async function updateWalletRestrictions(env, body) {
   }
   const sources = await loadParentSources(env, 'identity', body);
   const { applications, matchingApplications } = await assertParentAccess(
+    env,
     sources,
     email,
-    body.code || body.VerificationCode
+    body.code || body.VerificationCode,
+    body.__parentSessionEmail
   );
   const student = normalizeStudent(selectedRow);
   const selectedScope = selectedChildActivityScope(requestedScopePath, 'students', student);
@@ -1623,7 +1672,8 @@ async function getChildPayable(env, body) {
     VerificationCode: body.code || body.VerificationCode,
     AccountRef: body.accountRef || body.AccountRef || body.AdmissionNo,
     SourceType: body.sourceType || body.SourceType,
-    ScopePath: body.scopePath || body.ScopePath
+    ScopePath: body.scopePath || body.ScopePath,
+    AuthenticatedParentEmail: body.__parentSessionEmail || body.__parentAuthenticatedEmail
   });
   const items = buildPayableItems(payable.fees || [], payable.schoolFeeBreakdown || []);
   if (!items.some(isWalletFee) && clean(payable.account && payable.account.AdmissionNo)) {
@@ -1802,13 +1852,84 @@ async function updateParentNotificationConfiguration(env, body, request) {
   return response;
 }
 
+async function changeParentPassword(env, body) {
+  const email = lower(body.__parentSessionEmail);
+  if (!email) {
+    const error = new Error('Your parent session has expired. Sign in again before changing your password.');
+    error.status = 401;
+    throw error;
+  }
+  const currentPassword = String(body.currentPassword || '').trim();
+  const newPassword = String(body.newPassword || '');
+  const confirmPassword = String(body.confirmPassword || '');
+  if (!currentPassword) {
+    const error = new Error('Enter your current password or verification code.');
+    error.status = 400;
+    throw error;
+  }
+  if (newPassword !== confirmPassword) {
+    const error = new Error('The new password and confirmation do not match.');
+    error.status = 400;
+    throw error;
+  }
+  if (newPassword === currentPassword) {
+    const error = new Error('Choose a new password that is different from your current password.');
+    error.status = 400;
+    throw error;
+  }
+  const sources = await loadParentSources(env, 'identity', { email, code: currentPassword });
+  await assertParentAccess(env, sources, email, currentPassword, '');
+  await saveParentPassword(env, email, newPassword);
+  return {
+    ok: true,
+    parentEmail: email,
+    message: 'Password changed. Your browser can now update the saved password.'
+  };
+}
+
+function parentResponseHeaders(cookie = '') {
+  const headers = new Headers({
+    'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+    Pragma: 'no-cache'
+  });
+  if (cookie) headers.set('Set-Cookie', cookie);
+  return headers;
+}
+
 export async function onRequestPost(context) {
   try {
     const { request, env } = context;
     const body = await readJsonBody(request, { maxBytes: 256 * 1024 });
     const action = clean(body.action || body.Action || 'getDashboard');
+    if (lower(action) === 'signout') {
+      return Response.json({ ok: true, message: 'Signed out.' }, {
+        headers: parentResponseHeaders(clearParentSessionCookie())
+      });
+    }
+
+    const session = await readParentSession(env, request);
+    const suppliedEmail = lower(body.email || body.ParentEmail || body.Email);
+    const suppliedSecret = String(body.code || body.VerificationCode || '').trim();
+    delete body.__parentSessionEmail;
+    delete body.__parentAuthenticatedEmail;
+    if (session && !suppliedSecret) {
+      body.email = session.email;
+      body.__parentSessionEmail = session.email;
+    } else if (!suppliedEmail || !suppliedSecret) {
+      const error = new Error('Parent email and password or verification code are required.');
+      error.status = 401;
+      throw error;
+    }
+    if (!body.__parentSessionEmail && !['getDashboard', 'changeParentPassword'].includes(action)) {
+      const sources = await loadParentSources(env, 'identity', body);
+      await assertParentAccess(env, sources, suppliedEmail, suppliedSecret, '');
+      body.__parentAuthenticatedEmail = suppliedEmail;
+    }
+
     let data;
-    if (action === 'updateWalletRestrictions') {
+    if (action === 'changeParentPassword') {
+      data = await changeParentPassword(env, body);
+    } else if (action === 'updateWalletRestrictions') {
       data = await updateWalletRestrictions(env, body);
     } else if (action === 'getNotifications') {
       data = await getParentNotifications(env, body);
@@ -1837,11 +1958,12 @@ export async function onRequestPost(context) {
     } else {
       data = await getDashboard(env, body);
     }
+    const shouldIssueSession = action === 'getDashboard' || action === 'changeParentPassword';
+    const cookie = shouldIssueSession
+      ? parentSessionCookie(await createParentSession(env, data.parentEmail || body.email))
+      : '';
     return Response.json(data, {
-      headers: {
-        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-        Pragma: 'no-cache'
-      }
+      headers: parentResponseHeaders(cookie)
     });
   } catch (err) {
     return Response.json({
@@ -1849,10 +1971,7 @@ export async function onRequestPost(context) {
       message: String(err && err.message ? err.message : err)
     }, {
       status: err.status || 500,
-      headers: {
-        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
-        Pragma: 'no-cache'
-      }
+      headers: parentResponseHeaders()
     });
   }
 }

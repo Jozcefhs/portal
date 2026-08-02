@@ -5,6 +5,7 @@ import { getDocument, requireFirestoreEnv } from '../lib/firestore.js';
 import { getSchoolDocumentById, querySchoolCollection } from '../lib/school-scope.js';
 import { resolveDocumentStorage } from '../lib/document-storage.js';
 import { readJsonBody } from '../lib/request-security.js';
+import { readParentSession, verifyStoredParentPassword } from '../lib/parent-auth.js';
 import {
   admissionApplicationScopePath,
   admissionThumbnailDocumentId,
@@ -51,16 +52,21 @@ function passportUrl(row) {
   return clean(passport.url || row.DocPassportPhotographUrl || row.PassportPhotographUrl || row.PassportPhotographLink);
 }
 
-function parentOwnsApplication(row, email, code) {
+function parentEmailOwnsApplication(row, email) {
   const parent = row && row.parent && typeof row.parent === 'object' ? row.parent : {};
   const emails = [row.VerificationEmail, row.verificationEmail, row.ParentEmail, row.parentEmail, row.Email, row.email, parent.email]
     .map(lower)
     .filter(Boolean);
+  return emails.includes(lower(email));
+}
+
+function parentOwnsApplication(row, email, code) {
   const rowCode = clean(pick(row, ['VerificationCode', 'verificationCode'])).toUpperCase();
-  return emails.includes(email) && rowCode === code;
+  return parentEmailOwnsApplication(row, email) && rowCode === clean(code).toUpperCase();
 }
 
 export async function parentCanAccessPassportApplication(env, application, email, code, options = {}) {
+  if (options.authenticated === true) return parentEmailOwnsApplication(application, email);
   if (parentOwnsApplication(application, email, code)) return true;
   const resolveApplication = options.findFirestoreApplication || findFirestoreApplication;
   const reference = applicationReference(application);
@@ -171,9 +177,19 @@ export async function onRequestPost(context) {
     const suppliedSecret = clean(body.Secret || body.secret);
     const staffAuthorized = Boolean(env.BACKEND_SHARED_SECRET) && suppliedSecret === clean(env.BACKEND_SHARED_SECRET);
     if (!staffAuthorized) {
-      const email = lower(body.email || body.ParentEmail || body.Email);
-      const code = clean(body.code || body.VerificationCode).toUpperCase();
-      if (!email || !code || !await parentCanAccessPassportApplication(env, application, email, code)) {
+      const session = await readParentSession(env, request);
+      const email = lower(session?.email || body.email || body.ParentEmail || body.Email);
+      const code = clean(body.code || body.VerificationCode);
+      const storedPassword = session || !email || !code
+        ? { configured: false, valid: false }
+        : await verifyStoredParentPassword(env, email, code);
+      const authenticated = Boolean(session || storedPassword.valid);
+      const allowed = email && (authenticated || code) &&
+        await parentCanAccessPassportApplication(env, application, email, code, { authenticated });
+      if (storedPassword.configured && !storedPassword.valid) {
+        return Response.json({ ok: false, message: 'Invalid parent email or password.' }, { status: 401 });
+      }
+      if (!allowed) {
         return Response.json({ ok: false, message: 'Unauthorized passport photograph request.' }, { status: 403 });
       }
     }

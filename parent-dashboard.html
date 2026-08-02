@@ -7,9 +7,27 @@
   <meta name="theme-color" content="#0f3d66"><link rel="manifest" href="manifest.webmanifest?v=20260801-transparent-app-logo"><link rel="icon" type="image/png" href="images/Logo.png?v=20260801-transparent-app-logo"><link rel="apple-touch-icon" href="images/Logo.png?v=20260801-transparent-app-logo">
   <script src="js/preferences.js?v=20260726-biometric"></script>
   <link rel="stylesheet" href="css/style.css?v=20260802-parent-mobile-actions">
-  <link rel="stylesheet" href="css/notifications.css?v=20260802-school-managed-notifications">
+  <link rel="stylesheet" href="css/notifications.css?v=20260802-parent-password-session">
 </head>
 <body>
+  <dialog id="changeParentPasswordDialog" class="notification-history-dialog parent-password-dialog">
+    <div class="notification-history-shell">
+      <header><div><small>ACCOUNT SECURITY</small><h2>Change password</h2></div><button type="button" id="closeChangeParentPasswordDialog" aria-label="Close">&times;</button></header>
+      <form id="changeParentPasswordForm" autocomplete="on">
+        <label for="changeParentEmail">Parent email</label>
+        <input id="changeParentEmail" name="username" type="email" autocomplete="username" readonly>
+        <label for="currentParentPassword">Current password or verification code</label>
+        <input id="currentParentPassword" name="current-password" type="password" autocomplete="current-password" required>
+        <label for="newParentPassword">New password</label>
+        <input id="newParentPassword" name="new-password" type="password" autocomplete="new-password" minlength="8" required>
+        <label for="confirmParentPassword">Confirm new password</label>
+        <input id="confirmParentPassword" name="new-password-confirmation" type="password" autocomplete="new-password" minlength="8" required>
+        <p class="muted">Use at least 8 characters. Your browser can offer to save the new password securely.</p>
+        <p id="changeParentPasswordStatus" class="status" role="status" aria-live="polite"></p>
+        <div class="dialog-form-actions"><button type="button" id="cancelChangeParentPassword" class="secondary">Cancel</button><button type="submit" id="saveParentPasswordBtn">Save Password</button></div>
+      </form>
+    </div>
+  </dialog>
   <main class="page-wrap">
     <section class="card dashboard-card">
       <div class="form-header">
@@ -24,12 +42,12 @@
         <div class="grid two">
           <div>
             <label for="parentEmail">Parent Email <span class="required">*</span></label>
-            <input id="parentEmail" type="email" required>
+            <input id="parentEmail" name="username" type="email" autocomplete="username" required>
           </div>
           <div>
-            <label for="verificationCode">Parent Login / Verification Code <span class="required">*</span></label>
-            <input id="verificationCode" required>
-            <small class="muted">For imported students, use the Parent Login Code supplied by the school.</small>
+            <label for="verificationCode">Parent Password / Verification Code <span class="required">*</span></label>
+            <input id="verificationCode" name="password" type="password" autocomplete="current-password" required>
+            <small class="muted">First login: use the Parent Login Code supplied by the school. You can then choose a private password.</small>
           </div>
         </div>
         <button type="submit" id="loadDashboardBtn">Open Dashboard</button>
@@ -43,6 +61,7 @@
             <span id="parentNotificationBadge" class="parent-notification-badge" hidden>0</span>
           </button>
           <button type="button" id="refreshDashboardBtn">Refresh Dashboard</button>
+          <button type="button" id="changeParentPasswordBtn" class="secondary">Change Password</button>
           <button type="button" id="signOutDashboardBtn" class="dashboard-signout">Sign Out</button>
         </div>
         <section id="parentNotificationPanel" class="parent-notification-panel" hidden>
@@ -228,6 +247,7 @@
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/pwa-install.js?v=20260729-action-feedback"></script>
   <script src="js/web-push.js?v=20260801-mobile-push"></script>
-  <script src="js/parent-dashboard.js?v=20260802-school-managed-notifications"></script>
+  <script src="js/password-toggle.js?v=20260726-biometric"></script>
+  <script src="js/parent-dashboard.js?v=20260802-parent-password-session"></script>
 </body>
 </html>
