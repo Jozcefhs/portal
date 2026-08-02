@@ -5,10 +5,57 @@ const statusEl = document.getElementById('submitStatus');
 const submitBtn = document.getElementById('submitBtn');
 const classSelect = document.getElementById('classApplying');
 const classCompletedSelect = document.getElementById('classCompleted');
+const dobInput = document.getElementById('dob');
+const dobYear = document.getElementById('dobYear');
+const dobMonth = document.getElementById('dobMonth');
+const dobDay = document.getElementById('dobDay');
 
 let verified = null;
 let openClassesLoaded = false;
 let applicationIdempotencyKey = '';
+
+function option(value, label = value) {
+  const item = document.createElement('option');
+  item.value = String(value);
+  item.textContent = String(label);
+  return item;
+}
+
+function daysInMonth(year, month) {
+  return new Date(Number(year), Number(month), 0).getDate();
+}
+
+function syncDateOfBirth() {
+  if (!dobInput || !dobYear || !dobMonth || !dobDay) return;
+  const previousDay = dobDay.value;
+  const year = Number(dobYear.value);
+  const month = Number(dobMonth.value);
+  const dayLimit = year && month ? daysInMonth(year, month) : 31;
+  dobDay.innerHTML = '<option value="">Day</option>';
+  for (let day = 1; day <= dayLimit; day += 1) dobDay.appendChild(option(day, String(day).padStart(2, '0')));
+  if (previousDay && Number(previousDay) <= dayLimit) dobDay.value = previousDay;
+  const day = Number(dobDay.value);
+  const selectedDate = year && month && day ? new Date(year, month - 1, day) : null;
+  dobDay.setCustomValidity(selectedDate && selectedDate > new Date() ? 'Date of birth cannot be in the future.' : '');
+  dobInput.value = year && month && day
+    ? `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    : '';
+}
+
+function installDateOfBirthPicker() {
+  if (!dobInput || !dobYear || !dobMonth || !dobDay) return;
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  for (let year = currentYear; year >= currentYear - 120; year -= 1) dobYear.appendChild(option(year));
+  [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ].forEach((month, index) => dobMonth.appendChild(option(index + 1, month)));
+  syncDateOfBirth();
+  [dobYear, dobMonth, dobDay].forEach((select) => select.addEventListener('change', syncDateOfBirth));
+}
+
+installDateOfBirthPicker();
 
 function newIdempotencyKey() {
   if (window.crypto?.randomUUID) return window.crypto.randomUUID();

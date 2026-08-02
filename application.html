@@ -6,6 +6,7 @@
   <title>Admission Application Form</title>
   <script src="js/preferences.js?v=20260726-biometric"></script>
   <link rel="stylesheet" href="css/style.css?v=20260802-parent-notification-layout">
+  <link rel="stylesheet" href="css/application.css?v=20260802-long-past-date-picker">
 </head>
 <body>
   <main class="page-wrap">
@@ -46,8 +47,14 @@
               </select>
             </div>
             <div>
-              <label for="dob">Date of Birth <span class="required">*</span></label>
-              <input id="dob" name="DateOfBirth" type="date" required>
+              <label id="dobLabel">Date of Birth <span class="required">*</span></label>
+              <div class="historical-date-picker" role="group" aria-labelledby="dobLabel" data-historical-date-picker>
+                <label><span>Year</span><select id="dobYear" required aria-label="Birth year"><option value="">Year</option></select></label>
+                <label><span>Month</span><select id="dobMonth" required aria-label="Birth month"><option value="">Month</option></select></label>
+                <label><span>Day</span><select id="dobDay" required aria-label="Birth day"><option value="">Day</option></select></label>
+                <input id="dob" name="DateOfBirth" type="hidden">
+              </div>
+              <small class="historical-date-help">Select the year first for faster entry of an earlier birth date.</small>
             </div>
             <div>
               <label for="religion">Religion <span class="required">*</span></label>
@@ -314,6 +321,6 @@
   </div>
   <script src="js/site-config.js?v=20260728-quota-safety"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
-  <script src="js/application.js?v=20260729-action-feedback"></script>
+  <script src="js/application.js?v=20260802-long-past-date-picker"></script>
 </body>
 </html>
