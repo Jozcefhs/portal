@@ -83,7 +83,9 @@ function audiencePolicies(value = {}, fallback = {}) {
       },
       Categories: Object.fromEntries(NOTIFICATION_CATEGORIES.map((category) => [
         category,
-        input.Categories?.[category] !== undefined
+        audience === 'Parent' && category === 'Requisitions'
+          ? false
+          : input.Categories?.[category] !== undefined
           ? input.Categories[category] === true
           : existing.Categories?.[category] !== false
       ]))

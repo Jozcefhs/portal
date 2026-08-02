@@ -50,6 +50,7 @@ test('parent and staff notification types are school-managed by default', () => 
   }, 'Parent');
   assert.deepEqual(parent.Channels, { InApp: true, Push: true });
   assert.equal(parent.Categories.Payments, true);
+  assert.equal(parent.Categories.Requisitions, false);
 });
 
 test('staff requisition notifications target finance decision makers in the record scope', () => {
@@ -563,9 +564,15 @@ test('staff and parent notification interfaces are wired to protected APIs', asy
   assert.match(notificationJs, /class="notification-device-delete"[^>]*data-remove-push-device/);
   assert.doesNotMatch(notificationJs, /data-remove-push-device="[^\n]*">Remove</);
   assert.match(notificationJs, /School settings & devices/);
+  assert.match(notificationJs, /Delivery channels/);
+  assert.match(notificationJs, /Notification types/);
+  assert.match(notificationJs, /audience === 'Parent'[\s\S]*?filter\(\(category\) => category !== 'Requisitions'\)/);
   assert.match(notificationJs, /data-policy-audience="\$\{audience\}"/);
   assert.match(notificationJs, /AudiencePolicies: audiencePolicies/);
   assert.match(notificationCss, /\.notification-audience-policy-grid\{/);
+  assert.match(notificationCss, /\.notification-settings-form input\[type=checkbox\]\{[^}]*width:16px[^}]*height:16px/);
+  assert.match(notificationCss, /\.notification-audience-policy label\{[^}]*grid-template-columns:16px minmax\(0,1fr\)/);
+  assert.doesNotMatch(parentHtml, /id="parentNotificationCategory"[\s\S]*?<option>Requisitions<\/option>[\s\S]*?<\/select>/);
   assert.doesNotMatch(parentHtml, /Preferences & devices|parentNotificationSettingsForm|disableParentPush/);
   assert.doesNotMatch(parentDashboardJs, /saveNotificationSettings|data-remove-parent-push-device/);
   assert.match(parentApi, /action === 'archiveNotification'/);
@@ -573,6 +580,7 @@ test('staff and parent notification interfaces are wired to protected APIs', asy
   assert.match(styleCss, /\.parent-notification-item strong\{font-size:12px/);
   assert.match(styleCss, /\.parent-notification-item>span>span\{[^}]*font-size:10px/);
   assert.match(staffApi, /requireStaffSession/);
+  assert.match(staffApi, /audience === 'Parent' && category === 'Requisitions'/);
   assert.match(staffApi, /AudiencePolicies: audiencePolicies/);
   assert.match(parentApi, /action === 'getNotifications'/);
   assert.match(parentApi, /action === 'markNotificationRead'/);

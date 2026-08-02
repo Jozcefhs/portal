@@ -6,7 +6,7 @@ const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260802-parent-notification-layout';
 const adminScriptVersion = '20260801-income-latest-period';
 const parentScriptVersion = '20260802-parent-password-session';
-const notificationVersion = '20260802-parent-password-session';
+const notificationVersion = '20260802-notification-policy-layout';
 const pageNames = [
   'admin.html',
   'application.html',
@@ -89,7 +89,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v88-parent-notification-layout/);
+  assert.match(serviceWorker, /dynamax-v89-notification-policy-layout/);
   assert.match(serviceWorker, /'\/give\.html'/);
   assert.match(serviceWorker, /'\/js\/give\.js'/);
   assert.match(serviceWorker, /'\/js\/action-feedback\.js'/);

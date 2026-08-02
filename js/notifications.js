@@ -3,12 +3,23 @@
   const profile = document.getElementById('staffProfileTrigger');
   if (!identity || !profile) return;
   const managedCategories = ['Fees', 'Payments', 'Requisitions', 'Attendance', 'Academics', 'Announcements', 'System'];
-  const audiencePolicyMarkup = (audience, label) => `
-    <section class="notification-audience-policy" data-policy-audience="${audience}">
-      <h3>${label}</h3>
-      <div class="notification-policy-channels"><label><input type="checkbox" data-policy-channel="InApp"> In-app</label><label><input type="checkbox" data-policy-channel="Push"> Browser push</label></div>
-      <div class="notification-policy-categories">${managedCategories.map((category) => `<label><input type="checkbox" data-policy-category="${category}"> ${category}</label>`).join('')}</div>
-    </section>`;
+  const audiencePolicyMarkup = (audience, label) => {
+    const categories = audience === 'Parent'
+      ? managedCategories.filter((category) => category !== 'Requisitions')
+      : managedCategories;
+    return `
+      <section class="notification-audience-policy" data-policy-audience="${audience}">
+        <h3>${label}</h3>
+        <div class="notification-policy-group">
+          <h4>Delivery channels</h4>
+          <div class="notification-policy-channels"><label><input type="checkbox" data-policy-channel="InApp"><span>In-app</span></label><label><input type="checkbox" data-policy-channel="Push"><span>Browser push</span></label></div>
+        </div>
+        <div class="notification-policy-group">
+          <h4>Notification types</h4>
+          <div class="notification-policy-categories">${categories.map((category) => `<label><input type="checkbox" data-policy-category="${category}"><span>${category}</span></label>`).join('')}</div>
+        </div>
+      </section>`;
+  };
 
   const centre = document.createElement('div');
   centre.className = 'notification-centre';

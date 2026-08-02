@@ -204,17 +204,19 @@ function notificationAudiencePolicies(system = {}) {
     const policy = configured[audience] && typeof configured[audience] === 'object'
       ? configured[audience]
       : {};
+    const categories = {
+      ...DEFAULT_NOTIFICATION_SETTINGS.Categories,
+      ...(system.Categories || {}),
+      ...(policy.Categories || {})
+    };
+    if (audience === 'Parent') categories.Requisitions = false;
     return [audience, {
       Channels: {
         ...DEFAULT_NOTIFICATION_SETTINGS.Channels,
         ...(system.Channels || {}),
         ...(policy.Channels || {})
       },
-      Categories: {
-        ...DEFAULT_NOTIFICATION_SETTINGS.Categories,
-        ...(system.Categories || {}),
-        ...(policy.Categories || {})
-      }
+      Categories: categories
     }];
   }));
 }
