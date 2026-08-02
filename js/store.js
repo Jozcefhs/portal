@@ -138,7 +138,7 @@ storeForm.addEventListener('submit', async (event) => {
   storeForm.dataset.idempotencyKey = idempotencyKey;
   storeButton.disabled = true;
   storeButton.textContent = 'Preparing payment…';
-  setStatus('Preparing your secure payment and email link…');
+  setStatus('Preparing your secure payment…');
   try {
     const turnstile = window.DynamaxPublicApi?.getTurnstileToken
       ? await window.DynamaxPublicApi.getTurnstileToken('organization_store')
@@ -164,7 +164,7 @@ storeForm.addEventListener('submit', async (event) => {
     }
     const paymentUrl = clean(data.authorizationUrl || data.sale?.AuthorizationUrl);
     if (!/^https:\/\/[A-Za-z0-9.-]+(?:\/|$)/.test(paymentUrl)) throw new Error('The secure payment address was not returned.');
-    setStatus('Payment link emailed. Opening secure payment now…', 'ok');
+    setStatus('Opening secure payment now. Your receipt will be emailed after payment…', 'ok');
     window.location.assign(paymentUrl);
   } catch (error) {
     if (error.responseReceived) delete storeForm.dataset.idempotencyKey;

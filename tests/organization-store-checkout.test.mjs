@@ -48,7 +48,7 @@ test('public organisation store exposes a compact searchable catalogue and autho
   assert.match(storeHtml, /id="publicStoreCartShortcut"/);
   assert.match(storeHtml, /class="public-store-header" id="publicStoreHeader"/);
   assert.match(storeHtml, /id="publicStoreCheckout" tabindex="-1"/);
-  assert.match(storeHtml, /js\/store\.js\?v=20260802-cart-shortcut/);
+  assert.match(storeHtml, /js\/store\.js\?v=20260802-receipt-only/);
   assert.match(storeCompactCss, /\.public-store-header\s*\{[\s\S]*?position: sticky;[\s\S]*?top: 0;[\s\S]*?z-index: 20;/);
   assert.match(storeCompactCss, /@media \(max-width: 820px\)[\s\S]*?\.public-store-header\s*\{[\s\S]*?gap: 6px;[\s\S]*?padding: 10px 12px;/);
   assert.match(storeCompactCss, /\.public-store-header > div:last-child > span\s*\{\s*display: none;/);
@@ -78,10 +78,13 @@ test('public store API is edition-bound, rate limited, replay safe and uses serv
   assert.match(commerce, /const cart = await authoritativeCart/);
 });
 
-test('store checkout emails a payment link while pending and a receipt only after payment', () => {
+test('staff checkout emails a pending link while public QR checkout sends only the paid receipt', () => {
   assert.match(commerce, /sendOrganizationCommercePaymentLinkEmail/);
   assert.match(commerce, /sendOrganizationCommerceReceiptEmail/);
-  assert.match(commerce, /scheduleCommerceEmail\(env, updated, 'payment-link'/);
+  assert.match(commerce, /function shouldEmailOrganizationCommercePaymentLink/);
+  assert.match(commerce, /lower\(sale\.CheckoutSource\) !== 'public store'/);
+  assert.match(commerce, /reason: 'public-self-service-checkout'/);
+  assert.match(commerce, /scheduleCommercePaymentLinkEmail\(env, updated, options\)/);
   assert.match(commerce, /scheduleCommerceEmail\(env, paidSale, 'receipt'/);
   assert.match(commerce, /scheduleCommerceEmail\(env, sale, 'receipt'/);
   assert.match(commerce, /typeof options\.waitUntil === 'function'/);
@@ -97,6 +100,10 @@ test('store checkout emails a payment link while pending and a receipt only afte
   assert.match(commerceEmail, /width="28%"/);
   assert.match(commerceEmail, /function totalSummary/);
   assert.doesNotMatch(commerceEmail, /display:flex/);
+  assert.doesNotMatch(storeHtml, /payment link and receipt/i);
+  assert.match(storeHtml, /Your paid receipt will be sent here/);
+  assert.doesNotMatch(storeJs, /Payment link emailed/);
+  assert.match(storeJs, /receipt will be emailed after payment/);
 });
 
 test('staff can print a reusable branch-scoped public store QR and email online links without leaving the POS', () => {

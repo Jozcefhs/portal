@@ -113,6 +113,22 @@ async function scheduleCommerceEmail(env, sale = {}, type = 'receipt', options =
   return task;
 }
 
+export function shouldEmailOrganizationCommercePaymentLink(sale = {}) {
+  return lower(sale.CheckoutSource) !== 'public store';
+}
+
+async function scheduleCommercePaymentLinkEmail(env, sale = {}, options = {}) {
+  if (!shouldEmailOrganizationCommercePaymentLink(sale)) {
+    return {
+      ok: true,
+      skipped: true,
+      type: 'payment-link',
+      reason: 'public-self-service-checkout'
+    };
+  }
+  return scheduleCommerceEmail(env, sale, 'payment-link', options);
+}
+
 function commerceEmailNotice(delivery = {}, label = 'Email') {
   if (delivery.skipped) return '';
   if (delivery.ok || delivery.queued) return ` ${label} queued.`;
@@ -509,7 +525,7 @@ export async function initializeOnlineOrganizationCommerceSale(env, request, sec
   const id = saleId(body, section);
   const previous = await existingSale(env, id);
   if (previous?.AuthorizationUrl && lower(previous.PaymentStatus) === 'pending') {
-    const emailDelivery = await scheduleCommerceEmail(env, previous, 'payment-link', options);
+    const emailDelivery = await scheduleCommercePaymentLinkEmail(env, previous, options);
     return {
       ok: true,
       replayed: true,
@@ -535,7 +551,7 @@ export async function initializeOnlineOrganizationCommerceSale(env, request, sec
     sale
   );
   if (!created.created && created.document?.AuthorizationUrl) {
-    const emailDelivery = await scheduleCommerceEmail(env, created.document, 'payment-link', options);
+    const emailDelivery = await scheduleCommercePaymentLinkEmail(env, created.document, options);
     return {
       ok: true,
       replayed: true,
@@ -602,10 +618,13 @@ export async function initializeOnlineOrganizationCommerceSale(env, request, sec
     UpdatedAt: nowIso()
   };
   await upsertDocument(env, COMMERCE_CONFIG.organizationStore.sales, safeId(id), updated);
-  const emailDelivery = await scheduleCommerceEmail(env, updated, 'payment-link', options);
+  const emailDelivery = await scheduleCommercePaymentLinkEmail(env, updated, options);
+  const paymentMessage = shouldEmailOrganizationCommercePaymentLink(updated)
+    ? `Secure payment initialized.${commerceEmailNotice(emailDelivery, 'Payment link email')}`
+    : 'Secure payment initialized. A receipt will be emailed after payment is confirmed.';
   return {
     ok: true,
-    message: `Secure payment initialized.${commerceEmailNotice(emailDelivery, 'Payment link email')}`,
+    message: paymentMessage,
     sale: updated,
     authorizationUrl: updated.AuthorizationUrl,
     reference: updated.PaymentReference,

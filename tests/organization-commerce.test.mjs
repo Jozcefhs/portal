@@ -4,7 +4,8 @@ import test from 'node:test';
 
 import {
   buildOrganizationCommerceJournal,
-  normalizeCommercePaymentMethod
+  normalizeCommercePaymentMethod,
+  shouldEmailOrganizationCommercePaymentLink
 } from '../functions/lib/organization-commerce.js';
 
 const portalRoot = new URL('../', import.meta.url);
@@ -34,6 +35,12 @@ test('commerce payment method names are normalized without accepting ambiguous m
   assert.equal(normalizeCommercePaymentMethod('POS/Card'), 'POS / Card');
   assert.equal(normalizeCommercePaymentMethod('paystack'), 'Paystack Online');
   assert.throws(() => normalizeCommercePaymentMethod('wallet'), /Choose Cash/);
+});
+
+test('payment-link email is reserved for staff-created online store sales', () => {
+  assert.equal(shouldEmailOrganizationCommercePaymentLink({ CheckoutSource: 'Staff Point of Sale' }), true);
+  assert.equal(shouldEmailOrganizationCommercePaymentLink({ CheckoutSource: 'Public Store' }), false);
+  assert.equal(shouldEmailOrganizationCommercePaymentLink({ CheckoutSource: 'public store' }), false);
 });
 
 test('organisation store cash sale debits cash and credits dedicated store revenue', () => {
