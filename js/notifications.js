@@ -143,7 +143,10 @@
   }
 
   function renderAnnouncements(data = {}) {
-    const allowed = data.canComposeAnnouncements === true;
+    const roleText = String(document.getElementById('staffRole')?.textContent || '').trim().toLowerCase();
+    const schoolManagementInterface = document.documentElement.dataset.edition === 'school' &&
+      ['super admin', 'management'].some((role) => roleText.startsWith(role));
+    const allowed = data.canComposeAnnouncements === true || schoolManagementInterface;
     composeTab.hidden = !allowed;
     if (!allowed && dialog.querySelector('[data-notification-view="compose"]').classList.contains('is-active')) {
       dialog.querySelector('[data-notification-view="history"]').click();

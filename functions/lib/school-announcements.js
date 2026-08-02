@@ -79,7 +79,8 @@ function chunks(values = [], size = MAX_TARGETS_PER_NOTIFICATION) {
 }
 
 export function canManageSchoolAnnouncements(user = {}) {
-  return lower(user.edition) === 'school' && ANNOUNCEMENT_ROLES.has(lower(user.role));
+  const schoolEdition = lower(user.edition) === 'school' || user.featureFlags?.students === true;
+  return schoolEdition && ANNOUNCEMENT_ROLES.has(lower(user.role));
 }
 
 export function normalizeSchoolAnnouncementInput(input = {}, options = {}) {

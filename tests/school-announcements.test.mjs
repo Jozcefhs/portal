@@ -10,6 +10,7 @@ import {
 test('only authorised school management can compose announcements', () => {
   assert.equal(canManageSchoolAnnouncements({ edition: 'school', role: 'Super Admin' }), true);
   assert.equal(canManageSchoolAnnouncements({ edition: 'school', role: 'Management' }), true);
+  assert.equal(canManageSchoolAnnouncements({ featureFlags: { students: true }, role: 'Super Admin' }), true);
   assert.equal(canManageSchoolAnnouncements({ edition: 'school', role: 'Accounts Officer' }), false);
   assert.equal(canManageSchoolAnnouncements({ edition: 'church', role: 'Super Admin' }), false);
 });
@@ -71,6 +72,7 @@ test('composer, protected endpoint and scheduler are wired together', async () =
   assert.match(ui, /name="Staff"/);
   assert.match(ui, /update\('sendAnnouncement'/);
   assert.match(ui, /Sent and scheduled messages/);
+  assert.match(ui, /schoolManagementInterface/);
   assert.match(css, /\.notification-compose-form\{/);
   assert.match(css, /\.notification-announcement-history\{/);
   assert.match(api, /action === 'sendannouncement'/);
