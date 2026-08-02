@@ -55,6 +55,10 @@ test('church store uses its own catalogue scope and customer-facing language', (
   assert.match(adminJs, /textContent = 'Update item'/);
   assert.match(storeApi, /existing \? 'Store item updated\.' : 'Store item saved\.'/);
   assert.match(storeApi, /Store item not found or is outside your permitted workspace/);
+  assert.match(storeApi, /action === 'deletecategory'/);
+  assert.match(categorySource, /export async function deleteStoreCategory/);
+  assert.match(categorySource, /is assigned to \$\{affected\.length\} inventory item/);
+  assert.match(categorySource, /await deleteDocument\(env, 'storeCategories', id\)/);
 });
 
 test('restaurant manages separate inventory, movements, low stock and supplier market lists', () => {

@@ -1,7 +1,7 @@
 import { batchCommitDocuments, batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, listCollectionPage, patchDocumentFields, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { deleteSchoolDocument, getSchoolDocumentById, getSchoolStructure, invalidateSchoolStructureCache, listSchoolCollection, querySchoolCollection, safeScopeId, schoolCollectionPaths, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass, classNamesMatch } from '../lib/class-names.js';
-import { categoryApplies, ensureStoreCategories, resolveStoreCategory, saveStoreCategory } from '../lib/store-categories.js';
+import { categoryApplies, deleteStoreCategory, ensureStoreCategories, resolveStoreCategory, saveStoreCategory } from '../lib/store-categories.js';
 import {
   clonePayrollTaxProfile, getPayrollTaxConfiguration, migratePayrollTaxPhase2,
   PAYROLL_TAX_COLLECTIONS, savePayrollSalaryComponent, savePayrollTaxBands,
@@ -668,7 +668,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'saveBillingCategory', 'deleteBillingCategory', 'updateStudentBillingCategory',
   'generateSchoolFeeInvoices', 'recordManualPayment',
   'saveWalletCard', 'recordWalletPurchase', 'recordCreditAction',
-  'saveStoreItem', 'saveStoreCategory', 'updateStoreOrderStatus',
+  'saveStoreItem', 'saveStoreCategory', 'deleteStoreCategory', 'updateStoreOrderStatus',
   'saveClinicInventoryItem', 'deleteClinicInventoryItem', 'recordClinicStockMovement',
   'saveKitchenInventoryItem', 'deleteKitchenInventoryItem', 'recordKitchenStockMovement',
   'updateApplicationStatus', 'updateApplicantIntelligence', 'updateApplicationDetails',
@@ -2246,6 +2246,11 @@ async function saveStoreItem(env, body) {
 async function saveStoreCategoryAction(env, body) {
   const category = await saveStoreCategory(env, body, clean(body.RecordedBy || body.UpdatedBy));
   return { ok: true, message: clean(body.Active).toUpperCase() === 'NO' ? 'Category deactivated. Existing references were preserved.' : 'Category saved.', category };
+}
+
+async function deleteStoreCategoryAction(env, body) {
+  const category = await deleteStoreCategory(env, body);
+  return { ok: true, message: `Category "${category.Name}" deleted.`, category };
 }
 
 async function updateStoreOrderStatus(env, body) {
@@ -7001,6 +7006,8 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       return saveStoreItem(env, body);
     case 'saveStoreCategory':
       return saveStoreCategoryAction(env, body);
+    case 'deleteStoreCategory':
+      return deleteStoreCategoryAction(env, body);
     case 'updateStoreOrderStatus':
       return updateStoreOrderStatus(env, body);
     case 'deleteFeeItem':

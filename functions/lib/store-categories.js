@@ -1,4 +1,4 @@
-import { batchUpsertDocuments, listCollection, upsertDocument } from './firestore.js';
+import { batchUpsertDocuments, deleteDocument, listCollection, upsertDocument } from './firestore.js';
 
 const clean = (value) => String(value ?? '').trim().replace(/\s+/g, ' ');
 const scopeName = (value) => {
@@ -85,6 +85,24 @@ export async function saveStoreCategory(env, body, updatedBy = '') {
     for (let index = 0; index < affected.length; index += 450) await batchUpsertDocuments(env, affected.slice(index, index + 450).map((item) => { const data = { ...item, CategoryId: categoryId, Category: name }; delete data.__id; delete data.__name; return { collectionPath: 'storeItems', documentId: item.__id, data }; }));
   }
   return payload;
+}
+
+export async function deleteStoreCategory(env, body) {
+  const id = clean(body.CategoryId || body.categoryId);
+  if (!id) { const error = new Error('Select a category to delete.'); error.status = 400; throw error; }
+  const { categories, items } = await ensureStoreCategories(env);
+  const current = categories.find((row) => row.CategoryId === id);
+  if (!current || (clean(body.StoreType) && !categoryApplies(current, body.StoreType))) {
+    const error = new Error('The category was not found in this store.'); error.status = 404; throw error;
+  }
+  const affected = items.filter((item) => clean(item.CategoryId) === id || categoryKey(item.Category) === categoryKey(current.Name));
+  if (affected.length) {
+    const error = new Error(`"${current.Name}" is assigned to ${affected.length} inventory item(s). Deactivate it instead, or move those items to another category first.`);
+    error.status = 409;
+    throw error;
+  }
+  await deleteDocument(env, 'storeCategories', id);
+  return current;
 }
 
 export async function resolveStoreCategory(env, body, storeType) {

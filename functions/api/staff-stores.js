@@ -2,7 +2,7 @@ import { batchCommitDocuments, listCollection, requireFirestoreEnv, upsertDocume
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
 import { canonicalConfiguredClass } from '../lib/class-names.js';
-import { categoryApplies, ensureStoreCategories, resolveStoreCategory, saveStoreCategory } from '../lib/store-categories.js';
+import { categoryApplies, deleteStoreCategory, ensureStoreCategories, resolveStoreCategory, saveStoreCategory } from '../lib/store-categories.js';
 import {
   beginIdempotentRequest,
   completeIdempotentRequest,
@@ -88,6 +88,10 @@ export async function onRequestPost(context) {
     if (action === 'savecategory' || action === 'deactivatecategory') {
       const category = await saveStoreCategory(env, { ...body, StoreType: storeType, Active: action === 'deactivatecategory' ? 'NO' : body.Active }, user.displayName || user.username);
       return Response.json({ ok: true, message: action === 'deactivatecategory' ? 'Category deactivated. Existing references were preserved.' : 'Category saved.', category });
+    }
+    if (action === 'deletecategory') {
+      const category = await deleteStoreCategory(env, { ...body, StoreType: storeType });
+      return Response.json({ ok: true, message: `Category "${category.Name}" deleted.`, category });
     }
     if (action === 'saveitem') {
       const itemId = clean(body.ItemId || body.itemId);
