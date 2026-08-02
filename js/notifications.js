@@ -2,6 +2,13 @@
   const identity = document.getElementById('staffIdentity');
   const profile = document.getElementById('staffProfileTrigger');
   if (!identity || !profile) return;
+  const managedCategories = ['Fees', 'Payments', 'Requisitions', 'Attendance', 'Academics', 'Announcements', 'System'];
+  const audiencePolicyMarkup = (audience, label) => `
+    <section class="notification-audience-policy" data-policy-audience="${audience}">
+      <h3>${label}</h3>
+      <div class="notification-policy-channels"><label><input type="checkbox" data-policy-channel="InApp"> In-app</label><label><input type="checkbox" data-policy-channel="Push"> Browser push</label></div>
+      <div class="notification-policy-categories">${managedCategories.map((category) => `<label><input type="checkbox" data-policy-category="${category}"> ${category}</label>`).join('')}</div>
+    </section>`;
 
   const centre = document.createElement('div');
   centre.className = 'notification-centre';
@@ -27,7 +34,7 @@
       <header><div><small>COMMUNICATION CENTRE</small><h2>Notifications</h2></div><button type="button" data-notification-close aria-label="Close">&times;</button></header>
       <nav class="notification-history-tabs" aria-label="Notification views">
         <button type="button" class="is-active" data-notification-view="history">History</button>
-        <button type="button" data-notification-view="settings">Preferences & devices</button>
+        <button type="button" data-notification-view="settings" data-notification-settings-tab>Devices</button>
       </nav>
       <section data-notification-panel="history">
         <div class="notification-history-filters">
@@ -46,11 +53,10 @@
             <div><button type="button" data-enable-push>Enable on this device</button><button type="button" class="notification-device-delete" data-disable-push aria-label="Delete this device" title="Delete this device">&#128465;</button><button type="button" data-test-push>Send test</button></div>
           </div>
           <div class="notification-device-list" aria-label="Subscribed devices"></div>
-          <fieldset class="notification-category-settings"><legend>Categories</legend><div class="notification-category-grid"></div></fieldset>
-          <fieldset class="notification-quiet-settings"><legend>Quiet hours</legend><label><input type="checkbox" name="QuietHoursEnabled"> Enable quiet hours</label><label>From <input type="time" name="QuietHoursStart"></label><label>To <input type="time" name="QuietHoursEnd"></label><label>Timezone <input name="Timezone" maxlength="80"></label></fieldset>
-          <fieldset class="notification-channel-settings"><legend>Channels</legend><label><input type="checkbox" name="InApp"> In-app notifications</label><label><input type="checkbox" name="Push"> Browser push</label></fieldset>
-          <fieldset class="notification-system-settings" hidden><legend>Organisation defaults</legend><label>Before due (days) <input name="FeeDueIntervals"></label><label>After due (days) <input name="FeeOverdueIntervals"></label><label>Submission reviewer roles <input name="SubmittedRoles"></label><label>Processing roles <input name="ProcessingRoles"></label><label>Management roles <input name="ManagementRoles"></label><label class="notification-template-field">Templates (JSON) <textarea name="Templates" rows="8"></textarea></label><button type="button" data-save-system-settings>Save organisation defaults</button></fieldset>
-          <button type="submit">Save preferences</button><p class="notification-settings-status" role="status"></p>
+          <fieldset class="notification-quiet-settings"><legend>Personal quiet hours</legend><label><input type="checkbox" name="QuietHoursEnabled"> Enable quiet hours</label><label>From <input type="time" name="QuietHoursStart"></label><label>To <input type="time" name="QuietHoursEnd"></label><label>Timezone <input name="Timezone" maxlength="80"></label></fieldset>
+          <button type="submit">Save quiet hours</button>
+          <fieldset class="notification-system-settings" hidden><legend>School notification policy</legend><p class="notification-policy-help">Choose the channels and notification types available to each group of app users.</p><div class="notification-audience-policy-grid">${audiencePolicyMarkup('Parent', 'Parent portal users')}${audiencePolicyMarkup('Staff', 'Staff app users')}</div><label>Before due (days) <input name="FeeDueIntervals"></label><label>After due (days) <input name="FeeOverdueIntervals"></label><label>Submission reviewer roles <input name="SubmittedRoles"></label><label>Processing roles <input name="ProcessingRoles"></label><label>Management roles <input name="ManagementRoles"></label><label class="notification-template-field">Templates (JSON) <textarea name="Templates" rows="8"></textarea></label><button type="button" data-save-system-settings>Save school notification policy</button></fieldset>
+          <p class="notification-settings-status" role="status"></p>
         </form>
       </section>
     </div>`;
@@ -181,8 +187,6 @@
     form.elements.QuietHoursStart.value = settings.QuietHoursStart || '21:00';
     form.elements.QuietHoursEnd.value = settings.QuietHoursEnd || '06:00';
     form.elements.Timezone.value = settings.Timezone || 'Africa/Lagos';
-    form.elements.InApp.checked = settings.Channels?.InApp !== false;
-    form.elements.Push.checked = settings.Channels?.Push !== false;
     form.elements.FeeDueIntervals.value = (settings.FeeDueIntervals || [14, 7, 3, 1, 0]).join(', ');
     form.elements.FeeOverdueIntervals.value = (settings.FeeOverdueIntervals || [1, 7, 14, 30]).join(', ');
     form.elements.Templates.value = JSON.stringify(settings.Templates || {}, null, 2);
@@ -190,7 +194,16 @@
     form.elements.ProcessingRoles.value = (settings.WorkflowRecipients?.ProcessingRoles || ['Super Admin', 'Accounts Officer']).join(', ');
     form.elements.ManagementRoles.value = (settings.WorkflowRecipients?.ManagementRoles || ['Super Admin', 'Management']).join(', ');
     form.querySelector('.notification-system-settings').hidden = !data.canManageSystemSettings;
-    form.querySelector('.notification-category-grid').innerHTML = Object.entries(settings.Categories).map(([name, enabled]) => `<label><input type="checkbox" name="Category:${html(name)}" ${enabled !== false ? 'checked' : ''}> ${html(name)}</label>`).join('');
+    dialog.querySelector('[data-notification-settings-tab]').textContent = data.canManageSystemSettings ? 'School settings & devices' : 'Devices';
+    form.querySelectorAll('[data-policy-audience]').forEach((section) => {
+      const policy = settings.AudiencePolicies?.[section.dataset.policyAudience] || {};
+      section.querySelectorAll('[data-policy-channel]').forEach((input) => {
+        input.checked = policy.Channels?.[input.dataset.policyChannel] !== false;
+      });
+      section.querySelectorAll('[data-policy-category]').forEach((input) => {
+        input.checked = policy.Categories?.[input.dataset.policyCategory] !== false;
+      });
+    });
     form.querySelector('[data-push-status]').textContent = !pushConfigured
       ? 'Push is not configured for this deployment.'
       : thisDevice ? `Enabled: ${thisDevice.DeviceName || 'this device'}` : `Status: ${permission}`;
@@ -262,19 +275,15 @@
   pushPromptButton.addEventListener('click', enablePushOnThisDevice);
   settingsForm.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const categories = {};
-    settingsForm.querySelectorAll('[name^="Category:"]').forEach((input) => { categories[input.name.slice(9)] = input.checked; });
     const status = settingsForm.querySelector('.notification-settings-status');
     try {
       await update('saveSettings', { settings: {
         QuietHoursEnabled: settingsForm.elements.QuietHoursEnabled.checked,
         QuietHoursStart: settingsForm.elements.QuietHoursStart.value,
         QuietHoursEnd: settingsForm.elements.QuietHoursEnd.value,
-        Timezone: settingsForm.elements.Timezone.value,
-        Channels: { InApp: settingsForm.elements.InApp.checked, Push: settingsForm.elements.Push.checked },
-        Categories: categories
+        Timezone: settingsForm.elements.Timezone.value
       } });
-      status.textContent = 'Preferences saved.';
+      status.textContent = 'Quiet hours saved.';
     } catch (error) { status.textContent = error.message; }
   });
   settingsForm.querySelector('[data-enable-push]').addEventListener('click', enablePushOnThisDevice);
@@ -296,6 +305,14 @@
     const status = settingsForm.querySelector('.notification-settings-status');
     try {
       const templates = JSON.parse(settingsForm.elements.Templates.value || '{}');
+      const audiencePolicies = {};
+      settingsForm.querySelectorAll('[data-policy-audience]').forEach((section) => {
+        const channels = {};
+        const categories = {};
+        section.querySelectorAll('[data-policy-channel]').forEach((input) => { channels[input.dataset.policyChannel] = input.checked; });
+        section.querySelectorAll('[data-policy-category]').forEach((input) => { categories[input.dataset.policyCategory] = input.checked; });
+        audiencePolicies[section.dataset.policyAudience] = { Channels: channels, Categories: categories };
+      });
       await update('saveSystemSettings', { settings: {
         Timezone: settingsForm.elements.Timezone.value,
         FeeDueIntervals: settingsForm.elements.FeeDueIntervals.value,
@@ -305,9 +322,10 @@
           SubmittedRoles: settingsForm.elements.SubmittedRoles.value.split(',').map((value) => value.trim()).filter(Boolean),
           ProcessingRoles: settingsForm.elements.ProcessingRoles.value.split(',').map((value) => value.trim()).filter(Boolean),
           ManagementRoles: settingsForm.elements.ManagementRoles.value.split(',').map((value) => value.trim()).filter(Boolean)
-        }
+        },
+        AudiencePolicies: audiencePolicies
       } });
-      status.textContent = 'Organisation notification defaults saved.';
+      status.textContent = 'School notification policy saved.';
     } catch (error) { status.textContent = error instanceof SyntaxError ? 'Templates must be valid JSON.' : error.message; }
   });
 

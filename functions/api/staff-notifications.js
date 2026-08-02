@@ -6,6 +6,7 @@ import {
   loadNotificationSettings,
   markAllNotificationsRead,
   markNotificationRead,
+  NOTIFICATION_CATEGORIES,
   notificationTargetsRecipient,
   saveNotificationSettings
 } from '../lib/notifications.js';
@@ -71,6 +72,25 @@ function workflowRecipients(value, fallback = {}) {
   };
 }
 
+function audiencePolicies(value = {}, fallback = {}) {
+  return Object.fromEntries(['Parent', 'Staff'].map((audience) => {
+    const input = value?.[audience] && typeof value[audience] === 'object' ? value[audience] : {};
+    const existing = fallback?.[audience] && typeof fallback[audience] === 'object' ? fallback[audience] : {};
+    return [audience, {
+      Channels: {
+        InApp: input.Channels?.InApp !== undefined ? input.Channels.InApp === true : existing.Channels?.InApp !== false,
+        Push: input.Channels?.Push !== undefined ? input.Channels.Push === true : existing.Channels?.Push !== false
+      },
+      Categories: Object.fromEntries(NOTIFICATION_CATEGORIES.map((category) => [
+        category,
+        input.Categories?.[category] !== undefined
+          ? input.Categories[category] === true
+          : existing.Categories?.[category] !== false
+      ]))
+    }];
+  }));
+}
+
 async function saveSystemSettings(env, user, input = {}) {
   if (clean(user.role) !== 'Super Admin') {
     const error = new Error('Only Super Admin can change organisation notification defaults.');
@@ -87,6 +107,7 @@ async function saveSystemSettings(env, user, input = {}) {
     FeeOverdueIntervals: intervals(input.FeeOverdueIntervals, [30, 14, 7, 1]),
     Templates: templates(input.Templates, existing.Templates || {}),
     WorkflowRecipients: workflowRecipients(input.WorkflowRecipients, existing.WorkflowRecipients || {}),
+    AudiencePolicies: audiencePolicies(input.AudiencePolicies, existing.AudiencePolicies || {}),
     UpdatedAt: new Date().toISOString(),
     UpdatedBy: user.username
   };

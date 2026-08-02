@@ -196,13 +196,41 @@ function notificationSettingsId(audience, recipientKey) {
   return `PREF-${safeId(key).slice(0, 130)}-${shortHash(key)}`;
 }
 
-function mergeNotificationSettings(system = {}, user = {}) {
+function notificationAudiencePolicies(system = {}) {
+  const configured = system.AudiencePolicies && typeof system.AudiencePolicies === 'object'
+    ? system.AudiencePolicies
+    : {};
+  return Object.fromEntries(['Parent', 'Staff'].map((audience) => {
+    const policy = configured[audience] && typeof configured[audience] === 'object'
+      ? configured[audience]
+      : {};
+    return [audience, {
+      Channels: {
+        ...DEFAULT_NOTIFICATION_SETTINGS.Channels,
+        ...(system.Channels || {}),
+        ...(policy.Channels || {})
+      },
+      Categories: {
+        ...DEFAULT_NOTIFICATION_SETTINGS.Categories,
+        ...(system.Categories || {}),
+        ...(policy.Categories || {})
+      }
+    }];
+  }));
+}
+
+export function notificationSettingsForAudience(system = {}, user = {}, audience = '') {
+  const audiencePolicies = notificationAudiencePolicies(system);
+  const managedAudience = ['Parent', 'Staff'].find((name) => lower(name) === lower(audience));
+  const managedPolicy = managedAudience ? audiencePolicies[managedAudience] : null;
   return {
     ...DEFAULT_NOTIFICATION_SETTINGS,
     ...system,
     ...user,
-    Channels: { ...DEFAULT_NOTIFICATION_SETTINGS.Channels, ...(system.Channels || {}), ...(user.Channels || {}) },
-    Categories: { ...DEFAULT_NOTIFICATION_SETTINGS.Categories, ...(system.Categories || {}), ...(user.Categories || {}) },
+    AudiencePolicies: audiencePolicies,
+    ManagedByOrganisation: Boolean(managedPolicy),
+    Channels: managedPolicy?.Channels || { ...DEFAULT_NOTIFICATION_SETTINGS.Channels, ...(system.Channels || {}), ...(user.Channels || {}) },
+    Categories: managedPolicy?.Categories || { ...DEFAULT_NOTIFICATION_SETTINGS.Categories, ...(system.Categories || {}), ...(user.Categories || {}) },
     Templates: { ...(system.Templates || {}), ...(user.Templates || {}) },
     FeeDueIntervals: values(user.FeeDueIntervals || system.FeeDueIntervals || DEFAULT_NOTIFICATION_SETTINGS.FeeDueIntervals).map(Number).filter(Number.isFinite),
     FeeOverdueIntervals: values(user.FeeOverdueIntervals || system.FeeOverdueIntervals || DEFAULT_NOTIFICATION_SETTINGS.FeeOverdueIntervals).map(Number).filter(Number.isFinite)
@@ -214,7 +242,7 @@ export async function loadNotificationSettings(env, audience = '', recipientKey 
     getDocument(env, 'notificationSettings', 'system').catch(() => null),
     recipientKey ? getDocument(env, 'notificationSettings', notificationSettingsId(audience, recipientKey)).catch(() => null) : null
   ]);
-  return mergeNotificationSettings(system || {}, user || {});
+  return notificationSettingsForAudience(system || {}, user || {}, audience);
 }
 
 export async function saveNotificationSettings(env, audience, recipientKey, input = {}) {
@@ -239,7 +267,7 @@ export async function saveNotificationSettings(env, audience, recipientKey, inpu
     UpdatedAt: nowIso()
   };
   await upsertDocument(env, 'notificationSettings', record.SettingsId, record);
-  return mergeNotificationSettings({}, record);
+  return notificationSettingsForAudience({}, record, audience);
 }
 
 function timeInZone(timezone, date = new Date()) {

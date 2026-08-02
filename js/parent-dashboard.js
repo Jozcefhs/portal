@@ -47,7 +47,6 @@ const markAllParentNotificationsReadBtn = document.getElementById('markAllParent
 const manageParentNotificationsBtn = document.getElementById('manageParentNotificationsBtn');
 const parentNotificationDialog = document.getElementById('parentNotificationDialog');
 const parentNotificationHistory = document.getElementById('parentNotificationHistory');
-const parentNotificationSettingsForm = document.getElementById('parentNotificationSettingsForm');
 
 let dashboard = null;
 let selectedChildKey = '';
@@ -465,29 +464,6 @@ async function loadParentNotificationHistory(append = false) {
   parentNotificationHistoryRows = append ? [...parentNotificationHistoryRows, ...(data.notifications || [])] : (data.notifications || []);
   parentNotificationHistory.innerHTML = parentNotificationHistoryRows.length ? parentNotificationHistoryRows.map(parentHistoryMarkup).join('') : '<p class="notification-empty">No notifications match these filters.</p>';
   document.getElementById('loadMoreParentNotifications').hidden = !data.hasMore;
-  renderParentNotificationSettings(data);
-}
-
-function renderParentNotificationSettings(data = parentNotificationMeta) {
-  if (!parentNotificationSettingsForm || !data.settings?.Categories) return;
-  const settings = data.settings;
-  parentNotificationSettingsForm.elements.QuietHoursEnabled.checked = settings.QuietHoursEnabled === true;
-  parentNotificationSettingsForm.elements.QuietHoursStart.value = settings.QuietHoursStart || '21:00';
-  parentNotificationSettingsForm.elements.QuietHoursEnd.value = settings.QuietHoursEnd || '06:00';
-  parentNotificationSettingsForm.elements.Timezone.value = settings.Timezone || 'Africa/Lagos';
-  parentNotificationSettingsForm.elements.InApp.checked = settings.Channels?.InApp !== false;
-  parentNotificationSettingsForm.elements.Push.checked = settings.Channels?.Push !== false;
-  document.getElementById('parentNotificationCategories').innerHTML = Object.entries(settings.Categories).map(([name, enabled]) => `<label><input type="checkbox" name="Category:${escapeHtml(name)}" ${enabled !== false ? 'checked' : ''}> ${escapeHtml(name)}</label>`).join('');
-  const thisDevice = (data.subscriptions || []).find((row) => row.DeviceId === window.DynamaxWebPush?.deviceId?.());
-  document.getElementById('parentPushStatus').textContent = data.messaging?.enabled !== true
-    ? 'Push is not configured for this deployment.'
-    : thisDevice ? `Enabled: ${thisDevice.DeviceName || 'this device'}` : `Status: ${window.DynamaxWebPush?.permission?.() || 'unsupported'}`;
-  document.getElementById('enableParentPush').disabled = !data.messaging?.enabled || Boolean(thisDevice);
-  document.getElementById('disableParentPush').disabled = !thisDevice;
-  document.getElementById('testParentPush').disabled = !thisDevice;
-  document.getElementById('parentNotificationDevices').innerHTML = (data.subscriptions || []).length
-    ? `<strong>Subscribed devices</strong>${data.subscriptions.map((row) => `<span><span><b>${escapeHtml(row.DeviceName || 'Browser device')}</b><small>${escapeHtml(row.LastSeenAt ? new Date(row.LastSeenAt).toLocaleString() : '')}${row.DeviceId === window.DynamaxWebPush?.deviceId?.() ? ' · This device' : ''}</small></span><button type="button" class="notification-device-delete" data-remove-parent-push-device="${escapeHtml(row.DeviceId)}" aria-label="Delete ${escapeHtml(row.DeviceName || 'browser device')}" title="Delete device">&#128465;</button></span>`).join('')}`
-    : '<span>No browser devices are subscribed.</span>';
 }
 
 async function markParentNotificationRead(notificationId, all = false, button = null) {
@@ -1957,10 +1933,6 @@ manageParentNotificationsBtn?.addEventListener('click', async () => {
   try { await loadParentNotificationHistory(false); } catch (error) { setParentNotificationStatus(error.message, 'bad'); }
 });
 document.getElementById('closeParentNotificationDialog')?.addEventListener('click', () => parentNotificationDialog?.close());
-document.querySelectorAll('[data-parent-notification-view]').forEach((button) => button.addEventListener('click', () => {
-  document.querySelectorAll('[data-parent-notification-view]').forEach((item) => item.classList.toggle('is-active', item === button));
-  document.querySelectorAll('[data-parent-notification-panel]').forEach((panel) => { panel.hidden = panel.dataset.parentNotificationPanel !== button.dataset.parentNotificationView; });
-}));
 ['parentNotificationCategory', 'parentNotificationUnread', 'parentNotificationArchived'].forEach((id) => document.getElementById(id)?.addEventListener('change', () => loadParentNotificationHistory(false).catch((error) => setParentNotificationStatus(error.message, 'bad'))));
 document.getElementById('refreshParentNotificationHistory')?.addEventListener('click', () => loadParentNotificationHistory(false).catch((error) => setParentNotificationStatus(error.message, 'bad')));
 document.getElementById('loadMoreParentNotifications')?.addEventListener('click', () => loadParentNotificationHistory(true).catch((error) => setParentNotificationStatus(error.message, 'bad')));
@@ -1976,54 +1948,21 @@ parentNotificationHistory?.addEventListener('click', async (event) => {
       if (row && !parentNotificationIsRead(row)) await parentNotificationRequest('markNotificationRead', { notificationId: item.dataset.parentNotificationId });
       openParentNotificationAction(row?.ActionUrl || row?.actionUrl);
     }
-  } catch (error) { document.getElementById('parentNotificationSettingsStatus').textContent = error.message; }
-});
-parentNotificationSettingsForm?.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const categories = {};
-  parentNotificationSettingsForm.querySelectorAll('[name^="Category:"]').forEach((input) => { categories[input.name.slice(9)] = input.checked; });
-  const status = document.getElementById('parentNotificationSettingsStatus');
-  try {
-    const data = await parentNotificationRequest('saveNotificationSettings', { settings: {
-      QuietHoursEnabled: parentNotificationSettingsForm.elements.QuietHoursEnabled.checked,
-      QuietHoursStart: parentNotificationSettingsForm.elements.QuietHoursStart.value,
-      QuietHoursEnd: parentNotificationSettingsForm.elements.QuietHoursEnd.value,
-      Timezone: parentNotificationSettingsForm.elements.Timezone.value,
-      Channels: { InApp: parentNotificationSettingsForm.elements.InApp.checked, Push: parentNotificationSettingsForm.elements.Push.checked }, Categories: categories
-    } });
-    renderParentNotificationSettings(data); status.textContent = 'Preferences saved.';
-  } catch (error) { status.textContent = error.message; }
+  } catch (error) { setParentNotificationStatus(error.message, 'bad'); }
 });
 async function enableParentPushOnThisDevice() {
-  const status = document.getElementById('parentNotificationSettingsStatus');
   try {
     await window.DynamaxWebPush.enable(parentNotificationMeta.messaging, (subscription) => parentNotificationRequest('subscribePush', { subscription }));
-    status.textContent = 'Push notifications are enabled on this device.';
-    renderParentNotificationSettings(parentNotificationMeta);
+    setParentNotificationStatus('Push notifications are enabled on this device.', 'ok');
     renderParentPushPrompt();
   } catch (error) {
     const message = parentNotificationErrorMessage(error);
-    status.textContent = message;
+    setParentNotificationStatus(message, 'bad');
     const copy = document.getElementById('parentPushPromptCopy');
     if (copy) copy.textContent = message;
   }
 }
-document.getElementById('enableParentPush')?.addEventListener('click', enableParentPushOnThisDevice);
 document.getElementById('enableParentPushPrompt')?.addEventListener('click', enableParentPushOnThisDevice);
-document.getElementById('disableParentPush')?.addEventListener('click', async () => {
-  const status = document.getElementById('parentNotificationSettingsStatus');
-  try { await window.DynamaxWebPush.disable((deviceId) => parentNotificationRequest('unsubscribePush', { deviceId })); status.textContent = 'This device was removed.'; renderParentNotificationSettings(parentNotificationMeta); } catch (error) { status.textContent = error.message; }
-});
-document.getElementById('testParentPush')?.addEventListener('click', async () => {
-  const status = document.getElementById('parentNotificationSettingsStatus');
-  try { await parentNotificationRequest('testPush', { deviceId: window.DynamaxWebPush.deviceId() }); status.textContent = 'Test notification sent.'; } catch (error) { status.textContent = error.message; }
-});
-document.getElementById('parentNotificationDevices')?.addEventListener('click', async (event) => {
-  const button = event.target.closest('[data-remove-parent-push-device]');
-  if (!button) return;
-  const status = document.getElementById('parentNotificationSettingsStatus');
-  try { const data = await parentNotificationRequest('unsubscribePush', { deviceId: button.dataset.removeParentPushDevice }); renderParentNotificationSettings(data); status.textContent = 'Device removed.'; } catch (error) { status.textContent = error.message; }
-});
 window.addEventListener('dynamax:foreground-notification', () => { if (dashboard) void loadParentNotifications(); });
 
 if (dashboardNav) {

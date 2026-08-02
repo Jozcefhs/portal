@@ -5,7 +5,8 @@ import { readFile } from 'node:fs/promises';
 const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260802-parent-mobile-actions';
 const adminScriptVersion = '20260801-income-latest-period';
-const parentScriptVersion = '20260801-compact-notification-preferences';
+const parentScriptVersion = '20260802-school-managed-notifications';
+const notificationVersion = '20260802-school-managed-notifications';
 const pageNames = [
   'admin.html',
   'application.html',
@@ -73,11 +74,14 @@ test('all portal pages reference the current shared stylesheet version', () => {
     assert.match(html, new RegExp(`css/style\\.css\\?v=${sharedVersion}`), `${pageNames[index]} should use the shared stylesheet version`);
   });
   assert.match(pages[pageNames.indexOf('admin.html')], new RegExp(`js/admin\\.js\\?v=${adminScriptVersion}`));
+  assert.match(pages[pageNames.indexOf('admin.html')], new RegExp(`js/notifications\\.js\\?v=${notificationVersion}`));
+  assert.match(pages[pageNames.indexOf('admin.html')], new RegExp(`css/notifications\\.css\\?v=${notificationVersion}`));
   assert.match(pages[pageNames.indexOf('parent-dashboard.html')], new RegExp(`js/parent-dashboard\\.js\\?v=${parentScriptVersion}`));
+  assert.match(pages[pageNames.indexOf('parent-dashboard.html')], new RegExp(`css/notifications\\.css\\?v=${notificationVersion}`));
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v85-parent-mobile-actions/);
+  assert.match(serviceWorker, /dynamax-v86-school-managed-notifications/);
   assert.match(serviceWorker, /'\/give\.html'/);
   assert.match(serviceWorker, /'\/js\/give\.js'/);
   assert.match(serviceWorker, /'\/js\/action-feedback\.js'/);

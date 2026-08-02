@@ -7,6 +7,7 @@ import {
   listNotifications,
   markNotificationRead,
   notificationDocumentId,
+  notificationSettingsForAudience,
   notificationTargetsRecipient,
   parentPaymentDueNotification,
   parentPaymentNotification,
@@ -23,6 +24,32 @@ test('notification ids are deterministic while preserving distinct events', () =
     notificationDocumentId('payment:PAY-001'),
     notificationDocumentId('payment:PAY-002')
   );
+});
+
+test('school notification policies override parent and staff category preferences', () => {
+  const system = {
+    AudiencePolicies: {
+      Parent: { Channels: { InApp: true, Push: false }, Categories: { Fees: true, Requisitions: false } },
+      Staff: { Channels: { InApp: false, Push: true }, Categories: { Fees: false, Requisitions: true } }
+    }
+  };
+  const user = { Channels: { InApp: true, Push: true }, Categories: { Fees: true, Requisitions: true } };
+  const parent = notificationSettingsForAudience(system, user, 'Parent');
+  const staff = notificationSettingsForAudience(system, user, 'Staff');
+  assert.equal(parent.Channels.Push, false);
+  assert.equal(parent.Categories.Requisitions, false);
+  assert.equal(staff.Channels.InApp, false);
+  assert.equal(staff.Categories.Fees, false);
+  assert.equal(parent.ManagedByOrganisation, true);
+});
+
+test('parent and staff notification types are school-managed by default', () => {
+  const parent = notificationSettingsForAudience({}, {
+    Channels: { InApp: false, Push: false },
+    Categories: { Payments: false }
+  }, 'Parent');
+  assert.deepEqual(parent.Channels, { InApp: true, Push: true });
+  assert.equal(parent.Categories.Payments, true);
 });
 
 test('staff requisition notifications target finance decision makers in the record scope', () => {
@@ -535,15 +562,21 @@ test('staff and parent notification interfaces are wired to protected APIs', asy
   assert.match(notificationCss, /\.notification-category-grid\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(notificationJs, /class="notification-device-delete"[^>]*data-remove-push-device/);
   assert.doesNotMatch(notificationJs, /data-remove-push-device="[^\n]*">Remove</);
-  assert.match(parentHtml, /id="disableParentPush" class="notification-device-delete"/);
-  assert.match(parentDashboardJs, /class="notification-device-delete"[^>]*data-remove-parent-push-device/);
+  assert.match(notificationJs, /School settings & devices/);
+  assert.match(notificationJs, /data-policy-audience="\$\{audience\}"/);
+  assert.match(notificationJs, /AudiencePolicies: audiencePolicies/);
+  assert.match(notificationCss, /\.notification-audience-policy-grid\{/);
+  assert.doesNotMatch(parentHtml, /Preferences & devices|parentNotificationSettingsForm|disableParentPush/);
+  assert.doesNotMatch(parentDashboardJs, /saveNotificationSettings|data-remove-parent-push-device/);
   assert.match(parentApi, /action === 'archiveNotification'/);
   assert.match(parentDashboardJs, /new Date\(dateValue\)/);
   assert.match(styleCss, /\.parent-notification-item strong\{font-size:12px/);
   assert.match(styleCss, /\.parent-notification-item>span>span\{[^}]*font-size:10px/);
   assert.match(staffApi, /requireStaffSession/);
+  assert.match(staffApi, /AudiencePolicies: audiencePolicies/);
   assert.match(parentApi, /action === 'getNotifications'/);
   assert.match(parentApi, /action === 'markNotificationRead'/);
+  assert.doesNotMatch(parentApi, /saveNotificationSettings/);
   assert.match(backendApi, /notifyParentPaymentReceived\(env, payment\)/);
   assert.match(backendApi, /invoiceReminderFields\(invoicePayload, notificationSettings\)/);
   assert.doesNotMatch(parentApi, /notifyParentPayment(?:Due|Received)/);

@@ -19,8 +19,7 @@ import {
   loadNotificationSettings,
   markAllNotificationsRead,
   markNotificationRead,
-  notificationTargetsRecipient,
-  saveNotificationSettings
+  notificationTargetsRecipient
 } from '../lib/notifications.js';
 import {
   listPushSubscriptions,
@@ -1759,10 +1758,7 @@ async function updateParentNotificationConfiguration(env, body, request) {
   const context = await getParentNotificationContext(env, body);
   const { dashboard, email } = context;
   const action = lower(body.action || body.Action);
-  let settings;
-  if (action === 'savenotificationsettings') {
-    settings = await saveNotificationSettings(env, 'Parent', email, body.settings || body.Settings || {});
-  } else if (action === 'subscribepush') {
+  if (action === 'subscribepush') {
     await savePushSubscription(env, {
       ...(body.subscription || body.Subscription || body),
       SchoolId: env.DYNAMAX_WORKSPACE_ID,
@@ -1800,7 +1796,6 @@ async function updateParentNotificationConfiguration(env, body, request) {
     ok: true,
     messaging: publicMessagingConfig(env)
   };
-  if (settings) response.settings = settings;
   if (action === 'subscribepush' || action === 'unsubscribepush') {
     response.subscriptions = await listPushSubscriptions(env, email);
   }
@@ -1823,7 +1818,7 @@ export async function onRequestPost(context) {
       data = await updateParentNotificationState(env, body);
     } else if (action === 'archiveNotification' || action === 'unarchiveNotification') {
       data = await updateParentNotificationState(env, body);
-    } else if (['saveNotificationSettings', 'subscribePush', 'unsubscribePush', 'testPush'].includes(action)) {
+    } else if (['subscribePush', 'unsubscribePush', 'testPush'].includes(action)) {
       data = await updateParentNotificationConfiguration(env, body, request);
     } else if (action === 'getChildActivity') {
       data = await getChildActivity(env, body);
