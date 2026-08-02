@@ -66,6 +66,12 @@ test('store checkout emails a payment link while pending and a receipt only afte
   assert.match(commerceEmail, /Organisation store receipt/);
   assert.match(commerceEmail, /sendConfiguredEmail/);
   assert.match(commerceEmail, /Stock is deducted only after payment is confirmed/);
+  assert.match(commerceEmail, /function receiptItemsTable/);
+  assert.match(commerceEmail, /table-layout:fixed/);
+  assert.match(commerceEmail, /vertical-align:middle/);
+  assert.match(commerceEmail, /width="28%"/);
+  assert.match(commerceEmail, /function totalSummary/);
+  assert.doesNotMatch(commerceEmail, /display:flex/);
 });
 
 test('staff can print a reusable branch-scoped public store QR and email online links without leaving the POS', () => {
