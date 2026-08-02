@@ -345,7 +345,7 @@ test('list and read helpers keep unread state per recipient', async () => {
   assert.equal(writes[0][3].RecipientKey, 'admin');
 });
 
-test('target queries bind each parent account reference only to its paired scope', async () => {
+test('target queries batch parent account references within their paired scope', async () => {
   const calls = [];
   const scopes = Array.from({ length: 5 }, (_, index) => ({
     accountRef: `child-${index + 1}`,
@@ -368,20 +368,57 @@ test('target queries bind each parent account reference only to its paired scope
   const uniqueScopeCount = new Set(scopes.map((scope) =>
     `${scope.branchId}::${scope.schoolSection}`
   )).size;
-  assert.equal(calls.length, (scopes.length * 2) + (uniqueScopeCount * 2));
+  assert.equal(calls.length, uniqueScopeCount * 4);
   calls.filter((options) => options.filters[0].field === 'TargetAccountRefs')
     .forEach((options) => {
-      const accountRef = options.filters[0].value;
-      const expected = scopes.find((scope) => scope.accountRef === accountRef);
-      assert.equal(options.filters.find((filter) => filter.field === 'BranchId')?.value, expected.branchId);
+      assert.equal(options.filters[0].op, 'array-contains-any');
+      const accountRefs = options.filters[0].value;
+      const expected = scopes.filter((scope) => accountRefs.includes(scope.accountRef));
+      assert.ok(expected.length > 0);
+      assert.equal(new Set(expected.map((scope) => scope.branchId)).size, 1);
+      assert.equal(new Set(expected.map((scope) => scope.schoolSection)).size, 1);
+      assert.equal(options.filters.find((filter) => filter.field === 'BranchId')?.value, expected[0].branchId);
       assert.ok([
-        expected.schoolSection,
+        expected[0].schoolSection,
         ''
       ].includes(options.filters.find((filter) => filter.field === 'SchoolSection')?.value));
     });
   assert.equal(calls.some((options) =>
     options.filters.some((filter) => filter.field === 'BranchId' && filter.value === '')
   ), false);
+});
+
+test('missing read-state index falls back to one recipient query', async () => {
+  const notification = {
+    NotificationId: notificationDocumentId('read-fallback'),
+    Audience: 'Staff',
+    TargetRoles: ['Super Admin'],
+    BranchId: 'main',
+    SchoolSection: 'secondary',
+    CreatedAt: '2026-07-30T12:00:00.000Z'
+  };
+  const readCalls = [];
+  const result = await listNotifications({}, {
+    audience: 'Staff', recipientKey: 'admin', role: 'Super Admin',
+    branchId: 'main', schoolSectionAccess: 'secondary'
+  }, {
+    queryCollection: async (_env, collection, options) => {
+      if (collection === 'notifications') {
+        const section = options.filters.find((filter) => filter.field === 'SchoolSection')?.value;
+        return section === '' ? [] : [notification];
+      }
+      readCalls.push(options);
+      if (options.filters.some((filter) => filter.field === 'NotificationId')) {
+        const error = new Error('The query requires an index.');
+        error.upstreamCode = 'FAILED_PRECONDITION';
+        throw error;
+      }
+      return [{ NotificationId: notification.NotificationId, RecipientKey: 'admin', ReadAt: '2026-07-30T13:00:00.000Z' }];
+    }
+  });
+  assert.equal(readCalls.length, 2);
+  assert.deepEqual(readCalls[1].filters, [{ field: 'RecipientKey', op: '==', value: 'admin' }]);
+  assert.equal(result.notifications[0].Read, true);
 });
 
 test('missing scoped indexes fall back without limiting before authorization filtering', async () => {

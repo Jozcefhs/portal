@@ -1319,7 +1319,7 @@ function invoiceDueNotifications(invoices, keys, accountSummary = null, child = 
     }));
 }
 
-async function getDashboard(env, body) {
+async function getDashboard(env, body, options = {}) {
   const email = lower(body.email || body.ParentEmail || body.Email);
   const code = clean(body.code || body.VerificationCode).toUpperCase();
   // The initial request only establishes the family/child list. Financial,
@@ -1394,7 +1394,9 @@ async function getDashboard(env, body) {
     entranceResults[identity] = result ? [result] : [];
   }
 
-  const notificationData = await parentNotifications(env, email, children);
+  const notificationData = options.includeNotifications === false
+    ? { notifications: [], unreadCount: 0 }
+    : await parentNotifications(env, email, children);
 
   return {
     ok: true,
@@ -1670,10 +1672,17 @@ async function getChildPayable(env, body) {
   };
 }
 
-async function getParentNotifications(env, body) {
-  const dashboard = await getDashboard(env, body);
+async function getParentNotificationContext(env, body) {
+  const dashboard = await getDashboard(env, body, { includeNotifications: false });
   const email = lower(body.email || body.ParentEmail || body.Email);
-  const recipient = parentNotificationRecipient(email, dashboard.children || [], env.DYNAMAX_WORKSPACE_ID);
+  return {
+    dashboard,
+    email,
+    recipient: parentNotificationRecipient(email, dashboard.children || [], env.DYNAMAX_WORKSPACE_ID)
+  };
+}
+
+async function parentNotificationResponse(env, body, context) {
   const options = {
     limit: Number(body.limit || 50),
     before: clean(body.before),
@@ -1681,10 +1690,10 @@ async function getParentNotifications(env, body) {
     unread: body.unread === true,
     archived: body.archived === true
   };
-  const [data, settings, subscriptions] = await Promise.all([
-    listNotifications(env, recipient, options),
-    loadNotificationSettings(env, 'Parent', email),
-    listPushSubscriptions(env, email)
+  const settings = await loadNotificationSettings(env, 'Parent', context.email);
+  const [data, subscriptions] = await Promise.all([
+    listNotifications(env, context.recipient, { ...options, preferences: settings }),
+    listPushSubscriptions(env, context.email)
   ]);
   return {
     ok: true,
@@ -1695,50 +1704,64 @@ async function getParentNotifications(env, body) {
   };
 }
 
+async function getParentNotifications(env, body) {
+  const context = await getParentNotificationContext(env, body);
+  return parentNotificationResponse(env, body, context);
+}
+
 async function markParentNotificationRead(env, body) {
-  const email = lower(body.email || body.ParentEmail || body.Email);
-  const current = await getParentNotifications(env, body);
+  const context = await getParentNotificationContext(env, body);
+  const current = await parentNotificationResponse(env, body, context);
   const notificationId = clean(body.notificationId || body.NotificationId);
   const markAll = body.all === true || body.All === true || lower(body.action || body.Action) === 'markallnotificationsread';
   if (markAll) {
-    await markAllNotificationsRead(env, current.notifications, email);
+    await markAllNotificationsRead(env, current.notifications, context.email);
   } else {
     if (!notificationId || !current.notifications.some((row) => clean(row.NotificationId || row.__id) === notificationId)) {
       const error = new Error('This notification is not available to this parent account.');
       error.status = 404;
       throw error;
     }
-    await markNotificationRead(env, notificationId, email);
+    await markNotificationRead(env, notificationId, context.email);
   }
-  return getParentNotifications(env, body);
+  const notifications = current.notifications.map((row) => {
+    const id = clean(row.NotificationId || row.__id);
+    return markAll || id === notificationId
+      ? { ...row, Read: true, ReadAt: row.ReadAt || new Date().toISOString() }
+      : row;
+  });
+  return {
+    ...current,
+    notifications,
+    unreadCount: notifications.filter((row) => !row.Read).length
+  };
 }
 
 async function updateParentNotificationState(env, body) {
-  const email = lower(body.email || body.ParentEmail || body.Email);
-  const dashboard = await getDashboard(env, body);
-  const recipient = parentNotificationRecipient(email, dashboard.children || [], env.DYNAMAX_WORKSPACE_ID);
+  const context = await getParentNotificationContext(env, body);
   const notificationId = clean(body.notificationId || body.NotificationId);
   const notification = await getDocument(env, 'notifications', notificationId);
-  if (!notification || !notificationTargetsRecipient(notification, recipient)) {
+  if (!notification || !notificationTargetsRecipient(notification, context.recipient)) {
     const error = new Error('This notification is not available to this parent account.');
     error.status = 404;
     throw error;
   }
   const action = lower(body.action || body.Action);
   if (action === 'archivenotification' || action === 'unarchivenotification') {
-    await archiveNotification(env, notificationId, email, action === 'archivenotification');
+    await archiveNotification(env, notificationId, context.email, action === 'archivenotification');
   } else {
-    await markNotificationRead(env, notificationId, email);
+    await markNotificationRead(env, notificationId, context.email);
   }
-  return getParentNotifications(env, body);
+  return parentNotificationResponse(env, body, context);
 }
 
 async function updateParentNotificationConfiguration(env, body, request) {
-  const email = lower(body.email || body.ParentEmail || body.Email);
-  const dashboard = await getDashboard(env, body);
+  const context = await getParentNotificationContext(env, body);
+  const { dashboard, email } = context;
   const action = lower(body.action || body.Action);
+  let settings;
   if (action === 'savenotificationsettings') {
-    await saveNotificationSettings(env, 'Parent', email, body.settings || body.Settings || {});
+    settings = await saveNotificationSettings(env, 'Parent', email, body.settings || body.Settings || {});
   } else if (action === 'subscribepush') {
     await savePushSubscription(env, {
       ...(body.subscription || body.Subscription || body),
@@ -1773,7 +1796,15 @@ async function updateParentNotificationConfiguration(env, body, request) {
       throw error;
     }
   }
-  return getParentNotifications(env, body);
+  const response = {
+    ok: true,
+    messaging: publicMessagingConfig(env)
+  };
+  if (settings) response.settings = settings;
+  if (action === 'subscribepush' || action === 'unsubscribepush') {
+    response.subscriptions = await listPushSubscriptions(env, email);
+  }
+  return response;
 }
 
 export async function onRequestPost(context) {

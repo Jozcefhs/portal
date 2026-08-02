@@ -354,12 +354,14 @@ function staffScopeBinding(recipient = {}) {
 }
 
 function notificationQueryScopes(recipient = {}, audience = '', lookup = {}) {
-  let scopes = audience === 'parent'
-    ? parentScopeBindings(recipient)
-    : [staffScopeBinding(recipient)];
+  let scopes = Array.isArray(lookup.scopes) && lookup.scopes.length
+    ? lookup.scopes
+    : audience === 'parent'
+      ? parentScopeBindings(recipient)
+      : [staffScopeBinding(recipient)];
   if (audience === 'parent' && lookup.field === 'TargetAccountRefs') {
-    const accountRef = lower(lookup.value);
-    scopes = scopes.filter((scope) => lower(scope.accountRef) === accountRef);
+    const accountRefs = new Set(lowerValues(lookup.value));
+    scopes = scopes.filter((scope) => accountRefs.has(lower(scope.accountRef)));
   }
   const unique = new Map();
   scopes.forEach((scope) => {
@@ -434,23 +436,34 @@ async function queryTargetedNotifications(env, recipient, query, limit) {
   } else if (audience === 'parent') {
     const email = lower(recipient.email || recipient.ParentEmail || recipient.Email);
     if (email) lookups.push({ field: 'TargetEmails', value: email });
-    const accountRefs = lowerValues([
-      ...values(recipient.accountRefs || recipient.AccountRefs),
-      ...parentScopeBindings(recipient).map((scope) => scope.accountRef)
-    ]);
-    accountRefs.forEach((reference) => {
-      lookups.push({ field: 'TargetAccountRefs', value: reference });
+    const scopedReferences = new Map();
+    parentScopeBindings(recipient).forEach((scope) => {
+      const key = `${scope.branchId}::${scope.schoolSection}`;
+      if (!scopedReferences.has(key)) scopedReferences.set(key, { scope, references: [] });
+      if (scope.accountRef) scopedReferences.get(key).references.push(scope.accountRef);
+    });
+    scopedReferences.forEach(({ scope, references }) => {
+      chunks(lowerValues(references), 30).forEach((referenceGroup) => {
+        if (!referenceGroup.length) return;
+        lookups.push({
+          field: 'TargetAccountRefs',
+          op: 'array-contains-any',
+          value: referenceGroup,
+          scopes: [scope]
+        });
+      });
     });
   }
   if (!lookups.length) return [];
   const perTargetLimit = Math.max(25, Math.min(200, Number(limit || 50) * 2));
   const plans = [];
-  lookups.forEach(({ field, value }) => {
-    const scopes = notificationQueryScopes(recipient, audience, { field, value });
+  lookups.forEach((lookup) => {
+    const { field, value, op } = lookup;
+    const scopes = notificationQueryScopes(recipient, audience, lookup);
     scopes.forEach((scope) => {
       const sectionFilters = scope.schoolSection ? [scope.schoolSection, ''] : [null];
       sectionFilters.forEach((schoolSectionFilter) => {
-        plans.push({ field, value, ...scope, schoolSectionFilter });
+        plans.push({ field, value, op, ...scope, schoolSectionFilter });
       });
     });
   });
@@ -458,24 +471,25 @@ async function queryTargetedNotifications(env, recipient, query, limit) {
   const uniquePlans = [...new Map(plans.map((plan) => [
     [
       plan.field,
-      lower(plan.value),
+      plan.op || 'array-contains',
+      lowerValues(plan.value).join('|'),
       plan.branchId,
       plan.schoolSectionFilter === null ? '*' : plan.schoolSectionFilter
     ].join('::'),
     plan
   ])).values()];
   const broadTargetQueries = new Map();
-  const broadRows = async (field, value) => {
-    const key = `${field}::${lower(value)}`;
+  const broadRows = async (field, value, op = 'array-contains') => {
+    const key = `${field}::${op}::${lowerValues(value).join('|')}`;
     if (!broadTargetQueries.has(key)) {
       broadTargetQueries.set(key, query(env, 'notifications', {
-        filters: [{ field, op: 'array-contains', value }]
+        filters: [{ field, op, value }]
       }));
     }
     return broadTargetQueries.get(key);
   };
   const groups = await Promise.all(uniquePlans.map(async (plan) => {
-    const filters = [{ field: plan.field, op: 'array-contains', value: plan.value }];
+    const filters = [{ field: plan.field, op: plan.op || 'array-contains', value: plan.value }];
     if (plan.branchId) filters.push({ field: 'BranchId', op: '==', value: plan.branchId });
     if (plan.schoolSectionFilter !== null) {
       filters.push({ field: 'SchoolSection', op: '==', value: plan.schoolSectionFilter });
@@ -489,7 +503,7 @@ async function queryTargetedNotifications(env, recipient, query, limit) {
       return await query(env, 'notifications', options);
     } catch (error) {
       if (!missingQueryIndex(error)) throw error;
-      const rows = await broadRows(plan.field, plan.value);
+      const rows = await broadRows(plan.field, plan.value, plan.op);
       return rows.filter((row) => {
         const branchMatches = !plan.branchId ||
           lower(row.BranchId || 'main') === plan.branchId;
@@ -513,7 +527,16 @@ function chunks(rows, size = 30) {
   return result;
 }
 
-async function readStatesForNotifications(env, recipientKey, notificationIds, query, get) {
+async function readStatesForNotifications(env, recipientKey, notificationIds, query) {
+  let broadReadStates;
+  const readAllRecipientStates = () => {
+    if (!broadReadStates) {
+      broadReadStates = query(env, 'notificationReads', {
+        filters: [{ field: 'RecipientKey', op: '==', value: recipientKey }]
+      });
+    }
+    return broadReadStates;
+  };
   const groups = await Promise.all(chunks(notificationIds).map(async (ids) => {
     try {
       return await query(env, 'notificationReads', {
@@ -525,10 +548,7 @@ async function readStatesForNotifications(env, recipientKey, notificationIds, qu
       });
     } catch (error) {
       if (!missingQueryIndex(error)) throw error;
-      return (await Promise.all(ids.map((notificationId) =>
-        get(env, 'notificationReads', notificationReadDocumentId(notificationId, recipientKey))
-          .catch(() => null)
-      ))).filter(Boolean);
+      return readAllRecipientStates();
     }
   }));
   const wanted = new Set(notificationIds);
@@ -551,7 +571,6 @@ export async function listNotifications(env, recipient, options = {}) {
   );
   if (!recipientKey) throw new Error('A notification recipient is required.');
   const query = options.queryCollection || queryCollection;
-  const get = options.getDocument || getDocument;
   const preferences = options.preferences || (options.respectPreferences === false
     ? DEFAULT_NOTIFICATION_SETTINGS
     : await loadNotificationSettings(env, recipient.audience || recipient.Audience, recipientKey));
@@ -569,8 +588,7 @@ export async function listNotifications(env, recipient, options = {}) {
         env,
         recipientKey,
         visible.map((row) => clean(row.NotificationId || row.__id)).filter(Boolean),
-        query,
-        get
+        query
       )
     : [];
   const readById = new Map(reads.map((row) => [clean(row.NotificationId), row]));

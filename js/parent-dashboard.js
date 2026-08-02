@@ -399,6 +399,14 @@ function renderParentPushPrompt() {
         : 'Tap once to receive alerts even when this page is closed.';
 }
 
+function parentNotificationErrorMessage(error) {
+  const message = String(error?.message || error || '').trim();
+  if (/too many subrequests|workers\/wrangler\/configuration\/#limits/i.test(message)) {
+    return 'The notification service is temporarily busy. Please wait a moment and try again.';
+  }
+  return message || 'Could not update notifications.';
+}
+
 async function loadParentNotifications() {
   if (!dashboard || !parentNotificationList) return;
   try {
@@ -408,7 +416,7 @@ async function loadParentNotifications() {
       headers: { 'Content-Type': 'application/json' },
       body: freshBody({
         action: 'getNotifications',
-        limit: 100,
+        limit: 30,
         ...authPayload(),
         accountRefs: (dashboard.children || []).map((child) => child.AccountRef).filter(Boolean)
       })
@@ -422,7 +430,7 @@ async function loadParentNotifications() {
   } catch (error) {
     parentNotifications = [];
     renderParentNotifications();
-    setParentNotificationStatus(error.message, 'bad');
+    setParentNotificationStatus(parentNotificationErrorMessage(error), 'bad');
   }
 }
 
@@ -432,9 +440,9 @@ async function parentNotificationRequest(action, extra = {}) {
     body: freshBody({ action, ...authPayload(), ...extra })
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok || !data.ok) throw new Error(data.message || 'Could not update notifications.');
-  parentNotificationMeta = data;
-  return data;
+  if (!response.ok || !data.ok) throw new Error(parentNotificationErrorMessage(data.message || 'Could not update notifications.'));
+  parentNotificationMeta = { ...parentNotificationMeta, ...data };
+  return parentNotificationMeta;
 }
 
 function parentHistoryMarkup(row) {
@@ -448,7 +456,7 @@ function parentHistoryMarkup(row) {
 async function loadParentNotificationHistory(append = false) {
   const cursor = append ? parentNotificationMeta.nextCursor : '';
   const data = await parentNotificationRequest('getNotifications', {
-    limit: 40,
+    limit: 30,
     before: cursor,
     category: document.getElementById('parentNotificationCategory').value,
     unread: document.getElementById('parentNotificationUnread').checked,
@@ -1994,9 +2002,10 @@ async function enableParentPushOnThisDevice() {
     renderParentNotificationSettings(parentNotificationMeta);
     renderParentPushPrompt();
   } catch (error) {
-    status.textContent = error.message;
+    const message = parentNotificationErrorMessage(error);
+    status.textContent = message;
     const copy = document.getElementById('parentPushPromptCopy');
-    if (copy) copy.textContent = error.message;
+    if (copy) copy.textContent = message;
   }
 }
 document.getElementById('enableParentPush')?.addEventListener('click', enableParentPushOnThisDevice);
