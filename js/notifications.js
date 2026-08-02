@@ -45,6 +45,7 @@
       <header><div><small>COMMUNICATION CENTRE</small><h2>Notifications</h2></div><button type="button" data-notification-close aria-label="Close">&times;</button></header>
       <nav class="notification-history-tabs" aria-label="Notification views">
         <button type="button" class="is-active" data-notification-view="history">History</button>
+        <button type="button" data-notification-view="compose" data-notification-compose-tab hidden>Compose message</button>
         <button type="button" data-notification-view="settings" data-notification-settings-tab>Devices</button>
       </nav>
       <section data-notification-panel="history">
@@ -56,6 +57,19 @@
         </div>
         <div class="notification-history-list"></div>
         <button type="button" class="notification-load-more" hidden>Load older notifications</button>
+      </section>
+      <section data-notification-panel="compose" hidden>
+        <form class="notification-compose-form">
+          <div class="notification-compose-heading"><div><small>SCHOOL ANNOUNCEMENT</small><h3>Compose notification message</h3><p>Messages for student groups are delivered to their linked parent accounts.</p></div></div>
+          <label class="notification-compose-wide">Title<input name="Title" maxlength="160" required placeholder="For example: Resumption information"></label>
+          <label class="notification-compose-wide">Message<textarea name="Message" maxlength="2000" rows="5" required placeholder="Write the message recipients should receive."></textarea></label>
+          <fieldset><legend>Who should receive it?</legend><div class="notification-compose-options"><label><input type="checkbox" name="DayStudents"><span>Day students' parents</span></label><label><input type="checkbox" name="BoardingStudents"><span>Boarding students' parents</span></label><label><input type="checkbox" name="Staff"><span>Staff</span></label></div></fieldset>
+          <fieldset><legend>Delivery channels</legend><div class="notification-compose-options"><label><input type="checkbox" name="InApp" checked><span>In-app notification</span></label><label><input type="checkbox" name="Push" checked><span>Browser push</span></label></div></fieldset>
+          <label>Delivery time<input type="datetime-local" name="ScheduledAt"><small>Leave blank to send immediately.</small></label>
+          <div class="notification-compose-actions"><button type="submit">Send or schedule</button><button type="reset" class="notification-secondary-action">Clear</button></div>
+          <p class="notification-compose-status" role="status"></p>
+        </form>
+        <section class="notification-sent-section"><header><div><small>AUDIT TRAIL</small><h3>Sent and scheduled messages</h3></div><button type="button" data-refresh-announcements>Refresh</button></header><div class="notification-announcement-history"></div></section>
       </section>
       <section data-notification-panel="settings" hidden>
         <form class="notification-settings-form">
@@ -82,6 +96,9 @@
   const pushPromptButton = centre.querySelector('[data-notification-enable-push]');
   const historyList = dialog.querySelector('.notification-history-list');
   const loadMore = dialog.querySelector('.notification-load-more');
+  const composeTab = dialog.querySelector('[data-notification-compose-tab]');
+  const composeForm = dialog.querySelector('.notification-compose-form');
+  const announcementHistory = dialog.querySelector('.notification-announcement-history');
   let records = [];
   let historyRecords = [];
   let currentData = {};
@@ -107,6 +124,36 @@
     </article>`;
   }
 
+  function announcementMarkup(row) {
+    const hasRecipientSummary = row.RecipientSummary && typeof row.RecipientSummary === 'object';
+    const recipients = row.RecipientSummary || {};
+    const selected = row.Recipients || {};
+    const groups = (hasRecipientSummary ? [
+      selected.DayStudents ? `${Number(recipients.DayStudents || 0)} day student${Number(recipients.DayStudents || 0) === 1 ? '' : 's'}` : '',
+      selected.BoardingStudents ? `${Number(recipients.BoardingStudents || 0)} boarding student${Number(recipients.BoardingStudents || 0) === 1 ? '' : 's'}` : '',
+      selected.Staff ? `${Number(recipients.Staff || 0)} staff` : ''
+    ] : [selected.DayStudents ? 'Day students' : '', selected.BoardingStudents ? 'Boarding students' : '', selected.Staff ? 'Staff' : ''])
+      .filter(Boolean).join(' · ') || 'Recipient count pending';
+    const deliveryTime = row.Status === 'Scheduled' ? row.ScheduledAt : row.SentAt || row.CreatedAt;
+    return `<article class="notification-announcement-record">
+      <div><small>${html(row.Status || 'Draft')}</small><strong>${html(row.Title || 'Announcement')}</strong><p>${html(row.Message || '')}</p></div>
+      <dl><div><dt>Recipients</dt><dd>${html(groups)}</dd></div><div><dt>Channels</dt><dd>${html(Object.entries(row.Channels || {}).filter(([, enabled]) => enabled).map(([name]) => name === 'InApp' ? 'In-app' : name).join(' + '))}</dd></div><div><dt>${row.Status === 'Scheduled' ? 'Scheduled' : 'Sent'}</dt><dd>${html(deliveryTime ? new Date(deliveryTime).toLocaleString() : '')}</dd></div><div><dt>By</dt><dd>${html(row.CreatedBy || '')}</dd></div>${row.Channels?.Push && row.Status !== 'Scheduled' ? `<div><dt>Push status</dt><dd>${Number(row.PushDelivered || 0)} delivered · ${Number(row.PushQueued || 0)} queued${Number(row.PushFailed || 0) ? ` · ${Number(row.PushFailed)} failed` : ''}</dd></div>` : ''}</dl>
+      ${row.Error ? `<p class="notification-announcement-error">${html(row.Error)}</p>` : ''}
+    </article>`;
+  }
+
+  function renderAnnouncements(data = {}) {
+    const allowed = data.canComposeAnnouncements === true;
+    composeTab.hidden = !allowed;
+    if (!allowed && dialog.querySelector('[data-notification-view="compose"]').classList.contains('is-active')) {
+      dialog.querySelector('[data-notification-view="history"]').click();
+    }
+    const announcements = Array.isArray(data.announcements) ? data.announcements : [];
+    announcementHistory.innerHTML = announcements.length
+      ? announcements.map(announcementMarkup).join('')
+      : '<p class="notification-empty">No school announcements have been sent yet.</p>';
+  }
+
   function render(data = {}) {
     currentData = { ...currentData, ...data };
     records = Array.isArray(data.notifications) ? data.notifications : [];
@@ -116,6 +163,7 @@
     markAll.disabled = unread < 1;
     list.innerHTML = records.length ? records.slice(0, 10).map((row) => itemMarkup(row)).join('') : '<p class="notification-empty">No notifications yet.</p>';
     renderSettings(currentData);
+    renderAnnouncements(currentData);
   }
 
   async function load(force = false) {
@@ -137,6 +185,24 @@
     render(data);
     lastLoadedAt = Date.now();
     return data;
+  }
+
+  async function drainAnnouncementPushQueue(initialCount, status) {
+    let remaining = Math.max(0, Number(initialCount || 0));
+    let processed = 0;
+    while (remaining > 0 && processed < 25) {
+      status.textContent = `Delivering push notifications… ${processed + 1} of ${Number(initialCount)} batch${Number(initialCount) === 1 ? '' : 'es'}`;
+      const response = await request('/api/staff-notifications', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'processAnnouncementPush' })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.message || 'Push delivery will continue through the notification scheduler.');
+      if (!Number(data.announcementPush?.inspected || 0)) break;
+      remaining = Number(data.announcementPush?.remaining || 0);
+      processed += 1;
+    }
+    await load(true);
+    return remaining;
   }
 
   function openSection(actionUrl) {
@@ -176,6 +242,7 @@
     historyList.innerHTML = historyRecords.length ? historyRecords.map((row) => itemMarkup(row, true)).join('') : '<p class="notification-empty">No notifications match these filters.</p>';
     loadMore.hidden = !data.hasMore;
     renderSettings(data);
+    renderAnnouncements(data);
   }
 
   function renderSettings(data = {}) {
@@ -246,6 +313,58 @@
   dialog.querySelectorAll('[data-notification-category], [data-notification-unread], [data-notification-archived]').forEach((control) => control.addEventListener('change', () => loadHistory(false).catch(() => {})));
   dialog.querySelector('[data-notification-refresh]').addEventListener('click', () => loadHistory(false).catch(() => {}));
   loadMore.addEventListener('click', () => loadHistory(true).catch(() => {}));
+  dialog.querySelector('[data-refresh-announcements]').addEventListener('click', () => load(true).catch(() => {}));
+
+  composeForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const status = composeForm.querySelector('.notification-compose-status');
+    const recipients = {
+      DayStudents: composeForm.elements.DayStudents.checked,
+      BoardingStudents: composeForm.elements.BoardingStudents.checked,
+      Staff: composeForm.elements.Staff.checked
+    };
+    const recipientNames = [recipients.DayStudents ? 'day students' : '', recipients.BoardingStudents ? 'boarding students' : '', recipients.Staff ? 'staff' : ''].filter(Boolean);
+    if (!recipientNames.length) { status.textContent = 'Select at least one recipient group.'; return; }
+    const policies = currentData.settings?.AudiencePolicies || {};
+    const blockedAudiences = [];
+    if ((recipients.DayStudents || recipients.BoardingStudents) && policies.Parent?.Categories?.Announcements === false) blockedAudiences.push('parent portal users');
+    if (recipients.Staff && policies.Staff?.Categories?.Announcements === false) blockedAudiences.push('staff app users');
+    if (blockedAudiences.length) {
+      status.textContent = `Announcements are disabled for ${blockedAudiences.join(' and ')} in School settings.`;
+      return;
+    }
+    const scheduledValue = composeForm.elements.ScheduledAt.value;
+    const scheduledAt = scheduledValue ? new Date(scheduledValue) : null;
+    if (scheduledAt && Number.isNaN(scheduledAt.getTime())) { status.textContent = 'Choose a valid delivery date and time.'; return; }
+    const action = scheduledAt && scheduledAt.getTime() > Date.now() ? `schedule this message for ${scheduledAt.toLocaleString()}` : 'send this message now';
+    if (!window.confirm(`Are you sure you want to ${action} for ${recipientNames.join(', ')}?`)) return;
+    const submit = composeForm.querySelector('[type="submit"]');
+    submit.disabled = true;
+    status.textContent = scheduledAt && scheduledAt.getTime() > Date.now() ? 'Scheduling notification...' : 'Sending notification...';
+    try {
+      const data = await update('sendAnnouncement', { announcement: {
+        Title: composeForm.elements.Title.value,
+        Message: composeForm.elements.Message.value,
+        Recipients: recipients,
+        Channels: {
+          InApp: composeForm.elements.InApp.checked,
+          Push: composeForm.elements.Push.checked
+        },
+        ScheduledAt: scheduledAt ? scheduledAt.toISOString() : ''
+      } });
+      composeForm.reset();
+      composeForm.elements.InApp.checked = true;
+      composeForm.elements.Push.checked = true;
+      const queued = Number(data.announcement?.PushQueued || 0);
+      if (queued) {
+        const remaining = await drainAnnouncementPushQueue(queued, status);
+        status.textContent = remaining
+          ? `Notification sent. ${remaining} push batch${remaining === 1 ? '' : 'es'} will continue through the scheduler.`
+          : 'Notification sent and push delivery processed.';
+      } else status.textContent = data.message || 'Notification saved.';
+    } catch (error) { status.textContent = error.message; }
+    finally { submit.disabled = false; }
+  });
 
   async function handleNotificationClick(event, sourceRecords) {
     const item = event.target.closest('[data-notification-id]');

@@ -34,6 +34,10 @@ The `system` document contains organisation defaults: timezone, fee reminder int
 
 Invoice documents now contain `ReminderEligible`, `NextReminderDate`, `NextReminderStage`, `SentReminderStages`, `LastReminderStage`, `LastReminderAt`, and `ReminderBalance`.
 
+### `notificationAnnouncements` and `notificationAnnouncementPushJobs`
+
+`notificationAnnouncements` is the audit trail for management-composed school messages. It records the title, message, selected recipient groups and channels, schedule, sender, recipient totals, status, and push counts. `notificationAnnouncementPushJobs` divides bulk browser-push work into small idempotent batches so one request cannot exceed the Cloudflare Worker subrequest allowance.
+
 ## Event flows
 
 ### Verified payment
@@ -55,6 +59,12 @@ School-fee components for the same student, period, currency, due date, and stag
 
 Notifications are emitted when a requisition or supplier bill is submitted/resubmitted, approved, rejected, pushed to Accounts for desktop processing, or posted to accounting. Recipient resolution supports explicit usernames, roles, departments, branch/section scope, the original requester, and configurable workflow roles.
 
+### School announcements
+
+Super Admin and Management users in the school edition can compose an announcement for day students, boarding students, staff, or any combination. Student-group messages target the linked parent accounts; staff messages target active staff usernames. The sender can choose in-app, browser push, or both, and may send immediately or schedule a future delivery. Duplicate parent addresses are collapsed, inactive students and staff are excluded, and branch scope is retained.
+
+In-app records are created immediately. Bulk push work is divided into small jobs and drained by the authenticated composer while the page remains open; the protected scheduler safely resumes any pending jobs and processes future scheduled announcements.
+
 ## Web interfaces
 
 Staff and parent portals provide:
@@ -65,6 +75,7 @@ Staff and parent portals provide:
 - Category/channel preferences, timezone, and quiet hours.
 - Browser push opt-in, current-device status, device removal, and staff test notification.
 - Super Admin settings for reminder intervals and templates.
+- A school-only message composer with recipient checkboxes, channel selection, scheduling, confirmation, and sent-message audit history.
 
 Browser permission is requested only after the user selects **Enable on this device**. Denial leaves in-app notifications operating normally.
 
@@ -88,7 +99,7 @@ Browser permission is requested only after the user selects **Enable on this dev
    - `NOTIFICATION_SCHEDULER_URL`: the full deployed URL ending in `/api/notification-scheduler`
    - `NOTIFICATION_SCHEDULER_SECRET`: the same value configured in Cloudflare
 
-The `Notification reminders` workflow runs daily at 05:15 UTC (06:15 Africa/Lagos). It is also manually runnable with an optional processing date. The endpoint accepts only a Bearer token matching the encrypted scheduler secret.
+The `Notification reminders` workflow runs daily at 05:15 UTC (06:15 Africa/Lagos). It is also manually runnable with an optional processing date. A separate `School announcement delivery` workflow calls the same protected endpoint every 15 minutes in announcement-only mode, using several bounded invocations to drain push batches without exceeding one Worker's subrequest allowance. Both workflows use the same school scheduler URL and Bearer secret.
 
 For existing invoices, run the reminder metadata migration first in dry-run mode with the four required Firebase/workspace environment variables loaded in the shell:
 
@@ -136,7 +147,7 @@ Template substitutions are plain text. The application escapes notification cont
 Run the notification suites with:
 
 ```powershell
-node --test tests/notifications.test.mjs tests/notification-system.test.mjs
+node --test tests/notifications.test.mjs tests/notification-system.test.mjs tests/school-announcements.test.mjs
 ```
 
 The suites cover central metadata, event idempotency, recipient isolation, unread/read state, payment confirmation, all default fee stages, paid and part-paid invoices, overdue processing, every requisition transition, per-device identity, push denial, invalid-token cleanup, protected APIs, and the absence of portal-open notification side effects.

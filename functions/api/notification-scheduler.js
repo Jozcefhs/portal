@@ -2,6 +2,10 @@ import { secureTextEqual } from '../lib/backend-security.js';
 import { processFeeReminderSchedule } from '../lib/notification-reminders.js';
 import { retryFailedPushDeliveries } from '../lib/firebase-messaging.js';
 import { readJsonBody } from '../lib/request-security.js';
+import {
+  processScheduledSchoolAnnouncements,
+  processSchoolAnnouncementPushQueue
+} from '../lib/school-announcements.js';
 
 const clean = (value) => String(value ?? '').trim();
 
@@ -26,12 +30,21 @@ async function run(context) {
     const body = context.request.method === 'POST'
       ? await readJsonBody(context.request, { maxBytes: 16 * 1024 })
       : {};
-    const reminders = await processFeeReminderSchedule(context.env, {
+    const announcementsOnly = body.announcementsOnly === true;
+    const reminders = announcementsOnly ? { skipped: true } : await processFeeReminderSchedule(context.env, {
       today: clean(body.today),
       limit: Number(body.limit || 250)
     });
-    const pushRetries = await retryFailedPushDeliveries(context.env, { limit: 50 });
-    return Response.json({ ok: true, reminders, pushRetries }, { headers: { 'Cache-Control': 'no-store' } });
+    const announcements = await processScheduledSchoolAnnouncements(context.env, {
+      now: clean(body.now),
+      limit: Number(body.limit || 100)
+    });
+    const announcementPush = await processSchoolAnnouncementPushQueue(context.env, {
+      now: clean(body.now),
+      limit: Number(body.pushJobLimit || 1)
+    });
+    const pushRetries = announcementsOnly ? { skipped: true } : await retryFailedPushDeliveries(context.env, { limit: 50 });
+    return Response.json({ ok: true, reminders, announcements, announcementPush, pushRetries }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     return Response.json({ ok: false, message: error?.message || String(error) }, {
       status: error?.status || 500,

@@ -608,6 +608,7 @@ export async function listNotifications(env, recipient, options = {}) {
   const rows = await queryTargetedNotifications(env, recipient, query, Math.min(100, requestedLimit + 1));
   const visible = rows
     .filter((row) => notificationTargetsRecipient(row, recipient))
+    .filter((row) => !values(row.Channels).length || values(row.Channels).map(lower).includes('inapp'))
     .filter((row) => preferences.Channels?.InApp !== false && preferences.Categories?.[category(row.Category || row.Type)] !== false)
     .filter((row) => !options.category || lower(row.Category || row.Type) === lower(options.category))
     .filter((row) => !options.before || clean(row.CreatedAt) < clean(options.before))

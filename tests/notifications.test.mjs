@@ -363,6 +363,15 @@ test('list and read helpers keep unread state per recipient', async () => {
   assert.equal(unread.unreadCount, 1);
   assert.equal(unread.notifications[0].Read, false);
 
+  const pushOnly = await listNotifications({}, {
+    audience: 'Staff', username: 'admin', role: 'Super Admin', branchId: 'main', schoolSectionAccess: 'secondary'
+  }, {
+    queryCollection: async (_env, collection) => collection === 'notifications'
+      ? [{ ...notification, Channels: ['Push'] }]
+      : []
+  });
+  assert.equal(pushOnly.notifications.length, 0);
+
   const writes = [];
   await markNotificationRead({}, notification.NotificationId, 'admin', {
     now: '2026-07-30T12:05:00.000Z',

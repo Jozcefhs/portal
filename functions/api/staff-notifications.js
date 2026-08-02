@@ -18,6 +18,12 @@ import {
   savePushSubscription
 } from '../lib/firebase-messaging.js';
 import { readJsonBody } from '../lib/request-security.js';
+import {
+  canManageSchoolAnnouncements,
+  createSchoolAnnouncement,
+  listSchoolAnnouncements,
+  processSchoolAnnouncementPushQueue
+} from '../lib/school-announcements.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -121,6 +127,25 @@ async function loadForUser(env, user, options = {}) {
   return listNotifications(env, recipientFor(user, env), { limit: 50, ...options });
 }
 
+async function responseData(env, user, options = {}) {
+  const canComposeAnnouncements = canManageSchoolAnnouncements(user);
+  const [data, settings, subscriptions, announcements] = await Promise.all([
+    loadForUser(env, user, options),
+    loadNotificationSettings(env, 'Staff', user.username),
+    listPushSubscriptions(env, user.username),
+    canComposeAnnouncements ? listSchoolAnnouncements(env) : Promise.resolve([])
+  ]);
+  return {
+    ...data,
+    settings,
+    subscriptions,
+    announcements,
+    messaging: publicMessagingConfig(env),
+    canManageSystemSettings: clean(user.role) === 'Super Admin',
+    canComposeAnnouncements
+  };
+}
+
 export async function onRequestGet(context) {
   try {
     const user = await requireStaffSession(context.env, context.request);
@@ -132,12 +157,7 @@ export async function onRequestGet(context) {
       unread: url.searchParams.get('unread') === 'true',
       archived: url.searchParams.get('archived') === 'true'
     };
-    const [data, settings, subscriptions] = await Promise.all([
-      loadForUser(context.env, user, options),
-      loadNotificationSettings(context.env, 'Staff', user.username),
-      listPushSubscriptions(context.env, user.username)
-    ]);
-    return response({ ok: true, ...data, settings, subscriptions, messaging: publicMessagingConfig(context.env), canManageSystemSettings: clean(user.role) === 'Super Admin' });
+    return response({ ok: true, ...await responseData(context.env, user, options) });
   } catch (error) {
     return response({ ok: false, message: error?.message || String(error) }, error?.status || 500);
   }
@@ -150,8 +170,9 @@ export async function onRequestPost(context) {
     const body = await readJsonBody(request, { maxBytes: 32 * 1024 });
     const action = clean(body.action || body.Action || 'markRead').toLowerCase();
     const recipient = recipientFor(user, env);
-    const current = await loadForUser(env, user, { limit: 100, archived: action === 'unarchive' });
+    let announcementResult = null;
     if (action === 'markallread') {
+      const current = await loadForUser(env, user, { limit: 100 });
       await markAllNotificationsRead(env, current.notifications, user.username);
     } else if (action === 'markread') {
       const notificationId = clean(body.notificationId || body.NotificationId);
@@ -180,6 +201,16 @@ export async function onRequestPost(context) {
       await saveNotificationSettings(env, 'Staff', user.username, body.settings || body.Settings || {});
     } else if (action === 'savesystemsettings') {
       await saveSystemSettings(env, user, body.settings || body.Settings || {});
+    } else if (action === 'sendannouncement') {
+      announcementResult = await createSchoolAnnouncement(env, user, body.announcement || body.Announcement || {});
+    } else if (action === 'processannouncementpush') {
+      if (!canManageSchoolAnnouncements(user)) {
+        const error = new Error('Only authorised school management can deliver announcements.');
+        error.status = 403;
+        throw error;
+      }
+      const announcementPush = await processSchoolAnnouncementPushQueue(env, { limit: 1 });
+      return response({ ok: true, announcementPush });
     } else if (action === 'subscribepush') {
       await savePushSubscription(env, {
         ...(body.subscription || body.Subscription || body),
@@ -218,12 +249,18 @@ export async function onRequestPost(context) {
       error.status = 400;
       throw error;
     }
-    const [data, settings, subscriptions] = await Promise.all([
-      loadForUser(env, user),
-      loadNotificationSettings(env, 'Staff', user.username),
-      listPushSubscriptions(env, user.username)
-    ]);
-    return response({ ok: true, ...data, settings, subscriptions, messaging: publicMessagingConfig(env), canManageSystemSettings: clean(user.role) === 'Super Admin' });
+    return response({
+      ok: true,
+      ...await responseData(env, user),
+      announcement: announcementResult,
+      message: announcementResult
+        ? announcementResult.Status === 'Scheduled'
+          ? 'Notification scheduled.'
+          : announcementResult.Channels?.Push
+            ? 'Notification sent. Push delivery is queued.'
+            : 'Notification sent.'
+        : ''
+    });
   } catch (error) {
     return response({ ok: false, message: error?.message || String(error) }, error?.status || 500);
   }
