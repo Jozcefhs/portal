@@ -1498,6 +1498,42 @@ html[data-theme="dark"] .vertical-bar-track {
 .compact-form input:not([type="checkbox"]),
 .compact-form select { width: 100%; min-height: 38px; }
 .compact-form button { width: auto; align-self: flex-start; }
+.church-service-entry-form {
+  width: 100%;
+  max-width: none;
+}
+.church-service-entry-form > h3,
+.church-service-entry-form > p { margin-right: 0; margin-left: 0; }
+.church-service-entry-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .8rem .9rem;
+  width: 100%;
+}
+.church-service-entry-grid label {
+  display: grid;
+  grid-template-rows: auto 44px;
+  gap: .35rem;
+  min-width: 0;
+  margin: 0;
+  align-content: start;
+}
+.church-service-entry-grid input:not([type="checkbox"]),
+.church-service-entry-grid select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+  margin: 0;
+}
+.church-service-entry-actions {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  width: 100%;
+  min-height: 40px;
+}
+.church-service-entry-actions .status { margin: 0; }
 .service-attendance-workspace {
   grid-column: 1 / -1;
   display: grid;
@@ -1575,10 +1611,12 @@ html[data-theme="dark"] .service-attendance-summary small,
 html[data-theme="dark"] .service-attendance-empty { color: #b8c7d8; }
 html[data-theme="dark"] .service-attendance-summary strong { color: #f4f8ff; }
 @media (max-width: 900px) {
+  .church-service-entry-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .service-attendance-workspace { grid-template-columns: 1fr; }
   .service-attendance-chart-grid { grid-template-columns: repeat(3, minmax(190px, 1fr)); overflow-x: auto; padding-bottom: .35rem; }
 }
 @media (max-width: 560px) {
+  .church-service-entry-grid { grid-template-columns: 1fr; }
   .attendance-breakdown-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .service-attendance-chart-grid { grid-template-columns: 1fr; overflow: visible; }
 }

@@ -3496,19 +3496,21 @@ async function loadChurchServices() {
     const memberOptions = members.map((row) => `<option value="${escapeHtml(pick(row, ['MemberId', '__id']))}">${escapeHtml([pick(row, ['DisplayName']), pick(row, ['MemberId', '__id'])].filter(Boolean).join(' · '))}</option>`).join('');
     const occurrenceForm = capabilities.canManageOccurrences
       ? services.length ? `
-        <form id="churchOccurrenceForm" class="workflow-card compact-form" data-service-workspace="occurrences">
+        <form id="churchOccurrenceForm" class="workflow-card compact-form church-service-entry-form" data-service-workspace="occurrences">
           <h3>Record service occurrence</h3>
-          <label>Service<select name="ServiceId" required><option value="">Choose service</option>${serviceOptions}</select></label>
-          <label>Date<input name="Date" type="date" value="${escapeHtml(today)}" required></label>
-          <label>Start time<input name="StartTime" type="time"></label>
-          <label>End time<input name="EndTime" type="time"></label>
-          <label>Location<input name="Location" placeholder="Service venue"></label>
-          <label>Theme<input name="Theme" placeholder="Optional theme"></label>
-          <label>Minister<input name="Minister" placeholder="Minister in charge"></label>
-          <label>Status<select name="Status"><option>Scheduled</option><option>In Progress</option><option>Completed</option></select></label>
-          <label>Notes<input name="Notes" placeholder="Optional notes"></label>
-          <button type="submit">Save occurrence</button>
-          <p class="status" data-service-form-status></p>
+          <p class="muted">Capture the schedule and service details in one concise record.</p>
+          <div class="church-service-entry-grid">
+            <label>Service<select name="ServiceId" required><option value="">Choose service</option>${serviceOptions}</select></label>
+            <label>Date<input name="Date" type="date" value="${escapeHtml(today)}" required></label>
+            <label>Start time<input name="StartTime" type="time"></label>
+            <label>End time<input name="EndTime" type="time"></label>
+            <label>Location<input name="Location" placeholder="Service venue"></label>
+            <label>Theme<input name="Theme" placeholder="Optional theme"></label>
+            <label>Minister<input name="Minister" placeholder="Minister in charge"></label>
+            <label>Status<select name="Status"><option>Scheduled</option><option>In Progress</option><option>Completed</option></select></label>
+            <label>Notes<input name="Notes" placeholder="Optional notes"></label>
+          </div>
+          <div class="church-service-entry-actions"><button type="submit">Save occurrence</button><p class="status" data-service-form-status></p></div>
         </form>` : '<article class="workflow-card" data-service-workspace="occurrences"><h3>Record service occurrence</h3><p class="muted">Create an active service definition in the desktop app before recording an occurrence.</p></article>'
       : '';
     const attendanceForms = capabilities.canRecordAttendance
@@ -3532,18 +3534,20 @@ async function loadChurchServices() {
           </form>
           <section id="churchAttendanceBreakdownReport" class="service-attendance-report" aria-live="polite"></section>
         </section>
-        <form id="churchAttendanceForm" class="workflow-card compact-form" data-service-workspace="checkin">
+        <form id="churchAttendanceForm" class="workflow-card compact-form church-service-entry-form" data-service-workspace="checkin">
           <h3>Individual attendance check-in</h3>
-          <label>Service occurrence<select name="OccurrenceId" required><option value="">Choose occurrence</option>${occurrenceOptions}</select></label>
-          <label>Attendance type<select name="AttendanceType"><option value="Member">Member</option><option value="Visitor">Visitor</option></select></label>
-          <label>Member<select name="MemberId"><option value="">Choose member</option>${memberOptions}</select></label>
-          <label>Visitor name<input name="DisplayName" placeholder="Required for a visitor"></label>
-          <label>Phone<input name="Phone" type="tel"></label>
-          <label>Email<input name="Email" type="email"></label>
-          <label>First-time visitor<select name="FirstTimeVisitor"><option value="NO">No</option><option value="YES">Yes</option></select></label>
-          <label>Notes<input name="Notes" placeholder="Optional notes"></label>
-          <button type="submit">Record check-in</button>
-          <p class="status" data-service-form-status></p>
+          <p class="muted">Choose a member or enter a visitor's details for this occurrence.</p>
+          <div class="church-service-entry-grid">
+            <label>Service occurrence<select name="OccurrenceId" required><option value="">Choose occurrence</option>${occurrenceOptions}</select></label>
+            <label>Attendance type<select name="AttendanceType"><option value="Member">Member</option><option value="Visitor">Visitor</option></select></label>
+            <label>Member<select name="MemberId"><option value="">Choose member</option>${memberOptions}</select></label>
+            <label>Visitor name<input name="DisplayName" placeholder="Required for a visitor"></label>
+            <label>Phone<input name="Phone" type="tel"></label>
+            <label>Email<input name="Email" type="email"></label>
+            <label>First-time visitor<select name="FirstTimeVisitor"><option value="NO">No</option><option value="YES">Yes</option></select></label>
+            <label>Notes<input name="Notes" placeholder="Optional notes"></label>
+          </div>
+          <div class="church-service-entry-actions"><button type="submit">Record check-in</button><p class="status" data-service-form-status></p></div>
         </form>` : '<article class="workflow-card" data-service-workspace="checkin"><h3>Record attendance</h3><p class="muted">Record a service occurrence before entering attendance.</p></article>'
       : '';
     panelEl.innerHTML = `
