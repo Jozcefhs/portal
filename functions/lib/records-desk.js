@@ -7,7 +7,8 @@ export const RECORD_DESK_TYPES = Object.freeze([
   'applicants',
   'staff',
   'members',
-  'departments'
+  'departments',
+  'donors'
 ]);
 
 const PASTORAL_ROLES = new Set(['Super Admin', 'Pastor', 'Senior Pastor', 'Head Minister']);
@@ -55,6 +56,7 @@ export function recordsDeskCapabilities(user = {}) {
   const executive = allowed.has('executiveOffice') && EXECUTIVE_ROLES.has(role);
   const schoolExecutive = executive && role === 'Principal' && schoolEdition;
   const ministryExecutive = executive && ['Senior Pastor', 'Head Minister'].includes(role) && organisationEdition;
+  const donorAccess = enabled && organisationEdition && allowed.has('donations');
   return {
     enabled,
     edition,
@@ -69,6 +71,7 @@ export function recordsDeskCapabilities(user = {}) {
     canSearchMembers: enabled && organisationEdition && (allowed.has('members') || ministryExecutive),
     canSearchDepartments: enabled && organisationEdition &&
       (ministryExecutive || ['members', 'funds', 'offerings'].some((section) => allowed.has(section))),
+    canSearchDonors: donorAccess,
     canViewStudentContact: schoolExecutive || allowed.has('students') || allowed.has('admissions'),
     canViewStudentFinance: allowed.has('accounts'),
     canViewStudentClinic: allowed.has('clinic'),
@@ -81,7 +84,9 @@ export function recordsDeskCapabilities(user = {}) {
     canViewMemberContact: ministryExecutive || allowed.has('members'),
     canViewPastoralNotes: PASTORAL_ROLES.has(clean(user.role)),
     canViewDepartmentRoster: ministryExecutive || allowed.has('members'),
-    canViewDepartmentFinance: allowed.has('funds') || allowed.has('offerings') || allowed.has('incomeAnalytics')
+    canViewDepartmentFinance: allowed.has('funds') || allowed.has('offerings') || allowed.has('incomeAnalytics'),
+    canViewDonorContact: donorAccess,
+    canViewDonorNotes: donorAccess && ['Super Admin', 'Church Administrator', 'Treasurer'].includes(role)
   };
 }
 
@@ -91,7 +96,8 @@ export function allowedRecordsDeskTypes(capabilities = {}) {
     capabilities.canSearchApplicants && 'applicants',
     capabilities.canSearchStaff && 'staff',
     capabilities.canSearchMembers && 'members',
-    capabilities.canSearchDepartments && 'departments'
+    capabilities.canSearchDepartments && 'departments',
+    capabilities.canSearchDonors && 'donors'
   ].filter(Boolean);
 }
 
@@ -117,6 +123,7 @@ export function recordReferenceKeys(row = {}) {
     row.ApplicationID,
     row.MemberId,
     row.DepartmentId,
+    row.DonorId,
     row.Username,
     row.__id
   ].map(recordReferenceKey).filter(Boolean);
@@ -215,6 +222,23 @@ export function departmentSearchCard(row = {}) {
     row.Name || row.DepartmentName,
     [id, row.DepartmentType, row.AreaZone].map(clean).filter(Boolean).join(' · '),
     row.Active === undefined || !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(row.Active)) ? 'Active' : 'Inactive',
+    row
+  );
+}
+
+export function donorSearchCard(row = {}) {
+  const id = clean(row.DonorId || row.donorId || row.__id);
+  const contributionCount = Math.max(0, Number(row.ContributionCount || row.GiftCount || 0) || 0);
+  return card(
+    'donors',
+    id,
+    row.DisplayName || row.DonorName || row.Name,
+    [
+      row.Email || row.DonorEmail,
+      row.Phone || row.DonorPhone,
+      contributionCount ? `${contributionCount} contribution${contributionCount === 1 ? '' : 's'}` : ''
+    ].map(clean).filter(Boolean).join(' Â· '),
+    lower(row.Active) === 'no' ? 'Inactive' : clean(row.DonorType || 'Donor'),
     row
   );
 }
@@ -376,4 +400,37 @@ export function departmentDetailProjection(row = {}) {
       ])
     }]
   };
+}
+
+export function donorDetailProjection(row = {}, capabilities = {}) {
+  const header = donorSearchCard(row);
+  const sections = [{
+    key: 'giving-profile',
+    title: 'Giving profile',
+    items: nonEmpty([
+      item('Donor ID', row.DonorId || row.__id),
+      item('Profile type', row.DonorType || 'Donor'),
+      item('First contribution', row.FirstContributionAt),
+      item('Latest contribution', row.LatestContributionAt)
+    ])
+  }];
+  if (capabilities.canViewDonorContact) {
+    sections.push({
+      key: 'contact',
+      title: 'Contact',
+      items: nonEmpty([
+        item('Email', row.Email || row.DonorEmail),
+        item('Phone', row.Phone || row.DonorPhone),
+        item('Address', row.Address)
+      ])
+    });
+  }
+  if (capabilities.canViewDonorNotes && clean(row.Notes)) {
+    sections.push({
+      key: 'notes',
+      title: 'Donor notes',
+      items: [item('Notes', row.Notes)]
+    });
+  }
+  return { ...header, sections };
 }

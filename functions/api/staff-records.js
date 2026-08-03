@@ -13,6 +13,8 @@ import {
   applicantSearchCard,
   departmentDetailProjection,
   departmentSearchCard,
+  donorDetailProjection,
+  donorSearchCard,
   memberDetailProjection,
   memberSearchCard,
   normalizeRecordsDeskQuery,
@@ -49,7 +51,11 @@ const SEARCH_FIELDS = Object.freeze({
   ],
   staff: ['Username', 'DisplayName', 'Role', 'Department', 'Position'],
   members: ['MemberId', 'DisplayName', 'FirstName', 'MiddleName', 'Surname', 'Phone', 'Email', 'Ministry'],
-  departments: ['DepartmentId', 'Name', 'DepartmentName', 'DepartmentType', 'AreaZone', 'Description']
+  departments: ['DepartmentId', 'Name', 'DepartmentName', 'DepartmentType', 'AreaZone', 'Description'],
+  donors: [
+    'DonorId', 'DisplayName', 'DonorName', 'Email', 'DonorEmail', 'Phone', 'DonorPhone',
+    'Address', 'DonationSearchText', 'GivingTypes', 'Currencies'
+  ]
 });
 const ROW_CACHE_TTL_MS = 5000;
 const ROW_CACHE_MAX_ENTRIES = 8;
@@ -103,6 +109,7 @@ function searchFields(type, capabilities) {
   if (type === 'students' && capabilities.canViewStudentWallet) {
     fields.push('WalletCardId');
   }
+  if (type === 'donors' && capabilities.canViewDonorNotes) fields.push('Notes');
   return fields;
 }
 
@@ -111,7 +118,103 @@ function searchCard(type, row) {
   if (type === 'applicants') return applicantSearchCard(row);
   if (type === 'staff') return staffSearchCard(row);
   if (type === 'members') return memberSearchCard(row);
+  if (type === 'donors') return donorSearchCard(row);
   return departmentSearchCard(row);
+}
+
+function donorContactKeys(row = {}) {
+  const email = lower(row.Email || row.DonorEmail);
+  const phone = clean(row.Phone || row.DonorPhone).replace(/[^0-9+]/g, '');
+  const name = lower(row.DisplayName || row.DonorName || row.Name);
+  return [
+    name && email && `email:${name}|${email}`,
+    name && phone && `phone:${name}|${phone}`,
+    !email && !phone && name && `name:${name}`
+  ].filter(Boolean);
+}
+
+export function donorDirectoryRows(registeredDonors = [], donations = [], branchId = 'main') {
+  const rowsByKey = new Map();
+  const contactIndex = new Map();
+  const givingTypesByKey = new Map();
+  const currenciesByKey = new Map();
+  const addContactIndex = (key, row) => donorContactKeys(row).forEach((contact) => contactIndex.set(contact, key));
+  registeredDonors.forEach((profile) => {
+    const donorId = clean(profile.DonorId || profile.__id);
+    if (!donorId) return;
+    const key = `registered:${lower(donorId)}`;
+    const row = {
+      ...profile,
+      __id: donorId,
+      DonorId: donorId,
+      BranchId: clean(profile.BranchId || branchId || 'main'),
+      DonorType: 'Registered donor',
+      Donations: [],
+      ContributionCount: 0,
+      DonationSearchText: '',
+      GivingTypes: '',
+      Currencies: ''
+    };
+    rowsByKey.set(key, row);
+    addContactIndex(key, row);
+  });
+  donations.forEach((donation, index) => {
+    const donorId = clean(donation.DonorId);
+    const name = clean(donation.DonorName);
+    const email = lower(donation.DonorEmail);
+    const phone = clean(donation.DonorPhone);
+    if (!donorId && !name && !email && !phone) return;
+    const contactKey = donorContactKeys({ DisplayName: name, Email: email, Phone: phone })
+      .map((candidate) => contactIndex.get(candidate)).find(Boolean);
+    const occasionalIdentity = [name, email, phone.replace(/[^0-9+]/g, '')].map(lower).join('|');
+    const key = donorId ? `registered:${lower(donorId)}` : contactKey || `occasional:${occasionalIdentity}`;
+    let row = rowsByKey.get(key);
+    if (!row) {
+      const fallbackId = clean(donation.DonationId || donation.Reference || donation.__id || index + 1);
+      const generatedId = donorId || `OCC-${safeId(occasionalIdentity || fallbackId)}`;
+      row = {
+        __id: generatedId,
+        DonorId: generatedId,
+        DisplayName: name || email || phone || 'Anonymous donor',
+        Email: email,
+        Phone: phone,
+        BranchId: clean(donation.BranchId || branchId || 'main'),
+        DonorType: donorId ? 'Registered donor' : 'Occasional donor',
+        Active: 'YES',
+        Donations: [],
+        ContributionCount: 0,
+        DonationSearchText: '',
+        GivingTypes: '',
+        Currencies: ''
+      };
+      rowsByKey.set(key, row);
+    }
+    row.DisplayName = clean(row.DisplayName || name || email || phone || 'Anonymous donor');
+    row.Email = clean(row.Email || email);
+    row.Phone = clean(row.Phone || phone);
+    row.Donations.push(donation);
+    row.ContributionCount = row.Donations.length;
+    const contributionDate = clean(donation.PaidAt || donation.Date || donation.CreatedAt || donation.UpdatedAt);
+    if (contributionDate && (!row.FirstContributionAt || contributionDate < row.FirstContributionAt)) row.FirstContributionAt = contributionDate;
+    if (contributionDate && (!row.LatestContributionAt || contributionDate > row.LatestContributionAt)) row.LatestContributionAt = contributionDate;
+    row.DonationSearchText = [row.DonationSearchText, [
+      donation.DonationId, donation.Reference, donation.ReceiptNo, donation.PaymentReference,
+      donation.PaymentType, donation.GivingTypeName, donation.PaymentMethod, donation.Status
+    ].map(clean).filter(Boolean).join(' ')].filter(Boolean).join(' ');
+    const givingTypes = givingTypesByKey.get(key) || new Set();
+    const givingType = clean(donation.GivingTypeName || donation.PaymentType);
+    if (givingType) givingTypes.add(givingType);
+    givingTypesByKey.set(key, givingTypes);
+    const currencies = currenciesByKey.get(key) || new Set();
+    const currency = clean(donation.TransactionCurrency || donation.Currency || 'NGN').toUpperCase();
+    if (currency) currencies.add(currency);
+    currenciesByKey.set(key, currencies);
+  });
+  return [...rowsByKey.entries()].map(([key, row]) => ({
+    ...row,
+    GivingTypes: [...(givingTypesByKey.get(key) || [])].join(' '),
+    Currencies: [...(currenciesByKey.get(key) || [])].join(' ')
+  }));
 }
 
 async function rowsForType(env, user, type, branchId) {
@@ -147,6 +250,13 @@ async function rowsForType(env, user, type, branchId) {
         delete safe.ProfilePhotoDataUrl;
         return safe;
       });
+  } else if (type === 'donors') {
+    const organisationBranch = resolveMembershipBranch(user, branchId);
+    const [donors, donations] = await Promise.all([
+      listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.donors, organisationBranch)),
+      listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.donations, organisationBranch))
+    ]);
+    rows = donorDirectoryRows(donors, donations, organisationBranch);
   } else {
     const organisationBranch = resolveMembershipBranch(user, branchId);
     rows = type === 'members'
@@ -587,6 +697,60 @@ async function departmentDetail(env, user, row, capabilities, branchId) {
   };
 }
 
+function donorDetail(user, row, capabilities) {
+  const detail = donorDetailProjection(row, capabilities);
+  const contributions = Array.isArray(row.Donations) ? row.Donations : [];
+  const paid = contributions.filter((item) => ['paid', 'completed'].includes(lower(item.Status || item.PaymentStatus)));
+  const settledNgn = paid.reduce((sum, item) => {
+    const currency = clean(item.TransactionCurrency || item.Currency || 'NGN').toUpperCase();
+    if (currency === 'NGN') return sum + number(item.BaseAmount || item.Amount);
+    return lower(item.ConversionStatus) === 'converted' ? sum + number(item.BaseAmount) : sum;
+  }, 0);
+  const foreignByCurrency = new Map();
+  paid.forEach((item) => {
+    const currency = clean(item.TransactionCurrency || item.Currency || 'NGN').toUpperCase();
+    if (currency === 'NGN') return;
+    const current = foreignByCurrency.get(currency) || { amount: 0, count: 0 };
+    current.amount += number(item.Amount);
+    current.count += 1;
+    foreignByCurrency.set(currency, current);
+  });
+  if (foreignByCurrency.size) {
+    detail.sections.push({
+      key: 'foreign-giving',
+      title: 'Foreign-currency giving',
+      items: [...foreignByCurrency.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([currency, value]) => ({
+        label: currency,
+        value: `${value.amount.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · ${value.count} contribution${value.count === 1 ? '' : 's'}`
+      }))
+    });
+  }
+  return {
+    ...detail,
+    metrics: [
+      { label: 'Contributions', value: contributions.length },
+      { label: 'Paid', value: paid.length },
+      { label: 'Settled NGN', value: settledNgn, format: 'money' }
+    ],
+    activities: [
+      activity('Recent contributions', recent(contributions, ['PaidAt', 'Date', 'CreatedAt', 'UpdatedAt'], 12).map((item) => ({
+        title: clean(item.GivingTypeName || item.PaymentType || 'Donation'),
+        meta: [
+          item.PaidAt || item.Date || item.CreatedAt,
+          item.DonationId || item.Reference || item.ReceiptNo,
+          item.PaymentMethod,
+          item.Status || item.PaymentStatus
+        ].map(clean).filter(Boolean).join(' Â· '),
+        amount: number(item.Amount),
+        currency: clean(item.TransactionCurrency || item.Currency || 'NGN').toUpperCase()
+      })))
+    ].filter(Boolean),
+    actions: (user.allowedSections || []).includes('donations')
+      ? [{ id: 'donor-giving', label: 'Open Donations', targetSection: 'donations', context: { DonorId: detail.id } }]
+      : []
+  };
+}
+
 async function detailRecord(env, user, body, capabilities) {
   const type = lower(body.type || body.RecordType);
   const id = clean(body.id || body.RecordId);
@@ -601,6 +765,7 @@ async function detailRecord(env, user, body, capabilities) {
   if (type === 'students') detail = await studentDetail(env, user, row, capabilities);
   else if (type === 'applicants') detail = applicantDetail(user, row);
   else if (type === 'staff') detail = staffDetail(user, row, capabilities);
+  else if (type === 'donors') detail = donorDetail(user, row, capabilities);
   else {
     const branchId = resolveMembershipBranch(user, requestedBranch || row.BranchId);
     detail = type === 'members'

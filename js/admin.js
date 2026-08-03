@@ -5183,7 +5183,8 @@ const recordsDeskTypeLabels = {
   applicants: 'Applicants',
   staff: 'Staff',
   members: 'Members',
-  departments: 'Departments'
+  departments: 'Departments',
+  donors: 'Donors'
 };
 
 const recordsDeskTypeIcons = {
@@ -5191,7 +5192,8 @@ const recordsDeskTypeIcons = {
   applicants: '\u{1F4DD}',
   staff: '\u{1F9D1}',
   members: '\u{1F465}',
-  departments: '\u{1F3E2}'
+  departments: '\u{1F3E2}',
+  donors: '\u{1F381}'
 };
 
 function inferredRecordsDeskTypes() {
@@ -5203,7 +5205,8 @@ function inferredRecordsDeskTypes() {
     school && allowed.has('admissions') && 'applicants',
     allowed.has('staffUsers') && 'staff',
     !school && allowed.has('members') && 'members',
-    !school && ['members', 'funds', 'offerings'].some((key) => allowed.has(key)) && 'departments'
+    !school && ['members', 'funds', 'offerings'].some((key) => allowed.has(key)) && 'departments',
+    !school && allowed.has('donations') && 'donors'
   ].filter(Boolean);
 }
 
@@ -5262,7 +5265,7 @@ function renderRecordsDeskDetail(detail) {
     <h3>${escapeHtml(group.title)}</h3>
     <div>${(group.rows || []).map((row) => `<article>
       <span><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.meta || row.status || '')}</small>${row.detail ? `<small>${escapeHtml(row.detail)}</small>` : ''}</span>
-      ${row.amount === undefined ? '' : `<b>${escapeHtml(money(row.amount))}</b>`}
+      ${row.amount === undefined ? '' : `<b>${escapeHtml(row.currency ? moneyInCurrency(row.amount, row.currency) : money(row.amount))}</b>`}
     </article>`).join('')}</div>
   </section>`).join('');
   const actions = (detail.actions || []).map((action, index) =>
@@ -5312,7 +5315,7 @@ function renderRecordsDesk() {
       <nav class="records-desk-type-list" aria-label="Record type filters">
         ${typeButtons.map(([key, label, icon]) => `<button type="button" data-record-filter="${escapeHtml(key)}" class="${recordsDeskState.type === key ? 'active' : ''}" aria-pressed="${recordsDeskState.type === key}"><span aria-hidden="true">${escapeHtml(icon)}</span><span>${escapeHtml(label)}</span></button>`).join('')}
       </nav>
-      <div class="records-desk-privacy"><span aria-hidden="true">\u{1F6E1}</span><p><strong>Permission protected</strong><small>Results and detail sections follow your role, branch and school-section access.</small></p></div>
+      <div class="records-desk-privacy"><span aria-hidden="true">\u{1F6E1}</span><p><strong>Permission protected</strong><small>Results and detail sections follow your role, branch and workspace access.</small></p></div>
     </aside>
     <section class="records-desk-results-pane" aria-live="polite">
       <header><div><small>Search results</small><h2>${escapeHtml(recordsDeskState.type === 'all' ? 'All permitted records' : recordsDeskTypeLabels[recordsDeskState.type])}</h2></div><span>${recordsDeskState.results.length}</span></header>

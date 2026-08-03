@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises';
 
 import {
   allowedRecordsDeskTypes,
+  donorDetailProjection,
+  donorSearchCard,
   memberDetailProjection,
   normalizeRecordsDeskQuery,
   recordMatches,
@@ -15,6 +17,7 @@ import {
   studentSearchCard
 } from '../functions/lib/records-desk.js';
 import { allowedSectionsFor } from '../functions/lib/staff-auth.js';
+import { donorDirectoryRows } from '../functions/api/staff-records.js';
 
 const portalRoot = new URL('../', import.meta.url);
 const [apiSource, adminJs, portalCss, staffAuth] = await Promise.all([
@@ -54,11 +57,12 @@ test('record types are derived from the signed-in edition and allowed sections',
   const treasurer = recordsDeskCapabilities({
     edition: 'faith',
     role: 'Treasurer',
-    allowedSections: ['recordsDesk', 'funds', 'offerings']
+    allowedSections: ['recordsDesk', 'funds', 'offerings', 'donations']
   });
-  assert.deepEqual(allowedRecordsDeskTypes(treasurer), ['departments']);
+  assert.deepEqual(allowedRecordsDeskTypes(treasurer), ['departments', 'donors']);
   assert.equal(treasurer.canSearchMembers, false);
   assert.equal(treasurer.canViewDepartmentFinance, true);
+  assert.equal(treasurer.canViewDonorContact, true);
 
   const delegatedStaffTab = recordsDeskCapabilities({
     edition: 'school',
@@ -141,6 +145,62 @@ test('medical and pastoral detail appears only for the corresponding privileged 
   assert.match(pastor, /Private care note/);
 });
 
+test('donor cards and details expose useful giving identity without leaking restricted notes', () => {
+  const donor = {
+    DonorId: 'DONOR-nancy@example.test',
+    DisplayName: 'Nancy Gregory',
+    Email: 'nancy@example.test',
+    Phone: '+2348012345678',
+    Notes: 'Contact only through the finance office',
+    DonorType: 'Registered donor',
+    ContributionCount: 2
+  };
+  assert.deepEqual(donorSearchCard(donor), {
+    type: 'donors',
+    id: 'DONOR-nancy@example.test',
+    title: 'Nancy Gregory',
+    subtitle: 'nancy@example.test Â· +2348012345678 Â· 2 contributions',
+    status: 'Registered donor',
+    branchId: 'main',
+    schoolSection: ''
+  });
+  assert.doesNotMatch(JSON.stringify(donorDetailProjection(donor, {
+    canViewDonorContact: true,
+    canViewDonorNotes: false
+  })), /Contact only through/);
+  assert.match(JSON.stringify(donorDetailProjection(donor, {
+    canViewDonorContact: true,
+    canViewDonorNotes: true
+  })), /Contact only through/);
+});
+
+test('donor directory includes occasional donors and does not merge different people using one receipt email', () => {
+  const rows = donorDirectoryRows([], [{
+    DonationId: 'D1',
+    DonorName: 'Nancy Gregory',
+    DonorEmail: 'finance@example.test',
+    Amount: 1000,
+    Currency: 'NGN'
+  }, {
+    DonationId: 'D2',
+    DonorName: 'Nnamdi Jerry',
+    DonorEmail: 'finance@example.test',
+    Amount: 500,
+    Currency: 'USD'
+  }, {
+    DonationId: 'D3',
+    DonorName: 'Nancy Gregory',
+    DonorEmail: 'finance@example.test',
+    Amount: 2000,
+    Currency: 'NGN'
+  }]);
+  assert.equal(rows.length, 2);
+  assert.equal(rows.find((row) => row.DisplayName === 'Nancy Gregory').ContributionCount, 2);
+  assert.equal(rows.find((row) => row.DisplayName === 'Nnamdi Jerry').ContributionCount, 1);
+  assert.equal(recordMatches(rows[0], 'finance@example.test', ['Email']), true);
+  assert.equal(rows.every((row) => row.DonorType === 'Occasional donor'), true);
+});
+
 test('staff directory projection never returns password or approval secrets', () => {
   const detail = staffDetailProjection({
     Username: 'staff.user',
@@ -169,6 +229,10 @@ test('records API requires a live staff session, scopes every type, audits recor
   assert.match(apiSource, /visibleSchoolRecord\(row, user, branchId\)/);
   assert.match(apiSource, /staffRecordMatchesEdition\(row, user\)/);
   assert.match(apiSource, /resolveMembershipBranch\(user, branchId\)/);
+  assert.match(apiSource, /CHURCH_COLLECTIONS\.donors, organisationBranch/);
+  assert.match(apiSource, /CHURCH_COLLECTIONS\.donations, organisationBranch/);
+  assert.match(apiSource, /donorDirectoryRows\(donors, donations, organisationBranch\)/);
+  assert.match(apiSource, /type === 'donors'\) detail = donorDetail/);
   assert.match(apiSource, /query\.length < 3/);
   assert.match(apiSource, /recordsDeskLimit\(body\.limit\)/);
   assert.match(apiSource, /capabilities\.canViewStudentFinance \? listCollection\(env, 'payments'\)/);
