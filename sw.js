@@ -1,4 +1,7 @@
-const CACHE = 'dynamax-v107-notification-text-only';
+const CACHE = 'dynamax-v108-notification-without-secondary-artwork';
+// Android Chrome invents a sender monogram when no notification artwork is supplied.
+// A valid transparent 192px PNG suppresses that extra artwork without changing app identity.
+const TRANSPARENT_NOTIFICATION_ICON = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAYAAABS3GwHAAAApklEQVR42u3BMQEAAADCoPVPbQlPoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPgZA3gABFrSBrAAAAABJRU5ErkJggg==';
 const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/parent-dashboard.html', '/register-organization.html', '/give.html', '/store.html', '/css/style.css', '/css/notifications.css', '/css/store.css', '/css/store-compact.css', '/js/preferences.js', '/js/action-feedback.js', '/js/launcher.js', '/js/site-config.js', '/js/admin.js', '/js/give.js', '/js/store.js', '/js/notifications.js', '/js/web-push.js', '/js/parent-dashboard.js', '/js/register-organization.js', '/images/Logo.png'];
 
 self.addEventListener('install', (event) => {
@@ -63,6 +66,7 @@ self.addEventListener('push', (event) => {
     }
     const options = {
       body: notification.body || data.message || '',
+      icon: TRANSPARENT_NOTIFICATION_ICON,
       silent: false,
       vibrate: [200, 100, 200],
       data: { actionUrl: data.actionUrl || notification.click_action || '/' }

@@ -1,5 +1,8 @@
 (() => {
   const DEVICE_KEY = 'dynamax-notification-device-id';
+  // Android Chrome invents a sender monogram when no notification artwork is supplied.
+  // A valid transparent 192px PNG suppresses that extra artwork without changing app identity.
+  const TRANSPARENT_NOTIFICATION_ICON = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAYAAABS3GwHAAAApklEQVR42u3BMQEAAADCoPVPbQlPoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPgZA3gABFrSBrAAAAABJRU5ErkJggg==';
   const FOREGROUND_ALERT_WINDOW_MS = 30 * 1000;
   const recentForegroundAlerts = new Map();
   let messagingInstance = null;
@@ -54,6 +57,7 @@
       }
       const options = {
         body: notification.body || data.message || '',
+        icon: TRANSPARENT_NOTIFICATION_ICON,
         silent: false,
         vibrate: [200, 100, 200],
         data: { actionUrl: data.actionUrl || notification.click_action || '/' }
