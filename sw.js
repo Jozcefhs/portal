@@ -1,4 +1,4 @@
-const CACHE = 'dynamax-v103-transparent-logo-surfaces';
+const CACHE = 'dynamax-v106-registration-theme-layout';
 const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/parent-dashboard.html', '/register-organization.html', '/give.html', '/store.html', '/css/style.css', '/css/notifications.css', '/css/store.css', '/css/store-compact.css', '/js/preferences.js', '/js/action-feedback.js', '/js/launcher.js', '/js/site-config.js', '/js/admin.js', '/js/give.js', '/js/store.js', '/js/notifications.js', '/js/web-push.js', '/js/parent-dashboard.js', '/js/register-organization.js', '/images/Logo.png'];
 
 self.addEventListener('install', (event) => {
@@ -55,13 +55,25 @@ self.addEventListener('push', (event) => {
   const notification = payload.notification || {};
   const data = payload.data || {};
   const title = notification.title || data.title || 'Dynamax notification';
-  event.waitUntil(self.registration.showNotification(title, {
-    body: notification.body || data.message || '',
-    icon: '/images/Logo.png',
-    badge: '/images/Logo.png',
-    tag: data.notificationId || undefined,
-    data: { actionUrl: data.actionUrl || notification.click_action || '/' }
-  }));
+  const tag = data.notificationId || undefined;
+  event.waitUntil((async () => {
+    if (tag) {
+      const visible = await self.registration.getNotifications({ tag });
+      if (visible.length) return;
+    }
+    const options = {
+      body: notification.body || data.message || '',
+      badge: notification.badge || '/images/Logo.png',
+      silent: false,
+      vibrate: [200, 100, 200],
+      data: { actionUrl: data.actionUrl || notification.click_action || '/' }
+    };
+    if (tag) {
+      options.tag = tag;
+      options.renotify = true;
+    }
+    await self.registration.showNotification(title, options);
+  })());
 });
 
 self.addEventListener('notificationclick', (event) => {

@@ -1847,21 +1847,51 @@ html[data-theme="dark"] .department-member-onboarding strong { color: #75dfbf; }
   .launcher-public-actions { margin-top: .45rem; }
 }
 
-.auth-page .auth-shell { min-height: 100vh; display: grid; place-items: center; padding: 1rem; box-sizing: border-box; }
-.organisation-registration-card { max-width: 920px; width: min(920px, calc(100vw - 2rem)); padding: 1.25rem; box-sizing: border-box; background: var(--card, #fff); border: 1px solid var(--border, #d8e1ec); border-radius: 18px; box-shadow: 0 16px 42px rgba(17,46,82,.12); }
+.auth-page { min-height: 100vh; min-height: 100dvh; overflow-x: hidden; }
+.auth-page .auth-shell { width: 100%; min-width: 0; min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 1rem; box-sizing: border-box; }
+.organisation-registration-card { max-width: 920px; min-width: 0; width: min(920px, calc(100vw - 2rem)); padding: 1.25rem; box-sizing: border-box; overflow: hidden; background: #fff; color: #172033; border: 1px solid #d8e1ec; border-radius: 18px; box-shadow: 0 16px 42px rgba(17,46,82,.12); }
 .registration-brand { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.2rem; }
 .registration-brand img { width: 64px; height: 64px; object-fit: contain; }
+.registration-brand > div { min-width: 0; }
 .registration-brand h1, .registration-brand p { margin: .15rem 0; }
+.registration-brand h1 { color: #174a7c; overflow-wrap: normal; }
+.registration-brand > div > p:last-child { color: #56657a; }
 .plan-choice-grid { display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: .65rem; }
-.plan-choice-grid label { cursor: pointer; }
+.plan-choice-grid label { min-width: 0; margin: 0; cursor: pointer; }
 .plan-choice-grid input { position: absolute; opacity: 0; width: 1px; height: 1px; }
-.plan-choice-grid span { display: flex; flex-direction: column; gap: .25rem; min-height: 88px; padding: .8rem; border: 1px solid var(--border, #d8e1ec); border-radius: 12px; }
-.plan-choice-grid input:checked + span { border-color: var(--accent, #1769e0); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #1769e0) 30%, transparent); }
-.organisation-registration-card .inline-check { justify-self: start; }
+.plan-choice-grid span { display: flex; min-width: 0; flex-direction: column; gap: .25rem; min-height: 88px; padding: .8rem; border: 1px solid #d8e1ec; border-radius: 12px; background: #f8fafc; color: #172033; }
+.plan-choice-grid small { color: #56657a; }
+.plan-choice-grid input:checked + span { border-color: #1769e0; box-shadow: 0 0 0 2px rgba(23,105,224,.22); }
+.organisation-registration-card .inline-check { justify-self: start; color: #26354a; white-space: normal; line-height: 1.4; }
 .organisation-registration-card .inline-check input { width: auto; min-height: 0; }
 .organisation-registration-card button[type="submit"],
 .organisation-registration-card .settings-link { width: fit-content; justify-self: start; }
-@media (max-width: 700px) { .plan-choice-grid { grid-template-columns: 1fr 1fr; } }
+html[data-theme="dark"] .organisation-registration-card { background: #111e2e; color: #edf4ff; border-color: #33465c; box-shadow: 0 16px 42px rgba(0,0,0,.32); }
+html[data-theme="dark"] .registration-brand h1 { color: #72a9ff; }
+html[data-theme="dark"] .registration-brand > div > p:last-child { color: #b7c6d8; }
+html[data-theme="dark"] .organisation-registration-card .settings-field label,
+html[data-theme="dark"] .organisation-registration-card .inline-check,
+html[data-theme="dark"] .plan-choice-grid strong { color: #edf4ff; }
+html[data-theme="dark"] .plan-choice-grid span { border-color: #3b5068; background: #0d1a29; color: #edf4ff; }
+html[data-theme="dark"] .plan-choice-grid small { color: #a8b8cb; }
+html[data-theme="dark"] .plan-choice-grid input:checked + span { border-color: #69a5ff; box-shadow: 0 0 0 2px rgba(105,165,255,.28); }
+@media (max-width: 700px) {
+  .auth-page { padding-bottom: 0; }
+  .auth-page .auth-shell { place-items: start center; padding: .75rem; }
+  .organisation-registration-card { width: 100%; padding: 1rem; }
+  .registration-brand { display: grid; grid-template-columns: 52px minmax(0,1fr); align-items: start; gap: .75rem; margin-bottom: 1rem; }
+  .registration-brand img { width: 52px; height: 52px; }
+  .registration-brand h1 { font-size: 24px; }
+  .registration-brand > div > p:last-child { font-size: 13px; line-height: 1.4; }
+  .plan-choice-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+@media (max-width: 430px) {
+  .registration-brand { grid-template-columns: 44px minmax(0,1fr); gap: .65rem; }
+  .registration-brand img { width: 44px; height: 44px; }
+  .registration-brand h1 { font-size: 22px; }
+  .plan-choice-grid { grid-template-columns: 1fr; }
+  .plan-choice-grid span { min-height: 0; }
+}
 
 /* Principal, Senior Pastor and Head Minister executive correspondence workspace. */
 .executive-loading{display:grid;min-height:46vh;place-content:center;justify-items:center;gap:8px;color:#526d82;text-align:center}

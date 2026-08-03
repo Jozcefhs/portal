@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import {
   SCHOOL_ONLY_SECTION_KEYS,
@@ -179,4 +180,18 @@ test('offering drafts target the existing accounting journal contract', () => {
     [25000, 0],
     [0, 25000]
   ]);
+});
+
+test('public organisation registration stays aligned and legible in both themes', async () => {
+  const [html, css] = await Promise.all([
+    readFile(new URL('../register-organization.html', import.meta.url), 'utf8'),
+    readFile(new URL('../css/style.css', import.meta.url), 'utf8')
+  ]);
+  assert.match(html, /name="theme-color"/);
+  assert.match(html, /registration-theme-layout/);
+  assert.match(css, /\.auth-page\s*\{[^}]*overflow-x:\s*hidden/s);
+  assert.match(css, /\.organisation-registration-card\s+\.inline-check\s*\{[^}]*white-space:\s*normal/s);
+  assert.match(css, /html\[data-theme="dark"\]\s+\.organisation-registration-card\s*\{[^}]*background:\s*#111e2e/s);
+  assert.match(css, /html\[data-theme="dark"\]\s+\.organisation-registration-card\s+\.settings-field label/);
+  assert.match(css, /@media \(max-width:\s*430px\)[\s\S]*?\.plan-choice-grid\s*\{\s*grid-template-columns:\s*1fr/);
 });

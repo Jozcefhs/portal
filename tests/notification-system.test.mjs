@@ -212,6 +212,25 @@ test('denied push permission returns a user-facing error without breaking in-app
   assert.match(source, /Notification permission was not granted/);
 });
 
+test('foreground push displays a deduplicated audible system notification', async () => {
+  const [client, worker] = await Promise.all([
+    readFile(new URL('../js/web-push.js', import.meta.url), 'utf8'),
+    readFile(new URL('../sw.js', import.meta.url), 'utf8')
+  ]);
+  assert.match(client, /void showForegroundNotification\(payload\)/);
+  assert.match(client, /registration\.getNotifications\(\{ tag \}\)/);
+  assert.match(client, /registration\.showNotification\(title, options\)/);
+  assert.doesNotMatch(client, /\bicon:\s*notification\.icon/);
+  assert.match(client, /badge:\s*notification\.badge/);
+  assert.match(client, /silent:\s*false/);
+  assert.match(client, /vibrate:\s*\[200, 100, 200\]/);
+  assert.match(worker, /self\.registration\.getNotifications\(\{ tag \}\)/);
+  assert.doesNotMatch(worker, /\bicon:\s*notification\.icon/);
+  assert.match(worker, /badge:\s*notification\.badge/);
+  assert.match(worker, /silent:\s*false/);
+  assert.match(worker, /vibrate:\s*\[200, 100, 200\]/);
+});
+
 test('invalid FCM subscriptions are removed after provider rejection', async () => {
   const source = await readFile(new URL('../functions/lib/firebase-messaging.js', import.meta.url), 'utf8');
   assert.match(source, /error\.invalidToken/);

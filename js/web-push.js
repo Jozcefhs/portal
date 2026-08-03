@@ -1,5 +1,7 @@
 (() => {
   const DEVICE_KEY = 'dynamax-notification-device-id';
+  const FOREGROUND_ALERT_WINDOW_MS = 30 * 1000;
+  const recentForegroundAlerts = new Map();
   let messagingInstance = null;
 
   function deviceId() {
@@ -15,6 +17,58 @@
     if (!('serviceWorker' in navigator)) throw new Error('This browser does not support service workers.');
     await navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' });
     return navigator.serviceWorker.ready;
+  }
+
+  function foregroundAlertKey(payload = {}) {
+    const notification = payload.notification || {};
+    const data = payload.data || {};
+    return String(
+      data.notificationId || payload.messageId ||
+      `${notification.title || data.title || ''}:${notification.body || data.message || ''}:${data.actionUrl || ''}`
+    ).trim();
+  }
+
+  function rememberForegroundAlert(key) {
+    const now = Date.now();
+    recentForegroundAlerts.forEach((seenAt, seenKey) => {
+      if (now - seenAt > FOREGROUND_ALERT_WINDOW_MS) recentForegroundAlerts.delete(seenKey);
+    });
+    if (key && recentForegroundAlerts.has(key)) return false;
+    if (key) recentForegroundAlerts.set(key, now);
+    return true;
+  }
+
+  async function showForegroundNotification(payload = {}) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return false;
+    const notification = payload.notification || {};
+    const data = payload.data || {};
+    const title = notification.title || data.title || 'Dynamax notification';
+    const alertKey = foregroundAlertKey(payload);
+    if (!rememberForegroundAlert(alertKey)) return false;
+    try {
+      const registration = await serviceWorker();
+      const tag = String(data.notificationId || payload.messageId || '').trim();
+      if (tag) {
+        const visible = await registration.getNotifications({ tag });
+        if (visible.length) return false;
+      }
+      const options = {
+        body: notification.body || data.message || '',
+        badge: notification.badge || '/images/Logo.png',
+        silent: false,
+        vibrate: [200, 100, 200],
+        data: { actionUrl: data.actionUrl || notification.click_action || '/' }
+      };
+      if (tag) {
+        options.tag = tag;
+        options.renotify = true;
+      }
+      await registration.showNotification(title, options);
+      return true;
+    } catch {
+      if (alertKey) recentForegroundAlerts.delete(alertKey);
+      return false;
+    }
   }
 
   async function firebaseMessaging(config) {
@@ -33,6 +87,7 @@
     }, appName);
     const messaging = messagingModule.getMessaging(app);
     messagingModule.onMessage(messaging, (payload) => {
+      void showForegroundNotification(payload);
       window.dispatchEvent(new CustomEvent('dynamax:foreground-notification', { detail: payload }));
     });
     messagingInstance = { messaging, module: messagingModule, projectId: config.projectId };
