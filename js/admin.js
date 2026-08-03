@@ -3466,8 +3466,8 @@ function renderChurchAttendanceBreakdown(target, row = null) {
       ${churchAttendanceChartCard('Gender composition', [
         { label: 'Male', value: normalized.MaleCount },
         { label: 'Female', value: normalized.FemaleCount }
-      ], total)}
-      ${churchAttendanceChartCard('Guest and decision response', [
+      ], normalized.AdultCount)}
+      ${churchAttendanceChartCard('Included response groups', [
         { label: 'First-timers', value: normalized.FirstTimerCount },
         { label: 'New converts', value: normalized.NewConvertCount }
       ], total)}
@@ -3516,7 +3516,7 @@ async function loadChurchServices() {
         <section class="service-attendance-workspace" data-service-workspace="totals">
           <form id="churchAttendanceTotalForm" class="workflow-card compact-form">
             <h3>Record attendance breakdown</h3>
-            <p class="muted">Enter the age and gender counts. Each pair must add up to the total attendance.</p>
+            <p class="muted">Enter any two of Adults, Male and Female; the third is calculated automatically. Adults + Children = Total. First-timers and new converts are already included within these counts.</p>
             <label>Service occurrence<select name="OccurrenceId" required><option value="">Choose occurrence</option>${occurrenceOptions}</select></label>
             <div class="attendance-breakdown-fields">
               <label>Children<input name="ChildrenCount" type="number" min="0" max="1000000" step="1" required></label>
@@ -3612,24 +3612,47 @@ async function loadChurchServices() {
         AttendanceCount: totalForm.elements.AttendanceCount.value
       };
     };
-    const validateAttendanceBreakdown = () => {
+    const attendanceValue = (name) => clean(totalForm?.elements[name]?.value) === '' ? null : Number(totalForm.elements[name].value);
+    const setCalculatedAttendanceValue = (name, value) => {
+      if (!totalForm || value === null || !Number.isFinite(value) || value < 0) return false;
+      totalForm.elements[name].value = String(value);
+      return true;
+    };
+    const validateAttendanceBreakdown = (changedName = '') => {
       if (!totalForm) return;
-      const value = (name) => clean(totalForm.elements[name].value) === '' ? null : Number(totalForm.elements[name].value);
-      const children = value('ChildrenCount');
-      const adults = value('AdultCount');
-      const male = value('MaleCount');
-      const female = value('FemaleCount');
-      const ageTotal = children === null || adults === null ? null : children + adults;
-      const genderTotal = male === null || female === null ? null : male + female;
-      const total = ageTotal ?? genderTotal;
+      totalForm.elements.AdultCount.setCustomValidity('');
+      totalForm.elements.MaleCount.setCustomValidity('');
+      totalForm.elements.FemaleCount.setCustomValidity('');
+      let adults = attendanceValue('AdultCount');
+      let male = attendanceValue('MaleCount');
+      let female = attendanceValue('FemaleCount');
+      let impossibleMessage = '';
+      if (changedName === 'AdultCount' && adults !== null) {
+        if (male !== null) {
+          if (!setCalculatedAttendanceValue('FemaleCount', adults - male)) impossibleMessage = 'Male attendance cannot exceed adult attendance.';
+        } else if (female !== null && !setCalculatedAttendanceValue('MaleCount', adults - female)) {
+          impossibleMessage = 'Female attendance cannot exceed adult attendance.';
+        }
+      } else if (changedName === 'MaleCount' && male !== null) {
+        if (female !== null) setCalculatedAttendanceValue('AdultCount', male + female);
+        else if (adults !== null && !setCalculatedAttendanceValue('FemaleCount', adults - male)) impossibleMessage = 'Male attendance cannot exceed adult attendance.';
+      } else if (changedName === 'FemaleCount' && female !== null) {
+        if (male !== null) setCalculatedAttendanceValue('AdultCount', male + female);
+        else if (adults !== null && !setCalculatedAttendanceValue('MaleCount', adults - female)) impossibleMessage = 'Female attendance cannot exceed adult attendance.';
+      }
+      adults = attendanceValue('AdultCount');
+      male = attendanceValue('MaleCount');
+      female = attendanceValue('FemaleCount');
+      const children = attendanceValue('ChildrenCount');
+      const total = children === null || adults === null ? null : children + adults;
       totalForm.elements.AttendanceCount.value = total === null ? '' : String(total);
-      const genderMessage = ageTotal !== null && genderTotal !== null && ageTotal !== genderTotal
-        ? 'Male and female attendance must add up to the same total as children and adults.'
-        : '';
-      totalForm.elements.FemaleCount.setCustomValidity(genderMessage);
+      const genderMessage = impossibleMessage || (adults !== null && male !== null && female !== null && male + female !== adults
+        ? 'Male and female attendance must add up to adult attendance.'
+        : '');
+      totalForm.elements.AdultCount.setCustomValidity(genderMessage);
       const savedTotal = total ?? 0;
-      const firstTimers = value('FirstTimerCount');
-      const newConverts = value('NewConvertCount');
+      const firstTimers = attendanceValue('FirstTimerCount');
+      const newConverts = attendanceValue('NewConvertCount');
       totalForm.elements.FirstTimerCount.setCustomValidity(firstTimers !== null && firstTimers > savedTotal ? 'First-timers cannot exceed total attendance.' : '');
       totalForm.elements.NewConvertCount.setCustomValidity(newConverts !== null && newConverts > savedTotal ? 'New converts cannot exceed total attendance.' : '');
       renderChurchAttendanceBreakdown(attendanceReport, attendanceDraft());
@@ -3645,13 +3668,15 @@ async function loadChurchServices() {
         ? churchAttendanceNumber(occurrence, 'AttendanceCount') ?? churchAttendanceNumber(occurrence, 'TotalAttendance')
         : null;
       totalForm.elements.AttendanceCount.value = total === null ? '' : String(total);
+      totalForm.elements.AdultCount.setCustomValidity('');
+      totalForm.elements.MaleCount.setCustomValidity('');
       totalForm.elements.FemaleCount.setCustomValidity('');
       totalForm.elements.FirstTimerCount.setCustomValidity('');
       totalForm.elements.NewConvertCount.setCustomValidity('');
       renderChurchAttendanceBreakdown(attendanceReport, occurrence || null);
     };
     totalForm?.elements.OccurrenceId.addEventListener('change', loadAttendanceBreakdown);
-    churchAttendanceBreakdownFields.forEach(([key]) => totalForm?.elements[key].addEventListener('input', validateAttendanceBreakdown));
+    churchAttendanceBreakdownFields.forEach(([key]) => totalForm?.elements[key].addEventListener('input', () => validateAttendanceBreakdown(key)));
     if (totalForm && occurrences.length) {
       totalForm.elements.OccurrenceId.value = clean(pick(occurrences[0], ['OccurrenceId', '__id']));
       loadAttendanceBreakdown();

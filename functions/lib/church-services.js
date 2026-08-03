@@ -143,11 +143,13 @@ export function normalizeAttendanceBreakdown(input = {}) {
   if (childrenCount !== null && childrenCount + adultCount !== attendanceCount) {
     throw inputError('Children and adults must add up to the total attendance.');
   }
-  if ((maleCount === null) !== (femaleCount === null)) {
-    throw inputError('Enter both the male and female attendance figures.');
-  }
-  if (maleCount !== null && maleCount + femaleCount !== attendanceCount) {
-    throw inputError('Male and female attendance must add up to the total attendance.');
+  if (maleCount !== null || femaleCount !== null) {
+    if (adultCount === null || maleCount === null || femaleCount === null) {
+      throw inputError('Enter the adult, male and female attendance figures together.');
+    }
+    if (maleCount + femaleCount !== adultCount) {
+      throw inputError('Male and female attendance must add up to the adult attendance.');
+    }
   }
   if (firstTimerCount !== null && firstTimerCount > attendanceCount) {
     throw inputError('First-timers cannot exceed the total attendance.');

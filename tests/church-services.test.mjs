@@ -125,7 +125,7 @@ test('attendance breakdown validates age, gender, first-timer and conversion tot
     ChildrenCount: 75,
     AdultCount: 200,
     MaleCount: 120,
-    FemaleCount: 155,
+    FemaleCount: 80,
     FirstTimerCount: 18,
     NewConvertCount: 6
   }), {
@@ -133,14 +133,14 @@ test('attendance breakdown validates age, gender, first-timer and conversion tot
     ChildrenCount: 75,
     AdultCount: 200,
     MaleCount: 120,
-    FemaleCount: 155,
+    FemaleCount: 80,
     FirstTimerCount: 18,
     NewConvertCount: 6
   });
   assert.deepEqual(normalizeAttendanceBreakdown({ AttendanceCount: 25 }), { AttendanceCount: 25 });
   assert.throws(() => normalizeAttendanceBreakdown({ AttendanceCount: 10, ChildrenCount: 3 }), /both the children and adult/);
   assert.throws(() => normalizeAttendanceBreakdown({ AttendanceCount: 10, ChildrenCount: 3, AdultCount: 6 }), /add up to the total/);
-  assert.throws(() => normalizeAttendanceBreakdown({ AttendanceCount: 10, MaleCount: 4, FemaleCount: 5 }), /Male and female/);
+  assert.throws(() => normalizeAttendanceBreakdown({ AttendanceCount: 10, ChildrenCount: 2, AdultCount: 8, MaleCount: 4, FemaleCount: 5 }), /adult attendance/);
   assert.throws(() => normalizeAttendanceBreakdown({ AttendanceCount: 10, FirstTimerCount: 11 }), /First-timers/);
   assert.throws(() => normalizeAttendanceBreakdown({ AttendanceCount: 10, NewConvertCount: 11 }), /New converts/);
 });
@@ -159,7 +159,11 @@ test('the web services workspace records occurrences, totals, and individual che
   assert.match(adminJs, /renderChurchAttendanceBreakdown/);
   assert.match(adminJs, /Age composition/);
   assert.match(adminJs, /Gender composition/);
-  assert.match(adminJs, /Guest and decision response/);
+  assert.match(adminJs, /Included response groups/);
+  assert.match(adminJs, /Enter any two of Adults, Male and Female; the third is calculated automatically/);
+  assert.match(adminJs, /setCalculatedAttendanceValue\('AdultCount', male \+ female\)/);
+  assert.match(adminJs, /adults - male/);
+  assert.match(adminJs, /adults - female/);
   assert.match(adminJs, /table\('Attendance Summary'/);
   assert.match(adminJs, /churchServiceAction\('recordAttendanceTotal', payload\)/);
   assert.match(adminJs, /id="churchAttendanceForm"/);
