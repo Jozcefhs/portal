@@ -54,7 +54,6 @@
       }
       const options = {
         body: notification.body || data.message || '',
-        badge: notification.badge || '/images/Logo.png',
         silent: false,
         vibrate: [200, 100, 200],
         data: { actionUrl: data.actionUrl || notification.click_action || '/' }

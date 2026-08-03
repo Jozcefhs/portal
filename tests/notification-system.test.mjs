@@ -221,12 +221,12 @@ test('foreground push displays a deduplicated audible system notification', asyn
   assert.match(client, /registration\.getNotifications\(\{ tag \}\)/);
   assert.match(client, /registration\.showNotification\(title, options\)/);
   assert.doesNotMatch(client, /\bicon:\s*notification\.icon/);
-  assert.match(client, /badge:\s*notification\.badge/);
+  assert.doesNotMatch(client, /\bbadge:\s*notification\.badge/);
   assert.match(client, /silent:\s*false/);
   assert.match(client, /vibrate:\s*\[200, 100, 200\]/);
   assert.match(worker, /self\.registration\.getNotifications\(\{ tag \}\)/);
   assert.doesNotMatch(worker, /\bicon:\s*notification\.icon/);
-  assert.match(worker, /badge:\s*notification\.badge/);
+  assert.doesNotMatch(worker, /\bbadge:\s*notification\.badge/);
   assert.match(worker, /silent:\s*false/);
   assert.match(worker, /vibrate:\s*\[200, 100, 200\]/);
 });
