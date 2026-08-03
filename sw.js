@@ -1,8 +1,5 @@
-const CACHE = 'dynamax-v110-monochrome-notification-status-badge';
-// Android Chrome invents a sender monogram when no notification artwork is supplied.
-// A valid transparent 192px PNG suppresses that extra artwork without changing app identity.
-const TRANSPARENT_NOTIFICATION_ICON = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAYAAABS3GwHAAAApklEQVR42u3BMQEAAADCoPVPbQlPoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPgZA3gABFrSBrAAAAABJRU5ErkJggg==';
-const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/parent-dashboard.html', '/register-organization.html', '/give.html', '/store.html', '/css/style.css', '/css/notifications.css', '/css/store.css', '/css/store-compact.css', '/js/preferences.js', '/js/action-feedback.js', '/js/launcher.js', '/js/site-config.js', '/js/admin.js', '/js/give.js', '/js/store.js', '/js/notifications.js', '/js/web-push.js', '/js/parent-dashboard.js', '/js/register-organization.js', '/images/Logo.png', '/images/notification-badge.png'];
+const CACHE = 'dynamax-v111-native-android-notification-artwork';
+const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/parent-dashboard.html', '/register-organization.html', '/give.html', '/store.html', '/css/style.css', '/css/notifications.css', '/css/store.css', '/css/store-compact.css', '/js/preferences.js', '/js/action-feedback.js', '/js/launcher.js', '/js/site-config.js', '/js/admin.js', '/js/give.js', '/js/store.js', '/js/notifications.js', '/js/web-push.js', '/js/parent-dashboard.js', '/js/register-organization.js', '/images/Logo.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -66,8 +63,6 @@ self.addEventListener('push', (event) => {
     }
     const options = {
       body: notification.body || data.message || '',
-      icon: TRANSPARENT_NOTIFICATION_ICON,
-      badge: '/images/notification-badge.png?v=20260803-monochrome-status-badge',
       silent: false,
       vibrate: [200, 100, 200],
       data: { actionUrl: data.actionUrl || notification.click_action || '/' }
