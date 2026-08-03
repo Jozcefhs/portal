@@ -133,17 +133,27 @@ export function buildDonationInsights(donations = []) {
   const paid = donations.filter((row) => ['paid', 'completed'].includes(lower(row.Status || row.PaymentStatus)));
   const byDonor = new Map();
   const byCurrency = new Map();
-  paid.forEach((row) => {
+  paid.forEach((row, index) => {
     const currency = clean(row.TransactionCurrency || row.Currency || 'NGN').toUpperCase();
     const original = amount(row.Amount);
     const converted = currency === 'NGN'
       ? amount(row.BaseAmount || row.Amount)
       : lower(row.ConversionStatus) === 'converted' ? amount(row.BaseAmount) : 0;
-    const key = lower(row.DonorId || row.DonorEmail || row.DonorPhone || row.DonorName || 'anonymous');
+    const donorId = clean(row.DonorId);
+    const donorName = clean(row.DonorName);
+    const donorEmail = clean(row.DonorEmail);
+    const donorPhone = clean(row.DonorPhone).replace(/\s+/g, '');
+    const occasionalIdentity = [donorName, donorEmail, donorPhone].map(lower).join('|');
+    const recordIdentity = clean(row.DonationId || row.__id || row.Reference) || String(index);
+    const key = donorId
+      ? `registered:${lower(donorId)}`
+      : occasionalIdentity.replace(/\|/g, '')
+        ? `occasional:${occasionalIdentity}`
+        : `anonymous:${lower(recordIdentity)}`;
     const donor = byDonor.get(key) || {
-      DonorId: clean(row.DonorId),
-      DonorName: clean(row.DonorName) || 'Anonymous donor',
-      DonorEmail: clean(row.DonorEmail),
+      DonorId: donorId,
+      DonorName: donorName || 'Anonymous donor',
+      DonorEmail: donorEmail,
       DonationCount: 0,
       SettledNgnTotal: 0
     };

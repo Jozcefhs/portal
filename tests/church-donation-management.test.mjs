@@ -41,6 +41,20 @@ test('donor ranking combines only settled NGN equivalents and preserves currency
   assert.deepEqual(insights.foreignHoldings, [{ Currency: 'USD', PaidAmount: 150, AwaitingAmount: 100, DonationCount: 2 }]);
 });
 
+test('donor ranking does not merge different occasional donors who share a receipt email', () => {
+  const insights = buildDonationInsights([
+    { DonationId: 'D1', DonorName: 'De Great El-kanah', DonorEmail: 'shared@example.test', Status: 'Paid', Amount: 200000, Currency: 'NGN' },
+    { DonationId: 'D2', DonorName: 'Matthew Ikechi', DonorEmail: 'shared@example.test', Status: 'Paid', Amount: 1000, Currency: 'USD', ConversionStatus: 'Awaiting Rate' },
+    { DonationId: 'D3', DonorName: 'Nancy Gregory', DonorEmail: 'shared@example.test', Status: 'Paid', Amount: 4500000, Currency: 'NGN' }
+  ]);
+
+  assert.deepEqual(insights.topDonors.map((row) => [row.DonorName, row.SettledNgnTotal, row.DonationCount]), [
+    ['Nancy Gregory', 4500000, 1],
+    ['De Great El-kanah', 200000, 1]
+  ]);
+  assert.deepEqual(insights.foreignHoldings, [{ Currency: 'USD', PaidAmount: 1000, AwaitingAmount: 1000, DonationCount: 1 }]);
+});
+
 test('batch conversion charge posts as an expense while revenue remains gross', () => {
   const journal = buildChurchDonationAccountingJournal({
     DonationId: 'D1', DonorName: 'Ada', Status: 'Paid', PaymentMethod: 'BANK TRANSFER',
