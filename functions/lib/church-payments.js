@@ -14,6 +14,7 @@ import { resolveEmailSenderProfile } from './email-service.js';
 import { getSchoolStructure } from './school-scope.js';
 import { getWebBranding } from './web-branding.js';
 import { ensureGivingTypes, resolveGivingType } from './church-funds.js';
+import { getDonationCurrencySettings, registerDonorFromPaidDonation } from './church-donation-management.js';
 import {
   ACCOUNTING_BASE_CURRENCY,
   convertedDonationBaseAmount,
@@ -116,6 +117,11 @@ function normalizeDonationInput(input = {}, branchId = 'main') {
     BranchId: clean(branchId || 'main').toLowerCase() || 'main',
     DonorName: donorName,
     DonorEmail: donorEmail,
+    DonorId: clean(input.DonorId || input.donorId),
+    DonorPhone: clean(input.DonorPhone || input.donorPhone || input.Phone || input.phone),
+    SaveDonorProfileRequested: ['yes', 'true', '1', 'on'].includes(lower(
+      input.SaveDonorProfileRequested ?? input.saveDonorProfileRequested ?? input.SaveDonorProfile
+    )),
     Amount: amount,
     ...conversion,
     PaymentMethod: paymentMethod,
@@ -354,7 +360,13 @@ export async function saveChurchDonation(env, user, body = {}) {
   const capabilities = requireCapability(user, 'canCollect');
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
   const donation = normalizeDonationInput(body.donation || body.Donation || body, branchId);
-  if (donation.PaymentMethod !== 'ONLINE' && donation.ConversionStatus !== 'Converted') {
+  const currencySettings = await getDonationCurrencySettings(env, branchId);
+  donation.ConversionMode = currencySettings.ForeignCurrencyMode;
+  if (
+    donation.PaymentMethod !== 'ONLINE'
+    && donation.ConversionStatus !== 'Converted'
+    && currencySettings.ForeignCurrencyMode !== 'BATCH_SETTLEMENT'
+  ) {
     inputError(`Enter the ${ACCOUNTING_BASE_CURRENCY} exchange rate before recording an offline foreign-currency donation.`);
   }
   const { givingTypes } = await ensureGivingTypes(env, branchId);
@@ -393,6 +405,7 @@ export async function saveChurchDonation(env, user, body = {}) {
   delete prepared.__id;
   delete prepared.__name;
   await upsertDocument(env, path, id, prepared);
+  await registerDonorFromPaidDonation(env, prepared).catch(() => null);
 
   const action = existing ? 'UPDATE' : 'CREATE';
   await writeDonationAudit(env, branchId, user, action, prepared.DonationId, `${prepared.PaymentMethod} ${prepared.Currency} ${prepared.Amount} (${prepared.Status})`);

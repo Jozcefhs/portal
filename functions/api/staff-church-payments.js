@@ -5,6 +5,13 @@ import {
   initChurchDonationPayment
 } from '../lib/church-payments.js';
 import { postChurchDonationToAccounting } from './backend.js';
+import {
+  donationWorkspaceSupplement,
+  markCurrencySettlementAccounting,
+  saveDonationCurrencySettings,
+  saveDonor,
+  settleCurrencyBatch
+} from '../lib/church-donation-management.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import {
   beginIdempotentRequest,
@@ -99,8 +106,38 @@ export async function onRequestPost(context) {
       result = await initChurchDonationPayment(env, user, body, new URL(request.url).origin);
     } else if (action === 'syncaccounting') {
       result = await syncPaidOfflineDonations(env, user, body);
+    } else if (action === 'savedonor') {
+      result = await saveDonor(env, user, body);
+    } else if (action === 'savecurrencysettings') {
+      result = await saveDonationCurrencySettings(env, user, body);
+    } else if (action === 'settlecurrencybatch') {
+      result = await settleCurrencyBatch(env, user, body);
+      const failures = [];
+      for (const donation of result.donations || []) {
+        try {
+          await postChurchDonationToAccounting(env, donation);
+        } catch (error) {
+          failures.push({ DonationId: clean(donation.DonationId), message: error?.message || String(error) });
+        }
+      }
+      const accountingStatus = failures.length ? 'Pending' : 'Posted';
+      await markCurrencySettlementAccounting(
+        env,
+        result.settlement.BranchId,
+        result.settlement.SettlementBatchId,
+        accountingStatus,
+        failures.map((item) => `${item.DonationId}: ${item.message}`).join('; ')
+      );
+      result.accountingStatus = accountingStatus;
+      result.failed = failures;
+      result.message = failures.length
+        ? `${result.message} ${failures.length} accounting posting(s) still need attention.`
+        : `${result.message} Accounting posted.`;
     } else {
       result = await handleChurchDonationAction(env, user, body);
+    }
+    if (action === 'list' || action === 'getchurchdonations') {
+      Object.assign(result, await donationWorkspaceSupplement(env, user, body, result.donations || []));
     }
     const conversionAction = ['setconversion', 'setexchangerate', 'freezeconversion'].includes(action);
     const convertedPaidDonation = conversionAction

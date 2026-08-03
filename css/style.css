@@ -2462,3 +2462,30 @@ img.nav-logo,
 .commerce-product-list{max-height:269px;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable}
 .commerce-product{height:62px;min-height:62px;box-sizing:border-box}
 @media(max-width:680px){.commerce-product-list{max-height:269px}}
+
+/* Clean donor, currency-settlement and staff-attendance workspaces. */
+.workspace-subnav{position:sticky;top:0;z-index:8;display:flex;gap:7px;overflow-x:auto;margin:10px 0;padding:7px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.96);scrollbar-width:thin}
+.workspace-subnav button{flex:0 0 auto;width:fit-content;min-height:34px;margin:0;padding:7px 11px;border-radius:7px;font-size:10px;white-space:nowrap}
+.management-split{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}
+.management-split>.admin-table-wrap,.management-split>.chart-card,.management-split>.church-dashboard-grid{min-width:0;margin-top:0}
+.compact-management-form{margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--line)}
+.inline-policy-form{display:flex;flex-wrap:wrap;align-items:end;gap:10px;margin:10px 0 14px}
+.inline-policy-form>label{display:grid;gap:5px;min-width:150px;margin:0;font-size:11px}
+.inline-policy-form>label:has(input[type="radio"]){display:flex;align-items:center;min-height:37px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#f8fafc}
+.inline-policy-form input[type="radio"]{flex:0 0 16px;width:16px;height:16px;margin:0 7px 0 0}
+.inline-policy-form button{flex:0 0 auto;width:fit-content;min-height:37px;margin:0;padding:8px 12px}
+.settlement-selection{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;max-height:260px;margin:12px 0;padding:9px;border:1px solid var(--line);border-radius:9px;overflow:auto;background:#f8fafc}
+.settlement-selection>label{display:grid;grid-template-columns:18px minmax(0,1fr);gap:8px;align-items:start;margin:0;padding:9px;border:1px solid var(--line);border-radius:8px;background:#fff;font-weight:normal}
+.settlement-selection input{width:16px;height:16px;margin:2px 0 0}
+.settlement-selection strong,.settlement-selection small{display:block}.settlement-selection small{margin-top:2px;color:var(--muted)}
+.attendance-clock-card{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,.5fr);gap:20px;align-items:center;margin:14px 0;padding:20px;border:1px solid #b9d9d0;border-left:5px solid #159b7f;border-radius:12px;background:linear-gradient(135deg,#f5fcfa,#edf8f5)}
+.attendance-clock-card.is-clocked-in{border-left-color:#1f74d2;background:linear-gradient(135deg,#f5f9fe,#edf4fc)}
+.attendance-clock-card h3{margin:2px 0 5px;color:var(--blue2);font-size:22px}.attendance-clock-card p{margin:0;color:var(--muted)}
+.attendance-clock-controls{display:flex;align-items:end;justify-content:flex-end;gap:8px}.attendance-clock-controls label{flex:1;margin:0}.attendance-clock-controls button{flex:0 0 auto;width:fit-content;min-height:43px;margin:0;padding:9px 15px;background:#087d68;white-space:nowrap}
+.giving-remember{display:grid!important;grid-template-columns:16px minmax(0,1fr);align-items:start!important;gap:8px!important;padding:9px;border:1px solid #c9d7e4;border-radius:9px;background:#f7fafc}.giving-remember input{width:16px!important;height:16px!important;min-height:16px!important;margin:1px 0 0!important;padding:0!important}.giving-remember span{font-size:10px;line-height:1.45}
+html[data-theme="dark"] .workspace-subnav{border-color:#33495f;background:rgba(13,27,43,.96)}
+html[data-theme="dark"] .inline-policy-form>label:has(input[type="radio"]),html[data-theme="dark"] .settlement-selection{border-color:#33495f;background:#10243a;color:#eef5fc}
+html[data-theme="dark"] .settlement-selection>label{border-color:#33495f;background:#132a41;color:#eef5fc}
+html[data-theme="dark"] .attendance-clock-card,html[data-theme="dark"] .attendance-clock-card.is-clocked-in{border-color:#2a7c6d;background:linear-gradient(135deg,#102b2a,#10243a);color:#eef5fc}
+html[data-theme="dark"] .attendance-clock-card h3{color:#f4f8ff}
+@media(max-width:760px){.management-split,.attendance-clock-card{grid-template-columns:1fr}.attendance-clock-card{padding:14px}.attendance-clock-controls{align-items:stretch;flex-direction:column}.attendance-clock-controls button{align-self:flex-end}.inline-policy-form{align-items:stretch;flex-direction:column}.inline-policy-form>label{width:100%}.settlement-selection{grid-template-columns:1fr}.workspace-subnav{top:0}}

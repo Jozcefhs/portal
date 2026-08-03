@@ -46,6 +46,9 @@
         <label>Email address
           <input name="DonorEmail" type="email" autocomplete="email" maxlength="254" required>
         </label>
+        <label>Phone number <span class="muted">(optional)</span>
+          <input name="DonorPhone" type="tel" autocomplete="tel" maxlength="40">
+        </label>
         <div class="giving-form-row">
           <label>Gift type
             <select name="PaymentType" id="givingType" required>
@@ -72,6 +75,10 @@
         </label>
         <p id="publicGivingStatus" class="status" role="status" aria-live="polite"></p>
         <button type="submit" id="publicGivingButton">Continue to secure payment</button>
+        <label class="giving-remember">
+          <input name="SaveDonorProfile" type="checkbox" value="yes">
+          <span>Remember my details on this device and in the church donor register after payment is verified.</span>
+        </label>
         <p class="giving-disclaimer">Payment is recorded only after Paystack confirms a successful transaction.</p>
       </form>
     </section>

@@ -5,6 +5,7 @@ import { postChurchDonationToAccounting, recordManualPayment } from './backend.j
 import { batchUpsertDocuments, createDocumentIfAbsent, getDocument, upsertDocument } from '../lib/firestore.js';
 import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
 import { markDonationPaidByReference, sendChurchDonationReceipt } from '../lib/church-payments.js';
+import { registerDonorFromPaidDonation } from '../lib/church-donation-management.js';
 import { finalizeOnlineOrganizationCommerceSale } from '../lib/organization-commerce.js';
 import { paymentIntentReference, paymentIntentType } from '../lib/payment-intent.js';
 import {
@@ -357,6 +358,7 @@ export async function onRequestPost(context) {
           UpdatedBy: 'Paystack Verification'
         });
         if (donation) {
+          await registerDonorFromPaidDonation(env, donation).catch(() => null);
           donationReceipt = await sendChurchDonationReceipt(env, donation, {
             donorName: donation.DonorName,
             subject: clean(meta.receiptSubject || meta.subject || donation.ReceiptSubject || 'Payment confirmation - Church Donation'),

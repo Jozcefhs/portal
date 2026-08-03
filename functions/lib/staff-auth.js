@@ -291,10 +291,14 @@ export async function staffAccessFor(env, user = {}) {
       expiresAt: Date.now() + ACCESS_CONFIG_CACHE_MS
     };
   }
+  const allowedSections = allowedSectionsFor(user, organization.FeatureFlags);
+  if (organization.Edition === 'faith' && !allowedSections.includes('staffAttendance')) {
+    allowedSections.push('staffAttendance');
+  }
   return {
     edition: organization.Edition,
     featureFlags: organization.FeatureFlags,
-    allowedSections: allowedSectionsFor(user, organization.FeatureFlags)
+    allowedSections
   };
 }
 

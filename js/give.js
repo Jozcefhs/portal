@@ -7,6 +7,7 @@ const givingBranch = document.getElementById('givingBranch');
 const givingType = document.getElementById('givingType');
 const givingCurrency = document.getElementById('givingCurrency');
 const givingCurrencyNote = document.getElementById('givingCurrencyNote');
+const donorProfileStorageKey = 'dynamax-church-donor-profile-v1';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -30,6 +31,16 @@ function setGivingBusy(busy) {
 
 const requestedBranch = clean(new URLSearchParams(window.location.search).get('branch')).toLowerCase();
 givingBranch.value = /^[a-z0-9._-]{1,80}$/.test(requestedBranch) ? requestedBranch : 'main';
+
+try {
+  const savedProfile = JSON.parse(localStorage.getItem(donorProfileStorageKey) || '{}');
+  ['DonorName', 'DonorEmail', 'DonorPhone'].forEach((field) => {
+    if (givingForm.elements[field] && clean(savedProfile[field])) givingForm.elements[field].value = clean(savedProfile[field]);
+  });
+  if (savedProfile.SaveDonorProfile && givingForm.elements.SaveDonorProfile) givingForm.elements.SaveDonorProfile.checked = true;
+} catch (_error) {
+  // A blocked or cleared browser store must never stop a donation.
+}
 
 async function loadGivingTypes() {
   try {
@@ -106,6 +117,18 @@ givingForm.addEventListener('submit', async (event) => {
       const error = new Error(data.message || 'Could not start the payment.');
       error.responseReceived = true;
       throw error;
+    }
+    if (givingForm.elements.SaveDonorProfile?.checked) {
+      try {
+        localStorage.setItem(donorProfileStorageKey, JSON.stringify({
+          DonorName: clean(payload.DonorName),
+          DonorEmail: clean(payload.DonorEmail),
+          DonorPhone: clean(payload.DonorPhone),
+          SaveDonorProfile: true
+        }));
+      } catch (_error) {
+        // The secure payment flow continues even if this browser blocks storage.
+      }
     }
     const paymentUrl = clean(data.authorizationUrl);
     if (!/^https:\/\/[A-Za-z0-9.-]+(?:\/|$)/.test(paymentUrl)) {

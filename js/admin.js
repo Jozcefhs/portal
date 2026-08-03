@@ -132,6 +132,7 @@ const tabConfig = [
   ['studentConduct', 'Student Conduct & Discipline'],
   ['members', 'Departments & Members'],
   ['services', 'Services & Attendance'],
+  ['staffAttendance', 'Staff Attendance'],
   ['funds', 'Funds & Mappings'],
   ['offerings', 'Offerings'],
   ['donations', 'Donations'],
@@ -189,6 +190,7 @@ const tabIcons = {
   studentConduct: '\u2696',
   members: '\u{1F465}',
   services: '\u{1F4C5}',
+  staffAttendance: '\u23F1',
   funds: '\u{1F4B0}',
   offerings: '\u{1F9FA}',
   donations: '\u{1F381}',
@@ -3393,7 +3395,7 @@ async function loadChurchFunds() {
     const capabilities = data.capabilities || {};
     const revenueAccounts = (data.chart || []).filter((row) => clean(row.Type).toLowerCase() === 'revenue');
     const givingTypeForm = capabilities.canManageGivingTypes ? `
-      <section class="config-group">
+      <section class="config-group" id="donationGivingPanel">
         <header><strong>Giving types and individual income accounts</strong><small>Each giving source must point to a different Revenue account.</small></header>
         <form id="churchGivingTypeForm" class="workflow-form config-form">
           <input type="hidden" name="GivingTypeId">
@@ -3710,6 +3712,17 @@ async function loadChurchDonations() {
     const awaitingRateText = Number(summary.awaitingRate || 0)
       ? `${Number(summary.awaitingRate)} foreign-currency gift${Number(summary.awaitingRate) === 1 ? '' : 's'} awaiting an NGN rate`
       : 'All foreign-currency gifts converted';
+    const donors = data.donors || [];
+    const topDonors = data.topDonors || [];
+    const foreignHoldings = data.foreignHoldings || [];
+    const currencyMode = clean(data.settings?.ForeignCurrencyMode || 'PER_DONATION').toUpperCase();
+    const awaitingForeignDonations = (data.donations || []).filter((row) => {
+      const currency = clean(row.TransactionCurrency || row.Currency || 'NGN').toUpperCase();
+      return currency !== 'NGN'
+        && clean(row.ConversionStatus).toLowerCase() !== 'converted'
+        && ['paid', 'completed'].includes(clean(row.Status || row.PaymentStatus).toLowerCase());
+    });
+    const awaitingCurrencies = [...new Set(awaitingForeignDonations.map((row) => clean(row.TransactionCurrency || row.Currency).toUpperCase()))];
 
     panelEl.innerHTML = `
       <div class="workflow-intro">
@@ -3720,6 +3733,12 @@ async function loadChurchDonations() {
         </div>
         <span class="compact-row-actions"><button type="button" id="genericChurchGivingQr">▦ Generic Giving QR</button>${capabilities.canCollect ? '<button type="button" id="syncChurchDonationAccounting">Sync paid giving</button>' : ''}<button type="button" id="refreshChurchDonations">Refresh</button></span>
       </div>
+      <nav class="workspace-subnav" aria-label="Donation workspace">
+        <button type="button" data-donation-jump="giving">Record giving</button>
+        <button type="button" data-donation-jump="donors">Donor register</button>
+        <button type="button" data-donation-jump="currency">Currencies</button>
+        <button type="button" data-donation-jump="records">Records</button>
+      </nav>
       <div class="workflow-kpis">
         <div><small>NGN equivalent</small><strong>${money(summary.totalAmount || 0)}</strong><span>Converted records only</span></div>
         <div><small>Paid</small><strong>${money((summary.paid || 0) > 0 ? summary.paidAmount || summary.totalAmount : 0)}</strong><span>Recorded as paid</span></div>
@@ -3734,8 +3753,15 @@ async function loadChurchDonations() {
         <header><strong>New donation entry</strong><small>Record offline and online payments, then optionally send confirmation and link.</small></header>
         <form id="churchDonationForm" class="workflow-form config-form">
           <div class="config-grid">
+            <label>Registered donor
+              <select name="DonorId" id="churchDonationDonorSelect">
+                <option value="">Enter a new or occasional donor</option>
+                ${donors.map((row) => `<option value="${escapeHtml(row.DonorId || row.__id)}">${escapeHtml(row.DisplayName)}${row.Email ? ` · ${escapeHtml(row.Email)}` : ''}</option>`).join('')}
+              </select>
+            </label>
             <label>Donor name <input name="DonorName" required></label>
             <label>Donor email <input name="DonorEmail" type="email" required></label>
+            <label>Donor phone <input name="DonorPhone" type="tel" autocomplete="tel"></label>
             <label>Amount <input name="Amount" type="number" min="0.01" step="0.01" required></label>
             <label>Currency <select name="Currency">${currencies.map((currency) => `<option value="${escapeHtml(currency)}">${escapeHtml(currency)}</option>`).join('')}</select></label>
             <label id="churchDonationExchangeRateField">NGN per 1 foreign currency <input name="ExchangeRate" type="number" min="0.000001" step="0.000001" value="1"><small data-exchange-rate-help>NGN donations use a rate of 1.</small></label>
@@ -3750,12 +3776,88 @@ async function loadChurchDonations() {
             <textarea name="Notes" rows="2" placeholder="Optional notes for donation records."></textarea>
           </label>
           <label class="check-row config-switch" style="display:flex;align-items:center;justify-content:flex-start;gap:8px;"><input name="sendOnlineEmail" type="checkbox" checked style="flex:0 0 16px;width:16px;height:16px;min-height:16px;margin:0;padding:0;"><span>Send online payment link for this donation</span></label>
+          <label class="check-row config-switch"><input name="SaveDonorProfileRequested" type="checkbox" value="yes" checked><span>Save or refresh this donor after payment is confirmed</span></label>
           <div class="config-dialog-actions">
             <p class="status" id="churchDonationStatus"></p>
             <button type="submit">Save donation</button>
           </div>
         </form>
       </section>
+      <section class="config-group" id="donationDonorPanel">
+        <header><strong>Donor register</strong><small>Reuse verified contact details and recognise consistent supporters without exposing this information publicly.</small></header>
+        ${capabilities.canCollect ? `<form id="churchDonorForm" class="workflow-form config-form compact-management-form">
+          <input name="DonorId" type="hidden">
+          <div class="config-grid">
+            <label>Name <input name="DisplayName" required></label>
+            <label>Email <input name="Email" type="email"></label>
+            <label>Phone <input name="Phone" type="tel"></label>
+            <label>Notes <input name="Notes"></label>
+          </div>
+          <div class="config-dialog-actions"><p class="status" id="churchDonorStatus"></p><button type="submit">Save donor</button></div>
+        </form>` : ''}
+        <div class="management-split">
+          ${table('Top 10 donors', topDonors, [
+            { label: 'Donor', value: (row) => row.DonorName },
+            { label: 'Settled NGN total', value: (row) => money(row.SettledNgnTotal) },
+            { label: 'Gifts', value: (row) => row.DonationCount }
+          ])}
+          ${table('Registered donors', donors, [
+            { label: 'Name', value: (row) => row.DisplayName },
+            { label: 'Email', value: (row) => row.Email },
+            { label: 'Phone', value: (row) => row.Phone },
+            { label: 'Action', render: (row) => capabilities.canCollect ? `<button type="button" class="table-action" data-edit-donor="${escapeHtml(row.DonorId || row.__id)}">Edit</button>` : '' }
+          ])}
+        </div>
+      </section>
+      <section class="config-group" id="donationCurrencyPanel">
+        <header><strong>Foreign-currency giving</strong><small>Keep each currency separate until it is converted, or translate each gift immediately using a frozen rate.</small></header>
+        ${capabilities.canCollect ? `<form id="churchCurrencyPolicyForm" class="inline-policy-form">
+          <label><input type="radio" name="ForeignCurrencyMode" value="PER_DONATION" ${currencyMode === 'PER_DONATION' ? 'checked' : ''}> Translate each donation</label>
+          <label><input type="radio" name="ForeignCurrencyMode" value="BATCH_SETTLEMENT" ${currencyMode === 'BATCH_SETTLEMENT' ? 'checked' : ''}> Hold and settle by currency</label>
+          <button type="submit">Save policy</button>
+        </form>` : ''}
+        <p class="notice ${currencyMode === 'BATCH_SETTLEMENT' ? 'ok' : ''}">${currencyMode === 'BATCH_SETTLEMENT'
+          ? 'Batch mode is active. Foreign gifts stay outside combined NGN income until the accountant records actual conversion proceeds.'
+          : 'Per-donation mode is active. A frozen NGN rate is required when each foreign gift is recorded.'}</p>
+        <div class="management-split">
+          ${verticalBars('Foreign gifts by currency', foreignHoldings, 'Currency', 'PaidAmount', 'teal')}
+          ${table('Currency holdings', foreignHoldings, [
+            { label: 'Currency', value: (row) => row.Currency },
+            { label: 'Paid gifts', value: (row) => moneyInCurrency(row.PaidAmount, row.Currency) },
+            { label: 'Awaiting conversion', value: (row) => moneyInCurrency(row.AwaitingAmount, row.Currency) },
+            { label: 'Count', value: (row) => row.DonationCount }
+          ])}
+        </div>
+        ${currencyMode === 'BATCH_SETTLEMENT' && capabilities.canCollect ? `<form id="churchCurrencySettlementForm" class="workflow-form config-form">
+          <h3>Record a completed currency conversion</h3>
+          <p class="muted">Choose one currency and the gifts included in the conversion. Record actual NGN proceeds, not an estimated rate.</p>
+          <div class="config-grid">
+            <label>Currency <select name="Currency" id="churchSettlementCurrency" required><option value="">Choose currency</option>${awaitingCurrencies.map((currency) => `<option value="${escapeHtml(currency)}">${escapeHtml(currency)}</option>`).join('')}</select></label>
+            <label>Gross NGN proceeds <input name="GrossNgnProceeds" type="number" min="0.01" step="0.01" required></label>
+            <label>Conversion charge (NGN) <input name="ConversionFee" type="number" min="0" step="0.01" value="0"></label>
+            <label>Settlement date <input name="SettlementDate" type="date" value="${new Date().toISOString().slice(0, 10)}" required></label>
+            <label>Bank / bureau reference <input name="Reference"></label>
+          </div>
+          <div class="settlement-selection" id="churchSettlementDonations">
+            ${awaitingForeignDonations.map((row) => {
+              const id = clean(row.DonationId || row.__id);
+              const currency = clean(row.TransactionCurrency || row.Currency).toUpperCase();
+              return `<label data-settlement-currency="${escapeHtml(currency)}"><input type="checkbox" name="DonationIds" value="${escapeHtml(id)}"><span><strong>${escapeHtml(row.DonorName || 'Donor')}</strong><small>${escapeHtml(moneyInCurrency(row.Amount, currency))} · ${escapeHtml(row.PaymentType || 'Donation')}</small></span></label>`;
+            }).join('') || '<p class="muted">There are no paid foreign gifts awaiting conversion.</p>'}
+          </div>
+          <div class="config-dialog-actions"><p class="status" id="churchSettlementStatus"></p><button type="submit">Settle selected gifts</button></div>
+        </form>` : ''}
+        ${table('Recent currency settlements', data.settlements || [], [
+          { label: 'Date', value: (row) => row.SettlementDate },
+          { label: 'Currency', value: (row) => row.Currency },
+          { label: 'Foreign amount', value: (row) => moneyInCurrency(row.ForeignAmount, row.Currency) },
+          { label: 'Gross NGN', value: (row) => money(row.GrossNgnProceeds) },
+          { label: 'Charges', value: (row) => money(row.ConversionFee) },
+          { label: 'Rate', value: (row) => row.ExchangeRate },
+          { label: 'Accounting', value: (row) => row.AccountingStatus }
+        ])}
+      </section>
+      <section id="donationRecordsPanel">
       ${table('Donations', data.donations || [], [
         { label: 'Receipt', value: (row) => pick(row, ['ReceiptNo', '__id']) },
         { label: 'Donor', value: (row) => pick(row, ['DonorName']) },
@@ -3823,9 +3925,99 @@ async function loadChurchDonations() {
         { label: 'Receipt', value: (row) => pick(row, ['DonationId']) },
         { label: 'Actor', value: (row) => pick(row, ['Actor']) },
         { label: 'Details', value: (row) => pick(row, ['Details']) }
-      ])}`;
+      ])}
+      </section>`;
 
     const form = document.getElementById('churchDonationForm');
+    panelEl.querySelectorAll('[data-donation-jump]').forEach((button) => button.addEventListener('click', () => {
+      const target = {
+        giving: 'donationGivingPanel',
+        donors: 'donationDonorPanel',
+        currency: 'donationCurrencyPanel',
+        records: 'donationRecordsPanel'
+      }[button.dataset.donationJump];
+      document.getElementById(target)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }));
+    form?.elements.DonorId?.addEventListener('change', () => {
+      const donor = donors.find((row) => clean(row.DonorId || row.__id) === clean(form.elements.DonorId.value));
+      if (!donor) return;
+      form.elements.DonorName.value = clean(donor.DisplayName);
+      form.elements.DonorEmail.value = clean(donor.Email);
+      form.elements.DonorPhone.value = clean(donor.Phone);
+    });
+    const donorForm = document.getElementById('churchDonorForm');
+    donorForm?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = donorForm.querySelector('button[type="submit"]');
+      const status = document.getElementById('churchDonorStatus');
+      setButtonLoading(button, true, 'Saving...', 'Save donor');
+      try {
+        const saved = await churchDonationRequest('savedonor', Object.fromEntries(new FormData(donorForm).entries()));
+        setStatus(status, saved.message, 'ok');
+        await loadChurchDonations();
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+      } finally {
+        if (button.isConnected) setButtonLoading(button, false, 'Saving...', 'Save donor');
+      }
+    });
+    panelEl.querySelectorAll('[data-edit-donor]').forEach((button) => button.addEventListener('click', () => {
+      const donor = donors.find((row) => clean(row.DonorId || row.__id) === clean(button.dataset.editDonor));
+      if (!donor || !donorForm) return;
+      ['DonorId', 'DisplayName', 'Email', 'Phone', 'Notes'].forEach((field) => {
+        if (donorForm.elements[field]) donorForm.elements[field].value = clean(donor[field]);
+      });
+      donorForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      donorForm.elements.DisplayName?.focus();
+    }));
+    document.getElementById('churchCurrencyPolicyForm')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const policyForm = event.currentTarget;
+      const button = policyForm.querySelector('button[type="submit"]');
+      setButtonLoading(button, true, 'Saving...', 'Save policy');
+      try {
+        const saved = await churchDonationRequest('savecurrencysettings', Object.fromEntries(new FormData(policyForm).entries()));
+        await loadChurchDonations();
+        setStatus(document.getElementById('churchDonationStatus') || dashboardStatus, saved.message, 'ok');
+      } catch (error) {
+        setStatus(document.getElementById('churchDonationStatus') || dashboardStatus, error.message || String(error), 'bad');
+      } finally {
+        if (button.isConnected) setButtonLoading(button, false, 'Saving...', 'Save policy');
+      }
+    });
+    const settlementForm = document.getElementById('churchCurrencySettlementForm');
+    const settlementCurrency = document.getElementById('churchSettlementCurrency');
+    const filterSettlementRows = () => {
+      const selected = clean(settlementCurrency?.value).toUpperCase();
+      panelEl.querySelectorAll('[data-settlement-currency]').forEach((label) => {
+        const matches = !selected || clean(label.dataset.settlementCurrency).toUpperCase() === selected;
+        label.hidden = !matches;
+        if (!matches) label.querySelector('input').checked = false;
+      });
+    };
+    settlementCurrency?.addEventListener('change', filterSettlementRows);
+    filterSettlementRows();
+    settlementForm?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = settlementForm.querySelector('button[type="submit"]');
+      const status = document.getElementById('churchSettlementStatus');
+      const payload = Object.fromEntries(new FormData(settlementForm).entries());
+      payload.DonationIds = new FormData(settlementForm).getAll('DonationIds');
+      if (!payload.DonationIds.length) {
+        setStatus(status, 'Select at least one donation from this currency.', 'bad');
+        return;
+      }
+      setButtonLoading(button, true, 'Settling...', 'Settle selected gifts');
+      try {
+        const settled = await churchDonationRequest('settlecurrencybatch', payload);
+        setStatus(status, settled.message, settled.accountingStatus === 'Posted' ? 'ok' : 'bad');
+        await loadChurchDonations();
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+      } finally {
+        if (button.isConnected) setButtonLoading(button, false, 'Settling...', 'Settle selected gifts');
+      }
+    });
     const syncDonationConversionFields = () => {
       if (!form) return;
       const currency = clean(form.elements.Currency?.value || 'NGN').toUpperCase();
@@ -3833,21 +4025,22 @@ async function loadChurchDonations() {
       const dateInput = form.elements.ExchangeRateDate;
       const help = form.querySelector('[data-exchange-rate-help]');
       const foreign = currency !== 'NGN';
+      const requiresRate = foreign && currencyMode !== 'BATCH_SETTLEMENT';
       if (rateInput) {
         const previousCurrency = clean(rateInput.dataset.currency);
-        rateInput.disabled = !foreign;
-        rateInput.required = foreign;
+        rateInput.disabled = !requiresRate;
+        rateInput.required = requiresRate;
         if (!foreign) rateInput.value = '1';
         else if (rateInput.value === '1' || (previousCurrency && previousCurrency !== currency)) rateInput.value = '';
         rateInput.dataset.currency = currency;
       }
       if (dateInput) {
-        dateInput.disabled = !foreign;
-        dateInput.required = foreign;
-        if (foreign && !dateInput.value) dateInput.value = new Date().toISOString().slice(0, 10);
+        dateInput.disabled = !requiresRate;
+        dateInput.required = requiresRate;
+        if (requiresRate && !dateInput.value) dateInput.value = new Date().toISOString().slice(0, 10);
       }
       if (help) help.textContent = foreign
-        ? `Enter the NGN value of 1 ${currency}. This rate will be frozen for audit.`
+        ? (requiresRate ? `Enter the NGN value of 1 ${currency}. This rate will be frozen for audit.` : `${currency} will remain unconverted until included in a settlement batch.`)
         : 'NGN donations use a rate of 1.';
     };
     form?.elements.Currency?.addEventListener('change', syncDonationConversionFields);
@@ -4052,6 +4245,205 @@ async function loadChurchDonations() {
     });
   } catch (error) {
     if (activeSection === 'donations') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+  }
+}
+
+async function staffAttendanceRequest(action, payload = {}) {
+  const idempotencyKey = clean(payload.idempotencyKey) || newIdempotencyKey();
+  const response = await staffFetch('/api/staff-attendance', {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify({ action, BranchId: currentUser?.branchId || 'main', ...payload, idempotencyKey })
+  });
+  const data = await response.json().catch(() => ({ ok: false, message: 'Staff attendance service did not return JSON.' }));
+  if (!response.ok || !data.ok) throw receivedResponseError(data.message || 'Staff attendance action failed.');
+  return data;
+}
+
+function browserPosition() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('This device does not provide browser location. Connect to the approved organisation network or use a supported device.'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => resolve({
+        Latitude: position.coords.latitude,
+        Longitude: position.coords.longitude,
+        Accuracy: position.coords.accuracy
+      }),
+      (error) => reject(new Error(error.message || 'Location permission was not granted.')),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }
+    );
+  });
+}
+
+async function loadStaffAttendance() {
+  try {
+    const data = await staffAttendanceRequest('list');
+    if (activeSection !== 'staffAttendance') return;
+    const sites = data.sites || [];
+    const configuredSites = data.configuredSites || sites;
+    const stateIn = data.state === 'CLOCKED_IN';
+    const nextDirection = data.nextDirection || (stateIn ? 'OUT' : 'IN');
+    const capabilities = data.capabilities || {};
+    panelEl.innerHTML = `
+      <div class="workflow-intro">
+        <div><p class="eyebrow">People & ministry</p><h2>Staff attendance</h2><p class="muted">Verified clock-in and clock-out using an approved church location or network.</p></div>
+        <button type="button" id="refreshStaffAttendance">Refresh</button>
+      </div>
+      <div class="workflow-kpis">
+        <div><small>Current state</small><strong>${stateIn ? 'Clocked in' : 'Clocked out'}</strong><span>${data.myEvents?.[0]?.Timestamp ? escapeHtml(new Date(data.myEvents[0].Timestamp).toLocaleString()) : 'No attendance event yet'}</span></div>
+        <div><small>Approved locations</small><strong>${sites.length}</strong><span>Geofence or organisation network</span></div>
+        <div><small>My recent events</small><strong>${data.myEvents?.length || 0}</strong><span>Server-timestamped entries</span></div>
+      </div>
+      <section class="attendance-clock-card ${stateIn ? 'is-clocked-in' : ''}">
+        <div><p class="eyebrow">My attendance</p><h3>${stateIn ? 'Ready to clock out?' : 'Ready to clock in?'}</h3><p>Your precise coordinates are used only to validate your distance and are not stored in the attendance record.</p></div>
+        <div class="attendance-clock-controls">
+          <label>Location <select id="staffAttendanceSite"><option value="">Choose location</option>${sites.map((site) => `<option value="${escapeHtml(site.SiteId || site.__id)}">${escapeHtml(site.Name)}</option>`).join('')}</select></label>
+          <button type="button" id="staffClockButton" ${sites.length ? '' : 'disabled'}>${nextDirection === 'IN' ? 'Clock in' : 'Clock out'}</button>
+        </div>
+        <p class="status" id="staffAttendanceStatus"></p>
+      </section>
+      ${table('My attendance history', data.myEvents || [], [
+        { label: 'Time', value: (row) => row.Timestamp },
+        { label: 'Action', value: (row) => row.Direction === 'IN' ? 'Clock in' : 'Clock out' },
+        { label: 'Location', value: (row) => row.SiteName },
+        { label: 'Verified by', value: (row) => row.VerificationMethod },
+        { label: 'Distance', value: (row) => row.DistanceMetres === null || row.DistanceMetres === undefined ? '' : `${row.DistanceMetres} m` }
+      ])}
+      ${capabilities.canManage ? `<section class="config-group">
+        <header><strong>Attendance locations</strong><small>Geofence is recommended. The approved public network is a fallback; browsers cannot securely read a Wi-Fi name.</small></header>
+        <form id="staffAttendanceSiteForm" class="workflow-form config-form">
+          <input name="SiteId" type="hidden">
+          <div class="config-grid">
+            <label>Location name <input name="Name" required placeholder="Main church premises"></label>
+            <label>Latitude <input name="Latitude" type="number" step="any" required></label>
+            <label>Longitude <input name="Longitude" type="number" step="any" required></label>
+            <label>Allowed radius (metres) <input name="RadiusMetres" type="number" min="20" max="5000" value="150" required></label>
+            <label>Maximum GPS uncertainty (metres) <input name="MaxAccuracyMetres" type="number" min="10" max="2000" value="100" required></label>
+            <label>Verification rule <select name="Policy"><option value="GEOFENCE_OR_NETWORK">Geofence or approved network</option><option value="GEOFENCE_ONLY">Geofence only</option><option value="NETWORK_ONLY">Approved network only</option></select></label>
+            <label>Other approved public IPs <input name="AllowedPublicIps" placeholder="Comma-separated, optional"></label>
+            <label>Status <select name="Active"><option value="YES">Active</option><option value="NO">Inactive</option></select></label>
+          </div>
+          <label class="check-row config-switch"><input type="checkbox" name="UseCurrentNetwork" value="yes"><span>Also approve the public network currently in use</span></label>
+          <div class="config-dialog-actions"><p class="status" id="staffAttendanceSiteStatus"></p><button type="button" id="useAttendanceLocation">Use my current location</button><button type="submit">Save location</button></div>
+        </form>
+        ${table('Configured attendance locations', configuredSites, [
+          { label: 'Location', value: (row) => row.Name },
+          { label: 'Rule', value: (row) => clean(row.Policy).replaceAll('_', ' ').toLowerCase() },
+          { label: 'Radius', value: (row) => `${row.RadiusMetres || 0} m` },
+          { label: 'Networks', value: (row) => `${row.AllowedPublicIps?.length || 0} approved` },
+          { label: 'Action', render: (row) => `<button type="button" class="table-action" data-edit-attendance-site="${escapeHtml(row.SiteId || row.__id)}">Edit</button>` }
+        ])}
+      </section>
+      <section class="config-group">
+        <header><strong>Manual correction</strong><small>For an authorised exception only. Every correction keeps the reason and administrator in an audit trail.</small></header>
+        <form id="staffAttendanceManualForm" class="inline-policy-form">
+          <label>Username <input name="Username" required></label>
+          <label>Action <select name="Direction"><option value="IN">Clock in</option><option value="OUT">Clock out</option></select></label>
+          <label>Time <input name="Timestamp" type="datetime-local" required></label>
+          <label>Reason <input name="Reason" minlength="5" required></label>
+          <button type="submit">Record correction</button>
+        </form>
+        <p class="status" id="staffAttendanceManualStatus"></p>
+      </section>` : ''}
+      ${capabilities.canReport ? table('Recent staff attendance', data.recentEvents || [], [
+        { label: 'Staff', value: (row) => row.DisplayName || row.Username },
+        { label: 'Time', value: (row) => row.Timestamp },
+        { label: 'Action', value: (row) => row.Direction === 'IN' ? 'Clock in' : 'Clock out' },
+        { label: 'Location', value: (row) => row.SiteName },
+        { label: 'Verification', value: (row) => row.VerificationMethod },
+        { label: 'Correction', value: (row) => row.ManualOverride ? row.OverrideReason : '' }
+      ]) : ''}`;
+
+    document.getElementById('refreshStaffAttendance')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', loadStaffAttendance));
+    document.getElementById('staffClockButton')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      const status = document.getElementById('staffAttendanceStatus');
+      const siteId = clean(document.getElementById('staffAttendanceSite')?.value);
+      if (!siteId) {
+        setStatus(status, 'Choose the church location first.', 'bad');
+        return;
+      }
+      setButtonLoading(button, true, 'Verifying...', nextDirection === 'IN' ? 'Clock in' : 'Clock out');
+      try {
+        let location = {};
+        try { location = await browserPosition(); } catch (_error) { location = {}; }
+        const result = await staffAttendanceRequest('clock', { SiteId: siteId, Direction: nextDirection, Location: location });
+        await loadStaffAttendance();
+        setStatus(document.getElementById('staffAttendanceStatus') || dashboardStatus, result.message, 'ok');
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+      } finally {
+        if (button.isConnected) setButtonLoading(button, false, 'Verifying...', nextDirection === 'IN' ? 'Clock in' : 'Clock out');
+      }
+    });
+    const siteForm = document.getElementById('staffAttendanceSiteForm');
+    panelEl.querySelectorAll('[data-edit-attendance-site]').forEach((button) => button.addEventListener('click', () => {
+      const site = configuredSites.find((row) => clean(row.SiteId || row.__id) === clean(button.dataset.editAttendanceSite));
+      if (!site || !siteForm) return;
+      ['SiteId', 'Name', 'Latitude', 'Longitude', 'RadiusMetres', 'MaxAccuracyMetres', 'Policy', 'Active'].forEach((field) => {
+        if (siteForm.elements[field]) siteForm.elements[field].value = site[field] ?? '';
+      });
+      siteForm.elements.AllowedPublicIps.value = (site.AllowedPublicIps || []).join(', ');
+      siteForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      siteForm.elements.Name?.focus();
+    }));
+    document.getElementById('useAttendanceLocation')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      setButtonLoading(button, true, 'Locating...', 'Use my current location');
+      try {
+        const position = await browserPosition();
+        siteForm.elements.Latitude.value = position.Latitude.toFixed(7);
+        siteForm.elements.Longitude.value = position.Longitude.toFixed(7);
+        setStatus(document.getElementById('staffAttendanceSiteStatus'), `Location captured with about ${Math.round(position.Accuracy)} m accuracy.`, 'ok');
+      } catch (error) {
+        setStatus(document.getElementById('staffAttendanceSiteStatus'), error.message || String(error), 'bad');
+      } finally {
+        setButtonLoading(button, false, 'Locating...', 'Use my current location');
+      }
+    });
+    siteForm?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = siteForm.querySelector('button[type="submit"]');
+      setButtonLoading(button, true, 'Saving...', 'Save location');
+      try {
+        const result = await staffAttendanceRequest('savesite', Object.fromEntries(new FormData(siteForm).entries()));
+        await loadStaffAttendance();
+        setStatus(document.getElementById('staffAttendanceSiteStatus') || dashboardStatus, result.message, 'ok');
+      } catch (error) {
+        setStatus(document.getElementById('staffAttendanceSiteStatus'), error.message || String(error), 'bad');
+      } finally {
+        if (button.isConnected) setButtonLoading(button, false, 'Saving...', 'Save location');
+      }
+    });
+    const manualForm = document.getElementById('staffAttendanceManualForm');
+    if (manualForm?.elements.Timestamp) {
+      const localNow = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      manualForm.elements.Timestamp.value = localNow;
+    }
+    manualForm?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = manualForm.querySelector('button[type="submit"]');
+      const status = document.getElementById('staffAttendanceManualStatus');
+      setButtonLoading(button, true, 'Recording...', 'Record correction');
+      try {
+        const payload = Object.fromEntries(new FormData(manualForm).entries());
+        payload.Timestamp = new Date(payload.Timestamp).toISOString();
+        const result = await staffAttendanceRequest('manual', payload);
+        await loadStaffAttendance();
+        setStatus(document.getElementById('staffAttendanceManualStatus') || dashboardStatus, result.message, 'ok');
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+      } finally {
+        if (button.isConnected) setButtonLoading(button, false, 'Recording...', 'Record correction');
+      }
+    });
+  } catch (error) {
+    if (activeSection === 'staffAttendance') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
   }
 }
 
@@ -5964,6 +6356,9 @@ function renderSection(active) {
   } else if (active === 'services') {
     panelEl.innerHTML = '<p class="muted">Loading church services and attendance...</p>';
     loadChurchServices();
+  } else if (active === 'staffAttendance') {
+    panelEl.innerHTML = '<p class="muted">Loading staff attendance...</p>';
+    loadStaffAttendance();
   } else if (active === 'funds') {
     panelEl.innerHTML = '<p class="muted">Loading church funds and accounting mappings...</p>';
     loadChurchFunds();

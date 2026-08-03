@@ -4691,18 +4691,27 @@ export function buildChurchDonationAccountingJournal(donation = {}, settlement =
     || normalizedGateway.includes('online')
     || normalizedGateway.includes('paystack')
     || normalizedGateway.includes('gateway');
+  const batchConversionFee = Math.max(0, asMoneyNumber(
+    settlement.BaseConversionFee ?? donation.BaseConversionFee
+  ));
   const suppliedFee = online
     ? Math.max(0, asMoneyNumber(settlement.GatewayFee ?? donation.GatewayFee))
-    : 0;
+    : batchConversionFee;
   const suppliedNet = online
     ? asMoneyNumber(settlement.NetAmount ?? donation.NetAmount)
-    : originalGrossAmount;
+    : batchConversionFee > 0
+      ? asMoneyNumber(settlement.BaseNetAmount ?? donation.BaseNetAmount)
+      : originalGrossAmount;
   const originalNetAmount = Math.min(originalGrossAmount, suppliedNet > 0 ? suppliedNet : Math.max(0, originalGrossAmount - suppliedFee));
   const originalGatewayFee = Math.max(0, asMoneyNumber(originalGrossAmount - originalNetAmount));
-  const baseNetAmount = transactionCurrency === baseCurrency
+  const baseNetAmount = batchConversionFee > 0
+    ? Math.max(0, asMoneyNumber(settlement.BaseNetAmount ?? donation.BaseNetAmount ?? (baseGrossAmount - batchConversionFee)))
+    : transactionCurrency === baseCurrency
     ? originalNetAmount
     : roundMoney(originalNetAmount * exchangeRate);
-  const baseGatewayFee = Math.max(0, asMoneyNumber(baseGrossAmount - baseNetAmount));
+  const baseGatewayFee = batchConversionFee > 0
+    ? batchConversionFee
+    : Math.max(0, asMoneyNumber(baseGrossAmount - baseNetAmount));
   const branchId = clean(donation.BranchId || settlement.BranchId || 'main').toLowerCase() || 'main';
   const description = clean(donation.PaymentType || settlement.PaymentType || 'Donation');
   const revenueAccountCode = clean(
@@ -4727,7 +4736,7 @@ export function buildChurchDonationAccountingJournal(donation = {}, settlement =
       AccountCode: '6060',
       Debit: baseGatewayFee,
       Credit: 0,
-      Description: 'Donation payment processing charge',
+      Description: batchConversionFee > 0 ? 'Foreign-currency conversion charge' : 'Donation payment processing charge',
       Department: 'Donations',
       CostCentre: branchId
     });
