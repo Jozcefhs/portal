@@ -58,7 +58,7 @@
       const options = {
         body: notification.body || data.message || '',
         icon: TRANSPARENT_NOTIFICATION_ICON,
-        badge: '/images/Logo.png?v=20260803-notification-status-badge',
+        badge: '/images/notification-badge.png?v=20260803-monochrome-status-badge',
         silent: false,
         vibrate: [200, 100, 200],
         data: { actionUrl: data.actionUrl || notification.click_action || '/' }

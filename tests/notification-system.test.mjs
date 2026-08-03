@@ -221,14 +221,14 @@ test('foreground push displays a deduplicated audible system notification', asyn
   assert.match(client, /registration\.getNotifications\(\{ tag \}\)/);
   assert.match(client, /registration\.showNotification\(title, options\)/);
   assert.match(client, /icon:\s*TRANSPARENT_NOTIFICATION_ICON/);
-  assert.match(client, /badge:\s*'\/images\/Logo\.png\?v=20260803-notification-status-badge'/);
+  assert.match(client, /badge:\s*'\/images\/notification-badge\.png\?v=20260803-monochrome-status-badge'/);
   assert.doesNotMatch(client, /\bicon:\s*notification\.icon/);
   assert.doesNotMatch(client, /\bbadge:\s*notification\.badge/);
   assert.match(client, /silent:\s*false/);
   assert.match(client, /vibrate:\s*\[200, 100, 200\]/);
   assert.match(worker, /self\.registration\.getNotifications\(\{ tag \}\)/);
   assert.match(worker, /icon:\s*TRANSPARENT_NOTIFICATION_ICON/);
-  assert.match(worker, /badge:\s*'\/images\/Logo\.png\?v=20260803-notification-status-badge'/);
+  assert.match(worker, /badge:\s*'\/images\/notification-badge\.png\?v=20260803-monochrome-status-badge'/);
   assert.doesNotMatch(worker, /\bicon:\s*notification\.icon/);
   assert.doesNotMatch(worker, /\bbadge:\s*notification\.badge/);
   assert.match(worker, /silent:\s*false/);
