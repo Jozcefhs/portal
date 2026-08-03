@@ -1118,6 +1118,7 @@ function renderPayableItems(child) {
       const input = document.createElement('input');
       input.id = amountInputId(fee);
       input.type = 'number';
+      input.dataset.financeInput = '';
       input.min = fee.MinAmount || '1';
       if (fee.MaxAmount) input.max = fee.MaxAmount;
       input.step = '0.01';
@@ -1132,6 +1133,7 @@ function renderPayableItems(child) {
       }
       item.appendChild(label);
       item.appendChild(input);
+      window.DynamaxFinancialValues?.refresh(input);
     }
     const button = document.createElement('button');
     button.type = 'button';

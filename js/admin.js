@@ -264,6 +264,18 @@ function moneyInCurrency(value, currency = 'NGN') {
   }
 }
 
+function financialNumber(value, fallback = 0) {
+  const parsed = window.DynamaxFinancialValues?.parse
+    ? window.DynamaxFinancialValues.parse(value)
+    : Number(String(value ?? '').replace(/[,\s]/g, ''));
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function setFinancialInputValue(input, value) {
+  if (window.DynamaxFinancialValues?.set) window.DynamaxFinancialValues.set(input, value);
+  else if (input) input.value = value ?? '';
+}
+
 function setStatus(element, message, type = '') {
   element.textContent = message || '';
   element.className = type ? `status ${type}` : 'status';
@@ -1970,7 +1982,7 @@ function renderStaffStore(section, store) {
       <label>Item code<input name="ItemCode" required></label><label>Item name<input name="ItemName" required></label>
       <label>Category<input name="Category" list="storeCategoryOptions" autocomplete="off" required><datalist id="storeCategoryOptions">${activeCategories.map((row) => `<option value="${escapeHtml(row.Name)}"></option>`).join('')}</datalist></label><label>Variant / size<input name="Size"></label>
       ${organisationStore ? '' : '<label>Gender<select name="Gender"><option>All</option><option>Male</option><option>Female</option></select></label><label>Class<input name="ClassName" value="All"></label>'}
-      <label>Price<input name="Price" type="number" min="0" step="0.01" required></label><label>Stock quantity<input name="Quantity" type="number" min="0" step="1" required></label>
+      <label>Price<input name="Price" type="number" min="0" step="0.01" data-finance-input required></label><label>Stock quantity<input name="Quantity" type="number" min="0" step="1" required></label>
       <div class="config-actionbar"><label class="check-row"><input name="Active" type="checkbox" checked> ${organisationStore ? 'Available for sale' : 'Available to parents'}</label><p class="status" data-store-status></p><span class="inline-action-group"><button type="button" data-cancel-store-edit hidden>Cancel edit</button><button type="submit">Save item</button></span></div>
     </form>
     </section>
@@ -2045,7 +2057,7 @@ function renderStaffStore(section, store) {
     itemForm.elements.ItemName.value = clean(row.ItemName);
     itemForm.elements.Category.value = clean(row.Category);
     itemForm.elements.Size.value = clean(row.Size);
-    itemForm.elements.Price.value = commerceNumber(row.Price);
+    setFinancialInputValue(itemForm.elements.Price, commerceNumber(row.Price));
     itemForm.elements.Quantity.value = commerceItemStock(row);
     itemForm.elements.Active.checked = clean(row.Active || 'YES').toUpperCase() !== 'NO';
     if (itemForm.elements.Gender) itemForm.elements.Gender.value = clean(row.Gender || 'All');
@@ -2293,7 +2305,7 @@ function renderDepartmentOperations(section, data) {
       <div class="purchase-step-label"><strong>2</strong><span>Enter the purchase and complete the sale</span></div>
       <form id="walletPurchaseForm" class="workflow-form workflow-form-grid config-form">
         <input type="hidden" name="AccountRef" value="${escapeHtml(wallet.AccountRef)}">
-        <label>Purchase amount<input name="Amount" type="number" min="0.01" step="0.01" required placeholder="0.00"></label>
+        <label>Purchase amount<input name="Amount" type="number" min="0.01" step="0.01" data-finance-input required placeholder="0.00"></label>
         <label>Items / description<input name="Description" value="Tuck shop purchase" required placeholder="Describe the items purchased"></label>
         <label>Wallet PIN (when required)<input name="WalletPin" type="password" inputmode="numeric" autocomplete="off"></label>
         <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit">&#10003; Complete Wallet Purchase</button></div>
@@ -2342,7 +2354,7 @@ function renderDepartmentOperations(section, data) {
         <input type="hidden" name="OriginalItemName">
         <label>Item name<input name="ItemName" required></label><label>Category<input name="Category" value="${section === 'clinic' ? 'Medical Supply' : section === 'kitchen' ? 'Foodstuff' : section === 'restaurant' ? 'Food & Beverage' : 'General Item'}"></label>
         <label>Unit<input name="Unit" value="${section === 'kitchen' ? 'kg' : 'pcs'}" required></label><label>Opening/current quantity<input name="Quantity" type="number" min="0" step="0.01" value="0" required></label>
-        <label>Reorder level<input name="ReorderLevel" type="number" min="0" step="0.01" value="0"></label>${section === 'restaurant' ? '<label>Selling price<input name="SalePrice" type="number" min="0" step="0.01" value="0" required></label>' : ''}<label>Notes<input name="Notes"></label>
+        <label>Reorder level<input name="ReorderLevel" type="number" min="0" step="0.01" value="0"></label>${section === 'restaurant' ? '<label>Selling price<input name="SalePrice" type="number" min="0" step="0.01" value="0" data-finance-input required></label>' : ''}<label>Notes<input name="Notes"></label>
         ${section === 'restaurant' ? '<label class="check-row commerce-inventory-active"><input name="Active" type="checkbox" checked> Available for sale</label>' : ''}
         <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" data-normal-text="Save item">Save item</button></div>
       </form>
@@ -2497,7 +2509,12 @@ function renderDepartmentOperations(section, data) {
     const row = inventory.find((item) => clean(item.ItemName) === button.dataset.editInventory);
     const form = document.getElementById('departmentInventoryForm');
     if (!row || !form) return;
-    ['ItemName', 'Category', 'Unit', 'Quantity', 'ReorderLevel', 'SalePrice', 'Notes'].forEach((key) => { if (form.elements[key]) form.elements[key].value = row[key] ?? (key === 'SalePrice' ? row.Price : ''); });
+    ['ItemName', 'Category', 'Unit', 'Quantity', 'ReorderLevel', 'SalePrice', 'Notes'].forEach((key) => {
+      if (!form.elements[key]) return;
+      const value = row[key] ?? (key === 'SalePrice' ? row.Price : '');
+      if (form.elements[key].matches('[data-finance-input]')) setFinancialInputValue(form.elements[key], value);
+      else form.elements[key].value = value;
+    });
     if (form.elements.Active) form.elements.Active.checked = clean(row.Active || 'YES').toUpperCase() !== 'NO';
     form.elements.OriginalItemName.value = row.ItemName;
     form.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -2728,7 +2745,7 @@ function departmentWorkspace(data) {
         <h3>Submit departmental offering</h3><select name="DepartmentId" required>${departmentOptions(departments)}</select>
         <select name="MeetingId"><option value="">No linked meeting</option>${meetings.map((row) => `<option value="${escapeHtml(row.MeetingId)}">${escapeHtml(row.Title || row.MeetingId)}</option>`).join('')}</select>
         <input name="OfferingId" value="DOF-${Date.now()}" required><input name="Date" type="date" required>
-        <input name="Amount" type="number" min="0.01" step="0.01" placeholder="Amount" required>
+        <input name="Amount" type="number" min="0.01" step="0.01" placeholder="Amount" data-finance-input required>
         <select name="PaymentMethod"><option>Cash</option><option>Online</option><option>Transfer</option><option>Card</option></select>
         <input name="PaymentReference" placeholder="Payment / remittance reference"><button type="submit">Submit offering</button>
       </form>
@@ -2971,7 +2988,7 @@ function organizedDepartmentWorkspace(data) {
     <section class="organization-workspace-panel" data-organization-workspace-panel="offerings"${panelState('offerings')}>
       <div class="department-panel-heading"><div><small>Department finance</small><h3>Offerings & Remittance</h3></div><p>Submit meeting offerings and track their remittance to Accounts.</p></div>
       <div class="department-form-grid department-single-form-grid">
-        <form class="workflow-card compact-form" data-department-action="saveOffering"><h3>Submit departmental offering</h3><select name="DepartmentId" required>${departmentOptions(departments)}</select><select name="MeetingId"><option value="">No linked meeting</option>${meetings.map((row) => `<option value="${escapeHtml(row.MeetingId)}">${escapeHtml(row.Title || row.MeetingId)}</option>`).join('')}</select><input name="OfferingId" value="DOF-${Date.now()}" required><input name="Date" type="date" required><input name="Amount" type="number" min="0.01" step="0.01" placeholder="Amount" required><select name="PaymentMethod"><option>Cash</option><option>Online</option><option>Transfer</option><option>Card</option></select><input name="PaymentReference" placeholder="Payment / remittance reference"><button type="submit">Submit offering</button></form>
+        <form class="workflow-card compact-form" data-department-action="saveOffering"><h3>Submit departmental offering</h3><select name="DepartmentId" required>${departmentOptions(departments)}</select><select name="MeetingId"><option value="">No linked meeting</option>${meetings.map((row) => `<option value="${escapeHtml(row.MeetingId)}">${escapeHtml(row.Title || row.MeetingId)}</option>`).join('')}</select><input name="OfferingId" value="DOF-${Date.now()}" required><input name="Date" type="date" required><input name="Amount" type="number" min="0.01" step="0.01" placeholder="Amount" data-finance-input required><select name="PaymentMethod"><option>Cash</option><option>Online</option><option>Transfer</option><option>Card</option></select><input name="PaymentReference" placeholder="Payment / remittance reference"><button type="submit">Submit offering</button></form>
       </div>
       ${table('Department offerings and remittance', offerings, [
         { label: 'Date', value: (row) => row.Date }, { label: 'Department', value: (row) => row.DepartmentName || row.DepartmentId },
@@ -3922,9 +3939,9 @@ async function loadChurchDonations() {
             <label>Donor name <input name="DonorName" required></label>
             <label>Donor email <input name="DonorEmail" type="email" required></label>
             <label>Donor phone <input name="DonorPhone" type="tel" autocomplete="tel"></label>
-            <label>Amount <input name="Amount" type="number" min="0.01" step="0.01" required></label>
+            <label>Amount <input name="Amount" type="number" min="0.01" step="0.01" data-finance-input required></label>
             <label>Currency <select name="Currency">${currencies.map((currency) => `<option value="${escapeHtml(currency)}">${escapeHtml(currency)}</option>`).join('')}</select></label>
-            <label id="churchDonationExchangeRateField">NGN per 1 foreign currency <input name="ExchangeRate" type="number" min="0.000001" step="0.000001" value="1"><small data-exchange-rate-help>NGN donations use a rate of 1.</small></label>
+            <label id="churchDonationExchangeRateField">NGN per 1 foreign currency <input name="ExchangeRate" type="number" min="0.000001" step="0.000001" value="1" data-finance-input data-finance-decimals="6"><small data-exchange-rate-help>NGN donations use a rate of 1.</small></label>
             <label id="churchDonationExchangeRateDateField">Rate date <input name="ExchangeRateDate" type="date" value="${new Date().toISOString().slice(0, 10)}"></label>
             <input name="ExchangeRateSource" type="hidden" value="Manual staff rate">
             <label>Method <select name="PaymentMethod">${methods.map((method) => `<option value="${escapeHtml(method)}">${escapeHtml(method)}</option>`).join('')}</select></label>
@@ -3993,9 +4010,9 @@ async function loadChurchDonations() {
           <p class="muted">Choose one currency and the gifts included in the conversion. Enter the completed conversion rate and the system will calculate their NGN equivalent.</p>
           <div class="config-grid">
             <label>Currency <select name="Currency" id="churchSettlementCurrency" required><option value="">Choose currency</option>${awaitingCurrencies.map((currency) => `<option value="${escapeHtml(currency)}">${escapeHtml(currency)}</option>`).join('')}</select></label>
-            <label>Conversion rate (NGN per unit) <input name="ExchangeRate" type="number" min="0.00000001" step="0.00000001" inputmode="decimal" placeholder="e.g. 1600" required></label>
-            <label>Calculated NGN equivalent <input name="GrossNgnProceeds" type="number" min="0.01" step="0.01" readonly required></label>
-            <label>Conversion charge (NGN) <input name="ConversionFee" type="number" min="0" step="0.01" value="0"></label>
+            <label>Conversion rate (NGN per unit) <input name="ExchangeRate" type="number" min="0.00000001" step="0.00000001" inputmode="decimal" placeholder="e.g. 1,600" data-finance-input data-finance-decimals="8" required></label>
+            <label>Calculated NGN equivalent <input name="GrossNgnProceeds" type="number" min="0.01" step="0.01" data-finance-input data-finance-fixed="2" readonly required></label>
+            <label>Conversion charge (NGN) <input name="ConversionFee" type="number" min="0" step="0.01" value="0" data-finance-input></label>
             <label>Settlement date <input name="SettlementDate" type="date" value="${new Date().toISOString().slice(0, 10)}" required></label>
             <label>Bank / bureau reference <input name="Reference"></label>
           </div>
@@ -4154,11 +4171,11 @@ async function loadChurchDonations() {
       const selectedLabels = [...settlementForm.querySelectorAll('[data-settlement-currency]')]
         .filter((label) => !label.hidden && label.querySelector('input[name="DonationIds"]')?.checked);
       const foreignTotal = selectedLabels.reduce((sum, label) => sum + Number(label.dataset.settlementAmount || 0), 0);
-      const rate = Number(settlementForm.elements.ExchangeRate?.value || 0);
+      const rate = financialNumber(settlementForm.elements.ExchangeRate?.value);
       const grossNgn = Math.round(((foreignTotal * rate) + Number.EPSILON) * 100) / 100;
-      const conversionFee = Number(settlementForm.elements.ConversionFee?.value || 0);
+      const conversionFee = financialNumber(settlementForm.elements.ConversionFee?.value);
       const grossInput = settlementForm.elements.GrossNgnProceeds;
-      if (grossInput) grossInput.value = foreignTotal > 0 && rate > 0 ? grossNgn.toFixed(2) : '';
+      if (grossInput) setFinancialInputValue(grossInput, foreignTotal > 0 && rate > 0 ? grossNgn.toFixed(2) : '');
       if (!settlementCalculation) return;
       if (!currency) settlementCalculation.textContent = 'Choose a currency, select its gifts and enter the completed conversion rate.';
       else if (!foreignTotal) settlementCalculation.textContent = `Select one or more ${currency} gifts to calculate their NGN equivalent.`;
@@ -4189,7 +4206,7 @@ async function loadChurchDonations() {
         setStatus(status, 'Select at least one donation from this currency.', 'bad');
         return;
       }
-      if (!(Number(payload.ExchangeRate) > 0) || !(Number(payload.GrossNgnProceeds) > 0)) {
+      if (!(financialNumber(payload.ExchangeRate) > 0) || !(financialNumber(payload.GrossNgnProceeds) > 0)) {
         setStatus(status, 'Enter the completed conversion rate to calculate the NGN equivalent.', 'bad');
         return;
       }
@@ -6992,7 +7009,7 @@ function renderFinanceWorkflow() {
           <input name="recordId" type="hidden"><input name="recordVersion" type="hidden">
           <h3 data-requisition-form-heading>Expense Requisition</h3>
           <label>Description <span class="required">*</span><textarea name="description" rows="3" required></textarea></label>
-          <label>Amount <span class="required">*</span><input name="amount" type="number" min="1" step="0.01" inputmode="decimal" required></label>
+          <label>Amount <span class="required">*</span><input name="amount" type="number" min="1" step="0.01" inputmode="decimal" data-finance-input required></label>
           <label>Preferred vendor<input name="vendor"></label>
           <label>Required date<input name="date" type="date"></label>
           <label>Reference<input name="reference"></label>
@@ -7018,7 +7035,7 @@ function renderFinanceWorkflow() {
                   <td><div class="material-item-control"><input data-material-field="item" aria-label="Item 1" required><button type="button" class="compact-icon-action compact-delete-action" data-remove-material-item aria-label="Delete item 1" title="Delete item"><span aria-hidden="true">&#128465;&#65038;</span></button></div></td>
                   <td><input data-material-field="specification" aria-label="Specification 1" required></td>
                   <td><input data-material-field="quantity" aria-label="Quantity 1" type="number" min="0.01" step="0.01" inputmode="decimal" required></td>
-                  <td><input data-material-field="unitPrice" aria-label="Unit price 1" type="number" min="0.01" step="0.01" inputmode="decimal" required></td>
+                  <td><input data-material-field="unitPrice" aria-label="Unit price 1" type="number" min="0.01" step="0.01" inputmode="decimal" data-finance-input required></td>
                   <td><output data-material-line-total>₦0.00</output></td>
                 </tr>
               </tbody>
@@ -7042,7 +7059,7 @@ function renderFinanceWorkflow() {
           <label>Supplier <span class="required">*</span><input name="vendorName" required></label>
           <label>Invoice reference<input name="invoiceReference"></label>
           <label>Description <span class="required">*</span><textarea name="description" rows="3" required></textarea></label>
-          <label>Amount <span class="required">*</span><input name="amount" type="number" min="1" step="0.01" inputmode="decimal" required></label>
+          <label>Amount <span class="required">*</span><input name="amount" type="number" min="1" step="0.01" inputmode="decimal" data-finance-input required></label>
           <label>Bill date<input name="date" type="date"></label>
           <label>Due date<input name="dueDate" type="date"></label>
           <label>Supporting document URL<input name="attachmentUrl" type="url"></label>
@@ -7094,7 +7111,7 @@ function materialEntryRow(index) {
       <td><div class="material-item-control"><input data-material-field="item" aria-label="Item ${index}" required><button type="button" class="compact-icon-action compact-delete-action" data-remove-material-item aria-label="Delete item ${index}" title="Delete item"><span aria-hidden="true">&#128465;&#65038;</span></button></div></td>
       <td><input data-material-field="specification" aria-label="Specification ${index}" required></td>
       <td><input data-material-field="quantity" aria-label="Quantity ${index}" type="number" min="0.01" step="0.01" inputmode="decimal" required></td>
-      <td><input data-material-field="unitPrice" aria-label="Unit price ${index}" type="number" min="0.01" step="0.01" inputmode="decimal" required></td>
+      <td><input data-material-field="unitPrice" aria-label="Unit price ${index}" type="number" min="0.01" step="0.01" inputmode="decimal" data-finance-input required></td>
       <td><output data-material-line-total>₦0.00</output></td>
     </tr>
   `;
@@ -7105,7 +7122,7 @@ function materialRequisitionItems(form) {
     item: clean(row.querySelector('[data-material-field="item"]')?.value),
     specification: clean(row.querySelector('[data-material-field="specification"]')?.value),
     quantity: Number(row.querySelector('[data-material-field="quantity"]')?.value || 0),
-    unitPrice: Number(row.querySelector('[data-material-field="unitPrice"]')?.value || 0)
+    unitPrice: financialNumber(row.querySelector('[data-material-field="unitPrice"]')?.value)
   }));
 }
 
@@ -7124,7 +7141,7 @@ function updateMaterialRequisitionTable(form) {
     const removeButton = row.querySelector('[data-remove-material-item]');
     removeButton.setAttribute('aria-label', `Delete item ${serial}`);
     const quantity = Number(row.querySelector('[data-material-field="quantity"]').value || 0);
-    const unitPrice = Number(row.querySelector('[data-material-field="unitPrice"]').value || 0);
+    const unitPrice = financialNumber(row.querySelector('[data-material-field="unitPrice"]').value);
     const lineTotal = Math.round((quantity * unitPrice + Number.EPSILON) * 100) / 100;
     grandTotal += lineTotal;
     row.querySelector('[data-material-line-total]').textContent = money(lineTotal);
@@ -7154,7 +7171,9 @@ function resetRequisitionEditor(form) {
 
 function setRequisitionEditorValue(form, name, value) {
   const input = form?.elements?.[name];
-  if (input) input.value = clean(value);
+  if (!input) return;
+  if (input.matches('[data-finance-input]')) setFinancialInputValue(input, value);
+  else input.value = clean(value);
 }
 
 function openRequisitionEditor(record) {
@@ -7184,7 +7203,7 @@ function openRequisitionEditor(record) {
       row.querySelector('[data-material-field="item"]').value = clean(item.Item ?? item.item);
       row.querySelector('[data-material-field="specification"]').value = clean(item.Specification ?? item.specification);
       row.querySelector('[data-material-field="quantity"]').value = Number(item.Quantity ?? item.quantity ?? 0) || '';
-      row.querySelector('[data-material-field="unitPrice"]').value = Number(item.UnitPrice ?? item.unitPrice ?? 0) || '';
+      setFinancialInputValue(row.querySelector('[data-material-field="unitPrice"]'), Number(item.UnitPrice ?? item.unitPrice ?? 0) || '');
     });
     updateMaterialRequisitionTable(form);
   } else {
@@ -7418,7 +7437,7 @@ function renderStaffUsers() {
         </div></section>
         <section class="config-group"><header><strong>Finance approval</strong><small>Approval is blocked unless explicitly enabled by an administrator.</small></header><div class="config-grid">
           <label class="check-row config-switch"><input name="ApprovalEnabled" type="checkbox"> Allow this user to approve finance documents</label>
-          <label>Maximum approval amount<input name="ApprovalMaxAmount" type="number" min="0" step="0.01" value="0"><small>Zero blocks approval. Super Admin is unrestricted.</small></label>
+          <label>Maximum approval amount<input name="ApprovalMaxAmount" type="number" min="0" step="0.01" value="0" data-finance-input><small>Zero blocks approval. Super Admin is unrestricted.</small></label>
         </div><div class="approval-account-list config-option-list"><strong>Accounts this user may approve directly from</strong>${staffApprovalAccounts.length ? staffApprovalAccounts.map((account) => `<label class="check-row"><input type="checkbox" name="ApprovalAccountOption" value="${escapeHtml(account.Code)}"> ${escapeHtml(account.Code)} - ${escapeHtml(account.Name || '')}</label>`).join('') : '<small>Create active Chart of Accounts entries in the desktop Finance tab first.</small>'}</div></section>
         <section class="config-group"><header><strong>Web companion access</strong><small>Leave all clear to use the selected role's default tabs.</small></header><div class="approval-account-list config-option-list config-option-grid">${permissionTabs.map(([key, label]) => `<label class="check-row"><input type="checkbox" name="TabAccessOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}</div></section>
         <section class="config-group"><header><strong>Security</strong><small>Password and account-state controls.</small></header><div class="config-grid">
@@ -7454,7 +7473,7 @@ function openStaffUserDialog(username = '') {
       form.elements.SchoolSectionAccess.value = user.SchoolSectionAccess || 'All';
     }
     form.elements.ApprovalEnabled.checked = yes(user.ApprovalEnabled);
-    form.elements.ApprovalMaxAmount.value = user.ApprovalMaxAmount || 0;
+    setFinancialInputValue(form.elements.ApprovalMaxAmount, user.ApprovalMaxAmount || 0);
     const allowedAccounts = new Set(user.ApprovalAccounts || []);
     form.querySelectorAll('[name="ApprovalAccountOption"]').forEach((input) => { input.checked = allowedAccounts.has(input.value); });
     const allowedTabs = new Set(user.TabAccess || []);

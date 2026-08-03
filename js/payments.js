@@ -119,10 +119,10 @@ function updateWalletAmountVisibility() {
   walletAmountInput.min = rules.min > 0 ? String(rules.min) : '0';
   walletAmountInput.max = rules.max > 0 ? String(rules.max) : '';
   if (rules.show && !walletAmountInput.value) {
-    walletAmountInput.value = rules.defaultAmount || '';
+    window.DynamaxFinancialValues?.set(walletAmountInput, rules.defaultAmount || '');
   }
   if (!rules.show) {
-    walletAmountInput.value = '';
+    window.DynamaxFinancialValues?.set(walletAmountInput, '');
   }
 }
 
@@ -346,7 +346,7 @@ payBtn.addEventListener('click', async () => {
     return;
   }
   const rules = paymentAmountRules(fee);
-  const enteredAmount = rules.show ? Number(walletAmountInput.value || 0) : 0;
+  const enteredAmount = rules.show ? toAmount(walletAmountInput.value) : 0;
   if (rules.show && (!Number.isFinite(enteredAmount) || enteredAmount <= 0)) {
     setStatus('Enter the amount to pay.', 'bad');
     return;
