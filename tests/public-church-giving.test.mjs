@@ -33,7 +33,7 @@ test('public giving page collects donor details before opening Paystack', () => 
   assert.match(givingHtml, /name="Currency"/);
   assert.match(givingHtml, /name="Amount"/);
   assert.match(givingHtml, /name="CompanyWebsite"/);
-  assert.match(givingHtml, /js\/give\.js\?v=20260801-currency-conversion/);
+  assert.match(givingHtml, /js\/give\.js\?v=20260803-donor-currency-attendance/);
   assert.match(givingJs, /getTurnstileToken\('church_giving'\)/);
   assert.match(givingJs, /fetch\('\/api\/public-church-payment'/);
   assert.match(givingJs, /'Idempotency-Key': idempotencyKey/);

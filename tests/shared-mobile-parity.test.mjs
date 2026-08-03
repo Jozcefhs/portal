@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
-const sharedVersion = '20260803-donor-currency-attendance';
-const adminScriptVersion = '20260803-donor-currency-attendance';
+const sharedVersion = '20260803-workspace-tabs';
+const adminScriptVersion = '20260803-workspace-tabs';
 const parentScriptVersion = '20260802-parent-password-session';
 const notificationVersion = '20260802-dark-settings-contrast';
 const pageNames = [
@@ -77,6 +77,18 @@ test('parent mobile notification heading stacks compact actions below compact te
   assert.match(portalCss, /\.parent-notification-heading>button\{[^}]*font-size:8px/);
 });
 
+test('multi-function workspaces use focused URL-aware tabs', () => {
+  assert.match(adminJs, /function mountWorkspaceTabs\(section, tabs = \[\], options = \{\}\)/);
+  assert.match(adminJs, /window\.history\.replaceState\(window\.history\.state, '', url\)/);
+  assert.match(adminJs, /window\.localStorage\.setItem\(workspaceViewStorageKey\(section\), selected\)/);
+  ['donations', 'funds', 'offerings', 'services', 'staffAttendance', 'incomeAnalytics', 'financeRequests', 'staffUsers', 'studentConduct'].forEach((section) => {
+    assert.match(adminJs, new RegExp(`mountWorkspaceTabs\\('${section}'`), `${section} should use focused tabs`);
+  });
+  assert.doesNotMatch(adminJs, /data-donation-jump/);
+  assert.match(portalCss, /\.module-workspace-tabs\{[^}]*overflow-x:auto/);
+  assert.match(portalCss, /\.module-workspace-panel\[hidden\]\{display:none!important\}/);
+});
+
 test('all portal pages reference the current shared stylesheet version', () => {
   pages.forEach((html, index) => {
     assert.match(html, new RegExp(`css/style\\.css\\?v=${sharedVersion}`), `${pageNames[index]} should use the shared stylesheet version`);
@@ -89,7 +101,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v113-donor-currency-attendance-assets/);
+  assert.match(serviceWorker, /dynamax-v114-workspace-tabs/);
   assert.match(serviceWorker, /'\/give\.html'/);
   assert.match(serviceWorker, /'\/js\/give\.js'/);
   assert.match(serviceWorker, /'\/store\.html'/);

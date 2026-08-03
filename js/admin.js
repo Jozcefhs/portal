@@ -1241,6 +1241,13 @@ function renderWorkspace(active) {
 function selectSection(key, allowed = activeTabs.map(([tabKey]) => tabKey)) {
   if (!allowed.includes(key)) return;
   activeSection = key;
+  const url = new URL(window.location.href);
+  url.searchParams.set('section', key);
+  let savedView = '';
+  try { savedView = clean(window.localStorage.getItem(workspaceViewStorageKey(key))); } catch (_error) { /* optional */ }
+  if (savedView) url.searchParams.set('view', savedView);
+  else url.searchParams.delete('view');
+  window.history.replaceState(window.history.state, '', url);
   renderTabs(allowed);
   renderWorkspace(activeSection);
   renderSection(activeSection);
@@ -1287,6 +1294,118 @@ function table(title, rows, columns) {
       </table>
     </div>
   `;
+}
+
+function workspaceViewStorageKey(section) {
+  return `dynamax:workspace-view:${clean(section)}`;
+}
+
+function savedWorkspaceView(section, available = []) {
+  const keys = available.map((tab) => clean(tab.key)).filter(Boolean);
+  const params = new URLSearchParams(window.location.search);
+  const urlView = params.get('section') === section ? clean(params.get('view')) : '';
+  if (keys.includes(urlView)) return urlView;
+  try {
+    const stored = clean(window.localStorage.getItem(workspaceViewStorageKey(section)));
+    if (keys.includes(stored)) return stored;
+  } catch (_error) {
+    // Storage is optional. URL state remains the primary navigation source.
+  }
+  return keys[0] || '';
+}
+
+function normalizeWorkspaceNodes(nodes = []) {
+  const values = Array.isArray(nodes) ? nodes.flat(Infinity) : [nodes];
+  return values.filter((node, index, all) => node instanceof Node && all.indexOf(node) === index);
+}
+
+function workspaceTableNodes(title, root = panelEl) {
+  const heading = [...root.querySelectorAll(':scope > h2')]
+    .find((node) => clean(node.textContent).toLowerCase() === clean(title).toLowerCase());
+  if (!heading) return [];
+  const wrap = heading.nextElementSibling?.classList.contains('admin-table-wrap') ? heading.nextElementSibling : null;
+  return [heading, wrap].filter(Boolean);
+}
+
+function mountWorkspaceTabs(section, tabs = [], options = {}) {
+  const host = options.host || panelEl;
+  host.querySelector(':scope > .module-workspace-shell')?.remove();
+  const usable = tabs.map((tab) => ({
+    ...tab,
+    key: clean(tab.key),
+    label: clean(tab.label),
+    nodes: normalizeWorkspaceNodes(tab.nodes)
+  })).filter((tab) => tab.key && tab.label && tab.nodes.length);
+  if (!usable.length) return null;
+
+  const activeView = savedWorkspaceView(section, usable);
+  const shell = document.createElement('section');
+  shell.className = 'module-workspace-shell';
+  shell.dataset.workspaceSection = section;
+  const nav = document.createElement('nav');
+  nav.className = 'module-workspace-tabs';
+  nav.setAttribute('aria-label', `${section} workspaces`);
+  const panels = document.createElement('div');
+  panels.className = 'module-workspace-panels';
+
+  usable.forEach((tab) => {
+    const panelId = `workspace-${section}-${tab.key}`.replace(/[^a-z0-9_-]/gi, '-');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.workspaceView = tab.key;
+    button.setAttribute('aria-controls', panelId);
+    button.innerHTML = `${tab.icon ? `<span aria-hidden="true">${escapeHtml(tab.icon)}</span>` : ''}<strong>${escapeHtml(tab.label)}</strong>${tab.count === undefined ? '' : `<small>${escapeHtml(tab.count)}</small>`}`;
+    nav.append(button);
+
+    const panel = document.createElement('section');
+    panel.className = 'module-workspace-panel';
+    panel.id = panelId;
+    panel.dataset.workspacePanel = tab.key;
+    panel.setAttribute('role', 'tabpanel');
+    tab.nodes.forEach((node) => panel.append(node));
+    panels.append(panel);
+  });
+  shell.append(nav, panels);
+  const anchor = options.after instanceof Node ? options.after : host.querySelector(':scope > .workflow-intro');
+  if (anchor?.parentNode === host) anchor.after(shell);
+  else host.append(shell);
+
+  const activate = (view, updateUrl = true) => {
+    const selected = usable.some((tab) => tab.key === view) ? view : usable[0].key;
+    nav.querySelectorAll('[data-workspace-view]').forEach((button) => {
+      const current = button.dataset.workspaceView === selected;
+      button.classList.toggle('selected', current);
+      button.setAttribute('aria-selected', String(current));
+      button.tabIndex = current ? 0 : -1;
+    });
+    panels.querySelectorAll('[data-workspace-panel]').forEach((panel) => {
+      panel.hidden = panel.dataset.workspacePanel !== selected;
+    });
+    try { window.localStorage.setItem(workspaceViewStorageKey(section), selected); } catch (_error) { /* optional */ }
+    if (updateUrl) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('section', section);
+      url.searchParams.set('view', selected);
+      window.history.replaceState(window.history.state, '', url);
+    }
+    nav.querySelector(`[data-workspace-view="${CSS.escape(selected)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  };
+  nav.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-workspace-view]');
+    if (!button) return;
+    activate(button.dataset.workspaceView);
+  });
+  nav.addEventListener('keydown', (event) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    const buttons = [...nav.querySelectorAll('[data-workspace-view]')];
+    const current = Math.max(0, buttons.indexOf(document.activeElement));
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (current + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+    event.preventDefault();
+    buttons[next].focus();
+    activate(buttons[next].dataset.workspaceView);
+  });
+  activate(activeView, false);
+  return { shell, nav, panels, activate };
 }
 
 const studentProfileSections = [
@@ -1845,7 +1964,7 @@ function renderStaffStore(section, store) {
   panelEl.innerHTML = `
     <div class="workflow-intro"><div><p class="eyebrow">${organisationStore ? 'Retail operations' : 'School store'}</p><h2>${label}</h2><p class="muted">List items and prices, monitor paid orders, and record collection.</p></div></div>
     ${organisationStore ? renderOrganizationCommerceWorkspace(section, store) : ''}
-    <section class="config-card">
+    <section class="config-card" id="staffStoreItemWorkspace">
       <header class="config-card-heading"><div><small>Inventory setup</small><h3>Add or update an item</h3><p>Define how this product appears to ${storeAudience}.</p></div></header>
     <form id="staffStoreItemForm" class="workflow-form workflow-form-grid config-form"><input type="hidden" name="ItemId">
       <label>Item code<input name="ItemCode" required></label><label>Item name<input name="ItemName" required></label>
@@ -1855,7 +1974,7 @@ function renderStaffStore(section, store) {
       <div class="config-actionbar"><label class="check-row"><input name="Active" type="checkbox" checked> ${organisationStore ? 'Available for sale' : 'Available to parents'}</label><p class="status" data-store-status></p><span class="inline-action-group"><button type="button" data-cancel-store-edit hidden>Cancel edit</button><button type="submit">Save item</button></span></div>
     </form>
     </section>
-    <details class="workflow-card config-details"><summary><span>Category management<small>Add, rename or deactivate reusable product categories.</small></span></summary>
+    <details class="workflow-card config-details" id="staffStoreCategoryWorkspace" open><summary><span>Category management<small>Add, rename or deactivate reusable product categories.</small></span></summary>
       <form id="storeCategoryForm" class="workflow-form workflow-form-grid config-form"><input type="hidden" name="CategoryId"><label>Category name<input name="Name" required></label><label>Available in<select name="AppliesTo"><option value="${label}">${label}</option>${organisationStore ? '' : '<option value="Bookstore,Uniform Store">Both stores</option>'}</select></label><div class="config-actionbar"><label class="check-row"><input name="Active" type="checkbox" checked> Category active</label><p class="status" data-category-status></p><button type="submit">Save category</button></div></form>
       <div class="workflow-record-list store-category-list">${categories.length ? categories.map((row) => {
         const categoryActive = clean(row.Active || 'YES') !== 'NO';
@@ -1868,7 +1987,7 @@ function renderStaffStore(section, store) {
       { label: 'Price', value: (row) => money(pick(row, ['Price'])) }, { label: 'Stock', value: (row) => pick(row, ['Quantity']) },
       { label: 'Actions', render: (row) => `<button type="button" class="compact-icon-action compact-edit-action" data-edit-store-item="${escapeHtml(row.__id)}" aria-label="Edit ${escapeHtml(row.ItemName || row.ItemCode || 'store item')}" title="Edit item"><span aria-hidden="true">&#9998;</span></button>` }
     ])}
-    <h2>Paid Orders & Collection</h2><div class="workflow-record-list">${(store.orders || []).length ? (store.orders || []).map((order) => {
+    <section id="staffStoreOrdersWorkspace"><h2>Paid Orders & Collection</h2><div class="workflow-record-list">${(store.orders || []).length ? (store.orders || []).map((order) => {
       const orderStatus = clean(order.Status || 'Paid - Awaiting Collection');
       const statusKey = orderStatus.toLowerCase();
       const collected = statusKey === 'collected';
@@ -1879,7 +1998,13 @@ function renderStaffStore(section, store) {
       <article class="workflow-record store-order-record"><div class="workflow-record-heading"><div><strong>${escapeHtml(order.DisplayName || order.CustomerName || order.AccountRef || 'Customer')}</strong><small>${escapeHtml(order.OrderNo)}</small></div></div>
       <p>${money(order.Amount)} &middot; ${escapeHtml(order.PaidAt || order.CreatedAt || '')}</p>
       <button type="button" class="store-order-status ${collected ? 'is-collected' : ''}" data-store-order="${escapeHtml(order.OrderNo)}" data-store-status="${escapeHtml(nextStatus)}" aria-label="${escapeHtml(statusLabel)} for ${escapeHtml(order.DisplayName || order.AccountRef)}" ${collected ? 'disabled' : ''}>${escapeHtml(statusLabel)}</button></article>`;
-    }).join('') : '<p class="muted">No paid orders yet.</p>'}</div>`;
+    }).join('') : '<p class="muted">No paid orders yet.</p>'}</div></section>`;
+  mountWorkspaceTabs(section, [
+    { key: 'sales', label: organisationStore ? 'Point of sale' : 'Sales', icon: '\u{1F6D2}', nodes: document.getElementById('organizationCommercePOS') },
+    { key: 'items', label: 'Items', icon: '\u25A6', count: (store.items || []).length, nodes: [document.getElementById('staffStoreItemWorkspace'), workspaceTableNodes(`${label} Items`)] },
+    { key: 'categories', label: 'Categories', icon: '\u{1F5C2}', count: categories.length, nodes: document.getElementById('staffStoreCategoryWorkspace') },
+    { key: 'orders', label: 'Orders & collection', icon: '\u2713', count: (store.orders || []).length, nodes: document.getElementById('staffStoreOrdersWorkspace') }
+  ]);
   if (organisationStore) bindOrganizationCommerceWorkspace(section, store);
   const itemForm = document.getElementById('staffStoreItemForm');
   const resetStoreItemForm = () => {
@@ -2250,6 +2375,21 @@ function renderDepartmentOperations(section, data) {
       { label: 'Type', value: (row) => pick(row, ['MovementType']) }, { label: 'Quantity', value: (row) => pick(row, ['Quantity']) },
       { label: 'Reason', value: (row) => pick(row, ['Reason']) }, { label: 'Recorded by', value: (row) => pick(row, ['RecordedBy']) }
     ])}`;
+  panelEl.querySelector(':scope > .department-workspace-links')?.remove();
+  const departmentCards = [...panelEl.querySelectorAll(':scope > .config-card')];
+  const departmentCard = (pattern) => departmentCards.find((node) => pattern.test(clean(node.querySelector('h3')?.textContent)));
+  const departmentTabs = [];
+  if (section === 'restaurant') departmentTabs.push({ key: 'sales', label: 'Point of sale', icon: '\u{1F6D2}', nodes: document.getElementById('organizationCommercePOS') });
+  if (section === 'tuckShop') departmentTabs.push({ key: 'sales', label: 'Student purchase', icon: '\u{1F6D2}', nodes: document.getElementById('tuckShopPOS') });
+  if (section === 'clinic') {
+    departmentTabs.push({ key: 'visits', label: 'Clinic visits', icon: '\u2695', count: records.length, nodes: [departmentCard(/record a clinic visit/i), workspaceTableNodes('Clinic Records')] });
+    departmentTabs.push({ key: 'reports', label: 'Parent reports', icon: '\u2709', nodes: departmentCard(/email a clinic report/i) });
+  }
+  if (['clinic', 'kitchen', 'restaurant'].includes(section)) departmentTabs.push({ key: 'procurement', label: 'Market list', icon: '\u{1F4CB}', nodes: departmentCard(/market list/i) });
+  departmentTabs.push({ key: 'inventory', label: 'Inventory', icon: '\u{1F4E6}', count: inventory.length, nodes: [document.getElementById('departmentInventoryWorkspace'), workspaceTableNodes(`${label} Inventory`), workspaceTableNodes('Low Stock')] });
+  departmentTabs.push({ key: 'stock', label: 'Stock in / out', icon: '\u21C5', count: (data.movements || []).length, nodes: [document.getElementById('departmentStockWorkspace'), workspaceTableNodes('Recent Stock Movements')] });
+  if (section === 'tuckShop') departmentTabs.push({ key: 'history', label: 'Purchase history', icon: '\u{1F5C2}', count: purchases.length, nodes: document.getElementById('departmentPurchaseHistory') });
+  mountWorkspaceTabs(section, departmentTabs);
   if (section === 'restaurant') bindOrganizationCommerceWorkspace(section, data);
   const recordsHandoff = takeRecordsDeskHandoff(section);
   const selectedAccountRef = recordsDeskHandoffReference(recordsHandoff);
@@ -2866,6 +3006,11 @@ function organizedDepartmentWorkspace(data) {
 function setOrganizationDepartmentWorkspaceTab(tab) {
   const allowed = ['overview', 'departments', 'members', 'meetings', 'offerings', 'programs'];
   organizationDepartmentWorkspaceTab = allowed.includes(tab) ? tab : 'overview';
+  try { window.localStorage.setItem(workspaceViewStorageKey('members'), organizationDepartmentWorkspaceTab); } catch (_error) { /* optional */ }
+  const url = new URL(window.location.href);
+  url.searchParams.set('section', 'members');
+  url.searchParams.set('view', organizationDepartmentWorkspaceTab);
+  window.history.replaceState(window.history.state, '', url);
   panelEl.querySelectorAll('[data-organization-workspace-tab]').forEach((button) => {
     const selected = button.dataset.organizationWorkspaceTab === organizationDepartmentWorkspaceTab;
     button.classList.toggle('active', selected);
@@ -2880,6 +3025,14 @@ async function loadOrganizationDepartments() {
   try {
     const data = await organizationDepartmentAction('list');
     if (activeSection !== 'members') return;
+    organizationDepartmentWorkspaceTab = savedWorkspaceView('members', [
+      { key: 'overview', label: 'Overview' },
+      { key: 'departments', label: 'Departments' },
+      { key: 'members', label: 'Members & Positions' },
+      { key: 'meetings', label: 'Meetings & Attendance' },
+      { key: 'offerings', label: 'Offerings' },
+      { key: 'programs', label: 'Programs & Visitors' }
+    ]) || organizationDepartmentWorkspaceTab;
     panelEl.innerHTML = organizedDepartmentWorkspace(data);
     const status = document.getElementById('organizationDepartmentStatus');
     document.getElementById('refreshOrganizationDepartments')?.addEventListener('click', (event) => {
@@ -3244,7 +3397,7 @@ async function loadChurchServices() {
     const memberOptions = members.map((row) => `<option value="${escapeHtml(pick(row, ['MemberId', '__id']))}">${escapeHtml([pick(row, ['DisplayName']), pick(row, ['MemberId', '__id'])].filter(Boolean).join(' · '))}</option>`).join('');
     const occurrenceForm = capabilities.canManageOccurrences
       ? services.length ? `
-        <form id="churchOccurrenceForm" class="workflow-card compact-form">
+        <form id="churchOccurrenceForm" class="workflow-card compact-form" data-service-workspace="occurrences">
           <h3>Record service occurrence</h3>
           <label>Service<select name="ServiceId" required><option value="">Choose service</option>${serviceOptions}</select></label>
           <label>Date<input name="Date" type="date" value="${escapeHtml(today)}" required></label>
@@ -3257,11 +3410,11 @@ async function loadChurchServices() {
           <label>Notes<input name="Notes" placeholder="Optional notes"></label>
           <button type="submit">Save occurrence</button>
           <p class="status" data-service-form-status></p>
-        </form>` : '<article class="workflow-card"><h3>Record service occurrence</h3><p class="muted">Create an active service definition in the desktop app before recording an occurrence.</p></article>'
+        </form>` : '<article class="workflow-card" data-service-workspace="occurrences"><h3>Record service occurrence</h3><p class="muted">Create an active service definition in the desktop app before recording an occurrence.</p></article>'
       : '';
     const attendanceForms = capabilities.canRecordAttendance
       ? occurrences.length ? `
-        <form id="churchAttendanceTotalForm" class="workflow-card compact-form">
+        <form id="churchAttendanceTotalForm" class="workflow-card compact-form" data-service-workspace="totals">
           <h3>Record attendance total</h3>
           <p class="muted">Use the headcount when individual names are not required.</p>
           <label>Service occurrence<select name="OccurrenceId" required><option value="">Choose occurrence</option>${occurrenceOptions}</select></label>
@@ -3269,7 +3422,7 @@ async function loadChurchServices() {
           <button type="submit">Save attendance total</button>
           <p class="status" data-service-form-status></p>
         </form>
-        <form id="churchAttendanceForm" class="workflow-card compact-form">
+        <form id="churchAttendanceForm" class="workflow-card compact-form" data-service-workspace="checkin">
           <h3>Individual attendance check-in</h3>
           <label>Service occurrence<select name="OccurrenceId" required><option value="">Choose occurrence</option>${occurrenceOptions}</select></label>
           <label>Attendance type<select name="AttendanceType"><option value="Member">Member</option><option value="Visitor">Visitor</option></select></label>
@@ -3281,7 +3434,7 @@ async function loadChurchServices() {
           <label>Notes<input name="Notes" placeholder="Optional notes"></label>
           <button type="submit">Record check-in</button>
           <p class="status" data-service-form-status></p>
-        </form>` : '<article class="workflow-card"><h3>Record attendance</h3><p class="muted">Record a service occurrence before entering attendance.</p></article>'
+        </form>` : '<article class="workflow-card" data-service-workspace="checkin"><h3>Record attendance</h3><p class="muted">Record a service occurrence before entering attendance.</p></article>'
       : '';
     panelEl.innerHTML = `
       <div class="workflow-intro"><div><p class="eyebrow">Gatherings</p><h2>Services & Attendance</h2><p class="muted">Branch ${escapeHtml(data.branchId || 'main')} · ${data.services.length} service definitions · ${data.attendance.length} check-ins</p></div><button type="button" id="refreshChurchServices">Refresh</button></div>
@@ -3303,6 +3456,13 @@ async function loadChurchServices() {
         { label: 'Type', value: (row) => pick(row, ['AttendanceType']) },
         { label: 'Check-in', value: (row) => pick(row, ['CheckInAt']) }
       ])}`;
+    const serviceFormGrid = panelEl.querySelector(':scope > .church-service-recording');
+    mountWorkspaceTabs('services', [
+      { key: 'occurrences', label: 'Service occurrences', icon: '\u{1F4C5}', count: (data.occurrences || []).length, nodes: [panelEl.querySelector('[data-service-workspace="occurrences"]'), workspaceTableNodes('Service Occurrences')] },
+      { key: 'totals', label: 'Attendance totals', icon: '\u03A3', nodes: panelEl.querySelector('[data-service-workspace="totals"]') },
+      { key: 'checkin', label: 'Individual check-in', icon: '\u2713', count: (data.attendance || []).length, nodes: [panelEl.querySelector('[data-service-workspace="checkin"]'), workspaceTableNodes('Recent Attendance')] }
+    ]);
+    if (serviceFormGrid && !serviceFormGrid.children.length) serviceFormGrid.remove();
     const occurrenceFormElement = document.getElementById('churchOccurrenceForm');
     occurrenceFormElement?.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -3395,7 +3555,7 @@ async function loadChurchFunds() {
     const capabilities = data.capabilities || {};
     const revenueAccounts = (data.chart || []).filter((row) => clean(row.Type).toLowerCase() === 'revenue');
     const givingTypeForm = capabilities.canManageGivingTypes ? `
-      <section class="config-group" id="donationGivingPanel">
+      <section class="config-group" id="fundGivingTypeWorkspace">
         <header><strong>Giving types and individual income accounts</strong><small>Each giving source must point to a different Revenue account.</small></header>
         <form id="churchGivingTypeForm" class="workflow-form config-form">
           <input type="hidden" name="GivingTypeId">
@@ -3458,6 +3618,12 @@ async function loadChurchFunds() {
         { label: 'Actor', value: (row) => pick(row, ['Actor']) },
         { label: 'Details', value: (row) => pick(row, ['Details']) }
       ])}`;
+    mountWorkspaceTabs('funds', [
+      { key: 'funds', label: 'Funds', icon: '\u{1F4B0}', count: data.funds.length, nodes: workspaceTableNodes('Funds') },
+      { key: 'giving-types', label: 'Giving types', icon: '\u2192', count: (data.givingTypes || []).length, nodes: [panelEl.querySelector(':scope > p.muted'), document.getElementById('fundGivingTypeWorkspace'), workspaceTableNodes('Giving Types & Income Accounts')] },
+      { key: 'mappings', label: 'Accounting mappings', icon: '\u21C4', count: data.mappings.length, nodes: workspaceTableNodes('Accounting Mappings') },
+      { key: 'audit', label: 'Audit', icon: '\u2713', count: (data.audit || []).length, nodes: workspaceTableNodes('Recent Fund Audit') }
+    ]);
     const givingTypeFormElement = document.getElementById('churchGivingTypeForm');
     givingTypeFormElement?.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -3733,12 +3899,6 @@ async function loadChurchDonations() {
         </div>
         <span class="compact-row-actions"><button type="button" id="genericChurchGivingQr">▦ Generic Giving QR</button>${capabilities.canCollect ? '<button type="button" id="syncChurchDonationAccounting">Sync paid giving</button>' : ''}<button type="button" id="refreshChurchDonations">Refresh</button></span>
       </div>
-      <nav class="workspace-subnav" aria-label="Donation workspace">
-        <button type="button" data-donation-jump="giving">Record giving</button>
-        <button type="button" data-donation-jump="donors">Donor register</button>
-        <button type="button" data-donation-jump="currency">Currencies</button>
-        <button type="button" data-donation-jump="records">Records</button>
-      </nav>
       <div class="workflow-kpis">
         <div><small>NGN equivalent</small><strong>${money(summary.totalAmount || 0)}</strong><span>Converted records only</span></div>
         <div><small>Paid</small><strong>${money((summary.paid || 0) > 0 ? summary.paidAmount || summary.totalAmount : 0)}</strong><span>Recorded as paid</span></div>
@@ -3749,7 +3909,7 @@ async function loadChurchDonations() {
       <div class="church-dashboard-grid giving-source-chart">
         ${verticalBars('Giving by source', givingSourceRows, 'Name', 'Amount', 'teal')}
       </div>
-      <section class="config-group">
+      <section class="config-group" id="donationGivingPanel">
         <header><strong>New donation entry</strong><small>Record offline and online payments, then optionally send confirmation and link.</small></header>
         <form id="churchDonationForm" class="workflow-form config-form">
           <div class="config-grid">
@@ -3928,16 +4088,14 @@ async function loadChurchDonations() {
       ])}
       </section>`;
 
+    mountWorkspaceTabs('donations', [
+      { key: 'overview', label: 'Overview', icon: '\u25A6', nodes: [...panelEl.querySelectorAll(':scope > .workflow-kpis, :scope > .church-dashboard-grid')] },
+      { key: 'record', label: 'Record donation', icon: '+', nodes: document.getElementById('donationGivingPanel') },
+      { key: 'donors', label: 'Donor register', icon: '\u{1F465}', count: donors.length, nodes: document.getElementById('donationDonorPanel') },
+      { key: 'currency', label: 'Foreign currency', icon: '\u00A4', count: foreignHoldings.length, nodes: document.getElementById('donationCurrencyPanel') },
+      { key: 'records', label: 'Records & audit', icon: '\u{1F5C2}', count: (data.donations || []).length, nodes: document.getElementById('donationRecordsPanel') }
+    ]);
     const form = document.getElementById('churchDonationForm');
-    panelEl.querySelectorAll('[data-donation-jump]').forEach((button) => button.addEventListener('click', () => {
-      const target = {
-        giving: 'donationGivingPanel',
-        donors: 'donationDonorPanel',
-        currency: 'donationCurrencyPanel',
-        records: 'donationRecordsPanel'
-      }[button.dataset.donationJump];
-      document.getElementById(target)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }));
     form?.elements.DonorId?.addEventListener('change', () => {
       const donor = donors.find((row) => clean(row.DonorId || row.__id) === clean(form.elements.DonorId.value));
       if (!donor) return;
@@ -4359,6 +4517,15 @@ async function loadStaffAttendance() {
         { label: 'Correction', value: (row) => row.ManualOverride ? row.OverrideReason : '' }
       ]) : ''}`;
 
+    const attendanceGroups = [...panelEl.querySelectorAll(':scope > .config-group')];
+    mountWorkspaceTabs('staffAttendance', [
+      { key: 'clock', label: 'Clock in / out', icon: '\u23F1', nodes: [panelEl.querySelector(':scope > .workflow-kpis'), panelEl.querySelector(':scope > .attendance-clock-card')] },
+      { key: 'my-history', label: 'My history', icon: '\u{1F5C2}', count: (data.myEvents || []).length, nodes: workspaceTableNodes('My attendance history') },
+      { key: 'locations', label: 'Locations', icon: '\u2316', count: configuredSites.length, nodes: attendanceGroups.find((node) => /attendance locations/i.test(node.textContent)) },
+      { key: 'corrections', label: 'Corrections', icon: '\u270E', nodes: attendanceGroups.find((node) => /manual correction/i.test(node.textContent)) },
+      { key: 'reports', label: 'Reports', icon: '\u03A3', count: (data.recentEvents || []).length, nodes: workspaceTableNodes('Recent staff attendance') }
+    ]);
+
     document.getElementById('refreshStaffAttendance')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', loadStaffAttendance));
     document.getElementById('staffClockButton')?.addEventListener('click', async (event) => {
       const button = event.currentTarget;
@@ -4582,6 +4749,13 @@ async function loadChurchOfferings() {
         { label: 'Actor', value: (row) => pick(row, ['Actor']) },
         { label: 'Details', value: (row) => pick(row, ['Details']) }
       ])}`;
+    const offeringNotes = [...panelEl.querySelectorAll(':scope > p.muted')];
+    mountWorkspaceTabs('offerings', [
+      { key: 'overview', label: 'Overview', icon: '\u25A6', nodes: [...panelEl.querySelectorAll(':scope > .workflow-kpis, :scope > .church-dashboard-grid')] },
+      { key: 'batches', label: 'Offering batches', icon: '\u{1F9FA}', count: (data.offerings || []).length, nodes: [offeringNotes.filter((node) => /capture and reconciliation/i.test(node.textContent)), workspaceTableNodes('Offering Batches')] },
+      { key: 'routes', label: 'Approval routes', icon: '\u21C4', count: approvalRoutes.length, nodes: [[...panelEl.querySelectorAll(':scope > .config-group')], offeringNotes.filter((node) => !/capture and reconciliation/i.test(node.textContent))] },
+      { key: 'audit', label: 'Audit', icon: '\u2713', count: (data.audit || []).length, nodes: workspaceTableNodes('Recent Offering Audit') }
+    ]);
     panelEl.querySelectorAll('[data-offering-action]').forEach((button) => {
       button.addEventListener('click', async () => {
         if (button.disabled) return;
@@ -4831,6 +5005,12 @@ function renderIncomeAnalytics(data) {
         ])}
       </section>
     </div>`;
+  const incomeReport = document.getElementById('incomeAnalyticsReport');
+  mountWorkspaceTabs('incomeAnalytics', [
+    { key: 'overview', label: 'Overview & filters', icon: '\u25A6', nodes: [incomeReport?.querySelector(':scope > .income-filter-card'), incomeReport?.querySelector(':scope > .income-report-period'), [...(incomeReport?.querySelectorAll(':scope > p.status') || [])]] },
+    { key: 'trends', label: 'Trends & sources', icon: '\u{1F4CA}', nodes: [incomeReport?.querySelector(':scope > .income-chart-card'), incomeReport?.querySelector(':scope > .income-distribution-grid')] },
+    { key: 'transactions', label: 'Transactions', icon: '\u{1F5C2}', count: (data.transactions || []).length, nodes: incomeReport?.querySelector(':scope > .income-transactions') }
+  ], { host: incomeReport, after: incomeReport?.querySelector(':scope > .workflow-intro') });
   bindIncomeAnalyticsEvents();
 }
 
@@ -5674,6 +5854,11 @@ function renderExecutiveOffice(draft = null) {
 function switchExecutiveOfficeTab(tab, draft = null) {
   if (!['overview', 'directory', 'templates', 'compose', 'register'].includes(tab)) return;
   executiveOfficeTab = tab;
+  try { window.localStorage.setItem(workspaceViewStorageKey('executiveOffice'), tab); } catch (_error) { /* optional */ }
+  const url = new URL(window.location.href);
+  url.searchParams.set('section', 'executiveOffice');
+  url.searchParams.set('view', tab);
+  window.history.replaceState(window.history.state, '', url);
   renderExecutiveOffice(draft);
   panelEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -6017,6 +6202,13 @@ async function loadExecutiveOffice() {
     if (activeSection !== 'executiveOffice') return;
     executiveOfficeData = data;
     executiveAvailableDirectoryTypes = data.availableTypes || executiveAvailableDirectoryTypes;
+    executiveOfficeTab = savedWorkspaceView('executiveOffice', [
+      { key: 'overview', label: 'Overview' },
+      { key: 'directory', label: 'Directory' },
+      { key: 'templates', label: 'Templates' },
+      { key: 'compose', label: 'Compose' },
+      { key: 'register', label: 'Register' }
+    ]) || executiveOfficeTab;
     renderModuleSummary('executiveOffice', data);
     renderExecutiveOffice();
   } catch (error) {
@@ -6211,18 +6403,29 @@ function renderStudentConduct(selected = {}) {
         ])}
       </section>
     </div>`;
+  const conductLayout = panelEl.querySelector(':scope > .student-conduct-layout');
+  const conductCards = [...(conductLayout?.children || [])];
+  const conductTabs = mountWorkspaceTabs('studentConduct', [
+    { key: 'overview', label: 'Overview', icon: '\u25A6', nodes: panelEl.querySelector(':scope > .student-conduct-summary') },
+    { key: 'case', label: selected.CaseId ? (selectedClosed ? 'View case' : 'Edit case') : 'New case', icon: selectedClosed ? '\u{1F512}' : '+', nodes: conductCards[0] },
+    { key: 'register', label: 'Case register', icon: '\u{1F5C2}', count: (data.cases || []).length, nodes: conductCards[1] }
+  ]);
+  if (conductLayout && !conductLayout.children.length) conductLayout.remove();
   document.getElementById('refreshStudentConduct')?.addEventListener('click', (event) => {
     runButtonAction(event.currentTarget, 'Refreshing...', loadStudentConduct);
   });
   bindStudentConductStudentSearch(data);
-  document.getElementById('cancelStudentConductEdit')?.addEventListener('click', () => renderStudentConduct());
+  document.getElementById('cancelStudentConductEdit')?.addEventListener('click', () => {
+    conductTabs?.activate('register');
+    renderStudentConduct();
+  });
   panelEl.querySelectorAll('[data-edit-conduct]').forEach((button) => button.addEventListener('click', () => {
     const row = (data.cases || []).find((item) => clean(item.CaseId) === clean(button.dataset.editConduct));
-    if (row) renderStudentConduct(row);
+    if (row) { conductTabs?.activate('case'); renderStudentConduct(row); }
   }));
   panelEl.querySelectorAll('[data-view-conduct]').forEach((button) => button.addEventListener('click', () => {
     const row = (data.cases || []).find((item) => clean(item.CaseId) === clean(button.dataset.viewConduct));
-    if (row) renderStudentConduct(row);
+    if (row) { conductTabs?.activate('case'); renderStudentConduct(row); }
   }));
   panelEl.querySelectorAll('[data-delete-conduct]').forEach((button) => button.addEventListener('click', async () => {
     if (!window.confirm('Delete this conduct case? The deletion will be audited.')) return;
@@ -6382,7 +6585,7 @@ function renderSection(active) {
     );
     const payments = (accounts.payments || []).filter(matchesAccount);
     const invoices = (accounts.invoices || []).filter(matchesAccount);
-    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + table('Payments', payments, [
+    panelEl.innerHTML = `<div class="workflow-intro"><div><p class="eyebrow">Student finance</p><h2>Accounts</h2><p class="muted">Payments and invoices from the shared accounting records.</p></div></div>` + recordsDeskHandoffBanner(handoff, reference) + table('Payments', payments, [
       { label: 'Date', value: (row) => pick(row, ['PaidAt', 'Date']) },
       { label: 'Account', value: (row) => pick(row, ['AccountRef', 'AdmissionNo']) },
       { label: 'Fee', value: (row) => pick(row, ['FeeName', 'FeeCode']) },
@@ -6394,6 +6597,10 @@ function renderSection(active) {
       { label: 'Fee', value: (row) => pick(row, ['FeeName', 'FeeCode']) },
       { label: 'Debit', value: (row) => money(pick(row, ['Debit', 'Amount'])) },
       { label: 'Status', value: (row) => pick(row, ['Status']) }
+    ]);
+    mountWorkspaceTabs('accounts', [
+      { key: 'payments', label: 'Payments', icon: '\u2713', count: payments.length, nodes: [panelEl.querySelector(':scope > .records-desk-handoff'), workspaceTableNodes('Payments')] },
+      { key: 'invoices', label: 'Invoices', icon: '\u{1F9FE}', count: invoices.length, nodes: workspaceTableNodes('Invoices') }
     ]);
   } else if (active === 'clinic' || active === 'kitchen' || active === 'restaurant' || active === 'tuckShop') {
     panelEl.innerHTML = '<p class="muted">Loading department operations...</p>';
@@ -6839,6 +7046,12 @@ function renderFinanceWorkflow() {
     ${financeRecordsSection('Supplier Bills', bills, 'bill', capabilities)}
     ${submissionDialogs}
   `;
+  const financeLists = [...panelEl.querySelectorAll(':scope > .workflow-list-section')];
+  mountWorkspaceTabs('financeRequests', [
+    { key: 'overview', label: 'Overview', icon: '\u25A6', nodes: [[...panelEl.querySelectorAll(':scope > p.status')], panelEl.querySelector(':scope > .workflow-kpis'), panelEl.querySelector(':scope > .workflow-ledger-heading')] },
+    { key: 'requisitions', label: 'Requisitions', icon: '\u{1F4CB}', count: requisitions.length, nodes: financeLists[0] },
+    { key: 'bills', label: 'Supplier bills', icon: '\u{1F9FE}', count: bills.length, nodes: financeLists[1] }
+  ]);
   bindFinanceWorkflowEvents();
 }
 
@@ -7188,6 +7401,11 @@ function renderStaffUsers() {
       </form>
     </dialog>
   `;
+  mountWorkspaceTabs('staffUsers', [
+    { key: 'overview', label: 'Overview', icon: '\u25A6', nodes: [document.getElementById('staffUsersStatus'), panelEl.querySelector(':scope > .workflow-kpis')] },
+    { key: 'accounts', label: 'Staff accounts', icon: '\u{1F465}', count: staffUsersData.length, nodes: panelEl.querySelector(':scope > .staff-user-list') },
+    { key: 'security', label: 'Security activity', icon: '\u{1F6E1}', count: staffAuditData.length, nodes: panelEl.querySelector(':scope > .staff-security-activity') }
+  ]);
   bindStaffUserEvents();
 }
 
