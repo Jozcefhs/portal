@@ -3865,6 +3865,54 @@ function showChurchGivingQr(data = {}) {
   }
 }
 
+function donorContributionInsights(topDonors = [], registeredDonors = []) {
+  const colors = ['#1769e0', '#159b7f', '#8055c7', '#ed8b18', '#d84a67', '#6f8092'];
+  const ranked = topDonors
+    .map((row) => ({ ...row, SettledNgnTotal: financialNumber(row.SettledNgnTotal) }))
+    .filter((row) => row.SettledNgnTotal > 0);
+  const total = ranked.reduce((sum, row) => sum + row.SettledNgnTotal, 0);
+  const highlighted = ranked.slice(0, 5).map((row, index) => ({
+    label: clean(row.DonorName || row.DisplayName) || 'Donor',
+    value: row.SettledNgnTotal,
+    gifts: Number(row.DonationCount || 0),
+    color: colors[index]
+  }));
+  const remaining = ranked.slice(5);
+  const remainingValue = remaining.reduce((sum, row) => sum + row.SettledNgnTotal, 0);
+  if (remainingValue > 0) highlighted.push({
+    label: 'Other top donors',
+    value: remainingValue,
+    gifts: remaining.reduce((sum, row) => sum + Number(row.DonationCount || 0), 0),
+    color: colors[5]
+  });
+  let cursor = 0;
+  const segments = highlighted.map((row) => {
+    const start = cursor;
+    cursor += total > 0 ? (row.value / total) * 100 : 0;
+    return `${row.color} ${start.toFixed(2)}% ${cursor.toFixed(2)}%`;
+  });
+  const chart = segments.length ? `conic-gradient(${segments.join(',')})` : 'conic-gradient(#dfe7ef 0 100%)';
+  const giftCount = ranked.reduce((sum, row) => sum + Number(row.DonationCount || 0), 0);
+  const leaderShare = total > 0 && ranked.length ? Math.round((ranked[0].SettledNgnTotal / total) * 100) : 0;
+  return `
+    <aside class="donor-insights-card">
+      <header><div><small>Settled giving overview</small><h2>Top donor contribution</h2></div><span>${ranked.length} ranked</span></header>
+      <div class="donor-contribution-visual">
+        <div class="donor-contribution-chart" style="--donor-pie:${chart}" role="img" aria-label="Contribution share of the leading donors">
+          <span><strong>${escapeHtml(money(total))}</strong><small>Top 10 total</small></span>
+        </div>
+        <div class="donor-contribution-legend">
+          ${highlighted.length ? highlighted.map((row) => `<div><i style="--donor-color:${row.color}"></i><span><strong>${escapeHtml(row.label)}</strong><small>${escapeHtml(money(row.value))} · ${row.gifts} gift${row.gifts === 1 ? '' : 's'}</small></span><b>${total > 0 ? Math.round((row.value / total) * 100) : 0}%</b></div>`).join('') : '<p class="muted">Settled donor totals will appear here after giving is converted to NGN.</p>'}
+        </div>
+      </div>
+      <div class="donor-insight-kpis">
+        <div><strong>${registeredDonors.length}</strong><span>Registered donors</span></div>
+        <div><strong>${giftCount}</strong><span>Top-donor gifts</span></div>
+        <div><strong>${leaderShare}%</strong><span>Leader share</span></div>
+      </div>
+    </aside>`;
+}
+
 async function loadChurchDonations() {
   try {
     const methods = ['CASH', 'BANK TRANSFER', 'CHEQUE', 'POS', 'ONLINE', 'CARD', 'MOBILE MONEY'];
@@ -3972,7 +4020,9 @@ async function loadChurchDonations() {
           </div>
           <div class="config-dialog-actions"><p class="status" id="churchDonorStatus"></p><button type="submit">Save donor</button></div>
         </form>` : ''}
-        <div class="management-split">
+        <div class="donor-register-layout">
+          ${donorContributionInsights(topDonors, donors)}
+          <div class="donor-table-stack">
           <div class="management-table-block" style="min-width:0">${table('Top 10 donors', topDonors, [
             { label: 'Donor', value: (row) => row.DonorName },
             { label: 'Settled NGN total', value: (row) => money(row.SettledNgnTotal) },
@@ -3984,6 +4034,7 @@ async function loadChurchDonations() {
             { label: 'Phone', value: (row) => row.Phone },
             { label: 'Action', render: (row) => capabilities.canCollect ? `<button type="button" class="table-action" data-edit-donor="${escapeHtml(row.DonorId || row.__id)}">Edit</button>` : '' }
           ])}</div>
+          </div>
         </div>
       </section>
       <section class="config-group" id="donationCurrencyPanel">
