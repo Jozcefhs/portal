@@ -6,6 +6,7 @@ import {
   attendanceDocumentId,
   attendanceSummary,
   normalizeAttendance,
+  normalizeAttendanceBreakdown,
   normalizeAttendanceCount,
   normalizeChurchService,
   normalizeServiceOccurrence,
@@ -14,6 +15,7 @@ import {
 
 const adminJs = fs.readFileSync(new URL('../js/admin.js', import.meta.url), 'utf8');
 const serviceApi = fs.readFileSync(new URL('../functions/lib/church-services.js', import.meta.url), 'utf8');
+const portalCss = fs.readFileSync(new URL('../css/style.css', import.meta.url), 'utf8');
 
 test('church service capabilities separate schedule management from attendance recording', () => {
   assert.equal(serviceCapabilities({ role: 'Pastor' }).canManageServices, true);
@@ -117,14 +119,56 @@ test('an aggregate headcount is validated and remains the occurrence total', () 
   assert.equal(result[0].MemberAttendance, 1);
 });
 
+test('attendance breakdown validates age, gender, first-timer and conversion totals', () => {
+  assert.deepEqual(normalizeAttendanceBreakdown({
+    AttendanceCount: 275,
+    ChildrenCount: 75,
+    AdultCount: 200,
+    MaleCount: 120,
+    FemaleCount: 155,
+    FirstTimerCount: 18,
+    NewConvertCount: 6
+  }), {
+    AttendanceCount: 275,
+    ChildrenCount: 75,
+    AdultCount: 200,
+    MaleCount: 120,
+    FemaleCount: 155,
+    FirstTimerCount: 18,
+    NewConvertCount: 6
+  });
+  assert.deepEqual(normalizeAttendanceBreakdown({ AttendanceCount: 25 }), { AttendanceCount: 25 });
+  assert.throws(() => normalizeAttendanceBreakdown({ AttendanceCount: 10, ChildrenCount: 3 }), /both the children and adult/);
+  assert.throws(() => normalizeAttendanceBreakdown({ AttendanceCount: 10, ChildrenCount: 3, AdultCount: 6 }), /add up to the total/);
+  assert.throws(() => normalizeAttendanceBreakdown({ AttendanceCount: 10, MaleCount: 4, FemaleCount: 5 }), /Male and female/);
+  assert.throws(() => normalizeAttendanceBreakdown({ AttendanceCount: 10, FirstTimerCount: 11 }), /First-timers/);
+  assert.throws(() => normalizeAttendanceBreakdown({ AttendanceCount: 10, NewConvertCount: 11 }), /New converts/);
+});
+
 test('the web services workspace records occurrences, totals, and individual check-ins', () => {
   assert.match(adminJs, /id="churchOccurrenceForm"/);
   assert.match(adminJs, /churchServiceAction\('saveOccurrence', payload\)/);
   assert.match(adminJs, /id="churchAttendanceTotalForm"/);
   assert.match(adminJs, /name="AttendanceCount" type="number"/);
+  assert.match(adminJs, /name="ChildrenCount" type="number"/);
+  assert.match(adminJs, /name="AdultCount" type="number"/);
+  assert.match(adminJs, /name="MaleCount" type="number"/);
+  assert.match(adminJs, /name="FemaleCount" type="number"/);
+  assert.match(adminJs, /name="FirstTimerCount" type="number"/);
+  assert.match(adminJs, /name="NewConvertCount" type="number"/);
+  assert.match(adminJs, /renderChurchAttendanceBreakdown/);
+  assert.match(adminJs, /Age composition/);
+  assert.match(adminJs, /Gender composition/);
+  assert.match(adminJs, /Guest and decision response/);
+  assert.match(adminJs, /table\('Attendance Summary'/);
   assert.match(adminJs, /churchServiceAction\('recordAttendanceTotal', payload\)/);
   assert.match(adminJs, /id="churchAttendanceForm"/);
   assert.match(adminJs, /churchServiceAction\('recordAttendance', payload\)/);
   assert.match(serviceApi, /recordChurchAttendanceTotal/);
+  assert.match(serviceApi, /normalizeAttendanceBreakdown\(incoming\)/);
   assert.match(serviceApi, /AttendanceCountRecordedAt/);
+  assert.match(portalCss, /\.service-attendance-workspace\s*\{[\s\S]*?grid-template-columns:/);
+  assert.match(portalCss, /\.attendance-breakdown-fields\s*\{[\s\S]*?repeat\(3,/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.attendance-total-field/);
+  assert.match(portalCss, /@media \(max-width: 560px\)[\s\S]*?\.attendance-breakdown-fields[\s\S]*?repeat\(2,/);
 });

@@ -3392,6 +3392,70 @@ async function churchServiceAction(action, payload = {}) {
   return data;
 }
 
+const churchAttendanceBreakdownFields = [
+  ['ChildrenCount', 'Children'],
+  ['AdultCount', 'Adults'],
+  ['MaleCount', 'Male'],
+  ['FemaleCount', 'Female'],
+  ['FirstTimerCount', 'First-timers'],
+  ['NewConvertCount', 'New converts']
+];
+
+function churchAttendanceNumber(row = {}, key) {
+  const raw = row?.[key];
+  if (raw === undefined || raw === null || clean(raw) === '') return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? Math.round(value) : null;
+}
+
+function churchAttendanceChartCard(title, rows, total) {
+  const maximum = Math.max(1, Number(total || 0), ...rows.map((row) => Number(row.value || 0)));
+  return `<article class="department-chart-card service-attendance-chart-card">
+    <h3>${escapeHtml(title)}</h3>
+    <div role="img" aria-label="${escapeHtml(title)} attendance chart">
+      ${rows.map((row) => `<div class="chart-row"><span>${escapeHtml(row.label)}</span><i><b style="width:${Math.max(row.value ? 3 : 0, Math.round(Number(row.value || 0) / maximum * 100))}%"></b></i><strong>${escapeHtml(row.value)}</strong></div>`).join('')}
+    </div>
+  </article>`;
+}
+
+function renderChurchAttendanceBreakdown(target, row = null) {
+  if (!target) return;
+  if (!row) {
+    target.innerHTML = '<div class="service-attendance-empty"><strong>Choose a service occurrence</strong><span>Its saved attendance breakdown and charts will appear here.</span></div>';
+    return;
+  }
+  const total = churchAttendanceNumber(row, 'AttendanceCount') ?? churchAttendanceNumber(row, 'TotalAttendance') ?? 0;
+  const values = Object.fromEntries(churchAttendanceBreakdownFields.map(([key]) => [key, churchAttendanceNumber(row, key)]));
+  const hasBreakdown = Object.values(values).some((value) => value !== null);
+  const label = [pick(row, ['Date']), pick(row, ['ServiceName', 'ServiceId'])].filter(Boolean).join(' Â· ');
+  if (!hasBreakdown) {
+    target.innerHTML = `<div class="service-attendance-empty"><strong>${escapeHtml(label || 'Attendance breakdown')}</strong><span>A total of ${escapeHtml(total)} is recorded. Enter the breakdown below to generate the charts.</span></div>`;
+    return;
+  }
+  const normalized = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value ?? 0]));
+  const summary = [
+    ['Total', total],
+    ...churchAttendanceBreakdownFields.map(([key, fieldLabel]) => [fieldLabel, normalized[key]])
+  ];
+  target.innerHTML = `
+    <header class="service-attendance-report-heading"><div><small>Attendance analysis</small><h3>${escapeHtml(label || 'Selected occurrence')}</h3></div></header>
+    <div class="service-attendance-summary" aria-label="Attendance summary">${summary.map(([fieldLabel, value]) => `<div><small>${escapeHtml(fieldLabel)}</small><strong>${escapeHtml(value)}</strong></div>`).join('')}</div>
+    <div class="service-attendance-chart-grid">
+      ${churchAttendanceChartCard('Age composition', [
+        { label: 'Children', value: normalized.ChildrenCount },
+        { label: 'Adults', value: normalized.AdultCount }
+      ], total)}
+      ${churchAttendanceChartCard('Gender composition', [
+        { label: 'Male', value: normalized.MaleCount },
+        { label: 'Female', value: normalized.FemaleCount }
+      ], total)}
+      ${churchAttendanceChartCard('Guest and decision response', [
+        { label: 'First-timers', value: normalized.FirstTimerCount },
+        { label: 'New converts', value: normalized.NewConvertCount }
+      ], total)}
+    </div>`;
+}
+
 async function loadChurchServices() {
   try {
     const response = await staffFetch('/api/staff-services', {
@@ -3431,14 +3495,25 @@ async function loadChurchServices() {
       : '';
     const attendanceForms = capabilities.canRecordAttendance
       ? occurrences.length ? `
-        <form id="churchAttendanceTotalForm" class="workflow-card compact-form" data-service-workspace="totals">
-          <h3>Record attendance total</h3>
-          <p class="muted">Use the headcount when individual names are not required.</p>
-          <label>Service occurrence<select name="OccurrenceId" required><option value="">Choose occurrence</option>${occurrenceOptions}</select></label>
-          <label>Number of attendance<input name="AttendanceCount" type="number" min="0" max="1000000" step="1" required></label>
-          <button type="submit">Save attendance total</button>
-          <p class="status" data-service-form-status></p>
-        </form>
+        <section class="service-attendance-workspace" data-service-workspace="totals">
+          <form id="churchAttendanceTotalForm" class="workflow-card compact-form">
+            <h3>Record attendance breakdown</h3>
+            <p class="muted">Enter the age and gender counts. Each pair must add up to the total attendance.</p>
+            <label>Service occurrence<select name="OccurrenceId" required><option value="">Choose occurrence</option>${occurrenceOptions}</select></label>
+            <div class="attendance-breakdown-fields">
+              <label>Children<input name="ChildrenCount" type="number" min="0" max="1000000" step="1" required></label>
+              <label>Adults<input name="AdultCount" type="number" min="0" max="1000000" step="1" required></label>
+              <label>Male<input name="MaleCount" type="number" min="0" max="1000000" step="1" required></label>
+              <label>Female<input name="FemaleCount" type="number" min="0" max="1000000" step="1" required></label>
+              <label>First-timers<input name="FirstTimerCount" type="number" min="0" max="1000000" step="1" required></label>
+              <label>New converts<input name="NewConvertCount" type="number" min="0" max="1000000" step="1" required></label>
+            </div>
+            <label class="attendance-total-field">Total attendance<input name="AttendanceCount" type="number" min="0" max="1000000" step="1" readonly required></label>
+            <button type="submit">Save attendance breakdown</button>
+            <p class="status" data-service-form-status></p>
+          </form>
+          <section id="churchAttendanceBreakdownReport" class="service-attendance-report" aria-live="polite"></section>
+        </section>
         <form id="churchAttendanceForm" class="workflow-card compact-form" data-service-workspace="checkin">
           <h3>Individual attendance check-in</h3>
           <label>Service occurrence<select name="OccurrenceId" required><option value="">Choose occurrence</option>${occurrenceOptions}</select></label>
@@ -3460,10 +3535,19 @@ async function loadChurchServices() {
         { label: 'Date', value: (row) => pick(row, ['Date']) },
         { label: 'Service', value: (row) => pick(row, ['ServiceName', 'ServiceId']) },
         { label: 'Time', value: (row) => pick(row, ['StartTime']) },
-        { label: 'Status', value: (row) => pick(row, ['Status']) },
+        { label: 'Status', value: (row) => pick(row, ['Status']) }
+      ])}
+      ${table('Attendance Summary', data.occurrences || [], [
+        { label: 'Date', value: (row) => pick(row, ['Date']) },
+        { label: 'Service', value: (row) => pick(row, ['ServiceName', 'ServiceId']) },
         { label: 'Members', value: (row) => pick(row, ['MemberAttendance']) },
         { label: 'Visitors', value: (row) => pick(row, ['VisitorAttendance']) },
-        { label: 'Recorded number', value: (row) => pick(row, ['AttendanceCount']) },
+        { label: 'Children', value: (row) => pick(row, ['ChildrenCount']) },
+        { label: 'Adults', value: (row) => pick(row, ['AdultCount']) },
+        { label: 'Male', value: (row) => pick(row, ['MaleCount']) },
+        { label: 'Female', value: (row) => pick(row, ['FemaleCount']) },
+        { label: 'First-timers', value: (row) => pick(row, ['FirstTimerCount', 'FirstTimeVisitors']) },
+        { label: 'New converts', value: (row) => pick(row, ['NewConvertCount']) },
         { label: 'Total', value: (row) => pick(row, ['TotalAttendance']) }
       ])}
       ${table('Recent Attendance', (data.attendance || []).slice(0, 100), [
@@ -3476,7 +3560,7 @@ async function loadChurchServices() {
     const serviceFormGrid = panelEl.querySelector(':scope > .church-service-recording');
     mountWorkspaceTabs('services', [
       { key: 'occurrences', label: 'Service occurrences', icon: '\u{1F4C5}', count: (data.occurrences || []).length, nodes: [panelEl.querySelector('[data-service-workspace="occurrences"]'), workspaceTableNodes('Service Occurrences')] },
-      { key: 'totals', label: 'Attendance totals', icon: '\u03A3', nodes: panelEl.querySelector('[data-service-workspace="totals"]') },
+      { key: 'totals', label: 'Attendance totals', icon: '\u03A3', count: (data.occurrences || []).filter((row) => clean(row.AttendanceCount) !== '').length, nodes: [panelEl.querySelector('[data-service-workspace="totals"]'), workspaceTableNodes('Attendance Summary')] },
       { key: 'checkin', label: 'Individual check-in', icon: '\u2713', count: (data.attendance || []).length, nodes: [panelEl.querySelector('[data-service-workspace="checkin"]'), workspaceTableNodes('Recent Attendance')] }
     ]);
     if (serviceFormGrid && !serviceFormGrid.children.length) serviceFormGrid.remove();
@@ -3499,20 +3583,79 @@ async function loadChurchServices() {
       }
     });
     const totalForm = document.getElementById('churchAttendanceTotalForm');
+    const attendanceReport = document.getElementById('churchAttendanceBreakdownReport');
+    const occurrenceById = new Map(occurrences.map((row) => [clean(pick(row, ['OccurrenceId', '__id'])), row]));
+    const attendanceDraft = () => {
+      if (!totalForm) return null;
+      const source = occurrenceById.get(clean(totalForm.elements.OccurrenceId.value)) || {};
+      return {
+        ...source,
+        ...Object.fromEntries(churchAttendanceBreakdownFields.map(([key]) => [key, totalForm.elements[key].value])),
+        AttendanceCount: totalForm.elements.AttendanceCount.value
+      };
+    };
+    const validateAttendanceBreakdown = () => {
+      if (!totalForm) return;
+      const value = (name) => clean(totalForm.elements[name].value) === '' ? null : Number(totalForm.elements[name].value);
+      const children = value('ChildrenCount');
+      const adults = value('AdultCount');
+      const male = value('MaleCount');
+      const female = value('FemaleCount');
+      const ageTotal = children === null || adults === null ? null : children + adults;
+      const genderTotal = male === null || female === null ? null : male + female;
+      const total = ageTotal ?? genderTotal;
+      totalForm.elements.AttendanceCount.value = total === null ? '' : String(total);
+      const genderMessage = ageTotal !== null && genderTotal !== null && ageTotal !== genderTotal
+        ? 'Male and female attendance must add up to the same total as children and adults.'
+        : '';
+      totalForm.elements.FemaleCount.setCustomValidity(genderMessage);
+      const savedTotal = total ?? 0;
+      const firstTimers = value('FirstTimerCount');
+      const newConverts = value('NewConvertCount');
+      totalForm.elements.FirstTimerCount.setCustomValidity(firstTimers !== null && firstTimers > savedTotal ? 'First-timers cannot exceed total attendance.' : '');
+      totalForm.elements.NewConvertCount.setCustomValidity(newConverts !== null && newConverts > savedTotal ? 'New converts cannot exceed total attendance.' : '');
+      renderChurchAttendanceBreakdown(attendanceReport, attendanceDraft());
+    };
+    const loadAttendanceBreakdown = () => {
+      if (!totalForm) return;
+      const occurrence = occurrenceById.get(clean(totalForm.elements.OccurrenceId.value));
+      churchAttendanceBreakdownFields.forEach(([key]) => {
+        const value = occurrence ? churchAttendanceNumber(occurrence, key) : null;
+        totalForm.elements[key].value = value === null ? '' : String(value);
+      });
+      const total = occurrence
+        ? churchAttendanceNumber(occurrence, 'AttendanceCount') ?? churchAttendanceNumber(occurrence, 'TotalAttendance')
+        : null;
+      totalForm.elements.AttendanceCount.value = total === null ? '' : String(total);
+      totalForm.elements.FemaleCount.setCustomValidity('');
+      totalForm.elements.FirstTimerCount.setCustomValidity('');
+      totalForm.elements.NewConvertCount.setCustomValidity('');
+      renderChurchAttendanceBreakdown(attendanceReport, occurrence || null);
+    };
+    totalForm?.elements.OccurrenceId.addEventListener('change', loadAttendanceBreakdown);
+    churchAttendanceBreakdownFields.forEach(([key]) => totalForm?.elements[key].addEventListener('input', validateAttendanceBreakdown));
+    if (totalForm && occurrences.length) {
+      totalForm.elements.OccurrenceId.value = clean(pick(occurrences[0], ['OccurrenceId', '__id']));
+      loadAttendanceBreakdown();
+    } else {
+      renderChurchAttendanceBreakdown(attendanceReport, null);
+    }
     totalForm?.addEventListener('submit', async (event) => {
       event.preventDefault();
       const form = event.currentTarget;
       const button = form.querySelector('button[type="submit"]');
       const status = form.querySelector('[data-service-form-status]');
+      validateAttendanceBreakdown();
+      if (!form.reportValidity()) return;
       const payload = Object.fromEntries(new FormData(form).entries());
-      setButtonLoading(button, true, 'Saving...', 'Save attendance total');
+      setButtonLoading(button, true, 'Saving...', 'Save attendance breakdown');
       try {
         const result = await churchServiceAction('recordAttendanceTotal', payload);
         await loadChurchServices();
         setStatus(dashboardStatus, result.message, 'ok');
       } catch (error) {
         setStatus(status, error.message || String(error), 'bad');
-        if (button.isConnected) setButtonLoading(button, false, 'Saving...', 'Save attendance total');
+        if (button.isConnected) setButtonLoading(button, false, 'Saving...', 'Save attendance breakdown');
       }
     });
     const attendanceForm = document.getElementById('churchAttendanceForm');

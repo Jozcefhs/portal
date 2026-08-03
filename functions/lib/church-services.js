@@ -124,6 +124,46 @@ export function normalizeAttendanceCount(value) {
   return count;
 }
 
+function optionalAttendanceCount(input = {}, names = []) {
+  const selected = names.find((name) => input[name] !== undefined && clean(input[name]) !== '');
+  return selected ? normalizeAttendanceCount(input[selected]) : null;
+}
+
+export function normalizeAttendanceBreakdown(input = {}) {
+  const attendanceCount = normalizeAttendanceCount(input.AttendanceCount ?? input.attendanceCount);
+  const childrenCount = optionalAttendanceCount(input, ['ChildrenCount', 'childrenCount']);
+  const adultCount = optionalAttendanceCount(input, ['AdultCount', 'AdultsCount', 'adultCount', 'adultsCount']);
+  const maleCount = optionalAttendanceCount(input, ['MaleCount', 'maleCount']);
+  const femaleCount = optionalAttendanceCount(input, ['FemaleCount', 'femaleCount']);
+  const firstTimerCount = optionalAttendanceCount(input, ['FirstTimerCount', 'FirstTimersCount', 'firstTimerCount', 'firstTimersCount']);
+  const newConvertCount = optionalAttendanceCount(input, ['NewConvertCount', 'NewConvertsCount', 'newConvertCount', 'newConvertsCount']);
+  if ((childrenCount === null) !== (adultCount === null)) {
+    throw inputError('Enter both the children and adult attendance figures.');
+  }
+  if (childrenCount !== null && childrenCount + adultCount !== attendanceCount) {
+    throw inputError('Children and adults must add up to the total attendance.');
+  }
+  if ((maleCount === null) !== (femaleCount === null)) {
+    throw inputError('Enter both the male and female attendance figures.');
+  }
+  if (maleCount !== null && maleCount + femaleCount !== attendanceCount) {
+    throw inputError('Male and female attendance must add up to the total attendance.');
+  }
+  if (firstTimerCount !== null && firstTimerCount > attendanceCount) {
+    throw inputError('First-timers cannot exceed the total attendance.');
+  }
+  if (newConvertCount !== null && newConvertCount > attendanceCount) {
+    throw inputError('New converts cannot exceed the total attendance.');
+  }
+  return {
+    AttendanceCount: attendanceCount,
+    ...(childrenCount === null ? {} : { ChildrenCount: childrenCount, AdultCount: adultCount }),
+    ...(maleCount === null ? {} : { MaleCount: maleCount, FemaleCount: femaleCount }),
+    ...(firstTimerCount === null ? {} : { FirstTimerCount: firstTimerCount }),
+    ...(newConvertCount === null ? {} : { NewConvertCount: newConvertCount })
+  };
+}
+
 export function attendanceSummary(occurrences = [], attendance = []) {
   const totals = new Map();
   for (const row of attendance) {
@@ -332,11 +372,12 @@ export async function recordChurchAttendanceTotal(env, user, body = {}) {
   const occurrence = await getDocument(env, path, id).catch(() => null);
   if (!occurrence) throw inputError('The selected service occurrence does not exist in this branch.');
   if (lower(occurrence.Status) === 'cancelled') throw inputError('Attendance cannot be recorded for a cancelled occurrence.');
-  const attendanceCount = normalizeAttendanceCount(incoming.AttendanceCount ?? incoming.attendanceCount);
+  const attendanceBreakdown = normalizeAttendanceBreakdown(incoming);
+  const attendanceCount = attendanceBreakdown.AttendanceCount;
   const recordedAt = nowIso();
   const payload = {
     ...occurrence,
-    AttendanceCount: attendanceCount,
+    ...attendanceBreakdown,
     AttendanceCountRecordedAt: recordedAt,
     AttendanceCountRecordedBy: actorName(user),
     UpdatedAt: recordedAt,
@@ -344,9 +385,15 @@ export async function recordChurchAttendanceTotal(env, user, body = {}) {
   };
   delete payload.__id; delete payload.__name;
   await upsertDocument(env, path, id, payload);
+  const breakdownAudit = [
+    attendanceBreakdown.ChildrenCount === undefined ? '' : `${attendanceBreakdown.ChildrenCount} children, ${attendanceBreakdown.AdultCount} adults`,
+    attendanceBreakdown.MaleCount === undefined ? '' : `${attendanceBreakdown.MaleCount} male, ${attendanceBreakdown.FemaleCount} female`,
+    attendanceBreakdown.FirstTimerCount === undefined ? '' : `${attendanceBreakdown.FirstTimerCount} first-timers`,
+    attendanceBreakdown.NewConvertCount === undefined ? '' : `${attendanceBreakdown.NewConvertCount} new converts`
+  ].filter(Boolean).join(' | ');
   await writeServiceAudit(
     env, branchId, user, 'RECORD TOTAL', 'Attendance', occurrenceId,
-    `${clean(occurrence.ServiceName || occurrence.ServiceId)} | ${attendanceCount} attendee(s)`
+    `${clean(occurrence.ServiceName || occurrence.ServiceId)} | ${attendanceCount} attendee(s)${breakdownAudit ? ` | ${breakdownAudit}` : ''}`
   );
   return {
     ok: true,

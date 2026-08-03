@@ -1498,6 +1498,90 @@ html[data-theme="dark"] .vertical-bar-track {
 .compact-form input:not([type="checkbox"]),
 .compact-form select { width: 100%; min-height: 38px; }
 .compact-form button { width: auto; align-self: flex-start; }
+.service-attendance-workspace {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(300px, 410px) minmax(0, 1fr);
+  gap: .9rem;
+  align-items: start;
+  min-width: 0;
+}
+.attendance-breakdown-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .65rem;
+  width: 100%;
+}
+.attendance-breakdown-fields label { min-width: 0; }
+.attendance-total-field {
+  width: 100%;
+  padding: .65rem .75rem;
+  border: 1px solid #96d9c7;
+  border-radius: 10px;
+  background: #eaf8f3;
+  color: #075f4d;
+}
+.attendance-total-field input[readonly] {
+  border-color: transparent;
+  background: transparent;
+  color: #075f4d;
+  font-size: 1.25rem;
+  font-weight: 800;
+}
+.service-attendance-report { min-width: 0; }
+.service-attendance-report-heading { margin: 0 0 .65rem; }
+.service-attendance-report-heading small { color: var(--ok); font-size: .7rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.service-attendance-report-heading h3 { margin: .15rem 0 0; }
+.service-attendance-summary {
+  display: flex;
+  gap: .55rem;
+  overflow-x: auto;
+  padding: 0 0 .5rem;
+  scrollbar-width: thin;
+}
+.service-attendance-summary > div {
+  flex: 0 0 min(130px, 28vw);
+  min-width: 100px;
+  padding: .7rem;
+  border: 1px solid var(--border, #d8e1ec);
+  border-radius: 10px;
+  background: var(--card, #fff);
+}
+.service-attendance-summary small { display: block; color: #61758c; font-size: .68rem; }
+.service-attendance-summary strong { display: block; margin-top: .2rem; color: var(--finance-navy); font-size: 1.1rem; }
+.service-attendance-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(210px, 1fr));
+  gap: .7rem;
+  min-width: 0;
+}
+.service-attendance-chart-card { min-height: 130px; padding: .8rem; }
+.service-attendance-chart-card .chart-row { grid-template-columns: minmax(76px, 1fr) minmax(65px, 1.6fr) auto; }
+.service-attendance-empty {
+  display: grid;
+  gap: .25rem;
+  min-height: 170px;
+  place-content: center;
+  padding: 1rem;
+  border: 1px dashed var(--border, #d8e1ec);
+  border-radius: 14px;
+  color: #61758c;
+  text-align: center;
+}
+html[data-theme="dark"] .attendance-total-field { border-color: #287c68; background: #11382f; color: #9ae7d1; }
+html[data-theme="dark"] .attendance-total-field input[readonly] { color: #9ae7d1; }
+html[data-theme="dark"] .service-attendance-summary > div { border-color: #33465c; background: #111e2e; }
+html[data-theme="dark"] .service-attendance-summary small,
+html[data-theme="dark"] .service-attendance-empty { color: #b8c7d8; }
+html[data-theme="dark"] .service-attendance-summary strong { color: #f4f8ff; }
+@media (max-width: 900px) {
+  .service-attendance-workspace { grid-template-columns: 1fr; }
+  .service-attendance-chart-grid { grid-template-columns: repeat(3, minmax(190px, 1fr)); overflow-x: auto; padding-bottom: .35rem; }
+}
+@media (max-width: 560px) {
+  .attendance-breakdown-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .service-attendance-chart-grid { grid-template-columns: 1fr; overflow: visible; }
+}
 .inline-check {
   display: inline-flex;
   align-items: center;
