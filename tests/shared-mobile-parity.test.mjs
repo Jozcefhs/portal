@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
-const sharedVersion = '20260802-transparent-logo-surfaces';
-const adminScriptVersion = '20260802-closed-conduct-lock';
+const sharedVersion = '20260803-donor-currency-attendance';
+const adminScriptVersion = '20260803-donor-currency-attendance';
 const parentScriptVersion = '20260802-parent-password-session';
 const notificationVersion = '20260802-dark-settings-contrast';
 const pageNames = [
@@ -89,7 +89,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v112-donor-currency-attendance/);
+  assert.match(serviceWorker, /dynamax-v113-donor-currency-attendance-assets/);
   assert.match(serviceWorker, /'\/give\.html'/);
   assert.match(serviceWorker, /'\/js\/give\.js'/);
   assert.match(serviceWorker, /'\/store\.html'/);
