@@ -25,6 +25,7 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     branding: true,
     approvals: true,
     executiveOffice: true,
+    humanResources: true,
     accounting: true,
     payroll: true,
     admissions: true,
@@ -44,6 +45,7 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     branding: true,
     approvals: true,
     executiveOffice: true,
+    humanResources: true,
     accounting: true,
     payroll: true,
     admissions: false,
@@ -68,6 +70,7 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     branding: true,
     approvals: true,
     executiveOffice: true,
+    humanResources: true,
     accounting: true,
     payroll: true,
     admissions: false,
@@ -207,6 +210,7 @@ export function organizationProfileDocument(config, audit = {}) {
 
 const SECTION_FEATURES = Object.freeze({
   executiveOffice: 'executiveOffice',
+  humanResources: 'humanResources',
   admissions: 'admissions',
   formPurchases: 'admissions',
   students: 'students',

@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
-const sharedVersion = '20260803-attendance-breakdown';
-const adminScriptVersion = '20260803-attendance-breakdown';
+const sharedVersion = '20260803-human-resources';
+const adminScriptVersion = '20260803-human-resources';
 const parentScriptVersion = '20260803-finance-commas';
 const notificationVersion = '20260802-dark-settings-contrast';
 const pageNames = [
@@ -81,7 +81,7 @@ test('multi-function workspaces use focused URL-aware tabs', () => {
   assert.match(adminJs, /function mountWorkspaceTabs\(section, tabs = \[\], options = \{\}\)/);
   assert.match(adminJs, /window\.history\.replaceState\(window\.history\.state, '', url\)/);
   assert.match(adminJs, /window\.localStorage\.setItem\(workspaceViewStorageKey\(section\), selected\)/);
-  ['donations', 'funds', 'offerings', 'services', 'staffAttendance', 'incomeAnalytics', 'financeRequests', 'staffUsers', 'studentConduct'].forEach((section) => {
+  ['donations', 'funds', 'offerings', 'services', 'staffAttendance', 'humanResources', 'incomeAnalytics', 'financeRequests', 'staffUsers', 'studentConduct'].forEach((section) => {
     assert.match(adminJs, new RegExp(`mountWorkspaceTabs\\('${section}'`), `${section} should use focused tabs`);
   });
   assert.doesNotMatch(adminJs, /data-donation-jump/);
@@ -101,7 +101,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v121-attendance-breakdown/);
+  assert.match(serviceWorker, /dynamax-v122-human-resources/);
   assert.match(serviceWorker, /'\/js\/financial-values\.js'/);
   assert.match(serviceWorker, /'\/payments\.html'/);
   assert.match(serviceWorker, /'\/js\/payments\.js'/);

@@ -62,6 +62,7 @@ let financeData = null;
 let staffUsersData = [];
 let staffAuditData = [];
 let staffApprovalAccounts = [];
+let humanResourcesData = null;
 let activeTabs = [];
 let approvalProfile = null;
 let approvalAssetState = { signature: '', stamp: '' };
@@ -130,6 +131,7 @@ const tabConfig = [
   ['formPurchases', 'Form Purchases'],
   ['students', 'Students'],
   ['studentConduct', 'Student Conduct & Discipline'],
+  ['humanResources', 'Human Resources'],
   ['members', 'Departments & Members'],
   ['services', 'Services & Attendance'],
   ['staffAttendance', 'Staff Attendance'],
@@ -160,7 +162,12 @@ const staffRoleOptions = [
   'Admissions Officer', 'Student Welfare Officer', 'Accounts Officer',
   'Management', 'Department User', 'Tuck Shop User', 'Clinic User',
   'Kitchen User', 'Store User', 'Restaurant User', 'Front Desk', 'Pastor',
-  'Church Administrator', 'Membership Officer', 'Treasurer', 'Auditor'
+  'Church Administrator', 'Membership Officer', 'Treasurer', 'Auditor',
+  'HR Director', 'HR Manager', 'HR Business Partner', 'HR Officer',
+  'HR Assistant', 'Recruitment Officer', 'Learning & Development Officer',
+  'Employee Relations Officer', 'Performance Management Officer',
+  'Compensation & Benefits Officer', 'Payroll Officer',
+  'Health & Safety Officer', 'Line Manager'
 ];
 
 const schoolOnlyStaffRoles = new Set([
@@ -188,6 +195,7 @@ const tabIcons = {
   formPurchases: '\u{1F9FE}',
   students: '\u{1F465}',
   studentConduct: '\u2696',
+  humanResources: '\u{1F465}',
   members: '\u{1F465}',
   services: '\u{1F4C5}',
   staffAttendance: '\u23F1',
@@ -698,6 +706,7 @@ function clearStaffWorkspaceState() {
   staffUsersData = [];
   staffAuditData = [];
   staffApprovalAccounts = [];
+  humanResourcesData = null;
   approvalProfile = null;
   approvalAssetState = { signature: '', stamp: '' };
   pendingFinanceDecision = null;
@@ -1213,6 +1222,15 @@ function renderModuleSummary(active, liveData = null) {
       { icon: '\u2713', label: 'Paid', value: money(sumRows(rows, ['PaidAmount'])) },
       { icon: '\u231B', label: 'Outstanding', value: money(sumRows(rows, ['OutstandingAmount'])) }
     ];
+  } else if (active === 'humanResources' && liveData) {
+    const leave = liveData.leave || [];
+    const vacancies = liveData.vacancies || [];
+    cards = [
+      { icon, label: 'Staff', value: (liveData.directory || []).length },
+      { icon: '\u{1F334}', label: 'Pending Leave', value: leave.filter((row) => /pending/i.test(clean(row.Status))).length },
+      { icon: '\u{1F4CB}', label: 'Open Vacancies', value: vacancies.filter((row) => /open/i.test(clean(row.Status))).length },
+      { icon: '\u{1F393}', label: 'Training Records', value: (liveData.training || []).length }
+    ];
   } else if (active === 'staffUsers' && liveData) {
     const rows = liveData.users || liveData;
     cards = [
@@ -1276,7 +1294,7 @@ function renderMobileNavigation(tabs) {
   }
   const findTab = (...keys) => tabs.find(([key]) => keys.includes(key));
   const homeTab = findTab('overview') || tabs[0];
-  const peopleTab = findTab('recordsDesk', 'members', 'students', 'services', 'admissions') || homeTab;
+  const peopleTab = findTab('recordsDesk', 'humanResources', 'members', 'students', 'services', 'admissions') || homeTab;
   const financeTab = findTab('incomeAnalytics', 'accounts', 'donations', 'offerings', 'funds', 'financeRequests') || homeTab;
   const items = [
     [homeTab[0], tabIcons.overview, 'Home'],
@@ -4854,6 +4872,283 @@ async function loadStaffAttendance() {
   }
 }
 
+async function humanResourcesRequest(action, payload = {}) {
+  const response = await staffFetch('/api/staff-hr', {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...payload })
+  });
+  const data = await response.json().catch(() => ({ ok: false, message: 'Human Resources did not return JSON.' }));
+  if (!response.ok || !data.ok) throw new Error(data.message || 'Human Resources action failed.');
+  return data;
+}
+
+function hrStaffOptions(directory = [], selected = '') {
+  return `<option value="">Choose staff member</option>${directory.map((row) => {
+    const username = clean(row.Username);
+    const label = [row.DisplayName || username, username, row.Department].filter(Boolean).join(' · ');
+    return `<option value="${escapeHtml(username)}" ${lower(selected) === lower(username) ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+  }).join('')}`;
+}
+
+function hrRoleGuide() {
+  const groups = [
+    ['HR Director / HR Manager', 'Full HR oversight, records, leave approvals, recruitment, performance and training.'],
+    ['HR Business Partner', 'People strategy, employee support and full HR operations.'],
+    ['HR Officer / HR Assistant', 'Day-to-day staff records, leave administration and HR coordination.'],
+    ['Recruitment Officer', 'Vacancies and recruitment pipeline.'],
+    ['Learning & Development Officer', 'Training plans, completion and certificates.'],
+    ['Employee Relations Officer', 'Leave, employee relations and performance records.'],
+    ['Performance Management Officer', 'Reviews, goals, ratings and development follow-up.'],
+    ['Compensation & Benefits Officer', 'Staff directory context, compensation and benefits coordination.'],
+    ['Payroll Officer', 'HR directory context, payroll and finance requests.'],
+    ['Health & Safety Officer', 'Required safety learning and compliance training.'],
+    ['Line Manager', 'Team visibility, leave decisions and performance reviews.']
+  ];
+  return `<section class="hr-role-guide"><header><div><p class="eyebrow">Access model</p><h2>HR roles and responsibilities</h2></div><span>Least-privilege access</span></header><div>${groups.map(([role, description]) => `<article><strong>${escapeHtml(role)}</strong><p>${escapeHtml(description)}</p></article>`).join('')}</div></section>`;
+}
+
+function hrFormStaffNameSync(form, directory) {
+  const select = form?.elements.Username;
+  if (!select || !form.elements.DisplayName) return;
+  const sync = () => {
+    const staff = directory.find((row) => lower(row.Username) === lower(select.value));
+    form.elements.DisplayName.value = staff?.DisplayName || '';
+  };
+  select.addEventListener('change', sync);
+  sync();
+}
+
+function bindHrForm(formId, action, loadingText, idleText) {
+  const form = document.getElementById(formId);
+  form?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = form.querySelector('button[type="submit"]');
+    const status = form.querySelector('.status');
+    setButtonLoading(button, true, loadingText, idleText);
+    try {
+      const result = await humanResourcesRequest(action, Object.fromEntries(new FormData(form).entries()));
+      await loadHumanResources();
+      setStatus(dashboardStatus, result.message, 'ok');
+    } catch (error) {
+      setStatus(status, error.message || String(error), 'bad');
+    } finally {
+      if (button.isConnected) setButtonLoading(button, false, loadingText, idleText);
+    }
+  });
+}
+
+function renderHumanResources(data) {
+  humanResourcesData = data;
+  const directory = data.directory || [];
+  const leave = data.leave || [];
+  const vacancies = data.vacancies || [];
+  const reviews = data.reviews || [];
+  const training = data.training || [];
+  const capabilities = data.capabilities || {};
+  const username = clean(currentUser?.username);
+  const staffOptions = hrStaffOptions(directory);
+  const reviewStaffOptions = hrStaffOptions(directory.filter((row) => lower(row.Username) !== lower(username)));
+  const pendingLeave = leave.filter((row) => /pending/i.test(clean(row.Status))).length;
+  const activeStaff = directory.filter((row) => !/inactive|suspended|terminated/i.test(clean(row.Status)) && row.Active !== false).length;
+  const openVacancies = vacancies.filter((row) => /open/i.test(clean(row.Status))).length;
+  const completedTraining = training.filter((row) => /completed/i.test(clean(row.Status))).length;
+  const peoplePanel = document.createElement('section');
+  peoplePanel.className = 'hr-workspace-stack';
+  peoplePanel.innerHTML = `${capabilities.canManagePeople ? `
+    <section class="config-group hr-form-card"><header><strong>Employment record</strong><small>Link HR information to an existing staff login; passwords and credentials are never exposed here.</small></header>
+      <form id="hrEmployeeForm" class="workflow-form config-form">
+        <div class="config-grid">
+          <label>Staff member <select name="Username" required>${staffOptions}</select></label>
+          <label>Employee ID <input name="EmployeeId" placeholder="EMP-001"></label>
+          <label>Position <input name="Position" required></label>
+          <label>Department <input name="Department" required></label>
+          <label>Employment type <select name="EmploymentType"><option>Permanent</option><option>Contract</option><option>Part-time</option><option>Temporary</option><option>Volunteer</option></select></label>
+          <label>Hire date <input name="HireDate" type="date"></label>
+          <label>Line manager <select name="ManagerUsername">${hrStaffOptions(directory)}</select></label>
+          <label>Work email <input name="WorkEmail" type="email"></label>
+          <label>Phone <input name="Phone" type="tel"></label>
+          <label>Status <select name="Status"><option>Active</option><option>On leave</option><option>Suspended</option><option>Exited</option></select></label>
+          <label class="config-grid-span">Emergency contact <input name="EmergencyContact"></label>
+        </div>
+        <input name="DisplayName" type="hidden">
+        <div class="config-dialog-actions"><p class="status"></p><button type="submit">Save employment record</button></div>
+      </form>
+    </section>` : ''}
+    ${table('Staff directory', directory, [
+      { label: 'Employee ID', value: (row) => row.EmployeeId },
+      { label: 'Staff', value: (row) => row.DisplayName || row.Username },
+      { label: 'Position', value: (row) => row.Position || row.Role },
+      { label: 'Department', value: (row) => row.Department },
+      { label: 'Employment', value: (row) => row.EmploymentType },
+      { label: 'Manager', value: (row) => row.ManagerUsername },
+      { label: 'Status', value: (row) => row.Status || (row.Active === false ? 'Inactive' : 'Active') },
+      ...(capabilities.canManagePeople ? [{ label: 'Action', render: (row) => `<button type="button" class="compact-icon-action compact-edit-action" data-edit-hr-employee="${escapeHtml(row.Username)}" aria-label="Edit ${escapeHtml(row.DisplayName || row.Username)}" title="Edit employment record"><span aria-hidden="true">&#9998;</span></button>` }] : [])
+    ])}`;
+
+  const leavePanel = document.createElement('section');
+  leavePanel.className = 'hr-workspace-stack';
+  leavePanel.innerHTML = `
+    <section class="config-group hr-form-card"><header><strong>Request leave</strong><small>Staff may submit their own request. HR officers may submit one for another staff member.</small></header>
+      <form id="hrLeaveForm" class="workflow-form config-form">
+        <div class="config-grid">
+          ${capabilities.canManageLeave ? `<label>Staff member <select name="Username" required>${hrStaffOptions(directory, username)}</select></label>` : `<input name="Username" type="hidden" value="${escapeHtml(username)}">`}
+          <input name="DisplayName" type="hidden" value="${escapeHtml(currentUser?.displayName || username)}">
+          <label>Leave type <select name="LeaveType"><option>Annual leave</option><option>Sick leave</option><option>Maternity leave</option><option>Paternity leave</option><option>Compassionate leave</option><option>Study leave</option><option>Unpaid leave</option></select></label>
+          <label>Start date <input name="StartDate" type="date" required></label>
+          <label>End date <input name="EndDate" type="date" required></label>
+          <label class="config-grid-span">Reason <textarea name="Reason" rows="2" required></textarea></label>
+        </div>
+        <div class="config-dialog-actions"><p class="status"></p><button type="submit">Submit leave request</button></div>
+      </form>
+    </section>
+    ${table('Leave register', leave, [
+      { label: 'Staff', value: (row) => row.DisplayName || row.Username },
+      { label: 'Type', value: (row) => row.LeaveType },
+      { label: 'From', value: (row) => row.StartDate },
+      { label: 'To', value: (row) => row.EndDate },
+      { label: 'Days', value: (row) => row.Days },
+      { label: 'Status', value: (row) => row.Status },
+      { label: 'Reviewed by', value: (row) => row.ReviewedBy },
+      ...(capabilities.canApproveLeave ? [{ label: 'Action', render: (row) => /pending/i.test(clean(row.Status)) && lower(row.Username) !== lower(username) ? `<span class="table-action-group"><button type="button" class="table-action" data-hr-leave-decision="Approved" data-hr-leave-id="${escapeHtml(row.LeaveId || row.__id)}">Approve</button><button type="button" class="table-action danger" data-hr-leave-decision="Declined" data-hr-leave-id="${escapeHtml(row.LeaveId || row.__id)}">Decline</button></span>` : '' }] : [])
+    ])}`;
+
+  const recruitmentPanel = document.createElement('section');
+  recruitmentPanel.className = 'hr-workspace-stack';
+  recruitmentPanel.innerHTML = `${capabilities.canManageRecruitment ? `
+    <section class="config-group hr-form-card"><header><strong>Vacancy</strong><small>Create or update an approved staffing need.</small></header>
+      <form id="hrVacancyForm" class="workflow-form config-form"><input name="VacancyId" type="hidden"><div class="config-grid">
+        <label>Job title <input name="Title" required></label><label>Department <input name="Department" required></label>
+        <label>Employment type <select name="EmploymentType"><option>Permanent</option><option>Contract</option><option>Part-time</option><option>Temporary</option></select></label>
+        <label>Openings <input name="Openings" type="number" min="1" value="1" required></label>
+        <label>Closing date <input name="ClosingDate" type="date"></label><label>Status <select name="Status"><option>Open</option><option>On hold</option><option>Closed</option><option>Filled</option></select></label>
+        <label class="config-grid-span">Description <textarea name="Description" rows="2"></textarea></label>
+      </div><div class="config-dialog-actions"><p class="status"></p><button type="submit">Save vacancy</button></div></form>
+    </section>` : ''}
+    ${table('Recruitment plan', vacancies, [
+      { label: 'Role', value: (row) => row.Title }, { label: 'Department', value: (row) => row.Department },
+      { label: 'Type', value: (row) => row.EmploymentType }, { label: 'Openings', value: (row) => row.Openings },
+      { label: 'Closing', value: (row) => row.ClosingDate }, { label: 'Status', value: (row) => row.Status },
+      ...(capabilities.canManageRecruitment ? [{ label: 'Action', render: (row) => `<button type="button" class="compact-icon-action compact-edit-action" data-edit-hr-vacancy="${escapeHtml(row.VacancyId || row.__id)}" aria-label="Edit ${escapeHtml(row.Title)}"><span aria-hidden="true">&#9998;</span></button>` }] : [])
+    ])}`;
+
+  const performancePanel = document.createElement('section');
+  performancePanel.className = 'hr-workspace-stack';
+  performancePanel.innerHTML = `${capabilities.canManagePerformance ? `
+    <section class="config-group hr-form-card"><header><strong>Performance review</strong><small>Keep reviews factual, work-related and visible only to authorised HR roles and the employee.</small></header>
+      <form id="hrReviewForm" class="workflow-form config-form"><input name="ReviewId" type="hidden"><input name="DisplayName" type="hidden"><div class="config-grid">
+        <label>Staff member <select name="Username" required>${reviewStaffOptions}</select></label><label>Review period <input name="ReviewPeriod" placeholder="2026 Annual" required></label>
+        <label>Rating <select name="Rating" required><option value="">Choose rating</option><option value="1">1 - Needs improvement</option><option value="2">2 - Developing</option><option value="3">3 - Meets expectations</option><option value="4">4 - Exceeds expectations</option><option value="5">5 - Outstanding</option></select></label>
+        <label>Status <select name="Status"><option>Completed</option><option>Draft</option><option>Follow-up required</option></select></label>
+        <label>Strengths <textarea name="Strengths" rows="2"></textarea></label><label>Development areas <textarea name="DevelopmentAreas" rows="2"></textarea></label>
+        <label class="config-grid-span">Goals <textarea name="Goals" rows="2"></textarea></label>
+      </div><div class="config-dialog-actions"><p class="status"></p><button type="submit">Save performance review</button></div></form>
+    </section>` : ''}
+    ${table('Performance history', reviews, [
+      { label: 'Staff', value: (row) => row.DisplayName || row.Username }, { label: 'Period', value: (row) => row.ReviewPeriod },
+      { label: 'Rating', value: (row) => row.Rating ? `${row.Rating} / 5` : '' }, { label: 'Status', value: (row) => row.Status },
+      { label: 'Reviewed by', value: (row) => row.ReviewedBy }, { label: 'Date', value: (row) => clean(row.ReviewedAt).slice(0, 10) }
+    ])}`;
+
+  const trainingPanel = document.createElement('section');
+  trainingPanel.className = 'hr-workspace-stack';
+  trainingPanel.innerHTML = `${capabilities.canManageTraining ? `
+    <section class="config-group hr-form-card"><header><strong>Learning & development</strong><small>Plan training and keep completion or certificate references.</small></header>
+      <form id="hrTrainingForm" class="workflow-form config-form"><input name="TrainingId" type="hidden"><input name="DisplayName" type="hidden"><div class="config-grid">
+        <label>Staff member <select name="Username" required>${staffOptions}</select></label><label>Course or programme <input name="Course" required></label>
+        <label>Provider <input name="Provider"></label><label>Completion date <input name="CompletionDate" type="date"></label>
+        <label>Status <select name="Status"><option>Planned</option><option>In progress</option><option>Completed</option><option>Cancelled</option></select></label>
+        <label>Certificate reference <input name="CertificateReference"></label>
+      </div><div class="config-dialog-actions"><p class="status"></p><button type="submit">Save training record</button></div></form>
+    </section>` : ''}
+    ${table('Training register', training, [
+      { label: 'Staff', value: (row) => row.DisplayName || row.Username }, { label: 'Course', value: (row) => row.Course },
+      { label: 'Provider', value: (row) => row.Provider }, { label: 'Status', value: (row) => row.Status },
+      { label: 'Completion', value: (row) => row.CompletionDate }, { label: 'Certificate', value: (row) => row.CertificateReference }
+    ])}`;
+
+  const overviewPanel = document.createElement('section');
+  overviewPanel.className = 'hr-overview-panel';
+  overviewPanel.innerHTML = `<div class="workflow-kpis hr-kpis">
+    <div><small>Active staff</small><strong>${activeStaff}</strong><span>Employment records in view</span></div>
+    <div><small>Pending leave</small><strong>${pendingLeave}</strong><span>Awaiting a decision</span></div>
+    <div><small>Open vacancies</small><strong>${openVacancies}</strong><span>Approved staffing needs</span></div>
+    <div><small>Training completed</small><strong>${completedTraining}</strong><span>Development records</span></div>
+  </div>${hrRoleGuide()}`;
+
+  panelEl.innerHTML = `<div class="workflow-intro"><div><p class="eyebrow">People operations</p><h2>Human Resources</h2><p class="muted">Staff records, leave, recruitment, performance and development in one permission-controlled workspace.</p></div><button type="button" id="refreshHumanResources">Refresh</button></div><p id="humanResourcesStatus" class="status"></p>`;
+  panelEl.append(overviewPanel, peoplePanel, leavePanel);
+  if (capabilities.canManageRecruitment || vacancies.length) panelEl.append(recruitmentPanel);
+  panelEl.append(performancePanel, trainingPanel);
+
+  mountWorkspaceTabs('humanResources', [
+    { key: 'overview', label: 'Overview', icon: '\u25A6', nodes: overviewPanel },
+    { key: 'people', label: 'People', icon: '\u{1F465}', count: directory.length, nodes: peoplePanel },
+    { key: 'leave', label: 'Leave', icon: '\u{1F334}', count: pendingLeave, nodes: leavePanel },
+    { key: 'recruitment', label: 'Recruitment', icon: '\u{1F4CB}', count: openVacancies, nodes: capabilities.canManageRecruitment || vacancies.length ? recruitmentPanel : [] },
+    { key: 'performance', label: 'Performance', icon: '\u2605', count: reviews.length, nodes: performancePanel },
+    { key: 'training', label: 'Training', icon: '\u{1F393}', count: training.length, nodes: trainingPanel }
+  ]);
+  renderModuleSummary('humanResources', data);
+
+  document.getElementById('refreshHumanResources')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', loadHumanResources));
+  hrFormStaffNameSync(document.getElementById('hrEmployeeForm'), directory);
+  hrFormStaffNameSync(document.getElementById('hrLeaveForm'), directory);
+  hrFormStaffNameSync(document.getElementById('hrReviewForm'), directory);
+  hrFormStaffNameSync(document.getElementById('hrTrainingForm'), directory);
+  bindHrForm('hrEmployeeForm', 'saveemployee', 'Saving...', 'Save employment record');
+  bindHrForm('hrLeaveForm', 'saveleave', 'Submitting...', 'Submit leave request');
+  bindHrForm('hrVacancyForm', 'savevacancy', 'Saving...', 'Save vacancy');
+  bindHrForm('hrReviewForm', 'savereview', 'Saving...', 'Save performance review');
+  bindHrForm('hrTrainingForm', 'savetraining', 'Saving...', 'Save training record');
+
+  panelEl.querySelectorAll('[data-edit-hr-employee]').forEach((button) => button.addEventListener('click', () => {
+    const form = document.getElementById('hrEmployeeForm');
+    const record = directory.find((row) => lower(row.Username) === lower(button.dataset.editHrEmployee));
+    if (!form || !record) return;
+    ['Username', 'EmployeeId', 'Position', 'Department', 'EmploymentType', 'HireDate', 'ManagerUsername', 'WorkEmail', 'Phone', 'Status', 'EmergencyContact', 'DisplayName'].forEach((field) => {
+      if (form.elements[field]) form.elements[field].value = record[field] ?? '';
+    });
+    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
+  panelEl.querySelectorAll('[data-edit-hr-vacancy]').forEach((button) => button.addEventListener('click', () => {
+    const form = document.getElementById('hrVacancyForm');
+    const record = vacancies.find((row) => clean(row.VacancyId || row.__id) === clean(button.dataset.editHrVacancy));
+    if (!form || !record) return;
+    ['VacancyId', 'Title', 'Department', 'EmploymentType', 'Openings', 'ClosingDate', 'Status', 'Description'].forEach((field) => {
+      if (form.elements[field]) form.elements[field].value = record[field] ?? '';
+    });
+    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
+  panelEl.querySelectorAll('[data-hr-leave-decision]').forEach((button) => button.addEventListener('click', async () => {
+    const decision = button.dataset.hrLeaveDecision;
+    const note = window.prompt(`${decision} this leave request. Add an optional note:`, '');
+    if (note === null) return;
+    setButtonLoading(button, true, `${decision}...`, decision);
+    try {
+      const result = await humanResourcesRequest('reviewleave', { LeaveId: button.dataset.hrLeaveId, Decision: decision, ReviewNotes: note });
+      await loadHumanResources();
+      setStatus(dashboardStatus, result.message, 'ok');
+    } catch (error) {
+      setStatus(document.getElementById('humanResourcesStatus') || dashboardStatus, error.message || String(error), 'bad');
+      if (button.isConnected) setButtonLoading(button, false, `${decision}...`, decision);
+    }
+  }));
+}
+
+async function loadHumanResources() {
+  if (activeSection !== 'humanResources') return;
+  try {
+    const data = await humanResourcesRequest('list');
+    if (activeSection !== 'humanResources') return;
+    renderHumanResources(data);
+  } catch (error) {
+    if (activeSection === 'humanResources') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+  }
+}
+
 async function loadChurchOfferings() {
   try {
     const response = await staffFetch('/api/staff-offerings', {
@@ -6732,6 +7027,9 @@ function renderSection(active) {
   } else if (active === 'staffUsers') {
     panelEl.innerHTML = '<p class="muted">Loading staff accounts...</p>';
     loadStaffUsers();
+  } else if (active === 'humanResources') {
+    panelEl.innerHTML = '<p class="muted">Loading Human Resources...</p>';
+    loadHumanResources();
   } else if (active === 'studentConduct') {
     panelEl.innerHTML = '<p class="muted">Loading Student Conduct & Discipline Committee cases...</p>';
     loadStudentConduct();

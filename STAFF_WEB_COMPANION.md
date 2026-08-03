@@ -60,6 +60,14 @@ Super Admins can use the web `Staff & Permissions` section to create, update, di
 - Clinic, Kitchen and Tuck Shop users: their own departmental section.
 - Department User: section inferred from the assigned department.
 
+## Human Resources
+
+Every active staff account receives a private **Human Resources** self-service area for its own employment, leave, performance and training records. Authorised HR and leadership roles receive additional task-based tabs for the staff directory, leave decisions, recruitment, performance and learning records.
+
+The shared role catalogue includes HR Director, HR Manager, HR Business Partner, HR Officer, HR Assistant, Recruitment Officer, Learning & Development Officer, Employee Relations Officer, Performance Management Officer, Compensation & Benefits Officer, Payroll Officer, Health & Safety Officer and Line Manager. Access is least-privilege: specialist roles receive only their relevant workspace actions, line managers are limited to direct reports, staff cannot approve their own leave, and no HR response exposes passwords or authentication credentials.
+
+HR records are stored separately from login credentials in `hrEmployees`, `hrLeaveRequests`, `hrVacancies`, `hrPerformanceReviews`, `hrTrainingRecords` and `hrAudit`. `staffUsers` remains the authoritative sign-in directory.
+
 ## Bills and requisitions workflow
 
 The `Bills & Requisitions` section now provides authenticated write workflows:

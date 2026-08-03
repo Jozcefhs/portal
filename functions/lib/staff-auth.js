@@ -232,7 +232,9 @@ export function allowedSectionsFor(user = {}, featureFlags = null) {
   const department = lower(user.department || user.Department);
   const custom = Array.isArray(user.tabAccess || user.TabAccess) ? (user.tabAccess || user.TabAccess).map(clean).filter(Boolean) : [];
   if (custom.length) {
-    const inherited = role === 'Super Admin' ? [...custom, 'staffUsers'] : [...custom];
+    const inherited = role === 'Super Admin'
+      ? [...custom, 'humanResources', 'staffUsers']
+      : [...custom, 'humanResources'];
     const recordsDeskSources = new Set([
       'admissions', 'students', 'accounts', 'clinic', 'tuckShop',
       'staffUsers', 'members', 'funds', 'offerings', 'executiveOffice'
@@ -259,18 +261,32 @@ export function allowedSectionsFor(user = {}, featureFlags = null) {
     'Church Administrator': ['recordsDesk', 'members', 'services', 'funds', 'offerings', 'donations', 'organizationStore', 'restaurant', 'financeRequests', 'payroll'],
     'Membership Officer': ['recordsDesk', 'members', 'services'],
     Treasurer: ['recordsDesk', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests', 'payroll'],
-    Auditor: ['recordsDesk', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests']
+    Auditor: ['recordsDesk', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests'],
+    'HR Director': ['recordsDesk', 'humanResources', 'payroll'],
+    'HR Manager': ['recordsDesk', 'humanResources', 'payroll'],
+    'HR Business Partner': ['recordsDesk', 'humanResources', 'payroll'],
+    'HR Officer': ['recordsDesk', 'humanResources', 'payroll'],
+    'HR Assistant': ['recordsDesk', 'humanResources', 'payroll'],
+    'Recruitment Officer': ['humanResources', 'payroll'],
+    'Learning & Development Officer': ['humanResources', 'payroll'],
+    'Employee Relations Officer': ['humanResources', 'payroll'],
+    'Performance Management Officer': ['humanResources', 'payroll'],
+    'Compensation & Benefits Officer': ['recordsDesk', 'humanResources', 'payroll'],
+    'Payroll Officer': ['recordsDesk', 'humanResources', 'financeRequests', 'payroll'],
+    'Health & Safety Officer': ['humanResources', 'payroll'],
+    'Line Manager': ['humanResources', 'payroll']
   };
   if (role === 'Department User') {
-    if (department.includes('clinic')) return filterSectionsForFeatures(['recordsDesk', 'clinic', 'financeRequests', 'payroll'], featureFlags);
-    if (department.includes('kitchen')) return filterSectionsForFeatures(['kitchen', 'financeRequests', 'payroll'], featureFlags);
-    if (department.includes('restaurant') || department.includes('catering')) return filterSectionsForFeatures(['restaurant', 'financeRequests', 'payroll'], featureFlags);
-    if (department.includes('store') || department.includes('retail') || department.includes('bookshop')) return filterSectionsForFeatures(['organizationStore', 'financeRequests', 'payroll'], featureFlags);
-    if (department.includes('tuck')) return filterSectionsForFeatures(['recordsDesk', 'tuckShop', 'financeRequests', 'payroll'], featureFlags);
-    if (department.includes('account') || department.includes('finance')) return filterSectionsForFeatures(['recordsDesk', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll'], featureFlags);
-    return filterSectionsForFeatures(['financeRequests', 'payroll'], featureFlags);
+    if (department.includes('clinic')) return filterSectionsForFeatures(['recordsDesk', 'clinic', 'humanResources', 'financeRequests', 'payroll'], featureFlags);
+    if (department.includes('kitchen')) return filterSectionsForFeatures(['kitchen', 'humanResources', 'financeRequests', 'payroll'], featureFlags);
+    if (department.includes('restaurant') || department.includes('catering')) return filterSectionsForFeatures(['restaurant', 'humanResources', 'financeRequests', 'payroll'], featureFlags);
+    if (department.includes('store') || department.includes('retail') || department.includes('bookshop')) return filterSectionsForFeatures(['organizationStore', 'humanResources', 'financeRequests', 'payroll'], featureFlags);
+    if (department.includes('tuck')) return filterSectionsForFeatures(['recordsDesk', 'tuckShop', 'humanResources', 'financeRequests', 'payroll'], featureFlags);
+    if (department.includes('account') || department.includes('finance')) return filterSectionsForFeatures(['recordsDesk', 'accounts', 'incomeAnalytics', 'humanResources', 'financeRequests', 'payroll'], featureFlags);
+    return filterSectionsForFeatures(['humanResources', 'financeRequests', 'payroll'], featureFlags);
   }
-  return filterSectionsForFeatures(roleSections[role] || [], featureFlags);
+  const defaults = roleSections[role] || [];
+  return filterSectionsForFeatures(role ? [...defaults, 'humanResources'] : defaults, featureFlags);
 }
 
 export async function staffAccessFor(env, user = {}) {

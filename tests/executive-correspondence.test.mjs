@@ -33,15 +33,15 @@ const [endpoint, backend, backendSecurity, executiveSource, emailSource] = await
 test('principal also receives school conduct oversight while senior-minister defaults remain scoped', () => {
   assert.deepEqual(
     allowedSectionsFor({ role: 'Principal' }, featureFlagsForEdition('school')),
-    ['recordsDesk', 'executiveOffice', 'studentConduct']
+    ['recordsDesk', 'executiveOffice', 'studentConduct', 'humanResources']
   );
   assert.deepEqual(
     allowedSectionsFor({ role: 'Senior Pastor' }, featureFlagsForEdition('faith')),
-    ['recordsDesk', 'executiveOffice']
+    ['recordsDesk', 'executiveOffice', 'humanResources']
   );
   assert.deepEqual(
     allowedSectionsFor({ role: 'Head Minister' }, featureFlagsForEdition('organization')),
-    ['recordsDesk', 'executiveOffice']
+    ['recordsDesk', 'executiveOffice', 'humanResources']
   );
   assert.equal(canonicalExecutiveRole('Head Minister'), 'Senior Pastor');
   assert.equal(executiveOfficeCapabilities({

@@ -24,7 +24,7 @@ const WEB_SECTION_KEYS = new Set([
   'studentConduct', 'members', 'services', 'funds', 'offerings', 'donations',
   'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic',
   'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore',
-  'restaurant', 'staffUsers'
+  'restaurant', 'humanResources', 'staffUsers'
 ]);
 
 function listValue(value, separator = ',') {

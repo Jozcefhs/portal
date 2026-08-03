@@ -55,6 +55,7 @@ test('church is canonicalized to faith while retaining shared finance modules', 
   assert.equal(flags.payroll, true);
   assert.equal(flags.approvals, true);
   assert.equal(flags.executiveOffice, true);
+  assert.equal(flags.humanResources, true);
   assert.equal(flags.members, true);
   assert.equal(flags.services, true);
   assert.equal(flags.funds, true);
@@ -65,23 +66,24 @@ test('church is canonicalized to faith while retaining shared finance modules', 
   assert.equal(flags.admissions, false);
   assert.deepEqual(
     filterSectionsForFeatures(
-      ['admissions', 'students', 'financeRequests', 'payroll', 'staffUsers'],
+      ['admissions', 'students', 'humanResources', 'financeRequests', 'payroll', 'staffUsers'],
       flags
     ),
-    ['financeRequests', 'payroll', 'staffUsers']
+    ['humanResources', 'financeRequests', 'payroll', 'staffUsers']
   );
   assert.deepEqual(
     allowedSectionsFor({ role: 'Super Admin' }, flags),
-    ['recordsDesk', 'executiveOffice', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'organizationStore', 'restaurant', 'staffUsers']
+    ['recordsDesk', 'executiveOffice', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'organizationStore', 'restaurant', 'staffUsers', 'humanResources']
   );
 });
 
 test('church staff role defaults respect the membership privacy boundary', () => {
   const flags = featureFlagsForEdition('church');
-  assert.deepEqual(allowedSectionsFor({ role: 'Membership Officer' }, flags), ['recordsDesk', 'members', 'services']);
+  assert.deepEqual(allowedSectionsFor({ role: 'Membership Officer' }, flags), ['recordsDesk', 'members', 'services', 'humanResources']);
   assert.equal(allowedSectionsFor({ role: 'Pastor' }, flags).includes('members'), true);
   assert.equal(allowedSectionsFor({ role: 'Treasurer' }, flags).includes('members'), false);
   assert.equal(allowedSectionsFor({ role: 'Auditor' }, flags).includes('members'), false);
+  assert.equal(allowedSectionsFor({ role: 'HR Manager' }, flags).includes('humanResources'), true);
 });
 
 test('known feature overrides are normalized and unknown flags are discarded', () => {
@@ -188,7 +190,7 @@ test('public organisation registration stays aligned and legible in both themes'
     readFile(new URL('../css/style.css', import.meta.url), 'utf8')
   ]);
   assert.match(html, /name="theme-color"/);
-  assert.match(html, /20260803-attendance-breakdown/);
+  assert.match(html, /20260803-human-resources/);
   assert.match(css, /\.auth-page\s*\{[^}]*overflow-x:\s*hidden/s);
   assert.match(css, /\.organisation-registration-card\s+\.inline-check\s*\{[^}]*white-space:\s*normal/s);
   assert.match(css, /html\[data-theme="dark"\]\s+\.organisation-registration-card\s*\{[^}]*background:\s*#111e2e/s);
