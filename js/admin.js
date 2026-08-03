@@ -4918,9 +4918,93 @@ async function humanResourcesRequest(action, payload = {}) {
 function hrStaffOptions(directory = [], selected = '') {
   return `<option value="">Choose staff member</option>${directory.map((row) => {
     const username = clean(row.Username);
-    const label = [row.DisplayName || username, username, row.Department].filter(Boolean).join(' · ');
-    return `<option value="${escapeHtml(username)}" ${lower(selected) === lower(username) ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+    const label = [row.DisplayName || username, username, row.EmployeeId, row.Department, row.Position || row.Role].filter(Boolean).join(' · ');
+    const search = lower([label, row.WorkEmail, row.Phone].filter(Boolean).join(' '));
+    return `<option value="${escapeHtml(username)}" data-person-search="${escapeHtml(search)}" ${lower(selected) === lower(username) ? 'selected' : ''}>${escapeHtml(label)}</option>`;
   }).join('')}`;
+}
+
+function hrPersonPicker(id, label, directory = [], options = {}) {
+  const name = clean(options.name) || 'Username';
+  const selected = clean(options.selected);
+  const required = options.required === false ? '' : ' required';
+  const prompt = clean(options.prompt) || `Search ${label.toLowerCase()}`;
+  return `<div class="hr-person-picker" data-hr-person-picker>
+    <label for="${escapeHtml(id)}Search">Find ${escapeHtml(label.toLowerCase())}
+      <input id="${escapeHtml(id)}Search" type="search" data-hr-person-search placeholder="${escapeHtml(prompt)}" autocomplete="off">
+    </label>
+    <label for="${escapeHtml(id)}">${escapeHtml(label)}
+      <select id="${escapeHtml(id)}" name="${escapeHtml(name)}" data-hr-person-select${required}>${hrStaffOptions(directory, selected)}</select>
+    </label>
+    <small data-hr-person-count>${directory.length} staff available</small>
+  </div>`;
+}
+
+function bindHrPersonPickers(root = document) {
+  root.querySelectorAll('[data-hr-person-picker]').forEach((picker) => {
+    const search = picker.querySelector('[data-hr-person-search]');
+    const select = picker.querySelector('[data-hr-person-select]');
+    const count = picker.querySelector('[data-hr-person-count]');
+    if (!search || !select) return;
+    const source = [...select.options].map((option) => ({
+      value: option.value,
+      label: option.textContent,
+      search: lower(option.dataset.personSearch || option.textContent)
+    }));
+    const staff = source.filter((option) => option.value);
+    const render = () => {
+      const query = lower(search.value);
+      const previous = select.value;
+      const matches = staff.filter((option) => !query || option.search.includes(query));
+      select.replaceChildren(...source.filter((option) => !option.value || matches.includes(option)).map((item) => {
+        const option = document.createElement('option');
+        option.value = item.value;
+        option.textContent = item.label;
+        option.dataset.personSearch = item.search;
+        return option;
+      }));
+      if (matches.some((option) => option.value === previous)) select.value = previous;
+      else if (query && matches.length === 1) select.value = matches[0].value;
+      else select.value = '';
+      if (select.value !== previous) select.dispatchEvent(new Event('change', { bubbles: true }));
+      if (count) count.textContent = query ? `${matches.length} matching staff` : `${staff.length} staff available`;
+    };
+    search.addEventListener('input', render);
+    search.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      search.value = '';
+      render();
+      search.focus();
+    });
+    picker.closest('form')?.addEventListener('reset', () => setTimeout(() => {
+      search.value = '';
+      render();
+    }, 0));
+  });
+}
+
+function bindHrWorkspaceSearch(root = document) {
+  const search = root.querySelector('#humanResourcesPeopleSearch');
+  const count = root.querySelector('[data-hr-workspace-search-count]');
+  if (!search) return;
+  const rows = [...root.querySelectorAll('.hr-workspace-stack .admin-table tbody tr')]
+    .filter((row) => !/no records found/i.test(clean(row.textContent)));
+  const render = () => {
+    const query = lower(search.value);
+    let matches = 0;
+    rows.forEach((row) => {
+      const matched = !query || lower(row.textContent).includes(query);
+      row.hidden = !matched;
+      if (matched) matches += 1;
+    });
+    if (count) count.textContent = query ? `${matches} matching HR record${matches === 1 ? '' : 's'}` : 'Searches every HR register';
+  };
+  search.addEventListener('input', render);
+  search.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    search.value = '';
+    render();
+  });
 }
 
 function hrRoleGuide() {
@@ -4999,8 +5083,6 @@ function renderHumanResources(data) {
   const exits = data.exits || [];
   const capabilities = data.capabilities || {};
   const username = clean(currentUser?.username);
-  const staffOptions = hrStaffOptions(directory);
-  const reviewStaffOptions = hrStaffOptions(directory.filter((row) => lower(row.Username) !== lower(username)));
   const vacancyOptions = `<option value="">Choose vacancy</option>${vacancies.map((row) => `<option value="${escapeHtml(row.VacancyId || row.__id)}">${escapeHtml([row.Title, row.Department, row.Status].filter(Boolean).join(' · '))}</option>`).join('')}`;
   const pendingLeave = leave.filter((row) => /pending/i.test(clean(row.Status))).length;
   const activeStaff = directory.filter((row) => !/inactive|suspended|terminated/i.test(clean(row.Status)) && row.Active !== false).length;
@@ -5015,13 +5097,13 @@ function renderHumanResources(data) {
     <section class="config-group hr-form-card"><header><strong>Employment record</strong><small>Link HR information to an existing staff login; passwords and credentials are never exposed here.</small></header>
       <form id="hrEmployeeForm" class="workflow-form config-form">
         <div class="config-grid">
-          <label>Staff member <select name="Username" required>${staffOptions}</select></label>
+          ${hrPersonPicker('hrEmployeeUsername', 'Staff member', directory)}
           <label>Employee ID <input name="EmployeeId" placeholder="EMP-001"></label>
           <label>Position <input name="Position" required></label>
           <label>Department <input name="Department" required></label>
           <label>Employment type <select name="EmploymentType"><option>Permanent</option><option>Contract</option><option>Part-time</option><option>Temporary</option><option>Volunteer</option></select></label>
           <label>Hire date <input name="HireDate" type="date"></label>
-          <label>Line manager <select name="ManagerUsername">${hrStaffOptions(directory)}</select></label>
+          ${hrPersonPicker('hrEmployeeManager', 'Line manager', directory, { name: 'ManagerUsername', required: false })}
           <label>Work email <input name="WorkEmail" type="email"></label>
           <label>Phone <input name="Phone" type="tel"></label>
           <label>Status <select name="Status"><option>Active</option><option>On leave</option><option>Suspended</option><option>Exited</option></select></label>
@@ -5047,7 +5129,7 @@ function renderHumanResources(data) {
   recordsPanel.innerHTML = `${capabilities.canManageEmploymentHistory ? `
     <section class="config-group hr-form-card"><header><strong>Employment history and documents</strong><small>Register contracts, qualifications, promotions, transfers, awards and supporting document references.</small></header>
       <form id="hrHistoryForm" class="workflow-form config-form"><input name="HistoryId" type="hidden"><input name="DisplayName" type="hidden"><div class="config-grid">
-        <label>Staff member <select name="Username" required>${staffOptions}</select></label>
+        ${hrPersonPicker('hrHistoryUsername', 'Staff member', directory)}
         <label>Record type <select name="RecordType"><option>Contract</option><option>Qualification</option><option>Promotion</option><option>Transfer</option><option>Award</option><option>Employment document</option><option>Other</option></select></label>
         <label>Title <input name="Title" placeholder="e.g. B.Sc. certificate or promotion to manager" required></label>
         <label>Effective date <input name="EffectiveDate" type="date" required></label>
@@ -5069,7 +5151,7 @@ function renderHumanResources(data) {
     <section class="config-group hr-form-card"><header><strong>Request leave</strong><small>Staff may submit their own request. HR officers may submit one for another staff member.</small></header>
       <form id="hrLeaveForm" class="workflow-form config-form">
         <div class="config-grid">
-          ${capabilities.canManageLeave ? `<label>Staff member <select name="Username" required>${hrStaffOptions(directory, username)}</select></label>` : `<input name="Username" type="hidden" value="${escapeHtml(username)}">`}
+          ${capabilities.canManageLeave ? hrPersonPicker('hrLeaveUsername', 'Staff member', directory, { selected: username }) : `<input name="Username" type="hidden" value="${escapeHtml(username)}">`}
           <input name="DisplayName" type="hidden" value="${escapeHtml(currentUser?.displayName || username)}">
           <label>Leave type <select name="LeaveType"><option>Annual leave</option><option>Sick leave</option><option>Maternity leave</option><option>Paternity leave</option><option>Compassionate leave</option><option>Study leave</option><option>Unpaid leave</option></select></label>
           <label>Start date <input name="StartDate" type="date" required></label>
@@ -5093,7 +5175,7 @@ function renderHumanResources(data) {
   leavePanel.innerHTML += `${capabilities.canManageTime ? `
     <section class="config-group hr-form-card"><header><strong>Attendance, lateness and work schedules</strong><small>Record schedules, absence, lateness and authorised attendance corrections. Verified clock events remain available in Staff Attendance where enabled.</small></header>
       <form id="hrTimeForm" class="workflow-form config-form"><input name="TimeRecordId" type="hidden"><input name="DisplayName" type="hidden"><div class="config-grid">
-        <label>Staff member <select name="Username" required>${staffOptions}</select></label>
+        ${hrPersonPicker('hrTimeUsername', 'Staff member', directory)}
         <label>Record type <select name="RecordType"><option>Work schedule</option><option>Lateness</option><option>Absence</option><option>Attendance correction</option><option>Shift assignment</option></select></label>
         <label>Work date <input name="WorkDate" type="date" required></label>
         <label>Start time <input name="StartTime" type="time"></label><label>End time <input name="EndTime" type="time"></label>
@@ -5156,7 +5238,7 @@ function renderHumanResources(data) {
   performancePanel.innerHTML = `${capabilities.canManagePerformance ? `
     <section class="config-group hr-form-card"><header><strong>Performance review</strong><small>Keep reviews factual, work-related and visible only to authorised HR roles and the employee.</small></header>
       <form id="hrReviewForm" class="workflow-form config-form"><input name="ReviewId" type="hidden"><input name="DisplayName" type="hidden"><div class="config-grid">
-        <label>Staff member <select name="Username" required>${reviewStaffOptions}</select></label><label>Review period <input name="ReviewPeriod" placeholder="2026 Annual" required></label>
+        ${hrPersonPicker('hrReviewUsername', 'Staff member', directory.filter((row) => lower(row.Username) !== lower(username)))}<label>Review period <input name="ReviewPeriod" placeholder="2026 Annual" required></label>
         <label>Rating <select name="Rating" required><option value="">Choose rating</option><option value="1">1 - Needs improvement</option><option value="2">2 - Developing</option><option value="3">3 - Meets expectations</option><option value="4">4 - Exceeds expectations</option><option value="5">5 - Outstanding</option></select></label>
         <label>Status <select name="Status"><option>Completed</option><option>Draft</option><option>Follow-up required</option></select></label>
         <label>Strengths <textarea name="Strengths" rows="2"></textarea></label><label>Development areas <textarea name="DevelopmentAreas" rows="2"></textarea></label>
@@ -5175,7 +5257,7 @@ function renderHumanResources(data) {
   trainingPanel.innerHTML = `${capabilities.canManageTraining ? `
     <section class="config-group hr-form-card"><header><strong>Learning & development</strong><small>Plan training and keep completion or certificate references.</small></header>
       <form id="hrTrainingForm" class="workflow-form config-form"><input name="TrainingId" type="hidden"><input name="DisplayName" type="hidden"><div class="config-grid">
-        <label>Staff member <select name="Username" required>${staffOptions}</select></label><label>Course or programme <input name="Course" required></label>
+        ${hrPersonPicker('hrTrainingUsername', 'Staff member', directory)}<label>Course or programme <input name="Course" required></label>
         <label>Provider <input name="Provider"></label><label>Completion date <input name="CompletionDate" type="date"></label>
         <label>Status <select name="Status"><option>Planned</option><option>In progress</option><option>Completed</option><option>Cancelled</option></select></label>
         <label>Certificate reference <input name="CertificateReference"></label>
@@ -5193,7 +5275,7 @@ function renderHumanResources(data) {
   compensationPanel.innerHTML = `<p class="workspace-panel-note muted">Human Resources coordinates and approves changes here. Payroll remains the authoritative workspace for salary calculations, statutory deductions and payment.</p>${capabilities.canManageCompensation ? `
     <section class="config-group hr-form-card"><header><strong>Pay and benefits coordination</strong><small>Submit salary, allowance, pension, bonus, deduction or benefit changes for independent review and payroll implementation.</small></header>
       <form id="hrCompensationForm" class="workflow-form config-form"><input name="CompensationId" type="hidden"><input name="DisplayName" type="hidden"><div class="config-grid">
-        <label>Staff member <select name="Username" required>${staffOptions}</select></label>
+        ${hrPersonPicker('hrCompensationUsername', 'Staff member', directory)}
         <label>Change type <select name="ChangeType"><option>Salary adjustment</option><option>Allowance</option><option>Bonus</option><option>Pension</option><option>Deduction</option><option>Benefit</option><option>Other</option></select></label>
         <label>Amount <input name="Amount" type="number" min="0" step="0.01" value="0" data-finance-input></label>
         <label>Currency <input name="Currency" value="NGN" maxlength="3"></label>
@@ -5213,7 +5295,7 @@ function renderHumanResources(data) {
   relationsPanel.innerHTML = `${capabilities.canManageRelations || capabilities.canManageDiscipline ? `
     <section class="config-group hr-form-card"><header><strong>Employee welfare, relations and conduct</strong><small>Keep factual, confidential records of concerns, grievances, conflicts, misconduct and fair disciplinary action.</small></header>
       <form id="hrCaseForm" class="workflow-form config-form"><input name="CaseId" type="hidden"><input name="DisplayName" type="hidden"><div class="config-grid">
-        <label>Staff member <select name="Username" required>${staffOptions}</select></label>
+        ${hrPersonPicker('hrCaseUsername', 'Staff member', directory)}
         <label>Case type <select name="CaseType"><option>Welfare concern</option><option>Grievance</option><option>Workplace conflict</option>${capabilities.canManageDiscipline ? '<option>Misconduct</option><option>Disciplinary action</option>' : ''}<option>Health and safety</option><option>Other</option></select></label>
         <label>Case date <input name="OpenedDate" type="date" required></label>
         <label>Severity <select name="Severity"><option>Low</option><option selected>Moderate</option><option>High</option><option>Critical</option></select></label>
@@ -5256,7 +5338,7 @@ function renderHumanResources(data) {
   exitPanel.innerHTML = `${capabilities.canManageExit ? `
     <section class="config-group hr-form-card"><header><strong>Employee exit and clearance</strong><small>Coordinate notice, handover, clearance, final pay, exit interview and final documentation.</small></header>
       <form id="hrExitForm" class="workflow-form config-form"><input name="ExitId" type="hidden"><input name="DisplayName" type="hidden"><div class="config-grid">
-        <label>Staff member <select name="Username" required>${staffOptions}</select></label>
+        ${hrPersonPicker('hrExitUsername', 'Staff member', directory)}
         <label>Exit type <select name="ExitType"><option>Resignation</option><option>Retirement</option><option>Dismissal</option><option>End of contract</option><option>Redundancy</option><option>Death in service</option><option>Other</option></select></label>
         <label>Notice date <input name="NoticeDate" type="date"></label><label>Last working date <input name="LastWorkingDate" type="date" required></label>
         <label>Handover <select name="HandoverStatus"><option>Not started</option><option>In progress</option><option>Completed</option><option>Not applicable</option></select></label>
@@ -5289,7 +5371,7 @@ function renderHumanResources(data) {
     <div><small>Active exits</small><strong>${activeExits}</strong><span>Clearance in progress</span></div>
   </div>${hrRoleGuide()}`;
 
-  panelEl.innerHTML = `<div class="workflow-intro"><div><p class="eyebrow">People operations</p><h2>Human Resources</h2><p class="muted">Manage the employee journey from recruitment and employment records through wellbeing, development, compliance and exit.</p></div><button type="button" id="refreshHumanResources">Refresh</button></div><p id="humanResourcesStatus" class="status"></p>`;
+  panelEl.innerHTML = `<div class="workflow-intro"><div><p class="eyebrow">People operations</p><h2>Human Resources</h2><p class="muted">Manage the employee journey from recruitment and employment records through wellbeing, development, compliance and exit.</p></div><div class="hr-workspace-actions"><label for="humanResourcesPeopleSearch">Find a person<input id="humanResourcesPeopleSearch" type="search" placeholder="Name, ID, email, phone or department" autocomplete="off"></label><small data-hr-workspace-search-count>Searches every HR register</small><button type="button" id="refreshHumanResources">Refresh</button></div></div><p id="humanResourcesStatus" class="status"></p>`;
   panelEl.append(overviewPanel, peoplePanel, recordsPanel, leavePanel);
   if (capabilities.canManageRecruitment || vacancies.length) panelEl.append(recruitmentPanel);
   panelEl.append(performancePanel, trainingPanel);
@@ -5314,6 +5396,8 @@ function renderHumanResources(data) {
   renderModuleSummary('humanResources', data);
 
   document.getElementById('refreshHumanResources')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', loadHumanResources));
+  bindHrWorkspaceSearch(panelEl);
+  bindHrPersonPickers(panelEl);
   hrFormStaffNameSync(document.getElementById('hrEmployeeForm'), directory);
   hrFormStaffNameSync(document.getElementById('hrLeaveForm'), directory);
   hrFormStaffNameSync(document.getElementById('hrReviewForm'), directory);

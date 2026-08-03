@@ -170,3 +170,19 @@ test('HR web workspace is tabbed, responsive and backed by a protected API', () 
   assert.match(portalCss, /html\[data-theme="dark"\] \.hr-role-guide/);
   assert.match(portalCss, /@media\(max-width:620px\)/);
 });
+
+test('HR people can be searched wherever an existing staff record is required', () => {
+  assert.match(adminJs, /function hrPersonPicker\(/);
+  assert.match(adminJs, /function bindHrPersonPickers\(/);
+  assert.match(adminJs, /data-hr-person-search/);
+  assert.match(adminJs, /Name, ID, email, phone or department/);
+  assert.match(adminJs, /function bindHrWorkspaceSearch\(/);
+  assert.equal([...adminJs.matchAll(/hrPersonPicker\('hr[A-Z][^']*'/g)].length, 10);
+  for (const field of [
+    'hrEmployeeUsername', 'hrEmployeeManager', 'hrHistoryUsername', 'hrLeaveUsername', 'hrTimeUsername',
+    'hrReviewUsername', 'hrTrainingUsername', 'hrCompensationUsername', 'hrCaseUsername', 'hrExitUsername'
+  ]) assert.match(adminJs, new RegExp(field));
+  assert.match(portalCss, /\.hr-person-picker/);
+  assert.match(portalCss, /\.hr-workspace-actions/);
+  assert.match(portalCss, /html\[data-theme="dark"\] \.hr-person-picker/);
+});
