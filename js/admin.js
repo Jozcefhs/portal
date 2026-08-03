@@ -4007,7 +4007,7 @@ async function loadChurchDonations() {
         </div>
         ${currencyMode === 'BATCH_SETTLEMENT' && capabilities.canCollect ? `<form id="churchCurrencySettlementForm" class="workflow-form config-form">
           <h3>Record a completed currency conversion</h3>
-          <p class="muted">Choose one currency and the gifts included in the conversion. Enter the completed conversion rate and the system will calculate their NGN equivalent.</p>
+          <p class="muted">Choose one currency. All outstanding gifts in that currency will be selected automatically; untick any gift you do not want to include. Enter the completed conversion rate and the system will calculate their NGN equivalent.</p>
           <div class="config-grid">
             <label>Currency <select name="Currency" id="churchSettlementCurrency" required><option value="">Choose currency</option>${awaitingCurrencies.map((currency) => `<option value="${escapeHtml(currency)}">${escapeHtml(currency)}</option>`).join('')}</select></label>
             <label>Conversion rate (NGN per unit) <input name="ExchangeRate" type="number" min="0.00000001" step="0.00000001" inputmode="decimal" placeholder="e.g. 1,600" data-finance-input data-finance-decimals="8" required></label>
@@ -4186,8 +4186,9 @@ async function loadChurchDonations() {
       const selected = clean(settlementCurrency?.value).toUpperCase();
       panelEl.querySelectorAll('[data-settlement-currency]').forEach((label) => {
         const matches = !selected || clean(label.dataset.settlementCurrency).toUpperCase() === selected;
+        const checkbox = label.querySelector('input[name="DonationIds"]');
         label.hidden = !matches;
-        if (!matches) label.querySelector('input').checked = false;
+        if (checkbox) checkbox.checked = Boolean(selected && matches);
       });
       syncSettlementCalculation();
     };
