@@ -3990,19 +3990,21 @@ async function loadChurchDonations() {
         </div>
         ${currencyMode === 'BATCH_SETTLEMENT' && capabilities.canCollect ? `<form id="churchCurrencySettlementForm" class="workflow-form config-form">
           <h3>Record a completed currency conversion</h3>
-          <p class="muted">Choose one currency and the gifts included in the conversion. Record actual NGN proceeds, not an estimated rate.</p>
+          <p class="muted">Choose one currency and the gifts included in the conversion. Enter the completed conversion rate and the system will calculate their NGN equivalent.</p>
           <div class="config-grid">
             <label>Currency <select name="Currency" id="churchSettlementCurrency" required><option value="">Choose currency</option>${awaitingCurrencies.map((currency) => `<option value="${escapeHtml(currency)}">${escapeHtml(currency)}</option>`).join('')}</select></label>
-            <label>Gross NGN proceeds <input name="GrossNgnProceeds" type="number" min="0.01" step="0.01" required></label>
+            <label>Conversion rate (NGN per unit) <input name="ExchangeRate" type="number" min="0.00000001" step="0.00000001" inputmode="decimal" placeholder="e.g. 1600" required></label>
+            <label>Calculated NGN equivalent <input name="GrossNgnProceeds" type="number" min="0.01" step="0.01" readonly required></label>
             <label>Conversion charge (NGN) <input name="ConversionFee" type="number" min="0" step="0.01" value="0"></label>
             <label>Settlement date <input name="SettlementDate" type="date" value="${new Date().toISOString().slice(0, 10)}" required></label>
             <label>Bank / bureau reference <input name="Reference"></label>
           </div>
+          <p class="notice" id="churchSettlementCalculation">Select gifts and enter their completed conversion rate.</p>
           <div class="settlement-selection" id="churchSettlementDonations">
             ${awaitingForeignDonations.map((row) => {
               const id = clean(row.DonationId || row.__id);
               const currency = clean(row.TransactionCurrency || row.Currency).toUpperCase();
-              return `<label data-settlement-currency="${escapeHtml(currency)}"><input type="checkbox" name="DonationIds" value="${escapeHtml(id)}"><span><strong>${escapeHtml(row.DonorName || 'Donor')}</strong><small>${escapeHtml(moneyInCurrency(row.Amount, currency))} · ${escapeHtml(row.PaymentType || 'Donation')}</small></span></label>`;
+              return `<label data-settlement-currency="${escapeHtml(currency)}" data-settlement-amount="${escapeHtml(row.Amount)}"><input type="checkbox" name="DonationIds" value="${escapeHtml(id)}"><span><strong>${escapeHtml(row.DonorName || 'Donor')}</strong><small>${escapeHtml(moneyInCurrency(row.Amount, currency))} · ${escapeHtml(row.PaymentType || 'Donation')}</small></span></label>`;
             }).join('') || '<p class="muted">There are no paid foreign gifts awaiting conversion.</p>'}
           </div>
           <div class="config-dialog-actions"><p class="status" id="churchSettlementStatus"></p><button type="submit">Settle selected gifts</button></div>
@@ -4145,6 +4147,24 @@ async function loadChurchDonations() {
     });
     const settlementForm = document.getElementById('churchCurrencySettlementForm');
     const settlementCurrency = document.getElementById('churchSettlementCurrency');
+    const settlementCalculation = document.getElementById('churchSettlementCalculation');
+    const syncSettlementCalculation = () => {
+      if (!settlementForm) return;
+      const currency = clean(settlementCurrency?.value).toUpperCase();
+      const selectedLabels = [...settlementForm.querySelectorAll('[data-settlement-currency]')]
+        .filter((label) => !label.hidden && label.querySelector('input[name="DonationIds"]')?.checked);
+      const foreignTotal = selectedLabels.reduce((sum, label) => sum + Number(label.dataset.settlementAmount || 0), 0);
+      const rate = Number(settlementForm.elements.ExchangeRate?.value || 0);
+      const grossNgn = Math.round(((foreignTotal * rate) + Number.EPSILON) * 100) / 100;
+      const conversionFee = Number(settlementForm.elements.ConversionFee?.value || 0);
+      const grossInput = settlementForm.elements.GrossNgnProceeds;
+      if (grossInput) grossInput.value = foreignTotal > 0 && rate > 0 ? grossNgn.toFixed(2) : '';
+      if (!settlementCalculation) return;
+      if (!currency) settlementCalculation.textContent = 'Choose a currency, select its gifts and enter the completed conversion rate.';
+      else if (!foreignTotal) settlementCalculation.textContent = `Select one or more ${currency} gifts to calculate their NGN equivalent.`;
+      else if (!(rate > 0)) settlementCalculation.textContent = `${moneyInCurrency(foreignTotal, currency)} selected. Enter the NGN conversion rate.`;
+      else settlementCalculation.textContent = `${moneyInCurrency(foreignTotal, currency)} × NGN ${rate.toLocaleString(undefined, { maximumFractionDigits: 8 })} = ${money(grossNgn)} gross equivalent · ${money(Math.max(0, grossNgn - conversionFee))} after charges.`;
+    };
     const filterSettlementRows = () => {
       const selected = clean(settlementCurrency?.value).toUpperCase();
       panelEl.querySelectorAll('[data-settlement-currency]').forEach((label) => {
@@ -4152,8 +4172,12 @@ async function loadChurchDonations() {
         label.hidden = !matches;
         if (!matches) label.querySelector('input').checked = false;
       });
+      syncSettlementCalculation();
     };
     settlementCurrency?.addEventListener('change', filterSettlementRows);
+    settlementForm?.elements.ExchangeRate?.addEventListener('input', syncSettlementCalculation);
+    settlementForm?.elements.ConversionFee?.addEventListener('input', syncSettlementCalculation);
+    settlementForm?.querySelectorAll('input[name="DonationIds"]').forEach((input) => input.addEventListener('change', syncSettlementCalculation));
     filterSettlementRows();
     settlementForm?.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -4163,6 +4187,10 @@ async function loadChurchDonations() {
       payload.DonationIds = new FormData(settlementForm).getAll('DonationIds');
       if (!payload.DonationIds.length) {
         setStatus(status, 'Select at least one donation from this currency.', 'bad');
+        return;
+      }
+      if (!(Number(payload.ExchangeRate) > 0) || !(Number(payload.GrossNgnProceeds) > 0)) {
+        setStatus(status, 'Enter the completed conversion rate to calculate the NGN equivalent.', 'bad');
         return;
       }
       setButtonLoading(button, true, 'Settling...', 'Settle selected gifts');

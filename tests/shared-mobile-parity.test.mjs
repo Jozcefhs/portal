@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260803-workspace-tabs';
-const adminScriptVersion = '20260803-workspace-tabs';
+const adminScriptVersion = '20260803-currency-rate-settlement';
 const parentScriptVersion = '20260802-parent-password-session';
 const notificationVersion = '20260802-dark-settings-contrast';
 const pageNames = [
@@ -101,7 +101,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v114-workspace-tabs/);
+  assert.match(serviceWorker, /dynamax-v115-currency-rate-settlement/);
   assert.match(serviceWorker, /'\/give\.html'/);
   assert.match(serviceWorker, /'\/js\/give\.js'/);
   assert.match(serviceWorker, /'\/store\.html'/);

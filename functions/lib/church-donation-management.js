@@ -179,7 +179,7 @@ export function buildDonationInsights(donations = []) {
   };
 }
 
-export function allocateCurrencySettlement(donations = [], grossNgnValue, conversionFeeValue = 0) {
+export function allocateCurrencySettlement(donations = [], grossNgnValue, conversionFeeValue = 0, exchangeRateValue = 0) {
   if (!donations.length) fail('Select at least one donation for settlement.');
   const currency = clean(donations[0].TransactionCurrency || donations[0].Currency).toUpperCase();
   if (!currency || currency === 'NGN') fail('Choose foreign-currency donations.');
@@ -191,7 +191,14 @@ export function allocateCurrencySettlement(donations = [], grossNgnValue, conver
   const feeNgn = amount(conversionFeeValue);
   if (grossNgn <= 0) fail('Enter the gross NGN proceeds received from conversion.');
   if (feeNgn < 0 || feeNgn >= grossNgn) fail('Conversion charges must be zero or less than the gross NGN proceeds.');
-  const rate = Math.round(((grossNgn / totalForeign) + Number.EPSILON) * 1e8) / 1e8;
+  const submittedRate = Number(exchangeRateValue || 0);
+  if (submittedRate < 0 || !Number.isFinite(submittedRate)) fail('Enter a valid positive conversion rate.');
+  const rate = submittedRate > 0
+    ? Math.round((submittedRate + Number.EPSILON) * 1e8) / 1e8
+    : Math.round(((grossNgn / totalForeign) + Number.EPSILON) * 1e8) / 1e8;
+  if (submittedRate > 0 && Math.abs(amount(totalForeign * rate) - grossNgn) > 0.01) {
+    fail('The NGN equivalent does not match the selected gifts and conversion rate. Refresh and try again.');
+  }
   let allocatedGross = 0;
   let allocatedFee = 0;
   const allocations = donations.map((row, index) => {
@@ -225,7 +232,7 @@ export async function settleCurrencyBatch(env, user, body = {}) {
     if (!['paid', 'completed'].includes(lower(row.Status || row.PaymentStatus))) fail('Only paid donations can be settled.');
     if (lower(row.ConversionStatus) === 'converted') fail('One or more selected donations have already been converted.');
   });
-  const allocation = allocateCurrencySettlement(rows, body.GrossNgnProceeds, body.ConversionFee);
+  const allocation = allocateCurrencySettlement(rows, body.GrossNgnProceeds, body.ConversionFee, body.ExchangeRate);
   const batchId = safeChurchDocumentId(clean(body.SettlementBatchId) || `FX-${new Date().toISOString().slice(0, 10)}-${crypto.randomUUID().slice(0, 8)}`);
   const settledAt = clean(body.SettlementDate) || nowIso().slice(0, 10);
   const allocationById = new Map(allocation.allocations.map((item) => [safeChurchDocumentId(item.DonationId), item]));

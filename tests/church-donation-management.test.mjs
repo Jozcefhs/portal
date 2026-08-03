@@ -30,6 +30,21 @@ test('a batch settlement allocates actual NGN proceeds and charges without round
   assert.equal(result.allocations.reduce((sum, row) => sum + row.BaseConversionFee, 0), 3000);
 });
 
+test('a supplied conversion rate must reproduce the calculated NGN equivalent', () => {
+  const donations = [
+    { DonationId: 'D1', Amount: 100, Currency: 'USD' },
+    { DonationId: 'D2', Amount: 50, Currency: 'USD' }
+  ];
+  const result = allocateCurrencySettlement(donations, 240000, 3000, 1600);
+
+  assert.equal(result.rate, 1600);
+  assert.equal(result.grossNgn, 240000);
+  assert.throws(
+    () => allocateCurrencySettlement(donations, 250000, 3000, 1600),
+    /does not match the selected gifts and conversion rate/
+  );
+});
+
 test('donor ranking combines only settled NGN equivalents and preserves currency holdings separately', () => {
   const insights = buildDonationInsights([
     { DonorName: 'Ada', DonorEmail: 'ada@example.test', Status: 'Paid', Amount: 100, Currency: 'USD', ConversionStatus: 'Awaiting Rate' },
@@ -75,6 +90,8 @@ test('church staff interface exposes clean donor, currency and staff-attendance 
   assert.match(admin, /Donor register/);
   assert.match(admin, /name="ForeignCurrencyMode"/);
   assert.match(admin, /Settle selected gifts/);
+  assert.match(admin, /name="ExchangeRate"/);
+  assert.match(admin, /syncSettlementCalculation/);
   assert.match(admin, /\['staffAttendance', 'Staff Attendance'\]/);
   assert.match(admin, /\/api\/staff-attendance/);
   assert.match(style, /\.attendance-clock-card/);
