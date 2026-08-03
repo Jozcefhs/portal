@@ -3973,17 +3973,17 @@ async function loadChurchDonations() {
           <div class="config-dialog-actions"><p class="status" id="churchDonorStatus"></p><button type="submit">Save donor</button></div>
         </form>` : ''}
         <div class="management-split">
-          ${table('Top 10 donors', topDonors, [
+          <div class="management-table-block" style="min-width:0">${table('Top 10 donors', topDonors, [
             { label: 'Donor', value: (row) => row.DonorName },
             { label: 'Settled NGN total', value: (row) => money(row.SettledNgnTotal) },
             { label: 'Gifts', value: (row) => row.DonationCount }
-          ])}
-          ${table('Registered donors', donors, [
+          ])}</div>
+          <div class="management-table-block" style="min-width:0">${table('Registered donors', donors, [
             { label: 'Name', value: (row) => row.DisplayName },
             { label: 'Email', value: (row) => row.Email },
             { label: 'Phone', value: (row) => row.Phone },
             { label: 'Action', render: (row) => capabilities.canCollect ? `<button type="button" class="table-action" data-edit-donor="${escapeHtml(row.DonorId || row.__id)}">Edit</button>` : '' }
-          ])}
+          ])}</div>
         </div>
       </section>
       <section class="config-group" id="donationCurrencyPanel">

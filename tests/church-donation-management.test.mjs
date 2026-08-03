@@ -93,6 +93,7 @@ test('church staff interface exposes clean donor, currency and staff-attendance 
   assert.match(admin, /name="ExchangeRate"/);
   assert.match(admin, /syncSettlementCalculation/);
   assert.match(admin, /checkbox\.checked = Boolean\(selected && matches\)/);
+  assert.equal((admin.match(/class="management-table-block"/g) || []).length, 2);
   assert.match(admin, /\['staffAttendance', 'Staff Attendance'\]/);
   assert.match(admin, /\/api\/staff-attendance/);
   assert.match(style, /\.attendance-clock-card/);
