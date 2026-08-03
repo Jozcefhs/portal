@@ -3,9 +3,16 @@ import { requireStaffSession } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
 import {
   hrCapabilitiesFor,
+  normalizeHrCandidate,
+  normalizeHrCompensationChange,
+  normalizeHrCompliance,
   normalizeHrEmployee,
+  normalizeHrEmployeeCase,
+  normalizeHrEmploymentHistory,
+  normalizeHrExit,
   normalizeHrLeave,
   normalizeHrReview,
+  normalizeHrTimeRecord,
   normalizeHrTraining,
   normalizeHrVacancy,
   safeHrStaffUser
@@ -70,14 +77,23 @@ async function audit(env, user, action, reference, details = '') {
 async function listWorkspace(env, user) {
   const capabilities = hrCapabilitiesFor(user);
   const username = actorUsername(user);
-  const [staffUsers, employees, leave, vacancies, reviews, training] = await Promise.all([
+  const [staffUsers, employees, leave, vacancies, reviews, training, lifecycleRecords] = await Promise.all([
     listCollection(env, 'staffUsers'),
     listCollection(env, 'hrEmployees').catch(() => []),
     listCollection(env, 'hrLeaveRequests').catch(() => []),
     listCollection(env, 'hrVacancies').catch(() => []),
     listCollection(env, 'hrPerformanceReviews').catch(() => []),
-    listCollection(env, 'hrTrainingRecords').catch(() => [])
+    listCollection(env, 'hrTrainingRecords').catch(() => []),
+    listCollection(env, 'hrLifecycleRecords').catch(() => [])
   ]);
+  const lifecycle = (kind) => lifecycleRecords.filter((row) => clean(row.RecordKind) === kind);
+  const candidates = lifecycle('Candidate');
+  const employmentHistory = lifecycle('EmploymentHistory');
+  const compensation = lifecycle('Compensation');
+  const timeRecords = lifecycle('TimeRecord');
+  const employeeCases = lifecycle('EmployeeCase');
+  const compliance = lifecycle('Compliance');
+  const exits = lifecycle('Exit');
   const safeStaff = staffUsers.map(safeHrStaffUser).filter((row) => row.Username);
   const employeeByUsername = new Map(employees.map((row) => [lower(row.Username), row]));
   const directory = safeStaff.map((row) => ({ ...row, ...(employeeByUsername.get(lower(row.Username)) || {}) }));
@@ -95,11 +111,26 @@ async function listWorkspace(env, user) {
     ? leave
     : ownOrTeam(leave);
   const visibleReviews = capabilities.canManagePerformance || capabilities.canSeeAllHrRecords
-    ? reviews
+    ? role === 'Line Manager' ? ownOrTeam(reviews) : reviews
     : ownOrTeam(reviews);
   const visibleTraining = capabilities.canManageTraining || capabilities.canSeeAllHrRecords
     ? training
     : ownOrTeam(training);
+  const visibleHistory = capabilities.canManageEmploymentHistory || capabilities.canSeeAllHrRecords
+    ? employmentHistory
+    : employmentHistory.filter((row) => lower(row.Username) === username);
+  const visibleCompensation = capabilities.canManageCompensation || capabilities.canReviewCompensation || capabilities.canSeeAllHrRecords
+    ? compensation
+    : compensation.filter((row) => lower(row.Username) === username);
+  const visibleTimeRecords = capabilities.canManageTime || capabilities.canSeeAllHrRecords
+    ? role === 'Line Manager' ? ownOrTeam(timeRecords) : timeRecords
+    : ownOrTeam(timeRecords);
+  const visibleCases = capabilities.canManageRelations || capabilities.canManageDiscipline || capabilities.canSeeAllHrRecords
+    ? employeeCases
+    : [];
+  const visibleExits = capabilities.canManageExit || capabilities.canSeeAllHrRecords
+    ? exits
+    : exits.filter((row) => lower(row.Username) === username);
   return {
     ok: true,
     capabilities,
@@ -107,9 +138,59 @@ async function listWorkspace(env, user) {
     directory: visibleDirectory.sort((a, b) => clean(a.DisplayName).localeCompare(clean(b.DisplayName))),
     leave: sorted(visibleLeave, 'SubmittedAt'),
     vacancies: capabilities.canManageRecruitment || capabilities.canSeeAllHrRecords ? sorted(vacancies, 'CreatedAt') : [],
+    candidates: capabilities.canManageRecruitment || capabilities.canSeeAllHrRecords ? sorted(candidates, 'UpdatedAt') : [],
     reviews: sorted(visibleReviews, 'ReviewedAt'),
-    training: sorted(visibleTraining, 'UpdatedAt')
+    training: sorted(visibleTraining, 'UpdatedAt'),
+    employmentHistory: sorted(visibleHistory, 'EffectiveDate'),
+    compensation: sorted(visibleCompensation, 'UpdatedAt'),
+    timeRecords: sorted(visibleTimeRecords, 'WorkDate'),
+    employeeCases: sorted(visibleCases, 'OpenedDate'),
+    compliance: capabilities.canManageCompliance || capabilities.canSeeAllHrRecords ? sorted(compliance, 'DueDate') : [],
+    exits: sorted(visibleExits, 'LastWorkingDate')
   };
+}
+
+async function knownStaff(env, username) {
+  const id = lower(username);
+  const rows = await listCollection(env, 'staffUsers');
+  const staff = rows.find((row) => lower(row.Username || row.__id) === id);
+  if (!staff) fail('Choose an existing staff account.', 404);
+  return safeHrStaffUser(staff);
+}
+
+async function saveManagedRecord(env, user, body, capabilities, options) {
+  assertCapability(capabilities, options.capability, options.deniedMessage);
+  const id = safeId(clean(body[options.idField]) || `${options.prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`);
+  const existing = clean(body[options.idField]) ? await getDocument(env, options.collection, id).catch(() => null) : null;
+  if (existing && clean(existing.RecordKind) && clean(existing.RecordKind) !== options.recordKind) {
+    fail('This HR record belongs to a different workflow.', 409);
+  }
+  let incoming = body;
+  if (options.staffTarget) {
+    const staff = await knownStaff(env, body.Username || existing?.Username);
+    if (options.lineManagerTarget) await assertLineManagerTarget(env, user, staff.Username);
+    incoming = { ...body, Username: staff.Username, DisplayName: clean(body.DisplayName || staff.DisplayName) };
+  }
+  const record = {
+    ...(existing || {}),
+    [options.idField]: id,
+    RecordKind: options.recordKind,
+    ...options.normalize(incoming, existing || {}),
+    CreatedAt: clean(existing?.CreatedAt) || nowIso(),
+    CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+    CreatedByUsername: clean(existing?.CreatedByUsername) || actorUsername(user),
+    UpdatedAt: nowIso(),
+    UpdatedBy: actorName(user),
+    UpdatedByUsername: actorUsername(user)
+  };
+  delete record.__id;
+  delete record.__name;
+  delete record.__createTime;
+  delete record.__updateTime;
+  await upsertDocument(env, options.collection, id, record,
+    existing?.__updateTime ? { updateTime: existing.__updateTime } : { exists: false });
+  await audit(env, user, existing ? `UPDATE ${options.auditLabel}` : `CREATE ${options.auditLabel}`, id, clean(record.Username || record.CandidateName || record.Obligation));
+  return { ok: true, message: options.message, record };
 }
 
 async function saveEmployee(env, user, body, capabilities) {
@@ -135,6 +216,8 @@ async function saveEmployee(env, user, body, capabilities) {
   };
   delete record.__id;
   delete record.__name;
+  delete record.__createTime;
+  delete record.__updateTime;
   await upsertDocument(env, 'hrEmployees', id, record);
   await audit(env, user, existing ? 'UPDATE EMPLOYEE' : 'CREATE EMPLOYEE', username, record.Position);
   return { ok: true, message: 'Employment record saved.', employee: record };
@@ -241,6 +324,116 @@ async function saveTraining(env, user, body, capabilities) {
   return { ok: true, message: 'Training record saved.', training: record };
 }
 
+async function saveCandidate(env, user, body, capabilities) {
+  const vacancy = await getDocument(env, 'hrVacancies', safeId(body.VacancyId)).catch(() => null);
+  if (!vacancy) fail('Choose an existing vacancy before adding a candidate.', 404);
+  return saveManagedRecord(env, user, body, capabilities, {
+    capability: 'canManageRecruitment', deniedMessage: 'Your HR role cannot manage recruitment candidates.',
+    collection: 'hrLifecycleRecords', recordKind: 'Candidate', idField: 'CandidateId', prefix: 'CANDIDATE', normalize: normalizeHrCandidate,
+    auditLabel: 'CANDIDATE', message: 'Candidate record saved.'
+  });
+}
+
+async function saveEmploymentHistory(env, user, body, capabilities) {
+  return saveManagedRecord(env, user, body, capabilities, {
+    capability: 'canManageEmploymentHistory', deniedMessage: 'Your HR role cannot manage employment history or document references.',
+    collection: 'hrLifecycleRecords', recordKind: 'EmploymentHistory', idField: 'HistoryId', prefix: 'HISTORY', normalize: normalizeHrEmploymentHistory,
+    auditLabel: 'EMPLOYMENT HISTORY', message: 'Employment history record saved.', staffTarget: true
+  });
+}
+
+async function saveCompensation(env, user, body, capabilities) {
+  if (clean(body.CompensationId)) {
+    const existing = await getDocument(env, 'hrLifecycleRecords', safeId(body.CompensationId)).catch(() => null);
+    if (existing && lower(existing.Status) !== 'pending') fail('A reviewed pay or benefit change cannot be edited.', 409);
+  }
+  return saveManagedRecord(env, user, body, capabilities, {
+    capability: 'canManageCompensation', deniedMessage: 'Your HR role cannot submit pay or benefit changes.',
+    collection: 'hrLifecycleRecords', recordKind: 'Compensation', idField: 'CompensationId', prefix: 'COMP', normalize: normalizeHrCompensationChange,
+    auditLabel: 'COMPENSATION CHANGE', message: 'Pay or benefit change sent for review.', staffTarget: true
+  });
+}
+
+async function reviewCompensation(env, user, body, capabilities) {
+  assertCapability(capabilities, 'canReviewCompensation', 'Your role cannot review pay or benefit changes.');
+  const id = safeId(body.CompensationId);
+  const decision = clean(body.Decision);
+  if (!id) fail('Choose a pay or benefit change.');
+  if (!['Approved', 'Declined', 'Implemented'].includes(decision)) fail('Choose Approve, Decline or Implemented.');
+  const existing = await getDocument(env, 'hrLifecycleRecords', id).catch(() => null);
+  if (!existing) fail('The pay or benefit change was not found.', 404);
+  if (clean(existing.RecordKind) !== 'Compensation') fail('This is not a pay or benefit change.', 409);
+  if (lower(existing.CreatedByUsername) === actorUsername(user) && decision === 'Approved') fail('You cannot approve a pay or benefit change that you created.', 409);
+  const currentStatus = clean(existing.Status || 'Pending');
+  const validTransition = (currentStatus === 'Pending' && ['Approved', 'Declined'].includes(decision))
+    || (currentStatus === 'Approved' && decision === 'Implemented');
+  if (!validTransition) fail(`A ${currentStatus.toLowerCase()} pay or benefit change cannot be marked ${decision.toLowerCase()}.`, 409);
+  const record = {
+    ...existing, Status: decision, ReviewNotes: clean(body.ReviewNotes), ReviewedAt: nowIso(),
+    ReviewedBy: actorName(user), ReviewedByUsername: actorUsername(user), UpdatedAt: nowIso()
+  };
+  delete record.__id;
+  delete record.__name;
+  delete record.__createTime;
+  delete record.__updateTime;
+  await upsertDocument(env, 'hrLifecycleRecords', id, record, { updateTime: existing.__updateTime });
+  await audit(env, user, `${decision.toUpperCase()} COMPENSATION CHANGE`, id, record.Username);
+  return { ok: true, message: `Pay or benefit change marked ${decision.toLowerCase()}.`, record };
+}
+
+async function saveTimeRecord(env, user, body, capabilities) {
+  return saveManagedRecord(env, user, body, capabilities, {
+    capability: 'canManageTime', deniedMessage: 'Your HR role cannot manage schedules, lateness or absence records.',
+    collection: 'hrLifecycleRecords', recordKind: 'TimeRecord', idField: 'TimeRecordId', prefix: 'TIME', normalize: normalizeHrTimeRecord,
+    auditLabel: 'TIME RECORD', message: 'Attendance or schedule record saved.', staffTarget: true, lineManagerTarget: true
+  });
+}
+
+async function saveEmployeeCase(env, user, body, capabilities) {
+  const existing = clean(body.CaseId) ? await getDocument(env, 'hrLifecycleRecords', safeId(body.CaseId)).catch(() => null) : null;
+  const caseType = clean(body.CaseType || existing?.CaseType);
+  const capability = ['Misconduct', 'Disciplinary action'].includes(caseType) ? 'canManageDiscipline' : 'canManageRelations';
+  return saveManagedRecord(env, user, body, capabilities, {
+    capability, deniedMessage: 'Your HR role cannot manage this employee relations or conduct case.',
+    collection: 'hrLifecycleRecords', recordKind: 'EmployeeCase', idField: 'CaseId', prefix: 'CASE', normalize: normalizeHrEmployeeCase,
+    auditLabel: 'EMPLOYEE CASE', message: 'Employee relations or conduct case saved.', staffTarget: true
+  });
+}
+
+async function saveCompliance(env, user, body, capabilities) {
+  return saveManagedRecord(env, user, body, capabilities, {
+    capability: 'canManageCompliance', deniedMessage: 'Your HR role cannot manage the compliance register.',
+    collection: 'hrLifecycleRecords', recordKind: 'Compliance', idField: 'ComplianceId', prefix: 'COMPLIANCE', normalize: normalizeHrCompliance,
+    auditLabel: 'COMPLIANCE ITEM', message: 'Compliance item saved.'
+  });
+}
+
+async function saveExit(env, user, body, capabilities) {
+  const existingExit = clean(body.ExitId) ? await getDocument(env, 'hrLifecycleRecords', safeId(body.ExitId)).catch(() => null) : null;
+  if (existingExit && lower(existingExit.Status) === 'completed') fail('A completed employee exit cannot be edited.', 409);
+  const result = await saveManagedRecord(env, user, body, capabilities, {
+    capability: 'canManageExit', deniedMessage: 'Your HR role cannot manage employee exits.',
+    collection: 'hrLifecycleRecords', recordKind: 'Exit', idField: 'ExitId', prefix: 'EXIT', normalize: normalizeHrExit,
+    auditLabel: 'EMPLOYEE EXIT', message: 'Employee exit record saved.', staffTarget: true
+  });
+  if (clean(result.record.Status) === 'Completed') {
+    const employeeId = safeId(result.record.Username);
+    const employee = await getDocument(env, 'hrEmployees', employeeId).catch(() => null);
+    if (employee) {
+      const updatedEmployee = {
+        ...employee, Status: 'Exited', ExitDate: result.record.LastWorkingDate,
+        UpdatedAt: nowIso(), UpdatedBy: actorName(user)
+      };
+      delete updatedEmployee.__id;
+      delete updatedEmployee.__name;
+      delete updatedEmployee.__createTime;
+      delete updatedEmployee.__updateTime;
+      await upsertDocument(env, 'hrEmployees', employeeId, updatedEmployee, { updateTime: employee.__updateTime });
+    }
+  }
+  return result;
+}
+
 export async function onRequestPost(context) {
   try {
     requireFirestoreEnv(context.env);
@@ -257,6 +450,14 @@ export async function onRequestPost(context) {
     else if (action === 'savevacancy') result = await saveVacancy(context.env, user, body, capabilities);
     else if (action === 'savereview') result = await saveReview(context.env, user, body, capabilities);
     else if (action === 'savetraining') result = await saveTraining(context.env, user, body, capabilities);
+    else if (action === 'savecandidate') result = await saveCandidate(context.env, user, body, capabilities);
+    else if (action === 'saveemploymenthistory') result = await saveEmploymentHistory(context.env, user, body, capabilities);
+    else if (action === 'savecompensation') result = await saveCompensation(context.env, user, body, capabilities);
+    else if (action === 'reviewcompensation') result = await reviewCompensation(context.env, user, body, capabilities);
+    else if (action === 'savetimerecord') result = await saveTimeRecord(context.env, user, body, capabilities);
+    else if (action === 'saveemployeecase') result = await saveEmployeeCase(context.env, user, body, capabilities);
+    else if (action === 'savecompliance') result = await saveCompliance(context.env, user, body, capabilities);
+    else if (action === 'saveexit') result = await saveExit(context.env, user, body, capabilities);
     else fail('Choose a valid Human Resources action.');
     return Response.json(result, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (error) {

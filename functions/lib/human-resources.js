@@ -45,6 +45,14 @@ export function hrCapabilitiesFor(user = {}) {
     canManageRecruitment: generalist || ['HR Assistant', 'Recruitment Officer'].includes(role),
     canManagePerformance: generalist || ['Employee Relations Officer', 'Performance Management Officer', 'Line Manager'].includes(role),
     canManageTraining: generalist || ['Learning & Development Officer', 'Health & Safety Officer'].includes(role),
+    canManageEmploymentHistory: generalist || role === 'HR Assistant',
+    canManageCompensation: generalist || role === 'Compensation & Benefits Officer',
+    canReviewCompensation: leader || executive || role === 'Payroll Officer',
+    canManageTime: generalist || ['HR Assistant', 'Employee Relations Officer', 'Line Manager'].includes(role),
+    canManageRelations: generalist || ['Employee Relations Officer', 'Health & Safety Officer'].includes(role),
+    canManageDiscipline: generalist || role === 'Employee Relations Officer',
+    canManageCompliance: generalist || ['Health & Safety Officer', 'Compensation & Benefits Officer', 'Payroll Officer'].includes(role),
+    canManageExit: generalist || role === 'Employee Relations Officer',
     canSeeAllHrRecords: generalist || executive
   };
 }
@@ -70,6 +78,27 @@ function required(value, label) {
     throw error;
   }
   return result;
+}
+
+function option(value, allowed, fallback, label) {
+  const selected = clean(value || fallback);
+  if (!allowed.includes(selected)) {
+    const error = new Error(`Choose a valid ${label}.`);
+    error.status = 400;
+    throw error;
+  }
+  return selected;
+}
+
+function optionalMoney(value, label) {
+  if (clean(value) === '') return 0;
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0 || amount > 1000000000000) {
+    const error = new Error(`${label} must be zero or a valid positive amount.`);
+    error.status = 400;
+    throw error;
+  }
+  return Math.round((amount + Number.EPSILON) * 100) / 100;
 }
 
 export function normalizeHrEmployee(input = {}, existing = {}) {
@@ -160,5 +189,137 @@ export function normalizeHrTraining(input = {}, existing = {}) {
     CompletionDate: clean(input.CompletionDate || existing.CompletionDate),
     Status: clean(input.Status || existing.Status || 'Planned'),
     CertificateReference: clean(input.CertificateReference || existing.CertificateReference)
+  };
+}
+
+export function normalizeHrCandidate(input = {}, existing = {}) {
+  const email = lower(input.Email || existing.Email);
+  const phone = clean(input.Phone || existing.Phone);
+  if (!email && !phone) {
+    const error = new Error('Candidate email or phone is required.');
+    error.status = 400;
+    throw error;
+  }
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    const error = new Error('Enter a valid candidate email address.');
+    error.status = 400;
+    throw error;
+  }
+  return {
+    VacancyId: required(input.VacancyId || existing.VacancyId, 'Vacancy'),
+    CandidateName: required(input.CandidateName || existing.CandidateName, 'Candidate name'),
+    Email: email,
+    Phone: phone,
+    ApplicationDate: clean(input.ApplicationDate || existing.ApplicationDate),
+    ApplicationReference: clean(input.ApplicationReference || existing.ApplicationReference),
+    QualificationSummary: clean(input.QualificationSummary || existing.QualificationSummary),
+    InterviewDate: clean(input.InterviewDate || existing.InterviewDate),
+    InterviewPanel: clean(input.InterviewPanel || existing.InterviewPanel),
+    InterviewNotes: clean(input.InterviewNotes || existing.InterviewNotes),
+    QualificationCheck: option(input.QualificationCheck || existing.QualificationCheck, ['Pending', 'Verified', 'Failed', 'Not required'], 'Pending', 'qualification check status'),
+    ReferenceCheck: option(input.ReferenceCheck || existing.ReferenceCheck, ['Pending', 'Verified', 'Failed', 'Not required'], 'Pending', 'reference check status'),
+    Status: option(input.Status || existing.Status, ['Applied', 'Screening', 'Interview', 'Offer', 'Selected', 'Rejected', 'Withdrawn'], 'Applied', 'candidate status')
+  };
+}
+
+export function normalizeHrEmploymentHistory(input = {}, existing = {}) {
+  const effectiveDate = required(input.EffectiveDate || existing.EffectiveDate, 'Effective date');
+  const expiryDate = clean(input.ExpiryDate || existing.ExpiryDate);
+  if (expiryDate && expiryDate < effectiveDate) {
+    const error = new Error('Expiry date must be on or after the effective date.');
+    error.status = 400;
+    throw error;
+  }
+  return {
+    Username: required(lower(input.Username || existing.Username), 'Staff username'),
+    DisplayName: clean(input.DisplayName || existing.DisplayName),
+    RecordType: option(input.RecordType || existing.RecordType, ['Contract', 'Qualification', 'Promotion', 'Transfer', 'Award', 'Employment document', 'Other'], 'Employment document', 'employment record type'),
+    Title: required(input.Title || existing.Title, 'Record title'),
+    EffectiveDate: effectiveDate,
+    ExpiryDate: expiryDate,
+    DocumentReference: clean(input.DocumentReference || existing.DocumentReference),
+    Notes: clean(input.Notes || existing.Notes)
+  };
+}
+
+export function normalizeHrCompensationChange(input = {}, existing = {}) {
+  const currency = clean(input.Currency || existing.Currency || 'NGN').toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) {
+    const error = new Error('Currency must be a three-letter code such as NGN or USD.');
+    error.status = 400;
+    throw error;
+  }
+  return {
+    Username: required(lower(input.Username || existing.Username), 'Staff username'),
+    DisplayName: clean(input.DisplayName || existing.DisplayName),
+    ChangeType: option(input.ChangeType || existing.ChangeType, ['Salary adjustment', 'Allowance', 'Bonus', 'Pension', 'Deduction', 'Benefit', 'Other'], 'Benefit', 'pay or benefit change type'),
+    Amount: optionalMoney(input.Amount ?? existing.Amount, 'Amount'),
+    Currency: currency,
+    EffectiveDate: required(input.EffectiveDate || existing.EffectiveDate, 'Effective date'),
+    Details: required(input.Details || existing.Details, 'Change details'),
+    Status: clean(existing.Status || 'Pending')
+  };
+}
+
+export function normalizeHrTimeRecord(input = {}, existing = {}) {
+  return {
+    Username: required(lower(input.Username || existing.Username), 'Staff username'),
+    DisplayName: clean(input.DisplayName || existing.DisplayName),
+    RecordType: option(input.RecordType || existing.RecordType, ['Work schedule', 'Lateness', 'Absence', 'Attendance correction', 'Shift assignment'], 'Work schedule', 'time record type'),
+    WorkDate: required(input.WorkDate || existing.WorkDate, 'Work date'),
+    StartTime: clean(input.StartTime || existing.StartTime),
+    EndTime: clean(input.EndTime || existing.EndTime),
+    Reason: clean(input.Reason || existing.Reason),
+    Status: option(input.Status || existing.Status, ['Recorded', 'Excused', 'Unexcused', 'Resolved'], 'Recorded', 'time record status')
+  };
+}
+
+export function normalizeHrEmployeeCase(input = {}, existing = {}) {
+  return {
+    Username: required(lower(input.Username || existing.Username), 'Staff username'),
+    DisplayName: clean(input.DisplayName || existing.DisplayName),
+    CaseType: option(input.CaseType || existing.CaseType, ['Welfare concern', 'Grievance', 'Workplace conflict', 'Misconduct', 'Disciplinary action', 'Health and safety', 'Other'], 'Welfare concern', 'employee case type'),
+    OpenedDate: required(input.OpenedDate || existing.OpenedDate, 'Case date'),
+    Severity: option(input.Severity || existing.Severity, ['Low', 'Moderate', 'High', 'Critical'], 'Moderate', 'case severity'),
+    Summary: required(input.Summary || existing.Summary, 'Case summary'),
+    ActionTaken: clean(input.ActionTaken || existing.ActionTaken),
+    PolicyReference: clean(input.PolicyReference || existing.PolicyReference),
+    Status: option(input.Status || existing.Status, ['Open', 'Under review', 'Action required', 'Resolved', 'Closed'], 'Open', 'case status')
+  };
+}
+
+export function normalizeHrCompliance(input = {}, existing = {}) {
+  return {
+    Category: option(input.Category || existing.Category, ['Labour law', 'Pension', 'Tax obligation', 'Health and safety', 'Employment contract', 'Workplace policy', 'Other'], 'Labour law', 'compliance category'),
+    Obligation: required(input.Obligation || existing.Obligation, 'Compliance obligation'),
+    Owner: clean(input.Owner || existing.Owner),
+    DueDate: clean(input.DueDate || existing.DueDate),
+    EvidenceReference: clean(input.EvidenceReference || existing.EvidenceReference),
+    Notes: clean(input.Notes || existing.Notes),
+    Status: option(input.Status || existing.Status, ['Not started', 'In progress', 'Compliant', 'Action required', 'Overdue'], 'Not started', 'compliance status')
+  };
+}
+
+export function normalizeHrExit(input = {}, existing = {}) {
+  const lastWorkingDate = required(input.LastWorkingDate || existing.LastWorkingDate, 'Last working date');
+  const noticeDate = clean(input.NoticeDate || existing.NoticeDate);
+  if (noticeDate && noticeDate > lastWorkingDate) {
+    const error = new Error('Last working date must be on or after the notice date.');
+    error.status = 400;
+    throw error;
+  }
+  return {
+    Username: required(lower(input.Username || existing.Username), 'Staff username'),
+    DisplayName: clean(input.DisplayName || existing.DisplayName),
+    ExitType: option(input.ExitType || existing.ExitType, ['Resignation', 'Retirement', 'Dismissal', 'End of contract', 'Redundancy', 'Death in service', 'Other'], 'Resignation', 'exit type'),
+    NoticeDate: noticeDate,
+    LastWorkingDate: lastWorkingDate,
+    Reason: clean(input.Reason || existing.Reason),
+    HandoverStatus: option(input.HandoverStatus || existing.HandoverStatus, ['Not started', 'In progress', 'Completed', 'Not applicable'], 'Not started', 'handover status'),
+    ClearanceStatus: option(input.ClearanceStatus || existing.ClearanceStatus, ['Not started', 'In progress', 'Cleared'], 'Not started', 'clearance status'),
+    FinalPayStatus: option(input.FinalPayStatus || existing.FinalPayStatus, ['Pending', 'Sent to payroll', 'Paid', 'Not applicable'], 'Pending', 'final pay status'),
+    FinalDocumentReference: clean(input.FinalDocumentReference || existing.FinalDocumentReference),
+    ExitInterviewNotes: clean(input.ExitInterviewNotes || existing.ExitInterviewNotes),
+    Status: option(input.Status || existing.Status, ['Planned', 'In progress', 'Completed', 'Cancelled'], 'Planned', 'exit status')
   };
 }
