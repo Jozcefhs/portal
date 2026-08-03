@@ -33,6 +33,8 @@ export const CHURCH_COLLECTIONS = Object.freeze({
   donationSettings: 'churchDonationSettings',
   currencySettlements: 'churchCurrencySettlements',
   staffAttendanceSites: 'churchStaffAttendanceSites',
+  staffAttendancePolicy: 'churchStaffAttendancePolicy',
+  staffDailyAttendance: 'churchStaffDailyAttendance',
   staffTimeEvents: 'churchStaffTimeEvents',
   staffTimeState: 'churchStaffTimeState',
   staffTimeAudit: 'churchStaffTimeAudit',

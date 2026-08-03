@@ -4708,6 +4708,14 @@ async function staffAttendanceRequest(action, payload = {}) {
   return data;
 }
 
+function attendanceMinutesLabel(value) {
+  const minutes = Math.max(0, Number(value || 0) || 0);
+  if (!minutes) return '—';
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return hours ? `${hours}h${remainder ? ` ${remainder}m` : ''}` : `${remainder}m`;
+}
+
 function browserPosition() {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
@@ -4735,32 +4743,67 @@ async function loadStaffAttendance() {
     const stateIn = data.state === 'CLOCKED_IN';
     const nextDirection = data.nextDirection || (stateIn ? 'OUT' : 'IN');
     const capabilities = data.capabilities || {};
+    const policy = data.policy || {};
+    const workDays = Array.isArray(policy.WorkDays) ? policy.WorkDays : [];
+    const myDailyRecords = data.myDailyRecords || [];
+    const latestDaily = myDailyRecords.find((row) => clean(row.Date) === clean(data.todayAttendanceDate)) || null;
+    const scheduleActive = clean(policy.Active).toUpperCase() !== 'NO';
+    const selectedOption = (value, expected) => clean(value).toUpperCase() === expected ? ' selected' : '';
     panelEl.innerHTML = `
       <div class="workflow-intro">
-        <div><p class="eyebrow">People & ministry</p><h2>Staff attendance</h2><p class="muted">Verified clock-in and clock-out using an approved church location or network.</p></div>
+        <div><p class="eyebrow">People & ministry</p><h2>Staff attendance</h2><p class="muted">Verified clock-in/out with automatic lateness, absence, early-departure and overtime calculations.</p></div>
         <button type="button" id="refreshStaffAttendance">Refresh</button>
       </div>
       <div class="workflow-kpis">
         <div><small>Current state</small><strong>${stateIn ? 'Clocked in' : 'Clocked out'}</strong><span>${data.myEvents?.[0]?.Timestamp ? escapeHtml(new Date(data.myEvents[0].Timestamp).toLocaleString()) : 'No attendance event yet'}</span></div>
+        <div><small>Today's status</small><strong>${escapeHtml(latestDaily?.AttendanceStatus || 'No record')}</strong><span>${latestDaily?.Date ? escapeHtml(latestDaily.Date) : scheduleActive ? 'Awaiting today’s clock-in' : 'Work-hours policy not enabled'}</span></div>
+        <div><small>Late today</small><strong>${attendanceMinutesLabel(latestDaily?.LateMinutes)}</strong><span>${policy.ResumptionTime ? `Resumption ${escapeHtml(policy.ResumptionTime)} · ${Number(policy.GraceMinutes || 0)}m grace` : 'Set daily work hours'}</span></div>
+        <div><small>Overtime today</small><strong>${attendanceMinutesLabel(latestDaily?.OvertimeMinutes)}</strong><span>${policy.ClosingTime ? `Closing ${escapeHtml(policy.ClosingTime)}` : 'Set daily work hours'}</span></div>
         <div><small>Approved locations</small><strong>${sites.length}</strong><span>Geofence or organisation network</span></div>
-        <div><small>My recent events</small><strong>${data.myEvents?.length || 0}</strong><span>Server-timestamped entries</span></div>
       </div>
       <section class="attendance-clock-card ${stateIn ? 'is-clocked-in' : ''}">
-        <div><p class="eyebrow">My attendance</p><h3>${stateIn ? 'Ready to clock out?' : 'Ready to clock in?'}</h3><p>Your precise coordinates are used only to validate your distance and are not stored in the attendance record.</p></div>
+        <div><p class="eyebrow">My attendance</p><h3>${stateIn ? 'Ready to clock out?' : 'Ready to clock in?'}</h3><p>${scheduleActive ? `Work hours: ${escapeHtml(policy.ResumptionTime)}–${escapeHtml(policy.ClosingTime)} on ${escapeHtml(workDays.join(', '))}. ` : ''}Your precise coordinates are used only to validate your distance and are not stored in the attendance record.</p></div>
         <div class="attendance-clock-controls">
           <label>Location <select id="staffAttendanceSite"><option value="">Choose location</option>${sites.map((site) => `<option value="${escapeHtml(site.SiteId || site.__id)}">${escapeHtml(site.Name)}</option>`).join('')}</select></label>
           <button type="button" id="staffClockButton" ${sites.length ? '' : 'disabled'}>${nextDirection === 'IN' ? 'Clock in' : 'Clock out'}</button>
         </div>
         <p class="status" id="staffAttendanceStatus"></p>
       </section>
+      ${table('My daily attendance', myDailyRecords, [
+        { label: 'Date', value: (row) => row.Date },
+        { label: 'Status', value: (row) => row.AttendanceStatus },
+        { label: 'Clock in', value: (row) => row.FirstClockIn ? new Date(row.FirstClockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '' },
+        { label: 'Clock out', value: (row) => row.LastClockOut ? new Date(row.LastClockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '' },
+        { label: 'Late', value: (row) => attendanceMinutesLabel(row.LateMinutes) },
+        { label: 'Left early', value: (row) => attendanceMinutesLabel(row.EarlyDepartureMinutes) },
+        { label: 'Overtime', value: (row) => attendanceMinutesLabel(row.OvertimeMinutes) },
+        { label: 'Worked', value: (row) => attendanceMinutesLabel(row.WorkMinutes) }
+      ])}
       ${table('My attendance history', data.myEvents || [], [
         { label: 'Time', value: (row) => row.Timestamp },
         { label: 'Action', value: (row) => row.Direction === 'IN' ? 'Clock in' : 'Clock out' },
+        { label: 'Status', value: (row) => row.AttendanceStatus },
         { label: 'Location', value: (row) => row.SiteName },
         { label: 'Verified by', value: (row) => row.VerificationMethod },
         { label: 'Distance', value: (row) => row.DistanceMetres === null || row.DistanceMetres === undefined ? '' : `${row.DistanceMetres} m` }
       ])}
       ${capabilities.canManage ? `<section class="config-group">
+        <header><strong>Daily work hours</strong><small>After the configured closing time, active staff without a clock-in are marked absent automatically. Approved leave is recorded separately.</small></header>
+        <form id="staffAttendancePolicyForm" class="workflow-form config-form">
+          <div class="config-grid">
+            <label>Daily resumption time <input name="ResumptionTime" type="time" value="${escapeHtml(policy.ResumptionTime || '08:00')}" required></label>
+            <label>Daily closing time <input name="ClosingTime" type="time" value="${escapeHtml(policy.ClosingTime || '17:00')}" required></label>
+            <label>Grace period (minutes) <input name="GraceMinutes" type="number" min="0" max="180" value="${Number(policy.GraceMinutes ?? 15)}" required></label>
+            <label>Minimum overtime (minutes) <input name="OvertimeMinimumMinutes" type="number" min="0" max="240" value="${Number(policy.OvertimeMinimumMinutes ?? 15)}" required></label>
+            <label>Time zone <input name="TimeZone" value="${escapeHtml(policy.TimeZone || 'Africa/Lagos')}" required></label>
+            <label>Policy status <select name="Active"><option value="YES"${selectedOption(policy.Active, 'YES')}>Enabled</option><option value="NO"${selectedOption(policy.Active, 'NO')}>Disabled</option></select></label>
+          </div>
+          <fieldset class="config-option-list"><legend>Working days</legend><div class="config-option-grid">${[['MON', 'Monday'], ['TUE', 'Tuesday'], ['WED', 'Wednesday'], ['THU', 'Thursday'], ['FRI', 'Friday'], ['SAT', 'Saturday'], ['SUN', 'Sunday']].map(([day, label]) => `<label class="check-row"><input type="checkbox" name="WorkDays" value="${day}" ${workDays.includes(day) ? 'checked' : ''}> ${label}</label>`).join('')}</div></fieldset>
+          <label class="check-row config-switch"><input type="checkbox" name="AutoRecordAbsence" value="YES" ${clean(policy.AutoRecordAbsence).toUpperCase() !== 'NO' ? 'checked' : ''}><span>Automatically record absence after closing time when there is no clock-in</span></label>
+          <div class="config-dialog-actions"><p class="status" id="staffAttendancePolicyStatus">${data.policyConfigured ? 'Current branch policy loaded.' : 'Save the policy to activate automatic calculations.'}</p><button type="submit">Save work hours</button></div>
+        </form>
+      </section>
+      <section class="config-group">
         <header><strong>Attendance locations</strong><small>Geofence is recommended. The approved public network is a fallback; browsers cannot securely read a Wi-Fi name.</small></header>
         <form id="staffAttendanceSiteForm" class="workflow-form config-form">
           <input name="SiteId" type="hidden">
@@ -4788,7 +4831,8 @@ async function loadStaffAttendance() {
       <section class="config-group">
         <header><strong>Manual correction</strong><small>For an authorised exception only. Every correction keeps the reason and administrator in an audit trail.</small></header>
         <form id="staffAttendanceManualForm" class="inline-policy-form">
-          <label>Username <input name="Username" required></label>
+          ${hrPersonPicker('staffAttendanceManualUsername', 'Staff member', data.staffDirectory || [])}
+          <input name="DisplayName" type="hidden">
           <label>Action <select name="Direction"><option value="IN">Clock in</option><option value="OUT">Clock out</option></select></label>
           <label>Time <input name="Timestamp" type="datetime-local" required></label>
           <label>Reason <input name="Reason" minlength="5" required></label>
@@ -4796,10 +4840,22 @@ async function loadStaffAttendance() {
         </form>
         <p class="status" id="staffAttendanceManualStatus"></p>
       </section>` : ''}
+      ${capabilities.canReport ? table('Daily attendance report', data.recentDailyRecords || [], [
+        { label: 'Date', value: (row) => row.Date },
+        { label: 'Staff', value: (row) => row.DisplayName || row.Username },
+        { label: 'Status', value: (row) => row.AttendanceStatus },
+        { label: 'Clock in', value: (row) => row.FirstClockIn ? new Date(row.FirstClockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '' },
+        { label: 'Clock out', value: (row) => row.LastClockOut ? new Date(row.LastClockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '' },
+        { label: 'Late', value: (row) => attendanceMinutesLabel(row.LateMinutes) },
+        { label: 'Left early', value: (row) => attendanceMinutesLabel(row.EarlyDepartureMinutes) },
+        { label: 'Overtime', value: (row) => attendanceMinutesLabel(row.OvertimeMinutes) },
+        { label: 'Worked', value: (row) => attendanceMinutesLabel(row.WorkMinutes) }
+      ]) : ''}
       ${capabilities.canReport ? table('Recent staff attendance', data.recentEvents || [], [
         { label: 'Staff', value: (row) => row.DisplayName || row.Username },
         { label: 'Time', value: (row) => row.Timestamp },
         { label: 'Action', value: (row) => row.Direction === 'IN' ? 'Clock in' : 'Clock out' },
+        { label: 'Status', value: (row) => row.AttendanceStatus },
         { label: 'Location', value: (row) => row.SiteName },
         { label: 'Verification', value: (row) => row.VerificationMethod },
         { label: 'Correction', value: (row) => row.ManualOverride ? row.OverrideReason : '' }
@@ -4808,13 +4864,36 @@ async function loadStaffAttendance() {
     const attendanceGroups = [...panelEl.querySelectorAll(':scope > .config-group')];
     mountWorkspaceTabs('staffAttendance', [
       { key: 'clock', label: 'Clock in / out', icon: '\u23F1', nodes: [panelEl.querySelector(':scope > .workflow-kpis'), panelEl.querySelector(':scope > .attendance-clock-card')] },
-      { key: 'my-history', label: 'My history', icon: '\u{1F5C2}', count: (data.myEvents || []).length, nodes: workspaceTableNodes('My attendance history') },
+      { key: 'my-history', label: 'My history', icon: '\u{1F5C2}', count: myDailyRecords.length, nodes: [...workspaceTableNodes('My daily attendance'), ...workspaceTableNodes('My attendance history')] },
+      { key: 'policy', label: 'Work hours', icon: '\u23F0', nodes: attendanceGroups.find((node) => /daily work hours/i.test(node.textContent)) },
       { key: 'locations', label: 'Locations', icon: '\u2316', count: configuredSites.length, nodes: attendanceGroups.find((node) => /attendance locations/i.test(node.textContent)) },
       { key: 'corrections', label: 'Corrections', icon: '\u270E', nodes: attendanceGroups.find((node) => /manual correction/i.test(node.textContent)) },
-      { key: 'reports', label: 'Reports', icon: '\u03A3', count: (data.recentEvents || []).length, nodes: workspaceTableNodes('Recent staff attendance') }
+      { key: 'reports', label: 'Reports', icon: '\u03A3', count: (data.recentDailyRecords || []).length, nodes: [...workspaceTableNodes('Daily attendance report'), ...workspaceTableNodes('Recent staff attendance')] }
     ]);
 
     document.getElementById('refreshStaffAttendance')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', loadStaffAttendance));
+    bindHrPersonPickers(panelEl);
+    hrFormStaffNameSync(document.getElementById('staffAttendanceManualForm'), data.staffDirectory || []);
+    const policyForm = document.getElementById('staffAttendancePolicyForm');
+    policyForm?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = policyForm.querySelector('button[type="submit"]');
+      const status = document.getElementById('staffAttendancePolicyStatus');
+      setButtonLoading(button, true, 'Saving...', 'Save work hours');
+      try {
+        const formData = new FormData(policyForm);
+        const payload = Object.fromEntries(formData.entries());
+        payload.WorkDays = formData.getAll('WorkDays');
+        payload.AutoRecordAbsence = formData.has('AutoRecordAbsence') ? 'YES' : 'NO';
+        const result = await staffAttendanceRequest('savepolicy', payload);
+        await loadStaffAttendance();
+        setStatus(document.getElementById('staffAttendancePolicyStatus') || dashboardStatus, result.message, 'ok');
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+      } finally {
+        if (button.isConnected) setButtonLoading(button, false, 'Saving...', 'Save work hours');
+      }
+    });
     document.getElementById('staffClockButton')?.addEventListener('click', async (event) => {
       const button = event.currentTarget;
       const status = document.getElementById('staffAttendanceStatus');

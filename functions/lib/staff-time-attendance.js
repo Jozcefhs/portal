@@ -1,12 +1,24 @@
 import { batchCommitDocuments, getDocument, listCollection, queryCollection, upsertDocument } from './firestore.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from './church-foundation.js';
 import { resolveMembershipBranch } from './church-membership.js';
+import { staffRecordMatchesEdition } from './records-desk.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 const nowIso = () => new Date().toISOString();
 const MANAGE_ROLES = new Set(['Super Admin', 'Church Administrator']);
 const REPORT_ROLES = new Set([...MANAGE_ROLES, 'Pastor', 'Treasurer', 'Auditor']);
+const DAY_KEYS = Object.freeze(['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']);
+const DEFAULT_ATTENDANCE_POLICY = Object.freeze({
+  ResumptionTime: '08:00',
+  ClosingTime: '17:00',
+  GraceMinutes: 15,
+  OvertimeMinimumMinutes: 15,
+  WorkDays: ['MON', 'TUE', 'WED', 'THU', 'FRI'],
+  TimeZone: 'Africa/Lagos',
+  AutoRecordAbsence: 'YES',
+  Active: 'YES'
+});
 
 function fail(message, status = 400) {
   const error = new Error(message);
@@ -29,6 +41,115 @@ function branchFor(user, body = {}) {
 function number(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function activeValue(value, fallback = true) {
+  const normalized = lower(value);
+  if (!normalized) return fallback;
+  return !['no', 'false', '0', 'inactive', 'disabled', 'off'].includes(normalized);
+}
+
+function timeMinutes(value, label) {
+  const match = clean(value).match(/^(\d{2}):(\d{2})$/);
+  if (!match) fail(`Enter a valid ${label.toLowerCase()} in 24-hour time.`);
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) fail(`Enter a valid ${label.toLowerCase()} in 24-hour time.`);
+  return hours * 60 + minutes;
+}
+
+function boundedWholeNumber(value, fallback, minimum, maximum, label) {
+  const parsed = value === undefined || value === null || clean(value) === '' ? fallback : Number(value);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    fail(`${label} must be a whole number between ${minimum} and ${maximum}.`);
+  }
+  return parsed;
+}
+
+function localAttendanceParts(timestamp, timeZone) {
+  const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+  if (Number.isNaN(date.getTime())) fail('Enter a valid attendance time.');
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    day: clean(parts.weekday).slice(0, 3).toUpperCase(),
+    minuteOfDay: Number(parts.hour) * 60 + Number(parts.minute)
+  };
+}
+
+export function normalizeAttendancePolicy(input = {}, existing = {}) {
+  const resumption = clean(input.ResumptionTime || existing.ResumptionTime || DEFAULT_ATTENDANCE_POLICY.ResumptionTime);
+  const closing = clean(input.ClosingTime || existing.ClosingTime || DEFAULT_ATTENDANCE_POLICY.ClosingTime);
+  const resumptionMinutes = timeMinutes(resumption, 'Resumption time');
+  const closingMinutes = timeMinutes(closing, 'Closing time');
+  if (closingMinutes <= resumptionMinutes) fail('Closing time must be later than resumption time on the same day.');
+  const sourceDays = input.WorkDays ?? existing.WorkDays ?? DEFAULT_ATTENDANCE_POLICY.WorkDays;
+  const workDays = [...new Set((Array.isArray(sourceDays) ? sourceDays : clean(sourceDays).split(/[\s,;]+/))
+    .map((value) => clean(value).slice(0, 3).toUpperCase()).filter((value) => DAY_KEYS.includes(value)))];
+  if (!workDays.length) fail('Choose at least one working day.');
+  const timeZone = clean(input.TimeZone || existing.TimeZone || DEFAULT_ATTENDANCE_POLICY.TimeZone);
+  try {
+    new Intl.DateTimeFormat('en-GB', { timeZone }).format(new Date());
+  } catch (_error) {
+    fail('Enter a valid time zone, for example Africa/Lagos.');
+  }
+  return {
+    ResumptionTime: resumption,
+    ClosingTime: closing,
+    GraceMinutes: boundedWholeNumber(input.GraceMinutes ?? existing.GraceMinutes, DEFAULT_ATTENDANCE_POLICY.GraceMinutes, 0, 180, 'Grace period'),
+    OvertimeMinimumMinutes: boundedWholeNumber(input.OvertimeMinimumMinutes ?? existing.OvertimeMinimumMinutes, DEFAULT_ATTENDANCE_POLICY.OvertimeMinimumMinutes, 0, 240, 'Minimum overtime'),
+    WorkDays: DAY_KEYS.filter((day) => workDays.includes(day)),
+    TimeZone: timeZone,
+    AutoRecordAbsence: activeValue(input.AutoRecordAbsence ?? existing.AutoRecordAbsence, true) ? 'YES' : 'NO',
+    Active: activeValue(input.Active ?? existing.Active, true) ? 'YES' : 'NO'
+  };
+}
+
+export function calculateAttendanceMetrics(policyInput = {}, eventInput = {}) {
+  const policy = normalizeAttendancePolicy(policyInput);
+  const timestamp = clean(eventInput.Timestamp) || nowIso();
+  const direction = clean(eventInput.Direction).toUpperCase();
+  if (!['IN', 'OUT'].includes(direction)) fail('Choose Clock in or Clock out.');
+  const local = localAttendanceParts(timestamp, policy.TimeZone);
+  const workDay = policy.WorkDays.includes(local.day);
+  const start = timeMinutes(policy.ResumptionTime, 'Resumption time');
+  const close = timeMinutes(policy.ClosingTime, 'Closing time');
+  const lateDifference = Math.max(0, local.minuteOfDay - start);
+  const lateMinutes = direction === 'IN' && workDay && lateDifference > policy.GraceMinutes ? lateDifference : 0;
+  const firstClockIn = clean(eventInput.FirstClockIn);
+  const firstTime = firstClockIn ? new Date(firstClockIn).getTime() : NaN;
+  const eventTime = new Date(timestamp).getTime();
+  const workMinutes = direction === 'OUT' && Number.isFinite(firstTime) && eventTime >= firstTime
+    ? Math.round((eventTime - firstTime) / 60000)
+    : 0;
+  const rawOvertime = direction === 'OUT'
+    ? workDay ? Math.max(0, local.minuteOfDay - close) : workMinutes
+    : 0;
+  const overtimeMinutes = rawOvertime >= policy.OvertimeMinimumMinutes ? rawOvertime : 0;
+  const earlyDepartureMinutes = direction === 'OUT' && workDay ? Math.max(0, close - local.minuteOfDay) : 0;
+  const existingStatus = clean(eventInput.ExistingStatus);
+  const status = direction === 'IN'
+    ? workDay ? lateMinutes ? 'Late' : 'Present' : 'Overtime day'
+    : existingStatus || (firstClockIn ? workDay ? 'Present' : 'Overtime day' : 'Incomplete');
+  return {
+    Date: local.date,
+    Day: local.day,
+    WorkDay: workDay,
+    AttendanceStatus: status,
+    LateMinutes: lateMinutes,
+    OvertimeMinutes: overtimeMinutes,
+    EarlyDepartureMinutes: earlyDepartureMinutes,
+    WorkMinutes: workMinutes
+  };
 }
 
 export function haversineDistanceMetres(lat1, lon1, lat2, lon2) {
@@ -106,12 +227,149 @@ async function ipFingerprint(value) {
   return [...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, '0')).join('').slice(0, 20);
 }
 
+function attendancePolicyPath(branchId) {
+  return churchCollectionPath(CHURCH_COLLECTIONS.staffAttendancePolicy, branchId);
+}
+
+function dailyAttendancePath(branchId) {
+  return churchCollectionPath(CHURCH_COLLECTIONS.staffDailyAttendance, branchId);
+}
+
+function dailyAttendanceId(date, username) {
+  return safeChurchDocumentId(`DAY-${date}-${lower(username)}`);
+}
+
+function staffBranchMatches(row = {}, branchId = 'main') {
+  return lower(row.BranchId || row.branchId || 'main') === lower(branchId || 'main');
+}
+
+function activeStaffValue(value) {
+  return !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(value));
+}
+
+function attendancePolicySnapshot(policy = {}) {
+  return {
+    ScheduledResumptionTime: clean(policy.ResumptionTime),
+    ScheduledClosingTime: clean(policy.ClosingTime),
+    GraceMinutes: Number(policy.GraceMinutes || 0),
+    OvertimeMinimumMinutes: Number(policy.OvertimeMinimumMinutes || 0),
+    TimeZone: clean(policy.TimeZone)
+  };
+}
+
+function buildDailyAttendanceFromEvent(policy, event, existing = {}) {
+  const { __id: _documentId, __createTime: _createdAt, __updateTime: _updatedAt, ...storedExisting } = existing;
+  const storedFirstClockIn = clean(existing.FirstClockIn);
+  const storedLastClockOut = clean(existing.LastClockOut);
+  const firstClockIn = event.Direction === 'IN'
+    ? !storedFirstClockIn || event.Timestamp < storedFirstClockIn ? event.Timestamp : storedFirstClockIn
+    : storedFirstClockIn;
+  const lastClockOut = event.Direction === 'OUT'
+    ? !storedLastClockOut || event.Timestamp > storedLastClockOut ? event.Timestamp : storedLastClockOut
+    : storedLastClockOut;
+  const metrics = calculateAttendanceMetrics(policy, {
+    Direction: event.Direction,
+    Timestamp: event.Direction === 'OUT' ? lastClockOut : firstClockIn,
+    FirstClockIn: firstClockIn,
+    ExistingStatus: event.Direction === 'OUT' ? existing.AttendanceStatus : ''
+  });
+  const id = dailyAttendanceId(metrics.Date, event.Username);
+  const scheduleActive = lower(policy.Active) !== 'no';
+  return {
+    ...storedExisting,
+    DailyId: id,
+    BranchId: event.BranchId,
+    Date: metrics.Date,
+    Day: metrics.Day,
+    Username: event.Username,
+    DisplayName: event.DisplayName,
+    Role: event.Role || clean(existing.Role),
+    AttendanceStatus: scheduleActive ? metrics.AttendanceStatus : clean(existing.AttendanceStatus) || 'Recorded',
+    FirstClockIn: firstClockIn,
+    LastClockOut: lastClockOut,
+    LateMinutes: scheduleActive && event.Direction === 'IN' ? metrics.LateMinutes : Number(existing.LateMinutes || 0),
+    OvertimeMinutes: scheduleActive && event.Direction === 'OUT' ? metrics.OvertimeMinutes : Number(existing.OvertimeMinutes || 0),
+    EarlyDepartureMinutes: scheduleActive && event.Direction === 'OUT' ? metrics.EarlyDepartureMinutes : Number(existing.EarlyDepartureMinutes || 0),
+    WorkMinutes: event.Direction === 'OUT' ? metrics.WorkMinutes : Number(existing.WorkMinutes || 0),
+    ...attendancePolicySnapshot(policy),
+    AutoGenerated: false,
+    GeneratedReason: '',
+    CreatedAt: clean(existing.CreatedAt) || event.Timestamp,
+    UpdatedAt: event.Timestamp,
+    UpdatedBy: event.ManualOverride ? event.RecordedBy : event.DisplayName
+  };
+}
+
+function approvedLeaveForDate(leaveRows = [], username, date) {
+  return leaveRows.some((row) => lower(row.Username) === lower(username)
+    && lower(row.Status) === 'approved'
+    && clean(row.StartDate) <= date
+    && clean(row.EndDate) >= date);
+}
+
+async function synchronizeAutomaticAbsences(env, branchId, policy, now, directory, leaveRows, dailyRows) {
+  if (lower(policy.Active) === 'no' || lower(policy.AutoRecordAbsence) === 'no') return dailyRows;
+  const local = localAttendanceParts(now, policy.TimeZone);
+  if (!policy.WorkDays.includes(local.day) || local.minuteOfDay < timeMinutes(policy.ClosingTime, 'Closing time')) return dailyRows;
+  const current = dailyRows.filter((row) => clean(row.Date) === local.date);
+  const currentUsernames = new Set(current.map((row) => lower(row.Username)));
+  const timestamp = now instanceof Date ? now.toISOString() : new Date(now).toISOString();
+  const created = directory.filter((row) => !currentUsernames.has(lower(row.Username))).map((row) => {
+    const onLeave = approvedLeaveForDate(leaveRows, row.Username, local.date);
+    const id = dailyAttendanceId(local.date, row.Username);
+    return {
+      DailyId: id,
+      BranchId: branchId,
+      Date: local.date,
+      Day: local.day,
+      Username: lower(row.Username),
+      DisplayName: clean(row.DisplayName || row.Username),
+      Role: clean(row.Role),
+      AttendanceStatus: onLeave ? 'Approved leave' : 'Absent',
+      FirstClockIn: '',
+      LastClockOut: '',
+      LateMinutes: 0,
+      OvertimeMinutes: 0,
+      EarlyDepartureMinutes: 0,
+      WorkMinutes: 0,
+      ...attendancePolicySnapshot(policy),
+      AutoGenerated: true,
+      GeneratedReason: onLeave ? 'Approved leave covers this working day.' : 'No clock-in was recorded by the configured closing time.',
+      CreatedAt: timestamp,
+      UpdatedAt: timestamp,
+      UpdatedBy: 'Automatic attendance processing'
+    };
+  });
+  if (!created.length) return dailyRows;
+  let conflict = false;
+  for (let index = 0; index < created.length; index += 400) {
+    const chunk = created.slice(index, index + 400);
+    try {
+      await batchCommitDocuments(env, chunk.map((row) => ({
+        collectionPath: dailyAttendancePath(branchId),
+        documentId: row.DailyId,
+        data: row,
+        exists: false
+      })));
+    } catch (error) {
+      if (![409, 412].includes(Number(error?.status))) throw error;
+      conflict = true;
+    }
+  }
+  if (!conflict) return [...created, ...dailyRows];
+  const refreshed = await queryCollection(env, dailyAttendancePath(branchId), {
+    filters: [{ field: 'Date', op: '==', value: local.date }],
+    limit: 500
+  }).catch(() => current);
+  return [...refreshed, ...dailyRows.filter((row) => clean(row.Date) !== local.date)];
+}
+
 export async function listStaffAttendance(env, user, body = {}) {
   const branchId = branchFor(user, body);
   const username = actorId(user);
   if (!username) fail('The signed-in staff account has no username.', 401);
   const role = clean(user.role || user.Role);
-  const [sites, events, storedState] = await Promise.all([
+  const [sites, events, storedState, storedPolicy, dailySource, staffUsers, employees, leaveRows] = await Promise.all([
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.staffAttendanceSites, branchId)).catch(() => []),
     queryCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.staffTimeEvents, branchId), {
       orderBy: [{ field: 'Timestamp', direction: 'DESCENDING' }],
@@ -121,19 +379,49 @@ export async function listStaffAttendance(env, user, body = {}) {
       env,
       churchCollectionPath(CHURCH_COLLECTIONS.staffTimeState, branchId),
       safeChurchDocumentId(username)
-    ).catch(() => null)
+    ).catch(() => null),
+    getDocument(env, attendancePolicyPath(branchId), 'default').catch(() => null),
+    queryCollection(env, dailyAttendancePath(branchId), {
+      orderBy: [{ field: 'Date', direction: 'DESCENDING' }],
+      limit: 500
+    }).catch(() => []),
+    listCollection(env, 'staffUsers').catch(() => []),
+    listCollection(env, 'hrEmployees').catch(() => []),
+    listCollection(env, 'hrLeaveRequests').catch(() => [])
   ]);
+  const policy = normalizeAttendancePolicy(storedPolicy || { Active: 'NO' });
+  const exited = new Set(employees.filter((row) => /exited|terminated/i.test(clean(row.Status))).map((row) => lower(row.Username)));
+  const directory = staffUsers.filter((row) => staffRecordMatchesEdition(row, user)
+    && staffBranchMatches(row, branchId)
+    && activeStaffValue(row.Active === undefined ? true : row.Active)
+    && !exited.has(lower(row.Username || row.__id)))
+    .map((row) => ({
+      Username: lower(row.Username || row.__id),
+      DisplayName: clean(row.DisplayName || row.Username || row.__id),
+      Role: clean(row.Role),
+      Department: clean(row.Department)
+    })).filter((row) => row.Username).sort((a, b) => a.DisplayName.localeCompare(b.DisplayName));
+  const dailyRows = await synchronizeAutomaticAbsences(env, branchId, policy, new Date(), directory, leaveRows, dailySource);
   const sorted = events.sort((a, b) => clean(b.Timestamp).localeCompare(clean(a.Timestamp)));
+  const sortedDaily = dailyRows.sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)) || clean(a.DisplayName).localeCompare(clean(b.DisplayName)));
   const sortedSites = sites.sort((a, b) => clean(a.Name).localeCompare(clean(b.Name)));
   const own = sorted.filter((row) => actorId(row) === username).slice(0, 100);
+  const ownDaily = sortedDaily.filter((row) => actorId(row) === username).slice(0, 100);
   const latest = own[0] || null;
+  const todayAttendanceDate = localAttendanceParts(new Date(), policy.TimeZone).date;
   return {
     ok: true,
     branchId,
     sites: sortedSites.filter((row) => lower(row.Active || 'YES') !== 'no'),
     configuredSites: MANAGE_ROLES.has(role) ? sortedSites : [],
+    policy,
+    policyConfigured: Boolean(storedPolicy),
+    todayAttendanceDate,
+    staffDirectory: MANAGE_ROLES.has(role) ? directory : [],
     myEvents: own,
+    myDailyRecords: ownDaily,
     recentEvents: REPORT_ROLES.has(role) ? sorted.slice(0, 250) : [],
+    recentDailyRecords: REPORT_ROLES.has(role) ? sortedDaily.slice(0, 500) : [],
     state: clean(storedState?.State) || (latest?.Direction === 'IN' ? 'CLOCKED_IN' : 'CLOCKED_OUT'),
     nextDirection: clean(storedState?.NextDirection) || (latest?.Direction === 'IN' ? 'OUT' : 'IN'),
     stateVersion: clean(storedState?.__updateTime),
@@ -154,6 +442,21 @@ export async function saveAttendanceSite(env, user, body = {}) {
   };
   await upsertDocument(env, churchCollectionPath(CHURCH_COLLECTIONS.staffAttendanceSites, branchId), id, site);
   return { ok: true, site, message: 'Attendance location saved.' };
+}
+
+export async function saveAttendancePolicy(env, user, body = {}) {
+  if (!MANAGE_ROLES.has(clean(user.role || user.Role))) fail('Only church administrators can manage daily work hours.', 403);
+  const branchId = branchFor(user, body);
+  const existing = await getDocument(env, attendancePolicyPath(branchId), 'default').catch(() => null);
+  const policy = {
+    PolicyId: 'default',
+    BranchId: branchId,
+    ...normalizeAttendancePolicy(body, existing || {}),
+    UpdatedAt: nowIso(),
+    UpdatedBy: actorName(user)
+  };
+  await upsertDocument(env, attendancePolicyPath(branchId), 'default', policy);
+  return { ok: true, policy, message: 'Daily work hours saved. Lateness, absence and overtime will now be calculated automatically.' };
 }
 
 export async function clockStaffAttendance(env, user, body = {}, requestContext = {}) {
@@ -195,6 +498,17 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
     Notes: clean(body.Notes),
     ManualOverride: false
   };
+  const attendanceDate = calculateAttendanceMetrics(workspace.policy, { Direction: direction, Timestamp: timestamp }).Date;
+  const existingDaily = workspace.myDailyRecords.find((row) => clean(row.Date) === attendanceDate) || null;
+  const daily = buildDailyAttendanceFromEvent(workspace.policy, event, existingDaily || {});
+  Object.assign(event, {
+    AttendanceDate: daily.Date,
+    AttendanceStatus: daily.AttendanceStatus,
+    LateMinutes: daily.LateMinutes,
+    OvertimeMinutes: daily.OvertimeMinutes,
+    EarlyDepartureMinutes: daily.EarlyDepartureMinutes,
+    WorkMinutes: daily.WorkMinutes
+  });
   const eventPath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeEvents, branchId);
   const statePath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeState, branchId);
   const stateDocument = {
@@ -213,9 +527,28 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
       documentId: safeChurchDocumentId(username),
       data: stateDocument,
       ...(workspace.stateVersion ? { updateTime: workspace.stateVersion } : { exists: false })
+    },
+    {
+      collectionPath: dailyAttendancePath(branchId),
+      documentId: daily.DailyId,
+      data: daily,
+      ...(existingDaily ? existingDaily.__updateTime ? { updateTime: existingDaily.__updateTime } : {} : { exists: false })
     }
   ]);
-  return { ok: true, event, state: direction === 'IN' ? 'CLOCKED_IN' : 'CLOCKED_OUT', message: direction === 'IN' ? 'Clock-in recorded.' : 'Clock-out recorded.' };
+  const timing = direction === 'IN' && daily.LateMinutes
+    ? ` ${daily.LateMinutes} minute(s) late.`
+    : direction === 'OUT' && daily.OvertimeMinutes
+      ? ` ${daily.OvertimeMinutes} overtime minute(s) recorded.`
+      : direction === 'OUT' && daily.EarlyDepartureMinutes
+        ? ` ${daily.EarlyDepartureMinutes} minute(s) before closing time.`
+        : '';
+  return {
+    ok: true,
+    event,
+    daily,
+    state: direction === 'IN' ? 'CLOCKED_IN' : 'CLOCKED_OUT',
+    message: `${direction === 'IN' ? 'Clock-in' : 'Clock-out'} recorded.${timing}`
+  };
 }
 
 export async function recordManualAttendance(env, user, body = {}) {
@@ -227,7 +560,10 @@ export async function recordManualAttendance(env, user, body = {}) {
   if (!username) fail('Enter the staff username.');
   if (!['IN', 'OUT'].includes(direction)) fail('Choose Clock in or Clock out.');
   if (reason.length < 5) fail('Enter a clear reason for the manual correction.');
-  const timestamp = clean(body.Timestamp) || nowIso();
+  const requestedTimestamp = clean(body.Timestamp) || nowIso();
+  const parsedTimestamp = new Date(requestedTimestamp);
+  if (Number.isNaN(parsedTimestamp.getTime())) fail('Enter a valid correction date and time.');
+  const timestamp = parsedTimestamp.toISOString();
   const eventId = safeChurchDocumentId(`MANUAL-${timestamp}-${username}-${crypto.randomUUID().slice(0, 8)}`);
   const event = {
     EventId: eventId,
@@ -248,11 +584,32 @@ export async function recordManualAttendance(env, user, body = {}) {
   const auditPath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeAudit, branchId);
   const statePath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeState, branchId);
   const stateId = safeChurchDocumentId(username);
-  const currentState = await getDocument(env, statePath, stateId).catch(() => null);
-  await batchCommitDocuments(env, [
+  const policy = normalizeAttendancePolicy(await getDocument(env, attendancePolicyPath(branchId), 'default').catch(() => ({ Active: 'NO' })));
+  const attendanceDate = calculateAttendanceMetrics(policy, { Direction: direction, Timestamp: timestamp }).Date;
+  const dailyId = dailyAttendanceId(attendanceDate, username);
+  const [currentState, existingDaily] = await Promise.all([
+    getDocument(env, statePath, stateId).catch(() => null),
+    getDocument(env, dailyAttendancePath(branchId), dailyId).catch(() => null)
+  ]);
+  const daily = buildDailyAttendanceFromEvent(policy, event, existingDaily || {});
+  Object.assign(event, {
+    AttendanceDate: daily.Date,
+    AttendanceStatus: daily.AttendanceStatus,
+    LateMinutes: daily.LateMinutes,
+    OvertimeMinutes: daily.OvertimeMinutes,
+    EarlyDepartureMinutes: daily.EarlyDepartureMinutes,
+    WorkMinutes: daily.WorkMinutes
+  });
+  const writes = [
     { collectionPath: eventPath, documentId: eventId, data: event, exists: false },
     { collectionPath: auditPath, documentId: eventId, data: { ...event, Action: 'MANUAL_ATTENDANCE_CORRECTION' }, exists: false },
     {
+      collectionPath: dailyAttendancePath(branchId),
+      documentId: daily.DailyId,
+      data: daily,
+      ...(existingDaily?.__updateTime ? { updateTime: existingDaily.__updateTime } : { exists: false })
+    },
+    ...(!currentState?.LastTimestamp || timestamp >= currentState.LastTimestamp ? [{
       collectionPath: statePath,
       documentId: stateId,
       data: {
@@ -266,15 +623,17 @@ export async function recordManualAttendance(env, user, body = {}) {
         UpdatedBy: actorName(user)
       },
       ...(currentState?.__updateTime ? { updateTime: currentState.__updateTime } : { exists: false })
-    }
-  ]);
-  return { ok: true, event, message: 'Attendance correction recorded with an audit trail.' };
+    }] : [])
+  ];
+  await batchCommitDocuments(env, writes);
+  return { ok: true, event, daily, message: 'Attendance correction recorded with an audit trail and recalculated daily totals.' };
 }
 
 export async function handleStaffAttendanceAction(env, user, body = {}, requestContext = {}) {
   const action = lower(body.action || body.Action || 'list');
   if (action === 'list') return listStaffAttendance(env, user, body);
   if (action === 'savesite') return saveAttendanceSite(env, user, body);
+  if (action === 'savepolicy') return saveAttendancePolicy(env, user, body);
   if (action === 'clock') return clockStaffAttendance(env, user, body, requestContext);
   if (action === 'manual') return recordManualAttendance(env, user, body);
   fail('Choose a valid staff attendance action.');
