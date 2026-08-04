@@ -171,6 +171,19 @@ test('HR web workspace is tabbed, responsive and backed by a protected API', () 
   assert.match(portalCss, /@media\(max-width:620px\)/);
 });
 
+test('completing an employee exit deactivates access and excludes exited staff from the active total', () => {
+  assert.match(apiSource, /Active: false/);
+  assert.match(apiSource, /Automatically deactivated after completed/);
+  assert.match(apiSource, /At least one active Super Admin must remain/);
+  assert.match(apiSource, /Employee exit completed and staff account deactivated/);
+  assert.match(apiSource, /batchCommitDocuments\(env, writes\)/);
+  assert.match(apiSource, /AccessSyncStatus = 'Completed'/);
+  assert.match(apiSource, /REPAIR COMPLETED EMPLOYEE EXIT/);
+  assert.match(adminJs, /inactive\|suspended\|terminated\|exited/i);
+  assert.match(adminJs, /data-repair-hr-exit/);
+  assert.match(adminJs, /Access disabled/);
+});
+
 test('HR people can be searched wherever an existing staff record is required', () => {
   assert.match(adminJs, /function hrPersonPicker\(/);
   assert.match(adminJs, /function bindHrPersonPickers\(/);

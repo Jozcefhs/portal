@@ -5296,7 +5296,7 @@ function renderHumanResources(data) {
   const username = clean(currentUser?.username);
   const vacancyOptions = `<option value="">Choose vacancy</option>${vacancies.map((row) => `<option value="${escapeHtml(row.VacancyId || row.__id)}">${escapeHtml([row.Title, row.Department, row.Status].filter(Boolean).join(' · '))}</option>`).join('')}`;
   const pendingLeave = leave.filter((row) => /pending/i.test(clean(row.Status))).length;
-  const activeStaff = directory.filter((row) => !/inactive|suspended|terminated/i.test(clean(row.Status)) && row.Active !== false).length;
+  const activeStaff = directory.filter((row) => !/inactive|suspended|terminated|exited/i.test(clean(row.Status)) && row.Active !== false).length;
   const openVacancies = vacancies.filter((row) => /open/i.test(clean(row.Status))).length;
   const pendingCompensation = compensation.filter((row) => /pending/i.test(clean(row.Status))).length;
   const openCases = employeeCases.filter((row) => !/resolved|closed/i.test(clean(row.Status))).length;
@@ -5566,7 +5566,15 @@ function renderHumanResources(data) {
       { label: 'Last day', value: (row) => row.LastWorkingDate }, { label: 'Handover', value: (row) => row.HandoverStatus },
       { label: 'Clearance', value: (row) => row.ClearanceStatus }, { label: 'Final pay', value: (row) => row.FinalPayStatus },
       { label: 'Final document', value: (row) => row.FinalDocumentReference }, { label: 'Status', value: (row) => row.Status },
-      ...(capabilities.canManageExit ? [{ label: 'Action', render: (row) => `<button type="button" class="compact-icon-action compact-edit-action" data-edit-hr-exit data-hr-record-id="${escapeHtml(row.ExitId || row.__id)}" aria-label="Edit exit record"><span aria-hidden="true">&#9998;</span></button>` }] : [])
+      ...(capabilities.canManageExit ? [{ label: 'Action', render: (row) => {
+        const completed = /completed/i.test(clean(row.Status));
+        const staff = directory.find((item) => lower(item.Username) === lower(row.Username));
+        if (completed && staff && yes(staff.Active)) {
+          return `<button type="button" class="table-action danger" data-repair-hr-exit="${escapeHtml(row.ExitId || row.__id)}">Repair access</button>`;
+        }
+        if (completed) return '<span class="workflow-status status-rejected">Access disabled</span>';
+        return `<button type="button" class="compact-icon-action compact-edit-action" data-edit-hr-exit data-hr-record-id="${escapeHtml(row.ExitId || row.__id)}" aria-label="Edit exit record"><span aria-hidden="true">&#9998;</span></button>`;
+      } }] : [])
     ])}`;
 
   const overviewPanel = document.createElement('section');
@@ -5678,6 +5686,19 @@ function renderHumanResources(data) {
     'ExitId', 'Username', 'DisplayName', 'ExitType', 'NoticeDate', 'LastWorkingDate', 'Reason', 'HandoverStatus',
     'ClearanceStatus', 'FinalPayStatus', 'FinalDocumentReference', 'ExitInterviewNotes', 'Status'
   ]);
+  panelEl.querySelectorAll('[data-repair-hr-exit]').forEach((button) => button.addEventListener('click', async () => {
+    if (!window.confirm('Disable this dismissed staff account and repair the completed exit record now?')) return;
+    const normalText = clean(button.textContent) || 'Repair access';
+    setButtonLoading(button, true, 'Repairing...', normalText);
+    try {
+      const result = await humanResourcesRequest('saveexit', { ExitId: button.dataset.repairHrExit, Status: 'Completed' });
+      await loadHumanResources();
+      setStatus(document.getElementById('humanResourcesStatus') || dashboardStatus, result.message, 'ok');
+    } catch (error) {
+      setStatus(document.getElementById('humanResourcesStatus') || dashboardStatus, error.message || String(error), 'bad');
+      if (button.isConnected) setButtonLoading(button, false, 'Repairing...', normalText);
+    }
+  }));
   panelEl.querySelectorAll('[data-hr-leave-decision]').forEach((button) => button.addEventListener('click', async () => {
     const decision = button.dataset.hrLeaveDecision;
     const note = window.prompt(`${decision} this leave request. Add an optional note:`, '');
@@ -8090,7 +8111,7 @@ function renderFinanceWorkflow() {
           <label>Description <span class="required">*</span><textarea name="description" rows="3" required></textarea></label>
           <label>Amount <span class="required">*</span><input name="amount" type="number" min="1" step="0.01" inputmode="decimal" data-finance-input required></label>
           <label>Preferred vendor<input name="vendor"></label>
-          <label>Required date<input name="date" type="date"></label>
+          <label>Required date <span class="required">*</span><input name="date" type="date" required></label>
           <label>Reference<input name="reference"></label>
           <label>Supporting document URL<input name="attachmentUrl" type="url"></label>
           <label>Notes<textarea name="notes" rows="2"></textarea></label>
@@ -8123,7 +8144,7 @@ function renderFinanceWorkflow() {
           </div>
           <div class="material-entry-actions"><button type="button" data-add-material-item>+ Add Item</button></div>
           <label>Preferred vendor<input name="vendor"></label>
-          <label>Required date<input name="date" type="date"></label>
+          <label>Required date <span class="required">*</span><input name="date" type="date" required></label>
           <label>Reference<input name="reference"></label>
           <label>Supporting document URL<input name="attachmentUrl" type="url"></label>
           <label>Notes<textarea name="notes" rows="2"></textarea></label>

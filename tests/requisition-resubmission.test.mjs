@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import { buildRequisitionResubmission } from '../functions/api/finance-workflow.js';
+import {
+  buildRequisitionResubmission,
+  requiredRequisitionDate
+} from '../functions/api/finance-workflow.js';
 
 const portalRoot = new URL('../', import.meta.url);
 const [workflowApi, adminJs] = await Promise.all([
@@ -70,6 +73,7 @@ test('material requisition resubmission recalculates line and grand totals', () 
     MaterialItems: [{ SNo: 1, Item: 'Old item', Specification: 'Old', Quantity: 1, UnitPrice: 50, Total: 50 }]
   }, {
     description: 'Updated supplies',
+    date: '2026-08-02',
     items: [
       { item: 'Paper', specification: 'A4', quantity: 3, unitPrice: 2500 },
       { item: 'Ink', specification: 'Black', quantity: 2, unitPrice: 6000 }
@@ -81,6 +85,27 @@ test('material requisition resubmission recalculates line and grand totals', () 
   assert.equal(result.payload.MaterialItems[0].Total, 7500);
   assert.equal(result.payload.Amount, 19500);
   assert.equal(result.payload.Status, 'Submitted');
+});
+
+test('every requisition requires a real calendar date', () => {
+  assert.equal(requiredRequisitionDate('2026-08-04'), '2026-08-04');
+  for (const date of ['', '04/08/2026', '2026-02-31']) {
+    assert.throws(() => requiredRequisitionDate(date), (error) => {
+      assert.equal(error.status, 400);
+      assert.equal(error.code, 'REQUISITION_DATE_REQUIRED');
+      return true;
+    });
+  }
+  assert.throws(() => buildRequisitionResubmission({
+    ExpenseNo: 'WEB-REQ-NO-DATE',
+    Status: 'Rejected',
+    Description: 'Original purpose',
+    Amount: 1000
+  }, {
+    description: 'Updated purpose',
+    amount: 1200,
+    date: ''
+  }, admin), /valid required date/i);
 });
 
 test('final finance records cannot be edited and resubmitted', () => {
@@ -148,4 +173,10 @@ test('web companion gives Super Admin a populated edit-and-resubmit form', () =>
   assert.match(adminJs, /Resubmission archives this revision and resets approval and Accounts review/);
   assert.match(adminJs, /const administrativelyApproved = Boolean\(clean\(record\.AdminReviewedAt\)\)/);
   assert.match(adminJs, /administrativelyApproved[\s\S]*?disabled aria-label="Editing locked after administrative approval/);
+});
+
+test('web requisition forms mark the required date as mandatory', () => {
+  const requiredDateFields = adminJs.match(/<input name="date" type="date" required>/g) || [];
+  assert.equal(requiredDateFields.length, 2);
+  assert.match(workflowApi, /Date: requiredDate/);
 });

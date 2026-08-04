@@ -1,4 +1,4 @@
-import { getDocument, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { batchCommitDocuments, getDocument, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
 import {
@@ -21,6 +21,7 @@ import {
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 const nowIso = () => new Date().toISOString();
+const activeValue = (value) => !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(value));
 
 function safeId(value) {
   return lower(value).replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 140);
@@ -409,29 +410,145 @@ async function saveCompliance(env, user, body, capabilities) {
 }
 
 async function saveExit(env, user, body, capabilities) {
+  assertCapability(capabilities, 'canManageExit', 'Your HR role cannot manage employee exits.');
   const existingExit = clean(body.ExitId) ? await getDocument(env, 'hrLifecycleRecords', safeId(body.ExitId)).catch(() => null) : null;
-  if (existingExit && lower(existingExit.Status) === 'completed') fail('A completed employee exit cannot be edited.', 409);
-  const result = await saveManagedRecord(env, user, body, capabilities, {
-    capability: 'canManageExit', deniedMessage: 'Your HR role cannot manage employee exits.',
-    collection: 'hrLifecycleRecords', recordKind: 'Exit', idField: 'ExitId', prefix: 'EXIT', normalize: normalizeHrExit,
-    auditLabel: 'EMPLOYEE EXIT', message: 'Employee exit record saved.', staffTarget: true
-  });
-  if (clean(result.record.Status) === 'Completed') {
-    const employeeId = safeId(result.record.Username);
-    const employee = await getDocument(env, 'hrEmployees', employeeId).catch(() => null);
-    if (employee) {
-      const updatedEmployee = {
-        ...employee, Status: 'Exited', ExitDate: result.record.LastWorkingDate,
-        UpdatedAt: nowIso(), UpdatedBy: actorName(user)
-      };
-      delete updatedEmployee.__id;
-      delete updatedEmployee.__name;
-      delete updatedEmployee.__createTime;
-      delete updatedEmployee.__updateTime;
-      await upsertDocument(env, 'hrEmployees', employeeId, updatedEmployee, { updateTime: employee.__updateTime });
-    }
+  if (existingExit && clean(existingExit.RecordKind) && clean(existingExit.RecordKind) !== 'Exit') {
+    fail('This HR record belongs to a different workflow.', 409);
   }
-  return result;
+  const alreadyCompleted = lower(existingExit?.Status) === 'completed';
+  if (alreadyCompleted && clean(body.Status) && lower(body.Status) !== 'completed') {
+    fail('A completed employee exit cannot be changed or reopened.', 409);
+  }
+  const completingExit = alreadyCompleted || lower(body.Status || existingExit?.Status) === 'completed';
+  if (!completingExit) {
+    return saveManagedRecord(env, user, body, capabilities, {
+      capability: 'canManageExit', deniedMessage: 'Your HR role cannot manage employee exits.',
+      collection: 'hrLifecycleRecords', recordKind: 'Exit', idField: 'ExitId', prefix: 'EXIT', normalize: normalizeHrExit,
+      auditLabel: 'EMPLOYEE EXIT', message: 'Employee exit record saved.', staffTarget: true
+    });
+  }
+
+  // Completing an exit changes three security-sensitive records. Keep them in one
+  // Firestore commit so a quota or network failure cannot leave a completed exit
+  // attached to an active login. Re-running a previously completed exit repairs
+  // legacy partial saves without allowing the HR details to be edited.
+  const timestamp = nowIso();
+  const exitId = safeId(clean(existingExit?.ExitId || body.ExitId) || `EXIT-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`);
+  const targetUsername = lower(existingExit?.Username || body.Username);
+  if (!targetUsername) fail('Choose an existing staff account.', 404);
+  let targetStaff = null;
+  const staffUsers = await listCollection(env, 'staffUsers');
+  targetStaff = staffUsers.find((row) => lower(row.Username || row.__id) === targetUsername);
+  if (!targetStaff) fail('Choose an existing staff account.', 404);
+  const targetIsActive = targetStaff.Active === undefined || activeValue(targetStaff.Active);
+  if (targetIsActive && clean(targetStaff.Role) === 'Super Admin') {
+    const otherActiveAdmins = staffUsers.filter((row) =>
+      lower(row.Username || row.__id) !== targetUsername &&
+      clean(row.Role) === 'Super Admin' &&
+      (row.Active === undefined || activeValue(row.Active)));
+    if (!otherActiveAdmins.length) fail('At least one active Super Admin must remain. Assign another Super Admin before completing this exit.', 409);
+  }
+
+  const stripMetadata = (value = {}) => {
+    const record = { ...value };
+    delete record.__id;
+    delete record.__name;
+    delete record.__createTime;
+    delete record.__updateTime;
+    return record;
+  };
+  const record = alreadyCompleted
+    ? stripMetadata(existingExit)
+    : {
+        ExitId: exitId,
+        RecordKind: 'Exit',
+        ...normalizeHrExit({
+          ...body,
+          Username: targetUsername,
+          DisplayName: clean(body.DisplayName || targetStaff.DisplayName || targetUsername),
+          Status: 'Completed'
+        }, existingExit || {}),
+        CreatedAt: clean(existingExit?.CreatedAt) || timestamp,
+        CreatedBy: clean(existingExit?.CreatedBy) || actorName(user),
+        CreatedByUsername: clean(existingExit?.CreatedByUsername) || actorUsername(user),
+        UpdatedAt: timestamp,
+        UpdatedBy: actorName(user),
+        UpdatedByUsername: actorUsername(user)
+      };
+  record.ExitId = exitId;
+  record.RecordKind = 'Exit';
+  record.Status = 'Completed';
+  record.AccountDeactivated = true;
+  record.AccessSyncStatus = 'Completed';
+  record.AccessSyncedAt = timestamp;
+  record.AccessSyncedBy = actorName(user);
+
+  const employeeId = safeId(targetUsername);
+  const employee = await getDocument(env, 'hrEmployees', employeeId).catch(() => null);
+  const auditId = safeId(`HR-${timestamp}-${crypto.randomUUID().slice(0, 8)}`);
+  const writes = [{
+    collectionPath: 'hrLifecycleRecords', documentId: exitId, data: record,
+    ...(existingExit?.__updateTime ? { updateTime: existingExit.__updateTime } : { exists: false })
+  }, {
+    collectionPath: 'hrAudit', documentId: auditId, exists: false, data: {
+      AuditId: auditId,
+      Timestamp: timestamp,
+      Action: alreadyCompleted ? 'REPAIR COMPLETED EMPLOYEE EXIT' : 'COMPLETE EMPLOYEE EXIT',
+      Reference: exitId,
+      Details: targetUsername,
+      ActorUsername: actorUsername(user),
+      Actor: actorName(user)
+    }
+  }];
+  if (targetIsActive) {
+    const updatedStaff = stripMetadata({
+      ...targetStaff,
+      Active: false,
+      DeactivatedAt: timestamp,
+      DeactivatedBy: actorName(user),
+      DeactivationReason: `Completed HR exit: ${record.ExitType}`,
+      UpdatedAt: timestamp,
+      UpdatedBy: actorName(user)
+    });
+    writes.push({
+      collectionPath: 'staffUsers', documentId: targetStaff.__id || employeeId, data: updatedStaff,
+      ...(targetStaff.__updateTime ? { updateTime: targetStaff.__updateTime } : {})
+    });
+    const securityAuditId = safeId(`STAFF-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`);
+    writes.push({
+      collectionPath: 'staffSecurityAudit', documentId: securityAuditId, exists: false, data: {
+        AuditId: securityAuditId,
+        Timestamp: timestamp,
+        Action: 'DEACTIVATE USER',
+        Username: targetUsername,
+        Details: `Automatically deactivated after completed ${clean(record.ExitType).toLowerCase()} exit.`,
+        Actor: actorName(user),
+        ActorUsername: actorUsername(user),
+        SourcePlatform: 'Web HR'
+      }
+    });
+  }
+  if (employee) {
+    writes.push({
+      collectionPath: 'hrEmployees', documentId: employeeId,
+      data: stripMetadata({
+        ...employee,
+        Status: 'Exited',
+        ExitDate: record.LastWorkingDate,
+        UpdatedAt: timestamp,
+        UpdatedBy: actorName(user)
+      }),
+      ...(employee.__updateTime ? { updateTime: employee.__updateTime } : {})
+    });
+  }
+  await batchCommitDocuments(env, writes);
+  return {
+    ok: true,
+    message: targetIsActive
+      ? 'Employee exit completed and staff account deactivated.'
+      : 'Employee exit verified; the staff account is disabled.',
+    record
+  };
 }
 
 export async function onRequestPost(context) {

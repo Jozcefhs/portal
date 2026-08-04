@@ -5197,8 +5197,13 @@ async function saveAccountingExpense(env, body) {
     const err = new Error('Posted expenses cannot be edited. Use a reversal.'); err.status = 409; throw err;
   }
   const amount = asMoneyNumber(body.Amount || body.amount);
+  const expenseDate = clean(body.Date || body.date);
+  const parsedExpenseDate = new Date(`${expenseDate}T00:00:00.000Z`);
   if (amount <= 0 || !clean(body.Description || body.description)) {
     const err = new Error('Expense description and amount are required.'); err.status = 400; throw err;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(expenseDate) || Number.isNaN(parsedExpenseDate.getTime()) || parsedExpenseDate.toISOString().slice(0, 10) !== expenseDate) {
+    const err = new Error('A valid requisition date is required.'); err.status = 400; throw err;
   }
   const requestedStatus = clean(body.Status || body.status || 'Draft');
   const forcedDepartment = enforceDepartmentSubmission(body, existing, requestedStatus);
@@ -5206,7 +5211,7 @@ async function saveAccountingExpense(env, body) {
     await requireAccountingApprovalLimit(env, body, 'Expense', amount);
   }
   const payload = {
-    ...existing, ExpenseNo: expenseNo, Date: clean(body.Date || body.date) || nowIso().slice(0, 10),
+    ...existing, ExpenseNo: expenseNo, Date: expenseDate,
     Vendor: clean(body.Vendor || body.vendor), Description: clean(body.Description || body.description), Amount: amount,
     ExpenseAccount: clean(body.ExpenseAccount || body.expenseAccount) || '6090',
     PaymentAccount: clean(body.PaymentAccount || body.paymentAccount) || '1020',
@@ -5214,6 +5219,8 @@ async function saveAccountingExpense(env, body) {
     BudgetCode: clean(body.BudgetCode || body.budgetCode), PaymentMethod: clean(body.PaymentMethod || body.paymentMethod),
     Reference: clean(body.Reference || body.reference), AttachmentUrl: clean(body.AttachmentUrl || body.attachmentUrl),
     Notes: clean(body.Notes || body.notes), Status: requestedStatus,
+    PostingWarningAcknowledged: clean(body.PostingWarningAcknowledged || body.postingWarningAcknowledged),
+    PostingWarningDetails: clean(body.PostingWarningDetails || body.postingWarningDetails),
     RequestedBy: existing.RequestedBy || clean(body.RecordedBy || body.recordedBy), RequestedAt: existing.RequestedAt || nowIso(),
     ApprovedBy: lower(requestedStatus) === 'approved' ? clean(body.RecordedBy || body.recordedBy) : (existing.ApprovedBy || ''),
     ApprovedAt: lower(requestedStatus) === 'approved' ? nowIso() : (existing.ApprovedAt || ''), UpdatedAt: nowIso()

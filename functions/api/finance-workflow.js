@@ -27,6 +27,19 @@ function amount(value) {
   return Number.isFinite(number) ? Math.round((number + Number.EPSILON) * 100) / 100 : 0;
 }
 
+export function requiredRequisitionDate(value) {
+  const date = clean(value);
+  const validShape = /^\d{4}-\d{2}-\d{2}$/.test(date);
+  const parsed = validShape ? new Date(`${date}T00:00:00.000Z`) : null;
+  if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+    const err = new Error('A valid required date is required for the requisition.');
+    err.status = 400;
+    err.code = 'REQUISITION_DATE_REQUIRED';
+    throw err;
+  }
+  return date;
+}
+
 export function normalizeMaterialItems(input) {
   let rows = input;
   if (typeof rows === 'string') {
@@ -105,6 +118,7 @@ export function buildRequisitionResubmission(existing = {}, body = {}, user = {}
 
   const isMaterial = lower(existing.RequisitionType) === 'material';
   const description = clean(body.description ?? body.Description);
+  const requiredDate = requiredRequisitionDate(body.date ?? body.Date);
   const value = isMaterial
     ? amount(normalizeMaterialItems(body.items ?? body.MaterialItems).reduce((sum, item) => sum + item.Total, 0))
     : amount(body.amount ?? body.Amount);
@@ -141,7 +155,7 @@ export function buildRequisitionResubmission(existing = {}, body = {}, user = {}
   const revisedBy = actor(user);
   const payload = removeFirestoreMetadata({
     ...existing,
-    Date: clean(body.date ?? body.Date) || existing.Date || dateToday(),
+    Date: requiredDate,
     Vendor: clean(body.vendor ?? body.Vendor),
     Description: description,
     Amount: value,
@@ -363,6 +377,7 @@ async function submitRequisition(env, user, body) {
   const department = requireSubmitter(user);
   const value = amount(body.amount || body.Amount);
   const description = clean(body.description || body.Description);
+  const requiredDate = requiredRequisitionDate(body.date || body.Date);
   if (!description || value <= 0) {
     const err = new Error('Description and an amount greater than zero are required.');
     err.status = 400;
@@ -371,7 +386,7 @@ async function submitRequisition(env, user, body) {
   const expenseNo = requestNumber('WEB-REQ');
   const payload = {
     ExpenseNo: expenseNo,
-    Date: clean(body.date || body.Date) || dateToday(),
+    Date: requiredDate,
     Vendor: clean(body.vendor || body.Vendor),
     Description: description,
     Amount: value,
@@ -404,6 +419,7 @@ async function submitMaterialRequisition(env, user, body) {
   const department = requireSubmitter(user);
   const items = normalizeMaterialItems(body.items || body.MaterialItems);
   const description = clean(body.description || body.Description);
+  const requiredDate = requiredRequisitionDate(body.date || body.Date);
   if (!description) {
     const err = new Error('A description is required for the material requisition.');
     err.status = 400;
@@ -425,7 +441,7 @@ async function submitMaterialRequisition(env, user, body) {
   const payload = {
     ExpenseNo: expenseNo,
     RequisitionType: 'Material',
-    Date: clean(body.date || body.Date) || dateToday(),
+    Date: requiredDate,
     Vendor: clean(body.vendor || body.Vendor),
     Description: description,
     MaterialItems: items,
