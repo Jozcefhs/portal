@@ -15,6 +15,10 @@ on:
         description: Service account allowed to manage Firestore indexes
         required: true
         type: string
+      firebase_config:
+        description: Edition-specific Firebase CLI configuration file
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -36,17 +40,19 @@ jobs:
           FIREBASE_PROJECT_ID: ${{ inputs.firebase_project_id }}
           GCP_WIF_PROVIDER: ${{ inputs.workload_identity_provider }}
           GCP_INDEX_SERVICE_ACCOUNT: ${{ inputs.service_account }}
+          FIREBASE_CONFIG: ${{ inputs.firebase_config }}
         run: |
           set -euo pipefail
           missing=()
           [[ -n "${FIREBASE_PROJECT_ID}" ]] || missing+=("Firebase project ID")
           [[ -n "${GCP_WIF_PROVIDER}" ]] || missing+=("Workload Identity provider")
           [[ -n "${GCP_INDEX_SERVICE_ACCOUNT}" ]] || missing+=("index service account")
+          [[ -n "${FIREBASE_CONFIG}" ]] || missing+=("Firebase configuration file")
           if (( ${#missing[@]} )); then
             printf '::error::Missing required index deployment configuration: %s\n' "$(IFS=', '; echo "${missing[*]}")"
             exit 1
           fi
-          node -e "JSON.parse(require('node:fs').readFileSync('firebase.json', 'utf8')); JSON.parse(require('node:fs').readFileSync('firestore.indexes.json', 'utf8'));"
+          node -e "const fs=require('node:fs'); const config=JSON.parse(fs.readFileSync(process.env.FIREBASE_CONFIG,'utf8')); const firestore=Array.isArray(config.firestore)?config.firestore[0]:config.firestore; if(!firestore?.indexes) throw new Error('Firebase configuration has no Firestore index file.'); JSON.parse(fs.readFileSync(firestore.indexes,'utf8'));"
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
@@ -64,8 +70,11 @@ jobs:
         shell: bash
         env:
           FIREBASE_PROJECT_ID: ${{ inputs.firebase_project_id }}
+          FIREBASE_CONFIG: ${{ inputs.firebase_config }}
         run: >-
           npx --yes firebase-tools@15.24.0 deploy
           --only firestore:indexes
           --project "${FIREBASE_PROJECT_ID}"
+          --config "${FIREBASE_CONFIG}"
+          --force
           --non-interactive

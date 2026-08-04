@@ -94,7 +94,7 @@ Browser permission is requested only after the user selects **Enable on this dev
    - `FIREBASE_MESSAGING_SENDER_ID`
    - `FCM_VAPID_KEY`
 6. Add a long random `NOTIFICATION_SCHEDULER_SECRET` as a Cloudflare encrypted secret.
-7. Deploy the indexes in `firestore.indexes.json` to the same Firebase project. The reminder query requires the `ReminderEligible` + `NextReminderDate` composite index.
+7. Deploy `firestore.school.indexes.json` through `firebase.school.json` to the same Firebase project. The reminder query requires the `ReminderEligible` + `NextReminderDate` composite index.
 8. In the GitHub repository, configure Actions secrets:
    - `NOTIFICATION_SCHEDULER_URL`: the full deployed URL ending in `/api/notification-scheduler`
    - `NOTIFICATION_SCHEDULER_SECRET`: the same value configured in Cloudflare

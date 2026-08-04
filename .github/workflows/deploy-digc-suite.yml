@@ -23,6 +23,7 @@ jobs:
       firebase_project_id: ${{ vars.CHURCH_FIREBASE_PROJECT_ID }}
       workload_identity_provider: ${{ vars.CHURCH_GCP_WIF_PROVIDER }}
       service_account: ${{ vars.CHURCH_GCP_INDEX_SERVICE_ACCOUNT }}
+      firebase_config: firebase.church.json
 
   deploy:
     name: Deploy digc-suite to Cloudflare Pages

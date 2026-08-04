@@ -23,6 +23,7 @@ jobs:
       firebase_project_id: ${{ vars.SCHOOL_FIREBASE_PROJECT_ID }}
       workload_identity_provider: ${{ vars.SCHOOL_GCP_WIF_PROVIDER }}
       service_account: ${{ vars.SCHOOL_GCP_INDEX_SERVICE_ACCOUNT }}
+      firebase_config: firebase.school.json
 
   deploy:
     name: Deploy destinychristianacademy to Cloudflare Pages

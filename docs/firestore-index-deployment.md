@@ -1,9 +1,19 @@
 # Mandatory Firestore index deployment
 
-Every production web deployment is gated by the checked-in Firestore index
-definition. The school and church Cloudflare Pages jobs start only after
-`firestore.indexes.json` has been accepted by their respective Firebase
-projects.
+Every production web deployment is gated by its edition-specific Firestore
+index definition. The school and church Cloudflare Pages jobs start only after
+the correct index set has been accepted by the corresponding Firebase project.
+
+| Edition | Firebase CLI configuration | Index definition |
+| --- | --- | --- |
+| School | `firebase.school.json` | `firestore.school.indexes.json` |
+| Church | `firebase.church.json` | `firestore.church.indexes.json` |
+
+The school set contains its payment, invoice, store, accounting and scoped
+notification composites. The church set contains shared accounting and payment
+intent composites plus church staff/member notification composites. Church
+member notification lookup includes `TargetEmails + BranchId + CreatedAt` and
+does not deploy school-only `SchoolSection` or `TargetAccountRefs` indexes.
 
 ## GitHub repository variables
 
@@ -38,23 +48,33 @@ downloaded private key.
 
 ## Deployment behavior
 
-The reusable `.github/workflows/deploy-firestore-indexes.yml` workflow validates
-both JSON files and runs:
+The reusable `.github/workflows/deploy-firestore-indexes.yml` workflow receives
+the appropriate Firebase configuration, validates that configuration and its
+referenced index file, and runs:
 
 ```text
-npx --yes firebase-tools@15.24.0 deploy --only firestore:indexes --project PROJECT_ID --non-interactive
+npx --yes firebase-tools@15.24.0 deploy --only firestore:indexes --project PROJECT_ID --config EDITION_CONFIG --force --non-interactive
 ```
 
 Both Cloudflare workflows declare `needs: firestore-indexes`. Missing variables,
 authentication errors, invalid JSON, or a rejected index deployment therefore
 stop the website deployment.
 
+`--force` makes the selected edition manifest authoritative. In addition to
+creating required indexes, Firebase removes deployed composite indexes that are
+not present in that edition's checked-in file. This permanently prevents school
+indexes from accumulating in church projects, and church-only indexes from
+accumulating in school projects. Before creating an index in the Firebase
+console, add it to the appropriate checked-in manifest; otherwise the next
+edition deployment will remove it.
+
 ## Adding another organisation
 
-Create a dedicated deployment workflow for the organisation, add a
-`firestore-indexes` job that calls the reusable workflow with that Firebase
-project's three variables, and make its Pages deploy job depend on the index
-job. This makes index provisioning part of onboarding instead of a manual
+Create an index definition and Firebase configuration for the organisation's
+edition. Then create its deployment workflow, add a `firestore-indexes` job
+that calls the reusable workflow with that Firebase project's three variables
+and configuration file, and make its Pages deploy job depend on the index job.
+This makes index provisioning part of onboarding instead of a manual
 afterthought.
 
 For repository merge protection, also make the organisation's Firestore index

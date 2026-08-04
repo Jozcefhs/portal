@@ -6,13 +6,23 @@
 2. Configure the mandatory GitHub index-deployment gate described in
    `docs/firestore-index-deployment.md`.
 3. For an exceptional manual deployment, install and authenticate the Firebase
-   CLI, then run from this portal directory:
+   CLI, then run the command for the target edition from this portal directory:
 
-   `firebase deploy --only firestore:indexes --project YOUR_PROJECT_ID`
+   School:
+
+   `firebase deploy --only firestore:indexes --project YOUR_SCHOOL_PROJECT_ID --config firebase.school.json --force`
+
+   Church:
+
+   `firebase deploy --only firestore:indexes --project YOUR_CHURCH_PROJECT_ID --config firebase.church.json --force`
 
 The application uses automatic single-field indexes for direct equality and `IN`
-queries. `firestore.indexes.json` contains the compound indexes used by payment,
-invoice, store-order, accounting, and health views.
+queries. `firestore.school.indexes.json` contains the school payment, invoice,
+store, accounting and notification composites. `firestore.church.indexes.json`
+contains the church accounting, payment-intent and notification composites.
+The edition files are authoritative: deployment removes composite indexes that
+are not listed in the selected file. Commit any console-created index to the
+correct file before the next deployment.
 
 ## One-time data optimization
 

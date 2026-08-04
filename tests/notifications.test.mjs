@@ -544,7 +544,7 @@ test('read-state queries use the exact visible notification ids in bounded chunk
 });
 
 test('staff and parent notification interfaces are wired to protected APIs', async () => {
-  const [adminHtml, parentHtml, notificationJs, notificationCss, parentDashboardJs, styleCss, staffApi, parentApi, backendApi, indexes] = await Promise.all([
+  const [adminHtml, parentHtml, notificationJs, notificationCss, parentDashboardJs, styleCss, staffApi, parentApi, backendApi, schoolIndexes, churchIndexes] = await Promise.all([
     readFile(new URL('../admin.html', import.meta.url), 'utf8'),
     readFile(new URL('../parent-dashboard.html', import.meta.url), 'utf8'),
     readFile(new URL('../js/notifications.js', import.meta.url), 'utf8'),
@@ -554,7 +554,8 @@ test('staff and parent notification interfaces are wired to protected APIs', asy
     readFile(new URL('../functions/api/staff-notifications.js', import.meta.url), 'utf8'),
     readFile(new URL('../functions/api/parent-dashboard.js', import.meta.url), 'utf8'),
     readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8'),
-    readFile(new URL('../firestore.indexes.json', import.meta.url), 'utf8')
+    readFile(new URL('../firestore.school.indexes.json', import.meta.url), 'utf8'),
+    readFile(new URL('../firestore.church.indexes.json', import.meta.url), 'utf8')
   ]);
   assert.match(adminHtml, /js\/notifications\.js/);
   assert.match(notificationJs, /\/api\/staff-notifications/);
@@ -612,9 +613,12 @@ test('staff and parent notification interfaces are wired to protected APIs', asy
   assert.doesNotMatch(backendApi, /notifyParentPaymentDue\(env, invoicePayload\)/);
   assert.doesNotMatch(parentApi, /BranchId:\s*body\.branchId/);
   assert.doesNotMatch(parentApi, /SchoolSection:\s*body\.schoolSection/);
-  assert.match(indexes, /"fieldPath": "TargetRoles", "arrayConfig": "CONTAINS"/);
-  assert.match(indexes, /"fieldPath": "TargetAccountRefs", "arrayConfig": "CONTAINS"/);
-  assert.match(indexes, /"collectionGroup": "notificationReads"/);
-  assert.match(indexes, /"fieldPath": "BranchId", "order": "ASCENDING"/);
-  assert.match(indexes, /"fieldPath": "SchoolSection", "order": "ASCENDING"/);
+  assert.match(schoolIndexes, /"fieldPath": "TargetRoles", "arrayConfig": "CONTAINS"/);
+  assert.match(schoolIndexes, /"fieldPath": "TargetAccountRefs", "arrayConfig": "CONTAINS"/);
+  assert.match(schoolIndexes, /"collectionGroup": "notificationReads"/);
+  assert.match(schoolIndexes, /"fieldPath": "BranchId", "order": "ASCENDING"/);
+  assert.match(schoolIndexes, /"fieldPath": "SchoolSection", "order": "ASCENDING"/);
+  assert.match(churchIndexes, /"fieldPath": "TargetEmails", "arrayConfig": "CONTAINS"[\s\S]*?"fieldPath": "BranchId", "order": "ASCENDING"[\s\S]*?"fieldPath": "CreatedAt", "order": "DESCENDING"/);
+  assert.doesNotMatch(churchIndexes, /"fieldPath": "SchoolSection"/);
+  assert.doesNotMatch(churchIndexes, /"fieldPath": "TargetAccountRefs"/);
 });
