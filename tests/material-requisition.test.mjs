@@ -46,3 +46,13 @@ test('material requisition is an additional workflow with a multi-item table', (
   assert.match(portalCss, /\.material-requisition-dialog\{width:min\(1000px/);
   assert.match(portalCss, /\.material-grand-total-row th\{/);
 });
+
+test('material requisition dialog is compact on mobile', () => {
+  assert.match(portalCss, /@media \(max-width:680px\)\{[\s\S]*?\.material-requisition-dialog \.workflow-dialog-header\{padding:10px 12px\}/);
+  assert.match(portalCss, /\.material-requisition-dialog \.workflow-dialog-header h2\{[^}]*font-size:14px/);
+  assert.match(portalCss, /\.material-requisition-dialog \.workflow-form\{padding:10px 12px 14px;font-size:10px\}/);
+  assert.match(portalCss, /\.material-requisition-dialog \.workflow-form>label\{[^}]*font-size:10px;[^}]*font-weight:600/);
+  assert.match(portalCss, /\.material-requisition-dialog \.material-entry-table\{min-width:630px\}/);
+  assert.match(portalCss, /\.material-requisition-dialog \.material-entry-table input\{[^}]*min-height:30px;[^}]*font-size:10px/);
+  assert.match(portalCss, /\.material-requisition-dialog \.workflow-form \.material-entry-actions button,[\s\S]*?font-size:10px/);
+});

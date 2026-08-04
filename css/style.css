@@ -602,6 +602,31 @@ html[data-theme="dark"] .material-entry-table output{color:#fff}
   .staff-sidebar{position:fixed;left:0;right:auto;top:58px;bottom:0;z-index:120;width:min(84vw,310px);height:auto;padding:18px 12px calc(14px + env(safe-area-inset-bottom));border:0;border-right:1px solid #284b6b;background:linear-gradient(180deg,var(--finance-navy) 0,#0b2239 100%);transform:translateX(-105%);transition:transform .24s ease;overflow:hidden}.staff-sidebar.is-open{transform:translateX(0);box-shadow:18px 0 45px rgba(4,20,35,.32)}.staff-sidebar-heading{display:block}.staff-sidebar-note{display:flex}.staff-page .staff-tabs{display:grid;grid-template-columns:1fr;margin:12px 0;overflow-x:hidden;overflow-y:auto;gap:5px;scrollbar-width:thin}.staff-page .staff-tabs .child-card{width:100%;min-width:0;min-height:44px;padding:10px 12px;text-align:left;font-size:13px}.staff-page .staff-tabs .child-card.selected{box-shadow:inset 3px 0 0 var(--finance-cyan)}
   .staff-sidebar-scrim{position:fixed;inset:58px 0 0;z-index:110;display:block;margin:0;padding:0;border:0;border-radius:0;background:rgba(7,25,43,.56);backdrop-filter:blur(2px)}
   .staff-page .staff-panel{padding:14px}.workflow-primary-actions{display:flex;flex-wrap:nowrap;align-items:center;justify-content:flex-start;gap:4px;width:100%;margin-top:10px}.workflow-primary-actions button{flex:0 0 auto;width:fit-content;min-width:0;min-height:29px;padding:6px 7px;font-size:9px;line-height:1;white-space:nowrap}.workflow-primary-actions .finance-workflow-refresh{display:grid;place-items:center;width:29px;height:29px;min-width:29px;padding:0;font-size:17px}.workflow-primary-actions .finance-workflow-refresh span{display:block;line-height:1}.workflow-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.workflow-kpis>div{padding:12px}.workflow-kpis strong{font-size:21px}
+  .material-requisition-dialog{max-height:94vh;max-height:94dvh;border-radius:11px}
+  .material-requisition-dialog .workflow-dialog-header{padding:10px 12px}
+  .material-requisition-dialog .workflow-dialog-header small{font-size:8px;line-height:1.1}
+  .material-requisition-dialog .workflow-dialog-header h2{margin-top:2px;font-size:14px;line-height:1.2}
+  .material-requisition-dialog .workflow-dialog-header>button{width:30px;height:30px;min-height:30px;font-size:19px}
+  .material-requisition-dialog .workflow-form{padding:10px 12px 14px;font-size:10px}
+  .material-requisition-dialog .workflow-form>label{margin:6px 0 3px;font-size:10px;font-weight:600;line-height:1.2}
+  .material-requisition-dialog .workflow-form>label input,
+  .material-requisition-dialog .workflow-form>label textarea{min-height:33px;margin-top:3px;padding:6px 8px;font-size:11px;font-weight:400;line-height:1.25}
+  .material-requisition-dialog .workflow-form>label textarea{min-height:44px}
+  .material-requisition-dialog .workflow-form>.muted{margin:5px 0;font-size:9px;line-height:1.35}
+  .material-requisition-dialog .material-entry-wrap{margin:6px -12px 7px;padding:0 12px}
+  .material-requisition-dialog .material-entry-table{min-width:630px}
+  .staff-page .material-requisition-dialog .material-entry-table th,
+  .staff-page .material-requisition-dialog .material-entry-table td{padding:4px 5px;font-size:9px}
+  .material-requisition-dialog .material-entry-table input{min-height:30px;padding:5px 6px;font-size:10px}
+  .material-requisition-dialog .material-entry-table [data-material-field="item"]{width:132px}
+  .material-requisition-dialog .material-entry-table [data-material-field="specification"]{width:158px}
+  .material-requisition-dialog .material-entry-table [data-material-field="quantity"]{width:70px}
+  .material-requisition-dialog .material-entry-table [data-material-field="unitPrice"]{width:90px}
+  .material-requisition-dialog .material-item-control{grid-template-columns:minmax(102px,1fr) 26px;gap:4px}
+  .material-requisition-dialog .workflow-form .material-item-control button{width:26px;height:26px;min-height:26px;font-size:14px}
+  .material-requisition-dialog .material-entry-actions{margin:5px 0 9px}
+  .material-requisition-dialog .workflow-form .material-entry-actions button,
+  .material-requisition-dialog .workflow-form>button[type="submit"]{min-height:30px;padding:6px 8px;font-size:10px;line-height:1}
 }
 @media (max-width:420px){.workflow-kpis{grid-template-columns:1fr 1fr}.staff-page .staff-summary{grid-template-columns:1fr 1fr}.staff-page .staff-summary div{min-height:84px;padding:12px}.staff-page .staff-summary strong{font-size:21px}}
 
