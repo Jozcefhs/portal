@@ -1,13 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { access, readFile } from 'node:fs/promises';
+import {
+  buildDeploymentMatrix,
+  validateOrganisationRegistry
+} from '../scripts/organisation-deployment-matrix.mjs';
+import { validateDeploymentPayload } from '../scripts/verify-organisation-deployment.mjs';
 
 const reusable = await readFile(
-  new URL('../.github/workflows/deploy-firestore-indexes.yml', import.meta.url),
+  new URL('../.github/workflows/deploy-organisation.yml', import.meta.url),
   'utf8'
 );
-const school = await readFile(new URL('../.github/workflows/deploy-school.yml', import.meta.url), 'utf8');
-const church = await readFile(new URL('../.github/workflows/deploy-digc-suite.yml', import.meta.url), 'utf8');
+const coordinator = await readFile(
+  new URL('../.github/workflows/deploy-organisations.yml', import.meta.url),
+  'utf8'
+);
+const registry = JSON.parse(await readFile(new URL('../deploy/organisations.json', import.meta.url), 'utf8'));
 const schoolConfig = JSON.parse(await readFile(new URL('../firebase.school.json', import.meta.url), 'utf8'));
 const churchConfig = JSON.parse(await readFile(new URL('../firebase.church.json', import.meta.url), 'utf8'));
 const schoolIndexes = JSON.parse(await readFile(new URL('../firestore.school.indexes.json', import.meta.url), 'utf8'));
@@ -17,17 +25,69 @@ function indexFields(index) {
   return (index.fields || []).map((field) => field.fieldPath).join('|');
 }
 
-test('the reusable workflow deploys only checked-in Firestore indexes with short-lived credentials', () => {
+test('the organisation registry validates and builds an edition-aware deployment matrix', () => {
+  const organisations = validateOrganisationRegistry(registry);
+  assert.equal(organisations.length, 2);
+  assert.deepEqual(organisations.map((row) => row.id), ['destinychristianacademy', 'digc-suite']);
+  assert.equal(organisations[0].firebaseConfig, 'firebase.school.json');
+  assert.equal(organisations[1].firebaseConfig, 'firebase.church.json');
+  assert.equal(organisations[1].cloudflareAccountId, 'a5aa57ffa1fd00e4fd98e78ee7d32f01');
+  assert.deepEqual(buildDeploymentMatrix(registry, { target: 'digc-suite' }).map((row) => row.id), ['digc-suite']);
+  assert.equal(buildDeploymentMatrix(registry, { target: 'all' }).length, 2);
+});
+
+test('the registry rejects duplicate deployment boundaries and invalid edition profiles', () => {
+  const duplicate = structuredClone(registry);
+  duplicate.organisations[1].cloudflareProject = duplicate.organisations[0].cloudflareProject;
+  assert.throws(() => validateOrganisationRegistry(duplicate), /Cloudflare Pages project/);
+
+  const mismatched = structuredClone(registry);
+  mismatched.organisations[0].indexProfile = 'church';
+  assert.throws(() => validateOrganisationRegistry(mismatched), /must use the school index profile/);
+});
+
+test('the reusable workflow deploys indexes and Pages with short-lived, environment-scoped credentials', () => {
   assert.match(reusable, /workflow_call:/);
+  assert.match(reusable, /environment:[\s\S]*inputs\.github_environment/);
   assert.match(reusable, /google-github-actions\/auth@v3/);
   assert.match(reusable, /id-token: write/);
+  assert.match(reusable, /vars\.FIREBASE_PROJECT_ID/);
+  assert.match(reusable, /vars\.GCP_WIF_PROVIDER/);
+  assert.match(reusable, /vars\.GCP_INDEX_SERVICE_ACCOUNT/);
   assert.match(reusable, /firebase-tools@15\.24\.0 deploy/);
   assert.match(reusable, /--only firestore:indexes/);
   assert.match(reusable, /--config "\$\{FIREBASE_CONFIG\}"/);
-  assert.match(reusable, /--force/);
-  assert.match(reusable, /--non-interactive/);
-  assert.match(reusable, /inputs\.firebase_config/);
+  assert.match(reusable, /cloudflare\/wrangler-action@v3/);
+  assert.match(reusable, /inputs\.cloudflare_account_id/);
+  assert.match(reusable, /--project-name=\$\{\{ inputs\.cloudflare_project \}\}/);
+  assert.match(reusable, /verify-organisation-deployment\.mjs/);
   assert.doesNotMatch(reusable, /FIREBASE_TOKEN|credentials_json|private[_ -]?key/i);
+});
+
+test('the coordinator can deploy one or all organisations without cancelling unaffected tenants', () => {
+  assert.match(coordinator, /workflow_dispatch:/);
+  assert.match(coordinator, /vars\.MULTI_ORG_DEPLOY_ENABLED == 'true'/);
+  assert.match(coordinator, /organisation-deployment-matrix\.mjs --target/);
+  assert.match(coordinator, /fail-fast: false/);
+  assert.match(coordinator, /max-parallel: 3/);
+  assert.match(coordinator, /fromJSON\(needs\.validate\.outputs\.organisations\)/);
+  assert.match(coordinator, /matrix\.organisation\.cloudflareAccountId/);
+  assert.match(coordinator, /uses: \.\/\.github\/workflows\/deploy-organisation\.yml/);
+  assert.match(coordinator, /secrets: inherit/);
+});
+
+test('deployed organisation identity must match its registry boundary', () => {
+  assert.deepEqual(validateDeploymentPayload({
+    ok: true,
+    profile: { WorkspaceId: 'digc-suite', OrganisationEdition: 'faith' }
+  }, { workspaceId: 'DIGC-SUITE', edition: 'faith' }), {
+    workspaceId: 'digc-suite',
+    edition: 'faith'
+  });
+  assert.throws(() => validateDeploymentPayload({
+    ok: true,
+    profile: { WorkspaceId: 'another-school', OrganisationEdition: 'school' }
+  }, { workspaceId: 'digc-suite', edition: 'faith' }), /workspace mismatch/);
 });
 
 test('school and church use separate Firebase configurations and index files', async () => {
@@ -58,24 +118,4 @@ test('school indexes retain school finance and section-scoped notification queri
   assert.equal(schoolCollections.has('invoices'), true);
   assert.equal(schoolCollections.has('payments'), true);
   assert.equal(schoolCollections.has('storeOrders'), true);
-});
-
-test('school deployment is blocked until its Firestore indexes deploy', () => {
-  assert.match(school, /firestore-indexes:/);
-  assert.match(school, /SCHOOL_FIREBASE_PROJECT_ID/);
-  assert.match(school, /SCHOOL_GCP_WIF_PROVIDER/);
-  assert.match(school, /SCHOOL_GCP_INDEX_SERVICE_ACCOUNT/);
-  assert.match(school, /firebase_config: firebase\.school\.json/);
-  assert.match(school, /needs: firestore-indexes/);
-  assert.ok(school.indexOf('needs: firestore-indexes') < school.indexOf('cloudflare/wrangler-action@v3'));
-});
-
-test('church deployment is blocked until its Firestore indexes deploy', () => {
-  assert.match(church, /firestore-indexes:/);
-  assert.match(church, /CHURCH_FIREBASE_PROJECT_ID/);
-  assert.match(church, /CHURCH_GCP_WIF_PROVIDER/);
-  assert.match(church, /CHURCH_GCP_INDEX_SERVICE_ACCOUNT/);
-  assert.match(church, /firebase_config: firebase\.church\.json/);
-  assert.match(church, /needs: firestore-indexes/);
-  assert.ok(church.indexOf('needs: firestore-indexes') < church.indexOf('cloudflare/wrangler-action@v3'));
 });

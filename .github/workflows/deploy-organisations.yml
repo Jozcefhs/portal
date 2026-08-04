@@ -1,0 +1,64 @@
+name: Deploy organisations
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      organisation:
+        description: Organisation id from deploy/organisations.json, or all
+        required: true
+        default: all
+        type: string
+
+permissions:
+  contents: read
+  deployments: write
+  id-token: write
+
+jobs:
+  validate:
+    name: Validate organisation registry
+    runs-on: ubuntu-latest
+    outputs:
+      organisations: ${{ steps.matrix.outputs.organisations }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate registry and deployment tests
+        run: |
+          node scripts/organisation-deployment-matrix.mjs --validate-only
+          node --test tests/deployment-workflows.test.mjs
+
+      - name: Build deployment matrix
+        id: matrix
+        shell: bash
+        env:
+          TARGET_ORGANISATION: ${{ inputs.organisation || 'all' }}
+        run: |
+          set -euo pipefail
+          organisations="$(node scripts/organisation-deployment-matrix.mjs --target "${TARGET_ORGANISATION}")"
+          echo "organisations=${organisations}" >> "${GITHUB_OUTPUT}"
+
+  deploy:
+    name: ${{ matrix.organisation.name }}
+    needs: validate
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.MULTI_ORG_DEPLOY_ENABLED == 'true' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        organisation: ${{ fromJSON(needs.validate.outputs.organisations) }}
+    uses: ./.github/workflows/deploy-organisation.yml
+    with:
+      organisation_id: ${{ matrix.organisation.id }}
+      organisation_name: ${{ matrix.organisation.name }}
+      edition: ${{ matrix.organisation.edition }}
+      workspace_id: ${{ matrix.organisation.workspaceId }}
+      github_environment: ${{ matrix.organisation.githubEnvironment }}
+      firebase_config: ${{ matrix.organisation.firebaseConfig }}
+      cloudflare_account_id: ${{ matrix.organisation.cloudflareAccountId }}
+      cloudflare_project: ${{ matrix.organisation.cloudflareProject }}
+    secrets: inherit

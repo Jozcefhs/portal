@@ -1,0 +1,151 @@
+name: Deploy one organisation
+
+on:
+  workflow_call:
+    inputs:
+      organisation_id:
+        description: Stable organisation key from deploy/organisations.json
+        required: true
+        type: string
+      organisation_name:
+        description: Human-readable organisation name
+        required: true
+        type: string
+      edition:
+        description: Deployment-bound organisation edition
+        required: true
+        type: string
+      workspace_id:
+        description: Deployment-bound workspace identity
+        required: true
+        type: string
+      github_environment:
+        description: GitHub environment holding organisation deployment configuration
+        required: true
+        type: string
+      firebase_config:
+        description: Edition-specific Firebase CLI configuration file
+        required: true
+        type: string
+      cloudflare_project:
+        description: Cloudflare Pages project name
+        required: true
+        type: string
+      cloudflare_account_id:
+        description: Cloudflare account containing the Pages project
+        required: true
+        type: string
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        description: Cloudflare token allowed to deploy Pages projects
+        required: true
+
+permissions:
+  contents: read
+  deployments: write
+  id-token: write
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.organisation_name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: ${{ inputs.github_environment }}
+      url: https://${{ inputs.cloudflare_project }}.pages.dev
+    concurrency:
+      group: deploy-${{ inputs.organisation_id }}-production
+      cancel-in-progress: true
+    env:
+      FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+      GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+      GCP_INDEX_SERVICE_ACCOUNT: ${{ vars.GCP_INDEX_SERVICE_ACCOUNT }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare_account_id }}
+      FIREBASE_CONFIG: ${{ inputs.firebase_config }}
+      EXPECTED_EDITION: ${{ inputs.edition }}
+      EXPECTED_WORKSPACE_ID: ${{ inputs.workspace_id }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate organisation deployment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "${FIREBASE_PROJECT_ID}" ]] || missing+=("Firebase project ID")
+          [[ -n "${GCP_WIF_PROVIDER}" ]] || missing+=("Workload Identity provider")
+          [[ -n "${GCP_INDEX_SERVICE_ACCOUNT}" ]] || missing+=("index service account")
+          [[ -n "${CLOUDFLARE_ACCOUNT_ID}" ]] || missing+=("Cloudflare account ID")
+          if (( ${#missing[@]} )); then
+            printf '::error::GitHub environment %s is missing: %s\n' \
+              '${{ inputs.github_environment }}' "$(IFS=', '; echo "${missing[*]}")"
+            exit 1
+          fi
+          node -e "const fs=require('node:fs'); const config=JSON.parse(fs.readFileSync(process.env.FIREBASE_CONFIG,'utf8')); const firestore=Array.isArray(config.firestore)?config.firestore[0]:config.firestore; if(!firestore?.indexes) throw new Error('Firebase configuration has no Firestore index file.'); JSON.parse(fs.readFileSync(firestore.indexes,'utf8'));"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.FIREBASE_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_INDEX_SERVICE_ACCOUNT }}
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Apply required Firestore indexes
+        shell: bash
+        run: >-
+          npx --yes firebase-tools@15.24.0 deploy
+          --only firestore:indexes
+          --project "${FIREBASE_PROJECT_ID}"
+          --config "${FIREBASE_CONFIG}"
+          --force
+          --non-interactive
+
+      - name: Install function dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Prepare production files
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .pages-deploy
+          mkdir .pages-deploy
+          cp -R css functions images js vendor .pages-deploy/
+          cp _headers _routes.json .pages-deploy/
+          cp ./*.html .pages-deploy/
+          cp app-icon.svg manifest.webmanifest sw.js version.json .pages-deploy/
+
+      - name: Deploy Cloudflare Pages production
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy .pages-deploy --project-name=${{ inputs.cloudflare_project }} --branch=main --commit-hash=${{ github.sha }} --commit-dirty=false
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify deployed organisation identity
+        run: >-
+          node scripts/verify-organisation-deployment.mjs
+          --url "https://${{ inputs.cloudflare_project }}.pages.dev"
+          --workspace "${EXPECTED_WORKSPACE_ID}"
+          --edition "${EXPECTED_EDITION}"
+
+      - name: Write deployment summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '### ${{ inputs.organisation_name }}'
+            echo ''
+            echo '- Organisation: `${{ inputs.organisation_id }}`'
+            echo '- Edition: `${{ inputs.edition }}`'
+            echo '- Firebase: `${{ env.FIREBASE_PROJECT_ID }}`'
+            echo '- Cloudflare Pages: `${{ inputs.cloudflare_project }}`'
+            echo '- GitHub environment: `${{ inputs.github_environment }}`'
+          } >> "${GITHUB_STEP_SUMMARY}"

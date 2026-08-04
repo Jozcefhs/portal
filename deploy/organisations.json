@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "organisations": [
+    {
+      "id": "destinychristianacademy",
+      "name": "Destiny Christian Academy",
+      "edition": "school",
+      "indexProfile": "school",
+      "githubEnvironment": "production-destinychristianacademy",
+      "cloudflareAccountId": "a5aa57ffa1fd00e4fd98e78ee7d32f01",
+      "cloudflareProject": "destinychristianacademy",
+      "workspaceId": "destinychristianacademy",
+      "enabled": true,
+      "rolloutOrder": 10
+    },
+    {
+      "id": "digc-suite",
+      "name": "Dunamis International Gospel Centre",
+      "edition": "faith",
+      "indexProfile": "church",
+      "githubEnvironment": "production-digc-suite",
+      "cloudflareAccountId": "a5aa57ffa1fd00e4fd98e78ee7d32f01",
+      "cloudflareProject": "digc-suite",
+      "workspaceId": "digc-suite",
+      "enabled": true,
+      "rolloutOrder": 20
+    }
+  ]
+}
