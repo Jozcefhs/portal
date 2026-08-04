@@ -9,7 +9,7 @@
       "githubEnvironment": "production-destinychristianacademy",
       "cloudflareAccountId": "a5aa57ffa1fd00e4fd98e78ee7d32f01",
       "cloudflareProject": "destinychristianacademy",
-      "workspaceId": "destinychristianacademy",
+      "workspaceId": "school",
       "enabled": true,
       "rolloutOrder": 10
     },
@@ -21,7 +21,7 @@
       "githubEnvironment": "production-digc-suite",
       "cloudflareAccountId": "a5aa57ffa1fd00e4fd98e78ee7d32f01",
       "cloudflareProject": "digc-suite",
-      "workspaceId": "digc-suite",
+      "workspaceId": "faith",
       "enabled": true,
       "rolloutOrder": 20
     }
