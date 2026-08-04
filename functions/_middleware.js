@@ -20,15 +20,31 @@ function unavailableResponse(requestId, message = 'The API backend is not config
 function identityUnavailableResponse(requestId, error) {
   const code = String(error?.code || '');
   const upstreamCode = String(error?.upstreamCode || '');
-  const quotaFailure = code === 'FIRESTORE_QUOTA_EXHAUSTED'
+  const resourceLimitFailure = code === 'FIRESTORE_QUOTA_EXHAUSTED'
     || upstreamCode === 'RESOURCE_EXHAUSTED'
     || /quota|resource exhausted/i.test(String(error?.message || ''));
-  const message = quotaFailure
-    ? 'The daily database read quota is currently exhausted. Firebase usage reporting can be delayed; access will resume after the daily quota resets or billing is enabled.'
+  const message = resourceLimitFailure
+    ? `The database temporarily refused this request because a resource limit was reached. This is not necessarily the daily read quota. Reference: ${requestId}`
     : code.startsWith('DEPLOYMENT_')
     ? String(error?.message || 'The deployment identity is invalid.')
     : 'The deployment identity could not be verified.';
   return unavailableResponse(requestId, message);
+}
+
+function logIdentityFailure({ requestId, pathname, env, error }) {
+  const code = String(error?.code || '').slice(0, 120);
+  const upstreamCode = String(error?.upstreamCode || '').slice(0, 120);
+  const firestoreDiagnostic = code.startsWith('FIRESTORE_') || Boolean(upstreamCode);
+  console.error(JSON.stringify({
+    event: 'api_identity_error',
+    requestId,
+    route: pathname,
+    firebaseProjectId: String(env?.FIREBASE_PROJECT_ID || '').trim().slice(0, 120),
+    status: Number(error?.status || 503),
+    code,
+    upstreamCode,
+    message: firestoreDiagnostic ? String(error?.message || '').slice(0, 500) : ''
+  }));
 }
 
 async function handleRequest(context, identityLoader) {
@@ -50,6 +66,7 @@ async function handleRequest(context, identityLoader) {
         await identityLoader(env);
       } catch (error) {
         identityFailure = error;
+        logIdentityFailure({ requestId, pathname: url.pathname, env, error });
       }
       response = identityFailure
         ? identityUnavailableResponse(requestId, identityFailure)

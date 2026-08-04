@@ -51,7 +51,7 @@ function publicSessionError(error) {
   if (clean(error?.code) === 'FIRESTORE_QUOTA_EXHAUSTED'
     || clean(error?.upstreamCode).toUpperCase() === 'RESOURCE_EXHAUSTED'
     || /quota|resource exhausted/i.test(clean(error?.message))) {
-    return 'The daily database read quota is exhausted. Firebase usage reporting can be delayed; sign-in will resume after the daily quota resets or billing is enabled.';
+    return 'The database temporarily refused this request because a resource limit was reached. This is not necessarily the daily read quota. Please try again shortly.';
   }
   return error?.message || String(error);
 }

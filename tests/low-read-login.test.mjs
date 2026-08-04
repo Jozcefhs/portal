@@ -36,5 +36,7 @@ test('fresh login reuses the signed session response instead of issuing verifica
 test('Firestore quota failures retain a safe machine-readable status', () => {
   assert.match(firestore, /upstreamCode === 'RESOURCE_EXHAUSTED'/);
   assert.match(firestore, /code: 'FIRESTORE_QUOTA_EXHAUSTED'/);
-  assert.match(middleware, /daily database read quota is currently exhausted/i);
+  assert.match(middleware, /resource limit was reached/i);
+  assert.match(middleware, /not necessarily the daily read quota/i);
+  assert.match(middleware, /event: 'api_identity_error'/);
 });

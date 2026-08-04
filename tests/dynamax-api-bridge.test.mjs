@@ -95,7 +95,7 @@ test('staff sign-in uses environment deployment identity without an extra Firest
   }
 });
 
-test('Firestore quota failures are not mislabeled as deployment identity failures', async () => {
+test('Firestore resource limits are not mislabeled as daily read quota or deployment identity failures', async () => {
   const response = await onRequestWithIdentityLoader({
     request: new Request('https://school.example/api/settings'),
     env: { FIREBASE_PROJECT_ID: 'school-project' },
@@ -108,7 +108,8 @@ test('Firestore quota failures are not mislabeled as deployment identity failure
   });
   assert.equal(response.status, 503);
   const payload = await response.json();
-  assert.match(payload.message, /daily database read quota is currently exhausted/i);
+  assert.match(payload.message, /resource limit was reached/i);
+  assert.match(payload.message, /not necessarily the daily read quota/i);
   assert.doesNotMatch(payload.message, /deployment identity/i);
 });
 
@@ -169,17 +170,25 @@ test('a local profile conflict returns 503 without invoking a Pages Function or 
 
 test('unexpected identity verification failures do not expose secrets', async () => {
   const secret = 'PRIVATE_KEY=do-not-expose';
-  const response = await onRequestWithIdentityLoader({
-    request: new Request('https://school.example/api/backend'),
-    env: { FIREBASE_PROJECT_ID: 'school-project' },
-    next: async () => Response.json({ ok: true })
-  }, async () => {
-    throw new Error(`Credential failure: ${secret}`);
-  });
-  assert.equal(response.status, 503);
-  const payload = await response.json();
-  assert.equal(payload.message, 'The deployment identity could not be verified.');
-  assert.equal(JSON.stringify(payload).includes(secret), false);
+  const originalError = console.error;
+  const errorLines = [];
+  console.error = (...values) => errorLines.push(values.join(' '));
+  try {
+    const response = await onRequestWithIdentityLoader({
+      request: new Request('https://school.example/api/backend'),
+      env: { FIREBASE_PROJECT_ID: 'school-project' },
+      next: async () => Response.json({ ok: true })
+    }, async () => {
+      throw new Error(`Credential failure: ${secret}`);
+    });
+    assert.equal(response.status, 503);
+    const payload = await response.json();
+    assert.equal(payload.message, 'The deployment identity could not be verified.');
+    assert.equal(JSON.stringify(payload).includes(secret), false);
+    assert.doesNotMatch(errorLines.join('\n'), /PRIVATE_KEY|do-not-expose/i);
+  } finally {
+    console.error = originalError;
+  }
 });
 
 test('proxy opt-in still rejects a missing, malformed, insecure, or self-referencing target', async () => {
