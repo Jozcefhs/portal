@@ -364,7 +364,7 @@ test('finance requests use one-row records, icon decisions, printing, and a repe
   assert.match(adminJs, /class="admin-table finance-record-table"/);
   assert.match(adminJs, /<th>Reference<\/th><th>Request<\/th><th>Description<\/th><th>Amount<\/th><th>Department<\/th><th>Date<\/th>/);
   assert.match(adminJs, /class="finance-row-actions"/);
-  assert.match(adminJs, /class="finance-new-request" data-open-dialog="requisitionDialog" title="New Requisition">\+ Request/);
+  assert.doesNotMatch(adminJs, /class="finance-new-request"/);
   assert.match(adminJs, /class="compact-icon-action compact-print-action" data-print-finance-record=/);
   assert.match(adminJs, /class="compact-icon-action compact-approve-action"[\s\S]*?aria-label="Approve/);
   assert.match(adminJs, /class="compact-icon-action compact-reject-action"[\s\S]*?aria-label="Reject/);
@@ -375,7 +375,7 @@ test('finance requests use one-row records, icon decisions, printing, and a repe
   assert.match(portalCss, /\.finance-record-table\{[^}]*width:max-content;[^}]*min-width:100%;[^}]*table-layout:auto/);
   assert.match(portalCss, /\.finance-record-table th,\.finance-record-table td\{white-space:nowrap\}/);
   assert.match(portalCss, /\.finance-row-actions\{[^}]*display:flex;[^}]*gap:4px/);
-  assert.match(portalCss, /\.workflow-ledger-heading \.finance-new-request\{[^}]*width:auto;[^}]*min-width:132px/);
+  assert.doesNotMatch(portalCss, /\.workflow-ledger-heading \.finance-new-request/);
   assert.match(portalCss, /\.compact-print-action\{color:/);
   assert.match(portalCss, /\.compact-approve-action\{color:/);
   assert.match(portalCss, /\.compact-reject-action\{color:/);

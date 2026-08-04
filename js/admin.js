@@ -8186,7 +8186,7 @@ function renderFinanceWorkflow() {
       <div><small>Rejected</small><strong>${statusCount('rejected')}</strong><span>Requires attention</span></div>
       <div><small>Total Records</small><strong>${allRecords.length}</strong><span>Current view</span></div>
     </div>
-    <div class="workflow-ledger-heading"><div><h2>Recent Transactions</h2><p class="muted">Requisitions and bills synchronized with desktop accounting</p></div>${capabilities.canSubmit ? '<button type="button" class="finance-new-request" data-open-dialog="requisitionDialog" title="New Requisition">+ Request</button>' : ''}</div>
+    <div class="workflow-ledger-heading"><div><h2>Recent Transactions</h2><p class="muted">Requisitions and bills synchronized with desktop accounting</p></div></div>
     ${financeRecordsSection('Expense Requisitions', requisitions, 'requisition', capabilities)}
     ${financeRecordsSection('Supplier Bills', bills, 'bill', capabilities)}
     ${submissionDialogs}
