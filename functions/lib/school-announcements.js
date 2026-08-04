@@ -327,11 +327,14 @@ export async function createSchoolAnnouncement(env, user, input = {}, options = 
 export async function listSchoolAnnouncements(env, options = {}) {
   const schoolId = lower(env.DYNAMAX_WORKSPACE_ID);
   const limit = Math.min(100, Math.max(1, Number(options.limit || 40)));
-  const rows = await listCollection(env, 'notificationAnnouncements').catch(() => []);
+  const scanLimit = Math.min(100, Math.max(50, limit));
+  const rows = await queryCollection(env, 'notificationAnnouncements', {
+    orderBy: [{ field: 'CreatedAt', direction: 'DESCENDING' }],
+    limit: scanLimit
+  }).catch(() => []);
   return rows
     .filter((row) => lower(row.Edition) !== 'church')
     .filter((row) => !schoolId || !clean(row.SchoolId) || lower(row.SchoolId) === schoolId)
-    .sort((left, right) => clean(right.CreatedAt).localeCompare(clean(left.CreatedAt)))
     .slice(0, limit);
 }
 

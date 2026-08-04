@@ -67,8 +67,16 @@ export async function findStaffUserRecord(env, identity, options = {}) {
     const direct = await getDocument(env, 'staffUsers', directId);
     if (direct && staffIdentityMatches(direct, wanted)) return direct;
   }
+  const indexed = await findOneByField(env, 'staffUsers', 'UsernameKey', wanted);
+  if (indexed && staffIdentityMatches(indexed, wanted)) return indexed;
   if (options.allowListFallback === false) return null;
-  return findStaffUser(await listCollection(env, 'staffUsers'), wanted);
+  const legacy = findStaffUser(await listCollection(env, 'staffUsers'), wanted);
+  if (legacy?.__id && !clean(legacy.UsernameKey)) {
+    await patchDocumentFields(env, 'staffUsers', legacy.__id, {
+      UsernameKey: lower(legacy.Username || legacy.username || legacy.__id)
+    }).catch(() => null);
+  }
+  return legacy;
 }
 
 export async function findStaffLoginRecord(env, identity) {
@@ -81,7 +89,14 @@ export async function findStaffLoginRecord(env, identity) {
   }
   const indexed = await findOneByField(env, 'staffUsers', 'LoginUsernameKey', wanted);
   if (indexed) return indexed;
-  return findStaffLoginUser(await listCollection(env, 'staffUsers'), wanted);
+  const legacy = findStaffLoginUser(await listCollection(env, 'staffUsers'), wanted);
+  if (legacy?.__id && !clean(legacy.LoginUsernameKey)) {
+    await patchDocumentFields(env, 'staffUsers', legacy.__id, {
+      LoginUsername: clean(legacy.LoginUsername || legacy.Username || legacy.__id),
+      LoginUsernameKey: wanted
+    }).catch(() => null);
+  }
+  return legacy;
 }
 
 function base64Url(value) {
@@ -303,10 +318,10 @@ export async function staffAccessFor(env, user = {}) {
   if (accessConfigCache && accessConfigCache.environmentKey === environmentKey && accessConfigCache.expiresAt > now) {
     organization = accessConfigCache.organization;
   } else {
-    const [organizationProfile, legacyProfile] = await Promise.all([
-      getDocument(env, 'settings', 'organisationProfile').catch(() => null),
-      getDocument(env, 'settings', 'schoolProfile').catch(() => null)
-    ]);
+    const organizationProfile = await getDocument(env, 'settings', 'organisationProfile').catch(() => null);
+    const legacyProfile = organizationProfile
+      ? null
+      : await getDocument(env, 'settings', 'schoolProfile').catch(() => null);
     if (organizationProfile) {
       deploymentIdentityDetails({
         env,

@@ -6561,6 +6561,7 @@ async function saveStaffUserFromDesktop(env, body) {
   const payload = {
     ...(existing || {}),
     Username: username,
+    UsernameKey: lower(username),
     LoginUsername: loginUsername,
     LoginUsernameKey: lower(loginUsername),
     DisplayName: clean(incoming.DisplayName) || username,

@@ -258,3 +258,23 @@ test('parent and staff notification APIs retain protected authentication', async
   assert.match(staff, /requireStaffSession/);
   assert.match(parent, /assertParentAccess/);
 });
+
+test('staff notification refresh avoids high-frequency metadata and hidden-tab reads', async () => {
+  const [client, api, schoolAnnouncements, churchAnnouncements] = await Promise.all([
+    readFile(new URL('../js/notifications.js', import.meta.url), 'utf8'),
+    readFile(new URL('../functions/api/staff-notifications.js', import.meta.url), 'utf8'),
+    readFile(new URL('../functions/lib/school-announcements.js', import.meta.url), 'utf8'),
+    readFile(new URL('../functions/lib/church-announcements.js', import.meta.url), 'utf8')
+  ]);
+  assert.match(client, /notificationPollIntervalMs = 5 \* 60 \* 1000/);
+  assert.match(client, /identity\.hidden \|\| document\.hidden \|\| loading/);
+  assert.match(client, /includeMeta/);
+  assert.doesNotMatch(client, /setInterval\(\(\) => load\(\), 30000\)/);
+  assert.match(api, /includeMetadata = options\.includeMetadata === true/);
+  assert.match(api, /url\.searchParams\.get\('includeMeta'\) === 'true'/);
+  assert.match(api, /\.\.\.\(includeMetadata \? \{ settings, subscriptions, announcements \} : \{\}\)/);
+  for (const source of [schoolAnnouncements, churchAnnouncements]) {
+    assert.match(source, /queryCollection\(env, 'notificationAnnouncements'/);
+    assert.match(source, /limit: scanLimit/);
+  }
+});

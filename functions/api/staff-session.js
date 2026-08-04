@@ -85,6 +85,7 @@ function environmentAdminProfile(env, sessionUser) {
   return {
     __id: safeStaffId(configuredUsername),
     Username: configuredUsername,
+    UsernameKey: lower(configuredUsername),
     LoginUsername: configuredUsername,
     LoginUsernameKey: lower(configuredUsername),
     DisplayName: clean(sessionUser.displayName || env.ADMIN_WEB_DISPLAY_NAME || 'Super Admin'),

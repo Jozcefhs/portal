@@ -159,6 +159,7 @@ async function saveUser(env, actor, body) {
   const payload = {
     ...(existing || {}),
     Username: username,
+    UsernameKey: lower(username),
     LoginUsername: clean(existing?.LoginUsername || username),
     LoginUsernameKey: lower(existing?.LoginUsername || username),
     DisplayName: clean(body.DisplayName || body.displayName) || username,
@@ -222,6 +223,7 @@ async function importUsers(env, actor, body) {
       if (!existing && requestedActive) plannedActive += 1;
       const payload = {
         ...(existing || {}), Username: username,
+        UsernameKey: lower(username),
         LoginUsername: clean(existing?.LoginUsername || username),
         LoginUsernameKey: lower(existing?.LoginUsername || username),
         DisplayName: clean(row.DisplayName || row.displayName) || username,

@@ -152,21 +152,26 @@ async function responseData(env, user, options = {}) {
   const canComposeAnnouncements = edition === 'church'
     ? canManageChurchAnnouncements(user)
     : canManageSchoolAnnouncements(user);
-  const [data, settings, subscriptions, announcements] = await Promise.all([
-    loadForUser(env, user, options),
-    loadNotificationSettings(env, 'Staff', user.username),
-    listPushSubscriptions(env, user.username),
-    canComposeAnnouncements
-      ? edition === 'church' ? listChurchAnnouncements(env) : listSchoolAnnouncements(env)
-      : Promise.resolve([])
-  ]);
+  const includeMetadata = options.includeMetadata === true;
+  const data = await loadForUser(env, user, options);
+  let settings;
+  let subscriptions;
+  let announcements;
+  if (includeMetadata) {
+    [settings, subscriptions, announcements] = await Promise.all([
+      loadNotificationSettings(env, 'Staff', user.username),
+      listPushSubscriptions(env, user.username),
+      canComposeAnnouncements
+        ? edition === 'church' ? listChurchAnnouncements(env) : listSchoolAnnouncements(env)
+        : Promise.resolve([])
+    ]);
+  }
   return {
     ...data,
-    settings,
-    subscriptions,
-    announcements,
+    ...(includeMetadata ? { settings, subscriptions, announcements } : {}),
     messaging: publicMessagingConfig(env),
     edition,
+    metadataIncluded: includeMetadata,
     canManageSystemSettings: clean(user.role) === 'Super Admin',
     canComposeAnnouncements
   };
@@ -181,7 +186,8 @@ export async function onRequestGet(context) {
       before: clean(url.searchParams.get('before')),
       category: clean(url.searchParams.get('category')),
       unread: url.searchParams.get('unread') === 'true',
-      archived: url.searchParams.get('archived') === 'true'
+      archived: url.searchParams.get('archived') === 'true',
+      includeMetadata: url.searchParams.get('includeMeta') === 'true'
     };
     return response({ ok: true, ...await responseData(context.env, user, options) });
   } catch (error) {
@@ -280,9 +286,13 @@ export async function onRequestPost(context) {
       error.status = 400;
       throw error;
     }
+    const includeMetadata = [
+      'savesettings', 'savesystemsettings', 'sendannouncement',
+      'subscribepush', 'unsubscribepush', 'testpush'
+    ].includes(action);
     return response({
       ok: true,
-      ...await responseData(env, user),
+      ...await responseData(env, user, { includeMetadata }),
       announcement: announcementResult,
       message: announcementResult
         ? announcementResult.Status === 'Scheduled'

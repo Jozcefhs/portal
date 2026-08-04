@@ -98,10 +98,16 @@ test('login usernames remain separate from immutable staff identity', () => {
   assert.equal(findStaffLoginUser([user], 'staff.one'), null);
   assert.match(staffAuth, /loginUsername: clean\(user\.LoginUsername/);
   assert.match(staffAuth, /findStaffLoginRecord\(env, wanted\)/);
+  assert.match(staffAuth, /findOneByField\(env, 'staffUsers', 'UsernameKey', wanted\)/);
+  assert.match(staffAuth, /UsernameKey: lower\(legacy\.Username \|\| legacy\.username \|\| legacy\.__id\)/);
+  assert.match(staffAuth, /const legacyProfile = organizationProfile\s*\? null\s*:\s*await getDocument\(env, 'settings', 'schoolProfile'\)/);
   assert.match(staffAuth, /findOneByField\(env, 'staffUsers', 'LoginUsernameKey', wanted\)/);
+  assert.match(staffAuth, /legacy\?\.__id && !clean\(legacy\.LoginUsernameKey\)/);
+  assert.match(staffAuth, /patchDocumentFields\(env, 'staffUsers', legacy\.__id/);
   assert.match(staffAuth, /!configuredHasPassword && wanted === envUsername/);
   assert.match(staffAuth, /if \(user\)[\s\S]*?return verifyDesktopPassword\(user, password\)/);
   assert.match(backendApi, /LoginUsername: loginUsername/);
+  assert.match(backendApi, /UsernameKey: lower\(username\)/);
   assert.match(backendApi, /LoginUsernameKey: lower\(loginUsername\)/);
   assert.match(backendApi, /That login username is already assigned to another staff account/);
 });

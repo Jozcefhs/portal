@@ -110,6 +110,8 @@
   let loading = false;
   let lastLoadedAt = 0;
   let activeEdition = '';
+  const notificationPollIntervalMs = 5 * 60 * 1000;
+  const foregroundRefreshAgeMs = 60 * 1000;
 
   const html = (value) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
@@ -217,7 +219,11 @@
   }
 
   function render(data = {}) {
-    currentData = { ...currentData, ...data };
+    currentData = {
+      ...currentData,
+      ...data,
+      metadataIncluded: currentData.metadataIncluded === true || data.metadataIncluded === true
+    };
     configureEdition(currentData);
     records = Array.isArray(data.notifications) ? data.notifications : [];
     const unread = Number(data.unreadCount || 0);
@@ -229,11 +235,13 @@
     renderAnnouncements(currentData);
   }
 
-  async function load(force = false) {
-    if (identity.hidden || loading || (!force && Date.now() - lastLoadedAt < 15000)) return;
+  async function load(force = false, includeMetadata = false) {
+    if (identity.hidden || document.hidden || loading || (!force && Date.now() - lastLoadedAt < 15000)) return;
     loading = true;
     try {
-      const response = await request('/api/staff-notifications?limit=100', { cache: 'no-store' });
+      const params = new URLSearchParams({ limit: '20' });
+      if (includeMetadata) params.set('includeMeta', 'true');
+      const response = await request(`/api/staff-notifications?${params}`, { cache: 'no-store' });
       const data = await response.json().catch(() => ({}));
       if (response.ok && data.ok) { render(data); lastLoadedAt = Date.now(); }
     } finally { loading = false; }
@@ -289,6 +297,7 @@
     if (category) params.set('category', category);
     if (dialog.querySelector('[data-notification-unread]').checked) params.set('unread', 'true');
     if (dialog.querySelector('[data-notification-archived]').checked) params.set('archived', 'true');
+    if (currentData.metadataIncluded !== true) params.set('includeMeta', 'true');
     if (before) params.set('before', before);
     return params;
   }
@@ -300,12 +309,16 @@
     const data = await response.json().catch(() => ({}));
     historyList.removeAttribute('aria-busy');
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load notification history.');
-    currentData = data;
+    currentData = {
+      ...currentData,
+      ...data,
+      metadataIncluded: currentData.metadataIncluded === true || data.metadataIncluded === true
+    };
     historyRecords = append ? [...historyRecords, ...(data.notifications || [])] : (data.notifications || []);
     historyList.innerHTML = historyRecords.length ? historyRecords.map((row) => itemMarkup(row, true)).join('') : '<p class="notification-empty">No notifications match these filters.</p>';
     loadMore.hidden = !data.hasMore;
-    renderSettings(data);
-    renderAnnouncements(data);
+    renderSettings(currentData);
+    renderAnnouncements(currentData);
   }
 
   function renderSettings(data = {}) {
@@ -379,7 +392,7 @@
   dialog.querySelectorAll('[data-notification-category], [data-notification-unread], [data-notification-archived]').forEach((control) => control.addEventListener('change', () => loadHistory(false).catch(() => {})));
   dialog.querySelector('[data-notification-refresh]').addEventListener('click', () => loadHistory(false).catch(() => {}));
   loadMore.addEventListener('click', () => loadHistory(true).catch(() => {}));
-  dialog.querySelector('[data-refresh-announcements]').addEventListener('click', () => load(true).catch(() => {}));
+  dialog.querySelector('[data-refresh-announcements]').addEventListener('click', () => load(true, true).catch(() => {}));
 
   composeForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -540,6 +553,10 @@
   });
 
   window.addEventListener('dynamax:foreground-notification', () => load(true));
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && Date.now() - lastLoadedAt >= foregroundRefreshAgeMs) load();
+  });
+  window.addEventListener('online', () => load(true));
   new MutationObserver(() => {
     if (!identity.hidden) load(true);
     else { popover.hidden = true; trigger.setAttribute('aria-expanded', 'false'); }
@@ -547,5 +564,7 @@
   new MutationObserver(() => configureEdition({
     edition: document.documentElement.dataset.edition === 'church' ? 'church' : 'school'
   })).observe(document.documentElement, { attributes: true, attributeFilter: ['data-edition'] });
-  window.setInterval(() => load(), 30000);
+  window.setInterval(() => {
+    if (!document.hidden) load();
+  }, notificationPollIntervalMs);
 })();
