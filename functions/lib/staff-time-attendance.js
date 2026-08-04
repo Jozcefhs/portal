@@ -2,12 +2,14 @@ import { batchCommitDocuments, getDocument, listCollection, queryCollection, ups
 import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from './church-foundation.js';
 import { resolveMembershipBranch } from './church-membership.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
+import { hrCapabilitiesFor } from './human-resources.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 const nowIso = () => new Date().toISOString();
 const MANAGE_ROLES = new Set(['Super Admin', 'Church Administrator']);
 const REPORT_ROLES = new Set([...MANAGE_ROLES, 'Pastor', 'Treasurer', 'Auditor']);
+const ATTENDANCE_REPORT_LIMIT = 5000;
 const DAY_KEYS = Object.freeze(['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']);
 const DEFAULT_ATTENDANCE_POLICY = Object.freeze({
   ResumptionTime: '08:00',
@@ -64,6 +66,33 @@ function boundedWholeNumber(value, fallback, minimum, maximum, label) {
     fail(`${label} must be a whole number between ${minimum} and ${maximum}.`);
   }
   return parsed;
+}
+
+function attendanceDate(value, label) {
+  const date = clean(value);
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+    fail(`Enter a valid ${label.toLowerCase()}.`);
+  }
+  return date;
+}
+
+export function normalizeAttendanceReportPeriod(input = {}) {
+  const fromDate = clean(input.FromDate || input.fromDate);
+  const toDate = clean(input.ToDate || input.toDate);
+  if (!fromDate && !toDate) return { FromDate: '', ToDate: '' };
+  if (!fromDate || !toDate) fail('Choose both the report start date and end date.');
+  const from = attendanceDate(fromDate, 'Report start date');
+  const to = attendanceDate(toDate, 'Report end date');
+  if (to < from) fail('The report end date must be on or after the start date.');
+  const days = Math.floor((new Date(`${to}T00:00:00Z`) - new Date(`${from}T00:00:00Z`)) / 86400000) + 1;
+  if (days > 366) fail('Choose an attendance report period of 366 days or less.');
+  return { FromDate: from, ToDate: to };
+}
+
+export function canReportStaffAttendance(user = {}) {
+  const role = clean(user.role || user.Role);
+  return REPORT_ROLES.has(role) || hrCapabilitiesFor(user).canManageTime;
 }
 
 function localAttendanceParts(timestamp, timeZone) {
@@ -369,6 +398,8 @@ export async function listStaffAttendance(env, user, body = {}) {
   const username = actorId(user);
   if (!username) fail('The signed-in staff account has no username.', 401);
   const role = clean(user.role || user.Role);
+  const canReport = canReportStaffAttendance(user);
+  const reportPeriod = canReport ? normalizeAttendanceReportPeriod(body) : { FromDate: '', ToDate: '' };
   const [sites, events, storedState, storedPolicy, dailySource, staffUsers, employees, leaveRows] = await Promise.all([
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.staffAttendanceSites, branchId)).catch(() => []),
     queryCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.staffTimeEvents, branchId), {
@@ -404,6 +435,18 @@ export async function listStaffAttendance(env, user, body = {}) {
   const dailyRows = await synchronizeAutomaticAbsences(env, branchId, policy, new Date(), directory, leaveRows, dailySource);
   const sorted = events.sort((a, b) => clean(b.Timestamp).localeCompare(clean(a.Timestamp)));
   const sortedDaily = dailyRows.sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)) || clean(a.DisplayName).localeCompare(clean(b.DisplayName)));
+  let reportDailyRows = sortedDaily;
+  if (canReport && reportPeriod.FromDate) {
+    reportDailyRows = await queryCollection(env, dailyAttendancePath(branchId), {
+      filters: [
+        { field: 'Date', op: '>=', value: reportPeriod.FromDate },
+        { field: 'Date', op: '<=', value: reportPeriod.ToDate }
+      ],
+      orderBy: [{ field: 'Date', direction: 'DESCENDING' }],
+      limit: ATTENDANCE_REPORT_LIMIT
+    });
+    reportDailyRows.sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)) || clean(a.DisplayName).localeCompare(clean(b.DisplayName)));
+  }
   const sortedSites = sites.sort((a, b) => clean(a.Name).localeCompare(clean(b.Name)));
   const own = sorted.filter((row) => actorId(row) === username).slice(0, 100);
   const ownDaily = sortedDaily.filter((row) => actorId(row) === username).slice(0, 100);
@@ -420,12 +463,14 @@ export async function listStaffAttendance(env, user, body = {}) {
     staffDirectory: MANAGE_ROLES.has(role) ? directory : [],
     myEvents: own,
     myDailyRecords: ownDaily,
-    recentEvents: REPORT_ROLES.has(role) ? sorted.slice(0, 250) : [],
-    recentDailyRecords: REPORT_ROLES.has(role) ? sortedDaily.slice(0, 500) : [],
+    recentEvents: canReport ? sorted.slice(0, 250) : [],
+    recentDailyRecords: canReport ? reportDailyRows : [],
+    reportPeriod,
+    reportTruncated: canReport && reportDailyRows.length >= ATTENDANCE_REPORT_LIMIT,
     state: clean(storedState?.State) || (latest?.Direction === 'IN' ? 'CLOCKED_IN' : 'CLOCKED_OUT'),
     nextDirection: clean(storedState?.NextDirection) || (latest?.Direction === 'IN' ? 'OUT' : 'IN'),
     stateVersion: clean(storedState?.__updateTime),
-    capabilities: { canManage: MANAGE_ROLES.has(role), canReport: REPORT_ROLES.has(role) }
+    capabilities: { canManage: MANAGE_ROLES.has(role), canReport }
   };
 }
 

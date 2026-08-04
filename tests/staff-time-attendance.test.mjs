@@ -1,12 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import {
   calculateAttendanceMetrics,
+  canReportStaffAttendance,
   evaluateAttendancePresence,
   haversineDistanceMetres,
   normalizeAttendancePolicy,
+  normalizeAttendanceReportPeriod,
   normalizeAttendanceSite
 } from '../functions/lib/staff-time-attendance.js';
+
+const adminJs = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
+const attendanceSource = await readFile(new URL('../functions/lib/staff-time-attendance.js', import.meta.url), 'utf8');
 
 test('geofence distance is calculated in metres', () => {
   assert.ok(haversineDistanceMetres(9.0765, 7.3986, 9.0765, 7.3986) < 1);
@@ -85,4 +91,38 @@ test('clock-out calculates work duration, early departure and overtime', () => {
   assert.equal(overtime.EarlyDepartureMinutes, 0);
   assert.equal(early.OvertimeMinutes, 0);
   assert.equal(early.EarlyDepartureMinutes, 30);
+});
+
+test('attendance reporting grants HR time roles without widening unrelated HR roles', () => {
+  assert.equal(canReportStaffAttendance({ role: 'HR Manager' }), true);
+  assert.equal(canReportStaffAttendance({ role: 'HR Officer' }), true);
+  assert.equal(canReportStaffAttendance({ role: 'HR Assistant' }), true);
+  assert.equal(canReportStaffAttendance({ role: 'Employee Relations Officer' }), true);
+  assert.equal(canReportStaffAttendance({ role: 'Line Manager' }), true);
+  assert.equal(canReportStaffAttendance({ role: 'Recruitment Officer' }), false);
+  assert.equal(canReportStaffAttendance({ role: 'Payroll Officer' }), false);
+  assert.equal(canReportStaffAttendance({ role: 'Church Administrator' }), true);
+});
+
+test('attendance report periods are valid, ordered and bounded to one year', () => {
+  assert.deepEqual(normalizeAttendanceReportPeriod({ FromDate: '2026-08-01', ToDate: '2026-08-31' }), {
+    FromDate: '2026-08-01', ToDate: '2026-08-31'
+  });
+  assert.throws(() => normalizeAttendanceReportPeriod({ FromDate: '2026-08-31', ToDate: '2026-08-01' }), /on or after/);
+  assert.throws(() => normalizeAttendanceReportPeriod({ FromDate: '2026-02-31', ToDate: '2026-03-01' }), /valid report start date/i);
+  assert.throws(() => normalizeAttendanceReportPeriod({ FromDate: '2025-01-01', ToDate: '2026-08-31' }), /366 days or less/);
+});
+
+test('HR attendance report supports period filters, sorting and printing', () => {
+  assert.match(attendanceSource, /ATTENDANCE_REPORT_LIMIT = 5000/);
+  assert.match(attendanceSource, /field: 'Date', op: '>='/);
+  assert.match(attendanceSource, /field: 'Date', op: '<='/);
+  assert.match(adminJs, /HR attendance report/);
+  assert.match(adminJs, /name="FromDate" type="date"/);
+  assert.match(adminJs, /name="ToDate" type="date"/);
+  assert.match(adminJs, /Lateness/);
+  assert.match(adminJs, /Absence/);
+  assert.match(adminJs, /Sort by/);
+  assert.match(adminJs, /function printStaffAttendanceReport\(/);
+  assert.match(adminJs, /Print \/ Save as PDF/);
 });

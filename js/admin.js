@@ -63,6 +63,7 @@ let staffUsersData = [];
 let staffAuditData = [];
 let staffApprovalAccounts = [];
 let humanResourcesData = null;
+let staffAttendanceReportFilters = null;
 let activeTabs = [];
 let approvalProfile = null;
 let approvalAssetState = { signature: '', stamp: '' };
@@ -4716,6 +4717,80 @@ function attendanceMinutesLabel(value) {
   return hours ? `${hours}h${remainder ? ` ${remainder}m` : ''}` : `${remainder}m`;
 }
 
+function attendanceReportDefaults() {
+  const now = new Date();
+  const localDate = (date) => {
+    const adjusted = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return adjusted.toISOString().slice(0, 10);
+  };
+  return {
+    FromDate: localDate(new Date(now.getFullYear(), now.getMonth(), 1)),
+    ToDate: localDate(now),
+    Status: 'All',
+    StaffSearch: '',
+    SortBy: 'date',
+    SortDirection: 'desc'
+  };
+}
+
+function filteredAttendanceReportRows(rows = [], filters = {}) {
+  const status = clean(filters.Status || 'All').toLowerCase();
+  const search = clean(filters.StaffSearch).toLowerCase();
+  const matchesStatus = (row) => {
+    if (status === 'all') return true;
+    if (status === 'late') return Number(row.LateMinutes || 0) > 0 || clean(row.AttendanceStatus).toLowerCase() === 'late';
+    if (status === 'absent') return clean(row.AttendanceStatus).toLowerCase() === 'absent';
+    if (status === 'overtime') return Number(row.OvertimeMinutes || 0) > 0;
+    if (status === 'early') return Number(row.EarlyDepartureMinutes || 0) > 0;
+    return clean(row.AttendanceStatus).toLowerCase() === status;
+  };
+  const valueFor = (row) => {
+    if (filters.SortBy === 'staff') return clean(row.DisplayName || row.Username).toLowerCase();
+    if (filters.SortBy === 'status') return clean(row.AttendanceStatus).toLowerCase();
+    if (filters.SortBy === 'late') return Number(row.LateMinutes || 0);
+    if (filters.SortBy === 'overtime') return Number(row.OvertimeMinutes || 0);
+    return clean(row.Date);
+  };
+  const direction = clean(filters.SortDirection).toLowerCase() === 'asc' ? 1 : -1;
+  return rows.filter((row) => matchesStatus(row)
+    && (!search || lower([row.DisplayName, row.Username, row.Role].filter(Boolean).join(' ')).includes(search)))
+    .sort((left, right) => {
+      const a = valueFor(left);
+      const b = valueFor(right);
+      if (typeof a === 'number' && typeof b === 'number') return (a - b) * direction;
+      const compared = String(a).localeCompare(String(b));
+      return (compared || clean(left.DisplayName).localeCompare(clean(right.DisplayName))) * direction;
+    });
+}
+
+function attendanceReportSummary(rows = []) {
+  return {
+    records: rows.length,
+    late: rows.filter((row) => Number(row.LateMinutes || 0) > 0 || clean(row.AttendanceStatus).toLowerCase() === 'late').length,
+    absent: rows.filter((row) => clean(row.AttendanceStatus).toLowerCase() === 'absent').length,
+    overtime: rows.filter((row) => Number(row.OvertimeMinutes || 0) > 0).length
+  };
+}
+
+function printStaffAttendanceReport(rows = [], filters = {}) {
+  const printable = window.open('', '_blank', 'width=1100,height=760');
+  if (!printable) {
+    setStatus(dashboardStatus, 'Allow pop-ups to print the attendance report.', 'bad');
+    return;
+  }
+  printable.opener = null;
+  const organisation = clean(document.querySelector('[data-school-name]')?.textContent || staffBrand?.textContent) || 'Dynamax';
+  const logo = clean(document.querySelector('.nav-logo')?.getAttribute('src') || 'images/Logo.png');
+  const summary = attendanceReportSummary(rows);
+  const statusLabel = clean(filters.Status || 'All') === 'All' ? 'All attendance records' : `${clean(filters.Status)} records`;
+  const body = rows.length ? rows.map((row) => `<tr><td>${escapeHtml(row.Date)}</td><td>${escapeHtml(row.DisplayName || row.Username)}</td><td>${escapeHtml(row.AttendanceStatus)}</td><td>${escapeHtml(row.FirstClockIn ? new Date(row.FirstClockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')}</td><td>${escapeHtml(row.LastClockOut ? new Date(row.LastClockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')}</td><td>${escapeHtml(attendanceMinutesLabel(row.LateMinutes))}</td><td>${escapeHtml(attendanceMinutesLabel(row.EarlyDepartureMinutes))}</td><td>${escapeHtml(attendanceMinutesLabel(row.OvertimeMinutes))}</td><td>${escapeHtml(attendanceMinutesLabel(row.WorkMinutes))}</td></tr>`).join('') : '<tr><td colspan="9">No attendance records matched the selected filters.</td></tr>';
+  printable.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(organisation)} attendance report</title><style>
+    @page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{margin:24px;color:#17314b;font:11px/1.4 Arial,sans-serif}.brand{display:flex;align-items:center;gap:12px;padding-bottom:12px;border-bottom:3px solid #0b8f76}.brand img{width:52px;height:52px;object-fit:contain}.brand h1{margin:0;color:#123f6d;font-size:20px}.brand p,.meta{margin:3px 0;color:#60758c}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:16px 0}.summary div{padding:10px;border:1px solid #d4e0eb;border-radius:7px}.summary span,.summary strong{display:block}.summary span{color:#60758c;font-size:9px;text-transform:uppercase}.summary strong{margin-top:3px;font-size:18px}table{width:100%;border-collapse:collapse}th,td{padding:7px;border:1px solid #d4e0eb;text-align:left;white-space:nowrap}th{background:#123f6d;color:#fff;font-size:9px;text-transform:uppercase}.footer{display:flex;justify-content:space-between;margin-top:12px;color:#60758c}.print{position:fixed;top:10px;right:10px;width:fit-content;padding:8px 13px;border:0;border-radius:6px;background:#1769e0;color:#fff;font-weight:bold;cursor:pointer}@media print{body{margin:0}.print{display:none}}</style></head><body><button class="print" onclick="window.print()">Print / Save as PDF</button><header class="brand">${logo ? `<img src="${escapeHtml(logo)}" alt="">` : ''}<div><h1>${escapeHtml(organisation)}</h1><p>Staff attendance report · ${escapeHtml(statusLabel)}</p><p class="meta">Period: ${escapeHtml(filters.FromDate)} to ${escapeHtml(filters.ToDate)}</p></div></header><section class="summary"><div><span>Matching records</span><strong>${summary.records}</strong></div><div><span>Late</span><strong>${summary.late}</strong></div><div><span>Absent</span><strong>${summary.absent}</strong></div><div><span>Overtime</span><strong>${summary.overtime}</strong></div></section><table><thead><tr><th>Date</th><th>Staff</th><th>Status</th><th>Clock in</th><th>Clock out</th><th>Late</th><th>Left early</th><th>Overtime</th><th>Worked</th></tr></thead><tbody>${body}</tbody></table><footer class="footer"><span>Prepared by ${escapeHtml(currentUser?.displayName || currentUser?.username || '')}</span><span>Generated ${escapeHtml(new Date().toLocaleString())}</span></footer></body></html>`);
+  printable.document.close();
+  printable.focus();
+  window.setTimeout(() => printable.print(), 250);
+}
+
 function browserPosition() {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
@@ -4736,7 +4811,9 @@ function browserPosition() {
 
 async function loadStaffAttendance() {
   try {
-    const data = await staffAttendanceRequest('list');
+    const reportFilters = staffAttendanceReportFilters || attendanceReportDefaults();
+    staffAttendanceReportFilters = reportFilters;
+    const data = await staffAttendanceRequest('list', { FromDate: reportFilters.FromDate, ToDate: reportFilters.ToDate });
     if (activeSection !== 'staffAttendance') return;
     const sites = data.sites || [];
     const configuredSites = data.configuredSites || sites;
@@ -4749,6 +4826,8 @@ async function loadStaffAttendance() {
     const latestDaily = myDailyRecords.find((row) => clean(row.Date) === clean(data.todayAttendanceDate)) || null;
     const scheduleActive = clean(policy.Active).toUpperCase() !== 'NO';
     const selectedOption = (value, expected) => clean(value).toUpperCase() === expected ? ' selected' : '';
+    const attendanceReportRows = filteredAttendanceReportRows(data.recentDailyRecords || [], reportFilters);
+    const reportSummary = attendanceReportSummary(attendanceReportRows);
     panelEl.innerHTML = `
       <div class="workflow-intro">
         <div><p class="eyebrow">People & ministry</p><h2>Staff attendance</h2><p class="muted">Verified clock-in/out with automatic lateness, absence, early-departure and overtime calculations.</p></div>
@@ -4840,17 +4919,31 @@ async function loadStaffAttendance() {
         </form>
         <p class="status" id="staffAttendanceManualStatus"></p>
       </section>` : ''}
-      ${capabilities.canReport ? table('Daily attendance report', data.recentDailyRecords || [], [
-        { label: 'Date', value: (row) => row.Date },
-        { label: 'Staff', value: (row) => row.DisplayName || row.Username },
-        { label: 'Status', value: (row) => row.AttendanceStatus },
-        { label: 'Clock in', value: (row) => row.FirstClockIn ? new Date(row.FirstClockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '' },
-        { label: 'Clock out', value: (row) => row.LastClockOut ? new Date(row.LastClockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '' },
-        { label: 'Late', value: (row) => attendanceMinutesLabel(row.LateMinutes) },
-        { label: 'Left early', value: (row) => attendanceMinutesLabel(row.EarlyDepartureMinutes) },
-        { label: 'Overtime', value: (row) => attendanceMinutesLabel(row.OvertimeMinutes) },
-        { label: 'Worked', value: (row) => attendanceMinutesLabel(row.WorkMinutes) }
-      ]) : ''}
+      ${capabilities.canReport ? `<section class="config-group attendance-report-workspace">
+        <header><strong>HR attendance report</strong><small>Choose a period, isolate lateness or absence records, sort the list, then print or save it as PDF.</small></header>
+        <form id="staffAttendanceReportForm" class="inline-policy-form attendance-report-filters">
+          <label>From <input name="FromDate" type="date" value="${escapeHtml(reportFilters.FromDate)}" required></label>
+          <label>To <input name="ToDate" type="date" value="${escapeHtml(reportFilters.ToDate)}" required></label>
+          <label>Record type <select name="Status"><option value="All"${selectedOption(reportFilters.Status, 'ALL')}>All records</option><option value="Late"${selectedOption(reportFilters.Status, 'LATE')}>Lateness</option><option value="Absent"${selectedOption(reportFilters.Status, 'ABSENT')}>Absence</option><option value="Overtime"${selectedOption(reportFilters.Status, 'OVERTIME')}>Overtime</option><option value="Early"${selectedOption(reportFilters.Status, 'EARLY')}>Early departure</option><option value="Present"${selectedOption(reportFilters.Status, 'PRESENT')}>Present</option><option value="Approved leave"${selectedOption(reportFilters.Status, 'APPROVED LEAVE')}>Approved leave</option><option value="Incomplete"${selectedOption(reportFilters.Status, 'INCOMPLETE')}>Incomplete</option></select></label>
+          <label>Find staff <input name="StaffSearch" value="${escapeHtml(reportFilters.StaffSearch)}" placeholder="Name or username"></label>
+          <label>Sort by <select name="SortBy"><option value="date"${selectedOption(reportFilters.SortBy, 'DATE')}>Date</option><option value="staff"${selectedOption(reportFilters.SortBy, 'STAFF')}>Staff name</option><option value="status"${selectedOption(reportFilters.SortBy, 'STATUS')}>Status</option><option value="late"${selectedOption(reportFilters.SortBy, 'LATE')}>Late minutes</option><option value="overtime"${selectedOption(reportFilters.SortBy, 'OVERTIME')}>Overtime minutes</option></select></label>
+          <label>Order <select name="SortDirection"><option value="desc"${selectedOption(reportFilters.SortDirection, 'DESC')}>Descending</option><option value="asc"${selectedOption(reportFilters.SortDirection, 'ASC')}>Ascending</option></select></label>
+          <button type="submit">Apply filters</button><button type="button" id="printStaffAttendanceReport" ${attendanceReportRows.length ? '' : 'disabled'}>Print report</button>
+        </form>
+        <div class="workflow-kpis attendance-report-summary"><div><small>Matching records</small><strong>${reportSummary.records}</strong><span>Selected period and filters</span></div><div><small>Late</small><strong>${reportSummary.late}</strong><span>Beyond the grace period</span></div><div><small>Absent</small><strong>${reportSummary.absent}</strong><span>No clock-in after closing</span></div><div><small>Overtime</small><strong>${reportSummary.overtime}</strong><span>Beyond the overtime threshold</span></div></div>
+        ${data.reportTruncated ? '<p class="status bad">The report reached the 5,000-record safety limit. Choose a shorter period before printing.</p>' : ''}
+        ${table('Filtered attendance records', attendanceReportRows, [
+          { label: 'Date', value: (row) => row.Date },
+          { label: 'Staff', value: (row) => row.DisplayName || row.Username },
+          { label: 'Status', value: (row) => row.AttendanceStatus },
+          { label: 'Clock in', value: (row) => row.FirstClockIn ? new Date(row.FirstClockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '' },
+          { label: 'Clock out', value: (row) => row.LastClockOut ? new Date(row.LastClockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '' },
+          { label: 'Late', value: (row) => attendanceMinutesLabel(row.LateMinutes) },
+          { label: 'Left early', value: (row) => attendanceMinutesLabel(row.EarlyDepartureMinutes) },
+          { label: 'Overtime', value: (row) => attendanceMinutesLabel(row.OvertimeMinutes) },
+          { label: 'Worked', value: (row) => attendanceMinutesLabel(row.WorkMinutes) }
+        ])}
+      </section>` : ''}
       ${capabilities.canReport ? table('Recent staff attendance', data.recentEvents || [], [
         { label: 'Staff', value: (row) => row.DisplayName || row.Username },
         { label: 'Time', value: (row) => row.Timestamp },
@@ -4868,10 +4961,25 @@ async function loadStaffAttendance() {
       { key: 'policy', label: 'Work hours', icon: '\u23F0', nodes: attendanceGroups.find((node) => /daily work hours/i.test(node.textContent)) },
       { key: 'locations', label: 'Locations', icon: '\u2316', count: configuredSites.length, nodes: attendanceGroups.find((node) => /attendance locations/i.test(node.textContent)) },
       { key: 'corrections', label: 'Corrections', icon: '\u270E', nodes: attendanceGroups.find((node) => /manual correction/i.test(node.textContent)) },
-      { key: 'reports', label: 'Reports', icon: '\u03A3', count: (data.recentDailyRecords || []).length, nodes: [...workspaceTableNodes('Daily attendance report'), ...workspaceTableNodes('Recent staff attendance')] }
+      { key: 'reports', label: 'Reports', icon: '\u03A3', count: attendanceReportRows.length, nodes: [attendanceGroups.find((node) => /HR attendance report/i.test(node.textContent)), ...workspaceTableNodes('Recent staff attendance')] }
     ]);
 
     document.getElementById('refreshStaffAttendance')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', loadStaffAttendance));
+    const attendanceReportForm = document.getElementById('staffAttendanceReportForm');
+    attendanceReportForm?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = attendanceReportForm.querySelector('button[type="submit"]');
+      setButtonLoading(button, true, 'Applying...', 'Apply filters');
+      try {
+        staffAttendanceReportFilters = Object.fromEntries(new FormData(attendanceReportForm).entries());
+        await loadStaffAttendance();
+      } catch (error) {
+        setStatus(dashboardStatus, error.message || String(error), 'bad');
+      } finally {
+        if (button.isConnected) setButtonLoading(button, false, 'Applying...', 'Apply filters');
+      }
+    });
+    document.getElementById('printStaffAttendanceReport')?.addEventListener('click', () => printStaffAttendanceReport(attendanceReportRows, reportFilters));
     bindHrPersonPickers(panelEl);
     hrFormStaffNameSync(document.getElementById('staffAttendanceManualForm'), data.staffDirectory || []);
     const policyForm = document.getElementById('staffAttendancePolicyForm');
