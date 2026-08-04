@@ -273,7 +273,8 @@ test('parent student selector cards are compact on mobile', () => {
   assert.match(portalCss, /\.child-list \.child-card\{[^}]*min-height:0;[^}]*padding:7px 8px;[^}]*font-size:9px/);
   assert.match(portalCss, /\.child-list \.child-card\.selected::after\{[^}]*padding:2px 4px;[^}]*font-size:7px/);
   assert.match(portalCss, /\.child-card-layout\{grid-template-columns:44px minmax\(0,1fr\);gap:7px\}/);
-  assert.match(portalCss, /\.child-card-copy strong\{font-size:11px;line-height:1\.2\}/);
+  assert.match(portalCss, /\.child-card-copy strong\{font-size:9px;line-height:1\.25\}/);
+  assert.match(portalCss, /\.child-list \.child-card span\{[^}]*font-size:9px/);
   assert.match(portalCss, /\.child-passport\{width:44px;height:50px;border-radius:6px\}/);
 });
 
@@ -284,6 +285,17 @@ test('parent dashboard history sections use compact mobile typography', () => {
   assert.match(portalCss, /\.dashboard-card \.dashboard-view-panel \.activity-item strong\{font-size:10px/);
   assert.match(portalCss, /\.dashboard-card \.dashboard-view-panel \.activity-item span,[\s\S]*?font-size:9px/);
   assert.match(portalCss, /\.dashboard-card \.dashboard-view-panel \.collapsible-activity summary\{[^}]*font-size:9px/);
+});
+
+test('mobile histories share the compact records-desk type scale', () => {
+  assert.match(portalCss, /One compact, readable type scale for history and audit records on phones/);
+  assert.match(portalCss, /\.activity-list \.activity-item strong\{font-size:10px/);
+  assert.match(portalCss, /\.activity-list \.activity-item span,[^}]*font-size:8px/);
+  assert.match(portalCss, /\.workflow-record-list \.workflow-record-heading>div strong\{font-size:10px/);
+  assert.match(portalCss, /\.workflow-record-list \.workflow-record-heading>div small,[^}]*font-size:8px/);
+  assert.match(portalCss, /\.staff-page \.module-workspace-panel \.admin-table td\{[^}]*font-size:9px/);
+  assert.match(portalCss, /\.records-desk-activity-card article strong,[^}]*font-size:10px/);
+  assert.match(portalCss, /\.records-desk-activity-card article small,[^}]*font-size:8px/);
 });
 
 test('student profile action uses a compact accessible pencil icon', () => {

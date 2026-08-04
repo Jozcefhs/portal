@@ -577,6 +577,8 @@ test('staff and parent notification interfaces are wired to protected APIs', asy
   assert.match(notificationCss, /\.notification-push-prompt\{display:flex/);
   assert.match(notificationCss, /\.notification-delete-action\{/);
   assert.match(notificationCss, /@media \(max-width:720px\)[\s\S]*?\.notification-settings-form label\{[^}]*font-size:9px/);
+  assert.match(notificationCss, /\.notification-history-list \.notification-item-copy strong,[^}]*font-size:10px/);
+  assert.match(notificationCss, /\.notification-history-list \.notification-item-copy span,[^}]*font-size:8px/);
   assert.match(notificationCss, /\.notification-category-grid\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(notificationJs, /class="notification-device-delete"[^>]*data-remove-push-device/);
   assert.doesNotMatch(notificationJs, /data-remove-push-device="[^\n]*">Remove</);
