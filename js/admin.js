@@ -8174,8 +8174,8 @@ function renderFinanceWorkflow() {
     <div class="workflow-intro">
       <div><p class="eyebrow">Department finance</p><h2>Bills & Requisitions</h2><p class="muted">${escapeHtml(department)} workspace</p></div>
       <div class="workflow-primary-actions">
-        ${capabilities.canSubmit ? '<button type="button" data-open-dialog="requisitionDialog">+ New Requisition</button><button type="button" class="workflow-secondary-action" data-open-dialog="materialRequisitionDialog">+ Material Requisition</button><button type="button" class="workflow-secondary-action" data-open-dialog="supplierBillDialog">+ Supplier Bill</button>' : ''}
-        <button type="button" class="workflow-icon-action" id="refreshFinanceWorkflow" aria-label="Refresh requests">Refresh</button>
+        ${capabilities.canSubmit ? '<button type="button" data-open-dialog="requisitionDialog" title="New Requisition">+ Request</button><button type="button" class="workflow-secondary-action" data-open-dialog="materialRequisitionDialog" title="Material Requisition">+ Materials</button><button type="button" class="workflow-secondary-action" data-open-dialog="supplierBillDialog" title="Supplier Bill">+ Invoice</button>' : ''}
+        <button type="button" class="workflow-icon-action finance-workflow-refresh" id="refreshFinanceWorkflow" aria-label="Refresh requests" title="Refresh"><span aria-hidden="true">&#8635;</span></button>
       </div>
     </div>
     <p id="financeWorkflowStatus" class="status"></p>
@@ -8186,7 +8186,7 @@ function renderFinanceWorkflow() {
       <div><small>Rejected</small><strong>${statusCount('rejected')}</strong><span>Requires attention</span></div>
       <div><small>Total Records</small><strong>${allRecords.length}</strong><span>Current view</span></div>
     </div>
-    <div class="workflow-ledger-heading"><div><h2>Recent Transactions</h2><p class="muted">Requisitions and bills synchronized with desktop accounting</p></div>${capabilities.canSubmit ? '<button type="button" class="finance-new-request" data-open-dialog="requisitionDialog">+ New Requisition</button>' : ''}</div>
+    <div class="workflow-ledger-heading"><div><h2>Recent Transactions</h2><p class="muted">Requisitions and bills synchronized with desktop accounting</p></div>${capabilities.canSubmit ? '<button type="button" class="finance-new-request" data-open-dialog="requisitionDialog" title="New Requisition">+ Request</button>' : ''}</div>
     ${financeRecordsSection('Expense Requisitions', requisitions, 'requisition', capabilities)}
     ${financeRecordsSection('Supplier Bills', bills, 'bill', capabilities)}
     ${submissionDialogs}

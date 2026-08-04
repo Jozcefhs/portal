@@ -334,7 +334,7 @@ test('finance requests use one-row records, icon decisions, printing, and a repe
   assert.match(adminJs, /class="admin-table finance-record-table"/);
   assert.match(adminJs, /<th>Reference<\/th><th>Request<\/th><th>Description<\/th><th>Amount<\/th><th>Department<\/th><th>Date<\/th>/);
   assert.match(adminJs, /class="finance-row-actions"/);
-  assert.match(adminJs, /class="finance-new-request" data-open-dialog="requisitionDialog">\+ New Requisition/);
+  assert.match(adminJs, /class="finance-new-request" data-open-dialog="requisitionDialog" title="New Requisition">\+ Request/);
   assert.match(adminJs, /class="compact-icon-action compact-print-action" data-print-finance-record=/);
   assert.match(adminJs, /class="compact-icon-action compact-approve-action"[\s\S]*?aria-label="Approve/);
   assert.match(adminJs, /class="compact-icon-action compact-reject-action"[\s\S]*?aria-label="Reject/);
@@ -349,6 +349,16 @@ test('finance requests use one-row records, icon decisions, printing, and a repe
   assert.match(portalCss, /\.compact-print-action\{color:/);
   assert.match(portalCss, /\.compact-approve-action\{color:/);
   assert.match(portalCss, /\.compact-reject-action\{color:/);
+});
+
+test('mobile finance actions use compact content-width labels in one row', () => {
+  assert.match(adminJs, /title="New Requisition">\+ Request/);
+  assert.match(adminJs, /title="Material Requisition">\+ Materials/);
+  assert.match(adminJs, /title="Supplier Bill">\+ Invoice/);
+  assert.match(adminJs, /class="workflow-icon-action finance-workflow-refresh"[\s\S]*?aria-label="Refresh requests"[\s\S]*?&#8635;/);
+  assert.match(portalCss, /@media \(max-width:680px\)\{[\s\S]*?\.workflow-primary-actions\{[^}]*flex-wrap:nowrap;[^}]*gap:4px;/);
+  assert.match(portalCss, /\.workflow-primary-actions button\{[^}]*width:fit-content;[^}]*font-size:9px;[^}]*white-space:nowrap/);
+  assert.match(portalCss, /\.workflow-primary-actions \.finance-workflow-refresh\{[^}]*width:29px;[^}]*height:29px;/);
 });
 
 test('parents can search the eligible school-store catalog', () => {

@@ -30,8 +30,8 @@ test('material requisition normalizer accepts JSON and ignores empty rows', () =
 });
 
 test('material requisition is an additional workflow with a multi-item table', () => {
-  assert.match(adminJs, /data-open-dialog="requisitionDialog">\+ New Requisition/);
-  assert.match(adminJs, /data-open-dialog="materialRequisitionDialog">\+ Material Requisition/);
+  assert.match(adminJs, /data-open-dialog="requisitionDialog" title="New Requisition">\+ Request/);
+  assert.match(adminJs, /data-open-dialog="materialRequisitionDialog" title="Material Requisition">\+ Materials/);
   assert.match(adminJs, /<th>S\/No\.<\/th><th>Item<\/th><th>Specification<\/th><th>Quantity<\/th><th>Unit Price<\/th><th>Total<\/th>/);
   assert.match(adminJs, /data-add-material-item/);
   assert.match(adminJs, /financeRequest\('submitMaterialRequisition', payload\)/);
