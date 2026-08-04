@@ -1,4 +1,10 @@
-import { loadDeploymentIdentity } from './lib/deployment-identity.js';
+import { loadDeploymentIdentity, requiredDeploymentIdentity } from './lib/deployment-identity.js';
+
+const LOW_READ_IDENTITY_PATHS = new Set([
+  '/api/staff-session',
+  '/api/staff-passkey',
+  '/api/admin'
+]);
 
 function enabled(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
@@ -13,7 +19,13 @@ function unavailableResponse(requestId, message = 'The API backend is not config
 
 function identityUnavailableResponse(requestId, error) {
   const code = String(error?.code || '');
-  const message = code.startsWith('DEPLOYMENT_')
+  const upstreamCode = String(error?.upstreamCode || '');
+  const quotaFailure = code === 'FIRESTORE_QUOTA_EXHAUSTED'
+    || upstreamCode === 'RESOURCE_EXHAUSTED'
+    || /quota|resource exhausted/i.test(String(error?.message || ''));
+  const message = quotaFailure
+    ? 'The daily database read quota is currently exhausted. Firebase usage reporting can be delayed; access will resume after the daily quota resets or billing is enabled.'
+    : code.startsWith('DEPLOYMENT_')
     ? String(error?.message || 'The deployment identity is invalid.')
     : 'The deployment identity could not be verified.';
   return unavailableResponse(requestId, message);
@@ -104,5 +116,9 @@ export async function onRequestWithIdentityLoader(context, identityLoader) {
 }
 
 export async function onRequest(context) {
-  return handleRequest(context, loadDeploymentIdentity);
+  const pathname = new URL(context.request.url).pathname;
+  const identityLoader = LOW_READ_IDENTITY_PATHS.has(pathname)
+    ? async (env) => requiredDeploymentIdentity(env)
+    : loadDeploymentIdentity;
+  return handleRequest(context, identityLoader);
 }

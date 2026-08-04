@@ -47,6 +47,15 @@ function lower(value) {
   return clean(value).toLowerCase();
 }
 
+function publicSessionError(error) {
+  if (clean(error?.code) === 'FIRESTORE_QUOTA_EXHAUSTED'
+    || clean(error?.upstreamCode).toUpperCase() === 'RESOURCE_EXHAUSTED'
+    || /quota|resource exhausted/i.test(clean(error?.message))) {
+    return 'The daily database read quota is exhausted. Firebase usage reporting can be delayed; sign-in will resume after the daily quota resets or billing is enabled.';
+  }
+  return error?.message || String(error);
+}
+
 function safeStaffId(value) {
   return lower(value).replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120);
 }
@@ -159,7 +168,7 @@ export async function onRequestGet(context) {
     const cookies = status === 401
       ? [clearStaffSessionCookie(), clearLegacyStaffSessionCookie(), clearStaffApprovalProofCookie()]
       : [];
-    return response({ ok: false, authenticated: false, message: err.message || String(err) }, status, cookies);
+    return response({ ok: false, authenticated: false, message: publicSessionError(err) }, status, cookies);
   }
 }
 
@@ -420,6 +429,6 @@ export async function onRequestPost(context) {
       user: staffUserForAccess(user, access)
     }, 200, staffSessionCookie(token));
   } catch (err) {
-    return response({ ok: false, message: err.message || String(err) }, err.status || 500);
+    return response({ ok: false, message: publicSessionError(err) }, err.status || 500);
   }
 }

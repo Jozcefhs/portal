@@ -15,6 +15,13 @@ function firestoreEnvironmentKey(env) {
 
 function firestoreErrorStatus(data, responseStatus) {
   const upstreamCode = clean(data?.error?.status).toUpperCase();
+  if (upstreamCode === 'RESOURCE_EXHAUSTED') {
+    return {
+      status: 429,
+      code: 'FIRESTORE_QUOTA_EXHAUSTED',
+      upstreamCode
+    };
+  }
   if (['FAILED_PRECONDITION', 'ABORTED', 'ALREADY_EXISTS'].includes(upstreamCode)) {
     return {
       status: 409,

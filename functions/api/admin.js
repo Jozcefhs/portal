@@ -3,6 +3,7 @@ import { listCollection, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
 import { normalizeClassKey } from '../lib/class-names.js';
+import { readJsonBody } from '../lib/request-security.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -77,6 +78,30 @@ export async function onRequestPost(context) {
       err.status = 403;
       throw err;
     }
+    const body = await readJsonBody(request, { maxBytes: 32 * 1024 });
+    const requestedSection = clean(body.section);
+    const shellOnly = clean(body.mode).toLowerCase() === 'shell';
+    if (requestedSection && !allowed.has(requestedSection)) {
+      const err = new Error('That dashboard section is not assigned to this staff account.');
+      err.status = 403;
+      throw err;
+    }
+    if (shellOnly) {
+      return Response.json({
+        ok: true,
+        message: 'Staff workspace ready.',
+        user,
+        allowedSections: user.allowedSections,
+        summary: {},
+        charts: {},
+        departments: {},
+        summaryDeferred: true
+      }, { headers: { 'Cache-Control': 'no-store' } });
+    }
+    const shouldLoad = (section) => allowed.has(section)
+      && (!requestedSection || requestedSection === section);
+    const shouldLoadStore = () => ['bookstore', 'uniformStore', 'organizationStore']
+      .some((section) => shouldLoad(section));
 
     const [
       applications,
@@ -97,29 +122,29 @@ export async function onRequestPost(context) {
       ,storeItems
       ,storeOrders
     ] = await Promise.all([
-      allowed.has('admissions') ? listSchoolCollection(env, 'applications', {
+      shouldLoad('admissions') ? listSchoolCollection(env, 'applications', {
         branchId: user.branchId,
         schoolSectionAccess: user.schoolSectionAccess
       }) : Promise.resolve([]),
-      allowed.has('students') ? listSchoolCollection(env, 'students', {
+      shouldLoad('students') ? listSchoolCollection(env, 'students', {
         branchId: user.branchId,
         schoolSectionAccess: user.schoolSectionAccess
       }) : Promise.resolve([]),
-      allowed.has('formPurchases') ? listCollection(env, 'formSales') : Promise.resolve([]),
-      allowed.has('accounts') ? listCollection(env, 'payments') : Promise.resolve([]),
-      allowed.has('accounts') ? listCollection(env, 'invoices') : Promise.resolve([]),
-      (allowed.has('accounts') || allowed.has('tuckShop')) ? listCollection(env, 'ledger') : Promise.resolve([]),
-      allowed.has('clinic') ? listCollection(env, 'clinicRecords') : Promise.resolve([]),
-      allowed.has('clinic') ? listCollection(env, 'clinicInventory') : Promise.resolve([]),
-      allowed.has('kitchen') ? listCollection(env, 'kitchenInventory') : Promise.resolve([]),
-      allowed.has('clinic') ? listCollection(env, 'clinicMovements') : Promise.resolve([]),
-      allowed.has('kitchen') ? listCollection(env, 'kitchenMovements') : Promise.resolve([]),
-      allowed.has('restaurant') ? listCollection(env, 'restaurantInventory') : Promise.resolve([]),
-      allowed.has('restaurant') ? listCollection(env, 'restaurantMovements') : Promise.resolve([]),
-      allowed.has('tuckShop') ? listCollection(env, 'tuckShopInventory') : Promise.resolve([]),
-      allowed.has('tuckShop') ? listCollection(env, 'tuckShopMovements') : Promise.resolve([]),
-      (allowed.has('bookstore') || allowed.has('uniformStore') || allowed.has('organizationStore')) ? listCollection(env, 'storeItems') : Promise.resolve([]),
-      (allowed.has('bookstore') || allowed.has('uniformStore') || allowed.has('organizationStore')) ? listCollection(env, 'storeOrders') : Promise.resolve([])
+      shouldLoad('formPurchases') ? listCollection(env, 'formSales') : Promise.resolve([]),
+      shouldLoad('accounts') ? listCollection(env, 'payments') : Promise.resolve([]),
+      shouldLoad('accounts') ? listCollection(env, 'invoices') : Promise.resolve([]),
+      (shouldLoad('accounts') || shouldLoad('tuckShop')) ? listCollection(env, 'ledger') : Promise.resolve([]),
+      shouldLoad('clinic') ? listCollection(env, 'clinicRecords') : Promise.resolve([]),
+      shouldLoad('clinic') ? listCollection(env, 'clinicInventory') : Promise.resolve([]),
+      shouldLoad('kitchen') ? listCollection(env, 'kitchenInventory') : Promise.resolve([]),
+      shouldLoad('clinic') ? listCollection(env, 'clinicMovements') : Promise.resolve([]),
+      shouldLoad('kitchen') ? listCollection(env, 'kitchenMovements') : Promise.resolve([]),
+      shouldLoad('restaurant') ? listCollection(env, 'restaurantInventory') : Promise.resolve([]),
+      shouldLoad('restaurant') ? listCollection(env, 'restaurantMovements') : Promise.resolve([]),
+      shouldLoad('tuckShop') ? listCollection(env, 'tuckShopInventory') : Promise.resolve([]),
+      shouldLoad('tuckShop') ? listCollection(env, 'tuckShopMovements') : Promise.resolve([]),
+      shouldLoadStore() ? listCollection(env, 'storeItems') : Promise.resolve([]),
+      shouldLoadStore() ? listCollection(env, 'storeOrders') : Promise.resolve([])
     ]);
 
     const staffScope = (rows) => rows.filter((row) => {
@@ -133,15 +158,15 @@ export async function onRequestPost(context) {
       return branchAllowed && sectionAllowed;
     });
     let accountOverview = null;
-    if (allowed.has('accounts')) {
+    if (shouldLoad('accounts')) {
       try {
         const overviewInputs = {
           payments: staffScope(payments),
           invoices: staffScope(invoices),
           ledger: staffScope(ledger)
         };
-        if (allowed.has('admissions')) overviewInputs.applications = applications;
-        if (allowed.has('students')) overviewInputs.students = students;
+        if (shouldLoad('admissions')) overviewInputs.applications = applications;
+        if (shouldLoad('students')) overviewInputs.students = students;
         accountOverview = await getAccountsOverview(env, overviewInputs, {
           branchId: user.branchId,
           schoolSectionAccess: user.schoolSectionAccess
@@ -218,37 +243,39 @@ export async function onRequestPost(context) {
         orders: publicRows(sortRecent(visibleStoreOrders.filter((row) => clean(row.StoreType) === 'Organisation Store'), ['PaidAt', 'CreatedAt']), 200)
       }
     };
-    const departments = Object.fromEntries(Object.entries(allDepartments).filter(([key]) => allowed.has(key)));
+    const departments = Object.fromEntries(Object.entries(allDepartments).filter(([key]) => (
+      requestedSection ? key === requestedSection : allowed.has(key)
+    )));
     const summary = {};
-    if (allowed.has('admissions')) summary.applications = visibleApplications.length;
-    if (allowed.has('students')) {
+    if (shouldLoad('admissions')) summary.applications = visibleApplications.length;
+    if (shouldLoad('students')) {
       summary.students = visibleStudents.length;
       summary.boardingStudents = visibleStudents.filter(isBoardingStudent).length;
       summary.dayStudents = visibleStudents.length - summary.boardingStudents;
     }
-    if (allowed.has('formPurchases')) summary.formPurchases = visibleFormSales.length;
-    if (allowed.has('accounts')) {
+    if (shouldLoad('formPurchases')) summary.formPurchases = visibleFormSales.length;
+    if (shouldLoad('accounts')) {
       summary.payments = visiblePayments.length;
       summary.invoices = visibleInvoices.length;
     }
-    if (allowed.has('clinic')) {
+    if (shouldLoad('clinic')) {
       summary.clinicRecords = visibleClinicRecords.length;
       summary.clinicInventory = visibleClinicInventory.length;
       summary.lowClinicStock = lowClinic.length;
     }
-    if (allowed.has('kitchen')) {
+    if (shouldLoad('kitchen')) {
       summary.kitchenInventory = visibleKitchenInventory.length;
       summary.lowKitchenStock = lowKitchen.length;
     }
-    if (allowed.has('restaurant')) {
+    if (shouldLoad('restaurant')) {
       summary.restaurantInventory = visibleRestaurantInventory.length;
       summary.lowRestaurantStock = lowRestaurant.length;
     }
-    if (allowed.has('organizationStore')) {
+    if (shouldLoad('organizationStore')) {
       summary.organizationStoreItems = visibleStoreItems.filter((row) => clean(row.StoreType) === 'Organisation Store').length;
       summary.organizationStoreOrders = visibleStoreOrders.filter((row) => clean(row.StoreType) === 'Organisation Store').length;
     }
-    if (allowed.has('tuckShop')) {
+    if (shouldLoad('tuckShop')) {
       summary.tuckShopPurchases = walletPurchases.length;
       summary.tuckShopInventory = visibleTuckShopInventory.length;
       summary.lowTuckShopStock = lowTuckShop.length;

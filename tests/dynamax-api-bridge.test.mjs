@@ -66,6 +66,52 @@ test('a deployment with a local Firebase backend continues to its own Pages Func
   assert.deepEqual(await response.json(), { ok: true, local: true });
 });
 
+test('staff sign-in uses environment deployment identity without an extra Firestore profile read', async () => {
+  let nextCalled = false;
+  let fetchCalled = false;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    fetchCalled = true;
+    throw new Error('Firestore should not be called by middleware for this path.');
+  };
+  try {
+    const response = await onRequest({
+      request: new Request('https://school.example/api/staff-session', { method: 'POST' }),
+      env: {
+        FIREBASE_PROJECT_ID: 'school-project',
+        DYNAMAX_WORKSPACE_ID: 'school-main',
+        ORGANISATION_EDITION: 'school'
+      },
+      next: async () => {
+        nextCalled = true;
+        return Response.json({ ok: true });
+      }
+    });
+    assert.equal(response.status, 200);
+    assert.equal(nextCalled, true);
+    assert.equal(fetchCalled, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Firestore quota failures are not mislabeled as deployment identity failures', async () => {
+  const response = await onRequestWithIdentityLoader({
+    request: new Request('https://school.example/api/settings'),
+    env: { FIREBASE_PROJECT_ID: 'school-project' },
+    next: async () => Response.json({ ok: true })
+  }, async () => {
+    const error = new Error('Quota exceeded.');
+    error.code = 'FIRESTORE_QUOTA_EXHAUSTED';
+    error.upstreamCode = 'RESOURCE_EXHAUSTED';
+    throw error;
+  });
+  assert.equal(response.status, 503);
+  const payload = await response.json();
+  assert.match(payload.message, /daily database read quota is currently exhausted/i);
+  assert.doesNotMatch(payload.message, /deployment identity/i);
+});
+
 test('a local backend with missing deployment identity fails closed before its Pages Function', async () => {
   let nextCalled = false;
   const response = await onRequest({

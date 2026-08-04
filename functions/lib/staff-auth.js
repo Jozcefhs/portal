@@ -1,6 +1,7 @@
 import { findOneByField, getDocument, listCollection, patchDocumentFields, upsertDocument } from './firestore.js';
 import { accountingCodeAllowedForEdition } from './accounting-edition-scope.js';
 import { filterSectionsForFeatures, resolveOrganizationConfig } from './organization-config.js';
+import { deploymentIdentityDetails, requiredDeploymentIdentity } from './deployment-identity.js';
 
 const encoder = new TextEncoder();
 const SESSION_COOKIE = '__Host-digc_staff_session';
@@ -20,6 +21,12 @@ function clean(value) {
 
 function lower(value) {
   return clean(value).toLowerCase();
+}
+
+function isFirestoreQuotaError(error) {
+  return clean(error?.code) === 'FIRESTORE_QUOTA_EXHAUSTED'
+    || clean(error?.upstreamCode).toUpperCase() === 'RESOURCE_EXHAUSTED'
+    || /quota|resource exhausted/i.test(clean(error?.message));
 }
 
 export function findStaffUser(users = [], identity = '') {
@@ -300,6 +307,13 @@ export async function staffAccessFor(env, user = {}) {
       getDocument(env, 'settings', 'organisationProfile').catch(() => null),
       getDocument(env, 'settings', 'schoolProfile').catch(() => null)
     ]);
+    if (organizationProfile) {
+      deploymentIdentityDetails({
+        env,
+        identity: requiredDeploymentIdentity(env),
+        organizationProfile
+      });
+    }
     organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile });
     accessConfigCache = {
       environmentKey,
@@ -337,10 +351,12 @@ export function staffUserForAccess(user = {}, access = {}) {
 export async function authenticateStaff(env, username, password) {
   const wanted = lower(username);
   if (!wanted || !password) return null;
+  const envUsername = lower(env.ADMIN_WEB_USERNAME || 'admin');
   let user = null;
   try {
     user = await findStaffLoginRecord(env, wanted);
-  } catch (_err) {
+  } catch (error) {
+    if (wanted !== envUsername && isFirestoreQuotaError(error)) throw error;
     user = null;
   }
   if (user) {
@@ -360,7 +376,6 @@ export async function authenticateStaff(env, username, password) {
     }
   }
 
-  const envUsername = lower(env.ADMIN_WEB_USERNAME || 'admin');
   const envPassword = clean(env.ADMIN_WEB_PASSWORD);
   const configuredRecord = wanted === envUsername
     ? await findStaffUserRecord(env, envUsername).catch(() => null)

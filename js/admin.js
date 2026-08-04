@@ -54,6 +54,7 @@ const moduleGrid = document.getElementById('staffModuleGrid');
 const moduleCloseButton = document.getElementById('staffModuleClose');
 const requestedWorkspace = new URLSearchParams(window.location.search).get('workspace')?.trim().toLowerCase() || '';
 const requestedSection = new URLSearchParams(window.location.search).get('section')?.trim() || '';
+const legacyDashboardSections = new Set(['admissions', 'formPurchases', 'students', 'accounts']);
 
 let currentUser = null;
 let dashboardData = null;
@@ -76,6 +77,7 @@ let staffSessionAbortController = new AbortController();
 let passkeyStatusRequest = null;
 let organizationDepartmentWorkspaceTab = 'overview';
 let organizationDashboardChartsRequest = 0;
+const dashboardSectionRequests = new Map();
 let incomeAnalyticsData = null;
 let incomeAnalyticsFilter = { period: 'monthly' };
 let recordsDeskRequest = 0;
@@ -826,7 +828,7 @@ async function continueAfterAuthentication(user) {
     document.getElementById('staffNewPassword').focus();
     return;
   }
-  await loadDashboard();
+  await loadDashboard({ mode: 'shell' });
 }
 
 async function sessionRequest(method = 'GET', body = null) {
@@ -842,36 +844,45 @@ async function sessionRequest(method = 'GET', body = null) {
 }
 
 async function confirmFreshStaffSession(fallbackUser, fallbackToken = '') {
-  staffBearerToken = '';
-  const delays = [120, 300, 700, 1200];
-  let lastMessage = '';
-  for (const delay of delays) {
-    await new Promise((resolve) => window.setTimeout(resolve, delay));
-    const { response, data } = await sessionRequest();
-    if (response.ok && data.authenticated && data.user) return data.user;
-    lastMessage = data.message || lastMessage;
-  }
   const memoryToken = clean(fallbackToken);
-  if (memoryToken) {
+  if (memoryToken && fallbackUser) {
     staffBearerToken = memoryToken;
-    const { response, data } = await sessionRequest();
-    if (response.ok && data.authenticated && data.user) return data.user;
-    staffBearerToken = '';
-    lastMessage = data.message || lastMessage;
+    return fallbackUser;
   }
-  throw new Error(lastMessage || `Your identity was verified, but this browser did not retain the new session for ${fallbackUser?.displayName || fallbackUser?.username || 'this account'}.`);
+  staffBearerToken = '';
+  const { response, data } = await sessionRequest();
+  if (response.ok && data.authenticated && data.user) return data.user;
+  throw new Error(data.message || `Your identity was verified, but this browser did not retain the new session for ${fallbackUser?.displayName || fallbackUser?.username || 'this account'}.`);
 }
 
-async function loadDashboard() {
+function mergeDashboardResponse(current, incoming) {
+  if (!current) return incoming;
+  return {
+    ...current,
+    ...incoming,
+    user: { ...(current.user || {}), ...(incoming.user || {}) },
+    summary: { ...(current.summary || {}), ...(incoming.summary || {}) },
+    charts: { ...(current.charts || {}), ...(incoming.charts || {}) },
+    departments: { ...(current.departments || {}), ...(incoming.departments || {}) },
+    summaryDeferred: current.summaryDeferred === true && incoming.summaryDeferred !== false
+  };
+}
+
+async function loadDashboard(options = {}) {
+  const section = clean(options.section || (legacyDashboardSections.has(activeSection) ? activeSection : ''));
+  const mode = clean(options.mode || (section ? 'section' : 'shell')).toLowerCase();
+  const merge = options.merge === true || mode === 'section';
   setDashboardRefreshLoading(true);
-  setStatus(dashboardStatus, 'Loading permitted database records...');
+  setStatus(dashboardStatus, mode === 'shell'
+    ? 'Opening your permitted workspace...'
+    : `Loading ${staffTabLabel(section, section) || 'module'} records...`);
   try {
     const response = await staffFetch('/api/admin', {
       method: 'POST',
       credentials: 'same-origin',
       cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
-      body: '{}'
+      body: JSON.stringify({ mode, ...(section ? { section } : {}) })
     });
     const data = await response.json().catch(() => ({ ok: false, message: 'Staff dashboard did not return JSON.' }));
     if (response.status === 401) {
@@ -879,7 +890,7 @@ async function loadDashboard() {
       return;
     }
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load staff dashboard.');
-    dashboardData = data;
+    dashboardData = merge ? mergeDashboardResponse(dashboardData, data) : data;
     const dashboardUser = data.user || {};
     currentUser = {
       ...currentUser,
@@ -898,9 +909,14 @@ async function loadDashboard() {
     renderTabs(allowed);
     renderWorkspace(activeSection);
     renderSection(activeSection);
-    setStatus(dashboardStatus, 'Dashboard updated.', 'ok');
+    setStatus(dashboardStatus, mode === 'shell'
+      ? 'Workspace ready. Records load only when you open a module.'
+      : `${staffTabLabel(section, section) || 'Module'} updated.`, 'ok');
   } catch (error) {
     setStatus(dashboardStatus, error.message || String(error), 'bad');
+    if (section && activeSection === section) {
+      panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+    }
   } finally {
     setDashboardRefreshLoading(false);
   }
@@ -914,6 +930,10 @@ function renderDashboardCharts(charts) {
     return;
   }
   dashboardChartsEl.hidden = false;
+  if (dashboardData?.summaryDeferred) {
+    dashboardChartsEl.innerHTML = '<article class="department-chart-card dashboard-chart-loading"><h3>Low-read workspace</h3><p class="muted">Open a module to load only the records needed for that task. This prevents sign-in and refresh from scanning the entire database.</p></article>';
+    return;
+  }
   if (document.documentElement.dataset.edition === 'church') {
     dashboardChartsEl.innerHTML = '<article class="department-chart-card dashboard-chart-loading"><h3>Department recordings</h3><p class="muted">Loading chart summaries...</p></article>';
     loadOrganizationDashboardCharts();
@@ -959,6 +979,10 @@ async function loadOrganizationDashboardCharts() {
 }
 
 function renderSummary(summary) {
+  if (dashboardData?.summaryDeferred) {
+    summaryEl.innerHTML = '<div><strong>Ready</strong><span>Low-read workspace</span><small>Module data loads on demand</small></div>';
+    return;
+  }
   const items = [
     ['Applications', summary.applications],
     ['Form Purchases', summary.formPurchases],
@@ -7569,6 +7593,15 @@ function renderSection(active) {
     return;
   }
   const departments = dashboardData.departments || {};
+  if (legacyDashboardSections.has(active) && !Object.hasOwn(departments, active)) {
+    panelEl.innerHTML = `<p class="muted">Loading ${escapeHtml(staffTabLabel(active, active))} records...</p>`;
+    if (!dashboardSectionRequests.has(active)) {
+      const request = loadDashboard({ mode: 'section', section: active, merge: true })
+        .finally(() => dashboardSectionRequests.delete(active));
+      dashboardSectionRequests.set(active, request);
+    }
+    return;
+  }
   if (active === 'recordsDesk') {
     renderRecordsDesk();
   } else if (active === 'executiveOffice') {
@@ -9045,6 +9078,6 @@ document.getElementById('staffPasswordSignOut').addEventListener('click', async 
   if (response.ok && data.authenticated && data.user) {
     await continueAfterAuthentication(data.user);
   } else {
-    showLogin();
+    showLogin(data.message || '', data.message ? 'bad' : '');
   }
 }());

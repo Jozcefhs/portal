@@ -32,11 +32,11 @@ test('staff portal offers passkey registration and authentication', () => {
   assert.match(adminJs, /passkeyLoginButton\.hidden = !supported \|\| Boolean\(currentUser\)/);
   assert.match(adminJs, /passkeyLoginButton\.classList\.toggle\('is-preferred', preferred\)/);
   assert.match(adminJs, /confirmFreshStaffSession\(completed\.user, sessionToken\)/);
-  assert.match(adminJs, /staffBearerToken = ''[\s\S]*?const delays = \[120, 300, 700, 1200\][\s\S]*?staffBearerToken = memoryToken/);
+  assert.match(adminJs, /if \(memoryToken && fallbackUser\)[\s\S]*?staffBearerToken = memoryToken;[\s\S]*?return fallbackUser/);
   assert.match(adminJs, /requestUrl\.origin === window\.location\.origin && requestUrl\.pathname\.startsWith\('\/api\/'\)/);
   assert.match(adminJs, /headers\.set\('Authorization', `Bearer \$\{staffBearerToken\}`\)/);
   assert.doesNotMatch(adminJs, /(?:localStorage|sessionStorage).*staffBearerToken/);
-  assert.match(adminJs, /const delays = \[120, 300, 700, 1200\]/);
+  assert.doesNotMatch(adminJs, /const delays = \[120, 300, 700, 1200\]/);
   assert.match(adminJs, /this browser did not retain the new session/);
   assert.match(adminJs, /navigator\.credentials\.create/);
   assert.match(adminJs, /navigator\.credentials\.get/);
