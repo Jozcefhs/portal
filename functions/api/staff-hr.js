@@ -1,6 +1,8 @@
 import { batchCommitDocuments, getDocument, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
+import { branchRecordVisible, enforceActorBranch, recordBranchId } from '../lib/branch-scope.js';
+import { staffRecordMatchesEdition } from '../lib/records-desk.js';
 import {
   hrCapabilitiesFor,
   normalizeHrCandidate,
@@ -41,6 +43,34 @@ function actorUsername(user = {}) {
   return lower(user.username || user.Username);
 }
 
+function staffBranchMap(staffUsers = []) {
+  return new Map(staffUsers.map((row) => [
+    lower(row.Username || row.username || row.__id),
+    recordBranchId(row)
+  ]).filter(([username]) => username));
+}
+
+function inferredHrBranch(row = {}, staffBranches = new Map(), vacancyBranches = new Map()) {
+  const explicit = clean(row.BranchId || row.branchId);
+  if (explicit) return recordBranchId(row);
+  const username = lower(row.Username || row.username);
+  if (username && staffBranches.has(username)) return staffBranches.get(username);
+  const vacancyId = lower(row.VacancyId || row.vacancyId);
+  if (vacancyId && vacancyBranches.has(vacancyId)) return vacancyBranches.get(vacancyId);
+  return 'main';
+}
+
+function visibleHrRows(rows, user, staffBranches, vacancyBranches = new Map()) {
+  return (rows || []).filter((row) => branchRecordVisible(row, user, {
+    inferredBranchId: inferredHrBranch(row, staffBranches, vacancyBranches)
+  }));
+}
+
+function requireVisibleStaff(row, user) {
+  if (row && staffRecordMatchesEdition(row, user) && branchRecordVisible(row, user)) return row;
+  fail('Choose an existing staff account in your assigned branch.', 404);
+}
+
 function canUseHumanResources(user = {}) {
   return (user.allowedSections || []).includes('humanResources');
 }
@@ -49,19 +79,22 @@ function assertCapability(capabilities, key, message) {
   if (!capabilities[key]) fail(message, 403);
 }
 
-async function assertLineManagerTarget(env, user, username) {
-  if (clean(user.role || user.Role) !== 'Line Manager') return;
+async function assertLineManagerTarget(env, user, username, known = null) {
+  const staff = known || await knownStaff(env, user, username);
+  if (clean(user.role || user.Role) !== 'Line Manager') return staff;
   const employee = await getDocument(env, 'hrEmployees', safeId(username)).catch(() => null);
-  if (!employee || lower(employee.ManagerUsername) !== actorUsername(user)) {
+  if (!employee || !branchRecordVisible(employee, user, { inferredBranchId: recordBranchId(staff) }) ||
+      lower(employee.ManagerUsername) !== actorUsername(user)) {
     fail('Line managers may act only for staff who report directly to them.', 403);
   }
+  return staff;
 }
 
 function sorted(rows, field = 'UpdatedAt') {
   return [...rows].sort((a, b) => clean(b[field]).localeCompare(clean(a[field])));
 }
 
-async function audit(env, user, action, reference, details = '') {
+async function audit(env, user, action, reference, details = '', branchId = '') {
   const timestamp = nowIso();
   const id = safeId(`HR-${timestamp}-${crypto.randomUUID().slice(0, 8)}`);
   await upsertDocument(env, 'hrAudit', id, {
@@ -71,7 +104,8 @@ async function audit(env, user, action, reference, details = '') {
     Reference: clean(reference),
     Details: clean(details),
     ActorUsername: actorUsername(user),
-    Actor: actorName(user)
+    Actor: actorName(user),
+    BranchId: enforceActorBranch(user, branchId, '', 'main')
   });
 }
 
@@ -87,7 +121,19 @@ async function listWorkspace(env, user) {
     listCollection(env, 'hrTrainingRecords').catch(() => []),
     listCollection(env, 'hrLifecycleRecords').catch(() => [])
   ]);
-  const lifecycle = (kind) => lifecycleRecords.filter((row) => clean(row.RecordKind) === kind);
+  const editionStaff = staffUsers.filter((row) => staffRecordMatchesEdition(row, user));
+  const staffBranches = staffBranchMap(editionStaff);
+  const scopedVacancies = visibleHrRows(vacancies, user, staffBranches);
+  const vacancyBranches = new Map(scopedVacancies.map((row) => [
+    lower(row.VacancyId || row.__id),
+    inferredHrBranch(row, staffBranches)
+  ]));
+  const scopedEmployees = visibleHrRows(employees, user, staffBranches);
+  const scopedLeave = visibleHrRows(leave, user, staffBranches);
+  const scopedReviews = visibleHrRows(reviews, user, staffBranches);
+  const scopedTraining = visibleHrRows(training, user, staffBranches);
+  const scopedLifecycle = visibleHrRows(lifecycleRecords, user, staffBranches, vacancyBranches);
+  const lifecycle = (kind) => scopedLifecycle.filter((row) => clean(row.RecordKind) === kind);
   const candidates = lifecycle('Candidate');
   const employmentHistory = lifecycle('EmploymentHistory');
   const compensation = lifecycle('Compensation');
@@ -95,8 +141,9 @@ async function listWorkspace(env, user) {
   const employeeCases = lifecycle('EmployeeCase');
   const compliance = lifecycle('Compliance');
   const exits = lifecycle('Exit');
-  const safeStaff = staffUsers.map(safeHrStaffUser).filter((row) => row.Username);
-  const employeeByUsername = new Map(employees.map((row) => [lower(row.Username), row]));
+  const safeStaff = editionStaff.filter((row) => branchRecordVisible(row, user))
+    .map(safeHrStaffUser).filter((row) => row.Username);
+  const employeeByUsername = new Map(scopedEmployees.map((row) => [lower(row.Username), row]));
   const directory = safeStaff.map((row) => ({ ...row, ...(employeeByUsername.get(lower(row.Username)) || {}) }));
   const role = clean(user.role || user.Role);
   const directReports = new Set(directory
@@ -109,14 +156,14 @@ async function listWorkspace(env, user) {
       ? directory.filter((row) => lower(row.Username) === username || directReports.has(lower(row.Username)))
       : directory.filter((row) => lower(row.Username) === username);
   const visibleLeave = capabilities.canManageLeave || capabilities.canSeeAllHrRecords
-    ? leave
-    : ownOrTeam(leave);
+    ? scopedLeave
+    : ownOrTeam(scopedLeave);
   const visibleReviews = capabilities.canManagePerformance || capabilities.canSeeAllHrRecords
-    ? role === 'Line Manager' ? ownOrTeam(reviews) : reviews
-    : ownOrTeam(reviews);
+    ? role === 'Line Manager' ? ownOrTeam(scopedReviews) : scopedReviews
+    : ownOrTeam(scopedReviews);
   const visibleTraining = capabilities.canManageTraining || capabilities.canSeeAllHrRecords
-    ? training
-    : ownOrTeam(training);
+    ? scopedTraining
+    : ownOrTeam(scopedTraining);
   const visibleHistory = capabilities.canManageEmploymentHistory || capabilities.canSeeAllHrRecords
     ? employmentHistory
     : employmentHistory.filter((row) => lower(row.Username) === username);
@@ -138,7 +185,7 @@ async function listWorkspace(env, user) {
     roles: [...new Set(safeStaff.map((row) => row.Role).filter(Boolean))].sort(),
     directory: visibleDirectory.sort((a, b) => clean(a.DisplayName).localeCompare(clean(b.DisplayName))),
     leave: sorted(visibleLeave, 'SubmittedAt'),
-    vacancies: capabilities.canManageRecruitment || capabilities.canSeeAllHrRecords ? sorted(vacancies, 'CreatedAt') : [],
+    vacancies: capabilities.canManageRecruitment || capabilities.canSeeAllHrRecords ? sorted(scopedVacancies, 'CreatedAt') : [],
     candidates: capabilities.canManageRecruitment || capabilities.canSeeAllHrRecords ? sorted(candidates, 'UpdatedAt') : [],
     reviews: sorted(visibleReviews, 'ReviewedAt'),
     training: sorted(visibleTraining, 'UpdatedAt'),
@@ -151,11 +198,11 @@ async function listWorkspace(env, user) {
   };
 }
 
-async function knownStaff(env, username) {
+async function knownStaff(env, user, username) {
   const id = lower(username);
   const rows = await listCollection(env, 'staffUsers');
   const staff = rows.find((row) => lower(row.Username || row.__id) === id);
-  if (!staff) fail('Choose an existing staff account.', 404);
+  requireVisibleStaff(staff, user);
   return safeHrStaffUser(staff);
 }
 
@@ -167,16 +214,26 @@ async function saveManagedRecord(env, user, body, capabilities, options) {
     fail('This HR record belongs to a different workflow.', 409);
   }
   let incoming = body;
+  let targetStaff = null;
   if (options.staffTarget) {
-    const staff = await knownStaff(env, body.Username || existing?.Username);
-    if (options.lineManagerTarget) await assertLineManagerTarget(env, user, staff.Username);
-    incoming = { ...body, Username: staff.Username, DisplayName: clean(body.DisplayName || staff.DisplayName) };
+    targetStaff = await knownStaff(env, user, body.Username || existing?.Username);
+    if (options.lineManagerTarget) await assertLineManagerTarget(env, user, targetStaff.Username, targetStaff);
+    incoming = { ...body, Username: targetStaff.Username, DisplayName: clean(body.DisplayName || targetStaff.DisplayName) };
   }
+  const branchId = enforceActorBranch(
+    user,
+    body.BranchId || body.branchId,
+    existing
+      ? recordBranchId(existing, clean(targetStaff?.BranchId) || 'main')
+      : clean(targetStaff?.BranchId),
+    clean(targetStaff?.BranchId) || 'main'
+  );
   const record = {
     ...(existing || {}),
     [options.idField]: id,
     RecordKind: options.recordKind,
     ...options.normalize(incoming, existing || {}),
+    BranchId: branchId,
     CreatedAt: clean(existing?.CreatedAt) || nowIso(),
     CreatedBy: clean(existing?.CreatedBy) || actorName(user),
     CreatedByUsername: clean(existing?.CreatedByUsername) || actorUsername(user),
@@ -190,18 +247,22 @@ async function saveManagedRecord(env, user, body, capabilities, options) {
   delete record.__updateTime;
   await upsertDocument(env, options.collection, id, record,
     existing?.__updateTime ? { updateTime: existing.__updateTime } : { exists: false });
-  await audit(env, user, existing ? `UPDATE ${options.auditLabel}` : `CREATE ${options.auditLabel}`, id, clean(record.Username || record.CandidateName || record.Obligation));
+  await audit(env, user, existing ? `UPDATE ${options.auditLabel}` : `CREATE ${options.auditLabel}`, id, clean(record.Username || record.CandidateName || record.Obligation), branchId);
   return { ok: true, message: options.message, record };
 }
 
 async function saveEmployee(env, user, body, capabilities) {
   assertCapability(capabilities, 'canManagePeople', 'Your HR role cannot change staff employment records.');
   const username = lower(body.Username);
-  const staffUsers = await listCollection(env, 'staffUsers');
-  const staff = staffUsers.find((row) => lower(row.Username || row.__id) === username);
-  if (!staff) fail('Choose an existing staff account.', 404);
+  const staff = await knownStaff(env, user, username);
   const id = safeId(username);
   const existing = await getDocument(env, 'hrEmployees', id).catch(() => null);
+  const branchId = enforceActorBranch(
+    user,
+    body.BranchId || body.branchId,
+    clean(existing?.BranchId || existing?.branchId || staff.BranchId),
+    clean(staff.BranchId) || 'main'
+  );
   const record = {
     ...(existing || {}),
     ...normalizeHrEmployee({
@@ -209,7 +270,7 @@ async function saveEmployee(env, user, body, capabilities) {
       DisplayName: clean(body.DisplayName || staff.DisplayName || username),
       Department: clean(body.Department || staff.Department)
     }, existing || {}),
-    BranchId: clean(body.BranchId || staff.BranchId),
+    BranchId: branchId,
     UpdatedAt: nowIso(),
     UpdatedBy: actorName(user),
     CreatedAt: clean(existing?.CreatedAt) || nowIso(),
@@ -220,7 +281,7 @@ async function saveEmployee(env, user, body, capabilities) {
   delete record.__createTime;
   delete record.__updateTime;
   await upsertDocument(env, 'hrEmployees', id, record);
-  await audit(env, user, existing ? 'UPDATE EMPLOYEE' : 'CREATE EMPLOYEE', username, record.Position);
+  await audit(env, user, existing ? 'UPDATE EMPLOYEE' : 'CREATE EMPLOYEE', username, record.Position, branchId);
   return { ok: true, message: 'Employment record saved.', employee: record };
 }
 
@@ -231,12 +292,20 @@ async function saveLeave(env, user, body, capabilities) {
   }
   const id = safeId(clean(body.LeaveId) || `LEAVE-${Date.now()}-${requestedUsername}-${crypto.randomUUID().slice(0, 8)}`);
   const existing = clean(body.LeaveId) ? await getDocument(env, 'hrLeaveRequests', id).catch(() => null) : null;
+  const staff = await knownStaff(env, user, requestedUsername);
+  const branchId = enforceActorBranch(
+    user,
+    body.BranchId || body.branchId,
+    clean(existing?.BranchId || existing?.branchId || staff.BranchId),
+    clean(staff.BranchId) || 'main'
+  );
   if (existing && lower(existing.Username) !== actorUsername(user) && !capabilities.canManageLeave) fail('This leave request is not available to you.', 403);
   if (existing && clean(existing.Status).toLowerCase() !== 'pending') fail('A reviewed leave request cannot be edited.', 409);
   const record = {
     ...(existing || {}),
     LeaveId: id,
     ...normalizeHrLeave({ ...body, Username: requestedUsername }, user, existing || {}),
+    BranchId: branchId,
     SubmittedAt: clean(existing?.SubmittedAt) || nowIso(),
     SubmittedBy: clean(existing?.SubmittedBy) || actorName(user),
     UpdatedAt: nowIso()
@@ -245,7 +314,7 @@ async function saveLeave(env, user, body, capabilities) {
   delete record.__name;
   await upsertDocument(env, 'hrLeaveRequests', id, record,
     existing?.__updateTime ? { updateTime: existing.__updateTime } : { exists: false });
-  await audit(env, user, existing ? 'UPDATE LEAVE' : 'SUBMIT LEAVE', id, `${record.Username} | ${record.Days} day(s)`);
+  await audit(env, user, existing ? 'UPDATE LEAVE' : 'SUBMIT LEAVE', id, `${record.Username} | ${record.Days} day(s)`, branchId);
   return { ok: true, message: 'Leave request submitted.', leave: record };
 }
 
@@ -257,11 +326,14 @@ async function reviewLeave(env, user, body, capabilities) {
   if (!['Approved', 'Declined'].includes(decision)) fail('Choose Approve or Decline.');
   const existing = await getDocument(env, 'hrLeaveRequests', id).catch(() => null);
   if (!existing) fail('Leave request was not found.', 404);
+  const staff = await knownStaff(env, user, existing.Username);
+  const branchId = enforceActorBranch(user, '', clean(existing.BranchId || staff.BranchId), clean(staff.BranchId) || 'main');
   await assertLineManagerTarget(env, user, existing.Username);
   if (lower(existing.Username) === actorUsername(user)) fail('You cannot approve your own leave request.', 409);
   if (clean(existing.Status).toLowerCase() !== 'pending') fail('This leave request has already been reviewed.', 409);
   const record = {
     ...existing,
+    BranchId: branchId,
     Status: decision,
     ReviewNotes: clean(body.ReviewNotes),
     ReviewedAt: nowIso(),
@@ -272,7 +344,7 @@ async function reviewLeave(env, user, body, capabilities) {
   delete record.__id;
   delete record.__name;
   await upsertDocument(env, 'hrLeaveRequests', id, record, { updateTime: existing.__updateTime });
-  await audit(env, user, `${decision.toUpperCase()} LEAVE`, id, record.Username);
+  await audit(env, user, `${decision.toUpperCase()} LEAVE`, id, record.Username, branchId);
   return { ok: true, message: `Leave request ${decision.toLowerCase()}.`, leave: record };
 }
 
@@ -280,8 +352,15 @@ async function saveVacancy(env, user, body, capabilities) {
   assertCapability(capabilities, 'canManageRecruitment', 'Your HR role cannot manage recruitment.');
   const id = safeId(clean(body.VacancyId) || `VAC-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`);
   const existing = clean(body.VacancyId) ? await getDocument(env, 'hrVacancies', id).catch(() => null) : null;
+  const branchId = enforceActorBranch(
+    user,
+    body.BranchId || body.branchId,
+    existing ? recordBranchId(existing) : '',
+    'main'
+  );
   const record = {
     ...(existing || {}), VacancyId: id, ...normalizeHrVacancy(body, existing || {}),
+    BranchId: branchId,
     CreatedAt: clean(existing?.CreatedAt) || nowIso(),
     CreatedBy: clean(existing?.CreatedBy) || actorName(user),
     UpdatedAt: nowIso(), UpdatedBy: actorName(user)
@@ -289,24 +368,26 @@ async function saveVacancy(env, user, body, capabilities) {
   delete record.__id;
   delete record.__name;
   await upsertDocument(env, 'hrVacancies', id, record);
-  await audit(env, user, existing ? 'UPDATE VACANCY' : 'CREATE VACANCY', id, record.Title);
+  await audit(env, user, existing ? 'UPDATE VACANCY' : 'CREATE VACANCY', id, record.Title, branchId);
   return { ok: true, message: 'Vacancy saved.', vacancy: record };
 }
 
 async function saveReview(env, user, body, capabilities) {
   assertCapability(capabilities, 'canManagePerformance', 'Your HR role cannot record performance reviews.');
   if (lower(body.Username) === actorUsername(user)) fail('You cannot record your own performance review.', 409);
-  await assertLineManagerTarget(env, user, body.Username);
+  const staff = await assertLineManagerTarget(env, user, body.Username);
   const id = safeId(clean(body.ReviewId) || `REVIEW-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`);
   const existing = clean(body.ReviewId) ? await getDocument(env, 'hrPerformanceReviews', id).catch(() => null) : null;
+  const branchId = enforceActorBranch(user, body.BranchId || body.branchId, clean(existing?.BranchId || staff.BranchId), clean(staff.BranchId) || 'main');
   const record = {
     ...(existing || {}), ReviewId: id, ...normalizeHrReview(body, existing || {}),
+    BranchId: branchId,
     ReviewedAt: nowIso(), ReviewedBy: actorName(user), ReviewedByUsername: actorUsername(user), UpdatedAt: nowIso()
   };
   delete record.__id;
   delete record.__name;
   await upsertDocument(env, 'hrPerformanceReviews', id, record);
-  await audit(env, user, existing ? 'UPDATE REVIEW' : 'CREATE REVIEW', id, record.Username);
+  await audit(env, user, existing ? 'UPDATE REVIEW' : 'CREATE REVIEW', id, record.Username, branchId);
   return { ok: true, message: 'Performance review saved.', review: record };
 }
 
@@ -314,21 +395,25 @@ async function saveTraining(env, user, body, capabilities) {
   assertCapability(capabilities, 'canManageTraining', 'Your HR role cannot manage training records.');
   const id = safeId(clean(body.TrainingId) || `TRAINING-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`);
   const existing = clean(body.TrainingId) ? await getDocument(env, 'hrTrainingRecords', id).catch(() => null) : null;
+  const staff = await knownStaff(env, user, body.Username || existing?.Username);
+  const branchId = enforceActorBranch(user, body.BranchId || body.branchId, clean(existing?.BranchId || staff.BranchId), clean(staff.BranchId) || 'main');
   const record = {
     ...(existing || {}), TrainingId: id, ...normalizeHrTraining(body, existing || {}),
+    BranchId: branchId,
     UpdatedAt: nowIso(), UpdatedBy: actorName(user), CreatedAt: clean(existing?.CreatedAt) || nowIso()
   };
   delete record.__id;
   delete record.__name;
   await upsertDocument(env, 'hrTrainingRecords', id, record);
-  await audit(env, user, existing ? 'UPDATE TRAINING' : 'CREATE TRAINING', id, record.Username);
+  await audit(env, user, existing ? 'UPDATE TRAINING' : 'CREATE TRAINING', id, record.Username, branchId);
   return { ok: true, message: 'Training record saved.', training: record };
 }
 
 async function saveCandidate(env, user, body, capabilities) {
   const vacancy = await getDocument(env, 'hrVacancies', safeId(body.VacancyId)).catch(() => null);
   if (!vacancy) fail('Choose an existing vacancy before adding a candidate.', 404);
-  return saveManagedRecord(env, user, body, capabilities, {
+  if (!branchRecordVisible(vacancy, user)) fail('Choose a vacancy in your assigned branch.', 404);
+  return saveManagedRecord(env, user, { ...body, BranchId: recordBranchId(vacancy) }, capabilities, {
     capability: 'canManageRecruitment', deniedMessage: 'Your HR role cannot manage recruitment candidates.',
     collection: 'hrLifecycleRecords', recordKind: 'Candidate', idField: 'CandidateId', prefix: 'CANDIDATE', normalize: normalizeHrCandidate,
     auditLabel: 'CANDIDATE', message: 'Candidate record saved.'
@@ -364,6 +449,8 @@ async function reviewCompensation(env, user, body, capabilities) {
   const existing = await getDocument(env, 'hrLifecycleRecords', id).catch(() => null);
   if (!existing) fail('The pay or benefit change was not found.', 404);
   if (clean(existing.RecordKind) !== 'Compensation') fail('This is not a pay or benefit change.', 409);
+  const staff = await knownStaff(env, user, existing.Username);
+  const branchId = enforceActorBranch(user, '', clean(existing.BranchId || staff.BranchId), clean(staff.BranchId) || 'main');
   if (lower(existing.CreatedByUsername) === actorUsername(user) && decision === 'Approved') fail('You cannot approve a pay or benefit change that you created.', 409);
   const currentStatus = clean(existing.Status || 'Pending');
   const validTransition = (currentStatus === 'Pending' && ['Approved', 'Declined'].includes(decision))
@@ -371,14 +458,14 @@ async function reviewCompensation(env, user, body, capabilities) {
   if (!validTransition) fail(`A ${currentStatus.toLowerCase()} pay or benefit change cannot be marked ${decision.toLowerCase()}.`, 409);
   const record = {
     ...existing, Status: decision, ReviewNotes: clean(body.ReviewNotes), ReviewedAt: nowIso(),
-    ReviewedBy: actorName(user), ReviewedByUsername: actorUsername(user), UpdatedAt: nowIso()
+    ReviewedBy: actorName(user), ReviewedByUsername: actorUsername(user), BranchId: branchId, UpdatedAt: nowIso()
   };
   delete record.__id;
   delete record.__name;
   delete record.__createTime;
   delete record.__updateTime;
   await upsertDocument(env, 'hrLifecycleRecords', id, record, { updateTime: existing.__updateTime });
-  await audit(env, user, `${decision.toUpperCase()} COMPENSATION CHANGE`, id, record.Username);
+  await audit(env, user, `${decision.toUpperCase()} COMPENSATION CHANGE`, id, record.Username, branchId);
   return { ok: true, message: `Pay or benefit change marked ${decision.toLowerCase()}.`, record };
 }
 
@@ -439,11 +526,19 @@ async function saveExit(env, user, body, capabilities) {
   let targetStaff = null;
   const staffUsers = await listCollection(env, 'staffUsers');
   targetStaff = staffUsers.find((row) => lower(row.Username || row.__id) === targetUsername);
-  if (!targetStaff) fail('Choose an existing staff account.', 404);
+  requireVisibleStaff(targetStaff, user);
+  const branchId = enforceActorBranch(
+    user,
+    body.BranchId || body.branchId,
+    clean(existingExit?.BranchId || targetStaff.BranchId),
+    clean(targetStaff.BranchId) || 'main'
+  );
   const targetIsActive = targetStaff.Active === undefined || activeValue(targetStaff.Active);
   if (targetIsActive && clean(targetStaff.Role) === 'Super Admin') {
     const otherActiveAdmins = staffUsers.filter((row) =>
       lower(row.Username || row.__id) !== targetUsername &&
+      staffRecordMatchesEdition(row, user) &&
+      recordBranchId(row) === branchId &&
       clean(row.Role) === 'Super Admin' &&
       (row.Active === undefined || activeValue(row.Active)));
     if (!otherActiveAdmins.length) fail('At least one active Super Admin must remain. Assign another Super Admin before completing this exit.', 409);
@@ -477,6 +572,7 @@ async function saveExit(env, user, body, capabilities) {
       };
   record.ExitId = exitId;
   record.RecordKind = 'Exit';
+  record.BranchId = branchId;
   record.Status = 'Completed';
   record.AccountDeactivated = true;
   record.AccessSyncStatus = 'Completed';
@@ -497,7 +593,8 @@ async function saveExit(env, user, body, capabilities) {
       Reference: exitId,
       Details: targetUsername,
       ActorUsername: actorUsername(user),
-      Actor: actorName(user)
+      Actor: actorName(user),
+      BranchId: branchId
     }
   }];
   if (targetIsActive) {
@@ -524,6 +621,7 @@ async function saveExit(env, user, body, capabilities) {
         Details: `Automatically deactivated after completed ${clean(record.ExitType).toLowerCase()} exit.`,
         Actor: actorName(user),
         ActorUsername: actorUsername(user),
+        BranchId: branchId,
         SourcePlatform: 'Web HR'
       }
     });
@@ -533,6 +631,7 @@ async function saveExit(env, user, body, capabilities) {
       collectionPath: 'hrEmployees', documentId: employeeId,
       data: stripMetadata({
         ...employee,
+        BranchId: branchId,
         Status: 'Exited',
         ExitDate: record.LastWorkingDate,
         UpdatedAt: timestamp,

@@ -2,6 +2,7 @@ import { batchUpsertDocuments, deleteDocument, getDocument, listCollection, requ
 import { hashStaffPassword, requireStaffSession } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { staffRecordMatchesEdition } from '../lib/records-desk.js';
+import { actorBranchScope, branchRecordVisible, enforceActorBranch } from '../lib/branch-scope.js';
 import {
   accountingChartForEdition,
   accountingCodeAllowedForEdition
@@ -80,7 +81,7 @@ function publicUser(row, edition = 'school', featureFlags = null) {
   };
 }
 
-async function audit(env, actor, action, username, details = '') {
+async function audit(env, actor, action, username, details = '', branchId = '') {
   const id = `STAFF-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   await upsertDocument(env, 'staffSecurityAudit', id, {
     AuditId: id,
@@ -90,6 +91,7 @@ async function audit(env, actor, action, username, details = '') {
     Details: clean(details),
     Actor: actor.displayName || actor.username,
     ActorUsername: actor.username,
+    BranchId: clean(branchId || actorBranchScope(actor)) || 'main',
     SourcePlatform: 'Web'
   });
 }
@@ -109,16 +111,18 @@ function activeSuperAdmins(rows, excluding = '') {
 async function listUsers(env, actor) {
   const rows = await listCollection(env, 'staffUsers');
   return rows
-    .filter((row) => staffRecordMatchesEdition(row, actor))
+    .filter((row) => staffRecordMatchesEdition(row, actor) && branchRecordVisible(row, actor))
     .map((row) => publicUser(row, actor.edition, actor.featureFlags))
     .sort((a, b) => a.LoginUsername.localeCompare(b.LoginUsername));
 }
 
-async function listSecurityAudit(env) {
+async function listSecurityAudit(env, actor) {
   const rows = await listCollection(env, 'staffSecurityAudit');
-  return rows.sort((a, b) => clean(b.Timestamp).localeCompare(clean(a.Timestamp))).slice(0, 80).map((row) => ({
+  return rows.filter((row) => branchRecordVisible(row, actor))
+    .sort((a, b) => clean(b.Timestamp).localeCompare(clean(a.Timestamp))).slice(0, 80).map((row) => ({
     Timestamp: clean(row.Timestamp), Action: clean(row.Action), Username: clean(row.Username),
-    Actor: clean(row.Actor || row.ActorUsername), SourcePlatform: clean(row.SourcePlatform), Details: clean(row.Details)
+    Actor: clean(row.Actor || row.ActorUsername), BranchId: clean(row.BranchId || 'main'),
+    SourcePlatform: clean(row.SourcePlatform), Details: clean(row.Details)
   }));
 }
 
@@ -142,6 +146,9 @@ async function saveUser(env, actor, body) {
   if (!id) { const err = new Error('Enter a valid username.'); err.status = 400; throw err; }
   const rows = await listCollection(env, 'staffUsers');
   const existing = rows.find((row) => lower(row.Username || row.__id) === lower(username));
+  if (existing && !branchRecordVisible(existing, actor)) {
+    const err = new Error('This staff account belongs to another branch.'); err.status = 403; throw err;
+  }
   const role = clean(body.Role || body.role) || 'Front Desk';
   const edition = normalizeOrganizationEdition(actor.edition);
   ensureRoleAvailable(role, edition);
@@ -156,6 +163,12 @@ async function saveUser(env, actor, body) {
   const password = String(body.Password || body.password || '');
   if (!existing && !password) { const err = new Error('Password is required for a new staff account.'); err.status = 400; throw err; }
   const passwordFields = password ? await hashStaffPassword(password) : {};
+  const branchId = enforceActorBranch(
+    actor,
+    body.BranchId || body.branchId,
+    existing?.BranchId || existing?.branchId,
+    'main'
+  );
   const payload = {
     ...(existing || {}),
     Username: username,
@@ -166,7 +179,7 @@ async function saveUser(env, actor, body) {
     Role: role,
     Department: department,
     OrganisationEdition: clean(actor.edition) || 'school',
-    BranchId: clean(body.BranchId || body.branchId),
+    BranchId: branchId,
     SchoolSectionAccess: edition === 'school'
       ? (clean(body.SchoolSectionAccess || body.schoolSectionAccess) || 'All')
       : 'All',
@@ -186,7 +199,7 @@ async function saveUser(env, actor, body) {
   delete payload.__id;
   delete payload.__name;
   await upsertDocument(env, 'staffUsers', id, payload);
-  await audit(env, actor, existing ? 'UPDATE USER' : 'CREATE USER', username, `${role}${department ? ` | ${department}` : ''}`);
+  await audit(env, actor, existing ? 'UPDATE USER' : 'CREATE USER', username, `${role}${department ? ` | ${department}` : ''}`, branchId);
   return { ok: true, message: existing ? 'Staff account updated.' : 'Staff account created.', user: publicUser(payload, edition, actor.featureFlags) };
 }
 
@@ -210,6 +223,7 @@ async function importUsers(env, actor, body) {
       if (seen.has(lower(username))) throw new Error('Duplicate username in this CSV.');
       seen.add(lower(username));
       const existing = existingByName.get(lower(username));
+      if (existing && !branchRecordVisible(existing, actor)) throw new Error('This staff account belongs to another branch.');
       const password = String(row.Password || row.password || '');
       if (!existing && !password) throw new Error('Password is required for a new staff account.');
       const role = clean(row.Role || row.role) || 'Front Desk';
@@ -221,6 +235,12 @@ async function importUsers(env, actor, body) {
         throw new Error(`Subscription user limit (${userLimit}) reached.`);
       }
       if (!existing && requestedActive) plannedActive += 1;
+      const branchId = enforceActorBranch(
+        actor,
+        row.BranchId || row.branchId,
+        existing?.BranchId || existing?.branchId,
+        'main'
+      );
       const payload = {
         ...(existing || {}), Username: username,
         UsernameKey: lower(username),
@@ -229,7 +249,7 @@ async function importUsers(env, actor, body) {
         DisplayName: clean(row.DisplayName || row.displayName) || username,
         Role: role, Department: department,
         OrganisationEdition: clean(actor.edition) || 'school',
-        BranchId: clean(row.BranchId || row.branchId),
+        BranchId: branchId,
         SchoolSectionAccess: edition === 'school'
           ? (clean(row.SchoolSectionAccess || row.schoolSectionAccess) || 'All')
           : 'All',
@@ -252,7 +272,7 @@ async function importUsers(env, actor, body) {
   }
   if (writes.length) await batchUpsertDocuments(env, writes);
   const imported = writes.length;
-  await audit(env, actor, 'BULK IMPORT', `${imported} staff`, `${failures.length} failed`);
+  await audit(env, actor, 'BULK IMPORT', `${imported} staff`, `${failures.length} failed`, actorBranchScope(actor) || 'main');
   return { ok: true, message: `${imported} staff account(s) uploaded${failures.length ? `; ${failures.length} failed.` : '.'}`, imported, failures };
 }
 
@@ -261,12 +281,13 @@ async function deleteUser(env, actor, body) {
   const rows = await listCollection(env, 'staffUsers');
   const existing = rows.find((row) => lower(row.Username || row.__id) === lower(username));
   if (!existing) { const err = new Error('Staff account was not found.'); err.status = 404; throw err; }
+  if (!branchRecordVisible(existing, actor)) { const err = new Error('This staff account belongs to another branch.'); err.status = 403; throw err; }
   if (lower(username) === lower(actor.username)) { const err = new Error('You cannot delete the account currently signed in.'); err.status = 409; throw err; }
   if (clean(existing.Role) === 'Super Admin' && activeValue(existing.Active === undefined ? true : existing.Active) && activeSuperAdmins(rows, username).length === 0) {
     const err = new Error('At least one active Super Admin must remain.'); err.status = 409; throw err;
   }
   await deleteDocument(env, 'staffUsers', existing.__id || safeId(username));
-  await audit(env, actor, 'DELETE USER', username, clean(existing.Role));
+  await audit(env, actor, 'DELETE USER', username, clean(existing.Role), clean(existing.BranchId || 'main'));
   return { ok: true, message: 'Staff account deleted.' };
 }
 
@@ -280,7 +301,7 @@ export async function onRequestPost(context) {
     const action = lower(body.action || 'list');
     let result;
     if (action === 'list') {
-      const [users, audit, accounts] = await Promise.all([listUsers(env, actor), listSecurityAudit(env), listCollection(env, 'chartOfAccounts')]);
+      const [users, audit, accounts] = await Promise.all([listUsers(env, actor), listSecurityAudit(env, actor), listCollection(env, 'chartOfAccounts')]);
       const scopedAccounts = accountingChartForEdition(accounts, actor.edition);
       result = { ok: true, users, audit, approvalAccounts: scopedAccounts.filter((row) => activeValue(row.Active === undefined ? true : row.Active)).map((row) => ({ Code: clean(row.Code || row.__id), Name: clean(row.Name) })).filter((row) => row.Code).sort((a, b) => a.Code.localeCompare(b.Code)) };
     }
