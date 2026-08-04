@@ -1,0 +1,71 @@
+name: Deploy Firestore indexes
+
+on:
+  workflow_call:
+    inputs:
+      firebase_project_id:
+        description: Firebase project that owns the target Firestore database
+        required: true
+        type: string
+      workload_identity_provider:
+        description: Google Workload Identity provider resource name
+        required: true
+        type: string
+      service_account:
+        description: Service account allowed to manage Firestore indexes
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy-indexes:
+    name: Apply required Firestore indexes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate index deployment configuration
+        shell: bash
+        env:
+          FIREBASE_PROJECT_ID: ${{ inputs.firebase_project_id }}
+          GCP_WIF_PROVIDER: ${{ inputs.workload_identity_provider }}
+          GCP_INDEX_SERVICE_ACCOUNT: ${{ inputs.service_account }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "${FIREBASE_PROJECT_ID}" ]] || missing+=("Firebase project ID")
+          [[ -n "${GCP_WIF_PROVIDER}" ]] || missing+=("Workload Identity provider")
+          [[ -n "${GCP_INDEX_SERVICE_ACCOUNT}" ]] || missing+=("index service account")
+          if (( ${#missing[@]} )); then
+            printf '::error::Missing required index deployment configuration: %s\n' "$(IFS=', '; echo "${missing[*]}")"
+            exit 1
+          fi
+          node -e "JSON.parse(require('node:fs').readFileSync('firebase.json', 'utf8')); JSON.parse(require('node:fs').readFileSync('firestore.indexes.json', 'utf8'));"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ inputs.firebase_project_id }}
+          workload_identity_provider: ${{ inputs.workload_identity_provider }}
+          service_account: ${{ inputs.service_account }}
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Deploy composite indexes
+        shell: bash
+        env:
+          FIREBASE_PROJECT_ID: ${{ inputs.firebase_project_id }}
+        run: >-
+          npx --yes firebase-tools@15.24.0 deploy
+          --only firestore:indexes
+          --project "${FIREBASE_PROJECT_ID}"
+          --non-interactive

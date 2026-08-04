@@ -13,10 +13,20 @@ concurrency:
 permissions:
   contents: read
   deployments: write
+  id-token: write
 
 jobs:
+  firestore-indexes:
+    name: Verify church Firestore indexes
+    uses: ./.github/workflows/deploy-firestore-indexes.yml
+    with:
+      firebase_project_id: ${{ vars.CHURCH_FIREBASE_PROJECT_ID }}
+      workload_identity_provider: ${{ vars.CHURCH_GCP_WIF_PROVIDER }}
+      service_account: ${{ vars.CHURCH_GCP_INDEX_SERVICE_ACCOUNT }}
+
   deploy:
     name: Deploy digc-suite to Cloudflare Pages
+    needs: firestore-indexes
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:

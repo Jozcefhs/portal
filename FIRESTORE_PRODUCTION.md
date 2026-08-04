@@ -3,8 +3,10 @@
 ## Billing and indexes
 
 1. Upgrade the Firebase project to the Blaze plan.
-2. Install and authenticate the Firebase CLI.
-3. From this portal directory, deploy the checked-in indexes:
+2. Configure the mandatory GitHub index-deployment gate described in
+   `docs/firestore-index-deployment.md`.
+3. For an exceptional manual deployment, install and authenticate the Firebase
+   CLI, then run from this portal directory:
 
    `firebase deploy --only firestore:indexes --project YOUR_PROJECT_ID`
 
