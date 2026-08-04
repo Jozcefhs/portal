@@ -174,8 +174,29 @@ img{max-width:100%}
   .parent-notification-heading h2{font-size:14px;line-height:1.15}
   .parent-notification-heading p{max-width:28ch;margin-top:3px;font-size:9px;line-height:1.3}
   .parent-notification-heading>button{width:auto;min-height:28px;margin:0;padding:5px 7px;font-size:8px;line-height:1.1;white-space:nowrap}
-  .child-list{grid-template-columns:1fr;gap:8px;margin:10px 0 14px}
-  .child-card{width:100%;min-height:86px}
+  .child-list{grid-template-columns:1fr;gap:5px;margin:7px 0 10px}
+  .child-list .child-card{width:100%;min-height:0;padding:7px 8px;border-radius:8px;font-size:9px;line-height:1.25}
+  .child-list .child-card.selected{box-shadow:0 0 0 2px rgba(67,209,158,.2)}
+  .child-list .child-card.selected::after{top:5px;right:5px;padding:2px 4px;font-size:7px}
+  .child-list .child-card.selected .child-card-layout{padding-right:48px}
+  .child-card-layout{grid-template-columns:44px minmax(0,1fr);gap:7px}
+  .child-card-copy strong{font-size:11px;line-height:1.2}
+  .child-list .child-card span{margin-top:1px;font-size:9px;line-height:1.25}
+  .child-passport{width:44px;height:50px;border-radius:6px}
+  .child-passport-initials{font-size:13px!important}
+  .dashboard-card .dashboard-view-panel{padding:9px}
+  .dashboard-card .dashboard-view-panel h2{margin:0 0 7px;font-size:13px;line-height:1.2}
+  .dashboard-card .dashboard-view-panel h3{margin:0 0 6px;font-size:11px;line-height:1.2}
+  .dashboard-card .dashboard-view-panel>.muted,
+  .dashboard-card .dashboard-view-panel .store-search-summary{font-size:9px;line-height:1.3}
+  .dashboard-card .dashboard-view-panel .activity-list{gap:5px}
+  .dashboard-card .dashboard-view-panel .activity-item{padding:7px 8px;border-radius:6px;font-size:9px;line-height:1.3}
+  .dashboard-card .dashboard-view-panel .activity-item strong{font-size:10px;line-height:1.25}
+  .dashboard-card .dashboard-view-panel .activity-item span,
+  .dashboard-card .dashboard-view-panel .activity-item small{margin-top:1px;font-size:9px;line-height:1.3}
+  .dashboard-card .dashboard-view-panel .collapsible-activity summary{margin-bottom:6px;font-size:9px;line-height:1.25}
+  .dashboard-card .dashboard-view-panel .collapsible-activity[open] summary{margin-bottom:7px}
+  .dashboard-card .dashboard-view-panel .result-scores{gap:5px;font-size:9px}
   .dashboard-grid{gap:10px}
   .panel{padding:12px}
   .panel h2{font-size:17px}
@@ -198,8 +219,8 @@ img{max-width:100%}
   .form-header .logo.small{width:44px;max-height:50px}
   .form-header h1{font-size:21px}
   .metric-row,.result-scores,.admin-tabs,.nav-actions{grid-template-columns:1fr}
-  .child-card-layout{grid-template-columns:54px minmax(0,1fr);gap:10px}
-  .child-passport{width:54px;height:64px}
+  .child-card-layout{grid-template-columns:44px minmax(0,1fr);gap:7px}
+  .child-passport{width:44px;height:50px}
   .breakdown-row{display:grid;gap:3px}
   .fee-option span{display:grid;gap:4px}
   .hero-copy h1{font-size:28px}

@@ -268,6 +268,24 @@ test('parent dashboard gives each student card a distinct colour', () => {
   assert.match(portalCss, /\.child-list \.child-card\{[^}]*background:hsl\(var\(--child-hue,207\) 72% 94%\)/);
 });
 
+test('parent student selector cards are compact on mobile', () => {
+  assert.match(portalCss, /@media \(max-width:680px\)\{[\s\S]*?\.child-list\{[^}]*gap:5px;[^}]*margin:7px 0 10px/);
+  assert.match(portalCss, /\.child-list \.child-card\{[^}]*min-height:0;[^}]*padding:7px 8px;[^}]*font-size:9px/);
+  assert.match(portalCss, /\.child-list \.child-card\.selected::after\{[^}]*padding:2px 4px;[^}]*font-size:7px/);
+  assert.match(portalCss, /\.child-card-layout\{grid-template-columns:44px minmax\(0,1fr\);gap:7px\}/);
+  assert.match(portalCss, /\.child-card-copy strong\{font-size:11px;line-height:1\.2\}/);
+  assert.match(portalCss, /\.child-passport\{width:44px;height:50px;border-radius:6px\}/);
+});
+
+test('parent dashboard history sections use compact mobile typography', () => {
+  assert.match(portalCss, /@media \(max-width:680px\)\{[\s\S]*?\.dashboard-card \.dashboard-view-panel\{padding:9px\}/);
+  assert.match(portalCss, /\.dashboard-card \.dashboard-view-panel h2\{[^}]*font-size:13px/);
+  assert.match(portalCss, /\.dashboard-card \.dashboard-view-panel \.activity-item\{[^}]*padding:7px 8px;[^}]*font-size:9px/);
+  assert.match(portalCss, /\.dashboard-card \.dashboard-view-panel \.activity-item strong\{font-size:10px/);
+  assert.match(portalCss, /\.dashboard-card \.dashboard-view-panel \.activity-item span,[\s\S]*?font-size:9px/);
+  assert.match(portalCss, /\.dashboard-card \.dashboard-view-panel \.collapsible-activity summary\{[^}]*font-size:9px/);
+});
+
 test('student profile action uses a compact accessible pencil icon', () => {
   assert.match(adminJs, /class="student-edit-icon compact-icon-action compact-edit-action"/);
   assert.match(adminJs, /aria-label="Edit profile for \$\{studentName\}"/);
