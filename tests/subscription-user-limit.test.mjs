@@ -52,3 +52,14 @@ test('all staff write endpoints use the authoritative subscription guard', async
   assert.match(webSource, /const seatDelta = activeSeatDelta\(existing, requestedActive\)/);
   assert.match(desktopSource, /await enforceSubscriptionUserLimit\(env, users, existing, active\)/);
 });
+
+test('the staff account limit links administrators to the Dynamax plans', async () => {
+  const [adminSource, registrationPage] = await Promise.all([
+    readFile(new URL('../js/admin.js', import.meta.url), 'utf8'),
+    readFile(new URL('../register-organization.html', import.meta.url), 'utf8')
+  ]);
+  assert.match(adminSource, /data-subscription-plans-link/);
+  assert.match(adminSource, /href="register-organization\.html#plans"/);
+  assert.match(adminSource, /subscription allows\|upgrade the plan/);
+  assert.match(registrationPage, /id="plans"/);
+});

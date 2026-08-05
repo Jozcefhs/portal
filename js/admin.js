@@ -8697,7 +8697,7 @@ function renderStaffUsers() {
           <label>New or reset password<input name="Password" type="password" minlength="6" autocomplete="new-password"><small>Required for a new account. Leave blank when editing unless resetting it.</small></label>
           <div class="config-toggle-stack"><label class="check-row"><input name="Active" type="checkbox" checked> Account active</label><label class="check-row"><input name="MustChangePassword" type="checkbox" checked> Require password change at next sign-in</label>${schoolEdition ? '<label class="check-row sensitive-access-toggle"><input name="BiometricLookupEnabled" type="checkbox"> Allow student face lookup</label>' : ''}</div>
         </div></section>
-        <div class="config-dialog-actions"><p class="status" data-user-form-status></p><button type="submit">Save staff account</button></div>
+        <div class="config-dialog-actions"><p class="status" data-user-form-status></p><div class="config-dialog-action-buttons"><a class="subscription-plans-link" data-subscription-plans-link href="register-organization.html#plans" target="_blank" rel="noopener" hidden>View Dynamax plans</a><button type="submit">Save staff account</button></div></div>
       </form>
     </dialog>
   `;
@@ -8736,6 +8736,9 @@ function openStaffUserDialog(username = '') {
   const form = document.getElementById('staffUserForm');
   const user = staffUsersData.find((row) => row.Username.toLowerCase() === username.toLowerCase());
   form.reset();
+  setStatus(form.querySelector('[data-user-form-status]'), '');
+  const plansLink = form.querySelector('[data-subscription-plans-link]');
+  if (plansLink) plansLink.hidden = true;
   form.elements.Username.readOnly = Boolean(user);
   document.getElementById('staffUserDialogTitle').textContent = user ? 'Manage Staff Account' : 'New Staff Account';
   if (user) {
@@ -8832,6 +8835,7 @@ function bindStaffUserEvents() {
     const form = event.currentTarget;
     const button = form.querySelector('button[type="submit"]');
     const status = form.querySelector('[data-user-form-status]');
+    const plansLink = form.querySelector('[data-subscription-plans-link]');
     const payload = Object.fromEntries(new FormData(form).entries());
     payload.Active = form.elements.Active.checked;
     payload.MustChangePassword = form.elements.MustChangePassword.checked;
@@ -8841,6 +8845,7 @@ function bindStaffUserEvents() {
     }
     payload.ApprovalAccounts = Array.from(form.querySelectorAll('[name="ApprovalAccountOption"]:checked')).map((input) => input.value);
     payload.TabAccess = Array.from(form.querySelectorAll('[name="TabAccessOption"]:checked')).map((input) => input.value);
+    if (plansLink) plansLink.hidden = true;
     setButtonLoading(button, true, 'Saving...', 'Save Staff Account');
     try {
       const data = await staffUserRequest('save', payload);
@@ -8848,7 +8853,9 @@ function bindStaffUserEvents() {
       await loadStaffUsers();
       setStatus(document.getElementById('staffUsersStatus'), data.message, 'ok');
     } catch (error) {
-      setStatus(status, error.message || String(error), 'bad');
+      const message = error.message || String(error);
+      setStatus(status, message, 'bad');
+      if (plansLink) plansLink.hidden = !/subscription allows|upgrade the plan/i.test(message);
       setButtonLoading(button, false, 'Saving...', 'Save Staff Account');
     }
   });
