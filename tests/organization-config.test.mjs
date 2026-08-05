@@ -227,11 +227,11 @@ test('public organisation registration stays aligned and legible in both themes'
     readFile(new URL('../css/style.css', import.meta.url), 'utf8')
   ]);
   assert.match(html, /name="theme-color"/);
-  assert.match(html, /20260805-subscription-commerce/);
+  assert.match(html, /20260805-plan-comparison/);
   assert.match(css, /\.auth-page\s*\{[^}]*overflow-x:\s*hidden/s);
   assert.match(css, /\.organisation-registration-card\s+\.inline-check\s*\{[^}]*white-space:\s*normal/s);
   assert.match(css, /html\[data-theme="dark"\]\s+\.organisation-registration-card\s*\{[^}]*background:\s*#111e2e/s);
   assert.match(css, /html\[data-theme="dark"\]\s+\.organisation-registration-card\s+\.settings-field label/);
   assert.match(css, /html\[data-theme="dark"\]\s+\.plan-choice-card/);
-  assert.match(css, /@media \(max-width:\s*430px\)[\s\S]*?\.plan-choice-grid\s*\{\s*grid-template-columns:\s*1fr/);
+  assert.match(css, /@media \(max-width:\s*700px\)[\s\S]*?\.plan-choice-grid\s*\{[^}]*grid-auto-flow:\s*column[^}]*overflow-x:\s*auto/);
 });

@@ -91,7 +91,9 @@ test('registration and pricing interfaces expose feature details and recurring c
   ]);
   assert.match(registrationHtml, /name="BillingCycle" value="monthly"/);
   assert.match(registrationHtml, /name="BillingCycle" value="yearly"/);
-  assert.match(registrationJs, /<summary>View features<\/summary>/);
+  assert.match(registrationHtml, /<summary>Compare all plan features<\/summary>/);
+  assert.match(registrationJs, /planComparisonGrid\.innerHTML = plans\.map/);
+  assert.doesNotMatch(registrationJs, /<summary>View features<\/summary>/);
   assert.match(registrationJs, /window\.location\.assign\(data\.authorizationUrl\)/);
   assert.match(pricingHtml, /Monthly and yearly pricing/);
   assert.match(pricingHtml, /Apply changed prices to existing Paystack subscribers/);

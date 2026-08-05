@@ -1,6 +1,7 @@
 const form = document.getElementById('organisationRegistrationForm');
 const statusNode = document.getElementById('organisationRegistrationStatus');
 const planGrid = document.getElementById('planChoiceGrid');
+const planComparisonGrid = document.getElementById('planComparisonGrid');
 let registrationIdempotencyKey = '';
 let planCatalog = null;
 
@@ -45,22 +46,34 @@ function renderPlans() {
   const cycle = billingCycle();
   const currentEdition = edition();
   const available = plans.filter((plan) => plan.Active !== false);
-  planGrid.innerHTML = available.map((plan, index) => {
+  const selectedName = available.some((plan) => plan.Name === current) ? current : available[0]?.Name;
+  planGrid.innerHTML = plans.map((plan) => {
     const amount = cycle === 'yearly' ? plan.YearlyAmount : plan.MonthlyAmount;
-    const features = plan.FeaturesByEdition?.[currentEdition] || [];
-    const selected = plan.Name === current || (!available.some((item) => item.Name === current) && index === 0);
+    const selected = plan.Name === selectedName;
+    const active = plan.Active !== false;
     const userText = plan.Name === 'Enterprise'
       ? `Up to ${Number(plan.UserLimit || 0).toLocaleString('en-NG')} users or custom`
       : `${Number(plan.UserLimit || 0).toLocaleString('en-NG')} users`;
     const period = Number(amount) > 0 ? `<em> / ${cycle === 'yearly' ? 'year' : 'month'}</em>` : '';
-    return `<article class="plan-choice-card${selected ? ' selected' : ''}">
+    return `<article class="plan-choice-card${selected ? ' selected' : ''}${active ? '' : ' unavailable'}">
       <label class="plan-choice-select">
-        <input type="radio" name="Plan" value="${escapeHtml(plan.Name)}" ${selected ? 'checked' : ''}>
-        <span class="plan-choice-main"><strong>${escapeHtml(plan.Name)}</strong><small>${escapeHtml(userText)} · ${escapeHtml(plan.Summary)}</small><b>${escapeHtml(formattedPrice(amount, planCatalog?.Currency || 'NGN'))}${period}</b></span>
+        <input type="radio" name="Plan" value="${escapeHtml(plan.Name)}" ${selected ? 'checked' : ''} ${active ? '' : 'disabled'}>
+        <span class="plan-choice-main"><strong>${escapeHtml(plan.Name)}</strong><small>${escapeHtml(userText)} · ${escapeHtml(plan.Summary)}</small><b>${active ? `${escapeHtml(formattedPrice(amount, planCatalog?.Currency || 'NGN'))}${period}` : 'Currently unavailable'}</b></span>
       </label>
-      <details><summary>View features</summary><ul>${features.map((feature) => `<li>${escapeHtml(feature)}</li>`).join('')}</ul></details>
     </article>`;
-  }).join('') || '<p class="status bad">No subscription plan is currently available.</p>';
+  }).join('') || '<p class="status bad">No subscription plan is currently configured.</p>';
+  planComparisonGrid.innerHTML = plans.map((plan) => {
+    const amount = cycle === 'yearly' ? plan.YearlyAmount : plan.MonthlyAmount;
+    const features = plan.FeaturesByEdition?.[currentEdition] || [];
+    const userText = plan.Name === 'Enterprise'
+      ? `Up to ${Number(plan.UserLimit || 0).toLocaleString('en-NG')} users or custom`
+      : `${Number(plan.UserLimit || 0).toLocaleString('en-NG')} active users`;
+    const period = Number(amount) > 0 ? ` per ${cycle === 'yearly' ? 'year' : 'month'}` : '';
+    return `<article class="plan-comparison-column${plan.Active === false ? ' unavailable' : ''}">
+      <header><h3>${escapeHtml(plan.Name)}</h3><strong>${escapeHtml(formattedPrice(amount, planCatalog?.Currency || 'NGN'))}${escapeHtml(period)}</strong><small>${escapeHtml(userText)}</small></header>
+      <ul>${features.map((feature) => `<li>${escapeHtml(feature)}</li>`).join('')}</ul>
+    </article>`;
+  }).join('');
   const submit = form.querySelector('button[type="submit"]');
   const selected = available.find((plan) => plan.Name === selectedPlanName());
   const amount = cycle === 'yearly' ? selected?.YearlyAmount : selected?.MonthlyAmount;

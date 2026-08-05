@@ -2027,7 +2027,7 @@ html[data-theme="dark"] .department-member-onboarding strong { color: #75dfbf; }
 
 .auth-page { min-height: 100vh; min-height: 100dvh; overflow-x: hidden; }
 .auth-page .auth-shell { width: 100%; min-width: 0; min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 1rem; box-sizing: border-box; }
-.organisation-registration-card { max-width: 920px; min-width: 0; width: min(920px, calc(100vw - 2rem)); padding: 1.25rem; box-sizing: border-box; overflow: hidden; background: #fff; color: #172033; border: 1px solid #d8e1ec; border-radius: 18px; box-shadow: 0 16px 42px rgba(17,46,82,.12); }
+.organisation-registration-card { max-width: 1180px; min-width: 0; width: min(1180px, calc(100vw - 2rem)); padding: 1.25rem; box-sizing: border-box; overflow: hidden; background: #fff; color: #172033; border: 1px solid #d8e1ec; border-radius: 18px; box-shadow: 0 16px 42px rgba(17,46,82,.12); }
 .registration-brand { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.2rem; }
 .registration-brand img { width: 64px; height: 64px; object-fit: contain; }
 .registration-brand > div { min-width: 0; }
@@ -2041,19 +2041,31 @@ html[data-theme="dark"] .department-member-onboarding strong { color: #75dfbf; }
 .billing-cycle-toggle input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .billing-cycle-toggle span { display: block; padding: .45rem .8rem; border-radius: 999px; color: #53677e; font-size: 12px; font-weight: 800; }
 .billing-cycle-toggle input:checked + span { background: #1769e0; color: #fff; box-shadow: 0 2px 7px rgba(23,105,224,.24); }
-.plan-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
+.plan-choice-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .65rem; }
 .plan-choice-card { min-width: 0; overflow: hidden; border: 1px solid #d8e1ec; border-radius: 13px; background: #f8fafc; color: #172033; transition: border-color .18s ease, box-shadow .18s ease; }
 .plan-choice-card.selected { border-color: #1769e0; box-shadow: 0 0 0 2px rgba(23,105,224,.18); }
+.plan-choice-card.unavailable { opacity: .68; }
 .plan-choice-select { display: block; min-width: 0; margin: 0; cursor: pointer; }
 .plan-choice-select > input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-.plan-choice-main { display: flex; min-width: 0; min-height: 104px; padding: .85rem; flex-direction: column; gap: .3rem; color: #172033; }
+.plan-choice-main { display: flex; min-width: 0; min-height: 128px; padding: .8rem; flex-direction: column; gap: .3rem; color: #172033; }
 .plan-choice-main strong { font-size: 16px; }
 .plan-choice-main small { min-height: 34px; color: #56657a; line-height: 1.35; }
 .plan-choice-main b { margin-top: auto; color: #0c745e; font-size: 15px; }
 .plan-choice-main b em { color: #66788d; font-size: 11px; font-style: normal; font-weight: 600; }
-.plan-choice-card details { border-top: 1px solid #d8e1ec; }
-.plan-choice-card summary { width: fit-content; padding: .62rem .85rem; color: #0b57d0; cursor: pointer; font-size: 12px; font-weight: 800; }
-.plan-choice-card ul { margin: 0; padding: 0 .9rem .85rem 1.9rem; color: #44566c; font-size: 12px; line-height: 1.55; }
+.plan-comparison-details { margin-top: .75rem; border: 1px solid #d8e1ec; border-radius: 13px; overflow: hidden; background: #fff; }
+.plan-comparison-details > summary { width: fit-content; margin: .7rem .8rem; color: #0b57d0; cursor: pointer; font-size: 13px; font-weight: 800; }
+.plan-comparison-scroll { overflow-x: auto; border-top: 1px solid #d8e1ec; scrollbar-gutter: stable; }
+.plan-comparison-scroll:focus-visible { outline: 3px solid rgba(23,105,224,.28); outline-offset: -3px; }
+.plan-comparison-grid { display: grid; grid-template-columns: repeat(4, minmax(210px,1fr)); min-width: 840px; }
+.plan-comparison-column { min-width: 0; padding: .9rem; border-right: 1px solid #d8e1ec; background: #f8fafc; }
+.plan-comparison-column:last-child { border-right: 0; }
+.plan-comparison-column.unavailable { opacity: .68; }
+.plan-comparison-column header { display: grid; gap: .25rem; min-height: 82px; padding-bottom: .65rem; border-bottom: 1px solid #d8e1ec; }
+.plan-comparison-column h3 { margin: 0; color: #174a7c; font-size: 15px; }
+.plan-comparison-column header strong { color: #0c745e; font-size: 13px; }
+.plan-comparison-column header small { color: #65778b; }
+.plan-comparison-column ul { margin: .7rem 0 0; padding-left: 1.1rem; color: #44566c; font-size: 12px; line-height: 1.5; }
+.plan-comparison-column li + li { margin-top: .32rem; }
 .organisation-registration-card .inline-check { justify-self: start; color: #26354a; white-space: normal; line-height: 1.4; }
 .organisation-registration-card .inline-check input { width: auto; min-height: 0; }
 .organisation-registration-card button[type="submit"],
@@ -2071,10 +2083,17 @@ html[data-theme="dark"] .billing-cycle-toggle input:checked + span { color: #fff
 html[data-theme="dark"] .plan-choice-card { border-color: #3b5068; background: #0d1a29; color: #edf4ff; }
 html[data-theme="dark"] .plan-choice-card.selected { border-color: #69a5ff; box-shadow: 0 0 0 2px rgba(105,165,255,.22); }
 html[data-theme="dark"] .plan-choice-main { color: #edf4ff; }
-html[data-theme="dark"] .plan-choice-main small,
-html[data-theme="dark"] .plan-choice-card ul { color: #a8b8cb; }
-html[data-theme="dark"] .plan-choice-card details { border-color: #3b5068; }
-html[data-theme="dark"] .plan-choice-card summary { color: #83b5ff; }
+html[data-theme="dark"] .plan-choice-main small { color: #a8b8cb; }
+html[data-theme="dark"] .plan-comparison-details,
+html[data-theme="dark"] .plan-comparison-scroll,
+html[data-theme="dark"] .plan-comparison-column,
+html[data-theme="dark"] .plan-comparison-column header { border-color: #3b5068; }
+html[data-theme="dark"] .plan-comparison-details { background: #111e2e; }
+html[data-theme="dark"] .plan-comparison-details > summary { color: #83b5ff; }
+html[data-theme="dark"] .plan-comparison-column { background: #0d1a29; }
+html[data-theme="dark"] .plan-comparison-column h3 { color: #edf4ff; }
+html[data-theme="dark"] .plan-comparison-column header small,
+html[data-theme="dark"] .plan-comparison-column ul { color: #a8b8cb; }
 @media (max-width: 700px) {
   .auth-page { padding-bottom: 0; }
   .auth-page .auth-shell { place-items: start center; padding: .75rem; }
@@ -2083,14 +2102,14 @@ html[data-theme="dark"] .plan-choice-card summary { color: #83b5ff; }
   .registration-brand img { width: 52px; height: 52px; }
   .registration-brand h1 { font-size: 24px; }
   .registration-brand > div > p:last-child { font-size: 13px; line-height: 1.4; }
-  .plan-choice-grid { grid-template-columns: 1fr; }
+  .plan-choice-grid { grid-auto-flow: column; grid-auto-columns: minmax(190px,78vw); grid-template-columns: none; overflow-x: auto; padding: 2px 2px .55rem; scroll-snap-type: x proximity; }
+  .plan-choice-card { scroll-snap-align: start; }
 }
 @media (max-width: 430px) {
   .registration-brand { grid-template-columns: 44px minmax(0,1fr); gap: .65rem; }
   .registration-brand img { width: 44px; height: 44px; }
   .registration-brand h1 { font-size: 22px; }
   .plan-selection-heading { align-items: flex-start; flex-direction: column; gap: .5rem; }
-  .plan-choice-grid { grid-template-columns: 1fr; }
   .plan-choice-main { min-height: 0; }
 }
 
