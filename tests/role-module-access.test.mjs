@@ -6,7 +6,9 @@ import { featureFlagsForEdition } from '../functions/lib/organization-config.js'
 import {
   configuredModulesForUser,
   defaultModulesForRole,
+  modulesForEdition,
   roleAccessView,
+  rolesForEdition,
   withRoleModules,
   withoutRoleModules
 } from '../functions/lib/role-module-access.js';
@@ -94,4 +96,22 @@ test('staff settings API and interface expose persisted role module controls', (
   assert.match(adminJs, /name="RoleModuleOption"/);
   assert.match(adminJs, /staffUserRequest\('save-role-access'/);
   assert.match(adminJs, /label: 'Role access'/);
+});
+
+test('role access settings expose only edition-appropriate roles and modules', () => {
+  const schoolRoles = rolesForEdition('school');
+  assert.equal(schoolRoles.includes('Principal'), true);
+  assert.equal(schoolRoles.includes('Senior Pastor'), false);
+  assert.equal(schoolRoles.includes('Church Administrator'), false);
+  const schoolModules = modulesForEdition('school', featureFlagsForEdition('school')).map(({ key }) => key);
+  assert.equal(schoolModules.includes('students'), true);
+  assert.equal(schoolModules.includes('offerings'), false);
+
+  const churchRoles = rolesForEdition('faith');
+  assert.equal(churchRoles.includes('Senior Pastor'), true);
+  assert.equal(churchRoles.includes('Principal'), false);
+  assert.equal(churchRoles.includes('Admissions Officer'), false);
+  const churchModules = modulesForEdition('faith', featureFlagsForEdition('faith')).map(({ key }) => key);
+  assert.equal(churchModules.includes('offerings'), true);
+  assert.equal(churchModules.includes('students'), false);
 });

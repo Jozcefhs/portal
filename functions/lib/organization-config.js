@@ -12,7 +12,29 @@ export const SCHOOL_ONLY_STAFF_ROLES = Object.freeze([
   'Tuck Shop User', 'Clinic User', 'Kitchen User'
 ]);
 
-const SCHOOL_ONLY_ROLE_SET = new Set(SCHOOL_ONLY_STAFF_ROLES);
+export const FAITH_ONLY_STAFF_ROLES = Object.freeze([
+  'Senior Pastor', 'Head Minister', 'Pastor', 'Church Administrator',
+  'Membership Officer'
+]);
+
+export const SHARED_STAFF_ROLES = Object.freeze([
+  'Super Admin', 'Accounts Officer', 'Management', 'Department User',
+  'Front Desk', 'HR Director', 'HR Manager', 'HR Business Partner',
+  'HR Officer', 'HR Assistant', 'Recruitment Officer',
+  'Learning & Development Officer', 'Employee Relations Officer',
+  'Performance Management Officer', 'Compensation & Benefits Officer',
+  'Payroll Officer', 'Health & Safety Officer', 'Line Manager'
+]);
+
+export const NON_SCHOOL_OPERATION_ROLES = Object.freeze([
+  'Store User', 'Restaurant User', 'Treasurer', 'Auditor'
+]);
+
+const EDITION_STAFF_ROLE_SETS = Object.freeze({
+  school: new Set([...SHARED_STAFF_ROLES, ...SCHOOL_ONLY_STAFF_ROLES]),
+  faith: new Set([...SHARED_STAFF_ROLES, ...FAITH_ONLY_STAFF_ROLES, ...NON_SCHOOL_OPERATION_ROLES]),
+  organization: new Set([...SHARED_STAFF_ROLES, ...NON_SCHOOL_OPERATION_ROLES])
+});
 
 const NON_SCHOOL_DISABLED_FEATURES = new Set([
   'admissions', 'students', 'studentConduct', 'parentPortal',
@@ -106,8 +128,7 @@ export function normalizeOrganizationEdition(value) {
 }
 
 export function staffRoleAllowedForEdition(role, edition) {
-  return normalizeOrganizationEdition(edition) === 'school'
-    || !SCHOOL_ONLY_ROLE_SET.has(clean(role));
+  return EDITION_STAFF_ROLE_SETS[normalizeOrganizationEdition(edition)].has(clean(role));
 }
 
 function explicitOrganizationEdition(value) {

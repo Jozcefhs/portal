@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import {
+  FAITH_ONLY_STAFF_ROLES,
+  NON_SCHOOL_OPERATION_ROLES,
   SCHOOL_ONLY_SECTION_KEYS,
   SCHOOL_ONLY_STAFF_ROLES,
   featureFlagsForEdition,
@@ -132,6 +134,20 @@ test('church staff configuration rejects school-only roles and section permissio
   assert.deepEqual(scoped.approvalAccounts, ['4140']);
   assert.equal(scoped.biometricLookupEnabled, false);
   assert.deepEqual(scoped.tabAccess, ['offerings']);
+});
+
+test('school and church role catalogues reject each others terminology', () => {
+  for (const role of FAITH_ONLY_STAFF_ROLES) {
+    assert.equal(staffRoleAllowedForEdition(role, 'school'), false);
+    assert.equal(staffRoleAllowedForEdition(role, 'faith'), true);
+  }
+  for (const role of NON_SCHOOL_OPERATION_ROLES) {
+    assert.equal(staffRoleAllowedForEdition(role, 'school'), false);
+    assert.equal(staffRoleAllowedForEdition(role, 'faith'), true);
+  }
+  assert.equal(staffRoleAllowedForEdition('Principal', 'faith'), false);
+  assert.equal(staffRoleAllowedForEdition('Senior Pastor', 'school'), false);
+  assert.equal(staffRoleAllowedForEdition('Church Administrator', 'school'), false);
 });
 
 test('organisation document stores canonical edition identity and flags', () => {
