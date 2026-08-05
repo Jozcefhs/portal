@@ -2,6 +2,7 @@ import { findOneByField, getDocument, listCollection, patchDocumentFields, upser
 import { accountingCodeAllowedForEdition } from './accounting-edition-scope.js';
 import { filterSectionsForFeatures, resolveOrganizationConfig } from './organization-config.js';
 import { deploymentIdentityDetails, requiredDeploymentIdentity } from './deployment-identity.js';
+import { configuredModulesForUser, defaultModulesForRole } from './role-module-access.js';
 
 const encoder = new TextEncoder();
 const SESSION_COOKIE = '__Host-digc_staff_session';
@@ -249,7 +250,7 @@ function publicUser(user) {
   };
 }
 
-export function allowedSectionsFor(user = {}, featureFlags = null) {
+export function allowedSectionsFor(user = {}, featureFlags = null, options = {}) {
   const role = clean(user.role || user.Role);
   const department = lower(user.department || user.Department);
   const custom = Array.isArray(user.tabAccess || user.TabAccess) ? (user.tabAccess || user.TabAccess).map(clean).filter(Boolean) : [];
@@ -264,61 +265,35 @@ export function allowedSectionsFor(user = {}, featureFlags = null) {
     if (inherited.some((section) => recordsDeskSources.has(section))) inherited.push('recordsDesk');
     return filterSectionsForFeatures([...new Set(inherited)], featureFlags);
   }
-  const roleSections = {
-    'Super Admin': ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'studentConduct', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'staffUsers'],
-    Principal: ['recordsDesk', 'executiveOffice', 'studentConduct'],
-    'Admissions Officer': ['recordsDesk', 'admissions', 'formPurchases', 'students', 'studentConduct', 'financeRequests', 'payroll'],
-    'Accounts Officer': ['recordsDesk', 'students', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
-    Management: ['recordsDesk', 'admissions', 'formPurchases', 'students', 'studentConduct', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
-    'Student Welfare Officer': ['recordsDesk', 'students', 'studentConduct'],
-    'Tuck Shop User': ['recordsDesk', 'tuckShop', 'financeRequests', 'payroll'],
-    'Clinic User': ['recordsDesk', 'clinic', 'financeRequests', 'payroll'],
-    'Kitchen User': ['kitchen', 'financeRequests', 'payroll'],
-    'Store User': ['organizationStore', 'financeRequests', 'payroll'],
-    'Restaurant User': ['restaurant', 'financeRequests', 'payroll'],
-    'Front Desk': ['recordsDesk', 'admissions', 'formPurchases', 'students', 'financeRequests', 'payroll'],
-    Pastor: ['recordsDesk', 'members', 'services', 'funds', 'offerings', 'donations'],
-    'Senior Pastor': ['recordsDesk', 'executiveOffice'],
-    'Head Minister': ['recordsDesk', 'executiveOffice'],
-    'Church Administrator': ['recordsDesk', 'members', 'services', 'funds', 'offerings', 'donations', 'organizationStore', 'restaurant', 'financeRequests', 'payroll'],
-    'Membership Officer': ['recordsDesk', 'members', 'services'],
-    Treasurer: ['recordsDesk', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests', 'payroll'],
-    Auditor: ['recordsDesk', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests'],
-    'HR Director': ['recordsDesk', 'humanResources', 'payroll'],
-    'HR Manager': ['recordsDesk', 'humanResources', 'payroll'],
-    'HR Business Partner': ['recordsDesk', 'humanResources', 'payroll'],
-    'HR Officer': ['recordsDesk', 'humanResources', 'payroll'],
-    'HR Assistant': ['recordsDesk', 'humanResources', 'payroll'],
-    'Recruitment Officer': ['humanResources', 'payroll'],
-    'Learning & Development Officer': ['humanResources', 'payroll'],
-    'Employee Relations Officer': ['humanResources', 'payroll'],
-    'Performance Management Officer': ['humanResources', 'payroll'],
-    'Compensation & Benefits Officer': ['recordsDesk', 'humanResources', 'payroll'],
-    'Payroll Officer': ['recordsDesk', 'humanResources', 'financeRequests', 'payroll'],
-    'Health & Safety Officer': ['humanResources', 'payroll'],
-    'Line Manager': ['humanResources', 'payroll']
-  };
-  if (role === 'Department User') {
-    if (department.includes('clinic')) return filterSectionsForFeatures(['recordsDesk', 'clinic', 'humanResources', 'financeRequests', 'payroll'], featureFlags);
-    if (department.includes('kitchen')) return filterSectionsForFeatures(['kitchen', 'humanResources', 'financeRequests', 'payroll'], featureFlags);
-    if (department.includes('restaurant') || department.includes('catering')) return filterSectionsForFeatures(['restaurant', 'humanResources', 'financeRequests', 'payroll'], featureFlags);
-    if (department.includes('store') || department.includes('retail') || department.includes('bookshop')) return filterSectionsForFeatures(['organizationStore', 'humanResources', 'financeRequests', 'payroll'], featureFlags);
-    if (department.includes('tuck')) return filterSectionsForFeatures(['recordsDesk', 'tuckShop', 'humanResources', 'financeRequests', 'payroll'], featureFlags);
-    if (department.includes('account') || department.includes('finance')) return filterSectionsForFeatures(['recordsDesk', 'accounts', 'incomeAnalytics', 'humanResources', 'financeRequests', 'payroll'], featureFlags);
-    return filterSectionsForFeatures(['humanResources', 'financeRequests', 'payroll'], featureFlags);
+  if (Array.isArray(options.roleModules)) {
+    const configured = [...options.roleModules];
+    if (role === 'Super Admin' && !configured.includes('staffUsers')) configured.push('staffUsers');
+    return filterSectionsForFeatures([...new Set(configured)], featureFlags);
   }
-  const defaults = roleSections[role] || [];
-  return filterSectionsForFeatures(role ? [...defaults, 'humanResources'] : defaults, featureFlags);
+  return defaultModulesForRole(role, {
+    edition: options.edition || 'school',
+    featureFlags,
+    department
+  });
+}
+
+export function invalidateStaffAccessCache() {
+  accessConfigCache = null;
 }
 
 export async function staffAccessFor(env, user = {}) {
   const environmentKey = `${clean(env.FIREBASE_PROJECT_ID)}|${clean(env.ORGANISATION_EDITION || env.ORGANIZATION_EDITION)}`;
   const now = Date.now();
   let organization;
+  let roleAccess;
   if (accessConfigCache && accessConfigCache.environmentKey === environmentKey && accessConfigCache.expiresAt > now) {
     organization = accessConfigCache.organization;
+    roleAccess = accessConfigCache.roleAccess;
   } else {
-    const organizationProfile = await getDocument(env, 'settings', 'organisationProfile').catch(() => null);
+    const [organizationProfile, storedRoleAccess] = await Promise.all([
+      getDocument(env, 'settings', 'organisationProfile').catch(() => null),
+      getDocument(env, 'settings', 'roleModuleAccess').catch(() => null)
+    ]);
     const legacyProfile = organizationProfile
       ? null
       : await getDocument(env, 'settings', 'schoolProfile').catch(() => null);
@@ -330,14 +305,29 @@ export async function staffAccessFor(env, user = {}) {
       });
     }
     organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile });
+    roleAccess = storedRoleAccess;
     accessConfigCache = {
       environmentKey,
       organization,
+      roleAccess,
       expiresAt: Date.now() + ACCESS_CONFIG_CACHE_MS
     };
   }
-  const allowedSections = allowedSectionsFor(user, organization.FeatureFlags);
-  if (organization.Edition === 'faith' && !allowedSections.includes('staffAttendance')) {
+  const configuredRoleModules = configuredModulesForUser(
+    roleAccess,
+    user,
+    clean(user.role || user.Role),
+    organization.Edition,
+    organization.FeatureFlags
+  );
+  const allowedSections = allowedSectionsFor(user, organization.FeatureFlags, {
+    edition: organization.Edition,
+    roleModules: configuredRoleModules
+  });
+  const customUserModules = Array.isArray(user.tabAccess || user.TabAccess)
+    ? (user.tabAccess || user.TabAccess).map(clean).filter(Boolean)
+    : [];
+  if (organization.Edition === 'faith' && configuredRoleModules === null && !customUserModules.length && !allowedSections.includes('staffAttendance')) {
     allowedSections.push('staffAttendance');
   }
   return {

@@ -193,10 +193,10 @@ test('branch scoping treats legacy records as main and reads donation branch cos
 });
 
 test('staff portal exposes the responsive income analytics workspace', async () => {
-  const [adminJs, css, auth, config] = await Promise.all([
+  const [adminJs, css, roleAccess, config] = await Promise.all([
     readFile(new URL('../js/admin.js', import.meta.url), 'utf8'),
     readFile(new URL('../css/style.css', import.meta.url), 'utf8'),
-    readFile(new URL('../functions/lib/staff-auth.js', import.meta.url), 'utf8'),
+    readFile(new URL('../functions/lib/role-module-access.js', import.meta.url), 'utf8'),
     readFile(new URL('../functions/lib/organization-config.js', import.meta.url), 'utf8')
   ]);
   assert.match(adminJs, /\['incomeAnalytics', 'Income Analytics'\]/);
@@ -211,6 +211,6 @@ test('staff portal exposes the responsive income analytics workspace', async () 
   assert.match(css, /grid-template-columns:repeat\(var\(--income-buckets\),minmax\(0,1fr\)\)/);
   assert.match(css, /\.income-donut/);
   assert.match(css, /@media print/);
-  assert.match(auth, /'incomeAnalytics'/);
+  assert.match(roleAccess, /'incomeAnalytics'/);
   assert.match(config, /incomeAnalytics: 'accounting'/);
 });

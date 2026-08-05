@@ -63,6 +63,8 @@ let financeData = null;
 let staffUsersData = [];
 let staffAuditData = [];
 let staffApprovalAccounts = [];
+let staffRoleAccessData = null;
+let staffRoleAccessSelectedRole = '';
 let humanResourcesData = null;
 let staffAttendanceReportFilters = null;
 let activeTabs = [];
@@ -709,6 +711,8 @@ function clearStaffWorkspaceState() {
   staffUsersData = [];
   staffAuditData = [];
   staffApprovalAccounts = [];
+  staffRoleAccessData = null;
+  staffRoleAccessSelectedRole = '';
   humanResourcesData = null;
   approvalProfile = null;
   approvalAssetState = { signature: '', stamp: '' };
@@ -8494,8 +8498,16 @@ function renderStaffUsers() {
   const activeUsers = staffUsersData.filter((user) => yes(user.Active)).length;
   const admins = staffUsersData.filter((user) => user.Role === 'Super Admin' && yes(user.Active)).length;
   const schoolEdition = resolveDashboardEdition(currentUser || {}) === 'school';
-  const availableRoles = staffRolesForEdition();
+  const availableRoles = Object.keys(staffRoleAccessData?.roles || {}).length
+    ? Object.keys(staffRoleAccessData.roles)
+    : staffRolesForEdition();
   const permissionTabs = webTabsForEdition();
+  const policyRoles = staffRoleAccessData?.roles || {};
+  const policyModules = Array.isArray(staffRoleAccessData?.modules) && staffRoleAccessData.modules.length
+    ? staffRoleAccessData.modules
+    : permissionTabs.map(([key, label]) => ({ key, label }));
+  if (!availableRoles.includes(staffRoleAccessSelectedRole)) staffRoleAccessSelectedRole = availableRoles[0] || '';
+  const policyScope = clean(staffRoleAccessData?.scope || 'global');
   panelEl.innerHTML = `
     <div class="workflow-intro">
       <div><p class="eyebrow">Identity & access</p><h2>Staff & Permissions</h2><p class="muted">Shared database accounts for desktop and web access</p></div>
@@ -8518,6 +8530,17 @@ function renderStaffUsers() {
         </article>
       `).join('') : '<p class="muted">No database staff accounts found. Create the first shared staff account.</p>'}
     </div>
+    <section class="role-access-settings">
+      <div class="role-access-heading"><div><p class="eyebrow">Role access</p><h2>Role module access</h2><p class="muted">Choose the tabs each role receives by default. Individual staff overrides remain available in each staff account.</p></div><span class="role-access-scope">${policyScope === 'global' ? 'All branches' : `Branch: ${escapeHtml(policyScope)}`}</span></div>
+      <div class="role-access-editor">
+        <label class="role-access-role">Staff role<select id="roleAccessRole">${availableRoles.map((role) => `<option value="${escapeHtml(role)}"${role === staffRoleAccessSelectedRole ? ' selected' : ''}>${escapeHtml(role)}</option>`).join('')}</select></label>
+        <p class="role-access-source" id="roleAccessSource"></p>
+        <div class="config-option-list config-option-grid role-access-modules" id="roleAccessModules">
+          ${policyModules.map(({ key, label }) => `<label class="check-row"><input type="checkbox" name="RoleModuleOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}
+        </div>
+        <div class="role-access-actions"><p class="status" id="roleAccessStatus"></p><button type="button" class="secondary" id="resetRoleAccess">Use inherited default</button><button type="button" id="saveRoleAccess">Save role access</button></div>
+      </div>
+    </section>
     <section class="staff-security-activity">
       <h2>Recent Security Activity</h2>
       <div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Time</th><th>Action</th><th>Account</th><th>Actor</th><th>Platform</th></tr></thead><tbody>
@@ -8539,7 +8562,7 @@ function renderStaffUsers() {
           <label class="check-row config-switch"><input name="ApprovalEnabled" type="checkbox"> Allow this user to approve finance documents</label>
           <label>Maximum approval amount<input name="ApprovalMaxAmount" type="number" min="0" step="0.01" value="0" data-finance-input><small>Zero blocks approval. Super Admin is unrestricted.</small></label>
         </div><div class="approval-account-list config-option-list"><strong>Accounts this user may approve directly from</strong>${staffApprovalAccounts.length ? staffApprovalAccounts.map((account) => `<label class="check-row"><input type="checkbox" name="ApprovalAccountOption" value="${escapeHtml(account.Code)}"> ${escapeHtml(account.Code)} - ${escapeHtml(account.Name || '')}</label>`).join('') : '<small>Create active Chart of Accounts entries in the desktop Finance tab first.</small>'}</div></section>
-        <section class="config-group"><header><strong>Web companion access</strong><small>Leave all clear to use the selected role's default tabs.</small></header><div class="approval-account-list config-option-list config-option-grid">${permissionTabs.map(([key, label]) => `<label class="check-row"><input type="checkbox" name="TabAccessOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}</div></section>
+        <section class="config-group"><header><strong>Web companion access</strong><small>Optional user-specific override. Leave all clear to inherit the module access saved for the selected role.</small></header><div class="approval-account-list config-option-list config-option-grid">${permissionTabs.map(([key, label]) => `<label class="check-row"><input type="checkbox" name="TabAccessOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}</div></section>
         <section class="config-group"><header><strong>Security</strong><small>Password and account-state controls.</small></header><div class="config-grid">
           <label>New or reset password<input name="Password" type="password" minlength="6" autocomplete="new-password"><small>Required for a new account. Leave blank when editing unless resetting it.</small></label>
           <div class="config-toggle-stack"><label class="check-row"><input name="Active" type="checkbox" checked> Account active</label><label class="check-row"><input name="MustChangePassword" type="checkbox" checked> Require password change at next sign-in</label>${schoolEdition ? '<label class="check-row sensitive-access-toggle"><input name="BiometricLookupEnabled" type="checkbox"> Allow student face lookup</label>' : ''}</div>
@@ -8551,9 +8574,31 @@ function renderStaffUsers() {
   mountWorkspaceTabs('staffUsers', [
     { key: 'overview', label: 'Overview', icon: '\u25A6', nodes: [document.getElementById('staffUsersStatus'), panelEl.querySelector(':scope > .workflow-kpis')] },
     { key: 'accounts', label: 'Staff accounts', icon: '\u{1F465}', count: staffUsersData.length, nodes: panelEl.querySelector(':scope > .staff-user-list') },
+    { key: 'roleAccess', label: 'Role access', icon: '\u{1F511}', nodes: panelEl.querySelector(':scope > .role-access-settings') },
     { key: 'security', label: 'Security activity', icon: '\u{1F6E1}', count: staffAuditData.length, nodes: panelEl.querySelector(':scope > .staff-security-activity') }
   ]);
   bindStaffUserEvents();
+  renderRoleAccessEditor(staffRoleAccessSelectedRole, policyRoles);
+}
+
+function renderRoleAccessEditor(role = staffRoleAccessSelectedRole, roles = staffRoleAccessData?.roles || {}) {
+  const selector = document.getElementById('roleAccessRole');
+  if (!selector) return;
+  staffRoleAccessSelectedRole = role || selector.value;
+  selector.value = staffRoleAccessSelectedRole;
+  const policy = roles[staffRoleAccessSelectedRole] || { modules: [], source: 'default', locallyConfigured: false };
+  const allowed = new Set(policy.modules || []);
+  document.querySelectorAll('[name="RoleModuleOption"]').forEach((input) => { input.checked = allowed.has(input.value); });
+  const source = document.getElementById('roleAccessSource');
+  if (source) {
+    source.textContent = policy.source === 'default'
+      ? 'Using the safe system starting policy until you save this role.'
+      : policy.locallyConfigured
+        ? `Saved specifically for ${policy.source === 'global' ? 'all branches' : `branch ${policy.source}`}.`
+        : 'Inheriting the organisation-wide role policy.';
+  }
+  const reset = document.getElementById('resetRoleAccess');
+  if (reset) reset.disabled = !policy.locallyConfigured;
 }
 
 function openStaffUserDialog(username = '') {
@@ -8600,6 +8645,41 @@ function bindStaffUserEvents() {
   document.getElementById('uploadStaffCsv')?.addEventListener('click', () => document.getElementById('staffCsvFile').click());
   document.getElementById('staffCsvTemplate')?.addEventListener('click', downloadStaffCsvTemplate);
   document.getElementById('staffCsvFile')?.addEventListener('change', importStaffCsv);
+  document.getElementById('roleAccessRole')?.addEventListener('change', (event) => {
+    renderRoleAccessEditor(event.currentTarget.value);
+    setStatus(document.getElementById('roleAccessStatus'), '');
+  });
+  document.getElementById('saveRoleAccess')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const modules = Array.from(document.querySelectorAll('[name="RoleModuleOption"]:checked')).map((input) => input.value);
+    setButtonLoading(button, true, 'Saving...', 'Save role access');
+    try {
+      const data = await staffUserRequest('save-role-access', { Role: staffRoleAccessSelectedRole, Modules: modules });
+      staffRoleAccessData = data.roleAccess;
+      renderRoleAccessEditor(staffRoleAccessSelectedRole);
+      setStatus(document.getElementById('roleAccessStatus'), data.message, 'ok');
+    } catch (error) {
+      setStatus(document.getElementById('roleAccessStatus'), error.message || String(error), 'bad');
+    } finally {
+      setButtonLoading(button, false, 'Saving...', 'Save role access');
+    }
+  });
+  document.getElementById('resetRoleAccess')?.addEventListener('click', async (event) => {
+    if (!window.confirm(`Remove the saved ${staffRoleAccessSelectedRole} policy for this scope and use its inherited default?`)) return;
+    const button = event.currentTarget;
+    setButtonLoading(button, true, 'Resetting...', 'Use inherited default');
+    try {
+      const data = await staffUserRequest('reset-role-access', { Role: staffRoleAccessSelectedRole });
+      staffRoleAccessData = data.roleAccess;
+      renderRoleAccessEditor(staffRoleAccessSelectedRole);
+      setStatus(document.getElementById('roleAccessStatus'), data.message, 'ok');
+    } catch (error) {
+      setStatus(document.getElementById('roleAccessStatus'), error.message || String(error), 'bad');
+    } finally {
+      setButtonLoading(button, false, 'Resetting...', 'Use inherited default');
+      renderRoleAccessEditor(staffRoleAccessSelectedRole);
+    }
+  });
   document.querySelector('[data-close-user-dialog]')?.addEventListener('click', () => document.getElementById('staffUserDialog').close());
   panelEl.querySelectorAll('[data-edit-user]').forEach((button) => button.addEventListener('click', () => openStaffUserDialog(button.dataset.editUser)));
   panelEl.querySelectorAll('[data-delete-user]').forEach((button) => button.addEventListener('click', async () => {
@@ -8748,6 +8828,7 @@ async function loadStaffUsers() {
     staffUsersData = data.users || [];
     staffAuditData = data.audit || [];
     staffApprovalAccounts = data.approvalAccounts || [];
+    staffRoleAccessData = data.roleAccess || null;
     renderModuleSummary('staffUsers', staffUsersData);
     renderStaffUsers();
     const handoff = takeRecordsDeskHandoff('staffUsers');

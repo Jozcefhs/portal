@@ -1,5 +1,5 @@
-import { batchUpsertDocuments, deleteDocument, getDocument, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
-import { hashStaffPassword, requireStaffSession } from '../lib/staff-auth.js';
+import { batchUpsertDocuments, deleteDocument, getDocument, listCollection, requireFirestoreEnv, updateDocumentIfCurrent, upsertDocument } from '../lib/firestore.js';
+import { hashStaffPassword, invalidateStaffAccessCache, requireStaffSession } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { staffRecordMatchesEdition } from '../lib/records-desk.js';
 import { actorBranchScope, branchRecordVisible, enforceActorBranch } from '../lib/branch-scope.js';
@@ -12,6 +12,14 @@ import {
   normalizeOrganizationEdition,
   staffRoleAllowedForEdition
 } from '../lib/organization-config.js';
+import {
+  WEB_SECTION_KEYS,
+  roleAccessScope,
+  roleAccessView,
+  rolesForEdition,
+  withRoleModules,
+  withoutRoleModules
+} from '../lib/role-module-access.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -20,13 +28,7 @@ function nowIso() { return new Date().toISOString(); }
 function activeValue(value) { return !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(value)); }
 function explicitOptIn(value) { return ['yes', 'true', '1', 'enabled', 'on'].includes(lower(value)); }
 
-const WEB_SECTION_KEYS = new Set([
-  'recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students',
-  'studentConduct', 'members', 'services', 'funds', 'offerings', 'donations',
-  'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic',
-  'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore',
-  'restaurant', 'humanResources', 'staffUsers'
-]);
+const WEB_SECTION_KEY_SET = new Set(WEB_SECTION_KEYS);
 
 function listValue(value, separator = ',') {
   return Array.isArray(value)
@@ -40,7 +42,7 @@ function scopedApprovalAccounts(value, edition) {
 
 function scopedTabAccess(value, actor) {
   return filterSectionsForFeatures(listValue(value, /[;,]/), actor.featureFlags)
-    .filter((section) => WEB_SECTION_KEYS.has(section));
+    .filter((section) => WEB_SECTION_KEY_SET.has(section));
 }
 
 function ensureRoleAvailable(role, edition) {
@@ -291,6 +293,86 @@ async function deleteUser(env, actor, body) {
   return { ok: true, message: 'Staff account deleted.' };
 }
 
+async function roleAccessSettings(env, actor) {
+  const document = await getDocument(env, 'settings', 'roleModuleAccess').catch(() => null);
+  return roleAccessView(document, actor, actor.edition, actor.featureFlags);
+}
+
+async function saveRoleAccess(env, actor, body) {
+  const role = clean(body.Role || body.role);
+  if (!role || !rolesForEdition(actor.edition).includes(role)) {
+    const err = new Error('Choose an available staff role.');
+    err.status = 400;
+    throw err;
+  }
+  if (!Array.isArray(body.Modules || body.modules)) {
+    const err = new Error('Choose the modules this role may access.');
+    err.status = 400;
+    throw err;
+  }
+  const existing = await getDocument(env, 'settings', 'roleModuleAccess').catch(() => null);
+  const scope = roleAccessScope(actor);
+  const scopes = withRoleModules(
+    existing,
+    scope,
+    role,
+    body.Modules || body.modules,
+    actor.edition,
+    actor.featureFlags
+  );
+  const saved = {
+    ...(existing || {}),
+    Edition: normalizeOrganizationEdition(actor.edition),
+    Scopes: scopes,
+    UpdatedAt: nowIso(),
+    UpdatedBy: actor.displayName || actor.username
+  };
+  delete saved.__id;
+  delete saved.__name;
+  delete saved.__createTime;
+  delete saved.__updateTime;
+  if (existing?.__updateTime) await updateDocumentIfCurrent(env, 'settings', 'roleModuleAccess', saved, existing);
+  else await upsertDocument(env, 'settings', 'roleModuleAccess', saved);
+  invalidateStaffAccessCache();
+  await audit(env, actor, 'UPDATE ROLE ACCESS', role, `${scope} | ${(scopes[scope]?.[role] || []).join(', ')}`, actorBranchScope(actor) || 'main');
+  return {
+    ok: true,
+    message: `${role} module access saved for ${scope === 'global' ? 'all branches' : `branch ${scope}`}.`,
+    roleAccess: roleAccessView(saved, actor, actor.edition, actor.featureFlags)
+  };
+}
+
+async function resetRoleAccess(env, actor, body) {
+  const role = clean(body.Role || body.role);
+  if (!role || !rolesForEdition(actor.edition).includes(role)) {
+    const err = new Error('Choose an available staff role.');
+    err.status = 400;
+    throw err;
+  }
+  const existing = await getDocument(env, 'settings', 'roleModuleAccess').catch(() => null);
+  const scope = roleAccessScope(actor);
+  const saved = {
+    ...(existing || {}),
+    Edition: normalizeOrganizationEdition(actor.edition),
+    Scopes: withoutRoleModules(existing, scope, role),
+    UpdatedAt: nowIso(),
+    UpdatedBy: actor.displayName || actor.username
+  };
+  delete saved.__id;
+  delete saved.__name;
+  delete saved.__createTime;
+  delete saved.__updateTime;
+  if (existing?.__updateTime) await updateDocumentIfCurrent(env, 'settings', 'roleModuleAccess', saved, existing);
+  else await upsertDocument(env, 'settings', 'roleModuleAccess', saved);
+  invalidateStaffAccessCache();
+  await audit(env, actor, 'RESET ROLE ACCESS', role, scope, actorBranchScope(actor) || 'main');
+  return {
+    ok: true,
+    message: `${role} now inherits ${scope === 'global' ? 'the system default' : 'the organisation-wide policy or system default'}.`,
+    roleAccess: roleAccessView(saved, actor, actor.edition, actor.featureFlags)
+  };
+}
+
 export async function onRequestPost(context) {
   try {
     const { request, env } = context;
@@ -301,13 +383,20 @@ export async function onRequestPost(context) {
     const action = lower(body.action || 'list');
     let result;
     if (action === 'list') {
-      const [users, audit, accounts] = await Promise.all([listUsers(env, actor), listSecurityAudit(env, actor), listCollection(env, 'chartOfAccounts')]);
+      const [users, audit, accounts, roleAccess] = await Promise.all([
+        listUsers(env, actor),
+        listSecurityAudit(env, actor),
+        listCollection(env, 'chartOfAccounts'),
+        roleAccessSettings(env, actor)
+      ]);
       const scopedAccounts = accountingChartForEdition(accounts, actor.edition);
-      result = { ok: true, users, audit, approvalAccounts: scopedAccounts.filter((row) => activeValue(row.Active === undefined ? true : row.Active)).map((row) => ({ Code: clean(row.Code || row.__id), Name: clean(row.Name) })).filter((row) => row.Code).sort((a, b) => a.Code.localeCompare(b.Code)) };
+      result = { ok: true, users, audit, roleAccess, approvalAccounts: scopedAccounts.filter((row) => activeValue(row.Active === undefined ? true : row.Active)).map((row) => ({ Code: clean(row.Code || row.__id), Name: clean(row.Name) })).filter((row) => row.Code).sort((a, b) => a.Code.localeCompare(b.Code)) };
     }
     else if (action === 'save') result = await saveUser(env, actor, body);
     else if (action === 'delete') result = await deleteUser(env, actor, body);
     else if (action === 'import') result = await importUsers(env, actor, body);
+    else if (action === 'save-role-access') result = await saveRoleAccess(env, actor, body);
+    else if (action === 'reset-role-access') result = await resetRoleAccess(env, actor, body);
     else { const err = new Error('Unknown staff-user action.'); err.status = 400; throw err; }
     return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {

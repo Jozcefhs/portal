@@ -26,6 +26,7 @@ const [apiSource, adminJs, portalCss, staffAuth] = await Promise.all([
   readFile(new URL('css/style.css', portalRoot), 'utf8'),
   readFile(new URL('functions/lib/staff-auth.js', portalRoot), 'utf8')
 ]);
+const roleAccessSource = await readFile(new URL('../functions/lib/role-module-access.js', import.meta.url), 'utf8');
 
 test('record types are derived from the signed-in edition and allowed sections', () => {
   const schoolAccounts = recordsDeskCapabilities({
@@ -260,10 +261,10 @@ test('student conduct history is permission-gated and rendered in the student pr
 });
 
 test('role defaults expose Records Desk without weakening member privacy', () => {
-  assert.match(staffAuth, /'Super Admin': \['recordsDesk'/);
-  assert.match(staffAuth, /'Accounts Officer': \['recordsDesk'/);
-  assert.match(staffAuth, /'Membership Officer': \['recordsDesk', 'members', 'services'\]/);
-  assert.match(staffAuth, /Treasurer: \['recordsDesk', 'funds'/);
+  assert.match(roleAccessSource, /'Super Admin': \['recordsDesk'/);
+  assert.match(roleAccessSource, /'Accounts Officer': \['recordsDesk'/);
+  assert.match(roleAccessSource, /'Membership Officer': \['recordsDesk', 'members', 'services'\]/);
+  assert.match(roleAccessSource, /Treasurer: \['recordsDesk', 'funds'/);
 });
 
 test('existing custom access derives Records Desk without widening its source permissions', () => {
