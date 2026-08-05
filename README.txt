@@ -56,6 +56,7 @@ Feature-specific:
 - TURNSTILE_ALLOWED_HOSTNAMES
 - ALLOW_CANONICAL_API_PROXY (off by default; enable only for an intentional bridge)
 - CANONICAL_PORTAL_URL (required when ALLOW_CANONICAL_API_PROXY is enabled)
+- CANONICAL_API_PROXY_SCOPE (`platform-subscriptions` on the public Dynamax site; limits the bridge to pricing, registration, verification and subscription webhooks)
 - WEBAUTHN_RP_ID
 - WEBAUTHN_ORIGIN
 - WEBAUTHN_RP_NAME

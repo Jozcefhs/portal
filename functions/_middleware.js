@@ -6,6 +6,13 @@ const LOW_READ_IDENTITY_PATHS = new Set([
   '/api/admin'
 ]);
 
+const PLATFORM_SUBSCRIPTION_PROXY_PATHS = new Set([
+  '/api/plan-catalog',
+  '/api/register-organization',
+  '/api/verify-subscription-payment',
+  '/api/paystack-subscription-webhook'
+]);
+
 function enabled(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
 }
@@ -15,6 +22,14 @@ function unavailableResponse(requestId, message = 'The API backend is not config
     status: 503,
     headers: { 'Cache-Control': 'no-store', 'X-Request-Id': requestId }
   });
+}
+
+function canonicalProxyPathAllowed(env, pathname) {
+  const scope = String(env.CANONICAL_API_PROXY_SCOPE || '').trim().toLowerCase();
+  if (!scope) return true;
+  if (scope !== 'platform-subscriptions') return false;
+  const normalizedPath = String(pathname || '').replace(/\/+$/, '') || '/';
+  return PLATFORM_SUBSCRIPTION_PROXY_PATHS.has(normalizedPath);
 }
 
 function identityUnavailableResponse(requestId, error) {
@@ -76,6 +91,8 @@ async function handleRequest(context, identityLoader) {
       const configuredOrigin = String(env.CANONICAL_PORTAL_URL || '').trim();
       if (!proxyAllowed || !configuredOrigin) {
         response = unavailableResponse(requestId);
+      } else if (!canonicalProxyPathAllowed(env, url.pathname)) {
+        response = unavailableResponse(requestId, 'This API route is not available on the public Dynamax deployment.');
       } else {
         let configuredUrl = null;
         try {

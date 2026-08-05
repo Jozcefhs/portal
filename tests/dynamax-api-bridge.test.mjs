@@ -13,6 +13,8 @@ test('Dynamax Pages fail closed unless an API proxy is explicitly configured', (
   assert.match(middleware, /if \(hasLocalBackend\)/);
   assert.match(middleware, /env\.ALLOW_CANONICAL_API_PROXY/);
   assert.match(middleware, /env\.CANONICAL_PORTAL_URL/);
+  assert.match(middleware, /env\.CANONICAL_API_PROXY_SCOPE/);
+  assert.match(middleware, /PLATFORM_SUBSCRIPTION_PROXY_PATHS/);
   assert.match(middleware, /if \(!proxyAllowed \|\| !configuredOrigin\)/);
   assert.doesNotMatch(middleware, /https:\/\/digc-suite\.pages\.dev/);
   assert.doesNotMatch(middleware, /PRIVATE_KEY|SHARED_SECRET|SESSION_SECRET/);
@@ -202,5 +204,40 @@ test('proxy opt-in still rejects a missing, malformed, insecure, or self-referen
       next: async () => Response.json({ ok: true })
     });
     assert.equal(response.status, 503);
+  }
+});
+
+test('the public subscription bridge forwards billing APIs but blocks tenant staff APIs', async () => {
+  const originalFetch = globalThis.fetch;
+  const forwarded = [];
+  globalThis.fetch = async (request) => {
+    forwarded.push(request.url);
+    return Response.json({ ok: true, proxied: true });
+  };
+  const env = {
+    ALLOW_CANONICAL_API_PROXY: 'true',
+    CANONICAL_PORTAL_URL: 'https://canonical.example',
+    CANONICAL_API_PROXY_SCOPE: 'platform-subscriptions'
+  };
+  try {
+    const pricing = await onRequest({
+      request: new Request('https://dynamax.example/api/plan-catalog'),
+      env,
+      next: async () => Response.json({ ok: false })
+    });
+    assert.equal(pricing.status, 200);
+    assert.deepEqual(await pricing.json(), { ok: true, proxied: true });
+    assert.deepEqual(forwarded, ['https://canonical.example/api/plan-catalog']);
+
+    const staff = await onRequest({
+      request: new Request('https://dynamax.example/api/staff-session', { method: 'POST' }),
+      env,
+      next: async () => Response.json({ ok: false })
+    });
+    assert.equal(staff.status, 503);
+    assert.match((await staff.json()).message, /not available on the public Dynamax deployment/i);
+    assert.equal(forwarded.length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });

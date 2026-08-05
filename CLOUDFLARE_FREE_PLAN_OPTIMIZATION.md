@@ -254,6 +254,7 @@ HTML, CSS, JavaScript, images, icons, fonts, the manifest, service worker and fa
 - `TURNSTILE_ALLOWED_HOSTNAMES` — comma-separated hostnames
 - `ALLOW_CANONICAL_API_PROXY` — must be explicitly enabled for an intentional API bridge
 - `CANONICAL_PORTAL_URL` — required only when `ALLOW_CANONICAL_API_PROXY` is enabled
+- `CANONICAL_API_PROXY_SCOPE` — set to `platform-subscriptions` on the public Dynamax project so tenant staff APIs remain unavailable there
 - `WEBAUTHN_RP_ID`
 - `WEBAUTHN_ORIGIN`
 - `WEBAUTHN_RP_NAME`
