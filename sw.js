@@ -1,5 +1,5 @@
-const CACHE = 'dynamax-v135-subscription-plans-link';
-const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/parent-dashboard.html', '/payments.html', '/register-organization.html', '/give.html', '/store.html', '/css/style.css', '/css/notifications.css', '/css/store.css', '/css/store-compact.css', '/js/preferences.js', '/js/action-feedback.js', '/js/financial-values.js', '/js/launcher.js', '/js/site-config.js', '/js/admin.js', '/js/give.js', '/js/payments.js', '/js/store.js', '/js/notifications.js', '/js/web-push.js', '/js/parent-dashboard.js', '/js/register-organization.js', '/images/Logo.png'];
+const CACHE = 'dynamax-v136-subscription-commerce';
+const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/parent-dashboard.html', '/payments.html', '/register-organization.html', '/subscription-payment.html', '/plan-management.html', '/give.html', '/store.html', '/css/style.css', '/css/notifications.css', '/css/store.css', '/css/store-compact.css', '/js/preferences.js', '/js/action-feedback.js', '/js/financial-values.js', '/js/launcher.js', '/js/site-config.js', '/js/admin.js', '/js/give.js', '/js/payments.js', '/js/store.js', '/js/notifications.js', '/js/web-push.js', '/js/parent-dashboard.js', '/js/register-organization.js', '/js/subscription-payment.js', '/js/plan-management.js', '/images/Logo.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

@@ -1,3 +1,9 @@
+import {
+  normalizeSubscriptionPlan,
+  subscriptionPlanEntitlements,
+  subscriptionPlanUserLimit
+} from './subscription-plans.js';
+
 const clean = (value) => String(value ?? '').trim();
 
 export const ORGANIZATION_EDITIONS = Object.freeze(['school', 'faith', 'organization']);
@@ -153,6 +159,18 @@ export function featureFlagsForEdition(edition, overrides = {}) {
   ]));
 }
 
+export function featureFlagsForPlan(edition, plan, overrides = {}) {
+  const normalizedPlan = normalizeSubscriptionPlan(plan);
+  const editionFlags = featureFlagsForEdition(edition, overrides);
+  const entitlements = subscriptionPlanEntitlements(normalizedPlan, normalizeOrganizationEdition(edition));
+  if (entitlements === '*') return editionFlags;
+  const allowed = new Set(entitlements);
+  return Object.fromEntries(Object.entries(editionFlags).map(([feature, enabled]) => [
+    feature,
+    enabled === true && allowed.has(feature)
+  ]));
+}
+
 export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, legacyProfile = {} } = {}) {
   const profile = organizationProfile && typeof organizationProfile === 'object' ? organizationProfile : {};
   const legacy = legacyProfile && typeof legacyProfile === 'object' ? legacyProfile : {};
@@ -203,11 +221,22 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
   ).toUpperCase().replace(/[^A-Z0-9]/g, '') || (edition === 'school' ? 'DCA' : 'ORG');
   const overrides = profile.FeatureFlags || profile.Features
     || legacy.FeatureFlags || legacy.Features || {};
+  const configuredPlan = clean(
+    profile.Plan || profile.SubscriptionPlan
+      || legacy.Plan || legacy.SubscriptionPlan
+      || env.SUBSCRIPTION_PLAN
+  );
+  // Profiles created before subscription plans existed retain full operations
+  // until an explicit plan is selected. New profiles are written with Starter.
+  const plan = normalizeSubscriptionPlan(configuredPlan || 'Professional');
+  const defaultLimit = subscriptionPlanUserLimit(plan);
   return {
     Edition: edition,
     Name: name,
     Code: code,
-    FeatureFlags: featureFlagsForEdition(edition, overrides)
+    Plan: plan,
+    UserLimit: Math.max(1, Number(profile.UserLimit || legacy.UserLimit || env.USER_LIMIT || defaultLimit) || defaultLimit),
+    FeatureFlags: featureFlagsForPlan(edition, plan, overrides)
   };
 }
 
@@ -222,8 +251,8 @@ export function organizationProfileDocument(config, audit = {}) {
     UpdatedAt: clean(audit.UpdatedAt),
     UpdatedBy: clean(audit.UpdatedBy),
     GoogleDocumentsUrl: clean(config.GoogleDocumentsUrl || config.googleDocumentsUrl),
-    Plan: clean(config.Plan || config.plan) || 'Starter',
-    UserLimit: Math.max(1, Number(config.UserLimit || config.userLimit || 5) || 5),
+    Plan: normalizeSubscriptionPlan(config.Plan || config.plan || resolved.Plan || 'Starter'),
+    UserLimit: Math.max(1, Number(config.UserLimit || config.userLimit || resolved.UserLimit || 5) || 5),
     BrandName: clean(config.BrandName || config.brandName) || 'Dynamax',
     BrandLogoUrl: clean(config.BrandLogoUrl || config.brandLogoUrl)
   };

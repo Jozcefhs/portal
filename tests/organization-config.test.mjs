@@ -8,6 +8,7 @@ import {
   SCHOOL_ONLY_SECTION_KEYS,
   SCHOOL_ONLY_STAFF_ROLES,
   featureFlagsForEdition,
+  featureFlagsForPlan,
   filterSectionsForFeatures,
   normalizeOrganizationEdition,
   organizationProfileDocument,
@@ -98,6 +99,26 @@ test('known feature overrides are normalized and unknown flags are discarded', (
   assert.equal(flags.offerings, true);
   assert.equal(flags.donations, true);
   assert.equal(Object.hasOwn(flags, 'inventedFeature'), false);
+});
+
+test('subscription plans enforce module entitlements in addition to organisation edition', () => {
+  const starterSchool = featureFlagsForPlan('school', 'Starter');
+  assert.equal(starterSchool.students, true);
+  assert.equal(starterSchool.parentPortal, true);
+  assert.equal(starterSchool.accounting, false);
+  assert.equal(starterSchool.payroll, false);
+
+  const standardChurch = featureFlagsForPlan('faith', 'Standard');
+  assert.equal(standardChurch.members, true);
+  assert.equal(standardChurch.offerings, true);
+  assert.equal(standardChurch.accounting, true);
+  assert.equal(standardChurch.payroll, false);
+  assert.equal(standardChurch.retail, false);
+
+  const professionalChurch = featureFlagsForPlan('faith', 'Professional');
+  assert.equal(professionalChurch.payroll, true);
+  assert.equal(professionalChurch.retail, true);
+  assert.equal(professionalChurch.admissions, false);
 });
 
 test('school-only modules cannot be re-enabled by church feature overrides', () => {
@@ -206,10 +227,11 @@ test('public organisation registration stays aligned and legible in both themes'
     readFile(new URL('../css/style.css', import.meta.url), 'utf8')
   ]);
   assert.match(html, /name="theme-color"/);
-  assert.match(html, /20260805-branch-selector/);
+  assert.match(html, /20260805-subscription-commerce/);
   assert.match(css, /\.auth-page\s*\{[^}]*overflow-x:\s*hidden/s);
   assert.match(css, /\.organisation-registration-card\s+\.inline-check\s*\{[^}]*white-space:\s*normal/s);
   assert.match(css, /html\[data-theme="dark"\]\s+\.organisation-registration-card\s*\{[^}]*background:\s*#111e2e/s);
   assert.match(css, /html\[data-theme="dark"\]\s+\.organisation-registration-card\s+\.settings-field label/);
+  assert.match(css, /html\[data-theme="dark"\]\s+\.plan-choice-card/);
   assert.match(css, /@media \(max-width:\s*430px\)[\s\S]*?\.plan-choice-grid\s*\{\s*grid-template-columns:\s*1fr/);
 });

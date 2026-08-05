@@ -6,6 +6,16 @@ const saveSetupButton = document.getElementById('saveSetupButton');
 let unlockedPassword = '';
 let webLogoDataUrl = '';
 let webLogoChanged = false;
+const fixedPlanUserLimits = { Starter: 5, Standard: 20, Professional: 50 };
+
+function alignPlanUserLimit() {
+  const planField = document.getElementById('subscriptionPlan');
+  const limitField = document.getElementById('userLimit');
+  if (!planField || !limitField) return;
+  const fixedLimit = fixedPlanUserLimits[planField.value];
+  limitField.readOnly = Boolean(fixedLimit);
+  if (fixedLimit) limitField.value = fixedLimit;
+}
 
 function setStatus(message, type) {
   setupStatus.textContent = message || '';
@@ -95,6 +105,7 @@ async function loadProfile(password = '') {
     setField('googleDocumentsUrl', profile.GoogleDocumentsUrl);
     setField('subscriptionPlan', profile.SubscriptionPlan || 'Starter');
     setField('userLimit', profile.UserLimit || 5);
+    alignPlanUserLimit();
   } catch (error) {
     setStatus(error.message, 'bad');
     throw error;
@@ -190,6 +201,8 @@ setupForm.addEventListener('submit', async (event) => {
 setupForm.addEventListener('input', () => {
   setStatus('You have unsaved changes.', '');
 });
+
+document.getElementById('subscriptionPlan')?.addEventListener('change', alignPlanUserLimit);
 
 const settingsNavLinks = [...document.querySelectorAll('.settings-nav-link')];
 settingsNavLinks.forEach((link) => link.addEventListener('click', () => {

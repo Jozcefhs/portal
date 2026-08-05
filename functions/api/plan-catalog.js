@@ -1,0 +1,167 @@
+import { getDocument, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { secureTextEqual } from '../lib/backend-security.js';
+import { readJsonBody } from '../lib/request-security.js';
+import {
+  SUBSCRIPTION_PLAN_NAMES,
+  normalizeSubscriptionPlanCatalog,
+  publicSubscriptionPlanCatalog
+} from '../lib/subscription-plans.js';
+
+const PLAN_DOCUMENT_ID = 'dynamaxPlanCatalog';
+const PAYSTACK_PLAN_URL = 'https://api.paystack.co/plan';
+const clean = (value) => String(value ?? '').trim();
+
+function requirePricingAdmin(env, password) {
+  const expected = clean(env.ADMIN_WEB_PASSWORD);
+  if (!expected) {
+    const error = new Error('Pricing administration is not configured. Add ADMIN_WEB_PASSWORD in Cloudflare.');
+    error.status = 503;
+    throw error;
+  }
+  if (!secureTextEqual(password, expected)) {
+    const error = new Error('Invalid administration password.');
+    error.status = 401;
+    throw error;
+  }
+}
+
+async function loadCatalog(env) {
+  requireFirestoreEnv(env);
+  const saved = await getDocument(env, 'settings', PLAN_DOCUMENT_ID).catch(() => null);
+  return normalizeSubscriptionPlanCatalog(saved || {});
+}
+
+function mergeCatalog(existing, incoming) {
+  const source = incoming && typeof incoming === 'object' && !Array.isArray(incoming) ? incoming : {};
+  const incomingPlans = source.Plans && typeof source.Plans === 'object' && !Array.isArray(source.Plans)
+    ? source.Plans
+    : {};
+  return normalizeSubscriptionPlanCatalog({
+    ...existing,
+    ...source,
+    Plans: Object.fromEntries(SUBSCRIPTION_PLAN_NAMES.map((name) => [
+      name,
+      { ...existing.Plans[name], ...(incomingPlans[name] || {}) }
+    ]))
+  });
+}
+
+export function paystackPlanPayload(name, cycle, amount, currency, updateExistingSubscriptions = false) {
+  const yearly = cycle === 'yearly';
+  return {
+    name: `Dynamax ${name} - ${yearly ? 'Yearly' : 'Monthly'}`,
+    amount: Math.round(Number(amount || 0) * 100),
+    interval: yearly ? 'annually' : 'monthly',
+    currency: clean(currency).toUpperCase() || 'NGN',
+    description: `${name} subscription billed ${yearly ? 'yearly' : 'monthly'}`,
+    send_invoices: true,
+    send_sms: false,
+    update_existing_subscriptions: Boolean(updateExistingSubscriptions)
+  };
+}
+
+async function syncPaystackPlan(env, { name, cycle, amount, currency, planCode, updateExistingSubscriptions }) {
+  if (!(Number(amount) > 0)) return clean(planCode);
+  if (!clean(env.PAYSTACK_SECRET_KEY)) {
+    const error = new Error('Add PAYSTACK_SECRET_KEY in Cloudflare before enabling paid plan prices.');
+    error.status = 503;
+    throw error;
+  }
+  const payload = paystackPlanPayload(name, cycle, amount, currency, updateExistingSubscriptions);
+  const existingCode = clean(planCode);
+  if (!existingCode) delete payload.update_existing_subscriptions;
+  const response = await fetch(existingCode ? `${PAYSTACK_PLAN_URL}/${encodeURIComponent(existingCode)}` : PAYSTACK_PLAN_URL, {
+    method: existingCode ? 'PUT' : 'POST',
+    headers: {
+      Authorization: `Bearer ${env.PAYSTACK_SECRET_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.status === false) {
+    const error = new Error(data.message || `Paystack could not ${existingCode ? 'update' : 'create'} the ${name} ${cycle} plan.`);
+    error.status = 502;
+    throw error;
+  }
+  const resolvedCode = existingCode || clean(data.data?.plan_code);
+  if (!resolvedCode) {
+    const error = new Error(`Paystack did not return a plan code for ${name} ${cycle}.`);
+    error.status = 502;
+    throw error;
+  }
+  return resolvedCode;
+}
+
+export async function onRequestGet({ env }) {
+  try {
+    const catalog = await loadCatalog(env);
+    return Response.json({ ok: true, catalog: publicSubscriptionPlanCatalog(catalog) }, {
+      headers: { 'Cache-Control': 'public, max-age=60, stale-while-revalidate=300' }
+    });
+  } catch (error) {
+    return Response.json({ ok: false, message: error.message || String(error) }, {
+      status: error.status || 500,
+      headers: { 'Cache-Control': 'no-store' }
+    });
+  }
+}
+
+export async function onRequestPost({ request, env }) {
+  try {
+    const body = await readJsonBody(request, { maxBytes: 128 * 1024 });
+    requirePricingAdmin(env, body.password);
+    const existing = await loadCatalog(env);
+    if (clean(body.action).toLowerCase() === 'load') {
+      return Response.json({ ok: true, catalog: publicSubscriptionPlanCatalog(existing) }, {
+        headers: { 'Cache-Control': 'no-store' }
+      });
+    }
+    const catalog = mergeCatalog(existing, body.catalog);
+    const updateExistingSubscriptions = body.updateExistingSubscriptions === true;
+    for (const name of SUBSCRIPTION_PLAN_NAMES) {
+      const plan = catalog.Plans[name];
+      plan.PaystackMonthlyPlanCode = await syncPaystackPlan(env, {
+        name,
+        cycle: 'monthly',
+        amount: plan.MonthlyAmount,
+        currency: catalog.Currency,
+        planCode: plan.PaystackMonthlyPlanCode,
+        updateExistingSubscriptions
+      });
+      // Persist every returned code before the next provider call. If a later
+      // Paystack request fails, retrying cannot create duplicate plans.
+      await upsertDocument(env, 'settings', PLAN_DOCUMENT_ID, {
+        ...catalog,
+        UpdatedAt: new Date().toISOString(),
+        UpdatedBy: 'Dynamax pricing administration'
+      });
+      plan.PaystackYearlyPlanCode = await syncPaystackPlan(env, {
+        name,
+        cycle: 'yearly',
+        amount: plan.YearlyAmount,
+        currency: catalog.Currency,
+        planCode: plan.PaystackYearlyPlanCode,
+        updateExistingSubscriptions
+      });
+      await upsertDocument(env, 'settings', PLAN_DOCUMENT_ID, {
+        ...catalog,
+        UpdatedAt: new Date().toISOString(),
+        UpdatedBy: 'Dynamax pricing administration'
+      });
+    }
+    catalog.UpdatedAt = new Date().toISOString();
+    catalog.UpdatedBy = 'Dynamax pricing administration';
+    await upsertDocument(env, 'settings', PLAN_DOCUMENT_ID, catalog);
+    return Response.json({
+      ok: true,
+      message: 'Plan pricing saved and Paystack recurring plans synchronized.',
+      catalog: publicSubscriptionPlanCatalog(catalog)
+    }, { headers: { 'Cache-Control': 'no-store' } });
+  } catch (error) {
+    return Response.json({ ok: false, message: error.message || String(error) }, {
+      status: error.status || 500,
+      headers: { 'Cache-Control': 'no-store' }
+    });
+  }
+}

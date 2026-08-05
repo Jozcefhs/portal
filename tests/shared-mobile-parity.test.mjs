@@ -101,7 +101,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v135-subscription-plans-link/);
+  assert.match(serviceWorker, /dynamax-v136-subscription-commerce/);
   assert.match(serviceWorker, /'\/js\/financial-values\.js'/);
   assert.match(serviceWorker, /'\/payments\.html'/);
   assert.match(serviceWorker, /'\/js\/payments\.js'/);
@@ -112,6 +112,8 @@ test('service worker refreshes the shared school, church, and parent assets', ()
   assert.match(serviceWorker, /'\/js\/action-feedback\.js'/);
   assert.match(serviceWorker, /'\/admin\.html'/);
   assert.match(serviceWorker, /'\/js\/admin\.js'/);
+  assert.match(serviceWorker, /'\/plan-management\.html'/);
+  assert.match(serviceWorker, /'\/subscription-payment\.html'/);
   assert.match(serviceWorker, /self\.skipWaiting\(\)/);
   assert.match(serviceWorker, /self\.clients\.claim\(\)/);
 });

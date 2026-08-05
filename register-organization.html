@@ -7,7 +7,7 @@
   <title>Register your organisation — Dynamax</title>
   <link rel="icon" href="images/Logo.png">
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260805-branch-selector">
+  <link rel="stylesheet" href="css/style.css?v=20260805-subscription-commerce">
 </head>
 <body class="auth-page">
   <main class="auth-shell">
@@ -20,12 +20,19 @@
         <div class="settings-field"><label>Contact email</label><input name="Email" type="email" required></div>
         <div class="settings-field"><label>Phone</label><input name="Phone" required></div>
         <div class="settings-field"><label>Country</label><input name="Country" required></div>
-        <div class="settings-field full-width" id="plans"><label>Plan</label><div class="plan-choice-grid">
-          <label><input type="radio" name="Plan" value="Starter" checked><span><strong>Starter</strong><small>5 users · core records</small></span></label>
-          <label><input type="radio" name="Plan" value="Standard"><span><strong>Standard</strong><small>20 users · finance and workflows</small></span></label>
-          <label><input type="radio" name="Plan" value="Professional"><span><strong>Professional</strong><small>50 users · full operations</small></span></label>
-          <label><input type="radio" name="Plan" value="Enterprise"><span><strong>Enterprise</strong><small>Custom users and modules</small></span></label>
-        </div></div>
+        <div class="settings-field full-width plan-selection-section" id="plans">
+          <div class="plan-selection-heading">
+            <label>Plan</label>
+            <fieldset class="billing-cycle-toggle" aria-label="Payment frequency">
+              <label><input type="radio" name="BillingCycle" value="monthly" checked><span>Monthly</span></label>
+              <label><input type="radio" name="BillingCycle" value="yearly"><span>Yearly</span></label>
+            </fieldset>
+          </div>
+          <p class="plan-selection-help">Select a plan. Open “View features” on any plan to see exactly what it includes.</p>
+          <div class="plan-choice-grid" id="planChoiceGrid" aria-live="polite">
+            <p class="muted">Loading current plans and pricing...</p>
+          </div>
+        </div>
         <label class="inline-check full-width"><input type="checkbox" name="Consent" value="YES" required> I confirm that I am authorised to register this organisation.</label>
         <button type="submit">Submit registration</button><a class="settings-link" href="index.html">Back to Dynamax</a>
         <p id="organisationRegistrationStatus" class="status full-width" aria-live="polite"></p>
@@ -34,6 +41,6 @@
   </main>
   <script src="js/site-config.js?v=20260728-quota-safety"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
-  <script src="js/register-organization.js?v=20260729-action-feedback"></script>
+  <script src="js/register-organization.js?v=20260805-subscription-commerce"></script>
 </body>
 </html>

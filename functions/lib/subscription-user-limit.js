@@ -1,4 +1,5 @@
 import { getDocument } from './firestore.js';
+import { normalizeSubscriptionPlan, subscriptionPlanUserLimit } from './subscription-plans.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -38,10 +39,22 @@ export function assertSubscriptionSeatAvailable(rows, existing, requestedActive,
 
 export async function loadSubscriptionUserLimit(env) {
   const profile = await getDocument(env, 'settings', 'organisationProfile').catch(() => null);
-  if (profile?.UserLimit !== undefined && profile?.UserLimit !== null && clean(profile.UserLimit)) {
-    return Math.max(1, Number(profile.UserLimit || 5) || 5);
+  if (profile) {
+    const configuredPlan = clean(profile.Plan || profile.SubscriptionPlan);
+    if (configuredPlan) {
+      const plan = normalizeSubscriptionPlan(configuredPlan);
+      if (plan !== 'Enterprise') return subscriptionPlanUserLimit(plan);
+    }
+    if (profile.UserLimit !== undefined && profile.UserLimit !== null && clean(profile.UserLimit)) {
+      return Math.max(1, Number(profile.UserLimit || 5) || 5);
+    }
   }
   const legacy = await getDocument(env, 'settings', 'schoolProfile').catch(() => null);
+  const legacyPlan = clean(legacy?.SubscriptionPlan || legacy?.Plan || env.SUBSCRIPTION_PLAN);
+  if (legacyPlan) {
+    const plan = normalizeSubscriptionPlan(legacyPlan);
+    if (plan !== 'Enterprise') return subscriptionPlanUserLimit(plan);
+  }
   return Math.max(1, Number(legacy?.UserLimit || env.USER_LIMIT || 5) || 5);
 }
 

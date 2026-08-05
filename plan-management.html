@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b4bc8">
+  <title>Plan pricing — Dynamax</title>
+  <link rel="icon" href="images/Logo.png">
+  <script src="js/preferences.js?v=20260726-biometric"></script>
+  <link rel="stylesheet" href="css/style.css?v=20260805-subscription-commerce">
+</head>
+<body class="settings-page">
+  <main class="settings-shell plan-management-shell">
+    <header class="settings-topbar">
+      <div class="settings-brand"><span class="settings-logo-wrap"><img src="images/Logo.png" alt="Dynamax logo" class="settings-logo"></span><div><p class="settings-eyebrow">Dynamax administration</p><h1>Plans and pricing</h1><p>Set public monthly and yearly prices and keep Paystack recurring plans synchronized.</p></div></div>
+      <div class="settings-top-actions"><a href="register-organization.html#plans" class="settings-link">View public plans</a><a href="setup.html#licence-settings" class="settings-link">Organisation setup</a></div>
+    </header>
+
+    <form id="planPricingLoginForm" class="settings-unlock-card">
+      <div class="settings-lock-icon" aria-hidden="true">&#128274;</div>
+      <div class="settings-unlock-copy"><p class="settings-eyebrow">Restricted area</p><h2>Unlock pricing</h2><p>Use the Cloudflare administration password. Paystack keys remain on the server.</p></div>
+      <div class="settings-unlock-control"><label for="planPricingPassword">Administration password</label><input id="planPricingPassword" type="password" required autocomplete="current-password"></div>
+      <button type="submit">Unlock pricing</button>
+      <p id="planPricingLoginStatus" class="status settings-login-status" aria-live="polite"></p>
+    </form>
+
+    <form id="planPricingForm" class="plan-pricing-workspace" hidden>
+      <section class="settings-section">
+        <div class="settings-section-heading"><div><span class="settings-section-icon">P</span></div><div><p class="settings-eyebrow">Subscription catalogue</p><h2>Monthly and yearly pricing</h2><p>Amounts are entered in naira. A value of zero keeps that payment option unavailable until pricing is confirmed.</p></div></div>
+        <div class="plan-pricing-toolbar"><label>Currency <input id="planPricingCurrency" value="NGN" maxlength="3" readonly></label><label class="inline-check"><input id="updateExistingSubscriptions" type="checkbox"> Apply changed prices to existing Paystack subscribers</label></div>
+        <aside class="plan-pricing-webhook-note">
+          <strong>Paystack webhook URL</strong>
+          <code id="paystackWebhookUrl"></code>
+          <p>Add this URL once in the Paystack Dashboard so renewals, failed payments and cancellations update Dynamax automatically.</p>
+        </aside>
+        <div id="planPricingCards" class="plan-pricing-grid" aria-live="polite"></div>
+      </section>
+      <div class="settings-savebar"><div><strong>Paystack synchronization</strong><p id="planPricingStatus" class="status">Review the prices before saving.</p></div><button id="savePlanPricing" type="submit">Save pricing</button></div>
+    </form>
+  </main>
+  <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
+  <script src="js/plan-management.js?v=20260805-subscription-commerce"></script>
+</body>
+</html>
