@@ -85,6 +85,8 @@ test('legacy defaults remain only as an unsaved starting policy', () => {
 });
 
 test('staff settings API and interface expose persisted role module controls', () => {
+  assert.doesNotMatch(staffUsersApi, /WEB_SECTION_KEYS\.has\(/);
+  assert.match(staffUsersApi, /WEB_SECTION_KEY_SET\.has\(section\)/);
   assert.match(staffUsersApi, /getDocument\(env, 'settings', 'roleModuleAccess'\)/);
   assert.match(staffUsersApi, /action === 'save-role-access'/);
   assert.match(staffUsersApi, /action === 'reset-role-access'/);

@@ -81,7 +81,7 @@ function publicUser(row, edition = 'school', featureFlags = null) {
     ApprovalAccounts: scopedApprovalAccounts(row.ApprovalAccounts, normalizedEdition),
     BiometricLookupEnabled: explicitOptIn(row.BiometricLookupEnabled) && normalizedEdition === 'school',
     TabAccess: filterSectionsForFeatures(listValue(row.TabAccess), featureFlags)
-      .filter((section) => WEB_SECTION_KEYS.has(section)),
+      .filter((section) => WEB_SECTION_KEY_SET.has(section)),
     Active: row.Active === undefined ? true : activeValue(row.Active),
     MustChangePassword: row.MustChangePassword === undefined ? false : activeValue(row.MustChangePassword),
     CreatedAt: clean(row.CreatedAt),
