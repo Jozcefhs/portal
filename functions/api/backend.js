@@ -64,6 +64,11 @@ import {
 import { invoiceReminderFields } from '../lib/notification-reminders.js';
 import { normalizeMinimumAdmissionAge } from '../lib/admission-age.js';
 import { enforceSubscriptionUserLimit } from '../lib/subscription-user-limit.js';
+import {
+  accountingRequestBranch,
+  accountingRowsForBranch,
+  accountingWriteBranch
+} from '../lib/accounting-branch-scope.js';
 
 export const SCHOOL_FEES_TOTAL_CODE = 'SCHOOL_FEES_TOTAL';
 
@@ -2938,6 +2943,7 @@ async function writeFormSaleAccountingJournal(env, sale) {
     JournalNo: journalNo, Date: sale.PaymentDate || sale.Time || nowIso(), Status: 'Posted',
     Description: `Admission form sale: ${clean(sale.ApplicantName || sourceId)}`,
     Reference: sourceId, Source: 'Admission Form Sale', SourceId: sourceId, RecordedBy: 'System',
+    BranchId: clean(sale.BranchId || sale.branchId || 'main').toLowerCase() || 'main',
     Lines: [
       { AccountCode: cashCode, Debit: amount, Credit: 0, Description: 'Form sale net receipt' },
       { AccountCode: '4010', Debit: 0, Credit: amount, Description: 'Admission form revenue' }
@@ -3374,6 +3380,7 @@ async function writePaymentAccountingJournal(env, payment, hasMatchingInvoice) {
     JournalNo: journalNo, Date: payment.PaidAt || nowIso(), Status: 'Posted',
     Description: `Receipt: ${sourceId}`, Reference: sourceId,
     Source: 'Fee Payment', SourceId: sourceId, RecordedBy: 'System',
+    BranchId: clean(payment.BranchId || payment.branchId || 'main').toLowerCase() || 'main',
     AcademicSession: payment.AcademicSession || '', Term: payment.Term || '',
     Lines: lines, TotalDebit: amount, TotalCredit: amount,
     CreatedAt: payment.RecordedAt || nowIso(), UpdatedAt: nowIso()
@@ -4576,6 +4583,7 @@ export function buildWalletPurchaseAccountingJournal(row = {}) {
     AcademicSession: clean(row.AcademicSession || row.academicSession),
     Term: clean(row.Term || row.term),
     Department: department,
+    BranchId: clean(row.BranchId || row.branchId || 'main').toLowerCase() || 'main',
     Lines: [
       { AccountCode: '2200', Debit: amount, Credit: 0, Description: clean(row.DisplayName || row.AccountRef) || 'Student wallet liability', Department: department },
       { AccountCode: destination, Debit: 0, Credit: amount, Description: description, Department: department }
@@ -4855,6 +4863,7 @@ async function writeAccountingAudit(env, action, entityType, entityId, body, det
     EntityId: clean(entityId),
     UserRole: clean(body.UserRole || body.userRole),
     UserName: clean(body.RecordedBy || body.UpdatedBy || body.UserName || body.userName),
+    BranchId: accountingWriteBranch(body),
     Details: clean(details)
   });
 }
@@ -4864,6 +4873,7 @@ export async function saveAccountingJournal(env, body, system = false) {
   const journalNo = existingId || ledgerDocumentId(system ? 'SYS' : 'JRN');
   const existingRows = await listCollection(env, 'accountingJournals');
   const existing = existingRows.find((row) => sameText(row.JournalNo, journalNo) || sameText(row.__id, safeDocumentId(journalNo))) || {};
+  const branchId = accountingWriteBranch(body, existing);
   if (lower(existing.Status) === 'posted' && !system) {
     const err = new Error('Posted journals are immutable. Create a reversal journal instead.');
     err.status = 409;
@@ -4916,6 +4926,7 @@ export async function saveAccountingJournal(env, body, system = false) {
     PostedBy: lower(status) === 'posted' ? clean(body.RecordedBy || body.recordedBy) : '',
     System: system ? 'YES' : clean(existing.System || 'NO')
   });
+  payload.BranchId = branchId;
   const debit = asMoneyNumber(payload.Lines.reduce((sum, line) => sum + line.Debit, 0));
   const credit = asMoneyNumber(payload.Lines.reduce((sum, line) => sum + line.Credit, 0));
   if (!payload.Lines.length || payload.Lines.some((line) => !line.AccountCode || (line.Debit <= 0 && line.Credit <= 0))) {
@@ -5194,6 +5205,7 @@ async function saveAccountingExpense(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer', 'Management', ...DEPARTMENT_ACCOUNTING_ROLES]);
   const expenseNo = clean(body.ExpenseNo || body.expenseNo) || ledgerDocumentId('EXP');
   const existing = (await listCollection(env, 'accountingExpenses')).find((row) => sameText(row.ExpenseNo, expenseNo) || sameText(row.__id, safeDocumentId(expenseNo))) || {};
+  const branchId = accountingWriteBranch(body, existing);
   if (lower(existing.Status) === 'posted') {
     const err = new Error('Posted expenses cannot be edited. Use a reversal.'); err.status = 409; throw err;
   }
@@ -5212,7 +5224,7 @@ async function saveAccountingExpense(env, body) {
     await requireAccountingApprovalLimit(env, body, 'Expense', amount);
   }
   const payload = {
-    ...existing, ExpenseNo: expenseNo, Date: expenseDate,
+    ...existing, ExpenseNo: expenseNo, BranchId: branchId, Date: expenseDate,
     Vendor: clean(body.Vendor || body.vendor), Description: clean(body.Description || body.description), Amount: amount,
     ExpenseAccount: clean(body.ExpenseAccount || body.expenseAccount) || '6090',
     PaymentAccount: clean(body.PaymentAccount || body.paymentAccount) || '1020',
@@ -5230,7 +5242,7 @@ async function saveAccountingExpense(env, body) {
     const journal = await saveAccountingJournal(env, {
       JournalNo: `SYS-EXP-${safeDocumentId(expenseNo)}`, Date: payload.Date, Status: 'Posted',
       Description: payload.Description, Reference: payload.Reference || expenseNo, Source: 'Expense', SourceId: expenseNo,
-      Department: payload.Department, CostCentre: payload.CostCentre, RecordedBy: clean(body.RecordedBy || body.recordedBy),
+      BranchId: branchId, Department: payload.Department, CostCentre: payload.CostCentre, RecordedBy: clean(body.RecordedBy || body.recordedBy),
       Lines: [
         { AccountCode: payload.ExpenseAccount, Debit: amount, Credit: 0, Description: payload.Description, Department: payload.Department },
         { AccountCode: payload.PaymentAccount, Debit: 0, Credit: amount, Description: payload.Vendor || payload.PaymentMethod }
@@ -5250,9 +5262,12 @@ async function saveAccountingExpense(env, body) {
 
 async function saveAccountingBudget(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer', 'Management']);
-  const id = clean(body.BudgetId || body.budgetId) || [body.FinancialYear, body.Department, body.AccountCode].map(safeDocumentId).join('-');
+  const requestedId = clean(body.BudgetId || body.budgetId);
+  const existing = requestedId ? (await listCollection(env, 'accountingBudgets')).find((row) => sameText(row.BudgetId, requestedId) || sameText(row.__id, safeDocumentId(requestedId))) || {} : {};
+  const branchId = accountingWriteBranch(body, existing);
+  const id = requestedId || [branchId, body.FinancialYear, body.Department, body.AccountCode].map(safeDocumentId).join('-');
   const payload = {
-    BudgetId: id, FinancialYear: clean(body.FinancialYear || body.financialYear),
+    ...existing, BudgetId: id, BranchId: branchId, FinancialYear: clean(body.FinancialYear || body.financialYear),
     AcademicSession: clean(body.AcademicSession || body.academicSession), Term: clean(body.Term || body.term),
     Department: clean(body.Department || body.department), AccountCode: clean(body.AccountCode || body.accountCode),
     Amount: asMoneyNumber(body.Amount || body.amount), Notes: clean(body.Notes || body.notes),
@@ -5268,10 +5283,15 @@ async function saveAccountingBudget(env, body) {
 
 async function saveAccountingBank(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
-  const id = clean(body.BankId || body.bankId || body.AccountCode || body.accountCode) || ledgerDocumentId('BNK');
+  const requestedId = clean(body.BankId || body.bankId);
+  const requestedBranch = accountingWriteBranch(body);
+  const accountCode = clean(body.AccountCode || body.accountCode);
+  const id = requestedId || (accountCode ? `${requestedBranch === 'main' ? '' : `${safeDocumentId(requestedBranch)}-`}${accountCode}` : ledgerDocumentId('BNK'));
+  const existing = (await listCollection(env, 'accountingBanks')).find((row) => sameText(row.BankId, id) || sameText(row.__id, safeDocumentId(id))) || {};
+  const branchId = accountingWriteBranch(body, existing);
   const payload = {
-    BankId: id, Name: clean(body.Name || body.name), BankName: clean(body.BankName || body.bankName),
-    AccountNumber: clean(body.AccountNumber || body.accountNumber), AccountCode: clean(body.AccountCode || body.accountCode) || '1020',
+    ...existing, BankId: id, BranchId: branchId, Name: clean(body.Name || body.name), BankName: clean(body.BankName || body.bankName),
+    AccountNumber: clean(body.AccountNumber || body.accountNumber), AccountCode: accountCode || '1020',
     OpeningBalance: asMoneyNumber(body.OpeningBalance || body.openingBalance), Active: yesNo(body.Active ?? 'YES') || 'YES',
     UpdatedAt: nowIso(), UpdatedBy: clean(body.RecordedBy || body.recordedBy)
   };
@@ -5284,13 +5304,15 @@ async function saveAccountingBank(env, body) {
 async function saveAccountingReconciliation(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
   const id = clean(body.ReconciliationNo || body.reconciliationNo) || ledgerDocumentId('REC');
+  const existing = (await listCollection(env, 'accountingReconciliations')).find((row) => sameText(row.ReconciliationNo, id) || sameText(row.__id, safeDocumentId(id))) || {};
+  const branchId = accountingWriteBranch(body, existing);
   const statement = asMoneyNumber(body.StatementBalance || body.statementBalance);
   const book = asMoneyNumber(body.BookBalance || body.bookBalance);
   const outstandingDeposits = asMoneyNumber(body.OutstandingDeposits || body.outstandingDeposits);
   const unpresentedPayments = asMoneyNumber(body.UnpresentedPayments || body.unpresentedPayments);
   const chargesAndAdjustments = asMoneyNumber(body.ChargesAndAdjustments || body.chargesAndAdjustments);
   const payload = {
-    ReconciliationNo: id, BankId: clean(body.BankId || body.bankId), AccountCode: clean(body.AccountCode || body.accountCode) || '1020',
+    ...existing, ReconciliationNo: id, BranchId: branchId, BankId: clean(body.BankId || body.bankId), AccountCode: clean(body.AccountCode || body.accountCode) || '1020',
     StatementDate: clean(body.StatementDate || body.statementDate) || nowIso().slice(0, 10),
     StatementBalance: statement, BookBalance: book,
     OutstandingDeposits: outstandingDeposits,
@@ -5440,7 +5462,8 @@ async function saveAccountingVendor(env, body) {
   const name = clean(body.Name || body.name || body.Vendor);
   if (!name) { const err = new Error('Supplier name is required.'); err.status = 400; throw err; }
   const existing = (await listCollection(env, 'accountingVendors')).find((row) => sameText(row.VendorId, vendorId) || sameText(row.__id, safeDocumentId(vendorId))) || {};
-  const payload = { ...existing, VendorId: vendorId, Name: name, ContactPerson: clean(body.ContactPerson), Phone: clean(body.Phone),
+  const branchId = accountingWriteBranch(body, existing);
+  const payload = { ...existing, VendorId: vendorId, BranchId: branchId, Name: name, ContactPerson: clean(body.ContactPerson), Phone: clean(body.Phone),
     Email: clean(body.Email), Address: clean(body.Address), BankName: clean(body.BankName), AccountNumber: clean(body.AccountNumber),
     TaxId: clean(body.TaxId), PaymentTermsDays: asMoneyNumber(body.PaymentTermsDays || 30), Active: yesNo(body.Active ?? 'YES') || 'YES',
     CreatedAt: existing.CreatedAt || nowIso(), UpdatedAt: nowIso(), UpdatedBy: clean(body.RecordedBy) };
@@ -5454,6 +5477,7 @@ async function saveAccountingSupplierBill(env, body) {
   const billNo = clean(body.BillNo || body.billNo) || ledgerDocumentId('BILL');
   const billRows = await listCollection(env, 'accountingSupplierBills');
   const existing = billRows.find((row) => sameText(row.BillNo, billNo) || sameText(row.__id, safeDocumentId(billNo))) || {};
+  const branchId = accountingWriteBranch(body, existing);
   if (['posted', 'part paid', 'paid'].includes(lower(existing.Status))) { const err = new Error('Posted supplier bills are immutable.'); err.status = 409; throw err; }
   const amount = asMoneyNumber(body.Amount || body.amount);
   const status = clean(body.Status || body.status || 'Draft');
@@ -5464,7 +5488,7 @@ async function saveAccountingSupplierBill(env, body) {
     const err = new Error('This supplier invoice reference has already been recorded for the selected supplier.'); err.status = 409; throw err;
   }
   if (['approved', 'posted', 'rejected'].includes(lower(status))) await requireAccountingApprovalLimit(env, body, 'Supplier Bill', amount);
-  const payload = { ...existing, BillNo: billNo, VendorId: clean(body.VendorId), VendorName: clean(body.VendorName || body.Vendor),
+  const payload = { ...existing, BillNo: billNo, BranchId: branchId, VendorId: clean(body.VendorId), VendorName: clean(body.VendorName || body.Vendor),
     InvoiceReference: invoiceReference, Date: clean(body.Date) || nowIso().slice(0, 10),
     DueDate: clean(body.DueDate), Description: clean(body.Description), Amount: amount, PaidAmount: asMoneyNumber(existing.PaidAmount), BalanceAmount: amount - asMoneyNumber(existing.PaidAmount),
     AccountCode: clean(body.AccountCode) || '6090', Department: forcedDepartment || clean(body.Department), CostCentre: clean(body.CostCentre),
@@ -5474,7 +5498,7 @@ async function saveAccountingSupplierBill(env, body) {
   if (lower(status) === 'posted') {
     const journal = await saveAccountingJournal(env, { JournalNo: `SYS-BILL-${safeDocumentId(billNo)}`, Date: payload.Date, Status: 'Posted',
       Description: payload.Description, Reference: payload.InvoiceReference || billNo, Source: 'Supplier Bill', SourceId: billNo,
-      Department: payload.Department, CostCentre: payload.CostCentre, AcademicSession: payload.AcademicSession, Term: payload.Term,
+      BranchId: branchId, Department: payload.Department, CostCentre: payload.CostCentre, AcademicSession: payload.AcademicSession, Term: payload.Term,
       RecordedBy: clean(body.RecordedBy), Lines: [
         { AccountCode: payload.AccountCode, Debit: amount, Credit: 0, Description: payload.Description, Department: payload.Department },
         { AccountCode: '2000', Debit: 0, Credit: amount, Description: payload.VendorName || payload.VendorId }
@@ -5491,6 +5515,7 @@ async function payAccountingSupplierBill(env, body) {
   const billNo = clean(body.BillNo || body.billNo);
   const bill = (await listCollection(env, 'accountingSupplierBills')).find((row) => sameText(row.BillNo, billNo) || sameText(row.__id, safeDocumentId(billNo)));
   if (!bill || !['posted', 'part paid'].includes(lower(bill.Status))) { const err = new Error('Select a posted unpaid supplier bill.'); err.status = 400; throw err; }
+  const branchId = accountingWriteBranch(body, bill);
   const outstanding = Math.max(0, asMoneyNumber(bill.Amount) - asMoneyNumber(bill.PaidAmount));
   const amount = asMoneyNumber(body.Amount || body.amount);
   if (amount <= 0 || amount > outstanding + 0.005) { const err = new Error(`Payment must be between 0 and ${outstanding.toFixed(2)}.`); err.status = 400; throw err; }
@@ -5499,7 +5524,7 @@ async function payAccountingSupplierBill(env, body) {
   const date = clean(body.Date) || nowIso().slice(0, 10);
   const journal = await saveAccountingJournal(env, { JournalNo: `SYS-VPAY-${safeDocumentId(paymentNo)}`, Date: date, Status: 'Posted',
     Description: `Payment to ${clean(bill.VendorName || bill.VendorId)}`, Reference: clean(body.Reference) || paymentNo,
-    Source: 'Supplier Payment', SourceId: paymentNo, RecordedBy: clean(body.RecordedBy), Lines: [
+    Source: 'Supplier Payment', SourceId: paymentNo, BranchId: branchId, RecordedBy: clean(body.RecordedBy), Lines: [
       { AccountCode: '2000', Debit: amount, Credit: 0, Description: billNo },
       { AccountCode: paymentAccount, Debit: 0, Credit: amount, Description: clean(body.Method) || 'Supplier payment' }
     ] }, true);
@@ -5507,7 +5532,7 @@ async function payAccountingSupplierBill(env, body) {
   const updated = { ...bill, PaidAmount: paid, BalanceAmount: Math.max(0, asMoneyNumber(bill.Amount) - paid),
     Status: paid + 0.005 >= asMoneyNumber(bill.Amount) ? 'Paid' : 'Part Paid', LastPaymentAt: date, UpdatedAt: nowIso() };
   await upsertDocument(env, 'accountingSupplierBills', safeDocumentId(billNo), updated);
-  const payment = { PaymentNo: paymentNo, BillNo: billNo, VendorId: clean(bill.VendorId), Date: date, Amount: amount,
+  const payment = { PaymentNo: paymentNo, BillNo: billNo, BranchId: branchId, VendorId: clean(bill.VendorId), Date: date, Amount: amount,
     PaymentAccount: paymentAccount, Method: clean(body.Method), Reference: clean(body.Reference), JournalNo: journal.JournalNo, RecordedBy: clean(body.RecordedBy), RecordedAt: nowIso() };
   await upsertDocument(env, 'accountingSupplierPayments', safeDocumentId(paymentNo), payment);
   await writeAccountingAudit(env, 'PAY', 'Supplier Bill', billNo, body, `${paymentNo}: ${amount}`);
@@ -5518,12 +5543,13 @@ async function saveAccountingAsset(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
   const assetId = clean(body.AssetId || body.assetId) || ledgerDocumentId('AST');
   const existing = (await listCollection(env, 'accountingAssets')).find((row) => sameText(row.AssetId, assetId) || sameText(row.__id, safeDocumentId(assetId))) || {};
+  const branchId = accountingWriteBranch(body, existing);
   const cost = asMoneyNumber(body.Cost || body.cost);
   const residual = asMoneyNumber(body.ResidualValue || body.residualValue);
   const life = Math.max(1, Math.round(asMoneyNumber(body.UsefulLifeMonths || body.usefulLifeMonths || 60)));
   if (!clean(body.Name) || cost <= 0 || residual > cost) { const err = new Error('Asset name, valid cost, and residual value are required.'); err.status = 400; throw err; }
   const accumulated = asMoneyNumber(existing.AccumulatedDepreciation || body.AccumulatedDepreciation);
-  const payload = { ...existing, AssetId: assetId, Name: clean(body.Name), Category: clean(body.Category), AcquisitionDate: clean(body.AcquisitionDate) || nowIso().slice(0, 10),
+  const payload = { ...existing, AssetId: assetId, BranchId: branchId, Name: clean(body.Name), Category: clean(body.Category), AcquisitionDate: clean(body.AcquisitionDate) || nowIso().slice(0, 10),
     Cost: cost, ResidualValue: residual, UsefulLifeMonths: life, MonthlyDepreciation: asMoneyNumber((cost - residual) / life),
     AccumulatedDepreciation: accumulated, NetBookValue: Math.max(residual, cost - accumulated), Location: clean(body.Location), Custodian: clean(body.Custodian),
     SerialNumber: clean(body.SerialNumber), AssetAccount: clean(body.AssetAccount) || '1500', AccumulatedDepreciationAccount: clean(body.AccumulatedDepreciationAccount) || '1600',
@@ -5532,7 +5558,7 @@ async function saveAccountingAsset(env, body) {
   if (yesNo(body.PostAcquisition) === 'YES' && !existing.AcquisitionJournalNo) {
     const journal = await saveAccountingJournal(env, { JournalNo: `SYS-AST-${safeDocumentId(assetId)}`, Date: payload.AcquisitionDate, Status: 'Posted',
       Description: `Asset acquisition: ${payload.Name}`, Reference: clean(body.Reference) || assetId, Source: 'Asset Acquisition', SourceId: assetId,
-      RecordedBy: clean(body.RecordedBy), Lines: [
+      BranchId: branchId, RecordedBy: clean(body.RecordedBy), Lines: [
         { AccountCode: payload.AssetAccount, Debit: cost, Credit: 0, Description: payload.Name },
         { AccountCode: clean(body.PaymentAccount) || '1020', Debit: 0, Credit: cost, Description: clean(body.PaymentMethod) || 'Asset acquisition' }
       ] }, true);
@@ -5548,6 +5574,7 @@ async function postAccountingDepreciation(env, body) {
   const assetId = clean(body.AssetId || body.assetId);
   const asset = (await listCollection(env, 'accountingAssets')).find((row) => sameText(row.AssetId, assetId) || sameText(row.__id, safeDocumentId(assetId)));
   if (!asset || lower(asset.Status) !== 'active') { const err = new Error('Select an active fixed asset.'); err.status = 400; throw err; }
+  const branchId = accountingWriteBranch(body, asset);
   const date = clean(body.Date) || nowIso().slice(0, 10);
   const period = date.slice(0, 7).replace('-', '');
   const remaining = Math.max(0, asMoneyNumber(asset.Cost) - asMoneyNumber(asset.ResidualValue) - asMoneyNumber(asset.AccumulatedDepreciation));
@@ -5556,7 +5583,7 @@ async function postAccountingDepreciation(env, body) {
   const journalNo = `SYS-DEP-${safeDocumentId(assetId)}-${period}`;
   if ((await listCollection(env, 'accountingJournals')).some((row) => sameText(row.JournalNo, journalNo))) { const err = new Error('Depreciation was already posted for this asset and month.'); err.status = 409; throw err; }
   const journal = await saveAccountingJournal(env, { JournalNo: journalNo, Date: date, Status: 'Posted', Description: `Depreciation: ${asset.Name}`,
-    Reference: assetId, Source: 'Depreciation', SourceId: assetId, RecordedBy: clean(body.RecordedBy), Lines: [
+    Reference: assetId, Source: 'Depreciation', SourceId: assetId, BranchId: branchId, RecordedBy: clean(body.RecordedBy), Lines: [
       { AccountCode: clean(asset.DepreciationExpenseAccount) || '6070', Debit: amount, Credit: 0, Description: asset.Name },
       { AccountCode: clean(asset.AccumulatedDepreciationAccount) || '1600', Debit: 0, Credit: amount, Description: asset.Name }
     ] }, true);
@@ -5572,19 +5599,20 @@ async function saveAccountingAdjustment(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer', 'Management']);
   const adjustmentNo = clean(body.AdjustmentNo) || ledgerDocumentId('ADJ');
   const existing = (await listCollection(env, 'accountingAdjustments')).find((row) => sameText(row.AdjustmentNo, adjustmentNo) || sameText(row.__id, safeDocumentId(adjustmentNo))) || {};
+  const branchId = accountingWriteBranch(body, existing);
   if (lower(existing.Status) === 'posted') { const err = new Error('Posted adjustments are immutable.'); err.status = 409; throw err; }
   const amount = asMoneyNumber(body.Amount);
   const type = clean(body.Type || 'Discount');
   const status = clean(body.Status || 'Draft');
   if (!clean(body.AccountRef) || amount <= 0 || !clean(body.Reason)) { const err = new Error('Account, amount, and reason are required.'); err.status = 400; throw err; }
   if (['approved', 'posted', 'rejected'].includes(lower(status))) await requireAccountingApprovalLimit(env, body, 'Concession', amount);
-  const payload = { ...existing, AdjustmentNo: adjustmentNo, Date: clean(body.Date) || nowIso().slice(0, 10), Type: type, AccountRef: clean(body.AccountRef),
+  const payload = { ...existing, AdjustmentNo: adjustmentNo, BranchId: branchId, Date: clean(body.Date) || nowIso().slice(0, 10), Type: type, AccountRef: clean(body.AccountRef),
     DisplayName: clean(body.DisplayName), Amount: amount, Reason: clean(body.Reason), Reference: clean(body.Reference), PaymentAccount: clean(body.PaymentAccount) || '1020',
     Status: status, RequestedBy: existing.RequestedBy || clean(body.RecordedBy), RequestedAt: existing.RequestedAt || nowIso(), UpdatedAt: nowIso() };
   if (lower(status) === 'posted') {
     const isRefund = lower(type).includes('refund');
     const journal = await saveAccountingJournal(env, { JournalNo: `SYS-ADJ-${safeDocumentId(adjustmentNo)}`, Date: payload.Date, Status: 'Posted',
-      Description: `${type}: ${payload.Reason}`, Reference: payload.Reference || adjustmentNo, Source: type, SourceId: adjustmentNo, RecordedBy: clean(body.RecordedBy), Lines: [
+      Description: `${type}: ${payload.Reason}`, Reference: payload.Reference || adjustmentNo, Source: type, SourceId: adjustmentNo, BranchId: branchId, RecordedBy: clean(body.RecordedBy), Lines: [
         { AccountCode: '4100', Debit: amount, Credit: 0, Description: payload.Reason },
         { AccountCode: isRefund ? payload.PaymentAccount : '1100', Debit: 0, Credit: amount, Description: payload.AccountRef }
       ] }, true);
@@ -5654,12 +5682,13 @@ export function buildReceivablesAgeing(invoices, payments, asOf) {
 
 async function importAccountingBankStatement(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
+  const branchId = accountingWriteBranch(body);
   const bankId = clean(body.BankId || body.bankId);
   const accountCode = clean(body.AccountCode || body.accountCode) || '1020';
   const rows = Array.isArray(body.Rows || body.rows) ? (body.Rows || body.rows) : [];
   if (!bankId || !rows.length) { const err = new Error('Bank account and statement rows are required.'); err.status = 400; throw err; }
   if (rows.length > 500) { const err = new Error('Import at most 500 bank statement rows per request.'); err.status = 413; throw err; }
-  const journals = await listCollection(env, 'accountingJournals');
+  const journals = accountingRowsForBranch(await listCollection(env, 'accountingJournals'), branchId);
   const cashMovements = [];
   journals.filter((j) => lower(j.Status) === 'posted').forEach((journal) => accountingLines(journal.Lines).filter((line) => clean(line.AccountCode) === accountCode).forEach((line) => {
     cashMovements.push({ JournalNo: clean(journal.JournalNo), Date: clean(journal.Date).slice(0, 10), Reference: clean(journal.Reference),
@@ -5676,7 +5705,7 @@ async function importAccountingBankStatement(env, body) {
     if (!date || Math.abs(amount) <= 0.005) continue;
     const id = safeDocumentId(`${bankId}-${date}-${reference || index}-${amount.toFixed(2)}`);
     const exact = cashMovements.find((move) => Math.abs(move.Amount - amount) <= 0.005 && ((reference && sameText(move.Reference, reference)) || (!reference && move.Date === date)));
-    const payload = { StatementItemId: id, BankId: bankId, AccountCode: accountCode, Date: date, Reference: reference,
+    const payload = { StatementItemId: id, BranchId: branchId, BankId: bankId, AccountCode: accountCode, Date: date, Reference: reference,
       Description: clean(row.Description || row.description || row.Narration || row.narration), Debit: debit, Credit: credit, Amount: amount,
       Status: exact ? 'Matched' : 'Unmatched', MatchedJournalNo: exact ? exact.JournalNo : '', ImportedAt: nowIso(), ImportedBy: clean(body.RecordedBy) };
     writes.push({ collectionPath: 'accountingBankStatementItems', documentId: id, data: payload });
@@ -5692,8 +5721,10 @@ async function matchAccountingBankStatement(env, body) {
   const itemId = clean(body.StatementItemId);
   const journalNo = clean(body.JournalNo);
   const item = (await listCollection(env, 'accountingBankStatementItems')).find((row) => sameText(row.StatementItemId, itemId) || sameText(row.__id, safeDocumentId(itemId)));
-  const journal = (await listCollection(env, 'accountingJournals')).find((row) => sameText(row.JournalNo, journalNo));
-  if (!item || !journal) { const err = new Error('Statement item or journal was not found.'); err.status = 404; throw err; }
+  if (!item) { const err = new Error('Statement item was not found.'); err.status = 404; throw err; }
+  const branchId = accountingWriteBranch(body, item);
+  const journal = accountingRowsForBranch(await listCollection(env, 'accountingJournals'), branchId).find((row) => sameText(row.JournalNo, journalNo));
+  if (!journal) { const err = new Error('Statement item or journal was not found.'); err.status = 404; throw err; }
   const cashMovement = accountingLines(journal.Lines).filter((line) => sameText(line.AccountCode, item.AccountCode))
     .reduce((sum, line) => sum + asMoneyNumber(line.Debit) - asMoneyNumber(line.Credit), 0);
   if (Math.abs(cashMovement - asMoneyNumber(item.Amount)) > 0.005) {
@@ -5995,6 +6026,8 @@ export function buildGatewayCollectionsReport(
 
 async function getAccountingOverview(env, body = {}) {
   const edition = accountingEditionForRequest(env, body);
+  const branchId = accountingRequestBranch(body);
+  const branchRows = (rows) => accountingRowsForBranch(rows, branchId);
   if (isDepartmentAccountingUser(body)) {
     const department = accountingDepartment(body);
     if (!department) { const err = new Error('A department must be assigned to this user.'); err.status = 403; throw err; }
@@ -6005,9 +6038,9 @@ async function getAccountingOverview(env, body = {}) {
     ]);
     return {
       ok: true, message: `${department} requisitions and bills loaded.`, synchronized: 0,
-      chart: accountingChartForEdition(chart, edition), expenses: expenses.filter((row) => sameText(row.Department, department)),
-      budgets: budgets.filter((row) => sameText(row.Department, department)), vendors,
-      supplierBills: supplierBills.filter((row) => sameText(row.Department, department)),
+      branchId, chart: accountingChartForEdition(chart, edition), expenses: branchRows(expenses).filter((row) => sameText(row.Department, department)),
+      budgets: branchRows(budgets).filter((row) => sameText(row.Department, department)), vendors: branchRows(vendors),
+      supplierBills: branchRows(supplierBills).filter((row) => sameText(row.Department, department)),
       journals: [], banks: [], reconciliations: [], periods: [], audit: [], supplierPayments: [], assets: [], adjustments: [],
       approvalLimits: [], closeChecklist: [], bankStatementItems: [], donations: [], reports: {}
     };
@@ -6031,21 +6064,45 @@ async function getAccountingOverview(env, body = {}) {
     listCollection(env, PAYROLL_TAX_COLLECTIONS.reliefs).catch(() => []), listCollection(env, PAYROLL_TAX_COLLECTIONS.mappings).catch(() => []),
     listChurchDonationsForAccounting(env)
   ]);
+  const scopedJournalsByBranch = branchRows(journals);
+  const scopedExpenses = branchRows(expenses);
+  const scopedBudgets = branchRows(budgets);
+  const scopedBanks = branchRows(banks);
+  const scopedReconciliations = branchRows(reconciliations);
+  const scopedAudit = branchRows(audit);
+  const scopedVendors = branchRows(vendors);
+  const scopedSupplierBills = branchRows(supplierBills);
+  const scopedSupplierPayments = branchRows(supplierPayments);
+  const scopedAssets = branchRows(assets);
+  const scopedAdjustments = branchRows(adjustments);
+  const scopedCloseChecklist = branchRows(closeChecklist);
+  const scopedBankStatementItems = branchRows(bankStatementItems);
+  const scopedInvoices = branchRows(invoices);
+  const scopedPayments = branchRows(payments);
+  const scopedFormSales = branchRows(formSales);
+  const scopedGatewayCharges = branchRows(gatewayCharges);
+  const scopedPayrollProfiles = branchRows(payrollProfiles);
+  const scopedPayrollRuns = branchRows(payrollRuns);
+  const scopedPayrollItems = branchRows(payrollItems);
+  const scopedPayrollPayments = branchRows(payrollPayments);
+  const scopedPayrollAudit = branchRows(payrollAudit);
+  const scopedPayrollTaxOverrides = branchRows(payrollTaxOverrides);
+  const scopedDonations = branchRows(donations);
   const filter = accountingFilter(body);
   const scopedChart = accountingChartForEdition(chart, edition);
-  const scopedJournals = accountingJournalsForEdition(journals, edition);
-  const finalizedPayrollRunIds = new Set(payrollRuns.filter((row) => ['approved', 'posted', 'part paid', 'paid', 'finalized'].includes(lower(row.Status))).map((row) => lower(row.RunId)));
+  const scopedJournals = accountingJournalsForEdition(scopedJournalsByBranch, edition);
+  const finalizedPayrollRunIds = new Set(scopedPayrollRuns.filter((row) => ['approved', 'posted', 'part paid', 'paid', 'finalized'].includes(lower(row.Status))).map((row) => lower(row.RunId)));
   const taxProfileUsage = {};
-  payrollItems.filter((row) => finalizedPayrollRunIds.has(lower(row.RunId))).forEach((row) => { const id = clean(row.TaxProfileId || row.ConfigurationSnapshot?.TaxProfile?.ProfileId); if (id) taxProfileUsage[id] = (taxProfileUsage[id] || 0) + 1; });
+  scopedPayrollItems.filter((row) => finalizedPayrollRunIds.has(lower(row.RunId))).forEach((row) => { const id = clean(row.TaxProfileId || row.ConfigurationSnapshot?.TaxProfile?.ProfileId); if (id) taxProfileUsage[id] = (taxProfileUsage[id] || 0) + 1; });
   const payrollTaxProfilesWithUsage = payrollTaxProfiles.map((row) => ({ ...row, UsageCount: taxProfileUsage[clean(row.ProfileId || row.__id)] || 0 }));
-  const reports = buildAccountingReport(scopedChart, scopedJournals, expenses, budgets, filter, invoices);
-  reports.receivablesAgeing = buildReceivablesAgeing(invoices, payments, filter.DateTo || nowIso().slice(0, 10));
-  reports.payablesAgeing = buildAgeing(supplierBills, filter.DateTo || nowIso().slice(0, 10), 'payable');
-  const gatewayReport = buildGatewayCollectionsReport(formSales, gatewayCharges, filter, payments, donations);
-  return { ok: true, message: 'Finance and accounting records loaded.', synchronized, filter, chart: scopedChart, journals: scopedJournals, expenses, budgets, banks, reconciliations, periods, audit,
-    vendors, supplierBills, supplierPayments, assets, adjustments, approvalLimits, closeChecklist, bankStatementItems,
-    payrollProfiles, payrollRuns, payrollItems, payrollPayments, payrollAudit, payrollTaxProfiles: payrollTaxProfilesWithUsage, payrollTaxOverrides,
-    payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings, donations, gatewayReport, reports };
+  const reports = buildAccountingReport(scopedChart, scopedJournals, scopedExpenses, scopedBudgets, filter, scopedInvoices);
+  reports.receivablesAgeing = buildReceivablesAgeing(scopedInvoices, scopedPayments, filter.DateTo || nowIso().slice(0, 10));
+  reports.payablesAgeing = buildAgeing(scopedSupplierBills, filter.DateTo || nowIso().slice(0, 10), 'payable');
+  const gatewayReport = buildGatewayCollectionsReport(scopedFormSales, scopedGatewayCharges, filter, scopedPayments, scopedDonations);
+  return { ok: true, message: `Finance and accounting records loaded for ${branchId === 'all' ? 'all branches' : `branch ${branchId}`}.`, synchronized, branchId, filter, chart: scopedChart, journals: scopedJournals, expenses: scopedExpenses, budgets: scopedBudgets, banks: scopedBanks, reconciliations: scopedReconciliations, periods, audit: scopedAudit,
+    vendors: scopedVendors, supplierBills: scopedSupplierBills, supplierPayments: scopedSupplierPayments, assets: scopedAssets, adjustments: scopedAdjustments, approvalLimits, closeChecklist: scopedCloseChecklist, bankStatementItems: scopedBankStatementItems,
+    payrollProfiles: scopedPayrollProfiles, payrollRuns: scopedPayrollRuns, payrollItems: scopedPayrollItems, payrollPayments: scopedPayrollPayments, payrollAudit: scopedPayrollAudit, payrollTaxProfiles: payrollTaxProfilesWithUsage, payrollTaxOverrides: scopedPayrollTaxOverrides,
+    payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings, donations: scopedDonations, gatewayReport, reports };
 }
 
 async function getAccountingRequisitionDocument(env, body = {}) {
@@ -6060,7 +6117,7 @@ async function getAccountingRequisitionDocument(env, body = {}) {
     err.status = 400;
     throw err;
   }
-  const record = (await listCollection(env, 'accountingExpenses'))
+  const record = accountingRowsForBranch(await listCollection(env, 'accountingExpenses'), accountingRequestBranch(body))
     .find((row) => sameText(row.ExpenseNo, expenseNo) || sameText(row.__id, safeDocumentId(expenseNo)));
   if (!record) {
     const err = new Error('The selected requisition was not found.');
@@ -6149,7 +6206,8 @@ async function writePayrollAudit(env, action, entityType, entityId, body, detail
   const auditId = ledgerDocumentId('PAYAUD');
   await upsertDocument(env, 'payrollAudit', safeDocumentId(auditId), {
     AuditId: auditId, Timestamp: nowIso(), Action: clean(action), EntityType: clean(entityType), EntityId: clean(entityId),
-    UserRole: clean(body.UserRole || body.userRole), UserName: clean(body.RecordedBy || body.UpdatedBy), Details: clean(details)
+    UserRole: clean(body.UserRole || body.userRole), UserName: clean(body.RecordedBy || body.UpdatedBy),
+    BranchId: accountingWriteBranch(body), Details: clean(details)
   });
 }
 
@@ -6158,17 +6216,18 @@ async function savePayrollProfile(env, body) {
   const employeeId = clean(body.EmployeeId || body.employeeId) || ledgerDocumentId('EMP');
   const profiles = await listCollection(env, 'payrollProfiles');
   const existing = profiles.find((row) => sameText(row.EmployeeId, employeeId) || sameText(row.__id, safeDocumentId(employeeId))) || {};
+  const branchId = accountingWriteBranch(body, existing);
   const username = clean(body.Username || body.username);
   const displayName = clean(body.DisplayName || body.displayName || body.Name);
   const basicSalary = asMoneyNumber(body.BasicSalary || body.basicSalary);
   if (!username || !displayName || basicSalary < 0) {
     const err = new Error('Staff username, display name, and a valid basic salary are required.'); err.status = 400; throw err;
   }
-  if (profiles.some((row) => !sameText(row.EmployeeId, employeeId) && sameText(row.Username, username))) {
+  if (accountingRowsForBranch(profiles, branchId).some((row) => !sameText(row.EmployeeId, employeeId) && sameText(row.Username, username))) {
     const err = new Error('That staff username is already linked to another payroll profile.'); err.status = 409; throw err;
   }
   const payload = {
-    ...existing, EmployeeId: employeeId, Username: username, DisplayName: displayName,
+    ...existing, EmployeeId: employeeId, BranchId: branchId, Username: username, DisplayName: displayName,
     Department: clean(body.Department), Position: clean(body.Position), EmploymentType: clean(body.EmploymentType) || 'Permanent',
     BasicSalary: basicSalary, Allowances: normalizedPayrollComponents(body.Allowances), Deductions: normalizedPayrollComponents(body.Deductions),
     PensionRate: Math.min(100, Math.max(0, asMoneyNumber(body.PensionRate))), TaxRate: Math.min(100, Math.max(0, asMoneyNumber(body.TaxRate))),
@@ -6196,10 +6255,13 @@ async function savePayrollProfile(env, body) {
 
 async function createPayrollProfilesFromStaff(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
-  const [staffUsers, profiles] = await Promise.all([
+  const branchId = accountingRequestBranch(body);
+  const [allStaffUsers, allProfiles] = await Promise.all([
     listCollection(env, 'staffUsers'),
     listCollection(env, 'payrollProfiles')
   ]);
+  const staffUsers = accountingRowsForBranch(allStaffUsers, branchId);
+  const profiles = accountingRowsForBranch(allProfiles, branchId);
   const orderedStaffUsers = [...staffUsers].sort((left, right) =>
     lower(left.Username || left.__id).localeCompare(lower(right.Username || right.__id)));
   const cursor = Math.floor(Math.max(0, Number(body.Cursor || body.cursor || body.StaffOffset || 0) || 0));
@@ -6266,7 +6328,7 @@ async function importPayrollProfiles(env, body) {
   if (cursor >= sourceRows.length) { const err = new Error('The payroll import cursor is outside the supplied rows. Restart from cursor 0.'); err.status = 400; err.code = 'PAYROLL_CURSOR_INVALID'; throw err; }
   const rows = sourceRows.slice(cursor, cursor + PAYROLL_BULK_ACTION_LIMIT);
   const updateExisting = yesNo(body.UpdateExisting ?? body.updateExisting ?? 'YES') === 'YES';
-  const profiles = await listCollection(env, 'payrollProfiles');
+  const profiles = accountingRowsForBranch(await listCollection(env, 'payrollProfiles'), accountingRequestBranch(body));
   const byUsername = new Map(profiles.map((row) => [lower(row.Username), row]).filter(([username]) => username));
   const byEmployeeId = new Map(profiles.map((row) => [lower(row.EmployeeId), row]).filter(([employeeId]) => employeeId));
   const seenUsernames = new Set();
@@ -6323,17 +6385,19 @@ async function importPayrollProfiles(env, body) {
 
 async function requestPayrollTaxOverride(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
+  const branchId = accountingWriteBranch(body);
   const runId = clean(body.RunId); const employeeId = clean(body.EmployeeId); const reason = clean(body.Reason); const overridePaye = asMoneyNumber(body.OverridePaye);
   if (!runId || !employeeId || !reason || overridePaye < 0) { const err = new Error('Run, employee, non-negative override PAYE, and a reason are required.'); err.status = 400; throw err; }
   const [runs, items, overrides] = await Promise.all([listCollection(env, 'payrollRuns'), listCollection(env, 'payrollItems'), listCollection(env, PAYROLL_TAX_COLLECTIONS.overrides).catch(() => [])]);
   const run = runs.find((row) => sameText(row.RunId, runId));
   if (!run || !['draft', 'rejected'].includes(lower(run.Status))) { const err = new Error('Tax overrides can only be requested for Draft or Rejected payroll.'); err.status = 409; throw err; }
+  accountingWriteBranch(body, run);
   const item = items.find((row) => sameText(row.RunId, runId) && sameText(row.EmployeeId, employeeId));
   if (!item || clean(item.CalculationMode).toUpperCase() !== 'CONFIGURABLE_PAYE') { const err = new Error('Generate configurable payroll for this employee before requesting an override.'); err.status = 409; throw err; }
   const overrideId = clean(body.OverrideId) || `TAXOVR-${safeDocumentId(runId)}-${safeDocumentId(employeeId)}`;
   const existing = overrides.find((row) => sameText(row.OverrideId || row.__id, overrideId)) || {};
   if (lower(existing.Status) === 'approved') { const err = new Error('An approved override is immutable. Request a supervised reversal before replacing it.'); err.status = 409; throw err; }
-  const payload = { ...existing, OverrideId: overrideId, RunId: runId, EmployeeId: employeeId, ItemId: clean(item.ItemId), CalculatedPaye: asMoneyNumber(item.CalculatedPaye ?? item.TaxAmount),
+  const payload = { ...existing, OverrideId: overrideId, BranchId: branchId, RunId: runId, EmployeeId: employeeId, ItemId: clean(item.ItemId), CalculatedPaye: asMoneyNumber(item.CalculatedPaye ?? item.TaxAmount),
     OverridePaye: overridePaye, Difference: overridePaye - asMoneyNumber(item.CalculatedPaye ?? item.TaxAmount), Reason: reason, Status: 'Pending',
     RequestedAt: nowIso(), RequestedBy: clean(body.RecordedBy), RequestedByRole: clean(body.UserRole), UpdatedAt: nowIso() };
   delete payload.__id; delete payload.__name;
@@ -6348,9 +6412,10 @@ async function approvePayrollTaxOverride(env, body) {
   if (!overrideId || !['approved', 'rejected'].includes(decision)) { const err = new Error('Override ID and an Approved or Rejected decision are required.'); err.status = 400; throw err; }
   const overrides = await listCollection(env, PAYROLL_TAX_COLLECTIONS.overrides); const existing = overrides.find((row) => sameText(row.OverrideId || row.__id, overrideId));
   if (!existing) { const err = new Error('Tax override request was not found.'); err.status = 404; throw err; }
+  const branchId = accountingWriteBranch(body, existing);
   if (lower(existing.Status) !== 'pending') { const err = new Error('Only a pending tax override can be decided.'); err.status = 409; throw err; }
   if (decision === 'approved' && sameText(existing.RequestedBy, body.RecordedBy)) { const err = new Error('The override requester cannot approve the same request.'); err.status = 403; throw err; }
-  const runs = await listCollection(env, 'payrollRuns'); const run = runs.find((row) => sameText(row.RunId, existing.RunId));
+  const runs = accountingRowsForBranch(await listCollection(env, 'payrollRuns'), branchId); const run = runs.find((row) => sameText(row.RunId, existing.RunId));
   if (!run || !['draft', 'rejected'].includes(lower(run.Status))) { const err = new Error('The payroll is no longer editable, so this override cannot be decided.'); err.status = 409; throw err; }
   const updated = { ...existing, Status: decision === 'approved' ? 'Approved' : 'Rejected', DecisionReason: clean(body.DecisionReason || body.Reason),
     DecidedAt: nowIso(), DecidedBy: clean(body.RecordedBy), DecidedByRole: clean(body.UserRole), UpdatedAt: nowIso() };
@@ -6365,11 +6430,13 @@ async function generatePayrollRun(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
   const month = clean(body.Month || body.month);
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) { const err = new Error('Payroll month must use a valid YYYY-MM format.'); err.status = 400; throw err; }
-  const runId = clean(body.RunId) || `PAY-${month.replace('-', '')}`;
+  const branchId = accountingWriteBranch(body);
+  const runId = clean(body.RunId) || `PAY-${branchId === 'main' ? '' : `${safeDocumentId(branchId)}-`}${month.replace('-', '')}`;
   const runs = await listCollection(env, 'payrollRuns');
   const existing = runs.find((row) => sameText(row.RunId, runId) || sameText(row.__id, safeDocumentId(runId))) || {};
+  accountingWriteBranch(body, existing);
   assertPayrollCanRegenerate(existing);
-  const profiles = (await listCollection(env, 'payrollProfiles')).filter((row) => yesNo(row.Active ?? 'YES') === 'YES');
+  const profiles = accountingRowsForBranch(await listCollection(env, 'payrollProfiles'), branchId).filter((row) => yesNo(row.Active ?? 'YES') === 'YES');
   if (!profiles.length) { const err = new Error('Create at least one active payroll profile first.'); err.status = 400; throw err; }
   if (profiles.length > PAYROLL_GENERATION_PROFILE_LIMIT) {
     const err = new Error(`A payroll run supports at most ${PAYROLL_GENERATION_PROFILE_LIMIT} active profiles per request. Reduce the run scope before generating.`);
@@ -6377,7 +6444,7 @@ async function generatePayrollRun(env, body) {
     err.code = 'PAYROLL_RUN_TOO_LARGE';
     throw err;
   }
-  const existingItems = (await listCollection(env, 'payrollItems')).filter((row) => sameText(row.RunId, runId));
+  const existingItems = accountingRowsForBranch(await listCollection(env, 'payrollItems'), branchId).filter((row) => sameText(row.RunId, runId));
   const usesConfigurablePaye = profiles.some((row) => clean(row.CalculationMode).toUpperCase() === 'CONFIGURABLE_PAYE');
   const configuration = usesConfigurablePaye ? await getPayrollTaxConfiguration(env) : null;
   const payrollDate = clean(body.PayDate) || `${month}-28`; const calculatedItems = []; const errors = [];
@@ -6389,7 +6456,7 @@ async function generatePayrollRun(env, body) {
       const calculation = configurable ? calculateConfigurablePayroll({ employee: profile, configuration, payrollDate, approvedOverride }) : calculateLegacyPayroll(profile);
       const itemId = `${runId}-${clean(profile.EmployeeId)}`;
       const item = {
-        ItemId: itemId, RunId: runId, Month: month, EmployeeId: clean(profile.EmployeeId), Username: clean(profile.Username),
+        ItemId: itemId, RunId: runId, BranchId: branchId, Month: month, EmployeeId: clean(profile.EmployeeId), Username: clean(profile.Username),
         DisplayName: clean(profile.DisplayName), Department: clean(profile.Department), Position: clean(profile.Position), ...calculation,
         PaidAmount: 0, OutstandingAmount: calculation.NetPay, PaymentStatus: 'Unpaid', BankName: clean(profile.BankName),
         AccountName: clean(profile.AccountName), AccountNumber: clean(profile.AccountNumber), SalaryExpenseAccount: clean(profile.SalaryExpenseAccount) || '6000',
@@ -6417,7 +6484,7 @@ async function generatePayrollRun(env, body) {
   const taxProfileIds = [...new Set(calculatedItems.map((item) => clean(item.TaxProfileId)).filter(Boolean))];
   const warnings = calculatedItems.flatMap((item) => (item.CalculationWarnings || []).map((warning) => `${item.DisplayName}: ${warning}`));
   const run = {
-    ...existing, RunId: runId, Month: month, PayDate: payrollDate, Description: clean(body.Description) || `Payroll for ${month}`,
+    ...existing, RunId: runId, BranchId: branchId, Month: month, PayDate: payrollDate, Description: clean(body.Description) || `Payroll for ${month}`,
     Status: 'Draft', EmployeeCount: profiles.length, TotalBasic: totalBasic, TotalAllowances: totalAllowances, TotalGross: totalGross,
     TotalTaxableEarnings: totalTaxable, TotalPension: totalPension, TotalNhf: totalNhf, TotalPaye: totalPaye,
     TotalDeductions: totalDeductions, TotalNet: totalNet, PaidAmount: 0, OutstandingAmount: totalNet,
@@ -6436,6 +6503,7 @@ async function savePayrollRunStatus(env, body) {
   const runs = await listCollection(env, 'payrollRuns');
   const run = runs.find((row) => sameText(row.RunId, runId) || sameText(row.__id, safeDocumentId(runId)));
   if (!run) { const err = new Error('Payroll run was not found.'); err.status = 404; throw err; }
+  const branchId = accountingWriteBranch(body, run);
   const current = lower(run.Status);
   const target = lower(requested);
   const allowed = {
@@ -6447,7 +6515,7 @@ async function savePayrollRunStatus(env, body) {
   const roles = allowed[current] && allowed[current][target];
   if (!roles) { const err = new Error(`Payroll cannot move from ${run.Status} to ${requested}.`); err.status = 409; throw err; }
   requireAccountingRole(body, roles);
-  const runItems = (await listCollection(env, 'payrollItems')).filter((row) => sameText(row.RunId, runId));
+  const runItems = accountingRowsForBranch(await listCollection(env, 'payrollItems'), branchId).filter((row) => sameText(row.RunId, runId));
   if (target === 'submitted') validatePayrollForSubmission(run, runItems);
   const updated = { ...run, Status: requested, UpdatedAt: nowIso(), UpdatedBy: clean(body.RecordedBy) };
   if (target === 'submitted') { updated.SubmittedAt = nowIso(); updated.SubmittedBy = clean(body.RecordedBy); }
@@ -6466,7 +6534,7 @@ async function savePayrollRunStatus(env, body) {
     const mappings = await listCollection(env, PAYROLL_TAX_COLLECTIONS.mappings).catch(() => []);
     const ledger = buildPayrollJournalLines(runItems, mappings, date, run.Description);
     const journal = await saveAccountingJournal(env, { JournalNo: `SYS-PR-${safeDocumentId(runId)}`, Date: date, Status: 'Posted',
-      Description: run.Description, Reference: runId, Source: 'Payroll', SourceId: runId, RecordedBy: clean(body.RecordedBy), Lines: ledger.lines }, true);
+      Description: run.Description, Reference: runId, Source: 'Payroll', SourceId: runId, BranchId: branchId, RecordedBy: clean(body.RecordedBy), Lines: ledger.lines }, true);
     updated.JournalNo = journal.JournalNo; updated.PostedAt = nowIso(); updated.PostedBy = clean(body.RecordedBy); updated.LedgerMappingSnapshot = ledger.mappingSnapshot;
   }
   await upsertDocument(env, 'payrollRuns', safeDocumentId(runId), updated);
@@ -6480,7 +6548,8 @@ async function payPayrollItem(env, body) {
   const items = await listCollection(env, 'payrollItems');
   const item = items.find((row) => sameText(row.ItemId, itemId) || sameText(row.__id, safeDocumentId(itemId)));
   if (!item) { const err = new Error('Payroll item was not found.'); err.status = 404; throw err; }
-  const run = (await listCollection(env, 'payrollRuns')).find((row) => sameText(row.RunId, item.RunId));
+  const branchId = accountingWriteBranch(body, item);
+  const run = accountingRowsForBranch(await listCollection(env, 'payrollRuns'), branchId).find((row) => sameText(row.RunId, item.RunId));
   if (!run || !['posted', 'part paid'].includes(lower(run.Status))) { const err = new Error('Payroll must be posted before salary payment.'); err.status = 409; throw err; }
   const outstanding = Math.max(0, asMoneyNumber(item.NetPay) - asMoneyNumber(item.PaidAmount));
   const amount = asMoneyNumber(body.Amount || outstanding);
@@ -6490,7 +6559,7 @@ async function payPayrollItem(env, body) {
   const paymentAccount = clean(body.PaymentAccount) || '1020';
   const journal = await saveAccountingJournal(env, { JournalNo: `SYS-SALPAY-${safeDocumentId(paymentNo)}`, Date: date, Status: 'Posted',
     Description: `Salary payment: ${clean(item.DisplayName)}`, Reference: clean(body.Reference) || paymentNo,
-    Source: 'Salary Payment', SourceId: paymentNo, RecordedBy: clean(body.RecordedBy), Lines: [
+    Source: 'Salary Payment', SourceId: paymentNo, BranchId: branchId, RecordedBy: clean(body.RecordedBy), Lines: [
       { AccountCode: '2300', Debit: amount, Credit: 0, Description: clean(item.DisplayName) },
       { AccountCode: paymentAccount, Debit: 0, Credit: amount, Description: clean(body.Method) || 'Salary payment' }
     ] }, true);
@@ -6498,11 +6567,11 @@ async function payPayrollItem(env, body) {
   const updatedItem = { ...item, PaidAmount: paid, OutstandingAmount: Math.max(0, asMoneyNumber(item.NetPay) - paid),
     PaymentStatus: paid + 0.005 >= asMoneyNumber(item.NetPay) ? 'Paid' : 'Part Paid', LastPaidAt: date, UpdatedAt: nowIso() };
   await upsertDocument(env, 'payrollItems', safeDocumentId(itemId), updatedItem);
-  const payment = { PaymentNo: paymentNo, RunId: item.RunId, ItemId: itemId, EmployeeId: item.EmployeeId, Username: item.Username,
+  const payment = { PaymentNo: paymentNo, BranchId: branchId, RunId: item.RunId, ItemId: itemId, EmployeeId: item.EmployeeId, Username: item.Username,
     DisplayName: item.DisplayName, Date: date, Amount: amount, PaymentAccount: paymentAccount, Method: clean(body.Method),
     Reference: clean(body.Reference), JournalNo: journal.JournalNo, RecordedBy: clean(body.RecordedBy), RecordedAt: nowIso() };
   await upsertDocument(env, 'payrollPayments', safeDocumentId(paymentNo), payment);
-  const runItems = items.filter((row) => sameText(row.RunId, item.RunId)).map((row) => sameText(row.ItemId, itemId) ? updatedItem : row);
+  const runItems = accountingRowsForBranch(items, branchId).filter((row) => sameText(row.RunId, item.RunId)).map((row) => sameText(row.ItemId, itemId) ? updatedItem : row);
   const runPaid = runItems.reduce((sum, row) => sum + asMoneyNumber(row.PaidAmount), 0);
   const updatedRun = { ...run, PaidAmount: runPaid, OutstandingAmount: Math.max(0, asMoneyNumber(run.TotalNet) - runPaid),
     Status: runPaid + 0.005 >= asMoneyNumber(run.TotalNet) ? 'Paid' : 'Part Paid', UpdatedAt: nowIso() };
