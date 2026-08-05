@@ -20,6 +20,13 @@ import {
   withRoleModules,
   withoutRoleModules
 } from '../lib/role-module-access.js';
+import {
+  activeSeatDelta,
+  activeStaffAccountCount,
+  enforceSubscriptionUserLimit,
+  loadSubscriptionUserLimit,
+  subscriptionUserLimitError
+} from '../lib/subscription-user-limit.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -128,19 +135,6 @@ async function listSecurityAudit(env, actor) {
   }));
 }
 
-async function enforceUserLimit(env, rows, existing, requestedActive) {
-  if (existing || !requestedActive) return;
-  const profile = await getDocument(env, 'settings', 'organisationProfile').catch(() => null);
-  const legacy = await getDocument(env, 'settings', 'schoolProfile').catch(() => null);
-  const limit = Math.max(1, Number(profile?.UserLimit || legacy?.UserLimit || env.USER_LIMIT || 5) || 5);
-  const active = rows.filter((row) => row.Active === undefined || activeValue(row.Active)).length;
-  if (active >= limit) {
-    const err = new Error(`This subscription allows ${limit} active staff account(s). Deactivate an account or upgrade the plan.`);
-    err.status = 409;
-    throw err;
-  }
-}
-
 async function saveUser(env, actor, body) {
   const username = clean(body.Username || body.username);
   if (!username) { const err = new Error('Username is required.'); err.status = 400; throw err; }
@@ -156,7 +150,7 @@ async function saveUser(env, actor, body) {
   ensureRoleAvailable(role, edition);
   const department = clean(body.Department || body.department);
   const active = activeValue(body.Active === undefined ? true : body.Active);
-  await enforceUserLimit(env, rows, existing, active);
+  await enforceSubscriptionUserLimit(env, rows, existing, active);
   if (role === 'Department User' && !department) { const err = new Error('Department is required for a Department User.'); err.status = 400; throw err; }
   if (existing && clean(existing.Role) === 'Super Admin' && activeValue(existing.Active === undefined ? true : existing.Active) &&
       (role !== 'Super Admin' || !active) && activeSuperAdmins(rows, username).length === 0) {
@@ -210,10 +204,8 @@ async function importUsers(env, actor, body) {
   if (!users.length) { const err = new Error('Choose a CSV containing at least one staff row.'); err.status = 400; throw err; }
   const existingRows = await listCollection(env, 'staffUsers');
   const edition = normalizeOrganizationEdition(actor.edition);
-  const profile = await getDocument(env, 'settings', 'organisationProfile').catch(() => null);
-  const legacy = await getDocument(env, 'settings', 'schoolProfile').catch(() => null);
-  const userLimit = Math.max(1, Number(profile?.UserLimit || legacy?.UserLimit || env.USER_LIMIT || 5) || 5);
-  let plannedActive = existingRows.filter((row) => row.Active === undefined || activeValue(row.Active)).length;
+  const userLimit = await loadSubscriptionUserLimit(env);
+  let plannedActive = activeStaffAccountCount(existingRows);
   const existingByName = new Map(existingRows.map((row) => [lower(row.Username || row.__id), row]));
   const writes = []; const failures = []; const seen = new Set();
   for (let index = 0; index < users.length; index += 1) {
@@ -233,10 +225,9 @@ async function importUsers(env, actor, body) {
       const department = clean(row.Department || row.department);
       if (role === 'Department User' && !department) throw new Error('Department is required for a Department User.');
       const requestedActive = activeValue(row.Active === undefined ? true : row.Active);
-      if (!existing && requestedActive && plannedActive >= userLimit) {
-        throw new Error(`Subscription user limit (${userLimit}) reached.`);
-      }
-      if (!existing && requestedActive) plannedActive += 1;
+      const seatDelta = activeSeatDelta(existing, requestedActive);
+      if (seatDelta > 0 && plannedActive >= userLimit) throw subscriptionUserLimitError(userLimit);
+      plannedActive += seatDelta;
       const branchId = enforceActorBranch(
         actor,
         row.BranchId || row.branchId,
