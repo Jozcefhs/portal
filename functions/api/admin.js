@@ -1,7 +1,8 @@
 import { getAccountsOverview } from './backend.js';
 import { listCollection, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
-import { listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
+import { getSchoolStructure, listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
+import { configuredStaffBranches } from '../lib/staff-branch-context.js';
 import { normalizeClassKey } from '../lib/class-names.js';
 import { readJsonBody } from '../lib/request-security.js';
 
@@ -87,6 +88,11 @@ export async function onRequestPost(context) {
       throw err;
     }
     if (shellOnly) {
+      const structure = await getSchoolStructure(env);
+      const configuredBranches = configuredStaffBranches(structure);
+      const branches = user.canSwitchBranches
+        ? configuredBranches
+        : configuredBranches.filter((branch) => branch.id.toLowerCase() === clean(user.assignedBranchId).toLowerCase());
       return Response.json({
         ok: true,
         message: 'Staff workspace ready.',
@@ -95,6 +101,8 @@ export async function onRequestPost(context) {
         summary: {},
         charts: {},
         departments: {},
+        branches,
+        defaultBranchId: clean(structure.ActiveBranchId || configuredBranches[0]?.id || 'main'),
         summaryDeferred: true
       }, { headers: { 'Cache-Control': 'no-store' } });
     }

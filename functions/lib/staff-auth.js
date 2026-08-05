@@ -3,6 +3,8 @@ import { accountingCodeAllowedForEdition } from './accounting-edition-scope.js';
 import { filterSectionsForFeatures, resolveOrganizationConfig } from './organization-config.js';
 import { deploymentIdentityDetails, requiredDeploymentIdentity } from './deployment-identity.js';
 import { configuredModulesForUser, defaultModulesForRole } from './role-module-access.js';
+import { getSchoolStructure } from './school-scope.js';
+import { applyStaffBranchContext } from './staff-branch-context.js';
 
 const encoder = new TextEncoder();
 const SESSION_COOKIE = '__Host-digc_staff_session';
@@ -575,7 +577,12 @@ export async function requireStaffSession(env, request) {
     throw err;
   }
   const access = await staffAccessFor(env, user);
-  return staffUserForAccess(user, access);
+  const requestedBranch = request.headers.get('X-Dynamax-Branch') || '';
+  const needsConfiguredBranchValidation = !clean(user.branchId)
+    && clean(requestedBranch)
+    && lower(requestedBranch) !== 'all';
+  const structure = needsConfiguredBranchValidation ? await getSchoolStructure(env) : {};
+  return applyStaffBranchContext(staffUserForAccess(user, access), requestedBranch, structure);
 }
 
 export function staffSessionCookie(token) {

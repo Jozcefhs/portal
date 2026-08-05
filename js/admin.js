@@ -48,6 +48,8 @@ const editionLabel = document.getElementById('staffEditionLabel');
 const workspaceTitle = document.getElementById('staffWorkspaceTitle');
 const overviewLabel = document.getElementById('staffOverviewLabel');
 const welcomeCopy = document.getElementById('staffWelcomeCopy');
+const branchControl = document.getElementById('staffBranchControl');
+const branchSelector = document.getElementById('staffBranchSelector');
 const mobileNav = document.getElementById('staffMobileNav');
 const moduleDialog = document.getElementById('staffModuleDialog');
 const moduleGrid = document.getElementById('staffModuleGrid');
@@ -76,6 +78,9 @@ let financeDecisionApprovalProof = '';
 let profilePhotoState = '';
 let staffBearerToken = '';
 let staffSessionAbortController = new AbortController();
+let selectedBranchId = 'all';
+let availableBranches = [];
+let branchSwitchInProgress = false;
 let passkeyStatusRequest = null;
 let organizationDepartmentWorkspaceTab = 'overview';
 let organizationDashboardChartsRequest = 0;
@@ -366,13 +371,12 @@ function warmPasskeyCredentialManager() {
 function staffFetch(input, init = {}) {
   const options = { ...init };
   if (!options.signal) options.signal = staffSessionAbortController.signal;
-  if (staffBearerToken) {
-    const requestUrl = new URL(typeof input === 'string' ? input : input.url, window.location.href);
-    if (requestUrl.origin === window.location.origin && requestUrl.pathname.startsWith('/api/')) {
-      const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
-      headers.set('Authorization', `Bearer ${staffBearerToken}`);
-      options.headers = headers;
-    }
+  const requestUrl = new URL(typeof input === 'string' ? input : input.url, window.location.href);
+  if (requestUrl.origin === window.location.origin && requestUrl.pathname.startsWith('/api/')) {
+    const headers = new Headers(options.headers || (input instanceof Request ? input.headers : undefined));
+    headers.set('X-Dynamax-Branch', selectedBranchId || 'all');
+    if (staffBearerToken) headers.set('Authorization', `Bearer ${staffBearerToken}`);
+    options.headers = headers;
   }
   return window.fetch(input, options);
 }
@@ -705,6 +709,9 @@ function clearStaffWorkspaceState() {
   organizationDashboardChartsRequest += 1;
   setSidebarOpen(false);
   staffBearerToken = '';
+  selectedBranchId = 'all';
+  availableBranches = [];
+  branchSwitchInProgress = false;
   currentUser = null;
   dashboardData = null;
   financeData = null;
@@ -751,8 +758,106 @@ function clearStaffWorkspaceState() {
   document.querySelectorAll('dialog[open]').forEach((dialog) => dialog.close());
   displayNameEl.textContent = '';
   roleEl.textContent = '';
+  branchControl.hidden = true;
+  branchSelector.replaceChildren();
+  branchSelector.disabled = false;
   renderProfilePhoto('', 'Staff');
   delete document.documentElement.dataset.edition;
+}
+
+function initializeStaffBranchContext(user = {}) {
+  const assignedBranchId = clean(user.assignedBranchId || user.branchId);
+  selectedBranchId = assignedBranchId || 'all';
+  availableBranches = assignedBranchId
+    ? [{ id: assignedBranchId, name: clean(user.branchName) || assignedBranchId }]
+    : [];
+}
+
+function renderStaffBranchSelector(user = currentUser || {}) {
+  const canSwitch = user.canSwitchBranches === true;
+  branchControl.hidden = !canSwitch;
+  if (!canSwitch) {
+    branchSelector.replaceChildren();
+    return;
+  }
+  const options = [...availableBranches]
+    .filter((branch, index, rows) => branch.id && rows.findIndex((item) => item.id.toLowerCase() === branch.id.toLowerCase()) === index);
+  branchSelector.innerHTML = options
+    .map((branch) => `<option value="${escapeHtml(branch.id)}">${escapeHtml(branch.name)}</option>`)
+    .join('');
+  const activeBranchId = clean(user.activeBranchId || selectedBranchId);
+  selectedBranchId = options.some((branch) => branch.id === activeBranchId)
+    ? activeBranchId
+    : (options[0]?.id || 'all');
+  branchSelector.value = selectedBranchId;
+  branchSelector.disabled = branchSwitchInProgress;
+}
+
+function clearBranchScopedWorkspaceData() {
+  staffSessionAbortController.abort();
+  staffSessionAbortController = new AbortController();
+  dashboardSectionRequests.clear();
+  window.clearTimeout(recordsDeskSearchTimer);
+  recordsDeskAbortController?.abort();
+  recordsDeskAbortController = null;
+  recordsDeskRequest += 1;
+  organizationDashboardChartsRequest += 1;
+  dashboardData = null;
+  financeData = null;
+  staffUsersData = [];
+  staffAuditData = [];
+  staffApprovalAccounts = [];
+  staffRoleAccessData = null;
+  staffRoleAccessSelectedRole = '';
+  humanResourcesData = null;
+  staffAttendanceReportFilters = null;
+  approvalProfile = null;
+  incomeAnalyticsData = null;
+  incomeAnalyticsFilter = { period: 'monthly' };
+  executiveOfficeData = null;
+  executiveDirectoryResults = [];
+  executiveAvailableDirectoryTypes = [];
+  executiveSelectedRecipient = null;
+  studentConductData = null;
+  Object.values(organizationCommerceCarts).forEach((cart) => cart.clear());
+  organizationCommerceLastSale.organizationStore = null;
+  organizationCommerceLastSale.restaurant = null;
+  recordsDeskState = {
+    query: '', type: 'all', availableTypes: [], results: [], totalMatches: 0,
+    truncated: false, selectedKey: '', selectedBranchId: '', detail: null, loading: false, loadingDetail: false, error: ''
+  };
+  summaryEl.replaceChildren();
+  dashboardChartsEl.replaceChildren();
+  panelEl.replaceChildren();
+}
+
+async function switchStaffBranch(nextBranchId) {
+  const next = clean(nextBranchId) || 'all';
+  if (branchSwitchInProgress || next === selectedBranchId) return;
+  const previous = selectedBranchId;
+  branchSwitchInProgress = true;
+  branchSelector.disabled = true;
+  selectedBranchId = next;
+  currentUser = {
+    ...currentUser,
+    branchId: next === 'all' ? '' : next,
+    activeBranchId: next
+  };
+  clearBranchScopedWorkspaceData();
+  setStatus(dashboardStatus, `Switching to ${branchSelector.selectedOptions[0]?.textContent || 'the selected branch'}...`);
+  const loaded = await loadDashboard({ mode: 'shell' });
+  if (!loaded && currentUser) {
+    selectedBranchId = previous;
+    currentUser = {
+      ...currentUser,
+      branchId: previous === 'all' ? '' : previous,
+      activeBranchId: previous
+    };
+    clearBranchScopedWorkspaceData();
+    await loadDashboard({ mode: 'shell' });
+  }
+  branchSwitchInProgress = false;
+  if (currentUser) renderStaffBranchSelector(currentUser);
 }
 
 function showLogin(message = '', type = '') {
@@ -788,7 +893,12 @@ function staffTabLabel(key, fallback = '') {
 }
 
 function showDashboard(user, options = {}) {
-  currentUser = user;
+  currentUser = { ...(currentUser || {}), ...user };
+  if (currentUser.canSwitchBranches === true && selectedBranchId !== 'all') {
+    currentUser.branchId = selectedBranchId;
+    currentUser.activeBranchId = selectedBranchId;
+  }
+  user = currentUser;
   const displayName = user.displayName || user.username || 'Staff';
   const dashboardEdition = resolveDashboardEdition(user);
   const isFaith = ['church', 'faith'].includes(dashboardEdition);
@@ -811,6 +921,7 @@ function showDashboard(user, options = {}) {
       ? 'Monitor departments, meetings, offerings, programs and organisational activity.'
       : 'Monitor records, requests and departmental activity.');
   welcomeTitle.textContent = `Welcome, ${displayName}`;
+  renderStaffBranchSelector(user);
   document.documentElement.dataset.edition = isOrganisationOperations ? 'church' : 'school';
   loginCard.hidden = true;
   identityEl.hidden = false;
@@ -826,6 +937,7 @@ function showDashboard(user, options = {}) {
 }
 
 async function continueAfterAuthentication(user) {
+  initializeStaffBranchContext(user);
   showDashboard(user);
   if (user.mustChangePassword) {
     passwordDialog.showModal();
@@ -894,8 +1006,23 @@ async function loadDashboard(options = {}) {
       return;
     }
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load staff dashboard.');
+    if (Array.isArray(data.branches)) {
+      availableBranches = data.branches.map((branch) => ({
+        id: clean(branch.id || branch.Id),
+        name: clean(branch.name || branch.Name || branch.id || branch.Id)
+      })).filter((branch) => branch.id);
+    }
+    if (data.user?.canSwitchBranches === true && selectedBranchId === 'all') {
+      selectedBranchId = clean(data.defaultBranchId || availableBranches[0]?.id || 'all');
+      data.user = {
+        ...data.user,
+        branchId: selectedBranchId === 'all' ? '' : selectedBranchId,
+        activeBranchId: selectedBranchId
+      };
+    }
     dashboardData = merge ? mergeDashboardResponse(dashboardData, data) : data;
     const dashboardUser = data.user || {};
+    if (clean(dashboardUser.activeBranchId)) selectedBranchId = clean(dashboardUser.activeBranchId);
     currentUser = {
       ...currentUser,
       ...dashboardUser,
@@ -916,11 +1043,13 @@ async function loadDashboard(options = {}) {
     setStatus(dashboardStatus, mode === 'shell'
       ? 'Workspace ready. Records load only when you open a module.'
       : `${staffTabLabel(section, section) || 'Module'} updated.`, 'ok');
+    return true;
   } catch (error) {
     setStatus(dashboardStatus, error.message || String(error), 'bad');
     if (section && activeSection === section) {
       panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
     }
+    return false;
   } finally {
     setDashboardRefreshLoading(false);
   }
@@ -6083,6 +6212,7 @@ function renderIncomeAnalytics(data) {
   const period = data.period || {};
   const options = data.options || {};
   const selectedBranch = data.filter?.branchId || incomeAnalyticsFilter.branchId || '';
+  const selectedBranchLabel = availableBranches.find((branch) => branch.id === selectedBranch)?.name || selectedBranch || 'Current branch';
   const accountOptions = (options.accounts || []).map((row) => ({ ...row, label: `${row.code} - ${row.name}` }));
   const periodButtons = [
     ['daily', 'Daily'],
@@ -6107,7 +6237,7 @@ function renderIncomeAnalytics(data) {
         <form id="incomeAnalyticsFilter" class="income-filter-grid">
           <label>From<input type="date" name="dateFrom" value="${escapeHtml(period.dateFrom)}"></label>
           <label>To<input type="date" name="dateTo" value="${escapeHtml(period.dateTo)}"></label>
-          <label>Branch<select name="branchId">${incomeOptionList(options.branches, '', '', selectedBranch, 'All branches')}</select></label>
+          <label>Branch<select aria-label="Current working branch" disabled><option>${escapeHtml(selectedBranchLabel)}</option></select><input type="hidden" name="branchId" value="${escapeHtml(selectedBranch)}"></label>
           <label>Department<select name="department">${incomeOptionList(options.departments, '', '', incomeAnalyticsFilter.department, 'All departments')}</select></label>
           <label>Income account<select name="accountCode">${incomeOptionList(accountOptions, 'code', 'label', incomeAnalyticsFilter.accountCode, 'All income accounts')}</select></label>
           <label>Payment route<select name="channel">${incomeOptionList(options.channels, '', '', incomeAnalyticsFilter.channel, 'All payment routes')}</select></label>
@@ -9103,6 +9233,7 @@ staffBrand.addEventListener('click', (event) => {
 headerRefreshButton.addEventListener('click', loadDashboard);
 themeToggleButton.addEventListener('click', toggleStaffTheme);
 sidebarThemeToggleButton.addEventListener('click', toggleStaffTheme);
+branchSelector.addEventListener('change', () => switchStaffBranch(branchSelector.value));
 new MutationObserver(updateStaffThemeToggle).observe(document.documentElement, {
   attributes: true,
   attributeFilter: ['data-theme']
