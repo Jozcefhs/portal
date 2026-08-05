@@ -39,3 +39,4 @@ test('visible product logo wrappers have no supplied card background', async () 
     assert.match(source, /images\/Logo\.png\?v=20260801-transparent-app-logo/);
   }
 });
+
