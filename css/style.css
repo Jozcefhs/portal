@@ -2049,18 +2049,18 @@ html[data-theme="dark"] .department-member-onboarding strong { color: #75dfbf; }
 .billing-cycle-toggle input:checked + span { background: #1769e0; color: #fff; box-shadow: 0 2px 7px rgba(23,105,224,.24); }
 .plan-choice-grid { position: relative; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .85rem; }
 .plan-choice-card { --plan-cover: #4f6eff; --plan-strip: #c9d7ff; --plan-sheet: #eef4ff; --plan-accent: #2246b8;
-  position: relative; min-width: 0; overflow: hidden; border: 0; border-radius: 18px; color: #172033; transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease; background: var(--plan-sheet); box-shadow: 0 12px 20px #0f234a1f; }
+  position: relative; isolation: isolate; min-width: 0; overflow: hidden; border: 1px solid transparent; border-radius: 18px; color: #172033; transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease; background: var(--plan-sheet); box-shadow: 0 12px 20px #0f234a1f; }
 .plan-choice-card.selected { border-color: var(--plan-accent); box-shadow: 0 0 0 2px var(--plan-accent), 0 14px 28px #1738ab3f; }
 .plan-choice-card.unavailable { opacity: .68; }
-.plan-choice-card::before { content: ""; position: absolute; inset: 0; background: linear-gradient(170deg, rgba(255,255,255,.45), rgba(255,255,255,0)), linear-gradient(90deg, var(--plan-strip), var(--plan-sheet)); opacity: .95; }
-.plan-choice-card::after { content: ""; position: absolute; left: 8px; top: 8px; bottom: 8px; width: 22px; background: linear-gradient(180deg, #fff 0, var(--plan-cover)); opacity: .65; border-right: 1px solid rgba(255,255,255,.55); }
+.plan-choice-card::before { content: ""; position: absolute; z-index: 0; inset: 0; pointer-events: none; background: linear-gradient(170deg, rgba(255,255,255,.45), rgba(255,255,255,0)), linear-gradient(90deg, var(--plan-strip), var(--plan-sheet)); opacity: .95; }
+.plan-choice-card::after { content: ""; position: absolute; z-index: 0; left: 8px; top: 8px; bottom: 8px; width: 22px; pointer-events: none; background: linear-gradient(180deg, #fff 0, var(--plan-cover)); opacity: .75; border-right: 1px solid rgba(255,255,255,.55); }
 .plan-choice-tag { position: absolute; right: .75rem; top: .65rem; padding: .2rem .45rem; background: #fff; color: #173f96; border-radius: 999px; font-size: 11px; font-weight: 800; border: 1px solid #cbd8ff; box-shadow: 0 3px 8px #234ca30f; z-index: 2; }
-.plan-choice-select { display: block; min-width: 0; margin: 0; cursor: pointer; }
+.plan-choice-select { position: relative; z-index: 1; display: block; min-width: 0; margin: 0; cursor: pointer; }
 .plan-choice-select > input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-.plan-choice-main { display: flex; min-width: 0; min-height: 128px; padding: .8rem; flex-direction: column; gap: .3rem; color: #172033; }
-.plan-choice-main strong { font-size: 16px; }
-.plan-choice-main small { min-height: 34px; color: #56657a; line-height: 1.35; }
-.plan-choice-main b { margin-top: auto; color: #0c745e; font-size: 15px; }
+.plan-choice-main { position: relative; z-index: 1; display: flex; min-width: 0; min-height: 128px; padding: .8rem .8rem .8rem 2.85rem; flex-direction: column; gap: .3rem; color: #172033; }
+.plan-choice-main strong { color: #10253f; font-size: 16px; font-weight: 900; }
+.plan-choice-main small { min-height: 34px; color: #354a63; line-height: 1.35; font-weight: 650; }
+.plan-choice-main b { margin-top: auto; color: #075f4c; font-size: 15px; font-weight: 900; }
 .plan-choice-main b em { color: #66788d; font-size: 11px; font-style: normal; font-weight: 600; }
 .plan-comparison-details { margin-top: .75rem; border: 1px solid #d8e1ec; border-radius: 13px; overflow: hidden; background: #fff; }
 .plan-comparison-details > summary { width: fit-content; margin: .7rem .8rem; color: #0b57d0; cursor: pointer; font-size: 13px; font-weight: 800; }
@@ -2095,9 +2095,12 @@ html[data-theme="dark"] .plan-book-download { background: #2c6af1; }
 html[data-theme="dark"] .plan-book-download:hover { background: #4f83f4; }
 html[data-theme="dark"] .plan-choice-card { background: #0d1a29; color: #edf4ff; box-shadow: 0 12px 20px #00000038; }
 html[data-theme="dark"] .plan-choice-card.selected { border-color: var(--plan-accent); box-shadow: 0 0 0 2px var(--plan-accent), 0 16px 30px #0a1c402c; }
+html[data-theme="dark"] .plan-choice-card::before { filter: brightness(.32) saturate(.9); }
+html[data-theme="dark"] .plan-choice-card::after { opacity: .9; filter: brightness(.72) saturate(.9); }
 html[data-theme="dark"] .plan-choice-tag { background: #0d1a29; color: #9fcbff; border-color: #2f4b7c; }
 html[data-theme="dark"] .plan-choice-main { color: #edf4ff; }
 html[data-theme="dark"] .plan-choice-main small { color: #a8b8cb; }
+html[data-theme="dark"] .plan-choice-main b { color: #79e1bd; }
 html[data-theme="dark"] .plan-comparison-details,
 html[data-theme="dark"] .plan-comparison-scroll,
 html[data-theme="dark"] .plan-comparison-column,

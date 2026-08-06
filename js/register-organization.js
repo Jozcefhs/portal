@@ -204,6 +204,35 @@ function buildPricingBookPrintMarkup() {
 </html>`;
 }
 
+function pricingBookDownloadUrl() {
+  const url = new URL('/api/pricing-book-pdf', window.location.origin);
+  url.searchParams.set('edition', edition());
+  url.searchParams.set('billingCycle', billingCycle());
+  return url;
+}
+
+async function downloadPricingBook() {
+  const response = await fetch(pricingBookDownloadUrl(), {
+    headers: { Accept: 'application/pdf' }
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.message || 'The pricing book could not be downloaded.');
+  }
+  const blob = await response.blob();
+  if (!blob.size || !String(blob.type || '').toLowerCase().includes('pdf')) {
+    throw new Error('The server did not return a valid pricing book PDF.');
+  }
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = `Dynamax_Pricing_Book_${edition()}_${billingCycle()}.pdf`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+
 function renderPlans() {
   const plans = visiblePlans();
   const current = selectedPlanName();
@@ -343,7 +372,7 @@ form.addEventListener('change', (event) => {
   if (['Edition', 'BillingCycle', 'Plan'].includes(event.target?.name)) renderPlans();
 });
 
-downloadPricingBookButton?.addEventListener('click', () => {
+downloadPricingBookButton?.addEventListener('click', async () => {
   const loadingAction = window.DynamaxActionFeedback?.begin?.(downloadPricingBookButton, 'Preparing pricing book...');
   if (loadingAction === false) return;
   try {
@@ -351,12 +380,9 @@ downloadPricingBookButton?.addEventListener('click', () => {
     if (!plans?.length) {
       throw new Error('Pricing data is not available at the moment.');
     }
-    const docHtml = buildPricingBookPrintMarkup();
-    const popup = window.open('', '_blank', 'noopener=yes');
-    if (!popup) throw new Error('Popup blocked. Please allow popups and try again.');
-    popup.document.open();
-    popup.document.write(docHtml);
-    popup.document.close();
+    await downloadPricingBook();
+    statusNode.className = 'status good';
+    statusNode.textContent = 'Pricing book downloaded successfully.';
   } catch (error) {
     statusNode.className = 'status bad';
     statusNode.textContent = error.message || 'Unable to prepare pricing book PDF.';

@@ -91,9 +91,12 @@ test('registration and pricing interfaces expose feature details and recurring c
   ]);
   assert.match(registrationHtml, /name="BillingCycle" value="monthly"/);
   assert.match(registrationHtml, /name="BillingCycle" value="yearly"/);
-  assert.match(registrationHtml, /<summary>Compare all plan features<\/summary>/);
+  assert.match(registrationHtml, /<summary>Open all plan feature chapters<\/summary>/);
   assert.match(registrationJs, /planComparisonGrid\.innerHTML = plans\.map/);
   assert.doesNotMatch(registrationJs, /<summary>View features<\/summary>/);
+  assert.match(registrationJs, /\/api\/pricing-book-pdf/);
+  assert.match(registrationJs, /anchor\.download = `Dynamax_Pricing_Book_/);
+  assert.doesNotMatch(registrationJs, /window\.open\('', '_blank'/);
   assert.match(registrationJs, /window\.location\.assign\(data\.authorizationUrl\)/);
   assert.match(pricingHtml, /Monthly and yearly pricing/);
   assert.match(pricingHtml, /Apply changed prices to existing Paystack subscribers/);
