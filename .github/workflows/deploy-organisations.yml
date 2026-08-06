@@ -45,7 +45,6 @@ jobs:
   deploy:
     name: ${{ matrix.organisation.name }}
     needs: validate
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.MULTI_ORG_DEPLOY_ENABLED == 'true' }}
     strategy:
       fail-fast: false
       max-parallel: 3

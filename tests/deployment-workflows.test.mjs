@@ -64,9 +64,10 @@ test('the reusable workflow deploys indexes and Pages with short-lived, environm
   assert.doesNotMatch(reusable, /FIREBASE_TOKEN|credentials_json|private[_ -]?key/i);
 });
 
-test('the coordinator can deploy one or all organisations without cancelling unaffected tenants', () => {
+test('the coordinator deploys main pushes and can manually target one or all organisations', () => {
   assert.match(coordinator, /workflow_dispatch:/);
-  assert.match(coordinator, /vars\.MULTI_ORG_DEPLOY_ENABLED == 'true'/);
+  assert.match(coordinator, /push:[\s\S]*branches:[\s\S]*- main/);
+  assert.doesNotMatch(coordinator, /MULTI_ORG_DEPLOY_ENABLED/);
   assert.match(coordinator, /organisation-deployment-matrix\.mjs --target/);
   assert.match(coordinator, /fail-fast: false/);
   assert.match(coordinator, /max-parallel: 3/);
