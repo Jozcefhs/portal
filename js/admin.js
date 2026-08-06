@@ -5096,6 +5096,25 @@ function attendanceMinutesLabel(value) {
   return hours ? `${hours}h${remainder ? ` ${remainder}m` : ''}` : `${remainder}m`;
 }
 
+function attendancePresenceStatusText(presenceCheck = {}) {
+  if (presenceCheck.status === 'OVERDUE') return 'Confirmation overdue - this will be flagged for HR review.';
+  if (presenceCheck.status === 'DUE') return 'A random presence confirmation is due now.';
+  if (presenceCheck.status === 'UPCOMING' && presenceCheck.dueAt) {
+    return `Next random confirmation: ${new Date(presenceCheck.dueAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  }
+  return 'No random presence confirmation is currently due.';
+}
+
+function updateAttendancePresenceCard(card, presenceCheck = {}) {
+  if (!card) return;
+  card.classList.toggle('is-overdue', presenceCheck.status === 'OVERDUE');
+  card.classList.toggle('is-due', presenceCheck.status === 'DUE');
+  const detail = card.querySelector('small');
+  if (detail) detail.textContent = attendancePresenceStatusText(presenceCheck);
+  const button = card.querySelector('#staffPresenceButton');
+  if (button) button.disabled = !presenceCheck.canConfirm;
+}
+
 function attendanceReportDefaults() {
   const now = new Date();
   const localDate = (date) => {
@@ -5207,13 +5226,7 @@ async function loadStaffAttendance() {
     const todaySchedule = data.todaySchedule || daySchedules[data.todayAttendanceDay] || {};
     const identityMode = clean(policy.IdentityVerification || 'NONE').toUpperCase();
     const presenceCheck = data.presenceCheck || { enabled: false };
-    const presenceStatusText = presenceCheck.status === 'OVERDUE'
-      ? 'Confirmation overdue - this will be flagged for HR review.'
-      : presenceCheck.status === 'DUE'
-        ? 'A random presence confirmation is due now.'
-        : presenceCheck.status === 'UPCOMING' && presenceCheck.dueAt
-          ? `Next random confirmation: ${new Date(presenceCheck.dueAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-          : 'No random presence confirmation is currently due.';
+    const presenceStatusText = attendancePresenceStatusText(presenceCheck);
     const identityChoice = identityMode === 'PASSKEY_OR_FACE'
       ? `<label>Identity method <select id="staffAttendanceIdentityMethod"><option value="PASSKEY">Device biometric</option><option value="FACE">Live face recognition</option></select></label>`
       : identityMode === 'PASSKEY'
@@ -5518,6 +5531,7 @@ async function loadStaffAttendance() {
       const button = event.currentTarget;
       const status = document.getElementById('staffAttendanceStatus');
       const siteId = clean(document.getElementById('staffAttendanceSite')?.value);
+      let nextPresenceCheck = null;
       if (!siteId) {
         setStatus(status, 'Choose the attendance location before confirming your presence.', 'bad');
         return;
@@ -5532,12 +5546,18 @@ async function loadStaffAttendance() {
           Location: location,
           AttendanceProof: attendanceProof
         });
-        await loadStaffAttendance();
-        setStatus(document.getElementById('staffAttendanceStatus') || dashboardStatus, result.message, 'ok');
+        nextPresenceCheck = result.presenceCheck || {};
+        Object.assign(presenceCheck, nextPresenceCheck);
+        if (latestDaily && result.daily) Object.assign(latestDaily, result.daily);
+        updateAttendancePresenceCard(button.closest('.attendance-presence-check'), nextPresenceCheck);
+        setStatus(status || dashboardStatus, result.message, 'ok');
       } catch (error) {
         setStatus(status, error.message || String(error), 'bad');
       } finally {
-        if (button.isConnected) setButtonLoading(button, false, 'Confirming...', 'Confirm presence');
+        if (button.isConnected) {
+          setButtonLoading(button, false, 'Confirming...', 'Confirm presence');
+          if (nextPresenceCheck) button.disabled = !nextPresenceCheck.canConfirm;
+        }
       }
     });
     document.getElementById('setupAttendancePasskey')?.addEventListener('click', () => passkeySetupButton.click());

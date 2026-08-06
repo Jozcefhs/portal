@@ -823,22 +823,35 @@ export async function recordPresenceCheck(env, user, body = {}, requestContext =
   if (!username) fail('The signed-in staff account has no username.', 401);
   const siteId = safeChurchDocumentId(body.SiteId);
   if (!siteId) fail('Choose the attendance location.');
-  const workspace = await listStaffAttendance(env, user, body);
-  if (workspace.state !== 'CLOCKED_IN') fail('Clock in before confirming your continued presence.', 409);
-  if (!workspace.presenceCheck?.enabled) fail('Random presence confirmations are not enabled for this branch.', 409);
-  if (!workspace.presenceCheck.canConfirm) {
-    fail(`Your next random presence confirmation is not due yet${workspace.presenceCheck.dueAt ? ` (${workspace.presenceCheck.dueAt})` : ''}.`, 409);
+  const storedPolicy = await getDocument(env, attendancePolicyPath(branchId), 'default');
+  const policy = normalizeAttendancePolicy(storedPolicy || { Active: 'NO' });
+  const today = localAttendanceParts(new Date(), policy.TimeZone);
+  const statePath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeState, branchId);
+  const dailyPath = dailyAttendancePath(branchId);
+  const dailyId = dailyAttendanceId(today.date, username);
+  const [site, storedState, existingDaily] = await Promise.all([
+    getDocument(env, churchCollectionPath(CHURCH_COLLECTIONS.staffAttendanceSites, branchId), siteId),
+    getDocument(env, statePath, safeChurchDocumentId(username)),
+    getDocument(env, dailyPath, dailyId)
+  ]);
+  if (!site || !activeValue(site.Active, true)) fail('The selected attendance location is inactive or unavailable.', 404);
+  const attendanceState = clean(existingDaily?.FirstClockIn)
+    ? clean(existingDaily?.LastClockOut) ? 'COMPLETED' : 'CLOCKED_IN'
+    : 'CLOCKED_OUT';
+  if (attendanceState !== 'CLOCKED_IN') fail('Clock in before confirming your continued presence.', 409);
+  const todayState = clean(storedState?.AttendanceDate) === today.date ? storedState : {};
+  const currentPresenceCheck = presenceCheckView(policy, todayState, true);
+  if (!currentPresenceCheck.enabled) fail('Random presence confirmations are not enabled for this branch.', 409);
+  if (!currentPresenceCheck.canConfirm) {
+    fail(`Your next random presence confirmation is not due yet${currentPresenceCheck.dueAt ? ` (${currentPresenceCheck.dueAt})` : ''}.`, 409);
   }
-  const site = workspace.sites.find((row) => safeChurchDocumentId(row.SiteId || row.__id) === siteId);
-  if (!site) fail('The selected attendance location is inactive or unavailable.', 404);
-  const identityMethod = verifiedAttendanceIdentity(workspace.policy, requestContext.identityProof);
+  const identityMethod = verifiedAttendanceIdentity(policy, requestContext.identityProof);
   const presence = evaluateAttendancePresence(site, body.Location || body, requestContext.clientIp || '');
   if (!presence.passed) fail('You appear to be outside the approved premises and network.', 403);
   const timestamp = nowIso();
-  const existingDaily = workspace.myDailyRecords.find((row) => clean(row.Date) === workspace.todayAttendanceDate) || null;
   if (!existingDaily?.FirstClockIn || existingDaily?.LastClockOut) fail('An active attendance day was not found.', 409);
   const { __id: _id, __createTime: _createTime, __updateTime: _updateTime, ...storedDaily } = existingDaily;
-  const overdue = workspace.presenceCheck.status === 'OVERDUE';
+  const overdue = currentPresenceCheck.status === 'OVERDUE';
   const daily = {
     ...storedDaily,
     PresenceCheckCount: Number(existingDaily.PresenceCheckCount || 0) + 1,
@@ -857,7 +870,7 @@ export async function recordPresenceCheck(env, user, body = {}, requestContext =
     Role: clean(user.role || user.Role),
     Direction: 'CHECK',
     Timestamp: timestamp,
-    AttendanceDate: workspace.todayAttendanceDate,
+    AttendanceDate: today.date,
     AttendanceStatus: daily.PresenceStatus,
     SiteId: siteId,
     SiteName: clean(site.Name),
@@ -867,18 +880,18 @@ export async function recordPresenceCheck(env, user, body = {}, requestContext =
     IpFingerprint: await ipFingerprint(requestContext.clientIp || ''),
     ManualOverride: false
   };
-  const nextDueAt = nextPresenceCheckAt(workspace.policy, timestamp);
+  const nextDueAt = nextPresenceCheckAt(policy, timestamp);
   const state = {
     Username: username,
     BranchId: branchId,
     State: 'CLOCKED_IN',
     NextDirection: 'OUT',
-    AttendanceDate: workspace.todayAttendanceDate,
+    AttendanceDate: today.date,
     LastEventId: eventId,
     LastTimestamp: timestamp,
     LastPresenceCheckAt: timestamp,
     NextPresenceCheckDueAt: nextDueAt,
-    PresenceCheckSequence: Number(workspace.presenceCheck.sequence || 0) + 1,
+    PresenceCheckSequence: Number(currentPresenceCheck.sequence || 0) + 1,
     UpdatedAt: timestamp
   };
   await batchCommitDocuments(env, [
@@ -889,23 +902,23 @@ export async function recordPresenceCheck(env, user, body = {}, requestContext =
       exists: false
     },
     {
-      collectionPath: churchCollectionPath(CHURCH_COLLECTIONS.staffTimeState, branchId),
+      collectionPath: statePath,
       documentId: safeChurchDocumentId(username),
       data: state,
-      ...(workspace.stateVersion ? { updateTime: workspace.stateVersion } : { exists: false })
+      ...(storedState?.__updateTime ? { updateTime: storedState.__updateTime } : { exists: false })
     },
     {
-      collectionPath: dailyAttendancePath(branchId),
-      documentId: safeChurchDocumentId(existingDaily.DailyId || existingDaily.__id),
+      collectionPath: dailyPath,
+      documentId: dailyId,
       data: daily,
-      ...(existingDaily.__updateTime ? { updateTime: existingDaily.__updateTime } : {})
+      ...(existingDaily.__updateTime ? { updateTime: existingDaily.__updateTime } : { exists: false })
     }
   ]);
   return {
     ok: true,
     event,
     daily,
-    presenceCheck: { ...presenceCheckView(workspace.policy, state, true), dueAt: nextDueAt },
+    presenceCheck: { ...presenceCheckView(policy, state, true), dueAt: nextDueAt },
     message: overdue
       ? 'Presence confirmed, but the random confirmation window had already expired and was flagged for review.'
       : 'Continued presence confirmed successfully.'

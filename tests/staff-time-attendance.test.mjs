@@ -19,6 +19,14 @@ const portalCss = await readFile(new URL('../css/style.css', import.meta.url), '
 const attendanceSource = await readFile(new URL('../functions/lib/staff-time-attendance.js', import.meta.url), 'utf8');
 const attendanceApiSource = await readFile(new URL('../functions/api/staff-attendance.js', import.meta.url), 'utf8');
 const attendanceFaceSource = await readFile(new URL('../functions/api/staff-attendance-face.js', import.meta.url), 'utf8');
+const presenceHandlerSource = attendanceSource.slice(
+  attendanceSource.indexOf('export async function recordPresenceCheck'),
+  attendanceSource.indexOf('export async function recordManualAttendance')
+);
+const presenceButtonSource = adminJs.slice(
+  adminJs.indexOf("document.getElementById('staffPresenceButton')"),
+  adminJs.indexOf("document.getElementById('setupAttendancePasskey')")
+);
 
 test('geofence distance is calculated in metres', () => {
   assert.ok(haversineDistanceMetres(9.0765, 7.3986, 9.0765, 7.3986) < 1);
@@ -202,6 +210,17 @@ test('attendance UI and API enforce identity and random continued-presence check
   assert.match(attendanceFaceSource, /decryptFaceDescriptor/);
   assert.match(attendanceFaceSource, /createStaffAttendanceProof/);
   assert.match(attendanceFaceSource, /Live face recognition did not match/);
+});
+
+test('continued-presence confirmation uses focused reads and updates the UI without a full reload', () => {
+  assert.doesNotMatch(presenceHandlerSource, /listStaffAttendance|listCollection|queryCollection/);
+  assert.equal((presenceHandlerSource.match(/getDocument\(/g) || []).length, 4);
+  assert.match(presenceHandlerSource, /getDocument\(env, attendancePolicyPath\(branchId\), 'default'\)/);
+  assert.match(presenceHandlerSource, /const \[site, storedState, existingDaily\] = await Promise\.all/);
+  assert.match(presenceHandlerSource, /getDocument\(env, dailyPath, dailyId\)/);
+  assert.match(presenceHandlerSource, /batchCommitDocuments/);
+  assert.doesNotMatch(presenceButtonSource, /loadStaffAttendance\(/);
+  assert.match(presenceButtonSource, /updateAttendancePresenceCard/);
 });
 
 test('attendance policy settings use compact accessible tabs on mobile', () => {
