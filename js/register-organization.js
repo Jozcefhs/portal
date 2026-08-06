@@ -2,8 +2,41 @@ const form = document.getElementById('organisationRegistrationForm');
 const statusNode = document.getElementById('organisationRegistrationStatus');
 const planGrid = document.getElementById('planChoiceGrid');
 const planComparisonGrid = document.getElementById('planComparisonGrid');
+const downloadPricingBookButton = document.getElementById('downloadPricingBook');
 let registrationIdempotencyKey = '';
 let planCatalog = null;
+const planBookThemes = {
+  starter: {
+    sheet: '#f3f7ff',
+    cover: '#2f6ff2',
+    strip: '#c5d7ff',
+    accent: '#173f96'
+  },
+  standard: {
+    sheet: '#f2fbf2',
+    cover: '#2f9b52',
+    strip: '#bfe5c6',
+    accent: '#1d5a34'
+  },
+  professional: {
+    sheet: '#fff6fb',
+    cover: '#9f38d8',
+    strip: '#edc8f7',
+    accent: '#5c1e83'
+  },
+  enterprise: {
+    sheet: '#fff7e8',
+    cover: '#f08a2d',
+    strip: '#ffd8a1',
+    accent: '#8d4f07'
+  }
+};
+const defaultPlanTheme = {
+  sheet: '#f3f7ff',
+  cover: '#4f6eff',
+  strip: '#c9d7ff',
+  accent: '#2246b8'
+};
 
 const fallbackPlans = [
   { Name: 'Starter', Summary: 'Core records for a small team', UserLimit: 5, MonthlyAmount: 0, YearlyAmount: 0, Active: true, FeaturesByEdition: { school: ['Student and admission records', 'Parent portal', 'Records Desk'], faith: ['Member records', 'Services and attendance', 'Departments'], organization: ['People records', 'Departments', 'Records Desk'] } },
@@ -16,6 +49,22 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (character) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[character]);
+}
+
+function normalizePlanName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+}
+
+function planTheme(planName) {
+  return planBookThemes[normalizePlanName(planName)] || defaultPlanTheme;
+}
+
+function visiblePlans() {
+  return planCatalog?.Plans?.length ? planCatalog.Plans : fallbackPlans;
 }
 
 function edition() {
@@ -40,8 +89,123 @@ function selectedPlanName() {
   return form.querySelector('[name="Plan"]:checked')?.value || 'Starter';
 }
 
+function buildPricingBookPrintMarkup() {
+  const plans = visiblePlans();
+  const cycle = billingCycle();
+  const currency = planCatalog?.Currency || 'NGN';
+  const cycleLabel = cycle === 'yearly' ? 'Yearly' : 'Monthly';
+  const selected = selectedPlanName();
+  const currentEdition = edition();
+  const generatedAt = new Date().toLocaleString();
+
+  const themeRows = plans
+    .map((plan) => {
+      const amount = cycle === 'yearly' ? plan.YearlyAmount : plan.MonthlyAmount;
+      const features = (plan.FeaturesByEdition?.[currentEdition] || []).map((feature) => `<li>${escapeHtml(feature)}</li>`).join('');
+      const slug = normalizePlanName(plan.Name);
+      const recommended = slug === 'professional' ? ' (Recommended)' : '';
+      const availability = plan.Active === false ? '<span class="plan-badge unavailable">Unavailable</span>' : '';
+      const userText = plan.Name === 'Enterprise'
+        ? `Up to ${Number(plan.UserLimit || 0).toLocaleString('en-NG')} users or custom`
+        : `${Number(plan.UserLimit || 0).toLocaleString('en-NG')} users`;
+      const priceText = Number(amount) > 0 ? `${escapeHtml(formattedPrice(amount, currency))} / ${cycleLabel}` : 'Price to be confirmed';
+
+      return `<article class="pdf-plan-card ${selected === plan.Name ? 'selected' : ''} ${plan.Active === false ? 'unavailable' : ''}">
+  <header><h1>${escapeHtml(plan.Name)}${escapeHtml(recommended)}</h1><span class="muted">${escapeHtml(userText)}</span>${availability}</header>
+  <p class="pdf-plan-summary">${escapeHtml(plan.Summary || '')}</p>
+  <strong class="pdf-plan-price">${priceText}</strong>
+  <p><strong>Edition:</strong> ${escapeHtml(currentEdition)}</p>
+  <ul>${features || '<li>No feature list provided.</li>'}</ul>
+</article>`;
+    })
+    .join('');
+
+  const comparisonRows = plans
+    .map((plan) => {
+      const amount = cycle === 'yearly' ? plan.YearlyAmount : plan.MonthlyAmount;
+      const features = (plan.FeaturesByEdition?.[currentEdition] || []).map((feature) => `<li>${escapeHtml(feature)}</li>`).join('');
+      const userText = plan.Name === 'Enterprise'
+        ? `Up to ${Number(plan.UserLimit || 0).toLocaleString('en-NG')} users or custom`
+        : `${Number(plan.UserLimit || 0).toLocaleString('en-NG')} users`;
+      return `<tr>
+  <td>${escapeHtml(plan.Name)}</td>
+  <td>${Number(amount) > 0 ? escapeHtml(formattedPrice(amount, currency)) : '—'}</td>
+  <td>${escapeHtml(plan.Active === false ? 'Unavailable' : `${cycleLabel} plan`)}</td>
+  <td>${escapeHtml(userText)}</td>
+</tr>`;
+    })
+    .join('');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pricing Book · Dynamax</title>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;font:12px/1.45 Arial, sans-serif;color:#17314b;background:#f6f9ff}
+    .sheet{max-width:1100px;margin:0 auto;padding:22px}
+    .sheet h1{margin:.08rem 0 .55rem 0;font-size:28px;color:#1a3f70}
+    .sheet p{margin:.15rem 0}
+    .sheet small{display:block;color:#65778f;margin-bottom:15px}
+    .toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;border:1px solid #d7e2ee;border-radius:12px;padding:10px 12px;background:#eef4ff;margin:8px 0 14px}
+    .toolbar p{margin:0}
+    .pdf-plan-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+    .pdf-plan-card{border:1px solid #d9e4f4;background:#fff;padding:12px;border-radius:12px}
+    .pdf-plan-card.selected{border-color:#1769e0;box-shadow:0 8px 18px #1738ab33}
+    .pdf-plan-card.unavailable{opacity:.72}
+    .pdf-plan-card h1{font-size:18px;margin:.1rem 0 .5rem}
+    .pdf-plan-card .muted{font-size:11px;color:#687d97}
+    .pdf-plan-summary{min-height:36px;color:#3b516a}
+    .pdf-plan-price{display:block;color:#0c745e;margin:.5rem 0;font-size:16px}
+    .pdf-plan-card ul{margin:.35rem 0 0 .9rem;padding:0}
+    .pdf-plan-card li{line-height:1.45}
+    .plan-badge{display:inline-block;margin-left:8px;padding:2px 7px;border-radius:999px;background:#173f96;color:#fff;font-size:10px;font-weight:700}
+    .plan-badge.unavailable{background:#7d8ea5}
+    .feature-table{margin-top:14px;border:1px solid #d9e5f5;background:#fff;border-radius:12px;overflow:hidden}
+    .feature-table table{width:100%;border-collapse:collapse}
+    .feature-table th,.feature-table td{padding:9px 10px;border-bottom:1px solid #e1e9f3;text-align:left;vertical-align:top}
+    .feature-table thead{background:#f0f5fb}
+    .feature-table th{font-size:10px;letter-spacing:.2px;text-transform:uppercase}
+    .footer-note{margin-top:12px;font-size:10px;color:#667e98}
+    .print-action{display:none}
+    @page{size:A4;margin:10mm}
+    @media print{.print-action{display:none}}
+    .plan-book-footer{display:grid;gap:4px;font-size:10px;color:#65778f}
+    @media (max-width:900px){.sheet{padding:14px}.pdf-plan-grid{grid-template-columns:1fr 1fr}}
+  </style>
+</head>
+<body>
+  <main class="sheet">
+    <h1>Pricing Book</h1>
+    <small>Dynamax plan catalogue · Generated ${escapeHtml(generatedAt)}</small>
+    <section class="toolbar">
+      <p>Billing cycle selected: <strong>${escapeHtml(cycleLabel)}</strong> · Edition context: <strong>${escapeHtml(currentEdition)}</strong> · Default currency: <strong>${escapeHtml(currency)}</strong></p>
+    </section>
+    <div class="pdf-plan-grid">
+      ${themeRows}
+    </div>
+    <section class="feature-table">
+      <table>
+        <thead><tr><th>Plan</th><th>Price</th><th>Availability</th><th>Users</th></tr></thead>
+        <tbody>${comparisonRows}</tbody>
+      </table>
+    </section>
+    <div class="plan-book-footer">
+      <div class="footer-note">For purchase and onboarding questions, contact the Dynamax support team.</div>
+      <div class="footer-note">Generated by Dynamax · Pricing is subject to change.</div>
+    </div>
+  </main>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => setTimeout(() => window.print(), 220));
+  </script>
+</body>
+</html>`;
+}
+
 function renderPlans() {
-  const plans = planCatalog?.Plans?.length ? planCatalog.Plans : fallbackPlans;
+  const plans = visiblePlans();
   const current = selectedPlanName();
   const cycle = billingCycle();
   const currentEdition = edition();
@@ -51,12 +215,19 @@ function renderPlans() {
     const amount = cycle === 'yearly' ? plan.YearlyAmount : plan.MonthlyAmount;
     const selected = plan.Name === selectedName;
     const active = plan.Active !== false;
+    const slug = normalizePlanName(plan.Name);
+    const theme = planTheme(plan.Name);
+    const recommended = slug === 'professional';
+    const cardClass = ['plan-choice-card', `plan-${slug}`, active ? '' : 'unavailable', selected ? 'selected' : '']
+      .filter(Boolean)
+      .join(' ');
     const userText = plan.Name === 'Enterprise'
       ? `Up to ${Number(plan.UserLimit || 0).toLocaleString('en-NG')} users or custom`
       : `${Number(plan.UserLimit || 0).toLocaleString('en-NG')} users`;
     const period = Number(amount) > 0 ? `<em> / ${cycle === 'yearly' ? 'year' : 'month'}</em>` : '';
-    return `<article class="plan-choice-card${selected ? ' selected' : ''}${active ? '' : ' unavailable'}">
+    return `<article class="${cardClass}" style="--plan-sheet:${theme.sheet}; --plan-cover:${theme.cover}; --plan-strip:${theme.strip}; --plan-accent:${theme.accent};">
       <label class="plan-choice-select">
+        ${recommended ? '<span class="plan-choice-tag" aria-hidden="true">Recommended</span>' : ''}
         <input type="radio" name="Plan" value="${escapeHtml(plan.Name)}" ${selected ? 'checked' : ''} ${active ? '' : 'disabled'}>
         <span class="plan-choice-main"><strong>${escapeHtml(plan.Name)}</strong><small>${escapeHtml(userText)} · ${escapeHtml(plan.Summary)}</small><b>${active ? `${escapeHtml(formattedPrice(amount, planCatalog?.Currency || 'NGN'))}${period}` : 'Currently unavailable'}</b></span>
       </label>
@@ -65,11 +236,16 @@ function renderPlans() {
   planComparisonGrid.innerHTML = plans.map((plan) => {
     const amount = cycle === 'yearly' ? plan.YearlyAmount : plan.MonthlyAmount;
     const features = plan.FeaturesByEdition?.[currentEdition] || [];
+    const slug = normalizePlanName(plan.Name);
+    const theme = planTheme(plan.Name);
+    const compareClass = ['plan-comparison-column', `plan-${slug}`, plan.Active === false ? 'unavailable' : '']
+      .filter(Boolean)
+      .join(' ');
     const userText = plan.Name === 'Enterprise'
       ? `Up to ${Number(plan.UserLimit || 0).toLocaleString('en-NG')} users or custom`
       : `${Number(plan.UserLimit || 0).toLocaleString('en-NG')} active users`;
     const period = Number(amount) > 0 ? ` per ${cycle === 'yearly' ? 'year' : 'month'}` : '';
-    return `<article class="plan-comparison-column${plan.Active === false ? ' unavailable' : ''}">
+    return `<article class="${compareClass}" style="--plan-sheet:${theme.sheet}; --plan-cover:${theme.cover}; --plan-strip:${theme.strip}; --plan-accent:${theme.accent};">
       <header><h3>${escapeHtml(plan.Name)}</h3><strong>${escapeHtml(formattedPrice(amount, planCatalog?.Currency || 'NGN'))}${escapeHtml(period)}</strong><small>${escapeHtml(userText)}</small></header>
       <ul>${features.map((feature) => `<li>${escapeHtml(feature)}</li>`).join('')}</ul>
     </article>`;
@@ -165,6 +341,28 @@ form.addEventListener('input', () => {
 
 form.addEventListener('change', (event) => {
   if (['Edition', 'BillingCycle', 'Plan'].includes(event.target?.name)) renderPlans();
+});
+
+downloadPricingBookButton?.addEventListener('click', () => {
+  const loadingAction = window.DynamaxActionFeedback?.begin?.(downloadPricingBookButton, 'Preparing pricing book...');
+  if (loadingAction === false) return;
+  try {
+    const plans = visiblePlans();
+    if (!plans?.length) {
+      throw new Error('Pricing data is not available at the moment.');
+    }
+    const docHtml = buildPricingBookPrintMarkup();
+    const popup = window.open('', '_blank', 'noopener=yes');
+    if (!popup) throw new Error('Popup blocked. Please allow popups and try again.');
+    popup.document.open();
+    popup.document.write(docHtml);
+    popup.document.close();
+  } catch (error) {
+    statusNode.className = 'status bad';
+    statusNode.textContent = error.message || 'Unable to prepare pricing book PDF.';
+  } finally {
+    if (loadingAction) window.DynamaxActionFeedback?.end?.(downloadPricingBookButton);
+  }
 });
 
 loadPlans();

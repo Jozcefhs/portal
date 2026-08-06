@@ -7,7 +7,7 @@
   <title>Register your organisation — Dynamax</title>
   <link rel="icon" href="images/Logo.png">
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260805-plan-comparison">
+  <link rel="stylesheet" href="css/style.css?v=20260806-pricing-book">
 </head>
 <body class="auth-page">
   <main class="auth-shell">
@@ -28,16 +28,21 @@
               <label><input type="radio" name="BillingCycle" value="yearly"><span>Yearly</span></label>
             </fieldset>
           </div>
-          <p class="plan-selection-help">Select one of the four plans. Open the comparison once to review every plan together.</p>
-          <div class="plan-choice-grid" id="planChoiceGrid" aria-live="polite">
-            <p class="muted">Loading current plans and pricing...</p>
+          <div class="plan-book-toolbar">
+            <p class="plan-selection-help">Browse the pricing book and choose the plan that best fits your organisation.</p>
+            <button type="button" id="downloadPricingBook" class="plan-book-download">Download pricing book (PDF)</button>
           </div>
-          <details class="plan-comparison-details" id="planComparisonDetails">
-            <summary>Compare all plan features</summary>
-            <div class="plan-comparison-scroll" tabindex="0" aria-label="Plan feature comparison">
-              <div class="plan-comparison-grid" id="planComparisonGrid"></div>
+          <section class="plan-book-spread" aria-label="Pricing plan book">
+            <div class="plan-choice-grid" id="planChoiceGrid" aria-live="polite">
+              <p class="muted">Loading current plans and pricing...</p>
             </div>
-          </details>
+            <details class="plan-comparison-details" id="planComparisonDetails">
+              <summary>Open all plan feature chapters</summary>
+              <div class="plan-comparison-scroll" tabindex="0" aria-label="Plan feature comparison">
+                <div class="plan-comparison-grid" id="planComparisonGrid"></div>
+              </div>
+            </details>
+          </section>
         </div>
         <label class="inline-check full-width"><input type="checkbox" name="Consent" value="YES" required> I confirm that I am authorised to register this organisation.</label>
         <button type="submit">Submit registration</button><a class="settings-link" href="index.html">Back to Dynamax</a>
@@ -47,6 +52,6 @@
   </main>
   <script src="js/site-config.js?v=20260728-quota-safety"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
-  <script src="js/register-organization.js?v=20260805-plan-comparison"></script>
+  <script src="js/register-organization.js?v=20260806-pricing-book-pdf"></script>
 </body>
 </html>
