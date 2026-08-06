@@ -381,6 +381,9 @@ function staffFetch(input, init = {}) {
   return window.fetch(input, options);
 }
 
+// Dynamic staff-portal modules use the same bearer session and active branch context.
+window.DynamaxStaffFetch = staffFetch;
+
 function base64UrlToBytes(value) {
   const normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
   const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
@@ -477,6 +480,33 @@ async function passkeyRequest(action, extra = {}) {
   const data = await response.json().catch(() => ({ ok: false, message: 'Biometric sign-in did not return JSON.' }));
   if (!response.ok || !data.ok) throw new Error(data.message || 'Biometric sign-in failed.');
   return data;
+}
+
+async function attendancePasskeyProof(siteId, direction) {
+  const started = await passkeyRequest('attendance-options', { siteId, direction });
+  const credential = await getPasskeyCredential(started.options);
+  if (!credential) throw new Error('No biometric credential was returned.');
+  const completed = await passkeyRequest('attendance-verify', {
+    ceremonyId: started.ceremonyId,
+    credential: credentialToJSON(credential)
+  });
+  const proof = clean(completed.attendanceProof);
+  if (!proof) throw new Error('Biometric verification did not return an attendance proof.');
+  return proof;
+}
+
+async function attendanceIdentityProof(policy, siteId, direction) {
+  const required = clean(policy?.IdentityVerification || 'NONE').toUpperCase();
+  if (required === 'NONE') return '';
+  const choice = clean(document.getElementById('staffAttendanceIdentityMethod')?.value).toUpperCase();
+  const method = required === 'PASSKEY_OR_FACE' ? choice || 'PASSKEY' : required;
+  if (method === 'PASSKEY') return attendancePasskeyProof(siteId, direction);
+  const module = await import('./student-face-lookup.js?v=20260806-staff-attendance-face');
+  const result = await module.captureStaffAttendanceFace({ mode: 'verify', siteId, direction });
+  if (!result) throw new Error('Face verification was cancelled.');
+  const proof = clean(result.attendanceProof);
+  if (!proof) throw new Error('Face recognition did not return an attendance proof.');
+  return proof;
 }
 
 function friendlyPasskeyError(error) {
@@ -4975,10 +5005,30 @@ async function loadStaffAttendance() {
     const sites = data.sites || [];
     const configuredSites = data.configuredSites || sites;
     const stateIn = data.state === 'CLOCKED_IN';
+    const stateComplete = data.state === 'COMPLETED';
     const nextDirection = data.nextDirection || (stateIn ? 'OUT' : 'IN');
     const capabilities = data.capabilities || {};
     const policy = data.policy || {};
     const workDays = Array.isArray(policy.WorkDays) ? policy.WorkDays : [];
+    const attendanceDays = [['MON', 'Monday'], ['TUE', 'Tuesday'], ['WED', 'Wednesday'], ['THU', 'Thursday'], ['FRI', 'Friday'], ['SAT', 'Saturday'], ['SUN', 'Sunday']];
+    const daySchedules = policy.DaySchedules || {};
+    const todaySchedule = data.todaySchedule || daySchedules[data.todayAttendanceDay] || {};
+    const identityMode = clean(policy.IdentityVerification || 'NONE').toUpperCase();
+    const presenceCheck = data.presenceCheck || { enabled: false };
+    const presenceStatusText = presenceCheck.status === 'OVERDUE'
+      ? 'Confirmation overdue - this will be flagged for HR review.'
+      : presenceCheck.status === 'DUE'
+        ? 'A random presence confirmation is due now.'
+        : presenceCheck.status === 'UPCOMING' && presenceCheck.dueAt
+          ? `Next random confirmation: ${new Date(presenceCheck.dueAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+          : 'No random presence confirmation is currently due.';
+    const identityChoice = identityMode === 'PASSKEY_OR_FACE'
+      ? `<label>Identity method <select id="staffAttendanceIdentityMethod"><option value="PASSKEY">Device biometric</option><option value="FACE">Live face recognition</option></select></label>`
+      : identityMode === 'PASSKEY'
+        ? '<input id="staffAttendanceIdentityMethod" type="hidden" value="PASSKEY"><small>Device biometric verification is required.</small>'
+        : identityMode === 'FACE'
+          ? '<input id="staffAttendanceIdentityMethod" type="hidden" value="FACE"><small>Live face recognition is required.</small>'
+          : '<input id="staffAttendanceIdentityMethod" type="hidden" value="NONE"><small>Location or approved network verification is required.</small>';
     const myDailyRecords = data.myDailyRecords || [];
     const latestDaily = myDailyRecords.find((row) => clean(row.Date) === clean(data.todayAttendanceDate)) || null;
     const scheduleActive = clean(policy.Active).toUpperCase() !== 'NO';
@@ -4991,18 +5041,21 @@ async function loadStaffAttendance() {
         <button type="button" id="refreshStaffAttendance">Refresh</button>
       </div>
       <div class="workflow-kpis">
-        <div><small>Current state</small><strong>${stateIn ? 'Clocked in' : 'Clocked out'}</strong><span>${data.myEvents?.[0]?.Timestamp ? escapeHtml(new Date(data.myEvents[0].Timestamp).toLocaleString()) : 'No attendance event yet'}</span></div>
+        <div><small>Current state</small><strong>${stateComplete ? 'Completed' : stateIn ? 'Clocked in' : 'Clocked out'}</strong><span>${data.myEvents?.[0]?.Timestamp ? escapeHtml(new Date(data.myEvents[0].Timestamp).toLocaleString()) : 'No attendance event yet'}</span></div>
         <div><small>Today's status</small><strong>${escapeHtml(latestDaily?.AttendanceStatus || 'No record')}</strong><span>${latestDaily?.Date ? escapeHtml(latestDaily.Date) : scheduleActive ? 'Awaiting today’s clock-in' : 'Work-hours policy not enabled'}</span></div>
-        <div><small>Late today</small><strong>${attendanceMinutesLabel(latestDaily?.LateMinutes)}</strong><span>${policy.ResumptionTime ? `Resumption ${escapeHtml(policy.ResumptionTime)} · ${Number(policy.GraceMinutes || 0)}m grace` : 'Set daily work hours'}</span></div>
-        <div><small>Overtime today</small><strong>${attendanceMinutesLabel(latestDaily?.OvertimeMinutes)}</strong><span>${policy.ClosingTime ? `Closing ${escapeHtml(policy.ClosingTime)}` : 'Set daily work hours'}</span></div>
+        <div><small>Late today</small><strong>${attendanceMinutesLabel(latestDaily?.LateMinutes)}</strong><span>${todaySchedule.ResumptionTime ? `Resumption ${escapeHtml(todaySchedule.ResumptionTime)} · ${Number(policy.GraceMinutes || 0)}m grace` : 'Not a configured work day'}</span></div>
+        <div><small>Overtime today</small><strong>${attendanceMinutesLabel(latestDaily?.OvertimeMinutes)}</strong><span>${todaySchedule.ClosingTime ? `Closing ${escapeHtml(todaySchedule.ClosingTime)}` : 'Not a configured work day'}</span></div>
         <div><small>Approved locations</small><strong>${sites.length}</strong><span>Geofence or organisation network</span></div>
       </div>
       <section class="attendance-clock-card ${stateIn ? 'is-clocked-in' : ''}">
-        <div><p class="eyebrow">My attendance</p><h3>${stateIn ? 'Ready to clock out?' : 'Ready to clock in?'}</h3><p>${scheduleActive ? `Work hours: ${escapeHtml(policy.ResumptionTime)}–${escapeHtml(policy.ClosingTime)} on ${escapeHtml(workDays.join(', '))}. ` : ''}Your precise coordinates are used only to validate your distance and are not stored in the attendance record.</p></div>
+        <div><p class="eyebrow">My attendance</p><h3>${stateComplete ? 'Attendance completed for today' : stateIn ? 'Ready to clock out?' : 'Ready to clock in?'}</h3><p>${scheduleActive && todaySchedule.Enabled ? `Today: ${escapeHtml(todaySchedule.ResumptionTime)}-${escapeHtml(todaySchedule.ClosingTime)}. ` : ''}Your precise coordinates are used only to validate your distance and are not stored in the attendance record. The first successful clock-in and clock-out cannot be replaced by repeated attempts.</p></div>
         <div class="attendance-clock-controls">
           <label>Location <select id="staffAttendanceSite"><option value="">Choose location</option>${sites.map((site) => `<option value="${escapeHtml(site.SiteId || site.__id)}">${escapeHtml(site.Name)}</option>`).join('')}</select></label>
-          <button type="button" id="staffClockButton" ${sites.length ? '' : 'disabled'}>${nextDirection === 'IN' ? 'Clock in' : 'Clock out'}</button>
+          ${identityChoice}
+          <button type="button" id="staffClockButton" ${sites.length && !stateComplete ? '' : 'disabled'}>${stateComplete ? 'Completed' : nextDirection === 'IN' ? 'Clock in' : 'Clock out'}</button>
         </div>
+        ${identityMode !== 'NONE' ? `<div class="attendance-security-actions"><button type="button" class="secondary" id="setupAttendancePasskey">Set up device biometric</button>${identityMode.includes('FACE') ? '<button type="button" class="secondary" id="enrollAttendanceFace">Enroll my face</button><button type="button" class="secondary danger" id="removeAttendanceFace">Remove face enrollment</button>' : ''}</div>` : ''}
+        ${presenceCheck.enabled && stateIn ? `<div class="attendance-presence-check ${presenceCheck.status === 'OVERDUE' ? 'is-overdue' : presenceCheck.status === 'DUE' ? 'is-due' : ''}"><div><strong>Random presence confirmation</strong><small>${escapeHtml(presenceStatusText)}</small></div><button type="button" id="staffPresenceButton" ${presenceCheck.canConfirm ? '' : 'disabled'}>Confirm presence</button></div>` : ''}
         <p class="status" id="staffAttendanceStatus"></p>
       </section>
       ${table('My daily attendance', myDailyRecords, [
@@ -5013,11 +5066,13 @@ async function loadStaffAttendance() {
         { label: 'Late', value: (row) => attendanceMinutesLabel(row.LateMinutes) },
         { label: 'Left early', value: (row) => attendanceMinutesLabel(row.EarlyDepartureMinutes) },
         { label: 'Overtime', value: (row) => attendanceMinutesLabel(row.OvertimeMinutes) },
-        { label: 'Worked', value: (row) => attendanceMinutesLabel(row.WorkMinutes) }
+        { label: 'Worked', value: (row) => attendanceMinutesLabel(row.WorkMinutes) },
+        { label: 'Presence checks', value: (row) => Number(row.PresenceCheckCount || 0) },
+        { label: 'Missed checks', value: (row) => Number(row.MissedPresenceChecks || 0) }
       ])}
       ${table('My attendance history', data.myEvents || [], [
         { label: 'Time', value: (row) => row.Timestamp },
-        { label: 'Action', value: (row) => row.Direction === 'IN' ? 'Clock in' : 'Clock out' },
+        { label: 'Action', value: (row) => row.Direction === 'CHECK' ? 'Presence check' : row.Direction === 'IN' ? 'Clock in' : 'Clock out' },
         { label: 'Status', value: (row) => row.AttendanceStatus },
         { label: 'Location', value: (row) => row.SiteName },
         { label: 'Verified by', value: (row) => row.VerificationMethod },
@@ -5026,15 +5081,20 @@ async function loadStaffAttendance() {
       ${capabilities.canManage ? `<section class="config-group">
         <header><strong>Daily work hours</strong><small>After the configured closing time, active staff without a clock-in are marked absent automatically. Approved leave is recorded separately.</small></header>
         <form id="staffAttendancePolicyForm" class="workflow-form config-form">
+          <input name="ResumptionTime" type="hidden" value="${escapeHtml(policy.ResumptionTime || '08:00')}">
+          <input name="ClosingTime" type="hidden" value="${escapeHtml(policy.ClosingTime || '17:00')}">
           <div class="config-grid">
-            <label>Daily resumption time <input name="ResumptionTime" type="time" value="${escapeHtml(policy.ResumptionTime || '08:00')}" required></label>
-            <label>Daily closing time <input name="ClosingTime" type="time" value="${escapeHtml(policy.ClosingTime || '17:00')}" required></label>
             <label>Grace period (minutes) <input name="GraceMinutes" type="number" min="0" max="180" value="${Number(policy.GraceMinutes ?? 15)}" required></label>
             <label>Minimum overtime (minutes) <input name="OvertimeMinimumMinutes" type="number" min="0" max="240" value="${Number(policy.OvertimeMinimumMinutes ?? 15)}" required></label>
             <label>Time zone <input name="TimeZone" value="${escapeHtml(policy.TimeZone || 'Africa/Lagos')}" required></label>
             <label>Policy status <select name="Active"><option value="YES"${selectedOption(policy.Active, 'YES')}>Enabled</option><option value="NO"${selectedOption(policy.Active, 'NO')}>Disabled</option></select></label>
+            <label>Clock identity verification <select name="IdentityVerification"><option value="NONE"${selectedOption(identityMode, 'NONE')}>Location/network only</option><option value="PASSKEY"${selectedOption(identityMode, 'PASSKEY')}>Device biometric required</option><option value="FACE"${selectedOption(identityMode, 'FACE')}>Live face recognition required</option><option value="PASSKEY_OR_FACE"${selectedOption(identityMode, 'PASSKEY_OR_FACE')}>Device biometric or face</option></select></label>
+            <label>Continued-presence checks <select name="PresenceCheckMode"><option value="NONE"${selectedOption(policy.PresenceCheckMode, 'NONE')}>Disabled</option><option value="RANDOM"${selectedOption(policy.PresenceCheckMode, 'RANDOM')}>Random intervals</option></select></label>
+            <label>Minimum random interval (minutes) <input name="PresenceCheckMinimumMinutes" type="number" min="15" max="480" value="${Number(policy.PresenceCheckMinimumMinutes ?? 90)}" required></label>
+            <label>Maximum random interval (minutes) <input name="PresenceCheckMaximumMinutes" type="number" min="15" max="720" value="${Number(policy.PresenceCheckMaximumMinutes ?? 180)}" required></label>
+            <label>Confirmation grace period (minutes) <input name="PresenceCheckGraceMinutes" type="number" min="5" max="180" value="${Number(policy.PresenceCheckGraceMinutes ?? 20)}" required></label>
           </div>
-          <fieldset class="config-option-list"><legend>Working days</legend><div class="config-option-grid">${[['MON', 'Monday'], ['TUE', 'Tuesday'], ['WED', 'Wednesday'], ['THU', 'Thursday'], ['FRI', 'Friday'], ['SAT', 'Saturday'], ['SUN', 'Sunday']].map(([day, label]) => `<label class="check-row"><input type="checkbox" name="WorkDays" value="${day}" ${workDays.includes(day) ? 'checked' : ''}> ${label}</label>`).join('')}</div></fieldset>
+          <fieldset class="attendance-week-schedule"><legend>Weekly work schedule</legend><div class="attendance-week-schedule-head"><span>Day</span><span>Working</span><span>Resumption</span><span>Closing</span></div>${attendanceDays.map(([day, label]) => { const schedule = daySchedules[day] || { Enabled: workDays.includes(day), ResumptionTime: policy.ResumptionTime || '08:00', ClosingTime: policy.ClosingTime || '17:00' }; return `<div class="attendance-week-schedule-row"><strong>${label}</strong><label class="check-row"><input type="checkbox" name="Schedule_${day}_Enabled" ${schedule.Enabled ? 'checked' : ''}><span>Yes</span></label><label><span class="sr-only">${label} resumption</span><input name="Schedule_${day}_ResumptionTime" type="time" value="${escapeHtml(schedule.ResumptionTime)}" required></label><label><span class="sr-only">${label} closing</span><input name="Schedule_${day}_ClosingTime" type="time" value="${escapeHtml(schedule.ClosingTime)}" required></label></div>`; }).join('')}</fieldset>
           <label class="check-row config-switch"><input type="checkbox" name="AutoRecordAbsence" value="YES" ${clean(policy.AutoRecordAbsence).toUpperCase() !== 'NO' ? 'checked' : ''}><span>Automatically record absence after closing time when there is no clock-in</span></label>
           <div class="config-dialog-actions"><p class="status" id="staffAttendancePolicyStatus">${data.policyConfigured ? 'Current branch policy loaded.' : 'Save the policy to activate automatic calculations.'}</p><button type="submit">Save work hours</button></div>
         </form>
@@ -5098,13 +5158,15 @@ async function loadStaffAttendance() {
           { label: 'Late', value: (row) => attendanceMinutesLabel(row.LateMinutes) },
           { label: 'Left early', value: (row) => attendanceMinutesLabel(row.EarlyDepartureMinutes) },
           { label: 'Overtime', value: (row) => attendanceMinutesLabel(row.OvertimeMinutes) },
-          { label: 'Worked', value: (row) => attendanceMinutesLabel(row.WorkMinutes) }
+          { label: 'Worked', value: (row) => attendanceMinutesLabel(row.WorkMinutes) },
+          { label: 'Presence', value: (row) => row.PresenceStatus || '' },
+          { label: 'Missed checks', value: (row) => Number(row.MissedPresenceChecks || 0) }
         ])}
       </section>` : ''}
       ${capabilities.canReport ? table('Recent staff attendance', data.recentEvents || [], [
         { label: 'Staff', value: (row) => row.DisplayName || row.Username },
         { label: 'Time', value: (row) => row.Timestamp },
-        { label: 'Action', value: (row) => row.Direction === 'IN' ? 'Clock in' : 'Clock out' },
+        { label: 'Action', value: (row) => row.Direction === 'CHECK' ? 'Presence check' : row.Direction === 'IN' ? 'Clock in' : 'Clock out' },
         { label: 'Status', value: (row) => row.AttendanceStatus },
         { label: 'Location', value: (row) => row.SiteName },
         { label: 'Verification', value: (row) => row.VerificationMethod },
@@ -5148,7 +5210,17 @@ async function loadStaffAttendance() {
       try {
         const formData = new FormData(policyForm);
         const payload = Object.fromEntries(formData.entries());
-        payload.WorkDays = formData.getAll('WorkDays');
+        payload.DaySchedules = Object.fromEntries(attendanceDays.map(([day]) => [day, {
+          Enabled: formData.has(`Schedule_${day}_Enabled`),
+          ResumptionTime: clean(formData.get(`Schedule_${day}_ResumptionTime`)),
+          ClosingTime: clean(formData.get(`Schedule_${day}_ClosingTime`))
+        }]));
+        payload.WorkDays = attendanceDays.filter(([day]) => payload.DaySchedules[day].Enabled).map(([day]) => day);
+        const firstWorkingSchedule = payload.WorkDays.length ? payload.DaySchedules[payload.WorkDays[0]] : null;
+        if (firstWorkingSchedule) {
+          payload.ResumptionTime = firstWorkingSchedule.ResumptionTime;
+          payload.ClosingTime = firstWorkingSchedule.ClosingTime;
+        }
         payload.AutoRecordAbsence = formData.has('AutoRecordAbsence') ? 'YES' : 'NO';
         const result = await staffAttendanceRequest('savepolicy', payload);
         await loadStaffAttendance();
@@ -5164,20 +5236,84 @@ async function loadStaffAttendance() {
       const status = document.getElementById('staffAttendanceStatus');
       const siteId = clean(document.getElementById('staffAttendanceSite')?.value);
       if (!siteId) {
-        setStatus(status, 'Choose the church location first.', 'bad');
+        setStatus(status, 'Choose the attendance location first.', 'bad');
         return;
       }
       setButtonLoading(button, true, 'Verifying...', nextDirection === 'IN' ? 'Clock in' : 'Clock out');
       try {
         let location = {};
         try { location = await browserPosition(); } catch (_error) { location = {}; }
-        const result = await staffAttendanceRequest('clock', { SiteId: siteId, Direction: nextDirection, Location: location });
+        const attendanceProof = await attendanceIdentityProof(policy, siteId, nextDirection);
+        const result = await staffAttendanceRequest('clock', {
+          SiteId: siteId,
+          Direction: nextDirection,
+          Location: location,
+          AttendanceProof: attendanceProof
+        });
         await loadStaffAttendance();
         setStatus(document.getElementById('staffAttendanceStatus') || dashboardStatus, result.message, 'ok');
       } catch (error) {
         setStatus(status, error.message || String(error), 'bad');
       } finally {
         if (button.isConnected) setButtonLoading(button, false, 'Verifying...', nextDirection === 'IN' ? 'Clock in' : 'Clock out');
+      }
+    });
+    document.getElementById('staffPresenceButton')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      const status = document.getElementById('staffAttendanceStatus');
+      const siteId = clean(document.getElementById('staffAttendanceSite')?.value);
+      if (!siteId) {
+        setStatus(status, 'Choose the attendance location before confirming your presence.', 'bad');
+        return;
+      }
+      setButtonLoading(button, true, 'Confirming...', 'Confirm presence');
+      try {
+        let location = {};
+        try { location = await browserPosition(); } catch (_error) { location = {}; }
+        const attendanceProof = await attendanceIdentityProof(policy, siteId, 'CHECK');
+        const result = await staffAttendanceRequest('presence', {
+          SiteId: siteId,
+          Location: location,
+          AttendanceProof: attendanceProof
+        });
+        await loadStaffAttendance();
+        setStatus(document.getElementById('staffAttendanceStatus') || dashboardStatus, result.message, 'ok');
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+      } finally {
+        if (button.isConnected) setButtonLoading(button, false, 'Confirming...', 'Confirm presence');
+      }
+    });
+    document.getElementById('setupAttendancePasskey')?.addEventListener('click', () => passkeySetupButton.click());
+    document.getElementById('enrollAttendanceFace')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      const status = document.getElementById('staffAttendanceStatus');
+      setButtonLoading(button, true, 'Verifying...', 'Enroll my face');
+      try {
+        const proof = await attendancePasskeyProof('SELF', 'ENROLL');
+        const module = await import('./student-face-lookup.js?v=20260806-staff-attendance-face');
+        const result = await module.captureStaffAttendanceFace({ mode: 'enroll', attendanceProof: proof });
+        if (result) setStatus(status, result.message, 'ok');
+      } catch (error) {
+        setStatus(status, friendlyPasskeyError(error), 'bad');
+      } finally {
+        if (button.isConnected) setButtonLoading(button, false, 'Verifying...', 'Enroll my face');
+      }
+    });
+    document.getElementById('removeAttendanceFace')?.addEventListener('click', async (event) => {
+      if (!window.confirm('Remove your encrypted attendance face enrollment?')) return;
+      const button = event.currentTarget;
+      const status = document.getElementById('staffAttendanceStatus');
+      setButtonLoading(button, true, 'Removing...', 'Remove face enrollment');
+      try {
+        const proof = await attendancePasskeyProof('SELF', 'REVOKE');
+        const module = await import('./student-face-lookup.js?v=20260806-staff-attendance-face');
+        const result = await module.revokeStaffAttendanceFace(proof);
+        setStatus(status, result.message, 'ok');
+      } catch (error) {
+        setStatus(status, friendlyPasskeyError(error), 'bad');
+      } finally {
+        if (button.isConnected) setButtonLoading(button, false, 'Removing...', 'Remove face enrollment');
       }
     });
     const siteForm = document.getElementById('staffAttendanceSiteForm');

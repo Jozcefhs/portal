@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
-const sharedVersion = '20260805-branch-selector';
-const adminScriptVersion = '20260805-subscription-plans-link';
+const sharedVersion = '20260806-attendance-integrity';
+const adminScriptVersion = '20260806-attendance-integrity';
 const parentScriptVersion = '20260803-finance-commas';
 const notificationVersion = '20260804-read-efficiency';
 const pageNames = [

@@ -61,6 +61,7 @@ Feature-specific:
 - WEBAUTHN_ORIGIN
 - WEBAUTHN_RP_NAME
 - STUDENT_FACE_LOOKUP_ENABLED (school-only; off unless explicitly set to true)
+- STAFF_ATTENDANCE_FACE_ENABLED (faith/organisation staff attendance; defaults to true when a face-template key is configured)
 - FACE_TEMPLATE_ENCRYPTION_KEY (encrypted; minimum 24 characters)
 - FACE_TEMPLATE_KEY_VERSION (optional; defaults to v1)
 - FACE_TEMPLATE_PREVIOUS_KEYS (optional encrypted JSON keyring for rotation)
@@ -68,6 +69,8 @@ Feature-specific:
 - STUDENT_FACE_MATCH_MARGIN (optional; calibrate before production use)
 - STUDENT_FACE_MAX_GALLERY (optional direct-match cap; defaults to 250)
 - STUDENT_FACE_TEMPLATE_RETENTION_DAYS (optional; defaults to 365, minimum 30, maximum 730)
+- STAFF_ATTENDANCE_FACE_MATCH_THRESHOLD (optional; defaults to 0.72; calibrate before production use)
+- STAFF_ATTENDANCE_FACE_RETENTION_DAYS (optional; defaults to 365, minimum 30, maximum 730)
 - DATA_BACKEND_MODE (only for an intentional legacy Google backend)
 
 Set production and preview values separately. Encrypt all private values. Do

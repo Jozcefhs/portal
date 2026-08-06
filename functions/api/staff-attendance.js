@@ -1,5 +1,5 @@
 import { requireFirestoreEnv } from '../lib/firestore.js';
-import { requireStaffSession } from '../lib/staff-auth.js';
+import { readStaffAttendanceProof, requireStaffSession } from '../lib/staff-auth.js';
 import { handleStaffAttendanceAction } from '../lib/staff-time-attendance.js';
 import {
   beginIdempotentRequest,
@@ -42,7 +42,17 @@ export async function onRequestPost(context) {
         return Response.json(idempotency.response, { status: idempotency.status || 200, headers: { 'Cache-Control': 'no-store' } });
       }
     }
-    const result = await handleStaffAttendanceAction(context.env, user, body, { clientIp: requestIp(context.request) });
+    const proofDirection = action === 'presence' ? 'CHECK' : clean(body.Direction).toUpperCase();
+    const identityProof = ['clock', 'presence'].includes(action)
+      ? await readStaffAttendanceProof(context.env, body.AttendanceProof, user.username, {
+        siteId: body.SiteId,
+        direction: proofDirection
+      })
+      : null;
+    const result = await handleStaffAttendanceAction(context.env, user, body, {
+      clientIp: requestIp(context.request),
+      identityProof
+    });
     if (idempotency) await completeIdempotentRequest(context.env, idempotency, result, 200);
     return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {

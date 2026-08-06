@@ -6,6 +6,10 @@ import {
   bytesToBase64Url,
   relyingPartySettings
 } from '../functions/api/staff-passkey.js';
+import {
+  createStaffAttendanceProof,
+  readStaffAttendanceProof
+} from '../functions/lib/staff-auth.js';
 
 const portalRoot = new URL('../', import.meta.url);
 const [indexHtml, adminHtml, adminJs, preferencesJs, passkeyApi, staffAuth] = await Promise.all([
@@ -42,6 +46,8 @@ test('staff portal offers passkey registration and authentication', () => {
   assert.match(adminJs, /navigator\.credentials\.get/);
   assert.match(passkeyApi, /action === 'approval-options'/);
   assert.match(passkeyApi, /action === 'approval-verify'/);
+  assert.match(passkeyApi, /action === 'attendance-options'/);
+  assert.match(passkeyApi, /action === 'attendance-verify'/);
   assert.match(passkeyApi, /sessionToken: token/);
   assert.match(passkeyApi, /}, 200, staffSessionCookie\(token\)\)/);
 });
@@ -56,7 +62,7 @@ test('credential-manager cold starts retry once without repeating the server cer
   assert.match(adminJs, /function warmPasskeyCredentialManager\(\)/);
   assert.match(adminJs, /isUserVerifyingPlatformAuthenticatorAvailable/);
   assert.equal((adminJs.match(/navigator\.credentials\.get\(/g) || []).length, 1);
-  assert.equal((adminJs.match(/getPasskeyCredential\(started\.options(?:, 'optional')?\)/g) || []).length, 2);
+  assert.equal((adminJs.match(/getPasskeyCredential\(started\.options(?:, 'optional')?\)/g) || []).length, 3);
   assert.equal((adminJs.match(/getPasskeyCredential\(started\.options, 'optional'\)/g) || []).length, 1);
   const retrySource = adminJs.slice(
     adminJs.indexOf('function retryableCredentialManagerError'),
@@ -107,4 +113,24 @@ test('relying party defaults are derived from the current secure origin', () => 
     origin: 'https://digc-suite.pages.dev',
     rpName: 'Dynamax'
   });
+});
+
+test('attendance identity proofs are short-lived and scoped to user, location and action', async () => {
+  const env = { STAFF_SESSION_SECRET: 'attendance-test-secret-that-is-long-enough' };
+  const proof = await createStaffAttendanceProof(env, { username: 'Ada' }, {
+    siteId: 'main-premises', direction: 'IN', method: 'passkey'
+  });
+  const accepted = await readStaffAttendanceProof(env, proof, 'ada', {
+    siteId: 'main-premises', direction: 'IN'
+  });
+  assert.equal(accepted.method, 'passkey');
+  assert.equal(await readStaffAttendanceProof(env, proof, 'another-user', {
+    siteId: 'main-premises', direction: 'IN'
+  }), null);
+  assert.equal(await readStaffAttendanceProof(env, proof, 'ada', {
+    siteId: 'another-site', direction: 'IN'
+  }), null);
+  assert.equal(await readStaffAttendanceProof(env, proof, 'ada', {
+    siteId: 'main-premises', direction: 'OUT'
+  }), null);
 });

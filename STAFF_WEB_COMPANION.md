@@ -18,6 +18,15 @@ The existing Firestore service-account variables are also required:
 
 Redeploy the Cloudflare Pages project after changing environment variables.
 
+For optional live-face staff attendance, also configure `FACE_TEMPLATE_ENCRYPTION_KEY`
+as an encrypted secret with at least 24 random characters. `STAFF_ATTENDANCE_FACE_ENABLED`
+may be set to `true` explicitly, and `STAFF_ATTENDANCE_FACE_MATCH_THRESHOLD` may be
+calibrated for the organisation (the default is `0.72`). The optional
+`STAFF_ATTENDANCE_FACE_RETENTION_DAYS` value defaults to 365 days. Camera frames remain on the
+staff device; Firestore stores only the encrypted mathematical face template under the
+staff member and branch. Face enrollment and removal require an existing passkey/device
+biometric confirmation.
+
 If an older Firestore administrator has a `120000`-iteration password hash that the current web runtime cannot verify, deploy the current portal source and sign in with `ADMIN_WEB_USERNAME` / `ADMIN_WEB_PASSWORD`. For a matching Firestore Super Admin, this securely replaces the incompatible hash with the supported format and records a `PASSWORD RECOVERY` security-audit event. There is no universal default password.
 
 ## Firestore staff accounts

@@ -409,3 +409,135 @@ export async function openStudentFaceLookup(options = {}) {
     setStatus(dialog, clean(failure?.message), 'bad');
   }
 }
+
+async function staffAttendanceFaceRequest(action, payload = {}) {
+  const request = typeof window.DynamaxStaffFetch === 'function'
+    ? window.DynamaxStaffFetch
+    : window.fetch.bind(window);
+  const response = await request('/api/staff-attendance-face', {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...payload })
+  });
+  const data = await response.json().catch(() => ({ ok: false, message: 'Face attendance did not return JSON.' }));
+  if (!response.ok || !data.ok) throw new Error(data.message || 'Face attendance could not be completed.');
+  return data;
+}
+
+export function staffAttendanceFaceStatus() {
+  return staffAttendanceFaceRequest('status');
+}
+
+export function revokeStaffAttendanceFace(attendanceProof) {
+  return staffAttendanceFaceRequest('revoke', { AttendanceProof: attendanceProof });
+}
+
+function attendanceFaceDialogMarkup(mode) {
+  const enrollment = mode === 'enroll';
+  return `<dialog class="student-face-dialog staff-attendance-face-dialog" data-staff-attendance-face-dialog aria-modal="true" aria-labelledby="attendanceFaceDialogTitle">
+    <header>
+      <div><small>${enrollment ? 'Private biometric enrollment' : 'Attendance identity check'}</small>
+        <h2 id="attendanceFaceDialogTitle">${enrollment ? 'Enroll my face' : 'Verify my face'}</h2>
+        <p>${enrollment ? 'This enrollment is linked only to your signed-in staff account.' : 'Complete a live check for this attendance action.'}</p>
+      </div>
+      <button type="button" class="student-face-close" data-face-close aria-label="Close">&times;</button>
+    </header>
+    <div class="student-face-notice">
+      <span aria-hidden="true">&#128737;</span>
+      <p><strong>Privacy protected</strong><small>Camera frames remain on this device. Only an encrypted mathematical template is stored, and a blink is required for every live check.</small></p>
+    </div>
+    <div class="student-face-camera">
+      <video data-face-video playsinline muted aria-label="Live staff face camera preview"></video>
+      <div class="student-face-guide" aria-hidden="true"></div>
+      <p>Keep one face centred and blink once when prompted.</p>
+    </div>
+    <progress data-face-progress value="0" max="${SAMPLE_COUNT}" hidden></progress>
+    <p class="student-face-status" data-face-status>Ready to open the camera.</p>
+    <footer>
+      <button type="button" class="secondary" data-face-start>Start camera</button>
+      <button type="button" data-face-capture disabled>${enrollment ? 'Save enrollment' : 'Verify and continue'}</button>
+      <button type="button" class="secondary" data-face-close>Cancel</button>
+    </footer>
+  </dialog>`;
+}
+
+export function captureStaffAttendanceFace(options = {}) {
+  const mode = options.mode === 'enroll' ? 'enroll' : 'verify';
+  if (activeDialog?.open) activeDialog.close();
+  document.body.insertAdjacentHTML('beforeend', attendanceFaceDialogMarkup(mode));
+  const dialog = document.body.lastElementChild;
+  activeDialog = dialog;
+  const video = dialog.querySelector('[data-face-video]');
+  const startButton = dialog.querySelector('[data-face-start]');
+  const captureButton = dialog.querySelector('[data-face-capture]');
+  let settled = false;
+
+  return new Promise((resolve, reject) => {
+    const finish = (value, error = null) => {
+      if (settled) return;
+      settled = true;
+      stopCamera(video);
+      if (dialog.open) dialog.close();
+      if (error) reject(error); else resolve(value);
+    };
+    const cancel = () => finish(null);
+    dialog.querySelectorAll('[data-face-close]').forEach((button) => button.addEventListener('click', cancel));
+    dialog.addEventListener('cancel', (event) => {
+      event.preventDefault();
+      cancel();
+    });
+    dialog.addEventListener('close', () => {
+      stopCamera(video);
+      dialog.remove();
+      if (activeDialog === dialog) activeDialog = null;
+      if (!settled) {
+        settled = true;
+        resolve(null);
+      }
+    }, { once: true });
+
+    startButton.addEventListener('click', async () => {
+      setBusy(startButton, true, 'Preparing camera...');
+      try {
+        await Promise.all([startCamera(dialog), loadHuman(dialog)]);
+        if (!dialog.isConnected || !dialog.open) return;
+        captureButton.disabled = false;
+        setStatus(dialog, 'Camera and private face model are ready.', 'good');
+      } catch (error) {
+        stopCamera(video);
+        captureButton.disabled = true;
+        setStatus(dialog, formatCameraError(error), 'bad');
+      } finally {
+        setBusy(startButton, false);
+      }
+    });
+
+    captureButton.addEventListener('click', async () => {
+      setBusy(captureButton, true, mode === 'enroll' ? 'Saving...' : 'Verifying...');
+      try {
+        const human = await loadHuman(dialog);
+        const descriptor = await captureDescriptor(dialog, human);
+        const result = await staffAttendanceFaceRequest(mode === 'enroll' ? 'enroll' : 'verify', {
+          modelId: MODEL_ID,
+          descriptor,
+          sampleCount: SAMPLE_COUNT,
+          SiteId: options.siteId,
+          Direction: options.direction,
+          AttendanceProof: options.attendanceProof
+        });
+        setStatus(dialog, result.message, 'good');
+        window.setTimeout(() => finish(result), 250);
+      } catch (error) {
+        stopCamera(video);
+        setStatus(dialog, formatCameraError(error), 'bad');
+        captureButton.disabled = true;
+      } finally {
+        setBusy(captureButton, false);
+      }
+    });
+
+    dialog.showModal();
+  });
+}

@@ -12,6 +12,7 @@ const LEGACY_SESSION_COOKIE = 'school_staff_session';
 const SESSION_SECONDS = 4 * 60 * 60;
 const APPROVAL_PROOF_COOKIE = 'staff_approval_proof';
 const APPROVAL_PROOF_SECONDS = 3 * 60;
+const ATTENDANCE_PROOF_SECONDS = 2 * 60;
 const WEB_PASSWORD_ITERATIONS = 10000;
 const WEB_PASSWORD_HASH_VERSION = 'pbkdf2-sha256-v1';
 const ACCESS_CONFIG_CACHE_MS = 15000;
@@ -583,6 +584,34 @@ export async function requireStaffSession(env, request) {
     && lower(requestedBranch) !== 'all';
   const structure = needsConfiguredBranchValidation ? await getSchoolStructure(env) : {};
   return applyStaffBranchContext(staffUserForAccess(user, access), requestedBranch, structure);
+}
+
+export async function createStaffAttendanceProof(env, user, scope = {}) {
+  const method = lower(scope.method);
+  if (!['passkey', 'face'].includes(method)) throw new Error('Choose a valid attendance identity method.');
+  const payload = {
+    username: lower(user.username),
+    purpose: 'staff-attendance-presence',
+    siteId: clean(scope.siteId),
+    direction: clean(scope.direction).toUpperCase(),
+    method,
+    exp: Math.floor(Date.now() / 1000) + ATTENDANCE_PROOF_SECONDS,
+    nonce: crypto.randomUUID()
+  };
+  const encoded = base64Url(JSON.stringify(payload));
+  return `${encoded}.${await signPayload(env, encoded)}`;
+}
+
+export async function readStaffAttendanceProof(env, token, username, scope = {}) {
+  const payload = await verifiedSignedPayload(env, clean(token));
+  const valid = payload &&
+    payload.purpose === 'staff-attendance-presence' &&
+    lower(payload.username) === lower(username) &&
+    clean(payload.siteId) === clean(scope.siteId) &&
+    clean(payload.direction).toUpperCase() === clean(scope.direction).toUpperCase() &&
+    ['passkey', 'face'].includes(lower(payload.method)) &&
+    Number(payload.exp) > Math.floor(Date.now() / 1000);
+  return valid ? payload : null;
 }
 
 export function staffSessionCookie(token) {

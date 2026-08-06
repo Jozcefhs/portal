@@ -7,6 +7,7 @@ import {
 import {
   authenticateStaffPasskey,
   createStaffApprovalProof,
+  createStaffAttendanceProof,
   createStaffSession,
   requireStaffSession,
   staffApprovalProofCookie,
@@ -288,6 +289,41 @@ async function approvalOptions(request, env, body) {
   });
 }
 
+async function attendanceOptions(request, env, body) {
+  const user = await requireStaffSession(env, request);
+  if (!(user.allowedSections || []).includes('staffAttendance')) {
+    return response({ ok: false, message: 'Staff attendance is not available to this account.' }, 403);
+  }
+  const direction = clean(body.direction).toUpperCase();
+  const siteId = clean(body.siteId);
+  if (!siteId || !['IN', 'OUT', 'CHECK', 'ENROLL', 'REVOKE'].includes(direction)) {
+    return response({ ok: false, message: 'The attendance biometric request is invalid.' }, 400);
+  }
+  const credentials = (await userPasskeys(env, user.username)).filter((item) => isActive(item.Active));
+  if (!credentials.length) {
+    return response({ ok: false, message: 'Set up biometric sign-in before using biometric attendance verification.' }, 400);
+  }
+  const rp = relyingPartySettings(request, env);
+  const options = await generateAuthenticationOptions({
+    rpID: rp.rpID,
+    allowCredentials: credentials.map((item) => ({
+      id: item.CredentialId,
+      transports: Array.isArray(item.Transports) ? item.Transports : undefined
+    })),
+    timeout: 60000,
+    userVerification: 'required'
+  });
+  return response({
+    ok: true,
+    ceremonyId: await saveCeremony(env, 'attendance', options.challenge, user.username, {
+      recordId: siteId,
+      recordType: 'staff-attendance',
+      action: direction
+    }),
+    options
+  });
+}
+
 async function verifyAuthentication(request, env, body) {
   const ceremony = await consumeCeremony(env, body.ceremonyId, 'authentication');
   const credentialId = clean(body.credential?.id);
@@ -373,6 +409,48 @@ async function verifyApproval(request, env, body) {
   );
 }
 
+async function verifyAttendance(request, env, body) {
+  const user = await requireStaffSession(env, request);
+  const ceremony = await consumeCeremony(env, body.ceremonyId, 'attendance');
+  if (lower(ceremony.UsernameKey) !== lower(user.username)) {
+    return response({ ok: false, message: 'This attendance verification belongs to another staff account.' }, 403);
+  }
+  const credentialId = clean(body.credential?.id);
+  const stored = credentialId ? await findOneByField(env, 'staffPasskeys', 'CredentialId', credentialId) : null;
+  if (!stored || !isActive(stored.Active) || lower(stored.Username) !== lower(user.username)) {
+    return response({ ok: false, message: 'This biometric credential is not linked to the signed-in staff account.' }, 401);
+  }
+  const rp = relyingPartySettings(request, env);
+  const verification = await verifyAuthenticationResponse({
+    response: body.credential,
+    expectedChallenge: ceremony.Challenge,
+    expectedOrigin: rp.origin,
+    expectedRPID: rp.rpID,
+    requireUserVerification: true,
+    credential: {
+      id: stored.CredentialId,
+      publicKey: base64UrlToBytes(stored.PublicKey),
+      counter: Number(stored.Counter || 0),
+      transports: Array.isArray(stored.Transports) ? stored.Transports : undefined
+    }
+  });
+  if (!verification.verified) {
+    return response({ ok: false, message: 'Attendance biometric verification failed.' }, 401);
+  }
+  await updateCredentialUsage(env, stored, verification.authenticationInfo.newCounter);
+  const proof = await createStaffAttendanceProof(env, user, {
+    siteId: ceremony.RecordId,
+    direction: ceremony.DecisionAction,
+    method: 'passkey'
+  });
+  return response({
+    ok: true,
+    message: 'Identity verified for this attendance action.',
+    attendanceProof: proof,
+    method: 'Passkey biometric'
+  });
+}
+
 async function passkeyStatus(request, env) {
   const user = await requireStaffSession(env, request);
   const registered = (await userPasskeys(env, user.username)).filter((item) => isActive(item.Active));
@@ -390,6 +468,8 @@ export async function onRequestPost({ request, env }) {
     if (action === 'authentication-verify') return verifyAuthentication(request, env, body);
     if (action === 'approval-options') return approvalOptions(request, env, body);
     if (action === 'approval-verify') return verifyApproval(request, env, body);
+    if (action === 'attendance-options') return attendanceOptions(request, env, body);
+    if (action === 'attendance-verify') return verifyAttendance(request, env, body);
     if (action === 'status') return passkeyStatus(request, env);
     return response({ ok: false, message: 'Unsupported biometric action.' }, 400);
   } catch (error) {

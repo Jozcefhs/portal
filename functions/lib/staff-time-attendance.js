@@ -8,9 +8,18 @@ const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 const nowIso = () => new Date().toISOString();
 const MANAGE_ROLES = new Set(['Super Admin', 'Church Administrator']);
+const ATTENDANCE_ADMIN_ROLES = new Set([
+  ...MANAGE_ROLES,
+  'HR Director',
+  'HR Manager',
+  'HR Business Partner',
+  'HR Officer'
+]);
 const REPORT_ROLES = new Set([...MANAGE_ROLES, 'Pastor', 'Treasurer', 'Auditor']);
 const ATTENDANCE_REPORT_LIMIT = 5000;
 const DAY_KEYS = Object.freeze(['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']);
+const IDENTITY_VERIFICATION_MODES = new Set(['NONE', 'PASSKEY', 'FACE', 'PASSKEY_OR_FACE']);
+const PRESENCE_CHECK_MODES = new Set(['NONE', 'RANDOM']);
 const DEFAULT_ATTENDANCE_POLICY = Object.freeze({
   ResumptionTime: '08:00',
   ClosingTime: '17:00',
@@ -19,6 +28,11 @@ const DEFAULT_ATTENDANCE_POLICY = Object.freeze({
   WorkDays: ['MON', 'TUE', 'WED', 'THU', 'FRI'],
   TimeZone: 'Africa/Lagos',
   AutoRecordAbsence: 'YES',
+  IdentityVerification: 'NONE',
+  PresenceCheckMode: 'NONE',
+  PresenceCheckMinimumMinutes: 90,
+  PresenceCheckMaximumMinutes: 180,
+  PresenceCheckGraceMinutes: 20,
   Active: 'YES'
 });
 
@@ -95,6 +109,10 @@ export function canReportStaffAttendance(user = {}) {
   return REPORT_ROLES.has(role) || hrCapabilitiesFor(user).canManageTime;
 }
 
+export function canManageStaffAttendance(user = {}) {
+  return ATTENDANCE_ADMIN_ROLES.has(clean(user.role || user.Role));
+}
+
 function localAttendanceParts(timestamp, timeZone) {
   const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
   if (Number.isNaN(date.getTime())) fail('Enter a valid attendance time.');
@@ -124,22 +142,94 @@ export function normalizeAttendancePolicy(input = {}, existing = {}) {
   const sourceDays = input.WorkDays ?? existing.WorkDays ?? DEFAULT_ATTENDANCE_POLICY.WorkDays;
   const workDays = [...new Set((Array.isArray(sourceDays) ? sourceDays : clean(sourceDays).split(/[\s,;]+/))
     .map((value) => clean(value).slice(0, 3).toUpperCase()).filter((value) => DAY_KEYS.includes(value)))];
-  if (!workDays.length) fail('Choose at least one working day.');
+  const inputSchedules = input.DaySchedules && typeof input.DaySchedules === 'object' && !Array.isArray(input.DaySchedules)
+    ? input.DaySchedules
+    : null;
+  const existingSchedules = existing.DaySchedules && typeof existing.DaySchedules === 'object' && !Array.isArray(existing.DaySchedules)
+    ? existing.DaySchedules
+    : {};
+  const daySchedules = Object.fromEntries(DAY_KEYS.map((day) => {
+    const source = inputSchedules?.[day] && typeof inputSchedules[day] === 'object'
+      ? inputSchedules[day]
+      : existingSchedules[day] && typeof existingSchedules[day] === 'object'
+        ? existingSchedules[day]
+        : {};
+    const enabled = source.Enabled === undefined
+      ? workDays.includes(day)
+      : activeValue(source.Enabled, workDays.includes(day));
+    const dayResumption = clean(source.ResumptionTime || resumption);
+    const dayClosing = clean(source.ClosingTime || closing);
+    const dayResumptionMinutes = timeMinutes(dayResumption, `${day} resumption time`);
+    const dayClosingMinutes = timeMinutes(dayClosing, `${day} closing time`);
+    if (enabled && dayClosingMinutes <= dayResumptionMinutes) {
+      fail(`${day} closing time must be later than its resumption time on the same day.`);
+    }
+    return [day, {
+      Enabled: enabled,
+      ResumptionTime: dayResumption,
+      ClosingTime: dayClosing
+    }];
+  }));
+  const normalizedWorkDays = DAY_KEYS.filter((day) => daySchedules[day].Enabled);
+  if (!normalizedWorkDays.length) fail('Choose at least one working day.');
   const timeZone = clean(input.TimeZone || existing.TimeZone || DEFAULT_ATTENDANCE_POLICY.TimeZone);
   try {
     new Intl.DateTimeFormat('en-GB', { timeZone }).format(new Date());
   } catch (_error) {
     fail('Enter a valid time zone, for example Africa/Lagos.');
   }
+  const identityVerification = clean(input.IdentityVerification ?? existing.IdentityVerification ?? DEFAULT_ATTENDANCE_POLICY.IdentityVerification).toUpperCase();
+  if (!IDENTITY_VERIFICATION_MODES.has(identityVerification)) fail('Choose a valid attendance identity verification method.');
+  const presenceCheckMode = clean(input.PresenceCheckMode ?? existing.PresenceCheckMode ?? DEFAULT_ATTENDANCE_POLICY.PresenceCheckMode).toUpperCase();
+  if (!PRESENCE_CHECK_MODES.has(presenceCheckMode)) fail('Choose a valid presence-check mode.');
+  const presenceCheckMinimumMinutes = boundedWholeNumber(
+    input.PresenceCheckMinimumMinutes ?? existing.PresenceCheckMinimumMinutes,
+    DEFAULT_ATTENDANCE_POLICY.PresenceCheckMinimumMinutes,
+    15,
+    480,
+    'Minimum presence-check interval'
+  );
+  const presenceCheckMaximumMinutes = boundedWholeNumber(
+    input.PresenceCheckMaximumMinutes ?? existing.PresenceCheckMaximumMinutes,
+    DEFAULT_ATTENDANCE_POLICY.PresenceCheckMaximumMinutes,
+    15,
+    720,
+    'Maximum presence-check interval'
+  );
+  if (presenceCheckMaximumMinutes < presenceCheckMinimumMinutes) {
+    fail('Maximum presence-check interval must be greater than or equal to the minimum interval.');
+  }
   return {
     ResumptionTime: resumption,
     ClosingTime: closing,
     GraceMinutes: boundedWholeNumber(input.GraceMinutes ?? existing.GraceMinutes, DEFAULT_ATTENDANCE_POLICY.GraceMinutes, 0, 180, 'Grace period'),
     OvertimeMinimumMinutes: boundedWholeNumber(input.OvertimeMinimumMinutes ?? existing.OvertimeMinimumMinutes, DEFAULT_ATTENDANCE_POLICY.OvertimeMinimumMinutes, 0, 240, 'Minimum overtime'),
-    WorkDays: DAY_KEYS.filter((day) => workDays.includes(day)),
+    WorkDays: normalizedWorkDays,
+    DaySchedules: daySchedules,
     TimeZone: timeZone,
     AutoRecordAbsence: activeValue(input.AutoRecordAbsence ?? existing.AutoRecordAbsence, true) ? 'YES' : 'NO',
+    IdentityVerification: identityVerification,
+    PresenceCheckMode: presenceCheckMode,
+    PresenceCheckMinimumMinutes: presenceCheckMinimumMinutes,
+    PresenceCheckMaximumMinutes: presenceCheckMaximumMinutes,
+    PresenceCheckGraceMinutes: boundedWholeNumber(
+      input.PresenceCheckGraceMinutes ?? existing.PresenceCheckGraceMinutes,
+      DEFAULT_ATTENDANCE_POLICY.PresenceCheckGraceMinutes,
+      5,
+      180,
+      'Presence-check grace period'
+    ),
     Active: activeValue(input.Active ?? existing.Active, true) ? 'YES' : 'NO'
+  };
+}
+
+export function attendanceScheduleFor(policyInput = {}, day) {
+  const policy = normalizeAttendancePolicy(policyInput);
+  const key = clean(day).slice(0, 3).toUpperCase();
+  return policy.DaySchedules[key] || {
+    Enabled: false,
+    ResumptionTime: policy.ResumptionTime,
+    ClosingTime: policy.ClosingTime
   };
 }
 
@@ -149,9 +239,10 @@ export function calculateAttendanceMetrics(policyInput = {}, eventInput = {}) {
   const direction = clean(eventInput.Direction).toUpperCase();
   if (!['IN', 'OUT'].includes(direction)) fail('Choose Clock in or Clock out.');
   const local = localAttendanceParts(timestamp, policy.TimeZone);
-  const workDay = policy.WorkDays.includes(local.day);
-  const start = timeMinutes(policy.ResumptionTime, 'Resumption time');
-  const close = timeMinutes(policy.ClosingTime, 'Closing time');
+  const schedule = policy.DaySchedules[local.day];
+  const workDay = Boolean(schedule?.Enabled);
+  const start = timeMinutes(schedule?.ResumptionTime || policy.ResumptionTime, 'Resumption time');
+  const close = timeMinutes(schedule?.ClosingTime || policy.ClosingTime, 'Closing time');
   const lateDifference = Math.max(0, local.minuteOfDay - start);
   const lateMinutes = direction === 'IN' && workDay && lateDifference > policy.GraceMinutes ? lateDifference : 0;
   const firstClockIn = clean(eventInput.FirstClockIn);
@@ -173,6 +264,8 @@ export function calculateAttendanceMetrics(policyInput = {}, eventInput = {}) {
     Date: local.date,
     Day: local.day,
     WorkDay: workDay,
+    ScheduledResumptionTime: schedule?.ResumptionTime || policy.ResumptionTime,
+    ScheduledClosingTime: schedule?.ClosingTime || policy.ClosingTime,
     AttendanceStatus: status,
     LateMinutes: lateMinutes,
     OvertimeMinutes: overtimeMinutes,
@@ -250,6 +343,26 @@ export function evaluateAttendancePresence(site = {}, location = {}, clientIp = 
   };
 }
 
+function verifiedAttendanceIdentity(policy = {}, proof = null) {
+  const required = clean(policy.IdentityVerification || 'NONE').toUpperCase();
+  if (required === 'NONE') return 'Session identity';
+  const method = lower(proof?.method);
+  const accepted = required === 'PASSKEY'
+    ? method === 'passkey'
+    : required === 'FACE'
+      ? method === 'face'
+      : ['passkey', 'face'].includes(method);
+  if (!accepted) {
+    const label = required === 'PASSKEY'
+      ? 'device biometric'
+      : required === 'FACE'
+        ? 'live face recognition'
+        : 'device biometric or live face recognition';
+    fail(`Verify your identity with ${label} before completing this attendance action.`, 403);
+  }
+  return method === 'face' ? 'Live face recognition' : 'Passkey biometric';
+}
+
 async function ipFingerprint(value) {
   const data = new TextEncoder().encode(clean(value));
   const digest = await crypto.subtle.digest('SHA-256', data);
@@ -268,6 +381,40 @@ function dailyAttendanceId(date, username) {
   return safeChurchDocumentId(`DAY-${date}-${lower(username)}`);
 }
 
+function randomWholeNumber(minimum, maximum) {
+  const min = Math.ceil(Number(minimum));
+  const max = Math.floor(Number(maximum));
+  if (max <= min) return min;
+  const values = crypto.getRandomValues(new Uint32Array(1));
+  return min + (values[0] % (max - min + 1));
+}
+
+function nextPresenceCheckAt(policy = {}, timestamp = nowIso()) {
+  if (clean(policy.PresenceCheckMode).toUpperCase() !== 'RANDOM') return '';
+  const minutes = randomWholeNumber(policy.PresenceCheckMinimumMinutes, policy.PresenceCheckMaximumMinutes);
+  return new Date(new Date(timestamp).getTime() + (minutes * 60000)).toISOString();
+}
+
+function presenceCheckView(policy = {}, state = {}, active, now = new Date()) {
+  if (!active || clean(policy.PresenceCheckMode).toUpperCase() !== 'RANDOM') {
+    return { enabled: false, status: 'NOT_REQUIRED', dueAt: '', graceEndsAt: '', canConfirm: false };
+  }
+  const dueAt = clean(state.NextPresenceCheckDueAt);
+  if (!dueAt) return { enabled: true, status: 'PENDING_SETUP', dueAt: '', graceEndsAt: '', canConfirm: false };
+  const dueTime = Date.parse(dueAt);
+  const graceEndsAt = new Date(dueTime + (Number(policy.PresenceCheckGraceMinutes || 0) * 60000)).toISOString();
+  const nowTime = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  return {
+    enabled: true,
+    status: nowTime < dueTime ? 'UPCOMING' : nowTime <= Date.parse(graceEndsAt) ? 'DUE' : 'OVERDUE',
+    dueAt,
+    graceEndsAt,
+    canConfirm: nowTime >= dueTime,
+    lastConfirmedAt: clean(state.LastPresenceCheckAt),
+    sequence: Number(state.PresenceCheckSequence || 0)
+  };
+}
+
 function staffBranchMatches(row = {}, branchId = 'main') {
   return lower(row.BranchId || row.branchId || 'main') === lower(branchId || 'main');
 }
@@ -276,10 +423,11 @@ function activeStaffValue(value) {
   return !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(value));
 }
 
-function attendancePolicySnapshot(policy = {}) {
+function attendancePolicySnapshot(policy = {}, day = '') {
+  const schedule = policy.DaySchedules?.[clean(day).slice(0, 3).toUpperCase()] || {};
   return {
-    ScheduledResumptionTime: clean(policy.ResumptionTime),
-    ScheduledClosingTime: clean(policy.ClosingTime),
+    ScheduledResumptionTime: clean(schedule.ResumptionTime || policy.ResumptionTime),
+    ScheduledClosingTime: clean(schedule.ClosingTime || policy.ClosingTime),
     GraceMinutes: Number(policy.GraceMinutes || 0),
     OvertimeMinimumMinutes: Number(policy.OvertimeMinimumMinutes || 0),
     TimeZone: clean(policy.TimeZone)
@@ -320,7 +468,11 @@ function buildDailyAttendanceFromEvent(policy, event, existing = {}) {
     OvertimeMinutes: scheduleActive && event.Direction === 'OUT' ? metrics.OvertimeMinutes : Number(existing.OvertimeMinutes || 0),
     EarlyDepartureMinutes: scheduleActive && event.Direction === 'OUT' ? metrics.EarlyDepartureMinutes : Number(existing.EarlyDepartureMinutes || 0),
     WorkMinutes: event.Direction === 'OUT' ? metrics.WorkMinutes : Number(existing.WorkMinutes || 0),
-    ...attendancePolicySnapshot(policy),
+    PresenceCheckCount: Number(existing.PresenceCheckCount || 0),
+    MissedPresenceChecks: Number(existing.MissedPresenceChecks || 0),
+    PresenceStatus: clean(existing.PresenceStatus) || (clean(policy.PresenceCheckMode).toUpperCase() === 'RANDOM' ? 'Awaiting random check' : 'Not required'),
+    LastPresenceCheckAt: clean(existing.LastPresenceCheckAt),
+    ...attendancePolicySnapshot(policy, metrics.Day),
     AutoGenerated: false,
     GeneratedReason: '',
     CreatedAt: clean(existing.CreatedAt) || event.Timestamp,
@@ -339,7 +491,8 @@ function approvedLeaveForDate(leaveRows = [], username, date) {
 async function synchronizeAutomaticAbsences(env, branchId, policy, now, directory, leaveRows, dailyRows) {
   if (lower(policy.Active) === 'no' || lower(policy.AutoRecordAbsence) === 'no') return dailyRows;
   const local = localAttendanceParts(now, policy.TimeZone);
-  if (!policy.WorkDays.includes(local.day) || local.minuteOfDay < timeMinutes(policy.ClosingTime, 'Closing time')) return dailyRows;
+  const schedule = policy.DaySchedules?.[local.day];
+  if (!schedule?.Enabled || local.minuteOfDay < timeMinutes(schedule.ClosingTime, 'Closing time')) return dailyRows;
   const current = dailyRows.filter((row) => clean(row.Date) === local.date);
   const currentUsernames = new Set(current.map((row) => lower(row.Username)));
   const timestamp = now instanceof Date ? now.toISOString() : new Date(now).toISOString();
@@ -361,7 +514,7 @@ async function synchronizeAutomaticAbsences(env, branchId, policy, now, director
       OvertimeMinutes: 0,
       EarlyDepartureMinutes: 0,
       WorkMinutes: 0,
-      ...attendancePolicySnapshot(policy),
+      ...attendancePolicySnapshot(policy, local.day),
       AutoGenerated: true,
       GeneratedReason: onLeave ? 'Approved leave covers this working day.' : 'No clock-in was recorded by the configured closing time.',
       CreatedAt: timestamp,
@@ -397,7 +550,7 @@ export async function listStaffAttendance(env, user, body = {}) {
   const branchId = branchFor(user, body);
   const username = actorId(user);
   if (!username) fail('The signed-in staff account has no username.', 401);
-  const role = clean(user.role || user.Role);
+  const canManage = canManageStaffAttendance(user);
   const canReport = canReportStaffAttendance(user);
   const reportPeriod = canReport ? normalizeAttendanceReportPeriod(body) : { FromDate: '', ToDate: '' };
   const [sites, events, storedState, storedPolicy, dailySource, staffUsers, employees, leaveRows] = await Promise.all([
@@ -451,52 +604,69 @@ export async function listStaffAttendance(env, user, body = {}) {
   const own = sorted.filter((row) => actorId(row) === username).slice(0, 100);
   const ownDaily = sortedDaily.filter((row) => actorId(row) === username).slice(0, 100);
   const latest = own[0] || null;
-  const todayAttendanceDate = localAttendanceParts(new Date(), policy.TimeZone).date;
+  const todayLocal = localAttendanceParts(new Date(), policy.TimeZone);
+  const todayAttendanceDate = todayLocal.date;
+  const todayDaily = ownDaily.find((row) => clean(row.Date) === todayAttendanceDate) || null;
+  const todayState = clean(todayDaily?.FirstClockIn)
+    ? clean(todayDaily?.LastClockOut) ? 'COMPLETED' : 'CLOCKED_IN'
+    : 'CLOCKED_OUT';
+  const todayStoredState = clean(storedState?.AttendanceDate) === todayAttendanceDate ? storedState : {};
+  const presenceCheck = presenceCheckView(policy, todayStoredState, todayState === 'CLOCKED_IN');
   return {
     ok: true,
     branchId,
     sites: sortedSites.filter((row) => lower(row.Active || 'YES') !== 'no'),
-    configuredSites: MANAGE_ROLES.has(role) ? sortedSites : [],
+    configuredSites: canManage ? sortedSites : [],
     policy,
     policyConfigured: Boolean(storedPolicy),
     todayAttendanceDate,
-    staffDirectory: MANAGE_ROLES.has(role) ? directory : [],
+    todayAttendanceDay: todayLocal.day,
+    todaySchedule: policy.DaySchedules?.[todayLocal.day] || null,
+    staffDirectory: canManage ? directory : [],
     myEvents: own,
     myDailyRecords: ownDaily,
     recentEvents: canReport ? sorted.slice(0, 250) : [],
     recentDailyRecords: canReport ? reportDailyRows : [],
     reportPeriod,
     reportTruncated: canReport && reportDailyRows.length >= ATTENDANCE_REPORT_LIMIT,
-    state: clean(storedState?.State) || (latest?.Direction === 'IN' ? 'CLOCKED_IN' : 'CLOCKED_OUT'),
-    nextDirection: clean(storedState?.NextDirection) || (latest?.Direction === 'IN' ? 'OUT' : 'IN'),
+    state: todayState,
+    nextDirection: todayState === 'CLOCKED_IN' ? 'OUT' : todayState === 'CLOCKED_OUT' ? 'IN' : '',
     stateVersion: clean(storedState?.__updateTime),
-    capabilities: { canManage: MANAGE_ROLES.has(role), canReport }
+    presenceCheck,
+    capabilities: { canManage, canReport }
   };
 }
 
 export async function saveAttendanceSite(env, user, body = {}) {
-  if (!MANAGE_ROLES.has(clean(user.role || user.Role))) fail('Only church administrators can manage attendance locations.', 403);
+  if (!canManageStaffAttendance(user)) fail('Only organisation or HR attendance administrators can manage attendance locations.', 403);
   const branchId = branchFor(user, body);
   const id = safeChurchDocumentId(clean(body.SiteId) || `SITE-${crypto.randomUUID().slice(0, 8)}`);
+  const collectionPath = churchCollectionPath(CHURCH_COLLECTIONS.staffAttendanceSites, branchId);
+  const existing = await getDocument(env, collectionPath, id).catch(() => null);
   const site = {
     SiteId: id,
-    ...normalizeAttendanceSite(body),
+    ...normalizeAttendanceSite(body, existing || {}),
     BranchId: branchId,
     UpdatedAt: nowIso(),
     UpdatedBy: actorName(user)
   };
-  await upsertDocument(env, churchCollectionPath(CHURCH_COLLECTIONS.staffAttendanceSites, branchId), id, site);
+  await upsertDocument(env, collectionPath, id, site);
   return { ok: true, site, message: 'Attendance location saved.' };
 }
 
 export async function saveAttendancePolicy(env, user, body = {}) {
-  if (!MANAGE_ROLES.has(clean(user.role || user.Role))) fail('Only church administrators can manage daily work hours.', 403);
+  if (!canManageStaffAttendance(user)) fail('Only organisation or HR attendance administrators can manage daily work hours.', 403);
   const branchId = branchFor(user, body);
   const existing = await getDocument(env, attendancePolicyPath(branchId), 'default').catch(() => null);
+  const normalized = normalizeAttendancePolicy(body, existing || {});
+  if (normalized.IdentityVerification.includes('FACE') &&
+      (!activeValue(env.STAFF_ATTENDANCE_FACE_ENABLED, true) || clean(env.FACE_TEMPLATE_ENCRYPTION_KEY).length < 24)) {
+    fail('Configure FACE_TEMPLATE_ENCRYPTION_KEY and enable staff face attendance before requiring face recognition.', 503);
+  }
   const policy = {
     PolicyId: 'default',
     BranchId: branchId,
-    ...normalizeAttendancePolicy(body, existing || {}),
+    ...normalized,
     UpdatedAt: nowIso(),
     UpdatedBy: actorName(user)
   };
@@ -513,6 +683,7 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
   const workspace = await listStaffAttendance(env, user, body);
   const site = workspace.sites.find((row) => safeChurchDocumentId(row.SiteId || row.__id) === siteId);
   if (!site) fail('The selected attendance location is inactive or unavailable.', 404);
+  const identityMethod = verifiedAttendanceIdentity(workspace.policy, requestContext.identityProof);
   const presence = evaluateAttendancePresence(site, body.Location || body, requestContext.clientIp || '');
   if (!presence.passed) {
     const details = presence.accuracyMetres && presence.accuracyMetres > Number(site.MaxAccuracyMetres)
@@ -521,10 +692,22 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
     fail(details, 403);
   }
   const expected = workspace.nextDirection;
+  if (!expected) fail('Today\'s first clock-in and first clock-out are already recorded. Repeated clocking cannot change them.', 409);
   const direction = clean(body.Direction || expected).toUpperCase();
   if (!['IN', 'OUT'].includes(direction)) fail('Choose Clock in or Clock out.');
   if (direction !== expected) fail(expected === 'IN' ? 'You are already clocked out.' : 'You are already clocked in.', 409);
   const timestamp = nowIso();
+  const attendanceDate = calculateAttendanceMetrics(workspace.policy, { Direction: direction, Timestamp: timestamp }).Date;
+  const existingDaily = workspace.myDailyRecords.find((row) => clean(row.Date) === attendanceDate) || null;
+  if (direction === 'IN' && clean(existingDaily?.FirstClockIn)) {
+    fail('Today\'s first clock-in is already recorded and cannot be replaced by a repeated clock-in.', 409);
+  }
+  if (direction === 'OUT' && clean(existingDaily?.LastClockOut)) {
+    fail('Today\'s first clock-out is already recorded and cannot be replaced by a repeated clock-out.', 409);
+  }
+  if (direction === 'OUT' && !clean(existingDaily?.FirstClockIn)) {
+    fail('Clock in successfully before attempting to clock out.', 409);
+  }
   const eventId = safeChurchDocumentId(`TIME-${timestamp}-${username}-${crypto.randomUUID().slice(0, 8)}`);
   const event = {
     EventId: eventId,
@@ -536,16 +719,18 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
     Timestamp: timestamp,
     SiteId: siteId,
     SiteName: clean(site.Name),
-    VerificationMethod: presence.verificationMethod,
+    VerificationMethod: `${presence.verificationMethod} + ${identityMethod}`,
     DistanceMetres: presence.distanceMetres,
     AccuracyMetres: presence.accuracyMetres,
     IpFingerprint: await ipFingerprint(requestContext.clientIp || ''),
     Notes: clean(body.Notes),
     ManualOverride: false
   };
-  const attendanceDate = calculateAttendanceMetrics(workspace.policy, { Direction: direction, Timestamp: timestamp }).Date;
-  const existingDaily = workspace.myDailyRecords.find((row) => clean(row.Date) === attendanceDate) || null;
   const daily = buildDailyAttendanceFromEvent(workspace.policy, event, existingDaily || {});
+  if (direction === 'OUT' && workspace.presenceCheck?.status === 'OVERDUE') {
+    daily.MissedPresenceChecks = Number(daily.MissedPresenceChecks || 0) + 1;
+    daily.PresenceStatus = 'Random presence check missed';
+  }
   Object.assign(event, {
     AttendanceDate: daily.Date,
     AttendanceStatus: daily.AttendanceStatus,
@@ -556,11 +741,16 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
   });
   const eventPath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeEvents, branchId);
   const statePath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeState, branchId);
+  const nextPresenceDueAt = direction === 'IN' ? nextPresenceCheckAt(workspace.policy, timestamp) : '';
   const stateDocument = {
     Username: username,
     BranchId: branchId,
-    State: direction === 'IN' ? 'CLOCKED_IN' : 'CLOCKED_OUT',
-    NextDirection: direction === 'IN' ? 'OUT' : 'IN',
+    State: direction === 'IN' ? 'CLOCKED_IN' : 'COMPLETED',
+    NextDirection: direction === 'IN' ? 'OUT' : '',
+    AttendanceDate: daily.Date,
+    LastPresenceCheckAt: direction === 'IN' ? '' : clean(workspace.presenceCheck?.lastConfirmedAt),
+    NextPresenceCheckDueAt: nextPresenceDueAt,
+    PresenceCheckSequence: direction === 'IN' ? 0 : Number(workspace.presenceCheck?.sequence || 0),
     LastEventId: eventId,
     LastTimestamp: timestamp,
     UpdatedAt: timestamp
@@ -591,13 +781,108 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
     ok: true,
     event,
     daily,
-    state: direction === 'IN' ? 'CLOCKED_IN' : 'CLOCKED_OUT',
+    state: direction === 'IN' ? 'CLOCKED_IN' : 'COMPLETED',
     message: `${direction === 'IN' ? 'Clock-in' : 'Clock-out'} recorded.${timing}`
   };
 }
 
+export async function recordPresenceCheck(env, user, body = {}, requestContext = {}) {
+  const branchId = branchFor(user, body);
+  const username = actorId(user);
+  if (!username) fail('The signed-in staff account has no username.', 401);
+  const siteId = safeChurchDocumentId(body.SiteId);
+  if (!siteId) fail('Choose the attendance location.');
+  const workspace = await listStaffAttendance(env, user, body);
+  if (workspace.state !== 'CLOCKED_IN') fail('Clock in before confirming your continued presence.', 409);
+  if (!workspace.presenceCheck?.enabled) fail('Random presence confirmations are not enabled for this branch.', 409);
+  if (!workspace.presenceCheck.canConfirm) {
+    fail(`Your next random presence confirmation is not due yet${workspace.presenceCheck.dueAt ? ` (${workspace.presenceCheck.dueAt})` : ''}.`, 409);
+  }
+  const site = workspace.sites.find((row) => safeChurchDocumentId(row.SiteId || row.__id) === siteId);
+  if (!site) fail('The selected attendance location is inactive or unavailable.', 404);
+  const identityMethod = verifiedAttendanceIdentity(workspace.policy, requestContext.identityProof);
+  const presence = evaluateAttendancePresence(site, body.Location || body, requestContext.clientIp || '');
+  if (!presence.passed) fail('You appear to be outside the approved premises and network.', 403);
+  const timestamp = nowIso();
+  const existingDaily = workspace.myDailyRecords.find((row) => clean(row.Date) === workspace.todayAttendanceDate) || null;
+  if (!existingDaily?.FirstClockIn || existingDaily?.LastClockOut) fail('An active attendance day was not found.', 409);
+  const { __id: _id, __createTime: _createTime, __updateTime: _updateTime, ...storedDaily } = existingDaily;
+  const overdue = workspace.presenceCheck.status === 'OVERDUE';
+  const daily = {
+    ...storedDaily,
+    PresenceCheckCount: Number(existingDaily.PresenceCheckCount || 0) + 1,
+    MissedPresenceChecks: Number(existingDaily.MissedPresenceChecks || 0) + (overdue ? 1 : 0),
+    PresenceStatus: overdue ? 'Confirmed after random-check window' : 'Random presence confirmed',
+    LastPresenceCheckAt: timestamp,
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName(user)
+  };
+  const eventId = safeChurchDocumentId(`PRESENCE-${timestamp}-${username}-${crypto.randomUUID().slice(0, 8)}`);
+  const event = {
+    EventId: eventId,
+    BranchId: branchId,
+    Username: username,
+    DisplayName: actorName(user),
+    Role: clean(user.role || user.Role),
+    Direction: 'CHECK',
+    Timestamp: timestamp,
+    AttendanceDate: workspace.todayAttendanceDate,
+    AttendanceStatus: daily.PresenceStatus,
+    SiteId: siteId,
+    SiteName: clean(site.Name),
+    VerificationMethod: `${presence.verificationMethod} + ${identityMethod}`,
+    DistanceMetres: presence.distanceMetres,
+    AccuracyMetres: presence.accuracyMetres,
+    IpFingerprint: await ipFingerprint(requestContext.clientIp || ''),
+    ManualOverride: false
+  };
+  const nextDueAt = nextPresenceCheckAt(workspace.policy, timestamp);
+  const state = {
+    Username: username,
+    BranchId: branchId,
+    State: 'CLOCKED_IN',
+    NextDirection: 'OUT',
+    AttendanceDate: workspace.todayAttendanceDate,
+    LastEventId: eventId,
+    LastTimestamp: timestamp,
+    LastPresenceCheckAt: timestamp,
+    NextPresenceCheckDueAt: nextDueAt,
+    PresenceCheckSequence: Number(workspace.presenceCheck.sequence || 0) + 1,
+    UpdatedAt: timestamp
+  };
+  await batchCommitDocuments(env, [
+    {
+      collectionPath: churchCollectionPath(CHURCH_COLLECTIONS.staffTimeEvents, branchId),
+      documentId: eventId,
+      data: event,
+      exists: false
+    },
+    {
+      collectionPath: churchCollectionPath(CHURCH_COLLECTIONS.staffTimeState, branchId),
+      documentId: safeChurchDocumentId(username),
+      data: state,
+      ...(workspace.stateVersion ? { updateTime: workspace.stateVersion } : { exists: false })
+    },
+    {
+      collectionPath: dailyAttendancePath(branchId),
+      documentId: safeChurchDocumentId(existingDaily.DailyId || existingDaily.__id),
+      data: daily,
+      ...(existingDaily.__updateTime ? { updateTime: existingDaily.__updateTime } : {})
+    }
+  ]);
+  return {
+    ok: true,
+    event,
+    daily,
+    presenceCheck: { ...presenceCheckView(workspace.policy, state, true), dueAt: nextDueAt },
+    message: overdue
+      ? 'Presence confirmed, but the random confirmation window had already expired and was flagged for review.'
+      : 'Continued presence confirmed successfully.'
+  };
+}
+
 export async function recordManualAttendance(env, user, body = {}) {
-  if (!MANAGE_ROLES.has(clean(user.role || user.Role))) fail('Only church administrators can record an attendance correction.', 403);
+  if (!canManageStaffAttendance(user)) fail('Only organisation or HR attendance administrators can record an attendance correction.', 403);
   const branchId = branchFor(user, body);
   const username = lower(body.Username);
   const direction = clean(body.Direction).toUpperCase();
@@ -660,8 +945,9 @@ export async function recordManualAttendance(env, user, body = {}) {
       data: {
         Username: username,
         BranchId: branchId,
-        State: direction === 'IN' ? 'CLOCKED_IN' : 'CLOCKED_OUT',
-        NextDirection: direction === 'IN' ? 'OUT' : 'IN',
+        State: direction === 'IN' ? 'CLOCKED_IN' : 'COMPLETED',
+        NextDirection: direction === 'IN' ? 'OUT' : '',
+        AttendanceDate: attendanceDate,
         LastEventId: eventId,
         LastTimestamp: timestamp,
         UpdatedAt: nowIso(),
@@ -680,6 +966,7 @@ export async function handleStaffAttendanceAction(env, user, body = {}, requestC
   if (action === 'savesite') return saveAttendanceSite(env, user, body);
   if (action === 'savepolicy') return saveAttendancePolicy(env, user, body);
   if (action === 'clock') return clockStaffAttendance(env, user, body, requestContext);
+  if (action === 'presence') return recordPresenceCheck(env, user, body, requestContext);
   if (action === 'manual') return recordManualAttendance(env, user, body);
   fail('Choose a valid staff attendance action.');
 }

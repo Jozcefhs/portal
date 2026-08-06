@@ -38,6 +38,7 @@ export const CHURCH_COLLECTIONS = Object.freeze({
   staffTimeEvents: 'churchStaffTimeEvents',
   staffTimeState: 'churchStaffTimeState',
   staffTimeAudit: 'churchStaffTimeAudit',
+  staffAttendanceFaceTemplates: 'churchStaffAttendanceFaceTemplates',
   offeringApprovalRoutes: 'churchOfferingApprovalRoutes',
   donations: 'churchDonations',
   offerings: 'churchOfferings',
