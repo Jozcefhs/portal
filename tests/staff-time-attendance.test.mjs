@@ -14,6 +14,7 @@ import {
 } from '../functions/lib/staff-time-attendance.js';
 
 const adminJs = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
+const portalCss = await readFile(new URL('../css/style.css', import.meta.url), 'utf8');
 const attendanceSource = await readFile(new URL('../functions/lib/staff-time-attendance.js', import.meta.url), 'utf8');
 const attendanceApiSource = await readFile(new URL('../functions/api/staff-attendance.js', import.meta.url), 'utf8');
 const attendanceFaceSource = await readFile(new URL('../functions/api/staff-attendance-face.js', import.meta.url), 'utf8');
@@ -187,7 +188,7 @@ test('attendance state resets by date and preserves the first successful daily t
 });
 
 test('attendance UI and API enforce identity and random continued-presence checks', () => {
-  assert.match(adminJs, /Weekly work schedule/);
+  assert.match(adminJs, /Weekly schedule/);
   assert.match(adminJs, /PASSKEY_OR_FACE/);
   assert.match(adminJs, /Confirm presence/);
   assert.match(adminJs, /payload\.DaySchedules/);
@@ -200,4 +201,20 @@ test('attendance UI and API enforce identity and random continued-presence check
   assert.match(attendanceFaceSource, /decryptFaceDescriptor/);
   assert.match(attendanceFaceSource, /createStaffAttendanceProof/);
   assert.match(attendanceFaceSource, /Live face recognition did not match/);
+});
+
+test('attendance policy settings use compact accessible tabs on mobile', () => {
+  assert.match(adminJs, /class="attendance-settings-tabs" role="tablist"/);
+  assert.match(adminJs, /data-attendance-policy-tab="general"/);
+  assert.match(adminJs, /data-attendance-policy-tab="identity"/);
+  assert.match(adminJs, /data-attendance-policy-tab="presence"/);
+  assert.match(adminJs, /data-attendance-policy-tab="schedule"/);
+  assert.match(adminJs, /data-attendance-policy-panel="schedule" hidden/);
+  assert.match(adminJs, /activatePolicyTab/);
+  assert.match(adminJs, /policyTabStorageKey/);
+  assert.match(adminJs, /\['ArrowLeft', 'ArrowRight', 'Home', 'End'\]/);
+  assert.match(adminJs, /addEventListener\('invalid'/);
+  assert.match(portalCss, /\.attendance-settings-panel\[hidden\]\{display:none!important\}/);
+  assert.match(portalCss, /@media\(max-width:760px\)\{\.attendance-settings-tabs/);
+  assert.match(portalCss, /\.attendance-week-schedule-row\{grid-template-columns:minmax\(0,1fr\) auto/);
 });

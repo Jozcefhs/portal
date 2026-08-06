@@ -5083,19 +5083,37 @@ async function loadStaffAttendance() {
         <form id="staffAttendancePolicyForm" class="workflow-form config-form">
           <input name="ResumptionTime" type="hidden" value="${escapeHtml(policy.ResumptionTime || '08:00')}">
           <input name="ClosingTime" type="hidden" value="${escapeHtml(policy.ClosingTime || '17:00')}">
-          <div class="config-grid">
-            <label>Grace period (minutes) <input name="GraceMinutes" type="number" min="0" max="180" value="${Number(policy.GraceMinutes ?? 15)}" required></label>
-            <label>Minimum overtime (minutes) <input name="OvertimeMinimumMinutes" type="number" min="0" max="240" value="${Number(policy.OvertimeMinimumMinutes ?? 15)}" required></label>
-            <label>Time zone <input name="TimeZone" value="${escapeHtml(policy.TimeZone || 'Africa/Lagos')}" required></label>
-            <label>Policy status <select name="Active"><option value="YES"${selectedOption(policy.Active, 'YES')}>Enabled</option><option value="NO"${selectedOption(policy.Active, 'NO')}>Disabled</option></select></label>
-            <label>Clock identity verification <select name="IdentityVerification"><option value="NONE"${selectedOption(identityMode, 'NONE')}>Location/network only</option><option value="PASSKEY"${selectedOption(identityMode, 'PASSKEY')}>Device biometric required</option><option value="FACE"${selectedOption(identityMode, 'FACE')}>Live face recognition required</option><option value="PASSKEY_OR_FACE"${selectedOption(identityMode, 'PASSKEY_OR_FACE')}>Device biometric or face</option></select></label>
-            <label>Continued-presence checks <select name="PresenceCheckMode"><option value="NONE"${selectedOption(policy.PresenceCheckMode, 'NONE')}>Disabled</option><option value="RANDOM"${selectedOption(policy.PresenceCheckMode, 'RANDOM')}>Random intervals</option></select></label>
-            <label>Minimum random interval (minutes) <input name="PresenceCheckMinimumMinutes" type="number" min="15" max="480" value="${Number(policy.PresenceCheckMinimumMinutes ?? 90)}" required></label>
-            <label>Maximum random interval (minutes) <input name="PresenceCheckMaximumMinutes" type="number" min="15" max="720" value="${Number(policy.PresenceCheckMaximumMinutes ?? 180)}" required></label>
-            <label>Confirmation grace period (minutes) <input name="PresenceCheckGraceMinutes" type="number" min="5" max="180" value="${Number(policy.PresenceCheckGraceMinutes ?? 20)}" required></label>
-          </div>
-          <fieldset class="attendance-week-schedule"><legend>Weekly work schedule</legend><div class="attendance-week-schedule-head"><span>Day</span><span>Working</span><span>Resumption</span><span>Closing</span></div>${attendanceDays.map(([day, label]) => { const schedule = daySchedules[day] || { Enabled: workDays.includes(day), ResumptionTime: policy.ResumptionTime || '08:00', ClosingTime: policy.ClosingTime || '17:00' }; return `<div class="attendance-week-schedule-row"><strong>${label}</strong><label class="check-row"><input type="checkbox" name="Schedule_${day}_Enabled" ${schedule.Enabled ? 'checked' : ''}><span>Yes</span></label><label><span class="sr-only">${label} resumption</span><input name="Schedule_${day}_ResumptionTime" type="time" value="${escapeHtml(schedule.ResumptionTime)}" required></label><label><span class="sr-only">${label} closing</span><input name="Schedule_${day}_ClosingTime" type="time" value="${escapeHtml(schedule.ClosingTime)}" required></label></div>`; }).join('')}</fieldset>
-          <label class="check-row config-switch"><input type="checkbox" name="AutoRecordAbsence" value="YES" ${clean(policy.AutoRecordAbsence).toUpperCase() !== 'NO' ? 'checked' : ''}><span>Automatically record absence after closing time when there is no clock-in</span></label>
+          <nav class="attendance-settings-tabs" role="tablist" aria-label="Attendance policy settings">
+            <button type="button" role="tab" id="attendancePolicyTabGeneral" aria-controls="attendancePolicyPanelGeneral" aria-selected="true" data-attendance-policy-tab="general">General</button>
+            <button type="button" role="tab" id="attendancePolicyTabIdentity" aria-controls="attendancePolicyPanelIdentity" aria-selected="false" data-attendance-policy-tab="identity">Identity</button>
+            <button type="button" role="tab" id="attendancePolicyTabPresence" aria-controls="attendancePolicyPanelPresence" aria-selected="false" data-attendance-policy-tab="presence">Presence</button>
+            <button type="button" role="tab" id="attendancePolicyTabSchedule" aria-controls="attendancePolicyPanelSchedule" aria-selected="false" data-attendance-policy-tab="schedule">Weekly schedule</button>
+          </nav>
+          <section class="attendance-settings-panel" id="attendancePolicyPanelGeneral" role="tabpanel" aria-labelledby="attendancePolicyTabGeneral" data-attendance-policy-panel="general">
+            <div class="config-grid">
+              <label>Policy status <select name="Active"><option value="YES"${selectedOption(policy.Active, 'YES')}>Enabled</option><option value="NO"${selectedOption(policy.Active, 'NO')}>Disabled</option></select></label>
+              <label>Grace period (minutes) <input name="GraceMinutes" type="number" min="0" max="180" value="${Number(policy.GraceMinutes ?? 15)}" required></label>
+              <label>Minimum overtime (minutes) <input name="OvertimeMinimumMinutes" type="number" min="0" max="240" value="${Number(policy.OvertimeMinimumMinutes ?? 15)}" required></label>
+              <label>Time zone <input name="TimeZone" value="${escapeHtml(policy.TimeZone || 'Africa/Lagos')}" required></label>
+            </div>
+            <label class="check-row config-switch"><input type="checkbox" name="AutoRecordAbsence" value="YES" ${clean(policy.AutoRecordAbsence).toUpperCase() !== 'NO' ? 'checked' : ''}><span>Automatically record absence after closing time when there is no clock-in</span></label>
+          </section>
+          <section class="attendance-settings-panel" id="attendancePolicyPanelIdentity" role="tabpanel" aria-labelledby="attendancePolicyTabIdentity" data-attendance-policy-panel="identity" hidden>
+            <div class="config-grid"><label>Clock identity verification <select name="IdentityVerification"><option value="NONE"${selectedOption(identityMode, 'NONE')}>Location/network only</option><option value="PASSKEY"${selectedOption(identityMode, 'PASSKEY')}>Device biometric required</option><option value="FACE"${selectedOption(identityMode, 'FACE')}>Live face recognition required</option><option value="PASSKEY_OR_FACE"${selectedOption(identityMode, 'PASSKEY_OR_FACE')}>Device biometric or face</option></select></label></div>
+            <p class="attendance-settings-note"><strong>Recommendation:</strong> use live face recognition for the strongest protection against shared login details, and supervise each staff member's first face enrollment.</p>
+          </section>
+          <section class="attendance-settings-panel" id="attendancePolicyPanelPresence" role="tabpanel" aria-labelledby="attendancePolicyTabPresence" data-attendance-policy-panel="presence" hidden>
+            <div class="config-grid">
+              <label>Continued-presence checks <select name="PresenceCheckMode" id="staffPresenceCheckMode"><option value="NONE"${selectedOption(policy.PresenceCheckMode, 'NONE')}>Disabled</option><option value="RANDOM"${selectedOption(policy.PresenceCheckMode, 'RANDOM')}>Random intervals</option></select></label>
+              <label data-attendance-presence-setting>Minimum random interval (minutes) <input name="PresenceCheckMinimumMinutes" type="number" min="15" max="480" value="${Number(policy.PresenceCheckMinimumMinutes ?? 90)}" required></label>
+              <label data-attendance-presence-setting>Maximum random interval (minutes) <input name="PresenceCheckMaximumMinutes" type="number" min="15" max="720" value="${Number(policy.PresenceCheckMaximumMinutes ?? 180)}" required></label>
+              <label data-attendance-presence-setting>Confirmation grace period (minutes) <input name="PresenceCheckGraceMinutes" type="number" min="5" max="180" value="${Number(policy.PresenceCheckGraceMinutes ?? 20)}" required></label>
+            </div>
+            <p class="attendance-settings-note">Random checks require the staff member to verify identity and location again during the working day. Missed checks are flagged for HR review.</p>
+          </section>
+          <section class="attendance-settings-panel" id="attendancePolicyPanelSchedule" role="tabpanel" aria-labelledby="attendancePolicyTabSchedule" data-attendance-policy-panel="schedule" hidden>
+            <fieldset class="attendance-week-schedule"><legend>Working days and times</legend><div class="attendance-week-schedule-head"><span>Day</span><span>Working</span><span>Resumption</span><span>Closing</span></div>${attendanceDays.map(([day, label]) => { const schedule = daySchedules[day] || { Enabled: workDays.includes(day), ResumptionTime: policy.ResumptionTime || '08:00', ClosingTime: policy.ClosingTime || '17:00' }; return `<div class="attendance-week-schedule-row"><strong>${label}</strong><label class="check-row"><input type="checkbox" name="Schedule_${day}_Enabled" ${schedule.Enabled ? 'checked' : ''}><span>Working</span></label><label class="attendance-day-time"><span>${label} resumption</span><input name="Schedule_${day}_ResumptionTime" type="time" value="${escapeHtml(schedule.ResumptionTime)}" required></label><label class="attendance-day-time"><span>${label} closing</span><input name="Schedule_${day}_ClosingTime" type="time" value="${escapeHtml(schedule.ClosingTime)}" required></label></div>`; }).join('')}</fieldset>
+          </section>
           <div class="config-dialog-actions"><p class="status" id="staffAttendancePolicyStatus">${data.policyConfigured ? 'Current branch policy loaded.' : 'Save the policy to activate automatic calculations.'}</p><button type="submit">Save work hours</button></div>
         </form>
       </section>
@@ -5202,6 +5220,52 @@ async function loadStaffAttendance() {
     bindHrPersonPickers(panelEl);
     hrFormStaffNameSync(document.getElementById('staffAttendanceManualForm'), data.staffDirectory || []);
     const policyForm = document.getElementById('staffAttendancePolicyForm');
+    const policyTabButtons = [...(policyForm?.querySelectorAll('[data-attendance-policy-tab]') || [])];
+    const policyTabPanels = [...(policyForm?.querySelectorAll('[data-attendance-policy-panel]') || [])];
+    const policyTabNames = policyTabButtons.map((button) => clean(button.dataset.attendancePolicyTab));
+    const policyTabStorageKey = `dynamax:staff-attendance:policy-tab:${clean(data.branchId) || 'main'}`;
+    const activatePolicyTab = (requestedTab, focus = false) => {
+      const tab = policyTabNames.includes(clean(requestedTab)) ? clean(requestedTab) : 'general';
+      policyTabButtons.forEach((button) => {
+        const selected = clean(button.dataset.attendancePolicyTab) === tab;
+        button.setAttribute('aria-selected', selected ? 'true' : 'false');
+        button.tabIndex = selected ? 0 : -1;
+        if (selected && focus) button.focus();
+      });
+      policyTabPanels.forEach((panel) => { panel.hidden = clean(panel.dataset.attendancePolicyPanel) !== tab; });
+      try { window.localStorage.setItem(policyTabStorageKey, tab); } catch (_error) { /* Browser storage is optional. */ }
+    };
+    let savedPolicyTab = 'general';
+    try { savedPolicyTab = window.localStorage.getItem(policyTabStorageKey) || 'general'; } catch (_error) { /* Browser storage is optional. */ }
+    activatePolicyTab(savedPolicyTab);
+    policyTabButtons.forEach((button, index) => {
+      button.addEventListener('click', () => activatePolicyTab(button.dataset.attendancePolicyTab));
+      button.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const nextIndex = event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? policyTabButtons.length - 1
+            : (index + (event.key === 'ArrowRight' ? 1 : -1) + policyTabButtons.length) % policyTabButtons.length;
+        activatePolicyTab(policyTabButtons[nextIndex].dataset.attendancePolicyTab, true);
+      });
+    });
+    policyForm?.addEventListener('invalid', (event) => {
+      const panel = event.target.closest('[data-attendance-policy-panel]');
+      if (panel) activatePolicyTab(panel.dataset.attendancePolicyPanel);
+    }, true);
+    const presenceMode = policyForm?.querySelector('#staffPresenceCheckMode');
+    const syncPresenceSettings = () => {
+      const disabled = clean(presenceMode?.value).toUpperCase() !== 'RANDOM';
+      policyForm?.querySelectorAll('[data-attendance-presence-setting]').forEach((label) => {
+        label.classList.toggle('is-disabled', disabled);
+        const input = label.querySelector('input');
+        if (input) input.disabled = disabled;
+      });
+    };
+    presenceMode?.addEventListener('change', syncPresenceSettings);
+    syncPresenceSettings();
     policyForm?.addEventListener('submit', async (event) => {
       event.preventDefault();
       const button = policyForm.querySelector('button[type="submit"]');
