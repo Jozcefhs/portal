@@ -546,6 +546,37 @@ async function synchronizeAutomaticAbsences(env, branchId, policy, now, director
   return [...refreshed, ...dailyRows.filter((row) => clean(row.Date) !== local.date)];
 }
 
+export async function getStaffAttendanceQuickState(env, user, body = {}) {
+  const branchId = branchFor(user, body);
+  const username = actorId(user);
+  if (!username) fail('The signed-in staff account has no username.', 401);
+  const policyDocumentPromise = getDocument(env, attendancePolicyPath(branchId), 'default').catch(() => null);
+  const sitesPromise = listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.staffAttendanceSites, branchId)).catch(() => []);
+  const storedPolicy = await policyDocumentPromise;
+  const policy = normalizeAttendancePolicy(storedPolicy || { Active: 'NO' });
+  const today = localAttendanceParts(new Date(), policy.TimeZone);
+  const todayDailyPromise = getDocument(env, dailyAttendancePath(branchId), dailyAttendanceId(today.date, username)).catch(() => null);
+  const [sites, todayDaily] = await Promise.all([sitesPromise, todayDailyPromise]);
+  const state = clean(todayDaily?.FirstClockIn)
+    ? clean(todayDaily?.LastClockOut) ? 'COMPLETED' : 'CLOCKED_IN'
+    : 'CLOCKED_OUT';
+  return {
+    ok: true,
+    branchId,
+    sites: sites
+      .filter((row) => lower(row.Active || 'YES') !== 'no')
+      .sort((a, b) => clean(a.Name).localeCompare(clean(b.Name))),
+    policy,
+    policyConfigured: Boolean(storedPolicy),
+    todayAttendanceDate: today.date,
+    todayAttendanceDay: today.day,
+    todaySchedule: policy.DaySchedules?.[today.day] || null,
+    todayDaily: todayDaily || null,
+    state,
+    nextDirection: state === 'CLOCKED_IN' ? 'OUT' : state === 'CLOCKED_OUT' ? 'IN' : ''
+  };
+}
+
 export async function listStaffAttendance(env, user, body = {}) {
   const branchId = branchFor(user, body);
   const username = actorId(user);
@@ -963,6 +994,7 @@ export async function recordManualAttendance(env, user, body = {}) {
 export async function handleStaffAttendanceAction(env, user, body = {}, requestContext = {}) {
   const action = lower(body.action || body.Action || 'list');
   if (action === 'list') return listStaffAttendance(env, user, body);
+  if (action === 'quick') return getStaffAttendanceQuickState(env, user, body);
   if (action === 'savesite') return saveAttendanceSite(env, user, body);
   if (action === 'savepolicy') return saveAttendancePolicy(env, user, body);
   if (action === 'clock') return clockStaffAttendance(env, user, body, requestContext);

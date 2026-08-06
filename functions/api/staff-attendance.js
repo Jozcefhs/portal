@@ -32,7 +32,7 @@ export async function onRequestPost(context) {
         ].filter(Boolean))
       ];
     }
-    if (action !== 'list') {
+    if (!['list', 'quick'].includes(action)) {
       idempotency = await beginIdempotentRequest(context.env, context.request, body, {
         scope: `church-staff-attendance-${action}`,
         actor: user.username,

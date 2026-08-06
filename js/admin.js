@@ -27,6 +27,7 @@ const themeToggleIcon = document.getElementById('staffThemeToggleIcon');
 const sidebarThemeToggleButton = document.getElementById('staffSidebarThemeToggle');
 const sidebarThemeToggleIcon = document.getElementById('staffSidebarThemeToggleIcon');
 const summaryEl = document.getElementById('adminSummary');
+const dashboardClockEl = document.getElementById('staffDashboardClock');
 const dashboardChartsEl = document.getElementById('dashboardCharts');
 const tabsEl = document.getElementById('adminTabs');
 const panelEl = document.getElementById('adminPanel');
@@ -84,6 +85,10 @@ let branchSwitchInProgress = false;
 let passkeyStatusRequest = null;
 let organizationDepartmentWorkspaceTab = 'overview';
 let organizationDashboardChartsRequest = 0;
+let dashboardAttendanceRequest = 0;
+let dashboardAttendanceCache = null;
+let dashboardClockTimer = 0;
+let dashboardClockTimeZone = '';
 const dashboardSectionRequests = new Map();
 let incomeAnalyticsData = null;
 let incomeAnalyticsFilter = { period: 'monthly' };
@@ -495,10 +500,10 @@ async function attendancePasskeyProof(siteId, direction) {
   return proof;
 }
 
-async function attendanceIdentityProof(policy, siteId, direction) {
+async function attendanceIdentityProof(policy, siteId, direction, selectedMethod = '') {
   const required = clean(policy?.IdentityVerification || 'NONE').toUpperCase();
   if (required === 'NONE') return '';
-  const choice = clean(document.getElementById('staffAttendanceIdentityMethod')?.value).toUpperCase();
+  const choice = clean(selectedMethod || document.getElementById('staffAttendanceIdentityMethod')?.value).toUpperCase();
   const method = required === 'PASSKEY_OR_FACE' ? choice || 'PASSKEY' : required;
   if (method === 'PASSKEY') return attendancePasskeyProof(siteId, direction);
   const module = await import('./student-face-lookup.js?v=20260806-staff-attendance-face');
@@ -760,6 +765,10 @@ function clearStaffWorkspaceState() {
   incomeAnalyticsData = null;
   incomeAnalyticsFilter = { period: 'monthly' };
   organizationDepartmentWorkspaceTab = 'overview';
+  dashboardAttendanceRequest += 1;
+  dashboardAttendanceCache = null;
+  dashboardClockTimeZone = '';
+  stopDashboardClock();
   executiveOfficeData = null;
   executiveOfficeTab = 'overview';
   executiveDirectoryType = '';
@@ -777,6 +786,7 @@ function clearStaffWorkspaceState() {
   try { sessionStorage.removeItem('dynamaxRecordsDeskContext'); } catch (_error) { /* Ignore private storage. */ }
   tabsEl.replaceChildren();
   summaryEl.replaceChildren();
+  dashboardClockEl.replaceChildren();
   dashboardChartsEl.replaceChildren();
   panelEl.replaceChildren();
   mobileNav.replaceChildren();
@@ -832,6 +842,9 @@ function clearBranchScopedWorkspaceData() {
   recordsDeskAbortController = null;
   recordsDeskRequest += 1;
   organizationDashboardChartsRequest += 1;
+  dashboardAttendanceRequest += 1;
+  dashboardAttendanceCache = null;
+  dashboardClockTimeZone = '';
   dashboardData = null;
   financeData = null;
   staffUsersData = [];
@@ -857,6 +870,7 @@ function clearBranchScopedWorkspaceData() {
     truncated: false, selectedKey: '', selectedBranchId: '', detail: null, loading: false, loadingDetail: false, error: ''
   };
   summaryEl.replaceChildren();
+  dashboardClockEl.replaceChildren();
   dashboardChartsEl.replaceChildren();
   panelEl.replaceChildren();
 }
@@ -1113,6 +1127,183 @@ function renderDashboardCharts(charts) {
     const bars = rows.length ? rows.map((row) => `<div class="chart-row"><span title="${escapeHtml(row.label)}">${escapeHtml(row.label)}${row.secondary ? `<small>${escapeHtml(row.secondary)}</small>` : ''}</span><i><b style="width:${Math.max(2, Math.round(Number(row.value || 0) / max * 100))}%"></b></i><strong>${currency ? money(row.value) : escapeHtml(row.value)}</strong></div>`).join('') : '<p class="muted">No data yet.</p>';
     return `<article><h3>${escapeHtml(title)}</h3>${bars}</article>`;
   }).join('');
+}
+
+function stopDashboardClock() {
+  if (dashboardClockTimer) window.clearInterval(dashboardClockTimer);
+  dashboardClockTimer = 0;
+}
+
+function updateDashboardClockFace() {
+  const timeElement = document.getElementById('staffDashboardClockTime');
+  const dateElement = document.getElementById('staffDashboardClockDate');
+  if (!timeElement || !dateElement) return;
+  const options = dashboardClockTimeZone ? { timeZone: dashboardClockTimeZone } : {};
+  const now = new Date();
+  try {
+    timeElement.textContent = new Intl.DateTimeFormat([], {
+      ...options,
+      hour: '2-digit', minute: '2-digit', second: '2-digit'
+    }).format(now);
+    dateElement.textContent = new Intl.DateTimeFormat([], {
+      ...options,
+      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+    }).format(now);
+    const dateParts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+      ...options,
+      year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(now).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+    const attendanceDate = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+    if (activeSection === 'overview'
+        && dashboardAttendanceCache?.data?.todayAttendanceDate
+        && attendanceDate !== clean(dashboardAttendanceCache.data.todayAttendanceDate)
+        && !dashboardAttendanceCache.loading) {
+      void loadDashboardAttendanceCard(true);
+    }
+  } catch (_error) {
+    timeElement.textContent = now.toLocaleTimeString();
+    dateElement.textContent = now.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  }
+}
+
+function attendanceDashboardAllowed() {
+  const sections = dashboardData?.allowedSections || currentUser?.allowedSections || [];
+  return sections.includes('staffAttendance');
+}
+
+function dashboardAttendanceSiteStorageKey(branchId) {
+  return `dynamax:staff-attendance:dashboard-site:${clean(branchId) || 'main'}`;
+}
+
+function dashboardAttendanceTime(value, timeZone = '') {
+  if (!value) return '';
+  try {
+    return new Intl.DateTimeFormat([], {
+      ...(timeZone ? { timeZone } : {}),
+      hour: '2-digit', minute: '2-digit'
+    }).format(new Date(value));
+  } catch (_error) {
+    return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+}
+
+function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
+  if (!dashboardClockEl || activeSection !== 'overview') return;
+  const loading = dashboardAttendanceCache?.loading && !data;
+  const refreshing = Boolean(dashboardAttendanceCache?.loading);
+  const state = clean(data?.state || 'CLOCKED_OUT').toUpperCase();
+  const complete = state === 'COMPLETED';
+  const direction = clean(data?.nextDirection || (state === 'CLOCKED_IN' ? 'OUT' : 'IN')).toUpperCase();
+  const sites = data?.sites || [];
+  const policy = data?.policy || {};
+  const identityMode = clean(policy.IdentityVerification || 'NONE').toUpperCase();
+  const todaySchedule = data?.todaySchedule || {};
+  const daily = data?.todayDaily || {};
+  let savedSiteId = '';
+  try { savedSiteId = window.localStorage.getItem(dashboardAttendanceSiteStorageKey(data?.branchId)) || ''; } catch (_error) { /* Browser storage is optional. */ }
+  const selectedSiteId = sites.some((site) => clean(site.SiteId || site.__id) === savedSiteId)
+    ? savedSiteId
+    : clean(sites[0]?.SiteId || sites[0]?.__id);
+  const stateLabel = complete ? 'Completed today' : state === 'CLOCKED_IN' ? 'Currently clocked in' : 'Not clocked in';
+  const timeNote = todaySchedule.Enabled
+    ? `${clean(todaySchedule.ResumptionTime)}-${clean(todaySchedule.ClosingTime)}`
+    : 'No work schedule for today';
+  const identityControl = identityMode === 'PASSKEY_OR_FACE'
+    ? `<label>Verify with<select id="dashboardAttendanceIdentityMethod"><option value="PASSKEY">Device biometric</option><option value="FACE">Live face</option></select></label>`
+    : `<small>${identityMode === 'PASSKEY' ? 'Device biometric required' : identityMode === 'FACE' ? 'Live face required' : 'Location/network verification'}</small>`;
+  dashboardClockEl.innerHTML = `
+    <article class="dashboard-digital-clock">
+      <small>${dashboardClockTimeZone ? escapeHtml(dashboardClockTimeZone) : 'Local time'}</small>
+      <strong id="staffDashboardClockTime">--:--:--</strong>
+      <span id="staffDashboardClockDate">Loading date...</span>
+    </article>
+    <article class="dashboard-attendance-quick">
+      <div class="dashboard-attendance-heading"><div><small>My attendance</small><strong>${loading ? 'Loading attendance...' : escapeHtml(stateLabel)}</strong></div>${data ? `<span class="dashboard-attendance-state state-${escapeHtml(state.toLowerCase())}">${escapeHtml(daily.AttendanceStatus || stateLabel)}</span>` : ''}</div>
+      ${!attendanceDashboardAllowed()
+        ? '<p class="muted">Staff Attendance access has not been assigned to this account.</p>'
+        : loading
+          ? '<p class="muted">Loading today\'s attendance state and approved locations...</p>'
+          : data
+            ? `<div class="dashboard-attendance-meta"><span>${escapeHtml(timeNote)}</span>${daily.FirstClockIn ? `<span>In: ${escapeHtml(dashboardAttendanceTime(daily.FirstClockIn, policy.TimeZone))}</span>` : ''}${daily.LastClockOut ? `<span>Out: ${escapeHtml(dashboardAttendanceTime(daily.LastClockOut, policy.TimeZone))}</span>` : ''}</div>
+              <div class="dashboard-attendance-controls">
+                <label>Location<select id="dashboardAttendanceSite" ${sites.length ? '' : 'disabled'}>${sites.length ? sites.map((site) => { const id = clean(site.SiteId || site.__id); return `<option value="${escapeHtml(id)}"${id === selectedSiteId ? ' selected' : ''}>${escapeHtml(site.Name)}</option>`; }).join('') : '<option value="">No approved location</option>'}</select></label>
+                ${identityControl}
+                <button type="button" id="dashboardAttendanceClockButton" ${sites.length && !complete && !refreshing ? '' : 'disabled'}>${refreshing ? 'Refreshing...' : complete ? 'Completed' : direction === 'OUT' ? 'Clock out' : 'Clock in'}</button>
+              </div>`
+            : '<p class="muted">Attendance information could not be loaded.</p>'}
+      <p id="dashboardAttendanceStatus" class="status ${tone}">${escapeHtml(message)}</p>
+    </article>`;
+  updateDashboardClockFace();
+  const siteSelect = document.getElementById('dashboardAttendanceSite');
+  siteSelect?.addEventListener('change', () => {
+    try { window.localStorage.setItem(dashboardAttendanceSiteStorageKey(data?.branchId), clean(siteSelect.value)); } catch (_error) { /* Browser storage is optional. */ }
+  });
+  document.getElementById('dashboardAttendanceClockButton')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const status = document.getElementById('dashboardAttendanceStatus');
+    const siteId = clean(siteSelect?.value);
+    if (!siteId) {
+      setStatus(status, 'No approved attendance location is available.', 'bad');
+      return;
+    }
+    const normalText = direction === 'OUT' ? 'Clock out' : 'Clock in';
+    setButtonLoading(button, true, 'Verifying...', normalText);
+    try {
+      let location = {};
+      try { location = await browserPosition(); } catch (_error) { location = {}; }
+      const selectedMethod = clean(document.getElementById('dashboardAttendanceIdentityMethod')?.value);
+      const attendanceProof = await attendanceIdentityProof(policy, siteId, direction, selectedMethod);
+      const result = await staffAttendanceRequest('clock', {
+        SiteId: siteId,
+        Direction: direction,
+        Location: location,
+        AttendanceProof: attendanceProof
+      });
+      await loadDashboardAttendanceCard(true, result.message, 'ok');
+    } catch (error) {
+      setStatus(status, error.message || String(error), 'bad');
+    } finally {
+      if (button.isConnected) setButtonLoading(button, false, 'Verifying...', normalText);
+    }
+  });
+}
+
+async function loadDashboardAttendanceCard(force = false, message = '', tone = '') {
+  if (!dashboardClockEl || activeSection !== 'overview' || !attendanceDashboardAllowed()) return;
+  const branchId = clean(selectedBranchId || currentUser?.branchId || 'main');
+  if (!force && dashboardAttendanceCache?.branchId === branchId && dashboardAttendanceCache.loading) return;
+  if (!force && dashboardAttendanceCache?.branchId === branchId && dashboardAttendanceCache.data) {
+    dashboardClockTimeZone = clean(dashboardAttendanceCache.data.policy?.TimeZone);
+    renderDashboardTimeAttendance(dashboardAttendanceCache.data, message, tone);
+    return;
+  }
+  const requestId = ++dashboardAttendanceRequest;
+  dashboardAttendanceCache = { branchId, data: dashboardAttendanceCache?.branchId === branchId ? dashboardAttendanceCache.data : null, loading: true };
+  renderDashboardTimeAttendance(dashboardAttendanceCache.data, message || 'Refreshing attendance...', message ? tone : '');
+  try {
+    const data = await staffAttendanceRequest('quick');
+    if (requestId !== dashboardAttendanceRequest || activeSection !== 'overview') return;
+    dashboardAttendanceCache = { branchId, data, loading: false };
+    dashboardClockTimeZone = clean(data.policy?.TimeZone);
+    renderDashboardTimeAttendance(data, message, tone);
+  } catch (error) {
+    if (requestId !== dashboardAttendanceRequest || activeSection !== 'overview') return;
+    dashboardAttendanceCache = { branchId, data: null, loading: false };
+    renderDashboardTimeAttendance(null, error.message || String(error), 'bad');
+  }
+}
+
+function setDashboardClockActive(active) {
+  if (!dashboardClockEl) return;
+  dashboardClockEl.hidden = !active;
+  if (!active) {
+    stopDashboardClock();
+    return;
+  }
+  renderDashboardTimeAttendance(dashboardAttendanceCache?.data || null);
+  stopDashboardClock();
+  dashboardClockTimer = window.setInterval(updateDashboardClockFace, 1000);
+  if (attendanceDashboardAllowed()) void loadDashboardAttendanceCard();
 }
 
 async function loadOrganizationDashboardCharts() {
@@ -1454,6 +1645,7 @@ function renderWorkspace(active) {
   panelEl.hidden = overview;
   staffMainContent.classList.toggle('module-view-active', !overview);
   renderModuleSummary(active);
+  setDashboardClockActive(overview);
   renderDashboardCharts(dashboardData?.charts || {});
 }
 
