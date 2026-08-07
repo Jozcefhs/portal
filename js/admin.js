@@ -1136,9 +1136,11 @@ async function loadDashboard(options = {}) {
     renderTabs(allowed);
     renderWorkspace(activeSection);
     renderSection(activeSection);
-    setStatus(dashboardStatus, mode === 'shell'
+    setStatus(dashboardStatus, currentUser.subscriptionActive === false
+      ? (currentUser.subscriptionMessage || 'This subscription is not active. Choose a paid subscription to continue.')
+      : mode === 'shell'
       ? 'Workspace ready. Records load only when you open a module.'
-      : `${staffTabLabel(section, section) || 'Module'} updated.`, 'ok');
+      : `${staffTabLabel(section, section) || 'Module'} updated.`, currentUser.subscriptionActive === false ? 'bad' : 'ok');
     return true;
   } catch (error) {
     setStatus(dashboardStatus, error.message || String(error), 'bad');
@@ -1159,6 +1161,13 @@ function renderDashboardCharts(charts) {
     return;
   }
   dashboardChartsEl.hidden = false;
+  if (currentUser?.subscriptionActive === false || dashboardData?.subscriptionActive === false) {
+    const message = clean(currentUser?.subscriptionMessage || dashboardData?.subscriptionMessage)
+      || 'Your 7-day full-access trial has ended. Choose a paid subscription to continue.';
+    const endedAt = clean(currentUser?.trialEndsAt || dashboardData?.trialEndsAt);
+    dashboardChartsEl.innerHTML = `<article class="department-chart-card dashboard-chart-loading subscription-expired-card"><h3>Subscription required</h3><p class="status bad">${escapeHtml(message)}</p>${endedAt ? `<p class="muted">Trial ended: ${escapeHtml(new Date(endedAt).toLocaleString())}</p>` : ''}<p><a class="button-link" href="/register-organization.html#plans">View paid plans</a></p></article>`;
+    return;
+  }
   if (dashboardData?.summaryDeferred) {
     dashboardChartsEl.innerHTML = '<article class="department-chart-card dashboard-chart-loading"><h3>Low-read workspace</h3><p class="muted">Open a module to load only the records needed for that task. This prevents sign-in and refresh from scanning the entire database.</p></article>';
     return;
@@ -1686,6 +1695,7 @@ function renderTabs(allowed) {
       .map(([key, label]) => [key, label, restrictedSet.has(key) && !allowedSet.has(key)])
   ];
   const plan = clean(dashboardData?.subscriptionPlan || currentUser?.subscriptionPlan || 'current');
+  const subscriptionInactive = dashboardData?.subscriptionActive === false || currentUser?.subscriptionActive === false;
   activeTabs = tabs;
   tabsEl.innerHTML = visibleTabs.map(([key, label, restricted]) => {
     label = staffTabLabel(key, label);
@@ -1693,10 +1703,12 @@ function renderTabs(allowed) {
     const locked = restricted ? ' subscription-restricted' : '';
     const disabled = restricted ? ' disabled aria-disabled="true"' : '';
     const title = restricted
-      ? ` title="${escapeHtml(`${label} is not included in the ${plan} plan. Upgrade the subscription to activate it.`)}"`
+      ? ` title="${escapeHtml(subscriptionInactive
+        ? `${label} is locked because the subscription is not active.`
+        : `${label} is not included in the ${plan} plan. Upgrade the subscription to activate it.`)}"`
       : '';
     const icon = restricted ? '\u{1F512}' : (tabIcons[key] || '•');
-    return `<button type="button" class="child-card${selected}${locked}" data-tab="${escapeHtml(key)}" aria-selected="${key === activeSection}"${disabled}${title}><span class="staff-tab-icon" aria-hidden="true">${escapeHtml(icon)}</span><span>${escapeHtml(label)}</span>${restricted ? '<small>Upgrade plan</small>' : ''}</button>`;
+    return `<button type="button" class="child-card${selected}${locked}" data-tab="${escapeHtml(key)}" aria-selected="${key === activeSection}"${disabled}${title}><span class="staff-tab-icon" aria-hidden="true">${escapeHtml(icon)}</span><span>${escapeHtml(label)}</span>${restricted ? `<small>${subscriptionInactive ? 'Trial ended' : 'Upgrade plan'}</small>` : ''}</button>`;
   }).join('');
   tabsEl.querySelectorAll('[data-tab]:not(:disabled)').forEach((button) => {
     button.addEventListener('click', () => selectSection(button.dataset.tab, tabs.map(([key]) => key)));

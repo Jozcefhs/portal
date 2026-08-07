@@ -15,6 +15,7 @@ const WHITE = rgb(1, 1, 1);
 const BORDER = rgb(0.82, 0.87, 0.93);
 
 const PLAN_THEMES = Object.freeze({
+  Free: { accent: rgb(0.06, 0.56, 0.66), pale: rgb(0.91, 0.99, 1) },
   Starter: { accent: rgb(0.18, 0.44, 0.95), pale: rgb(0.93, 0.96, 1) },
   Standard: { accent: rgb(0.12, 0.58, 0.32), pale: rgb(0.92, 0.98, 0.93) },
   Professional: { accent: rgb(0.61, 0.19, 0.82), pale: rgb(0.99, 0.94, 1) },
@@ -46,6 +47,10 @@ function formatPrice(value, currency) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   })}`;
+}
+
+function formatPlanPrice(plan, value, currency) {
+  return plan?.Name === 'Free' ? 'Free for 7 days' : formatPrice(value, currency);
 }
 
 function wrapText(text, font, size, maxWidth) {
@@ -110,7 +115,7 @@ function drawOverviewPage(pdf, fonts, catalog, edition, cycle, generatedAt) {
   const plans = catalog.Plans;
   const margin = 32;
   const gap = 10;
-  const cardWidth = (A4_LANDSCAPE[0] - (margin * 2) - (gap * 3)) / 4;
+  const cardWidth = (A4_LANDSCAPE[0] - (margin * 2) - (gap * 4)) / 5;
   const cardY = 58;
   const cardHeight = 416;
   plans.forEach((plan, index) => {
@@ -138,10 +143,10 @@ function drawOverviewPage(pdf, fonts, catalog, edition, cycle, generatedAt) {
     });
     const amount = cycle === 'yearly' ? plan.YearlyAmount : plan.MonthlyAmount;
     y -= 10;
-    y = drawWrapped(page, formatPrice(amount, catalog.Currency), {
+    y = drawWrapped(page, formatPlanPrice(plan, amount, catalog.Currency), {
       x: x + 19, y, width: cardWidth - 35, font: bold, size: 13, color: theme.accent, lineHeight: 15, maxLines: 2
     });
-    page.drawText(cycle === 'yearly' ? 'per year' : 'per month', { x: x + 19, y: y - 2, size: 8, font: regular, color: MUTED });
+    page.drawText(plan.Name === 'Free' ? 'one-time trial' : cycle === 'yearly' ? 'per year' : 'per month', { x: x + 19, y: y - 2, size: 8, font: regular, color: MUTED });
     y -= 28;
     page.drawText('Included highlights', { x: x + 19, y, size: 9, font: bold, color: TEXT });
     y -= 18;
@@ -170,7 +175,7 @@ function drawComparisonPage(pdf, fonts, catalog, edition, cycle, generatedAt) {
 
   const margin = 32;
   const gap = 10;
-  const columnWidth = (A4_LANDSCAPE[0] - (margin * 2) - (gap * 3)) / 4;
+  const columnWidth = (A4_LANDSCAPE[0] - (margin * 2) - (gap * 4)) / 5;
   catalog.Plans.forEach((plan, index) => {
     const theme = PLAN_THEMES[plan.Name] || PLAN_THEMES.Starter;
     const x = margin + (index * (columnWidth + gap));
@@ -178,7 +183,7 @@ function drawComparisonPage(pdf, fonts, catalog, edition, cycle, generatedAt) {
     page.drawRectangle({ x, y: 440, width: columnWidth, height: 53, borderRadius: 12, color: theme.accent });
     page.drawText(clean(plan.Name), { x: x + 13, y: 469, size: 14, font: bold, color: WHITE });
     const amount = cycle === 'yearly' ? plan.YearlyAmount : plan.MonthlyAmount;
-    drawWrapped(page, formatPrice(amount, catalog.Currency), {
+    drawWrapped(page, formatPlanPrice(plan, amount, catalog.Currency), {
       x: x + 13, y: 451, width: columnWidth - 26, font: regular, size: 8.5, color: WHITE, lineHeight: 10, maxLines: 1
     });
     page.drawText(userLabel(plan), { x: x + 13, y: 421, size: 8.5, font: bold, color: TEXT });
@@ -215,4 +220,3 @@ export async function createPricingBookPdf(catalogValue, options = {}) {
   drawComparisonPage(pdf, fonts, catalog, edition, cycle, generatedAt);
   return pdf.save();
 }
-

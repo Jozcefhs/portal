@@ -6,7 +6,7 @@ const saveSetupButton = document.getElementById('saveSetupButton');
 let unlockedPassword = '';
 let webLogoDataUrl = '';
 let webLogoChanged = false;
-const fixedPlanUserLimits = { Starter: 5, Standard: 20, Professional: 50 };
+const fixedPlanUserLimits = { Free: 5, Starter: 5, Standard: 20, Professional: 50 };
 
 function alignPlanUserLimit() {
   const planField = document.getElementById('subscriptionPlan');

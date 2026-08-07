@@ -112,7 +112,15 @@ test('identity details expose only non-secret organisation metadata', () => {
     workspaceId: 'destiny-school',
     edition: 'school',
     organisationName: 'Destiny Christian Academy',
-    organisationCode: 'DCA'
+    organisationCode: 'DCA',
+    subscriptionPlan: 'Professional',
+    subscriptionActive: true,
+    subscriptionState: 'active',
+    subscriptionStatus: 'Active',
+    trialStartedAt: '',
+    trialEndsAt: '',
+    trialDaysRemaining: 0,
+    subscriptionMessage: ''
   });
   assert.equal(Object.hasOwn(details, 'secret'), false);
 });

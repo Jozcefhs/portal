@@ -292,6 +292,7 @@ export function invalidateStaffAccessCache() {
 export function sectionAccessFor(user = {}, organization = {}, roleAccess = null) {
   const edition = clean(organization.Edition || organization.edition) || 'school';
   const subscriptionPlan = clean(organization.Plan || organization.plan) || 'Professional';
+  const subscriptionActive = organization.SubscriptionActive !== false;
   const featureFlags = organization.FeatureFlags || organization.featureFlags || featureFlagsForEdition(edition);
   const planFeatureFlags = featureFlagsForPlan(edition, subscriptionPlan);
   const editionFeatureFlags = featureFlagsForEdition(edition);
@@ -344,13 +345,23 @@ export function sectionAccessFor(user = {}, organization = {}, roleAccess = null
     planSections.push('staffAttendance');
   }
   const planSet = new Set(planSections);
+  const effectiveAllowedSections = subscriptionActive ? allowedSections : [];
   return {
     edition,
     featureFlags,
     subscriptionPlan,
-    allowedSections,
+    subscriptionActive,
+    subscriptionState: clean(organization.SubscriptionState || organization.subscriptionState) || (subscriptionActive ? 'active' : 'inactive'),
+    subscriptionStatus: clean(organization.SubscriptionStatus || organization.subscriptionStatus),
+    trialStartedAt: clean(organization.TrialStartedAt || organization.trialStartedAt),
+    trialEndsAt: clean(organization.TrialEndsAt || organization.trialEndsAt),
+    trialDaysRemaining: Number(organization.TrialDaysRemaining || organization.trialDaysRemaining || 0),
+    subscriptionMessage: clean(organization.SubscriptionMessage || organization.subscriptionMessage),
+    allowedSections: effectiveAllowedSections,
     availableSections,
-    restrictedSections: availableSections.filter((section) => !planSet.has(section))
+    restrictedSections: subscriptionActive
+      ? availableSections.filter((section) => !planSet.has(section))
+      : availableSections
   };
 }
 

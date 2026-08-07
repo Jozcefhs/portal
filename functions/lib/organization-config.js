@@ -1,5 +1,6 @@
 import {
   normalizeSubscriptionPlan,
+  subscriptionAccessState,
   subscriptionPlanEntitlements,
   subscriptionPlanUserLimit
 } from './subscription-plans.js';
@@ -233,6 +234,13 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
   // until an explicit plan is selected. New profiles are written with Starter.
   const plan = normalizeSubscriptionPlan(configuredPlan || 'Professional');
   const defaultLimit = subscriptionPlanUserLimit(plan);
+  const subscription = subscriptionAccessState({
+    Plan: plan,
+    SubscriptionStatus: profile.SubscriptionStatus || legacy.SubscriptionStatus || env.SUBSCRIPTION_STATUS,
+    TrialStartedAt: profile.TrialStartedAt || legacy.TrialStartedAt || env.TRIAL_STARTED_AT,
+    TrialEndsAt: profile.TrialEndsAt || legacy.TrialEndsAt || env.TRIAL_ENDS_AT
+  });
+  const planFlags = featureFlagsForPlan(edition, plan, overrides);
   return {
     Edition: edition,
     Name: name,
@@ -240,7 +248,10 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
     Plan: plan,
     UserLimit: Math.max(1, Number(profile.UserLimit || legacy.UserLimit || env.USER_LIMIT || defaultLimit) || defaultLimit),
     FeatureOverrides: overrides,
-    FeatureFlags: featureFlagsForPlan(edition, plan, overrides)
+    FeatureFlags: subscription.SubscriptionActive
+      ? planFlags
+      : Object.fromEntries(Object.keys(planFlags).map((feature) => [feature, false])),
+    ...subscription
   };
 }
 
@@ -258,6 +269,9 @@ export function organizationProfileDocument(config, audit = {}) {
     GoogleDocumentsUrl: clean(config.GoogleDocumentsUrl || config.googleDocumentsUrl),
     Plan: normalizeSubscriptionPlan(config.Plan || config.plan || resolved.Plan || 'Starter'),
     UserLimit: Math.max(1, Number(config.UserLimit || config.userLimit || resolved.UserLimit || 5) || 5),
+    SubscriptionStatus: clean(config.SubscriptionStatus || config.subscriptionStatus || resolved.SubscriptionStatus),
+    TrialStartedAt: clean(config.TrialStartedAt || config.trialStartedAt || resolved.TrialStartedAt),
+    TrialEndsAt: clean(config.TrialEndsAt || config.trialEndsAt || resolved.TrialEndsAt),
     BrandName: clean(config.BrandName || config.brandName) || 'Dynamax',
     BrandLogoUrl: clean(config.BrandLogoUrl || config.brandLogoUrl)
   };

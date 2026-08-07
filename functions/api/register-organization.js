@@ -1,10 +1,14 @@
 import { createDocumentIfAbsent, getDocument, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { normalizeOrganizationEdition } from '../lib/organization-config.js';
+import { loadDeploymentIdentity } from '../lib/deployment-identity.js';
+import { requireStaffSession } from '../lib/staff-auth.js';
 import {
+  freeTrialWindow,
   normalizeBillingCycle,
   normalizeSubscriptionPlan,
   normalizeSubscriptionPlanCatalog,
   subscriptionPaystackPlanCode,
+  subscriptionAccessState,
   subscriptionPlanEntitlements,
   subscriptionPlanPrice
 } from '../lib/subscription-plans.js';
@@ -15,9 +19,28 @@ import {
   readJsonBody,
   verifyTurnstile
 } from '../lib/request-security.js';
+import { syncRegistrationSubscriptionToWorkspace } from '../lib/subscription-workspace-sync.js';
 
 const clean = (value) => String(value ?? '').trim();
 const PAYSTACK_INITIALIZE_URL = 'https://api.paystack.co/transaction/initialize';
+
+function comparable(value) {
+  return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+async function authenticatedWorkspaceBinding(env, request, organizationName) {
+  const credentialHeader = `${request.headers.get('Cookie') || ''} ${request.headers.get('Authorization') || ''}`;
+  if (!/__Host-digc_staff_session=|school_staff_session=|Bearer\s+/i.test(credentialHeader)) return null;
+  try {
+    const user = await requireStaffSession(env, request);
+    if (clean(user.role || user.Role) !== 'Super Admin') return null;
+    const identity = await loadDeploymentIdentity(env);
+    if (comparable(identity.organisationName) !== comparable(organizationName)) return null;
+    return { WorkspaceId: identity.workspaceId };
+  } catch (_error) {
+    return null;
+  }
+}
 
 function withoutFirestoreMetadata(document = {}) {
   const value = { ...document };
@@ -39,6 +62,85 @@ async function initializeSubscriptionCheckout({ request, env, registration, cata
     const error = new Error(`${plan} registration is not currently available.`);
     error.status = 409;
     throw error;
+  }
+  if (plan === 'Free') {
+    const registrationReference = clean(registration.Reference || registration.__id);
+    const priorTrialStartedAt = clean(registration.TrialStartedAt);
+    if (clean(registration.PaymentStatus).toLowerCase() === 'paid'
+      || (clean(registration.Status).toLowerCase() === 'active' && clean(registration.Plan) !== 'Free')) {
+      const error = new Error('The free trial is available only before an organisation activates a paid subscription.');
+      error.status = 409;
+      throw error;
+    }
+    if (priorTrialStartedAt) {
+      const access = subscriptionAccessState({
+        Plan: 'Free',
+        SubscriptionStatus: registration.SubscriptionStatus,
+        TrialStartedAt: priorTrialStartedAt,
+        TrialEndsAt: registration.TrialEndsAt
+      });
+      if (!access.SubscriptionActive) {
+        const error = new Error('This organisation has already used its 7-day free trial. Choose a paid subscription to continue.');
+        error.status = 409;
+        throw error;
+      }
+      const currentRegistration = {
+        ...withoutFirestoreMetadata(registration),
+        WorkspaceId: clean(registration.WorkspaceId),
+        UpdatedAt: new Date().toISOString()
+      };
+      await upsertDocument(env, 'tenantRegistrations', registrationReference, currentRegistration);
+      await syncRegistrationSubscriptionToWorkspace(env, currentRegistration);
+      return {
+        trialActive: true,
+        trialStartedAt: access.TrialStartedAt,
+        trialEndsAt: access.TrialEndsAt,
+        trialDaysRemaining: access.TrialDaysRemaining,
+        amount: 0
+      };
+    }
+    if (!clean(registration.WorkspaceId)) {
+      const reservedAt = clean(registration.TrialReservedAt) || new Date().toISOString();
+      await upsertDocument(env, 'tenantRegistrations', registrationReference, {
+        ...withoutFirestoreMetadata(registration),
+        Plan: 'Free',
+        BillingCycle: 'monthly',
+        Price: 0,
+        Currency: catalog.Currency,
+        UserLimit: planEntry.UserLimit,
+        FeatureEntitlements: subscriptionPlanEntitlements('Free', clean(registration.Edition)),
+        PaymentStatus: 'Not Required',
+        SubscriptionStatus: 'Pending Trial Activation',
+        Status: 'Pending Trial Activation',
+        TrialReservedAt: reservedAt,
+        UpdatedAt: new Date().toISOString()
+      });
+      return { trialReserved: true, trialActive: false, amount: 0 };
+    }
+    const trial = freeTrialWindow();
+    const activatedRegistration = {
+      ...withoutFirestoreMetadata(registration),
+      Plan: 'Free',
+      BillingCycle: 'monthly',
+      Price: 0,
+      Currency: catalog.Currency,
+      UserLimit: planEntry.UserLimit,
+      FeatureEntitlements: subscriptionPlanEntitlements('Free', clean(registration.Edition)),
+      PaymentStatus: 'Not Required',
+      SubscriptionStatus: 'Trialing',
+      Status: 'Trial Active',
+      ...trial,
+      UpdatedAt: new Date().toISOString()
+    };
+    await upsertDocument(env, 'tenantRegistrations', registrationReference, activatedRegistration);
+    await syncRegistrationSubscriptionToWorkspace(env, activatedRegistration);
+    return {
+      trialActive: true,
+      trialStartedAt: trial.TrialStartedAt,
+      trialEndsAt: trial.TrialEndsAt,
+      trialDaysRemaining: 7,
+      amount: 0
+    };
   }
   const amount = subscriptionPlanPrice(catalog, plan, billingCycle);
   if (!(amount > 0)) {
@@ -195,6 +297,7 @@ export async function onRequestPost({ request, env }) {
       const error = new Error('Authorisation confirmation is required.'); error.status = 400; throw error;
     }
     await verifyTurnstile(env, request, body, 'register_organization');
+    const workspaceBinding = await authenticatedWorkspaceBinding(env, request, name);
     const {
       turnstileToken: _turnstileToken,
       turnstileAction: _turnstileAction,
@@ -213,20 +316,34 @@ export async function onRequestPost({ request, env }) {
         headers: { 'Cache-Control': 'no-store', 'Idempotency-Replayed': 'true' }
       });
     }
-    const existing = (await queryCollection(env, 'tenantRegistrations', {
+    const matchingRegistrations = (await queryCollection(env, 'tenantRegistrations', {
       filters: [{ field: 'Email', op: '==', value: email }],
-      limit: 5
+      limit: 50
     }).catch(() => []))
-      .find((row) => clean(row.OrganisationName).toLowerCase() === name.toLowerCase()
-        && !['rejected', 'cancelled'].includes(clean(row.Status).toLowerCase()));
+      .filter((row) => clean(row.OrganisationName).toLowerCase() === name.toLowerCase());
+    const priorTrial = matchingRegistrations.find((row) => clean(row.TrialStartedAt));
+    const currentRegistration = matchingRegistrations.find((row) =>
+      !['rejected', 'cancelled'].includes(clean(row.Status).toLowerCase()));
+    // A rejected/cancelled registration must not erase trial history. The same
+    // organisation and contact email can never reset the server-issued clock.
+    const existing = plan === 'Free' ? (priorTrial || currentRegistration) : currentRegistration;
     if (existing) {
       const checkout = await initializeSubscriptionCheckout({
-        request, env, registration: existing, catalog, plan, billingCycle
+        request,
+        env,
+        registration: { ...existing, ...(workspaceBinding || {}) },
+        catalog,
+        plan,
+        billingCycle
       });
       const result = {
         ok: true,
         reference: clean(existing.Reference || existing.__id),
-        message: checkout
+        message: checkout?.trialActive
+          ? `Your 7-day full-access trial is active until ${new Date(checkout.trialEndsAt).toLocaleString('en-NG')}.`
+          : checkout?.trialReserved
+          ? 'Your free trial is reserved. Its 7-day clock will begin when your workspace is activated.'
+          : checkout
           ? 'Registration found. Continue to Paystack to confirm the selected subscription.'
           : 'This organisation registration has already been received.',
         ...(checkout || {})
@@ -243,6 +360,7 @@ export async function onRequestPost({ request, env }) {
       BillingCycle: billingCycle,
       UserLimit: catalog.Plans[plan].UserLimit,
       FeatureEntitlements: subscriptionPlanEntitlements(plan, edition),
+      ...(workspaceBinding || {}),
       PaymentStatus: 'Pending',
       Status: 'Pending Activation', CreatedAt: new Date().toISOString(), Source: 'Dynamax public registration'
     });
@@ -257,7 +375,11 @@ export async function onRequestPost({ request, env }) {
       ok: true,
       reference,
       message: checkout
-        ? 'Registration received. Continue to Paystack to activate the selected subscription.'
+        ? checkout.trialActive
+          ? `Your 7-day full-access trial is active until ${new Date(checkout.trialEndsAt).toLocaleString('en-NG')}.`
+          : checkout.trialReserved
+          ? 'Registration received. Your free trial is reserved, and its 7-day clock will begin when your workspace is activated.'
+          : 'Registration received. Continue to Paystack to activate the selected subscription.'
         : 'Registration received. Your Dynamax workspace will be activated after plan confirmation.',
       ...(checkout || {})
     };

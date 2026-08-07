@@ -1,5 +1,6 @@
 import { getDocument, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { readJsonBody } from '../lib/request-security.js';
+import { syncRegistrationSubscriptionToWorkspace } from '../lib/subscription-workspace-sync.js';
 
 const clean = (value) => String(value ?? '').trim();
 const safeId = (value) => clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140);
@@ -84,6 +85,23 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
   const subscriptionCode = clean(transaction.subscription_code || transaction.subscription?.subscription_code);
   const paidAt = clean(transaction.paid_at || transaction.paidAt) || new Date().toISOString();
   const updatedAt = new Date().toISOString();
+  const updatedRegistration = {
+    ...withoutFirestoreMetadata(registration),
+    Plan: clean(intent.Plan),
+    BillingCycle: clean(intent.BillingCycle),
+    UserLimit: Number(registration.UserLimit || 0),
+    Price: Number(intent.Amount || 0),
+    Currency: clean(intent.Currency || transaction.currency || 'NGN'),
+    PaymentStatus: 'Paid',
+    SubscriptionStatus: 'Active',
+    Status: 'Payment Confirmed',
+    PaystackReference: reference,
+    PaystackPlanCode: clean(intent.PaystackPlanCode),
+    PaystackCustomerCode: customerCode,
+    PaystackSubscriptionCode: subscriptionCode,
+    PaidAt: paidAt,
+    UpdatedAt: updatedAt
+  };
   await Promise.all([
     upsertDocument(env, 'subscriptionPayments', reference, {
       ...withoutFirestoreMetadata(intent),
@@ -94,24 +112,9 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
       PaystackSubscriptionCode: subscriptionCode,
       UpdatedAt: updatedAt
     }),
-    upsertDocument(env, 'tenantRegistrations', registrationReference, {
-      ...withoutFirestoreMetadata(registration),
-      Plan: clean(intent.Plan),
-      BillingCycle: clean(intent.BillingCycle),
-      UserLimit: Number(registration.UserLimit || 0),
-      Price: Number(intent.Amount || 0),
-      Currency: clean(intent.Currency || transaction.currency || 'NGN'),
-      PaymentStatus: 'Paid',
-      SubscriptionStatus: 'Active',
-      Status: 'Payment Confirmed',
-      PaystackReference: reference,
-      PaystackPlanCode: clean(intent.PaystackPlanCode),
-      PaystackCustomerCode: customerCode,
-      PaystackSubscriptionCode: subscriptionCode,
-      PaidAt: paidAt,
-      UpdatedAt: updatedAt
-    })
+    upsertDocument(env, 'tenantRegistrations', registrationReference, updatedRegistration)
   ]);
+  await syncRegistrationSubscriptionToWorkspace(env, updatedRegistration);
   return {
     registrationReference,
     plan: clean(intent.Plan),

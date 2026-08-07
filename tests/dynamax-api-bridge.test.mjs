@@ -68,6 +68,39 @@ test('a deployment with a local Firebase backend continues to its own Pages Func
   assert.deepEqual(await response.json(), { ok: true, local: true });
 });
 
+test('an expired trial blocks operational APIs but preserves sign-in and upgrade recovery routes', async () => {
+  const identity = async () => ({
+    workspaceId: 'school',
+    edition: 'school',
+    subscriptionPlan: 'Free',
+    subscriptionActive: false,
+    subscriptionState: 'trial_expired',
+    trialEndsAt: '2026-08-01T00:00:00.000Z',
+    subscriptionMessage: 'Your 7-day full-access trial has ended. Choose a paid subscription to continue.'
+  });
+  let operationalNextCalled = false;
+  const blocked = await onRequestWithIdentityLoader({
+    request: new Request('https://school.example/api/students'),
+    env: { FIREBASE_PROJECT_ID: 'school-project' },
+    next: async () => {
+      operationalNextCalled = true;
+      return Response.json({ ok: true });
+    }
+  }, identity);
+  assert.equal(blocked.status, 402);
+  assert.equal(operationalNextCalled, false);
+  assert.equal((await blocked.json()).code, 'SUBSCRIPTION_REQUIRED');
+
+  for (const path of ['/api/admin', '/api/staff-session', '/api/plan-catalog', '/api/register-organization']) {
+    const allowed = await onRequestWithIdentityLoader({
+      request: new Request(`https://school.example${path}`),
+      env: { FIREBASE_PROJECT_ID: 'school-project' },
+      next: async () => Response.json({ ok: true })
+    }, identity);
+    assert.equal(allowed.status, 200, path);
+  }
+});
+
 test('staff sign-in uses environment deployment identity without an extra Firestore profile read', async () => {
   let nextCalled = false;
   let fetchCalled = false;

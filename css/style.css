@@ -2051,7 +2051,7 @@ html[data-theme="dark"] .department-member-onboarding strong { color: #75dfbf; }
 .billing-cycle-toggle input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .billing-cycle-toggle span { display: block; padding: .45rem .8rem; border-radius: 999px; color: #53677e; font-size: 12px; font-weight: 800; }
 .billing-cycle-toggle input:checked + span { background: #1769e0; color: #fff; box-shadow: 0 2px 7px rgba(23,105,224,.24); }
-.plan-choice-grid { position: relative; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .85rem; }
+.plan-choice-grid { position: relative; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .85rem; }
 .plan-choice-card { --plan-cover: #4f6eff; --plan-strip: #c9d7ff; --plan-sheet: #eef4ff; --plan-accent: #2246b8;
   position: relative; isolation: isolate; min-width: 0; overflow: hidden; border: 1px solid transparent; border-radius: 18px; color: #172033; transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease; background: var(--plan-sheet); box-shadow: 0 12px 20px #0f234a1f; }
 .plan-choice-card.selected { border-color: var(--plan-accent); box-shadow: 0 0 0 2px var(--plan-accent), 0 14px 28px #1738ab3f; }
@@ -2070,7 +2070,7 @@ html[data-theme="dark"] .department-member-onboarding strong { color: #75dfbf; }
 .plan-comparison-details > summary { width: fit-content; margin: .7rem .8rem; color: #0b57d0; cursor: pointer; font-size: 13px; font-weight: 800; }
 .plan-comparison-scroll { overflow-x: auto; border-top: 1px solid #d8e1ec; scrollbar-gutter: stable; }
 .plan-comparison-scroll:focus-visible { outline: 3px solid rgba(23,105,224,.28); outline-offset: -3px; }
-.plan-comparison-grid { display: grid; grid-template-columns: repeat(4, minmax(210px,1fr)); min-width: 840px; }
+.plan-comparison-grid { display: grid; grid-template-columns: repeat(5, minmax(210px,1fr)); min-width: 1050px; }
 .plan-comparison-column { min-width: 0; padding: .9rem; border-right: 1px solid #d8e1ec; background: var(--plan-sheet, #f8fafc); }
 .plan-comparison-column:last-child { border-right: 0; }
 .plan-comparison-column.unavailable { opacity: .68; }

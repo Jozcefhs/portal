@@ -4,10 +4,12 @@ import test from 'node:test';
 
 import { paystackPlanPayload } from '../functions/api/plan-catalog.js';
 import { validPaystackWebhookSignature } from '../functions/api/paystack-subscription-webhook.js';
+import { syncRegistrationSubscriptionToWorkspace } from '../functions/lib/subscription-workspace-sync.js';
 import {
   normalizeBillingCycle,
   normalizeSubscriptionPlanCatalog,
   publicSubscriptionPlanCatalog,
+  subscriptionAccessState,
   subscriptionPaystackPlanCode,
   subscriptionPlanEntitlements,
   subscriptionPlanPrice
@@ -22,6 +24,8 @@ test('plan catalogue normalizes pricing, billing cycles and enterprise custom se
     }
   });
   assert.equal(catalog.Currency, 'NGN');
+  assert.equal(catalog.Plans.Free.MonthlyAmount, 0);
+  assert.equal(catalog.Plans.Free.YearlyAmount, 0);
   assert.equal(catalog.Plans.Standard.MonthlyAmount, 15000);
   assert.equal(catalog.Plans.Standard.YearlyAmount, 150000);
   assert.equal(catalog.Plans.Standard.UserLimit, 20);
@@ -34,9 +38,55 @@ test('public plan catalogue never exposes Paystack plan codes', () => {
     Plans: { Starter: { PaystackMonthlyPlanCode: 'PLN_secret', MonthlyAmount: 1000 } }
   });
   const publicCatalog = publicSubscriptionPlanCatalog(internal);
-  assert.equal(publicCatalog.Plans[0].MonthlyAmount, 1000);
-  assert.equal('PaystackMonthlyPlanCode' in publicCatalog.Plans[0], false);
-  assert.ok(publicCatalog.Plans[0].FeaturesByEdition.faith.includes('Member records'));
+  const starter = publicCatalog.Plans.find((plan) => plan.Name === 'Starter');
+  const free = publicCatalog.Plans.find((plan) => plan.Name === 'Free');
+  assert.equal(starter.MonthlyAmount, 1000);
+  assert.equal('PaystackMonthlyPlanCode' in starter, false);
+  assert.equal(free.TrialDays, 7);
+  assert.ok(free.FeaturesByEdition.faith.some((feature) => /full access/i.test(feature)));
+});
+
+test('free access expires at the stored server-issued boundary and cannot become permanent', () => {
+  const active = subscriptionAccessState({
+    Plan: 'Free',
+    SubscriptionStatus: 'Trialing',
+    TrialStartedAt: '2099-01-01T00:00:00.000Z',
+    TrialEndsAt: '2099-01-08T00:00:00.000Z'
+  }, { now: '2099-01-04T00:00:00.000Z' });
+  assert.equal(active.SubscriptionActive, true);
+  assert.equal(active.SubscriptionState, 'trialing');
+  assert.equal(active.TrialDaysRemaining, 4);
+
+  const expired = subscriptionAccessState({
+    Plan: 'Free',
+    SubscriptionStatus: 'Trialing',
+    TrialStartedAt: '2099-01-01T00:00:00.000Z',
+    TrialEndsAt: '2099-01-08T00:00:00.000Z'
+  }, { now: '2099-01-08T00:00:00.000Z' });
+  assert.equal(expired.SubscriptionActive, false);
+  assert.equal(expired.SubscriptionState, 'trial_expired');
+  assert.match(expired.SubscriptionMessage, /paid subscription/i);
+  assert.equal(subscriptionAccessState({ Plan: 'Free' }).SubscriptionActive, false);
+  assert.equal(subscriptionAccessState({ Plan: 'Starter' }).SubscriptionActive, true);
+});
+
+test('subscription activation cannot target a workspace without a server-bound workspace id', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+  globalThis.fetch = async () => {
+    fetchCalled = true;
+    throw new Error('An unbound registration must not access a tenant profile.');
+  };
+  try {
+    assert.equal(await syncRegistrationSubscriptionToWorkspace({}, {
+      OrganisationName: 'Forged Organisation',
+      Plan: 'Enterprise',
+      SubscriptionStatus: 'Active'
+    }), false);
+    assert.equal(fetchCalled, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('pricing and Paystack codes resolve for the selected billing cycle', () => {
@@ -81,13 +131,15 @@ test('Paystack webhook signatures are checked with HMAC SHA-512', async () => {
 });
 
 test('registration and pricing interfaces expose feature details and recurring checkout', async () => {
-  const [registrationHtml, registrationJs, pricingHtml, setupHtml, registrationApi, pricingApi] = await Promise.all([
+  const [registrationHtml, registrationJs, pricingHtml, setupHtml, registrationApi, pricingApi, verificationApi, webhookApi] = await Promise.all([
     readFile(new URL('../register-organization.html', import.meta.url), 'utf8'),
     readFile(new URL('../js/register-organization.js', import.meta.url), 'utf8'),
     readFile(new URL('../plan-management.html', import.meta.url), 'utf8'),
     readFile(new URL('../setup.html', import.meta.url), 'utf8'),
     readFile(new URL('../functions/api/register-organization.js', import.meta.url), 'utf8'),
-    readFile(new URL('../functions/api/plan-catalog.js', import.meta.url), 'utf8')
+    readFile(new URL('../functions/api/plan-catalog.js', import.meta.url), 'utf8'),
+    readFile(new URL('../functions/api/verify-subscription-payment.js', import.meta.url), 'utf8'),
+    readFile(new URL('../functions/api/paystack-subscription-webhook.js', import.meta.url), 'utf8')
   ]);
   assert.match(registrationHtml, /name="BillingCycle" value="monthly"/);
   assert.match(registrationHtml, /name="BillingCycle" value="yearly"/);
@@ -101,8 +153,17 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(pricingHtml, /Monthly and yearly pricing/);
   assert.match(pricingHtml, /Apply changed prices to existing Paystack subscribers/);
   assert.match(setupHtml, /href="plan-management\.html"/);
+  assert.match(setupHtml, /<option>Free<\/option>/);
   assert.match(registrationApi, /plan: planCode/);
   assert.match(registrationApi, /PAYSTACK_SECRET_KEY/);
+  assert.match(registrationApi, /freeTrialWindow/);
+  assert.match(registrationApi, /already used its 7-day free trial/);
+  assert.match(registrationApi, /authenticatedWorkspaceBinding/);
+  assert.match(registrationApi, /requireStaffSession/);
+  assert.match(registrationApi, /Pending Trial Activation/);
+  assert.match(registrationApi, /7-day clock will begin when your workspace is activated/);
   assert.match(pricingApi, /update_existing_subscriptions/);
   assert.match(pricingApi, /ADMIN_WEB_PASSWORD/);
+  assert.match(verificationApi, /syncRegistrationSubscriptionToWorkspace/);
+  assert.match(webhookApi, /syncRegistrationSubscriptionToWorkspace/);
 });

@@ -6,6 +6,12 @@ const downloadPricingBookButton = document.getElementById('downloadPricingBook')
 let registrationIdempotencyKey = '';
 let planCatalog = null;
 const planBookThemes = {
+  free: {
+    sheet: '#eefcff',
+    cover: '#0f8fa8',
+    strip: '#a9e8f1',
+    accent: '#075766'
+  },
   starter: {
     sheet: '#f3f7ff',
     cover: '#2f6ff2',
@@ -39,6 +45,7 @@ const defaultPlanTheme = {
 };
 
 const fallbackPlans = [
+  { Name: 'Free', Summary: 'Seven-day full-access trial', UserLimit: 5, TrialDays: 7, MonthlyAmount: 0, YearlyAmount: 0, Active: true, FeaturesByEdition: { school: ['Full access to every school module for 7 days', 'Up to 5 active users during the trial', 'Paid subscription required after the trial'], faith: ['Full access to every church module for 7 days', 'Up to 5 active users during the trial', 'Paid subscription required after the trial'], organization: ['Full access to every organisation module for 7 days', 'Up to 5 active users during the trial', 'Paid subscription required after the trial'] } },
   { Name: 'Starter', Summary: 'Core records for a small team', UserLimit: 5, MonthlyAmount: 0, YearlyAmount: 0, Active: true, FeaturesByEdition: { school: ['Student and admission records', 'Parent portal', 'Records Desk'], faith: ['Member records', 'Services and attendance', 'Departments'], organization: ['People records', 'Departments', 'Records Desk'] } },
   { Name: 'Standard', Summary: 'Finance, people and approval workflows', UserLimit: 20, MonthlyAmount: 0, YearlyAmount: 0, Active: true, FeaturesByEdition: { school: ['Everything in Starter', 'Finance and income analytics', 'Bills, requisitions and approvals', 'Human Resources'], faith: ['Everything in Starter', 'Funds, offerings and donations', 'Finance and income analytics', 'Human Resources'], organization: ['Everything in Starter', 'Finance and income analytics', 'Bills, requisitions and approvals', 'Human Resources'] } },
   { Name: 'Professional', Summary: 'Full operations for a growing organisation', UserLimit: 50, MonthlyAmount: 0, YearlyAmount: 0, Active: true, FeaturesByEdition: { school: ['Everything in Standard', 'Payroll', 'Clinic, conduct and school stores', 'All school operation modules'], faith: ['Everything in Standard', 'Payroll', 'Organisation store and restaurant', 'All church operation modules'], organization: ['Everything in Standard', 'Payroll', 'Commerce', 'All organisation operation modules'] } },
@@ -85,8 +92,12 @@ function formattedPrice(amount, currency = 'NGN') {
   }
 }
 
+function displayedPlanPrice(plan, amount, currency = 'NGN') {
+  return plan?.Name === 'Free' ? 'Free for 7 days' : formattedPrice(amount, currency);
+}
+
 function selectedPlanName() {
-  return form.querySelector('[name="Plan"]:checked')?.value || 'Starter';
+  return form.querySelector('[name="Plan"]:checked')?.value || 'Free';
 }
 
 function buildPricingBookPrintMarkup() {
@@ -108,7 +119,9 @@ function buildPricingBookPrintMarkup() {
       const userText = plan.Name === 'Enterprise'
         ? `Up to ${Number(plan.UserLimit || 0).toLocaleString('en-NG')} users or custom`
         : `${Number(plan.UserLimit || 0).toLocaleString('en-NG')} users`;
-      const priceText = Number(amount) > 0 ? `${escapeHtml(formattedPrice(amount, currency))} / ${cycleLabel}` : 'Price to be confirmed';
+      const priceText = plan.Name === 'Free'
+        ? 'Free for 7 days'
+        : Number(amount) > 0 ? `${escapeHtml(formattedPrice(amount, currency))} / ${cycleLabel}` : 'Price to be confirmed';
 
       return `<article class="pdf-plan-card ${selected === plan.Name ? 'selected' : ''} ${plan.Active === false ? 'unavailable' : ''}">
   <header><h1>${escapeHtml(plan.Name)}${escapeHtml(recommended)}</h1><span class="muted">${escapeHtml(userText)}</span>${availability}</header>
@@ -129,8 +142,8 @@ function buildPricingBookPrintMarkup() {
         : `${Number(plan.UserLimit || 0).toLocaleString('en-NG')} users`;
       return `<tr>
   <td>${escapeHtml(plan.Name)}</td>
-  <td>${Number(amount) > 0 ? escapeHtml(formattedPrice(amount, currency)) : '—'}</td>
-  <td>${escapeHtml(plan.Active === false ? 'Unavailable' : `${cycleLabel} plan`)}</td>
+  <td>${plan.Name === 'Free' ? 'Free for 7 days' : Number(amount) > 0 ? escapeHtml(formattedPrice(amount, currency)) : '—'}</td>
+  <td>${escapeHtml(plan.Active === false ? 'Unavailable' : plan.Name === 'Free' ? 'One-time trial' : `${cycleLabel} plan`)}</td>
   <td>${escapeHtml(userText)}</td>
 </tr>`;
     })
@@ -151,7 +164,7 @@ function buildPricingBookPrintMarkup() {
     .sheet small{display:block;color:#65778f;margin-bottom:15px}
     .toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;border:1px solid #d7e2ee;border-radius:12px;padding:10px 12px;background:#eef4ff;margin:8px 0 14px}
     .toolbar p{margin:0}
-    .pdf-plan-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+    .pdf-plan-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
     .pdf-plan-card{border:1px solid #d9e4f4;background:#fff;padding:12px;border-radius:12px}
     .pdf-plan-card.selected{border-color:#1769e0;box-shadow:0 8px 18px #1738ab33}
     .pdf-plan-card.unavailable{opacity:.72}
@@ -258,7 +271,7 @@ function renderPlans() {
       <label class="plan-choice-select">
         ${recommended ? '<span class="plan-choice-tag" aria-hidden="true">Recommended</span>' : ''}
         <input type="radio" name="Plan" value="${escapeHtml(plan.Name)}" ${selected ? 'checked' : ''} ${active ? '' : 'disabled'}>
-        <span class="plan-choice-main"><strong>${escapeHtml(plan.Name)}</strong><small>${escapeHtml(userText)} · ${escapeHtml(plan.Summary)}</small><b>${active ? `${escapeHtml(formattedPrice(amount, planCatalog?.Currency || 'NGN'))}${period}` : 'Currently unavailable'}</b></span>
+        <span class="plan-choice-main"><strong>${escapeHtml(plan.Name)}</strong><small>${escapeHtml(userText)} · ${escapeHtml(plan.Summary)}</small><b>${active ? `${escapeHtml(displayedPlanPrice(plan, amount, planCatalog?.Currency || 'NGN'))}${plan.Name === 'Free' ? '' : period}` : 'Currently unavailable'}</b></span>
       </label>
     </article>`;
   }).join('') || '<p class="status bad">No subscription plan is currently configured.</p>';
@@ -275,14 +288,16 @@ function renderPlans() {
       : `${Number(plan.UserLimit || 0).toLocaleString('en-NG')} active users`;
     const period = Number(amount) > 0 ? ` per ${cycle === 'yearly' ? 'year' : 'month'}` : '';
     return `<article class="${compareClass}" style="--plan-sheet:${theme.sheet}; --plan-cover:${theme.cover}; --plan-strip:${theme.strip}; --plan-accent:${theme.accent};">
-      <header><h3>${escapeHtml(plan.Name)}</h3><strong>${escapeHtml(formattedPrice(amount, planCatalog?.Currency || 'NGN'))}${escapeHtml(period)}</strong><small>${escapeHtml(userText)}</small></header>
+      <header><h3>${escapeHtml(plan.Name)}</h3><strong>${escapeHtml(displayedPlanPrice(plan, amount, planCatalog?.Currency || 'NGN'))}${escapeHtml(plan.Name === 'Free' ? '' : period)}</strong><small>${escapeHtml(userText)}</small></header>
       <ul>${features.map((feature) => `<li>${escapeHtml(feature)}</li>`).join('')}</ul>
     </article>`;
   }).join('');
   const submit = form.querySelector('button[type="submit"]');
   const selected = available.find((plan) => plan.Name === selectedPlanName());
   const amount = cycle === 'yearly' ? selected?.YearlyAmount : selected?.MonthlyAmount;
-  if (submit) submit.textContent = Number(amount) > 0 ? 'Continue to Paystack' : 'Submit registration';
+  if (submit) submit.textContent = selected?.Name === 'Free'
+    ? 'Start free trial'
+    : Number(amount) > 0 ? 'Continue to Paystack' : 'Submit registration';
 }
 
 async function loadPlans() {

@@ -84,6 +84,9 @@ function defaultProfile(env) {
     ProductKeyMode: clean(env.PRODUCT_KEY_MODE) || 'off',
     GoogleDocumentsUrl: documentStorage.url,
     SubscriptionPlan: clean(env.SUBSCRIPTION_PLAN) || 'Starter',
+    SubscriptionStatus: clean(env.SUBSCRIPTION_STATUS),
+    TrialStartedAt: clean(env.TRIAL_STARTED_AT),
+    TrialEndsAt: clean(env.TRIAL_ENDS_AT),
     UserLimit: Math.max(1, Number(env.USER_LIMIT || 5) || 5),
     TurnstileSiteKey: clean(env.TURNSTILE_SITE_KEY),
     UpdatedAt: ''
@@ -136,6 +139,14 @@ async function loadProfile(env) {
     profile.OrganisationName = identity.organisationName;
     profile.OrganisationCode = identity.organisationCode;
     profile.FeatureFlags = organization.FeatureFlags;
+    profile.SubscriptionPlan = organization.Plan;
+    profile.SubscriptionStatus = organization.SubscriptionStatus;
+    profile.SubscriptionActive = organization.SubscriptionActive;
+    profile.SubscriptionState = organization.SubscriptionState;
+    profile.SubscriptionMessage = organization.SubscriptionMessage;
+    profile.TrialStartedAt = organization.TrialStartedAt;
+    profile.TrialEndsAt = organization.TrialEndsAt;
+    profile.TrialDaysRemaining = organization.TrialDaysRemaining;
     if (branding && clean(branding.WebLogoDataUrl)) {
       profile.WebLogoConfigured = true;
       profile.WebLogoUrl = `/api/web-logo?v=${encodeURIComponent(clean(branding.UpdatedAt))}`;
@@ -222,7 +233,12 @@ export async function onRequestPost(context) {
         Name: incoming.OrganisationName || incoming.OrganizationName || incoming.SchoolName || existing.OrganisationName,
         Code: incoming.OrganisationCode || incoming.OrganizationCode || incoming.SchoolCode || existing.OrganisationCode,
         FeatureOverrides: incoming.FeatureOverrides || incoming.FeatureFlags
-          || incoming.Features || existing.FeatureOverrides
+          || incoming.Features || existing.FeatureOverrides,
+        Plan: incoming.SubscriptionPlan || existing.SubscriptionPlan,
+        SubscriptionStatus: existing.SubscriptionStatus,
+        TrialStartedAt: existing.TrialStartedAt,
+        TrialEndsAt: existing.TrialEndsAt,
+        UserLimit: incoming.UserLimit || existing.UserLimit
       },
       legacyProfile: { ...existing, ...incoming }
     });
@@ -260,7 +276,14 @@ export async function onRequestPost(context) {
       DeclarationStatement: clean(incoming.DeclarationStatement) || 'I declare that the information supplied in this application is complete and correct.',
       ProductKeyMode: ['off', 'required'].includes(clean(incoming.ProductKeyMode)) ? clean(incoming.ProductKeyMode) : 'off',
       GoogleDocumentsUrl: requireAppsScriptWebAppUrl(incoming.GoogleDocumentsUrl),
-      SubscriptionPlan: clean(incoming.SubscriptionPlan) || 'Starter',
+      SubscriptionPlan: organization.Plan,
+      SubscriptionStatus: organization.SubscriptionStatus,
+      SubscriptionActive: organization.SubscriptionActive,
+      SubscriptionState: organization.SubscriptionState,
+      SubscriptionMessage: organization.SubscriptionMessage,
+      TrialStartedAt: organization.TrialStartedAt,
+      TrialEndsAt: organization.TrialEndsAt,
+      TrialDaysRemaining: organization.TrialDaysRemaining,
       UserLimit: Math.max(1, Number(incoming.UserLimit || existing.UserLimit || 5) || 5),
       UpdatedAt: new Date().toISOString()
     };

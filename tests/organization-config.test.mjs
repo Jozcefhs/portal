@@ -106,6 +106,11 @@ test('known feature overrides are normalized and unknown flags are discarded', (
 });
 
 test('subscription plans enforce module entitlements in addition to organisation edition', () => {
+  const freeChurch = featureFlagsForPlan('faith', 'Free');
+  assert.equal(freeChurch.payroll, true);
+  assert.equal(freeChurch.retail, true);
+  assert.equal(freeChurch.admissions, false);
+
   const starterSchool = featureFlagsForPlan('school', 'Starter');
   assert.equal(starterSchool.students, true);
   assert.equal(starterSchool.parentPortal, true);
@@ -123,6 +128,24 @@ test('subscription plans enforce module entitlements in addition to organisation
   assert.equal(professionalChurch.payroll, true);
   assert.equal(professionalChurch.retail, true);
   assert.equal(professionalChurch.admissions, false);
+});
+
+test('an expired free trial disables every operational feature and greys every assigned module', () => {
+  const organization = resolveOrganizationConfig({
+    organizationProfile: {
+      Edition: 'faith',
+      Plan: 'Free',
+      SubscriptionStatus: 'Trialing',
+      TrialStartedAt: '2000-01-01T00:00:00.000Z',
+      TrialEndsAt: '2000-01-08T00:00:00.000Z'
+    }
+  });
+  assert.equal(organization.SubscriptionActive, false);
+  assert.equal(Object.values(organization.FeatureFlags).some(Boolean), false);
+  const access = sectionAccessFor({ role: 'Super Admin' }, organization);
+  assert.deepEqual(access.allowedSections, []);
+  assert.ok(access.restrictedSections.includes('members'));
+  assert.ok(access.restrictedSections.includes('incomeAnalytics'));
 });
 
 test('a plan upgrade is not blocked by calculated flags saved by an older release', () => {
@@ -284,7 +307,7 @@ test('public organisation registration stays aligned and legible in both themes'
     readFile(new URL('../css/style.css', import.meta.url), 'utf8')
   ]);
   assert.match(html, /name="theme-color"/);
-  assert.match(html, /20260806-pricing-book-download/);
+  assert.match(html, /20260807-free-trial/);
   assert.match(css, /\.auth-page\s*\{[^}]*overflow-x:\s*hidden/s);
   assert.match(css, /\.organisation-registration-card\s+\.inline-check\s*\{[^}]*white-space:\s*normal/s);
   assert.match(css, /html\[data-theme="dark"\]\s+\.organisation-registration-card\s*\{[^}]*background:\s*#111e2e/s);

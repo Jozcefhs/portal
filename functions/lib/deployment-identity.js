@@ -194,7 +194,15 @@ export function deploymentIdentityDetails({
     workspaceId: identity.workspaceId,
     edition: identity.edition,
     organisationName: organization.Name,
-    organisationCode: organization.Code
+    organisationCode: organization.Code,
+    subscriptionPlan: organization.Plan,
+    subscriptionActive: organization.SubscriptionActive,
+    subscriptionState: organization.SubscriptionState,
+    subscriptionStatus: organization.SubscriptionStatus,
+    trialStartedAt: organization.TrialStartedAt,
+    trialEndsAt: organization.TrialEndsAt,
+    trialDaysRemaining: organization.TrialDaysRemaining,
+    subscriptionMessage: organization.SubscriptionMessage
   });
 }
 

@@ -1,6 +1,7 @@
 import { getDocument, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { secureTextEqual } from '../lib/backend-security.js';
 import { recordVerifiedSubscriptionPayment } from './verify-subscription-payment.js';
+import { syncRegistrationSubscriptionToWorkspace } from '../lib/subscription-workspace-sync.js';
 
 const MAX_WEBHOOK_BYTES = 512 * 1024;
 const clean = (value) => String(value ?? '').trim();
@@ -90,7 +91,7 @@ async function updateSubscriptionStatus(env, event, data) {
       ? 'Payment Failed'
       : clean(data.status || data.subscription?.status || 'Active');
   const active = ['active', 'success', 'complete'].includes(status.toLowerCase());
-  await upsertDocument(env, 'tenantRegistrations', registration.__id, {
+  const updatedRegistration = {
     ...withoutFirestoreMetadata(registration),
     PaystackSubscriptionCode: subscriptionCode,
     PaystackCustomerCode: clean(data.customer?.customer_code || registration.PaystackCustomerCode),
@@ -99,7 +100,9 @@ async function updateSubscriptionStatus(env, event, data) {
     LastSubscriptionEvent: event,
     LastSubscriptionEventAt: new Date().toISOString(),
     UpdatedAt: new Date().toISOString()
-  });
+  };
+  await upsertDocument(env, 'tenantRegistrations', registration.__id, updatedRegistration);
+  await syncRegistrationSubscriptionToWorkspace(env, updatedRegistration);
   return true;
 }
 

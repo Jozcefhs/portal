@@ -1,6 +1,7 @@
 const clean = (value) => String(value ?? '').trim();
 
 export const SUBSCRIPTION_PLAN_NAMES = Object.freeze([
+  'Free',
   'Starter',
   'Standard',
   'Professional',
@@ -8,8 +9,20 @@ export const SUBSCRIPTION_PLAN_NAMES = Object.freeze([
 ]);
 
 const FULL_ACCESS = '*';
+export const FREE_TRIAL_DAYS = 7;
 
 export const SUBSCRIPTION_PLAN_DEFINITIONS = Object.freeze({
+  Free: Object.freeze({
+    UserLimit: 5,
+    TrialDays: FREE_TRIAL_DAYS,
+    Summary: 'Seven-day full-access trial',
+    Entitlements: Object.freeze({ school: FULL_ACCESS, faith: FULL_ACCESS, organization: FULL_ACCESS }),
+    Features: Object.freeze({
+      school: Object.freeze(['Full access to every school module for 7 days', 'Up to 5 active users during the trial', 'Paid subscription required after the trial']),
+      faith: Object.freeze(['Full access to every church module for 7 days', 'Up to 5 active users during the trial', 'Paid subscription required after the trial']),
+      organization: Object.freeze(['Full access to every organisation module for 7 days', 'Up to 5 active users during the trial', 'Paid subscription required after the trial'])
+    })
+  }),
   Starter: Object.freeze({
     UserLimit: 5,
     Summary: 'Core records for a small team',
@@ -106,6 +119,65 @@ export function subscriptionPlanUserLimit(plan) {
   return subscriptionPlanDefinition(plan).UserLimit;
 }
 
+function timestampMilliseconds(value) {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value < 100000000000 ? value * 1000 : value;
+  }
+  if (value && typeof value === 'object') {
+    const seconds = Number(value.seconds ?? value._seconds);
+    if (Number.isFinite(seconds)) return (seconds * 1000) + Math.floor(Number(value.nanoseconds ?? value._nanoseconds ?? 0) / 1000000);
+  }
+  const parsed = Date.parse(clean(value));
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+export function freeTrialWindow(startedAt = new Date()) {
+  const startMs = timestampMilliseconds(startedAt);
+  const safeStart = Number.isFinite(startMs) ? startMs : Date.now();
+  return {
+    TrialStartedAt: new Date(safeStart).toISOString(),
+    TrialEndsAt: new Date(safeStart + (FREE_TRIAL_DAYS * 24 * 60 * 60 * 1000)).toISOString()
+  };
+}
+
+export function subscriptionAccessState(value = {}, options = {}) {
+  const source = value && typeof value === 'object' ? value : {};
+  const plan = normalizeSubscriptionPlan(source.Plan || source.SubscriptionPlan || source.plan || 'Professional', 'Professional');
+  const status = clean(source.SubscriptionStatus || source.Status || source.subscriptionStatus).toLowerCase();
+  const inactiveStatus = /^(cancelled|canceled|expired|inactive|suspended|payment failed|past due|terminated)$/.test(status);
+  const nowMs = timestampMilliseconds(options.now ?? Date.now());
+  const safeNow = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const trialStartedMs = timestampMilliseconds(source.TrialStartedAt || source.trialStartedAt);
+  const trialEndsMs = timestampMilliseconds(source.TrialEndsAt || source.trialEndsAt);
+  const isTrial = plan === 'Free';
+  const active = isTrial
+    ? !inactiveStatus && Number.isFinite(trialEndsMs) && trialEndsMs > safeNow
+    : !inactiveStatus;
+  const state = isTrial
+    ? active ? 'trialing' : 'trial_expired'
+    : active ? 'active' : 'inactive';
+  const daysRemaining = active && isTrial
+    ? Math.max(1, Math.ceil((trialEndsMs - safeNow) / (24 * 60 * 60 * 1000)))
+    : 0;
+  return {
+    Plan: plan,
+    SubscriptionActive: active,
+    SubscriptionState: state,
+    SubscriptionStatus: isTrial ? (active ? 'Trialing' : 'Trial Expired') : (clean(source.SubscriptionStatus || source.Status) || (active ? 'Active' : 'Inactive')),
+    TrialStartedAt: Number.isFinite(trialStartedMs) ? new Date(trialStartedMs).toISOString() : '',
+    TrialEndsAt: Number.isFinite(trialEndsMs) ? new Date(trialEndsMs).toISOString() : '',
+    TrialDaysRemaining: daysRemaining,
+    SubscriptionMessage: isTrial
+      ? active
+        ? `Your full-access trial has ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} remaining.`
+        : 'Your 7-day full-access trial has ended. Choose a paid subscription to continue.'
+      : active
+        ? ''
+        : 'This subscription is not active. Choose a paid subscription to continue.'
+  };
+}
+
 function money(value) {
   const amount = Number(String(value ?? '').replace(/,/g, ''));
   return Number.isFinite(amount) && amount >= 0 ? Math.round(amount * 100) / 100 : 0;
@@ -156,11 +228,11 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
         Name: name,
         Summary: definition.Summary,
         UserLimit: name === 'Enterprise' ? configuredLimit : definition.UserLimit,
-        MonthlyAmount: money(incoming.MonthlyAmount),
-        YearlyAmount: money(incoming.YearlyAmount),
+        MonthlyAmount: name === 'Free' ? 0 : money(incoming.MonthlyAmount),
+        YearlyAmount: name === 'Free' ? 0 : money(incoming.YearlyAmount),
         Active: enabled(incoming.Active, true),
-        PaystackMonthlyPlanCode: clean(incoming.PaystackMonthlyPlanCode),
-        PaystackYearlyPlanCode: clean(incoming.PaystackYearlyPlanCode)
+        PaystackMonthlyPlanCode: name === 'Free' ? '' : clean(incoming.PaystackMonthlyPlanCode),
+        PaystackYearlyPlanCode: name === 'Free' ? '' : clean(incoming.PaystackYearlyPlanCode)
       }];
     })),
     UpdatedAt: clean(source.UpdatedAt),
@@ -179,6 +251,7 @@ export function publicSubscriptionPlanCatalog(value = {}) {
       MonthlyAmount: catalog.Plans[name].MonthlyAmount,
       YearlyAmount: catalog.Plans[name].YearlyAmount,
       Active: catalog.Plans[name].Active,
+      TrialDays: Number(SUBSCRIPTION_PLAN_DEFINITIONS[name].TrialDays || 0),
       FeaturesByEdition: {
         school: subscriptionPlanFeatures(name, 'school'),
         faith: subscriptionPlanFeatures(name, 'faith'),

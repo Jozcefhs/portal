@@ -74,7 +74,7 @@ export async function onRequestPost(context) {
     requireFirestoreEnv(env);
     const user = await requireStaffSession(env, request);
     const allowed = new Set(user.allowedSections || []);
-    if (!allowed.size) {
+    if (!allowed.size && user.subscriptionActive !== false) {
       const err = new Error('Your staff role does not currently have a web dashboard section assigned.');
       err.status = 403;
       throw err;
@@ -82,6 +82,11 @@ export async function onRequestPost(context) {
     const body = await readJsonBody(request, { maxBytes: 32 * 1024 });
     const requestedSection = clean(body.section);
     const shellOnly = clean(body.mode).toLowerCase() === 'shell';
+    if (!shellOnly && user.subscriptionActive === false) {
+      const err = new Error(user.subscriptionMessage || 'This subscription is not active. Choose a paid subscription to continue.');
+      err.status = 402;
+      throw err;
+    }
     if (requestedSection && !allowed.has(requestedSection)) {
       const err = new Error('That dashboard section is not assigned to this staff account.');
       err.status = 403;
@@ -101,6 +106,13 @@ export async function onRequestPost(context) {
         availableSections: user.availableSections,
         restrictedSections: user.restrictedSections,
         subscriptionPlan: user.subscriptionPlan,
+        subscriptionActive: user.subscriptionActive,
+        subscriptionState: user.subscriptionState,
+        subscriptionStatus: user.subscriptionStatus,
+        trialStartedAt: user.trialStartedAt,
+        trialEndsAt: user.trialEndsAt,
+        trialDaysRemaining: user.trialDaysRemaining,
+        subscriptionMessage: user.subscriptionMessage,
         summary: {},
         charts: {},
         departments: {},

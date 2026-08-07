@@ -22,14 +22,15 @@ function escapeHtml(value) {
 function renderCatalog() {
   cards.innerHTML = (catalog?.Plans || []).map((plan) => {
     const features = plan.FeaturesByEdition?.school || [];
+    const isFree = plan.Name === 'Free';
     return `<article class="plan-pricing-card" data-plan="${escapeHtml(plan.Name)}">
       <header><div><h3>${escapeHtml(plan.Name)}</h3><p>${escapeHtml(plan.Summary)}</p></div><label class="inline-check"><input type="checkbox" data-field="Active" ${plan.Active ? 'checked' : ''}> Available</label></header>
       <div class="plan-pricing-fields">
-        <label>Monthly price (NGN)<input data-field="MonthlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.MonthlyAmount || 0)}"></label>
-        <label>Yearly price (NGN)<input data-field="YearlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.YearlyAmount || 0)}"></label>
+        <label>Monthly price (NGN)<input data-field="MonthlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.MonthlyAmount || 0)}" ${isFree ? 'readonly' : ''}></label>
+        <label>Yearly price (NGN)<input data-field="YearlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.YearlyAmount || 0)}" ${isFree ? 'readonly' : ''}></label>
         <label>Active-user limit<input data-field="UserLimit" type="number" min="1" step="1" value="${Number(plan.UserLimit || 1)}" ${plan.Name === 'Enterprise' ? '' : 'readonly'}></label>
       </div>
-      <details><summary>Feature summary</summary><ul>${features.map((feature) => `<li>${escapeHtml(feature)}</li>`).join('')}</ul><p>Public feature wording automatically changes for school, church and other organisation registrations.</p></details>
+      <details><summary>Feature summary</summary><ul>${features.map((feature) => `<li>${escapeHtml(feature)}</li>`).join('')}</ul><p>${isFree ? 'The Free plan is a one-time seven-day trial. Its price and duration are fixed.' : 'Public feature wording automatically changes for school, church and other organisation registrations.'}</p></details>
     </article>`;
   }).join('');
 }

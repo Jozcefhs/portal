@@ -13,6 +13,18 @@ const PLATFORM_SUBSCRIPTION_PROXY_PATHS = new Set([
   '/api/paystack-subscription-webhook'
 ]);
 
+const SUBSCRIPTION_RECOVERY_PATHS = new Set([
+  '/api/admin',
+  '/api/staff-session',
+  '/api/staff-passkey',
+  '/api/plan-catalog',
+  '/api/register-organization',
+  '/api/pricing-book-pdf',
+  '/api/verify-subscription-payment',
+  '/api/paystack-subscription-webhook',
+  '/api/web-logo'
+]);
+
 function enabled(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
 }
@@ -46,6 +58,25 @@ function identityUnavailableResponse(requestId, error) {
   return unavailableResponse(requestId, message);
 }
 
+function subscriptionRequiredResponse(requestId, identity = {}) {
+  return Response.json({
+    ok: false,
+    code: 'SUBSCRIPTION_REQUIRED',
+    message: String(identity.subscriptionMessage || 'This subscription is not active. Choose a paid subscription to continue.'),
+    subscriptionPlan: String(identity.subscriptionPlan || ''),
+    subscriptionState: String(identity.subscriptionState || 'inactive'),
+    trialEndsAt: String(identity.trialEndsAt || '')
+  }, {
+    status: 402,
+    headers: { 'Cache-Control': 'no-store', 'X-Request-Id': requestId }
+  });
+}
+
+function subscriptionGateExempt(pathname, method) {
+  if (SUBSCRIPTION_RECOVERY_PATHS.has(pathname)) return true;
+  return pathname === '/api/settings' && ['GET', 'HEAD'].includes(String(method || 'GET').toUpperCase());
+}
+
 function logIdentityFailure({ requestId, pathname, env, error }) {
   const code = String(error?.code || '').slice(0, 120);
   const upstreamCode = String(error?.upstreamCode || '').slice(0, 120);
@@ -77,15 +108,18 @@ async function handleRequest(context, identityLoader) {
   try {
     if (hasLocalBackend) {
       let identityFailure = null;
+      let identity = null;
       try {
-        await identityLoader(env);
+        identity = await identityLoader(env);
       } catch (error) {
         identityFailure = error;
         logIdentityFailure({ requestId, pathname: url.pathname, env, error });
       }
       response = identityFailure
         ? identityUnavailableResponse(requestId, identityFailure)
-        : await next();
+        : identity?.subscriptionActive === false && !subscriptionGateExempt(url.pathname, request.method)
+          ? subscriptionRequiredResponse(requestId, identity)
+          : await next();
     } else {
       const proxyAllowed = enabled(env.ALLOW_CANONICAL_API_PROXY);
       const configuredOrigin = String(env.CANONICAL_PORTAL_URL || '').trim();
