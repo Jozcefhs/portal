@@ -5201,21 +5201,77 @@ function printStaffAttendanceReport(rows = [], filters = {}) {
   window.setTimeout(() => printable.print(), 250);
 }
 
-function browserPosition() {
+function requestBrowserPosition(options) {
   return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error('This device does not provide browser location. Connect to the approved organisation network or use a supported device.'));
-      return;
-    }
     navigator.geolocation.getCurrentPosition(
       (position) => resolve({
         Latitude: position.coords.latitude,
         Longitude: position.coords.longitude,
         Accuracy: position.coords.accuracy
       }),
-      (error) => reject(new Error(error.message || 'Location permission was not granted.')),
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }
+      reject,
+      options
     );
+  });
+}
+
+function browserLocationError(errors = []) {
+  const permissionError = errors.find((error) => Number(error?.code) === 1);
+  if (permissionError) {
+    return new Error('Location access is blocked. Allow precise location for this site in your browser settings, then make sure Location is turned on for the device.');
+  }
+  if (errors.some((error) => Number(error?.code) === 2)) {
+    return new Error('Your device could not determine its location. Turn on Location and Google Location Accuracy (or the equivalent service), move near a window or outdoors, then try again.');
+  }
+  if (errors.some((error) => Number(error?.code) === 3)) {
+    return new Error('Location took too long to respond. Turn on precise location and the device location-accuracy service, then try again.');
+  }
+  return new Error(errors.find((error) => clean(error?.message))?.message || 'The device could not provide its current location.');
+}
+
+async function browserPosition() {
+  if (!navigator.geolocation) {
+    throw new Error('This device does not provide browser location. Connect to the approved organisation network or use a supported device.');
+  }
+  if (window.isSecureContext === false) {
+    throw new Error('Current location is available only on the secure HTTPS version of this site.');
+  }
+  let permission = null;
+  try {
+    if (navigator.permissions?.query) permission = await navigator.permissions.query({ name: 'geolocation' });
+  } catch (_error) {
+    permission = null;
+  }
+  if (permission?.state === 'denied') throw browserLocationError([{ code: 1 }]);
+
+  const attempts = [
+    { enableHighAccuracy: true, timeout: 30000, maximumAge: 15000 },
+    { enableHighAccuracy: false, timeout: 15000, maximumAge: 30000 }
+  ];
+  return new Promise((resolve, reject) => {
+    let pending = attempts.length;
+    let bestPosition = null;
+    const errors = [];
+    let completed = false;
+    attempts.forEach((options) => {
+      requestBrowserPosition(options).then((position) => {
+        if (completed) return;
+        pending -= 1;
+        if (!bestPosition || Number(position.Accuracy) < Number(bestPosition.Accuracy)) bestPosition = position;
+        if (Number(position.Accuracy) <= 150 || pending === 0) {
+          completed = true;
+          resolve(bestPosition);
+        }
+      }).catch((error) => {
+        if (completed) return;
+        errors.push(error);
+        pending -= 1;
+        if (pending > 0) return;
+        completed = true;
+        if (bestPosition) resolve(bestPosition);
+        else reject(browserLocationError(errors));
+      });
+    });
   });
 }
 
@@ -5353,7 +5409,7 @@ async function loadStaffAttendance() {
           { label: 'Rule', value: (row) => clean(row.Policy).replaceAll('_', ' ').toLowerCase() },
           { label: 'Radius', value: (row) => `${row.RadiusMetres || 0} m` },
           { label: 'Networks', value: (row) => `${row.AllowedPublicIps?.length || 0} approved` },
-          { label: 'Action', render: (row) => `<button type="button" class="table-action" data-edit-attendance-site="${escapeHtml(row.SiteId || row.__id)}">Edit</button>` }
+          { label: 'Action', render: (row) => `<span class="compact-row-actions"><button type="button" class="compact-icon-action compact-edit-action" data-edit-attendance-site="${escapeHtml(row.SiteId || row.__id)}" title="Edit location" aria-label="Edit ${escapeHtml(row.Name || 'attendance location')}">&#9998;</button><button type="button" class="compact-icon-action compact-delete-action" data-delete-attendance-site="${escapeHtml(row.SiteId || row.__id)}" data-attendance-site-name="${escapeHtml(row.Name || 'attendance location')}" title="Delete location" aria-label="Delete ${escapeHtml(row.Name || 'attendance location')}">&#128465;&#65038;</button></span>` }
         ])}
       </section>
       <section class="config-group">
@@ -5581,6 +5637,20 @@ async function loadStaffAttendance() {
       siteForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
       siteForm.elements.Name?.focus();
     }));
+    panelEl.querySelectorAll('[data-delete-attendance-site]').forEach((button) => button.addEventListener('click', async () => {
+      const siteId = clean(button.dataset.deleteAttendanceSite);
+      const siteName = clean(button.dataset.attendanceSiteName) || 'this attendance location';
+      if (!siteId || !window.confirm(`Delete ${siteName}? Existing attendance history will remain unchanged.`)) return;
+      button.disabled = true;
+      try {
+        const result = await staffAttendanceRequest('deletesite', { SiteId: siteId });
+        await loadStaffAttendance();
+        setStatus(document.getElementById('staffAttendanceSiteStatus') || dashboardStatus, result.message, 'ok');
+      } catch (error) {
+        button.disabled = false;
+        setStatus(document.getElementById('staffAttendanceSiteStatus') || dashboardStatus, error.message || String(error), 'bad');
+      }
+    }));
     document.getElementById('useAttendanceLocation')?.addEventListener('click', async (event) => {
       const button = event.currentTarget;
       setButtonLoading(button, true, 'Locating...', 'Use my current location');
@@ -5588,7 +5658,11 @@ async function loadStaffAttendance() {
         const position = await browserPosition();
         siteForm.elements.Latitude.value = position.Latitude.toFixed(7);
         siteForm.elements.Longitude.value = position.Longitude.toFixed(7);
-        setStatus(document.getElementById('staffAttendanceSiteStatus'), `Location captured with about ${Math.round(position.Accuracy)} m accuracy.`, 'ok');
+        const accuracy = Math.round(position.Accuracy);
+        const accurateEnough = accuracy <= Number(siteForm.elements.MaxAccuracyMetres?.value || 100);
+        setStatus(document.getElementById('staffAttendanceSiteStatus'), accurateEnough
+          ? `Location captured with about ${accuracy} m accuracy.`
+          : `Coordinates loaded, but accuracy is only about ${accuracy} m. Move near a window or outdoors and try again before saving.`, accurateEnough ? 'ok' : 'bad');
       } catch (error) {
         setStatus(document.getElementById('staffAttendanceSiteStatus'), error.message || String(error), 'bad');
       } finally {

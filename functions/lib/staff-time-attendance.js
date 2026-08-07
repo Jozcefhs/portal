@@ -1,4 +1,4 @@
-import { batchCommitDocuments, getDocument, listCollection, queryCollection, upsertDocument } from './firestore.js';
+import { batchCommitDocuments, deleteDocument, getDocument, listCollection, queryCollection, upsertDocument } from './firestore.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from './church-foundation.js';
 import { resolveMembershipBranch } from './church-membership.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
@@ -678,6 +678,22 @@ export async function saveAttendanceSite(env, user, body = {}) {
   return { ok: true, site, message: 'Attendance location saved.' };
 }
 
+export async function deleteAttendanceSite(env, user, body = {}) {
+  if (!canManageStaffAttendance(user)) fail('Only organisation or HR attendance administrators can delete attendance locations.', 403);
+  const branchId = branchFor(user, body);
+  const id = safeChurchDocumentId(body.SiteId);
+  if (!id) fail('Choose the attendance location to delete.');
+  const collectionPath = churchCollectionPath(CHURCH_COLLECTIONS.staffAttendanceSites, branchId);
+  const existing = await getDocument(env, collectionPath, id);
+  if (!existing) fail('The attendance location no longer exists.', 404);
+  await deleteDocument(env, collectionPath, id);
+  return {
+    ok: true,
+    siteId: id,
+    message: `${clean(existing.Name) || 'Attendance location'} deleted. Existing attendance history is unchanged.`
+  };
+}
+
 export async function saveAttendancePolicy(env, user, body = {}) {
   if (!canManageStaffAttendance(user)) fail('Only organisation or HR attendance administrators can manage daily work hours.', 403);
   const branchId = branchFor(user, body);
@@ -1013,6 +1029,7 @@ export async function handleStaffAttendanceAction(env, user, body = {}, requestC
   if (action === 'list') return listStaffAttendance(env, user, body);
   if (action === 'quick') return getStaffAttendanceQuickState(env, user, body);
   if (action === 'savesite') return saveAttendanceSite(env, user, body);
+  if (action === 'deletesite') return deleteAttendanceSite(env, user, body);
   if (action === 'savepolicy') return saveAttendancePolicy(env, user, body);
   if (action === 'clock') return clockStaffAttendance(env, user, body, requestContext);
   if (action === 'presence') return recordPresenceCheck(env, user, body, requestContext);

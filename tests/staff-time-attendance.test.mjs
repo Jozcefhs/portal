@@ -61,6 +61,17 @@ test('poor GPS accuracy cannot satisfy geofence-only attendance', () => {
   assert.equal(result.passed, false);
 });
 
+test('attendance location capture retries precisely and saved locations can be deleted', () => {
+  assert.match(adminJs, /navigator\.permissions\.query\(\{ name: 'geolocation' \}\)/);
+  assert.match(adminJs, /enableHighAccuracy: true, timeout: 30000, maximumAge: 15000/);
+  assert.match(adminJs, /enableHighAccuracy: false, timeout: 15000, maximumAge: 30000/);
+  assert.match(adminJs, /data-delete-attendance-site/);
+  assert.match(adminJs, /staffAttendanceRequest\('deletesite'/);
+  assert.match(attendanceSource, /export async function deleteAttendanceSite/);
+  assert.match(attendanceSource, /deleteDocument\(env, collectionPath, id\)/);
+  assert.match(attendanceSource, /action === 'deletesite'/);
+});
+
 test('daily attendance policy normalizes work hours and rejects an invalid closing time', () => {
   const policy = normalizeAttendancePolicy({
     ResumptionTime: '08:00',
