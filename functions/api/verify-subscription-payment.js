@@ -1,6 +1,7 @@
-import { getDocument, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { getDocument, upsertDocument } from '../lib/firestore.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { syncRegistrationSubscriptionToWorkspace } from '../lib/subscription-workspace-sync.js';
+import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 
 const clean = (value) => String(value ?? '').trim();
 const safeId = (value) => clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140);
@@ -40,9 +41,9 @@ export async function verifySubscriptionTransaction(env, reference) {
 }
 
 export async function recordVerifiedSubscriptionPayment(env, transaction, requestedRegistrationReference = '') {
-  requireFirestoreEnv(env);
+  const platformEnv = requirePlatformFirestoreEnv(env);
   const reference = safeId(transaction.reference);
-  const intent = await getDocument(env, 'subscriptionPayments', reference);
+  const intent = await getDocument(platformEnv, 'subscriptionPayments', reference);
   if (!intent) {
     const error = new Error('The saved subscription payment request was not found.');
     error.status = 409;
@@ -63,7 +64,7 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
     error.status = 409;
     throw error;
   }
-  const registration = await getDocument(env, 'tenantRegistrations', registrationReference);
+  const registration = await getDocument(platformEnv, 'tenantRegistrations', registrationReference);
   if (!registration) {
     const error = new Error('The organisation registration for this payment was not found.');
     error.status = 409;
@@ -103,7 +104,7 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
     UpdatedAt: updatedAt
   };
   await Promise.all([
-    upsertDocument(env, 'subscriptionPayments', reference, {
+    upsertDocument(platformEnv, 'subscriptionPayments', reference, {
       ...withoutFirestoreMetadata(intent),
       Status: 'Paid',
       PaidAt: paidAt,
@@ -112,7 +113,7 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
       PaystackSubscriptionCode: subscriptionCode,
       UpdatedAt: updatedAt
     }),
-    upsertDocument(env, 'tenantRegistrations', registrationReference, updatedRegistration)
+    upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, updatedRegistration)
   ]);
   await syncRegistrationSubscriptionToWorkspace(env, updatedRegistration);
   return {

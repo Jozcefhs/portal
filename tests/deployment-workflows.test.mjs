@@ -18,8 +18,10 @@ const coordinator = await readFile(
 const registry = JSON.parse(await readFile(new URL('../deploy/organisations.json', import.meta.url), 'utf8'));
 const schoolConfig = JSON.parse(await readFile(new URL('../firebase.school.json', import.meta.url), 'utf8'));
 const churchConfig = JSON.parse(await readFile(new URL('../firebase.church.json', import.meta.url), 'utf8'));
+const platformConfig = JSON.parse(await readFile(new URL('../firebase.platform.json', import.meta.url), 'utf8'));
 const schoolIndexes = JSON.parse(await readFile(new URL('../firestore.school.indexes.json', import.meta.url), 'utf8'));
 const churchIndexes = JSON.parse(await readFile(new URL('../firestore.church.indexes.json', import.meta.url), 'utf8'));
+const platformIndexes = JSON.parse(await readFile(new URL('../firestore.platform.indexes.json', import.meta.url), 'utf8'));
 
 function indexFields(index) {
   return (index.fields || []).map((field) => field.fieldPath).join('|');
@@ -90,11 +92,13 @@ test('deployed organisation identity must match its registry boundary', () => {
   }, { workspaceId: 'digc-suite', edition: 'faith' }), /workspace mismatch/);
 });
 
-test('school and church use separate Firebase configurations and index files', async () => {
+test('school, church and the Dynamax control plane use separate Firebase configurations', async () => {
   assert.equal(schoolConfig.firestore.indexes, 'firestore.school.indexes.json');
   assert.equal(churchConfig.firestore.indexes, 'firestore.church.indexes.json');
+  assert.equal(platformConfig.firestore.indexes, 'firestore.platform.indexes.json');
   assert.equal(schoolIndexes.indexes.length, 23);
   assert.equal(churchIndexes.indexes.length, 11);
+  assert.deepEqual(platformIndexes, { indexes: [], fieldOverrides: [] });
   await assert.rejects(access(new URL('../firebase.json', import.meta.url)));
   await assert.rejects(access(new URL('../firestore.indexes.json', import.meta.url)));
 });

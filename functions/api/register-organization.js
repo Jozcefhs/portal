@@ -1,4 +1,4 @@
-import { createDocumentIfAbsent, getDocument, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { createDocumentIfAbsent, getDocument, queryCollection, upsertDocument } from '../lib/firestore.js';
 import { normalizeOrganizationEdition } from '../lib/organization-config.js';
 import { loadDeploymentIdentity } from '../lib/deployment-identity.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
@@ -20,6 +20,7 @@ import {
   verifyTurnstile
 } from '../lib/request-security.js';
 import { syncRegistrationSubscriptionToWorkspace } from '../lib/subscription-workspace-sync.js';
+import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 
 const clean = (value) => String(value ?? '').trim();
 const PAYSTACK_INITIALIZE_URL = 'https://api.paystack.co/transaction/initialize';
@@ -51,12 +52,12 @@ function withoutFirestoreMetadata(document = {}) {
   return value;
 }
 
-async function loadPlanCatalog(env) {
-  const saved = await getDocument(env, 'settings', 'dynamaxPlanCatalog').catch(() => null);
+async function loadPlanCatalog(platformEnv) {
+  const saved = await getDocument(platformEnv, 'settings', 'dynamaxPlanCatalog');
   return normalizeSubscriptionPlanCatalog(saved || {});
 }
 
-async function initializeSubscriptionCheckout({ request, env, registration, catalog, plan, billingCycle }) {
+async function initializeSubscriptionCheckout({ request, env, platformEnv, registration, catalog, plan, billingCycle }) {
   const planEntry = catalog.Plans[plan];
   if (!planEntry.Active) {
     const error = new Error(`${plan} registration is not currently available.`);
@@ -89,7 +90,7 @@ async function initializeSubscriptionCheckout({ request, env, registration, cata
         WorkspaceId: clean(registration.WorkspaceId),
         UpdatedAt: new Date().toISOString()
       };
-      await upsertDocument(env, 'tenantRegistrations', registrationReference, currentRegistration);
+      await upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, currentRegistration);
       await syncRegistrationSubscriptionToWorkspace(env, currentRegistration);
       return {
         trialActive: true,
@@ -101,7 +102,7 @@ async function initializeSubscriptionCheckout({ request, env, registration, cata
     }
     if (!clean(registration.WorkspaceId)) {
       const reservedAt = clean(registration.TrialReservedAt) || new Date().toISOString();
-      await upsertDocument(env, 'tenantRegistrations', registrationReference, {
+      await upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, {
         ...withoutFirestoreMetadata(registration),
         Plan: 'Free',
         BillingCycle: 'monthly',
@@ -132,7 +133,7 @@ async function initializeSubscriptionCheckout({ request, env, registration, cata
       ...trial,
       UpdatedAt: new Date().toISOString()
     };
-    await upsertDocument(env, 'tenantRegistrations', registrationReference, activatedRegistration);
+    await upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, activatedRegistration);
     await syncRegistrationSubscriptionToWorkspace(env, activatedRegistration);
     return {
       trialActive: true,
@@ -144,7 +145,7 @@ async function initializeSubscriptionCheckout({ request, env, registration, cata
   }
   const amount = subscriptionPlanPrice(catalog, plan, billingCycle);
   if (!(amount > 0)) {
-    await upsertDocument(env, 'tenantRegistrations', clean(registration.Reference || registration.__id), {
+    await upsertDocument(platformEnv, 'tenantRegistrations', clean(registration.Reference || registration.__id), {
       ...withoutFirestoreMetadata(registration),
       Plan: plan,
       BillingCycle: billingCycle,
@@ -190,7 +191,7 @@ async function initializeSubscriptionCheckout({ request, env, registration, cata
     expectedAmount: amount,
     edition: clean(registration.Edition)
   };
-  await upsertDocument(env, 'subscriptionPayments', reference, {
+  await upsertDocument(platformEnv, 'subscriptionPayments', reference, {
     Reference: reference,
     RegistrationReference: metadata.registrationReference,
     Email: clean(registration.Email).toLowerCase(),
@@ -221,7 +222,7 @@ async function initializeSubscriptionCheckout({ request, env, registration, cata
   });
   const data = await paystackResponse.json().catch(() => ({}));
   if (!paystackResponse.ok || data.status === false || !clean(data.data?.authorization_url)) {
-    await upsertDocument(env, 'subscriptionPayments', reference, {
+    await upsertDocument(platformEnv, 'subscriptionPayments', reference, {
       Reference: reference,
       RegistrationReference: metadata.registrationReference,
       Email: clean(registration.Email).toLowerCase(),
@@ -241,7 +242,7 @@ async function initializeSubscriptionCheckout({ request, env, registration, cata
   }
   const authorizationUrl = clean(data.data.authorization_url);
   await Promise.all([
-    upsertDocument(env, 'subscriptionPayments', reference, {
+    upsertDocument(platformEnv, 'subscriptionPayments', reference, {
       Reference: reference,
       RegistrationReference: metadata.registrationReference,
       Email: clean(registration.Email).toLowerCase(),
@@ -256,7 +257,7 @@ async function initializeSubscriptionCheckout({ request, env, registration, cata
       CreatedAt: new Date().toISOString(),
       UpdatedAt: new Date().toISOString()
     }),
-    upsertDocument(env, 'tenantRegistrations', metadata.registrationReference, {
+    upsertDocument(platformEnv, 'tenantRegistrations', metadata.registrationReference, {
       ...withoutFirestoreMetadata(registration),
       Plan: plan,
       BillingCycle: billingCycle,
@@ -280,14 +281,15 @@ function validEmail(value) {
 
 export async function onRequestPost({ request, env }) {
   let idempotency = null;
+  let platformEnv = null;
   try {
-    requireFirestoreEnv(env);
+    platformEnv = requirePlatformFirestoreEnv(env);
     const body = await readJsonBody(request, { maxBytes: 96 * 1024 });
     const name = clean(body.OrganisationName);
     const email = clean(body.Email).toLowerCase();
     const plan = normalizeSubscriptionPlan(body.Plan);
     const billingCycle = normalizeBillingCycle(body.BillingCycle);
-    const catalog = await loadPlanCatalog(env);
+    const catalog = await loadPlanCatalog(platformEnv);
     const edition = normalizeOrganizationEdition(body.Edition);
     if (!name || !clean(body.ContactName) || !validEmail(email) || !clean(body.Phone) || !clean(body.Country)) {
       const error = new Error('Organisation, contact name, valid email, phone and country are required.');
@@ -304,7 +306,7 @@ export async function onRequestPost({ request, env }) {
       idempotencyKey: _idempotencyKey,
       ...idempotencyPayload
     } = body;
-    idempotency = await beginIdempotentRequest(env, request, body, {
+    idempotency = await beginIdempotentRequest(platformEnv, request, body, {
       scope: 'register-organization',
       actor: email,
       ttlMinutes: 30 * 24 * 60,
@@ -316,7 +318,7 @@ export async function onRequestPost({ request, env }) {
         headers: { 'Cache-Control': 'no-store', 'Idempotency-Replayed': 'true' }
       });
     }
-    const matchingRegistrations = (await queryCollection(env, 'tenantRegistrations', {
+    const matchingRegistrations = (await queryCollection(platformEnv, 'tenantRegistrations', {
       filters: [{ field: 'Email', op: '==', value: email }],
       limit: 50
     }).catch(() => []))
@@ -331,6 +333,7 @@ export async function onRequestPost({ request, env }) {
       const checkout = await initializeSubscriptionCheckout({
         request,
         env,
+        platformEnv,
         registration: { ...existing, ...(workspaceBinding || {}) },
         catalog,
         plan,
@@ -348,11 +351,11 @@ export async function onRequestPost({ request, env }) {
           : 'This organisation registration has already been received.',
         ...(checkout || {})
       };
-      await completeIdempotentRequest(env, idempotency, result, 200);
+      await completeIdempotentRequest(platformEnv, idempotency, result, 200);
       return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
     }
     const reference = `DMX-${Date.now()}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
-    const created = await createDocumentIfAbsent(env, 'tenantRegistrations', reference, {
+    const created = await createDocumentIfAbsent(platformEnv, 'tenantRegistrations', reference, {
       Reference: reference, OrganisationName: name,
       Edition: edition,
       ContactName: clean(body.ContactName), Email: email, Phone: clean(body.Phone), Country: clean(body.Country),
@@ -370,7 +373,7 @@ export async function onRequestPost({ request, env }) {
       throw error;
     }
     const registration = { ...created.document, Reference: reference };
-    const checkout = await initializeSubscriptionCheckout({ request, env, registration, catalog, plan, billingCycle });
+    const checkout = await initializeSubscriptionCheckout({ request, env, platformEnv, registration, catalog, plan, billingCycle });
     const result = {
       ok: true,
       reference,
@@ -383,10 +386,10 @@ export async function onRequestPost({ request, env }) {
         : 'Registration received. Your Dynamax workspace will be activated after plan confirmation.',
       ...(checkout || {})
     };
-    await completeIdempotentRequest(env, idempotency, result, 200);
+    await completeIdempotentRequest(platformEnv, idempotency, result, 200);
     return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
-    if (idempotency?.owner) await failIdempotentRequest(env, idempotency, error);
+    if (idempotency?.owner && platformEnv) await failIdempotentRequest(platformEnv, idempotency, error);
     return Response.json({ ok: false, message: error.message || String(error) }, {
       status: error.status || 500,
       headers: { 'Cache-Control': 'no-store' }

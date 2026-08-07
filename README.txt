@@ -43,6 +43,17 @@ Core:
 - ADMIN_WEB_PASSWORD (encrypted)
 - ADMIN_WEB_USERNAME (optional; defaults to admin)
 
+Dynamax central subscriber database (central Pages project only):
+
+- DYNAMAX_PLATFORM_FIREBASE_PROJECT_ID
+- DYNAMAX_PLATFORM_FIREBASE_CLIENT_EMAIL
+- DYNAMAX_PLATFORM_FIREBASE_PRIVATE_KEY (encrypted)
+
+These three platform values must point to Dynamax's own Firestore project, not
+to a school, church or other subscriber project. Subscriber Pages projects
+retain their own FIREBASE_* values and proxy only the subscription routes to
+the central Dynamax host. See docs/dynamax-platform-firestore.md.
+
 Feature-specific:
 
 - PAYSTACK_SECRET_KEY
@@ -56,7 +67,7 @@ Feature-specific:
 - TURNSTILE_ALLOWED_HOSTNAMES
 - ALLOW_CANONICAL_API_PROXY (off by default; enable only for an intentional bridge)
 - CANONICAL_PORTAL_URL (required when ALLOW_CANONICAL_API_PROXY is enabled)
-- CANONICAL_API_PROXY_SCOPE (`platform-subscriptions` on the public Dynamax site; limits the bridge to pricing, registration, verification and subscription webhooks)
+- CANONICAL_API_PROXY_SCOPE (`platform-subscriptions` on subscriber sites that proxy to the central Dynamax host; limits the bridge to pricing, registration, verification, pricing-book and subscription webhook routes)
 - WEBAUTHN_RP_ID
 - WEBAUTHN_ORIGIN
 - WEBAUTHN_RP_NAME

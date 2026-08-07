@@ -1,4 +1,5 @@
 import { loadDeploymentIdentity, requiredDeploymentIdentity } from './lib/deployment-identity.js';
+import { hasPlatformFirestoreConfiguration } from './lib/platform-firestore.js';
 
 const LOW_READ_IDENTITY_PATHS = new Set([
   '/api/staff-session',
@@ -8,6 +9,7 @@ const LOW_READ_IDENTITY_PATHS = new Set([
 
 const PLATFORM_SUBSCRIPTION_PROXY_PATHS = new Set([
   '/api/plan-catalog',
+  '/api/pricing-book-pdf',
   '/api/register-organization',
   '/api/verify-subscription-payment',
   '/api/paystack-subscription-webhook'
@@ -93,11 +95,48 @@ function logIdentityFailure({ requestId, pathname, env, error }) {
   }));
 }
 
+async function proxyApiRequest({ request, env, url, requestId }) {
+  const proxyAllowed = enabled(env.ALLOW_CANONICAL_API_PROXY);
+  const configuredOrigin = String(env.CANONICAL_PORTAL_URL || '').trim();
+  if (!proxyAllowed || !configuredOrigin) {
+    return { response: unavailableResponse(requestId) };
+  }
+  if (!canonicalProxyPathAllowed(env, url.pathname)) {
+    return {
+      response: unavailableResponse(requestId, 'This API route is not available on the public Dynamax deployment.')
+    };
+  }
+  let configuredUrl = null;
+  try {
+    configuredUrl = new URL(configuredOrigin);
+  } catch (_error) {
+    // Handled by the explicit fail-closed branch below.
+  }
+  if (!configuredUrl || configuredUrl.protocol !== 'https:' || configuredUrl.origin === url.origin) {
+    return { response: unavailableResponse(requestId, 'The configured canonical API proxy is invalid.') };
+  }
+  const target = new URL(`${url.pathname}${url.search}`, configuredUrl.origin);
+  const headers = new Headers(request.headers);
+  headers.set('X-Dynamax-Portal', url.hostname);
+  headers.set('X-Request-Id', requestId);
+  headers.delete('host');
+  const forwardedRequest = new Request(target, request);
+  return {
+    proxied: true,
+    response: await fetch(new Request(forwardedRequest, {
+      headers,
+      redirect: 'manual'
+    }))
+  };
+}
+
 async function handleRequest(context, identityLoader) {
   const { request, env, next } = context;
   const url = new URL(request.url);
   const isApi = url.pathname === '/api' || url.pathname.startsWith('/api/');
   const hasLocalBackend = Boolean(String(env.FIREBASE_PROJECT_ID || '').trim());
+  const platformPath = PLATFORM_SUBSCRIPTION_PROXY_PATHS.has(url.pathname.replace(/\/+$/, '') || '/');
+  const hasPlatformBackend = hasPlatformFirestoreConfiguration(env);
   if (!isApi) return next();
 
   const started = Date.now();
@@ -106,7 +145,15 @@ async function handleRequest(context, identityLoader) {
   let failure = null;
   let proxied = false;
   try {
-    if (hasLocalBackend) {
+    if (platformPath && hasPlatformBackend) {
+      // The central Dynamax deployment serves subscriber and plan data without
+      // consulting or exposing any organisation's operational database.
+      response = await next();
+    } else if (platformPath || !hasLocalBackend) {
+      const proxyResult = await proxyApiRequest({ request, env, url, requestId });
+      response = proxyResult.response;
+      proxied = Boolean(proxyResult.proxied);
+    } else {
       let identityFailure = null;
       let identity = null;
       try {
@@ -120,37 +167,6 @@ async function handleRequest(context, identityLoader) {
         : identity?.subscriptionActive === false && !subscriptionGateExempt(url.pathname, request.method)
           ? subscriptionRequiredResponse(requestId, identity)
           : await next();
-    } else {
-      const proxyAllowed = enabled(env.ALLOW_CANONICAL_API_PROXY);
-      const configuredOrigin = String(env.CANONICAL_PORTAL_URL || '').trim();
-      if (!proxyAllowed || !configuredOrigin) {
-        response = unavailableResponse(requestId);
-      } else if (!canonicalProxyPathAllowed(env, url.pathname)) {
-        response = unavailableResponse(requestId, 'This API route is not available on the public Dynamax deployment.');
-      } else {
-        let configuredUrl = null;
-        try {
-          configuredUrl = new URL(configuredOrigin);
-        } catch (_error) {
-          // Handled by the explicit fail-closed branch below.
-        }
-        if (!configuredUrl || configuredUrl.protocol !== 'https:' || configuredUrl.origin === url.origin) {
-          response = unavailableResponse(requestId, 'The configured canonical API proxy is invalid.');
-        } else {
-          const target = new URL(`${url.pathname}${url.search}`, configuredUrl.origin);
-          const headers = new Headers(request.headers);
-          headers.set('X-Dynamax-Portal', url.hostname);
-          headers.set('X-Request-Id', requestId);
-          headers.delete('host');
-          proxied = true;
-          response = await fetch(new Request(target, {
-            method: request.method,
-            headers,
-            body: ['GET', 'HEAD'].includes(request.method) ? undefined : request.body,
-            redirect: 'manual'
-          }));
-        }
-      }
     }
     const responseHeaders = new Headers(response.headers);
     if (!responseHeaders.has('Cache-Control')) responseHeaders.set('Cache-Control', 'no-store');

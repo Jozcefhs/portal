@@ -1,4 +1,5 @@
-import { getDocument, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { getDocument, upsertDocument } from '../lib/firestore.js';
+import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 import { secureTextEqual } from '../lib/backend-security.js';
 import { readJsonBody } from '../lib/request-security.js';
 import {
@@ -26,8 +27,8 @@ function requirePricingAdmin(env, password) {
 }
 
 async function loadCatalog(env) {
-  requireFirestoreEnv(env);
-  const saved = await getDocument(env, 'settings', PLAN_DOCUMENT_ID).catch(() => null);
+  const platformEnv = requirePlatformFirestoreEnv(env);
+  const saved = await getDocument(platformEnv, 'settings', PLAN_DOCUMENT_ID);
   return normalizeSubscriptionPlanCatalog(saved || {});
 }
 
@@ -109,6 +110,7 @@ export async function onRequestGet({ env }) {
 
 export async function onRequestPost({ request, env }) {
   try {
+    const platformEnv = requirePlatformFirestoreEnv(env);
     const body = await readJsonBody(request, { maxBytes: 128 * 1024 });
     requirePricingAdmin(env, body.password);
     const existing = await loadCatalog(env);
@@ -131,7 +133,7 @@ export async function onRequestPost({ request, env }) {
       });
       // Persist every returned code before the next provider call. If a later
       // Paystack request fails, retrying cannot create duplicate plans.
-      await upsertDocument(env, 'settings', PLAN_DOCUMENT_ID, {
+      await upsertDocument(platformEnv, 'settings', PLAN_DOCUMENT_ID, {
         ...catalog,
         UpdatedAt: new Date().toISOString(),
         UpdatedBy: 'Dynamax pricing administration'
@@ -144,7 +146,7 @@ export async function onRequestPost({ request, env }) {
         planCode: plan.PaystackYearlyPlanCode,
         updateExistingSubscriptions
       });
-      await upsertDocument(env, 'settings', PLAN_DOCUMENT_ID, {
+      await upsertDocument(platformEnv, 'settings', PLAN_DOCUMENT_ID, {
         ...catalog,
         UpdatedAt: new Date().toISOString(),
         UpdatedBy: 'Dynamax pricing administration'
@@ -152,7 +154,7 @@ export async function onRequestPost({ request, env }) {
     }
     catalog.UpdatedAt = new Date().toISOString();
     catalog.UpdatedBy = 'Dynamax pricing administration';
-    await upsertDocument(env, 'settings', PLAN_DOCUMENT_ID, catalog);
+    await upsertDocument(platformEnv, 'settings', PLAN_DOCUMENT_ID, catalog);
     return Response.json({
       ok: true,
       message: 'Plan pricing saved and Paystack recurring plans synchronized.',

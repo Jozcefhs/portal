@@ -8,9 +8,10 @@ const routes = JSON.parse(await readFile(new URL('../_routes.json', import.meta.
 
 test('Dynamax Pages fail closed unless an API proxy is explicitly configured', () => {
   assert.match(middleware, /env\.FIREBASE_PROJECT_ID/);
+  assert.match(middleware, /hasPlatformFirestoreConfiguration/);
   assert.match(middleware, /loadDeploymentIdentity/);
   assert.match(middleware, /if \(!isApi\) return next\(\)/);
-  assert.match(middleware, /if \(hasLocalBackend\)/);
+  assert.match(middleware, /platformPath && hasPlatformBackend/);
   assert.match(middleware, /env\.ALLOW_CANONICAL_API_PROXY/);
   assert.match(middleware, /env\.CANONICAL_PORTAL_URL/);
   assert.match(middleware, /env\.CANONICAL_API_PROXY_SCOPE/);
@@ -91,7 +92,7 @@ test('an expired trial blocks operational APIs but preserves sign-in and upgrade
   assert.equal(operationalNextCalled, false);
   assert.equal((await blocked.json()).code, 'SUBSCRIPTION_REQUIRED');
 
-  for (const path of ['/api/admin', '/api/staff-session', '/api/plan-catalog', '/api/register-organization']) {
+  for (const path of ['/api/admin', '/api/staff-session']) {
     const allowed = await onRequestWithIdentityLoader({
       request: new Request(`https://school.example${path}`),
       env: { FIREBASE_PROJECT_ID: 'school-project' },
@@ -99,6 +100,41 @@ test('an expired trial blocks operational APIs but preserves sign-in and upgrade
     }, identity);
     assert.equal(allowed.status, 200, path);
   }
+
+  for (const path of ['/api/plan-catalog', '/api/register-organization']) {
+    const allowed = await onRequestWithIdentityLoader({
+      request: new Request(`https://dynamax.example${path}`),
+      env: { DYNAMAX_PLATFORM_FIREBASE_PROJECT_ID: 'dynamax-platform' },
+      next: async () => Response.json({ ok: true })
+    }, async () => {
+      throw new Error('Platform routes must not load tenant deployment identity.');
+    });
+    assert.equal(allowed.status, 200, path);
+  }
+});
+
+test('the central Dynamax backend serves subscriber APIs without a tenant Firebase identity', async () => {
+  let identityCalled = false;
+  let nextCalled = false;
+  const response = await onRequestWithIdentityLoader({
+    request: new Request('https://dynamax.example/api/plan-catalog'),
+    env: {
+      DYNAMAX_PLATFORM_FIREBASE_PROJECT_ID: 'dynamax-platform',
+      DYNAMAX_PLATFORM_FIREBASE_CLIENT_EMAIL: 'runtime@dynamax-platform.iam.gserviceaccount.com',
+      DYNAMAX_PLATFORM_FIREBASE_PRIVATE_KEY: 'encrypted-at-runtime'
+    },
+    next: async () => {
+      nextCalled = true;
+      return Response.json({ ok: true, platform: true });
+    }
+  }, async () => {
+    identityCalled = true;
+    return {};
+  });
+  assert.equal(response.status, 200);
+  assert.equal(nextCalled, true);
+  assert.equal(identityCalled, false);
+  assert.deepEqual(await response.json(), { ok: true, platform: true });
 });
 
 test('staff sign-in uses environment deployment identity without an extra Firestore profile read', async () => {
@@ -262,6 +298,17 @@ test('the public subscription bridge forwards billing APIs but blocks tenant sta
     assert.deepEqual(await pricing.json(), { ok: true, proxied: true });
     assert.deepEqual(forwarded, ['https://canonical.example/api/plan-catalog']);
 
+    const pricingBook = await onRequest({
+      request: new Request('https://dynamax.example/api/pricing-book-pdf?edition=faith'),
+      env,
+      next: async () => Response.json({ ok: false })
+    });
+    assert.equal(pricingBook.status, 200);
+    assert.deepEqual(forwarded, [
+      'https://canonical.example/api/plan-catalog',
+      'https://canonical.example/api/pricing-book-pdf?edition=faith'
+    ]);
+
     const staff = await onRequest({
       request: new Request('https://dynamax.example/api/staff-session', { method: 'POST' }),
       env,
@@ -269,7 +316,36 @@ test('the public subscription bridge forwards billing APIs but blocks tenant sta
     });
     assert.equal(staff.status, 503);
     assert.match((await staff.json()).message, /not available on the public Dynamax deployment/i);
-    assert.equal(forwarded.length, 1);
+    assert.equal(forwarded.length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('an organisation backend proxies platform subscription routes instead of using its tenant database', async () => {
+  let identityCalled = false;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (request) => Response.json({ ok: true, target: request.url });
+  try {
+    const response = await onRequestWithIdentityLoader({
+      request: new Request('https://church.example/api/register-organization', { method: 'POST', body: '{}' }),
+      env: {
+        FIREBASE_PROJECT_ID: 'subscriber-church',
+        ALLOW_CANONICAL_API_PROXY: 'true',
+        CANONICAL_PORTAL_URL: 'https://dynamax.example',
+        CANONICAL_API_PROXY_SCOPE: 'platform-subscriptions'
+      },
+      next: async () => Response.json({ ok: false })
+    }, async () => {
+      identityCalled = true;
+      return {};
+    });
+    assert.equal(response.status, 200);
+    assert.equal(identityCalled, false);
+    assert.deepEqual(await response.json(), {
+      ok: true,
+      target: 'https://dynamax.example/api/register-organization'
+    });
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -1,6 +1,6 @@
 # Multi-organisation deployment
 
-The portal uses one source repository and one deployment workflow while keeping every organisation in its own Firebase project and Cloudflare Pages project.
+The portal uses one source repository and one deployment workflow while keeping every organisation in its own Firebase project and Cloudflare Pages project. Dynamax subscriber registrations, plan pricing and subscription payments live in a separate central platform Firestore project; see `docs/dynamax-platform-firestore.md`.
 
 ## Registry
 
@@ -52,6 +52,8 @@ Create the `cloudflareProject` named in the registry and configure its productio
 - `ORGANISATION_EDITION`, exactly matching `edition` in the registry
 
 Add the organisation-specific Paystack, email, notification and document-storage secrets needed by its enabled modules. Runtime secrets belong to the Pages project, not GitHub and not the registry.
+
+Do not add `DYNAMAX_PLATFORM_FIREBASE_*` credentials to organisation projects. Configure the restricted subscription proxy to the central Dynamax host instead. This prevents a compromised subscriber deployment from gaining direct database access to every subscriber record.
 
 ## Deployment
 

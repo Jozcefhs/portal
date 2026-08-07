@@ -161,9 +161,13 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(registrationApi, /authenticatedWorkspaceBinding/);
   assert.match(registrationApi, /requireStaffSession/);
   assert.match(registrationApi, /Pending Trial Activation/);
+  assert.match(registrationApi, /requirePlatformFirestoreEnv/);
   assert.match(registrationApi, /7-day clock will begin when your workspace is activated/);
   assert.match(pricingApi, /update_existing_subscriptions/);
   assert.match(pricingApi, /ADMIN_WEB_PASSWORD/);
+  assert.match(pricingApi, /requirePlatformFirestoreEnv/);
+  assert.match(verificationApi, /requirePlatformFirestoreEnv/);
+  assert.match(webhookApi, /requirePlatformFirestoreEnv/);
   assert.match(verificationApi, /syncRegistrationSubscriptionToWorkspace/);
   assert.match(webhookApi, /syncRegistrationSubscriptionToWorkspace/);
 });

@@ -1,0 +1,64 @@
+# Dynamax platform Firestore
+
+Dynamax has one control-plane Firestore project for subscriber administration. It must not be an organisation's school, church or other-organisation project.
+
+## Data boundary
+
+The central project owns only Dynamax commercial and onboarding data:
+
+- `tenantRegistrations`: subscriber organisations, contacts, selected plans and activation state.
+- `subscriptionPayments`: Dynamax subscription-payment intents and confirmations.
+- `settings/dynamaxPlanCatalog`: central plan prices, limits, feature lists and Paystack plan codes.
+- `requestIdempotency`: temporary retry protection created by registration requests.
+
+Each organisation project continues to own its operational records: people, attendance, finance, donations or fees, HR, documents, notifications and organisation settings. Central subscriber APIs now fail closed when the Dynamax project credentials are absent; they never fall back to `FIREBASE_*`.
+
+## Central Pages project
+
+Create a dedicated Google Cloud/Firebase project, enable a Firestore `(default)` database, and create a service account that can read and write only that platform database. On the central Dynamax Cloudflare Pages project, add:
+
+- `DYNAMAX_PLATFORM_FIREBASE_PROJECT_ID`
+- `DYNAMAX_PLATFORM_FIREBASE_CLIENT_EMAIL`
+- `DYNAMAX_PLATFORM_FIREBASE_PRIVATE_KEY` as an encrypted secret
+- `PAYSTACK_SECRET_KEY` as an encrypted secret for Dynamax subscription billing
+- `ADMIN_WEB_PASSWORD` as an encrypted secret for plan administration
+
+Do not set `FIREBASE_PROJECT_ID` to a subscriber project on the central deployment. If both project IDs are present, the API rejects a configuration where they are equal.
+
+Cloudflare supports production and preview Variables and Secrets separately. Configure the central values in both environments only when preview is intentionally allowed to reach the platform database. See [Cloudflare Pages bindings and secrets](https://developers.cloudflare.com/pages/functions/bindings/).
+
+The platform index manifest is `firebase.platform.json`. The current subscriber queries use Firestore's automatic single-field indexes, so `firestore.platform.indexes.json` intentionally has no composite indexes.
+
+## Organisation Pages projects
+
+Keep the existing organisation-specific `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL` and `FIREBASE_PRIVATE_KEY`. Do not copy the platform service-account private key into subscriber Pages projects.
+
+To expose registration, pricing and subscription payment from an organisation-branded portal, proxy only those routes to the central Dynamax deployment:
+
+- `ALLOW_CANONICAL_API_PROXY=true`
+- `CANONICAL_PORTAL_URL=https://<central-dynamax-host>`
+- `CANONICAL_API_PROXY_SCOPE=platform-subscriptions`
+
+The middleware gives the central route priority even when the organisation has its own local Firestore backend. Staff and operational APIs continue to use the organisation database and cannot pass through the restricted proxy.
+
+## One-time migration from `digc-suite`
+
+The migration utility is non-destructive and runs as a dry run unless `--apply` is supplied. Provide the old project credentials through `SOURCE_FIREBASE_*` and the new central credentials through `DYNAMAX_PLATFORM_FIREBASE_*`, then run:
+
+```powershell
+npm run migrate:dynamax-platform
+npm run migrate:dynamax-platform -- --apply
+```
+
+It copies the plan catalog, registrations and subscription payments only when the target document does not already exist. It never deletes or changes the source project. After verifying counts and payment records in the central Firestore console, remove the obsolete platform collections from the subscriber project in a separate, explicitly approved cleanup.
+
+## Deployment order
+
+1. Create the central Firebase/Google Cloud project and Firestore database.
+2. Apply `firebase.platform.json` to that project.
+3. Configure the central Pages project variables and secrets.
+4. Run and verify the dry-run migration, then apply it once.
+5. Deploy the central Pages source and verify `/api/plan-catalog` and the pricing-book download.
+6. Point each subscriber Pages project at the central host with the restricted proxy variables.
+7. Verify registration, Paystack callback and webhook delivery before removing old records.
+

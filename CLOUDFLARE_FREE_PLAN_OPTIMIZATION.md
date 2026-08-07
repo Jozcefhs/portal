@@ -241,6 +241,14 @@ HTML, CSS, JavaScript, images, icons, fonts, the manifest, service worker and fa
 - `ADMIN_WEB_PASSWORD` — encrypted secret
 - `ADMIN_WEB_USERNAME` — optional; defaults to `admin`
 
+The central Dynamax Pages project additionally requires its own subscriber
+database credentials. These must point to a Firebase project that is not used
+by any subscriber organisation:
+
+- `DYNAMAX_PLATFORM_FIREBASE_PROJECT_ID`
+- `DYNAMAX_PLATFORM_FIREBASE_CLIENT_EMAIL`
+- `DYNAMAX_PLATFORM_FIREBASE_PRIVATE_KEY` (encrypted secret)
+
 ### Enable only the features in use
 
 - `PAYSTACK_SECRET_KEY`
@@ -254,7 +262,7 @@ HTML, CSS, JavaScript, images, icons, fonts, the manifest, service worker and fa
 - `TURNSTILE_ALLOWED_HOSTNAMES` — comma-separated hostnames
 - `ALLOW_CANONICAL_API_PROXY` — must be explicitly enabled for an intentional API bridge
 - `CANONICAL_PORTAL_URL` — required only when `ALLOW_CANONICAL_API_PROXY` is enabled
-- `CANONICAL_API_PROXY_SCOPE` — set to `platform-subscriptions` on the public Dynamax project so tenant staff APIs remain unavailable there
+- `CANONICAL_API_PROXY_SCOPE` — set to `platform-subscriptions` on subscriber projects that proxy pricing and subscription routes to the central Dynamax project
 - `WEBAUTHN_RP_ID`
 - `WEBAUTHN_ORIGIN`
 - `WEBAUTHN_RP_NAME`
@@ -265,7 +273,7 @@ Cloudflare Pages currently limits configured variables per environment. The sour
 ## Cloudflare dashboard configuration
 
 1. Pages project:
-   - Project: `digc-suite`
+   - Project: the subscriber's own Pages project; `digc-suite` is one subscriber, not the Dynamax control plane
    - Production branch: the repository's release branch
    - Build command: none for this static source deployment
    - Build output directory: repository/portal root as used by the existing deployment
@@ -274,6 +282,9 @@ Cloudflare Pages currently limits configured variables per environment. The sour
    School and faith deployments must use different Firebase projects. For the
    current desktop workspace registry, configure the canonical values
    `DYNAMAX_WORKSPACE_ID=school` and `DYNAMAX_WORKSPACE_ID=faith` respectively.
+   The central Dynamax project uses all three `DYNAMAX_PLATFORM_FIREBASE_*`
+   values and must not reuse either subscriber project ID. Subscriber projects
+   must not receive the central service-account private key.
 4. If Turnstile is enabled:
    - create a widget for the production/custom hostnames;
    - set both Turnstile keys;

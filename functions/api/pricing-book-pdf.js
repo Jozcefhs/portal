@@ -1,4 +1,5 @@
-import { getDocument, requireFirestoreEnv } from '../lib/firestore.js';
+import { getDocument } from '../lib/firestore.js';
+import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 import { createPricingBookPdf } from '../lib/pricing-book-pdf.js';
 import { normalizeBillingCycle, normalizeSubscriptionPlanCatalog } from '../lib/subscription-plans.js';
 
@@ -19,11 +20,11 @@ function safeFilenamePart(value) {
 
 export async function onRequestGet({ request, env }) {
   try {
-    requireFirestoreEnv(env);
+    const platformEnv = requirePlatformFirestoreEnv(env);
     const url = new URL(request.url);
     const selectedEdition = edition(url.searchParams.get('edition'));
     const billingCycle = normalizeBillingCycle(url.searchParams.get('billingCycle'));
-    const saved = await getDocument(env, 'settings', PLAN_DOCUMENT_ID);
+    const saved = await getDocument(platformEnv, 'settings', PLAN_DOCUMENT_ID);
     const catalog = normalizeSubscriptionPlanCatalog(saved || {});
     const bytes = await createPricingBookPdf(catalog, {
       edition: selectedEdition,

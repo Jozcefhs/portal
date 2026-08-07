@@ -1,7 +1,8 @@
-import { getDocument, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { getDocument, queryCollection, upsertDocument } from '../lib/firestore.js';
 import { secureTextEqual } from '../lib/backend-security.js';
 import { recordVerifiedSubscriptionPayment } from './verify-subscription-payment.js';
 import { syncRegistrationSubscriptionToWorkspace } from '../lib/subscription-workspace-sync.js';
+import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 
 const MAX_WEBHOOK_BYTES = 512 * 1024;
 const clean = (value) => String(value ?? '').trim();
@@ -61,10 +62,10 @@ function withoutFirestoreMetadata(document = {}) {
   return value;
 }
 
-async function registrationForSubscription(env, data = {}) {
+async function registrationForSubscription(platformEnv, data = {}) {
   const subscriptionCode = clean(data.subscription_code || data.subscription?.subscription_code);
   if (subscriptionCode) {
-    const rows = await queryCollection(env, 'tenantRegistrations', {
+    const rows = await queryCollection(platformEnv, 'tenantRegistrations', {
       filters: [{ field: 'PaystackSubscriptionCode', op: '==', value: subscriptionCode }],
       limit: 2
     }).catch(() => []);
@@ -73,15 +74,15 @@ async function registrationForSubscription(env, data = {}) {
   const email = clean(data.customer?.email).toLowerCase();
   if (!email) return null;
   const planCode = clean(data.plan?.plan_code || data.subscription?.plan?.plan_code);
-  const rows = await queryCollection(env, 'tenantRegistrations', {
+  const rows = await queryCollection(platformEnv, 'tenantRegistrations', {
     filters: [{ field: 'Email', op: '==', value: email }],
     limit: 10
   }).catch(() => []);
   return rows.find((row) => !planCode || clean(row.PaystackPlanCode) === planCode) || null;
 }
 
-async function updateSubscriptionStatus(env, event, data) {
-  const registration = await registrationForSubscription(env, data);
+async function updateSubscriptionStatus(env, platformEnv, event, data) {
+  const registration = await registrationForSubscription(platformEnv, data);
   if (!registration) return false;
   const subscriptionCode = clean(data.subscription_code || data.subscription?.subscription_code || registration.PaystackSubscriptionCode);
   const normalizedEvent = clean(event).toLowerCase();
@@ -101,14 +102,14 @@ async function updateSubscriptionStatus(env, event, data) {
     LastSubscriptionEventAt: new Date().toISOString(),
     UpdatedAt: new Date().toISOString()
   };
-  await upsertDocument(env, 'tenantRegistrations', registration.__id, updatedRegistration);
+  await upsertDocument(platformEnv, 'tenantRegistrations', registration.__id, updatedRegistration);
   await syncRegistrationSubscriptionToWorkspace(env, updatedRegistration);
   return true;
 }
 
 export async function onRequestPost({ request, env }) {
   try {
-    requireFirestoreEnv(env);
+    const platformEnv = requirePlatformFirestoreEnv(env);
     if (!clean(env.PAYSTACK_SECRET_KEY)) {
       return Response.json({ ok: false, message: 'Paystack webhook verification is not configured.' }, { status: 503 });
     }
@@ -123,11 +124,11 @@ export async function onRequestPost({ request, env }) {
     const eventName = clean(event.event).toLowerCase();
     const data = event.data || {};
     if (eventName === 'charge.success' && clean(data.reference)) {
-      const intent = await getDocument(env, 'subscriptionPayments', clean(data.reference)).catch(() => null);
+      const intent = await getDocument(platformEnv, 'subscriptionPayments', clean(data.reference)).catch(() => null);
       if (intent) await recordVerifiedSubscriptionPayment(env, data).catch(() => null);
     }
     if (['subscription.create', 'subscription.disable', 'invoice.create', 'invoice.update', 'invoice.payment_failed'].includes(eventName)) {
-      await updateSubscriptionStatus(env, eventName, data);
+      await updateSubscriptionStatus(env, platformEnv, eventName, data);
     }
     return Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
