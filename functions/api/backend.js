@@ -2421,13 +2421,15 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
       Edition: body.OrganisationEdition || body.OrganizationEdition || body.organisationEdition || body.organizationEdition || existingOrganization?.Edition,
       Name: body.OrganisationName || body.OrganizationName || body.organisationName || body.organizationName || existingOrganization?.Name || profile.SchoolName,
       Code: body.OrganisationCode || body.OrganizationCode || body.organisationCode || body.organizationCode || existingOrganization?.Code || profile.SchoolCode,
-      FeatureFlags: body.FeatureFlags || body.featureFlags || existingOrganization?.FeatureFlags
+      FeatureOverrides: body.FeatureOverrides || body.featureOverrides
+        || body.FeatureFlags || body.featureFlags || existingOrganization?.FeatureOverrides
     },
     legacyProfile: profile
   });
   profile.OrganisationEdition = organization.Edition;
   profile.OrganisationName = organization.Name;
   profile.OrganisationCode = organization.Code;
+  profile.FeatureOverrides = organization.FeatureOverrides;
   profile.FeatureFlags = organization.FeatureFlags;
   if (body.WebLogoDataUrl !== undefined || body.webLogoDataUrl !== undefined) {
     const webLogo = clean(body.WebLogoDataUrl ?? body.webLogoDataUrl);

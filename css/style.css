@@ -1350,6 +1350,9 @@ html[data-theme="dark"] .password-field>.password-toggle:hover{background:#1a314
 .staff-page .staff-tabs .child-card{display:flex;align-items:center;gap:10px}
 .staff-tab-icon{display:grid!important;place-items:center;flex:0 0 25px;width:25px;height:25px;border-radius:8px;background:rgba(255,255,255,.07);font-size:15px;line-height:1}
 .staff-page .staff-tabs .child-card.selected .staff-tab-icon{background:rgba(255,255,255,.14)}
+.staff-page .staff-tabs .child-card.subscription-restricted{cursor:not-allowed;border-color:rgba(255,255,255,.08);background:rgba(128,145,160,.12);color:#8fa0b0;opacity:.68;box-shadow:none}.staff-page .staff-tabs .child-card.subscription-restricted>span:last-of-type{color:#a7b4c0}.staff-page .staff-tabs .child-card.subscription-restricted .staff-tab-icon{background:rgba(128,145,160,.16);filter:grayscale(1)}.staff-page .staff-tabs .child-card.subscription-restricted small{margin-left:auto;color:#bac4cd;font-size:9px;font-weight:700;white-space:nowrap}
+.staff-module-grid button.subscription-restricted{cursor:not-allowed;opacity:.52;filter:grayscale(1)}.staff-module-grid button.subscription-restricted>span{background:#e2e6ea;color:#69747f}.staff-module-grid button.subscription-restricted>em{font-size:8px;font-style:normal;font-weight:800;color:#687480;text-transform:uppercase}
+html[data-theme="dark"] .staff-page .staff-tabs .child-card.subscription-restricted{background:rgba(90,105,120,.16);color:#8795a2}html[data-theme="dark"] .staff-module-grid button.subscription-restricted>span{background:#34404c;color:#aeb9c3}
 .staff-sidebar .staff-tabs{margin-bottom:0;padding-bottom:12px}
 .staff-sidebar-actions{
   position:relative;

@@ -219,8 +219,11 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
       || legacy.OrganisationCode || legacy.OrganizationCode || legacy.SchoolCode
       || env.ORGANISATION_CODE || env.ORGANIZATION_CODE || env.SCHOOL_CODE
   ).toUpperCase().replace(/[^A-Z0-9]/g, '') || (edition === 'school' ? 'DCA' : 'ORG');
-  const overrides = profile.FeatureFlags || profile.Features
-    || legacy.FeatureFlags || legacy.Features || {};
+  // FeatureFlags is the calculated output saved by older releases. Treating
+  // that output as an override made a later plan upgrade remain artificially
+  // locked. Only the explicit override field is authoritative.
+  const overrides = profile.FeatureOverrides
+    || legacy.FeatureOverrides || {};
   const configuredPlan = clean(
     profile.Plan || profile.SubscriptionPlan
       || legacy.Plan || legacy.SubscriptionPlan
@@ -236,6 +239,7 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
     Code: code,
     Plan: plan,
     UserLimit: Math.max(1, Number(profile.UserLimit || legacy.UserLimit || env.USER_LIMIT || defaultLimit) || defaultLimit),
+    FeatureOverrides: overrides,
     FeatureFlags: featureFlagsForPlan(edition, plan, overrides)
   };
 }
@@ -247,6 +251,7 @@ export function organizationProfileDocument(config, audit = {}) {
     Edition: resolved.Edition,
     Name: resolved.Name,
     Code: resolved.Code,
+    FeatureOverrides: config.FeatureOverrides || config.featureOverrides || resolved.FeatureOverrides || {},
     FeatureFlags: resolved.FeatureFlags,
     UpdatedAt: clean(audit.UpdatedAt),
     UpdatedBy: clean(audit.UpdatedBy),
@@ -265,7 +270,7 @@ const SECTION_FEATURES = Object.freeze({
   formPurchases: 'admissions',
   students: 'students',
   studentConduct: 'studentConduct',
-  accounts: 'students',
+  accounts: Object.freeze(['students', 'accounting']),
   incomeAnalytics: 'accounting',
   financeRequests: 'accounting',
   payroll: 'payroll',
@@ -278,6 +283,7 @@ const SECTION_FEATURES = Object.freeze({
   restaurant: 'restaurant',
   members: 'members',
   services: 'services',
+  staffAttendance: 'humanResources',
   funds: 'funds',
   offerings: 'offerings',
   donations: 'donations',
@@ -289,7 +295,9 @@ export function filterSectionsForFeatures(sections, featureFlags) {
   const flags = featureFlags && typeof featureFlags === 'object' ? featureFlags : null;
   if (!flags) return [...new Set((sections || []).map(clean).filter(Boolean))];
   return [...new Set((sections || []).map(clean).filter((section) => {
-    const feature = SECTION_FEATURES[section];
-    return !feature || flags[feature] === true;
+    const requirements = SECTION_FEATURES[section];
+    if (!requirements) return true;
+    const features = Array.isArray(requirements) ? requirements : [requirements];
+    return features.every((feature) => flags[feature] === true);
   }))];
 }

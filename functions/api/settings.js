@@ -221,7 +221,8 @@ export async function onRequestPost(context) {
         Edition: deployment.edition,
         Name: incoming.OrganisationName || incoming.OrganizationName || incoming.SchoolName || existing.OrganisationName,
         Code: incoming.OrganisationCode || incoming.OrganizationCode || incoming.SchoolCode || existing.OrganisationCode,
-        FeatureFlags: incoming.FeatureFlags || incoming.Features || existing.FeatureFlags
+        FeatureOverrides: incoming.FeatureOverrides || incoming.FeatureFlags
+          || incoming.Features || existing.FeatureOverrides
       },
       legacyProfile: { ...existing, ...incoming }
     });
@@ -232,6 +233,7 @@ export async function onRequestPost(context) {
       OrganisationEdition: organization.Edition,
       OrganisationName: organization.Name,
       OrganisationCode: organization.Code,
+      FeatureOverrides: organization.FeatureOverrides,
       FeatureFlags: organization.FeatureFlags,
       SchoolName: clean(incoming.SchoolName) || 'Dynamax',
       SchoolCode: normalizeSchoolCode(incoming.SchoolCode),

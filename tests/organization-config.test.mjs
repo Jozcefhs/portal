@@ -15,7 +15,11 @@ import {
   resolveOrganizationConfig,
   staffRoleAllowedForEdition
 } from '../functions/lib/organization-config.js';
-import { allowedSectionsFor, staffUserForAccess } from '../functions/lib/staff-auth.js';
+import {
+  allowedSectionsFor,
+  sectionAccessFor,
+  staffUserForAccess
+} from '../functions/lib/staff-auth.js';
 import {
   buildOfferingJournalDraft,
   CHURCH_ACCOUNTING_TARGET,
@@ -119,6 +123,59 @@ test('subscription plans enforce module entitlements in addition to organisation
   assert.equal(professionalChurch.payroll, true);
   assert.equal(professionalChurch.retail, true);
   assert.equal(professionalChurch.admissions, false);
+});
+
+test('a plan upgrade is not blocked by calculated flags saved by an older release', () => {
+  const upgraded = resolveOrganizationConfig({
+    organizationProfile: {
+      Edition: 'school',
+      Plan: 'Standard',
+      FeatureFlags: { accounting: false, humanResources: false }
+    }
+  });
+  assert.equal(upgraded.FeatureFlags.accounting, true);
+  assert.equal(upgraded.FeatureFlags.humanResources, true);
+
+  const explicitlyDisabled = resolveOrganizationConfig({
+    organizationProfile: {
+      Edition: 'school',
+      Plan: 'Standard',
+      FeatureOverrides: { accounting: false }
+    }
+  });
+  assert.equal(explicitlyDisabled.FeatureFlags.accounting, false);
+});
+
+test('staff access separates plan-restricted modules from role-denied modules', () => {
+  const starterSchool = resolveOrganizationConfig({
+    organizationProfile: {
+      Edition: 'school',
+      Plan: 'Starter',
+      Name: 'Starter School'
+    }
+  });
+  const access = sectionAccessFor({ role: 'Super Admin' }, starterSchool);
+  assert.equal(access.subscriptionPlan, 'Starter');
+  assert.equal(access.allowedSections.includes('students'), true);
+  assert.equal(access.allowedSections.includes('accounts'), false);
+  assert.equal(access.restrictedSections.includes('accounts'), true);
+  assert.equal(access.restrictedSections.includes('incomeAnalytics'), true);
+  assert.equal(access.restrictedSections.includes('staffUsers'), false);
+
+  const principal = sectionAccessFor({ role: 'Principal' }, starterSchool);
+  assert.equal(principal.availableSections.includes('accounts'), false);
+  assert.equal(principal.restrictedSections.includes('accounts'), false);
+});
+
+test('web staff navigation displays plan restrictions as disabled grey modules', async () => {
+  const [adminSource, css] = await Promise.all([
+    readFile(new URL('../js/admin.js', import.meta.url), 'utf8'),
+    readFile(new URL('../css/style.css', import.meta.url), 'utf8')
+  ]);
+  assert.match(adminSource, /restrictedSections/);
+  assert.match(adminSource, /disabled aria-disabled="true"/);
+  assert.match(adminSource, /Upgrade plan/);
+  assert.match(css, /\.subscription-restricted/);
 });
 
 test('school-only modules cannot be re-enabled by church feature overrides', () => {

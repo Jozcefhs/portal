@@ -1673,17 +1673,35 @@ function renderModuleSummary(active, liveData = null) {
 }
 
 function renderTabs(allowed) {
-  const tabs = [['overview', 'Dashboard'], ...webTabsForEdition().filter(([key]) => allowed.includes(key))];
+  const allowedSet = new Set(allowed || []);
+  const restrictedSet = new Set(
+    dashboardData?.restrictedSections || currentUser?.restrictedSections || []
+  );
+  const editionTabs = webTabsForEdition();
+  const tabs = [['overview', 'Dashboard'], ...editionTabs.filter(([key]) => allowedSet.has(key))];
+  const visibleTabs = [
+    ['overview', 'Dashboard', false],
+    ...editionTabs
+      .filter(([key]) => allowedSet.has(key) || restrictedSet.has(key))
+      .map(([key, label]) => [key, label, restrictedSet.has(key) && !allowedSet.has(key)])
+  ];
+  const plan = clean(dashboardData?.subscriptionPlan || currentUser?.subscriptionPlan || 'current');
   activeTabs = tabs;
-  tabsEl.innerHTML = tabs.map(([key, label]) => {
+  tabsEl.innerHTML = visibleTabs.map(([key, label, restricted]) => {
     label = staffTabLabel(key, label);
     const selected = key === activeSection ? ' selected' : '';
-    return `<button type="button" class="child-card${selected}" data-tab="${escapeHtml(key)}" aria-selected="${key === activeSection}"><span class="staff-tab-icon" aria-hidden="true">${escapeHtml(tabIcons[key] || '•')}</span><span>${escapeHtml(label)}</span></button>`;
+    const locked = restricted ? ' subscription-restricted' : '';
+    const disabled = restricted ? ' disabled aria-disabled="true"' : '';
+    const title = restricted
+      ? ` title="${escapeHtml(`${label} is not included in the ${plan} plan. Upgrade the subscription to activate it.`)}"`
+      : '';
+    const icon = restricted ? '\u{1F512}' : (tabIcons[key] || '•');
+    return `<button type="button" class="child-card${selected}${locked}" data-tab="${escapeHtml(key)}" aria-selected="${key === activeSection}"${disabled}${title}><span class="staff-tab-icon" aria-hidden="true">${escapeHtml(icon)}</span><span>${escapeHtml(label)}</span>${restricted ? '<small>Upgrade plan</small>' : ''}</button>`;
   }).join('');
-  tabsEl.querySelectorAll('[data-tab]').forEach((button) => {
+  tabsEl.querySelectorAll('[data-tab]:not(:disabled)').forEach((button) => {
     button.addEventListener('click', () => selectSection(button.dataset.tab, tabs.map(([key]) => key)));
   });
-  renderMobileNavigation(tabs);
+  renderMobileNavigation(tabs, visibleTabs);
 }
 
 function renderWorkspace(active) {
@@ -1715,7 +1733,7 @@ function selectSection(key, allowed = activeTabs.map(([tabKey]) => tabKey)) {
   (activeSection === 'overview' ? staffMainContent : panelEl).scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function renderMobileNavigation(tabs) {
+function renderMobileNavigation(tabs, visibleTabs = tabs.map(([key, label]) => [key, label, false])) {
   if (!tabs.length) {
     mobileNav.innerHTML = '';
     moduleGrid.innerHTML = '';
@@ -1737,7 +1755,12 @@ function renderMobileNavigation(tabs) {
     const central = key === '__modules__' ? ' mobile-nav-centre' : '';
     return `<button type="button" class="${selected}${central}" data-mobile-tab="${escapeHtml(key)}" aria-label="${escapeHtml(label)}"><span>${escapeHtml(icon)}</span><small>${escapeHtml(label)}</small></button>`;
   }).join('');
-  moduleGrid.innerHTML = tabs.map(([key, label], index) => `<button type="button" data-module="${escapeHtml(key)}" class="module-tone-${index % 6}${key === activeSection ? ' selected' : ''}"><span>${escapeHtml(tabIcons[key] || '•')}</span><strong>${escapeHtml(staffTabLabel(key, label))}</strong></button>`).join('');
+  moduleGrid.innerHTML = visibleTabs.map(([key, label, restricted], index) => {
+    const locked = restricted ? ' subscription-restricted' : '';
+    const disabled = restricted ? ' disabled aria-disabled="true"' : '';
+    const icon = restricted ? '\u{1F512}' : (tabIcons[key] || '•');
+    return `<button type="button" data-module="${escapeHtml(key)}" class="module-tone-${index % 6}${key === activeSection ? ' selected' : ''}${locked}"${disabled}><span>${escapeHtml(icon)}</span><strong>${escapeHtml(staffTabLabel(key, label))}</strong>${restricted ? '<em>Upgrade plan</em>' : ''}</button>`;
+  }).join('');
 }
 
 function table(title, rows, columns) {
@@ -9766,7 +9789,7 @@ mobileNav.addEventListener('click', (event) => {
 });
 moduleGrid.addEventListener('click', (event) => {
   const button = event.target.closest('[data-module]');
-  if (button) selectSection(button.dataset.module);
+  if (button && !button.disabled) selectSection(button.dataset.module);
 });
 moduleCloseButton.addEventListener('click', () => moduleDialog.close());
 moduleDialog.addEventListener('click', (event) => { if (event.target === moduleDialog) moduleDialog.close(); });

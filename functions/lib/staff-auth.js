@@ -1,6 +1,11 @@
 import { findOneByField, getDocument, listCollection, patchDocumentFields, upsertDocument } from './firestore.js';
 import { accountingCodeAllowedForEdition } from './accounting-edition-scope.js';
-import { filterSectionsForFeatures, resolveOrganizationConfig } from './organization-config.js';
+import {
+  featureFlagsForEdition,
+  featureFlagsForPlan,
+  filterSectionsForFeatures,
+  resolveOrganizationConfig
+} from './organization-config.js';
 import { deploymentIdentityDetails, requiredDeploymentIdentity } from './deployment-identity.js';
 import { configuredModulesForUser, defaultModulesForRole } from './role-module-access.js';
 import { getSchoolStructure } from './school-scope.js';
@@ -284,6 +289,71 @@ export function invalidateStaffAccessCache() {
   accessConfigCache = null;
 }
 
+export function sectionAccessFor(user = {}, organization = {}, roleAccess = null) {
+  const edition = clean(organization.Edition || organization.edition) || 'school';
+  const subscriptionPlan = clean(organization.Plan || organization.plan) || 'Professional';
+  const featureFlags = organization.FeatureFlags || organization.featureFlags || featureFlagsForEdition(edition);
+  const planFeatureFlags = featureFlagsForPlan(edition, subscriptionPlan);
+  const editionFeatureFlags = featureFlagsForEdition(edition);
+  const configuredRoleModules = configuredModulesForUser(
+    roleAccess,
+    user,
+    clean(user.role || user.Role),
+    edition,
+    featureFlags
+  );
+  const availableRoleModules = configuredModulesForUser(
+    roleAccess,
+    user,
+    clean(user.role || user.Role),
+    edition,
+    editionFeatureFlags
+  );
+  const planRoleModules = configuredModulesForUser(
+    roleAccess,
+    user,
+    clean(user.role || user.Role),
+    edition,
+    planFeatureFlags
+  );
+  const allowedSections = allowedSectionsFor(user, featureFlags, {
+    edition,
+    roleModules: configuredRoleModules
+  });
+  const availableSections = allowedSectionsFor(user, editionFeatureFlags, {
+    edition,
+    roleModules: availableRoleModules
+  });
+  const planSections = allowedSectionsFor(user, planFeatureFlags, {
+    edition,
+    roleModules: planRoleModules
+  });
+  const customUserModules = Array.isArray(user.tabAccess || user.TabAccess)
+    ? (user.tabAccess || user.TabAccess).map(clean).filter(Boolean)
+    : [];
+  if (edition === 'faith' && configuredRoleModules === null && !customUserModules.length
+      && featureFlags.humanResources === true && !allowedSections.includes('staffAttendance')) {
+    allowedSections.push('staffAttendance');
+  }
+  if (edition === 'faith' && availableRoleModules === null && !customUserModules.length
+      && editionFeatureFlags.humanResources === true && !availableSections.includes('staffAttendance')) {
+    availableSections.push('staffAttendance');
+  }
+  if (edition === 'faith' && planRoleModules === null && !customUserModules.length
+      && planFeatureFlags.humanResources === true && !planSections.includes('staffAttendance')) {
+    planSections.push('staffAttendance');
+  }
+  const planSet = new Set(planSections);
+  return {
+    edition,
+    featureFlags,
+    subscriptionPlan,
+    allowedSections,
+    availableSections,
+    restrictedSections: availableSections.filter((section) => !planSet.has(section))
+  };
+}
+
 export async function staffAccessFor(env, user = {}) {
   const environmentKey = `${clean(env.FIREBASE_PROJECT_ID)}|${clean(env.ORGANISATION_EDITION || env.ORGANIZATION_EDITION)}`;
   const now = Date.now();
@@ -316,28 +386,7 @@ export async function staffAccessFor(env, user = {}) {
       expiresAt: Date.now() + ACCESS_CONFIG_CACHE_MS
     };
   }
-  const configuredRoleModules = configuredModulesForUser(
-    roleAccess,
-    user,
-    clean(user.role || user.Role),
-    organization.Edition,
-    organization.FeatureFlags
-  );
-  const allowedSections = allowedSectionsFor(user, organization.FeatureFlags, {
-    edition: organization.Edition,
-    roleModules: configuredRoleModules
-  });
-  const customUserModules = Array.isArray(user.tabAccess || user.TabAccess)
-    ? (user.tabAccess || user.TabAccess).map(clean).filter(Boolean)
-    : [];
-  if (organization.Edition === 'faith' && configuredRoleModules === null && !customUserModules.length && !allowedSections.includes('staffAttendance')) {
-    allowedSections.push('staffAttendance');
-  }
-  return {
-    edition: organization.Edition,
-    featureFlags: organization.FeatureFlags,
-    allowedSections
-  };
+  return sectionAccessFor(user, organization, roleAccess);
 }
 
 export function staffUserForAccess(user = {}, access = {}) {
