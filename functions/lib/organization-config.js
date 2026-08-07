@@ -24,6 +24,11 @@ export const FAITH_ONLY_STAFF_ROLES = Object.freeze([
   'Membership Officer'
 ]);
 
+export const ORGANIZATION_ONLY_STAFF_ROLES = Object.freeze([
+  'Executive Director', 'Organisation Administrator', 'Operations Manager',
+  'Procurement Officer', 'Records Officer'
+]);
+
 export const SHARED_STAFF_ROLES = Object.freeze([
   'Super Admin', 'Accounts Officer', 'Management', 'Department User',
   'Front Desk', 'HR Director', 'HR Manager', 'HR Business Partner',
@@ -40,7 +45,11 @@ export const NON_SCHOOL_OPERATION_ROLES = Object.freeze([
 const EDITION_STAFF_ROLE_SETS = Object.freeze({
   school: new Set([...SHARED_STAFF_ROLES, ...SCHOOL_ONLY_STAFF_ROLES]),
   faith: new Set([...SHARED_STAFF_ROLES, ...FAITH_ONLY_STAFF_ROLES, ...NON_SCHOOL_OPERATION_ROLES]),
-  organization: new Set([...SHARED_STAFF_ROLES, ...NON_SCHOOL_OPERATION_ROLES])
+  organization: new Set([
+    ...SHARED_STAFF_ROLES,
+    ...ORGANIZATION_ONLY_STAFF_ROLES,
+    ...NON_SCHOOL_OPERATION_ROLES
+  ])
 });
 
 const NON_SCHOOL_DISABLED_FEATURES = new Set([

@@ -114,4 +114,35 @@ test('role access settings expose only edition-appropriate roles and modules', (
   const churchModules = modulesForEdition('faith', featureFlagsForEdition('faith')).map(({ key }) => key);
   assert.equal(churchModules.includes('offerings'), true);
   assert.equal(churchModules.includes('students'), false);
+
+  const organizationRoles = rolesForEdition('organization');
+  assert.equal(organizationRoles.includes('Executive Director'), true);
+  assert.equal(organizationRoles.includes('Organisation Administrator'), true);
+  assert.equal(organizationRoles.includes('Head Minister'), false);
+  assert.equal(organizationRoles.includes('Pastor'), false);
+  assert.equal(organizationRoles.includes('Principal'), false);
+  const organizationModules = modulesForEdition(
+    'organization',
+    featureFlagsForEdition('organization')
+  );
+  assert.equal(
+    organizationModules.find(({ key }) => key === 'members')?.label,
+    'Departments & Personnel'
+  );
+  assert.equal(
+    organizationModules.find(({ key }) => key === 'offerings')?.label,
+    'Income & Receipts'
+  );
+  assert.equal(
+    organizationModules.find(({ key }) => key === 'services')?.label,
+    'Meetings & Attendance'
+  );
+});
+
+test('generic organisation interface has a neutral terminology layer', () => {
+  assert.match(adminJs, /Departments & Personnel/);
+  assert.match(adminJs, /Budgets & Account Mappings/);
+  assert.match(adminJs, /Grants & Contributions/);
+  assert.match(adminJs, /faithOnlyStaffRoles/);
+  assert.match(adminJs, /organizationOnlyStaffRoles/);
 });

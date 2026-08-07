@@ -38,6 +38,19 @@ export const WEB_SECTION_CATALOG = Object.freeze([
 export const WEB_SECTION_KEYS = Object.freeze(WEB_SECTION_CATALOG.map(({ key }) => key));
 const WEB_SECTION_KEY_SET = new Set(WEB_SECTION_KEYS);
 
+export const ORGANIZATION_SECTION_LABELS = Object.freeze({
+  recordsDesk: 'Records Centre',
+  members: 'Departments & Personnel',
+  services: 'Meetings & Attendance',
+  funds: 'Budgets & Account Mappings',
+  offerings: 'Income & Receipts',
+  donations: 'Grants & Contributions',
+  incomeAnalytics: 'Revenue Analytics',
+  organizationStore: 'Inventory & Sales',
+  restaurant: 'Catering Operations',
+  staffUsers: 'Users & Permissions'
+});
+
 export const STAFF_ROLE_OPTIONS = Object.freeze([
   'Super Admin', 'Principal', 'Senior Pastor', 'Head Minister',
   'Admissions Officer', 'Student Welfare Officer', 'Accounts Officer',
@@ -48,7 +61,9 @@ export const STAFF_ROLE_OPTIONS = Object.freeze([
   'HR Assistant', 'Recruitment Officer', 'Learning & Development Officer',
   'Employee Relations Officer', 'Performance Management Officer',
   'Compensation & Benefits Officer', 'Payroll Officer',
-  'Health & Safety Officer', 'Line Manager'
+  'Health & Safety Officer', 'Line Manager',
+  'Executive Director', 'Organisation Administrator', 'Operations Manager',
+  'Procurement Officer', 'Records Officer'
 ]);
 
 const LEGACY_ROLE_DEFAULTS = Object.freeze({
@@ -83,8 +98,19 @@ const LEGACY_ROLE_DEFAULTS = Object.freeze({
   'Compensation & Benefits Officer': ['recordsDesk', 'humanResources', 'payroll'],
   'Payroll Officer': ['recordsDesk', 'humanResources', 'financeRequests', 'payroll'],
   'Health & Safety Officer': ['humanResources', 'payroll'],
-  'Line Manager': ['humanResources', 'payroll']
+  'Line Manager': ['humanResources', 'payroll'],
+  'Executive Director': ['recordsDesk', 'executiveOffice', 'humanResources', 'members', 'services', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests', 'payroll'],
+  'Organisation Administrator': ['recordsDesk', 'executiveOffice', 'humanResources', 'members', 'services', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests', 'payroll', 'organizationStore', 'restaurant'],
+  'Operations Manager': ['recordsDesk', 'humanResources', 'members', 'services', 'financeRequests', 'organizationStore', 'restaurant', 'payroll'],
+  'Procurement Officer': ['recordsDesk', 'financeRequests', 'organizationStore', 'payroll'],
+  'Records Officer': ['recordsDesk', 'members', 'services', 'payroll']
 });
+
+export function moduleLabelForEdition(key, label, edition) {
+  return normalizeOrganizationEdition(edition) === 'organization'
+    ? (ORGANIZATION_SECTION_LABELS[key] || label)
+    : label;
+}
 
 export function rolesForEdition(edition) {
   return STAFF_ROLE_OPTIONS.filter((role) => staffRoleAllowedForEdition(role, edition));
@@ -96,7 +122,9 @@ export function modulesForEdition(edition, featureFlags = null) {
     ['admissions', 'formPurchases', 'students', 'studentConduct', 'accounts', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore']
       .forEach((key) => allowed.delete(key));
   }
-  return WEB_SECTION_CATALOG.filter(({ key }) => allowed.has(key));
+  return WEB_SECTION_CATALOG
+    .filter(({ key }) => allowed.has(key))
+    .map(({ key, label }) => ({ key, label: moduleLabelForEdition(key, label, edition) }));
 }
 
 export function normalizeModuleList(value, edition, featureFlags = null) {

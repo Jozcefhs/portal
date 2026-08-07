@@ -34,7 +34,7 @@ export const SUBSCRIPTION_PLAN_DEFINITIONS = Object.freeze({
     Features: Object.freeze({
       school: Object.freeze(['Student and admission records', 'Parent portal', 'Records Desk', 'Branches and branding']),
       faith: Object.freeze(['Member records', 'Services and attendance', 'Departments', 'Records Desk', 'Branches and branding']),
-      organization: Object.freeze(['People records', 'Departments', 'Records Desk', 'Branches and branding'])
+      organization: Object.freeze(['Personnel records', 'Departments', 'Records Centre', 'Branches and branding'])
     })
   }),
   Standard: Object.freeze({
@@ -57,7 +57,7 @@ export const SUBSCRIPTION_PLAN_DEFINITIONS = Object.freeze({
     Features: Object.freeze({
       school: Object.freeze(['Everything in Starter', 'Finance and income analytics', 'Bills, requisitions and approvals', 'Human Resources', 'Executive Office']),
       faith: Object.freeze(['Everything in Starter', 'Funds, offerings and donations', 'Finance and income analytics', 'Bills, requisitions and approvals', 'Human Resources and Executive Office']),
-      organization: Object.freeze(['Everything in Starter', 'Finance and income analytics', 'Bills, requisitions and approvals', 'Human Resources', 'Programs and Executive Office'])
+      organization: Object.freeze(['Everything in Starter', 'Finance and revenue analytics', 'Bills, requisitions and approvals', 'Human Resources', 'Programmes and Executive Office'])
     })
   }),
   Professional: Object.freeze({
@@ -67,7 +67,7 @@ export const SUBSCRIPTION_PLAN_DEFINITIONS = Object.freeze({
     Features: Object.freeze({
       school: Object.freeze(['Everything in Standard', 'Payroll', 'Student conduct and clinic', 'Kitchen and school stores', 'All school operation modules']),
       faith: Object.freeze(['Everything in Standard', 'Payroll', 'Organisation store and restaurant', 'Programs and all church operation modules']),
-      organization: Object.freeze(['Everything in Standard', 'Payroll', 'Organisation store and restaurant', 'All organisation operation modules'])
+      organization: Object.freeze(['Everything in Standard', 'Payroll', 'Inventory, sales and catering', 'All organisation operation modules'])
     })
   }),
   Enterprise: Object.freeze({

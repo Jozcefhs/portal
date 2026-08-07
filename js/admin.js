@@ -182,13 +182,38 @@ const staffRoleOptions = [
   'HR Assistant', 'Recruitment Officer', 'Learning & Development Officer',
   'Employee Relations Officer', 'Performance Management Officer',
   'Compensation & Benefits Officer', 'Payroll Officer',
-  'Health & Safety Officer', 'Line Manager'
+  'Health & Safety Officer', 'Line Manager', 'Executive Director',
+  'Organisation Administrator', 'Operations Manager', 'Procurement Officer',
+  'Records Officer'
 ];
 
 const schoolOnlyStaffRoles = new Set([
   'Principal', 'Admissions Officer', 'Student Welfare Officer',
   'Tuck Shop User', 'Clinic User', 'Kitchen User'
 ]);
+
+const faithOnlyStaffRoles = new Set([
+  'Senior Pastor', 'Head Minister', 'Pastor', 'Church Administrator',
+  'Membership Officer'
+]);
+
+const organizationOnlyStaffRoles = new Set([
+  'Executive Director', 'Organisation Administrator', 'Operations Manager',
+  'Procurement Officer', 'Records Officer'
+]);
+
+const organizationTabLabels = Object.freeze({
+  recordsDesk: 'Records Centre',
+  members: 'Departments & Personnel',
+  services: 'Meetings & Attendance',
+  funds: 'Budgets & Account Mappings',
+  offerings: 'Income & Receipts',
+  donations: 'Grants & Contributions',
+  incomeAnalytics: 'Revenue Analytics',
+  organizationStore: 'Inventory & Sales',
+  restaurant: 'Catering Operations',
+  staffUsers: 'Users & Permissions'
+});
 
 function webTabsForEdition(edition = resolveDashboardEdition(currentUser || {})) {
   return edition === 'school'
@@ -197,9 +222,13 @@ function webTabsForEdition(edition = resolveDashboardEdition(currentUser || {}))
 }
 
 function staffRolesForEdition(edition = resolveDashboardEdition(currentUser || {})) {
-  return edition === 'school'
-    ? staffRoleOptions
-    : staffRoleOptions.filter((role) => !schoolOnlyStaffRoles.has(role));
+  if (edition === 'school') {
+    return staffRoleOptions.filter((role) => !faithOnlyStaffRoles.has(role) && !organizationOnlyStaffRoles.has(role));
+  }
+  if (edition === 'organization') {
+    return staffRoleOptions.filter((role) => !schoolOnlyStaffRoles.has(role) && !faithOnlyStaffRoles.has(role));
+  }
+  return staffRoleOptions.filter((role) => !schoolOnlyStaffRoles.has(role) && !organizationOnlyStaffRoles.has(role));
 }
 
 const tabIcons = {
@@ -973,11 +1002,121 @@ function executiveOfficeTitle() {
 }
 
 function staffTabLabel(key, fallback = '') {
-  return key === 'executiveOffice' ? executiveOfficeTitle() : fallback;
+  if (key === 'executiveOffice') return executiveOfficeTitle();
+  if (resolveDashboardEdition(currentUser || {}) === 'organization') {
+    return organizationTabLabels[key] || fallback;
+  }
+  return fallback;
+}
+
+const genericOrganizationTextReplacements = Object.freeze([
+  ['Church Donations', 'Grants & Contributions'],
+  ['Church Donation', 'Organisation Contribution'],
+  ['Church Offerings', 'Income & Receipts'],
+  ['Church Attendance', 'Meeting Attendance'],
+  ['Church Membership', 'Personnel Directory'],
+  ['Offering Batches', 'Income Batches'],
+  ['Offering Batch', 'Income Batch'],
+  ['Funds & Accounting Mappings', 'Budgets & Account Mappings'],
+  ['Funds, Giving Types & Accounting Mappings', 'Budgets, Income Categories & Account Mappings'],
+  ['Giving Types', 'Income Categories'],
+  ['Giving Type', 'Income Category'],
+  ['Services & Attendance', 'Meetings & Attendance'],
+  ['Members & Positions', 'Personnel & Positions'],
+  ['Departments & Members', 'Departments & Personnel'],
+  ['Member Directory', 'Personnel Directory'],
+  ['Registered members', 'Personnel Register'],
+  ['Department members', 'Department Personnel'],
+  ['Home churches', 'Regional Offices'],
+  ['Home church', 'Regional Office'],
+  ['home-church', 'regional-office'],
+  ['Home cell', 'Field Unit'],
+  ['Foreign Desk', 'External Relations'],
+  ['First-timers', 'First-time attendees'],
+  ['New converts', 'New participants'],
+  ['Pastoral', 'Confidential'],
+  ['Minister', 'Coordinator'],
+  ['Tithes', 'Levies'],
+  ['Tithe', 'Levy'],
+  ['Thanksgiving', 'Appreciation'],
+  ['First Fruit', 'Special Contribution'],
+  ['membership', 'personnel'],
+  ['members', 'personnel'],
+  ['member', 'person'],
+  ['offerings', 'income receipts'],
+  ['offering', 'income receipt'],
+  ['donations', 'contributions'],
+  ['donation', 'contribution'],
+  ['donors', 'contributors'],
+  ['donor', 'contributor'],
+  ['giving', 'contributions'],
+  ['gifts', 'contributions'],
+  ['gift', 'contribution'],
+  ['services', 'meetings'],
+  ['service', 'meeting'],
+  ['ministry', 'operational unit'],
+  ['church', 'organisation'],
+  ['stewardship', 'financial control']
+]);
+
+function preserveReplacementCase(source, replacement) {
+  if (source === source.toUpperCase()) return replacement.toUpperCase();
+  if (source.charAt(0) === source.charAt(0).toUpperCase()) {
+    return replacement.charAt(0).toUpperCase() + replacement.slice(1);
+  }
+  return replacement;
+}
+
+function genericOrganizationText(value) {
+  if (resolveDashboardEdition(currentUser || {}) !== 'organization') return String(value ?? '');
+  return genericOrganizationTextReplacements.reduce((output, [source, replacement]) => (
+    output.replace(new RegExp(`\\b${source.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi'), (match) => (
+      preserveReplacementCase(match, replacement)
+    ))
+  ), String(value ?? ''));
+}
+
+function applyGenericOrganizationVocabulary(root = panelEl) {
+  if (!root || resolveDashboardEdition(currentUser || {}) !== 'organization') return;
+  const selector = [
+    'h1', 'h2', 'h3', 'h4', 'p', 'small', 'label', 'button', 'th', 'legend',
+    '.workflow-kpis span', '.module-stat span', '.module-stat small', '.status'
+  ].join(',');
+  const elements = [root, ...root.querySelectorAll(selector)].filter((element) => element?.nodeType === 1);
+  elements.forEach((element) => {
+    [...element.childNodes]
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .forEach((node) => { node.nodeValue = genericOrganizationText(node.nodeValue); });
+    ['title', 'aria-label', 'data-create-heading', 'data-create-label', 'data-loading-text'].forEach((attribute) => {
+      if (element.hasAttribute(attribute)) element.setAttribute(attribute, genericOrganizationText(element.getAttribute(attribute)));
+    });
+  });
+  root.querySelectorAll('input[placeholder], textarea[placeholder]').forEach((element) => {
+    element.placeholder = genericOrganizationText(element.placeholder);
+  });
+  const genericOptionLabels = new Set([
+    'Home Church', 'Home Cell', 'Foreign Desk', 'Member', 'Visitor',
+    'Donation', 'Offering', 'Special Offering', 'Tithe', 'Thanksgiving',
+    'First Fruit'
+  ]);
+  root.querySelectorAll('option').forEach((option) => {
+    if (!clean(option.value) || genericOptionLabels.has(clean(option.textContent))) {
+      option.textContent = genericOrganizationText(option.textContent);
+    }
+  });
+}
+
+let genericOrganizationVocabularyObserver = null;
+
+function observeGenericOrganizationVocabulary() {
+  if (!panelEl || genericOrganizationVocabularyObserver || typeof MutationObserver === 'undefined') return;
+  genericOrganizationVocabularyObserver = new MutationObserver(() => applyGenericOrganizationVocabulary(panelEl));
+  genericOrganizationVocabularyObserver.observe(panelEl, { childList: true, subtree: true });
 }
 
 function showDashboard(user, options = {}) {
   currentUser = { ...(currentUser || {}), ...user };
+  observeGenericOrganizationVocabulary();
   if (currentUser.canSwitchBranches === true && selectedBranchId !== 'all') {
     currentUser.branchId = selectedBranchId;
     currentUser.activeBranchId = selectedBranchId;
@@ -1001,9 +1140,11 @@ function showDashboard(user, options = {}) {
   overviewLabel.textContent = executiveWorkspaceName ? 'Executive overview' : (isFaith ? 'Community overview' : 'Operations overview');
   welcomeCopy.textContent = executiveWorkspaceName
     ? 'Review the organisation, prepare official correspondence and monitor the summaries selected for your office.'
-    : (isOrganisationOperations
+    : (isGenericOrganization
+      ? 'Monitor personnel, departments, meetings, revenue, programmes and organisational activity.'
+      : (isOrganisationOperations
       ? 'Monitor departments, meetings, offerings, programs and organisational activity.'
-      : 'Monitor records, requests and departmental activity.');
+      : 'Monitor records, requests and departmental activity.'));
   welcomeTitle.textContent = `Welcome, ${displayName}`;
   renderStaffBranchSelector(user);
   document.documentElement.dataset.edition = isOrganisationOperations ? 'church' : 'school';
@@ -1375,11 +1516,11 @@ async function loadOrganizationDashboardCharts() {
     const countrySummary = data.summaries?.participantsByCountry || [];
     dashboardChartsEl.hidden = false;
     dashboardChartsEl.innerHTML = `
-      ${verticalBars('Attendance by department', departmentSummary, 'Name', 'Attendance', 'blue')}
-      ${verticalBars('Offerings by department', departmentSummary, 'Name', 'Offerings', 'gold')}
-      ${verticalBars('Home churches by area / zone', areaSummary, 'AreaZone', 'HomeChurches', 'emerald')}
-      ${verticalBars('Weekly home-church attendance by area / zone', areaSummary, 'AreaZone', 'Attendance', 'purple')}
-      ${verticalBars('Program participants by country', countrySummary, 'Country', 'Participants', 'coral')}`;
+      ${verticalBars(genericOrganizationText('Attendance by department'), departmentSummary, 'Name', 'Attendance', 'blue')}
+      ${verticalBars(genericOrganizationText('Offerings by department'), departmentSummary, 'Name', 'Offerings', 'gold')}
+      ${verticalBars(genericOrganizationText('Home churches by area / zone'), areaSummary, 'AreaZone', 'HomeChurches', 'emerald')}
+      ${verticalBars(genericOrganizationText('Weekly home-church attendance by area / zone'), areaSummary, 'AreaZone', 'Attendance', 'purple')}
+      ${verticalBars('Programme participants by country', countrySummary, 'Country', 'Participants', 'coral')}`;
   } catch (error) {
     if (requestId !== organizationDashboardChartsRequest
       || activeSection !== 'overview'
@@ -1426,8 +1567,8 @@ function renderSummaryCards(cards = []) {
     <div class="module-summary-card">
       <span class="module-summary-icon" aria-hidden="true">${escapeHtml(card.icon || tabIcons[activeSection] || '•')}</span>
       <strong>${escapeHtml(card.value ?? 0)}</strong>
-      <span>${escapeHtml(card.label || '')}</span>
-      ${card.note ? `<small>${escapeHtml(card.note)}</small>` : ''}
+      <span>${escapeHtml(genericOrganizationText(card.label || ''))}</span>
+      ${card.note ? `<small>${escapeHtml(genericOrganizationText(card.note))}</small>` : ''}
     </div>`).join('');
 }
 
@@ -3249,7 +3390,7 @@ function departmentWorkspace(data) {
     </div>
     ${table('Departments', departments, [
       { label: 'Department', value: (row) => row.Name },
-      { label: 'Type', value: (row) => row.DepartmentType },
+      { label: 'Type', value: (row) => typeof genericOrganizationText === 'function' ? genericOrganizationText(row.DepartmentType) : row.DepartmentType },
       { label: 'Area / zone', value: (row) => row.AreaZone },
       { label: 'Status', value: (row) => row.Active },
       { label: 'Actions', render: (row) => `<button class="compact-icon-action compact-delete-action" data-delete-department="${escapeHtml(row.DepartmentId || row.__id)}" title="Delete department" aria-label="Delete ${escapeHtml(row.Name)}">✕</button>` }
@@ -3372,7 +3513,7 @@ function organizedDepartmentWorkspace(data) {
       </div>
       ${table('Department register', departments, [
         { label: 'Department', value: (row) => row.Name },
-        { label: 'Type', value: (row) => row.DepartmentType },
+        { label: 'Type', value: (row) => typeof genericOrganizationText === 'function' ? genericOrganizationText(row.DepartmentType) : row.DepartmentType },
         { label: 'Area / zone', value: (row) => row.AreaZone },
         { label: 'Status', value: (row) => row.Active },
         ...(canManageDepartments ? [{ label: 'Actions', render: (row) => `<span class="compact-row-actions"><button type="button" class="compact-icon-action compact-edit-action" data-edit-department="${escapeHtml(row.DepartmentId || row.__id)}" title="Edit department" aria-label="Edit ${escapeHtml(row.Name)}">✎</button><button type="button" class="compact-icon-action compact-delete-action" data-delete-department="${escapeHtml(row.DepartmentId || row.__id)}" title="Delete department" aria-label="Delete ${escapeHtml(row.Name)}">✕</button></span>` }] : [])
@@ -3442,7 +3583,7 @@ function organizedDepartmentWorkspace(data) {
       ${table('Department members and positions', departmentMembers, [
         { label: 'Department', value: (row) => row.DepartmentName || row.DepartmentId },
         { label: 'Person', value: (row) => row.DisplayName || row.MemberId || row.StaffUsername },
-        { label: 'Type', value: (row) => row.PersonType || (row.StaffId ? 'Staff' : 'Member') },
+        { label: 'Type', value: (row) => typeof genericOrganizationText === 'function' ? genericOrganizationText(row.PersonType || (row.StaffId ? 'Staff' : 'Member')) : (row.PersonType || (row.StaffId ? 'Staff' : 'Member')) },
         { label: 'Position', value: (row) => row.PositionName || row.PositionId },
         { label: 'Status', value: (row) => row.Status },
         ...(canManageMembers ? [
@@ -3463,7 +3604,7 @@ function organizedDepartmentWorkspace(data) {
       ])}
       ${table('Attendance register', attendance, [
         { label: 'Meeting', value: (row) => row.MeetingId }, { label: 'Attendee', value: (row) => row.DisplayName || row.MemberId },
-        { label: 'Type', value: (row) => row.MemberId ? 'Member' : 'Visitor' }, { label: 'Recorded at', value: (row) => row.RecordedAt || row.CreatedAt }
+        { label: 'Type', value: (row) => typeof genericOrganizationText === 'function' ? genericOrganizationText(row.MemberId ? 'Member' : 'Visitor') : (row.MemberId ? 'Member' : 'Visitor') }, { label: 'Recorded at', value: (row) => row.RecordedAt || row.CreatedAt }
       ])}
     </section>
 
@@ -3542,15 +3683,19 @@ async function loadOrganizationDepartments() {
     }));
     setOrganizationDepartmentWorkspaceTab(organizationDepartmentWorkspaceTab);
     document.getElementById('downloadDepartmentCsvTemplate')?.addEventListener('click', () => {
+      const organizationEdition = resolveDashboardEdition(currentUser || {}) === 'organization';
       downloadCsvFile(
         'departments_import_template.csv',
-        'DepartmentId,Name,DepartmentType,AreaZone,Description,MeetingFrequency,Active\nCHOIR,Choir,Department,,Music ministry,Weekly,YES\n'
+        organizationEdition
+          ? 'DepartmentId,Name,DepartmentType,AreaZone,Description,MeetingFrequency,Active\nOPS,Operations,Department,,Core operations,Weekly,YES\n'
+          : 'DepartmentId,Name,DepartmentType,AreaZone,Description,MeetingFrequency,Active\nCHOIR,Choir,Department,,Music ministry,Weekly,YES\n'
       );
     });
     document.getElementById('downloadMemberCsvTemplate')?.addEventListener('click', () => {
+      const organizationEdition = resolveDashboardEdition(currentUser || {}) === 'organization';
       downloadCsvFile(
-        'members_import_template.csv',
-        'MemberId,DisplayName,FirstName,Surname,Phone,Email,Gender,MembershipDate,MembershipStatus\nMEM-001,Ada Okafor,Ada,Okafor,+2348000000000,ada@example.com,Female,2026-07-29,Active\n'
+        organizationEdition ? 'personnel_import_template.csv' : 'members_import_template.csv',
+        `MemberId,DisplayName,FirstName,Surname,Phone,Email,Gender,MembershipDate,MembershipStatus\n${organizationEdition ? 'PER' : 'MEM'}-001,Ada Okafor,Ada,Okafor,+2348000000000,ada@example.com,Female,2026-07-29,Active\n`
       );
     });
     document.getElementById('importDepartmentsCsv')?.addEventListener('click', () => {
@@ -4040,7 +4185,7 @@ async function loadChurchServices() {
         { label: 'Date', value: (row) => pick(row, ['OccurrenceDate']) },
         { label: 'Service', value: (row) => pick(row, ['ServiceName']) },
         { label: 'Name', value: (row) => pick(row, ['DisplayName']) },
-        { label: 'Type', value: (row) => pick(row, ['AttendanceType']) },
+        { label: 'Type', value: (row) => typeof genericOrganizationText === 'function' ? genericOrganizationText(pick(row, ['AttendanceType'])) : pick(row, ['AttendanceType']) },
         { label: 'Check-in', value: (row) => pick(row, ['CheckInAt']) }
       ])}`;
     const serviceFormGrid = panelEl.querySelector(':scope > .church-service-recording');
@@ -4420,12 +4565,12 @@ async function churchDonationRequest(action, payload = {}) {
       idempotencyKey
     })
   });
-  const data = await response.json().catch(() => ({ ok: false, message: 'Church donation service did not return JSON.' }));
+  const data = await response.json().catch(() => ({ ok: false, message: genericOrganizationText('Church donation service did not return JSON.') }));
   if (!response.ok || !data.ok) {
     if (response.status === 401) {
       showLogin(data.message || 'Your staff session has expired.', 'bad');
     }
-    throw receivedResponseError(data.message || 'Church donation action failed.');
+    throw receivedResponseError(genericOrganizationText(data.message || 'Church donation action failed.'));
   }
   return data;
 }
@@ -4443,12 +4588,12 @@ async function initChurchDonationPayment(payload = {}) {
       idempotencyKey
     })
   });
-  const data = await response.json().catch(() => ({ ok: false, message: 'Church donation online-init service did not return JSON.' }));
+  const data = await response.json().catch(() => ({ ok: false, message: genericOrganizationText('Church donation online-init service did not return JSON.') }));
   if (!response.ok || !data.ok) {
     if (response.status === 401) {
       showLogin(data.message || 'Your staff session has expired.', 'bad');
     }
-    throw receivedResponseError(data.message || 'Could not initialize online church donation payment.');
+    throw receivedResponseError(genericOrganizationText(data.message || 'Could not initialize online church donation payment.'));
   }
   return data;
 }
@@ -4648,8 +4793,8 @@ async function loadChurchDonations() {
             <input name="ExchangeRateSource" type="hidden" value="Manual staff rate">
             <label>Method <select name="PaymentMethod">${methods.map((method) => `<option value="${escapeHtml(method)}">${escapeHtml(method)}</option>`).join('')}</select></label>
             <label>Giving type <select name="PaymentType">${paymentTypes.map((paymentType) => `<option value="${escapeHtml(paymentType)}">${escapeHtml(paymentType)}</option>`).join('')}</select></label>
-            <label>Receipt subject (after payment) <input name="ReceiptSubject" value="Thank you for your donation"></label>
-            <label>Receipt message (after payment) <input name="ReceiptMessage" value="Your gift was received."></label>
+            <label>Receipt subject (after payment) <input name="ReceiptSubject" value="${escapeHtml(genericOrganizationText('Thank you for your donation'))}"></label>
+            <label>Receipt message (after payment) <input name="ReceiptMessage" value="${escapeHtml(genericOrganizationText('Your gift was received.'))}"></label>
           </div>
           <label>Notes
             <textarea name="Notes" rows="2" placeholder="Optional notes for donation records."></textarea>
