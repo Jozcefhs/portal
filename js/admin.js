@@ -823,10 +823,33 @@ function clearStaffWorkspaceState() {
 
 function initializeStaffBranchContext(user = {}) {
   const assignedBranchId = clean(user.assignedBranchId || user.branchId);
-  selectedBranchId = assignedBranchId || 'all';
+  const storedBranchId = readStoredStaffBranch(user);
+  selectedBranchId = assignedBranchId || clean(user.activeBranchId) || storedBranchId || 'all';
   availableBranches = assignedBranchId
     ? [{ id: assignedBranchId, name: clean(user.branchName) || assignedBranchId }]
     : [];
+}
+
+function staffBranchStorageKey(user = currentUser || {}) {
+  const username = clean(user.username || user.loginUsername).toLowerCase() || 'anonymous';
+  return `dynamax:staff-branch:${window.location.host}:${requestedWorkspace}:${username}`;
+}
+
+function readStoredStaffBranch(user = currentUser || {}) {
+  try {
+    return clean(window.sessionStorage.getItem(staffBranchStorageKey(user)));
+  } catch (_error) {
+    return '';
+  }
+}
+
+function rememberStaffBranch(user = currentUser || {}) {
+  if (!user || user.canSwitchBranches !== true || !clean(selectedBranchId) || selectedBranchId === 'all') return;
+  try {
+    window.sessionStorage.setItem(staffBranchStorageKey(user), selectedBranchId);
+  } catch (_error) {
+    // Browser storage is optional; every request remains server-validated.
+  }
 }
 
 function renderStaffBranchSelector(user = currentUser || {}) {
@@ -841,10 +864,9 @@ function renderStaffBranchSelector(user = currentUser || {}) {
   branchSelector.innerHTML = options
     .map((branch) => `<option value="${escapeHtml(branch.id)}">${escapeHtml(branch.name)}</option>`)
     .join('');
-  const activeBranchId = clean(user.activeBranchId || selectedBranchId);
-  selectedBranchId = options.some((branch) => branch.id === activeBranchId)
-    ? activeBranchId
-    : (options[0]?.id || 'all');
+  const selectedOption = options.find((branch) => branch.id.toLowerCase() === clean(selectedBranchId).toLowerCase());
+  const userOption = options.find((branch) => branch.id.toLowerCase() === clean(user.activeBranchId).toLowerCase());
+  selectedBranchId = selectedOption?.id || userOption?.id || options[0]?.id || 'all';
   branchSelector.value = selectedBranchId;
   branchSelector.disabled = branchSwitchInProgress;
 }
@@ -915,6 +937,8 @@ async function switchStaffBranch(nextBranchId) {
     };
     clearBranchScopedWorkspaceData();
     await loadDashboard({ mode: 'shell' });
+  } else if (loaded) {
+    rememberStaffBranch();
   }
   branchSwitchInProgress = false;
   if (currentUser) renderStaffBranchSelector(currentUser);
@@ -1048,6 +1072,7 @@ async function loadDashboard(options = {}) {
   const section = clean(options.section || (legacyDashboardSections.has(activeSection) ? activeSection : ''));
   const mode = clean(options.mode || (section ? 'section' : 'shell')).toLowerCase();
   const merge = options.merge === true || mode === 'section';
+  const requestedBranchId = clean(selectedBranchId) || 'all';
   setDashboardRefreshLoading(true);
   setStatus(dashboardStatus, mode === 'shell'
     ? 'Opening your permitted workspace...'
@@ -1072,8 +1097,10 @@ async function loadDashboard(options = {}) {
         name: clean(branch.name || branch.Name || branch.id || branch.Id)
       })).filter((branch) => branch.id);
     }
-    if (data.user?.canSwitchBranches === true && selectedBranchId === 'all') {
-      selectedBranchId = clean(data.defaultBranchId || availableBranches[0]?.id || 'all');
+    if (data.user?.canSwitchBranches === true && requestedBranchId === 'all') {
+      const storedBranchId = readStoredStaffBranch(data.user);
+      const storedBranch = availableBranches.find((branch) => branch.id.toLowerCase() === storedBranchId.toLowerCase());
+      selectedBranchId = storedBranch?.id || clean(data.defaultBranchId || availableBranches[0]?.id || 'all');
       data.user = {
         ...data.user,
         branchId: selectedBranchId === 'all' ? '' : selectedBranchId,
@@ -1082,7 +1109,15 @@ async function loadDashboard(options = {}) {
     }
     dashboardData = merge ? mergeDashboardResponse(dashboardData, data) : data;
     const dashboardUser = data.user || {};
-    if (clean(dashboardUser.activeBranchId)) selectedBranchId = clean(dashboardUser.activeBranchId);
+    const responseBranchId = clean(dashboardUser.activeBranchId);
+    if (
+      dashboardUser.canSwitchBranches === true
+      && requestedBranchId !== 'all'
+      && responseBranchId.toLowerCase() !== requestedBranchId.toLowerCase()
+    ) {
+      throw new Error('The server did not open the selected branch. Please select the branch again.');
+    }
+    if (requestedBranchId !== 'all' && responseBranchId) selectedBranchId = responseBranchId;
     currentUser = {
       ...currentUser,
       ...dashboardUser,
@@ -1091,6 +1126,7 @@ async function loadDashboard(options = {}) {
       // that large data URL, so do not let it erase the hydrated avatar.
       profilePhotoUrl: clean(dashboardUser.profilePhotoUrl) || clean(currentUser?.profilePhotoUrl)
     };
+    rememberStaffBranch(currentUser);
     showDashboard(currentUser, { refreshPasskeys: false });
     const allowed = data.allowedSections || currentUser.allowedSections || [];
     const workspaceSections = ['overview', ...allowed];

@@ -59,6 +59,9 @@ test('the web companion sends and renders the server-enforced session branch', (
   assert.match(adminJs, /headers\.set\('X-Dynamax-Branch', selectedBranchId \|\| 'all'\)/);
   assert.match(adminJs, /function clearBranchScopedWorkspaceData\(\)/);
   assert.match(adminJs, /async function switchStaffBranch\(nextBranchId\)/);
+  assert.match(adminJs, /window\.sessionStorage\.setItem\(staffBranchStorageKey\(user\), selectedBranchId\)/);
+  assert.match(adminJs, /selectedOption\?\.id \|\| userOption\?\.id \|\| options\[0\]\?\.id \|\| 'all'/);
+  assert.match(adminJs, /responseBranchId\.toLowerCase\(\) !== requestedBranchId\.toLowerCase\(\)/);
   assert.match(staffAuth, /applyStaffBranchContext\(staffUserForAccess\(user, access\), requestedBranch, structure\)/);
   assert.match(adminApi, /branches,/);
 });
