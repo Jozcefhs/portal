@@ -9,6 +9,7 @@ import {
   normalizeBillingCycle,
   normalizeSubscriptionPlanCatalog,
   publicSubscriptionPlanCatalog,
+  subscriptionModulesForEdition,
   subscriptionAccessState,
   subscriptionPaystackPlanCode,
   subscriptionPlanEntitlements,
@@ -43,7 +44,36 @@ test('public plan catalogue never exposes Paystack plan codes', () => {
   assert.equal(starter.MonthlyAmount, 1000);
   assert.equal('PaystackMonthlyPlanCode' in starter, false);
   assert.equal(free.TrialDays, 7);
-  assert.ok(free.FeaturesByEdition.faith.some((feature) => /full access/i.test(feature)));
+  assert.ok(free.FeaturesByEdition.faith.includes('Payroll'));
+  assert.ok(publicCatalog.ModuleCatalog.faith.some((module) => module.Key === 'offerings'));
+});
+
+test('saved plan-module selections replace defaults and enforce dependencies', () => {
+  const catalog = normalizeSubscriptionPlanCatalog({
+    Plans: {
+      Starter: {
+        EntitlementsByEdition: {
+          school: ['payroll'],
+          faith: [],
+          organization: ['departments']
+        }
+      }
+    }
+  });
+  assert.deepEqual(
+    catalog.Plans.Starter.EntitlementsByEdition.school,
+    ['humanResources', 'accounting', 'payroll']
+  );
+  assert.deepEqual(catalog.Plans.Starter.EntitlementsByEdition.faith, []);
+  assert.deepEqual(
+    catalog.Plans.Starter.EntitlementsByEdition.organization,
+    ['members', 'departments']
+  );
+  assert.deepEqual(
+    subscriptionPlanEntitlements('Starter', 'school', catalog),
+    ['humanResources', 'accounting', 'payroll']
+  );
+  assert.ok(subscriptionModulesForEdition('school').every((module) => !/church|offering/i.test(module.Label)));
 });
 
 test('free access expires at the stored server-issued boundary and cannot become permanent', () => {
@@ -151,6 +181,8 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.doesNotMatch(registrationJs, /window\.open\('', '_blank'/);
   assert.match(registrationJs, /window\.location\.assign\(data\.authorizationUrl\)/);
   assert.match(pricingHtml, /Monthly and yearly pricing/);
+  assert.match(pricingHtml, /id="planEntitlementMatrix"/);
+  assert.match(pricingHtml, /Save plans &amp; pricing/);
   assert.match(pricingHtml, /Apply changed prices to existing Paystack subscribers/);
   assert.match(setupHtml, /href="plan-management\.html"/);
   assert.match(setupHtml, /<option>Free<\/option>/);

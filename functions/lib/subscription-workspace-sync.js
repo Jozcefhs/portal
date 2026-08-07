@@ -22,6 +22,8 @@ export async function syncRegistrationSubscriptionToWorkspace(env, registration 
   await upsertDocument(env, 'settings', 'organisationProfile', {
     ...withoutFirestoreMetadata(organizationProfile),
     Plan: clean(registration.Plan || organizationProfile.Plan),
+    PlanEntitlements: registration.FeatureEntitlements ?? organizationProfile.PlanEntitlements ?? null,
+    PlanCatalogRevision: clean(registration.PlanCatalogRevision || organizationProfile.PlanCatalogRevision),
     UserLimit: Math.max(1, Number(registration.UserLimit || organizationProfile.UserLimit || 5) || 5),
     SubscriptionStatus: clean(registration.SubscriptionStatus || organizationProfile.SubscriptionStatus),
     TrialStartedAt: clean(registration.TrialStartedAt || organizationProfile.TrialStartedAt),

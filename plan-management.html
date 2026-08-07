@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b4bc8">
-  <title>Plan pricing — Dynamax</title>
+  <title>Plans and pricing — Dynamax</title>
   <link rel="icon" href="images/Logo.png">
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260807-free-trial">
+  <link rel="stylesheet" href="css/style.css?v=20260807-entitlement-matrix">
 </head>
 <body class="settings-page">
   <main class="settings-shell plan-management-shell">
@@ -18,9 +18,9 @@
 
     <form id="planPricingLoginForm" class="settings-unlock-card">
       <div class="settings-lock-icon" aria-hidden="true">&#128274;</div>
-      <div class="settings-unlock-copy"><p class="settings-eyebrow">Restricted area</p><h2>Unlock pricing</h2><p>Use the Cloudflare administration password. Paystack keys remain on the server.</p></div>
+      <div class="settings-unlock-copy"><p class="settings-eyebrow">Restricted area</p><h2>Unlock plans and pricing</h2><p>Use the Cloudflare administration password. Paystack keys remain on the server.</p></div>
       <div class="settings-unlock-control"><label for="planPricingPassword">Administration password</label><input id="planPricingPassword" type="password" required autocomplete="current-password"></div>
-      <button type="submit">Unlock pricing</button>
+      <button type="submit">Unlock plans</button>
       <p id="planPricingLoginStatus" class="status settings-login-status" aria-live="polite"></p>
     </form>
 
@@ -35,10 +35,14 @@
         </aside>
         <div id="planPricingCards" class="plan-pricing-grid" aria-live="polite"></div>
       </section>
-      <div class="settings-savebar"><div><strong>Paystack synchronization</strong><p id="planPricingStatus" class="status">Review the prices before saving.</p></div><button id="savePlanPricing" type="submit">Save pricing</button></div>
+      <section class="settings-section plan-entitlement-section">
+        <div class="settings-section-heading"><div><span class="settings-section-icon">M</span></div><div><p class="settings-eyebrow">Plan access matrix</p><h2>Features and modules</h2><p>Select the organisation type, then check the modules that each plan may use. Module dependencies are applied automatically.</p></div></div>
+        <div id="planEntitlementMatrix" aria-live="polite"></div>
+      </section>
+      <div class="settings-savebar"><div><strong>Publish plans, prices and module access</strong><p id="planPricingStatus" class="status">Review the plans before saving.</p></div><button id="savePlanPricing" type="submit">Save plans &amp; pricing</button></div>
     </form>
   </main>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
-  <script src="js/plan-management.js?v=20260807-free-trial"></script>
+  <script src="js/plan-management.js?v=20260807-entitlement-matrix"></script>
 </body>
 </html>

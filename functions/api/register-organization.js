@@ -88,6 +88,8 @@ async function initializeSubscriptionCheckout({ request, env, platformEnv, regis
       const currentRegistration = {
         ...withoutFirestoreMetadata(registration),
         WorkspaceId: clean(registration.WorkspaceId),
+        FeatureEntitlements: subscriptionPlanEntitlements('Free', clean(registration.Edition), catalog),
+        PlanCatalogRevision: catalog.PolicyRevision,
         UpdatedAt: new Date().toISOString()
       };
       await upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, currentRegistration);
@@ -109,7 +111,8 @@ async function initializeSubscriptionCheckout({ request, env, platformEnv, regis
         Price: 0,
         Currency: catalog.Currency,
         UserLimit: planEntry.UserLimit,
-        FeatureEntitlements: subscriptionPlanEntitlements('Free', clean(registration.Edition)),
+        FeatureEntitlements: subscriptionPlanEntitlements('Free', clean(registration.Edition), catalog),
+        PlanCatalogRevision: catalog.PolicyRevision,
         PaymentStatus: 'Not Required',
         SubscriptionStatus: 'Pending Trial Activation',
         Status: 'Pending Trial Activation',
@@ -126,7 +129,8 @@ async function initializeSubscriptionCheckout({ request, env, platformEnv, regis
       Price: 0,
       Currency: catalog.Currency,
       UserLimit: planEntry.UserLimit,
-      FeatureEntitlements: subscriptionPlanEntitlements('Free', clean(registration.Edition)),
+      FeatureEntitlements: subscriptionPlanEntitlements('Free', clean(registration.Edition), catalog),
+      PlanCatalogRevision: catalog.PolicyRevision,
       PaymentStatus: 'Not Required',
       SubscriptionStatus: 'Trialing',
       Status: 'Trial Active',
@@ -152,6 +156,8 @@ async function initializeSubscriptionCheckout({ request, env, platformEnv, regis
       Price: 0,
       Currency: catalog.Currency,
       UserLimit: planEntry.UserLimit,
+      FeatureEntitlements: subscriptionPlanEntitlements(plan, clean(registration.Edition), catalog),
+      PlanCatalogRevision: catalog.PolicyRevision,
       PaymentStatus: 'Pending Plan Confirmation',
       Status: 'Pending Activation',
       UpdatedAt: new Date().toISOString()
@@ -264,6 +270,8 @@ async function initializeSubscriptionCheckout({ request, env, platformEnv, regis
       Price: amount,
       Currency: catalog.Currency,
       UserLimit: planEntry.UserLimit,
+      FeatureEntitlements: subscriptionPlanEntitlements(plan, clean(registration.Edition), catalog),
+      PlanCatalogRevision: catalog.PolicyRevision,
       PaystackPlanCode: planCode,
       PaystackReference: reference,
       AuthorizationUrl: authorizationUrl,
@@ -362,7 +370,8 @@ export async function onRequestPost({ request, env }) {
       Plan: plan,
       BillingCycle: billingCycle,
       UserLimit: catalog.Plans[plan].UserLimit,
-      FeatureEntitlements: subscriptionPlanEntitlements(plan, edition),
+      FeatureEntitlements: subscriptionPlanEntitlements(plan, edition, catalog),
+      PlanCatalogRevision: catalog.PolicyRevision,
       ...(workspaceBinding || {}),
       PaymentStatus: 'Pending',
       Status: 'Pending Activation', CreatedAt: new Date().toISOString(), Source: 'Dynamax public registration'

@@ -1,11 +1,12 @@
-import { getDocument, upsertDocument } from '../lib/firestore.js';
+import { batchUpsertDocuments, getDocument, listCollection, upsertDocument } from '../lib/firestore.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 import { secureTextEqual } from '../lib/backend-security.js';
 import { readJsonBody } from '../lib/request-security.js';
 import {
   SUBSCRIPTION_PLAN_NAMES,
   normalizeSubscriptionPlanCatalog,
-  publicSubscriptionPlanCatalog
+  publicSubscriptionPlanCatalog,
+  subscriptionPlanEntitlements
 } from '../lib/subscription-plans.js';
 
 const PLAN_DOCUMENT_ID = 'dynamaxPlanCatalog';
@@ -45,6 +46,40 @@ function mergeCatalog(existing, incoming) {
       { ...existing.Plans[name], ...(incomingPlans[name] || {}) }
     ]))
   });
+}
+
+function withoutFirestoreMetadata(document = {}) {
+  const value = { ...document };
+  delete value.__id;
+  delete value.__name;
+  delete value.__createTime;
+  delete value.__updateTime;
+  return value;
+}
+
+async function updateSubscriberEntitlements(platformEnv, catalog) {
+  const registrations = await listCollection(platformEnv, 'tenantRegistrations').catch(() => []);
+  const writes = registrations
+    .filter((registration) => clean(registration.__id || registration.Reference))
+    .map((registration) => ({
+      collectionPath: 'tenantRegistrations',
+      documentId: clean(registration.__id || registration.Reference),
+      data: {
+        ...withoutFirestoreMetadata(registration),
+        FeatureEntitlements: subscriptionPlanEntitlements(
+          registration.Plan,
+          registration.Edition,
+          catalog
+        ),
+        PlanCatalogRevision: catalog.PolicyRevision,
+        EntitlementsUpdatedAt: catalog.UpdatedAt,
+        UpdatedAt: new Date().toISOString()
+      }
+    }));
+  for (let index = 0; index < writes.length; index += 450) {
+    await batchUpsertDocuments(platformEnv, writes.slice(index, index + 450));
+  }
+  return writes.length;
 }
 
 export function paystackPlanPayload(name, cycle, amount, currency, updateExistingSubscriptions = false) {
@@ -120,6 +155,9 @@ export async function onRequestPost({ request, env }) {
       });
     }
     const catalog = mergeCatalog(existing, body.catalog);
+    catalog.PolicyRevision = crypto.randomUUID();
+    catalog.UpdatedAt = new Date().toISOString();
+    catalog.UpdatedBy = 'Dynamax pricing administration';
     const updateExistingSubscriptions = body.updateExistingSubscriptions === true;
     for (const name of SUBSCRIPTION_PLAN_NAMES) {
       const plan = catalog.Plans[name];
@@ -152,12 +190,11 @@ export async function onRequestPost({ request, env }) {
         UpdatedBy: 'Dynamax pricing administration'
       });
     }
-    catalog.UpdatedAt = new Date().toISOString();
-    catalog.UpdatedBy = 'Dynamax pricing administration';
     await upsertDocument(platformEnv, 'settings', PLAN_DOCUMENT_ID, catalog);
+    const updatedSubscribers = await updateSubscriberEntitlements(platformEnv, catalog);
     return Response.json({
       ok: true,
-      message: 'Plan pricing saved and Paystack recurring plans synchronized.',
+      message: `Plan pricing and module access saved; ${updatedSubscribers} subscriber record${updatedSubscribers === 1 ? '' : 's'} refreshed and Paystack plans synchronized.`,
       catalog: publicSubscriptionPlanCatalog(catalog)
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {

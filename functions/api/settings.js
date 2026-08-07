@@ -21,6 +21,7 @@ import {
   resetBranchProfileOverrides,
   saveBranchProfileOverrides
 } from '../lib/branch-profile-settings.js';
+import { refreshOrganizationPlanPolicy } from '../lib/plan-policy-sync.js';
 
 const PROFILE_CACHE_MS = 15000;
 let profileCache = null;
@@ -128,7 +129,9 @@ async function loadProfile(env, options = {}) {
       getWebBranding(env),
       getSchoolStructure(env)
     ]);
-    savedOrganization = storedOrganization;
+    savedOrganization = storedOrganization
+      ? await refreshOrganizationPlanPolicy(env, storedOrganization)
+      : storedOrganization;
     if (saved) {
       Object.keys(profile).forEach((key) => {
         if (saved[key] !== undefined) profile[key] = saved[key];
@@ -149,6 +152,8 @@ async function loadProfile(env, options = {}) {
     profile.OrganisationName = identity.organisationName;
     profile.OrganisationCode = identity.organisationCode;
     profile.FeatureFlags = organization.FeatureFlags;
+    profile.PlanEntitlements = organization.PlanEntitlements;
+    profile.PlanCatalogRevision = clean(savedOrganization?.PlanCatalogRevision);
     profile.SubscriptionPlan = organization.Plan;
     profile.SubscriptionStatus = organization.SubscriptionStatus;
     profile.SubscriptionActive = organization.SubscriptionActive;
@@ -302,6 +307,8 @@ export async function onRequestPost(context) {
         SubscriptionStatus: existing.SubscriptionStatus,
         TrialStartedAt: existing.TrialStartedAt,
         TrialEndsAt: existing.TrialEndsAt,
+        PlanEntitlements: existing.PlanEntitlements,
+        PlanCatalogRevision: existing.PlanCatalogRevision,
         UserLimit: incoming.UserLimit || existing.UserLimit
       },
       legacyProfile: { ...existing, ...incoming }
@@ -368,6 +375,8 @@ export async function onRequestPost(context) {
       WorkspaceId: deployment.workspaceId,
       GoogleDocumentsUrl: profile.GoogleDocumentsUrl,
       Plan: profile.SubscriptionPlan,
+      PlanEntitlements: existing.PlanEntitlements,
+      PlanCatalogRevision: existing.PlanCatalogRevision,
       UserLimit: profile.UserLimit,
       BrandName: 'Dynamax',
       BrandLogoUrl: '/images/Logo.png'

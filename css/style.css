@@ -2170,12 +2170,41 @@ html[data-theme="dark"] .plan-comparison-column ul { color: #a8b8cb; }
 .plan-pricing-card > header { display: flex; align-items: start; justify-content: space-between; gap: 1rem; padding-bottom: .75rem; border-bottom: 1px solid #e1e8f0; }
 .plan-pricing-card h3 { margin: 0; color: #174a7c; }
 .plan-pricing-card p { margin: .25rem 0 0; color: #60748a; font-size: 12px; line-height: 1.45; }
+.plan-pricing-card .plan-module-counts { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .75rem; }
+.plan-pricing-card .plan-module-counts span { padding: .3rem .5rem; border-radius: 999px; background: #edf4fb; color: #405b76; font-size: 10px; font-weight: 700; }
+.plan-pricing-card .plan-module-counts b { color: #0b57d0; }
+.plan-trial-note { display: block; margin-top: .6rem; color: #6b7f94; font-size: 10px; line-height: 1.45; }
 .plan-pricing-fields { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: .65rem; margin-top: .8rem; }
 .plan-pricing-fields label { display: grid; gap: .35rem; min-width: 0; color: #31465d; font-size: 11px; font-weight: 800; }
 .plan-pricing-fields input { min-width: 0; }
 .plan-pricing-card details { margin-top: .75rem; color: #40566e; font-size: 12px; }
 .plan-pricing-card summary { width: fit-content; color: #0b57d0; cursor: pointer; font-weight: 800; }
 .plan-pricing-card ul { margin: .65rem 0 0; padding-left: 1.25rem; line-height: 1.55; }
+.plan-entitlement-section { min-width: 0; }
+.plan-entitlement-tabs { display: flex; gap: .45rem; margin-bottom: .75rem; padding: .35rem; overflow-x: auto; border: 1px solid #d7e1eb; border-radius: 11px; background: #f4f8fb; }
+.plan-entitlement-tabs button { flex: 0 0 auto; width: fit-content; min-height: 34px; margin: 0; padding: .45rem .8rem; border: 1px solid transparent; border-radius: 8px; background: transparent; color: #526a80; font-size: 11px; font-weight: 800; }
+.plan-entitlement-tabs button:hover,
+.plan-entitlement-tabs button.active { border-color: #80cdbf; background: #e5f7f2; color: #08715f; }
+.plan-entitlement-table-wrap { max-width: 100%; overflow: auto; border: 1px solid #d5e0ea; border-radius: 12px; }
+.plan-entitlement-table { width: 100%; min-width: 760px; border-collapse: separate; border-spacing: 0; background: #fff; font-size: 11px; }
+.plan-entitlement-table th,
+.plan-entitlement-table td { padding: .65rem; border-right: 1px solid #e1e8ef; border-bottom: 1px solid #e1e8ef; text-align: center; vertical-align: middle; }
+.plan-entitlement-table thead th { position: sticky; top: 0; z-index: 2; background: #edf4fa; color: #24425e; font-size: 10px; text-transform: uppercase; }
+.plan-entitlement-table th:first-child { position: sticky; left: 0; z-index: 3; width: 34%; min-width: 250px; background: #f9fbfd; text-align: left; }
+.plan-entitlement-table thead th:first-child { z-index: 4; background: #edf4fa; }
+.plan-entitlement-table th:last-child,
+.plan-entitlement-table td:last-child { border-right: 0; }
+.plan-entitlement-table tbody tr:last-child th,
+.plan-entitlement-table tbody tr:last-child td { border-bottom: 0; }
+.plan-entitlement-table tbody th strong,
+.plan-entitlement-table tbody th small,
+.plan-entitlement-table tbody th em { display: block; }
+.plan-entitlement-table tbody th strong { color: #233f59; font-size: 11px; }
+.plan-entitlement-table tbody th small { margin-top: .2rem; color: #657b90; font-size: 9px; font-weight: 400; line-height: 1.4; }
+.plan-entitlement-table tbody th em { margin-top: .25rem; color: #087360; font-size: 8px; font-style: normal; }
+.plan-entitlement-table td label { display: grid; width: 32px; height: 32px; margin: auto; place-items: center; cursor: pointer; }
+.plan-entitlement-table td input { width: 17px; height: 17px; min-height: 17px; margin: 0; accent-color: #087f6c; }
+.plan-entitlement-help { margin: .75rem 0 0; padding: .7rem .8rem; border-left: 3px solid #159e87; border-radius: 5px; background: #eef8f5; color: #405e58; font-size: 10px; line-height: 1.5; }
 .subscription-confirmation-card { width: min(620px, calc(100vw - 2rem)); padding: 1.25rem; }
 .subscription-confirmation-result { margin: 1rem 0; }
 .subscription-confirmation-summary { display: grid; gap: .5rem; margin: 0; }
@@ -2191,12 +2220,31 @@ html[data-theme="dark"] .plan-pricing-card h3,
 html[data-theme="dark"] .plan-pricing-fields label { color: #edf4ff; }
 html[data-theme="dark"] .plan-pricing-card p,
 html[data-theme="dark"] .plan-pricing-card details { color: #a8b8cb; }
+html[data-theme="dark"] .plan-pricing-card .plan-module-counts span { background: #1b3045; color: #bdcad8; }
+html[data-theme="dark"] .plan-pricing-card .plan-module-counts b { color: #83b5ff; }
+html[data-theme="dark"] .plan-trial-note { color: #9fb0c2; }
 html[data-theme="dark"] .plan-pricing-card summary { color: #83b5ff; }
+html[data-theme="dark"] .plan-entitlement-tabs { border-color: #33465c; background: #0d1a29; }
+html[data-theme="dark"] .plan-entitlement-tabs button { color: #afbecd; }
+html[data-theme="dark"] .plan-entitlement-tabs button:hover,
+html[data-theme="dark"] .plan-entitlement-tabs button.active { border-color: #277969; background: #123d35; color: #9cebdc; }
+html[data-theme="dark"] .plan-entitlement-table-wrap { border-color: #33465c; }
+html[data-theme="dark"] .plan-entitlement-table { background: #111e2e; color: #dce7f2; }
+html[data-theme="dark"] .plan-entitlement-table th,
+html[data-theme="dark"] .plan-entitlement-table td { border-color: #2c4054; }
+html[data-theme="dark"] .plan-entitlement-table thead th,
+html[data-theme="dark"] .plan-entitlement-table thead th:first-child { background: #192a3c; color: #edf4ff; }
+html[data-theme="dark"] .plan-entitlement-table th:first-child { background: #132235; }
+html[data-theme="dark"] .plan-entitlement-table tbody th strong { color: #e5eef8; }
+html[data-theme="dark"] .plan-entitlement-table tbody th small { color: #a8b8cb; }
+html[data-theme="dark"] .plan-entitlement-table tbody th em { color: #89dfcf; }
+html[data-theme="dark"] .plan-entitlement-help { background: #102d28; color: #c8e7df; }
 html[data-theme="dark"] .subscription-confirmation-summary div { background: #0d1a29; }
 @media (max-width: 760px) {
   .plan-pricing-grid { grid-template-columns: 1fr; }
   .plan-pricing-fields { grid-template-columns: 1fr; }
   .plan-pricing-toolbar { align-items: flex-start; flex-direction: column; }
+  .plan-entitlement-table { min-width: 680px; }
 }
 
 /* Principal, Senior Pastor and Head Minister executive correspondence workspace. */

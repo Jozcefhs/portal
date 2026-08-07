@@ -75,6 +75,7 @@ import {
   resetBranchProfileOverrides,
   saveBranchProfileOverrides
 } from '../lib/branch-profile-settings.js';
+import { refreshOrganizationPlanPolicy } from '../lib/plan-policy-sync.js';
 
 export const SCHOOL_FEES_TOTAL_CODE = 'SCHOOL_FEES_TOTAL';
 
@@ -2501,6 +2502,8 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
     WorkspaceId: deploymentIdentity?.workspaceId,
     GoogleDocumentsUrl: profile.GoogleDocumentsUrl,
     Plan: profile.SubscriptionPlan,
+    PlanEntitlements: existingOrganization?.PlanEntitlements,
+    PlanCatalogRevision: existingOrganization?.PlanCatalogRevision,
     UserLimit: profile.UserLimit,
     BrandName: 'Dynamax',
     BrandLogoUrl: '/images/Logo.png'
@@ -2512,13 +2515,14 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
 }
 
 async function getSchoolProfile(env, options = {}) {
-  const [profile, branding, storedStructure, documentSettings, organizationProfile] = await Promise.all([
+  let [profile, branding, storedStructure, documentSettings, organizationProfile] = await Promise.all([
     getDocument(env, 'settings', 'schoolProfile').catch(() => null),
     getWebBranding(env).catch(() => null),
     getDocument(env, 'settings', 'schoolStructure').catch(() => null),
     getDocument(env, 'settings', 'admissionDocuments').catch(() => null),
     getDocument(env, 'settings', 'organisationProfile').catch(() => null)
   ]);
+  if (organizationProfile) organizationProfile = await refreshOrganizationPlanPolicy(env, organizationProfile);
   const structure = storedStructure || await getSchoolStructure(env);
   const enabledDocuments = documentSettings?.Enabled && typeof documentSettings.Enabled === 'object' ? documentSettings.Enabled : {};
   const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile: profile || {} });
@@ -2551,6 +2555,8 @@ async function getSchoolProfile(env, options = {}) {
       OrganisationName: organization.Name,
       OrganisationCode: organization.Code,
       FeatureFlags: organization.FeatureFlags,
+      PlanEntitlements: organization.PlanEntitlements,
+      PlanCatalogRevision: clean(organizationProfile?.PlanCatalogRevision),
       GoogleDocumentsUrl: selectDocumentStorageUrl({
         environmentUrl: env.GOOGLE_APPS_SCRIPT_URL,
         alternateEnvironmentUrl: env.GOOGLE_DOCUMENTS_URL,

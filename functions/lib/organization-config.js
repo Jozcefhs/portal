@@ -169,10 +169,12 @@ export function featureFlagsForEdition(edition, overrides = {}) {
   ]));
 }
 
-export function featureFlagsForPlan(edition, plan, overrides = {}) {
+export function featureFlagsForPlan(edition, plan, overrides = {}, configuredEntitlements = null) {
   const normalizedPlan = normalizeSubscriptionPlan(plan);
   const editionFlags = featureFlagsForEdition(edition, overrides);
-  const entitlements = subscriptionPlanEntitlements(normalizedPlan, normalizeOrganizationEdition(edition));
+  const entitlements = Array.isArray(configuredEntitlements) || configuredEntitlements === '*'
+    ? configuredEntitlements
+    : subscriptionPlanEntitlements(normalizedPlan, normalizeOrganizationEdition(edition));
   if (entitlements === '*') return editionFlags;
   const allowed = new Set(entitlements);
   return Object.fromEntries(Object.entries(editionFlags).map(([feature, enabled]) => [
@@ -234,6 +236,8 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
   // locked. Only the explicit override field is authoritative.
   const overrides = profile.FeatureOverrides
     || legacy.FeatureOverrides || {};
+  const planEntitlements = profile.PlanEntitlements ?? profile.FeatureEntitlements
+    ?? legacy.PlanEntitlements ?? legacy.FeatureEntitlements ?? null;
   const configuredPlan = clean(
     profile.Plan || profile.SubscriptionPlan
       || legacy.Plan || legacy.SubscriptionPlan
@@ -249,7 +253,7 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
     TrialStartedAt: profile.TrialStartedAt || legacy.TrialStartedAt || env.TRIAL_STARTED_AT,
     TrialEndsAt: profile.TrialEndsAt || legacy.TrialEndsAt || env.TRIAL_ENDS_AT
   });
-  const planFlags = featureFlagsForPlan(edition, plan, overrides);
+  const planFlags = featureFlagsForPlan(edition, plan, overrides, planEntitlements);
   return {
     Edition: edition,
     Name: name,
@@ -257,6 +261,7 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
     Plan: plan,
     UserLimit: Math.max(1, Number(profile.UserLimit || legacy.UserLimit || env.USER_LIMIT || defaultLimit) || defaultLimit),
     FeatureOverrides: overrides,
+    PlanEntitlements: planEntitlements,
     FeatureFlags: subscription.SubscriptionActive
       ? planFlags
       : Object.fromEntries(Object.keys(planFlags).map((feature) => [feature, false])),
@@ -272,6 +277,8 @@ export function organizationProfileDocument(config, audit = {}) {
     Name: resolved.Name,
     Code: resolved.Code,
     FeatureOverrides: config.FeatureOverrides || config.featureOverrides || resolved.FeatureOverrides || {},
+    PlanEntitlements: config.PlanEntitlements ?? config.FeatureEntitlements ?? resolved.PlanEntitlements ?? null,
+    PlanCatalogRevision: clean(config.PlanCatalogRevision || config.planCatalogRevision),
     FeatureFlags: resolved.FeatureFlags,
     UpdatedAt: clean(audit.UpdatedAt),
     UpdatedBy: clean(audit.UpdatedBy),
@@ -295,7 +302,7 @@ const SECTION_FEATURES = Object.freeze({
   studentConduct: 'studentConduct',
   accounts: Object.freeze(['students', 'accounting']),
   incomeAnalytics: 'accounting',
-  financeRequests: 'accounting',
+  financeRequests: 'approvals',
   payroll: 'payroll',
   clinic: 'clinic',
   kitchen: 'kitchen',

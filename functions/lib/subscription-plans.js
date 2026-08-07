@@ -11,6 +11,77 @@ export const SUBSCRIPTION_PLAN_NAMES = Object.freeze([
 const FULL_ACCESS = '*';
 export const FREE_TRIAL_DAYS = 7;
 
+export const SUBSCRIPTION_MODULE_CATALOG = Object.freeze([
+  Object.freeze({ Key: 'branches', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Branches & campuses', faith: 'Branches & assemblies', organization: 'Branches & offices' }), Description: 'Branch switching and branch-isolated records.', Requires: Object.freeze([]) }),
+  Object.freeze({ Key: 'branding', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Branding & document identity', faith: 'Branding & document identity', organization: 'Branding & document identity' }), Description: 'Organisation identity, logos and document presentation.', Requires: Object.freeze([]) }),
+  Object.freeze({ Key: 'approvals', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Bills, requisitions & approvals', faith: 'Bills, requisitions & approvals', organization: 'Bills, requisitions & approvals' }), Description: 'Request, review, approval and posting workflows.', Requires: Object.freeze([]) }),
+  Object.freeze({ Key: 'executiveOffice', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Executive Office', faith: 'Executive Office', organization: 'Executive Office' }), Description: 'Official correspondence, templates and executive records.', Requires: Object.freeze([]) }),
+  Object.freeze({ Key: 'humanResources', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Human Resources & staff attendance', faith: 'Human Resources & staff attendance', organization: 'Human Resources & staff attendance' }), Description: 'Employee journey, attendance, leave and performance.', Requires: Object.freeze([]) }),
+  Object.freeze({ Key: 'accounting', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Finance, accounting & income analytics', faith: 'Finance, accounting & income analytics', organization: 'Finance, accounting & revenue analytics' }), Description: 'Accounts, journals, expenses, analytics and finance registers.', Requires: Object.freeze([]) }),
+  Object.freeze({ Key: 'payroll', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Payroll', faith: 'Payroll', organization: 'Payroll' }), Description: 'Payroll profiles, calculations, approvals and payments.', Requires: Object.freeze(['accounting', 'humanResources']) }),
+  Object.freeze({ Key: 'admissions', Editions: Object.freeze(['school']), Labels: Object.freeze({ school: 'Admissions & form purchases' }), Description: 'Application intake, form sales and admission processing.', Requires: Object.freeze([]) }),
+  Object.freeze({ Key: 'students', Editions: Object.freeze(['school']), Labels: Object.freeze({ school: 'Student records & accounts' }), Description: 'Student directory, accounts and academic identity.', Requires: Object.freeze([]) }),
+  Object.freeze({ Key: 'studentConduct', Editions: Object.freeze(['school']), Labels: Object.freeze({ school: 'Student conduct & discipline' }), Description: 'Conduct cases, decisions and controlled case history.', Requires: Object.freeze(['students']) }),
+  Object.freeze({ Key: 'parentPortal', Editions: Object.freeze(['school']), Labels: Object.freeze({ school: 'Parent portal' }), Description: 'Parent access to payments, records, documents and notifications.', Requires: Object.freeze(['students']) }),
+  Object.freeze({ Key: 'stores', Editions: Object.freeze(['school']), Labels: Object.freeze({ school: 'School stores' }), Description: 'Tuck shop, books and supplies, clothing and uniform stores.', Requires: Object.freeze(['students']) }),
+  Object.freeze({ Key: 'clinic', Editions: Object.freeze(['school']), Labels: Object.freeze({ school: 'Clinic' }), Description: 'Student clinic visits, treatments and parent reports.', Requires: Object.freeze(['students']) }),
+  Object.freeze({ Key: 'kitchen', Editions: Object.freeze(['school']), Labels: Object.freeze({ school: 'Kitchen' }), Description: 'Kitchen inventory, issues and purchasing operations.', Requires: Object.freeze([]) }),
+  Object.freeze({ Key: 'members', Editions: Object.freeze(['faith', 'organization']), Labels: Object.freeze({ faith: 'Members & households', organization: 'Personnel & records' }), Description: 'People directory, profiles and household or personnel records.', Requires: Object.freeze([]) }),
+  Object.freeze({ Key: 'services', Editions: Object.freeze(['faith', 'organization']), Labels: Object.freeze({ faith: 'Services & attendance', organization: 'Meetings & attendance' }), Description: 'Scheduled occurrences and attendance analysis.', Requires: Object.freeze([]) }),
+  Object.freeze({ Key: 'departments', Editions: Object.freeze(['faith', 'organization']), Labels: Object.freeze({ faith: 'Departments & assignments', organization: 'Departments & assignments' }), Description: 'Department records and batch people assignment.', Requires: Object.freeze(['members']) }),
+  Object.freeze({ Key: 'programs', Editions: Object.freeze(['faith', 'organization']), Labels: Object.freeze({ faith: 'Programs & activities', organization: 'Programmes & activities' }), Description: 'Programme planning and operational activities.', Requires: Object.freeze([]) }),
+  Object.freeze({ Key: 'funds', Editions: Object.freeze(['faith', 'organization']), Labels: Object.freeze({ faith: 'Funds & mappings', organization: 'Budgets & account mappings' }), Description: 'Fund controls and accounting mappings.', Requires: Object.freeze(['accounting']) }),
+  Object.freeze({ Key: 'offerings', Editions: Object.freeze(['faith', 'organization']), Labels: Object.freeze({ faith: 'Offerings', organization: 'Income & receipts' }), Description: 'Batch collection, reconciliation and posting.', Requires: Object.freeze(['accounting']) }),
+  Object.freeze({ Key: 'donations', Editions: Object.freeze(['faith', 'organization']), Labels: Object.freeze({ faith: 'Donations & donor management', organization: 'Grants & contributions' }), Description: 'Donor records, currencies, conversion and giving analytics.', Requires: Object.freeze(['accounting']) }),
+  Object.freeze({ Key: 'retail', Editions: Object.freeze(['faith']), Labels: Object.freeze({ faith: 'Organisation store' }), Description: 'Inventory, sales, checkout and receipts.', Requires: Object.freeze(['accounting']) }),
+  Object.freeze({ Key: 'restaurant', Editions: Object.freeze(['faith']), Labels: Object.freeze({ faith: 'Restaurant' }), Description: 'Restaurant stock, ordering and sales operations.', Requires: Object.freeze(['accounting']) })
+]);
+
+const MODULE_BY_KEY = new Map(SUBSCRIPTION_MODULE_CATALOG.map((module) => [module.Key, module]));
+
+export function subscriptionModulesForEdition(edition) {
+  const normalizedEdition = ['faith', 'organization'].includes(clean(edition).toLowerCase())
+    ? clean(edition).toLowerCase()
+    : 'school';
+  return SUBSCRIPTION_MODULE_CATALOG
+    .filter((module) => module.Editions.includes(normalizedEdition))
+    .map((module) => ({
+      Key: module.Key,
+      Label: clean(module.Labels[normalizedEdition] || module.Labels.school || module.Key),
+      Description: module.Description,
+      Requires: module.Requires.filter((key) => MODULE_BY_KEY.get(key)?.Editions.includes(normalizedEdition))
+    }));
+}
+
+function normalizeConfiguredEntitlements(edition, value, fallback) {
+  const modules = subscriptionModulesForEdition(edition);
+  const allowed = new Set(modules.map((module) => module.Key));
+  const supplied = value === FULL_ACCESS
+    ? [...allowed]
+    : Array.isArray(value)
+      ? value.map(clean).filter((key) => allowed.has(key))
+      : Array.isArray(fallback)
+        ? fallback.map(clean).filter((key) => allowed.has(key))
+        : fallback === FULL_ACCESS
+          ? [...allowed]
+          : [];
+  const selected = new Set(supplied);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    modules.forEach((module) => {
+      if (!selected.has(module.Key)) return;
+      module.Requires.forEach((required) => {
+        if (!selected.has(required)) {
+          selected.add(required);
+          changed = true;
+        }
+      });
+    });
+  }
+  return modules.map((module) => module.Key).filter((key) => selected.has(key));
+}
+
 export const SUBSCRIPTION_PLAN_DEFINITIONS = Object.freeze({
   Free: Object.freeze({
     UserLimit: 5,
@@ -100,18 +171,28 @@ export function subscriptionPlanDefinition(value) {
   return SUBSCRIPTION_PLAN_DEFINITIONS[normalizeSubscriptionPlan(value)];
 }
 
-export function subscriptionPlanEntitlements(plan, edition) {
+export function subscriptionPlanEntitlements(plan, edition, catalog = null) {
   const normalizedEdition = ['faith', 'organization'].includes(clean(edition).toLowerCase())
     ? clean(edition).toLowerCase()
     : 'school';
+  if (catalog && typeof catalog === 'object') {
+    const normalizedCatalog = normalizeSubscriptionPlanCatalog(catalog);
+    return [...normalizedCatalog.Plans[normalizeSubscriptionPlan(plan)].EntitlementsByEdition[normalizedEdition]];
+  }
   const entitlements = subscriptionPlanDefinition(plan).Entitlements[normalizedEdition];
   return entitlements === FULL_ACCESS ? FULL_ACCESS : [...entitlements];
 }
 
-export function subscriptionPlanFeatures(plan, edition) {
+export function subscriptionPlanFeatures(plan, edition, catalog = null) {
   const normalizedEdition = ['faith', 'organization'].includes(clean(edition).toLowerCase())
     ? clean(edition).toLowerCase()
     : 'school';
+  if (catalog && typeof catalog === 'object') {
+    const enabledKeys = new Set(subscriptionPlanEntitlements(plan, normalizedEdition, catalog));
+    return subscriptionModulesForEdition(normalizedEdition)
+      .filter((module) => enabledKeys.has(module.Key))
+      .map((module) => module.Label);
+  }
   return [...subscriptionPlanDefinition(plan).Features[normalizedEdition]];
 }
 
@@ -203,10 +284,15 @@ export function defaultSubscriptionPlanCatalog() {
         MonthlyAmount: 0,
         YearlyAmount: 0,
         Active: true,
+        EntitlementsByEdition: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
+          edition,
+          normalizeConfiguredEntitlements(edition, definition.Entitlements[edition], [])
+        ])),
         PaystackMonthlyPlanCode: '',
         PaystackYearlyPlanCode: ''
       }];
     })),
+    PolicyRevision: '',
     UpdatedAt: '',
     UpdatedBy: ''
   };
@@ -224,6 +310,11 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
       const incoming = sourcePlans[name] && typeof sourcePlans[name] === 'object' ? sourcePlans[name] : {};
       const definition = SUBSCRIPTION_PLAN_DEFINITIONS[name];
       const configuredLimit = Math.max(1, Math.floor(Number(incoming.UserLimit || definition.UserLimit) || definition.UserLimit));
+      const configuredEntitlements = incoming.EntitlementsByEdition && typeof incoming.EntitlementsByEdition === 'object'
+        ? incoming.EntitlementsByEdition
+        : incoming.ModulesByEdition && typeof incoming.ModulesByEdition === 'object'
+          ? incoming.ModulesByEdition
+          : {};
       return [name, {
         Name: name,
         Summary: definition.Summary,
@@ -231,10 +322,21 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
         MonthlyAmount: name === 'Free' ? 0 : money(incoming.MonthlyAmount),
         YearlyAmount: name === 'Free' ? 0 : money(incoming.YearlyAmount),
         Active: enabled(incoming.Active, true),
+        EntitlementsByEdition: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
+          edition,
+          normalizeConfiguredEntitlements(
+            edition,
+            Object.prototype.hasOwnProperty.call(configuredEntitlements, edition)
+              ? configuredEntitlements[edition]
+              : undefined,
+            defaults.Plans[name].EntitlementsByEdition[edition]
+          )
+        ])),
         PaystackMonthlyPlanCode: name === 'Free' ? '' : clean(incoming.PaystackMonthlyPlanCode),
         PaystackYearlyPlanCode: name === 'Free' ? '' : clean(incoming.PaystackYearlyPlanCode)
       }];
     })),
+    PolicyRevision: clean(source.PolicyRevision),
     UpdatedAt: clean(source.UpdatedAt),
     UpdatedBy: clean(source.UpdatedBy)
   };
@@ -244,6 +346,10 @@ export function publicSubscriptionPlanCatalog(value = {}) {
   const catalog = normalizeSubscriptionPlanCatalog(value);
   return {
     Currency: catalog.Currency,
+    ModuleCatalog: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
+      edition,
+      subscriptionModulesForEdition(edition)
+    ])),
     Plans: SUBSCRIPTION_PLAN_NAMES.map((name) => ({
       Name: name,
       Summary: catalog.Plans[name].Summary,
@@ -252,12 +358,17 @@ export function publicSubscriptionPlanCatalog(value = {}) {
       YearlyAmount: catalog.Plans[name].YearlyAmount,
       Active: catalog.Plans[name].Active,
       TrialDays: Number(SUBSCRIPTION_PLAN_DEFINITIONS[name].TrialDays || 0),
+      EntitlementsByEdition: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
+        edition,
+        [...catalog.Plans[name].EntitlementsByEdition[edition]]
+      ])),
       FeaturesByEdition: {
-        school: subscriptionPlanFeatures(name, 'school'),
-        faith: subscriptionPlanFeatures(name, 'faith'),
-        organization: subscriptionPlanFeatures(name, 'organization')
+        school: subscriptionPlanFeatures(name, 'school', catalog),
+        faith: subscriptionPlanFeatures(name, 'faith', catalog),
+        organization: subscriptionPlanFeatures(name, 'organization', catalog)
       }
     })),
+    PolicyRevision: catalog.PolicyRevision,
     UpdatedAt: catalog.UpdatedAt
   };
 }

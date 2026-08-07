@@ -130,6 +130,23 @@ test('subscription plans enforce module entitlements in addition to organisation
   assert.equal(professionalChurch.admissions, false);
 });
 
+test('server-issued plan entitlements override bootstrap plan defaults', () => {
+  const configured = resolveOrganizationConfig({
+    organizationProfile: {
+      Edition: 'school',
+      Plan: 'Starter',
+      PlanEntitlements: ['accounting', 'humanResources', 'payroll']
+    }
+  });
+  assert.equal(configured.FeatureFlags.accounting, true);
+  assert.equal(configured.FeatureFlags.payroll, true);
+  assert.equal(configured.FeatureFlags.students, false);
+  assert.deepEqual(configured.PlanEntitlements, ['accounting', 'humanResources', 'payroll']);
+
+  const noOperationalModules = featureFlagsForPlan('faith', 'Professional', {}, []);
+  assert.equal(Object.values(noOperationalModules).some(Boolean), false);
+});
+
 test('an expired free trial disables every operational feature and greys every assigned module', () => {
   const organization = resolveOrganizationConfig({
     organizationProfile: {

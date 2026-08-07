@@ -10,6 +10,7 @@ import { deploymentIdentityDetails, requiredDeploymentIdentity } from './deploym
 import { configuredModulesForUser, defaultModulesForRole } from './role-module-access.js';
 import { getSchoolStructure } from './school-scope.js';
 import { applyStaffBranchContext } from './staff-branch-context.js';
+import { refreshOrganizationPlanPolicy } from './plan-policy-sync.js';
 
 const encoder = new TextEncoder();
 const SESSION_COOKIE = '__Host-digc_staff_session';
@@ -294,7 +295,12 @@ export function sectionAccessFor(user = {}, organization = {}, roleAccess = null
   const subscriptionPlan = clean(organization.Plan || organization.plan) || 'Professional';
   const subscriptionActive = organization.SubscriptionActive !== false;
   const featureFlags = organization.FeatureFlags || organization.featureFlags || featureFlagsForEdition(edition);
-  const planFeatureFlags = featureFlagsForPlan(edition, subscriptionPlan);
+  const planFeatureFlags = featureFlagsForPlan(
+    edition,
+    subscriptionPlan,
+    {},
+    organization.PlanEntitlements || organization.FeatureEntitlements || null
+  );
   const editionFeatureFlags = featureFlagsForEdition(edition);
   const configuredRoleModules = configuredModulesForUser(
     roleAccess,
@@ -374,7 +380,7 @@ export async function staffAccessFor(env, user = {}) {
     organization = accessConfigCache.organization;
     roleAccess = accessConfigCache.roleAccess;
   } else {
-    const [organizationProfile, storedRoleAccess] = await Promise.all([
+    let [organizationProfile, storedRoleAccess] = await Promise.all([
       getDocument(env, 'settings', 'organisationProfile').catch(() => null),
       getDocument(env, 'settings', 'roleModuleAccess').catch(() => null)
     ]);
@@ -387,6 +393,7 @@ export async function staffAccessFor(env, user = {}) {
         identity: requiredDeploymentIdentity(env),
         organizationProfile
       });
+      organizationProfile = await refreshOrganizationPlanPolicy(env, organizationProfile);
     }
     organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile });
     roleAccess = storedRoleAccess;
