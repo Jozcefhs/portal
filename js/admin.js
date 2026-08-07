@@ -5363,9 +5363,11 @@ async function loadStaffAttendance() {
             <div class="config-grid">
               <label>Policy status <select name="Active"><option value="YES"${selectedOption(policy.Active, 'YES')}>Enabled</option><option value="NO"${selectedOption(policy.Active, 'NO')}>Disabled</option></select></label>
               <label>Grace period (minutes) <input name="GraceMinutes" type="number" min="0" max="180" value="${Number(policy.GraceMinutes ?? 15)}" required></label>
+              <label>Clock-in opens before resumption (minutes) <input name="ClockInOpenMinutesBefore" type="number" min="0" max="360" value="${Number(policy.ClockInOpenMinutesBefore ?? 60)}" required></label>
               <label>Minimum overtime (minutes) <input name="OvertimeMinimumMinutes" type="number" min="0" max="240" value="${Number(policy.OvertimeMinimumMinutes ?? 15)}" required></label>
               <label>Time zone <input name="TimeZone" value="${escapeHtml(policy.TimeZone || 'Africa/Lagos')}" required></label>
             </div>
+            <p class="attendance-settings-note">Clock-in attempts before the opening window are rejected and kept in the attendance security audit. The default is 60 minutes before each day's resumption time.</p>
             <label class="check-row config-switch"><input type="checkbox" name="AutoRecordAbsence" value="YES" ${clean(policy.AutoRecordAbsence).toUpperCase() !== 'NO' ? 'checked' : ''}><span>Automatically record absence after closing time when there is no clock-in</span></label>
           </section>
           <section class="attendance-settings-panel" id="attendancePolicyPanelIdentity" role="tabpanel" aria-labelledby="attendancePolicyTabIdentity" data-attendance-policy-panel="identity" hidden>

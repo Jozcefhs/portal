@@ -24,6 +24,7 @@ const DEFAULT_ATTENDANCE_POLICY = Object.freeze({
   ResumptionTime: '08:00',
   ClosingTime: '17:00',
   GraceMinutes: 15,
+  ClockInOpenMinutesBefore: 60,
   OvertimeMinimumMinutes: 15,
   WorkDays: ['MON', 'TUE', 'WED', 'THU', 'FRI'],
   TimeZone: 'Africa/Lagos',
@@ -206,6 +207,13 @@ export function normalizeAttendancePolicy(input = {}, existing = {}) {
     ResumptionTime: resumption,
     ClosingTime: closing,
     GraceMinutes: boundedWholeNumber(input.GraceMinutes ?? existing.GraceMinutes, DEFAULT_ATTENDANCE_POLICY.GraceMinutes, 0, 180, 'Grace period'),
+    ClockInOpenMinutesBefore: boundedWholeNumber(
+      input.ClockInOpenMinutesBefore ?? existing.ClockInOpenMinutesBefore,
+      DEFAULT_ATTENDANCE_POLICY.ClockInOpenMinutesBefore,
+      0,
+      360,
+      'Clock-in opening allowance'
+    ),
     OvertimeMinimumMinutes: boundedWholeNumber(input.OvertimeMinimumMinutes ?? existing.OvertimeMinimumMinutes, DEFAULT_ATTENDANCE_POLICY.OvertimeMinimumMinutes, 0, 240, 'Minimum overtime'),
     WorkDays: normalizedWorkDays,
     DaySchedules: daySchedules,
@@ -233,6 +241,33 @@ export function attendanceScheduleFor(policyInput = {}, day) {
     Enabled: false,
     ResumptionTime: policy.ResumptionTime,
     ClosingTime: policy.ClosingTime
+  };
+}
+
+function clockTimeLabel(minutes) {
+  const bounded = Math.max(0, Math.min(1439, Number(minutes) || 0));
+  return `${String(Math.floor(bounded / 60)).padStart(2, '0')}:${String(bounded % 60).padStart(2, '0')}`;
+}
+
+export function attendanceClockInWindow(policyInput = {}, timestamp = nowIso()) {
+  const policy = normalizeAttendancePolicy(policyInput);
+  const local = localAttendanceParts(timestamp, policy.TimeZone);
+  const schedule = policy.DaySchedules?.[local.day] || {};
+  const resumptionMinute = timeMinutes(schedule.ResumptionTime || policy.ResumptionTime, 'Resumption time');
+  const allowanceMinutes = Number(policy.ClockInOpenMinutesBefore || 0);
+  const opensAtMinute = Math.max(0, resumptionMinute - allowanceMinutes);
+  const enforced = lower(policy.Active) !== 'no' && Boolean(schedule.Enabled);
+  return {
+    allowed: !enforced || local.minuteOfDay >= opensAtMinute,
+    enforced,
+    date: local.date,
+    day: local.day,
+    currentMinute: local.minuteOfDay,
+    opensAt: clockTimeLabel(opensAtMinute),
+    resumptionTime: clean(schedule.ResumptionTime || policy.ResumptionTime),
+    allowanceMinutes,
+    minutesBeforeOpening: Math.max(0, opensAtMinute - local.minuteOfDay),
+    minutesBeforeResumption: Math.max(0, resumptionMinute - local.minuteOfDay)
   };
 }
 
@@ -422,6 +457,7 @@ function attendancePolicySnapshot(policy = {}, day = '') {
     ScheduledResumptionTime: clean(schedule.ResumptionTime || policy.ResumptionTime),
     ScheduledClosingTime: clean(schedule.ClosingTime || policy.ClosingTime),
     GraceMinutes: Number(policy.GraceMinutes || 0),
+    ClockInOpenMinutesBefore: Number(policy.ClockInOpenMinutesBefore || 0),
     OvertimeMinimumMinutes: Number(policy.OvertimeMinimumMinutes || 0),
     TimeZone: clean(policy.TimeZone)
   };
@@ -749,6 +785,38 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
   const siteId = safeChurchDocumentId(body.SiteId);
   if (!siteId) fail('Choose the attendance location.');
   const workspace = await getStaffAttendanceActionState(env, branchId, username, siteId);
+  const expected = workspace.nextDirection;
+  if (!expected) fail('Today\'s first clock-in and first clock-out are already recorded. Repeated clocking cannot change them.', 409);
+  const direction = clean(body.Direction || expected).toUpperCase();
+  if (!['IN', 'OUT'].includes(direction)) fail('Choose Clock in or Clock out.');
+  if (direction !== expected) fail(expected === 'IN' ? 'You are already clocked out.' : 'You are already clocked in.', 409);
+  const timestamp = nowIso();
+  if (direction === 'IN') {
+    const opening = attendanceClockInWindow(workspace.policy, timestamp);
+    if (!opening.allowed) {
+      const attemptKey = clean(body.idempotencyKey) || crypto.randomUUID();
+      const auditId = safeChurchDocumentId(`EARLY-IN-${opening.date}-${username}-${attemptKey}`);
+      await upsertDocument(env, churchCollectionPath(CHURCH_COLLECTIONS.staffTimeAudit, branchId), auditId, {
+        AuditId: auditId,
+        Action: 'EARLY_CLOCK_IN_REJECTED',
+        BranchId: branchId,
+        Username: username,
+        DisplayName: actorName(user),
+        Role: clean(user.role || user.Role),
+        SiteId: siteId,
+        SiteName: clean(workspace.site.Name),
+        Timestamp: timestamp,
+        AttendanceDate: opening.date,
+        ScheduledResumptionTime: opening.resumptionTime,
+        ClockInOpensAt: opening.opensAt,
+        ClockInOpenMinutesBefore: opening.allowanceMinutes,
+        MinutesBeforeOpening: opening.minutesBeforeOpening,
+        MinutesBeforeResumption: opening.minutesBeforeResumption,
+        Reason: 'Clock-in attempted before the configured opening window.'
+      });
+      fail(`Clock-in opens at ${opening.opensAt}, ${opening.allowanceMinutes} minute(s) before today's ${opening.resumptionTime} resumption time. This early attempt was not recorded as attendance.`, 403);
+    }
+  }
   const site = workspace.site;
   const identityMethod = verifiedAttendanceIdentity(workspace.policy, requestContext.identityProof);
   const presence = evaluateAttendancePresence(site, body.Location || body, requestContext.clientIp || '');
@@ -758,12 +826,6 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
       : 'You appear to be outside the approved premises and network.';
     fail(details, 403);
   }
-  const expected = workspace.nextDirection;
-  if (!expected) fail('Today\'s first clock-in and first clock-out are already recorded. Repeated clocking cannot change them.', 409);
-  const direction = clean(body.Direction || expected).toUpperCase();
-  if (!['IN', 'OUT'].includes(direction)) fail('Choose Clock in or Clock out.');
-  if (direction !== expected) fail(expected === 'IN' ? 'You are already clocked out.' : 'You are already clocked in.', 409);
-  const timestamp = nowIso();
   const existingDaily = workspace.existingDaily;
   if (direction === 'IN' && clean(existingDaily?.FirstClockIn)) {
     fail('Today\'s first clock-in is already recorded and cannot be replaced by a repeated clock-in.', 409);

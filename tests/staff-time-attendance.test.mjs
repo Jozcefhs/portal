@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
+  attendanceClockInWindow,
   attendanceScheduleFor,
   calculateAttendanceMetrics,
   canManageStaffAttendance,
@@ -83,10 +84,33 @@ test('daily attendance policy normalizes work hours and rejects an invalid closi
   });
   assert.deepEqual(policy.WorkDays, ['MON', 'TUE', 'WED', 'THU', 'FRI']);
   assert.equal(policy.GraceMinutes, 15);
+  assert.equal(policy.ClockInOpenMinutesBefore, 60);
   assert.equal(policy.OvertimeMinimumMinutes, 20);
   assert.equal(normalizeAttendancePolicy({ IdentityVerification: 'FACE' }).IdentityVerification, 'PASSKEY');
   assert.equal(normalizeAttendancePolicy({ IdentityVerification: 'PASSKEY_OR_FACE' }).IdentityVerification, 'PASSKEY');
   assert.throws(() => normalizeAttendancePolicy({ ResumptionTime: '17:00', ClosingTime: '08:00' }), /Closing time must be later/);
+  assert.throws(() => normalizeAttendancePolicy({ ClockInOpenMinutesBefore: 361 }), /between 0 and 360/);
+});
+
+test('clock-in opens only within the configured lead time for each working day', () => {
+  const policy = normalizeAttendancePolicy({
+    ClockInOpenMinutesBefore: 60,
+    DaySchedules: {
+      MON: { Enabled: true, ResumptionTime: '08:00', ClosingTime: '17:00' },
+      TUE: { Enabled: true, ResumptionTime: '07:00', ClosingTime: '16:00' }
+    },
+    WorkDays: ['MON', 'TUE'],
+    TimeZone: 'Africa/Lagos'
+  });
+  const tooEarly = attendanceClockInWindow(policy, '2026-08-03T06:59:00+01:00');
+  const mondayOpen = attendanceClockInWindow(policy, '2026-08-03T07:00:00+01:00');
+  const tuesdayOpen = attendanceClockInWindow(policy, '2026-08-04T06:00:00+01:00');
+  assert.equal(tooEarly.allowed, false);
+  assert.equal(tooEarly.opensAt, '07:00');
+  assert.equal(tooEarly.minutesBeforeOpening, 1);
+  assert.equal(mondayOpen.allowed, true);
+  assert.equal(tuesdayOpen.allowed, true);
+  assert.equal(tuesdayOpen.opensAt, '06:00');
 });
 
 test('different work hours can be configured and calculated for every day', () => {
@@ -215,6 +239,10 @@ test('attendance state resets by date and preserves the first successful daily t
   assert.match(attendanceSource, /first clock-in is already recorded/);
   assert.match(attendanceSource, /first clock-out is already recorded/);
   assert.match(attendanceSource, /normalizeAttendanceSite\(body, existing \|\| \{\}\)/);
+  assert.match(attendanceSource, /EARLY_CLOCK_IN_REJECTED/);
+  assert.match(attendanceSource, /This early attempt was not recorded as attendance/);
+  assert.match(adminJs, /name="ClockInOpenMinutesBefore"/);
+  assert.ok(clockHandlerSource.indexOf('attendanceClockInWindow') < clockHandlerSource.indexOf('verifiedAttendanceIdentity'));
 });
 
 test('attendance UI and API enforce device unlock and random continued-presence checks', () => {
