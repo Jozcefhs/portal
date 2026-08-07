@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
-const [adminHtml, adminJs, portalCss] = await Promise.all([
+const [adminHtml, adminJs, portalCss, indexHtml] = await Promise.all([
   readFile(new URL('admin.html', portalRoot), 'utf8'),
   readFile(new URL('js/admin.js', portalRoot), 'utf8'),
-  readFile(new URL('css/style.css', portalRoot), 'utf8')
+  readFile(new URL('css/style.css', portalRoot), 'utf8'),
+  readFile(new URL('index.html', portalRoot), 'utf8')
 ]);
 const parentDashboardJs = await readFile(new URL('js/parent-dashboard.js', portalRoot), 'utf8');
 const parentDashboardHtml = await readFile(new URL('parent-dashboard.html', portalRoot), 'utf8');
@@ -138,9 +139,12 @@ test('staff and parent sign-out actions return to the suite landing page', () =>
 
 test('mobile launcher uses a compact first-screen layout', () => {
   assert.match(portalCss, /\.suite-launcher-page\{height:100vh;height:100dvh;[^}]*overflow:hidden/);
-  assert.match(portalCss, /@media \(max-width:560px\)\{[\s\S]*?\.suite-launcher\{height:100%;min-height:0;[^}]*overflow:hidden/);
-  assert.match(portalCss, /\.launcher-showcase\{height:auto;min-height:0/);
+  assert.match(portalCss, /@media \(max-width:560px\)\{[\s\S]*?\.suite-launcher-page\{height:auto;[^}]*overflow-y:auto/);
+  assert.match(portalCss, /@media \(max-width:560px\)\{[\s\S]*?\.suite-launcher\{height:auto;[^}]*overflow:visible/);
+  assert.match(portalCss, /\.launcher-showcase\{height:auto;min-height:clamp\(190px,28dvh,220px\)/);
+  assert.match(portalCss, /\.launcher-directory\{min-height:0;[^}]*overflow:visible;justify-content:flex-start/);
   assert.match(portalCss, /\.launcher-channel\{[^}]*min-height:66px/);
+  assert.doesNotMatch(indexHtml, /id="installDynamaxApp"/);
 });
 
 test('preference toggles have clearly distinct on and off states', () => {

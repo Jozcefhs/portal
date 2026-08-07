@@ -841,8 +841,9 @@ html[data-theme="dark"] .staff-page .admin-table tbody tr:focus-within .student-
 html[data-theme="dark"] .staff-page .admin-table tbody tr.selected .student-edit-icon{color:#8b6000}
 
 @media (max-width:560px){
-  .suite-launcher{height:100%;min-height:0;grid-template-rows:clamp(150px,27dvh,190px) minmax(0,1fr);overflow:hidden}
-  .launcher-showcase{height:auto;min-height:0;padding:12px 16px 14px;border-radius:0 0 28px 28px}
+  .suite-launcher-page{height:auto;min-height:100vh;min-height:100dvh;overflow-x:hidden;overflow-y:auto}
+  .suite-launcher{height:auto;min-height:100vh;min-height:100dvh;grid-template-rows:auto auto;overflow:visible}
+  .launcher-showcase{height:auto;min-height:clamp(190px,28dvh,220px);padding:12px 16px 14px;border-radius:0 0 28px 28px}
   .launcher-showcase-top{gap:9px;font-size:14px}
   .launcher-logo{width:36px;height:36px;padding:5px;border-radius:11px}
   .launcher-art{width:225px;top:-24%;right:-16%;opacity:.68}
@@ -850,7 +851,7 @@ html[data-theme="dark"] .staff-page .admin-table tbody tr.selected .student-edit
   .launcher-message p{margin-bottom:4px;font-size:8px}
   .launcher-message h1{font-size:28px;line-height:1}
   .launcher-message>span{max-width:330px;margin-top:7px;font-size:10px;line-height:1.35}
-  .launcher-directory{min-height:0;padding:18px 12px 58px;overflow:hidden}
+  .launcher-directory{min-height:0;padding:18px 12px 86px;overflow:visible;justify-content:flex-start}
   .launcher-heading{margin-bottom:14px}
   .launcher-kicker{margin-bottom:5px;font-size:9px}
   .launcher-heading h2{margin-bottom:5px;font-size:24px;line-height:1.03}
@@ -866,8 +867,8 @@ html[data-theme="dark"] .staff-page .admin-table tbody tr.selected .student-edit
 }
 
 @media (max-width:560px) and (max-height:640px){
-  .suite-launcher{grid-template-rows:145px minmax(0,1fr)}
-  .launcher-showcase{padding-top:9px;padding-bottom:10px}
+  .suite-launcher{grid-template-rows:auto auto}
+  .launcher-showcase{min-height:170px;padding-top:9px;padding-bottom:10px}
   .launcher-message{padding-top:13px}
   .launcher-message h1{font-size:25px}
   .launcher-message>span{font-size:9px}
