@@ -1,6 +1,7 @@
 const MODEL_ID = 'human-faceres-3.3.6';
 const DESCRIPTOR_LENGTH = 1024;
 const SAMPLE_COUNT = 3;
+const ATTENDANCE_VERIFY_SAMPLE_COUNT = 2;
 const CAPTURE_TIMEOUT_MS = 30000;
 
 let humanInstancePromise = null;
@@ -120,20 +121,33 @@ async function loadHuman(dialog) {
   }
 }
 
+export function preloadStaffAttendanceFace() {
+  if (!humanInstancePromise) humanInstancePromise = createHuman();
+  return humanInstancePromise.catch((failure) => {
+    humanInstancePromise = null;
+    throw failure;
+  });
+}
+
 async function startCamera(dialog) {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error('This browser does not provide secure camera access.');
   }
   const video = dialog.querySelector('[data-face-video]');
   stopCamera(video);
-  activeStream = await navigator.mediaDevices.getUserMedia({
+  const stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
       facingMode: 'user',
-      width: { ideal: 960 },
-      height: { ideal: 720 }
+      width: { ideal: 640 },
+      height: { ideal: 480 }
     }
   });
+  if (!dialog.isConnected || !dialog.open) {
+    stream.getTracks().forEach((track) => track.stop());
+    throw new Error('Face verification was cancelled.');
+  }
+  activeStream = stream;
   video.srcObject = activeStream;
   await new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => reject(new Error('The camera did not become ready.')), 10000);
@@ -175,7 +189,7 @@ function averageDescriptors(samples) {
   return average.map((value) => Math.round((value / samples.length) * 1e6) / 1e6);
 }
 
-async function captureDescriptor(dialog, human) {
+async function captureDescriptor(dialog, human, sampleCount = SAMPLE_COUNT) {
   const video = dialog.querySelector('[data-face-video]');
   const progress = dialog.querySelector('[data-face-progress]');
   if (!activeStream || !video.srcObject) throw new Error('Start the camera first.');
@@ -186,14 +200,14 @@ async function captureDescriptor(dialog, human) {
   let lastCaptureAt = 0;
   setStatus(dialog, 'Blink once while looking at the camera.');
   progress.hidden = false;
-  progress.max = SAMPLE_COUNT;
+  progress.max = sampleCount;
   progress.value = 0;
-  while (Date.now() - started < CAPTURE_TIMEOUT_MS && samples.length < SAMPLE_COUNT) {
+  while (Date.now() - started < CAPTURE_TIMEOUT_MS && samples.length < sampleCount) {
     const result = await human.detect(video);
     const faces = result?.face || [];
     if (faces.length !== 1) {
       setStatus(dialog, faces.length ? 'Only one person may be in the camera frame.' : 'Move your face into the camera frame.');
-      await new Promise((resolve) => window.setTimeout(resolve, 140));
+      await new Promise((resolve) => window.setTimeout(resolve, 60));
       continue;
     }
     const face = faces[0];
@@ -213,16 +227,16 @@ async function captureDescriptor(dialog, human) {
       setStatus(dialog, 'Blink once while looking at the camera.');
     } else if (!ready) {
       setStatus(dialog, 'Keep your face centred, clearly lit and close enough to the camera.');
-    } else if (Date.now() - lastCaptureAt >= 350) {
+    } else if (Date.now() - lastCaptureAt >= 180) {
       samples.push(face.embedding.map(Number));
       lastCaptureAt = Date.now();
       progress.value = samples.length;
-      setStatus(dialog, `Live sample ${samples.length} of ${SAMPLE_COUNT} captured. Keep still.`);
+      setStatus(dialog, `Live sample ${samples.length} of ${sampleCount} captured. Keep still.`);
     }
-    await new Promise((resolve) => window.setTimeout(resolve, 120));
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
   }
   progress.hidden = true;
-  if (samples.length < SAMPLE_COUNT) {
+  if (samples.length < sampleCount) {
     throw new Error('A reliable live face sample was not captured in time. Try again or use manual search.');
   }
   return averageDescriptors(samples);
@@ -436,6 +450,7 @@ export function revokeStaffAttendanceFace(attendanceProof) {
 
 function attendanceFaceDialogMarkup(mode) {
   const enrollment = mode === 'enroll';
+  const sampleCount = enrollment ? SAMPLE_COUNT : ATTENDANCE_VERIFY_SAMPLE_COUNT;
   return `<dialog class="student-face-dialog staff-attendance-face-dialog" data-staff-attendance-face-dialog aria-modal="true" aria-labelledby="attendanceFaceDialogTitle">
     <header>
       <div><small>${enrollment ? 'Private biometric enrollment' : 'Attendance identity check'}</small>
@@ -453,7 +468,7 @@ function attendanceFaceDialogMarkup(mode) {
       <div class="student-face-guide" aria-hidden="true"></div>
       <p>Keep one face centred and blink once when prompted.</p>
     </div>
-    <progress data-face-progress value="0" max="${SAMPLE_COUNT}" hidden></progress>
+    <progress data-face-progress value="0" max="${sampleCount}" hidden></progress>
     <p class="student-face-status" data-face-status>Ready to open the camera.</p>
     <footer>
       <button type="button" class="secondary" data-face-start>Start camera</button>
@@ -472,7 +487,10 @@ export function captureStaffAttendanceFace(options = {}) {
   const video = dialog.querySelector('[data-face-video]');
   const startButton = dialog.querySelector('[data-face-start]');
   const captureButton = dialog.querySelector('[data-face-capture]');
+  const sampleCount = mode === 'enroll' ? SAMPLE_COUNT : ATTENDANCE_VERIFY_SAMPLE_COUNT;
   let settled = false;
+  let preparing = false;
+  let capturing = false;
 
   return new Promise((resolve, reject) => {
     const finish = (value, error = null) => {
@@ -498,46 +516,60 @@ export function captureStaffAttendanceFace(options = {}) {
       }
     }, { once: true });
 
-    startButton.addEventListener('click', async () => {
-      setBusy(startButton, true, 'Preparing camera...');
-      try {
-        await Promise.all([startCamera(dialog), loadHuman(dialog)]);
-        if (!dialog.isConnected || !dialog.open) return;
-        captureButton.disabled = false;
-        setStatus(dialog, 'Camera and private face model are ready.', 'good');
-      } catch (error) {
-        stopCamera(video);
-        captureButton.disabled = true;
-        setStatus(dialog, formatCameraError(error), 'bad');
-      } finally {
-        setBusy(startButton, false);
-      }
-    });
-
-    captureButton.addEventListener('click', async () => {
+    const captureAndSubmit = async () => {
+      if (capturing || settled) return;
+      capturing = true;
       setBusy(captureButton, true, mode === 'enroll' ? 'Saving...' : 'Verifying...');
       try {
         const human = await loadHuman(dialog);
-        const descriptor = await captureDescriptor(dialog, human);
+        const descriptor = await captureDescriptor(dialog, human, sampleCount);
         const result = await staffAttendanceFaceRequest(mode === 'enroll' ? 'enroll' : 'verify', {
           modelId: MODEL_ID,
           descriptor,
-          sampleCount: SAMPLE_COUNT,
+          sampleCount,
           SiteId: options.siteId,
           Direction: options.direction,
           AttendanceProof: options.attendanceProof
         });
         setStatus(dialog, result.message, 'good');
-        window.setTimeout(() => finish(result), 250);
+        finish(result);
       } catch (error) {
         stopCamera(video);
         setStatus(dialog, formatCameraError(error), 'bad');
         captureButton.disabled = true;
       } finally {
-        setBusy(captureButton, false);
+        capturing = false;
+        if (captureButton.isConnected) setBusy(captureButton, false);
       }
-    });
+    };
+
+    const prepareCamera = async (captureAutomatically = false) => {
+      if (preparing || settled) return;
+      preparing = true;
+      setBusy(startButton, true, 'Preparing camera...');
+      try {
+        await Promise.all([startCamera(dialog), loadHuman(dialog)]);
+        if (!dialog.isConnected || !dialog.open) {
+          stopCamera(video);
+          return;
+        }
+        captureButton.disabled = false;
+        setStatus(dialog, captureAutomatically ? 'Camera ready. Blink once to verify.' : 'Camera and private face model are ready.', 'good');
+        if (captureAutomatically) await captureAndSubmit();
+      } catch (error) {
+        stopCamera(video);
+        captureButton.disabled = true;
+        setStatus(dialog, formatCameraError(error), 'bad');
+      } finally {
+        preparing = false;
+        if (startButton.isConnected) setBusy(startButton, false);
+      }
+    };
+
+    startButton.addEventListener('click', () => prepareCamera(false));
+    captureButton.addEventListener('click', captureAndSubmit);
 
     dialog.showModal();
+    void prepareCamera(mode === 'verify');
   });
 }

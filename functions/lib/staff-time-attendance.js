@@ -705,15 +705,46 @@ export async function saveAttendancePolicy(env, user, body = {}) {
   return { ok: true, policy, message: 'Daily work hours saved. Lateness, absence and overtime will now be calculated automatically.' };
 }
 
+async function getStaffAttendanceActionState(env, branchId, username, siteId) {
+  const storedPolicy = await getDocument(env, attendancePolicyPath(branchId), 'default');
+  const policy = normalizeAttendancePolicy(storedPolicy || { Active: 'NO' });
+  const today = localAttendanceParts(new Date(), policy.TimeZone);
+  const statePath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeState, branchId);
+  const dailyPath = dailyAttendancePath(branchId);
+  const dailyId = dailyAttendanceId(today.date, username);
+  const [site, storedState, existingDaily] = await Promise.all([
+    getDocument(env, churchCollectionPath(CHURCH_COLLECTIONS.staffAttendanceSites, branchId), siteId),
+    getDocument(env, statePath, safeChurchDocumentId(username)),
+    getDocument(env, dailyPath, dailyId)
+  ]);
+  if (!site || !activeValue(site.Active, true)) fail('The selected attendance location is inactive or unavailable.', 404);
+  const state = clean(existingDaily?.FirstClockIn)
+    ? clean(existingDaily?.LastClockOut) ? 'COMPLETED' : 'CLOCKED_IN'
+    : 'CLOCKED_OUT';
+  const todayState = clean(storedState?.AttendanceDate) === today.date ? storedState : {};
+  return {
+    policy,
+    today,
+    statePath,
+    dailyPath,
+    dailyId,
+    site,
+    storedState,
+    existingDaily,
+    state,
+    nextDirection: state === 'CLOCKED_IN' ? 'OUT' : state === 'CLOCKED_OUT' ? 'IN' : '',
+    presenceCheck: presenceCheckView(policy, todayState, state === 'CLOCKED_IN')
+  };
+}
+
 export async function clockStaffAttendance(env, user, body = {}, requestContext = {}) {
   const branchId = branchFor(user, body);
   const username = actorId(user);
   if (!username) fail('The signed-in staff account has no username.', 401);
   const siteId = safeChurchDocumentId(body.SiteId);
   if (!siteId) fail('Choose the attendance location.');
-  const workspace = await listStaffAttendance(env, user, body);
-  const site = workspace.sites.find((row) => safeChurchDocumentId(row.SiteId || row.__id) === siteId);
-  if (!site) fail('The selected attendance location is inactive or unavailable.', 404);
+  const workspace = await getStaffAttendanceActionState(env, branchId, username, siteId);
+  const site = workspace.site;
   const identityMethod = verifiedAttendanceIdentity(workspace.policy, requestContext.identityProof);
   const presence = evaluateAttendancePresence(site, body.Location || body, requestContext.clientIp || '');
   if (!presence.passed) {
@@ -728,8 +759,7 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
   if (!['IN', 'OUT'].includes(direction)) fail('Choose Clock in or Clock out.');
   if (direction !== expected) fail(expected === 'IN' ? 'You are already clocked out.' : 'You are already clocked in.', 409);
   const timestamp = nowIso();
-  const attendanceDate = calculateAttendanceMetrics(workspace.policy, { Direction: direction, Timestamp: timestamp }).Date;
-  const existingDaily = workspace.myDailyRecords.find((row) => clean(row.Date) === attendanceDate) || null;
+  const existingDaily = workspace.existingDaily;
   if (direction === 'IN' && clean(existingDaily?.FirstClockIn)) {
     fail('Today\'s first clock-in is already recorded and cannot be replaced by a repeated clock-in.', 409);
   }
@@ -771,7 +801,6 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
     WorkMinutes: daily.WorkMinutes
   });
   const eventPath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeEvents, branchId);
-  const statePath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeState, branchId);
   const nextPresenceDueAt = direction === 'IN' ? nextPresenceCheckAt(workspace.policy, timestamp) : '';
   const stateDocument = {
     Username: username,
@@ -789,13 +818,13 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
   await batchCommitDocuments(env, [
     { collectionPath: eventPath, documentId: eventId, data: event, exists: false },
     {
-      collectionPath: statePath,
+      collectionPath: workspace.statePath,
       documentId: safeChurchDocumentId(username),
       data: stateDocument,
-      ...(workspace.stateVersion ? { updateTime: workspace.stateVersion } : { exists: false })
+      ...(workspace.storedState?.__updateTime ? { updateTime: workspace.storedState.__updateTime } : { exists: false })
     },
     {
-      collectionPath: dailyAttendancePath(branchId),
+      collectionPath: workspace.dailyPath,
       documentId: daily.DailyId,
       data: daily,
       ...(existingDaily ? existingDaily.__updateTime ? { updateTime: existingDaily.__updateTime } : {} : { exists: false })
@@ -823,24 +852,10 @@ export async function recordPresenceCheck(env, user, body = {}, requestContext =
   if (!username) fail('The signed-in staff account has no username.', 401);
   const siteId = safeChurchDocumentId(body.SiteId);
   if (!siteId) fail('Choose the attendance location.');
-  const storedPolicy = await getDocument(env, attendancePolicyPath(branchId), 'default');
-  const policy = normalizeAttendancePolicy(storedPolicy || { Active: 'NO' });
-  const today = localAttendanceParts(new Date(), policy.TimeZone);
-  const statePath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeState, branchId);
-  const dailyPath = dailyAttendancePath(branchId);
-  const dailyId = dailyAttendanceId(today.date, username);
-  const [site, storedState, existingDaily] = await Promise.all([
-    getDocument(env, churchCollectionPath(CHURCH_COLLECTIONS.staffAttendanceSites, branchId), siteId),
-    getDocument(env, statePath, safeChurchDocumentId(username)),
-    getDocument(env, dailyPath, dailyId)
-  ]);
-  if (!site || !activeValue(site.Active, true)) fail('The selected attendance location is inactive or unavailable.', 404);
-  const attendanceState = clean(existingDaily?.FirstClockIn)
-    ? clean(existingDaily?.LastClockOut) ? 'COMPLETED' : 'CLOCKED_IN'
-    : 'CLOCKED_OUT';
-  if (attendanceState !== 'CLOCKED_IN') fail('Clock in before confirming your continued presence.', 409);
-  const todayState = clean(storedState?.AttendanceDate) === today.date ? storedState : {};
-  const currentPresenceCheck = presenceCheckView(policy, todayState, true);
+  const workspace = await getStaffAttendanceActionState(env, branchId, username, siteId);
+  if (workspace.state !== 'CLOCKED_IN') fail('Clock in before confirming your continued presence.', 409);
+  const { policy, today, site, storedState, existingDaily } = workspace;
+  const currentPresenceCheck = workspace.presenceCheck;
   if (!currentPresenceCheck.enabled) fail('Random presence confirmations are not enabled for this branch.', 409);
   if (!currentPresenceCheck.canConfirm) {
     fail(`Your next random presence confirmation is not due yet${currentPresenceCheck.dueAt ? ` (${currentPresenceCheck.dueAt})` : ''}.`, 409);
@@ -902,14 +917,14 @@ export async function recordPresenceCheck(env, user, body = {}, requestContext =
       exists: false
     },
     {
-      collectionPath: statePath,
+      collectionPath: workspace.statePath,
       documentId: safeChurchDocumentId(username),
       data: state,
       ...(storedState?.__updateTime ? { updateTime: storedState.__updateTime } : { exists: false })
     },
     {
-      collectionPath: dailyPath,
-      documentId: dailyId,
+      collectionPath: workspace.dailyPath,
+      documentId: workspace.dailyId,
       data: daily,
       ...(existingDaily.__updateTime ? { updateTime: existingDaily.__updateTime } : { exists: false })
     }

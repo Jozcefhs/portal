@@ -500,18 +500,54 @@ async function attendancePasskeyProof(siteId, direction) {
   return proof;
 }
 
+let attendanceFaceModulePromise = null;
+let attendanceFaceWarmupPromise = null;
+
+function attendanceFaceModule() {
+  if (!attendanceFaceModulePromise) {
+    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260807-attendance-speed').catch((error) => {
+      attendanceFaceModulePromise = null;
+      throw error;
+    });
+  }
+  return attendanceFaceModulePromise;
+}
+
+function warmAttendanceIdentity(policy, selectedMethod = '') {
+  const required = clean(policy?.IdentityVerification || 'NONE').toUpperCase();
+  const method = required === 'PASSKEY_OR_FACE' ? clean(selectedMethod).toUpperCase() : required;
+  if (required.includes('PASSKEY')) warmPasskeyCredentialManager();
+  if (method !== 'FACE') return;
+  if (!attendanceFaceWarmupPromise) {
+    attendanceFaceWarmupPromise = attendanceFaceModule()
+      .then((module) => module.preloadStaffAttendanceFace())
+      .catch(() => {
+        attendanceFaceWarmupPromise = null;
+        return null;
+      });
+  }
+}
+
 async function attendanceIdentityProof(policy, siteId, direction, selectedMethod = '') {
   const required = clean(policy?.IdentityVerification || 'NONE').toUpperCase();
   if (required === 'NONE') return '';
   const choice = clean(selectedMethod || document.getElementById('staffAttendanceIdentityMethod')?.value).toUpperCase();
   const method = required === 'PASSKEY_OR_FACE' ? choice || 'PASSKEY' : required;
   if (method === 'PASSKEY') return attendancePasskeyProof(siteId, direction);
-  const module = await import('./student-face-lookup.js?v=20260806-staff-attendance-face');
+  const module = await attendanceFaceModule();
   const result = await module.captureStaffAttendanceFace({ mode: 'verify', siteId, direction });
   if (!result) throw new Error('Face verification was cancelled.');
   const proof = clean(result.attendanceProof);
   if (!proof) throw new Error('Face recognition did not return an attendance proof.');
   return proof;
+}
+
+async function attendanceVerificationEvidence(policy, siteId, direction, selectedMethod = '') {
+  const [location, attendanceProof] = await Promise.all([
+    browserPosition().catch(() => ({})),
+    attendanceIdentityProof(policy, siteId, direction, selectedMethod)
+  ]);
+  return { location, attendanceProof };
 }
 
 function friendlyPasskeyError(error) {
@@ -1196,6 +1232,7 @@ function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
   const direction = clean(data?.nextDirection || (state === 'CLOCKED_IN' ? 'OUT' : 'IN')).toUpperCase();
   const sites = data?.sites || [];
   const policy = data?.policy || {};
+  warmAttendanceIdentity(policy);
   const identityMode = clean(policy.IdentityVerification || 'NONE').toUpperCase();
   const todaySchedule = data?.todaySchedule || {};
   const daily = data?.todayDaily || {};
@@ -1235,9 +1272,11 @@ function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
     </article>`;
   updateDashboardClockFace();
   const siteSelect = document.getElementById('dashboardAttendanceSite');
+  const identitySelect = document.getElementById('dashboardAttendanceIdentityMethod');
   siteSelect?.addEventListener('change', () => {
     try { window.localStorage.setItem(dashboardAttendanceSiteStorageKey(data?.branchId), clean(siteSelect.value)); } catch (_error) { /* Browser storage is optional. */ }
   });
+  identitySelect?.addEventListener('change', () => warmAttendanceIdentity(policy, identitySelect.value));
   document.getElementById('dashboardAttendanceClockButton')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
     const status = document.getElementById('dashboardAttendanceStatus');
@@ -1249,10 +1288,8 @@ function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
     const normalText = direction === 'OUT' ? 'Clock out' : 'Clock in';
     setButtonLoading(button, true, 'Verifying...', normalText);
     try {
-      let location = {};
-      try { location = await browserPosition(); } catch (_error) { location = {}; }
       const selectedMethod = clean(document.getElementById('dashboardAttendanceIdentityMethod')?.value);
-      const attendanceProof = await attendanceIdentityProof(policy, siteId, direction, selectedMethod);
+      const { location, attendanceProof } = await attendanceVerificationEvidence(policy, siteId, direction, selectedMethod);
       const result = await staffAttendanceRequest('clock', {
         SiteId: siteId,
         Direction: direction,
@@ -5225,6 +5262,7 @@ async function loadStaffAttendance() {
     const daySchedules = policy.DaySchedules || {};
     const todaySchedule = data.todaySchedule || daySchedules[data.todayAttendanceDay] || {};
     const identityMode = clean(policy.IdentityVerification || 'NONE').toUpperCase();
+    warmAttendanceIdentity(policy);
     const presenceCheck = data.presenceCheck || { enabled: false };
     const presenceStatusText = attendancePresenceStatusText(presenceCheck);
     const identityChoice = identityMode === 'PASSKEY_OR_FACE'
@@ -5405,6 +5443,8 @@ async function loadStaffAttendance() {
       { key: 'corrections', label: 'Corrections', icon: '\u270E', nodes: attendanceGroups.find((node) => /manual correction/i.test(node.textContent)) },
       { key: 'reports', label: 'Reports', icon: '\u03A3', count: attendanceReportRows.length, nodes: [attendanceGroups.find((node) => /HR attendance report/i.test(node.textContent)), ...workspaceTableNodes('Recent staff attendance')] }
     ]);
+    const attendanceIdentitySelect = document.getElementById('staffAttendanceIdentityMethod');
+    attendanceIdentitySelect?.addEventListener('change', () => warmAttendanceIdentity(policy, attendanceIdentitySelect.value));
 
     document.getElementById('refreshStaffAttendance')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', loadStaffAttendance));
     const attendanceReportForm = document.getElementById('staffAttendanceReportForm');
@@ -5504,27 +5544,30 @@ async function loadStaffAttendance() {
       const button = event.currentTarget;
       const status = document.getElementById('staffAttendanceStatus');
       const siteId = clean(document.getElementById('staffAttendanceSite')?.value);
+      let clockRecorded = false;
       if (!siteId) {
         setStatus(status, 'Choose the attendance location first.', 'bad');
         return;
       }
       setButtonLoading(button, true, 'Verifying...', nextDirection === 'IN' ? 'Clock in' : 'Clock out');
       try {
-        let location = {};
-        try { location = await browserPosition(); } catch (_error) { location = {}; }
-        const attendanceProof = await attendanceIdentityProof(policy, siteId, nextDirection);
+        const { location, attendanceProof } = await attendanceVerificationEvidence(policy, siteId, nextDirection);
         const result = await staffAttendanceRequest('clock', {
           SiteId: siteId,
           Direction: nextDirection,
           Location: location,
           AttendanceProof: attendanceProof
         });
-        await loadStaffAttendance();
-        setStatus(document.getElementById('staffAttendanceStatus') || dashboardStatus, result.message, 'ok');
+        clockRecorded = true;
+        setStatus(status || dashboardStatus, result.message, 'ok');
+        window.setTimeout(() => void loadStaffAttendance(), 0);
       } catch (error) {
         setStatus(status, error.message || String(error), 'bad');
       } finally {
-        if (button.isConnected) setButtonLoading(button, false, 'Verifying...', nextDirection === 'IN' ? 'Clock in' : 'Clock out');
+        if (button.isConnected) {
+          setButtonLoading(button, false, 'Verifying...', nextDirection === 'IN' ? 'Clock in' : 'Clock out');
+          if (clockRecorded) button.disabled = true;
+        }
       }
     });
     document.getElementById('staffPresenceButton')?.addEventListener('click', async (event) => {
@@ -5538,9 +5581,7 @@ async function loadStaffAttendance() {
       }
       setButtonLoading(button, true, 'Confirming...', 'Confirm presence');
       try {
-        let location = {};
-        try { location = await browserPosition(); } catch (_error) { location = {}; }
-        const attendanceProof = await attendanceIdentityProof(policy, siteId, 'CHECK');
+        const { location, attendanceProof } = await attendanceVerificationEvidence(policy, siteId, 'CHECK');
         const result = await staffAttendanceRequest('presence', {
           SiteId: siteId,
           Location: location,
@@ -5567,7 +5608,7 @@ async function loadStaffAttendance() {
       setButtonLoading(button, true, 'Verifying...', 'Enroll my face');
       try {
         const proof = await attendancePasskeyProof('SELF', 'ENROLL');
-        const module = await import('./student-face-lookup.js?v=20260806-staff-attendance-face');
+        const module = await attendanceFaceModule();
         const result = await module.captureStaffAttendanceFace({ mode: 'enroll', attendanceProof: proof });
         if (result) setStatus(status, result.message, 'ok');
       } catch (error) {
@@ -5583,7 +5624,7 @@ async function loadStaffAttendance() {
       setButtonLoading(button, true, 'Removing...', 'Remove face enrollment');
       try {
         const proof = await attendancePasskeyProof('SELF', 'REVOKE');
-        const module = await import('./student-face-lookup.js?v=20260806-staff-attendance-face');
+        const module = await attendanceFaceModule();
         const result = await module.revokeStaffAttendanceFace(proof);
         setStatus(status, result.message, 'ok');
       } catch (error) {

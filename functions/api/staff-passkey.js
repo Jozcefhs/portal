@@ -416,7 +416,9 @@ async function verifyAttendance(request, env, body) {
     return response({ ok: false, message: 'This attendance verification belongs to another staff account.' }, 403);
   }
   const credentialId = clean(body.credential?.id);
-  const stored = credentialId ? await findOneByField(env, 'staffPasskeys', 'CredentialId', credentialId) : null;
+  const stored = credentialId
+    ? await getDocument(env, 'staffPasskeys', await documentIdForCredential(credentialId))
+    : null;
   if (!stored || !isActive(stored.Active) || lower(stored.Username) !== lower(user.username)) {
     return response({ ok: false, message: 'This biometric credential is not linked to the signed-in staff account.' }, 401);
   }

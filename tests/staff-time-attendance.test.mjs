@@ -19,6 +19,16 @@ const portalCss = await readFile(new URL('../css/style.css', import.meta.url), '
 const attendanceSource = await readFile(new URL('../functions/lib/staff-time-attendance.js', import.meta.url), 'utf8');
 const attendanceApiSource = await readFile(new URL('../functions/api/staff-attendance.js', import.meta.url), 'utf8');
 const attendanceFaceSource = await readFile(new URL('../functions/api/staff-attendance-face.js', import.meta.url), 'utf8');
+const attendanceFaceUiSource = await readFile(new URL('../js/student-face-lookup.js', import.meta.url), 'utf8');
+const passkeyApiSource = await readFile(new URL('../functions/api/staff-passkey.js', import.meta.url), 'utf8');
+const attendanceActionStateSource = attendanceSource.slice(
+  attendanceSource.indexOf('async function getStaffAttendanceActionState'),
+  attendanceSource.indexOf('export async function clockStaffAttendance')
+);
+const clockHandlerSource = attendanceSource.slice(
+  attendanceSource.indexOf('export async function clockStaffAttendance'),
+  attendanceSource.indexOf('export async function recordPresenceCheck')
+);
 const presenceHandlerSource = attendanceSource.slice(
   attendanceSource.indexOf('export async function recordPresenceCheck'),
   attendanceSource.indexOf('export async function recordManualAttendance')
@@ -201,7 +211,7 @@ test('attendance UI and API enforce identity and random continued-presence check
   assert.match(adminJs, /PASSKEY_OR_FACE/);
   assert.match(adminJs, /Confirm presence/);
   assert.match(adminJs, /payload\.DaySchedules/);
-  assert.match(adminJs, /attendanceIdentityProof\(policy, siteId, nextDirection\)/);
+  assert.match(adminJs, /attendanceVerificationEvidence\(policy, siteId, nextDirection\)/);
   assert.match(attendanceApiSource, /readStaffAttendanceProof/);
   assert.match(attendanceApiSource, /action === 'presence' \? 'CHECK'/);
   assert.match(attendanceSource, /recordPresenceCheck/);
@@ -214,10 +224,12 @@ test('attendance UI and API enforce identity and random continued-presence check
 
 test('continued-presence confirmation uses focused reads and updates the UI without a full reload', () => {
   assert.doesNotMatch(presenceHandlerSource, /listStaffAttendance|listCollection|queryCollection/);
-  assert.equal((presenceHandlerSource.match(/getDocument\(/g) || []).length, 4);
-  assert.match(presenceHandlerSource, /getDocument\(env, attendancePolicyPath\(branchId\), 'default'\)/);
-  assert.match(presenceHandlerSource, /const \[site, storedState, existingDaily\] = await Promise\.all/);
-  assert.match(presenceHandlerSource, /getDocument\(env, dailyPath, dailyId\)/);
+  assert.match(presenceHandlerSource, /getStaffAttendanceActionState/);
+  assert.doesNotMatch(attendanceActionStateSource, /listStaffAttendance|listCollection|queryCollection/);
+  assert.equal((attendanceActionStateSource.match(/getDocument\(/g) || []).length, 4);
+  assert.match(attendanceActionStateSource, /getDocument\(env, attendancePolicyPath\(branchId\), 'default'\)/);
+  assert.match(attendanceActionStateSource, /const \[site, storedState, existingDaily\] = await Promise\.all/);
+  assert.match(attendanceActionStateSource, /getDocument\(env, dailyPath, dailyId\)/);
   assert.match(presenceHandlerSource, /batchCommitDocuments/);
   assert.doesNotMatch(presenceButtonSource, /loadStaffAttendance\(/);
   assert.match(presenceButtonSource, /updateAttendancePresenceCard/);
@@ -245,7 +257,7 @@ test('dashboard provides a live clock and protected attendance quick action', ()
   assert.match(adminJs, /window\.setInterval\(updateDashboardClockFace, 1000\)/);
   assert.match(adminJs, /staffAttendanceRequest\('quick'\)/);
   assert.match(adminJs, /id="dashboardAttendanceClockButton"/);
-  assert.match(adminJs, /attendanceIdentityProof\(policy, siteId, direction, selectedMethod\)/);
+  assert.match(adminJs, /attendanceVerificationEvidence\(policy, siteId, direction, selectedMethod\)/);
   assert.match(adminJs, /staffAttendanceRequest\('clock'/);
   assert.match(adminJs, /Location: location/);
   assert.match(attendanceSource, /export async function getStaffAttendanceQuickState/);
@@ -254,4 +266,19 @@ test('dashboard provides a live clock and protected attendance quick action', ()
   assert.match(portalCss, /\.dashboard-time-attendance\{display:grid/);
   assert.match(portalCss, /\.dashboard-digital-clock strong\{/);
   assert.match(portalCss, /@media\(max-width:760px\)\{\.dashboard-time-attendance\{grid-template-columns:1fr/);
+});
+
+test('mobile biometric and face attendance use the shortened verification path', () => {
+  assert.match(adminJs, /const \[location, attendanceProof\] = await Promise\.all/);
+  assert.match(adminJs, /browserPosition\(\)\.catch\(\(\) => \(\{\}\)\)/);
+  assert.match(adminJs, /warmAttendanceIdentity\(policy/);
+  assert.match(adminJs, /preloadStaffAttendanceFace/);
+  assert.match(clockHandlerSource, /getStaffAttendanceActionState/);
+  assert.doesNotMatch(clockHandlerSource, /listStaffAttendance|listCollection|queryCollection/);
+  assert.match(passkeyApiSource, /getDocument\(env, 'staffPasskeys', await documentIdForCredential\(credentialId\)\)/);
+  assert.match(attendanceFaceUiSource, /export function preloadStaffAttendanceFace/);
+  assert.match(attendanceFaceUiSource, /ATTENDANCE_VERIFY_SAMPLE_COUNT = 2/);
+  assert.match(attendanceFaceUiSource, /width: \{ ideal: 640 \}/);
+  assert.match(attendanceFaceUiSource, /void prepareCamera\(mode === 'verify'\)/);
+  assert.doesNotMatch(attendanceFaceUiSource, /window\.setTimeout\(\(\) => finish\(result\), 250\)/);
 });
