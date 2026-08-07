@@ -7,6 +7,8 @@ import {
 } from './firestore.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath } from './church-foundation.js';
 import { resolveOrganizationConfig } from './organization-config.js';
+import { requiredDeploymentIdentity } from './deployment-identity.js';
+import { effectiveBranchProfile } from './branch-profile-settings.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
 import { listSchoolCollection, safeScopeId, schoolSectionFor } from './school-scope.js';
 import { escapeEmailHtml, sendConfiguredEmail } from './email-service.js';
@@ -505,13 +507,14 @@ export function absolutePublicAssetUrl(env = {}, value = '', requestOrigin = '')
   return `${publicPortalUrl}/${source.replace(/^\/+/, '')}`;
 }
 
-async function loadIdentity(env, requestOrigin = '') {
-  const [organizationProfile, schoolProfile, documentBranding, webBranding] = await Promise.all([
+async function loadIdentity(env, requestOrigin = '', branchId = '') {
+  const [organizationProfile, defaultSchoolProfile, documentBranding, webBranding] = await Promise.all([
     getDocument(env, 'settings', 'organisationProfile').catch(() => ({})),
     getDocument(env, 'settings', 'schoolProfile').catch(() => ({})),
     getDocumentBranding(env).catch(() => ({})),
     getWebBranding(env).catch(() => ({}))
   ]);
+  const schoolProfile = await effectiveBranchProfile(env, defaultSchoolProfile, branchId);
   const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile: schoolProfile });
   const validDocumentBranding = documentBrandingMatchesDeployment(env, documentBranding)
     ? documentBranding
@@ -532,11 +535,14 @@ async function loadIdentity(env, requestOrigin = '') {
     ? `/api/document-logo${versionSuffix}`
     : (webLogoDataUrl ? `/api/web-logo${versionSuffix}` : clean(organizationProfile?.BrandLogoUrl));
   const schoolEdition = lower(organization.Edition) === 'school';
+  const branchScoped = Boolean(clean(branchId));
   return {
     ...organization,
-    Address: clean(schoolEdition ? schoolProfile?.SchoolAddress : organizationProfile?.Address),
-    Email: clean(schoolEdition ? schoolProfile?.SchoolEmail : organizationProfile?.Email),
-    Phone: clean(schoolEdition ? schoolProfile?.SchoolPhone : organizationProfile?.Phone),
+    Name: clean(branchScoped ? schoolProfile?.SchoolName : organization.Name) || organization.Name,
+    Code: clean(branchScoped ? schoolProfile?.SchoolCode : organization.Code) || organization.Code,
+    Address: clean((schoolEdition || branchScoped) ? schoolProfile?.SchoolAddress : organizationProfile?.Address),
+    Email: clean((schoolEdition || branchScoped) ? schoolProfile?.SchoolEmail : organizationProfile?.Email),
+    Phone: clean((schoolEdition || branchScoped) ? schoolProfile?.SchoolPhone : organizationProfile?.Phone),
     CurrentAcademicSession: clean(schoolEdition ? schoolProfile?.CurrentAcademicSession : ''),
     LogoDataUrl: logoDataUrl,
     LogoUrl: absolutePublicAssetUrl(env, configuredLogo, requestOrigin)
@@ -1423,7 +1429,8 @@ async function sendCorrespondence(env, user, body, scope, identity, authorizatio
       textContent: printable.fullText || printable.text,
       htmlContent: printable.emailHtml || printable.html,
       attachments: printable.emailAttachments,
-      senderProfile: 'executive'
+      senderProfile: 'executive',
+      branchId: existing.BranchId
     });
   } catch (error) {
     const failedAt = nowIso();
@@ -1540,12 +1547,13 @@ async function bootstrap(env, user, scope, capabilities, identity) {
 }
 
 export async function handleExecutiveOfficeAction(env, user, body = {}, options = {}) {
-  const identity = await loadIdentity(env, options.publicOrigin);
+  const deploymentEdition = requiredDeploymentIdentity(env).edition;
+  const scope = requestedScope(user, body, deploymentEdition);
+  const identity = await loadIdentity(env, options.publicOrigin, scope.branchId);
   if (identity.FeatureFlags?.executiveOffice === false) {
     throw inputError('The Executive Office feature is disabled for this subscription.', 403);
   }
   const capabilities = assertExecutiveAccess(user, identity.Edition);
-  const scope = requestedScope(user, body, identity.Edition);
   const action = lower(body.action || body.Action || 'bootstrap');
   if (action === 'bootstrap') return bootstrap(env, user, scope, capabilities, identity);
   if (action === 'search') {

@@ -3,10 +3,19 @@ const setupForm = document.getElementById('setupForm');
 const setupLoginStatus = document.getElementById('setupLoginStatus');
 const setupStatus = document.getElementById('setupStatus');
 const saveSetupButton = document.getElementById('saveSetupButton');
+const settingsScopeField = document.getElementById('settingsScope');
+const settingsBranchField = document.getElementById('settingsBranch');
+const settingsScopeSummary = document.getElementById('settingsScopeSummary');
+const settingsSaveScopeLabel = document.getElementById('settingsSaveScopeLabel');
+const resetBranchSettingsButton = document.getElementById('resetBranchSettings');
 let unlockedPassword = '';
 let webLogoDataUrl = '';
 let webLogoChanged = false;
 const fixedPlanUserLimits = { Free: 5, Starter: 5, Standard: 20, Professional: 50 };
+const organisationOnlyControlIds = [
+  'organisationEdition', 'nameFormat', 'webLogoFile', 'removeWebLogo',
+  'productKeyMode', 'googleDocumentsUrl', 'subscriptionPlan', 'userLimit'
+];
 
 function alignPlanUserLimit() {
   const planField = document.getElementById('subscriptionPlan');
@@ -65,47 +74,96 @@ function profileFromForm() {
   return profile;
 }
 
-async function loadProfile(password = '') {
+function populateBranchOptions(profile = {}) {
+  const current = settingsBranchField.value;
+  const branches = Array.isArray(profile.AvailableBranches) ? profile.AvailableBranches : [];
+  settingsBranchField.innerHTML = '';
+  branches.forEach((branch) => {
+    const option = document.createElement('option');
+    option.value = String(branch.Id || '').trim();
+    option.textContent = String(branch.Name || branch.Id || '').trim();
+    if (option.value) settingsBranchField.appendChild(option);
+  });
+  const preferred = profile.EffectiveBranchId || current || profile.ActiveBranchId;
+  if (preferred && [...settingsBranchField.options].some((option) => option.value === preferred)) {
+    settingsBranchField.value = preferred;
+  }
+}
+
+function applyProfile(profile = {}) {
+  populateBranchOptions(profile);
+  setField('schoolName', profile.SchoolName);
+  setField('schoolCode', profile.SchoolCode || 'DCA');
+  setField('schoolAddress', profile.SchoolAddress);
+  setField('organisationEdition', profile.OrganisationEdition || 'school');
+  setField('schoolEmail', profile.SchoolEmail);
+  setField('schoolPhone', profile.SchoolPhone);
+  setField('schoolSignatoryName', profile.SchoolSignatoryName);
+  setField('schoolSignatoryTitle', profile.SchoolSignatoryTitle);
+  setField('resultSignatoryName', profile.ResultSignatoryName);
+  setField('resultSignatoryTitle', profile.ResultSignatoryTitle);
+  setField('offerSignatoryName', profile.OfferSignatoryName);
+  setField('offerSignatoryTitle', profile.OfferSignatoryTitle);
+  setField('admissionSignatoryName', profile.AdmissionSignatoryName);
+  setField('admissionSignatoryTitle', profile.AdmissionSignatoryTitle);
+  setField('emailGreetingTemplate', profile.EmailGreetingTemplate || 'Dear Parent/Guardian,');
+  setField('nameFormat', profile.NameFormat || 'Surname, first name, middle name');
+  setField('portalHeadline', profile.PortalHeadline);
+  setField('portalSubheading', profile.PortalSubheading);
+  setField('portalNotice', profile.PortalNotice);
+  webLogoDataUrl = '';
+  webLogoChanged = false;
+  document.getElementById('webLogoPreview').src = profile.WebLogoUrl || 'images/Logo.png';
+  setField('resultDisplayMode', profile.ResultDisplayMode || 'subjects');
+  setField('showResultsOnline', profile.ShowResultsOnline || 'NO');
+  setField('productKeyMode', profile.ProductKeyMode || 'off');
+  setField('googleDocumentsUrl', profile.GoogleDocumentsUrl);
+  setField('subscriptionPlan', profile.SubscriptionPlan || 'Starter');
+  setField('userLimit', profile.UserLimit || 5);
+  updateSettingsScopeUI(profile);
+  alignPlanUserLimit();
+}
+
+function updateSettingsScopeUI(profile = {}) {
+  const branchMode = settingsScopeField.value === 'branch';
+  settingsBranchField.disabled = !branchMode;
+  resetBranchSettingsButton.hidden = !branchMode;
+  const branchName = settingsBranchField.selectedOptions[0]?.textContent || 'Selected branch';
+  const overrideCount = Array.isArray(profile.BranchOverrideFields) ? profile.BranchOverrideFields.length : 0;
+  settingsScopeSummary.textContent = branchMode
+    ? `${branchName} currently overrides ${overrideCount} field${overrideCount === 1 ? '' : 's'}; every other value is inherited automatically.`
+    : 'Edit the defaults inherited automatically by every branch.';
+  settingsSaveScopeLabel.textContent = branchMode ? `${branchName} overrides` : 'Organisation settings';
+  organisationOnlyControlIds.forEach((id) => {
+    const control = document.getElementById(id);
+    if (!control) return;
+    control.disabled = branchMode;
+    control.closest('.settings-section, .settings-field, .settings-logo-card')?.classList.toggle('settings-scope-locked', branchMode);
+  });
+  if (branchMode) {
+    webLogoDataUrl = '';
+    webLogoChanged = false;
+  }
+}
+
+async function loadProfile(password = '', { scope = settingsScopeField.value, branchId = settingsBranchField.value } = {}) {
   try {
     const response = password
       ? await fetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'load', password })
+          body: JSON.stringify({
+            action: 'load',
+            password,
+            SettingsScope: scope,
+            BranchId: scope === 'branch' ? branchId : ''
+          })
         })
       : await fetch('/api/settings');
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load setup.');
-    const profile = data.profile || {};
-    setField('schoolName', profile.SchoolName);
-    setField('schoolCode', profile.SchoolCode || 'DCA');
-    setField('schoolAddress', profile.SchoolAddress);
-    setField('organisationEdition', profile.OrganisationEdition || 'school');
-    setField('schoolEmail', profile.SchoolEmail);
-    setField('schoolPhone', profile.SchoolPhone);
-    setField('schoolSignatoryName', profile.SchoolSignatoryName);
-    setField('schoolSignatoryTitle', profile.SchoolSignatoryTitle);
-    setField('resultSignatoryName', profile.ResultSignatoryName);
-    setField('resultSignatoryTitle', profile.ResultSignatoryTitle);
-    setField('offerSignatoryName', profile.OfferSignatoryName);
-    setField('offerSignatoryTitle', profile.OfferSignatoryTitle);
-    setField('admissionSignatoryName', profile.AdmissionSignatoryName);
-    setField('admissionSignatoryTitle', profile.AdmissionSignatoryTitle);
-    setField('emailGreetingTemplate', profile.EmailGreetingTemplate || 'Dear Parent/Guardian,');
-    setField('nameFormat', profile.NameFormat || 'Surname, first name, middle name');
-    setField('portalHeadline', profile.PortalHeadline);
-    setField('portalSubheading', profile.PortalSubheading);
-    setField('portalNotice', profile.PortalNotice);
-    webLogoDataUrl = '';
-    webLogoChanged = false;
-    document.getElementById('webLogoPreview').src = profile.WebLogoUrl || 'images/Logo.png';
-    setField('resultDisplayMode', profile.ResultDisplayMode || 'subjects');
-    setField('showResultsOnline', profile.ShowResultsOnline || 'NO');
-    setField('productKeyMode', profile.ProductKeyMode || 'off');
-    setField('googleDocumentsUrl', profile.GoogleDocumentsUrl);
-    setField('subscriptionPlan', profile.SubscriptionPlan || 'Starter');
-    setField('userLimit', profile.UserLimit || 5);
-    alignPlanUserLimit();
+    applyProfile(data.profile || {});
+    return data.profile || {};
   } catch (error) {
     setStatus(error.message, 'bad');
     throw error;
@@ -185,12 +243,15 @@ setupForm.addEventListener('submit', async (event) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         password: unlockedPassword,
+        SettingsScope: settingsScopeField.value,
+        BranchId: settingsScopeField.value === 'branch' ? settingsBranchField.value : '',
         profile: profileFromForm()
       })
     });
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Setup could not be saved.');
-    setStatus('All changes saved.', 'ok');
+    applyProfile(data.profile || {});
+    setStatus(data.message || 'All changes saved.', 'ok');
   } catch (error) {
     setStatus(error.message, 'bad');
   } finally {
@@ -203,6 +264,48 @@ setupForm.addEventListener('input', () => {
 });
 
 document.getElementById('subscriptionPlan')?.addEventListener('change', alignPlanUserLimit);
+
+async function reloadSelectedSettingsScope() {
+  if (!unlockedPassword) return;
+  try {
+    setStatus('Loading the selected settings scope...', '');
+    await loadProfile(unlockedPassword);
+    setStatus(settingsScopeField.value === 'branch'
+      ? 'Branch-effective settings loaded. Change only the values this branch needs to override.'
+      : 'Organisation defaults loaded.', 'ok');
+  } catch (error) {
+    setStatus(error.message, 'bad');
+  }
+}
+
+settingsScopeField?.addEventListener('change', reloadSelectedSettingsScope);
+settingsBranchField?.addEventListener('change', reloadSelectedSettingsScope);
+
+resetBranchSettingsButton?.addEventListener('click', async () => {
+  const branchName = settingsBranchField.selectedOptions[0]?.textContent || 'this branch';
+  if (!window.confirm(`Reset ${branchName} so every setting inherits the organisation defaults?`)) return;
+  if (!window.DynamaxActionFeedback.begin(resetBranchSettingsButton, 'Resetting...')) return;
+  try {
+    const response = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'resetBranchOverrides',
+        password: unlockedPassword,
+        SettingsScope: 'branch',
+        BranchId: settingsBranchField.value
+      })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Branch overrides could not be reset.');
+    applyProfile(data.profile || {});
+    setStatus(data.message, 'ok');
+  } catch (error) {
+    setStatus(error.message, 'bad');
+  } finally {
+    window.DynamaxActionFeedback.end(resetBranchSettingsButton);
+  }
+});
 
 const settingsNavLinks = [...document.querySelectorAll('.settings-nav-link')];
 settingsNavLinks.forEach((link) => link.addEventListener('click', () => {

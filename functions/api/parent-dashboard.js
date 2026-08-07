@@ -35,6 +35,7 @@ import {
   removePushSubscription,
   savePushSubscription
 } from '../lib/firebase-messaging.js';
+import { effectiveBranchProfile } from '../lib/branch-profile-settings.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -929,7 +930,7 @@ function schoolResultsAreVisible(profile = {}) {
     profile.resultsOnline || profile.EntranceResultsOnline || profile.entranceResultsOnline);
 }
 
-async function getSchoolProfile(env) {
+async function getSchoolProfile(env, branchId = '') {
   try {
     const [profile, documentBranding, webBranding] = await Promise.all([
       getDocument(env, 'settings', 'schoolProfile'),
@@ -937,7 +938,7 @@ async function getSchoolProfile(env) {
       getWebBranding(env).catch(() => null)
     ]);
     if (profile) {
-      return {
+      return effectiveBranchProfile(env, {
         ...profile,
         ...(documentBranding || {}),
         DocumentLogoDataUrl: clean(documentBranding?.DocumentLogoDataUrl || webBranding?.WebLogoDataUrl),
@@ -946,7 +947,7 @@ async function getSchoolProfile(env) {
           'EntranceResultsOnline', 'entranceResultsOnline'
         ], clean(env.SHOW_RESULTS_ONLINE) || 'NO'),
         ResultDisplayMode: pick(profile, ['ResultDisplayMode', 'resultDisplayMode'], clean(env.RESULT_DISPLAY_MODE) || 'subjects')
-      };
+      }, branchId);
     }
     return {
         ShowResultsOnline: clean(env.SHOW_RESULTS_ONLINE) || 'NO',
@@ -1087,9 +1088,9 @@ async function getParentAdmissionDocument(env, body) {
   const code = clean(body.code || body.VerificationCode).toUpperCase();
   const accountRef = clean(body.accountRef || body.AccountRef || body.ApplicationReference);
   const documentType = lower(body.documentType || body.DocumentType);
-  const profile = await getSchoolProfile(env);
   const application = await resolveParentAdmissionApplication(env, body, email, code, accountRef);
   if (!application) { const err = new Error('That admission record is not linked to this parent.'); err.status = 404; throw err; }
+  const profile = await getSchoolProfile(env, application.BranchId || application.branchId);
   const resultStatus = lower(pick(application, ['ResultStatus', 'Status']));
   const admitted = resultStatus === 'admitted' || resultStatus === 'accepted';
   const now = new Date().toISOString();

@@ -69,6 +69,12 @@ import {
   accountingRowsForBranch,
   accountingWriteBranch
 } from '../lib/accounting-branch-scope.js';
+import {
+  BRANCH_PROFILE_OVERRIDE_FIELDS,
+  effectiveBranchProfile,
+  resetBranchProfileOverrides,
+  saveBranchProfileOverrides
+} from '../lib/branch-profile-settings.js';
 
 export const SCHOOL_FEES_TOTAL_CODE = 'SCHOOL_FEES_TOTAL';
 
@@ -2361,6 +2367,29 @@ async function saveBrevoSettings(env, body, deploymentIdentity = null) {
 }
 
 async function saveSchoolProfile(env, body, deploymentIdentity) {
+  const settingsScope = clean(body.SettingsScope || body.settingsScope).toLowerCase();
+  if (settingsScope === 'branch') {
+    const defaults = (await getSchoolProfile(env)).profile;
+    const submittedProfile = {};
+    BRANCH_PROFILE_OVERRIDE_FIELDS.forEach((field) => {
+      const camelField = `${field.charAt(0).toLowerCase()}${field.slice(1)}`;
+      if (Object.prototype.hasOwnProperty.call(body, field)) submittedProfile[field] = body[field];
+      else if (Object.prototype.hasOwnProperty.call(body, camelField)) submittedProfile[field] = body[camelField];
+    });
+    const saved = await saveBranchProfileOverrides(env, {
+      branchId: body.BranchId || body.branchId,
+      defaultProfile: defaults,
+      submittedProfile,
+      updatedBy: body.UserRole || body.UpdatedBy || body.updatedBy || 'Super Admin'
+    });
+    const result = await getSchoolProfile(env, { branchId: saved.branch.id });
+    return {
+      ...result,
+      message: saved.fields.length
+        ? `${saved.branch.name} overrides saved; remaining settings inherit the organisation defaults.`
+        : `${saved.branch.name} now inherits every organisation setting.`
+    };
+  }
   const existingOrganization = await getDocument(env, 'settings', 'organisationProfile').catch(() => null);
   const branchValues = Array.isArray(body.SchoolBranches) ? body.SchoolBranches : clean(body.SchoolBranches || body.schoolBranches || 'Main Branch').split(',');
   const requestedActiveBranchId = safeScopeId(body.ActiveBranchId || body.activeBranchId || 'main');
@@ -2482,7 +2511,7 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
   return { ok: true, message: 'Organisation profile saved to the database.', profile };
 }
 
-async function getSchoolProfile(env) {
+async function getSchoolProfile(env, options = {}) {
   const [profile, branding, storedStructure, documentSettings, organizationProfile] = await Promise.all([
     getDocument(env, 'settings', 'schoolProfile').catch(() => null),
     getWebBranding(env).catch(() => null),
@@ -2493,9 +2522,7 @@ async function getSchoolProfile(env) {
   const structure = storedStructure || await getSchoolStructure(env);
   const enabledDocuments = documentSettings?.Enabled && typeof documentSettings.Enabled === 'object' ? documentSettings.Enabled : {};
   const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile: profile || {} });
-  return {
-    ok: true,
-    profile: { ...(profile || {
+  const baseProfile = { ...(profile || {
       SchoolName: 'Dynamax',
       SchoolCode: normalizeSchoolCode(env.SCHOOL_CODE),
       SchoolAddress: '',
@@ -2550,7 +2577,11 @@ async function getSchoolProfile(env) {
       EnableMedicalReport: enabledDocuments.MedicalReport === false ? 'NO' : 'YES',
       EnableTransferCertificateDoc: enabledDocuments.TransferCertificateDoc === false ? 'NO' : 'YES',
       EnableAcceptanceForm: enabledDocuments.AcceptanceForm === false ? 'NO' : 'YES',
-      WebLogoConfigured: Boolean(branding && clean(branding.WebLogoDataUrl)), WebLogoUrl: branding && clean(branding.WebLogoDataUrl) ? '/api/web-logo' : '' }
+      AvailableBranches: (structure.Branches || []).map((row) => ({ Id: clean(row.Id), Name: clean(row.Name || row.Id) })),
+      WebLogoConfigured: Boolean(branding && clean(branding.WebLogoDataUrl)), WebLogoUrl: branding && clean(branding.WebLogoDataUrl) ? '/api/web-logo' : '' };
+  return {
+    ok: true,
+    profile: await effectiveBranchProfile(env, baseProfile, options.branchId || options.BranchId)
   };
 }
 
@@ -7261,7 +7292,15 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'saveSchoolProfile':
       return saveSchoolProfile(env, body, deploymentIdentity);
     case 'getSchoolProfile':
-      return getSchoolProfile(env);
+      return getSchoolProfile(env, body);
+    case 'resetBranchProfileOverrides': {
+      const reset = await resetBranchProfileOverrides(env, body.BranchId || body.branchId);
+      const result = await getSchoolProfile(env, { branchId: reset.branch.id });
+      return {
+        ...result,
+        message: `${reset.branch.name} now inherits every organisation setting.`
+      };
+    }
     case 'getPayableFees':
       return getPayableFees(env, body);
     case 'getClinicRecords':

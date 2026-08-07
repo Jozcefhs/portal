@@ -1,5 +1,6 @@
 import { getDocument } from './firestore.js';
 import { resolveOrganizationConfig } from './organization-config.js';
+import { effectiveBranchProfile } from './branch-profile-settings.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -75,10 +76,11 @@ export function resolveEmailSenderProfile(env = {}, {
             || schoolProfile?.ExecutiveReplyToEmail
             || brevo?.BrevoReplyToEmail
             || schoolProfile?.BrevoReplyToEmail
+            || schoolProfile?.SchoolEmail
           ))
     : (organisationScoped
-        ? (brevo?.OrganisationReplyToEmail || organizationProfile?.OrganisationReplyToEmail)
-        : (brevo?.BrevoReplyToEmail || schoolProfile?.BrevoReplyToEmail)));
+        ? (brevo?.OrganisationReplyToEmail || organizationProfile?.OrganisationReplyToEmail || organizationProfile?.SchoolEmail)
+        : (brevo?.BrevoReplyToEmail || schoolProfile?.BrevoReplyToEmail || schoolProfile?.SchoolEmail)));
   const replyToName = clean(useExecutiveProfile
     ? (organisationScoped
         ? (
@@ -93,11 +95,12 @@ export function resolveEmailSenderProfile(env = {}, {
             || schoolProfile?.ExecutiveReplyToName
             || brevo?.BrevoReplyToName
             || schoolProfile?.BrevoReplyToName
+            || schoolProfile?.SchoolName
             || senderName
           ))
     : (organisationScoped
-        ? (brevo?.OrganisationReplyToName || organizationProfile?.OrganisationReplyToName || senderName)
-        : (brevo?.BrevoReplyToName || schoolProfile?.BrevoReplyToName || senderName)));
+        ? (brevo?.OrganisationReplyToName || organizationProfile?.OrganisationReplyToName || organizationProfile?.SchoolName || senderName)
+        : (brevo?.BrevoReplyToName || schoolProfile?.BrevoReplyToName || schoolProfile?.SchoolName || senderName)));
   return {
     senderEmail,
     senderName,
@@ -352,7 +355,8 @@ export async function sendConfiguredEmail(env, {
   textContent,
   htmlContent,
   attachments = [],
-  senderProfile = ''
+  senderProfile = '',
+  branchId = ''
 }) {
   const recipient = clean(toEmail);
   if (!validEmail(recipient)) {
@@ -360,16 +364,20 @@ export async function sendConfiguredEmail(env, {
     err.status = 400;
     throw err;
   }
-  const [brevo, organizationProfile, schoolProfile] = await Promise.all([
+  const [brevo, organizationProfile, defaultSchoolProfile] = await Promise.all([
     getDocument(env, 'settings', 'brevo').catch(() => ({})),
     getDocument(env, 'settings', 'organisationProfile').catch(() => ({})),
     getDocument(env, 'settings', 'schoolProfile').catch(() => ({}))
   ]);
+  const schoolProfile = await effectiveBranchProfile(env, defaultSchoolProfile, branchId);
+  const effectiveOrganizationProfile = branchId
+    ? { ...organizationProfile, ...schoolProfile }
+    : organizationProfile;
   // Sender identities are deliberately scoped by edition. A faith or generic
   // organisation deployment never falls through to school sender fields.
   const senderProfileConfig = resolveEmailSenderProfile(env, {
     brevo,
-    organizationProfile,
+    organizationProfile: effectiveOrganizationProfile,
     schoolProfile,
     senderProfile
   });

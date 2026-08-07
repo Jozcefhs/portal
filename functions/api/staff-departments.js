@@ -283,7 +283,8 @@ async function sendClinicReport(env, body, user) {
   await sendConfiguredEmail(env, {
     toEmail: report.ParentEmail, toName: `Parent of ${report.StudentName}`, subject,
     textContent: `Dear Parent/Guardian,\n\n${intro}\n\nStudent: ${report.StudentName}\nClass: ${report.ClassName}\n\n${lines.join('\n')}\n\nSent by ${user.displayName || user.username}`,
-    htmlContent: `<div style="font-family:Arial,sans-serif"><p>Dear Parent/Guardian,</p><p>${escapeEmailHtml(intro)}</p><p><strong>Student:</strong> ${escapeEmailHtml(report.StudentName)}<br><strong>Class:</strong> ${escapeEmailHtml(report.ClassName)}</p><table style="border-collapse:collapse;width:100%" border="1" cellpadding="7"><thead><tr><th>Date</th><th>Complaint</th><th>Treatment</th><th>Disposition</th><th>Notes</th></tr></thead><tbody>${htmlRows}</tbody></table><p>Sent by ${escapeEmailHtml(user.displayName || user.username)}</p></div>`
+    htmlContent: `<div style="font-family:Arial,sans-serif"><p>Dear Parent/Guardian,</p><p>${escapeEmailHtml(intro)}</p><p><strong>Student:</strong> ${escapeEmailHtml(report.StudentName)}<br><strong>Class:</strong> ${escapeEmailHtml(report.ClassName)}</p><table style="border-collapse:collapse;width:100%" border="1" cellpadding="7"><thead><tr><th>Date</th><th>Complaint</th><th>Treatment</th><th>Disposition</th><th>Notes</th></tr></thead><tbody>${htmlRows}</tbody></table><p>Sent by ${escapeEmailHtml(user.displayName || user.username)}</p></div>`,
+    branchId: user.branchId || user.BranchId
   });
   await auditMessage(env, 'Clinic Parent Report', 'clinic', user, { AccountRef: report.AccountRef, StudentName: report.StudentName, RecipientEmail: report.ParentEmail, Subject: subject, RecordCount: report.RecordCount });
   return report;
@@ -308,7 +309,8 @@ async function sendMarketList(env, section, body, user) {
   await sendConfiguredEmail(env, {
     toEmail: supplierEmail, toName: supplierName, subject,
     textContent: `Dear ${supplierName},\n\nKindly supply the following items for ${CONFIG[section].label}:\n\n${lines.join('\n')}\n\nRequested by ${user.displayName || user.username}`,
-    htmlContent: `<div style="font-family:Arial,sans-serif"><p>Dear ${escapeEmailHtml(supplierName)},</p><p>Kindly supply the following items for <strong>${CONFIG[section].label}</strong>:</p><table style="border-collapse:collapse;width:100%" border="1" cellpadding="7"><thead><tr><th>S/No.</th><th>Item</th><th>Order quantity</th><th>Unit</th></tr></thead><tbody>${htmlRows}</tbody></table><p>Requested by ${escapeEmailHtml(user.displayName || user.username)}</p></div>`
+    htmlContent: `<div style="font-family:Arial,sans-serif"><p>Dear ${escapeEmailHtml(supplierName)},</p><p>Kindly supply the following items for <strong>${CONFIG[section].label}</strong>:</p><table style="border-collapse:collapse;width:100%" border="1" cellpadding="7"><thead><tr><th>S/No.</th><th>Item</th><th>Order quantity</th><th>Unit</th></tr></thead><tbody>${htmlRows}</tbody></table><p>Requested by ${escapeEmailHtml(user.displayName || user.username)}</p></div>`,
+    branchId: user.branchId || user.BranchId
   });
   await auditMessage(env, 'Supplier Market List', section, user, { RecipientEmail: supplierEmail, RecipientName: supplierName, Subject: subject, ItemCount: items.length, Items: items });
 }

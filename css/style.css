@@ -451,6 +451,11 @@ html[data-theme="dark"] .preference-switch-row:has(.preference-switch input:chec
 .settings-unlock-card button{min-height:46px;margin:0;white-space:nowrap}
 .settings-login-status{grid-column:2/-1;margin:0}
 .settings-layout{display:grid;grid-template-columns:255px minmax(0,1fr);gap:24px;align-items:start}
+.settings-scope-toolbar{grid-column:1/-1;display:grid;grid-template-columns:minmax(280px,1fr) minmax(190px,240px) minmax(180px,230px) auto;align-items:end;gap:12px;padding:15px 17px;border:1px solid #bfd3e7;border-radius:13px;background:linear-gradient(135deg,#f7fbff,#eef6ff);box-shadow:0 5px 18px rgba(15,52,89,.045)}
+.settings-scope-copy strong,.settings-scope-copy small{display:block}.settings-scope-copy strong{margin:2px 0 3px;color:#163a5e;font-size:15px}.settings-scope-copy small{color:#64748b;font-size:12px;line-height:1.4}
+.settings-scope-control span{display:block;margin-bottom:5px;color:#4b5f77;font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}.settings-scope-control select{min-height:41px;margin:0;padding:8px 10px;border-color:#b9cbe0;border-radius:8px;background:#fff;color:#172033;font-size:13px}
+.settings-scope-toolbar button{width:fit-content;min-height:41px;margin:0;white-space:nowrap}
+.settings-scope-locked{position:relative;opacity:.56}.settings-scope-locked::after{content:'Organisation-wide';position:absolute;top:10px;right:10px;padding:3px 6px;border-radius:5px;background:#e7edf4;color:#52667d;font-size:9px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
 .settings-sidebar{position:sticky;top:18px;padding:14px;border:1px solid #dbe3ef;border-radius:14px;background:#fff;box-shadow:0 5px 18px rgba(15,52,89,.045)}
 .settings-sidebar-title{padding:4px 8px 11px;color:#738196;font-size:11px;font-weight:800;letter-spacing:.09em;text-transform:uppercase}
 .settings-sidebar nav{display:grid;gap:4px}
@@ -491,6 +496,7 @@ html[data-theme="dark"] .preference-switch-row:has(.preference-switch input:chec
 
 @media (max-width:900px){
   .settings-shell{padding:16px 16px 40px}.settings-layout{grid-template-columns:1fr;gap:14px}
+  .settings-scope-toolbar{grid-template-columns:1fr 1fr}.settings-scope-copy{grid-column:1/-1}
   .settings-sidebar{position:sticky;top:0;z-index:15;overflow-x:auto;padding:8px}.settings-sidebar-title,.settings-sidebar-note{display:none}.settings-sidebar nav{display:flex;min-width:max-content}
   .settings-nav-link{grid-template-columns:26px auto;padding:8px}.settings-nav-link>span{width:25px;height:25px}.settings-nav-link small{display:none}
   .settings-unlock-card{grid-template-columns:auto 1fr;margin-top:42px}.settings-unlock-control{grid-column:1/-1}.settings-unlock-card button{grid-column:1/-1}.settings-login-status{grid-column:1/-1}
@@ -502,6 +508,7 @@ html[data-theme="dark"] .preference-switch-row:has(.preference-switch input:chec
   .settings-fields.two-column{grid-template-columns:1fr}.settings-fields .full-width{grid-column:auto}.settings-subsection-title{display:block}.settings-subsection-title span{display:block;margin-top:3px;text-align:left}
   .settings-logo-card{grid-template-columns:76px minmax(0,1fr);gap:13px;padding:13px}.settings-logo-preview{width:76px;height:76px}.settings-logo-preview img{max-width:58px;max-height:58px}
   .settings-savebar{bottom:7px;padding:11px}.settings-savebar button{width:fit-content}.settings-savebar strong{display:none}
+  .settings-scope-toolbar{grid-template-columns:1fr;padding:12px}.settings-scope-copy{grid-column:auto}.settings-scope-toolbar button{justify-self:start}
 }
 @media (max-width:430px){
   .settings-topbar{display:block}.settings-top-actions{grid-template-columns:1fr 1fr;margin-top:11px}.settings-link{justify-content:center}
@@ -1282,6 +1289,21 @@ html[data-theme="dark"] .settings-savebar{
   border-color:#3b5068;
   background:rgba(17,30,46,.96);
 }
+html[data-theme="dark"] .settings-scope-toolbar{
+  border-color:#3b5068;
+  background:linear-gradient(135deg,#111e2e,#14263a);
+  color:#edf4ff;
+}
+html[data-theme="dark"] .settings-scope-copy strong{color:#f4f8ff}
+html[data-theme="dark"] .settings-scope-copy small,
+html[data-theme="dark"] .settings-scope-control span{color:#a8b8cb}
+html[data-theme="dark"] .settings-scope-control select{
+  border-color:#3b5068;
+  background:#0d1a29;
+  color:#edf4ff;
+  color-scheme:dark;
+}
+html[data-theme="dark"] .settings-scope-locked::after{background:#26384d;color:#c9d9ea}
 
 /* Signed-in staff profile editing and photo avatar. */
 .staff-profile-trigger{

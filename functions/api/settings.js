@@ -14,6 +14,13 @@ import {
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { getWebBranding, saveWebBranding } from '../lib/web-branding.js';
+import { getSchoolStructure } from '../lib/school-scope.js';
+import {
+  assertConfiguredProfileBranch,
+  effectiveBranchProfile,
+  resetBranchProfileOverrides,
+  saveBranchProfileOverrides
+} from '../lib/branch-profile-settings.js';
 
 const PROFILE_CACHE_MS = 15000;
 let profileCache = null;
@@ -93,13 +100,14 @@ function defaultProfile(env) {
   };
 }
 
-function profileEnvironmentKey(env) {
+function profileEnvironmentKey(env, branchId = '') {
   const deployment = requiredDeploymentIdentity(env);
   return [
     clean(env.FIREBASE_PROJECT_ID),
     deployment.workspaceId,
     deployment.edition,
-    clean(env.TURNSTILE_SITE_KEY)
+    clean(env.TURNSTILE_SITE_KEY),
+    clean(branchId).toLowerCase()
   ].join('|');
 }
 
@@ -107,16 +115,18 @@ function invalidateProfileCache() {
   profileCache = null;
 }
 
-async function loadProfile(env) {
+async function loadProfile(env, options = {}) {
   const deployment = requiredDeploymentIdentity(env);
+  const requestedBranchId = clean(options.branchId || options.BranchId);
   let profile = defaultProfile(env);
   let savedOrganization = null;
   try {
     requireFirestoreEnv(env);
-    const [saved, storedOrganization, branding] = await Promise.all([
+    const [saved, storedOrganization, branding, structure] = await Promise.all([
       getDocument(env, 'settings', 'schoolProfile'),
       getDocument(env, 'settings', 'organisationProfile'),
-      getWebBranding(env)
+      getWebBranding(env),
+      getSchoolStructure(env)
     ]);
     savedOrganization = storedOrganization;
     if (saved) {
@@ -151,10 +161,22 @@ async function loadProfile(env) {
       profile.WebLogoConfigured = true;
       profile.WebLogoUrl = `/api/web-logo?v=${encodeURIComponent(clean(branding.UpdatedAt))}`;
     }
+    profile.AvailableBranches = (structure.Branches || []).map((row) => ({
+      Id: clean(row.Id),
+      Name: clean(row.Name || row.Id)
+    }));
+    if (requestedBranchId) {
+      await assertConfiguredProfileBranch(env, requestedBranchId);
+      profile = await effectiveBranchProfile(env, profile, requestedBranchId);
+    } else {
+      profile = await effectiveBranchProfile(env, profile);
+    }
   } catch (error) {
-    if (String(error?.code || '').startsWith('DEPLOYMENT_')) throw error;
+    const errorStatus = Number(error?.status || 0);
+    if (requestedBranchId || String(error?.code || '').startsWith('DEPLOYMENT_') || (errorStatus >= 400 && errorStatus < 500)) throw error;
     // Public pages should still load with environment/default values if Firestore is unavailable.
   }
+  if (!profile.SettingsScope) profile = await effectiveBranchProfile(env, profile);
   profile.TurnstileSiteKey = clean(env.TURNSTILE_SITE_KEY);
   profile.GoogleDocumentsUrl = selectDocumentStorageUrl({
     environmentUrl: env.GOOGLE_APPS_SCRIPT_URL,
@@ -171,11 +193,12 @@ async function loadProfile(env) {
 }
 
 async function getProfile(env, options = {}) {
-  const environmentKey = profileEnvironmentKey(env);
+  const branchId = clean(options.branchId || options.BranchId);
+  const environmentKey = profileEnvironmentKey(env, branchId);
   if (!options.fresh && profileCache && profileCache.environmentKey === environmentKey && profileCache.expiresAt > Date.now()) {
     return { ...profileCache.profile };
   }
-  const profile = await loadProfile(env);
+  const profile = await loadProfile(env, { branchId });
   profileCache = { environmentKey, profile, expiresAt: Date.now() + PROFILE_CACHE_MS };
   return { ...profile };
 }
@@ -186,7 +209,7 @@ function publicProfile(profile = {}) {
     'SchoolName', 'SchoolAddress', 'SchoolPhone', 'SchoolEmail',
     'PortalHeadline', 'PortalSubheading', 'PortalNotice', 'NameFormat',
     'ResultDisplayMode', 'ShowResultsOnline', 'DeclarationStatement',
-    'WebLogoUrl', 'WebLogoConfigured', 'TurnstileSiteKey'
+    'WebLogoUrl', 'WebLogoConfigured', 'TurnstileSiteKey', 'EffectiveBranchId'
   ];
   return Object.fromEntries(keys
     .filter((key) => profile[key] !== undefined)
@@ -195,7 +218,9 @@ function publicProfile(profile = {}) {
 
 export async function onRequestGet(context) {
   const metric = startRequestMetric(context.request, '/api/settings');
-  const profile = publicProfile(await getProfile(context.env));
+  const url = new URL(context.request.url);
+  const branchId = clean(url.searchParams.get('branchId') || url.searchParams.get('branch'));
+  const profile = publicProfile(await getProfile(context.env, { branchId }));
   finishRequestMetric(metric, { status: 200, action: 'load-public-profile' });
   return Response.json({ ok: true, profile }, {
     headers: {
@@ -213,13 +238,52 @@ export async function onRequestPost(context) {
     const deployment = requiredDeploymentIdentity(env);
     const body = await readJsonBody(request, { maxBytes: 1024 * 1024 });
     requireAdmin(env, body.password);
+    const settingsScope = clean(body.SettingsScope || body.settingsScope).toLowerCase();
+    const branchId = clean(body.BranchId || body.branchId);
     if (clean(body.action || body.Action) === 'load') {
       action = 'load-private-profile';
-      const profile = await getProfile(env, { fresh: true });
+      const profile = await getProfile(env, {
+        fresh: true,
+        branchId: settingsScope === 'branch' ? branchId : ''
+      });
       finishRequestMetric(metric, { status: 200, action });
       return Response.json({ ok: true, profile }, { headers: { 'Cache-Control': 'no-store' } });
     }
+    if (clean(body.action || body.Action) === 'resetBranchOverrides') {
+      action = 'reset-branch-profile-overrides';
+      requireFirestoreEnv(env);
+      const reset = await resetBranchProfileOverrides(env, branchId);
+      invalidateProfileCache();
+      const profile = await getProfile(env, { fresh: true, branchId: reset.branch.id });
+      finishRequestMetric(metric, { status: 200, action });
+      return Response.json({
+        ok: true,
+        message: `${reset.branch.name} now inherits every organisation setting.`,
+        profile
+      }, { headers: { 'Cache-Control': 'no-store' } });
+    }
     const incoming = body.profile || {};
+    if (settingsScope === 'branch') {
+      action = 'save-branch-profile-overrides';
+      requireFirestoreEnv(env);
+      const defaults = await getProfile(env, { fresh: true });
+      const saved = await saveBranchProfileOverrides(env, {
+        branchId,
+        defaultProfile: defaults,
+        submittedProfile: incoming,
+        updatedBy: incoming.UpdatedBy || 'Setup'
+      });
+      invalidateProfileCache();
+      const profile = await getProfile(env, { fresh: true, branchId: saved.branch.id });
+      finishRequestMetric(metric, { status: 200, action });
+      return Response.json({
+        ok: true,
+        message: saved.fields.length
+          ? `${saved.branch.name} overrides saved; all other values continue to inherit organisation defaults.`
+          : `${saved.branch.name} now inherits every organisation setting.`,
+        profile
+      }, { headers: { 'Cache-Control': 'no-store' } });
+    }
     assertDeploymentEditionSelection(
       deployment,
       incoming.OrganisationEdition || incoming.OrganizationEdition

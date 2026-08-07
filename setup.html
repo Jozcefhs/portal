@@ -40,6 +40,25 @@
     </form>
 
     <form id="setupForm" class="settings-layout" hidden>
+      <section class="settings-scope-toolbar" aria-labelledby="settingsScopeTitle">
+        <div class="settings-scope-copy">
+          <p class="settings-eyebrow">Configuration scope</p>
+          <strong id="settingsScopeTitle">Organisation defaults with branch overrides</strong>
+          <small id="settingsScopeSummary">Edit the defaults inherited by every branch.</small>
+        </div>
+        <label class="settings-scope-control" for="settingsScope">
+          <span>Editing</span>
+          <select id="settingsScope">
+            <option value="organisation">Organisation defaults</option>
+            <option value="branch">Selected branch overrides</option>
+          </select>
+        </label>
+        <label class="settings-scope-control" for="settingsBranch">
+          <span>Branch</span>
+          <select id="settingsBranch" disabled></select>
+        </label>
+        <button id="resetBranchSettings" class="settings-text-button" type="button" hidden>Reset overrides</button>
+      </section>
       <aside class="settings-sidebar">
         <div class="settings-sidebar-title">School settings</div>
         <nav aria-label="Settings sections">
@@ -270,7 +289,7 @@
         </section>
 
         <div class="settings-savebar">
-          <div><strong>Organisation settings</strong><p id="setupStatus" class="status">Review your changes before saving.</p></div>
+          <div><strong id="settingsSaveScopeLabel">Organisation settings</strong><p id="setupStatus" class="status">Review your changes before saving.</p></div>
           <button id="saveSetupButton" type="submit">Save changes</button>
         </div>
       </div>
@@ -279,6 +298,6 @@
 
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
-  <script src="js/setup.js?v=20260807-free-trial"></script>
+  <script src="js/setup.js?v=20260807-branch-overrides"></script>
 </body>
 </html>
