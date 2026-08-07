@@ -18,7 +18,7 @@ const ATTENDANCE_ADMIN_ROLES = new Set([
 const REPORT_ROLES = new Set([...MANAGE_ROLES, 'Pastor', 'Treasurer', 'Auditor']);
 const ATTENDANCE_REPORT_LIMIT = 5000;
 const DAY_KEYS = Object.freeze(['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']);
-const IDENTITY_VERIFICATION_MODES = new Set(['NONE', 'PASSKEY', 'FACE', 'PASSKEY_OR_FACE']);
+const IDENTITY_VERIFICATION_MODES = new Set(['NONE', 'PASSKEY']);
 const PRESENCE_CHECK_MODES = new Set(['NONE', 'RANDOM']);
 const DEFAULT_ATTENDANCE_POLICY = Object.freeze({
   ResumptionTime: '08:00',
@@ -178,7 +178,10 @@ export function normalizeAttendancePolicy(input = {}, existing = {}) {
   } catch (_error) {
     fail('Enter a valid time zone, for example Africa/Lagos.');
   }
-  const identityVerification = clean(input.IdentityVerification ?? existing.IdentityVerification ?? DEFAULT_ATTENDANCE_POLICY.IdentityVerification).toUpperCase();
+  const requestedIdentityVerification = clean(input.IdentityVerification ?? existing.IdentityVerification ?? DEFAULT_ATTENDANCE_POLICY.IdentityVerification).toUpperCase();
+  const identityVerification = ['FACE', 'PASSKEY_OR_FACE'].includes(requestedIdentityVerification)
+    ? 'PASSKEY'
+    : requestedIdentityVerification;
   if (!IDENTITY_VERIFICATION_MODES.has(identityVerification)) fail('Choose a valid attendance identity verification method.');
   const presenceCheckMode = clean(input.PresenceCheckMode ?? existing.PresenceCheckMode ?? DEFAULT_ATTENDANCE_POLICY.PresenceCheckMode).toUpperCase();
   if (!PRESENCE_CHECK_MODES.has(presenceCheckMode)) fail('Choose a valid presence-check mode.');
@@ -347,20 +350,10 @@ function verifiedAttendanceIdentity(policy = {}, proof = null) {
   const required = clean(policy.IdentityVerification || 'NONE').toUpperCase();
   if (required === 'NONE') return 'Session identity';
   const method = lower(proof?.method);
-  const accepted = required === 'PASSKEY'
-    ? method === 'passkey'
-    : required === 'FACE'
-      ? method === 'face'
-      : ['passkey', 'face'].includes(method);
-  if (!accepted) {
-    const label = required === 'PASSKEY'
-      ? 'device biometric'
-      : required === 'FACE'
-        ? 'live face recognition'
-        : 'device biometric or live face recognition';
-    fail(`Verify your identity with ${label} before completing this attendance action.`, 403);
+  if (required !== 'PASSKEY' || method !== 'passkey') {
+    fail('Verify your identity with the device unlock prompt before completing this attendance action.', 403);
   }
-  return method === 'face' ? 'Live face recognition' : 'Passkey biometric';
+  return 'Device unlock';
 }
 
 async function ipFingerprint(value) {
@@ -690,10 +683,6 @@ export async function saveAttendancePolicy(env, user, body = {}) {
   const branchId = branchFor(user, body);
   const existing = await getDocument(env, attendancePolicyPath(branchId), 'default').catch(() => null);
   const normalized = normalizeAttendancePolicy(body, existing || {});
-  if (normalized.IdentityVerification.includes('FACE') &&
-      (!activeValue(env.STAFF_ATTENDANCE_FACE_ENABLED, true) || clean(env.FACE_TEMPLATE_ENCRYPTION_KEY).length < 24)) {
-    fail('Configure FACE_TEMPLATE_ENCRYPTION_KEY and enable staff face attendance before requiring face recognition.', 503);
-  }
   const policy = {
     PolicyId: 'default',
     BranchId: branchId,

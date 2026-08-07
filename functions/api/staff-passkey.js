@@ -297,11 +297,11 @@ async function attendanceOptions(request, env, body) {
   const direction = clean(body.direction).toUpperCase();
   const siteId = clean(body.siteId);
   if (!siteId || !['IN', 'OUT', 'CHECK', 'ENROLL', 'REVOKE'].includes(direction)) {
-    return response({ ok: false, message: 'The attendance biometric request is invalid.' }, 400);
+    return response({ ok: false, message: 'The attendance device-unlock request is invalid.' }, 400);
   }
   const credentials = (await userPasskeys(env, user.username)).filter((item) => isActive(item.Active));
   if (!credentials.length) {
-    return response({ ok: false, message: 'Set up biometric sign-in before using biometric attendance verification.' }, 400);
+    return response({ ok: false, message: 'Set up device unlock before using protected attendance verification.' }, 400);
   }
   const rp = relyingPartySettings(request, env);
   const options = await generateAuthenticationOptions({
@@ -437,7 +437,7 @@ async function verifyAttendance(request, env, body) {
     }
   });
   if (!verification.verified) {
-    return response({ ok: false, message: 'Attendance biometric verification failed.' }, 401);
+    return response({ ok: false, message: 'Attendance device-unlock verification failed.' }, 401);
   }
   await updateCredentialUsage(env, stored, verification.authenticationInfo.newCounter);
   const proof = await createStaffAttendanceProof(env, user, {
@@ -447,9 +447,9 @@ async function verifyAttendance(request, env, body) {
   });
   return response({
     ok: true,
-    message: 'Identity verified for this attendance action.',
+    message: 'Device unlock verified for this attendance action.',
     attendanceProof: proof,
-    method: 'Passkey biometric'
+    method: 'Device unlock'
   });
 }
 

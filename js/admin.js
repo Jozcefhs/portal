@@ -490,62 +490,35 @@ async function passkeyRequest(action, extra = {}) {
 async function attendancePasskeyProof(siteId, direction) {
   const started = await passkeyRequest('attendance-options', { siteId, direction });
   const credential = await getPasskeyCredential(started.options);
-  if (!credential) throw new Error('No biometric credential was returned.');
+  if (!credential) throw new Error('The device unlock prompt did not return a credential.');
   const completed = await passkeyRequest('attendance-verify', {
     ceremonyId: started.ceremonyId,
     credential: credentialToJSON(credential)
   });
   const proof = clean(completed.attendanceProof);
-  if (!proof) throw new Error('Biometric verification did not return an attendance proof.');
+  if (!proof) throw new Error('Device unlock verification did not return an attendance proof.');
   return proof;
 }
 
-let attendanceFaceModulePromise = null;
-let attendanceFaceWarmupPromise = null;
-
-function attendanceFaceModule() {
-  if (!attendanceFaceModulePromise) {
-    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260807-attendance-speed').catch((error) => {
-      attendanceFaceModulePromise = null;
-      throw error;
-    });
-  }
-  return attendanceFaceModulePromise;
-}
-
-function warmAttendanceIdentity(policy, selectedMethod = '') {
+function warmAttendanceIdentity(policy) {
   const required = clean(policy?.IdentityVerification || 'NONE').toUpperCase();
-  const method = required === 'PASSKEY_OR_FACE' ? clean(selectedMethod).toUpperCase() : required;
-  if (required.includes('PASSKEY')) warmPasskeyCredentialManager();
-  if (method !== 'FACE') return;
-  if (!attendanceFaceWarmupPromise) {
-    attendanceFaceWarmupPromise = attendanceFaceModule()
-      .then((module) => module.preloadStaffAttendanceFace())
-      .catch(() => {
-        attendanceFaceWarmupPromise = null;
-        return null;
-      });
-  }
+  if (required !== 'NONE') warmPasskeyCredentialManager();
 }
 
-async function attendanceIdentityProof(policy, siteId, direction, selectedMethod = '') {
+async function attendanceIdentityProof(policy, siteId, direction) {
   const required = clean(policy?.IdentityVerification || 'NONE').toUpperCase();
   if (required === 'NONE') return '';
-  const choice = clean(selectedMethod || document.getElementById('staffAttendanceIdentityMethod')?.value).toUpperCase();
-  const method = required === 'PASSKEY_OR_FACE' ? choice || 'PASSKEY' : required;
-  if (method === 'PASSKEY') return attendancePasskeyProof(siteId, direction);
-  const module = await attendanceFaceModule();
-  const result = await module.captureStaffAttendanceFace({ mode: 'verify', siteId, direction });
-  if (!result) throw new Error('Face verification was cancelled.');
-  const proof = clean(result.attendanceProof);
-  if (!proof) throw new Error('Face recognition did not return an attendance proof.');
-  return proof;
+  try {
+    return await attendancePasskeyProof(siteId, direction);
+  } catch (error) {
+    throw new Error(friendlyDeviceUnlockError(error));
+  }
 }
 
-async function attendanceVerificationEvidence(policy, siteId, direction, selectedMethod = '') {
+async function attendanceVerificationEvidence(policy, siteId, direction) {
   const [location, attendanceProof] = await Promise.all([
     browserPosition().catch(() => ({})),
-    attendanceIdentityProof(policy, siteId, direction, selectedMethod)
+    attendanceIdentityProof(policy, siteId, direction)
   ]);
   return { location, attendanceProof };
 }
@@ -555,6 +528,13 @@ function friendlyPasskeyError(error) {
   if (error?.name === 'InvalidStateError') return 'This device is already registered for biometric sign-in.';
   if (error?.name === 'SecurityError') return 'Biometric sign-in requires a secure HTTPS connection.';
   if (retryableCredentialManagerError(error)) return 'Your device credential manager could not open. Please try again or use your password.';
+  return error?.message || String(error);
+}
+
+function friendlyDeviceUnlockError(error) {
+  if (error?.name === 'NotAllowedError') return 'Device unlock was cancelled or timed out.';
+  if (error?.name === 'SecurityError') return 'Device unlock requires a secure HTTPS connection.';
+  if (retryableCredentialManagerError(error)) return 'The device unlock prompt could not open. Please try again.';
   return error?.message || String(error);
 }
 
@@ -1233,7 +1213,7 @@ function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
   const sites = data?.sites || [];
   const policy = data?.policy || {};
   warmAttendanceIdentity(policy);
-  const identityMode = clean(policy.IdentityVerification || 'NONE').toUpperCase();
+  const identityMode = clean(policy.IdentityVerification || 'NONE').toUpperCase() === 'NONE' ? 'NONE' : 'PASSKEY';
   const todaySchedule = data?.todaySchedule || {};
   const daily = data?.todayDaily || {};
   let savedSiteId = '';
@@ -1245,9 +1225,7 @@ function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
   const timeNote = todaySchedule.Enabled
     ? `${clean(todaySchedule.ResumptionTime)}-${clean(todaySchedule.ClosingTime)}`
     : 'No work schedule for today';
-  const identityControl = identityMode === 'PASSKEY_OR_FACE'
-    ? `<label>Verify with<select id="dashboardAttendanceIdentityMethod"><option value="PASSKEY">Device biometric</option><option value="FACE">Live face</option></select></label>`
-    : `<small>${identityMode === 'PASSKEY' ? 'Device biometric required' : identityMode === 'FACE' ? 'Live face required' : 'Location/network verification'}</small>`;
+  const identityControl = `<small>${identityMode === 'PASSKEY' ? 'Device unlock required' : 'Location/network verification'}</small>`;
   dashboardClockEl.innerHTML = `
     <article class="dashboard-digital-clock">
       <small>${dashboardClockTimeZone ? escapeHtml(dashboardClockTimeZone) : 'Local time'}</small>
@@ -1272,11 +1250,9 @@ function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
     </article>`;
   updateDashboardClockFace();
   const siteSelect = document.getElementById('dashboardAttendanceSite');
-  const identitySelect = document.getElementById('dashboardAttendanceIdentityMethod');
   siteSelect?.addEventListener('change', () => {
     try { window.localStorage.setItem(dashboardAttendanceSiteStorageKey(data?.branchId), clean(siteSelect.value)); } catch (_error) { /* Browser storage is optional. */ }
   });
-  identitySelect?.addEventListener('change', () => warmAttendanceIdentity(policy, identitySelect.value));
   document.getElementById('dashboardAttendanceClockButton')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
     const status = document.getElementById('dashboardAttendanceStatus');
@@ -1288,8 +1264,7 @@ function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
     const normalText = direction === 'OUT' ? 'Clock out' : 'Clock in';
     setButtonLoading(button, true, 'Verifying...', normalText);
     try {
-      const selectedMethod = clean(document.getElementById('dashboardAttendanceIdentityMethod')?.value);
-      const { location, attendanceProof } = await attendanceVerificationEvidence(policy, siteId, direction, selectedMethod);
+      const { location, attendanceProof } = await attendanceVerificationEvidence(policy, siteId, direction);
       const result = await staffAttendanceRequest('clock', {
         SiteId: siteId,
         Direction: direction,
@@ -5261,17 +5236,13 @@ async function loadStaffAttendance() {
     const attendanceDays = [['MON', 'Monday'], ['TUE', 'Tuesday'], ['WED', 'Wednesday'], ['THU', 'Thursday'], ['FRI', 'Friday'], ['SAT', 'Saturday'], ['SUN', 'Sunday']];
     const daySchedules = policy.DaySchedules || {};
     const todaySchedule = data.todaySchedule || daySchedules[data.todayAttendanceDay] || {};
-    const identityMode = clean(policy.IdentityVerification || 'NONE').toUpperCase();
+    const identityMode = clean(policy.IdentityVerification || 'NONE').toUpperCase() === 'NONE' ? 'NONE' : 'PASSKEY';
     warmAttendanceIdentity(policy);
     const presenceCheck = data.presenceCheck || { enabled: false };
     const presenceStatusText = attendancePresenceStatusText(presenceCheck);
-    const identityChoice = identityMode === 'PASSKEY_OR_FACE'
-      ? `<label>Identity method <select id="staffAttendanceIdentityMethod"><option value="PASSKEY">Device biometric</option><option value="FACE">Live face recognition</option></select></label>`
-      : identityMode === 'PASSKEY'
-        ? '<input id="staffAttendanceIdentityMethod" type="hidden" value="PASSKEY"><small>Device biometric verification is required.</small>'
-        : identityMode === 'FACE'
-          ? '<input id="staffAttendanceIdentityMethod" type="hidden" value="FACE"><small>Live face recognition is required.</small>'
-          : '<input id="staffAttendanceIdentityMethod" type="hidden" value="NONE"><small>Location or approved network verification is required.</small>';
+    const identityChoice = identityMode === 'PASSKEY'
+      ? '<input id="staffAttendanceIdentityMethod" type="hidden" value="PASSKEY"><small>Unlock this device with its configured PIN, password or secure screen-lock method.</small>'
+      : '<input id="staffAttendanceIdentityMethod" type="hidden" value="NONE"><small>Location or approved network verification is required.</small>';
     const myDailyRecords = data.myDailyRecords || [];
     const latestDaily = myDailyRecords.find((row) => clean(row.Date) === clean(data.todayAttendanceDate)) || null;
     const scheduleActive = clean(policy.Active).toUpperCase() !== 'NO';
@@ -5297,7 +5268,7 @@ async function loadStaffAttendance() {
           ${identityChoice}
           <button type="button" id="staffClockButton" ${sites.length && !stateComplete ? '' : 'disabled'}>${stateComplete ? 'Completed' : nextDirection === 'IN' ? 'Clock in' : 'Clock out'}</button>
         </div>
-        ${identityMode !== 'NONE' ? `<div class="attendance-security-actions"><button type="button" class="secondary" id="setupAttendancePasskey">Set up device biometric</button>${identityMode.includes('FACE') ? '<button type="button" class="secondary" id="enrollAttendanceFace">Enroll my face</button><button type="button" class="secondary danger" id="removeAttendanceFace">Remove face enrollment</button>' : ''}</div>` : ''}
+        ${identityMode !== 'NONE' ? '<div class="attendance-security-actions"><button type="button" class="secondary" id="setupAttendancePasskey">Set up device unlock</button></div>' : ''}
         ${presenceCheck.enabled && stateIn ? `<div class="attendance-presence-check ${presenceCheck.status === 'OVERDUE' ? 'is-overdue' : presenceCheck.status === 'DUE' ? 'is-due' : ''}"><div><strong>Random presence confirmation</strong><small>${escapeHtml(presenceStatusText)}</small></div><button type="button" id="staffPresenceButton" ${presenceCheck.canConfirm ? '' : 'disabled'}>Confirm presence</button></div>` : ''}
         <p class="status" id="staffAttendanceStatus"></p>
       </section>
@@ -5342,8 +5313,8 @@ async function loadStaffAttendance() {
             <label class="check-row config-switch"><input type="checkbox" name="AutoRecordAbsence" value="YES" ${clean(policy.AutoRecordAbsence).toUpperCase() !== 'NO' ? 'checked' : ''}><span>Automatically record absence after closing time when there is no clock-in</span></label>
           </section>
           <section class="attendance-settings-panel" id="attendancePolicyPanelIdentity" role="tabpanel" aria-labelledby="attendancePolicyTabIdentity" data-attendance-policy-panel="identity" hidden>
-            <div class="config-grid"><label>Clock identity verification <select name="IdentityVerification"><option value="NONE"${selectedOption(identityMode, 'NONE')}>Location/network only</option><option value="PASSKEY"${selectedOption(identityMode, 'PASSKEY')}>Device biometric required</option><option value="FACE"${selectedOption(identityMode, 'FACE')}>Live face recognition required</option><option value="PASSKEY_OR_FACE"${selectedOption(identityMode, 'PASSKEY_OR_FACE')}>Device biometric or face</option></select></label></div>
-            <p class="attendance-settings-note"><strong>Recommendation:</strong> use live face recognition for the strongest protection against shared login details, and supervise each staff member's first face enrollment.</p>
+            <div class="config-grid"><label>Clock identity verification <select name="IdentityVerification"><option value="NONE"${selectedOption(identityMode, 'NONE')}>Location/network only</option><option value="PASSKEY"${selectedOption(identityMode, 'PASSKEY')}>Device unlock required</option></select></label></div>
+            <p class="attendance-settings-note"><strong>Device unlock:</strong> the phone or computer presents its secure screen-lock prompt. Depending on the device, that may be a PIN, password, fingerprint or built-in face unlock.</p>
           </section>
           <section class="attendance-settings-panel" id="attendancePolicyPanelPresence" role="tabpanel" aria-labelledby="attendancePolicyTabPresence" data-attendance-policy-panel="presence" hidden>
             <div class="config-grid">
@@ -5443,9 +5414,6 @@ async function loadStaffAttendance() {
       { key: 'corrections', label: 'Corrections', icon: '\u270E', nodes: attendanceGroups.find((node) => /manual correction/i.test(node.textContent)) },
       { key: 'reports', label: 'Reports', icon: '\u03A3', count: attendanceReportRows.length, nodes: [attendanceGroups.find((node) => /HR attendance report/i.test(node.textContent)), ...workspaceTableNodes('Recent staff attendance')] }
     ]);
-    const attendanceIdentitySelect = document.getElementById('staffAttendanceIdentityMethod');
-    attendanceIdentitySelect?.addEventListener('change', () => warmAttendanceIdentity(policy, attendanceIdentitySelect.value));
-
     document.getElementById('refreshStaffAttendance')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', loadStaffAttendance));
     const attendanceReportForm = document.getElementById('staffAttendanceReportForm');
     attendanceReportForm?.addEventListener('submit', async (event) => {
@@ -5602,37 +5570,6 @@ async function loadStaffAttendance() {
       }
     });
     document.getElementById('setupAttendancePasskey')?.addEventListener('click', () => passkeySetupButton.click());
-    document.getElementById('enrollAttendanceFace')?.addEventListener('click', async (event) => {
-      const button = event.currentTarget;
-      const status = document.getElementById('staffAttendanceStatus');
-      setButtonLoading(button, true, 'Verifying...', 'Enroll my face');
-      try {
-        const proof = await attendancePasskeyProof('SELF', 'ENROLL');
-        const module = await attendanceFaceModule();
-        const result = await module.captureStaffAttendanceFace({ mode: 'enroll', attendanceProof: proof });
-        if (result) setStatus(status, result.message, 'ok');
-      } catch (error) {
-        setStatus(status, friendlyPasskeyError(error), 'bad');
-      } finally {
-        if (button.isConnected) setButtonLoading(button, false, 'Verifying...', 'Enroll my face');
-      }
-    });
-    document.getElementById('removeAttendanceFace')?.addEventListener('click', async (event) => {
-      if (!window.confirm('Remove your encrypted attendance face enrollment?')) return;
-      const button = event.currentTarget;
-      const status = document.getElementById('staffAttendanceStatus');
-      setButtonLoading(button, true, 'Removing...', 'Remove face enrollment');
-      try {
-        const proof = await attendancePasskeyProof('SELF', 'REVOKE');
-        const module = await attendanceFaceModule();
-        const result = await module.revokeStaffAttendanceFace(proof);
-        setStatus(status, result.message, 'ok');
-      } catch (error) {
-        setStatus(status, friendlyPasskeyError(error), 'bad');
-      } finally {
-        if (button.isConnected) setButtonLoading(button, false, 'Removing...', 'Remove face enrollment');
-      }
-    });
     const siteForm = document.getElementById('staffAttendanceSiteForm');
     panelEl.querySelectorAll('[data-edit-attendance-site]').forEach((button) => button.addEventListener('click', () => {
       const site = configuredSites.find((row) => clean(row.SiteId || row.__id) === clean(button.dataset.editAttendanceSite));

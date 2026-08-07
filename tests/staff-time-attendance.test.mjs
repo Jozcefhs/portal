@@ -18,8 +18,6 @@ const adminHtml = await readFile(new URL('../admin.html', import.meta.url), 'utf
 const portalCss = await readFile(new URL('../css/style.css', import.meta.url), 'utf8');
 const attendanceSource = await readFile(new URL('../functions/lib/staff-time-attendance.js', import.meta.url), 'utf8');
 const attendanceApiSource = await readFile(new URL('../functions/api/staff-attendance.js', import.meta.url), 'utf8');
-const attendanceFaceSource = await readFile(new URL('../functions/api/staff-attendance-face.js', import.meta.url), 'utf8');
-const attendanceFaceUiSource = await readFile(new URL('../js/student-face-lookup.js', import.meta.url), 'utf8');
 const passkeyApiSource = await readFile(new URL('../functions/api/staff-passkey.js', import.meta.url), 'utf8');
 const attendanceActionStateSource = attendanceSource.slice(
   attendanceSource.indexOf('async function getStaffAttendanceActionState'),
@@ -75,6 +73,8 @@ test('daily attendance policy normalizes work hours and rejects an invalid closi
   assert.deepEqual(policy.WorkDays, ['MON', 'TUE', 'WED', 'THU', 'FRI']);
   assert.equal(policy.GraceMinutes, 15);
   assert.equal(policy.OvertimeMinimumMinutes, 20);
+  assert.equal(normalizeAttendancePolicy({ IdentityVerification: 'FACE' }).IdentityVerification, 'PASSKEY');
+  assert.equal(normalizeAttendancePolicy({ IdentityVerification: 'PASSKEY_OR_FACE' }).IdentityVerification, 'PASSKEY');
   assert.throws(() => normalizeAttendancePolicy({ ResumptionTime: '17:00', ClosingTime: '08:00' }), /Closing time must be later/);
 });
 
@@ -206,9 +206,11 @@ test('attendance state resets by date and preserves the first successful daily t
   assert.match(attendanceSource, /normalizeAttendanceSite\(body, existing \|\| \{\}\)/);
 });
 
-test('attendance UI and API enforce identity and random continued-presence checks', () => {
+test('attendance UI and API enforce device unlock and random continued-presence checks', () => {
   assert.match(adminJs, /Weekly schedule/);
-  assert.match(adminJs, /PASSKEY_OR_FACE/);
+  assert.match(adminJs, /Device unlock required/);
+  assert.match(adminJs, /PIN, password, fingerprint or built-in face unlock/);
+  assert.doesNotMatch(adminJs, /PASSKEY_OR_FACE|Live face recognition|Enroll my face|Remove face enrollment/);
   assert.match(adminJs, /Confirm presence/);
   assert.match(adminJs, /payload\.DaySchedules/);
   assert.match(adminJs, /attendanceVerificationEvidence\(policy, siteId, nextDirection\)/);
@@ -216,10 +218,8 @@ test('attendance UI and API enforce identity and random continued-presence check
   assert.match(attendanceApiSource, /action === 'presence' \? 'CHECK'/);
   assert.match(attendanceSource, /recordPresenceCheck/);
   assert.match(attendanceSource, /Random presence check missed/);
-  assert.match(attendanceFaceSource, /encryptFaceDescriptor/);
-  assert.match(attendanceFaceSource, /decryptFaceDescriptor/);
-  assert.match(attendanceFaceSource, /createStaffAttendanceProof/);
-  assert.match(attendanceFaceSource, /Live face recognition did not match/);
+  assert.match(attendanceSource, /\['FACE', 'PASSKEY_OR_FACE'\]\.includes\(requestedIdentityVerification\)/);
+  assert.match(attendanceSource, /return 'Device unlock'/);
 });
 
 test('continued-presence confirmation uses focused reads and updates the UI without a full reload', () => {
@@ -257,7 +257,7 @@ test('dashboard provides a live clock and protected attendance quick action', ()
   assert.match(adminJs, /window\.setInterval\(updateDashboardClockFace, 1000\)/);
   assert.match(adminJs, /staffAttendanceRequest\('quick'\)/);
   assert.match(adminJs, /id="dashboardAttendanceClockButton"/);
-  assert.match(adminJs, /attendanceVerificationEvidence\(policy, siteId, direction, selectedMethod\)/);
+  assert.match(adminJs, /attendanceVerificationEvidence\(policy, siteId, direction\)/);
   assert.match(adminJs, /staffAttendanceRequest\('clock'/);
   assert.match(adminJs, /Location: location/);
   assert.match(attendanceSource, /export async function getStaffAttendanceQuickState/);
@@ -268,17 +268,13 @@ test('dashboard provides a live clock and protected attendance quick action', ()
   assert.match(portalCss, /@media\(max-width:760px\)\{\.dashboard-time-attendance\{grid-template-columns:1fr/);
 });
 
-test('mobile biometric and face attendance use the shortened verification path', () => {
+test('mobile device-unlock attendance uses the shortened verification path without the custom camera', () => {
   assert.match(adminJs, /const \[location, attendanceProof\] = await Promise\.all/);
   assert.match(adminJs, /browserPosition\(\)\.catch\(\(\) => \(\{\}\)\)/);
   assert.match(adminJs, /warmAttendanceIdentity\(policy/);
-  assert.match(adminJs, /preloadStaffAttendanceFace/);
+  assert.doesNotMatch(adminJs, /attendanceFaceModule|captureStaffAttendanceFace/);
   assert.match(clockHandlerSource, /getStaffAttendanceActionState/);
   assert.doesNotMatch(clockHandlerSource, /listStaffAttendance|listCollection|queryCollection/);
   assert.match(passkeyApiSource, /getDocument\(env, 'staffPasskeys', await documentIdForCredential\(credentialId\)\)/);
-  assert.match(attendanceFaceUiSource, /export function preloadStaffAttendanceFace/);
-  assert.match(attendanceFaceUiSource, /ATTENDANCE_VERIFY_SAMPLE_COUNT = 2/);
-  assert.match(attendanceFaceUiSource, /width: \{ ideal: 640 \}/);
-  assert.match(attendanceFaceUiSource, /void prepareCamera\(mode === 'verify'\)/);
-  assert.doesNotMatch(attendanceFaceUiSource, /window\.setTimeout\(\(\) => finish\(result\), 250\)/);
+  assert.match(passkeyApiSource, /method: 'Device unlock'/);
 });
