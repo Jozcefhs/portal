@@ -13,6 +13,10 @@ The dedicated control plane was provisioned with these non-secret identifiers:
 - Firestore location: `africa-south1` (Johannesburg)
 - Runtime service account: `dynamax-platform-runtime@dynamax-platform-504906.iam.gserviceaccount.com`
 - Runtime role: `Cloud Datastore User`
+- Central Cloudflare Pages project: `dynamaxms`
+- Production platform variables: configured on 2026-08-08
+- Legacy central proxy to `digc-suite`: disabled
+- One-time migration: completed and idempotency-verified on 2026-08-08
 
 Use `dynamax-platform-504906` for `DYNAMAX_PLATFORM_FIREBASE_PROJECT_ID`. The project named `dynamax-platform` is not this control-plane database and must not be substituted.
 
@@ -80,6 +84,8 @@ npm run migrate:dynamax-platform -- --apply
 ```
 
 It copies the plan catalog, registrations and subscription payments only when the target document does not already exist. It never deletes or changes the source project. After verifying counts and payment records in the central Firestore console, remove the obsolete platform collections from the subscriber project in a separate, explicitly approved cleanup.
+
+The completed migration copied one plan catalog, one tenant registration and one subscription payment. A second apply run created zero documents and skipped the three existing target documents, confirming that the target records are present without duplicates. The source records remain untouched.
 
 ## Deployment order
 
