@@ -2084,7 +2084,7 @@ html[data-theme="dark"] .department-member-onboarding strong { color: #75dfbf; }
 .plan-choice-card.unavailable { opacity: .68; }
 .plan-choice-card::before { content: ""; position: absolute; z-index: 0; inset: 0; pointer-events: none; background: linear-gradient(170deg, rgba(255,255,255,.45), rgba(255,255,255,0)), linear-gradient(90deg, var(--plan-strip), var(--plan-sheet)); opacity: .95; }
 .plan-choice-card::after { content: ""; position: absolute; z-index: 0; left: 8px; top: 8px; bottom: 8px; width: 22px; pointer-events: none; background: linear-gradient(180deg, #fff 0, var(--plan-cover)); opacity: .75; border-right: 1px solid rgba(255,255,255,.55); }
-.plan-choice-tag { position: absolute; right: .75rem; top: .65rem; padding: .2rem .45rem; background: #fff; color: #173f96; border-radius: 999px; font-size: 11px; font-weight: 800; border: 1px solid #cbd8ff; box-shadow: 0 3px 8px #234ca30f; z-index: 2; }
+.plan-choice-tag { position: static; align-self: flex-start; max-width: 100%; padding: .2rem .45rem; background: #fff; color: #173f96; border-radius: 999px; font-size: 11px; font-weight: 800; line-height: 1.2; white-space: nowrap; border: 1px solid #cbd8ff; box-shadow: 0 3px 8px #234ca30f; z-index: 2; }
 .plan-choice-select { position: relative; z-index: 1; display: block; min-width: 0; margin: 0; cursor: pointer; }
 .plan-choice-select > input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .plan-choice-main { position: relative; z-index: 1; display: flex; min-width: 0; min-height: 128px; padding: .8rem .8rem .8rem 2.85rem; flex-direction: column; gap: .3rem; color: #172033; }

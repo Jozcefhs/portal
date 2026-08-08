@@ -269,9 +269,8 @@ function renderPlans() {
     const period = Number(amount) > 0 ? `<em> / ${cycle === 'yearly' ? 'year' : 'month'}</em>` : '';
     return `<article class="${cardClass}" style="--plan-sheet:${theme.sheet}; --plan-cover:${theme.cover}; --plan-strip:${theme.strip}; --plan-accent:${theme.accent};">
       <label class="plan-choice-select">
-        ${recommended ? '<span class="plan-choice-tag" aria-hidden="true">Recommended</span>' : ''}
         <input type="radio" name="Plan" value="${escapeHtml(plan.Name)}" ${selected ? 'checked' : ''} ${active ? '' : 'disabled'}>
-        <span class="plan-choice-main"><strong>${escapeHtml(plan.Name)}</strong><small>${escapeHtml(userText)} · ${escapeHtml(plan.Summary)}</small><b>${active ? `${escapeHtml(displayedPlanPrice(plan, amount, planCatalog?.Currency || 'NGN'))}${plan.Name === 'Free' ? '' : period}` : 'Currently unavailable'}</b></span>
+        <span class="plan-choice-main">${recommended ? '<span class="plan-choice-tag" aria-hidden="true">Recommended</span>' : ''}<strong>${escapeHtml(plan.Name)}</strong><small>${escapeHtml(userText)} · ${escapeHtml(plan.Summary)}</small><b>${active ? `${escapeHtml(displayedPlanPrice(plan, amount, planCatalog?.Currency || 'NGN'))}${plan.Name === 'Free' ? '' : period}` : 'Currently unavailable'}</b></span>
       </label>
     </article>`;
   }).join('') || '<p class="status bad">No subscription plan is currently configured.</p>';
