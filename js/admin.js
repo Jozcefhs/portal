@@ -4829,7 +4829,9 @@ async function loadChurchDonations() {
   try {
     const traceDonationRender = new URLSearchParams(window.location.search).has('traceDonations');
     const traceDonationStage = (stage) => {
-      if (traceDonationRender) console.info(`[donation-render] ${stage}`);
+      if (!traceDonationRender) return;
+      try { window.localStorage.setItem('dynamax:diagnostic:donation-render', `${Date.now()}:${stage}`); } catch (_error) { /* Diagnostic storage is optional. */ }
+      console.info(`[donation-render] ${stage}`);
     };
     traceDonationStage('request-start');
     const methods = ['CASH', 'BANK TRANSFER', 'CHEQUE', 'POS', 'ONLINE', 'CARD', 'MOBILE MONEY'];
