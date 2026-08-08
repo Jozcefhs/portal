@@ -335,7 +335,7 @@ test('public organisation registration stays aligned and legible in both themes'
     readFile(new URL('../css/style.css', import.meta.url), 'utf8')
   ]);
   assert.match(html, /name="theme-color"/);
-  assert.match(html, /20260808-attendance-responsive-2/);
+  assert.match(html, /20260808-attendance-responsive-3/);
   assert.match(css, /\.auth-page\s*\{[^}]*overflow-x:\s*hidden/s);
   assert.match(css, /\.organisation-registration-card\s+\.inline-check\s*\{[^}]*white-space:\s*normal/s);
   assert.match(css, /html\[data-theme="dark"\]\s+\.organisation-registration-card\s*\{[^}]*background:\s*#111e2e/s);

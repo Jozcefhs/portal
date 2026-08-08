@@ -1,4 +1,4 @@
-const CACHE = 'dynamax-v149-attendance-responsive-buttons';
+const CACHE = 'dynamax-v150-attendance-control-fit';
 const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/activate-account.html', '/onboarding-status.html', '/parent-dashboard.html', '/payments.html', '/register-organization.html', '/subscription-payment.html', '/plan-management.html', '/give.html', '/store.html', '/css/style.css', '/css/notifications.css', '/css/store.css', '/css/store-compact.css', '/js/preferences.js', '/js/action-feedback.js', '/js/activate-account.js', '/js/onboarding-status.js', '/js/financial-values.js', '/js/launcher.js', '/js/site-config.js', '/js/admin.js', '/js/give.js', '/js/payments.js', '/js/store.js', '/js/notifications.js', '/js/web-push.js', '/js/parent-dashboard.js', '/js/register-organization.js', '/js/subscription-payment.js', '/js/plan-management.js', '/images/Logo.png'];
 
 self.addEventListener('install', (event) => {

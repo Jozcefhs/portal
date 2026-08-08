@@ -304,7 +304,7 @@ test('dashboard provides a live clock and protected attendance quick action', ()
   assert.match(attendanceApiSource, /!\['list', 'quick'\]\.includes\(action\)/);
   assert.match(portalCss, /\.dashboard-time-attendance\{display:grid/);
   assert.match(portalCss, /\.dashboard-digital-clock strong\{/);
-  assert.match(portalCss, /\.attendance-clock-controls\{display:grid;grid-template-columns:minmax\(220px,260px\) minmax\(150px,1fr\) auto/);
+  assert.match(portalCss, /\.attendance-clock-controls\{display:grid;grid-template-columns:minmax\(190px,260px\) minmax\(150px,1fr\) max-content/);
   assert.match(portalCss, /\.attendance-clock-controls select\{box-sizing:border-box;width:100%;min-width:0\}/);
   assert.match(portalCss, /\.attendance-clock-controls>small\{[^}]*overflow-wrap:normal;word-break:normal/);
   assert.match(portalCss, /\.workflow-intro>button\{[^}]*min-width:max-content;white-space:nowrap/);
