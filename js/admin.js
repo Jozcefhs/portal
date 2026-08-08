@@ -4827,6 +4827,11 @@ function donorContributionInsights(topDonors = [], registeredDonors = []) {
 
 async function loadChurchDonations() {
   try {
+    const traceDonationRender = new URLSearchParams(window.location.search).has('traceDonations');
+    const traceDonationStage = (stage) => {
+      if (traceDonationRender) console.info(`[donation-render] ${stage}`);
+    };
+    traceDonationStage('request-start');
     const methods = ['CASH', 'BANK TRANSFER', 'CHEQUE', 'POS', 'ONLINE', 'CARD', 'MOBILE MONEY'];
     const currencies = ['NGN', 'USD', 'GBP', 'EUR', 'KES', 'GHS'];
     const response = await staffFetch('/api/staff-church-payments', {
@@ -4837,6 +4842,7 @@ async function loadChurchDonations() {
       body: JSON.stringify({ action: 'list', BranchId: currentUser?.branchId || 'main' })
     });
     const data = await response.json();
+    traceDonationStage('response-ready');
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load church donations.');
     if (activeSection !== 'donations') return;
     renderModuleSummary('donations', data);
@@ -4867,6 +4873,7 @@ async function loadChurchDonations() {
     });
     const awaitingCurrencies = [...new Set(awaitingForeignDonations.map((row) => clean(row.TransactionCurrency || row.Currency).toUpperCase()))];
 
+    traceDonationStage('markup-start');
     panelEl.innerHTML = `
       <div class="workflow-intro">
         <div>
@@ -5069,7 +5076,9 @@ async function loadChurchDonations() {
         { label: 'Details', value: (row) => pick(row, ['Details']) }
       ])}
       </section>`;
+    traceDonationStage('markup-ready');
 
+    traceDonationStage('workspace-tabs-start');
     mountWorkspaceTabs('donations', [
       { key: 'overview', label: 'Overview', icon: '\u25A6', nodes: [...panelEl.querySelectorAll(':scope > .workflow-kpis, :scope > .church-dashboard-grid')] },
       { key: 'record', label: 'Record donation', icon: '+', nodes: document.getElementById('donationGivingPanel') },
@@ -5077,6 +5086,7 @@ async function loadChurchDonations() {
       { key: 'currency', label: 'Foreign currency', icon: '\u00A4', count: foreignHoldings.length, nodes: document.getElementById('donationCurrencyPanel') },
       { key: 'records', label: 'Records & audit', icon: '\u{1F5C2}', count: (data.donations || []).length, nodes: document.getElementById('donationRecordsPanel') }
     ]);
+    traceDonationStage('workspace-tabs-ready');
     const form = document.getElementById('churchDonationForm');
     form?.elements.DonorId?.addEventListener('change', () => {
       const donor = donors.find((row) => clean(row.DonorId || row.__id) === clean(form.elements.DonorId.value));
@@ -5410,6 +5420,7 @@ async function loadChurchDonations() {
     document.getElementById('refreshChurchDonations')?.addEventListener('click', (event) => {
       runButtonAction(event.currentTarget, 'Refreshing...', loadChurchDonations);
     });
+    traceDonationStage('bindings-ready');
   } catch (error) {
     if (activeSection === 'donations') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
   }
