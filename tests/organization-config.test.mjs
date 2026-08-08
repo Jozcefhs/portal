@@ -219,16 +219,14 @@ test('web staff navigation displays plan restrictions as disabled grey modules',
   assert.match(css, /\.subscription-restricted/);
 });
 
-test('other-organisation vocabulary observer settles without rewriting unchanged DOM values', async () => {
+test('other-organisation vocabulary reconciliation is finite and skips unchanged DOM values', async () => {
   const adminSource = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
   assert.match(adminSource, /applyingGenericOrganizationVocabulary/);
   assert.match(adminSource, /if \(nextLabel !== option\.textContent\) option\.textContent = nextLabel/);
   assert.match(adminSource, /if \(nextValue !== node\.nodeValue\) node\.nodeValue = nextValue/);
   assert.match(adminSource, /finally \{\s*applyingGenericOrganizationVocabulary = false;/s);
-  assert.match(adminSource, /genericOrganizationVocabularyObserver\.disconnect\(\)/);
-  assert.match(adminSource, /genericOrganizationVocabularyTimer = window\.setTimeout/);
-  assert.match(adminSource, /genericOrganizationVocabularyObserver\.takeRecords\(\)/);
-  assert.match(adminSource, /genericOrganizationVocabularyObserver\.observe\(panelEl, observerOptions\)/);
+  assert.match(adminSource, /genericOrganizationVocabularyTimers = \[0, 250, 1000, 4000, 10000\]/);
+  assert.doesNotMatch(adminSource, /genericOrganizationVocabularyObserver/);
 });
 
 test('school-only modules cannot be re-enabled by church feature overrides', () => {

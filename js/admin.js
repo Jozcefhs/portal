@@ -1210,29 +1210,21 @@ function applyGenericOrganizationVocabulary(root = panelEl) {
   }
 }
 
-let genericOrganizationVocabularyObserver = null;
-let genericOrganizationVocabularyTimer = 0;
+let genericOrganizationVocabularyTimers = [];
 
-function observeGenericOrganizationVocabulary() {
+function scheduleGenericOrganizationVocabulary() {
+  genericOrganizationVocabularyTimers.forEach((timer) => window.clearTimeout(timer));
+  genericOrganizationVocabularyTimers = [];
   if (new URLSearchParams(window.location.search).get('donationDiagnostic') === 'no-vocabulary') return;
-  if (!panelEl || genericOrganizationVocabularyObserver || typeof MutationObserver === 'undefined') return;
-  const observerOptions = { childList: true, subtree: true };
-  genericOrganizationVocabularyObserver = new MutationObserver(() => {
-    genericOrganizationVocabularyObserver.disconnect();
-    if (genericOrganizationVocabularyTimer) return;
-    genericOrganizationVocabularyTimer = window.setTimeout(() => {
-      genericOrganizationVocabularyTimer = 0;
-      applyGenericOrganizationVocabulary(panelEl);
-      genericOrganizationVocabularyObserver.takeRecords();
-      genericOrganizationVocabularyObserver.observe(panelEl, observerOptions);
-    }, 0);
-  });
-  genericOrganizationVocabularyObserver.observe(panelEl, observerOptions);
+  if (resolveDashboardEdition(currentUser || {}) !== 'organization') return;
+  genericOrganizationVocabularyTimers = [0, 250, 1000, 4000, 10000].map((delay) => window.setTimeout(() => {
+    applyGenericOrganizationVocabulary(panelEl);
+  }, delay));
 }
 
 function showDashboard(user, options = {}) {
   currentUser = { ...(currentUser || {}), ...user };
-  observeGenericOrganizationVocabulary();
+  scheduleGenericOrganizationVocabulary();
   if (currentUser.canSwitchBranches === true && selectedBranchId !== 'all') {
     currentUser.branchId = selectedBranchId;
     currentUser.activeBranchId = selectedBranchId;
@@ -1394,6 +1386,7 @@ async function loadDashboard(options = {}) {
     renderTabs(allowed);
     renderWorkspace(activeSection);
     renderSection(activeSection);
+    scheduleGenericOrganizationVocabulary();
     setStatus(dashboardStatus, currentUser.subscriptionActive === false
       ? (currentUser.subscriptionMessage || 'This subscription is not active. Choose a paid subscription to continue.')
       : mode === 'shell'
@@ -1998,6 +1991,7 @@ function selectSection(key, allowed = activeTabs.map(([tabKey]) => tabKey)) {
   renderTabs(allowed);
   renderWorkspace(activeSection);
   renderSection(activeSection);
+  scheduleGenericOrganizationVocabulary();
   setSidebarOpen(false);
   if (moduleDialog.open) moduleDialog.close();
   (activeSection === 'overview' ? staffMainContent : panelEl).scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -5429,6 +5423,7 @@ async function loadChurchDonations() {
     document.getElementById('refreshChurchDonations')?.addEventListener('click', (event) => {
       runButtonAction(event.currentTarget, 'Refreshing...', loadChurchDonations);
     });
+    applyGenericOrganizationVocabulary(panelEl);
   } catch (error) {
     if (activeSection === 'donations') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
   }
