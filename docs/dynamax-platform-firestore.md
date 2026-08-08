@@ -30,6 +30,7 @@ The central project owns only Dynamax commercial and onboarding data:
 - `requestIdempotency`: temporary retry protection created by registration requests.
 - `tenantProjectPool`: isolated Firebase and Cloudflare projects ready for subscriber assignment.
 - `tenantProvisioningRequests`: manual, branded and automatic project-creation work.
+- `tenantActivations`: short-lived, single-use first-administrator tokens stored only as SHA-256 hashes.
 - `settings/tenantPoolPolicy`: ready-capacity targets and provisioning defaults.
 
 Each organisation project continues to own its operational records: people, attendance, finance, donations or fees, HR, documents, notifications and organisation settings. Central subscriber APIs now fail closed when the Dynamax project credentials are absent; they never fall back to `FIREBASE_*`.
@@ -43,12 +44,16 @@ The dedicated Google Cloud/Firebase project, Firestore `(default)` database and 
 - `DYNAMAX_PLATFORM_FIREBASE_PRIVATE_KEY` as an encrypted secret
 - `PAYSTACK_SECRET_KEY` as an encrypted secret for Dynamax subscription billing
 - `ADMIN_WEB_PASSWORD` as an encrypted secret for plan administration
+- `BREVO_API_KEY` as an encrypted secret when Dynamax should email delayed workspace-activation links
+- `DYNAMAX_SENDER_EMAIL` and `DYNAMAX_SENDER_NAME` for those central onboarding emails
 
 Do not set `FIREBASE_PROJECT_ID` to a subscriber project on the central deployment. If both project IDs are present, the API rejects a configuration where they are equal.
 
 Cloudflare supports production and preview Variables and Secrets separately. Configure the central values in both environments only when preview is intentionally allowed to reach the platform database. See [Cloudflare Pages bindings and secrets](https://developers.cloudflare.com/pages/functions/bindings/).
 
 The platform index manifest is `firebase.platform.json`. The current subscriber queries use Firestore's automatic single-field indexes, so `firestore.platform.indexes.json` intentionally has no composite indexes.
+
+Enable a Firestore TTL policy on `tenantActivations.ExpiresAt`. Activation is rejected by application logic immediately at expiry even before TTL cleanup runs; the TTL policy simply removes expired challenge documents later so the collection does not grow indefinitely.
 
 ## Creating the runtime credential yourself
 
@@ -69,7 +74,7 @@ The runtime accepts either real line breaks or escaped `\n` sequences in the pri
 
 Keep the existing organisation-specific `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL` and `FIREBASE_PRIVATE_KEY`. Do not copy the platform service-account private key into subscriber Pages projects.
 
-To expose registration, pricing and subscription payment from an organisation-branded portal, proxy only those routes to the central Dynamax deployment:
+To expose registration, pricing, subscription payment and first-account token validation from an organisation-branded portal, proxy only those routes to the central Dynamax deployment:
 
 - `ALLOW_CANONICAL_API_PROXY=true`
 - `CANONICAL_PORTAL_URL=https://<central-dynamax-host>`
@@ -78,6 +83,8 @@ To expose registration, pricing and subscription payment from an organisation-br
 All three are mandatory production variables. The organisation deployment verification now calls `/api/plan-catalog`; a deployment fails verification when the bridge is missing instead of leaving a broken Subscription & billing screen unnoticed.
 
 The middleware gives the central route priority even when the organisation has its own local Firestore backend. Staff and operational APIs continue to use the organisation database and cannot pass through the restricted proxy.
+
+`/api/tenant-activation` is part of that restricted central bridge. `/api/complete-tenant-activation` is deliberately not proxied: it runs in the assigned tenant, hashes the chosen password there, and creates the first Super Administrator in that tenant's `staffUsers` collection.
 
 The same bridge variables also let each subscriber backend refresh its local plan-entitlement snapshot from the public central plan catalogue. No central Firebase private key is copied to subscriber deployments. Catalogue changes are cached for at most 60 seconds and are then written into the subscriber's local organisation profile during the next settings or staff-access refresh.
 

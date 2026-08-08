@@ -22,6 +22,7 @@ import {
   saveBranchProfileOverrides
 } from '../lib/branch-profile-settings.js';
 import { refreshOrganizationPlanPolicy } from '../lib/plan-policy-sync.js';
+import { readStaffSession } from '../lib/staff-auth.js';
 
 const PROFILE_CACHE_MS = 15000;
 let profileCache = null;
@@ -34,18 +35,19 @@ function normalizeSchoolCode(value) {
   return clean(value).toUpperCase().replace(/[^A-Z0-9]/g, '') || 'DCA';
 }
 
-function requireAdmin(env, password) {
+async function requireAdmin(env, request, password) {
   const expected = clean(env.ADMIN_WEB_PASSWORD);
+  if (expected && secureTextEqual(password, expected)) return;
+  const staff = await readStaffSession(env, request).catch(() => null);
+  if (staff && clean(staff.role || staff.Role) === 'Super Admin') return;
   if (!expected) {
     const err = new Error('Setup login is not configured. Add ADMIN_WEB_PASSWORD in Cloudflare.');
     err.status = 503;
     throw err;
   }
-  if (!secureTextEqual(password, expected)) {
-    const err = new Error('Invalid setup password.');
-    err.status = 401;
-    throw err;
-  }
+  const err = new Error('Invalid setup password or Super Administrator session.');
+  err.status = 401;
+  throw err;
 }
 
 function defaultProfile(env) {
@@ -242,7 +244,7 @@ export async function onRequestPost(context) {
     const { request, env } = context;
     const deployment = requiredDeploymentIdentity(env);
     const body = await readJsonBody(request, { maxBytes: 1024 * 1024 });
-    requireAdmin(env, body.password);
+    await requireAdmin(env, request, body.password);
     const settingsScope = clean(body.SettingsScope || body.settingsScope).toLowerCase();
     const branchId = clean(body.BranchId || body.branchId);
     if (clean(body.action || body.Action) === 'load') {

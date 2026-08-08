@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Activate organisation administrator | Dynamax</title>
+  <meta name="theme-color" content="#0b2442">
+  <script src="js/preferences.js?v=20260808-activation"></script>
+  <link rel="stylesheet" href="css/style.css?v=20260808-activation">
+</head>
+<body class="settings-page organisation-registration-page activation-page">
+  <main class="settings-shell">
+    <section class="organisation-registration-card activation-card" aria-labelledby="activationTitle">
+      <div class="registration-brand">
+        <img src="images/Logo.png" alt="Dynamax">
+        <div>
+          <p class="eyebrow">Secure workspace activation</p>
+          <h1 id="activationTitle">Create the first administrator</h1>
+          <p>This account will own user access and initial organisation settings.</p>
+        </div>
+      </div>
+      <div id="activationSummary" class="activation-summary" hidden></div>
+      <form id="activationForm" class="settings-form activation-form" autocomplete="on" hidden>
+        <div class="settings-grid">
+          <label class="settings-field"><span>Administrator display name</span>
+            <input name="displayName" id="activationDisplayName" autocomplete="name" required>
+          </label>
+          <label class="settings-field"><span>Login username</span>
+            <input name="username" id="activationUsername" minlength="3" maxlength="80" autocomplete="username" required>
+            <small>Use letters, numbers, dots, underscores, @ or hyphens.</small>
+          </label>
+          <label class="settings-field"><span>Password</span>
+            <input name="password" id="activationPassword" type="password" minlength="8" autocomplete="new-password" required>
+            <small>Use at least 8 characters and keep it private.</small>
+          </label>
+          <label class="settings-field"><span>Confirm password</span>
+            <input name="confirmPassword" id="activationConfirmPassword" type="password" minlength="8" autocomplete="new-password" required>
+          </label>
+        </div>
+        <button id="activationSubmit" type="submit">Create administrator account</button>
+      </form>
+      <p id="activationStatus" class="status" role="status">Checking this secure activation link...</p>
+      <a id="activationLogin" class="settings-link" href="admin.html" hidden>Continue to sign in</a>
+    </section>
+  </main>
+  <script src="js/action-feedback.js?v=20260808-activation"></script>
+  <script src="js/activate-account.js?v=20260808-activation" type="module"></script>
+</body>
+</html>

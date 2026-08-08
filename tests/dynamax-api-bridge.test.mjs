@@ -17,6 +17,8 @@ test('Dynamax Pages fail closed unless an API proxy is explicitly configured', (
   assert.match(middleware, /env\.CANONICAL_API_PROXY_SCOPE/);
   assert.match(middleware, /PLATFORM_SUBSCRIPTION_PROXY_PATHS/);
   assert.match(middleware, /'\/api\/tenant-project-pool'/);
+  assert.match(middleware, /'\/api\/tenant-activation'/);
+  assert.match(middleware, /'\/api\/complete-tenant-activation'/);
   assert.match(middleware, /if \(!proxyAllowed \|\| !configuredOrigin\)/);
   assert.doesNotMatch(middleware, /https:\/\/digc-suite\.pages\.dev/);
   assert.doesNotMatch(middleware, /PRIVATE_KEY|SHARED_SECRET|SESSION_SECRET/);
@@ -68,6 +70,26 @@ test('a deployment with a local Firebase backend continues to its own Pages Func
   assert.equal(identityCalled, true);
   assert.equal(nextCalled, true);
   assert.deepEqual(await response.json(), { ok: true, local: true });
+});
+
+test('secure first-account completion bypasses an identity profile that does not exist yet', async () => {
+  let identityCalled = false;
+  let nextCalled = false;
+  const response = await onRequestWithIdentityLoader({
+    request: new Request('https://tenant.example/api/complete-tenant-activation', { method: 'POST' }),
+    env: { FIREBASE_PROJECT_ID: 'new-tenant-project' },
+    next: async () => {
+      nextCalled = true;
+      return Response.json({ ok: true, bootstrap: true });
+    }
+  }, async () => {
+    identityCalled = true;
+    throw new Error('A new tenant has no profile to load before activation.');
+  });
+  assert.equal(response.status, 200);
+  assert.equal(nextCalled, true);
+  assert.equal(identityCalled, false);
+  assert.deepEqual(await response.json(), { ok: true, bootstrap: true });
 });
 
 test('an expired trial blocks operational APIs but preserves sign-in and upgrade recovery routes', async () => {

@@ -25,7 +25,9 @@ async function confirmPayment() {
     const data = await response.json().catch(() => null);
     if (!response.ok || !data?.ok) throw new Error(data?.message || 'Subscription payment could not be confirmed.');
     message.textContent = data.message;
-    result.innerHTML = `<dl class="subscription-confirmation-summary"><div><dt>Reference</dt><dd>${safeText(data.registrationReference)}</dd></div><div><dt>Plan</dt><dd>${safeText(data.plan)}</dd></div><div><dt>Billing</dt><dd>${safeText(data.billingCycle)}</dd></div><div><dt>Workspace</dt><dd>${data.workspacePending ? 'Being prepared' : 'Ready'}</dd></div></dl>${data.portalUrl ? `<p><a class="settings-link" href="${safeText(data.portalUrl)}">Open organisation portal</a></p>` : ''}`;
+    const nextUrl = data.activationUrl || data.loginUrl || data.portalUrl;
+    const nextLabel = data.activationUrl ? 'Create administrator account' : data.loginUrl ? 'Sign in to organisation' : 'Open organisation portal';
+    result.innerHTML = `<dl class="subscription-confirmation-summary"><div><dt>Reference</dt><dd>${safeText(data.registrationReference)}</dd></div><div><dt>Plan</dt><dd>${safeText(data.plan)}</dd></div><div><dt>Billing</dt><dd>${safeText(data.billingCycle)}</dd></div><div><dt>Workspace</dt><dd>${data.workspacePending ? 'Being prepared' : 'Ready'}</dd></div></dl>${nextUrl ? `<p><a class="settings-link" href="${safeText(nextUrl)}">${safeText(nextLabel)}</a></p>` : ''}`;
   } catch (error) {
     message.textContent = 'Payment confirmation needs attention.';
     result.innerHTML = `<p class="status bad">${safeText(error.message || error)}</p>`;

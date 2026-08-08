@@ -2,6 +2,7 @@ import { getDocument } from '../lib/firestore.js';
 import { requirePlatformAdmin } from '../lib/platform-admin.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 import { readJsonBody } from '../lib/request-security.js';
+import { issueTenantActivation } from '../lib/tenant-activation.js';
 import {
   assignWaitingTenantRegistrations,
   claimNextTenantProvisioningRequest,
@@ -101,12 +102,18 @@ export async function onRequestPost({ request, env }) {
         throw error;
       }
       const assignment = await reserveTenantProjectSlot(platformEnv, registration);
+      const activation = assignment.assigned
+        ? await issueTenantActivation(platformEnv, assignment.registration, env).catch(() => ({ issued: false }))
+        : { issued: false };
       return Response.json({
         ok: true,
         message: assignment.assigned ? 'A ready project was assigned.' : 'No ready project is available; replenishment was queued.',
         assigned: assignment.assigned,
         workspaceId: clean(assignment.registration?.WorkspaceId),
-        portalUrl: clean(assignment.registration?.PortalUrl)
+        portalUrl: clean(assignment.registration?.PortalUrl),
+        activationIssued: Boolean(activation.issued),
+        activationEmailSent: Boolean(activation.emailSent),
+        activationUrl: clean(activation.activationUrl)
       }, { headers: { 'Cache-Control': 'no-store' } });
     }
     const error = new Error('Unsupported tenant-pool action.');

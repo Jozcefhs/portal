@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260808-self-service-upgrade';
-const adminScriptVersion = '20260808-subscription-account-link';
+const adminScriptVersion = '20260808-tenant-activation';
 const parentScriptVersion = '20260803-finance-commas';
 const notificationVersion = '20260804-read-efficiency';
 const pageNames = [
@@ -101,7 +101,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v145-self-service-upgrade/);
+  assert.match(serviceWorker, /dynamax-v146-tenant-activation/);
   assert.match(serviceWorker, /'\/js\/financial-values\.js'/);
   assert.match(serviceWorker, /'\/payments\.html'/);
   assert.match(serviceWorker, /'\/js\/payments\.js'/);

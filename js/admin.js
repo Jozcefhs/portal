@@ -10106,6 +10106,14 @@ document.getElementById('staffPasswordSignOut').addEventListener('click', async 
   if (response.ok && data.authenticated && data.user) {
     await continueAfterAuthentication(data.user);
   } else {
-    showLogin(data.message || '', data.message ? 'bad' : '');
+    const activationParams = new URLSearchParams(window.location.search);
+    if (activationParams.get('activated') === '1') {
+      showLogin('Administrator account created. Sign in with the username and password you just created.', 'good');
+      document.getElementById('staffUsername').value = activationParams.get('username') || '';
+      document.getElementById('staffPassword').focus();
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else {
+      showLogin(data.message || '', data.message ? 'bad' : '');
+    }
   }
 }());

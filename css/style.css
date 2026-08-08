@@ -2110,6 +2110,14 @@ html[data-theme="dark"] .department-member-onboarding strong { color: #75dfbf; }
 .organisation-registration-card .inline-check input { width: auto; min-height: 0; }
 .organisation-registration-card button[type="submit"],
 .organisation-registration-card .settings-link { width: fit-content; justify-self: start; }
+.activation-card { max-width: 780px; }
+.activation-summary { margin: 0 0 1rem; padding: .8rem 1rem; border: 1px solid #b9ded5; border-radius: 12px; background: #effaf7; }
+.activation-summary dl { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: .65rem 1rem; margin: 0; }
+.activation-summary dl > div { min-width: 0; }
+.activation-summary dt { color: #5d7188; font-size: 11px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.activation-summary dd { margin: .15rem 0 0; color: #143c63; font-weight: 750; overflow-wrap: anywhere; }
+.activation-form { display: grid; gap: 1rem; }
+.activation-form[hidden], .activation-summary[hidden], .activation-card .settings-link[hidden] { display: none; }
 html[data-theme="dark"] .organisation-registration-card { background: #111e2e; color: #edf4ff; border-color: #33465c; box-shadow: 0 16px 42px rgba(0,0,0,.32); }
 html[data-theme="dark"] .registration-brand h1 { color: #72a9ff; }
 html[data-theme="dark"] .registration-brand > div > p:last-child { color: #b7c6d8; }
@@ -2141,6 +2149,9 @@ html[data-theme="dark"] .plan-comparison-column { background: #0d1a29; }
 html[data-theme="dark"] .plan-comparison-column h3 { color: #edf4ff; }
 html[data-theme="dark"] .plan-comparison-column header small,
 html[data-theme="dark"] .plan-comparison-column ul { color: #a8b8cb; }
+html[data-theme="dark"] .activation-summary { border-color: #315b57; background: #102c2a; }
+html[data-theme="dark"] .activation-summary dt { color: #a9bdcf; }
+html[data-theme="dark"] .activation-summary dd { color: #eaf5ff; }
 @media (max-width: 700px) {
   .auth-page { padding-bottom: 0; }
   .auth-page .auth-shell { place-items: start center; padding: .75rem; }
@@ -2153,6 +2164,7 @@ html[data-theme="dark"] .plan-comparison-column ul { color: #a8b8cb; }
   .plan-choice-card { scroll-snap-align: start; }
   .plan-book-toolbar { align-items: flex-start; flex-direction: column; }
   .plan-book-download { width: 100%; }
+  .activation-summary dl { grid-template-columns: 1fr; }
 }
 @media (max-width: 430px) {
   .registration-brand { grid-template-columns: 44px minmax(0,1fr); gap: .65rem; }

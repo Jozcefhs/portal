@@ -22,6 +22,7 @@ import {
 import { syncRegistrationSubscriptionToWorkspace } from '../lib/subscription-workspace-sync.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 import { reserveTenantProjectSlot } from '../lib/tenant-project-pool.js';
+import { issueTenantActivation } from '../lib/tenant-activation.js';
 
 const clean = (value) => String(value ?? '').trim();
 const PAYSTACK_INITIALIZE_URL = 'https://api.paystack.co/transaction/initialize';
@@ -56,6 +57,31 @@ function withoutFirestoreMetadata(document = {}) {
 async function loadPlanCatalog(platformEnv) {
   const saved = await getDocument(platformEnv, 'settings', 'dynamaxPlanCatalog');
   return normalizeSubscriptionPlanCatalog(saved || {});
+}
+
+async function activationResponse(env, platformEnv, registrationReference) {
+  const registration = await getDocument(platformEnv, 'tenantRegistrations', clean(registrationReference));
+  if (!registration) return {};
+  try {
+    const activation = await issueTenantActivation(platformEnv, registration, env);
+    if (activation.issued) {
+      return {
+        activationUrl: activation.activationUrl,
+        activationExpiresAt: activation.expiresAt,
+        activationEmailSent: activation.emailSent,
+        activationEmailStatus: activation.emailStatus
+      };
+    }
+    if (activation.alreadyActivated) return { loginUrl: activation.loginUrl, administratorActivated: true };
+    return {};
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'tenant_activation_issue_failed',
+      registrationReference: clean(registrationReference),
+      message: clean(error.message || error).slice(0, 300)
+    }));
+    return { activationPending: true };
+  }
 }
 
 export async function initializeSubscriptionCheckout({ request, env, platformEnv, registration, catalog, plan, billingCycle, preserveActivePlan = false }) {
@@ -339,7 +365,10 @@ export async function onRequestPost({ request, env }) {
       fingerprintPayload: idempotencyPayload
     });
     if (idempotency.replay) {
-      return Response.json(idempotency.response, {
+      const activation = idempotency.response?.reference
+        ? await activationResponse(env, platformEnv, idempotency.response.reference)
+        : {};
+      return Response.json({ ...idempotency.response, ...activation }, {
         status: idempotency.status || (idempotency.response?.ok === false ? 409 : 200),
         headers: { 'Cache-Control': 'no-store', 'Idempotency-Replayed': 'true' }
       });
@@ -386,7 +415,8 @@ export async function onRequestPost({ request, env }) {
         ...(checkout || {})
       };
       await completeIdempotentRequest(platformEnv, idempotency, result, 200);
-      return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
+      const activation = await activationResponse(env, platformEnv, result.reference);
+      return Response.json({ ...result, ...activation }, { headers: { 'Cache-Control': 'no-store' } });
     }
     const reference = `DMX-${Date.now()}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
     const created = await createDocumentIfAbsent(platformEnv, 'tenantRegistrations', reference, {
@@ -429,7 +459,8 @@ export async function onRequestPost({ request, env }) {
       ...(checkout || {})
     };
     await completeIdempotentRequest(platformEnv, idempotency, result, 200);
-    return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
+    const activation = await activationResponse(env, platformEnv, reference);
+    return Response.json({ ...result, ...activation }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     if (idempotency?.owner && platformEnv) await failIdempotentRequest(platformEnv, idempotency, error);
     return Response.json({ ok: false, message: error.message || String(error) }, {

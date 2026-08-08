@@ -362,7 +362,19 @@ form.addEventListener('submit', async (event) => {
       throw new Error(data?.message || 'Registration could not be submitted.');
     }
     statusNode.className = 'status good';
-    statusNode.innerHTML = `${escapeHtml(data.message)} Reference: ${escapeHtml(data.reference)}${data.portalUrl ? ` <a class="settings-link" href="${escapeHtml(data.portalUrl)}">Open your organisation portal</a>` : ''}`;
+    const accountLink = data.activationUrl
+      ? ` <a class="settings-link" href="${escapeHtml(data.activationUrl)}">Create administrator account</a>`
+      : data.loginUrl
+        ? ` <a class="settings-link" href="${escapeHtml(data.loginUrl)}">Sign in to your organisation</a>`
+        : data.portalUrl
+          ? ` <a class="settings-link" href="${escapeHtml(data.portalUrl)}">Open your organisation portal</a>`
+          : '';
+    const deliveryNote = data.activationUrl && !data.activationEmailSent
+      ? /sent recently/i.test(data.activationEmailStatus || '')
+        ? ' A prior activation email was sent recently; this is a fresh link you can use now.'
+        : ' Save this activation link now because an activation email could not be delivered.'
+      : '';
+    statusNode.innerHTML = `${escapeHtml(data.message)} Reference: ${escapeHtml(data.reference)}${escapeHtml(deliveryNote)}${accountLink}`;
     registrationIdempotencyKey = '';
     if (data.authorizationUrl) {
       statusNode.textContent = 'Opening Paystack secure checkout...';

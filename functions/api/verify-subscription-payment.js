@@ -3,6 +3,7 @@ import { readJsonBody } from '../lib/request-security.js';
 import { syncRegistrationSubscriptionToWorkspace } from '../lib/subscription-workspace-sync.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 import { reserveTenantProjectSlot } from '../lib/tenant-project-pool.js';
+import { issueTenantActivation } from '../lib/tenant-activation.js';
 
 const clean = (value) => String(value ?? '').trim();
 const safeId = (value) => clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140);
@@ -161,6 +162,28 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
       });
     }
   }
+  let activation = {};
+  if (clean(updatedRegistration.WorkspaceId)) {
+    try {
+      const issued = await issueTenantActivation(platformEnv, updatedRegistration, env);
+      activation = issued.issued ? {
+        activationUrl: issued.activationUrl,
+        activationExpiresAt: issued.expiresAt,
+        activationEmailSent: issued.emailSent,
+        activationEmailStatus: issued.emailStatus
+      } : issued.alreadyActivated ? {
+        administratorActivated: true,
+        loginUrl: issued.loginUrl
+      } : {};
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: 'tenant_activation_issue_failed',
+        registrationReference,
+        message: clean(error.message || error).slice(0, 300)
+      }));
+      activation = { activationPending: true };
+    }
+  }
   return {
     registrationReference,
     plan: clean(intent.Plan),
@@ -170,7 +193,8 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
     workspaceId: clean(updatedRegistration.WorkspaceId),
     portalUrl: clean(updatedRegistration.PortalUrl),
     workspacePending: !clean(updatedRegistration.WorkspaceId),
-    warning: previousSubscriptionWarning
+    warning: previousSubscriptionWarning,
+    ...activation
   };
 }
 

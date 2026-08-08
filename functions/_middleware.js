@@ -14,6 +14,7 @@ const PLATFORM_SUBSCRIPTION_PROXY_PATHS = new Set([
   '/api/subscription-checkout',
   '/api/pricing-book-pdf',
   '/api/register-organization',
+  '/api/tenant-activation',
   '/api/verify-subscription-payment',
   '/api/paystack-subscription-webhook'
 ]);
@@ -28,10 +29,16 @@ const SUBSCRIPTION_RECOVERY_PATHS = new Set([
   '/api/subscription-checkout',
   '/api/staff-subscription',
   '/api/register-organization',
+  '/api/tenant-activation',
+  '/api/complete-tenant-activation',
   '/api/pricing-book-pdf',
   '/api/verify-subscription-payment',
   '/api/paystack-subscription-webhook',
   '/api/web-logo'
+]);
+
+const TENANT_BOOTSTRAP_PATHS = new Set([
+  '/api/complete-tenant-activation'
 ]);
 
 function enabled(value) {
@@ -160,6 +167,11 @@ async function handleRequest(context, identityLoader) {
       const proxyResult = await proxyApiRequest({ request, env, url, requestId });
       response = proxyResult.response;
       proxied = Boolean(proxyResult.proxied);
+    } else if (TENANT_BOOTSTRAP_PATHS.has(url.pathname)) {
+      // First-account activation verifies a central one-time token and writes
+      // only to the assigned local tenant. It must work before a profile or
+      // staff session exists, so it supplies its own stricter authorization.
+      response = await next();
     } else {
       let identityFailure = null;
       let identity = null;

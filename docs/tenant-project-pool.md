@@ -21,14 +21,36 @@ The default target is two ready projects for each edition. Change the targets un
 5. Assigned projects cannot be released while the related subscriber is paid, active or trialling.
 6. Each successful assignment checks the saved target and queues replacement capacity when necessary.
 
+## First administrator activation
+
+When a ready project is assigned, Dynamax creates a 48-hour, single-use activation link for the registered contact. The link opens on the assigned tenant URL, never on a different subscriber's portal.
+
+1. The central platform saves only the SHA-256 hash of the activation token in `tenantActivations`; the raw token is present only in the returned/email link fragment.
+2. The subscriber chooses the first administrator's display name, username and password on the assigned portal.
+3. The password is posted only to `/api/complete-tenant-activation` on that tenant. It is hashed there and never sent to or stored in the Dynamax control-plane database.
+4. One atomic tenant Firestore commit creates `settings/firstAdministrator`, the `staffUsers` Super Administrator, the organisation profile and its audit record. The non-overwrite precondition prevents simultaneous links from creating multiple owners.
+5. After local creation, the tenant marks the central activation used. Any other pending link for that registration stops working because the registration now has `AdminActivatedAt`.
+6. The administrator then signs in at `admin.html` with the username and password just created. A signed-in Super Administrator can open organisation settings even when that tenant has no legacy `ADMIN_WEB_PASSWORD` variable.
+
+The activation link is displayed immediately after Free registration or confirmed Paystack payment when the project is ready. If capacity was pending, it is emailed when assignment completes. Repeating the same organisation registration safely issues a new link if the first administrator has not yet been created.
+
+To email delayed activation links, configure these on the central `dynamaxms` Pages project (not on every tenant):
+
+- `BREVO_API_KEY` as an encrypted secret.
+- `DYNAMAX_SENDER_EMAIL` as a verified Brevo sender address; `BREVO_SENDER_EMAIL` is accepted as a fallback.
+- `DYNAMAX_SENDER_NAME`, normally `Dynamax`.
+
+Email failure never loses the subscription or project assignment. The central registration records the delivery status, and the registrant can repeat the same registration to obtain a fresh activation button.
+
 ## Central Firestore records
 
 - `tenantProjectPool`: ready, assigned, provisioning and failed project slots.
 - `tenantProvisioningRequests`: manual, branded and automatic replenishment requests.
+- `tenantActivations`: hashed, expiring first-administrator activation challenges and their used state.
 - `settings/tenantPoolPolicy`: edition targets, default Firestore region and project prefix.
 - `tenantRegistrations`: receives `WorkspaceId`, `FirebaseProjectId`, `CloudflareProject`, `PortalUrl` and provisioning state after assignment.
 
-These records contain identifiers and status only. They do not contain tenant Firebase private keys, Cloudflare tokens or subscriber operational data.
+These records contain identifiers, status and hashed activation challenges only. They do not contain tenant Firebase private keys, Cloudflare tokens, administrator passwords or subscriber operational data.
 
 ## One-time GitHub configuration
 

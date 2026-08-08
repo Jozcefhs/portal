@@ -7,6 +7,7 @@ import {
   upsertDocument
 } from './firestore.js';
 import { normalizeOrganizationEdition } from './organization-config.js';
+import { issueTenantActivation } from './tenant-activation.js';
 
 export const TENANT_PROJECT_POOL_COLLECTION = 'tenantProjectPool';
 export const TENANT_PROVISIONING_REQUEST_COLLECTION = 'tenantProvisioningRequests';
@@ -512,10 +513,25 @@ export async function assignWaitingTenantRegistrations(platformEnv, selectedEdit
         assignedRegistration = { ...assignedRegistration, ...trialUpdate };
       }
     }
+    let activationIssued = false;
+    let activationEmailSent = false;
+    try {
+      const activation = await issueTenantActivation(platformEnv, assignedRegistration, platformEnv);
+      activationIssued = Boolean(activation.issued);
+      activationEmailSent = Boolean(activation.emailSent);
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: 'tenant_activation_issue_failed',
+        registrationReference: clean(assignedRegistration.Reference || assignedRegistration.__id),
+        message: clean(error.message || error).slice(0, 300)
+      }));
+    }
     assignments.push({
       registrationReference: clean(assignedRegistration.Reference || assignedRegistration.__id),
       workspaceId: clean(assignedRegistration.WorkspaceId),
-      portalUrl: clean(assignedRegistration.PortalUrl)
+      portalUrl: clean(assignedRegistration.PortalUrl),
+      activationIssued,
+      activationEmailSent
     });
   }
   return assignments;

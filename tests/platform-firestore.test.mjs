@@ -52,11 +52,11 @@ test('all commercial APIs select the central Firestore environment', async () =>
     '../functions/api/plan-catalog.js',
     '../functions/api/pricing-book-pdf.js',
     '../functions/api/verify-subscription-payment.js',
-    '../functions/api/paystack-subscription-webhook.js'
+    '../functions/api/paystack-subscription-webhook.js',
+    '../functions/api/tenant-activation.js'
   ];
   for (const file of files) {
     const source = await readFile(new URL(file, import.meta.url), 'utf8');
     assert.match(source, /requirePlatformFirestoreEnv/, file);
   }
 });
-
