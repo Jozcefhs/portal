@@ -4841,9 +4841,17 @@ async function loadChurchDonations() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'list', BranchId: currentUser?.branchId || 'main' })
     });
+    if (donationDiagnostic === 'after-response') {
+      panelEl.textContent = `Donation HTTP response received (${response.status}).`;
+      return;
+    }
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load church donations.');
     if (activeSection !== 'donations') return;
+    if (donationDiagnostic === 'after-json') {
+      panelEl.textContent = 'Donation JSON parsed successfully.';
+      return;
+    }
     renderModuleSummary('donations', data);
     if (donationDiagnostic === 'after-data') {
       panelEl.innerHTML = '<p class="status ok">Donation response loaded successfully.</p>';
