@@ -19,7 +19,7 @@ import {
 import {
   claimNextTenantRetirementRequest,
   finishTenantRetirementRequest,
-  processExpiredTrialLifecycle,
+  processTenantSubscriptionLifecycle,
   queueTenantRetirementRequest
 } from '../lib/tenant-trial-lifecycle.js';
 
@@ -80,14 +80,14 @@ export async function onRequestPost({ request, env }) {
       });
     }
     if (action === 'process-lifecycle') {
-      const summary = await processExpiredTrialLifecycle(platformEnv, env, {
+      const summary = await processTenantSubscriptionLifecycle(platformEnv, env, {
         dryRun: body.dryRun === true,
         maximum: body.maximum,
         now: body.dryRun === true ? body.now : undefined
       });
       return Response.json({
         ok: true,
-        message: body.dryRun === true ? 'Expired-trial lifecycle preview completed.' : 'Expired-trial lifecycle processed.',
+        message: body.dryRun === true ? 'Subscription lifecycle preview completed.' : 'Subscription lifecycle processed.',
         summary
       }, { headers: { 'Cache-Control': 'no-store' } });
     }

@@ -3,6 +3,12 @@ import { secureTextEqual } from '../lib/backend-security.js';
 import { disablePaystackSubscription, recordVerifiedSubscriptionPayment } from './verify-subscription-payment.js';
 import { syncRegistrationSubscriptionToWorkspace } from '../lib/subscription-workspace-sync.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
+import {
+  paidLifecycleWindow,
+  paidSubscriptionPeriodEnd,
+  paidSubscriptionRecoveryFields,
+  paystackPaidThroughAt
+} from '../lib/paid-subscription-lifecycle.js';
 
 const MAX_WEBHOOK_BYTES = 512 * 1024;
 const clean = (value) => String(value ?? '').trim();
@@ -94,21 +100,62 @@ async function updateSubscriptionStatus(env, platformEnv, event, data) {
   }
   const subscriptionCode = clean(data.subscription_code || data.subscription?.subscription_code || registration.PaystackSubscriptionCode);
   const normalizedEvent = clean(event).toLowerCase();
-  const status = normalizedEvent === 'subscription.disable'
-    ? 'Cancelled'
-    : normalizedEvent === 'invoice.payment_failed'
-      ? 'Payment Failed'
-      : clean(data.status || data.subscription?.status || 'Active');
-  const active = ['active', 'success', 'complete'].includes(status.toLowerCase());
+  const providerStatus = clean(data.status || data.subscription?.status).toLowerCase();
+  const successful = ['active', 'success', 'complete', 'completed'].includes(providerStatus)
+    && ['subscription.create', 'invoice.update'].includes(normalizedEvent);
+  const eventAt = new Date().toISOString();
+  let lifecycleFields = {};
+  if (successful) {
+    const paidAt = clean(data.paid_at || data.paidAt || data.paid_date) || eventAt;
+    lifecycleFields = {
+      ...paidSubscriptionRecoveryFields({
+        paidAt,
+        billingCycle: registration.BillingCycle,
+        providerPaidThroughAt: paystackPaidThroughAt(data)
+      }),
+      Status: 'Payment Confirmed',
+      AutoRenewalEnabled: true
+    };
+  } else if (normalizedEvent === 'invoice.payment_failed') {
+    const paidThroughAt = clean(registration.PaidThroughAt || registration.RenewalDueAt) || eventAt;
+    const window = paidLifecycleWindow({ ...registration, PaidThroughAt: paidThroughAt }, eventAt);
+    lifecycleFields = {
+      SubscriptionStatus: 'Payment Grace',
+      PaymentStatus: 'Payment Failed',
+      Status: 'Payment Grace',
+      LifecycleStage: 'Payment Grace',
+      PaidThroughAt: paidThroughAt,
+      RenewalDueAt: paidThroughAt,
+      ExpiredPaidThroughAt: paidThroughAt,
+      GracePeriodStartedAt: paidThroughAt,
+      GracePeriodEndsAt: window.graceEndsAt,
+      DataRetentionEndsAt: window.retentionEndsAt,
+      PaymentGraceNoticeSentAt: ''
+    };
+  } else if (normalizedEvent === 'subscription.disable') {
+    const paidThroughAt = clean(registration.PaidThroughAt || registration.RenewalDueAt)
+      || paidSubscriptionPeriodEnd({
+        paidAt: registration.LastSuccessfulPaymentAt || registration.PaidAt || eventAt,
+        billingCycle: registration.BillingCycle,
+        providerPaidThroughAt: paystackPaidThroughAt(data)
+      })
+      || eventAt;
+    lifecycleFields = {
+      SubscriptionStatus: 'Non-renewing',
+      Status: 'Active Until Period End',
+      AutoRenewalEnabled: false,
+      PaidThroughAt: paidThroughAt,
+      RenewalDueAt: paidThroughAt
+    };
+  }
   const updatedRegistration = {
     ...withoutFirestoreMetadata(registration),
     PaystackSubscriptionCode: subscriptionCode,
     PaystackCustomerCode: clean(data.customer?.customer_code || registration.PaystackCustomerCode),
-    SubscriptionStatus: active ? 'Active' : status,
-    PaymentStatus: normalizedEvent === 'invoice.payment_failed' ? 'Payment Failed' : clean(registration.PaymentStatus || 'Paid'),
+    ...lifecycleFields,
     LastSubscriptionEvent: event,
-    LastSubscriptionEventAt: new Date().toISOString(),
-    UpdatedAt: new Date().toISOString()
+    LastSubscriptionEventAt: eventAt,
+    UpdatedAt: eventAt
   };
   await upsertDocument(platformEnv, 'tenantRegistrations', registration.__id, updatedRegistration);
   await syncRegistrationSubscriptionToWorkspace(env, updatedRegistration);

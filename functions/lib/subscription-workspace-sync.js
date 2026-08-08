@@ -28,6 +28,11 @@ export async function syncRegistrationSubscriptionToWorkspace(env, registration 
     SubscriptionStatus: clean(registration.SubscriptionStatus || organizationProfile.SubscriptionStatus),
     TrialStartedAt: clean(registration.TrialStartedAt || organizationProfile.TrialStartedAt),
     TrialEndsAt: clean(registration.TrialEndsAt || organizationProfile.TrialEndsAt),
+    LifecycleStage: clean(registration.LifecycleStage),
+    PaidThroughAt: clean(registration.PaidThroughAt),
+    RenewalDueAt: clean(registration.RenewalDueAt || registration.PaidThroughAt),
+    GracePeriodEndsAt: clean(registration.GracePeriodEndsAt),
+    DataRetentionEndsAt: clean(registration.DataRetentionEndsAt),
     SubscriptionUpdatedAt: clean(registration.UpdatedAt) || new Date().toISOString()
   });
   invalidateDeploymentIdentityCache();

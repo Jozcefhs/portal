@@ -1,3 +1,5 @@
+import { paidLifecycleWindow } from './paid-subscription-lifecycle.js';
+
 const clean = (value) => String(value ?? '').trim();
 
 export const SUBSCRIPTION_PLAN_NAMES = Object.freeze([
@@ -230,35 +232,62 @@ export function subscriptionAccessState(value = {}, options = {}) {
   const plan = normalizeSubscriptionPlan(source.Plan || source.SubscriptionPlan || source.plan || 'Professional', 'Professional');
   const status = clean(source.SubscriptionStatus || source.Status || source.subscriptionStatus).toLowerCase();
   const inactiveStatus = /^(cancelled|canceled|expired|inactive|suspended|payment failed|past due|terminated|retired|revoked|deleted)$/.test(status);
+  const terminalStatus = /^(terminated|retired|revoked|deleted)$/.test(status)
+    || ['retiring', 'retired'].includes(clean(source.LifecycleStage).toLowerCase());
   const nowMs = timestampMilliseconds(options.now ?? Date.now());
   const safeNow = Number.isFinite(nowMs) ? nowMs : Date.now();
   const trialStartedMs = timestampMilliseconds(source.TrialStartedAt || source.trialStartedAt);
   const trialEndsMs = timestampMilliseconds(source.TrialEndsAt || source.trialEndsAt);
   const isTrial = plan === 'Free';
+  const paidWindow = isTrial ? { applicable: false } : paidLifecycleWindow(source, safeNow);
+  const paymentGrace = !terminalStatus && paidWindow.applicable && paidWindow.stage === 'payment_grace';
   const active = isTrial
     ? !inactiveStatus && Number.isFinite(trialEndsMs) && trialEndsMs > safeNow
-    : !inactiveStatus;
+    : terminalStatus
+      ? false
+      : paidWindow.applicable
+        ? ['active', 'payment_grace'].includes(paidWindow.stage)
+        : !inactiveStatus;
+  const readOnly = Boolean(paymentGrace);
   const state = isTrial
     ? active ? 'trialing' : 'trial_expired'
-    : active ? 'active' : 'inactive';
+    : paymentGrace
+      ? 'payment_grace'
+      : active
+        ? 'active'
+        : paidWindow.applicable && ['suspended', 'retirement_due'].includes(paidWindow.stage)
+          ? 'suspended'
+          : 'inactive';
   const daysRemaining = active && isTrial
     ? Math.max(1, Math.ceil((trialEndsMs - safeNow) / (24 * 60 * 60 * 1000)))
     : 0;
   return {
     Plan: plan,
     SubscriptionActive: active,
+    SubscriptionReadOnly: readOnly,
     SubscriptionState: state,
+    LifecycleStage: clean(source.LifecycleStage) || (isTrial
+      ? active ? 'Trialing' : 'Suspended'
+      : readOnly ? 'Payment Grace' : active ? 'Active' : 'Suspended'),
     SubscriptionStatus: isTrial ? (active ? 'Trialing' : 'Trial Expired') : (clean(source.SubscriptionStatus || source.Status) || (active ? 'Active' : 'Inactive')),
     TrialStartedAt: Number.isFinite(trialStartedMs) ? new Date(trialStartedMs).toISOString() : '',
     TrialEndsAt: Number.isFinite(trialEndsMs) ? new Date(trialEndsMs).toISOString() : '',
     TrialDaysRemaining: daysRemaining,
+    PaidThroughAt: paidWindow.applicable ? paidWindow.paidThroughAt : clean(source.PaidThroughAt || source.RenewalDueAt),
+    RenewalDueAt: paidWindow.applicable ? paidWindow.paidThroughAt : clean(source.RenewalDueAt || source.PaidThroughAt),
+    GracePeriodEndsAt: paidWindow.applicable ? paidWindow.graceEndsAt : clean(source.GracePeriodEndsAt),
+    DataRetentionEndsAt: paidWindow.applicable ? paidWindow.retentionEndsAt : clean(source.DataRetentionEndsAt),
     SubscriptionMessage: isTrial
       ? active
         ? `Your full-access trial has ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} remaining.`
         : 'Your 7-day full-access trial has ended. Choose a paid subscription to continue.'
-      : active
-        ? ''
-        : 'This subscription is not active. Choose a paid subscription to continue.'
+      : readOnly
+        ? `Renewal payment is overdue. Records remain available in read-only mode until ${new Date(paidWindow.graceEndsAt).toLocaleDateString('en-NG')}.`
+        : active
+          ? ''
+          : paidWindow.applicable
+            ? `This subscription is suspended. Renew before ${new Date(paidWindow.retentionEndsAt).toLocaleDateString('en-NG')} to preserve the workspace and its records.`
+            : 'This subscription is not active. Choose a paid subscription to continue.'
   };
 }
 

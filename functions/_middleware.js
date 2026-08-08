@@ -90,9 +90,41 @@ function subscriptionRequiredResponse(requestId, identity = {}) {
   });
 }
 
+function subscriptionReadOnlyResponse(requestId, identity = {}) {
+  return Response.json({
+    ok: false,
+    code: 'SUBSCRIPTION_READ_ONLY',
+    message: String(identity.subscriptionMessage || 'This subscription is in its payment grace period. Renew it to make operational changes.'),
+    subscriptionPlan: String(identity.subscriptionPlan || ''),
+    subscriptionState: String(identity.subscriptionState || 'payment_grace'),
+    gracePeriodEndsAt: String(identity.gracePeriodEndsAt || '')
+  }, {
+    status: 402,
+    headers: { 'Cache-Control': 'no-store', 'X-Request-Id': requestId }
+  });
+}
+
 function subscriptionGateExempt(pathname, method) {
   if (SUBSCRIPTION_RECOVERY_PATHS.has(pathname)) return true;
   return pathname === '/api/settings' && ['GET', 'HEAD'].includes(String(method || 'GET').toUpperCase());
+}
+
+const READ_ONLY_POST_ACTIONS = new Set([
+  'detail', 'get', 'getchildactivity', 'getchildpayable', 'getdashboard',
+  'getnotifications', 'history', 'init', 'inspect', 'list', 'load', 'preview',
+  'refresh', 'report', 'search', 'shell', 'status', 'summary', 'view'
+]);
+
+async function subscriptionReadOnlyRequestAllowed(request, pathname) {
+  const method = String(request.method || 'GET').toUpperCase();
+  if (subscriptionGateExempt(pathname, method) || ['GET', 'HEAD', 'OPTIONS'].includes(method)) return true;
+  if (method !== 'POST' || !String(request.headers.get('Content-Type') || '').toLowerCase().includes('application/json')) return false;
+  const declared = Number(request.headers.get('Content-Length') || 0);
+  if (declared > 64 * 1024) return false;
+  const body = await request.clone().json().catch(() => null);
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+  const action = String(body.action || body.mode || body.operation || '').trim().toLowerCase();
+  return READ_ONLY_POST_ACTIONS.has(action);
 }
 
 function logIdentityFailure({ requestId, pathname, env, error }) {
@@ -187,7 +219,10 @@ async function handleRequest(context, identityLoader) {
         ? identityUnavailableResponse(requestId, identityFailure)
         : identity?.subscriptionActive === false && !subscriptionGateExempt(url.pathname, request.method)
           ? subscriptionRequiredResponse(requestId, identity)
-          : await next();
+          : identity?.subscriptionReadOnly === true
+            && !(await subscriptionReadOnlyRequestAllowed(request, url.pathname))
+            ? subscriptionReadOnlyResponse(requestId, identity)
+            : await next();
     }
     const responseHeaders = new Headers(response.headers);
     if (!responseHeaders.has('Cache-Control')) responseHeaders.set('Cache-Control', 'no-store');

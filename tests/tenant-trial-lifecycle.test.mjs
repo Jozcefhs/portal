@@ -14,6 +14,7 @@ const retirementSource = await readFile(new URL('../scripts/retire-tenant-projec
 const workflowSource = await readFile(new URL('../.github/workflows/retire-expired-trials.yml', import.meta.url), 'utf8');
 const paymentVerificationSource = await readFile(new URL('../functions/api/verify-subscription-payment.js', import.meta.url), 'utf8');
 const paymentWebhookSource = await readFile(new URL('../functions/api/paystack-subscription-webhook.js', import.meta.url), 'utf8');
+const lifecycleSource = await readFile(new URL('../functions/lib/tenant-trial-lifecycle.js', import.meta.url), 'utf8');
 
 test('trial fingerprints are deterministic without retaining contact details', async () => {
   const first = await tenantTrialFingerprint('Example Academy', 'Owner@Example.com');
@@ -66,4 +67,9 @@ test('late subscription payments cannot resurrect a tenant after deletion starts
   assert.match(paymentVerificationSource, /PAYMENT_AFTER_TENANT_RETIREMENT/);
   assert.match(paymentVerificationSource, /Paid After Retirement Deadline/);
   assert.match(paymentWebhookSource, /subscription_event_after_tenant_retirement/);
+});
+
+test('paid retirement sanitizes the central record without consuming a free-trial tombstone', () => {
+  assert.match(lifecycleSource, /if \(registration\) \{\s*writes\.push\(\{\s*collectionPath: 'tenantRegistrations'/s);
+  assert.match(lifecycleSource, /if \(registration && trial\) \{\s*await recordTrialUseTombstone/s);
 });

@@ -14,6 +14,7 @@ const financeDecisionForm = document.getElementById('financeDecisionForm');
 const loginStatus = document.getElementById('staffLoginStatus');
 const dashboardEl = document.getElementById('staffDashboard');
 const dashboardStatus = document.getElementById('staffDashboardStatus');
+const subscriptionAccessBanner = document.getElementById('subscriptionAccessBanner');
 const staffBrand = document.getElementById('staffBrand');
 const identityEl = document.getElementById('staffIdentity');
 const displayNameEl = document.getElementById('staffDisplayName');
@@ -699,7 +700,7 @@ function openStaffProfile() {
   profileSubscriptionSection.hidden = !canManageSubscription;
   if (canManageSubscription) {
     document.getElementById('staffProfileSubscriptionPlan').textContent = `${clean(currentUser.subscriptionPlan || 'Current')} plan`;
-    document.getElementById('staffProfileSubscriptionCopy').textContent = currentUser.subscriptionActive === false
+    document.getElementById('staffProfileSubscriptionCopy').textContent = currentUser.subscriptionActive === false || currentUser.subscriptionReadOnly === true
       ? (currentUser.subscriptionMessage || 'This subscription needs attention. Choose a paid plan to restore access.')
       : 'Compare plans, change billing frequency and upgrade securely through Paystack.';
   }
@@ -741,11 +742,13 @@ function renderStaffSubscription() {
   const { catalog, policy, edition } = subscriptionData;
   const currentPlan = clean(policy.Plan || 'Starter');
   const currentCycle = clean(policy.BillingCycle || 'monthly').toLowerCase();
+  const renewalRequired = /payment grace|payment failed|past due|suspended|expired/i.test(`${clean(policy.SubscriptionStatus)} ${clean(policy.LifecycleStage)}`);
   const plans = Array.isArray(catalog.Plans) ? catalog.Plans : [];
   document.getElementById('staffSubscriptionSummary').innerHTML = `
     <div><small>Current plan</small><strong>${escapeHtml(currentPlan)}</strong></div>
     <div><small>Billing</small><strong>${escapeHtml(currentCycle === 'yearly' ? 'Yearly' : 'Monthly')}</strong></div>
     <div><small>Status</small><strong>${escapeHtml(policy.SubscriptionStatus || policy.PaymentStatus || 'Active')}</strong></div>
+    <div><small>Paid through</small><strong>${policy.PaidThroughAt ? escapeHtml(new Date(policy.PaidThroughAt).toLocaleDateString()) : 'Not recorded'}</strong></div>
     <div><small>Active users allowed</small><strong>${escapeHtml(policy.UserLimit || 0)}</strong></div>`;
   document.querySelectorAll('[data-subscription-cycle]').forEach((button) => {
     button.classList.toggle('active', button.dataset.subscriptionCycle === subscriptionCycle);
@@ -754,10 +757,10 @@ function renderStaffSubscription() {
     const amount = subscriptionCycle === 'yearly' ? plan.YearlyAmount : plan.MonthlyAmount;
     const samePlan = clean(plan.Name) === currentPlan;
     const lowerPlan = subscriptionPlanRank(plan.Name) < subscriptionPlanRank(currentPlan);
-    const currentChoice = samePlan && subscriptionCycle === currentCycle;
+    const currentChoice = samePlan && subscriptionCycle === currentCycle && !renewalRequired;
     const unavailable = plan.Active === false || clean(plan.Name) === 'Free' || lowerPlan || currentChoice || !(Number(amount) > 0);
     const features = plan.FeaturesByEdition?.[edition] || [];
-    const label = currentChoice ? 'Current plan' : lowerPlan ? 'Contact support to downgrade' : samePlan ? `Switch to ${subscriptionCycle}` : `Upgrade to ${plan.Name}`;
+    const label = currentChoice ? 'Current plan' : lowerPlan ? 'Contact support to downgrade' : samePlan && renewalRequired && subscriptionCycle === currentCycle ? `Renew ${plan.Name}` : samePlan ? `Switch to ${subscriptionCycle}` : `Upgrade to ${plan.Name}`;
     return `<article class="staff-subscription-plan ${currentChoice ? 'current' : ''}">
       <header><div><small>${escapeHtml(plan.Summary || '')}</small><h3>${escapeHtml(plan.Name)}</h3></div>${currentChoice ? '<span>Current</span>' : ''}</header>
       <p class="subscription-price"><strong>${escapeHtml(subscriptionMoney(amount, catalog.Currency))}</strong><span>/${subscriptionCycle === 'yearly' ? 'year' : 'month'}</span></p>
@@ -1266,6 +1269,14 @@ function showDashboard(user, options = {}) {
     user.approvalEnabled
   );
   subscriptionButton.hidden = user.role !== 'Super Admin';
+  if (subscriptionAccessBanner) {
+    const readOnly = user.subscriptionReadOnly === true;
+    subscriptionAccessBanner.hidden = !readOnly;
+    subscriptionAccessBanner.innerHTML = readOnly
+      ? `<div><strong>Payment grace period &mdash; read-only access</strong><span>${escapeHtml(user.subscriptionMessage || 'Renew the organisation subscription to make operational changes.')}</span></div>${user.role === 'Super Admin' ? '<button type="button" data-open-subscription-renewal>Renew subscription</button>' : ''}`
+      : '';
+    subscriptionAccessBanner.querySelector('[data-open-subscription-renewal]')?.addEventListener('click', openStaffSubscription);
+  }
   if (options.refreshPasskeys !== false) refreshPasskeyControls();
 }
 
@@ -1388,9 +1399,11 @@ async function loadDashboard(options = {}) {
     scheduleGenericOrganizationVocabulary();
     setStatus(dashboardStatus, currentUser.subscriptionActive === false
       ? (currentUser.subscriptionMessage || 'This subscription is not active. Choose a paid subscription to continue.')
+      : currentUser.subscriptionReadOnly === true
+      ? (currentUser.subscriptionMessage || 'Payment grace period: records are available in read-only mode.')
       : mode === 'shell'
       ? 'Workspace ready. Records load only when you open a module.'
-      : `${staffTabLabel(section, section) || 'Module'} updated.`, currentUser.subscriptionActive === false ? 'bad' : 'ok');
+      : `${staffTabLabel(section, section) || 'Module'} updated.`, currentUser.subscriptionActive === false ? 'bad' : currentUser.subscriptionReadOnly === true ? 'warn' : 'ok');
     return true;
   } catch (error) {
     setStatus(dashboardStatus, error.message || String(error), 'bad');

@@ -7,7 +7,7 @@
   <title>Plans and pricing — Dynamax</title>
   <link rel="icon" href="images/Logo.png">
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260808-tenant-pool">
+  <link rel="stylesheet" href="css/style.css?v=20260808-paid-lifecycle">
 </head>
 <body class="settings-page">
   <main class="settings-shell plan-management-shell">
@@ -70,8 +70,8 @@
           <div class="tenant-pool-table-wrap"><table class="tenant-pool-table"><thead><tr><th>Reference</th><th>Edition</th><th>Mode</th><th>Count</th><th>Status</th><th>Requested</th></tr></thead><tbody id="tenantRequestRows"></tbody></table></div>
         </div>
         <div data-tenant-pool-panel="retirements" hidden>
-          <p class="plan-entitlement-help">Expired free-trial projects remain isolated during their 30-day retention period. Due projects are destroyed in Firebase and Cloudflare and are never returned to another subscriber.</p>
-          <div class="tenant-pool-table-wrap"><table class="tenant-pool-table"><thead><tr><th>Project</th><th>Edition</th><th>Status</th><th>Attempts</th><th>Requested</th><th>Last result</th></tr></thead><tbody id="tenantRetirementRows"></tbody></table></div>
+          <p class="plan-entitlement-help">Expired trials remain isolated for 30 days. Expired paid subscriptions receive a 7-day payment grace period followed by 90 days of retained data. Due projects are destroyed in Firebase and Cloudflare and are never returned to another subscriber.</p>
+          <div class="tenant-pool-table-wrap"><table class="tenant-pool-table"><thead><tr><th>Project</th><th>Subscription</th><th>Edition</th><th>Status</th><th>Attempts</th><th>Requested</th><th>Last result</th></tr></thead><tbody id="tenantRetirementRows"></tbody></table></div>
         </div>
         <div data-tenant-pool-panel="settings" hidden>
           <div class="tenant-pool-actions-grid tenant-policy-controls">
@@ -90,6 +90,6 @@
     </form>
   </main>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
-  <script src="js/plan-management.js?v=20260808-tenant-pool"></script>
+  <script src="js/plan-management.js?v=20260808-paid-lifecycle"></script>
 </body>
 </html>

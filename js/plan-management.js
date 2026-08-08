@@ -84,6 +84,15 @@ function renderTenantPool() {
     tenantRetirementRows.innerHTML = (tenantPoolState.retirements || []).length ? tenantPoolState.retirements.map((request) => `
       <tr><td>${escapeHtml(request.FirebaseProjectId)}</td><td>${escapeHtml(editionLabel(request.Edition))}</td><td><span class="tenant-pool-status ${poolStatusClass(request.Status)}">${escapeHtml(request.Status)}</span></td><td>${Number(request.Attempts || 0)}</td><td>${request.RequestedAt ? escapeHtml(new Date(request.RequestedAt).toLocaleString()) : '—'}</td><td>${escapeHtml(request.LastError || '—')}</td></tr>
     `).join('') : '<tr><td colspan="6">No tenant projects are awaiting secure retirement.</td></tr>';
+    if ((tenantPoolState.retirements || []).length) {
+      [...tenantRetirementRows.rows].forEach((row, index) => {
+        const request = tenantPoolState.retirements[index] || {};
+        const subscriptionCell = row.insertCell(1);
+        subscriptionCell.innerHTML = `${escapeHtml(request.SubscriptionKind || 'Trial')}${request.OriginalPlan ? `<small>${escapeHtml(request.OriginalPlan)}</small>` : ''}`;
+      });
+    } else if (tenantRetirementRows.rows[0]?.cells[0]) {
+      tenantRetirementRows.rows[0].cells[0].colSpan = 7;
+    }
   }
   const policy = tenantPoolState.policy || {};
   document.getElementById('tenantTargetSchool').value = Number(policy.TargetReadyPerEdition?.school || 2);

@@ -97,6 +97,10 @@ function defaultProfile(env) {
     SubscriptionStatus: clean(env.SUBSCRIPTION_STATUS),
     TrialStartedAt: clean(env.TRIAL_STARTED_AT),
     TrialEndsAt: clean(env.TRIAL_ENDS_AT),
+    PaidThroughAt: clean(env.PAID_THROUGH_AT),
+    RenewalDueAt: clean(env.RENEWAL_DUE_AT || env.PAID_THROUGH_AT),
+    GracePeriodEndsAt: clean(env.GRACE_PERIOD_ENDS_AT),
+    DataRetentionEndsAt: clean(env.DATA_RETENTION_ENDS_AT),
     UserLimit: Math.max(1, Number(env.USER_LIMIT || 5) || 5),
     TurnstileSiteKey: clean(env.TURNSTILE_SITE_KEY),
     UpdatedAt: ''
@@ -163,6 +167,11 @@ async function loadProfile(env, options = {}) {
     profile.SubscriptionMessage = organization.SubscriptionMessage;
     profile.TrialStartedAt = organization.TrialStartedAt;
     profile.TrialEndsAt = organization.TrialEndsAt;
+    profile.PaidThroughAt = organization.PaidThroughAt;
+    profile.RenewalDueAt = organization.RenewalDueAt;
+    profile.GracePeriodEndsAt = organization.GracePeriodEndsAt;
+    profile.DataRetentionEndsAt = organization.DataRetentionEndsAt;
+    profile.SubscriptionReadOnly = organization.SubscriptionReadOnly;
     profile.TrialDaysRemaining = organization.TrialDaysRemaining;
     if (branding && clean(branding.WebLogoDataUrl)) {
       profile.WebLogoConfigured = true;
@@ -309,6 +318,11 @@ export async function onRequestPost(context) {
         SubscriptionStatus: existing.SubscriptionStatus,
         TrialStartedAt: existing.TrialStartedAt,
         TrialEndsAt: existing.TrialEndsAt,
+        LifecycleStage: existing.LifecycleStage,
+        PaidThroughAt: existing.PaidThroughAt,
+        RenewalDueAt: existing.RenewalDueAt,
+        GracePeriodEndsAt: existing.GracePeriodEndsAt,
+        DataRetentionEndsAt: existing.DataRetentionEndsAt,
         PlanEntitlements: existing.PlanEntitlements,
         PlanCatalogRevision: existing.PlanCatalogRevision,
         UserLimit: incoming.UserLimit || existing.UserLimit
@@ -356,6 +370,11 @@ export async function onRequestPost(context) {
       SubscriptionMessage: organization.SubscriptionMessage,
       TrialStartedAt: organization.TrialStartedAt,
       TrialEndsAt: organization.TrialEndsAt,
+      PaidThroughAt: organization.PaidThroughAt,
+      RenewalDueAt: organization.RenewalDueAt,
+      GracePeriodEndsAt: organization.GracePeriodEndsAt,
+      DataRetentionEndsAt: organization.DataRetentionEndsAt,
+      SubscriptionReadOnly: organization.SubscriptionReadOnly,
       TrialDaysRemaining: organization.TrialDaysRemaining,
       UserLimit: Math.max(1, Number(incoming.UserLimit || existing.UserLimit || 5) || 5),
       UpdatedAt: new Date().toISOString()

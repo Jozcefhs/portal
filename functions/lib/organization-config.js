@@ -254,7 +254,12 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
     Plan: plan,
     SubscriptionStatus: profile.SubscriptionStatus || legacy.SubscriptionStatus || env.SUBSCRIPTION_STATUS,
     TrialStartedAt: profile.TrialStartedAt || legacy.TrialStartedAt || env.TRIAL_STARTED_AT,
-    TrialEndsAt: profile.TrialEndsAt || legacy.TrialEndsAt || env.TRIAL_ENDS_AT
+    TrialEndsAt: profile.TrialEndsAt || legacy.TrialEndsAt || env.TRIAL_ENDS_AT,
+    LifecycleStage: profile.LifecycleStage || legacy.LifecycleStage,
+    PaidThroughAt: profile.PaidThroughAt || legacy.PaidThroughAt,
+    RenewalDueAt: profile.RenewalDueAt || legacy.RenewalDueAt,
+    GracePeriodEndsAt: profile.GracePeriodEndsAt || legacy.GracePeriodEndsAt,
+    DataRetentionEndsAt: profile.DataRetentionEndsAt || legacy.DataRetentionEndsAt
   });
   const planFlags = featureFlagsForPlan(edition, plan, overrides, planEntitlements);
   return {
@@ -291,6 +296,11 @@ export function organizationProfileDocument(config, audit = {}) {
     SubscriptionStatus: clean(config.SubscriptionStatus || config.subscriptionStatus || resolved.SubscriptionStatus),
     TrialStartedAt: clean(config.TrialStartedAt || config.trialStartedAt || resolved.TrialStartedAt),
     TrialEndsAt: clean(config.TrialEndsAt || config.trialEndsAt || resolved.TrialEndsAt),
+    LifecycleStage: clean(config.LifecycleStage || config.lifecycleStage),
+    PaidThroughAt: clean(config.PaidThroughAt || config.paidThroughAt || resolved.PaidThroughAt),
+    RenewalDueAt: clean(config.RenewalDueAt || config.renewalDueAt || resolved.RenewalDueAt),
+    GracePeriodEndsAt: clean(config.GracePeriodEndsAt || config.gracePeriodEndsAt || resolved.GracePeriodEndsAt),
+    DataRetentionEndsAt: clean(config.DataRetentionEndsAt || config.dataRetentionEndsAt || resolved.DataRetentionEndsAt),
     BrandName: clean(config.BrandName || config.brandName) || 'Dynamax',
     BrandLogoUrl: clean(config.BrandLogoUrl || config.brandLogoUrl)
   };

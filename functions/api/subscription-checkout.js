@@ -46,7 +46,16 @@ export async function onRequestPost({ request, env }) {
     if (!registration) { const error = new Error('No active subscription record was found.'); error.status = 404; throw error; }
     const plan = normalizeSubscriptionPlan(body.plan);
     const billingCycle = normalizeBillingCycle(body.billingCycle);
-    const decision = subscriptionChangeDecision(registration.Plan, registration.BillingCycle, plan, billingCycle);
+    const renewalRequired = /payment grace|payment failed|past due|suspended|expired/i.test(
+      `${clean(registration.SubscriptionStatus)} ${clean(registration.LifecycleStage)}`
+    );
+    const decision = subscriptionChangeDecision(
+      registration.Plan,
+      registration.BillingCycle,
+      plan,
+      billingCycle,
+      { allowRenewal: renewalRequired }
+    );
     if (!decision.allowed) { const error = new Error(decision.reason); error.status = 409; throw error; }
     const catalog = normalizeSubscriptionPlanCatalog(await getDocument(platformEnv, 'settings', 'dynamaxPlanCatalog') || {});
     const checkout = await initializeSubscriptionCheckout({

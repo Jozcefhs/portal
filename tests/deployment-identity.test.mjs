@@ -115,11 +115,16 @@ test('identity details expose only non-secret organisation metadata', () => {
     organisationCode: 'DCA',
     subscriptionPlan: 'Professional',
     subscriptionActive: true,
+    subscriptionReadOnly: false,
     subscriptionState: 'active',
     subscriptionStatus: 'Active',
     trialStartedAt: '',
     trialEndsAt: '',
     trialDaysRemaining: 0,
+    paidThroughAt: '',
+    renewalDueAt: '',
+    gracePeriodEndsAt: '',
+    dataRetentionEndsAt: '',
     subscriptionMessage: ''
   });
   assert.equal(Object.hasOwn(details, 'secret'), false);

@@ -230,13 +230,17 @@ export async function initializeSubscriptionCheckout({ request, env, platformEnv
     error.status = 503;
     throw error;
   }
+  const reusableAuthorizationUrl = clean(registration.PendingAuthorizationUrl)
+    || (!clean(registration.WorkspaceId) ? clean(registration.AuthorizationUrl) : '');
+  const reusableReference = clean(registration.PendingPaystackReference || registration.PaystackReference);
   if (clean(registration.Plan) === plan
     && clean(registration.BillingCycle) === billingCycle
-    && clean(registration.AuthorizationUrl)
+    && reusableAuthorizationUrl
+    && reusableReference
     && clean(registration.PaymentStatus).toLowerCase() !== 'paid') {
     return {
-      authorizationUrl: clean(registration.AuthorizationUrl),
-      paymentReference: clean(registration.PaystackReference),
+      authorizationUrl: reusableAuthorizationUrl,
+      paymentReference: reusableReference,
       amount
     };
   }

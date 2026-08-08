@@ -2995,3 +2995,32 @@ html[data-theme="dark"] .hr-role-guide{border-color:#33495f;background:linear-gr
   .commerce-sales-history>summary{padding:9px 12px;font-size:10px}.commerce-sales-history th,.commerce-sales-history td{padding:6px 7px;font-size:9px}
   .records-desk-activity-card article strong,.executive-register-row strong{font-size:10px}.records-desk-activity-card article small,.executive-register-row small{font-size:8px}
 }
+.subscription-access-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0 0 0.85rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid #f0b429;
+  border-radius: 12px;
+  background: #fff8df;
+  color: #6a4300;
+}
+
+.subscription-access-banner[hidden] { display: none; }
+.subscription-access-banner div { display: grid; gap: 0.2rem; min-width: 0; }
+.subscription-access-banner span { font-size: 0.86rem; line-height: 1.35; }
+.subscription-access-banner button { width: max-content; flex: 0 0 auto; }
+
+[data-theme="dark"] .subscription-access-banner {
+  border-color: #b88618;
+  background: #342a11;
+  color: #ffe4a3;
+}
+
+@media (max-width: 640px) {
+  .subscription-access-banner { align-items: flex-start; flex-direction: column; padding: 0.6rem 0.7rem; }
+  .subscription-access-banner span { font-size: 0.74rem; }
+  .subscription-access-banner button { font-size: 0.72rem; padding: 0.48rem 0.65rem; }
+}

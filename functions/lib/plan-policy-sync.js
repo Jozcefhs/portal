@@ -171,6 +171,11 @@ export async function refreshOrganizationPlanPolicy(env, organizationProfile = {
       : clean(registration.SubscriptionStatus || organizationProfile.SubscriptionStatus),
     TrialStartedAt: clean(registration.TrialStartedAt || organizationProfile.TrialStartedAt),
     TrialEndsAt: clean(registration.TrialEndsAt || organizationProfile.TrialEndsAt),
+    LifecycleStage: clean(registration.LifecycleStage),
+    PaidThroughAt: clean(registration.PaidThroughAt),
+    RenewalDueAt: clean(registration.RenewalDueAt || registration.PaidThroughAt),
+    GracePeriodEndsAt: clean(registration.GracePeriodEndsAt),
+    DataRetentionEndsAt: clean(registration.DataRetentionEndsAt),
     SubscriptionMessage: centrallyRevoked
       ? 'This workspace is no longer registered with Dynamax.'
       : '',
@@ -185,6 +190,11 @@ export async function refreshOrganizationPlanPolicy(env, organizationProfile = {
     || clean(organizationProfile.SubscriptionStatus) !== clean(enriched.SubscriptionStatus)
     || clean(organizationProfile.TrialStartedAt) !== clean(enriched.TrialStartedAt)
     || clean(organizationProfile.TrialEndsAt) !== clean(enriched.TrialEndsAt)
+    || clean(organizationProfile.LifecycleStage) !== clean(enriched.LifecycleStage)
+    || clean(organizationProfile.PaidThroughAt) !== clean(enriched.PaidThroughAt)
+    || clean(organizationProfile.RenewalDueAt) !== clean(enriched.RenewalDueAt)
+    || clean(organizationProfile.GracePeriodEndsAt) !== clean(enriched.GracePeriodEndsAt)
+    || clean(organizationProfile.DataRetentionEndsAt) !== clean(enriched.DataRetentionEndsAt)
     || clean(organizationProfile.SubscriptionMessage) !== clean(enriched.SubscriptionMessage)
     || clean(organizationProfile.SubscriptionRevokedAt) !== clean(enriched.SubscriptionRevokedAt);
   if (changed) {

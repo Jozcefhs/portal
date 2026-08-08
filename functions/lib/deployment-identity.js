@@ -1,5 +1,6 @@
 import { getDocument } from './firestore.js';
 import { resolveOrganizationConfig } from './organization-config.js';
+import { refreshOrganizationPlanPolicy } from './plan-policy-sync.js';
 
 const clean = (value) => String(value ?? '').trim();
 const ALLOWED_DEPLOYMENT_EDITIONS = new Set(['school', 'faith', 'organization']);
@@ -197,11 +198,16 @@ export function deploymentIdentityDetails({
     organisationCode: organization.Code,
     subscriptionPlan: organization.Plan,
     subscriptionActive: organization.SubscriptionActive,
+    subscriptionReadOnly: organization.SubscriptionReadOnly,
     subscriptionState: organization.SubscriptionState,
     subscriptionStatus: organization.SubscriptionStatus,
     trialStartedAt: organization.TrialStartedAt,
     trialEndsAt: organization.TrialEndsAt,
     trialDaysRemaining: organization.TrialDaysRemaining,
+    paidThroughAt: organization.PaidThroughAt,
+    renewalDueAt: organization.RenewalDueAt,
+    gracePeriodEndsAt: organization.GracePeriodEndsAt,
+    dataRetentionEndsAt: organization.DataRetentionEndsAt,
     subscriptionMessage: organization.SubscriptionMessage
   });
 }
@@ -227,7 +233,8 @@ export async function loadDeploymentIdentity(env = {}, options = {}) {
   if (!options.fresh && cachedIdentity?.key === key && cachedIdentity.expiresAt > now) {
     return cachedIdentity.value;
   }
-  const organizationProfile = await getDocument(env, 'settings', 'organisationProfile');
+  const savedProfile = await getDocument(env, 'settings', 'organisationProfile');
+  const organizationProfile = await refreshOrganizationPlanPolicy(env, savedProfile || {});
   const value = deploymentIdentityDetails({ env, identity, organizationProfile });
   cachedIdentity = {
     key,

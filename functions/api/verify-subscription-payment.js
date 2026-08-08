@@ -4,6 +4,10 @@ import { syncRegistrationSubscriptionToWorkspace } from '../lib/subscription-wor
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 import { reserveTenantProjectSlot } from '../lib/tenant-project-pool.js';
 import { issueTenantActivation } from '../lib/tenant-activation.js';
+import {
+  paidSubscriptionRecoveryFields,
+  paystackPaidThroughAt
+} from '../lib/paid-subscription-lifecycle.js';
 
 const clean = (value) => String(value ?? '').trim();
 const safeId = (value) => clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140);
@@ -120,6 +124,11 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
   const subscriptionCode = clean(transaction.subscription_code || transaction.subscription?.subscription_code);
   const paidAt = clean(transaction.paid_at || transaction.paidAt) || new Date().toISOString();
   const updatedAt = new Date().toISOString();
+  const recoveryFields = paidSubscriptionRecoveryFields({
+    paidAt,
+    billingCycle: clean(intent.BillingCycle),
+    providerPaidThroughAt: paystackPaidThroughAt(transaction)
+  });
   const updatedRegistration = {
     ...withoutFirestoreMetadata(registration),
     Plan: clean(intent.Plan),
@@ -129,8 +138,7 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
     PlanCatalogRevision: clean(intent.PlanCatalogRevision || registration.PlanCatalogRevision),
     Price: Number(intent.Amount || 0),
     Currency: clean(intent.Currency || transaction.currency || 'NGN'),
-    PaymentStatus: 'Paid',
-    SubscriptionStatus: 'Active',
+    ...recoveryFields,
     Status: 'Payment Confirmed',
     PaystackReference: reference,
     PaystackPlanCode: clean(intent.PaystackPlanCode),
@@ -143,7 +151,7 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
     PendingPaystackPlanCode: '',
     PendingPaystackReference: '',
     PendingAuthorizationUrl: '',
-    PaidAt: paidAt,
+    AutoRenewalEnabled: true,
     UpdatedAt: updatedAt
   };
   await Promise.all([

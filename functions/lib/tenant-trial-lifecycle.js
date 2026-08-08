@@ -9,11 +9,18 @@ import {
 } from './firestore.js';
 import { escapeEmailHtml, sendConfiguredEmail } from './email-service.js';
 import { normalizeOrganizationEdition } from './organization-config.js';
+import { SUBSCRIPTION_PLAN_NAMES } from './subscription-plans.js';
+import {
+  PAID_DATA_RETENTION_DAYS,
+  PAID_SUBSCRIPTION_GRACE_DAYS,
+  paidLifecycleWindow
+} from './paid-subscription-lifecycle.js';
 
 export const TENANT_RETIREMENT_REQUEST_COLLECTION = 'tenantRetirementRequests';
 export const TENANT_TRIAL_TOMBSTONE_COLLECTION = 'tenantTrialTombstones';
 export const TENANT_LIFECYCLE_EMAIL_COLLECTION = 'tenantLifecycleEmailDeliveries';
 export const TRIAL_DATA_RETENTION_DAYS = 30;
+export { PAID_DATA_RETENTION_DAYS, PAID_SUBSCRIPTION_GRACE_DAYS };
 const RETIREMENT_LEASE_MINUTES = 90;
 const MAX_RETIREMENT_ATTEMPTS = 3;
 
@@ -35,6 +42,8 @@ export function publicTenantRetirementRequest(request = {}) {
     RegistrationReference: clean(request.RegistrationReference),
     ProjectSlotId: clean(request.ProjectSlotId),
     Edition: normalizeOrganizationEdition(request.Edition),
+    SubscriptionKind: clean(request.SubscriptionKind || 'Trial'),
+    OriginalPlan: clean(request.OriginalPlan),
     FirebaseProjectId: clean(request.FirebaseProjectId),
     CloudflareProject: clean(request.CloudflareProject),
     Status: clean(request.Status || 'Pending'),
@@ -112,6 +121,12 @@ export function trialLifecycleWindow(registration = {}, now = Date.now()) {
   };
 }
 
+export function tenantSubscriptionLifecycleWindow(registration = {}, now = Date.now()) {
+  const trial = trialLifecycleWindow(registration, now);
+  if (trial.applicable) return { ...trial, kind: 'trial', periodKey: 'free-trial' };
+  return paidLifecycleWindow(registration, now);
+}
+
 export async function recordTrialUseTombstone(platformEnv, registration = {}, overrides = {}) {
   const fingerprint = clean(overrides.Fingerprint || registration.TrialFingerprint)
     || await tenantTrialFingerprint(registration.OrganisationName, registration.Email);
@@ -139,53 +154,106 @@ export async function findTrialUseTombstone(platformEnv, organisationName, email
 }
 
 function noticeForWindow(registration, window) {
+  if (window.kind === 'trial') {
+    if (window.stage !== 'suspended') return '';
+    if (window.remainingDays <= 1 && !clean(registration.DeletionWarning1DaySentAt)) return 'trial-deletion-1-day';
+    if (window.remainingDays <= 7 && !clean(registration.DeletionWarning7DaySentAt)) return 'trial-deletion-7-day';
+    if (!clean(registration.TrialExpiryNoticeSentAt)) return 'trial-expired';
+    return '';
+  }
+  if (window.stage === 'active') {
+    if (window.daysUntilDue <= 1 && !clean(registration.RenewalReminder1DaySentAt)) return 'paid-renewal-1-day';
+    if (window.daysUntilDue <= 3 && !clean(registration.RenewalReminder3DaySentAt)) return 'paid-renewal-3-day';
+    if (window.daysUntilDue <= 7 && !clean(registration.RenewalReminder7DaySentAt)) return 'paid-renewal-7-day';
+    return '';
+  }
+  if (window.stage === 'payment_grace' && !clean(registration.PaymentGraceNoticeSentAt)) return 'paid-payment-grace';
   if (window.stage !== 'suspended') return '';
-  if (window.remainingDays <= 1 && !clean(registration.DeletionWarning1DaySentAt)) return 'deletion-1-day';
-  if (window.remainingDays <= 7 && !clean(registration.DeletionWarning7DaySentAt)) return 'deletion-7-day';
-  if (!clean(registration.TrialExpiryNoticeSentAt)) return 'trial-expired';
+  if (window.remainingDays <= 1 && !clean(registration.PaidDeletionWarning1DaySentAt)) return 'paid-deletion-1-day';
+  if (window.remainingDays <= 7 && !clean(registration.PaidDeletionWarning7DaySentAt)) return 'paid-deletion-7-day';
+  if (window.remainingDays <= 30 && !clean(registration.PaidDeletionWarning30DaySentAt)) return 'paid-deletion-30-day';
+  if (!clean(registration.PaidSuspensionNoticeSentAt)) return 'paid-suspended';
   return '';
 }
 
 function noticeFields(notice, now) {
-  if (notice === 'deletion-1-day') {
+  if (notice === 'trial-deletion-1-day') {
     return {
       TrialExpiryNoticeSentAt: now,
       DeletionWarning7DaySentAt: now,
       DeletionWarning1DaySentAt: now
     };
   }
-  if (notice === 'deletion-7-day') {
+  if (notice === 'trial-deletion-7-day') {
     return { TrialExpiryNoticeSentAt: now, DeletionWarning7DaySentAt: now };
   }
-  return notice === 'trial-expired' ? { TrialExpiryNoticeSentAt: now } : {};
+  if (notice === 'trial-expired') return { TrialExpiryNoticeSentAt: now };
+  if (notice === 'paid-renewal-1-day') {
+    return { RenewalReminder7DaySentAt: now, RenewalReminder3DaySentAt: now, RenewalReminder1DaySentAt: now };
+  }
+  if (notice === 'paid-renewal-3-day') return { RenewalReminder7DaySentAt: now, RenewalReminder3DaySentAt: now };
+  if (notice === 'paid-renewal-7-day') return { RenewalReminder7DaySentAt: now };
+  if (notice === 'paid-payment-grace') return { PaymentGraceNoticeSentAt: now };
+  if (notice === 'paid-suspended') return { PaidSuspensionNoticeSentAt: now };
+  if (notice === 'paid-deletion-1-day') {
+    return {
+      PaidSuspensionNoticeSentAt: now,
+      PaidDeletionWarning30DaySentAt: now,
+      PaidDeletionWarning7DaySentAt: now,
+      PaidDeletionWarning1DaySentAt: now
+    };
+  }
+  if (notice === 'paid-deletion-7-day') {
+    return { PaidSuspensionNoticeSentAt: now, PaidDeletionWarning30DaySentAt: now, PaidDeletionWarning7DaySentAt: now };
+  }
+  if (notice === 'paid-deletion-30-day') {
+    return { PaidSuspensionNoticeSentAt: now, PaidDeletionWarning30DaySentAt: now };
+  }
+  return {};
 }
 
 function lifecycleEmail(registration, window, notice) {
   const organisation = clean(registration.OrganisationName) || 'your organisation';
   const portalUrl = clean(registration.PortalUrl);
   const billingUrl = portalUrl ? `${portalUrl.replace(/\/$/, '')}/admin.html#subscription` : '';
-  const deletionDate = new Date(window.retentionEndsAt).toLocaleDateString('en-NG', {
+  const formattedDate = (value) => new Date(value).toLocaleDateString('en-NG', {
     day: 'numeric', month: 'long', year: 'numeric'
   });
-  const heading = notice === 'trial-expired'
-    ? 'Your Dynamax free trial has ended'
-    : notice === 'deletion-7-day'
-      ? 'Your Dynamax workspace will be deleted in 7 days'
-      : 'Final notice: your Dynamax workspace will be deleted within 24 hours';
-  const detail = notice === 'trial-expired'
-    ? `The 7-day free trial for ${organisation} has ended. Your operational modules are suspended, but your data will be retained until ${deletionDate}.`
-    : `The suspended workspace for ${organisation} is scheduled for permanent deletion on ${deletionDate}. Upgrade before then to preserve the workspace and its records.`;
-  const action = billingUrl ? ` Upgrade securely at ${billingUrl}.` : ' Sign in to your Dynamax account and choose a paid plan to retain the workspace.';
+  const deletionDate = formattedDate(window.retentionEndsAt);
+  const renewalDate = window.paidThroughAt ? formattedDate(window.paidThroughAt) : '';
+  const messages = {
+    'trial-expired': ['Your Dynamax free trial has ended', `The 7-day free trial for ${organisation} has ended. Operational modules are suspended, but the data will be retained until ${deletionDate}.`],
+    'trial-deletion-7-day': ['Your Dynamax workspace will be deleted in 7 days', `The suspended trial workspace for ${organisation} is scheduled for permanent deletion on ${deletionDate}.`],
+    'trial-deletion-1-day': ['Final notice: your Dynamax workspace will be deleted within 24 hours', `The suspended trial workspace for ${organisation} is scheduled for permanent deletion on ${deletionDate}.`],
+    'paid-renewal-7-day': ['Your Dynamax subscription renews in 7 days', `The ${clean(registration.Plan)} subscription for ${organisation} is due for renewal on ${renewalDate}.`],
+    'paid-renewal-3-day': ['Your Dynamax subscription renews in 3 days', `The ${clean(registration.Plan)} subscription for ${organisation} is due for renewal on ${renewalDate}.`],
+    'paid-renewal-1-day': ['Your Dynamax subscription renews tomorrow', `The ${clean(registration.Plan)} subscription for ${organisation} is due for renewal on ${renewalDate}.`],
+    'paid-payment-grace': ['Payment required: your Dynamax account is in grace period', `Renewal payment for ${organisation} was not confirmed. Records remain available in read-only mode until ${formattedDate(window.graceEndsAt)}.`],
+    'paid-suspended': ['Your Dynamax subscription has been suspended', `The payment grace period for ${organisation} has ended. Operational access is suspended, but the data will be retained until ${deletionDate}.`],
+    'paid-deletion-30-day': ['Your Dynamax workspace will be deleted in 30 days', `The suspended paid workspace for ${organisation} is scheduled for permanent deletion on ${deletionDate}.`],
+    'paid-deletion-7-day': ['Your Dynamax workspace will be deleted in 7 days', `The suspended paid workspace for ${organisation} is scheduled for permanent deletion on ${deletionDate}.`],
+    'paid-deletion-1-day': ['Final notice: your Dynamax workspace will be deleted within 24 hours', `The suspended paid workspace for ${organisation} is scheduled for permanent deletion on ${deletionDate}.`]
+  };
+  const [heading, detail] = messages[notice] || ['Dynamax subscription notice', `A subscription action is required for ${organisation}.`];
+  const actionText = window.kind === 'trial' ? 'upgrade' : 'renew';
+  const action = billingUrl
+    ? ` Sign in and ${actionText} securely at ${billingUrl}.`
+    : ` Sign in to your Dynamax account to ${actionText} the subscription.`;
+  const deletionWarning = notice.includes('deletion') || notice === 'paid-suspended' || notice === 'trial-expired';
+  const retentionText = deletionWarning
+    ? '\n\nAfter deletion, Dynamax operational records and access to linked document records cannot be recovered. Files held in an external storage account remain governed by that account owner.'
+    : '';
   return {
     subject: heading,
-    textContent: `${heading}\n\n${detail}${action}\n\nAfter deletion, Dynamax operational records and access to linked document records cannot be recovered. Files held in an external storage account remain governed by that account owner.`,
-    htmlContent: `<h2>${escapeEmailHtml(heading)}</h2><p>${escapeEmailHtml(detail)}</p><p>${escapeEmailHtml(action)}</p><p><strong>After deletion, Dynamax operational records and access to linked document records cannot be recovered.</strong> Files held in an external storage account remain governed by that account owner.</p>`
+    textContent: `${heading}\n\n${detail}${action}${retentionText}`,
+    htmlContent: `<h2>${escapeEmailHtml(heading)}</h2><p>${escapeEmailHtml(detail)}</p><p>${escapeEmailHtml(action)}</p>${deletionWarning ? '<p><strong>After deletion, Dynamax operational records and access to linked document records cannot be recovered.</strong> Files held in an external storage account remain governed by that account owner.</p>' : ''}`
   };
 }
 
 async function deliverLifecycleNotice(platformEnv, registration, window, notice, emailSender) {
   const registrationReference = clean(registration.Reference || registration.__id);
-  const deliveryId = `${safeReference(registrationReference, 'registration')}-${notice}`;
+  const periodKey = safeReference(window.periodKey || (window.kind === 'trial' ? 'free-trial' : window.paidThroughAt), 'period');
+  const deliveryId = `${safeReference(registrationReference, 'registration')}-${periodKey}-${notice}`;
   const recipient = lower(registration.Email || registration.ContactEmail || registration.AdminEmail);
   const now = new Date().toISOString();
   const recipientHash = await tenantTrialFingerprint('', recipient);
@@ -249,9 +317,9 @@ async function deliverLifecycleNotice(platformEnv, registration, window, notice,
 }
 
 export async function queueTenantRetirementRequest(platformEnv, registration = {}) {
-  const lifecycle = trialLifecycleWindow(registration);
+  const lifecycle = tenantSubscriptionLifecycleWindow(registration);
   if (!lifecycle.applicable || lifecycle.stage !== 'retirement_due') {
-    const error = new Error('Only a free-trial workspace whose retention period has ended can be retired.');
+    const error = new Error('Only an expired workspace whose data-retention period has ended can be retired.');
     error.status = 409;
     error.code = 'TENANT_RETIREMENT_NOT_DUE';
     throw error;
@@ -269,24 +337,28 @@ export async function queueTenantRetirementRequest(platformEnv, registration = {
   const firebaseProjectId = clean(registration.FirebaseProjectId || workspaceId || slot.FirebaseProjectId);
   const cloudflareProject = clean(registration.CloudflareProject || slot.CloudflareProject || firebaseProjectId);
   if (!registrationReference || !slotId || !firebaseProjectId || !cloudflareProject) {
-    const error = new Error('The expired trial does not contain a complete tenant project assignment.');
+    const error = new Error('The expired subscription does not contain a complete tenant project assignment.');
     error.status = 409;
     error.code = 'TENANT_RETIREMENT_ASSIGNMENT_INCOMPLETE';
     throw error;
   }
-  const reference = `RET-${safeReference(registrationReference, crypto.randomUUID())}`;
+  const reference = `RET-${safeReference(`${registrationReference}-${lifecycle.retentionEndsAt}`, crypto.randomUUID())}`;
   const now = new Date().toISOString();
   const request = {
     Reference: reference,
     RegistrationReference: registrationReference,
     ProjectSlotId: slotId,
     Edition: normalizeOrganizationEdition(registration.Edition),
+    SubscriptionKind: lifecycle.kind === 'trial' ? 'Trial' : 'Paid',
+    OriginalPlan: clean(registration.Plan),
     FirebaseProjectId: firebaseProjectId,
     CloudflareProject: cloudflareProject,
     WorkspaceId: clean(workspaceId || firebaseProjectId),
     Status: 'Pending',
     Attempts: 0,
-    RequestedBy: 'Automatic expired-trial lifecycle',
+    RequestedBy: lifecycle.kind === 'trial'
+      ? 'Automatic expired-trial lifecycle'
+      : 'Automatic expired-paid-subscription lifecycle',
     RequestedAt: now,
     UpdatedAt: now
   };
@@ -294,19 +366,25 @@ export async function queueTenantRetirementRequest(platformEnv, registration = {
   return created.document || request;
 }
 
-export async function processExpiredTrialLifecycle(platformEnv, runtimeEnv = {}, options = {}) {
+export async function processTenantSubscriptionLifecycle(platformEnv, runtimeEnv = {}, options = {}) {
   const now = isoDate(options.now || Date.now()) || new Date().toISOString();
   const nowMs = Date.parse(now);
   const dryRun = options.dryRun === true;
   const maximum = Math.min(5000, Math.max(1, Number(options.maximum || 5000) || 5000));
-  const registrations = await queryCollection(platformEnv, 'tenantRegistrations', {
-    filters: [{ field: 'Plan', op: '==', value: 'Free' }],
-    limit: maximum
-  });
+  const registrations = (await Promise.all(SUBSCRIPTION_PLAN_NAMES.map((plan) => queryCollection(
+    platformEnv,
+    'tenantRegistrations',
+    { filters: [{ field: 'Plan', op: '==', value: plan }], limit: maximum }
+  )))).flat().slice(0, maximum);
   const summary = {
     inspected: registrations.length,
     trialing: 0,
-    suspended: 0,
+    trialSuspended: 0,
+    paidActive: 0,
+    paymentGrace: 0,
+    paidSuspended: 0,
+    untrackedPaid: 0,
+    noticesDue: 0,
     noticesSent: 0,
     noticesFailed: 0,
     retirementQueued: 0,
@@ -315,26 +393,62 @@ export async function processExpiredTrialLifecycle(platformEnv, runtimeEnv = {},
 
   for (const registration of registrations) {
     const reference = clean(registration.Reference || registration.__id);
-    const window = trialLifecycleWindow(registration, nowMs);
-    if (!window.applicable || window.stage === 'trialing') {
-      summary.trialing += window.stage === 'trialing' ? 1 : 0;
+    const window = tenantSubscriptionLifecycleWindow(registration, nowMs);
+    if (!window.applicable) {
+      if (lower(registration.Plan) !== 'free') summary.untrackedPaid += 1;
       continue;
     }
-    summary.suspended += 1;
+    if (window.kind === 'trial' && window.stage === 'trialing') {
+      summary.trialing += 1;
+      continue;
+    }
+    if (window.kind === 'trial') summary.trialSuspended += 1;
+    else if (window.stage === 'active') summary.paidActive += 1;
+    else if (window.stage === 'payment_grace') summary.paymentGrace += 1;
+    else summary.paidSuspended += 1;
     if (['retiring', 'retired'].includes(lower(registration.LifecycleStage))) continue;
+    const notice = noticeForWindow(registration, window);
+    if (notice) summary.noticesDue += 1;
     if (dryRun) {
       if (window.stage === 'retirement_due') summary.retirementQueued += 1;
       continue;
     }
     try {
-      await recordTrialUseTombstone(platformEnv, registration, { Status: window.stage === 'retirement_due' ? 'Retirement Due' : 'Trial Expired' });
-      const baseFields = changedFields(registration, {
-        SubscriptionStatus: 'Trial Expired',
-        Status: window.stage === 'retirement_due' ? 'Retirement Pending' : 'Trial Expired',
-        LifecycleStage: window.stage === 'retirement_due' ? 'Retirement Queued' : 'Suspended',
-        DataRetentionEndsAt: window.retentionEndsAt
-      });
-      const notice = noticeForWindow(registration, window);
+      if (window.kind === 'trial') {
+        await recordTrialUseTombstone(platformEnv, registration, {
+          Status: window.stage === 'retirement_due' ? 'Retirement Due' : 'Trial Expired'
+        });
+      }
+      const lifecycleFields = window.kind === 'trial'
+        ? {
+            SubscriptionStatus: 'Trial Expired',
+            Status: window.stage === 'retirement_due' ? 'Retirement Pending' : 'Trial Expired',
+            LifecycleStage: window.stage === 'retirement_due' ? 'Retirement Queued' : 'Suspended',
+            DataRetentionEndsAt: window.retentionEndsAt
+          }
+        : window.stage === 'active'
+          ? {
+              RenewalDueAt: window.paidThroughAt,
+              PaidThroughAt: window.paidThroughAt
+            }
+          : {
+              SubscriptionStatus: window.stage === 'payment_grace' ? 'Payment Grace' : 'Suspended',
+              Status: window.stage === 'payment_grace'
+                ? 'Payment Grace'
+                : window.stage === 'retirement_due'
+                  ? 'Retirement Pending'
+                  : 'Subscription Suspended',
+              LifecycleStage: window.stage === 'payment_grace'
+                ? 'Payment Grace'
+                : window.stage === 'retirement_due'
+                  ? 'Retirement Queued'
+                  : 'Suspended',
+              ExpiredPaidThroughAt: window.paidThroughAt,
+              GracePeriodStartedAt: window.paidThroughAt,
+              GracePeriodEndsAt: window.graceEndsAt,
+              DataRetentionEndsAt: window.retentionEndsAt
+            };
+      const baseFields = changedFields(registration, lifecycleFields);
       const recipient = lower(registration.Email || registration.ContactEmail || registration.AdminEmail);
       let noticeUpdate = {};
       if (notice && validEmail(recipient)) {
@@ -380,6 +494,8 @@ export async function processExpiredTrialLifecycle(platformEnv, runtimeEnv = {},
   return summary;
 }
 
+export const processExpiredTrialLifecycle = processTenantSubscriptionLifecycle;
+
 function retryReady(request, nowMs) {
   const nextAttemptMs = timestampMilliseconds(request.NextAttemptAt);
   return !Number.isFinite(nextAttemptMs) || nextAttemptMs <= nowMs;
@@ -403,19 +519,19 @@ export async function claimNextTenantRetirementRequest(platformEnv, runnerId = '
     const registration = registrationReference
       ? await getDocument(platformEnv, 'tenantRegistrations', registrationReference)
       : null;
-    if (!registration || lower(registration.Plan) !== 'free'
-      || ['paid', 'active', 'payment confirmed'].includes(lower(registration.PaymentStatus))) {
+    const lifecycle = registration ? tenantSubscriptionLifecycleWindow(registration) : { applicable: false };
+    if (!registration || !lifecycle.applicable) {
       await patchDocumentFieldsIfCurrent(platformEnv, TENANT_RETIREMENT_REQUEST_COLLECTION, clean(request.__id || request.Reference), {
         Status: 'Cancelled',
-        LastError: 'The subscriber upgraded or the registration is no longer eligible for retirement.',
+        LastError: 'The registration is no longer eligible for retirement.',
         UpdatedAt: new Date().toISOString()
       }, request).catch(() => null);
       continue;
     }
-    if (trialLifecycleWindow(registration).stage !== 'retirement_due') {
+    if (lifecycle.stage !== 'retirement_due') {
       await patchDocumentFieldsIfCurrent(platformEnv, TENANT_RETIREMENT_REQUEST_COLLECTION, clean(request.__id || request.Reference), {
         Status: 'Cancelled',
-        LastError: 'The subscriber retention period has not ended.',
+        LastError: 'The subscriber renewed or the data-retention period has not ended.',
         UpdatedAt: new Date().toISOString()
       }, request).catch(() => null);
       continue;
@@ -455,7 +571,7 @@ export async function claimNextTenantRetirementRequest(platformEnv, runnerId = '
           data: {
             ...withoutFirestoreMetadata(registration),
             Status: 'Retirement In Progress',
-            SubscriptionStatus: 'Trial Expired',
+            SubscriptionStatus: lifecycle.kind === 'trial' ? 'Trial Expired' : 'Expired',
             LifecycleStage: 'Retiring',
             UpdatedAt: now
           },
@@ -472,17 +588,22 @@ export async function claimNextTenantRetirementRequest(platformEnv, runnerId = '
 }
 
 function sanitizedRetiredRegistration(registration = {}, request = {}, retiredAt = '') {
+  const trial = lower(request.SubscriptionKind) === 'trial' || lower(registration.Plan) === 'free';
   return {
     Reference: clean(registration.Reference || registration.__id || request.RegistrationReference),
-    TrialFingerprint: clean(registration.TrialFingerprint),
+    TrialFingerprint: trial ? clean(registration.TrialFingerprint) : '',
     Edition: normalizeOrganizationEdition(registration.Edition || request.Edition),
-    Plan: 'Retired Free Trial',
+    Plan: trial ? 'Retired Free Trial' : 'Retired Paid Subscription',
+    OriginalPlan: clean(request.OriginalPlan || registration.Plan),
+    BillingCycle: clean(registration.BillingCycle),
     Status: 'Retired',
-    SubscriptionStatus: 'Trial Expired',
+    SubscriptionStatus: trial ? 'Trial Expired' : 'Expired',
     LifecycleStage: 'Retired',
     TrialStartedAt: clean(registration.TrialStartedAt),
     TrialEndsAt: clean(registration.TrialEndsAt),
     DataRetentionEndsAt: clean(registration.DataRetentionEndsAt),
+    PaidThroughAt: clean(registration.PaidThroughAt),
+    GracePeriodEndsAt: clean(registration.GracePeriodEndsAt),
     FirebaseProjectId: clean(request.FirebaseProjectId),
     CloudflareProject: clean(request.CloudflareProject),
     ProjectSlotId: clean(request.ProjectSlotId),
@@ -538,8 +659,10 @@ export async function finishTenantRetirementRequest(platformEnv, result = {}) {
       limit: 450
     }) : []
   ]);
-  const fingerprint = clean(registration?.TrialFingerprint)
-    || await tenantTrialFingerprint(registration?.OrganisationName, registration?.Email);
+  const trial = lower(request.SubscriptionKind) === 'trial' || lower(registration?.Plan) === 'free';
+  const fingerprint = trial
+    ? clean(registration?.TrialFingerprint) || await tenantTrialFingerprint(registration?.OrganisationName, registration?.Email)
+    : '';
   const writes = [{
     collectionPath: TENANT_RETIREMENT_REQUEST_COLLECTION,
     documentId: reference,
@@ -583,7 +706,7 @@ export async function finishTenantRetirementRequest(platformEnv, result = {}) {
     });
   }
   await batchCommitDocuments(platformEnv, writes);
-  if (registration) {
+  if (registration && trial) {
     await recordTrialUseTombstone(platformEnv, { ...registration, TrialFingerprint: fingerprint }, {
       Status: 'Retired',
       RetiredAt: now
