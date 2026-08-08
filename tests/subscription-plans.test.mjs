@@ -206,6 +206,7 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(registrationJs, /anchor\.download = `Dynamax_Pricing_Book_/);
   assert.doesNotMatch(registrationJs, /window\.open\('', '_blank'/);
   assert.match(registrationJs, /window\.location\.assign\(data\.authorizationUrl\)/);
+  assert.match(registrationJs, /data\.activationUrl \|\| data\.loginUrl \|\| data\.onboardingUrl/);
   assert.match(pricingHtml, /Monthly and yearly pricing/);
   assert.match(pricingHtml, /id="planEntitlementMatrix"/);
   assert.match(pricingHtml, /<select id="planPricingCurrency"><option value="NGN">NGN<\/option><option value="USD">USD<\/option><\/select>/);

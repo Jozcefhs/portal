@@ -2118,6 +2118,18 @@ html[data-theme="dark"] .department-member-onboarding strong { color: #75dfbf; }
 .activation-summary dd { margin: .15rem 0 0; color: #143c63; font-weight: 750; overflow-wrap: anywhere; }
 .activation-form { display: grid; gap: 1rem; }
 .activation-form[hidden], .activation-summary[hidden], .activation-card .settings-link[hidden] { display: none; }
+.onboarding-status-card { overflow: visible; }
+.onboarding-progress { display: grid; gap: .75rem; margin: 0 0 1rem; padding: 0; list-style: none; }
+.onboarding-progress li { display: grid; grid-template-columns: 34px minmax(0,1fr); align-items: center; gap: .75rem; padding: .8rem; border: 1px solid #d8e1ec; border-radius: 12px; background: #f8fbff; }
+.onboarding-progress li > span { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: #dce7f6; color: #34516f; font-weight: 900; }
+.onboarding-progress li div { display: grid; gap: .16rem; min-width: 0; }
+.onboarding-progress li strong { color: #173f67; }
+.onboarding-progress li small { color: #64758a; line-height: 1.35; }
+.onboarding-progress li.is-complete { border-color: #91d3c3; background: #effaf7; }
+.onboarding-progress li.is-complete > span { background: #118a76; color: #fff; }
+.onboarding-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
+.onboarding-actions button, .onboarding-actions .settings-link { width: fit-content; }
+.onboarding-next-check { min-height: 1.25rem; }
 html[data-theme="dark"] .organisation-registration-card { background: #111e2e; color: #edf4ff; border-color: #33465c; box-shadow: 0 16px 42px rgba(0,0,0,.32); }
 html[data-theme="dark"] .registration-brand h1 { color: #72a9ff; }
 html[data-theme="dark"] .registration-brand > div > p:last-child { color: #b7c6d8; }
@@ -2152,6 +2164,12 @@ html[data-theme="dark"] .plan-comparison-column ul { color: #a8b8cb; }
 html[data-theme="dark"] .activation-summary { border-color: #315b57; background: #102c2a; }
 html[data-theme="dark"] .activation-summary dt { color: #a9bdcf; }
 html[data-theme="dark"] .activation-summary dd { color: #eaf5ff; }
+html[data-theme="dark"] .onboarding-progress li { border-color: #33465c; background: #15263a; }
+html[data-theme="dark"] .onboarding-progress li > span { background: #30465f; color: #dce9f8; }
+html[data-theme="dark"] .onboarding-progress li strong { color: #e7f2ff; }
+html[data-theme="dark"] .onboarding-progress li small { color: #b6c6d8; }
+html[data-theme="dark"] .onboarding-progress li.is-complete { border-color: #315b57; background: #102c2a; }
+html[data-theme="dark"] .onboarding-progress li.is-complete > span { background: #21a890; color: #fff; }
 @media (max-width: 700px) {
   .auth-page { padding-bottom: 0; }
   .auth-page .auth-shell { place-items: start center; padding: .75rem; }

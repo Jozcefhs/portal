@@ -13,6 +13,11 @@ const completionSource = await readFile(new URL('../functions/api/complete-tenan
 const registrationSource = await readFile(new URL('../functions/api/register-organization.js', import.meta.url), 'utf8');
 const activationPage = await readFile(new URL('../activate-account.html', import.meta.url), 'utf8');
 const activationClient = await readFile(new URL('../js/activate-account.js', import.meta.url), 'utf8');
+const onboardingSource = await readFile(new URL('../functions/lib/registration-onboarding.js', import.meta.url), 'utf8');
+const onboardingApi = await readFile(new URL('../functions/api/registration-status.js', import.meta.url), 'utf8');
+const onboardingPage = await readFile(new URL('../onboarding-status.html', import.meta.url), 'utf8');
+const onboardingClient = await readFile(new URL('../js/onboarding-status.js', import.meta.url), 'utf8');
+const middlewareSource = await readFile(new URL('../functions/_middleware.js', import.meta.url), 'utf8');
 
 test('activation tokens are hashed deterministically and never placed in the request URL', async () => {
   const first = await hashTenantActivationToken('one-time-secret');
@@ -60,6 +65,22 @@ test('registration returns activation only after its idempotent result is stored
   assert.ok(completionIndex >= 0);
   assert.ok(activationIndex > completionIndex);
   assert.match(registrationSource, /issueTenantActivation/);
+  assert.match(registrationSource, /issueRegistrationOnboarding/);
+  assert.match(registrationSource, /onboardingResponse\(request, platformEnv, result\.reference, activation\)/);
+});
+
+test('pending registrations redirect through a hashed, expiring onboarding status link', () => {
+  assert.match(onboardingSource, /OnboardingStatusTokenHash: tokenHash/);
+  assert.doesNotMatch(onboardingSource, /OnboardingStatusToken:\s*token/);
+  assert.match(onboardingSource, /onboardingUrl\.hash = new URLSearchParams/);
+  assert.match(onboardingApi, /inspectRegistrationOnboarding/);
+  assert.match(onboardingApi, /consumeRequestAllowance/);
+  assert.match(onboardingApi, /issueTenantActivation/);
+  assert.match(onboardingPage, /Preparing your workspace/);
+  assert.match(onboardingClient, /history\.replaceState/);
+  assert.match(onboardingClient, /\/api\/registration-status/);
+  assert.match(onboardingClient, /window\.location\.replace\(data\.destinationUrl\)/);
+  assert.match(middlewareSource, /'\/api\/registration-status'/);
 });
 
 test('activation interface collects the administrator account and removes the secret fragment immediately', () => {

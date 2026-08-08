@@ -23,6 +23,7 @@ import { syncRegistrationSubscriptionToWorkspace } from '../lib/subscription-wor
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 import { reserveTenantProjectSlot } from '../lib/tenant-project-pool.js';
 import { issueTenantActivation } from '../lib/tenant-activation.js';
+import { issueRegistrationOnboarding } from '../lib/registration-onboarding.js';
 
 const clean = (value) => String(value ?? '').trim();
 const PAYSTACK_INITIALIZE_URL = 'https://api.paystack.co/transaction/initialize';
@@ -81,6 +82,20 @@ async function activationResponse(env, platformEnv, registrationReference) {
       message: clean(error.message || error).slice(0, 300)
     }));
     return { activationPending: true };
+  }
+}
+
+async function onboardingResponse(request, platformEnv, registrationReference, activation = {}) {
+  if (clean(activation.activationUrl || activation.loginUrl)) return {};
+  try {
+    return await issueRegistrationOnboarding(platformEnv, registrationReference, request.url);
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'registration_onboarding_link_failed',
+      registrationReference: clean(registrationReference),
+      message: clean(error.message || error).slice(0, 300)
+    }));
+    return {};
   }
 }
 
@@ -368,7 +383,10 @@ export async function onRequestPost({ request, env }) {
       const activation = idempotency.response?.reference
         ? await activationResponse(env, platformEnv, idempotency.response.reference)
         : {};
-      return Response.json({ ...idempotency.response, ...activation }, {
+      const onboarding = idempotency.response?.reference
+        ? await onboardingResponse(request, platformEnv, idempotency.response.reference, activation)
+        : {};
+      return Response.json({ ...idempotency.response, ...activation, ...onboarding }, {
         status: idempotency.status || (idempotency.response?.ok === false ? 409 : 200),
         headers: { 'Cache-Control': 'no-store', 'Idempotency-Replayed': 'true' }
       });
@@ -416,7 +434,8 @@ export async function onRequestPost({ request, env }) {
       };
       await completeIdempotentRequest(platformEnv, idempotency, result, 200);
       const activation = await activationResponse(env, platformEnv, result.reference);
-      return Response.json({ ...result, ...activation }, { headers: { 'Cache-Control': 'no-store' } });
+      const onboarding = await onboardingResponse(request, platformEnv, result.reference, activation);
+      return Response.json({ ...result, ...activation, ...onboarding }, { headers: { 'Cache-Control': 'no-store' } });
     }
     const reference = `DMX-${Date.now()}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
     const created = await createDocumentIfAbsent(platformEnv, 'tenantRegistrations', reference, {
@@ -460,7 +479,8 @@ export async function onRequestPost({ request, env }) {
     };
     await completeIdempotentRequest(platformEnv, idempotency, result, 200);
     const activation = await activationResponse(env, platformEnv, reference);
-    return Response.json({ ...result, ...activation }, { headers: { 'Cache-Control': 'no-store' } });
+    const onboarding = await onboardingResponse(request, platformEnv, reference, activation);
+    return Response.json({ ...result, ...activation, ...onboarding }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     if (idempotency?.owner && platformEnv) await failIdempotentRequest(platformEnv, idempotency, error);
     return Response.json({ ok: false, message: error.message || String(error) }, {

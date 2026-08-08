@@ -381,6 +381,15 @@ form.addEventListener('submit', async (event) => {
       window.location.assign(data.authorizationUrl);
       return;
     }
+    if (data.activationUrl || data.loginUrl || data.onboardingUrl) {
+      statusNode.textContent = data.activationUrl
+        ? 'Opening secure administrator activation...'
+        : data.loginUrl
+          ? 'Opening your organisation sign-in...'
+          : 'Opening your workspace preparation status...';
+      window.location.assign(data.activationUrl || data.loginUrl || data.onboardingUrl);
+      return;
+    }
     form.reset();
     renderPlans();
   } catch (error) {

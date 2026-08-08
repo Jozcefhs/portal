@@ -14,6 +14,7 @@ const PLATFORM_SUBSCRIPTION_PROXY_PATHS = new Set([
   '/api/subscription-checkout',
   '/api/pricing-book-pdf',
   '/api/register-organization',
+  '/api/registration-status',
   '/api/tenant-activation',
   '/api/verify-subscription-payment',
   '/api/paystack-subscription-webhook'
@@ -29,6 +30,7 @@ const SUBSCRIPTION_RECOVERY_PATHS = new Set([
   '/api/subscription-checkout',
   '/api/staff-subscription',
   '/api/register-organization',
+  '/api/registration-status',
   '/api/tenant-activation',
   '/api/complete-tenant-activation',
   '/api/pricing-book-pdf',

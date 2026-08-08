@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Preparing your organisation | Dynamax</title>
+  <meta name="theme-color" content="#0b4bc8">
+  <link rel="icon" href="images/Logo.png">
+  <script src="js/preferences.js?v=20260808-onboarding-status"></script>
+  <link rel="stylesheet" href="css/style.css?v=20260808-onboarding-status">
+</head>
+<body class="auth-page onboarding-status-page">
+  <main class="auth-shell">
+    <section class="auth-card organisation-registration-card activation-card onboarding-status-card" aria-labelledby="onboardingTitle">
+      <header class="registration-brand">
+        <img src="images/Logo.png" alt="Dynamax">
+        <div>
+          <p class="eyebrow">Secure organisation onboarding</p>
+          <h1 id="onboardingTitle">Preparing your workspace</h1>
+          <p>You can leave this page open. It will continue automatically when your isolated workspace is ready.</p>
+        </div>
+      </header>
+      <div id="onboardingSummary" class="activation-summary" hidden></div>
+      <ol class="onboarding-progress" aria-label="Onboarding progress">
+        <li class="is-complete"><span>1</span><div><strong>Registration received</strong><small>Your subscription request is safely recorded.</small></div></li>
+        <li id="workspaceProgress"><span>2</span><div><strong>Isolated workspace</strong><small id="workspaceProgressText">Waiting for a ready tenant project.</small></div></li>
+        <li id="administratorProgress"><span>3</span><div><strong>Administrator access</strong><small>Create your first Super Administrator after assignment.</small></div></li>
+      </ol>
+      <p id="onboardingStatus" class="status" role="status">Checking your workspace status...</p>
+      <p id="onboardingNextCheck" class="muted onboarding-next-check"></p>
+      <div class="onboarding-actions">
+        <button id="onboardingCheckNow" type="button">Check now</button>
+        <a class="settings-link" href="index.html">Back to Dynamax</a>
+      </div>
+    </section>
+  </main>
+  <script src="js/action-feedback.js?v=20260808-onboarding-status"></script>
+  <script src="js/onboarding-status.js?v=20260808-onboarding-status" type="module"></script>
+</body>
+</html>
