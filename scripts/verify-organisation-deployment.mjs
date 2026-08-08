@@ -27,6 +27,13 @@ export function validateDeploymentPayload(payload, expected = {}) {
   return { workspaceId: actualWorkspace, edition: actualEdition };
 }
 
+export function validateSubscriptionBridgePayload(payload) {
+  if (!payload?.ok || !payload?.catalog || typeof payload.catalog !== 'object') {
+    throw new Error('The deployment cannot reach the central Dynamax subscription service. Check the three subscription bridge variables in Cloudflare.');
+  }
+  return payload.catalog;
+}
+
 async function fetchJson(url) {
   const response = await fetch(url, {
     headers: { Accept: 'application/json' },
@@ -51,11 +58,14 @@ export async function verifyOrganisationDeployment(options = {}) {
       const cacheKey = `deployment=${Date.now()}-${attempt}`;
       const versionUrl = new URL(`/version.json?${cacheKey}`, baseUrl);
       const settingsUrl = new URL(`/api/settings?${cacheKey}`, baseUrl);
-      const [version, settings] = await Promise.all([
+      const subscriptionUrl = new URL(`/api/plan-catalog?${cacheKey}`, baseUrl);
+      const [version, settings, subscription] = await Promise.all([
         fetchJson(versionUrl),
-        fetchJson(settingsUrl)
+        fetchJson(settingsUrl),
+        fetchJson(subscriptionUrl)
       ]);
       const identity = validateDeploymentPayload(settings, expected);
+      validateSubscriptionBridgePayload(subscription);
       return { ...identity, version: clean(version.version) };
     } catch (error) {
       lastError = error;

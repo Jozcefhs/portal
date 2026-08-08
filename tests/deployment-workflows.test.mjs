@@ -5,7 +5,10 @@ import {
   buildDeploymentMatrix,
   validateOrganisationRegistry
 } from '../scripts/organisation-deployment-matrix.mjs';
-import { validateDeploymentPayload } from '../scripts/verify-organisation-deployment.mjs';
+import {
+  validateDeploymentPayload,
+  validateSubscriptionBridgePayload
+} from '../scripts/verify-organisation-deployment.mjs';
 
 const reusable = await readFile(
   new URL('../.github/workflows/deploy-organisation.yml', import.meta.url),
@@ -90,6 +93,17 @@ test('deployed organisation identity must match its registry boundary', () => {
     ok: true,
     profile: { WorkspaceId: 'another-school', OrganisationEdition: 'school' }
   }, { workspaceId: 'digc-suite', edition: 'faith' }), /workspace mismatch/);
+});
+
+test('deployment verification requires the central subscription bridge', async () => {
+  const catalog = { Currency: 'NGN', Plans: {} };
+  assert.equal(validateSubscriptionBridgePayload({ ok: true, catalog }), catalog);
+  assert.throws(
+    () => validateSubscriptionBridgePayload({ ok: false, message: 'not configured' }),
+    /three subscription bridge variables/i
+  );
+  assert.match(reusable, /verify-organisation-deployment\.mjs/);
+  assert.match(await readFile(new URL('../scripts/verify-organisation-deployment.mjs', import.meta.url), 'utf8'), /api\/plan-catalog/);
 });
 
 test('school, church and the Dynamax control plane use separate Firebase configurations', async () => {

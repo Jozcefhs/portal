@@ -72,20 +72,22 @@ To expose registration, pricing and subscription payment from an organisation-br
 - `CANONICAL_PORTAL_URL=https://<central-dynamax-host>`
 - `CANONICAL_API_PROXY_SCOPE=platform-subscriptions`
 
+All three are mandatory production variables. The organisation deployment verification now calls `/api/plan-catalog`; a deployment fails verification when the bridge is missing instead of leaving a broken Subscription & billing screen unnoticed.
+
 The middleware gives the central route priority even when the organisation has its own local Firestore backend. Staff and operational APIs continue to use the organisation database and cannot pass through the restricted proxy.
 
 The same bridge variables also let each subscriber backend refresh its local plan-entitlement snapshot from the public central plan catalogue. No central Firebase private key is copied to subscriber deployments. Catalogue changes are cached for at most 60 seconds and are then written into the subscriber's local organisation profile during the next settings or staff-access refresh.
 
 ## One-time migration from `digc-suite`
 
-The migration utility is non-destructive and runs as a dry run unless `--apply` is supplied. Provide the old project credentials through `SOURCE_FIREBASE_*` and the new central credentials through `DYNAMAX_PLATFORM_FIREBASE_*`, then run:
+The migration utility is non-destructive and runs as a dry run unless `--apply` is supplied. Provide the old project credentials through `SOURCE_FIREBASE_*`, set `SOURCE_WORKSPACE_ID` to the subscriber's deployment workspace, and provide the new central credentials through `DYNAMAX_PLATFORM_FIREBASE_*`, then run:
 
 ```powershell
 npm run migrate:dynamax-platform
 npm run migrate:dynamax-platform -- --apply
 ```
 
-It copies the plan catalog, registrations and subscription payments only when the target document does not already exist. It never deletes or changes the source project. After verifying counts and payment records in the central Firestore console, remove the obsolete platform collections from the subscriber project in a separate, explicitly approved cleanup.
+It copies the plan catalog, registrations and subscription payments only when the target document does not already exist. Every migrated registration is linked to `SOURCE_WORKSPACE_ID`; the migration stops if a record already claims a different workspace. It never deletes or changes the source project. After verifying counts and payment records in the central Firestore console, remove the obsolete platform collections from the subscriber project in a separate, explicitly approved cleanup.
 
 The completed migration copied one plan catalog, one tenant registration and one subscription payment. A second apply run created zero documents and skipped the three existing target documents, confirming that the target records are present without duplicates. The source records remain untouched.
 

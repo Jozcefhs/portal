@@ -26,6 +26,7 @@ requiredEnvironment([
   'SOURCE_FIREBASE_PROJECT_ID',
   'SOURCE_FIREBASE_CLIENT_EMAIL',
   'SOURCE_FIREBASE_PRIVATE_KEY',
+  'SOURCE_WORKSPACE_ID',
   'DYNAMAX_PLATFORM_FIREBASE_PROJECT_ID',
   'DYNAMAX_PLATFORM_FIREBASE_CLIENT_EMAIL',
   'DYNAMAX_PLATFORM_FIREBASE_PRIVATE_KEY'
@@ -36,6 +37,7 @@ const sourceEnv = {
   FIREBASE_CLIENT_EMAIL: clean(process.env.SOURCE_FIREBASE_CLIENT_EMAIL),
   FIREBASE_PRIVATE_KEY: clean(process.env.SOURCE_FIREBASE_PRIVATE_KEY)
 };
+const sourceWorkspaceId = clean(process.env.SOURCE_WORKSPACE_ID).toLowerCase();
 const targetEnv = requirePlatformFirestoreEnv({
   FIREBASE_PROJECT_ID: sourceEnv.FIREBASE_PROJECT_ID,
   DYNAMAX_PLATFORM_FIREBASE_PROJECT_ID: process.env.DYNAMAX_PLATFORM_FIREBASE_PROJECT_ID,
@@ -49,13 +51,24 @@ const payments = await listCollection(sourceEnv, 'subscriptionPayments', { pageS
 
 const migrationItems = [
   ...(catalog ? [{ collection: 'settings', id: 'dynamaxPlanCatalog', data: catalog }] : []),
-  ...registrations.map((document) => ({ collection: 'tenantRegistrations', id: document.__id, data: document })),
+  ...registrations.map((document) => {
+    const existingWorkspaceId = clean(document.WorkspaceId).toLowerCase();
+    if (existingWorkspaceId && existingWorkspaceId !== sourceWorkspaceId) {
+      throw new Error(`Registration ${document.__id} belongs to workspace ${existingWorkspaceId}, not ${sourceWorkspaceId}.`);
+    }
+    return {
+      collection: 'tenantRegistrations',
+      id: document.__id,
+      data: { ...document, WorkspaceId: sourceWorkspaceId }
+    };
+  }),
   ...payments.map((document) => ({ collection: 'subscriptionPayments', id: document.__id, data: document }))
 ];
 
 console.log(JSON.stringify({
   mode: applying ? 'apply' : 'dry-run',
   sourceProject: sourceEnv.FIREBASE_PROJECT_ID,
+  sourceWorkspaceId,
   targetProject: targetEnv.FIREBASE_PROJECT_ID,
   planCatalogs: catalog ? 1 : 0,
   tenantRegistrations: registrations.length,
@@ -81,4 +94,3 @@ for (const item of migrationItems) {
 }
 
 console.log(JSON.stringify({ created, skippedExisting: skipped }, null, 2));
-

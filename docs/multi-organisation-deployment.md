@@ -55,6 +55,14 @@ Add the organisation-specific Paystack, email, notification and document-storage
 
 Do not add `DYNAMAX_PLATFORM_FIREBASE_*` credentials to organisation projects. Configure the restricted subscription proxy to the central Dynamax host instead. This prevents a compromised subscriber deployment from gaining direct database access to every subscriber record.
 
+Every organisation Pages project must also have these production plaintext variables:
+
+- `ALLOW_CANONICAL_API_PROXY=true`
+- `CANONICAL_API_PROXY_SCOPE=platform-subscriptions`
+- `CANONICAL_PORTAL_URL=https://dynamaxms.pages.dev`
+
+The deployment verifier checks the central plan catalogue after each upload, so a missing bridge prevents the deployment from being reported as successful.
+
 ## Deployment
 
 Every push to `main` validates the registry. When `MULTI_ORG_DEPLOY_ENABLED` is `true`, it deploys every enabled organisation, with at most three deployments running together. A failure in one matrix entry does not cancel the other organisations.
@@ -67,7 +75,7 @@ Each deployment:
 2. Authenticates to Google Cloud with short-lived Workload Identity credentials.
 3. Applies the edition-specific Firestore indexes.
 4. Uploads the shared application to the organisation's Cloudflare Pages project.
-5. Verifies that `/api/settings` reports the expected workspace and edition.
+5. Verifies that `/api/settings` reports the expected workspace and edition and that `/api/plan-catalog` reaches the central Dynamax subscription service.
 
 ## Adding an organisation
 
