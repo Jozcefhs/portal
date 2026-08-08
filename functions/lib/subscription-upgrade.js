@@ -1,0 +1,16 @@
+import { normalizeBillingCycle, normalizeSubscriptionPlan } from './subscription-plans.js';
+
+export const SUBSCRIPTION_PLAN_ORDER = Object.freeze(['Free', 'Starter', 'Standard', 'Professional', 'Enterprise']);
+
+export function subscriptionChangeDecision(currentPlan, currentCycle, targetPlan, targetCycle) {
+  const fromPlan = normalizeSubscriptionPlan(currentPlan);
+  const toPlan = normalizeSubscriptionPlan(targetPlan);
+  const fromCycle = normalizeBillingCycle(currentCycle);
+  const toCycle = normalizeBillingCycle(targetCycle);
+  const fromRank = SUBSCRIPTION_PLAN_ORDER.indexOf(fromPlan);
+  const toRank = SUBSCRIPTION_PLAN_ORDER.indexOf(toPlan);
+  if (toPlan === 'Free') return { allowed: false, reason: 'The free trial cannot replace an active paid plan.' };
+  if (toRank < fromRank) return { allowed: false, reason: 'Plan downgrades require assistance from Dynamax support.' };
+  if (toRank === fromRank && toCycle === fromCycle) return { allowed: false, reason: 'This plan and billing cycle are already active.' };
+  return { allowed: true, kind: toRank > fromRank ? 'upgrade' : 'billing-cycle-change', fromPlan, toPlan, fromCycle, toCycle };
+}

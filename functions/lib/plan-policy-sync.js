@@ -49,6 +49,27 @@ export async function loadCanonicalPlanCatalog(env = {}, fetchImpl = fetch) {
   return normalizeSubscriptionPlanCatalog({ ...publicCatalog, Plans: plans });
 }
 
+export async function loadCanonicalSubscriptionPolicy(env = {}, workspaceId, fetchImpl = fetch) {
+  const scope = clean(env.CANONICAL_API_PROXY_SCOPE).toLowerCase();
+  let origin;
+  try { origin = new URL(clean(env.CANONICAL_PORTAL_URL)); } catch (_error) { origin = null; }
+  if (!enabled(env.ALLOW_CANONICAL_API_PROXY) || scope !== 'platform-subscriptions' || !origin || origin.protocol !== 'https:') {
+    const error = new Error('The central Dynamax subscription-policy bridge is not configured.');
+    error.status = 503;
+    throw error;
+  }
+  const response = await fetchImpl(new URL('/api/subscription-policy', origin.origin), {
+    headers: { Accept: 'application/json', 'X-Dynamax-Workspace': clean(workspaceId) }
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data?.ok || !data.policy) {
+    const error = new Error(data?.message || 'The central Dynamax subscription policy could not be loaded.');
+    error.status = response.status || 503;
+    throw error;
+  }
+  return data.policy;
+}
+
 function workspaceKey(value) {
   return clean(value).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/(^-|-$)/g, '');
 }
@@ -77,9 +98,13 @@ async function loadCentralPolicy(env, workspaceId) {
   const cached = policyCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
   if (!directPlatformAccess) {
+    const [catalog, registration] = await Promise.all([
+      loadCanonicalPlanCatalog(env),
+      loadCanonicalSubscriptionPolicy(env, workspaceId).catch(() => null)
+    ]);
     const value = {
-      catalog: await loadCanonicalPlanCatalog(env),
-      registration: null
+      catalog,
+      registration
     };
     policyCache.set(key, { value, expiresAt: Date.now() + CACHE_MS });
     return value;

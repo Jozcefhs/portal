@@ -40,6 +40,22 @@ export async function verifySubscriptionTransaction(env, reference) {
   return data.data;
 }
 
+export async function disablePaystackSubscription(env, subscriptionCode, fetchImpl = fetch) {
+  const code = clean(subscriptionCode);
+  if (!code) return { disabled: false, skipped: true };
+  const headers = { Authorization: `Bearer ${env.PAYSTACK_SECRET_KEY}`, 'Content-Type': 'application/json' };
+  const detailResponse = await fetchImpl(`https://api.paystack.co/subscription/${encodeURIComponent(code)}`, { headers });
+  const detail = await detailResponse.json().catch(() => ({}));
+  const token = clean(detail.data?.email_token);
+  if (!detailResponse.ok || detail.status === false || !token) throw new Error(detail.message || 'The previous Paystack subscription could not be loaded for cancellation.');
+  const response = await fetchImpl('https://api.paystack.co/subscription/disable', {
+    method: 'POST', headers, body: JSON.stringify({ code, token })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.status === false) throw new Error(data.message || 'The previous Paystack subscription could not be disabled.');
+  return { disabled: true };
+}
+
 export async function recordVerifiedSubscriptionPayment(env, transaction, requestedRegistrationReference = '') {
   const platformEnv = requirePlatformFirestoreEnv(env);
   const reference = safeId(transaction.reference);
@@ -90,7 +106,9 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
     ...withoutFirestoreMetadata(registration),
     Plan: clean(intent.Plan),
     BillingCycle: clean(intent.BillingCycle),
-    UserLimit: Number(registration.UserLimit || 0),
+    UserLimit: Math.max(1, Number(intent.UserLimit || registration.UserLimit || 5) || 5),
+    FeatureEntitlements: intent.FeatureEntitlements || registration.FeatureEntitlements || [],
+    PlanCatalogRevision: clean(intent.PlanCatalogRevision || registration.PlanCatalogRevision),
     Price: Number(intent.Amount || 0),
     Currency: clean(intent.Currency || transaction.currency || 'NGN'),
     PaymentStatus: 'Paid',
@@ -100,6 +118,13 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
     PaystackPlanCode: clean(intent.PaystackPlanCode),
     PaystackCustomerCode: customerCode,
     PaystackSubscriptionCode: subscriptionCode,
+    PreviousPaystackSubscriptionCode: clean(intent.PreviousPaystackSubscriptionCode),
+    PendingPlan: '',
+    PendingBillingCycle: '',
+    PendingPrice: 0,
+    PendingPaystackPlanCode: '',
+    PendingPaystackReference: '',
+    PendingAuthorizationUrl: '',
     PaidAt: paidAt,
     UpdatedAt: updatedAt
   };
@@ -116,12 +141,28 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
     upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, updatedRegistration)
   ]);
   await syncRegistrationSubscriptionToWorkspace(env, updatedRegistration);
+  const previousSubscriptionCode = clean(intent.PreviousPaystackSubscriptionCode);
+  let previousSubscriptionWarning = '';
+  if (previousSubscriptionCode && subscriptionCode && previousSubscriptionCode !== subscriptionCode) {
+    try {
+      await disablePaystackSubscription(env, previousSubscriptionCode);
+      updatedRegistration.PreviousSubscriptionDisabledAt = new Date().toISOString();
+      await upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, updatedRegistration);
+    } catch (error) {
+      previousSubscriptionWarning = 'Your new plan is active, but the previous recurring Paystack subscription could not be cancelled automatically. Please contact Dynamax support immediately.';
+      await upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, {
+        ...updatedRegistration,
+        PreviousSubscriptionDisableError: clean(error.message || error).slice(0, 500)
+      });
+    }
+  }
   return {
     registrationReference,
     plan: clean(intent.Plan),
     billingCycle: clean(intent.BillingCycle),
     amount: Number(intent.Amount || 0),
-    currency: clean(intent.Currency || transaction.currency || 'NGN')
+    currency: clean(intent.Currency || transaction.currency || 'NGN'),
+    warning: previousSubscriptionWarning
   };
 }
 
@@ -138,7 +179,7 @@ export async function onRequestPost({ request, env }) {
     const result = await recordVerifiedSubscriptionPayment(env, transaction, body.registrationReference);
     return Response.json({
       ok: true,
-      message: 'Subscription payment confirmed. Your organisation is ready for activation.',
+      message: result.warning || 'Subscription payment confirmed. Your selected plan is now active.',
       ...result
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {

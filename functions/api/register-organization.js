@@ -57,7 +57,7 @@ async function loadPlanCatalog(platformEnv) {
   return normalizeSubscriptionPlanCatalog(saved || {});
 }
 
-async function initializeSubscriptionCheckout({ request, env, platformEnv, registration, catalog, plan, billingCycle }) {
+export async function initializeSubscriptionCheckout({ request, env, platformEnv, registration, catalog, plan, billingCycle, preserveActivePlan = false }) {
   const planEntry = catalog.Plans[plan];
   if (!planEntry.Active) {
     const error = new Error(`${plan} registration is not currently available.`);
@@ -206,6 +206,10 @@ async function initializeSubscriptionCheckout({ request, env, platformEnv, regis
     Amount: amount,
     Currency: catalog.Currency,
     PaystackPlanCode: planCode,
+    UserLimit: planEntry.UserLimit,
+    FeatureEntitlements: subscriptionPlanEntitlements(plan, clean(registration.Edition), catalog),
+    PlanCatalogRevision: catalog.PolicyRevision,
+    PreviousPaystackSubscriptionCode: clean(registration.PaystackSubscriptionCode),
     Status: 'Initializing',
     CreatedAt: new Date().toISOString(),
     UpdatedAt: new Date().toISOString()
@@ -257,13 +261,26 @@ async function initializeSubscriptionCheckout({ request, env, platformEnv, regis
       Amount: amount,
       Currency: catalog.Currency,
       PaystackPlanCode: planCode,
+      UserLimit: planEntry.UserLimit,
+      FeatureEntitlements: subscriptionPlanEntitlements(plan, clean(registration.Edition), catalog),
+      PlanCatalogRevision: catalog.PolicyRevision,
+      PreviousPaystackSubscriptionCode: clean(registration.PaystackSubscriptionCode),
       PaystackAccessCode: clean(data.data.access_code),
       AuthorizationUrl: authorizationUrl,
       Status: 'Awaiting Payment',
       CreatedAt: new Date().toISOString(),
       UpdatedAt: new Date().toISOString()
     }),
-    upsertDocument(platformEnv, 'tenantRegistrations', metadata.registrationReference, {
+    upsertDocument(platformEnv, 'tenantRegistrations', metadata.registrationReference, preserveActivePlan ? {
+      ...withoutFirestoreMetadata(registration),
+      PendingPlan: plan,
+      PendingBillingCycle: billingCycle,
+      PendingPrice: amount,
+      PendingPaystackPlanCode: planCode,
+      PendingPaystackReference: reference,
+      PendingAuthorizationUrl: authorizationUrl,
+      UpdatedAt: new Date().toISOString()
+    } : {
       ...withoutFirestoreMetadata(registration),
       Plan: plan,
       BillingCycle: billingCycle,

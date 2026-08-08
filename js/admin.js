@@ -6,6 +6,8 @@ const passkeySetupButton = document.getElementById('staffPasskeySetup');
 const approvalSettingsButton = document.getElementById('staffApprovalSettings');
 const approvalSettingsDialog = document.getElementById('staffApprovalSettingsDialog');
 const approvalSettingsForm = document.getElementById('staffApprovalSettingsForm');
+const subscriptionButton = document.getElementById('staffSubscriptionButton');
+const subscriptionDialog = document.getElementById('staffSubscriptionDialog');
 const financeDecisionDialog = document.getElementById('financeDecisionDialog');
 const financeDecisionForm = document.getElementById('financeDecisionForm');
 const loginStatus = document.getElementById('staffLoginStatus');
@@ -78,6 +80,8 @@ let financeDecisionBiometricVerified = false;
 let financeDecisionApprovalProof = '';
 let profilePhotoState = '';
 let staffBearerToken = '';
+let subscriptionData = null;
+let subscriptionCycle = 'monthly';
 let staffSessionAbortController = new AbortController();
 let selectedBranchId = 'all';
 let availableBranches = [];
@@ -715,6 +719,82 @@ async function openApprovalSettings() {
   }
 }
 
+function subscriptionPlanRank(name) {
+  return ['Free', 'Starter', 'Standard', 'Professional', 'Enterprise'].indexOf(clean(name));
+}
+
+function subscriptionMoney(amount, currency) {
+  return new Intl.NumberFormat('en-NG', { style: 'currency', currency: clean(currency) || 'NGN', maximumFractionDigits: 0 }).format(Number(amount || 0));
+}
+
+function renderStaffSubscription() {
+  if (!subscriptionData) return;
+  const { catalog, policy, edition } = subscriptionData;
+  const currentPlan = clean(policy.Plan || 'Starter');
+  const currentCycle = clean(policy.BillingCycle || 'monthly').toLowerCase();
+  const plans = Array.isArray(catalog.Plans) ? catalog.Plans : [];
+  document.getElementById('staffSubscriptionSummary').innerHTML = `
+    <div><small>Current plan</small><strong>${escapeHtml(currentPlan)}</strong></div>
+    <div><small>Billing</small><strong>${escapeHtml(currentCycle === 'yearly' ? 'Yearly' : 'Monthly')}</strong></div>
+    <div><small>Status</small><strong>${escapeHtml(policy.SubscriptionStatus || policy.PaymentStatus || 'Active')}</strong></div>
+    <div><small>Active users allowed</small><strong>${escapeHtml(policy.UserLimit || 0)}</strong></div>`;
+  document.querySelectorAll('[data-subscription-cycle]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.subscriptionCycle === subscriptionCycle);
+  });
+  document.getElementById('staffSubscriptionPlans').innerHTML = plans.map((plan) => {
+    const amount = subscriptionCycle === 'yearly' ? plan.YearlyAmount : plan.MonthlyAmount;
+    const samePlan = clean(plan.Name) === currentPlan;
+    const lowerPlan = subscriptionPlanRank(plan.Name) < subscriptionPlanRank(currentPlan);
+    const currentChoice = samePlan && subscriptionCycle === currentCycle;
+    const unavailable = plan.Active === false || clean(plan.Name) === 'Free' || lowerPlan || currentChoice || !(Number(amount) > 0);
+    const features = plan.FeaturesByEdition?.[edition] || [];
+    const label = currentChoice ? 'Current plan' : lowerPlan ? 'Contact support to downgrade' : samePlan ? `Switch to ${subscriptionCycle}` : `Upgrade to ${plan.Name}`;
+    return `<article class="staff-subscription-plan ${currentChoice ? 'current' : ''}">
+      <header><div><small>${escapeHtml(plan.Summary || '')}</small><h3>${escapeHtml(plan.Name)}</h3></div>${currentChoice ? '<span>Current</span>' : ''}</header>
+      <p class="subscription-price"><strong>${escapeHtml(subscriptionMoney(amount, catalog.Currency))}</strong><span>/${subscriptionCycle === 'yearly' ? 'year' : 'month'}</span></p>
+      <p class="subscription-seat-limit">Up to ${escapeHtml(plan.UserLimit)} active users</p>
+      <ul>${features.slice(0, 7).map((feature) => `<li>${escapeHtml(feature)}</li>`).join('')}</ul>
+      ${features.length > 7 ? `<small class="subscription-more">+${features.length - 7} more included features</small>` : ''}
+      <button type="button" data-upgrade-plan="${escapeHtml(plan.Name)}" ${unavailable ? 'disabled' : ''}>${escapeHtml(label)}</button>
+    </article>`;
+  }).join('');
+}
+
+async function openStaffSubscription() {
+  subscriptionDialog.showModal();
+  setStatus(document.getElementById('staffSubscriptionStatus'), 'Loading subscription options...');
+  try {
+    const response = await staffFetch('/api/staff-subscription', { credentials: 'same-origin', cache: 'no-store' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Subscription options could not be loaded.');
+    subscriptionData = data;
+    subscriptionCycle = clean(data.policy?.BillingCycle || 'monthly').toLowerCase();
+    renderStaffSubscription();
+    setStatus(document.getElementById('staffSubscriptionStatus'), 'Select a higher plan or a different billing cycle.');
+  } catch (error) {
+    setStatus(document.getElementById('staffSubscriptionStatus'), error.message || String(error), 'bad');
+  }
+}
+
+async function startSubscriptionUpgrade(plan, button) {
+  const original = button.textContent;
+  setButtonLoading(button, true, 'Opening Paystack...', original);
+  try {
+    const response = await staffFetch('/api/staff-subscription', {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan, billingCycle: subscriptionCycle, idempotencyKey: newIdempotencyKey() })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) throw new Error(data.message || 'The upgrade checkout could not be started.');
+    const target = new URL(data.authorizationUrl);
+    if (target.protocol !== 'https:') throw new Error('The payment provider returned an invalid checkout address.');
+    window.location.assign(target.href);
+  } catch (error) {
+    setStatus(document.getElementById('staffSubscriptionStatus'), error.message || String(error), 'bad');
+    setButtonLoading(button, false, 'Opening Paystack...', original);
+  }
+}
+
 function setSidebarOpen(open) {
   const shouldOpen = Boolean(open) && window.matchMedia('(max-width: 680px)').matches && !dashboardEl.hidden;
   sidebarEl.classList.toggle('is-open', shouldOpen);
@@ -1158,6 +1238,7 @@ function showDashboard(user, options = {}) {
     isExecutiveRole ||
     user.approvalEnabled
   );
+  subscriptionButton.hidden = user.role !== 'Super Admin';
   if (options.refreshPasskeys !== false) refreshPasskeyControls();
 }
 
@@ -9730,6 +9811,18 @@ passkeySetupButton.addEventListener('click', async () => {
 });
 
 approvalSettingsButton.addEventListener('click', openApprovalSettings);
+subscriptionButton.addEventListener('click', openStaffSubscription);
+document.getElementById('staffSubscriptionClose').addEventListener('click', () => subscriptionDialog.close());
+subscriptionDialog.addEventListener('click', (event) => {
+  const cycleButton = event.target.closest('[data-subscription-cycle]');
+  if (cycleButton) {
+    subscriptionCycle = cycleButton.dataset.subscriptionCycle;
+    renderStaffSubscription();
+    return;
+  }
+  const upgradeButton = event.target.closest('[data-upgrade-plan]');
+  if (upgradeButton && !upgradeButton.disabled) startSubscriptionUpgrade(upgradeButton.dataset.upgradePlan, upgradeButton);
+});
 document.getElementById('staffApprovalSettingsClose').addEventListener('click', () => approvalSettingsDialog.close());
 document.getElementById('removeStaffSignature').addEventListener('click', () => {
   approvalAssetState.signature = '';

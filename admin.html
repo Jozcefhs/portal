@@ -6,7 +6,7 @@
   <title>Organisation Staff Portal</title>
   <meta name="theme-color" content="#071b33">
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260808-attendance-location-width">
+  <link rel="stylesheet" href="css/style.css?v=20260808-self-service-upgrade">
   <link rel="stylesheet" href="css/notifications.css?v=20260804-read-efficiency">
 </head>
 <body class="staff-page">
@@ -71,6 +71,9 @@
             <small class="staff-swipe-hint">Swipe left to close this panel</small>
             <button type="button" id="staffApprovalSettings" class="staff-profile-settings" hidden>
               <span aria-hidden="true">⚙</span> User settings
+            </button>
+            <button type="button" id="staffSubscriptionButton" class="staff-profile-settings" hidden>
+              <span aria-hidden="true">&#8593;</span> Subscription
             </button>
             <button type="button" id="staffPasskeySetup" class="staff-passkey-setup" hidden>
               <span aria-hidden="true">◉</span> Set up biometric sign-in
@@ -215,6 +218,25 @@
     </form>
   </dialog>
 
+  <dialog id="staffSubscriptionDialog" class="workflow-dialog staff-subscription-dialog">
+    <div class="workflow-dialog-header">
+      <div><small>Organisation account</small><h2>Subscription &amp; billing</h2></div>
+      <button type="button" id="staffSubscriptionClose" aria-label="Close subscription">&times;</button>
+    </div>
+    <section class="staff-subscription-content">
+      <div id="staffSubscriptionSummary" class="staff-subscription-summary"></div>
+      <div class="staff-subscription-toolbar">
+        <div class="subscription-cycle" role="group" aria-label="Billing cycle">
+          <button type="button" data-subscription-cycle="monthly" class="active">Monthly</button>
+          <button type="button" data-subscription-cycle="yearly">Yearly</button>
+        </div>
+        <small>Checkout is completed securely on Paystack. Your current plan remains active until payment is confirmed.</small>
+      </div>
+      <div id="staffSubscriptionPlans" class="staff-subscription-plans"></div>
+      <p id="staffSubscriptionStatus" class="status" role="status"></p>
+    </section>
+  </dialog>
+
   <dialog id="financeDecisionDialog" class="workflow-dialog finance-decision-dialog">
     <div class="workflow-dialog-header">
       <div><small>Secure decision</small><h2 id="financeDecisionTitle">Approve Document</h2></div>
@@ -243,7 +265,7 @@
   <script src="js/site-config.js?v=20260728-quota-safety"></script>
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
   <script src="js/financial-values.js?v=20260803-finance-commas"></script>
-  <script src="js/admin.js?v=20260807-free-trial"></script>
+  <script src="js/admin.js?v=20260808-self-service-upgrade"></script>
   <script src="js/web-push.js?v=20260801-mobile-push"></script>
   <script src="js/notifications.js?v=20260804-read-efficiency"></script>
 </body>

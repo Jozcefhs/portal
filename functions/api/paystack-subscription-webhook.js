@@ -1,6 +1,6 @@
 import { getDocument, queryCollection, upsertDocument } from '../lib/firestore.js';
 import { secureTextEqual } from '../lib/backend-security.js';
-import { recordVerifiedSubscriptionPayment } from './verify-subscription-payment.js';
+import { disablePaystackSubscription, recordVerifiedSubscriptionPayment } from './verify-subscription-payment.js';
 import { syncRegistrationSubscriptionToWorkspace } from '../lib/subscription-workspace-sync.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 
@@ -104,6 +104,22 @@ async function updateSubscriptionStatus(env, platformEnv, event, data) {
   };
   await upsertDocument(platformEnv, 'tenantRegistrations', registration.__id, updatedRegistration);
   await syncRegistrationSubscriptionToWorkspace(env, updatedRegistration);
+  const previousCode = clean(registration.PreviousPaystackSubscriptionCode);
+  if (normalizedEvent === 'subscription.create' && previousCode && previousCode !== subscriptionCode) {
+    try {
+      await disablePaystackSubscription(env, previousCode);
+      await upsertDocument(platformEnv, 'tenantRegistrations', registration.__id, {
+        ...updatedRegistration,
+        PreviousSubscriptionDisabledAt: new Date().toISOString(),
+        PreviousSubscriptionDisableError: ''
+      });
+    } catch (error) {
+      await upsertDocument(platformEnv, 'tenantRegistrations', registration.__id, {
+        ...updatedRegistration,
+        PreviousSubscriptionDisableError: clean(error.message || error).slice(0, 500)
+      });
+    }
+  }
   return true;
 }
 

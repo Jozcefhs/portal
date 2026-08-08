@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { loadCanonicalPlanCatalog } from '../functions/lib/plan-policy-sync.js';
+import { loadCanonicalPlanCatalog, loadCanonicalSubscriptionPolicy } from '../functions/lib/plan-policy-sync.js';
 
 test('subscriber deployments load plan entitlements through the canonical bridge', async () => {
   let requestedUrl = '';
@@ -33,6 +33,22 @@ test('subscriber deployments load plan entitlements through the canonical bridge
   assert.equal(requestedUrl, 'https://dynamax.example/api/plan-catalog');
   assert.equal(requestedWorkspace, 'church-main');
   assert.deepEqual(catalog.Plans.Starter.EntitlementsByEdition.faith, ['humanResources', 'staffAttendance']);
+});
+
+test('subscriber deployments load their active subscription through the canonical bridge', async () => {
+  let requestedUrl = '';
+  const policy = await loadCanonicalSubscriptionPolicy({
+    ALLOW_CANONICAL_API_PROXY: 'true',
+    CANONICAL_PORTAL_URL: 'https://dynamax.example',
+    CANONICAL_API_PROXY_SCOPE: 'platform-subscriptions'
+  }, 'church-main', async (url, options) => {
+    requestedUrl = String(url);
+    assert.equal(options.headers['X-Dynamax-Workspace'], 'church-main');
+    return Response.json({ ok: true, policy: { WorkspaceId: 'church-main', Plan: 'Professional', UserLimit: 50 } });
+  });
+  assert.equal(requestedUrl, 'https://dynamax.example/api/subscription-policy');
+  assert.equal(policy.Plan, 'Professional');
+  assert.equal(policy.UserLimit, 50);
 });
 
 test('plan-policy bridge fails closed when subscriber bridge variables are missing', async () => {
