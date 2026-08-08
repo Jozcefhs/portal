@@ -2456,7 +2456,7 @@ function commerceReceiptPreview(sale = {}) {
     <aside class="commerce-receipt-preview" aria-live="polite">
       <div><small>${paid ? 'Payment recorded' : 'Payment link sent'}</small><strong>${escapeHtml(sale.SaleNo || 'Sale')}</strong><span>${escapeHtml(sale.CustomerName || 'Walk-in customer')} &middot; ${money(sale.Amount || sale.GrossAmount)}${!paid && sale.CustomerEmail ? ` &middot; ${escapeHtml(sale.CustomerEmail)}` : ''}</span></div>
       <div class="inline-action-group">
-        ${paid ? `<button type="button" class="compact-icon-action" data-commerce-print="${escapeHtml(sale.SaleNo || '')}" title="View and print receipt" aria-label="View and print receipt">&#128424;</button>` : ''}
+        ${paid ? `<button type="button" class="compact-icon-action" data-commerce-print="${escapeHtml(sale.SaleNo || '')}" title="Choose receipt format" aria-label="Choose receipt format">&#128424;</button>` : ''}
         ${!paid && /^https:\/\/[A-Za-z0-9.-]+(?:\/|$)/.test(paymentUrl) ? `<button type="button" class="compact-icon-action" data-commerce-open-payment="${escapeHtml(paymentUrl)}" title="Open secure payment page" aria-label="Open secure payment page">&#8599;</button>` : ''}
       </div>
       ${items.length ? `<small>${escapeHtml(items.map((item) => `${item.ItemName} x ${item.Quantity}`).join(', '))}</small>` : ''}
@@ -2552,7 +2552,7 @@ function renderOrganizationCommerceWorkspace(section, data = {}) {
       <details class="commerce-sales-history" ${recentSales.length ? '' : 'open'}>
         <summary>Recent sales <span>${recentSales.length}</span></summary>
         <div class="table-wrap"><table><thead><tr><th>Date</th><th>Receipt</th><th>Customer</th><th>Payment</th><th>Amount</th><th>Print</th></tr></thead><tbody>
-          ${recentSales.length ? recentSales.map((row) => `<tr><td>${escapeHtml(clean(row.PaidAt || row.SaleDate || row.CreatedAt).replace('T', ' ').slice(0, 19))}</td><td>${escapeHtml(row.SaleNo)}</td><td>${escapeHtml(row.CustomerName || 'Walk-in customer')}</td><td>${escapeHtml(row.PaymentMethod)}<br>${commerceSaleStatus(row)}</td><td>${money(row.Amount || row.GrossAmount)}</td><td><button type="button" class="compact-icon-action" data-commerce-print="${escapeHtml(row.SaleNo)}" aria-label="Print receipt ${escapeHtml(row.SaleNo)}" title="Print receipt" ${clean(row.PaymentStatus || row.Status).toLowerCase() === 'paid' ? '' : 'disabled'}>&#128424;</button></td></tr>`).join('') : '<tr><td colspan="6">No sales recorded yet.</td></tr>'}
+          ${recentSales.length ? recentSales.map((row) => `<tr><td>${escapeHtml(clean(row.PaidAt || row.SaleDate || row.CreatedAt).replace('T', ' ').slice(0, 19))}</td><td>${escapeHtml(row.SaleNo)}</td><td>${escapeHtml(row.CustomerName || 'Walk-in customer')}</td><td>${escapeHtml(row.PaymentMethod)}<br>${commerceSaleStatus(row)}</td><td>${money(row.Amount || row.GrossAmount)}</td><td><button type="button" class="compact-icon-action" data-commerce-print="${escapeHtml(row.SaleNo)}" aria-label="Choose receipt format for ${escapeHtml(row.SaleNo)}" title="Choose receipt format" ${clean(row.PaymentStatus || row.Status).toLowerCase() === 'paid' ? '' : 'disabled'}>&#128424;</button></td></tr>`).join('') : '<tr><td colspan="6">No sales recorded yet.</td></tr>'}
         </tbody></table></div>
       </details>
     </section>`;
@@ -2571,9 +2571,30 @@ function organizationCommerceReceiptSale(section, data, saleNo) {
   return (data.sales || []).find((row) => clean(row.SaleNo) === clean(saleNo));
 }
 
-function printOrganizationCommerceReceipt(sale = {}) {
+function chooseReceiptPrintFormat() {
+  let dialog = document.getElementById('receiptPrintFormatDialog');
+  if (!dialog) {
+    dialog = document.createElement('dialog');
+    dialog.id = 'receiptPrintFormatDialog';
+    dialog.className = 'workflow-dialog receipt-format-dialog';
+    dialog.innerHTML = `<form method="dialog">
+      <header class="workflow-dialog-header"><div><small>Receipt printing</small><h2>Choose receipt format</h2></div><button type="submit" value="" aria-label="Close receipt format chooser">&times;</button></header>
+      <div class="receipt-format-options">
+        <button type="submit" value="standard"><span aria-hidden="true">&#128196;</span><strong>Standard receipt</strong><small>A5 document for office printers or PDF</small></button>
+        <button type="submit" value="pos"><span aria-hidden="true">&#129534;</span><strong>POS receipt</strong><small>Compact 80 mm thermal-printer layout</small></button>
+      </div>
+    </form>`;
+    document.body.appendChild(dialog);
+  }
+  dialog.returnValue = '';
+  dialog.showModal();
+  return new Promise((resolve) => dialog.addEventListener('close', () => resolve(dialog.returnValue || ''), { once: true }));
+}
+
+function printOrganizationCommerceReceipt(sale = {}, format = 'standard') {
   if (!sale || clean(sale.PaymentStatus || sale.Status).toLowerCase() !== 'paid') return;
-  const receiptWindow = window.open('', '_blank', 'width=820,height=900');
+  const posFormat = format === 'pos';
+  const receiptWindow = window.open('', '_blank', posFormat ? 'width=430,height=820' : 'width=820,height=900');
   if (!receiptWindow) {
     setStatus(dashboardStatus, 'Allow pop-ups to view and print this receipt.', 'bad');
     return;
@@ -2582,6 +2603,12 @@ function printOrganizationCommerceReceipt(sale = {}) {
   const organisation = clean(document.querySelector('[data-school-name]')?.textContent || staffBrand?.textContent) || 'Dynamax';
   const logo = clean(document.querySelector('.nav-logo')?.getAttribute('src') || 'images/Logo.png');
   const items = Array.isArray(sale.Items) ? sale.Items : [];
+  if (posFormat) {
+    receiptWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(sale.SaleNo || 'POS receipt')}</title><style>
+      @page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:80mm;margin:0 auto;background:#eee;color:#000;font:11px/1.35 Arial,sans-serif}.receipt{width:74mm;margin:8px auto;padding:4mm 3mm;background:#fff}.brand{text-align:center}.brand img{width:34px;height:34px;object-fit:contain}.brand h1{margin:4px 0 1px;font-size:15px}.brand p{margin:0;font-size:10px}.divider{margin:8px 0;border-top:1px dashed #000}.meta{display:grid;grid-template-columns:30mm 1fr;gap:2px}.meta span{font-weight:700}.meta strong{min-width:0;text-align:right;overflow-wrap:anywhere}table{width:100%;margin:7px 0;border-collapse:collapse;font-size:10px}th,td{padding:3px 1px;border-bottom:1px dotted #777;text-align:left}.number{text-align:right}.total{display:flex;justify-content:space-between;margin-top:7px;padding:7px 0;border-top:2px solid #000;border-bottom:2px solid #000;font-size:14px}.footer{margin-top:9px;text-align:center;font-size:9px}.print{display:block;width:fit-content;margin:10px auto;padding:8px 12px;border:0;border-radius:5px;background:#1769e0;color:#fff;font-weight:700}@media print{body{width:80mm;background:#fff}.receipt{width:74mm;margin:0;padding:0}.print{display:none}}</style></head><body><button class="print" onclick="window.print()">Print POS receipt</button><main class="receipt"><header class="brand">${logo ? `<img src="${escapeHtml(logo)}" alt="">` : ''}<h1>${escapeHtml(organisation)}</h1><p>${escapeHtml(sale.Department || 'Sales')} payment receipt</p></header><div class="divider"></div><section class="meta"><span>Receipt</span><strong>${escapeHtml(sale.SaleNo)}</strong><span>Date</span><strong>${escapeHtml(clean(sale.PaidAt || sale.SaleDate).replace('T', ' ').slice(0, 19))}</strong><span>Customer</span><strong>${escapeHtml(sale.CustomerName || 'Walk-in customer')}</strong><span>Payment</span><strong>${escapeHtml(sale.PaymentMethod || '')}</strong>${sale.PaymentReference ? `<span>Reference</span><strong>${escapeHtml(sale.PaymentReference)}</strong>` : ''}</section><div class="divider"></div><table><thead><tr><th>Item</th><th class="number">Qty</th><th class="number">Amount</th></tr></thead><tbody>${items.map((item) => `<tr><td>${escapeHtml(item.ItemName || item.ItemCode)}</td><td class="number">${escapeHtml(item.Quantity)}</td><td class="number">${money(item.Amount)}</td></tr>`).join('')}</tbody></table><div class="total"><span>TOTAL</span><strong>${money(sale.Amount || sale.GrossAmount)}</strong></div><footer class="footer">Payment received with thanks<br>Generated by Dynamax</footer></main></body></html>`);
+    receiptWindow.document.close();
+    return;
+  }
   receiptWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(sale.SaleNo || 'Receipt')}</title><style>
     @page{size:A5;margin:12mm}*{box-sizing:border-box}body{margin:0;background:#eef4f8;color:#18324d;font:13px/1.45 Arial,sans-serif}.receipt{position:relative;max-width:620px;min-height:760px;margin:18px auto;padding:28px;border-top:7px solid #0c8b78;background:#fff;box-shadow:0 14px 35px #173b5820;overflow:hidden}.watermark{position:absolute;inset:25% 22%;width:56%;height:50%;object-fit:contain;opacity:.045}.brand,.meta,.total,.footer{position:relative}.brand{display:flex;align-items:center;gap:14px;padding-bottom:18px;border-bottom:2px solid #164d7a}.brand img{width:58px;height:58px;object-fit:contain}.brand h1{margin:0;color:#123f6d;font-size:21px}.brand p{margin:3px 0;color:#60758c}.meta{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:18px 0;padding:13px;background:#eaf4ff}.meta strong,.meta span{display:block}.meta span{font-size:11px;color:#60758c}table{position:relative;width:100%;border-collapse:collapse;margin:18px 0}th,td{padding:9px;border-bottom:1px solid #d8e4ee;text-align:left}th{background:#123f6d;color:white;font-size:10px;text-transform:uppercase}.number{text-align:right}.total{display:flex;justify-content:flex-end;gap:20px;padding:13px;background:#e5f7f1;color:#08725c;font-size:18px}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #d8e4ee;color:#60758c;text-align:center}.print{position:fixed;top:10px;right:10px;padding:9px 13px;border:0;border-radius:7px;background:#1769e0;color:#fff;font-weight:bold;cursor:pointer}@media print{body{background:#fff}.receipt{min-height:auto;margin:0;padding:0;box-shadow:none}.print{display:none}}</style></head><body><button class="print" onclick="window.print()">Print / Save as PDF</button><main class="receipt">${logo ? `<img class="watermark" src="${escapeHtml(logo)}" alt="">` : ''}<header class="brand">${logo ? `<img src="${escapeHtml(logo)}" alt="">` : ''}<div><h1>${escapeHtml(organisation)}</h1><p>${escapeHtml(sale.Department || 'Sales')} payment receipt</p></div></header><section class="meta"><div><span>Receipt number</span><strong>${escapeHtml(sale.SaleNo)}</strong></div><div><span>Date</span><strong>${escapeHtml(clean(sale.PaidAt || sale.SaleDate).replace('T', ' ').slice(0, 19))}</strong></div><div><span>Customer</span><strong>${escapeHtml(sale.CustomerName || 'Walk-in customer')}</strong></div><div><span>Payment</span><strong>${escapeHtml(sale.PaymentMethod || '')}</strong></div>${sale.PaymentReference ? `<div><span>Reference</span><strong>${escapeHtml(sale.PaymentReference)}</strong></div>` : ''}</section><table><thead><tr><th>Item</th><th class="number">Qty</th><th class="number">Price</th><th class="number">Total</th></tr></thead><tbody>${items.map((item) => `<tr><td>${escapeHtml(item.ItemName || item.ItemCode)}</td><td class="number">${escapeHtml(item.Quantity)}</td><td class="number">${money(item.UnitPrice)}</td><td class="number">${money(item.Amount)}</td></tr>`).join('')}</tbody></table><div class="total"><span>Grand total</span><strong>${money(sale.Amount || sale.GrossAmount)}</strong></div><footer class="footer">Payment received with thanks &middot; Generated by Dynamax</footer></main></body></html>`);
   receiptWindow.document.close();
@@ -2707,8 +2734,10 @@ function bindOrganizationCommerceWorkspace(section, data = {}) {
     const paymentUrl = clean(button.dataset.commerceOpenPayment);
     if (/^https:\/\/[A-Za-z0-9.-]+(?:\/|$)/.test(paymentUrl)) window.open(paymentUrl, '_blank', 'noopener');
   }));
-  workspace.querySelectorAll('[data-commerce-print]').forEach((button) => button.addEventListener('click', () => {
-    printOrganizationCommerceReceipt(organizationCommerceReceiptSale(section, data, button.dataset.commercePrint));
+  workspace.querySelectorAll('[data-commerce-print]').forEach((button) => button.addEventListener('click', async () => {
+    const format = await chooseReceiptPrintFormat();
+    if (!format) return;
+    printOrganizationCommerceReceipt(organizationCommerceReceiptSale(section, data, button.dataset.commercePrint), format);
   }));
 }
 
@@ -4722,12 +4751,13 @@ async function initChurchDonationPayment(payload = {}) {
 }
 
 
-function printChurchDonationReceipt(donation = {}) {
+function printChurchDonationReceipt(donation = {}, format = 'standard') {
   if (!donation || clean(donation.Status).toLowerCase() !== 'paid') {
     setStatus(document.getElementById('churchDonationStatus') || dashboardStatus, 'A receipt is available after the donation has been paid.', 'bad');
     return;
   }
-  const receiptWindow = window.open('', '_blank', 'width=820,height=900');
+  const posFormat = format === 'pos';
+  const receiptWindow = window.open('', '_blank', posFormat ? 'width=430,height=820' : 'width=820,height=900');
   if (!receiptWindow) {
     setStatus(document.getElementById('churchDonationStatus') || dashboardStatus, 'Allow pop-ups to view and print this receipt.', 'bad');
     return;
@@ -4760,6 +4790,12 @@ function printChurchDonationReceipt(donation = {}) {
   const receiptDate = paidAt ? paidAt.replace('T', ' ').replace('Z', '').slice(0, 19) : '';
   const donorName = clean(donation.DonorName) || 'Anonymous donor';
   const paymentDescription = [donation.PaymentType || 'Donation', donation.PaymentMethod].filter(Boolean).join(' · ');
+  if (posFormat) {
+    receiptWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(receiptNo || 'POS donation receipt')}</title><style>
+      @page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:80mm;margin:0 auto;background:#eee;color:#000;font:11px/1.35 Arial,sans-serif}.receipt{width:74mm;margin:8px auto;padding:4mm 3mm;background:#fff}.brand{text-align:center}.brand img{width:34px;height:34px;object-fit:contain}.brand h1{margin:4px 0 1px;font-size:15px}.brand p{margin:0;font-size:10px}.divider{margin:8px 0;border-top:1px dashed #000}.meta{display:grid;grid-template-columns:30mm 1fr;gap:3px}.meta span{font-weight:700}.meta strong{min-width:0;text-align:right;overflow-wrap:anywhere}.amount{margin:8px 0;padding:7px 0;border-top:2px solid #000;border-bottom:2px solid #000;text-align:center}.amount span,.amount strong{display:block}.amount strong{margin-top:2px;font-size:15px}.paid{text-align:center;font-weight:800}.footer{margin-top:9px;text-align:center;font-size:9px}.print{display:block;width:fit-content;margin:10px auto;padding:8px 12px;border:0;border-radius:5px;background:#1769e0;color:#fff;font-weight:700}@media print{body{width:80mm;background:#fff}.receipt{width:74mm;margin:0;padding:0}.print{display:none}}</style></head><body><button class="print" onclick="window.print()">Print POS receipt</button><main class="receipt"><header class="brand">${logo ? `<img src="${escapeHtml(logo)}" alt="${escapeHtml(organisation)} logo">` : ''}<h1>${escapeHtml(organisation)}</h1><p>Donation receipt</p></header><div class="divider"></div><section class="meta"><span>Donor</span><strong>${escapeHtml(donorName)}</strong><span>Gift type</span><strong>${escapeHtml(donation.PaymentType || 'Donation')}</strong><span>Payment</span><strong>${escapeHtml(donation.PaymentMethod || '')}</strong>${reference ? `<span>Reference</span><strong>${escapeHtml(reference)}</strong>` : ''}<span>Receipt</span><strong>${escapeHtml(receiptNo)}</strong>${receiptDate ? `<span>Date</span><strong>${escapeHtml(receiptDate)}</strong>` : ''}</section><div class="amount"><span>AMOUNT RECEIVED</span><strong>${escapeHtml(formattedAmount)}</strong></div><div class="paid">PAID</div><footer class="footer">Thank you for your generosity<br>Verified by Dynamax</footer></main></body></html>`);
+    receiptWindow.document.close();
+    return;
+  }
   receiptWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(receiptNo || 'Donation receipt')}</title><style>
     @page{size:A5;margin:12mm}*{box-sizing:border-box}body{margin:0;background:#edf3f8;color:#17314b;font:13px/1.5 Arial,sans-serif}.receipt{position:relative;max-width:620px;min-height:760px;margin:18px auto;background:#fff;border-top:7px solid #d49a00;box-shadow:0 14px 35px #173b5820;overflow:hidden}.watermark{position:absolute;inset:23% 20%;width:60%;height:54%;object-fit:contain;opacity:.045}.brand,.content,.footer{position:relative}.brand{display:flex;align-items:center;gap:15px;padding:25px 28px;background:#164a78;color:#fff;border-bottom:4px solid #16a596}.brand img{width:62px;height:62px;padding:5px;border-radius:12px;background:#fff;object-fit:contain}.brand small{display:block;color:#95f2e6;font-weight:bold;letter-spacing:1.4px;text-transform:uppercase}.brand h1{margin:2px 0 0;font-size:21px}.content{padding:26px 28px}.acknowledgement{margin:0 0 18px;color:#36536e}.meta{width:100%;border-collapse:collapse}.meta th,.meta td{padding:10px 12px;border:1px solid #cfdeea;text-align:left}.meta th{width:37%;background:#e8f1fb;color:#164a78}.meta tr:nth-child(even) td{background:#eef9f7}.meta .amount-row th,.meta .amount-row td{background:#fff3cf;color:#08745f;font-size:16px}.paid{display:inline-block;padding:3px 10px;border-radius:999px;background:#dff5e9;color:#08745f;font-weight:bold}.thanks{margin:20px 0 0;padding:13px 15px;border-left:4px solid #16a596;background:#eef9f7;color:#28566a}.footer{padding:13px 28px;background:#164a78;color:#dbeafb;text-align:center}.print{position:fixed;top:10px;right:10px;padding:9px 13px;border:0;border-radius:7px;background:#1769e0;color:#fff;font-weight:bold;cursor:pointer}@media print{body{background:#fff}.receipt{min-height:auto;margin:0;box-shadow:none}.print{display:none}}</style></head><body><button class="print" onclick="window.print()">Print / Save as PDF</button><main class="receipt">${logo ? `<img class="watermark" src="${escapeHtml(logo)}" alt="">` : ''}<header class="brand">${logo ? `<img src="${escapeHtml(logo)}" alt="${escapeHtml(organisation)} logo">` : ''}<div><small>Official acknowledgement</small><h1>${escapeHtml(organisation)} donation receipt</h1></div></header><section class="content"><p class="acknowledgement">Dear ${escapeHtml(donorName)},<br>Thank you. Your gift has been received and recorded.</p><table class="meta"><tbody><tr><th>Donor</th><td>${escapeHtml(donorName)}</td></tr>${donation.DonorEmail ? `<tr><th>Email</th><td>${escapeHtml(donation.DonorEmail)}</td></tr>` : ''}<tr class="amount-row"><th>Amount</th><td><strong>${escapeHtml(formattedAmount)}</strong></td></tr><tr><th>Payment</th><td>${escapeHtml(paymentDescription)}</td></tr>${reference ? `<tr><th>Reference</th><td>${escapeHtml(reference)}</td></tr>` : ''}<tr><th>Receipt number</th><td>${escapeHtml(receiptNo)}</td></tr>${receiptDate ? `<tr><th>Payment date</th><td>${escapeHtml(receiptDate)}</td></tr>` : ''}<tr><th>Status</th><td><span class="paid">Paid</span></td></tr></tbody></table><p class="thanks">Thank you for your generosity. Please retain this receipt for your records.</p></section><footer class="footer">Verified donation receipt · Generated by Dynamax</footer></main></body></html>`);
   receiptWindow.document.close();
@@ -5057,7 +5093,7 @@ async function loadChurchDonations() {
               stateAction = `<button type="button" class="table-action" data-donation-action="sendpayment" data-donation-id="${escapeHtml(donationId)}">Send payment link</button>`;
             }
             const printAction = status === 'paid'
-              ? `<button type="button" class="compact-icon-action compact-print-action" data-print-donation="${escapeHtml(donationId)}" aria-label="View and print receipt ${escapeHtml(pick(row, ['ReceiptNo']) || donationId)}" title="View and print receipt"><span aria-hidden="true">&#128424;&#65038;</span></button>`
+              ? `<button type="button" class="compact-icon-action compact-print-action" data-print-donation="${escapeHtml(donationId)}" aria-label="Choose receipt format for ${escapeHtml(pick(row, ['ReceiptNo']) || donationId)}" title="Choose receipt format"><span aria-hidden="true">&#128424;&#65038;</span></button>`
               : '';
             const qrAction = status === 'pending' && clean(pick(row, ['PaymentLink']))
               ? `<button type="button" class="compact-icon-action" data-donation-qr="${escapeHtml(donationId)}" aria-label="Generate payment QR for ${escapeHtml(donationId)}" title="Generate payment QR"><span aria-hidden="true">&#9638;</span></button>`
@@ -5268,10 +5304,12 @@ async function loadChurchDonations() {
       }
     });
 
-    panelEl.querySelectorAll('[data-print-donation]').forEach((button) => button.addEventListener('click', () => {
+    panelEl.querySelectorAll('[data-print-donation]').forEach((button) => button.addEventListener('click', async () => {
       const donationId = clean(button.dataset.printDonation);
       const donation = (data.donations || []).find((item) => clean(item.DonationId || item.__id) === donationId);
-      printChurchDonationReceipt(donation);
+      const format = await chooseReceiptPrintFormat();
+      if (!format) return;
+      printChurchDonationReceipt(donation, format);
     }));
 
     panelEl.querySelectorAll('[data-donation-rate]').forEach((button) => button.addEventListener('click', async () => {

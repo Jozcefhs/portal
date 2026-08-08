@@ -17,7 +17,7 @@ test('donation rows render one state-aware delivery button', () => {
 
 test('paid donations have a branded printable receipt action', () => {
   assert.match(adminJs, /status === 'paid'[\s\S]{0,500}data-print-donation=/);
-  assert.match(adminJs, /function printChurchDonationReceipt\(donation = \{\}\)/);
+  assert.match(adminJs, /function printChurchDonationReceipt\(donation = \{\}, format = 'standard'\)/);
   assert.match(adminJs, /clean\(donation\.Status\)\.toLowerCase\(\) !== 'paid'/);
   assert.match(adminJs, /Official acknowledgement/);
   assert.match(adminJs, /Your gift has been received and recorded\./);
