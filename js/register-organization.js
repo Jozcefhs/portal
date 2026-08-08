@@ -362,7 +362,7 @@ form.addEventListener('submit', async (event) => {
       throw new Error(data?.message || 'Registration could not be submitted.');
     }
     statusNode.className = 'status good';
-    statusNode.textContent = `${data.message} Reference: ${data.reference}`;
+    statusNode.innerHTML = `${escapeHtml(data.message)} Reference: ${escapeHtml(data.reference)}${data.portalUrl ? ` <a class="settings-link" href="${escapeHtml(data.portalUrl)}">Open your organisation portal</a>` : ''}`;
     registrationIdempotencyKey = '';
     if (data.authorizationUrl) {
       statusNode.textContent = 'Opening Paystack secure checkout...';

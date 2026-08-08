@@ -1,0 +1,145 @@
+name: Provision Dynamax tenant pool
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Show the next provisioning plan without creating billable resources
+        required: true
+        default: true
+        type: boolean
+  schedule:
+    - cron: '17,47 * * * *'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: dynamax-tenant-pool-provisioner
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    name: Provision next queued tenant project request
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.TENANT_POOL_AUTOMATION_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      APPLY_CHANGES: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
+      DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev' }}
+      DYNAMAX_ADMIN_WEB_PASSWORD: ${{ secrets.DYNAMAX_ADMIN_WEB_PASSWORD }}
+      DYNAMAX_GCP_BILLING_ACCOUNT: ${{ vars.DYNAMAX_GCP_BILLING_ACCOUNT }}
+      DYNAMAX_GCP_PARENT: ${{ vars.DYNAMAX_GCP_PARENT }}
+      DYNAMAX_TENANT_REGION: ${{ vars.DYNAMAX_TENANT_REGION || 'eur3' }}
+      DYNAMAX_TENANT_PROJECT_PREFIX: ${{ vars.DYNAMAX_TENANT_PROJECT_PREFIX || 'dynamax-tenant' }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate provisioner configuration
+        shell: bash
+        env:
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          DYNAMAX_PROVISION_SERVICE_ACCOUNT: ${{ vars.DYNAMAX_PROVISION_SERVICE_ACCOUNT }}
+          DYNAMAX_PROVISION_PROJECT_ID: ${{ vars.DYNAMAX_PROVISION_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "${DYNAMAX_ADMIN_WEB_PASSWORD}" ]] || missing+=("DYNAMAX_ADMIN_WEB_PASSWORD secret")
+          [[ -n "${CLOUDFLARE_ACCOUNT_ID}" ]] || missing+=("CLOUDFLARE_ACCOUNT_ID variable")
+          [[ -n "${CLOUDFLARE_API_TOKEN}" ]] || missing+=("CLOUDFLARE_API_TOKEN secret")
+          if [[ "${APPLY_CHANGES}" == "true" ]]; then
+            [[ -n "${DYNAMAX_GCP_BILLING_ACCOUNT}" ]] || missing+=("DYNAMAX_GCP_BILLING_ACCOUNT variable")
+            [[ -n "${GCP_WIF_PROVIDER}" ]] || missing+=("GCP_WIF_PROVIDER variable")
+            [[ -n "${DYNAMAX_PROVISION_SERVICE_ACCOUNT}" ]] || missing+=("DYNAMAX_PROVISION_SERVICE_ACCOUNT variable")
+            [[ -n "${DYNAMAX_PROVISION_PROJECT_ID}" ]] || missing+=("DYNAMAX_PROVISION_PROJECT_ID variable")
+          fi
+          if (( ${#missing[@]} )); then
+            printf '::error::Missing tenant provisioner configuration: %s\n' "$(IFS=', '; echo "${missing[*]}")"
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        if: ${{ env.APPLY_CHANGES == 'true' }}
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.DYNAMAX_PROVISION_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.DYNAMAX_PROVISION_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        if: ${{ env.APPLY_CHANGES == 'true' }}
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Claim next provisioning request
+        id: claim
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${APPLY_CHANGES}" == "true" ]]; then
+            payload="$(jq -nc --arg password "${DYNAMAX_ADMIN_WEB_PASSWORD}" --arg runner "github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" '{password:$password,action:"claim-next",runnerId:$runner}')"
+            response="$(curl --fail-with-body --silent --show-error "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" -H 'Content-Type: application/json' --data "${payload}")"
+            request="$(jq -c '.request // empty' <<<"${response}")"
+          else
+            payload="$(jq -nc --arg password "${DYNAMAX_ADMIN_WEB_PASSWORD}" '{password:$password,action:"load"}')"
+            response="$(curl --fail-with-body --silent --show-error "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" -H 'Content-Type: application/json' --data "${payload}")"
+            request="$(jq -c '[.requests[] | select((.Status | ascii_downcase) == "pending")][0] // empty' <<<"${response}")"
+          fi
+          if [[ -z "${request}" || "${request}" == "null" ]]; then
+            echo 'has_request=false' >> "${GITHUB_OUTPUT}"
+            echo 'No tenant project request is waiting.' >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          echo 'has_request=true' >> "${GITHUB_OUTPUT}"
+          printf 'request_base64=%s\n' "$(printf '%s' "${request}" | base64 -w 0)" >> "${GITHUB_OUTPUT}"
+          printf 'reference=%s\n' "$(jq -r '.Reference' <<<"${request}")" >> "${GITHUB_OUTPUT}"
+          printf 'edition=%s\n' "$(jq -r '.Edition' <<<"${request}")" >> "${GITHUB_OUTPUT}"
+          printf 'count=%s\n' "$(jq -r '.Count' <<<"${request}")" >> "${GITHUB_OUTPUT}"
+
+      - name: Use Node.js 22
+        if: ${{ steps.claim.outputs.has_request == 'true' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install function dependencies
+        if: ${{ steps.claim.outputs.has_request == 'true' && env.APPLY_CHANGES == 'true' }}
+        run: npm ci --ignore-scripts
+
+      - name: Provision isolated Firebase and Cloudflare projects
+        id: provision
+        if: ${{ steps.claim.outputs.has_request == 'true' }}
+        env:
+          TENANT_PROVISION_APPLY: ${{ env.APPLY_CHANGES }}
+          TENANT_PROVISIONING_REQUEST_BASE64: ${{ steps.claim.outputs.request_base64 }}
+        run: node scripts/provision-tenant-projects.mjs
+
+      - name: Mark interrupted request failed
+        if: ${{ failure() && env.APPLY_CHANGES == 'true' && steps.claim.outputs.has_request == 'true' }}
+        shell: bash
+        run: |
+          payload="$(jq -nc --arg password "${DYNAMAX_ADMIN_WEB_PASSWORD}" --arg reference '${{ steps.claim.outputs.reference }}' '{password:$password,action:"finish-request",request:{Reference:$reference,Status:"Failed",LastError:"The GitHub provisioning run was interrupted. Review the workflow log."}}')"
+          curl --silent --show-error "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" -H 'Content-Type: application/json' --data "${payload}" || true
+
+      - name: Summarize provisioning
+        if: ${{ always() && steps.claim.outputs.has_request == 'true' }}
+        shell: bash
+        run: |
+          {
+            echo '### Tenant project pool'
+            echo ''
+            echo '- Request: `${{ steps.claim.outputs.reference }}`'
+            echo '- Edition: `${{ steps.claim.outputs.edition }}`'
+            echo '- Project count: `${{ steps.claim.outputs.count }}`'
+            echo '- Apply changes: `${{ env.APPLY_CHANGES }}`'
+            if [[ -f tenant-provision-result.json ]]; then
+              echo ''
+              echo '```json'
+              cat tenant-provision-result.json
+              echo '```'
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"

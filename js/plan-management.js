@@ -4,8 +4,13 @@ const loginStatus = document.getElementById('planPricingLoginStatus');
 const pricingStatus = document.getElementById('planPricingStatus');
 const cards = document.getElementById('planPricingCards');
 const entitlementMatrix = document.getElementById('planEntitlementMatrix');
+const tenantPoolStatus = document.getElementById('tenantPoolStatus');
+const tenantPoolSummary = document.getElementById('tenantPoolSummary');
+const tenantPoolRows = document.getElementById('tenantPoolRows');
+const tenantRequestRows = document.getElementById('tenantRequestRows');
 let unlockedPassword = '';
 let catalog = null;
+let tenantPoolState = null;
 let selectedEntitlementEdition = 'school';
 
 document.getElementById('paystackWebhookUrl').textContent = `${window.location.origin}/api/paystack-subscription-webhook`;
@@ -54,6 +59,54 @@ function renderCatalog() {
 
 function editionLabel(edition) {
   return edition === 'school' ? 'School' : edition === 'faith' ? 'Church' : 'Other organisation';
+}
+
+function poolStatusClass(status) {
+  const value = String(status || '').toLowerCase();
+  return value === 'ready' || value === 'assigned' ? 'ok' : value === 'failed' ? 'bad' : '';
+}
+
+function renderTenantPool() {
+  if (!tenantPoolState) return;
+  const editions = ['school', 'faith', 'organization'];
+  tenantPoolSummary.innerHTML = editions.map((edition) => {
+    const row = tenantPoolState.summary?.[edition] || {};
+    return `<article class="tenant-pool-summary-card ${Number(row.Shortfall || 0) > 0 ? 'needs-capacity' : ''}"><span>${escapeHtml(editionLabel(edition))}</span><strong>${Number(row.Ready || 0)} ready</strong><small>Target ${Number(row.Target || 0)} · ${Number(row.Assigned || 0)} assigned${Number(row.Shortfall || 0) ? ` · ${Number(row.Shortfall)} needed` : ''}</small></article>`;
+  }).join('');
+  tenantPoolRows.innerHTML = (tenantPoolState.slots || []).length ? tenantPoolState.slots.map((slot) => `
+    <tr><td><strong>${escapeHtml(slot.FirebaseProjectId)}</strong><small>${escapeHtml(slot.Region || 'Default region')}</small></td><td>${escapeHtml(editionLabel(slot.Edition))}</td><td><span class="tenant-pool-status ${poolStatusClass(slot.Status)}">${escapeHtml(slot.Status)}</span></td><td>${escapeHtml(slot.AssignedOrganisationName || '—')}</td><td>${slot.PortalUrl ? `<a href="${escapeHtml(slot.PortalUrl)}" target="_blank" rel="noopener">Open</a>` : '—'}</td><td>${['reserved', 'assigned'].includes(String(slot.Status).toLowerCase()) ? `<button type="button" class="compact-action" data-release-tenant-slot="${escapeHtml(slot.Id)}" ${String(slot.Status).toLowerCase() === 'assigned' ? 'title="Active subscribers cannot be released"' : ''}>Release</button>` : '—'}</td></tr>
+  `).join('') : '<tr><td colspan="6">No tenant projects have been registered yet.</td></tr>';
+  tenantRequestRows.innerHTML = (tenantPoolState.requests || []).length ? tenantPoolState.requests.map((request) => `
+    <tr><td>${escapeHtml(request.Reference)}</td><td>${escapeHtml(editionLabel(request.Edition))}</td><td>${escapeHtml(request.Mode)}</td><td>${Number(request.Count || 1)}</td><td><span class="tenant-pool-status ${poolStatusClass(request.Status)}">${escapeHtml(request.Status)}</span></td><td>${request.RequestedAt ? escapeHtml(new Date(request.RequestedAt).toLocaleString()) : '—'}</td></tr>
+  `).join('') : '<tr><td colspan="6">No provisioning requests are waiting.</td></tr>';
+  const policy = tenantPoolState.policy || {};
+  document.getElementById('tenantTargetSchool').value = Number(policy.TargetReadyPerEdition?.school || 2);
+  document.getElementById('tenantTargetFaith').value = Number(policy.TargetReadyPerEdition?.faith || 2);
+  document.getElementById('tenantTargetOrganization').value = Number(policy.TargetReadyPerEdition?.organization || 2);
+  document.getElementById('tenantDefaultRegion').value = policy.DefaultRegion || 'eur3';
+  document.getElementById('tenantProjectPrefix').value = policy.ProjectPrefix || 'dynamax-tenant';
+  document.getElementById('tenantSlotRegion').value ||= policy.DefaultRegion || 'eur3';
+}
+
+async function tenantPoolRequest(payload) {
+  const response = await fetch('/api/tenant-project-pool', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: unlockedPassword, ...payload })
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data?.ok) throw new Error(data?.message || 'The tenant project pool could not be loaded.');
+  return data;
+}
+
+async function loadTenantPool(message = '') {
+  try {
+    tenantPoolState = await tenantPoolRequest({ action: 'load' });
+    renderTenantPool();
+    setStatus(tenantPoolStatus, message || 'Tenant project pool loaded.', 'ok');
+  } catch (error) {
+    setStatus(tenantPoolStatus, error.message || String(error), 'bad');
+  }
 }
 
 function modulesForEdition(edition) {
@@ -167,6 +220,7 @@ loginForm.addEventListener('submit', async (event) => {
     catalog = data.catalog;
     document.getElementById('planPricingCurrency').value = catalog.Currency || 'NGN';
     renderCatalog();
+    await loadTenantPool();
     loginForm.hidden = true;
     pricingForm.hidden = false;
     setStatus(pricingStatus, 'Pricing loaded. Changes are not published until you save.', 'ok');
@@ -213,7 +267,9 @@ pricingForm.addEventListener('submit', async (event) => {
   }
 });
 
-pricingForm.addEventListener('input', () => setStatus(pricingStatus, 'You have unsaved pricing changes.'));
+pricingForm.addEventListener('input', (event) => {
+  if (!event.target.closest('.tenant-pool-section')) setStatus(pricingStatus, 'You have unsaved pricing changes.');
+});
 
 document.getElementById('planPricingCurrency')?.addEventListener('change', () => {
   updatePriceCurrencyLabels();
@@ -241,4 +297,107 @@ entitlementMatrix?.addEventListener('change', (event) => {
   renderEntitlementMatrix();
   updateModuleCounts();
   setStatus(pricingStatus, 'You have unsaved plan-module changes.', '');
+});
+
+document.querySelector('.tenant-pool-tabs')?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-tenant-pool-tab]');
+  if (!button) return;
+  document.querySelectorAll('[data-tenant-pool-tab]').forEach((item) => {
+    const active = item === button;
+    item.classList.toggle('active', active);
+    item.setAttribute('aria-pressed', String(active));
+  });
+  document.querySelectorAll('[data-tenant-pool-panel]').forEach((panel) => {
+    panel.hidden = panel.dataset.tenantPoolPanel !== button.dataset.tenantPoolTab;
+  });
+});
+
+document.getElementById('tenantRequestMode')?.addEventListener('change', (event) => {
+  const branded = event.target.value === 'branded';
+  document.getElementById('tenantBrandedProjectField').hidden = !branded;
+  document.getElementById('tenantRequestCount').disabled = branded;
+});
+
+document.getElementById('registerTenantSlot')?.addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  if (!window.DynamaxActionFeedback.begin(button, 'Adding...')) return;
+  try {
+    const data = await tenantPoolRequest({
+      action: 'register',
+      slot: {
+        Edition: document.getElementById('tenantSlotEdition').value,
+        FirebaseProjectId: document.getElementById('tenantSlotFirebaseProject').value,
+        CloudflareProject: document.getElementById('tenantSlotCloudflareProject').value,
+        WorkspaceId: document.getElementById('tenantSlotWorkspace').value,
+        Region: document.getElementById('tenantSlotRegion').value,
+        Status: 'Ready'
+      }
+    });
+    ['tenantSlotFirebaseProject', 'tenantSlotCloudflareProject', 'tenantSlotWorkspace'].forEach((id) => { document.getElementById(id).value = ''; });
+    await loadTenantPool(data.message);
+  } catch (error) {
+    setStatus(tenantPoolStatus, error.message || String(error), 'bad');
+  } finally {
+    window.DynamaxActionFeedback.end(button);
+  }
+});
+
+document.getElementById('requestTenantProjects')?.addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  if (!window.DynamaxActionFeedback.begin(button, 'Queuing...')) return;
+  try {
+    const data = await tenantPoolRequest({
+      action: 'request',
+      request: {
+        Edition: document.getElementById('tenantRequestEdition').value,
+        Mode: document.getElementById('tenantRequestMode').value,
+        Count: document.getElementById('tenantRequestCount').value,
+        RequestedProjectId: document.getElementById('tenantRequestedProjectId').value
+      }
+    });
+    document.getElementById('tenantRequestedProjectId').value = '';
+    await loadTenantPool(data.message);
+  } catch (error) {
+    setStatus(tenantPoolStatus, error.message || String(error), 'bad');
+  } finally {
+    window.DynamaxActionFeedback.end(button);
+  }
+});
+
+document.getElementById('saveTenantPoolPolicy')?.addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  if (!window.DynamaxActionFeedback.begin(button, 'Saving...')) return;
+  try {
+    const data = await tenantPoolRequest({
+      action: 'save-policy',
+      policy: {
+        TargetReadyPerEdition: {
+          school: document.getElementById('tenantTargetSchool').value,
+          faith: document.getElementById('tenantTargetFaith').value,
+          organization: document.getElementById('tenantTargetOrganization').value
+        },
+        DefaultRegion: document.getElementById('tenantDefaultRegion').value,
+        ProjectPrefix: document.getElementById('tenantProjectPrefix').value
+      }
+    });
+    await loadTenantPool(data.message);
+  } catch (error) {
+    setStatus(tenantPoolStatus, error.message || String(error), 'bad');
+  } finally {
+    window.DynamaxActionFeedback.end(button);
+  }
+});
+
+tenantPoolRows?.addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-release-tenant-slot]');
+  if (!button || !window.confirm('Release this unused project back to the ready pool?')) return;
+  if (!window.DynamaxActionFeedback.begin(button, 'Releasing...')) return;
+  try {
+    const data = await tenantPoolRequest({ action: 'release', slotId: button.dataset.releaseTenantSlot });
+    await loadTenantPool(data.message);
+  } catch (error) {
+    setStatus(tenantPoolStatus, error.message || String(error), 'bad');
+  } finally {
+    window.DynamaxActionFeedback.end(button);
+  }
 });

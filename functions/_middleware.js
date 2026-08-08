@@ -9,6 +9,7 @@ const LOW_READ_IDENTITY_PATHS = new Set([
 
 const PLATFORM_SUBSCRIPTION_PROXY_PATHS = new Set([
   '/api/plan-catalog',
+  '/api/tenant-project-pool',
   '/api/subscription-policy',
   '/api/subscription-checkout',
   '/api/pricing-book-pdf',
@@ -22,6 +23,7 @@ const SUBSCRIPTION_RECOVERY_PATHS = new Set([
   '/api/staff-session',
   '/api/staff-passkey',
   '/api/plan-catalog',
+  '/api/tenant-project-pool',
   '/api/subscription-policy',
   '/api/subscription-checkout',
   '/api/staff-subscription',

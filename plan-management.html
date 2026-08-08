@@ -7,7 +7,7 @@
   <title>Plans and pricing — Dynamax</title>
   <link rel="icon" href="images/Logo.png">
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260808-self-service-upgrade">
+  <link rel="stylesheet" href="css/style.css?v=20260808-tenant-pool">
 </head>
 <body class="settings-page">
   <main class="settings-shell plan-management-shell">
@@ -39,10 +39,52 @@
         <div class="settings-section-heading"><div><span class="settings-section-icon">M</span></div><div><p class="settings-eyebrow">Plan access matrix</p><h2>Features and modules</h2><p>Select the organisation type, then check the modules that each plan may use. Module dependencies are applied automatically.</p></div></div>
         <div id="planEntitlementMatrix" aria-live="polite"></div>
       </section>
+      <section class="settings-section tenant-pool-section">
+        <div class="settings-section-heading"><div><span class="settings-section-icon">T</span></div><div><p class="settings-eyebrow">Fast subscriber onboarding</p><h2>Ready project pool</h2><p>Keep isolated Firebase and Cloudflare projects ready, assign them safely after trial activation or confirmed payment, and replenish capacity before it runs out.</p></div></div>
+        <div id="tenantPoolSummary" class="tenant-pool-summary" aria-live="polite"></div>
+        <div class="tenant-pool-tabs" role="tablist" aria-label="Tenant project pool sections">
+          <button type="button" class="active" data-tenant-pool-tab="projects" aria-pressed="true">Projects</button>
+          <button type="button" data-tenant-pool-tab="requests" aria-pressed="false">Requests</button>
+          <button type="button" data-tenant-pool-tab="settings" aria-pressed="false">Pool settings</button>
+        </div>
+        <div data-tenant-pool-panel="projects">
+          <div class="tenant-pool-actions-grid">
+            <label>Edition<select id="tenantSlotEdition"><option value="school">School</option><option value="faith">Church</option><option value="organization">Other organisation</option></select></label>
+            <label>Firebase project ID<input id="tenantSlotFirebaseProject" placeholder="dynamax-tenant-001"></label>
+            <label>Cloudflare project<input id="tenantSlotCloudflareProject" placeholder="dynamax-tenant-001"></label>
+            <label>Workspace ID<input id="tenantSlotWorkspace" placeholder="dynamax-tenant-001"></label>
+            <label>Region<input id="tenantSlotRegion" placeholder="eur3"></label>
+            <button id="registerTenantSlot" type="button">Add ready project</button>
+          </div>
+          <div class="tenant-pool-table-wrap"><table class="tenant-pool-table"><thead><tr><th>Project</th><th>Edition</th><th>Status</th><th>Subscriber</th><th>Portal</th><th>Action</th></tr></thead><tbody id="tenantPoolRows"></tbody></table></div>
+        </div>
+        <div data-tenant-pool-panel="requests" hidden>
+          <div class="tenant-pool-actions-grid tenant-request-controls">
+            <label>Edition<select id="tenantRequestEdition"><option value="school">School</option><option value="faith">Church</option><option value="organization">Other organisation</option></select></label>
+            <label>Provisioning mode<select id="tenantRequestMode"><option value="pool">Ready pool</option><option value="branded">Branded project ID</option></select></label>
+            <label>Number of projects<input id="tenantRequestCount" type="number" min="1" max="20" value="1"></label>
+            <label id="tenantBrandedProjectField" hidden>Requested project ID<input id="tenantRequestedProjectId" placeholder="organisation-name"></label>
+            <button id="requestTenantProjects" type="button">Queue provisioning</button>
+          </div>
+          <div class="tenant-pool-table-wrap"><table class="tenant-pool-table"><thead><tr><th>Reference</th><th>Edition</th><th>Mode</th><th>Count</th><th>Status</th><th>Requested</th></tr></thead><tbody id="tenantRequestRows"></tbody></table></div>
+        </div>
+        <div data-tenant-pool-panel="settings" hidden>
+          <div class="tenant-pool-actions-grid tenant-policy-controls">
+            <label>Ready schools<input id="tenantTargetSchool" type="number" min="1" max="20" value="2"></label>
+            <label>Ready churches<input id="tenantTargetFaith" type="number" min="1" max="20" value="2"></label>
+            <label>Ready other organisations<input id="tenantTargetOrganization" type="number" min="1" max="20" value="2"></label>
+            <label>Default region<input id="tenantDefaultRegion" value="eur3"></label>
+            <label>Project prefix<input id="tenantProjectPrefix" value="dynamax-tenant"></label>
+            <button id="saveTenantPoolPolicy" type="button">Save pool settings</button>
+          </div>
+          <p class="plan-entitlement-help">The project ID is permanent. Ready-pool projects use generic IDs; choose branded mode only when the subscriber requires a specific available project ID.</p>
+        </div>
+        <p id="tenantPoolStatus" class="status" aria-live="polite"></p>
+      </section>
       <div class="settings-savebar"><div><strong>Publish plans, prices and module access</strong><p id="planPricingStatus" class="status">Review the plans before saving.</p></div><button id="savePlanPricing" type="submit">Save plans &amp; pricing</button></div>
     </form>
   </main>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
-  <script src="js/plan-management.js?v=20260808-price-label-row"></script>
+  <script src="js/plan-management.js?v=20260808-tenant-pool"></script>
 </body>
 </html>

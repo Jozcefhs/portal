@@ -2,6 +2,7 @@ import { getDocument, upsertDocument } from '../lib/firestore.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { syncRegistrationSubscriptionToWorkspace } from '../lib/subscription-workspace-sync.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
+import { reserveTenantProjectSlot } from '../lib/tenant-project-pool.js';
 
 const clean = (value) => String(value ?? '').trim();
 const safeId = (value) => clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140);
@@ -80,8 +81,8 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
     error.status = 409;
     throw error;
   }
-  const registration = await getDocument(platformEnv, 'tenantRegistrations', registrationReference);
-  if (!registration) {
+  const savedRegistration = await getDocument(platformEnv, 'tenantRegistrations', registrationReference);
+  if (!savedRegistration) {
     const error = new Error('The organisation registration for this payment was not found.');
     error.status = 409;
     throw error;
@@ -98,6 +99,10 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
     error.status = 409;
     throw error;
   }
+  const assignment = clean(savedRegistration.WorkspaceId)
+    ? { assigned: true, registration: savedRegistration }
+    : await reserveTenantProjectSlot(platformEnv, savedRegistration);
+  const registration = assignment.registration;
   const customerCode = clean(transaction.customer?.customer_code);
   const subscriptionCode = clean(transaction.subscription_code || transaction.subscription?.subscription_code);
   const paidAt = clean(transaction.paid_at || transaction.paidAt) || new Date().toISOString();
@@ -162,6 +167,9 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
     billingCycle: clean(intent.BillingCycle),
     amount: Number(intent.Amount || 0),
     currency: clean(intent.Currency || transaction.currency || 'NGN'),
+    workspaceId: clean(updatedRegistration.WorkspaceId),
+    portalUrl: clean(updatedRegistration.PortalUrl),
+    workspacePending: !clean(updatedRegistration.WorkspaceId),
     warning: previousSubscriptionWarning
   };
 }
@@ -179,7 +187,9 @@ export async function onRequestPost({ request, env }) {
     const result = await recordVerifiedSubscriptionPayment(env, transaction, body.registrationReference);
     return Response.json({
       ok: true,
-      message: result.warning || 'Subscription payment confirmed. Your selected plan is now active.',
+      message: result.warning || (result.workspacePending
+        ? 'Subscription payment confirmed. Your plan is active and a project is being prepared for your organisation.'
+        : 'Subscription payment confirmed. Your selected plan and organisation workspace are now active.'),
       ...result
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {

@@ -5,7 +5,8 @@ import { pathToFileURL } from 'node:url';
 const EDITIONS = new Set(['school', 'faith', 'organization']);
 const INDEX_CONFIGS = Object.freeze({
   school: 'firebase.school.json',
-  church: 'firebase.church.json'
+  church: 'firebase.church.json',
+  organization: 'firebase.organization.json'
 });
 
 function clean(value) {
@@ -67,13 +68,16 @@ export function validateOrganisationRegistry(registry) {
       throw new Error(`${label} edition must be school, faith or organization.`);
     }
     if (!INDEX_CONFIGS[indexProfile]) {
-      throw new Error(`${label} index profile must be school or church.`);
+      throw new Error(`${label} index profile must be school, church or organization.`);
     }
     if (edition === 'school' && indexProfile !== 'school') {
       throw new Error(`${label} must use the school index profile.`);
     }
     if (edition === 'faith' && indexProfile !== 'church') {
       throw new Error(`${label} must use the church index profile.`);
+    }
+    if (edition === 'organization' && indexProfile !== 'organization') {
+      throw new Error(`${label} must use the organization index profile.`);
     }
     if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(cloudflareProject)) {
       throw new Error(`${label} Cloudflare project must be a lowercase Pages project name.`);

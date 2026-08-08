@@ -21,10 +21,15 @@ const coordinator = await readFile(
 const registry = JSON.parse(await readFile(new URL('../deploy/organisations.json', import.meta.url), 'utf8'));
 const schoolConfig = JSON.parse(await readFile(new URL('../firebase.school.json', import.meta.url), 'utf8'));
 const churchConfig = JSON.parse(await readFile(new URL('../firebase.church.json', import.meta.url), 'utf8'));
+const organizationConfig = JSON.parse(await readFile(new URL('../firebase.organization.json', import.meta.url), 'utf8'));
 const platformConfig = JSON.parse(await readFile(new URL('../firebase.platform.json', import.meta.url), 'utf8'));
 const schoolIndexes = JSON.parse(await readFile(new URL('../firestore.school.indexes.json', import.meta.url), 'utf8'));
 const churchIndexes = JSON.parse(await readFile(new URL('../firestore.church.indexes.json', import.meta.url), 'utf8'));
+const organizationIndexes = JSON.parse(await readFile(new URL('../firestore.organization.indexes.json', import.meta.url), 'utf8'));
 const platformIndexes = JSON.parse(await readFile(new URL('../firestore.platform.indexes.json', import.meta.url), 'utf8'));
+const tenantProvisioner = await readFile(new URL('../.github/workflows/provision-tenant-pool.yml', import.meta.url), 'utf8');
+const tenantFleet = await readFile(new URL('../.github/workflows/deploy-tenant-pool.yml', import.meta.url), 'utf8');
+const tenantProvisionerScript = await readFile(new URL('../scripts/provision-tenant-projects.mjs', import.meta.url), 'utf8');
 
 function indexFields(index) {
   return (index.fields || []).map((field) => field.fieldPath).join('|');
@@ -95,6 +100,27 @@ test('deployed organisation identity must match its registry boundary', () => {
   }, { workspaceId: 'digc-suite', edition: 'faith' }), /workspace mismatch/);
 });
 
+test('other organisations have an independent deployment profile', () => {
+  const withOtherOrganisation = structuredClone(registry);
+  withOtherOrganisation.organisations.push({
+    id: 'example-civic-office',
+    name: 'Example Civic Office',
+    edition: 'organization',
+    indexProfile: 'organization',
+    githubEnvironment: 'production-example-civic-office',
+    cloudflareAccountId: 'b5aa57ffa1fd00e4fd98e78ee7d32f02',
+    cloudflareProject: 'example-civic-office',
+    workspaceId: 'example-civic-office',
+    enabled: true,
+    rolloutOrder: 30
+  });
+  const rows = validateOrganisationRegistry(withOtherOrganisation);
+  assert.equal(rows[2].firebaseConfig, 'firebase.organization.json');
+  const mismatched = structuredClone(withOtherOrganisation);
+  mismatched.organisations[2].indexProfile = 'church';
+  assert.throws(() => validateOrganisationRegistry(mismatched), /must use the organization index profile/);
+});
+
 test('deployment verification requires the central subscription bridge', async () => {
   const catalog = { Currency: 'NGN', Plans: {} };
   assert.equal(validateSubscriptionBridgePayload({ ok: true, catalog }), catalog);
@@ -106,15 +132,35 @@ test('deployment verification requires the central subscription bridge', async (
   assert.match(await readFile(new URL('../scripts/verify-organisation-deployment.mjs', import.meta.url), 'utf8'), /api\/plan-catalog/);
 });
 
-test('school, church and the Dynamax control plane use separate Firebase configurations', async () => {
+test('school, church, other organisations and the Dynamax control plane use separate Firebase configurations', async () => {
   assert.equal(schoolConfig.firestore.indexes, 'firestore.school.indexes.json');
   assert.equal(churchConfig.firestore.indexes, 'firestore.church.indexes.json');
+  assert.equal(organizationConfig.firestore.indexes, 'firestore.organization.indexes.json');
   assert.equal(platformConfig.firestore.indexes, 'firestore.platform.indexes.json');
   assert.equal(schoolIndexes.indexes.length, 23);
   assert.equal(churchIndexes.indexes.length, 11);
+  assert.equal(organizationIndexes.indexes.length, 11);
   assert.deepEqual(platformIndexes, { indexes: [], fieldOverrides: [] });
   await assert.rejects(access(new URL('../firebase.json', import.meta.url)));
   await assert.rejects(access(new URL('../firestore.indexes.json', import.meta.url)));
+});
+
+test('the tenant pool provisioner is opt-in, uses WIF and creates isolated deployments without platform database keys', () => {
+  assert.match(tenantProvisioner, /workflow_dispatch:/);
+  assert.match(tenantProvisioner, /TENANT_POOL_AUTOMATION_ENABLED == 'true'/);
+  assert.match(tenantProvisioner, /google-github-actions\/auth@v3/);
+  assert.match(tenantProvisioner, /DYNAMAX_PROVISION_SERVICE_ACCOUNT/);
+  assert.match(tenantProvisioner, /claim-next/);
+  assert.match(tenantProvisionerScript, /projects', 'create'/);
+  assert.match(tenantProvisionerScript, /projects\/\$\{projectId\}:addFirebase/);
+  assert.match(tenantProvisionerScript, /firebase\.organization\.json/);
+  assert.match(tenantProvisionerScript, /secret_text/);
+  assert.match(tenantProvisionerScript, /wrangler@4\.61\.0/);
+  assert.doesNotMatch(tenantProvisionerScript, /DYNAMAX_PLATFORM_FIREBASE_(?:PRIVATE_KEY|CLIENT_EMAIL)/);
+  assert.match(tenantFleet, /TENANT_POOL_FLEET_DEPLOY_ENABLED == 'true'/);
+  assert.match(tenantFleet, /fromJSON\(needs\.inventory\.outputs\.projects\)/);
+  assert.match(tenantFleet, /firebase\.organization\.json/);
+  assert.match(tenantFleet, /max-parallel: 3/);
 });
 
 test('church indexes cover member notifications without carrying school-only composites', () => {

@@ -28,6 +28,9 @@ The central project owns only Dynamax commercial and onboarding data:
 - `subscriptionPayments`: Dynamax subscription-payment intents and confirmations.
 - `settings/dynamaxPlanCatalog`: central plan prices, limits, feature lists and Paystack plan codes.
 - `requestIdempotency`: temporary retry protection created by registration requests.
+- `tenantProjectPool`: isolated Firebase and Cloudflare projects ready for subscriber assignment.
+- `tenantProvisioningRequests`: manual, branded and automatic project-creation work.
+- `settings/tenantPoolPolicy`: ready-capacity targets and provisioning defaults.
 
 Each organisation project continues to own its operational records: people, attendance, finance, donations or fees, HR, documents, notifications and organisation settings. Central subscriber APIs now fail closed when the Dynamax project credentials are absent; they never fall back to `FIREBASE_*`.
 

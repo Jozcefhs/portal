@@ -8,6 +8,7 @@ The portal uses one source repository and one deployment workflow while keeping 
 
 - `school` uses `firebase.school.json` and `firestore.school.indexes.json`.
 - `church` uses `firebase.church.json` and `firestore.church.indexes.json`.
+- `organization` uses `firebase.organization.json` and `firestore.organization.indexes.json`.
 
 Do not put private keys, API tokens, payment credentials or email credentials in the registry.
 
@@ -78,6 +79,8 @@ Each deployment:
 5. Verifies that `/api/settings` reports the expected workspace and edition and that `/api/plan-catalog` reaches the central Dynamax subscription service.
 
 ## Adding an organisation
+
+Use the static registry below for named or already-established deployments. New generic subscribers should normally use the automated ready-project pool described in `docs/tenant-project-pool.md`; pool projects do not require one manually maintained registry entry per subscriber.
 
 1. Create its Firebase project and Firestore database.
 2. Create a project-specific index deployment service account.

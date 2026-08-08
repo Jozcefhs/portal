@@ -1,0 +1,152 @@
+name: Deploy tenant project pool
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      project:
+        description: Firebase project ID from the ready pool, or all
+        required: true
+        default: all
+        type: string
+
+permissions:
+  contents: read
+  deployments: write
+  id-token: write
+
+jobs:
+  inventory:
+    name: Load tenant project inventory
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.TENANT_POOL_FLEET_DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    outputs:
+      projects: ${{ steps.inventory.outputs.projects }}
+      count: ${{ steps.inventory.outputs.count }}
+    env:
+      DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev' }}
+      DYNAMAX_ADMIN_WEB_PASSWORD: ${{ secrets.DYNAMAX_ADMIN_WEB_PASSWORD }}
+      TARGET_PROJECT: ${{ inputs.project || 'all' }}
+    steps:
+      - name: Load ready and assigned projects
+        id: inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${DYNAMAX_ADMIN_WEB_PASSWORD}" ]] || { echo '::error::DYNAMAX_ADMIN_WEB_PASSWORD is required.'; exit 1; }
+          payload="$(jq -nc --arg password "${DYNAMAX_ADMIN_WEB_PASSWORD}" '{password:$password,action:"load"}')"
+          response="$(curl --fail-with-body --silent --show-error "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" -H 'Content-Type: application/json' --data "${payload}")"
+          projects="$(jq -c --arg target "${TARGET_PROJECT}" '[.slots[] | select((.Status | ascii_downcase) == "ready" or (.Status | ascii_downcase) == "assigned") | select($target == "all" or .FirebaseProjectId == $target)]' <<<"${response}")"
+          count="$(jq 'length' <<<"${projects}")"
+          if [[ "${TARGET_PROJECT}" != "all" && "${count}" == "0" ]]; then
+            echo "::error::No ready or assigned pool project matched ${TARGET_PROJECT}."
+            exit 1
+          fi
+          echo "projects=${projects}" >> "${GITHUB_OUTPUT}"
+          echo "count=${count}" >> "${GITHUB_OUTPUT}"
+
+  deploy:
+    name: ${{ matrix.project.FirebaseProjectId }}
+    needs: inventory
+    if: ${{ needs.inventory.outputs.count != '0' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        project: ${{ fromJSON(needs.inventory.outputs.projects) }}
+    concurrency:
+      group: deploy-pool-${{ matrix.project.FirebaseProjectId }}-production
+      cancel-in-progress: true
+    env:
+      FIREBASE_PROJECT_ID: ${{ matrix.project.FirebaseProjectId }}
+      EXPECTED_EDITION: ${{ matrix.project.Edition }}
+      EXPECTED_WORKSPACE_ID: ${{ matrix.project.WorkspaceId }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate deployment configuration
+        shell: bash
+        env:
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          DYNAMAX_PROVISION_SERVICE_ACCOUNT: ${{ vars.DYNAMAX_PROVISION_SERVICE_ACCOUNT }}
+          DYNAMAX_PROVISION_PROJECT_ID: ${{ vars.DYNAMAX_PROVISION_PROJECT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "${GCP_WIF_PROVIDER}" ]] || missing+=("GCP_WIF_PROVIDER")
+          [[ -n "${DYNAMAX_PROVISION_SERVICE_ACCOUNT}" ]] || missing+=("DYNAMAX_PROVISION_SERVICE_ACCOUNT")
+          [[ -n "${DYNAMAX_PROVISION_PROJECT_ID}" ]] || missing+=("DYNAMAX_PROVISION_PROJECT_ID")
+          [[ -n "${CLOUDFLARE_ACCOUNT_ID}" ]] || missing+=("CLOUDFLARE_ACCOUNT_ID")
+          [[ -n "${CLOUDFLARE_API_TOKEN}" ]] || missing+=("CLOUDFLARE_API_TOKEN")
+          if (( ${#missing[@]} )); then
+            printf '::error::Missing pooled deployment configuration: %s\n' "$(IFS=', '; echo "${missing[*]}")"
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.DYNAMAX_PROVISION_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.DYNAMAX_PROVISION_SERVICE_ACCOUNT }}
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Select edition index profile
+        shell: bash
+        run: |
+          case "${EXPECTED_EDITION}" in
+            school) echo 'FIREBASE_CONFIG=firebase.school.json' >> "${GITHUB_ENV}" ;;
+            faith) echo 'FIREBASE_CONFIG=firebase.church.json' >> "${GITHUB_ENV}" ;;
+            organization) echo 'FIREBASE_CONFIG=firebase.organization.json' >> "${GITHUB_ENV}" ;;
+            *) echo "::error::Unsupported edition ${EXPECTED_EDITION}."; exit 1 ;;
+          esac
+
+      - name: Apply required Firestore indexes
+        run: >-
+          npx --yes firebase-tools@15.24.0 deploy
+          --only firestore:indexes
+          --project "${FIREBASE_PROJECT_ID}"
+          --config "${FIREBASE_CONFIG}"
+          --force
+          --non-interactive
+
+      - name: Install function dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Prepare production files
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .pages-deploy
+          mkdir .pages-deploy
+          cp -R css functions images js vendor .pages-deploy/
+          cp _headers _routes.json .pages-deploy/
+          cp ./*.html .pages-deploy/
+          cp app-icon.svg manifest.webmanifest sw.js version.json .pages-deploy/
+
+      - name: Deploy Cloudflare Pages production
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy .pages-deploy --project-name=${{ matrix.project.CloudflareProject }} --branch=main --commit-hash=${{ github.sha }} --commit-dirty=false
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify deployed tenant identity
+        run: >-
+          node scripts/verify-organisation-deployment.mjs
+          --url "https://${{ matrix.project.CloudflareProject }}.pages.dev"
+          --workspace "${EXPECTED_WORKSPACE_ID}"
+          --edition "${EXPECTED_EDITION}"

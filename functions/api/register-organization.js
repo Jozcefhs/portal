@@ -21,6 +21,7 @@ import {
 } from '../lib/request-security.js';
 import { syncRegistrationSubscriptionToWorkspace } from '../lib/subscription-workspace-sync.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
+import { reserveTenantProjectSlot } from '../lib/tenant-project-pool.js';
 
 const clean = (value) => String(value ?? '').trim();
 const PAYSTACK_INITIALIZE_URL = 'https://api.paystack.co/transaction/initialize';
@@ -355,11 +356,16 @@ export async function onRequestPost({ request, env }) {
     // organisation and contact email can never reset the server-issued clock.
     const existing = plan === 'Free' ? (priorTrial || currentRegistration) : currentRegistration;
     if (existing) {
+      const boundRegistration = { ...existing, ...(workspaceBinding || {}) };
+      const assignment = plan === 'Free' && !clean(boundRegistration.WorkspaceId)
+        ? await reserveTenantProjectSlot(platformEnv, boundRegistration)
+        : { registration: boundRegistration, assigned: Boolean(clean(boundRegistration.WorkspaceId)) };
+      const assignedRegistration = assignment.registration;
       const checkout = await initializeSubscriptionCheckout({
         request,
         env,
         platformEnv,
-        registration: { ...existing, ...(workspaceBinding || {}) },
+        registration: assignedRegistration,
         catalog,
         plan,
         billingCycle
@@ -367,6 +373,9 @@ export async function onRequestPost({ request, env }) {
       const result = {
         ok: true,
         reference: clean(existing.Reference || existing.__id),
+        workspaceId: clean(assignedRegistration.WorkspaceId),
+        portalUrl: clean(assignedRegistration.PortalUrl),
+        workspacePending: !clean(assignedRegistration.WorkspaceId),
         message: checkout?.trialActive
           ? `Your 7-day full-access trial is active until ${new Date(checkout.trialEndsAt).toLocaleString('en-NG')}.`
           : checkout?.trialReserved
@@ -398,11 +407,18 @@ export async function onRequestPost({ request, env }) {
       error.status = 409;
       throw error;
     }
-    const registration = { ...created.document, Reference: reference };
+    const savedRegistration = { ...created.document, Reference: reference };
+    const assignment = plan === 'Free'
+      ? await reserveTenantProjectSlot(platformEnv, savedRegistration)
+      : { registration: savedRegistration, assigned: false };
+    const registration = assignment.registration;
     const checkout = await initializeSubscriptionCheckout({ request, env, platformEnv, registration, catalog, plan, billingCycle });
     const result = {
       ok: true,
       reference,
+      workspaceId: clean(registration.WorkspaceId),
+      portalUrl: clean(registration.PortalUrl),
+      workspacePending: !clean(registration.WorkspaceId),
       message: checkout
         ? checkout.trialActive
           ? `Your 7-day full-access trial is active until ${new Date(checkout.trialEndsAt).toLocaleString('en-NG')}.`

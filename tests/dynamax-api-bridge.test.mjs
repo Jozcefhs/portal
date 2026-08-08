@@ -16,6 +16,7 @@ test('Dynamax Pages fail closed unless an API proxy is explicitly configured', (
   assert.match(middleware, /env\.CANONICAL_PORTAL_URL/);
   assert.match(middleware, /env\.CANONICAL_API_PROXY_SCOPE/);
   assert.match(middleware, /PLATFORM_SUBSCRIPTION_PROXY_PATHS/);
+  assert.match(middleware, /'\/api\/tenant-project-pool'/);
   assert.match(middleware, /if \(!proxyAllowed \|\| !configuredOrigin\)/);
   assert.doesNotMatch(middleware, /https:\/\/digc-suite\.pages\.dev/);
   assert.doesNotMatch(middleware, /PRIVATE_KEY|SHARED_SECRET|SESSION_SECRET/);

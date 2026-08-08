@@ -1,6 +1,6 @@
 import { batchUpsertDocuments, getDocument, listCollection, upsertDocument } from '../lib/firestore.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
-import { secureTextEqual } from '../lib/backend-security.js';
+import { requirePlatformAdmin } from '../lib/platform-admin.js';
 import { readJsonBody } from '../lib/request-security.js';
 import {
   SUBSCRIPTION_PLAN_NAMES,
@@ -12,20 +12,6 @@ import {
 const PLAN_DOCUMENT_ID = 'dynamaxPlanCatalog';
 const PAYSTACK_PLAN_URL = 'https://api.paystack.co/plan';
 const clean = (value) => String(value ?? '').trim();
-
-function requirePricingAdmin(env, password) {
-  const expected = clean(env.ADMIN_WEB_PASSWORD);
-  if (!expected) {
-    const error = new Error('Pricing administration is not configured. Add ADMIN_WEB_PASSWORD in Cloudflare.');
-    error.status = 503;
-    throw error;
-  }
-  if (!secureTextEqual(password, expected)) {
-    const error = new Error('Invalid administration password.');
-    error.status = 401;
-    throw error;
-  }
-}
 
 async function loadCatalog(env) {
   const platformEnv = requirePlatformFirestoreEnv(env);
@@ -167,7 +153,7 @@ export async function onRequestPost({ request, env }) {
   try {
     const platformEnv = requirePlatformFirestoreEnv(env);
     const body = await readJsonBody(request, { maxBytes: 128 * 1024 });
-    requirePricingAdmin(env, body.password);
+    requirePlatformAdmin(env, body.password);
     const existing = await loadCatalog(env);
     if (clean(body.action).toLowerCase() === 'load') {
       return Response.json({ ok: true, catalog: publicSubscriptionPlanCatalog(existing) }, {
