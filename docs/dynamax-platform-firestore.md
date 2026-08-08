@@ -15,7 +15,7 @@ The dedicated control plane was provisioned with these non-secret identifiers:
 - Runtime role: `Cloud Datastore User`
 - Central Cloudflare Pages project: `dynamaxms`
 - Production platform variables: configured on 2026-08-08
-- Legacy central proxy to `digc-suite`: disabled
+- Legacy central proxy variables for `digc-suite`: removed
 - One-time migration: completed and idempotency-verified on 2026-08-08
 
 Use `dynamax-platform-504906` for `DYNAMAX_PLATFORM_FIREBASE_PROJECT_ID`. The project named `dynamax-platform` is not this control-plane database and must not be substituted.
