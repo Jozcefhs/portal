@@ -35,6 +35,8 @@ test('staff account exposes a Super Admin subscription upgrade interface', async
   ]);
   assert.match(html, /id="staffSubscriptionButton"/);
   assert.match(html, /id="staffSubscriptionDialog"/);
+  assert.match(html, /id="staffProfileSubscriptionOpen"/);
+  assert.match(html, /Manage subscription \/ Upgrade plan/);
   assert.match(client, /user\.role !== 'Super Admin'/);
   assert.match(client, /\/api\/staff-subscription/);
   assert.match(middleware, /'\/api\/subscription-checkout'/);

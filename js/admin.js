@@ -8,6 +8,7 @@ const approvalSettingsDialog = document.getElementById('staffApprovalSettingsDia
 const approvalSettingsForm = document.getElementById('staffApprovalSettingsForm');
 const subscriptionButton = document.getElementById('staffSubscriptionButton');
 const subscriptionDialog = document.getElementById('staffSubscriptionDialog');
+const profileSubscriptionSection = document.getElementById('staffProfileSubscription');
 const financeDecisionDialog = document.getElementById('financeDecisionDialog');
 const financeDecisionForm = document.getElementById('financeDecisionForm');
 const loginStatus = document.getElementById('staffLoginStatus');
@@ -694,6 +695,14 @@ function openStaffProfile() {
   document.getElementById('staffProfileDisplayName').value = currentUser.displayName || currentUser.username || '';
   document.getElementById('staffProfileLoginUsername').value = currentUser.loginUsername || currentUser.username || '';
   renderProfilePhoto(profilePhotoState, currentUser.displayName || currentUser.username);
+  const canManageSubscription = currentUser.role === 'Super Admin';
+  profileSubscriptionSection.hidden = !canManageSubscription;
+  if (canManageSubscription) {
+    document.getElementById('staffProfileSubscriptionPlan').textContent = `${clean(currentUser.subscriptionPlan || 'Current')} plan`;
+    document.getElementById('staffProfileSubscriptionCopy').textContent = currentUser.subscriptionActive === false
+      ? (currentUser.subscriptionMessage || 'This subscription needs attention. Choose a paid plan to restore access.')
+      : 'Compare plans, change billing frequency and upgrade securely through Paystack.';
+  }
   setStatus(document.getElementById('staffProfileStatus'), '');
   setStatus(document.getElementById('staffLoginDetailsStatus'), '');
   staffProfileDialog.showModal();
@@ -9812,6 +9821,10 @@ passkeySetupButton.addEventListener('click', async () => {
 
 approvalSettingsButton.addEventListener('click', openApprovalSettings);
 subscriptionButton.addEventListener('click', openStaffSubscription);
+document.getElementById('staffProfileSubscriptionOpen').addEventListener('click', () => {
+  staffProfileDialog.close();
+  openStaffSubscription();
+});
 document.getElementById('staffSubscriptionClose').addEventListener('click', () => subscriptionDialog.close());
 subscriptionDialog.addEventListener('click', (event) => {
   const cycleButton = event.target.closest('[data-subscription-cycle]');

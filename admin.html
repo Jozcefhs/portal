@@ -139,6 +139,14 @@
       <div><small>My account</small><h2>Edit Profile</h2></div>
       <button type="button" id="staffProfileClose" aria-label="Close profile">&times;</button>
     </div>
+    <section id="staffProfileSubscription" class="workflow-form staff-login-details-form" hidden>
+      <div class="profile-security-heading">
+        <small>Organisation subscription</small>
+        <h3 id="staffProfileSubscriptionPlan">Current plan</h3>
+        <p id="staffProfileSubscriptionCopy" class="muted">Compare plans, change billing frequency and upgrade securely.</p>
+      </div>
+      <button type="button" id="staffProfileSubscriptionOpen">Manage subscription / Upgrade plan</button>
+    </section>
     <form id="staffProfileForm" class="workflow-form">
       <label>Display name <span class="required">*</span><input id="staffProfileDisplayName" name="displayName" required></label>
       <div class="profile-photo-editor">
@@ -265,7 +273,7 @@
   <script src="js/site-config.js?v=20260728-quota-safety"></script>
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
   <script src="js/financial-values.js?v=20260803-finance-commas"></script>
-  <script src="js/admin.js?v=20260808-self-service-upgrade"></script>
+  <script src="js/admin.js?v=20260808-subscription-account-link"></script>
   <script src="js/web-push.js?v=20260801-mobile-push"></script>
   <script src="js/notifications.js?v=20260804-read-efficiency"></script>
 </body>

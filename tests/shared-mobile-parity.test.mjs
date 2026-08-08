@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260808-self-service-upgrade';
-const adminScriptVersion = '20260808-self-service-upgrade';
+const adminScriptVersion = '20260808-subscription-account-link';
 const parentScriptVersion = '20260803-finance-commas';
 const notificationVersion = '20260804-read-efficiency';
 const pageNames = [
