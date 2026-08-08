@@ -35,6 +35,10 @@ export const BRANCH_PROFILE_OVERRIDE_FIELDS = Object.freeze([
 
 const FIELD_SET = new Set(BRANCH_PROFILE_OVERRIDE_FIELDS);
 
+function profileObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
 function normalizedValue(field, value) {
   if (field === 'ShowResultsOnline') {
     return ['YES', 'NO'].includes(clean(value).toUpperCase()) ? clean(value).toUpperCase() : 'NO';
@@ -47,9 +51,10 @@ function normalizedValue(field, value) {
 }
 
 export function branchProfileDefaults(profile = {}) {
+  const source = profileObject(profile);
   return Object.fromEntries(BRANCH_PROFILE_OVERRIDE_FIELDS.map((field) => [
     field,
-    normalizedValue(field, profile[field])
+    normalizedValue(field, source[field])
   ]));
 }
 
@@ -75,17 +80,18 @@ function overrideValues(document = {}) {
 }
 
 export function applyBranchProfileOverrides(defaultProfile = {}, document = null, branchId = '') {
+  const defaults = profileObject(defaultProfile);
   const normalizedBranchId = clean(branchId) ? safeScopeId(branchId) : '';
   const values = normalizedBranchId ? overrideValues(document || {}) : {};
   const fields = Object.keys(values);
   return {
-    ...defaultProfile,
+    ...defaults,
     ...values,
     SettingsScope: normalizedBranchId ? 'branch' : 'organisation',
     EffectiveBranchId: normalizedBranchId,
     BranchOverrideFields: fields,
     BranchOverrideValues: values,
-    OrganisationDefaults: branchProfileDefaults(defaultProfile)
+    OrganisationDefaults: branchProfileDefaults(defaults)
   };
 }
 

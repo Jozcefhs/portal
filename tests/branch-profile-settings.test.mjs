@@ -52,6 +52,16 @@ test('effective branch settings preserve explicit blank overrides and inheritanc
   assert.deepEqual(effective.BranchOverrideFields, ['SchoolEmail', 'SchoolSignatoryName']);
 });
 
+test('organisation editions tolerate a missing legacy school profile', () => {
+  const effective = applyBranchProfileOverrides(null, null, 'Main Branch');
+
+  assert.equal(effective.SettingsScope, 'branch');
+  assert.equal(effective.EffectiveBranchId, 'main-branch');
+  assert.equal(effective.SchoolName, undefined);
+  assert.equal(effective.OrganisationDefaults.SchoolName, '');
+  assert.deepEqual(effective.BranchOverrideFields, []);
+});
+
 test('web and desktop settings use the same branch-effective profile contract', async () => {
   const [settingsApi, backendApi, setupScript, desktopSource] = await Promise.all([
     readFile(new URL('../functions/api/settings.js', import.meta.url), 'utf8'),
