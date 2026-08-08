@@ -11,6 +11,7 @@ export const SUBSCRIPTION_PLAN_NAMES = Object.freeze([
 const FULL_ACCESS = '*';
 export const FREE_TRIAL_DAYS = 7;
 export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 2;
+export const SUBSCRIPTION_CURRENCIES = Object.freeze(['NGN', 'USD']);
 
 export const SUBSCRIPTION_MODULE_CATALOG = Object.freeze([
   Object.freeze({ Key: 'branches', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Branches & campuses', faith: 'Branches & assemblies', organization: 'Branches & offices' }), Description: 'Branch switching and branch-isolated records.', Requires: Object.freeze([]) }),
@@ -274,6 +275,11 @@ function enabled(value, fallback = true) {
   return fallback;
 }
 
+function subscriptionCurrency(value) {
+  const currency = clean(value).toUpperCase();
+  return SUBSCRIPTION_CURRENCIES.includes(currency) ? currency : 'NGN';
+}
+
 export function defaultSubscriptionPlanCatalog() {
   return {
     Currency: 'NGN',
@@ -309,7 +315,7 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
     : {};
   const sourceModuleCatalogVersion = Math.max(0, Math.floor(Number(source.ModuleCatalogVersion) || 0));
   return {
-    Currency: clean(source.Currency || defaults.Currency).toUpperCase() || 'NGN',
+    Currency: subscriptionCurrency(source.Currency || defaults.Currency),
     ModuleCatalogVersion: SUBSCRIPTION_MODULE_CATALOG_VERSION,
     Plans: Object.fromEntries(SUBSCRIPTION_PLAN_NAMES.map((name) => {
       const incoming = sourcePlans[name] && typeof sourcePlans[name] === 'object' ? sourcePlans[name] : {};

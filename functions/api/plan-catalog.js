@@ -38,7 +38,7 @@ function mergeCatalog(existing, incoming) {
   const incomingPlans = source.Plans && typeof source.Plans === 'object' && !Array.isArray(source.Plans)
     ? source.Plans
     : {};
-  return normalizeSubscriptionPlanCatalog({
+  const catalog = normalizeSubscriptionPlanCatalog({
     ...existing,
     ...source,
     Plans: Object.fromEntries(SUBSCRIPTION_PLAN_NAMES.map((name) => [
@@ -46,6 +46,13 @@ function mergeCatalog(existing, incoming) {
       { ...existing.Plans[name], ...(incomingPlans[name] || {}) }
     ]))
   });
+  if (catalog.Currency !== existing.Currency) {
+    SUBSCRIPTION_PLAN_NAMES.forEach((name) => {
+      catalog.Plans[name].PaystackMonthlyPlanCode = '';
+      catalog.Plans[name].PaystackYearlyPlanCode = '';
+    });
+  }
+  return catalog;
 }
 
 function withoutFirestoreMetadata(document = {}) {

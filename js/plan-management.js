@@ -21,7 +21,18 @@ function escapeHtml(value) {
   })[character]);
 }
 
+function selectedPricingCurrency() {
+  const value = String(document.getElementById('planPricingCurrency')?.value || 'NGN').toUpperCase();
+  return value === 'USD' ? 'USD' : 'NGN';
+}
+
+function updatePriceCurrencyLabels() {
+  const currency = selectedPricingCurrency();
+  cards.querySelectorAll('[data-price-currency]').forEach((node) => { node.textContent = currency; });
+}
+
 function renderCatalog() {
+  const currency = selectedPricingCurrency();
   cards.innerHTML = (catalog?.Plans || []).map((plan) => {
     const isFree = plan.Name === 'Free';
     const counts = ['school', 'faith', 'organization'].map((edition) =>
@@ -29,14 +40,15 @@ function renderCatalog() {
     return `<article class="plan-pricing-card" data-plan="${escapeHtml(plan.Name)}">
       <header><div><h3>${escapeHtml(plan.Name)}</h3><p>${escapeHtml(plan.Summary)}</p></div><label class="inline-check"><input type="checkbox" data-field="Active" ${plan.Active ? 'checked' : ''}> Available</label></header>
       <div class="plan-pricing-fields">
-        <label>Monthly price (NGN)<input data-field="MonthlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.MonthlyAmount || 0)}" ${isFree ? 'readonly' : ''}></label>
-        <label>Yearly price (NGN)<input data-field="YearlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.YearlyAmount || 0)}" ${isFree ? 'readonly' : ''}></label>
+        <label>Monthly price (<span data-price-currency>${currency}</span>)<input data-field="MonthlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.MonthlyAmount || 0)}" ${isFree ? 'readonly' : ''}></label>
+        <label>Yearly price (<span data-price-currency>${currency}</span>)<input data-field="YearlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.YearlyAmount || 0)}" ${isFree ? 'readonly' : ''}></label>
         <label>Active-user limit<input data-field="UserLimit" type="number" min="1" step="1" value="${Number(plan.UserLimit || 1)}" ${plan.Name === 'Enterprise' ? '' : 'readonly'}></label>
       </div>
       <p class="plan-module-counts"><span>School <b>${counts[0]}</b></span><span>Church <b>${counts[1]}</b></span><span>Other <b>${counts[2]}</b></span></p>
       ${isFree ? '<small class="plan-trial-note">The seven-day duration remains fixed; its enabled modules are now controlled below.</small>' : ''}
     </article>`;
   }).join('');
+  updatePriceCurrencyLabels();
   renderEntitlementMatrix();
 }
 
@@ -202,6 +214,12 @@ pricingForm.addEventListener('submit', async (event) => {
 });
 
 pricingForm.addEventListener('input', () => setStatus(pricingStatus, 'You have unsaved pricing changes.'));
+
+document.getElementById('planPricingCurrency')?.addEventListener('change', () => {
+  updatePriceCurrencyLabels();
+  document.getElementById('updateExistingSubscriptions').checked = false;
+  setStatus(pricingStatus, `Currency changed to ${selectedPricingCurrency()}. Review every price before saving; existing subscribers remain on their current Paystack plans.`);
+});
 
 entitlementMatrix?.addEventListener('click', (event) => {
   const editionButton = event.target.closest('[data-entitlement-edition]');

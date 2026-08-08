@@ -32,6 +32,8 @@ test('plan catalogue normalizes pricing, billing cycles and enterprise custom se
   assert.equal(catalog.Plans.Standard.UserLimit, 20);
   assert.equal(catalog.Plans.Enterprise.UserLimit, 700);
   assert.equal(normalizeBillingCycle('annual'), 'yearly');
+  assert.equal(normalizeSubscriptionPlanCatalog({ Currency: 'usd' }).Currency, 'USD');
+  assert.equal(normalizeSubscriptionPlanCatalog({ Currency: 'eur' }).Currency, 'NGN');
 });
 
 test('public plan catalogue never exposes Paystack plan codes', () => {
@@ -191,10 +193,13 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(registrationJs, /window\.location\.assign\(data\.authorizationUrl\)/);
   assert.match(pricingHtml, /Monthly and yearly pricing/);
   assert.match(pricingHtml, /id="planEntitlementMatrix"/);
-  assert.match(pricingHtml, /plan-management\.js\?v=20260808-plan-matrix-overlap/);
+  assert.match(pricingHtml, /<select id="planPricingCurrency"><option value="NGN">NGN<\/option><option value="USD">USD<\/option><\/select>/);
+  assert.match(pricingHtml, /plan-management\.js\?v=20260808-pricing-currency/);
   assert.match(pricingHtml, /Save plans &amp; pricing/);
   assert.match(pricingHtml, /Apply changed prices to existing Paystack subscribers/);
   assert.match(pricingJs, /aria-label="\$\{accessibleLabel\}"/);
+  assert.match(pricingJs, /data-price-currency/);
+  assert.match(pricingJs, /existing subscribers remain on their current Paystack plans/);
   assert.doesNotMatch(pricingJs, /class="sr-only"/);
   assert.match(setupHtml, /href="plan-management\.html"/);
   assert.match(setupHtml, /<option>Free<\/option>/);
