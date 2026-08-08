@@ -151,6 +151,8 @@ test('the tenant pool provisioner is opt-in, uses WIF and creates isolated deplo
   assert.match(tenantProvisioner, /google-github-actions\/auth@v3/);
   assert.match(tenantProvisioner, /DYNAMAX_PROVISION_SERVICE_ACCOUNT/);
   assert.match(tenantProvisioner, /claim-next/);
+  assert.match(tenantProvisioner, /MANUAL_TENANT_PROJECT_ID/);
+  assert.match(tenantProvisioner, /GitHub exact-project provisioner/);
   assert.match(tenantProvisionerScript, /projects', 'create'/);
   assert.match(tenantProvisionerScript, /projects\/\$\{projectId\}:addFirebase/);
   assert.match(tenantProvisionerScript, /firebase\.organization\.json/);

@@ -18,7 +18,7 @@ import {
 } from '../lib/tenant-project-pool.js';
 
 const clean = (value) => String(value ?? '').trim();
-const PROVISIONER_ACTIONS = new Set(['load', 'register', 'claim-next', 'finish-request']);
+const PROVISIONER_ACTIONS = new Set(['load', 'register', 'request', 'claim-next', 'finish-request']);
 
 function requireTenantPoolAccess(env, password, action) {
   const provisionerSecret = clean(env.TENANT_PROVISIONER_SECRET);
@@ -71,7 +71,7 @@ export async function onRequestPost({ request, env }) {
       });
     }
     if (action === 'claim-next') {
-      const provisioningRequest = await claimNextTenantProvisioningRequest(platformEnv, body.runnerId);
+      const provisioningRequest = await claimNextTenantProvisioningRequest(platformEnv, body.runnerId, body.reference);
       return Response.json({ ok: true, request: provisioningRequest }, {
         headers: { 'Cache-Control': 'no-store' }
       });

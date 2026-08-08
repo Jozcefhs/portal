@@ -238,15 +238,17 @@ function publicProvisioningRequest(request = {}) {
   };
 }
 
-export async function claimNextTenantProvisioningRequest(platformEnv, runnerId = '') {
+export async function claimNextTenantProvisioningRequest(platformEnv, runnerId = '', requestedReference = '') {
   const staleBefore = Date.now() - (90 * 60 * 1000);
+  const targetReference = clean(requestedReference);
   const requests = (await listCollection(platformEnv, TENANT_PROVISIONING_REQUEST_COLLECTION, {
     pageSize: 250,
     maxPages: 4
   }))
-    .filter((request) => lower(request.Status) === 'pending'
-      || (lower(request.Status) === 'provisioning'
-        && Date.parse(clean(request.StartedAt)) < staleBefore))
+    .filter((request) => (!targetReference || clean(request.Reference || request.__id) === targetReference)
+      && (lower(request.Status) === 'pending'
+        || (lower(request.Status) === 'provisioning'
+          && Date.parse(clean(request.StartedAt)) < staleBefore)))
     .sort((left, right) => clean(left.RequestedAt || left.CreatedAt).localeCompare(clean(right.RequestedAt || right.CreatedAt)));
 
   for (const request of requests) {

@@ -87,6 +87,8 @@ The runtime service account created inside each tenant receives only Cloud Datas
 6. Repeat until the saved targets are filled.
 7. Set `TENANT_POOL_AUTOMATION_ENABLED=true` only after the live result is verified.
 
+For an exact pre-created name, run the same workflow with an edition and `project_id` such as `dynamax-tenant-001`. The workflow queues and claims only that exact branded request, so older automatic replenishment requests cannot take its place.
+
 The scheduled workflow checks twice an hour but processes nothing unless that repository variable is true. Only one provisioning run can execute at a time.
 
 Use **Actions -> Deploy tenant project pool** to update one pooled Firebase project or all of them. When `TENANT_POOL_FLEET_DEPLOY_ENABLED=true`, each push to `main` also updates the complete pooled fleet with at most three deployments at once.

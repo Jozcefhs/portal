@@ -55,6 +55,7 @@ test('tenant pool administration is protected and supports worker lifecycle stat
   assert.match(apiSource, /TENANT_PROVISIONER_SECRET/);
   assert.match(apiSource, /PROVISIONER_ACTIONS/);
   assert.match(apiSource, /claim-next/);
+  assert.match(apiSource, /body\.reference/);
   assert.match(apiSource, /finish-request/);
   assert.match(apiSource, /ensure-capacity/);
   assert.match(apiSource, /issueTenantActivation/);

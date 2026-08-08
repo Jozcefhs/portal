@@ -8,6 +8,20 @@ on:
         required: true
         default: true
         type: boolean
+      edition:
+        description: Edition for an exact manually named project
+        required: false
+        default: organization
+        type: choice
+        options:
+          - school
+          - faith
+          - organization
+      project_id:
+        description: Optional exact Firebase and Cloudflare project ID
+        required: false
+        default: ''
+        type: string
   schedule:
     - cron: '17,47 * * * *'
 
@@ -34,6 +48,8 @@ jobs:
       DYNAMAX_GCP_PARENT: ${{ vars.DYNAMAX_GCP_PARENT }}
       DYNAMAX_TENANT_REGION: ${{ vars.DYNAMAX_TENANT_REGION || 'africa-south1' }}
       DYNAMAX_TENANT_PROJECT_PREFIX: ${{ vars.DYNAMAX_TENANT_PROJECT_PREFIX || 'dynamax-tenant' }}
+      MANUAL_TENANT_EDITION: ${{ inputs.edition || '' }}
+      MANUAL_TENANT_PROJECT_ID: ${{ inputs.project_id || '' }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
@@ -53,6 +69,10 @@ jobs:
           [[ -n "${DYNAMAX_TENANT_PROVISIONER_SECRET}" ]] || missing+=("DYNAMAX_TENANT_PROVISIONER_SECRET secret")
           [[ -n "${CLOUDFLARE_ACCOUNT_ID}" ]] || missing+=("CLOUDFLARE_ACCOUNT_ID variable")
           [[ -n "${CLOUDFLARE_API_TOKEN}" ]] || missing+=("CLOUDFLARE_API_TOKEN secret")
+          if [[ -n "${MANUAL_TENANT_PROJECT_ID}" ]]; then
+            [[ "${MANUAL_TENANT_PROJECT_ID}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]] || missing+=("valid project_id input")
+            [[ "${MANUAL_TENANT_EDITION}" =~ ^(school|faith|organization)$ ]] || missing+=("valid edition input")
+          fi
           if [[ "${APPLY_CHANGES}" == "true" ]]; then
             if [[ "${DYNAMAX_GCP_BILLING_REQUIRED}" != "false" ]]; then
               [[ -n "${DYNAMAX_GCP_BILLING_ACCOUNT}" ]] || missing+=("DYNAMAX_GCP_BILLING_ACCOUNT variable")
@@ -83,7 +103,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${APPLY_CHANGES}" == "true" ]]; then
+          if [[ -n "${MANUAL_TENANT_PROJECT_ID}" ]]; then
+            if [[ "${APPLY_CHANGES}" == "true" ]]; then
+              queue_payload="$(jq -nc --arg password "${DYNAMAX_TENANT_PROVISIONER_SECRET}" --arg edition "${MANUAL_TENANT_EDITION}" --arg project_id "${MANUAL_TENANT_PROJECT_ID}" '{password:$password,action:"request",request:{Edition:$edition,Mode:"branded",Count:1,RequestedProjectId:$project_id,RequestedBy:"GitHub exact-project provisioner"}}')"
+              queue_response="$(curl --fail-with-body --silent --show-error "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" -H 'Content-Type: application/json' --data "${queue_payload}")"
+              target_reference="$(jq -r '.request.Reference' <<<"${queue_response}")"
+              payload="$(jq -nc --arg password "${DYNAMAX_TENANT_PROVISIONER_SECRET}" --arg runner "github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --arg reference "${target_reference}" '{password:$password,action:"claim-next",runnerId:$runner,reference:$reference}')"
+              response="$(curl --fail-with-body --silent --show-error "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" -H 'Content-Type: application/json' --data "${payload}")"
+              request="$(jq -c '.request // empty' <<<"${response}")"
+            else
+              request="$(jq -nc --arg reference "DRYRUN-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --arg edition "${MANUAL_TENANT_EDITION}" --arg project_id "${MANUAL_TENANT_PROJECT_ID}" '{Reference:$reference,Edition:$edition,Mode:"branded",Count:1,RequestedProjectId:$project_id,Status:"Pending",RequestedBy:"GitHub exact-project dry run"}')"
+            fi
+          elif [[ "${APPLY_CHANGES}" == "true" ]]; then
             payload="$(jq -nc --arg password "${DYNAMAX_TENANT_PROVISIONER_SECRET}" --arg runner "github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" '{password:$password,action:"claim-next",runnerId:$runner}')"
             response="$(curl --fail-with-body --silent --show-error "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" -H 'Content-Type: application/json' --data "${payload}")"
             request="$(jq -c '.request // empty' <<<"${response}")"
@@ -130,6 +161,8 @@ jobs:
 
       - name: Summarize provisioning
         if: ${{ always() && steps.claim.outputs.has_request == 'true' }}
+        env:
+          SUMMARY_PROJECT_ID: ${{ inputs.project_id || 'queued request' }}
         shell: bash
         run: |
           {
@@ -138,6 +171,7 @@ jobs:
             echo '- Request: `${{ steps.claim.outputs.reference }}`'
             echo '- Edition: `${{ steps.claim.outputs.edition }}`'
             echo '- Project count: `${{ steps.claim.outputs.count }}`'
+            echo "- Exact project ID: \`${SUMMARY_PROJECT_ID}\`"
             echo '- Apply changes: `${{ env.APPLY_CHANGES }}`'
             if [[ -f tenant-provision-result.json ]]; then
               echo ''
