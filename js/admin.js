@@ -1214,8 +1214,16 @@ let genericOrganizationVocabularyObserver = null;
 
 function observeGenericOrganizationVocabulary() {
   if (!panelEl || genericOrganizationVocabularyObserver || typeof MutationObserver === 'undefined') return;
-  genericOrganizationVocabularyObserver = new MutationObserver(() => applyGenericOrganizationVocabulary(panelEl));
-  genericOrganizationVocabularyObserver.observe(panelEl, { childList: true, subtree: true });
+  const observerOptions = { childList: true, subtree: true };
+  genericOrganizationVocabularyObserver = new MutationObserver(() => {
+    genericOrganizationVocabularyObserver.disconnect();
+    try {
+      applyGenericOrganizationVocabulary(panelEl);
+    } finally {
+      genericOrganizationVocabularyObserver.observe(panelEl, observerOptions);
+    }
+  });
+  genericOrganizationVocabularyObserver.observe(panelEl, observerOptions);
 }
 
 function showDashboard(user, options = {}) {

@@ -225,6 +225,8 @@ test('other-organisation vocabulary observer settles without rewriting unchanged
   assert.match(adminSource, /if \(nextLabel !== option\.textContent\) option\.textContent = nextLabel/);
   assert.match(adminSource, /if \(nextValue !== node\.nodeValue\) node\.nodeValue = nextValue/);
   assert.match(adminSource, /finally \{\s*applyingGenericOrganizationVocabulary = false;/s);
+  assert.match(adminSource, /genericOrganizationVocabularyObserver\.disconnect\(\)/);
+  assert.match(adminSource, /genericOrganizationVocabularyObserver\.observe\(panelEl, observerOptions\)/);
 });
 
 test('school-only modules cannot be re-enabled by church feature overrides', () => {
