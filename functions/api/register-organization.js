@@ -24,6 +24,11 @@ import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 import { reserveTenantProjectSlot } from '../lib/tenant-project-pool.js';
 import { issueTenantActivation } from '../lib/tenant-activation.js';
 import { issueRegistrationOnboarding } from '../lib/registration-onboarding.js';
+import {
+  findTrialUseTombstone,
+  recordTrialUseTombstone,
+  tenantTrialFingerprint
+} from '../lib/tenant-trial-lifecycle.js';
 
 const clean = (value) => String(value ?? '').trim();
 const PAYSTACK_INITIALIZE_URL = 'https://api.paystack.co/transaction/initialize';
@@ -135,6 +140,7 @@ export async function initializeSubscriptionCheckout({ request, env, platformEnv
         UpdatedAt: new Date().toISOString()
       };
       await upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, currentRegistration);
+      await recordTrialUseTombstone(platformEnv, currentRegistration).catch(() => null);
       await syncRegistrationSubscriptionToWorkspace(env, currentRegistration);
       return {
         trialActive: true,
@@ -180,6 +186,7 @@ export async function initializeSubscriptionCheckout({ request, env, platformEnv
       UpdatedAt: new Date().toISOString()
     };
     await upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, activatedRegistration);
+    await recordTrialUseTombstone(platformEnv, activatedRegistration).catch(() => null);
     await syncRegistrationSubscriptionToWorkspace(env, activatedRegistration);
     return {
       trialActive: true,
@@ -188,6 +195,12 @@ export async function initializeSubscriptionCheckout({ request, env, platformEnv
       trialDaysRemaining: 7,
       amount: 0
     };
+  }
+  if (['retiring', 'retired'].includes(clean(registration.LifecycleStage).toLowerCase())) {
+    const error = new Error('This workspace has reached permanent retirement and can no longer be upgraded. Register a new paid workspace or contact Dynamax support.');
+    error.status = 410;
+    error.code = 'TENANT_RETIREMENT_STARTED';
+    throw error;
   }
   const amount = subscriptionPlanPrice(catalog, plan, billingCycle);
   if (!(amount > 0)) {
@@ -399,11 +412,20 @@ export async function onRequestPost({ request, env }) {
     const priorTrial = matchingRegistrations.find((row) => clean(row.TrialStartedAt));
     const currentRegistration = matchingRegistrations.find((row) =>
       !['rejected', 'cancelled', 'retired', 'terminated', 'deleted'].includes(clean(row.Status).toLowerCase()));
+    const trialFingerprint = await tenantTrialFingerprint(name, email);
+    const trialTombstone = plan === 'Free'
+      ? await findTrialUseTombstone(platformEnv, name, email)
+      : null;
+    if (plan === 'Free' && trialTombstone && !priorTrial && !currentRegistration) {
+      const error = new Error('This organisation has already used its 7-day free trial. Choose a paid subscription to continue.');
+      error.status = 409;
+      throw error;
+    }
     // A retired or rejected registration must not erase trial history. The same
     // organisation and contact email can never reset the server-issued clock.
     const existing = plan === 'Free' ? (priorTrial || currentRegistration) : currentRegistration;
     if (existing) {
-      const boundRegistration = { ...existing, ...(workspaceBinding || {}) };
+      const boundRegistration = { ...existing, TrialFingerprint: clean(existing.TrialFingerprint) || trialFingerprint, ...(workspaceBinding || {}) };
       const assignment = plan === 'Free' && !clean(boundRegistration.WorkspaceId)
         ? await reserveTenantProjectSlot(platformEnv, boundRegistration)
         : { registration: boundRegistration, assigned: Boolean(clean(boundRegistration.WorkspaceId)) };
@@ -442,6 +464,7 @@ export async function onRequestPost({ request, env }) {
       Reference: reference, OrganisationName: name,
       Edition: edition,
       ContactName: clean(body.ContactName), Email: email, Phone: clean(body.Phone), Country: clean(body.Country),
+      TrialFingerprint: trialFingerprint,
       Plan: plan,
       BillingCycle: billingCycle,
       UserLimit: catalog.Plans[plan].UserLimit,

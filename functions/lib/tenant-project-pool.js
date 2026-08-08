@@ -8,6 +8,11 @@ import {
 } from './firestore.js';
 import { normalizeOrganizationEdition } from './organization-config.js';
 import { issueTenantActivation } from './tenant-activation.js';
+import {
+  publicTenantRetirementRequest,
+  recordTrialUseTombstone,
+  TENANT_RETIREMENT_REQUEST_COLLECTION
+} from './tenant-trial-lifecycle.js';
 
 export const TENANT_PROJECT_POOL_COLLECTION = 'tenantProjectPool';
 export const TENANT_PROVISIONING_REQUEST_COLLECTION = 'tenantProvisioningRequests';
@@ -42,17 +47,6 @@ function positiveInteger(value, fallback = 1, maximum = 100) {
 
 function poolEdition(value) {
   return normalizeOrganizationEdition(value);
-}
-
-function activeRegistration(registration = {}) {
-  const statuses = [
-    registration.Status,
-    registration.PaymentStatus,
-    registration.SubscriptionStatus
-  ].map(lower);
-  return statuses.some((status) => [
-    'active', 'paid', 'payment confirmed', 'trial active', 'trialing'
-  ].includes(status));
 }
 
 export function publicTenantProjectSlot(slot = {}) {
@@ -126,9 +120,10 @@ function poolSummary(slots, policy) {
 }
 
 export async function loadTenantProjectPool(platformEnv) {
-  const [slotRows, requestRows, policy] = await Promise.all([
+  const [slotRows, requestRows, retirementRows, policy] = await Promise.all([
     listCollection(platformEnv, TENANT_PROJECT_POOL_COLLECTION, { pageSize: 1000, maxPages: 10 }).catch(() => []),
     listCollection(platformEnv, TENANT_PROVISIONING_REQUEST_COLLECTION, { pageSize: 500, maxPages: 10 }).catch(() => []),
+    listCollection(platformEnv, TENANT_RETIREMENT_REQUEST_COLLECTION, { pageSize: 500, maxPages: 10 }).catch(() => []),
     loadTenantPoolPolicy(platformEnv)
   ]);
   const slots = slotRows.map(publicTenantProjectSlot).sort((left, right) => (
@@ -147,7 +142,10 @@ export async function loadTenantProjectPool(platformEnv) {
     RequestedBy: clean(request.RequestedBy),
     LastError: clean(request.LastError)
   })).sort((left, right) => right.RequestedAt.localeCompare(left.RequestedAt));
-  return { slots, requests, policy, summary: poolSummary(slots, policy) };
+  const retirements = retirementRows
+    .map(publicTenantRetirementRequest)
+    .sort((left, right) => right.RequestedAt.localeCompare(left.RequestedAt));
+  return { slots, requests, retirements, policy, summary: poolSummary(slots, policy) };
 }
 
 export async function registerTenantProjectSlot(platformEnv, value = {}) {
@@ -163,7 +161,9 @@ export async function registerTenantProjectSlot(platformEnv, value = {}) {
   const id = safeKey(value.Id || workspaceId || firebaseProjectId);
   const current = await getDocument(platformEnv, TENANT_PROJECT_POOL_COLLECTION, id);
   if (current && ['reserved', 'assigned'].includes(lower(current.Status))) {
-    const error = new Error('An assigned or reserved project cannot be replaced. Release it first.');
+    const error = new Error(lower(current.Status) === 'assigned'
+      ? 'An assigned tenant project cannot be replaced or reused. Retire it through the secure deletion lifecycle.'
+      : 'A reserved project cannot be replaced. Release the unused reservation first.');
     error.status = 409;
     throw error;
   }
@@ -513,6 +513,7 @@ export async function assignWaitingTenantRegistrations(platformEnv, selectedEdit
           current
         );
         assignedRegistration = { ...assignedRegistration, ...trialUpdate };
+        await recordTrialUseTombstone(platformEnv, assignedRegistration).catch(() => null);
       }
     }
     let activationIssued = false;
@@ -548,12 +549,10 @@ export async function releaseTenantProjectSlot(platformEnv, slotId) {
     throw error;
   }
   const registrationReference = clean(slot.AssignedRegistrationReference);
-  const registration = registrationReference
-    ? await getDocument(platformEnv, 'tenantRegistrations', registrationReference)
-    : null;
-  if (registration && activeRegistration(registration)) {
-    const error = new Error('This project belongs to an active or paid subscriber and cannot be released.');
+  if (registrationReference || lower(slot.Status) === 'assigned') {
+    const error = new Error('An assigned tenant project cannot return to the ready pool. Retire and delete it so subscriber data is never exposed to another organisation.');
     error.status = 409;
+    error.code = 'ASSIGNED_TENANT_REQUIRES_RETIREMENT';
     throw error;
   }
   const now = new Date().toISOString();
@@ -574,23 +573,6 @@ export async function releaseTenantProjectSlot(platformEnv, slotId) {
     data: releasedSlot,
     updateTime: slot.__updateTime
   }];
-  if (registration) {
-    writes.push({
-      collectionPath: 'tenantRegistrations',
-      documentId: registrationReference,
-      data: {
-        ...withoutFirestoreMetadata(registration),
-        WorkspaceId: '',
-        ProjectSlotId: '',
-        FirebaseProjectId: '',
-        CloudflareProject: '',
-        PortalUrl: '',
-        ProvisioningStatus: 'Project released',
-        UpdatedAt: now
-      },
-      updateTime: registration.__updateTime
-    });
-  }
   await batchCommitDocuments(platformEnv, writes);
   return publicTenantProjectSlot(releasedSlot);
 }

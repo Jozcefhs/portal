@@ -84,6 +84,14 @@ async function registrationForSubscription(platformEnv, data = {}) {
 async function updateSubscriptionStatus(env, platformEnv, event, data) {
   const registration = await registrationForSubscription(platformEnv, data);
   if (!registration) return false;
+  if (['retiring', 'retired'].includes(clean(registration.LifecycleStage).toLowerCase())) {
+    console.warn(JSON.stringify({
+      event: 'subscription_event_after_tenant_retirement',
+      registrationReference: clean(registration.Reference || registration.__id),
+      paystackEvent: clean(event)
+    }));
+    return false;
+  }
   const subscriptionCode = clean(data.subscription_code || data.subscription?.subscription_code || registration.PaystackSubscriptionCode);
   const normalizedEvent = clean(event).toLowerCase();
   const status = normalizedEvent === 'subscription.disable'

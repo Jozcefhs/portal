@@ -8,6 +8,7 @@ const tenantPoolStatus = document.getElementById('tenantPoolStatus');
 const tenantPoolSummary = document.getElementById('tenantPoolSummary');
 const tenantPoolRows = document.getElementById('tenantPoolRows');
 const tenantRequestRows = document.getElementById('tenantRequestRows');
+const tenantRetirementRows = document.getElementById('tenantRetirementRows');
 let unlockedPassword = '';
 let catalog = null;
 let tenantPoolState = null;
@@ -74,11 +75,16 @@ function renderTenantPool() {
     return `<article class="tenant-pool-summary-card ${Number(row.Shortfall || 0) > 0 ? 'needs-capacity' : ''}"><span>${escapeHtml(editionLabel(edition))}</span><strong>${Number(row.Ready || 0)} ready</strong><small>Target ${Number(row.Target || 0)} · ${Number(row.Assigned || 0)} assigned${Number(row.Shortfall || 0) ? ` · ${Number(row.Shortfall)} needed` : ''}</small></article>`;
   }).join('');
   tenantPoolRows.innerHTML = (tenantPoolState.slots || []).length ? tenantPoolState.slots.map((slot) => `
-    <tr><td><strong>${escapeHtml(slot.FirebaseProjectId)}</strong><small>${escapeHtml(slot.Region || 'Default region')}</small></td><td>${escapeHtml(editionLabel(slot.Edition))}</td><td><span class="tenant-pool-status ${poolStatusClass(slot.Status)}">${escapeHtml(slot.Status)}</span></td><td>${escapeHtml(slot.AssignedOrganisationName || '—')}</td><td>${slot.PortalUrl ? `<a href="${escapeHtml(slot.PortalUrl)}" target="_blank" rel="noopener">Open</a>` : '—'}</td><td>${['reserved', 'assigned'].includes(String(slot.Status).toLowerCase()) ? `<button type="button" class="compact-action" data-release-tenant-slot="${escapeHtml(slot.Id)}" ${String(slot.Status).toLowerCase() === 'assigned' ? 'title="Active subscribers cannot be released"' : ''}>Release</button>` : '—'}</td></tr>
+    <tr><td><strong>${escapeHtml(slot.FirebaseProjectId)}</strong><small>${escapeHtml(slot.Region || 'Default region')}</small></td><td>${escapeHtml(editionLabel(slot.Edition))}</td><td><span class="tenant-pool-status ${poolStatusClass(slot.Status)}">${escapeHtml(slot.Status)}</span></td><td>${escapeHtml(slot.AssignedOrganisationName || '—')}</td><td>${slot.PortalUrl ? `<a href="${escapeHtml(slot.PortalUrl)}" target="_blank" rel="noopener">Open</a>` : '—'}</td><td>${String(slot.Status).toLowerCase() === 'reserved' && !slot.AssignedRegistrationReference ? `<button type="button" class="compact-action" data-release-tenant-slot="${escapeHtml(slot.Id)}">Release</button>` : String(slot.Status).toLowerCase() === 'assigned' ? '<span class="muted">Secure retirement only</span>' : '—'}</td></tr>
   `).join('') : '<tr><td colspan="6">No tenant projects have been registered yet.</td></tr>';
   tenantRequestRows.innerHTML = (tenantPoolState.requests || []).length ? tenantPoolState.requests.map((request) => `
     <tr><td>${escapeHtml(request.Reference)}</td><td>${escapeHtml(editionLabel(request.Edition))}</td><td>${escapeHtml(request.Mode)}</td><td>${Number(request.Count || 1)}</td><td><span class="tenant-pool-status ${poolStatusClass(request.Status)}">${escapeHtml(request.Status)}</span></td><td>${request.RequestedAt ? escapeHtml(new Date(request.RequestedAt).toLocaleString()) : '—'}</td></tr>
   `).join('') : '<tr><td colspan="6">No provisioning requests are waiting.</td></tr>';
+  if (tenantRetirementRows) {
+    tenantRetirementRows.innerHTML = (tenantPoolState.retirements || []).length ? tenantPoolState.retirements.map((request) => `
+      <tr><td>${escapeHtml(request.FirebaseProjectId)}</td><td>${escapeHtml(editionLabel(request.Edition))}</td><td><span class="tenant-pool-status ${poolStatusClass(request.Status)}">${escapeHtml(request.Status)}</span></td><td>${Number(request.Attempts || 0)}</td><td>${request.RequestedAt ? escapeHtml(new Date(request.RequestedAt).toLocaleString()) : '—'}</td><td>${escapeHtml(request.LastError || '—')}</td></tr>
+    `).join('') : '<tr><td colspan="6">No tenant projects are awaiting secure retirement.</td></tr>';
+  }
   const policy = tenantPoolState.policy || {};
   document.getElementById('tenantTargetSchool').value = Number(policy.TargetReadyPerEdition?.school || 2);
   document.getElementById('tenantTargetFaith').value = Number(policy.TargetReadyPerEdition?.faith || 2);

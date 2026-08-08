@@ -16,9 +16,24 @@ import {
   reserveTenantProjectSlot,
   saveTenantPoolPolicy
 } from '../lib/tenant-project-pool.js';
+import {
+  claimNextTenantRetirementRequest,
+  finishTenantRetirementRequest,
+  processExpiredTrialLifecycle,
+  queueTenantRetirementRequest
+} from '../lib/tenant-trial-lifecycle.js';
 
 const clean = (value) => String(value ?? '').trim();
-const PROVISIONER_ACTIONS = new Set(['load', 'register', 'request', 'claim-next', 'finish-request']);
+const PROVISIONER_ACTIONS = new Set([
+  'load',
+  'register',
+  'request',
+  'claim-next',
+  'finish-request',
+  'process-lifecycle',
+  'claim-retirement',
+  'finish-retirement'
+]);
 
 function requireTenantPoolAccess(env, password, action) {
   const provisionerSecret = clean(env.TENANT_PROVISIONER_SECRET);
@@ -60,9 +75,46 @@ export async function onRequestPost({ request, env }) {
     }
     if (action === 'release') {
       const slot = await releaseTenantProjectSlot(platformEnv, body.slotId);
-      return Response.json({ ok: true, message: 'Project released back to the ready pool.', slot }, {
+      return Response.json({ ok: true, message: 'Unassigned project returned to the ready pool.', slot }, {
         headers: { 'Cache-Control': 'no-store' }
       });
+    }
+    if (action === 'process-lifecycle') {
+      const summary = await processExpiredTrialLifecycle(platformEnv, env, {
+        dryRun: body.dryRun === true,
+        maximum: body.maximum,
+        now: body.dryRun === true ? body.now : undefined
+      });
+      return Response.json({
+        ok: true,
+        message: body.dryRun === true ? 'Expired-trial lifecycle preview completed.' : 'Expired-trial lifecycle processed.',
+        summary
+      }, { headers: { 'Cache-Control': 'no-store' } });
+    }
+    if (action === 'queue-retirement') {
+      const registration = await getDocument(platformEnv, 'tenantRegistrations', clean(body.registrationReference));
+      if (!registration) {
+        const error = new Error('The subscriber registration was not found.');
+        error.status = 404;
+        throw error;
+      }
+      const retirement = await queueTenantRetirementRequest(platformEnv, registration);
+      return Response.json({ ok: true, message: 'Tenant project retirement queued.', retirement }, {
+        headers: { 'Cache-Control': 'no-store' }
+      });
+    }
+    if (action === 'claim-retirement') {
+      const retirement = await claimNextTenantRetirementRequest(platformEnv, body.runnerId);
+      return Response.json({ ok: true, retirement }, { headers: { 'Cache-Control': 'no-store' } });
+    }
+    if (action === 'finish-retirement') {
+      const retirement = await finishTenantRetirementRequest(platformEnv, body.retirement || body);
+      await ensureTenantPoolCapacity(platformEnv, retirement.Edition).catch(() => null);
+      return Response.json({
+        ok: true,
+        message: `Tenant retirement marked ${clean(retirement.Status).toLowerCase()}.`,
+        retirement
+      }, { headers: { 'Cache-Control': 'no-store' } });
     }
     if (action === 'request') {
       const provisioningRequest = await requestTenantProjectProvisioning(platformEnv, body.request || body);

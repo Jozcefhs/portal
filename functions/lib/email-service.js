@@ -28,11 +28,13 @@ export function resolveEmailSenderProfile(env = {}, {
         || organizationProfile?.OrganisationSenderEmail
         || env.ORGANISATION_SENDER_EMAIL
         || env.ORGANIZATION_SENDER_EMAIL
+        || env.DYNAMAX_SENDER_EMAIL
         || env.CHURCH_EMAIL
       )
     : (
         brevo?.BrevoSenderEmail
         || schoolProfile?.BrevoSenderEmail
+        || env.DYNAMAX_SENDER_EMAIL
         || env.BREVO_SENDER_EMAIL
         || env.SCHOOL_EMAIL
       ));
@@ -42,11 +44,13 @@ export function resolveEmailSenderProfile(env = {}, {
         || organizationProfile?.OrganisationSenderName
         || env.ORGANISATION_SENDER_NAME
         || env.ORGANIZATION_SENDER_NAME
+        || env.DYNAMAX_SENDER_NAME
         || organization.Name
       )
     : (
         brevo?.BrevoSenderName
         || schoolProfile?.BrevoSenderName
+        || env.DYNAMAX_SENDER_NAME
         || env.BREVO_SENDER_NAME
         || schoolProfile?.SchoolName
         || env.SCHOOL_NAME

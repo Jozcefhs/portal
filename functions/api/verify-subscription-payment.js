@@ -88,6 +88,18 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
     error.status = 409;
     throw error;
   }
+  if (['retiring', 'retired'].includes(clean(savedRegistration.LifecycleStage).toLowerCase())) {
+    await upsertDocument(platformEnv, 'subscriptionPayments', reference, {
+      ...withoutFirestoreMetadata(intent),
+      Status: 'Paid After Retirement Deadline',
+      LastError: 'Payment arrived after permanent tenant retirement began. Manual support review and refund may be required.',
+      UpdatedAt: new Date().toISOString()
+    }).catch(() => null);
+    const error = new Error('This workspace has already entered permanent retirement. Contact Dynamax support so the payment can be reviewed.');
+    error.status = 410;
+    error.code = 'PAYMENT_AFTER_TENANT_RETIREMENT';
+    throw error;
+  }
   const paidAmount = Number(transaction.requested_amount || transaction.amount || 0) / 100;
   if (Math.abs(Number(intent.Amount || 0) - paidAmount) > 0.01) {
     const error = new Error('The verified amount does not match the selected subscription price.');
