@@ -30,6 +30,7 @@ jobs:
       DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev' }}
       DYNAMAX_TENANT_PROVISIONER_SECRET: ${{ secrets.DYNAMAX_TENANT_PROVISIONER_SECRET }}
       DYNAMAX_GCP_BILLING_ACCOUNT: ${{ vars.DYNAMAX_GCP_BILLING_ACCOUNT }}
+      DYNAMAX_GCP_BILLING_REQUIRED: ${{ vars.DYNAMAX_GCP_BILLING_REQUIRED || 'true' }}
       DYNAMAX_GCP_PARENT: ${{ vars.DYNAMAX_GCP_PARENT }}
       DYNAMAX_TENANT_REGION: ${{ vars.DYNAMAX_TENANT_REGION || 'africa-south1' }}
       DYNAMAX_TENANT_PROJECT_PREFIX: ${{ vars.DYNAMAX_TENANT_PROJECT_PREFIX || 'dynamax-tenant' }}
@@ -53,7 +54,9 @@ jobs:
           [[ -n "${CLOUDFLARE_ACCOUNT_ID}" ]] || missing+=("CLOUDFLARE_ACCOUNT_ID variable")
           [[ -n "${CLOUDFLARE_API_TOKEN}" ]] || missing+=("CLOUDFLARE_API_TOKEN secret")
           if [[ "${APPLY_CHANGES}" == "true" ]]; then
-            [[ -n "${DYNAMAX_GCP_BILLING_ACCOUNT}" ]] || missing+=("DYNAMAX_GCP_BILLING_ACCOUNT variable")
+            if [[ "${DYNAMAX_GCP_BILLING_REQUIRED}" != "false" ]]; then
+              [[ -n "${DYNAMAX_GCP_BILLING_ACCOUNT}" ]] || missing+=("DYNAMAX_GCP_BILLING_ACCOUNT variable")
+            fi
             [[ -n "${GCP_WIF_PROVIDER}" ]] || missing+=("GCP_WIF_PROVIDER variable")
             [[ -n "${DYNAMAX_PROVISION_SERVICE_ACCOUNT}" ]] || missing+=("DYNAMAX_PROVISION_SERVICE_ACCOUNT variable")
             [[ -n "${DYNAMAX_PROVISION_PROJECT_ID}" ]] || missing+=("DYNAMAX_PROVISION_PROJECT_ID variable")

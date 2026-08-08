@@ -65,5 +65,7 @@ test('provisioning plans are repeatable and can resume from a user-precreated pr
   assert.match(provisionerSource, /gcloud', \['projects', 'describe'/);
   assert.match(provisionerSource, /Using pre-created Google Cloud project/);
   assert.match(provisionerSource, /DYNAMAX_TENANT_PROVISIONER_SECRET/);
+  assert.match(provisionerSource, /DYNAMAX_GCP_BILLING_REQUIRED/);
+  assert.match(provisionerSource, /Billing linkage is optional for this provisioning run/);
   assert.doesNotMatch(provisionerSource, /DYNAMAX_ADMIN_WEB_PASSWORD/);
 });

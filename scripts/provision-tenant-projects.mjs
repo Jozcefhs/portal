@@ -11,6 +11,7 @@ const platformPassword = clean(process.env.DYNAMAX_TENANT_PROVISIONER_SECRET);
 const cloudflareAccountId = clean(process.env.CLOUDFLARE_ACCOUNT_ID);
 const cloudflareToken = clean(process.env.CLOUDFLARE_API_TOKEN);
 const billingAccount = clean(process.env.DYNAMAX_GCP_BILLING_ACCOUNT);
+const billingRequired = lower(process.env.DYNAMAX_GCP_BILLING_REQUIRED || 'true') !== 'false';
 const projectParent = clean(process.env.DYNAMAX_GCP_PARENT);
 const region = clean(process.env.DYNAMAX_TENANT_REGION || 'africa-south1');
 const projectPrefix = (slug(process.env.DYNAMAX_TENANT_PROJECT_PREFIX || 'dynamax-tenant') || 'dynamax-tenant').slice(0, 17);
@@ -75,7 +76,7 @@ function requireConfiguration() {
   if (!platformPassword) missing.push('DYNAMAX_TENANT_PROVISIONER_SECRET');
   if (!cloudflareAccountId) missing.push('CLOUDFLARE_ACCOUNT_ID');
   if (!cloudflareToken) missing.push('CLOUDFLARE_API_TOKEN');
-  if (applyChanges && !billingAccount) missing.push('DYNAMAX_GCP_BILLING_ACCOUNT');
+  if (applyChanges && billingRequired && !billingAccount) missing.push('DYNAMAX_GCP_BILLING_ACCOUNT');
   if (missing.length) throw new Error(`Missing provisioning configuration: ${missing.join(', ')}.`);
 }
 
@@ -279,7 +280,16 @@ async function provisionProject(projectId) {
   } else {
     process.stdout.write(`Using pre-created Google Cloud project ${projectId}.\n`);
   }
-  command('gcloud', ['billing', 'projects', 'link', projectId, `--billing-account=${billingAccount}`, '--quiet']);
+  if (billingAccount) {
+    command('gcloud', ['billing', 'projects', 'link', projectId, `--billing-account=${billingAccount}`, '--quiet'], {
+      allowFailure: !billingRequired
+    });
+    if (!billingRequired) {
+      process.stdout.write('Billing linkage is optional for this provisioning run; continuing with Firebase free-tier setup if the billing account is unavailable.\n');
+    }
+  } else {
+    process.stdout.write('No billing account was supplied; continuing with Firebase free-tier setup.\n');
+  }
   command('gcloud', [
     'services', 'enable',
     'firebase.googleapis.com',
