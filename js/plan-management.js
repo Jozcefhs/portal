@@ -40,8 +40,8 @@ function renderCatalog() {
     return `<article class="plan-pricing-card" data-plan="${escapeHtml(plan.Name)}">
       <header><div><h3>${escapeHtml(plan.Name)}</h3><p>${escapeHtml(plan.Summary)}</p></div><label class="inline-check"><input type="checkbox" data-field="Active" ${plan.Active ? 'checked' : ''}> Available</label></header>
       <div class="plan-pricing-fields">
-        <label>Monthly price (<span data-price-currency>${currency}</span>)<input data-field="MonthlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.MonthlyAmount || 0)}" ${isFree ? 'readonly' : ''}></label>
-        <label>Yearly price (<span data-price-currency>${currency}</span>)<input data-field="YearlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.YearlyAmount || 0)}" ${isFree ? 'readonly' : ''}></label>
+        <label><span>Monthly price (<span data-price-currency>${currency}</span>)</span><input data-field="MonthlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.MonthlyAmount || 0)}" ${isFree ? 'readonly' : ''}></label>
+        <label><span>Yearly price (<span data-price-currency>${currency}</span>)</span><input data-field="YearlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.YearlyAmount || 0)}" ${isFree ? 'readonly' : ''}></label>
         <label>Active-user limit<input data-field="UserLimit" type="number" min="1" step="1" value="${Number(plan.UserLimit || 1)}" ${plan.Name === 'Enterprise' ? '' : 'readonly'}></label>
       </div>
       <p class="plan-module-counts"><span>School <b>${counts[0]}</b></span><span>Church <b>${counts[1]}</b></span><span>Other <b>${counts[2]}</b></span></p>

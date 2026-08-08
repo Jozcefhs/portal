@@ -194,11 +194,13 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(pricingHtml, /Monthly and yearly pricing/);
   assert.match(pricingHtml, /id="planEntitlementMatrix"/);
   assert.match(pricingHtml, /<select id="planPricingCurrency"><option value="NGN">NGN<\/option><option value="USD">USD<\/option><\/select>/);
-  assert.match(pricingHtml, /plan-management\.js\?v=20260808-pricing-currency/);
+  assert.match(pricingHtml, /plan-management\.js\?v=20260808-price-label-row/);
   assert.match(pricingHtml, /Save plans &amp; pricing/);
   assert.match(pricingHtml, /Apply changed prices to existing Paystack subscribers/);
   assert.match(pricingJs, /aria-label="\$\{accessibleLabel\}"/);
   assert.match(pricingJs, /data-price-currency/);
+  assert.match(pricingJs, /<span>Monthly price \(<span data-price-currency>\$\{currency\}<\/span>\)<\/span>/);
+  assert.match(pricingJs, /<span>Yearly price \(<span data-price-currency>\$\{currency\}<\/span>\)<\/span>/);
   assert.match(pricingJs, /existing subscribers remain on their current Paystack plans/);
   assert.doesNotMatch(pricingJs, /class="sr-only"/);
   assert.match(setupHtml, /href="plan-management\.html"/);
