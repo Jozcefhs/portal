@@ -97,6 +97,22 @@ function command(program, args, options = {}) {
   }
 }
 
+function commandWithRetry(program, args, options = {}) {
+  const attempts = Math.max(1, Number(options.attempts || 5));
+  const initialDelayMs = Math.max(250, Number(options.initialDelayMs || 1500));
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return command(program, args, options);
+    } catch (error) {
+      if (attempt === attempts) throw error;
+      const delayMs = Math.min(12000, initialDelayMs * (2 ** (attempt - 1)));
+      process.stdout.write(`Command failed on attempt ${attempt}; retrying in ${delayMs}ms.\n`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+    }
+  }
+  return '';
+}
+
 function accessToken() {
   return clean(command('gcloud', ['auth', 'print-access-token'], { capture: true, quiet: true }));
 }
@@ -141,11 +157,16 @@ async function waitForGoogleOperation(operation, serviceBase, timeoutMs = 240000
 }
 
 async function addFirebase(projectId) {
-  const operation = await googleRequest(`https://firebase.googleapis.com/v1beta1/projects/${projectId}:addFirebase`, {
-    method: 'POST',
-    body: '{}'
-  });
-  await waitForGoogleOperation(operation, 'https://firebase.googleapis.com/v1beta1');
+  try {
+    const operation = await googleRequest(`https://firebase.googleapis.com/v1beta1/projects/${projectId}:addFirebase`, {
+      method: 'POST',
+      body: '{}'
+    });
+    await waitForGoogleOperation(operation, 'https://firebase.googleapis.com/v1beta1');
+  } catch (error) {
+    if (Number(error.status) !== 409) throw error;
+    process.stdout.write(`Firebase is already enabled for ${projectId}; resuming provisioning.\n`);
+  }
 }
 
 async function createFirestoreDatabase(projectId) {
@@ -162,13 +183,17 @@ async function createFirestoreDatabase(projectId) {
 
 async function createFirebaseWebApp(projectId) {
   const displayName = 'Dynamax tenant web app';
-  const operation = await googleRequest(`https://firebase.googleapis.com/v1beta1/projects/${projectId}/webApps`, {
-    method: 'POST',
-    body: JSON.stringify({ displayName })
-  });
-  await waitForGoogleOperation(operation, 'https://firebase.googleapis.com/v1beta1');
-  const applications = await googleRequest(`https://firebase.googleapis.com/v1beta1/projects/${projectId}/webApps?pageSize=100`);
-  const application = (applications.apps || []).find((item) => clean(item.displayName) === displayName) || applications.apps?.[0];
+  let applications = await googleRequest(`https://firebase.googleapis.com/v1beta1/projects/${projectId}/webApps?pageSize=100`);
+  let application = (applications.apps || []).find((item) => clean(item.displayName) === displayName) || applications.apps?.[0];
+  if (!application) {
+    const operation = await googleRequest(`https://firebase.googleapis.com/v1beta1/projects/${projectId}/webApps`, {
+      method: 'POST',
+      body: JSON.stringify({ displayName })
+    });
+    await waitForGoogleOperation(operation, 'https://firebase.googleapis.com/v1beta1');
+    applications = await googleRequest(`https://firebase.googleapis.com/v1beta1/projects/${projectId}/webApps?pageSize=100`);
+    application = (applications.apps || []).find((item) => clean(item.displayName) === displayName) || applications.apps?.[0];
+  }
   const appId = clean(application?.appId);
   if (!appId) throw new Error(`Firebase did not return a web application for ${projectId}.`);
   return googleRequest(`https://firebase.googleapis.com/v1beta1/projects/${projectId}/webApps/${encodeURIComponent(appId)}/config`);
@@ -306,9 +331,18 @@ async function provisionProject(projectId) {
 
   const runtimeAccountName = 'dynamax-runtime';
   const runtimeEmail = `${runtimeAccountName}@${projectId}.iam.gserviceaccount.com`;
-  command('gcloud', ['iam', 'service-accounts', 'create', runtimeAccountName, '--display-name=Dynamax tenant runtime', '--project', projectId, '--quiet']);
+  const existingRuntimeAccount = clean(command('gcloud', ['iam', 'service-accounts', 'describe', runtimeEmail, '--project', projectId, '--format=value(email)'], {
+    capture: true,
+    quiet: true,
+    allowFailure: true
+  })) === runtimeEmail;
+  if (!existingRuntimeAccount) {
+    command('gcloud', ['iam', 'service-accounts', 'create', runtimeAccountName, '--display-name=Dynamax tenant runtime', '--project', projectId, '--quiet']);
+  } else {
+    process.stdout.write(`Using existing tenant runtime account ${runtimeEmail}.\n`);
+  }
   for (const role of ['roles/datastore.user', 'roles/firebasecloudmessaging.admin']) {
-    command('gcloud', ['projects', 'add-iam-policy-binding', projectId, `--member=serviceAccount:${runtimeEmail}`, `--role=${role}`, '--quiet']);
+    commandWithRetry('gcloud', ['projects', 'add-iam-policy-binding', projectId, `--member=serviceAccount:${runtimeEmail}`, `--role=${role}`, '--quiet']);
   }
 
   const keyFile = resolve(`.tenant-runtime-${projectId}.json`);
