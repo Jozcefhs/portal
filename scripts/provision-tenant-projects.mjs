@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
@@ -7,12 +7,12 @@ const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 const applyChanges = lower(process.env.TENANT_PROVISION_APPLY) === 'true';
 const platformUrl = clean(process.env.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev').replace(/\/$/, '');
-const platformPassword = clean(process.env.DYNAMAX_ADMIN_WEB_PASSWORD);
+const platformPassword = clean(process.env.DYNAMAX_TENANT_PROVISIONER_SECRET);
 const cloudflareAccountId = clean(process.env.CLOUDFLARE_ACCOUNT_ID);
 const cloudflareToken = clean(process.env.CLOUDFLARE_API_TOKEN);
 const billingAccount = clean(process.env.DYNAMAX_GCP_BILLING_ACCOUNT);
 const projectParent = clean(process.env.DYNAMAX_GCP_PARENT);
-const region = clean(process.env.DYNAMAX_TENANT_REGION || 'eur3');
+const region = clean(process.env.DYNAMAX_TENANT_REGION || 'africa-south1');
 const projectPrefix = (slug(process.env.DYNAMAX_TENANT_PROJECT_PREFIX || 'dynamax-tenant') || 'dynamax-tenant').slice(0, 17);
 const encodedRequest = clean(process.env.TENANT_PROVISIONING_REQUEST_BASE64);
 const request = JSON.parse(encodedRequest
@@ -65,14 +65,14 @@ function generatedProjectId(sequence) {
     }
     return requested;
   }
-  const unique = `${Date.now().toString(36)}${sequence.toString(36)}${randomBytes(2).toString('hex')}`;
+  const unique = createHash('sha256').update(`${requestReference}:${sequence}`).digest('hex').slice(0, 10);
   return `${projectPrefix}-${editionCode(edition)}-${unique}`.slice(0, 30).replace(/-$/, '0');
 }
 
 function requireConfiguration() {
   const missing = [];
   if (!requestReference) missing.push('TENANT_PROVISIONING_REQUEST_JSON.Reference');
-  if (!platformPassword) missing.push('DYNAMAX_ADMIN_WEB_PASSWORD');
+  if (!platformPassword) missing.push('DYNAMAX_TENANT_PROVISIONER_SECRET');
   if (!cloudflareAccountId) missing.push('CLOUDFLARE_ACCOUNT_ID');
   if (!cloudflareToken) missing.push('CLOUDFLARE_API_TOKEN');
   if (applyChanges && !billingAccount) missing.push('DYNAMAX_GCP_BILLING_ACCOUNT');
@@ -83,12 +83,17 @@ function command(program, args, options = {}) {
   const printable = `${program} ${args.map((item) => JSON.stringify(String(item))).join(' ')}`;
   if (!options.quiet) process.stdout.write(`$ ${printable}\n`);
   if (!applyChanges && options.allowDuringDryRun !== true) return '';
-  return execFileSync(program, args, {
-    cwd: options.cwd || process.cwd(),
-    env: { ...process.env, ...(options.env || {}) },
-    encoding: 'utf8',
-    stdio: options.capture ? ['ignore', 'pipe', 'inherit'] : 'inherit'
-  }) || '';
+  try {
+    return execFileSync(program, args, {
+      cwd: options.cwd || process.cwd(),
+      env: { ...process.env, ...(options.env || {}) },
+      encoding: 'utf8',
+      stdio: options.capture ? ['ignore', 'pipe', options.quiet ? 'ignore' : 'inherit'] : 'inherit'
+    }) || '';
+  } catch (error) {
+    if (options.allowFailure) return '';
+    throw error;
+  }
 }
 
 function accessToken() {
@@ -261,10 +266,19 @@ async function platformApi(payload) {
 
 async function provisionProject(projectId) {
   const displayName = `Dynamax ${editionLabel(edition)} ${projectId.slice(-8)}`.slice(0, 30);
-  const createArgs = ['projects', 'create', projectId, `--name=${displayName}`, '--quiet'];
-  if (projectParent.startsWith('folders/')) createArgs.push(`--folder=${projectParent.slice('folders/'.length)}`);
-  if (projectParent.startsWith('organizations/')) createArgs.push(`--organization=${projectParent.slice('organizations/'.length)}`);
-  command('gcloud', createArgs);
+  const existingProject = clean(command('gcloud', ['projects', 'describe', projectId, '--format=value(projectId)'], {
+    capture: true,
+    quiet: true,
+    allowFailure: true
+  })) === projectId;
+  if (!existingProject) {
+    const createArgs = ['projects', 'create', projectId, `--name=${displayName}`, '--quiet'];
+    if (projectParent.startsWith('folders/')) createArgs.push(`--folder=${projectParent.slice('folders/'.length)}`);
+    if (projectParent.startsWith('organizations/')) createArgs.push(`--organization=${projectParent.slice('organizations/'.length)}`);
+    command('gcloud', createArgs);
+  } else {
+    process.stdout.write(`Using pre-created Google Cloud project ${projectId}.\n`);
+  }
   command('gcloud', ['billing', 'projects', 'link', projectId, `--billing-account=${billingAccount}`, '--quiet']);
   command('gcloud', [
     'services', 'enable',

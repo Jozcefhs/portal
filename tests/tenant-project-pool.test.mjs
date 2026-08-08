@@ -9,11 +9,12 @@ import {
 const poolSource = await readFile(new URL('../functions/lib/tenant-project-pool.js', import.meta.url), 'utf8');
 const apiSource = await readFile(new URL('../functions/api/tenant-project-pool.js', import.meta.url), 'utf8');
 const paymentSource = await readFile(new URL('../functions/api/verify-subscription-payment.js', import.meta.url), 'utf8');
+const provisionerSource = await readFile(new URL('../scripts/provision-tenant-projects.mjs', import.meta.url), 'utf8');
 
 test('pool policy maintains a safe ready target for every organisation edition', () => {
   assert.deepEqual(normalizeTenantPoolPolicy({}), {
     TargetReadyPerEdition: { school: 2, faith: 2, organization: 2 },
-    DefaultRegion: 'eur3',
+    DefaultRegion: 'africa-south1',
     ProjectPrefix: 'dynamax-tenant',
     UpdatedAt: ''
   });
@@ -51,8 +52,18 @@ test('assignment is concurrency-safe and payment remains recoverable when capaci
 
 test('tenant pool administration is protected and supports worker lifecycle states', () => {
   assert.match(apiSource, /requirePlatformAdmin/);
+  assert.match(apiSource, /TENANT_PROVISIONER_SECRET/);
+  assert.match(apiSource, /PROVISIONER_ACTIONS/);
   assert.match(apiSource, /claim-next/);
   assert.match(apiSource, /finish-request/);
   assert.match(apiSource, /ensure-capacity/);
   assert.match(apiSource, /issueTenantActivation/);
+});
+
+test('provisioning plans are repeatable and can resume from a user-precreated project', () => {
+  assert.match(provisionerSource, /createHash\('sha256'\)\.update\(`\$\{requestReference\}:\$\{sequence\}`\)/);
+  assert.match(provisionerSource, /gcloud', \['projects', 'describe'/);
+  assert.match(provisionerSource, /Using pre-created Google Cloud project/);
+  assert.match(provisionerSource, /DYNAMAX_TENANT_PROVISIONER_SECRET/);
+  assert.doesNotMatch(provisionerSource, /DYNAMAX_ADMIN_WEB_PASSWORD/);
 });

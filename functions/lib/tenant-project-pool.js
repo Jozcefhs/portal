@@ -83,7 +83,7 @@ export function normalizeTenantPoolPolicy(value = {}) {
       faith: positiveInteger(targets.faith, DEFAULT_READY_TARGET, 20),
       organization: positiveInteger(targets.organization, DEFAULT_READY_TARGET, 20)
     },
-    DefaultRegion: clean(value.DefaultRegion || 'eur3'),
+    DefaultRegion: clean(value.DefaultRegion || 'africa-south1'),
     ProjectPrefix: safeKey(value.ProjectPrefix, 'dynamax-tenant').slice(0, 18),
     UpdatedAt: clean(value.UpdatedAt)
   };

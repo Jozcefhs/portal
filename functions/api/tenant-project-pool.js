@@ -1,5 +1,6 @@
 import { getDocument } from '../lib/firestore.js';
 import { requirePlatformAdmin } from '../lib/platform-admin.js';
+import { secureTextEqual } from '../lib/backend-security.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { issueTenantActivation } from '../lib/tenant-activation.js';
@@ -17,13 +18,22 @@ import {
 } from '../lib/tenant-project-pool.js';
 
 const clean = (value) => String(value ?? '').trim();
+const PROVISIONER_ACTIONS = new Set(['load', 'register', 'claim-next', 'finish-request']);
+
+function requireTenantPoolAccess(env, password, action) {
+  const provisionerSecret = clean(env.TENANT_PROVISIONER_SECRET);
+  if (PROVISIONER_ACTIONS.has(action)
+      && provisionerSecret
+      && secureTextEqual(password, provisionerSecret)) return;
+  requirePlatformAdmin(env, password);
+}
 
 export async function onRequestPost({ request, env }) {
   try {
     const body = await readJsonBody(request, { maxBytes: 96 * 1024 });
-    requirePlatformAdmin(env, body.password);
-    const platformEnv = requirePlatformFirestoreEnv(env);
     const action = clean(body.action || 'load').toLowerCase();
+    requireTenantPoolAccess(env, body.password, action);
+    const platformEnv = requirePlatformFirestoreEnv(env);
     if (action === 'load') {
       return Response.json({ ok: true, ...(await loadTenantProjectPool(platformEnv)) }, {
         headers: { 'Cache-Control': 'no-store' }

@@ -83,9 +83,9 @@ function renderTenantPool() {
   document.getElementById('tenantTargetSchool').value = Number(policy.TargetReadyPerEdition?.school || 2);
   document.getElementById('tenantTargetFaith').value = Number(policy.TargetReadyPerEdition?.faith || 2);
   document.getElementById('tenantTargetOrganization').value = Number(policy.TargetReadyPerEdition?.organization || 2);
-  document.getElementById('tenantDefaultRegion').value = policy.DefaultRegion || 'eur3';
+  document.getElementById('tenantDefaultRegion').value = policy.DefaultRegion || 'africa-south1';
   document.getElementById('tenantProjectPrefix').value = policy.ProjectPrefix || 'dynamax-tenant';
-  document.getElementById('tenantSlotRegion').value ||= policy.DefaultRegion || 'eur3';
+  document.getElementById('tenantSlotRegion').value ||= policy.DefaultRegion || 'africa-south1';
 }
 
 async function tenantPoolRequest(payload) {
