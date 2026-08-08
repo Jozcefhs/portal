@@ -103,6 +103,19 @@ export function paystackPlanPayload(name, cycle, amount, currency, updateExistin
   };
 }
 
+export function paystackPlanNeedsSync(existingPlan = {}, nextPlan = {}, cycle = 'monthly', currencyChanged = false) {
+  const yearly = cycle === 'yearly';
+  const amountKey = yearly ? 'YearlyAmount' : 'MonthlyAmount';
+  const codeKey = yearly ? 'PaystackYearlyPlanCode' : 'PaystackMonthlyPlanCode';
+  const nextAmount = Number(nextPlan[amountKey] || 0);
+  if (!(nextAmount > 0)) return false;
+  return Boolean(
+    currencyChanged
+    || Number(existingPlan[amountKey] || 0) !== nextAmount
+    || !clean(nextPlan[codeKey])
+  );
+}
+
 async function syncPaystackPlan(env, { name, cycle, amount, currency, planCode, updateExistingSubscriptions }) {
   if (!(Number(amount) > 0)) return clean(planCode);
   if (!clean(env.PAYSTACK_SECRET_KEY)) {
@@ -162,46 +175,55 @@ export async function onRequestPost({ request, env }) {
       });
     }
     const catalog = mergeCatalog(existing, body.catalog);
+    const currencyChanged = catalog.Currency !== existing.Currency;
     catalog.PolicyRevision = crypto.randomUUID();
     catalog.UpdatedAt = new Date().toISOString();
     catalog.UpdatedBy = 'Dynamax pricing administration';
     const updateExistingSubscriptions = body.updateExistingSubscriptions === true;
+    let synchronizedPaystackPlans = 0;
     for (const name of SUBSCRIPTION_PLAN_NAMES) {
       const plan = catalog.Plans[name];
-      plan.PaystackMonthlyPlanCode = await syncPaystackPlan(env, {
-        name,
-        cycle: 'monthly',
-        amount: plan.MonthlyAmount,
-        currency: catalog.Currency,
-        planCode: plan.PaystackMonthlyPlanCode,
-        updateExistingSubscriptions
-      });
-      // Persist every returned code before the next provider call. If a later
-      // Paystack request fails, retrying cannot create duplicate plans.
-      await upsertDocument(platformEnv, 'settings', PLAN_DOCUMENT_ID, {
-        ...catalog,
-        UpdatedAt: new Date().toISOString(),
-        UpdatedBy: 'Dynamax pricing administration'
-      });
-      plan.PaystackYearlyPlanCode = await syncPaystackPlan(env, {
-        name,
-        cycle: 'yearly',
-        amount: plan.YearlyAmount,
-        currency: catalog.Currency,
-        planCode: plan.PaystackYearlyPlanCode,
-        updateExistingSubscriptions
-      });
-      await upsertDocument(platformEnv, 'settings', PLAN_DOCUMENT_ID, {
-        ...catalog,
-        UpdatedAt: new Date().toISOString(),
-        UpdatedBy: 'Dynamax pricing administration'
-      });
+      const existingPlan = existing.Plans[name] || {};
+      if (paystackPlanNeedsSync(existingPlan, plan, 'monthly', currencyChanged)) {
+        plan.PaystackMonthlyPlanCode = await syncPaystackPlan(env, {
+          name,
+          cycle: 'monthly',
+          amount: plan.MonthlyAmount,
+          currency: catalog.Currency,
+          planCode: plan.PaystackMonthlyPlanCode,
+          updateExistingSubscriptions
+        });
+        synchronizedPaystackPlans += 1;
+        // Persist every newly returned code before the next provider call. If
+        // a later Paystack request fails, retrying cannot create duplicates.
+        await upsertDocument(platformEnv, 'settings', PLAN_DOCUMENT_ID, {
+          ...catalog,
+          UpdatedAt: new Date().toISOString(),
+          UpdatedBy: 'Dynamax pricing administration'
+        });
+      }
+      if (paystackPlanNeedsSync(existingPlan, plan, 'yearly', currencyChanged)) {
+        plan.PaystackYearlyPlanCode = await syncPaystackPlan(env, {
+          name,
+          cycle: 'yearly',
+          amount: plan.YearlyAmount,
+          currency: catalog.Currency,
+          planCode: plan.PaystackYearlyPlanCode,
+          updateExistingSubscriptions
+        });
+        synchronizedPaystackPlans += 1;
+        await upsertDocument(platformEnv, 'settings', PLAN_DOCUMENT_ID, {
+          ...catalog,
+          UpdatedAt: new Date().toISOString(),
+          UpdatedBy: 'Dynamax pricing administration'
+        });
+      }
     }
     await upsertDocument(platformEnv, 'settings', PLAN_DOCUMENT_ID, catalog);
     const updatedSubscribers = await updateSubscriberEntitlements(platformEnv, catalog);
     return Response.json({
       ok: true,
-      message: `Plan pricing and module access saved; ${updatedSubscribers} subscriber record${updatedSubscribers === 1 ? '' : 's'} refreshed and Paystack plans synchronized.`,
+      message: `Plan pricing and module access saved; ${updatedSubscribers} subscriber record${updatedSubscribers === 1 ? '' : 's'} refreshed. ${synchronizedPaystackPlans ? `${synchronizedPaystackPlans} Paystack price plan${synchronizedPaystackPlans === 1 ? '' : 's'} synchronized.` : 'No Paystack price change was required.'}`,
       catalog: publicSubscriptionPlanCatalog(catalog)
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {

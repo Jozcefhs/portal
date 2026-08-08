@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import { paystackPlanPayload } from '../functions/api/plan-catalog.js';
+import { paystackPlanNeedsSync, paystackPlanPayload } from '../functions/api/plan-catalog.js';
 import { validPaystackWebhookSignature } from '../functions/api/paystack-subscription-webhook.js';
 import { syncRegistrationSubscriptionToWorkspace } from '../functions/lib/subscription-workspace-sync.js';
 import {
@@ -158,6 +158,21 @@ test('Paystack recurring plan payload uses subunits and supported intervals', ()
     update_existing_subscriptions: false
   });
   assert.equal(paystackPlanPayload('Standard', 'yearly', 120000, 'NGN').interval, 'annually');
+});
+
+test('module-only plan saves do not call Paystack price synchronization', () => {
+  const existing = {
+    MonthlyAmount: 60000,
+    YearlyAmount: 600000,
+    PaystackMonthlyPlanCode: 'PLN_monthly',
+    PaystackYearlyPlanCode: 'PLN_yearly'
+  };
+  const moduleOnlyUpdate = { ...existing };
+  assert.equal(paystackPlanNeedsSync(existing, moduleOnlyUpdate, 'monthly'), false);
+  assert.equal(paystackPlanNeedsSync(existing, moduleOnlyUpdate, 'yearly'), false);
+  assert.equal(paystackPlanNeedsSync(existing, { ...moduleOnlyUpdate, MonthlyAmount: 65000 }, 'monthly'), true);
+  assert.equal(paystackPlanNeedsSync(existing, moduleOnlyUpdate, 'monthly', true), true);
+  assert.equal(paystackPlanNeedsSync(existing, { ...moduleOnlyUpdate, PaystackMonthlyPlanCode: '' }, 'monthly'), true);
 });
 
 test('Paystack webhook signatures are checked with HMAC SHA-512', async () => {
