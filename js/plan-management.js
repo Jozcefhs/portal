@@ -117,7 +117,8 @@ function renderEntitlementMatrix() {
       <th scope="row"><strong>${escapeHtml(module.Label)}</strong><small>${escapeHtml(module.Description)}</small>${requirementNames.length ? `<em>Requires ${escapeHtml(requirementNames.join(' and '))}</em>` : ''}</th>
       ${plans.map((plan) => {
         const checked = (plan.EntitlementsByEdition?.[selectedEntitlementEdition] || []).includes(module.Key);
-        return `<td><label title="${escapeHtml(`${plan.Name}: ${module.Label}`)}"><input type="checkbox" data-entitlement-plan="${escapeHtml(plan.Name)}" data-entitlement-module="${escapeHtml(module.Key)}" ${checked ? 'checked' : ''}><span aria-hidden="true"></span><span class="sr-only">${escapeHtml(`${plan.Name}: ${module.Label}`)}</span></label></td>`;
+        const accessibleLabel = escapeHtml(`${plan.Name}: ${module.Label}`);
+        return `<td><label title="${accessibleLabel}"><input type="checkbox" aria-label="${accessibleLabel}" data-entitlement-plan="${escapeHtml(plan.Name)}" data-entitlement-module="${escapeHtml(module.Key)}" ${checked ? 'checked' : ''}></label></td>`;
       }).join('')}
     </tr>`;
   }).join('');

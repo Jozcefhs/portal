@@ -161,10 +161,11 @@ test('Paystack webhook signatures are checked with HMAC SHA-512', async () => {
 });
 
 test('registration and pricing interfaces expose feature details and recurring checkout', async () => {
-  const [registrationHtml, registrationJs, pricingHtml, setupHtml, registrationApi, pricingApi, verificationApi, webhookApi] = await Promise.all([
+  const [registrationHtml, registrationJs, pricingHtml, pricingJs, setupHtml, registrationApi, pricingApi, verificationApi, webhookApi] = await Promise.all([
     readFile(new URL('../register-organization.html', import.meta.url), 'utf8'),
     readFile(new URL('../js/register-organization.js', import.meta.url), 'utf8'),
     readFile(new URL('../plan-management.html', import.meta.url), 'utf8'),
+    readFile(new URL('../js/plan-management.js', import.meta.url), 'utf8'),
     readFile(new URL('../setup.html', import.meta.url), 'utf8'),
     readFile(new URL('../functions/api/register-organization.js', import.meta.url), 'utf8'),
     readFile(new URL('../functions/api/plan-catalog.js', import.meta.url), 'utf8'),
@@ -184,6 +185,8 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(pricingHtml, /id="planEntitlementMatrix"/);
   assert.match(pricingHtml, /Save plans &amp; pricing/);
   assert.match(pricingHtml, /Apply changed prices to existing Paystack subscribers/);
+  assert.match(pricingJs, /aria-label="\$\{accessibleLabel\}"/);
+  assert.doesNotMatch(pricingJs, /class="sr-only"/);
   assert.match(setupHtml, /href="plan-management\.html"/);
   assert.match(setupHtml, /<option>Free<\/option>/);
   assert.match(registrationApi, /plan: planCode/);
