@@ -14,6 +14,14 @@ function enabled(value) {
   return ['1', 'true', 'yes', 'on'].includes(clean(value).toLowerCase());
 }
 
+export function canonicalSubscriptionBridgeConfigured(env = {}) {
+  let origin;
+  try { origin = new URL(clean(env.CANONICAL_PORTAL_URL)); } catch (_error) { origin = null; }
+  return enabled(env.ALLOW_CANONICAL_API_PROXY)
+    && clean(env.CANONICAL_API_PROXY_SCOPE).toLowerCase() === 'platform-subscriptions'
+    && Boolean(origin && origin.protocol === 'https:');
+}
+
 export async function loadCanonicalPlanCatalog(env = {}, fetchImpl = fetch) {
   const scope = clean(env.CANONICAL_API_PROXY_SCOPE).toLowerCase();
   const configuredOrigin = clean(env.CANONICAL_PORTAL_URL);
@@ -65,6 +73,9 @@ export async function loadCanonicalSubscriptionPolicy(env = {}, workspaceId, fet
   if (!response.ok || !data?.ok || !data.policy) {
     const error = new Error(data?.message || 'The central Dynamax subscription policy could not be loaded.');
     error.status = response.status || 503;
+    error.code = response.status === 404
+      ? 'DYNAMAX_SUBSCRIPTION_NOT_FOUND'
+      : 'DYNAMAX_SUBSCRIPTION_POLICY_BRIDGE_FAILED';
     throw error;
   }
   return data.policy;
@@ -100,7 +111,10 @@ async function loadCentralPolicy(env, workspaceId) {
   if (!directPlatformAccess) {
     const [catalog, registration] = await Promise.all([
       loadCanonicalPlanCatalog(env),
-      loadCanonicalSubscriptionPolicy(env, workspaceId).catch(() => null)
+      loadCanonicalSubscriptionPolicy(env, workspaceId).catch((error) => {
+        if (error?.status === 404 || error?.code === 'DYNAMAX_SUBSCRIPTION_NOT_FOUND') return null;
+        throw error;
+      })
     ]);
     const value = {
       catalog,
@@ -117,7 +131,7 @@ async function loadCentralPolicy(env, workspaceId) {
     }).catch(() => [])
   ]);
   const registration = registrations
-    .filter((row) => !['rejected', 'cancelled'].includes(clean(row.Status).toLowerCase()))
+    .filter((row) => !['rejected', 'cancelled', 'retired', 'terminated', 'deleted'].includes(clean(row.Status).toLowerCase()))
     .sort((left, right) => clean(right.UpdatedAt || right.CreatedAt).localeCompare(clean(left.UpdatedAt || left.CreatedAt)))[0] || null;
   const value = { catalog: normalizeSubscriptionPlanCatalog(savedCatalog || {}), registration };
   policyCache.set(key, { value, expiresAt: Date.now() + CACHE_MS });
@@ -139,6 +153,8 @@ export async function refreshOrganizationPlanPolicy(env, organizationProfile = {
     // database is unavailable or has not yet been configured.
     return organizationProfile;
   }
+  const centrallyRevoked = central.registration === null
+    && canonicalSubscriptionBridgeConfigured(env);
   const registration = central.registration || {};
   const plan = normalizeSubscriptionPlan(registration.Plan || organizationProfile.Plan || 'Starter');
   const edition = clean(organizationProfile.Edition || registration.Edition) || 'school';
@@ -147,12 +163,20 @@ export async function refreshOrganizationPlanPolicy(env, organizationProfile = {
   const enriched = {
     ...withoutFirestoreMetadata(organizationProfile),
     Plan: plan,
-    PlanEntitlements: entitlements,
+    PlanEntitlements: centrallyRevoked ? [] : entitlements,
     PlanCatalogRevision: revision,
     UserLimit: Math.max(1, Number(registration.UserLimit || organizationProfile.UserLimit || central.catalog.Plans[plan]?.UserLimit || 5) || 5),
-    SubscriptionStatus: clean(registration.SubscriptionStatus || organizationProfile.SubscriptionStatus),
+    SubscriptionStatus: centrallyRevoked
+      ? 'Terminated'
+      : clean(registration.SubscriptionStatus || organizationProfile.SubscriptionStatus),
     TrialStartedAt: clean(registration.TrialStartedAt || organizationProfile.TrialStartedAt),
-    TrialEndsAt: clean(registration.TrialEndsAt || organizationProfile.TrialEndsAt)
+    TrialEndsAt: clean(registration.TrialEndsAt || organizationProfile.TrialEndsAt),
+    SubscriptionMessage: centrallyRevoked
+      ? 'This workspace is no longer registered with Dynamax.'
+      : '',
+    SubscriptionRevokedAt: centrallyRevoked
+      ? clean(organizationProfile.SubscriptionRevokedAt) || new Date().toISOString()
+      : ''
   };
   const changed = clean(organizationProfile.Plan) !== clean(enriched.Plan)
     || clean(organizationProfile.PlanCatalogRevision) !== revision
@@ -160,7 +184,9 @@ export async function refreshOrganizationPlanPolicy(env, organizationProfile = {
     || Number(organizationProfile.UserLimit || 0) !== Number(enriched.UserLimit || 0)
     || clean(organizationProfile.SubscriptionStatus) !== clean(enriched.SubscriptionStatus)
     || clean(organizationProfile.TrialStartedAt) !== clean(enriched.TrialStartedAt)
-    || clean(organizationProfile.TrialEndsAt) !== clean(enriched.TrialEndsAt);
+    || clean(organizationProfile.TrialEndsAt) !== clean(enriched.TrialEndsAt)
+    || clean(organizationProfile.SubscriptionMessage) !== clean(enriched.SubscriptionMessage)
+    || clean(organizationProfile.SubscriptionRevokedAt) !== clean(enriched.SubscriptionRevokedAt);
   if (changed) {
     await upsertDocument(env, 'settings', 'organisationProfile', {
       ...enriched,

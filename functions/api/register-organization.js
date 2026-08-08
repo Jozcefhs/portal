@@ -398,8 +398,8 @@ export async function onRequestPost({ request, env }) {
       .filter((row) => clean(row.OrganisationName).toLowerCase() === name.toLowerCase());
     const priorTrial = matchingRegistrations.find((row) => clean(row.TrialStartedAt));
     const currentRegistration = matchingRegistrations.find((row) =>
-      !['rejected', 'cancelled'].includes(clean(row.Status).toLowerCase()));
-    // A rejected/cancelled registration must not erase trial history. The same
+      !['rejected', 'cancelled', 'retired', 'terminated', 'deleted'].includes(clean(row.Status).toLowerCase()));
+    // A retired or rejected registration must not erase trial history. The same
     // organisation and contact email can never reset the server-issued clock.
     const existing = plan === 'Free' ? (priorTrial || currentRegistration) : currentRegistration;
     if (existing) {

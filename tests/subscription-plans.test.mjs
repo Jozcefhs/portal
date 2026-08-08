@@ -108,6 +108,8 @@ test('free access expires at the stored server-issued boundary and cannot become
   assert.match(expired.SubscriptionMessage, /paid subscription/i);
   assert.equal(subscriptionAccessState({ Plan: 'Free' }).SubscriptionActive, false);
   assert.equal(subscriptionAccessState({ Plan: 'Starter' }).SubscriptionActive, true);
+  assert.equal(subscriptionAccessState({ Plan: 'Starter', SubscriptionStatus: 'Retired' }).SubscriptionActive, false);
+  assert.equal(subscriptionAccessState({ Plan: 'Professional', SubscriptionStatus: 'Revoked' }).SubscriptionActive, false);
 });
 
 test('subscription activation cannot target a workspace without a server-bound workspace id', async () => {

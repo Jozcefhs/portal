@@ -32,7 +32,7 @@ export async function onRequestGet({ request, env }) {
       limit: 20
     });
     const registration = rows
-      .filter((row) => !['rejected', 'cancelled'].includes(clean(row.Status).toLowerCase()))
+      .filter((row) => !['rejected', 'cancelled', 'retired', 'terminated', 'deleted'].includes(clean(row.Status).toLowerCase()))
       .sort((left, right) => clean(right.UpdatedAt || right.CreatedAt).localeCompare(clean(left.UpdatedAt || left.CreatedAt)))[0];
     if (!registration) return Response.json({ ok: false, message: 'No active subscription record was found for this workspace.' }, { status: 404 });
     return Response.json({ ok: true, policy: publicPolicy(registration) }, { headers: { 'Cache-Control': 'no-store' } });

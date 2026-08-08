@@ -229,7 +229,7 @@ export function subscriptionAccessState(value = {}, options = {}) {
   const source = value && typeof value === 'object' ? value : {};
   const plan = normalizeSubscriptionPlan(source.Plan || source.SubscriptionPlan || source.plan || 'Professional', 'Professional');
   const status = clean(source.SubscriptionStatus || source.Status || source.subscriptionStatus).toLowerCase();
-  const inactiveStatus = /^(cancelled|canceled|expired|inactive|suspended|payment failed|past due|terminated)$/.test(status);
+  const inactiveStatus = /^(cancelled|canceled|expired|inactive|suspended|payment failed|past due|terminated|retired|revoked|deleted)$/.test(status);
   const nowMs = timestampMilliseconds(options.now ?? Date.now());
   const safeNow = Number.isFinite(nowMs) ? nowMs : Date.now();
   const trialStartedMs = timestampMilliseconds(source.TrialStartedAt || source.trialStartedAt);
