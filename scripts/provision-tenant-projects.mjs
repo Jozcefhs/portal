@@ -171,6 +171,13 @@ async function addFirebase(projectId) {
 
 async function createFirestoreDatabase(projectId) {
   try {
+    await googleRequest(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/${encodeURIComponent('(default)')}`);
+    process.stdout.write(`Using existing Firestore database for ${projectId}.\n`);
+    return;
+  } catch (error) {
+    if (Number(error.status) !== 404) throw error;
+  }
+  try {
     const operation = await googleRequest(`https://firestore.googleapis.com/v1/projects/${projectId}/databases?databaseId=${encodeURIComponent('(default)')}`, {
       method: 'POST',
       body: JSON.stringify({ type: 'FIRESTORE_NATIVE', locationId: region })
