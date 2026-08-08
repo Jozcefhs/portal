@@ -4,6 +4,7 @@
   const form = document.getElementById('preferenceForm');
   const openServices = document.getElementById('openServices');
   const openSettings = document.getElementById('openSettings');
+  const desktopDownload = document.getElementById('downloadDesktopInstaller');
   const biometricInput = form.elements.biometric;
   const biometricHint = document.getElementById('biometricPreferenceHint');
   let lastTrigger = null;
@@ -95,6 +96,35 @@
   document.getElementById('resetPreferences').addEventListener('click', () => {
     window.DIGCPreferences.save(window.DIGCPreferences.defaults);
     populateForm();
+  });
+
+  desktopDownload?.addEventListener('click', async (event) => {
+    event.preventDefault();
+    if (desktopDownload.dataset.loading === '1') return;
+
+    const fallbackUrl = desktopDownload.href;
+    const originalLabel = desktopDownload.textContent;
+    desktopDownload.dataset.loading = '1';
+    desktopDownload.setAttribute('aria-busy', 'true');
+    desktopDownload.textContent = 'Preparing download...';
+
+    let installerUrl = fallbackUrl;
+    try {
+      const response = await fetch('version.json', { cache: 'no-store' });
+      if (!response.ok) throw new Error('The desktop release manifest is unavailable.');
+      const release = await response.json();
+      const candidate = new URL(String(release?.installer_url || ''), window.location.href);
+      if (candidate.protocol !== 'https:') throw new Error('The installer URL must use HTTPS.');
+      installerUrl = candidate.href;
+    } catch (error) {
+      console.warn('Using the stable Dynamax Desktop download fallback.', error);
+    } finally {
+      desktopDownload.dataset.loading = '0';
+      desktopDownload.removeAttribute('aria-busy');
+      desktopDownload.textContent = originalLabel;
+    }
+
+    window.location.assign(installerUrl);
   });
 
   (async function checkBiometricSupport() {

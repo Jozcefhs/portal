@@ -1,5 +1,7 @@
 {
   "version": "3.0.1",
-  "installer_url": "https://github.com/Jozcefhs/dcs/releases/download/v3.0.1/Integrated_School_Management_Suite_Setup_v3.0.1.exe",
-  "notes": "Integrated School Management Suite v3.0.1 fixes admission form expiry consistency, adds Accounts access to form purchases, and expands database write support for Accounts, Clinic, and Kitchen."
+  "channel": "stable",
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/v3.0.1/Integrated_School_Management_Suite_Setup_v3.0.1.exe",
+  "sha256": "2fd4344713fcd42481d33d0043d536f5cd5e22f12d63231093ba29c6f40ad178",
+  "notes": "Dynamax Desktop v3.0.1 improves admission expiry consistency, form-purchase access, and synchronized operational records."
 }
