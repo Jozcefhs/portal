@@ -183,6 +183,7 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(registrationJs, /window\.location\.assign\(data\.authorizationUrl\)/);
   assert.match(pricingHtml, /Monthly and yearly pricing/);
   assert.match(pricingHtml, /id="planEntitlementMatrix"/);
+  assert.match(pricingHtml, /plan-management\.js\?v=20260808-plan-matrix-overlap/);
   assert.match(pricingHtml, /Save plans &amp; pricing/);
   assert.match(pricingHtml, /Apply changed prices to existing Paystack subscribers/);
   assert.match(pricingJs, /aria-label="\$\{accessibleLabel\}"/);
