@@ -80,13 +80,13 @@ test('church is canonicalized to faith while retaining shared finance modules', 
   );
   assert.deepEqual(
     allowedSectionsFor({ role: 'Super Admin' }, flags),
-    ['recordsDesk', 'executiveOffice', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'organizationStore', 'restaurant', 'staffUsers', 'humanResources']
+    ['recordsDesk', 'executiveOffice', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'organizationStore', 'restaurant', 'staffUsers', 'humanResources', 'staffAttendance']
   );
 });
 
 test('church staff role defaults respect the membership privacy boundary', () => {
   const flags = featureFlagsForEdition('church');
-  assert.deepEqual(allowedSectionsFor({ role: 'Membership Officer' }, flags), ['recordsDesk', 'members', 'services', 'humanResources']);
+  assert.deepEqual(allowedSectionsFor({ role: 'Membership Officer' }, flags), ['recordsDesk', 'members', 'services', 'humanResources', 'staffAttendance']);
   assert.equal(allowedSectionsFor({ role: 'Pastor' }, flags).includes('members'), true);
   assert.equal(allowedSectionsFor({ role: 'Treasurer' }, flags).includes('members'), false);
   assert.equal(allowedSectionsFor({ role: 'Auditor' }, flags).includes('members'), false);
@@ -121,6 +121,7 @@ test('subscription plans enforce module entitlements in addition to organisation
   assert.equal(standardChurch.members, true);
   assert.equal(standardChurch.offerings, true);
   assert.equal(standardChurch.accounting, true);
+  assert.equal(standardChurch.staffAttendance, true);
   assert.equal(standardChurch.payroll, false);
   assert.equal(standardChurch.retail, false);
 

@@ -151,7 +151,7 @@ export function defaultModulesForRole(role, { edition = 'school', featureFlags =
   const base = name === 'Department User'
     ? departmentUserDefaults(department)
     : [...(LEGACY_ROLE_DEFAULTS[name] || []), ...(name ? ['humanResources'] : [])];
-  if (normalizeOrganizationEdition(edition) === 'faith' && name) base.push('staffAttendance');
+  if (name) base.push('staffAttendance');
   if (name === 'Super Admin') base.push('staffUsers');
   return normalizeModuleList(base, edition, featureFlags);
 }

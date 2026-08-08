@@ -339,15 +339,15 @@ export function sectionAccessFor(user = {}, organization = {}, roleAccess = null
     ? (user.tabAccess || user.TabAccess).map(clean).filter(Boolean)
     : [];
   if (edition === 'faith' && configuredRoleModules === null && !customUserModules.length
-      && featureFlags.humanResources === true && !allowedSections.includes('staffAttendance')) {
+      && featureFlags.staffAttendance === true && !allowedSections.includes('staffAttendance')) {
     allowedSections.push('staffAttendance');
   }
   if (edition === 'faith' && availableRoleModules === null && !customUserModules.length
-      && editionFeatureFlags.humanResources === true && !availableSections.includes('staffAttendance')) {
+      && editionFeatureFlags.staffAttendance === true && !availableSections.includes('staffAttendance')) {
     availableSections.push('staffAttendance');
   }
   if (edition === 'faith' && planRoleModules === null && !customUserModules.length
-      && planFeatureFlags.humanResources === true && !planSections.includes('staffAttendance')) {
+      && planFeatureFlags.staffAttendance === true && !planSections.includes('staffAttendance')) {
     planSections.push('staffAttendance');
   }
   const planSet = new Set(planSections);

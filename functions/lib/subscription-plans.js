@@ -10,13 +10,15 @@ export const SUBSCRIPTION_PLAN_NAMES = Object.freeze([
 
 const FULL_ACCESS = '*';
 export const FREE_TRIAL_DAYS = 7;
+export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 2;
 
 export const SUBSCRIPTION_MODULE_CATALOG = Object.freeze([
   Object.freeze({ Key: 'branches', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Branches & campuses', faith: 'Branches & assemblies', organization: 'Branches & offices' }), Description: 'Branch switching and branch-isolated records.', Requires: Object.freeze([]) }),
   Object.freeze({ Key: 'branding', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Branding & document identity', faith: 'Branding & document identity', organization: 'Branding & document identity' }), Description: 'Organisation identity, logos and document presentation.', Requires: Object.freeze([]) }),
   Object.freeze({ Key: 'approvals', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Bills, requisitions & approvals', faith: 'Bills, requisitions & approvals', organization: 'Bills, requisitions & approvals' }), Description: 'Request, review, approval and posting workflows.', Requires: Object.freeze([]) }),
   Object.freeze({ Key: 'executiveOffice', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Executive Office', faith: 'Executive Office', organization: 'Executive Office' }), Description: 'Official correspondence, templates and executive records.', Requires: Object.freeze([]) }),
-  Object.freeze({ Key: 'humanResources', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Human Resources & staff attendance', faith: 'Human Resources & staff attendance', organization: 'Human Resources & staff attendance' }), Description: 'Employee journey, attendance, leave and performance.', Requires: Object.freeze([]) }),
+  Object.freeze({ Key: 'humanResources', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Human Resources', faith: 'Human Resources', organization: 'Human Resources' }), Description: 'Employee journey, records, leave, welfare and performance.', Requires: Object.freeze([]) }),
+  Object.freeze({ Key: 'staffAttendance', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Staff attendance & clocking', faith: 'Staff attendance & clocking', organization: 'Staff attendance & clocking' }), Description: 'Clock-in/out, schedules, lateness, absence, overtime and presence checks.', Requires: Object.freeze([]) }),
   Object.freeze({ Key: 'accounting', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Finance, accounting & income analytics', faith: 'Finance, accounting & income analytics', organization: 'Finance, accounting & revenue analytics' }), Description: 'Accounts, journals, expenses, analytics and finance registers.', Requires: Object.freeze([]) }),
   Object.freeze({ Key: 'payroll', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Payroll', faith: 'Payroll', organization: 'Payroll' }), Description: 'Payroll profiles, calculations, approvals and payments.', Requires: Object.freeze(['accounting', 'humanResources']) }),
   Object.freeze({ Key: 'admissions', Editions: Object.freeze(['school']), Labels: Object.freeze({ school: 'Admissions & form purchases' }), Description: 'Application intake, form sales and admission processing.', Requires: Object.freeze([]) }),
@@ -114,15 +116,15 @@ export const SUBSCRIPTION_PLAN_DEFINITIONS = Object.freeze({
     Entitlements: Object.freeze({
       school: Object.freeze([
         'branches', 'branding', 'admissions', 'students', 'parentPortal',
-        'approvals', 'executiveOffice', 'humanResources', 'accounting'
+        'approvals', 'executiveOffice', 'humanResources', 'staffAttendance', 'accounting'
       ]),
       faith: Object.freeze([
         'branches', 'branding', 'members', 'services', 'departments', 'programs',
-        'approvals', 'executiveOffice', 'humanResources', 'accounting', 'funds', 'offerings', 'donations'
+        'approvals', 'executiveOffice', 'humanResources', 'staffAttendance', 'accounting', 'funds', 'offerings', 'donations'
       ]),
       organization: Object.freeze([
         'branches', 'branding', 'members', 'departments', 'programs',
-        'approvals', 'executiveOffice', 'humanResources', 'accounting'
+        'approvals', 'executiveOffice', 'humanResources', 'staffAttendance', 'accounting'
       ])
     }),
     Features: Object.freeze({
@@ -275,6 +277,7 @@ function enabled(value, fallback = true) {
 export function defaultSubscriptionPlanCatalog() {
   return {
     Currency: 'NGN',
+    ModuleCatalogVersion: SUBSCRIPTION_MODULE_CATALOG_VERSION,
     Plans: Object.fromEntries(SUBSCRIPTION_PLAN_NAMES.map((name) => {
       const definition = SUBSCRIPTION_PLAN_DEFINITIONS[name];
       return [name, {
@@ -304,8 +307,10 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
   const sourcePlans = source.Plans && typeof source.Plans === 'object' && !Array.isArray(source.Plans)
     ? source.Plans
     : {};
+  const sourceModuleCatalogVersion = Math.max(0, Math.floor(Number(source.ModuleCatalogVersion) || 0));
   return {
     Currency: clean(source.Currency || defaults.Currency).toUpperCase() || 'NGN',
+    ModuleCatalogVersion: SUBSCRIPTION_MODULE_CATALOG_VERSION,
     Plans: Object.fromEntries(SUBSCRIPTION_PLAN_NAMES.map((name) => {
       const incoming = sourcePlans[name] && typeof sourcePlans[name] === 'object' ? sourcePlans[name] : {};
       const definition = SUBSCRIPTION_PLAN_DEFINITIONS[name];
@@ -322,16 +327,19 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
         MonthlyAmount: name === 'Free' ? 0 : money(incoming.MonthlyAmount),
         YearlyAmount: name === 'Free' ? 0 : money(incoming.YearlyAmount),
         Active: enabled(incoming.Active, true),
-        EntitlementsByEdition: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
-          edition,
-          normalizeConfiguredEntitlements(
+        EntitlementsByEdition: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => {
+          const normalizedEntitlements = normalizeConfiguredEntitlements(
             edition,
             Object.prototype.hasOwnProperty.call(configuredEntitlements, edition)
               ? configuredEntitlements[edition]
               : undefined,
             defaults.Plans[name].EntitlementsByEdition[edition]
-          )
-        ])),
+          );
+          const migratedEntitlements = sourceModuleCatalogVersion < 2 && normalizedEntitlements.includes('humanResources')
+            ? normalizeConfiguredEntitlements(edition, [...normalizedEntitlements, 'staffAttendance'], [])
+            : normalizedEntitlements;
+          return [edition, migratedEntitlements];
+        })),
         PaystackMonthlyPlanCode: name === 'Free' ? '' : clean(incoming.PaystackMonthlyPlanCode),
         PaystackYearlyPlanCode: name === 'Free' ? '' : clean(incoming.PaystackYearlyPlanCode)
       }];
@@ -346,6 +354,7 @@ export function publicSubscriptionPlanCatalog(value = {}) {
   const catalog = normalizeSubscriptionPlanCatalog(value);
   return {
     Currency: catalog.Currency,
+    ModuleCatalogVersion: catalog.ModuleCatalogVersion,
     ModuleCatalog: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
       edition,
       subscriptionModulesForEdition(edition)

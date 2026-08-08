@@ -62,7 +62,7 @@ test('saved plan-module selections replace defaults and enforce dependencies', (
   });
   assert.deepEqual(
     catalog.Plans.Starter.EntitlementsByEdition.school,
-    ['humanResources', 'accounting', 'payroll']
+    ['humanResources', 'staffAttendance', 'accounting', 'payroll']
   );
   assert.deepEqual(catalog.Plans.Starter.EntitlementsByEdition.faith, []);
   assert.deepEqual(
@@ -71,9 +71,17 @@ test('saved plan-module selections replace defaults and enforce dependencies', (
   );
   assert.deepEqual(
     subscriptionPlanEntitlements('Starter', 'school', catalog),
-    ['humanResources', 'accounting', 'payroll']
+    ['humanResources', 'staffAttendance', 'accounting', 'payroll']
   );
   assert.ok(subscriptionModulesForEdition('school').every((module) => !/church|offering/i.test(module.Label)));
+  assert.ok(subscriptionModulesForEdition('faith').some((module) => module.Key === 'staffAttendance' && module.Label === 'Staff attendance & clocking'));
+  assert.ok(subscriptionModulesForEdition('faith').some((module) => module.Key === 'humanResources' && module.Label === 'Human Resources'));
+
+  const explicitlySeparated = normalizeSubscriptionPlanCatalog({
+    ModuleCatalogVersion: 2,
+    Plans: { Starter: { EntitlementsByEdition: { faith: ['humanResources'] } } }
+  });
+  assert.deepEqual(explicitlySeparated.Plans.Starter.EntitlementsByEdition.faith, ['humanResources']);
 });
 
 test('free access expires at the stored server-issued boundary and cannot become permanent', () => {
