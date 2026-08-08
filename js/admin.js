@@ -1165,34 +1165,49 @@ function genericOrganizationText(value) {
   ), String(value ?? ''));
 }
 
+let applyingGenericOrganizationVocabulary = false;
+
 function applyGenericOrganizationVocabulary(root = panelEl) {
-  if (!root || resolveDashboardEdition(currentUser || {}) !== 'organization') return;
-  const selector = [
-    'h1', 'h2', 'h3', 'h4', 'p', 'small', 'label', 'button', 'th', 'legend',
-    '.workflow-kpis span', '.module-stat span', '.module-stat small', '.status'
-  ].join(',');
-  const elements = [root, ...root.querySelectorAll(selector)].filter((element) => element?.nodeType === 1);
-  elements.forEach((element) => {
-    [...element.childNodes]
-      .filter((node) => node.nodeType === Node.TEXT_NODE)
-      .forEach((node) => { node.nodeValue = genericOrganizationText(node.nodeValue); });
-    ['title', 'aria-label', 'data-create-heading', 'data-create-label', 'data-loading-text'].forEach((attribute) => {
-      if (element.hasAttribute(attribute)) element.setAttribute(attribute, genericOrganizationText(element.getAttribute(attribute)));
+  if (!root || applyingGenericOrganizationVocabulary || resolveDashboardEdition(currentUser || {}) !== 'organization') return;
+  applyingGenericOrganizationVocabulary = true;
+  try {
+    const selector = [
+      'h1', 'h2', 'h3', 'h4', 'p', 'small', 'label', 'button', 'th', 'legend',
+      '.workflow-kpis span', '.module-stat span', '.module-stat small', '.status'
+    ].join(',');
+    const elements = [root, ...root.querySelectorAll(selector)].filter((element) => element?.nodeType === 1);
+    elements.forEach((element) => {
+      [...element.childNodes]
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .forEach((node) => {
+          const nextValue = genericOrganizationText(node.nodeValue);
+          if (nextValue !== node.nodeValue) node.nodeValue = nextValue;
+        });
+      ['title', 'aria-label', 'data-create-heading', 'data-create-label', 'data-loading-text'].forEach((attribute) => {
+        if (!element.hasAttribute(attribute)) return;
+        const currentValue = element.getAttribute(attribute);
+        const nextValue = genericOrganizationText(currentValue);
+        if (nextValue !== currentValue) element.setAttribute(attribute, nextValue);
+      });
     });
-  });
-  root.querySelectorAll('input[placeholder], textarea[placeholder]').forEach((element) => {
-    element.placeholder = genericOrganizationText(element.placeholder);
-  });
-  const genericOptionLabels = new Set([
-    'Home Church', 'Home Cell', 'Foreign Desk', 'Member', 'Visitor',
-    'Donation', 'Offering', 'Special Offering', 'Tithe', 'Thanksgiving',
-    'First Fruit'
-  ]);
-  root.querySelectorAll('option').forEach((option) => {
-    if (!clean(option.value) || genericOptionLabels.has(clean(option.textContent))) {
-      option.textContent = genericOrganizationText(option.textContent);
-    }
-  });
+    root.querySelectorAll('input[placeholder], textarea[placeholder]').forEach((element) => {
+      const nextPlaceholder = genericOrganizationText(element.placeholder);
+      if (nextPlaceholder !== element.placeholder) element.placeholder = nextPlaceholder;
+    });
+    const genericOptionLabels = new Set([
+      'Home Church', 'Home Cell', 'Foreign Desk', 'Member', 'Visitor',
+      'Donation', 'Offering', 'Special Offering', 'Tithe', 'Thanksgiving',
+      'First Fruit'
+    ]);
+    root.querySelectorAll('option').forEach((option) => {
+      if (!clean(option.value) || genericOptionLabels.has(clean(option.textContent))) {
+        const nextLabel = genericOrganizationText(option.textContent);
+        if (nextLabel !== option.textContent) option.textContent = nextLabel;
+      }
+    });
+  } finally {
+    applyingGenericOrganizationVocabulary = false;
+  }
 }
 
 let genericOrganizationVocabularyObserver = null;

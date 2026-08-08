@@ -219,6 +219,14 @@ test('web staff navigation displays plan restrictions as disabled grey modules',
   assert.match(css, /\.subscription-restricted/);
 });
 
+test('other-organisation vocabulary observer settles without rewriting unchanged DOM values', async () => {
+  const adminSource = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
+  assert.match(adminSource, /applyingGenericOrganizationVocabulary/);
+  assert.match(adminSource, /if \(nextLabel !== option\.textContent\) option\.textContent = nextLabel/);
+  assert.match(adminSource, /if \(nextValue !== node\.nodeValue\) node\.nodeValue = nextValue/);
+  assert.match(adminSource, /finally \{\s*applyingGenericOrganizationVocabulary = false;/s);
+});
+
 test('school-only modules cannot be re-enabled by church feature overrides', () => {
   const flags = featureFlagsForEdition('church', {
     admissions: true,
