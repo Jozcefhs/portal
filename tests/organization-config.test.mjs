@@ -226,6 +226,8 @@ test('other-organisation vocabulary observer settles without rewriting unchanged
   assert.match(adminSource, /if \(nextValue !== node\.nodeValue\) node\.nodeValue = nextValue/);
   assert.match(adminSource, /finally \{\s*applyingGenericOrganizationVocabulary = false;/s);
   assert.match(adminSource, /genericOrganizationVocabularyObserver\.disconnect\(\)/);
+  assert.match(adminSource, /genericOrganizationVocabularyTimer = window\.setTimeout/);
+  assert.match(adminSource, /genericOrganizationVocabularyObserver\.takeRecords\(\)/);
   assert.match(adminSource, /genericOrganizationVocabularyObserver\.observe\(panelEl, observerOptions\)/);
 });
 
