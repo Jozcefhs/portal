@@ -2,6 +2,20 @@
 
 Dynamax has one control-plane Firestore project for subscriber administration. It must not be an organisation's school, church or other-organisation project.
 
+## Provisioned platform project
+
+The dedicated control plane was provisioned with these non-secret identifiers:
+
+- Firebase/Google Cloud project: `Dynamax Platform`
+- Project ID: `dynamax-platform-504906`
+- Project number: `665142705074`
+- Firestore database: `(default)`, Standard edition, production mode
+- Firestore location: `africa-south1` (Johannesburg)
+- Runtime service account: `dynamax-platform-runtime@dynamax-platform-504906.iam.gserviceaccount.com`
+- Runtime role: `Cloud Datastore User`
+
+Use `dynamax-platform-504906` for `DYNAMAX_PLATFORM_FIREBASE_PROJECT_ID`. The project named `dynamax-platform` is not this control-plane database and must not be substituted.
+
 ## Data boundary
 
 The central project owns only Dynamax commercial and onboarding data:
@@ -15,10 +29,10 @@ Each organisation project continues to own its operational records: people, atte
 
 ## Central Pages project
 
-Create a dedicated Google Cloud/Firebase project, enable a Firestore `(default)` database, and create a service account that can read and write only that platform database. On the central Dynamax Cloudflare Pages project, add:
+The dedicated Google Cloud/Firebase project, Firestore `(default)` database and least-privilege runtime service account are provisioned. On the central Dynamax Cloudflare Pages project, add:
 
-- `DYNAMAX_PLATFORM_FIREBASE_PROJECT_ID`
-- `DYNAMAX_PLATFORM_FIREBASE_CLIENT_EMAIL`
+- `DYNAMAX_PLATFORM_FIREBASE_PROJECT_ID=dynamax-platform-504906`
+- `DYNAMAX_PLATFORM_FIREBASE_CLIENT_EMAIL=dynamax-platform-runtime@dynamax-platform-504906.iam.gserviceaccount.com`
 - `DYNAMAX_PLATFORM_FIREBASE_PRIVATE_KEY` as an encrypted secret
 - `PAYSTACK_SECRET_KEY` as an encrypted secret for Dynamax subscription billing
 - `ADMIN_WEB_PASSWORD` as an encrypted secret for plan administration
@@ -28,6 +42,21 @@ Do not set `FIREBASE_PROJECT_ID` to a subscriber project on the central deployme
 Cloudflare supports production and preview Variables and Secrets separately. Configure the central values in both environments only when preview is intentionally allowed to reach the platform database. See [Cloudflare Pages bindings and secrets](https://developers.cloudflare.com/pages/functions/bindings/).
 
 The platform index manifest is `firebase.platform.json`. The current subscriber queries use Firestore's automatic single-field indexes, so `firestore.platform.indexes.json` intentionally has no composite indexes.
+
+## Creating the runtime credential yourself
+
+Repeat these steps when a new central platform project needs its own credential:
+
+1. Open Google Cloud Console and select the platform project.
+2. Go to **IAM & Admin → Service Accounts → Create service account**.
+3. Use a clear name such as `Dynamax Platform Runtime` and an ID such as `dynamax-platform-runtime`.
+4. Under **Permissions**, select **Cloud Datastore User**. This permits document reads and writes without granting project administration.
+5. Finish creating the account, open it, and select **Keys → Add key → Create new key → JSON → Create**.
+6. Keep the downloaded JSON outside the source repository. Never commit it, email it or paste it into a public issue.
+7. In the JSON, use `project_id` as `DYNAMAX_PLATFORM_FIREBASE_PROJECT_ID`, `client_email` as `DYNAMAX_PLATFORM_FIREBASE_CLIENT_EMAIL`, and `private_key` as the encrypted `DYNAMAX_PLATFORM_FIREBASE_PRIVATE_KEY` secret.
+8. After the secret is configured and verified, store the JSON in a protected credential vault or delete the local copy. If it is ever exposed, delete that key in the service account's **Keys** tab and create a replacement.
+
+The runtime accepts either real line breaks or escaped `\n` sequences in the private-key value.
 
 ## Organisation Pages projects
 
@@ -61,4 +90,3 @@ It copies the plan catalog, registrations and subscription payments only when th
 5. Deploy the central Pages source and verify `/api/plan-catalog` and the pricing-book download.
 6. Point each subscriber Pages project at the central host with the restricted proxy variables.
 7. Verify registration, Paystack callback and webhook delivery before removing old records.
-
