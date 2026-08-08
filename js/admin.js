@@ -1215,7 +1215,6 @@ let genericOrganizationVocabularyTimers = [];
 function scheduleGenericOrganizationVocabulary() {
   genericOrganizationVocabularyTimers.forEach((timer) => window.clearTimeout(timer));
   genericOrganizationVocabularyTimers = [];
-  if (new URLSearchParams(window.location.search).get('donationDiagnostic') === 'no-vocabulary') return;
   if (resolveDashboardEdition(currentUser || {}) !== 'organization') return;
   genericOrganizationVocabularyTimers = [0, 250, 1000, 4000, 10000].map((delay) => window.setTimeout(() => {
     applyGenericOrganizationVocabulary(panelEl);
@@ -4825,7 +4824,6 @@ function donorContributionInsights(topDonors = [], registeredDonors = []) {
 
 async function loadChurchDonations() {
   try {
-    const donationDiagnostic = new URLSearchParams(window.location.search).get('donationDiagnostic') || '';
     const methods = ['CASH', 'BANK TRANSFER', 'CHEQUE', 'POS', 'ONLINE', 'CARD', 'MOBILE MONEY'];
     const currencies = ['NGN', 'USD', 'GBP', 'EUR', 'KES', 'GHS'];
     const response = await staffFetch('/api/staff-church-payments', {
@@ -4835,22 +4833,10 @@ async function loadChurchDonations() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'list', BranchId: currentUser?.branchId || 'main' })
     });
-    if (donationDiagnostic === 'after-response') {
-      panelEl.textContent = `Donation HTTP response received (${response.status}).`;
-      return;
-    }
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load church donations.');
     if (activeSection !== 'donations') return;
-    if (donationDiagnostic === 'after-json') {
-      panelEl.textContent = 'Donation JSON parsed successfully.';
-      return;
-    }
     renderModuleSummary('donations', data);
-    if (donationDiagnostic === 'after-data') {
-      panelEl.innerHTML = '<p class="status ok">Donation response loaded successfully.</p>';
-      return;
-    }
 
     const summary = data.summary || {};
     const capabilities = data.capabilities || {};
@@ -5080,8 +5066,6 @@ async function loadChurchDonations() {
         { label: 'Details', value: (row) => pick(row, ['Details']) }
       ])}
       </section>`;
-    if (donationDiagnostic === 'after-markup') return;
-
     mountWorkspaceTabs('donations', [
       { key: 'overview', label: 'Overview', icon: '\u25A6', nodes: [...panelEl.querySelectorAll(':scope > .workflow-kpis, :scope > .church-dashboard-grid')] },
       { key: 'record', label: 'Record donation', icon: '+', nodes: document.getElementById('donationGivingPanel') },
@@ -5089,7 +5073,6 @@ async function loadChurchDonations() {
       { key: 'currency', label: 'Foreign currency', icon: '\u00A4', count: foreignHoldings.length, nodes: document.getElementById('donationCurrencyPanel') },
       { key: 'records', label: 'Records & audit', icon: '\u{1F5C2}', count: (data.donations || []).length, nodes: document.getElementById('donationRecordsPanel') }
     ]);
-    if (donationDiagnostic === 'after-tabs') return;
     const form = document.getElementById('churchDonationForm');
     form?.elements.DonorId?.addEventListener('change', () => {
       const donor = donors.find((row) => clean(row.DonorId || row.__id) === clean(form.elements.DonorId.value));
