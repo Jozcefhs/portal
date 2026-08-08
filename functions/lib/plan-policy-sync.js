@@ -1,5 +1,5 @@
 import { getDocument, queryCollection, upsertDocument } from './firestore.js';
-import { requirePlatformFirestoreEnv } from './platform-firestore.js';
+import { hasPlatformFirestoreConfiguration, requirePlatformFirestoreEnv } from './platform-firestore.js';
 import {
   normalizeSubscriptionPlanCatalog,
   normalizeSubscriptionPlan,
@@ -9,6 +9,45 @@ import {
 const clean = (value) => String(value ?? '').trim();
 const CACHE_MS = 60000;
 const policyCache = new Map();
+
+function enabled(value) {
+  return ['1', 'true', 'yes', 'on'].includes(clean(value).toLowerCase());
+}
+
+export async function loadCanonicalPlanCatalog(env = {}, fetchImpl = fetch) {
+  const scope = clean(env.CANONICAL_API_PROXY_SCOPE).toLowerCase();
+  const configuredOrigin = clean(env.CANONICAL_PORTAL_URL);
+  let origin;
+  try { origin = new URL(configuredOrigin); } catch (_error) { origin = null; }
+  if (!enabled(env.ALLOW_CANONICAL_API_PROXY) || scope !== 'platform-subscriptions'
+      || !origin || origin.protocol !== 'https:') {
+    const error = new Error('The central Dynamax plan-policy bridge is not configured.');
+    error.status = 503;
+    error.code = 'DYNAMAX_PLAN_POLICY_BRIDGE_NOT_CONFIGURED';
+    throw error;
+  }
+  const target = new URL('/api/plan-catalog', origin.origin);
+  const response = await fetchImpl(target, {
+    headers: {
+      Accept: 'application/json',
+      'X-Dynamax-Workspace': clean(env.DYNAMAX_WORKSPACE_ID)
+    }
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data?.ok || !data.catalog) {
+    const error = new Error(data?.message || 'The central Dynamax plan catalogue could not be loaded.');
+    error.status = response.status || 503;
+    error.code = 'DYNAMAX_PLAN_POLICY_BRIDGE_FAILED';
+    throw error;
+  }
+  const publicCatalog = data.catalog;
+  const plans = Array.isArray(publicCatalog.Plans)
+    ? Object.fromEntries(publicCatalog.Plans
+      .filter((plan) => plan && typeof plan === 'object' && clean(plan.Name))
+      .map((plan) => [clean(plan.Name), plan]))
+    : publicCatalog.Plans;
+  return normalizeSubscriptionPlanCatalog({ ...publicCatalog, Plans: plans });
+}
 
 function workspaceKey(value) {
   return clean(value).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/(^-|-$)/g, '');
@@ -29,10 +68,22 @@ function comparableEntitlements(value) {
 }
 
 async function loadCentralPolicy(env, workspaceId) {
-  const platformEnv = requirePlatformFirestoreEnv(env);
-  const key = `${clean(platformEnv.FIREBASE_PROJECT_ID)}|${workspaceKey(workspaceId)}`;
+  const directPlatformAccess = hasPlatformFirestoreConfiguration(env);
+  const platformEnv = directPlatformAccess ? requirePlatformFirestoreEnv(env) : null;
+  const policySource = directPlatformAccess
+    ? clean(platformEnv.FIREBASE_PROJECT_ID)
+    : clean(env.CANONICAL_PORTAL_URL).toLowerCase();
+  const key = `${policySource}|${workspaceKey(workspaceId)}`;
   const cached = policyCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
+  if (!directPlatformAccess) {
+    const value = {
+      catalog: await loadCanonicalPlanCatalog(env),
+      registration: null
+    };
+    policyCache.set(key, { value, expiresAt: Date.now() + CACHE_MS });
+    return value;
+  }
   const [savedCatalog, registrations] = await Promise.all([
     getDocument(platformEnv, 'settings', 'dynamaxPlanCatalog').catch(() => null),
     queryCollection(platformEnv, 'tenantRegistrations', {

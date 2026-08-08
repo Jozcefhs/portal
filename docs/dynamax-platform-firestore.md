@@ -74,6 +74,8 @@ To expose registration, pricing and subscription payment from an organisation-br
 
 The middleware gives the central route priority even when the organisation has its own local Firestore backend. Staff and operational APIs continue to use the organisation database and cannot pass through the restricted proxy.
 
+The same bridge variables also let each subscriber backend refresh its local plan-entitlement snapshot from the public central plan catalogue. No central Firebase private key is copied to subscriber deployments. Catalogue changes are cached for at most 60 seconds and are then written into the subscriber's local organisation profile during the next settings or staff-access refresh.
+
 ## One-time migration from `digc-suite`
 
 The migration utility is non-destructive and runs as a dry run unless `--apply` is supplied. Provide the old project credentials through `SOURCE_FIREBASE_*` and the new central credentials through `DYNAMAX_PLATFORM_FIREBASE_*`, then run:
