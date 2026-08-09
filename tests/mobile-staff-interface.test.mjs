@@ -113,6 +113,8 @@ test('sidebar keeps account actions in one compact overlay control', () => {
   assert.match(portalCss, /\.staff-sidebar \.staff-tabs\{flex:1 1 auto;min-height:0\}/);
   assert.match(portalCss, /\.staff-sidebar-actions\{flex:0 0 auto;margin-top:auto\}/);
   assert.match(portalCss, /\.staff-account-menu-panel\{position:absolute;[\s\S]*?bottom:calc\(100% \+ 8px\);[\s\S]*?overflow-y:auto/);
+  assert.match(portalCss, /\.staff-account-menu-panel\{[^}]*background:#071c31!important;[^}]*opacity:1/);
+  assert.match(portalCss, /\.staff-account-menu-panel>\.staff-profile-settings,[\s\S]*?background:#15344f;[\s\S]*?opacity:1/);
   assert.match(portalCss, /\.staff-account-menu:not\(\[open\]\)>\.staff-account-menu-panel\{display:none\}/);
   assert.match(adminJs, /staffAccountMenuPanel\.addEventListener\('click'/);
 });
