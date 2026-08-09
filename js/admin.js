@@ -72,6 +72,10 @@ let activeSection = '';
 let financeData = null;
 let staffUsersData = [];
 let staffAuditData = [];
+let securityAuditData = {
+  rows: [], facets: {}, warnings: [], fromDate: '', toDate: '', totalMatches: 0, truncated: false,
+  filters: { action: '', user: '', module: '', outcome: '', source: '', branchId: '', search: '' }
+};
 let staffApprovalAccounts = [];
 let staffRoleAccessData = null;
 let staffRoleAccessSelectedRole = '';
@@ -173,6 +177,7 @@ const tabConfig = [
   ['uniformStore', 'Clothing & Supplies'],
   ['organizationStore', 'Organisation Store'],
   ['restaurant', 'Restaurant'],
+  ['securityAudit', 'Security Audit Log'],
   ['staffUsers', 'Staff & Permissions']
 ];
 
@@ -221,6 +226,7 @@ const organizationTabLabels = Object.freeze({
   incomeAnalytics: 'Revenue Analytics',
   organizationStore: 'Inventory & Sales',
   restaurant: 'Catering Operations',
+  securityAudit: 'Security Audit Log',
   staffUsers: 'Users & Permissions'
 });
 
@@ -267,6 +273,7 @@ const tabIcons = {
   uniformStore: '\u{1F455}',
   organizationStore: '\u{1F3EA}',
   restaurant: '\u{1F37D}',
+  securityAudit: '\u{1F6E1}',
   staffUsers: '\u2699'
 };
 
@@ -938,6 +945,10 @@ function clearStaffWorkspaceState() {
   financeData = null;
   staffUsersData = [];
   staffAuditData = [];
+  securityAuditData = {
+    rows: [], facets: {}, warnings: [], fromDate: '', toDate: '', totalMatches: 0, truncated: false,
+    filters: { action: '', user: '', module: '', outcome: '', source: '', branchId: '', search: '' }
+  };
   staffApprovalAccounts = [];
   staffRoleAccessData = null;
   staffRoleAccessSelectedRole = '';
@@ -1067,6 +1078,10 @@ function clearBranchScopedWorkspaceData() {
   financeData = null;
   staffUsersData = [];
   staffAuditData = [];
+  securityAuditData = {
+    rows: [], facets: {}, warnings: [], fromDate: '', toDate: '', totalMatches: 0, truncated: false,
+    filters: { action: '', user: '', module: '', outcome: '', source: '', branchId: '', search: '' }
+  };
   staffApprovalAccounts = [];
   staffRoleAccessData = null;
   staffRoleAccessSelectedRole = '';
@@ -2009,6 +2024,14 @@ function renderModuleSummary(active, liveData = null) {
       { icon: '\u{1F4CB}', label: 'Open Vacancies', value: vacancies.filter((row) => /open/i.test(clean(row.Status))).length },
       { icon: '\u2696', label: 'Open Staff Cases', value: (liveData.employeeCases || []).filter((row) => !/resolved|closed/i.test(clean(row.Status))).length },
       { icon: '\u{1F6E1}', label: 'Compliance Actions', value: (liveData.compliance || []).filter((row) => /action required|overdue/i.test(clean(row.Status))).length }
+    ];
+  } else if (active === 'securityAudit' && liveData) {
+    const rows = liveData.rows || [];
+    cards = [
+      { icon, label: 'Recorded actions', value: rows.length },
+      { icon: '\u2713', label: 'Successful', value: rows.filter((row) => clean(row.Outcome) === 'Success').length },
+      { icon: '\u26D4', label: 'Denied / failed', value: rows.filter((row) => /denied|failed/i.test(clean(row.Outcome))).length },
+      { icon: '\u{1F465}', label: 'Users', value: new Set(rows.map((row) => clean(row.ActorUsername || row.Actor)).filter(Boolean)).size }
     ];
   } else if (active === 'staffUsers' && liveData) {
     const rows = liveData.users || liveData;
@@ -6370,7 +6393,7 @@ async function humanResourcesRequest(action, payload = {}) {
     credentials: 'same-origin',
     cache: 'no-store',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, ...payload })
+    body: JSON.stringify({ ...payload, action })
   });
   const data = await response.json().catch(() => ({ ok: false, message: 'Human Resources did not return JSON.' }));
   if (!response.ok || !data.ok) throw new Error(data.message || 'Human Resources action failed.');
@@ -8930,6 +8953,9 @@ function renderSection(active) {
   } else if (active === 'executiveOffice') {
     panelEl.innerHTML = `<div class="executive-loading"><span class="records-desk-spinner" aria-hidden="true"></span><strong>Opening ${escapeHtml(executiveOfficeTitle())}...</strong><small>Loading authorised metrics, directories, templates and correspondence.</small></div>`;
     loadExecutiveOffice();
+  } else if (active === 'securityAudit') {
+    panelEl.innerHTML = '<p class="muted">Loading the aggregated security audit log...</p>';
+    loadSecurityAudit();
   } else if (active === 'staffUsers') {
     panelEl.innerHTML = '<p class="muted">Loading staff accounts...</p>';
     loadStaffUsers();
@@ -9770,6 +9796,199 @@ async function loadFinanceWorkflow() {
     renderFinanceWorkflow();
   } catch (error) {
     if (activeSection === 'financeRequests') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+  }
+}
+
+async function securityAuditRequest(action = 'list', payload = {}) {
+  const response = await staffFetch('/api/security-audit', {
+    method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...payload })
+  });
+  const data = await response.json().catch(() => ({ ok: false, message: 'Security audit did not return JSON.' }));
+  if (response.status === 401) showLogin(data.message || 'Your staff session has expired.', 'bad');
+  if (!response.ok || !data.ok) throw new Error(data.message || 'Security audit action failed.');
+  return data;
+}
+
+function securityAuditDefaultDate(daysAgo = 30) {
+  const date = new Date();
+  date.setDate(date.getDate() - daysAgo);
+  return date.toISOString().slice(0, 10);
+}
+
+function securityAuditOption(value, selected = '') {
+  return `<option value="${escapeHtml(value)}"${clean(value) === clean(selected) ? ' selected' : ''}>${escapeHtml(value)}</option>`;
+}
+
+function securityAuditFilteredRows() {
+  const filters = securityAuditData.filters || {};
+  const search = lower(filters.search);
+  return (securityAuditData.rows || []).filter((row) => {
+    const user = lower(filters.user);
+    const userMatch = !user || [row.ActorUsername, row.Actor, row.Subject].some((value) => lower(value) === user);
+    const searchMatch = !search || [
+      row.Action, row.Module, row.Actor, row.ActorUsername, row.Subject, row.ActorRole,
+      row.EntityType, row.EntityId, row.BranchId, row.SourcePlatform, row.Details, row.Route
+    ].some((value) => lower(value).includes(search));
+    return (!filters.action || clean(row.Action) === clean(filters.action))
+      && userMatch
+      && (!filters.module || clean(row.Module) === clean(filters.module))
+      && (!filters.outcome || clean(row.Outcome) === clean(filters.outcome))
+      && (!filters.source || clean(row.SourcePlatform) === clean(filters.source))
+      && (!filters.branchId || clean(row.BranchId) === clean(filters.branchId))
+      && searchMatch;
+  });
+}
+
+function securityAuditDateTime(value) {
+  if (!clean(value)) return '';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? clean(value) : parsed.toLocaleString();
+}
+
+function securityAuditDetail(row) {
+  const entity = [clean(row.EntityType), clean(row.EntityId)].filter(Boolean).join(' / ');
+  const details = [entity, clean(row.Details), clean(row.Route)].filter(Boolean);
+  return details.length ? details.join(' | ') : '—';
+}
+
+function securityAuditRowsHtml(rows) {
+  return rows.length ? rows.map((row) => `
+    <tr>
+      <td>${escapeHtml(securityAuditDateTime(row.Timestamp))}</td>
+      <td><strong>${escapeHtml(row.Action || 'Platform action')}</strong></td>
+      <td>${escapeHtml(row.Module || 'Platform operations')}</td>
+      <td><strong>${escapeHtml(row.Actor || row.ActorUsername || 'System')}</strong>${row.ActorUsername && row.ActorUsername !== row.Actor ? `<small>${escapeHtml(row.ActorUsername)}</small>` : ''}${row.ActorRole ? `<small>${escapeHtml(row.ActorRole)}</small>` : ''}</td>
+      <td>${escapeHtml(row.Subject || '—')}</td>
+      <td><span class="security-audit-outcome is-${escapeHtml(lower(row.Outcome || 'success'))}">${escapeHtml(row.Outcome || 'Success')}</span></td>
+      <td>${escapeHtml(row.BranchId || 'main')}</td>
+      <td>${escapeHtml(row.SourcePlatform || 'Web')}</td>
+      <td title="${escapeHtml(securityAuditDetail(row))}">${escapeHtml(securityAuditDetail(row))}</td>
+    </tr>`).join('') : '<tr><td colspan="9">No audit actions match the selected filters.</td></tr>';
+}
+
+function updateSecurityAuditTable() {
+  if (activeSection !== 'securityAudit') return;
+  const rows = securityAuditFilteredRows();
+  const body = panelEl.querySelector('[data-security-audit-rows]');
+  const count = panelEl.querySelector('[data-security-audit-count]');
+  if (body) body.innerHTML = securityAuditRowsHtml(rows);
+  if (count) {
+    count.textContent = `${rows.length.toLocaleString()} matching action${rows.length === 1 ? '' : 's'}${securityAuditData.truncated ? ' (source result limit reached)' : ''}`;
+  }
+  renderModuleSummary('securityAudit', { rows });
+}
+
+function renderSecurityAudit() {
+  if (activeSection !== 'securityAudit') return;
+  const facets = securityAuditData.facets || {};
+  const filters = securityAuditData.filters || {};
+  const rows = securityAuditFilteredRows();
+  panelEl.innerHTML = `
+    <section class="security-audit-workspace">
+      <div class="workflow-intro security-audit-heading">
+        <div><p class="eyebrow">Governance &amp; accountability</p><h2>Aggregated Security Audit Log</h2><p class="muted">A read-only record of authenticated web and desktop activity, sign-in attempts, approvals and operational changes.</p></div>
+        <div class="security-audit-actions"><button type="button" id="refreshSecurityAudit" class="secondary">Refresh</button><button type="button" id="printSecurityAudit">Print filtered log</button></div>
+      </div>
+      <div class="security-audit-print-heading">
+        <strong>${escapeHtml(clean(document.querySelector('[data-school-name]')?.textContent) || 'Organisation')}</strong>
+        <span>Security Audit Report · ${escapeHtml(securityAuditData.fromDate)} to ${escapeHtml(securityAuditData.toDate)}</span>
+      </div>
+      <form id="securityAuditFilters" class="security-audit-filters">
+        <label>From<input type="date" name="fromDate" value="${escapeHtml(securityAuditData.fromDate)}" required></label>
+        <label>To<input type="date" name="toDate" value="${escapeHtml(securityAuditData.toDate)}" required></label>
+        <label>Action<select name="action"><option value="">All actions</option>${(facets.actions || []).map((value) => securityAuditOption(value, filters.action)).join('')}</select></label>
+        <label>User<select name="user"><option value="">All users</option>${(facets.users || []).map((value) => securityAuditOption(value, filters.user)).join('')}</select></label>
+        <label>Module<select name="module"><option value="">All modules</option>${(facets.modules || []).map((value) => securityAuditOption(value, filters.module)).join('')}</select></label>
+        <label>Outcome<select name="outcome"><option value="">All outcomes</option>${(facets.outcomes || []).map((value) => securityAuditOption(value, filters.outcome)).join('')}</select></label>
+        <label>Source<select name="source"><option value="">All sources</option>${(facets.sources || []).map((value) => securityAuditOption(value, filters.source)).join('')}</select></label>
+        <label>Branch<select name="branchId"><option value="">All permitted branches</option>${(facets.branches || []).map((value) => securityAuditOption(value, filters.branchId)).join('')}</select></label>
+        <label class="security-audit-search">Search<input type="search" name="search" value="${escapeHtml(filters.search)}" placeholder="Action, person, reference or details"></label>
+        <div class="security-audit-filter-actions"><button type="submit">Apply dates</button><button type="button" id="resetSecurityAuditFilters" class="secondary">Clear filters</button></div>
+      </form>
+      ${(securityAuditData.warnings || []).length ? `<p class="status bad security-audit-warning"><strong>Incomplete audit result:</strong> ${escapeHtml(securityAuditData.warnings.join(' '))}</p>` : ''}
+      <div class="security-audit-result-bar"><strong data-security-audit-count>${rows.length.toLocaleString()} matching action${rows.length === 1 ? '' : 's'}</strong><span>Audit records are immutable from this page. Sensitive passwords, PINs and tokens are never captured.</span></div>
+      <div class="admin-table-wrap security-audit-table-wrap">
+        <table class="admin-table security-audit-table">
+          <thead><tr><th>Date &amp; time</th><th>Action</th><th>Module</th><th>User</th><th>Subject</th><th>Outcome</th><th>Branch</th><th>Source</th><th>Details</th></tr></thead>
+          <tbody data-security-audit-rows>${securityAuditRowsHtml(rows)}</tbody>
+        </table>
+      </div>
+    </section>`;
+  const form = document.getElementById('securityAuditFilters');
+  form?.querySelectorAll('select').forEach((select) => {
+    select.addEventListener('change', () => {
+      securityAuditData.filters[select.name] = select.value;
+      updateSecurityAuditTable();
+    });
+  });
+  form?.querySelector('[name="search"]')?.addEventListener('input', (event) => {
+    securityAuditData.filters.search = event.currentTarget.value;
+    updateSecurityAuditTable();
+  });
+  form?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const values = new FormData(form);
+    securityAuditData.fromDate = clean(values.get('fromDate'));
+    securityAuditData.toDate = clean(values.get('toDate'));
+    await loadSecurityAudit(true);
+  });
+  document.getElementById('resetSecurityAuditFilters')?.addEventListener('click', () => {
+    securityAuditData.filters = { action: '', user: '', module: '', outcome: '', source: '', branchId: '', search: '' };
+    renderSecurityAudit();
+  });
+  document.getElementById('refreshSecurityAudit')?.addEventListener('click', (event) => {
+    runButtonAction(event.currentTarget, 'Refreshing...', () => loadSecurityAudit(true));
+  });
+  document.getElementById('printSecurityAudit')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    if (!securityAuditFilteredRows().length) return;
+    setButtonLoading(button, true, 'Preparing...', 'Print filtered log');
+    try {
+      await securityAuditRequest('print', {
+        ...securityAuditData.filters,
+        actionFilter: securityAuditData.filters.action,
+        fromDate: securityAuditData.fromDate,
+        toDate: securityAuditData.toDate
+      });
+      document.body.classList.add('security-audit-print');
+      window.addEventListener('afterprint', () => document.body.classList.remove('security-audit-print'), { once: true });
+      window.print();
+    } catch (error) {
+      setStatus(dashboardStatus, error.message || String(error), 'bad');
+    } finally {
+      if (button.isConnected) setButtonLoading(button, false, 'Preparing...', 'Print filtered log');
+    }
+  });
+  renderModuleSummary('securityAudit', { rows });
+}
+
+async function loadSecurityAudit(preserveDates = false) {
+  if (activeSection !== 'securityAudit') return;
+  if (!preserveDates || !securityAuditData.fromDate || !securityAuditData.toDate) {
+    securityAuditData.fromDate = securityAuditData.fromDate || securityAuditDefaultDate(30);
+    securityAuditData.toDate = securityAuditData.toDate || new Date().toISOString().slice(0, 10);
+  }
+  try {
+    const data = await securityAuditRequest('list', {
+      fromDate: securityAuditData.fromDate,
+      toDate: securityAuditData.toDate,
+      limit: 1500
+    });
+    securityAuditData = {
+      ...securityAuditData,
+      rows: data.rows || [],
+      facets: data.facets || {},
+      warnings: data.warnings || [],
+      fromDate: data.fromDate || securityAuditData.fromDate,
+      toDate: data.toDate || securityAuditData.toDate,
+      totalMatches: Number(data.totalMatches || 0),
+      truncated: data.truncated === true
+    };
+    renderSecurityAudit();
+  } catch (error) {
+    if (activeSection === 'securityAudit') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
   }
 }
 

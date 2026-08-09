@@ -1,5 +1,6 @@
 import { loadDeploymentIdentity, requiredDeploymentIdentity } from './lib/deployment-identity.js';
 import { hasPlatformFirestoreConfiguration } from './lib/platform-firestore.js';
+import { persistRequestSecurityAudit, prepareSecurityAudit } from './lib/security-audit.js';
 
 const LOW_READ_IDENTITY_PATHS = new Set([
   '/api/staff-session',
@@ -193,6 +194,15 @@ async function handleRequest(context, identityLoader) {
 
   const started = Date.now();
   const requestId = String(request.headers.get('CF-Ray') || crypto.randomUUID()).slice(0, 96);
+  const auditPreparation = prepareSecurityAudit(request, url.pathname).catch((error) => {
+    console.warn(JSON.stringify({
+      event: 'security_audit_prepare_failed',
+      requestId,
+      route: url.pathname,
+      message: String(error?.message || error).slice(0, 200)
+    }));
+    return null;
+  });
   let response;
   let failure = null;
   let proxied = false;
@@ -242,16 +252,35 @@ async function handleRequest(context, identityLoader) {
     failure = error;
     throw error;
   } finally {
+    const durationMs = Date.now() - started;
     console.log(JSON.stringify({
       event: 'api_request',
       requestId,
       method: request.method,
       route: url.pathname,
       status: response?.status || Number(failure?.status || 500),
-      durationMs: Date.now() - started,
+      durationMs,
       colo: String(request.cf?.colo || ''),
       proxied
     }));
+    const auditTask = auditPreparation.then((prepared) => prepared && persistRequestSecurityAudit({
+      env,
+      request,
+      prepared,
+      response,
+      failure,
+      requestId,
+      durationMs
+    })).catch((error) => {
+      console.error(JSON.stringify({
+        event: 'security_audit_write_failed',
+        requestId,
+        route: url.pathname,
+        message: String(error?.message || error).slice(0, 300)
+      }));
+    });
+    if (typeof context.waitUntil === 'function') context.waitUntil(auditTask);
+    else await auditTask;
   }
 }
 

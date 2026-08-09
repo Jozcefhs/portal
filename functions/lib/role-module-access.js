@@ -32,6 +32,7 @@ export const WEB_SECTION_CATALOG = Object.freeze([
   Object.freeze({ key: 'uniformStore', label: 'Clothing & Supplies' }),
   Object.freeze({ key: 'organizationStore', label: 'Organisation Store' }),
   Object.freeze({ key: 'restaurant', label: 'Restaurant' }),
+  Object.freeze({ key: 'securityAudit', label: 'Security Audit Log' }),
   Object.freeze({ key: 'staffUsers', label: 'Staff & Permissions' })
 ]);
 
@@ -48,6 +49,7 @@ export const ORGANIZATION_SECTION_LABELS = Object.freeze({
   incomeAnalytics: 'Revenue Analytics',
   organizationStore: 'Inventory & Sales',
   restaurant: 'Catering Operations',
+  securityAudit: 'Security Audit Log',
   staffUsers: 'Users & Permissions'
 });
 
@@ -67,7 +69,7 @@ export const STAFF_ROLE_OPTIONS = Object.freeze([
 ]);
 
 const LEGACY_ROLE_DEFAULTS = Object.freeze({
-  'Super Admin': ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'studentConduct', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'staffUsers'],
+  'Super Admin': ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'studentConduct', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'securityAudit', 'staffUsers'],
   Principal: ['recordsDesk', 'executiveOffice', 'studentConduct'],
   'Admissions Officer': ['recordsDesk', 'admissions', 'formPurchases', 'students', 'studentConduct', 'financeRequests', 'payroll'],
   'Accounts Officer': ['recordsDesk', 'students', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
@@ -85,7 +87,7 @@ const LEGACY_ROLE_DEFAULTS = Object.freeze({
   'Church Administrator': ['recordsDesk', 'members', 'services', 'funds', 'offerings', 'donations', 'organizationStore', 'restaurant', 'financeRequests', 'payroll'],
   'Membership Officer': ['recordsDesk', 'members', 'services'],
   Treasurer: ['recordsDesk', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests', 'payroll'],
-  Auditor: ['recordsDesk', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests'],
+  Auditor: ['recordsDesk', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests', 'securityAudit'],
   'HR Director': ['recordsDesk', 'humanResources', 'payroll'],
   'HR Manager': ['recordsDesk', 'humanResources', 'payroll'],
   'HR Business Partner': ['recordsDesk', 'humanResources', 'payroll'],
@@ -152,12 +154,21 @@ export function defaultModulesForRole(role, { edition = 'school', featureFlags =
     ? departmentUserDefaults(department)
     : [...(LEGACY_ROLE_DEFAULTS[name] || []), ...(name ? ['humanResources'] : [])];
   if (name) base.push('staffAttendance');
-  if (name === 'Super Admin') base.push('staffUsers');
+  if (name === 'Super Admin') base.push('securityAudit', 'staffUsers');
   return normalizeModuleList(base, edition, featureFlags);
 }
 
 export function roleAccessScope(user = {}) {
   return lower(user.branchId || user.BranchId) || 'global';
+}
+
+function withRequiredRoleModules(role, modules = []) {
+  const normalized = [...modules];
+  if (role === 'Super Admin') {
+    if (!normalized.includes('securityAudit')) normalized.push('securityAudit');
+    if (!normalized.includes('staffUsers')) normalized.push('staffUsers');
+  }
+  return normalized;
 }
 
 function roleMapForScope(document, scope) {
@@ -188,11 +199,11 @@ export function roleAccessView(document, user = {}, edition = 'school', featureF
   const roles = Object.fromEntries(rolesForEdition(edition).map((role) => {
     const localConfigured = Object.prototype.hasOwnProperty.call(local, role);
     const globalConfigured = scope !== 'global' && Object.prototype.hasOwnProperty.call(global, role);
-    const modules = localConfigured
+    const modules = withRequiredRoleModules(role, localConfigured
       ? normalizeModuleList(local[role], edition, featureFlags)
       : globalConfigured
         ? normalizeModuleList(global[role], edition, featureFlags)
-        : defaultModulesForRole(role, { edition, featureFlags });
+        : defaultModulesForRole(role, { edition, featureFlags }));
     return [role, {
       modules,
       source: localConfigured ? scope : globalConfigured ? 'global' : 'default',
@@ -212,8 +223,7 @@ export function withRoleModules(document, scope, role, modules, edition, feature
     ? { ...document.Scopes }
     : {};
   const current = { ...roleMapForScope(document, scope) };
-  const normalized = normalizeModuleList(modules, edition, featureFlags);
-  if (role === 'Super Admin' && !normalized.includes('staffUsers')) normalized.push('staffUsers');
+  const normalized = withRequiredRoleModules(role, normalizeModuleList(modules, edition, featureFlags));
   current[role] = normalized;
   scopes[scope] = current;
   return scopes;
