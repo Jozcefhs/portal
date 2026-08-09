@@ -138,6 +138,22 @@ function setLoginStatus(message, type) {
   setupLoginStatus.className = 'status ' + (type || '');
 }
 
+function announceSettingsChange() {
+  try {
+    [...Array(sessionStorage.length).keys()]
+      .map((index) => sessionStorage.key(index))
+      .filter((key) => key && key.startsWith('dynamax-public-api:settings'))
+      .forEach((key) => sessionStorage.removeItem(key));
+  } catch (_error) {
+    // Storage may be unavailable in private browsing; the server save still succeeds.
+  }
+  try {
+    localStorage.setItem('dynamax:settings-revision', `${Date.now()}`);
+  } catch (_error) {
+    // Cross-tab refresh is an enhancement; navigation and manual refresh also reload settings.
+  }
+}
+
 function setField(id, value) {
   const node = document.getElementById(id);
   if (node) node.value = value || '';
@@ -383,6 +399,7 @@ setupForm.addEventListener('submit', async (event) => {
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Setup could not be saved.');
     applyProfile(data.profile || {});
+    announceSettingsChange();
     setStatus(data.message || 'All changes saved.', 'ok');
   } catch (error) {
     setStatus(error.message, 'bad');
@@ -431,6 +448,7 @@ resetBranchSettingsButton?.addEventListener('click', async () => {
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Branch overrides could not be reset.');
     applyProfile(data.profile || {});
+    announceSettingsChange();
     setStatus(data.message, 'ok');
   } catch (error) {
     setStatus(error.message, 'bad');

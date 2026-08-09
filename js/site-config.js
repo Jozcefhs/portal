@@ -49,7 +49,8 @@ async function getPublicJson(url, options = {}) {
   const request = fetch(url, {
     method: 'GET',
     credentials: 'same-origin',
-    cache: 'no-cache',
+    cache: options.fetchCache || (options.force ? 'no-store' : 'no-cache'),
+    headers: options.headers,
     signal: options.signal
   }).then(async (response) => {
     const text = await response.text();
@@ -82,6 +83,37 @@ async function loadSiteProfile() {
     return data && data.ok && data.profile ? { ...siteProfileFallback, ...data.profile } : siteProfileFallback;
   } catch (_err) {
     return siteProfileFallback;
+  }
+}
+
+async function refreshSiteProfile(options = {}) {
+  const branchId = String(options.branchId || '').trim();
+  const params = new URLSearchParams({ fresh: '1' });
+  if (branchId && branchId.toLowerCase() !== 'all') params.set('branchId', branchId);
+  const data = await getPublicJson(`/api/settings?${params.toString()}`, {
+    cacheKey: `settings:${branchId || 'organisation'}`,
+    cache: false,
+    force: true,
+    fetchCache: 'no-store',
+    headers: options.headers,
+    errorMessage: 'Could not refresh portal settings.',
+    invalidMessage: 'Portal settings returned an invalid response.'
+  });
+  const profile = data && data.ok && data.profile
+    ? { ...siteProfileFallback, ...data.profile }
+    : siteProfileFallback;
+  applySiteProfile(profile);
+  return profile;
+}
+
+function invalidateSiteProfileCache() {
+  try {
+    [...Array(sessionStorage.length).keys()]
+      .map((index) => sessionStorage.key(index))
+      .filter((key) => key && key.startsWith(`${PUBLIC_CACHE_PREFIX}settings`))
+      .forEach((key) => sessionStorage.removeItem(key));
+  } catch (_error) {
+    // Browser storage is optional; forced refreshes still bypass the cache.
   }
 }
 
@@ -173,7 +205,9 @@ async function getTurnstileToken(action) {
 
 window.DynamaxPublicApi = {
   getJson: getPublicJson,
-  getTurnstileToken
+  getTurnstileToken,
+  refreshSiteProfile,
+  invalidateSiteProfileCache
 };
 
 function applySiteProfile(profile) {

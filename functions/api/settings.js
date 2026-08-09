@@ -258,11 +258,16 @@ export async function onRequestGet(context) {
   const metric = startRequestMetric(context.request, '/api/settings');
   const url = new URL(context.request.url);
   const branchId = clean(url.searchParams.get('branchId') || url.searchParams.get('branch'));
-  const profile = publicProfile(await getProfile(context.env, { branchId }));
+  const freshRequested = url.searchParams.get('fresh') === '1';
+  const staff = freshRequested
+    ? await readStaffSession(context.env, context.request).catch(() => null)
+    : null;
+  const fresh = Boolean(staff);
+  const profile = publicProfile(await getProfile(context.env, { branchId, fresh }));
   finishRequestMetric(metric, { status: 200, action: 'load-public-profile' });
   return Response.json({ ok: true, profile }, {
     headers: {
-      'Cache-Control': 'public, max-age=60, stale-while-revalidate=300',
+      'Cache-Control': freshRequested ? 'no-store' : 'public, max-age=60, stale-while-revalidate=300',
       Vary: 'Accept-Encoding'
     }
   });

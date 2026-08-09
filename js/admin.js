@@ -422,6 +422,23 @@ function staffFetch(input, init = {}) {
   return window.fetch(input, options);
 }
 
+async function refreshStaffSiteProfile() {
+  const refreshProfile = window.DynamaxPublicApi?.refreshSiteProfile;
+  if (typeof refreshProfile !== 'function') return null;
+  const branchId = clean(selectedBranchId);
+  try {
+    const headers = new Headers();
+    if (staffBearerToken) headers.set('Authorization', `Bearer ${staffBearerToken}`);
+    return await refreshProfile({
+      branchId: branchId && branchId !== 'all' ? branchId : '',
+      headers
+    });
+  } catch (_error) {
+    // Operational data remains available if the public identity endpoint is temporarily unavailable.
+    return null;
+  }
+}
+
 // Dynamic staff-portal modules use the same bearer session and active branch context.
 window.DynamaxStaffFetch = staffFetch;
 
@@ -1427,6 +1444,7 @@ async function loadDashboard(options = {}) {
     };
     rememberStaffBranch(currentUser);
     showDashboard(currentUser, { refreshPasskeys: false });
+    if (mode === 'shell') await refreshStaffSiteProfile();
     const allowed = data.allowedSections || currentUser.allowedSections || [];
     const workspaceSections = ['overview', ...allowed];
     if (!activeSection || !workspaceSections.includes(activeSection)) {
@@ -10314,6 +10332,10 @@ headerRefreshButton.addEventListener('click', loadDashboard);
 themeToggleButton.addEventListener('click', toggleStaffTheme);
 sidebarThemeToggleButton.addEventListener('click', toggleStaffTheme);
 branchSelector.addEventListener('change', () => switchStaffBranch(branchSelector.value));
+window.addEventListener('storage', (event) => {
+  if (event.key !== 'dynamax:settings-revision' || !currentUser || dashboardEl.hidden) return;
+  void refreshStaffSiteProfile();
+});
 paymentSettingsButton.addEventListener('click', () => {
   window.location.assign(paymentSettingsUrl());
 });
