@@ -23,6 +23,7 @@ import {
   selectDocumentStorageUrl
 } from '../lib/document-storage.js';
 import { organizationProfileDocument, resolveOrganizationConfig } from '../lib/organization-config.js';
+import { mergedProfileText } from '../lib/profile-settings-update.js';
 import {
   accountingChartForEdition,
   accountingCodeAllowedForEdition,
@@ -2391,7 +2392,10 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
         : `${saved.branch.name} now inherits every organisation setting.`
     };
   }
-  const existingOrganization = await getDocument(env, 'settings', 'organisationProfile').catch(() => null);
+  const [existingProfile, existingOrganization] = await Promise.all([
+    getDocument(env, 'settings', 'schoolProfile').catch(() => null),
+    getDocument(env, 'settings', 'organisationProfile').catch(() => null)
+  ]);
   const branchValues = Array.isArray(body.SchoolBranches) ? body.SchoolBranches : clean(body.SchoolBranches || body.schoolBranches || 'Main Branch').split(',');
   const requestedActiveBranchId = safeScopeId(body.ActiveBranchId || body.activeBranchId || 'main');
   const branches = branchValues.map((value) => {
@@ -2413,32 +2417,33 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
     AcceptanceForm: yesNo(body.EnableAcceptanceForm ?? 'YES') === 'YES'
   };
   const profile = {
-    SchoolName: clean(body.SchoolName || body.schoolName) || 'Dynamax',
-    SchoolCode: normalizeSchoolCode(body.SchoolCode || body.schoolCode),
-    SchoolAddress: clean(body.SchoolAddress || body.schoolAddress),
-    SchoolPhone: clean(body.SchoolPhone || body.schoolPhone),
-    SchoolEmail: clean(body.SchoolEmail || body.schoolEmail),
-    SchoolSignatoryName: clean(body.SchoolSignatoryName || body.schoolSignatoryName),
-    SchoolSignatoryTitle: clean(body.SchoolSignatoryTitle || body.schoolSignatoryTitle),
-    ResultSignatoryName: clean(body.ResultSignatoryName || body.resultSignatoryName),
-    ResultSignatoryTitle: clean(body.ResultSignatoryTitle || body.resultSignatoryTitle),
-    OfferSignatoryName: clean(body.OfferSignatoryName || body.offerSignatoryName),
-    OfferSignatoryTitle: clean(body.OfferSignatoryTitle || body.offerSignatoryTitle),
-    AdmissionSignatoryName: clean(body.AdmissionSignatoryName || body.admissionSignatoryName),
-    AdmissionSignatoryTitle: clean(body.AdmissionSignatoryTitle || body.admissionSignatoryTitle),
-    EmailGreetingTemplate: clean(body.EmailGreetingTemplate || body.emailGreetingTemplate) || 'Dear Parent/Guardian,',
-    NameFormat: clean(body.NameFormat || body.nameFormat) || 'Surname, first name, middle name',
-    PortalHeadline: clean(body.PortalHeadline || body.portalHeadline) || 'Admissions and parent services in one place',
-    PortalSubheading: clean(body.PortalSubheading || body.portalSubheading) || 'Buy forms, complete applications, upload documents, pay fees, and monitor student activity from a secure school portal.',
-    PortalNotice: clean(body.PortalNotice || body.portalNotice),
-    CurrentAcademicSession: clean(body.CurrentAcademicSession || body.currentAcademicSession),
-    CurrentTerm: clean(body.CurrentTerm || body.currentTerm) || 'First Term',
-    DeclarationStatement: clean(body.DeclarationStatement || body.declarationStatement) || 'I declare that the information supplied in this application is complete and correct.',
-    ResultDisplayMode: clean(body.ResultDisplayMode || body.resultDisplayMode) || 'subjects',
-    ShowResultsOnline: yesNo(body.ShowResultsOnline ?? body.showResultsOnline ?? 'NO') || 'NO',
-    OfferDocumentBodyTemplate: clean(body.OfferDocumentBodyTemplate || body.offerDocumentBodyTemplate),
-    AdmissionDocumentBodyTemplate: clean(body.AdmissionDocumentBodyTemplate || body.admissionDocumentBodyTemplate),
-    GoogleDocumentsUrl: requireAppsScriptWebAppUrl(body.GoogleDocumentsUrl || body.googleDocumentsUrl),
+    ...withoutFirestoreMetadata(existingProfile || {}),
+    SchoolName: mergedProfileText(existingProfile, body, 'SchoolName', 'schoolName', 'Dynamax'),
+    SchoolCode: normalizeSchoolCode(mergedProfileText(existingProfile, body, 'SchoolCode', 'schoolCode')),
+    SchoolAddress: mergedProfileText(existingProfile, body, 'SchoolAddress', 'schoolAddress'),
+    SchoolPhone: mergedProfileText(existingProfile, body, 'SchoolPhone', 'schoolPhone'),
+    SchoolEmail: mergedProfileText(existingProfile, body, 'SchoolEmail', 'schoolEmail'),
+    SchoolSignatoryName: mergedProfileText(existingProfile, body, 'SchoolSignatoryName', 'schoolSignatoryName'),
+    SchoolSignatoryTitle: mergedProfileText(existingProfile, body, 'SchoolSignatoryTitle', 'schoolSignatoryTitle'),
+    ResultSignatoryName: mergedProfileText(existingProfile, body, 'ResultSignatoryName', 'resultSignatoryName'),
+    ResultSignatoryTitle: mergedProfileText(existingProfile, body, 'ResultSignatoryTitle', 'resultSignatoryTitle'),
+    OfferSignatoryName: mergedProfileText(existingProfile, body, 'OfferSignatoryName', 'offerSignatoryName'),
+    OfferSignatoryTitle: mergedProfileText(existingProfile, body, 'OfferSignatoryTitle', 'offerSignatoryTitle'),
+    AdmissionSignatoryName: mergedProfileText(existingProfile, body, 'AdmissionSignatoryName', 'admissionSignatoryName'),
+    AdmissionSignatoryTitle: mergedProfileText(existingProfile, body, 'AdmissionSignatoryTitle', 'admissionSignatoryTitle'),
+    EmailGreetingTemplate: mergedProfileText(existingProfile, body, 'EmailGreetingTemplate', 'emailGreetingTemplate', 'Dear Parent/Guardian,'),
+    NameFormat: mergedProfileText(existingProfile, body, 'NameFormat', 'nameFormat', 'Surname, first name, middle name'),
+    PortalHeadline: mergedProfileText(existingProfile, body, 'PortalHeadline', 'portalHeadline', 'Admissions and parent services in one place'),
+    PortalSubheading: mergedProfileText(existingProfile, body, 'PortalSubheading', 'portalSubheading', 'Buy forms, complete applications, upload documents, pay fees, and monitor student activity from a secure school portal.'),
+    PortalNotice: mergedProfileText(existingProfile, body, 'PortalNotice', 'portalNotice'),
+    CurrentAcademicSession: mergedProfileText(existingProfile, body, 'CurrentAcademicSession', 'currentAcademicSession'),
+    CurrentTerm: mergedProfileText(existingProfile, body, 'CurrentTerm', 'currentTerm', 'First Term'),
+    DeclarationStatement: mergedProfileText(existingProfile, body, 'DeclarationStatement', 'declarationStatement', 'I declare that the information supplied in this application is complete and correct.'),
+    ResultDisplayMode: mergedProfileText(existingProfile, body, 'ResultDisplayMode', 'resultDisplayMode', 'subjects'),
+    ShowResultsOnline: yesNo(mergedProfileText(existingProfile, body, 'ShowResultsOnline', 'showResultsOnline', 'NO')) || 'NO',
+    OfferDocumentBodyTemplate: mergedProfileText(existingProfile, body, 'OfferDocumentBodyTemplate', 'offerDocumentBodyTemplate'),
+    AdmissionDocumentBodyTemplate: mergedProfileText(existingProfile, body, 'AdmissionDocumentBodyTemplate', 'admissionDocumentBodyTemplate'),
+    GoogleDocumentsUrl: requireAppsScriptWebAppUrl(mergedProfileText(existingProfile, body, 'GoogleDocumentsUrl', 'googleDocumentsUrl')),
     SubscriptionPlan: clean(existingOrganization?.Plan || body.SubscriptionPlan || body.subscriptionPlan) || 'Starter',
     SubscriptionStatus: clean(existingOrganization?.SubscriptionStatus || body.SubscriptionStatus || body.subscriptionStatus),
     TrialStartedAt: clean(existingOrganization?.TrialStartedAt || body.TrialStartedAt || body.trialStartedAt),
