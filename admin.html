@@ -6,7 +6,7 @@
   <title>Organisation Staff Portal</title>
   <meta name="theme-color" content="#071b33">
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260809-direct-transfer">
+  <link rel="stylesheet" href="css/style.css?v=20260809-direct-transfer-compact-account-menu">
   <link rel="stylesheet" href="css/notifications.css?v=20260804-read-efficiency">
 </head>
 <body class="staff-page">
@@ -69,24 +69,31 @@
           <nav class="admin-tabs staff-tabs" id="adminTabs" aria-label="Staff dashboard sections"></nav>
           <div class="staff-sidebar-actions">
             <small class="staff-swipe-hint">Swipe left to close this panel</small>
-            <button type="button" id="staffApprovalSettings" class="staff-profile-settings" hidden>
-              <span aria-hidden="true">⚙</span> User settings
-            </button>
-            <button type="button" id="staffPaymentSettings" class="staff-profile-settings" hidden>
-              <span aria-hidden="true">&#8358;</span> Payment settings
-            </button>
-            <button type="button" id="staffSubscriptionButton" class="staff-profile-settings" hidden>
-              <span aria-hidden="true">&#8593;</span> Subscription
-            </button>
-            <button type="button" id="staffPasskeySetup" class="staff-passkey-setup" hidden>
-              <span aria-hidden="true">◉</span> Set up biometric sign-in
-            </button>
-            <button type="button" id="staffSidebarSwitchUser" class="staff-sidebar-signout"><span aria-hidden="true">&#8644;</span> Switch user</button>
-            <button type="button" id="staffSidebarSignOut" class="staff-sidebar-signout"><span aria-hidden="true">↪</span> Sign out</button>
-          </div>
-          <div class="staff-sidebar-note">
-            <span class="staff-live-dot"></span>
-            <div><strong>Database Live</strong><small>Desktop and web are synchronized</small></div>
+            <details id="staffAccountMenu" class="staff-account-menu">
+              <summary>
+                <span class="staff-account-menu-icon" aria-hidden="true">&#9881;</span>
+                <span class="staff-account-menu-label">Account &amp; settings</span>
+                <span class="staff-account-live" title="Desktop and web are synchronized"><span class="staff-live-dot"></span> Live</span>
+                <span class="staff-account-chevron" aria-hidden="true">&#8963;</span>
+              </summary>
+              <div id="staffAccountMenuPanel" class="staff-account-menu-panel">
+                <button type="button" id="staffApprovalSettings" class="staff-profile-settings" hidden>
+                  <span aria-hidden="true">&#9881;</span> User settings
+                </button>
+                <button type="button" id="staffPaymentSettings" class="staff-profile-settings" hidden>
+                  <span aria-hidden="true">&#8358;</span> Payment settings
+                </button>
+                <button type="button" id="staffSubscriptionButton" class="staff-profile-settings" hidden>
+                  <span aria-hidden="true">&#8593;</span> Subscription
+                </button>
+                <button type="button" id="staffPasskeySetup" class="staff-passkey-setup" hidden>
+                  <span aria-hidden="true">&#9673;</span> Set up biometric sign-in
+                </button>
+                <button type="button" id="staffSidebarSwitchUser" class="staff-sidebar-signout"><span aria-hidden="true">&#8644;</span> Switch user</button>
+                <button type="button" id="staffSidebarSignOut" class="staff-sidebar-signout"><span aria-hidden="true">&#8618;</span> Sign out</button>
+                <div class="staff-account-sync"><span class="staff-live-dot"></span><span><strong>Database live</strong><small>Desktop and web are synchronized</small></span></div>
+              </div>
+            </details>
           </div>
         </aside>
         <button type="button" id="staffSidebarScrim" class="staff-sidebar-scrim" aria-label="Close navigation menu" hidden></button>
@@ -278,7 +285,7 @@
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
   <script src="js/financial-values.js?v=20260803-finance-commas"></script>
   <script src="js/payment-methods.js?v=20260809-platform-direct-transfer"></script>
-  <script src="js/admin.js?v=20260809-platform-direct-transfer-settings-sync"></script>
+  <script src="js/admin.js?v=20260809-platform-direct-transfer-settings-sync-compact-account-menu"></script>
   <script src="js/web-push.js?v=20260801-mobile-push"></script>
   <script src="js/notifications.js?v=20260804-read-efficiency"></script>
 </body>

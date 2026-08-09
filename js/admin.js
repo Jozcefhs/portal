@@ -25,6 +25,8 @@ const signOutButton = document.getElementById('staffSignOut');
 const switchUserButton = document.getElementById('staffSwitchUser');
 const sidebarSignOutButton = document.getElementById('staffSidebarSignOut');
 const sidebarSwitchUserButton = document.getElementById('staffSidebarSwitchUser');
+const staffAccountMenu = document.getElementById('staffAccountMenu');
+const staffAccountMenuPanel = document.getElementById('staffAccountMenuPanel');
 const passwordSwitchUserButton = document.getElementById('staffPasswordSwitchUser');
 const headerRefreshButton = document.getElementById('staffHeaderRefresh');
 const themeToggleButton = document.getElementById('staffThemeToggle');
@@ -857,6 +859,7 @@ function setSidebarOpen(open) {
   sidebarEl.classList.toggle('is-open', shouldOpen);
   sidebarScrim.hidden = !shouldOpen;
   document.body.classList.toggle('staff-sidebar-open', shouldOpen);
+  if (!shouldOpen && staffAccountMenu) staffAccountMenu.open = false;
   if (shouldOpen) sidebarEl.querySelector('[data-tab]')?.focus();
 }
 
@@ -10319,6 +10322,12 @@ sidebarSignOutButton.addEventListener('click', () => signOutFromPortal(sidebarSi
 switchUserButton.addEventListener('click', switchUserFromPortal);
 sidebarSwitchUserButton.addEventListener('click', switchUserFromPortal);
 passwordSwitchUserButton.addEventListener('click', switchUserFromPortal);
+staffAccountMenuPanel.addEventListener('click', (event) => {
+  if (event.target.closest('button')) staffAccountMenu.open = false;
+});
+document.addEventListener('pointerdown', (event) => {
+  if (staffAccountMenu.open && !staffAccountMenu.contains(event.target)) staffAccountMenu.open = false;
+});
 
 staffBrand.addEventListener('click', (event) => {
   const mobileDashboard = window.matchMedia('(max-width:680px)').matches
@@ -10368,6 +10377,7 @@ moduleCloseButton.addEventListener('click', () => moduleDialog.close());
 moduleDialog.addEventListener('click', (event) => { if (event.target === moduleDialog) moduleDialog.close(); });
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
+  staffAccountMenu.open = false;
   setSidebarOpen(false);
   if (moduleDialog.open) moduleDialog.close();
 });

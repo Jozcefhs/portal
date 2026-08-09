@@ -104,13 +104,17 @@ test('overview and department summary cards stay in one scrollable row', () => {
   assert.match(portalCss, /\.department-summary-grid \.module-stat > \*\s*\{[\s\S]*?white-space: nowrap;/);
 });
 
-test('sidebar keeps account actions visible and database status last', () => {
+test('sidebar keeps account actions in one compact overlay control', () => {
   const actionsIndex = adminHtml.indexOf('class="staff-sidebar-actions"');
-  const databaseIndex = adminHtml.indexOf('<strong>Database Live</strong>');
-  assert.ok(actionsIndex >= 0 && databaseIndex > actionsIndex);
+  const accountMenuIndex = adminHtml.indexOf('id="staffAccountMenu"');
+  const databaseIndex = adminHtml.indexOf('<strong>Database live</strong>');
+  assert.ok(actionsIndex >= 0 && accountMenuIndex > actionsIndex && databaseIndex > accountMenuIndex);
   assert.doesNotMatch(adminHtml, /Firestore Live/);
   assert.match(portalCss, /\.staff-sidebar \.staff-tabs\{flex:1 1 auto;min-height:0\}/);
-  assert.match(portalCss, /\.staff-sidebar-actions\{display:flex;flex:0 0 auto;flex-wrap:wrap;gap:8px;margin-top:auto\}/);
+  assert.match(portalCss, /\.staff-sidebar-actions\{flex:0 0 auto;margin-top:auto\}/);
+  assert.match(portalCss, /\.staff-account-menu-panel\{position:absolute;[\s\S]*?bottom:calc\(100% \+ 8px\);[\s\S]*?overflow-y:auto/);
+  assert.match(portalCss, /\.staff-account-menu:not\(\[open\]\)>\.staff-account-menu-panel\{display:none\}/);
+  assert.match(adminJs, /staffAccountMenuPanel\.addEventListener\('click'/);
 });
 
 test('sidebar action zone prevents the final module from overlapping user controls', () => {
