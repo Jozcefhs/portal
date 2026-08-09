@@ -238,6 +238,10 @@ function applySiteProfile(profile) {
       node.src = brandLogo;
       node.style.display = '';
     });
+    document.querySelectorAll('link[rel="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"]').forEach((node) => {
+      node.href = brandLogo;
+      if (node.rel !== 'apple-touch-icon') node.removeAttribute('type');
+    });
   }
   window.SCHOOL_PROFILE = profile;
   window.dispatchEvent(new CustomEvent('school-profile-ready', { detail: profile }));

@@ -35,8 +35,7 @@ test('visible product logo wrappers have no supplied card background', async () 
   assert.match(styleSource, /img\.nav-logo[\s\S]*?background: transparent !important/);
   assert.match(storeStyleSource, /\.public-store-brand img\s*\{[\s\S]*?background: transparent;[\s\S]*?box-shadow: none;/);
   for (const source of [indexSource, schoolSource, parentSource]) {
-    assert.match(source, /manifest\.webmanifest\?v=20260801-transparent-app-logo/);
+    assert.match(source, /\/api\/app-manifest\?v=20260809-branded-app-icon/);
     assert.match(source, /images\/Logo\.png\?v=20260801-transparent-app-logo/);
   }
 });
-

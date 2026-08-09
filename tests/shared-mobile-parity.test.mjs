@@ -101,7 +101,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v163-opaque-account-panel/);
+  assert.match(serviceWorker, /dynamax-v164-branded-app-icon/);
   assert.match(serviceWorker, /'\/js\/app-dialogs\.js'/);
   assert.match(serviceWorker, /'\/setup\.html'/);
   assert.match(serviceWorker, /'\/js\/setup\.js'/);
