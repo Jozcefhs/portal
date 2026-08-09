@@ -53,6 +53,39 @@
 .landing-nav .nav-actions .nav-action-primary { color: #fff; background: var(--landing-navy); }
 .landing-nav .nav-actions .nav-action-primary:hover { color: #fff; background: #082d53; transform: translateY(-1px); }
 
+.landing-announcement {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 1240px;
+  min-height: 48px;
+  margin: 14px auto 0;
+  padding: 11px 16px;
+  border: 1px solid #8dd4c3;
+  border-left: 5px solid var(--landing-teal);
+  border-radius: 12px;
+  background: #e9f8f4;
+  color: #075f4d;
+  font-size: .9rem;
+  font-weight: 700;
+  box-shadow: 0 8px 22px rgba(11, 111, 91, .08);
+}
+.landing-announcement::before {
+  content: "i";
+  display: grid;
+  flex: 0 0 24px;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--landing-teal);
+  color: #fff;
+  font-family: Georgia, serif;
+  font-size: .85rem;
+  font-weight: 800;
+}
+.landing-announcement[hidden] { display: none !important; }
+
 .landing-hero {
   max-width: 1240px;
   grid-template-columns: minmax(0, 1.12fr) minmax(360px, .72fr);
@@ -161,6 +194,7 @@ html[data-theme="dark"] .landing-page { background: radial-gradient(circle at 88
 html[data-theme="dark"] .landing-nav,
 html[data-theme="dark"] .service-directory,
 html[data-theme="dark"] .landing-hero .hero-service-panel { border-color: #2c4056; background: rgba(13, 29, 46, .95); }
+html[data-theme="dark"] .landing-announcement { border-color: #287c68; background: #102f29; color: #c5e9df; }
 html[data-theme="dark"] .landing-nav .brand-lockup strong,
 html[data-theme="dark"] .landing-hero .hero-copy h1,
 html[data-theme="dark"] .landing-hero .service-panel-heading h2,
@@ -192,6 +226,7 @@ html[data-theme="dark"] .service-directory .service-tile-featured { border-color
   .landing-nav { display: grid; gap: 10px; padding: 10px 12px; border-radius: 13px; }
   .landing-nav .nav-actions { width: 100%; overflow-x: auto; flex-wrap: nowrap; justify-content: flex-start; padding-bottom: 2px; scrollbar-width: thin; }
   .landing-nav .nav-actions a { flex: 0 0 auto; padding: 8px 9px; font-size: .72rem; }
+  .landing-announcement { margin-top: 10px; padding: 9px 11px; border-radius: 10px; font-size: .76rem; }
   .landing-hero { gap: 30px; padding: 38px 5px 30px; }
   .landing-hero .hero-copy h1 { font-size: clamp(2.25rem, 12vw, 3.15rem); }
   .landing-hero .hero-copy .lead { font-size: .96rem; }

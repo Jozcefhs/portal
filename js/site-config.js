@@ -247,7 +247,10 @@ function applySiteProfile(profile) {
   window.dispatchEvent(new CustomEvent('school-profile-ready', { detail: profile }));
 }
 
-window.siteProfileReady = loadSiteProfile().then((profile) => {
-  applySiteProfile(profile);
-  return profile;
-});
+const freshInitialSiteProfile = Boolean(document.body?.hasAttribute('data-fresh-site-profile'));
+window.siteProfileReady = freshInitialSiteProfile
+  ? refreshSiteProfile()
+  : loadSiteProfile().then((profile) => {
+      applySiteProfile(profile);
+      return profile;
+    });

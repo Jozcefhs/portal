@@ -10,9 +10,9 @@
   <link rel="apple-touch-icon" href="images/Logo.png?v=20260801-transparent-app-logo">
   <script src="js/preferences.js?v=20260726-biometric"></script>
   <link rel="stylesheet" href="css/style.css?v=20260809-opaque-account-panel-v2">
-  <link rel="stylesheet" href="css/school-landing.css?v=20260809-professional-school-home">
+  <link rel="stylesheet" href="css/school-landing.css?v=20260809-landing-notice">
 </head>
-<body>
+<body data-fresh-site-profile>
   <main class="landing-page">
     <nav class="landing-nav">
       <div class="brand-lockup">
@@ -29,12 +29,13 @@
       </div>
     </nav>
 
+    <aside class="landing-announcement portal-notice" data-portal-notice role="status" aria-live="polite" hidden></aside>
+
     <section class="landing-hero">
       <div class="hero-copy">
         <p class="eyebrow">Integrated School Management Suite</p>
         <h1 data-portal-headline>Admissions and parent services in one place</h1>
         <p class="lead" data-portal-subheading>Buy forms, complete applications, upload documents, pay fees, and monitor student activity from a secure school portal.</p>
-        <p class="portal-notice" data-portal-notice hidden></p>
         <div class="hero-actions">
           <a class="btn" href="buy-form.html">Buy Admission Form</a>
           <a class="btn secondary" href="verify.html">Register Application</a>
@@ -108,7 +109,7 @@
       </div>
     </section>
   </main>
-  <script src="js/site-config.js?v=20260809-branded-app-icon"></script>
+  <script src="js/site-config.js?v=20260809-fresh-landing-notice"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
   <script src="js/pwa-install.js?v=20260809-custom-dialogs"></script>

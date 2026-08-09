@@ -33,8 +33,11 @@ test('guest fee token is encrypted, student-bound and short-lived', async () => 
   assert.equal(payload.sourceType, 'student');
   assert.equal(await readGuestFeePaymentToken(env, token, now + 21 * 60_000), null);
 
-  const replacement = token.endsWith('A') ? 'B' : 'A';
-  assert.equal(await readGuestFeePaymentToken(env, `${token.slice(0, -1)}${replacement}`, now), null);
+  const [ivPart, encryptedPart] = token.split('.');
+  const mutationIndex = Math.floor(encryptedPart.length / 2);
+  const replacement = encryptedPart[mutationIndex] === 'A' ? 'B' : 'A';
+  const tampered = `${ivPart}.${encryptedPart.slice(0, mutationIndex)}${replacement}${encryptedPart.slice(mutationIndex + 1)}`;
+  assert.equal(await readGuestFeePaymentToken(env, tampered, now), null);
 });
 
 test('parent address shown to a guest is masked', () => {
@@ -69,12 +72,13 @@ test('public fee page uses admission number and parent OTP rather than parent cr
 });
 
 test('guest authorization is accepted only by payment APIs and never by the parent dashboard', async () => {
-  const [optionsApi, initApi, parentDashboard, landing, landingCss] = await Promise.all([
+  const [optionsApi, initApi, parentDashboard, landing, landingCss, siteConfig] = await Promise.all([
     source('functions/api/payment-options.js'),
     source('functions/api/init-payment.js'),
     source('js/parent-dashboard.js'),
     source('school.html'),
-    source('css/school-landing.css')
+    source('css/school-landing.css'),
+    source('js/site-config.js')
   ]);
   assert.match(optionsApi, /requireGuestFeePaymentToken/);
   assert.match(optionsApi, /AccountRef: guestAccess\.accountRef/);
@@ -86,6 +90,11 @@ test('guest authorization is accepted only by payment APIs and never by the pare
   assert.doesNotMatch(parentDashboard, /guestPaymentToken|requireGuestFeePaymentToken/);
   assert.match(landing, /parent-approved OTP/i);
   assert.match(landing, /service-directory/);
+  assert.match(landing, /data-fresh-site-profile/);
+  assert.match(landing, /landing-announcement portal-notice/);
   assert.match(landingCss, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
+  assert.match(landingCss, /\.landing-announcement\[hidden\]\s*\{\s*display: none !important/);
   assert.match(landingCss, /@media \(max-width: 620px\)/);
+  assert.match(siteConfig, /hasAttribute\('data-fresh-site-profile'\)/);
+  assert.match(siteConfig, /freshInitialSiteProfile\s*\?\s*refreshSiteProfile\(\)/);
 });
