@@ -399,8 +399,13 @@ export function selectedChildActivityScope(scopePath, collection, child = {}) {
 
 export function recordMatchesSelectedChildScope(row = {}, selectedScope = {}) {
   const pathIdentity = scopedPathIdentity(row.__scopePath);
-  const branchId = pathIdentity?.branchId || clean(row.BranchId || row.branchId);
-  const schoolSection = pathIdentity?.schoolSection || clean(row.SchoolSection || row.schoolSection);
+  // Root-level records created before branch isolation did not always carry
+  // BranchId or SchoolSection. Treat those records with the same legacy
+  // defaults used everywhere else in school-scope.js: main branch plus the
+  // section inferred from the record (secondary when no class is available).
+  // A scoped collection path remains authoritative over conflicting fields.
+  const branchId = pathIdentity?.branchId || scopedRecordBranch(row);
+  const schoolSection = pathIdentity?.schoolSection || scopedRecordSection(row);
   if (!branchId || !schoolSection || !selectedScope.branchId || !selectedScope.schoolSection) return false;
   return lower(branchId) === lower(selectedScope.branchId) &&
     lower(schoolSection) === lower(selectedScope.schoolSection);
@@ -1263,10 +1268,34 @@ function groupedLedgerPayments(entries) {
   return Object.values(groups);
 }
 
+function paymentHistoryRows(paymentEntries = [], ledgerEntries = []) {
+  const records = new Map();
+  paymentEntries.filter(isPaidRecord).forEach((payment) => {
+    const amount = asMoneyNumber(payment.Amount || payment.Credit);
+    if (amount <= 0 || lower(payment.FeeCategory) === 'wallet') return;
+    const record = {
+      ...payment,
+      RecordType: 'Payment',
+      Description: payment.FeeName || payment.FeeCategory || 'Payment',
+      Amount: amount,
+      Debit: 0,
+      Credit: amount
+    };
+    records.set(paymentGroupKey(record), record);
+  });
+  groupedLedgerPayments(ledgerEntries).forEach((record) => {
+    const key = paymentGroupKey(record);
+    if (!records.has(key)) records.set(key, record);
+  });
+  return [...records.values()].sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)));
+}
+
 function paymentHistoryFor(child, payments, ledger) {
+  const paymentEntries = (payments || []).filter((entry) =>
+    financialReferenceMatches(entry.AccountRef || entry.AdmissionNo || entry.ApplicationReference, child));
   const ledgerEntries = (ledger || []).filter((entry) => financialReferenceMatches(entry.AccountRef, child) && lower(entry.FeeCategory) !== 'wallet');
   const paidLedgerEntries = ledgerEntries.filter(isPaidRecord);
-  return groupedLedgerPayments(paidLedgerEntries).sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)));
+  return paymentHistoryRows(paymentEntries, paidLedgerEntries);
 }
 
 function recordMatchesApplication(record, applicationRef) {
@@ -1277,18 +1306,25 @@ function recordMatchesApplication(record, applicationRef) {
     referencesMatch(record.Reference, ref);
 }
 
-function paymentHistoryForChild(child, payments, ledger) {
+export function paymentHistoryForChild(child, payments, ledger) {
   if (!childCanShowFinanceHistory(child)) return [];
   if (child && child.SourceType === 'Application') {
     const appRef = clean(child.ApplicationReference || child.AccountRef);
     const childCreatedMs = timestampMs(child.SubmittedAt || child.CreatedAt || child.UpdatedAt);
+    const appPayments = (payments || []).filter((entry) => {
+      if (lower(entry.FeeCategory) === 'wallet' || !isPaidRecord(entry) ||
+          !(recordMatchesApplication(entry, appRef) || financialReferenceMatches(entry.AccountRef, child))) return false;
+      if (!childCreatedMs) return true;
+      const entryMs = timestampMs(entry.RawDate || entry.PaidAt || entry.Date || entry.CreatedAt);
+      return !entryMs || entryMs >= childCreatedMs;
+    });
     const appLedger = (ledger || []).filter((entry) => {
       if (lower(entry.FeeCategory) === 'wallet' || !isPaidRecord(entry) || !recordMatchesApplication(entry, appRef)) return false;
       if (!childCreatedMs) return false;
       const entryMs = timestampMs(entry.RawDate || entry.Date);
       return entryMs >= childCreatedMs;
     });
-    return groupedLedgerPayments(appLedger).sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)));
+    return paymentHistoryRows(appPayments, appLedger);
   }
   return paymentHistoryFor(child, payments, ledger);
 }

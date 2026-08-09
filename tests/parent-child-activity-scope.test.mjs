@@ -63,6 +63,26 @@ test('a scoped collection path may provide scope without trusting conflicting fi
   }, scope), true);
 });
 
+test('legacy root finance records use the main-branch section defaults', () => {
+  const mainSecondary = {
+    branchId: 'main',
+    schoolSection: 'secondary'
+  };
+  assert.equal(recordMatchesSelectedChildScope({
+    AccountRef: 'DCA/26/001'
+  }, mainSecondary), true);
+  assert.equal(recordMatchesSelectedChildScope({
+    AccountRef: 'DCA/26/001',
+    ClassName: 'Primary 4'
+  }, mainSecondary), false);
+  assert.equal(recordMatchesSelectedChildScope({
+    AccountRef: 'DCA/26/001'
+  }, {
+    branchId: 'west',
+    schoolSection: 'secondary'
+  }), false);
+});
+
 test('child activity and wallet mutations require and preserve selected-child scope', () => {
   assert.match(
     source,
