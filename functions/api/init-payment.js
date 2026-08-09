@@ -14,6 +14,7 @@ import {
   verifyTurnstile
 } from '../lib/request-security.js';
 import { createDirectTransferRequest, normalizePublicPaymentMethod, publicPaymentMethods } from '../lib/direct-bank-transfer.js';
+import { requireGuestFeePaymentToken } from '../lib/guest-fee-payment.js';
 
 const PAYSTACK_INIT_URL = 'https://api.paystack.co/transaction/initialize';
 function cleanReference(value) {
@@ -137,27 +138,32 @@ export async function onRequestPost(context) {
     const { request, env } = context;
     const body = await readJsonBody(request, { maxBytes: 768 * 1024 });
     const session = await readParentSession(env, request);
-    const email = String(session?.email || body.email || '').trim().toLowerCase();
-    const code = String(body.code || '').trim();
+    const guestToken = String(body.guestPaymentToken || body.GuestPaymentToken || '').trim();
+    const guestAccess = guestToken ? await requireGuestFeePaymentToken(env, guestToken) : null;
+    const email = String(guestAccess?.parentEmail || session?.email || body.email || '').trim().toLowerCase();
+    const code = guestAccess ? '' : String(body.code || '').trim();
     const feeCode = String(body.feeCode || '').trim();
-    const accountRef = String(body.accountRef || body.AccountRef || '').trim();
-    const sourceType = String(body.sourceType || body.SourceType || '').trim();
-    const scopePath = String(body.scopePath || body.ScopePath || '').trim();
+    const accountRef = String(guestAccess?.accountRef || body.accountRef || body.AccountRef || '').trim();
+    const sourceType = String(guestAccess?.sourceType || body.sourceType || body.SourceType || '').trim();
+    const scopePath = String(guestAccess?.scopePath || body.scopePath || body.ScopePath || '').trim();
     const requestedAmount = Number(String(body.amount || '0').replace(/,/g, ''));
     const paymentMethod = normalizePublicPaymentMethod(body.paymentMethod || body.PaymentMethod);
 
-    if (!email || (!session && !code) || !feeCode) {
+    if (!email || (!session && !guestAccess && !code) || !feeCode) {
       return Response.json({ ok: false, message: 'Email, password or verification code, and fee are required.' }, { status: 400 });
+    }
+    if (guestAccess && ['WALLET_TOPUP', 'STORE_CART'].includes(feeCode.toUpperCase())) {
+      return Response.json({ ok: false, message: 'This parent-approved link can pay school fees only.' }, { status: 403 });
     }
     await verifyTurnstile(env, request, body, 'init_payment');
 
-    const storedPassword = session
+    const storedPassword = session || guestAccess
       ? { configured: false, valid: false }
       : await verifyStoredParentPassword(env, email, code);
     if (storedPassword.configured && !storedPassword.valid) {
       return Response.json({ ok: false, message: 'Invalid parent email or password.' }, { status: 401 });
     }
-    const authenticatedParentEmail = session?.email || (storedPassword.valid ? email : '');
+    const authenticatedParentEmail = guestAccess?.parentEmail || session?.email || (storedPassword.valid ? email : '');
 
     let feeData = null;
     try {
@@ -270,6 +276,11 @@ export async function onRequestPost(context) {
       return Response.json({ ok: false, message: 'That fee is not currently payable.' }, { status: 400 });
     }
 
+    const guestFeeCategory = String(fee.FeeCategory || '').trim().toLowerCase();
+    if (guestAccess && ['wallet', 'store'].includes(guestFeeCategory)) {
+      return Response.json({ ok: false, message: 'This parent-approved link can pay school fees only.' }, { status: 403 });
+    }
+
     const isWallet = isWalletFee(fee);
     const isSchoolFeesTotal = feeCode === SCHOOL_FEES_TOTAL_CODE;
     const configuredAmount = toAmount(fee.Amount);
@@ -347,6 +358,7 @@ export async function onRequestPost(context) {
       Amount: amount,
       Currency: String(fee.Currency || 'NGN'),
       PaymentMethod: paymentMethod === 'direct_bank_transfer' ? 'Direct Bank Transfer' : 'Paystack',
+      AuthorizationMode: guestAccess ? 'Parent OTP Guest Payment' : (session ? 'Parent Session' : 'Parent Credential'),
       Status: paymentMethod === 'direct_bank_transfer' ? 'Awaiting Verification' : 'Pending',
       CreatedAt: new Date().toISOString()
     });
@@ -379,6 +391,7 @@ export async function onRequestPost(context) {
           FeeCategory: fee.FeeCategory || '',
           Amount: amount,
           Currency: String(fee.Currency || 'NGN'),
+          AuthorizationMode: guestAccess ? 'Parent OTP Guest Payment' : (session ? 'Parent Session' : 'Parent Credential'),
           FeeItems: schoolFeeItems || [],
           StoreCart: storeCart
         }
@@ -426,8 +439,9 @@ export async function onRequestPost(context) {
           studentType: account.StudentType,
           academicSession: account.AcademicSession,
           term: account.Term,
-          verificationEmail: email
-          ,storeCart: storeCart.length ? storeCart : undefined
+          verificationEmail: email,
+          authorizationMode: guestAccess ? 'parent_otp_guest_payment' : (session ? 'parent_session' : 'parent_credential'),
+          storeCart: storeCart.length ? storeCart : undefined
         }
       })
     });

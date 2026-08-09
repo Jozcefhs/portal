@@ -1423,6 +1423,19 @@ export function shouldResolveStudentForPayable(application = {}, requestedSource
     normalizeMatchText(application.Status) === 'enrolled';
 }
 
+function identityUsesParentEmail(identity = {}, email = '') {
+  const requestedEmail = lower(email);
+  return Boolean(requestedEmail && [
+    identity.ParentEmail,
+    identity.ParentEmailAddress,
+    identity.GuardianEmail,
+    identity.FatherEmail,
+    identity.MotherEmail,
+    identity.VerificationEmail,
+    identity.Email
+  ].some((value) => lower(value) === requestedEmail));
+}
+
 export async function getPayableFees(env, body = {}) {
   const email = lower(body.Email || body.email);
   const code = clean(body.VerificationCode || body.code).toUpperCase();
@@ -1462,10 +1475,10 @@ export async function getPayableFees(env, body = {}) {
       )
     : null;
   const directIdentityValid = directIdentity && directCollection === 'applications'
-    ? lower(directIdentity.VerificationEmail || directIdentity.ParentEmail || directIdentity.Email) === email &&
+    ? identityUsesParentEmail(directIdentity, email) &&
       (authenticatedParent || clean(directIdentity.VerificationCode).toUpperCase() === code)
     : directIdentity &&
-      lower(directIdentity.ParentEmail || directIdentity.Email || directIdentity.VerificationEmail) === email &&
+      identityUsesParentEmail(directIdentity, email) &&
       (authenticatedParent || studentLoginCodes(directIdentity).includes(code));
   const [firestoreApplications, sheetApplications, firestoreStudents, sheetStudents, firestoreSales, sheetSales] = directIdentityValid
     ? [
@@ -1489,9 +1502,9 @@ export async function getPayableFees(env, body = {}) {
   const applications = [...firestoreApplications, ...sheetApplications].map(normalizeApplication);
   const students = [...firestoreStudents, ...sheetStudents].map(normalizeStudent);
   const sales = [...firestoreSales, ...sheetSales];
-  const loginApp = applications.find((row) => lower(row.VerificationEmail || row.Email || row.ParentEmail) === email &&
+  const loginApp = applications.find((row) => identityUsesParentEmail(row, email) &&
     (authenticatedParent || clean(row.VerificationCode).toUpperCase() === code));
-  const loginStudent = students.find((row) => lower(row.ParentEmail || row.Email || row.VerificationEmail) === email &&
+  const loginStudent = students.find((row) => identityUsesParentEmail(row, email) &&
     (authenticatedParent || studentLoginCodes(row).includes(code)));
   const saleMatch = sales.some((row) => {
     return lower(pick(row, ['Email', 'email'])) === email &&
@@ -1543,7 +1556,7 @@ export async function getPayableFees(env, body = {}) {
     );
   }
   if (student) {
-    const parentEmailMatches = lower(student.ParentEmail || student.Email) === email;
+    const parentEmailMatches = identityUsesParentEmail(student, email);
     const studentAppRef = clean(student.ApplicationReference);
     const studentApplicationScopePath = identityScopePathForCollection(student, 'applications');
     const linkedApplication = studentAppRef
@@ -1559,10 +1572,8 @@ export async function getPayableFees(env, body = {}) {
           )
         )
       : null;
-    const linkedEmailMatches = linkedApplication && [linkedApplication.VerificationEmail, linkedApplication.ParentEmail, linkedApplication.Email]
-      .some((value) => lower(value) === email);
-    const selectedEmailMatches = selectedApplication && [selectedApplication.VerificationEmail, selectedApplication.ParentEmail, selectedApplication.Email]
-      .some((value) => lower(value) === email);
+    const linkedEmailMatches = linkedApplication && identityUsesParentEmail(linkedApplication, email);
+    const selectedEmailMatches = selectedApplication && identityUsesParentEmail(selectedApplication, email);
     if (!parentEmailMatches && !linkedEmailMatches && !selectedEmailMatches && !saleMatch) {
       const err = new Error('The selected student is not linked to this parent email.');
       err.status = 403;
@@ -1570,8 +1581,7 @@ export async function getPayableFees(env, body = {}) {
     }
     app = linkedApplication || selectedApplication || null;
   } else if (selectedApplication) {
-    const selectedEmailMatches = [selectedApplication.VerificationEmail, selectedApplication.ParentEmail, selectedApplication.Email]
-      .some((value) => lower(value) === email);
+    const selectedEmailMatches = identityUsesParentEmail(selectedApplication, email);
     if (!selectedEmailMatches) {
       const err = new Error('The selected applicant is not linked to this parent email.');
       err.status = 403;

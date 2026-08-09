@@ -1,6 +1,10 @@
+const otpRequestForm = document.getElementById('otpRequestForm');
 const lookupForm = document.getElementById('paymentLookupForm');
 const statusEl = document.getElementById('paymentStatus');
+const sendOtpBtn = document.getElementById('sendOtpBtn');
 const lookupBtn = document.getElementById('lookupBtn');
+const restartOtpBtn = document.getElementById('restartOtpBtn');
+const otpDeliverySummary = document.getElementById('otpDeliverySummary');
 const feePanel = document.getElementById('feePanel');
 const feeList = document.getElementById('feeList');
 const accountSummary = document.getElementById('accountSummary');
@@ -9,8 +13,9 @@ const breakdownEl = document.getElementById('schoolFeeBreakdown');
 const walletAmountBox = document.getElementById('walletAmountBox');
 const walletAmountInput = document.getElementById('walletAmount');
 
-let currentEmail = '';
-let currentCode = '';
+let currentAdmissionNumber = '';
+let guestPaymentChallengeId = '';
+let guestPaymentToken = '';
 let currentFees = [];
 let currentBreakdown = [];
 let currentBranchId = 'main';
@@ -40,6 +45,19 @@ function shouldReleaseIdempotencyKey(response, data) {
 function setStatus(message, type) {
   statusEl.textContent = message || '';
   statusEl.className = 'status ' + (type || '');
+}
+
+function clearGuestPaymentAuthorization() {
+  guestPaymentChallengeId = '';
+  guestPaymentToken = '';
+  paymentIdempotencyKey = '';
+  feePanel.hidden = true;
+}
+
+async function publicTurnstile(action) {
+  return window.DynamaxPublicApi?.getTurnstileToken
+    ? window.DynamaxPublicApi.getTurnstileToken(action)
+    : {};
 }
 
 function formatMoney(amount, currency) {
@@ -311,34 +329,109 @@ function renderFees(account, fees, breakdown) {
   updateWalletAmountVisibility();
 }
 
-lookupForm.addEventListener('submit', async (event) => {
+otpRequestForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  currentEmail = document.getElementById('email').value.trim().toLowerCase();
-  currentCode = document.getElementById('code').value.trim().toUpperCase();
-  feePanel.hidden = true;
-  if (!window.DynamaxActionFeedback.begin(lookupBtn, 'Checking fees...')) return;
-  setStatus('Checking payable fees...', '');
+  currentAdmissionNumber = document.getElementById('admissionNumber').value.trim().toUpperCase();
+  clearGuestPaymentAuthorization();
+  lookupForm.hidden = true;
+  if (!currentAdmissionNumber) {
+    setStatus('Enter the student admission number.', 'bad');
+    return;
+  }
+  if (!window.DynamaxActionFeedback.begin(sendOtpBtn, 'Sending OTP...')) return;
+  setStatus('Verifying the admission number and contacting the parent...', '');
 
   try {
-    const turnstile = window.DynamaxPublicApi?.getTurnstileToken
-      ? await window.DynamaxPublicApi.getTurnstileToken('payment_lookup')
-      : {};
+    const turnstile = await publicTurnstile('guest_fee_otp_request');
+    const response = await fetch('/api/guest-fee-payment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'requestOtp',
+        admissionNumber: currentAdmissionNumber,
+        ...turnstile
+      })
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.ok) throw new Error(data?.message || 'The OTP could not be sent.');
+    guestPaymentChallengeId = String(data.challengeId || '');
+    otpDeliverySummary.textContent = `OTP sent to ${data.maskedParentEmail}. Ask the parent to forward the code only if they approve this payment. It expires in ${data.expiresInMinutes || 10} minutes.`;
+    otpRequestForm.hidden = true;
+    lookupForm.hidden = false;
+    document.getElementById('otp').value = '';
+    document.getElementById('otp').focus({ preventScroll: false });
+    setStatus(data.message || 'OTP sent to the parent.', 'ok');
+  } catch (error) {
+    setStatus(error.message, 'bad');
+  } finally {
+    window.DynamaxActionFeedback.end(sendOtpBtn);
+  }
+});
+
+lookupForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const otp = document.getElementById('otp').value.trim();
+  feePanel.hidden = true;
+  if (!guestPaymentToken && (!guestPaymentChallengeId || !/^\d{6}$/.test(otp))) {
+    setStatus('Enter the six-digit OTP sent to the parent.', 'bad');
+    return;
+  }
+  if (!window.DynamaxActionFeedback.begin(lookupBtn, 'Checking fees...')) return;
+  setStatus('Confirming parent approval...', '');
+
+  try {
+    if (!guestPaymentToken) {
+      const verificationTurnstile = await publicTurnstile('guest_fee_otp_verify');
+      const verificationResponse = await fetch('/api/guest-fee-payment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'verifyOtp',
+          challengeId: guestPaymentChallengeId,
+          otp,
+          ...verificationTurnstile
+        })
+      });
+      const verification = await verificationResponse.json().catch(() => null);
+      if (!verificationResponse.ok || !verification?.ok) {
+        throw new Error(verification?.message || 'The OTP could not be verified.');
+      }
+      guestPaymentToken = String(verification.guestPaymentToken || '');
+      guestPaymentChallengeId = '';
+      if (!guestPaymentToken) throw new Error('Payment authorization was not issued. Request a new OTP.');
+    }
+    const turnstile = await publicTurnstile('payment_lookup');
     const response = await fetch('/api/payment-options', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: currentEmail, code: currentCode, ...turnstile })
+      body: JSON.stringify({ guestPaymentToken, ...turnstile })
     });
     const data = await response.json();
     if (!response.ok || !data?.ok) {
       throw new Error(data.message || 'Could not load payable fees.');
     }
     renderFees(data.account || {}, data.fees || [], data.schoolFeeBreakdown || []);
-    setStatus('Review the payable amount, then choose a payment method.', 'ok');
+    lookupForm.hidden = true;
+    setStatus(`Parent approval confirmed for ${currentAdmissionNumber}. Review the payable amount, then choose a payment method.`, 'ok');
   } catch (error) {
+    if (/expired|invalid|no longer valid|too many/i.test(error.message)) {
+      guestPaymentChallengeId = '';
+      guestPaymentToken = '';
+      otpRequestForm.hidden = false;
+    }
     setStatus(error.message, 'bad');
   } finally {
     window.DynamaxActionFeedback.end(lookupBtn);
   }
+});
+
+restartOtpBtn?.addEventListener('click', () => {
+  clearGuestPaymentAuthorization();
+  otpRequestForm.hidden = false;
+  lookupForm.hidden = true;
+  document.getElementById('otp').value = '';
+  document.getElementById('admissionNumber').focus({ preventScroll: false });
+  setStatus('Enter another admission number to request a new parent OTP.', '');
 });
 
 payBtn.addEventListener('click', async () => {
@@ -369,9 +462,7 @@ payBtn.addEventListener('click', async () => {
     if (!window.DynamaxActionFeedback.begin(payBtn, paymentChoice.paymentMethod === 'direct_bank_transfer' ? 'Submitting transfer...' : 'Starting checkout...')) return;
     setStatus(paymentChoice.paymentMethod === 'direct_bank_transfer' ? 'Submitting your transfer for verification...' : 'Starting secure checkout...', '');
     paymentIdempotencyKey = paymentIdempotencyKey || newIdempotencyKey();
-    const turnstile = window.DynamaxPublicApi?.getTurnstileToken
-      ? await window.DynamaxPublicApi.getTurnstileToken('init_payment')
-      : {};
+    const turnstile = await publicTurnstile('init_payment');
     const response = await fetch('/api/init-payment', {
       method: 'POST',
       headers: {
@@ -379,8 +470,7 @@ payBtn.addEventListener('click', async () => {
         'Idempotency-Key': paymentIdempotencyKey
       },
       body: JSON.stringify({
-        email: currentEmail,
-        code: currentCode,
+        guestPaymentToken,
         feeCode: fee.FeeCode,
         components: fee.Components || undefined,
         amount: rules.show ? enteredAmount : undefined,
@@ -402,6 +492,11 @@ payBtn.addEventListener('click', async () => {
     }
     window.location.href = data.authorizationUrl;
   } catch (error) {
+    if (/expired|invalid|no longer valid/i.test(error.message)) {
+      clearGuestPaymentAuthorization();
+      otpRequestForm.hidden = false;
+      lookupForm.hidden = true;
+    }
     setStatus(error.message, 'bad');
     window.DynamaxActionFeedback.end(payBtn);
   }

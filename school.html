@@ -10,6 +10,7 @@
   <link rel="apple-touch-icon" href="images/Logo.png?v=20260801-transparent-app-logo">
   <script src="js/preferences.js?v=20260726-biometric"></script>
   <link rel="stylesheet" href="css/style.css?v=20260809-opaque-account-panel-v2">
+  <link rel="stylesheet" href="css/school-landing.css?v=20260809-professional-school-home">
 </head>
 <body>
   <main class="landing-page">
@@ -22,9 +23,9 @@
         </div>
       </div>
       <div class="nav-actions">
-        <a href="index.html">Suite Home</a>
-        <a href="parent-dashboard.html">Parent Dashboard</a>
-        <a href="admin.html">Staff Portal</a>
+        <a href="index.html">Suite home</a>
+        <a href="parent-dashboard.html">Parent dashboard</a>
+        <a class="nav-action-primary" href="admin.html">Staff portal</a>
       </div>
     </nav>
 
@@ -38,21 +39,73 @@
           <a class="btn" href="buy-form.html">Buy Admission Form</a>
           <a class="btn secondary" href="verify.html">Register Application</a>
         </div>
+        <div class="hero-trust" aria-label="Portal benefits">
+          <span><b aria-hidden="true">&#10003;</b> Secure payments</span>
+          <span><b aria-hidden="true">&#10003;</b> Parent-approved access</span>
+          <span><b aria-hidden="true">&#10003;</b> Mobile friendly</span>
+        </div>
       </div>
       <div class="hero-service-panel" aria-label="Portal services">
-        <div><strong>Admission</strong><span>Purchase forms and submit applications securely.</span></div>
-        <div><strong>Payments</strong><span>Pay approved fees and view payment status.</span></div>
-        <div><strong>Parent View</strong><span>Track results, clinic visits, wallet activity, and notices.</span></div>
+        <div class="service-panel-heading">
+          <span class="service-panel-kicker">Secure self-service</span>
+          <h2>Everything families need</h2>
+          <p>Complete common school services online, without unnecessary office visits.</p>
+        </div>
+        <div class="service-summary">
+          <span class="summary-icon" aria-hidden="true">01</span>
+          <span><strong>Apply for admission</strong><small>Purchase forms and complete applications securely.</small></span>
+        </div>
+        <div class="service-summary">
+          <span class="summary-icon" aria-hidden="true">02</span>
+          <span><strong>Make a payment</strong><small>Pay approved fees with short-lived parent authorization.</small></span>
+        </div>
+        <div class="service-summary">
+          <span class="summary-icon" aria-hidden="true">03</span>
+          <span><strong>Follow student progress</strong><small>View results, payments, documents and school activity.</small></span>
+        </div>
       </div>
     </section>
 
-    <section class="service-grid">
-      <a class="service-tile" href="buy-form.html"><strong>Buy Admission Form</strong><span>Start a new application and receive a verification code.</span></a>
-      <a class="service-tile" href="verify.html"><strong>Register</strong><span>Continue after purchasing an admission form.</span></a>
-      <a class="service-tile" href="payments.html"><strong>Pay Fees</strong><span>Review payable items and proceed to secure checkout.</span></a>
-      <a class="service-tile" href="parent-dashboard.html"><strong>Parent Dashboard</strong><span>Monitor linked children, payments, results, and activity.</span></a>
-      <a class="service-tile" href="upload-documents.html"><strong>Upload Documents</strong><span>Submit missing documents requested by the admissions office.</span></a>
-      <a class="service-tile" href="setup.html"><strong>School Setup</strong><span>Configure the school profile and portal display.</span></a>
+    <section class="service-directory" aria-labelledby="serviceDirectoryTitle">
+      <header class="service-directory-heading">
+        <div>
+          <p class="eyebrow">Quick access</p>
+          <h2 id="serviceDirectoryTitle">Choose a service</h2>
+        </div>
+        <p>Start with the action you need. Each service opens in its own secure workspace.</p>
+      </header>
+      <div class="service-grid">
+        <a class="service-tile" href="buy-form.html">
+          <span class="service-icon" aria-hidden="true">A</span>
+          <span class="service-copy"><strong>Buy Admission Form</strong><span>Start a new application and receive a verification code.</span></span>
+          <span class="service-arrow" aria-hidden="true">&rarr;</span>
+        </a>
+        <a class="service-tile" href="verify.html">
+          <span class="service-icon" aria-hidden="true">R</span>
+          <span class="service-copy"><strong>Register Application</strong><span>Continue an application after purchasing a form.</span></span>
+          <span class="service-arrow" aria-hidden="true">&rarr;</span>
+        </a>
+        <a class="service-tile service-tile-featured" href="payments.html">
+          <span class="service-icon" aria-hidden="true">&#8358;</span>
+          <span class="service-copy"><strong>Pay Fees</strong><span>Use an admission number and a parent-approved OTP to pay securely.</span></span>
+          <span class="service-arrow" aria-hidden="true">&rarr;</span>
+        </a>
+        <a class="service-tile" href="parent-dashboard.html">
+          <span class="service-icon" aria-hidden="true">P</span>
+          <span class="service-copy"><strong>Parent Dashboard</strong><span>Monitor linked children, payments, results and activity.</span></span>
+          <span class="service-arrow" aria-hidden="true">&rarr;</span>
+        </a>
+        <a class="service-tile" href="upload-documents.html">
+          <span class="service-icon" aria-hidden="true">D</span>
+          <span class="service-copy"><strong>Upload Documents</strong><span>Submit documents requested by the Admissions Office.</span></span>
+          <span class="service-arrow" aria-hidden="true">&rarr;</span>
+        </a>
+        <a class="service-tile" href="setup.html">
+          <span class="service-icon" aria-hidden="true">S</span>
+          <span class="service-copy"><strong>School Setup</strong><span>Manage the school profile, branding and public portal display.</span></span>
+          <span class="service-arrow" aria-hidden="true">&rarr;</span>
+        </a>
+      </div>
     </section>
   </main>
   <script src="js/site-config.js?v=20260809-branded-app-icon"></script>

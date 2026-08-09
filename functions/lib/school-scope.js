@@ -93,13 +93,18 @@ export async function schoolCollectionPaths(env, collection, requestedScope = nu
   return [...new Set(paths)];
 }
 
-export async function getSchoolDocumentById(env, collection, documentId, requestedScope = null) {
+export async function getSchoolDocumentsById(env, collection, documentId, requestedScope = null) {
   const paths = await schoolCollectionPaths(env, collection, requestedScope);
   const groups = await Promise.all(paths.map(async (path) => {
     const row = await getDocument(env, path, documentId).catch(() => null);
     return row ? { ...row, __scopePath: path } : null;
   }));
-  return groups.find(Boolean) || null;
+  return groups.filter(Boolean);
+}
+
+export async function getSchoolDocumentById(env, collection, documentId, requestedScope = null) {
+  const matches = await getSchoolDocumentsById(env, collection, documentId, requestedScope);
+  return matches[0] || null;
 }
 
 function validatedCollectionScopePath(value, collection) {

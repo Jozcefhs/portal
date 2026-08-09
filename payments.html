@@ -3,9 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Pay Admission Fees</title>
+  <title>Pay School Fees</title>
   <script src="js/preferences.js?v=20260726-biometric"></script>
   <link rel="stylesheet" href="css/style.css?v=20260809-opaque-account-panel-v2">
+  <link rel="stylesheet" href="css/guest-fee-payment.css?v=20260809-parent-otp">
 </head>
 <body>
   <main class="page-wrap narrow">
@@ -14,20 +15,34 @@
         <img src="images/Logo.png" alt="School logo" class="logo small" onerror="this.style.display='none'">
         <div>
           <h1>Pay School Fees</h1>
-          <p class="muted"><span data-school-name>School Portal</span> - use the same email address and verification code used for your admission application.</p>
+          <p class="muted"><span data-school-name>School Portal</span> - pay for a student without signing in to the parent dashboard.</p>
         </div>
       </div>
 
-      <form id="paymentLookupForm" autocomplete="on">
-        <label for="email">Verification Email <span class="required">*</span></label>
-        <input id="email" name="email" type="email" required>
+      <aside class="guest-payment-assurance" aria-label="Payment privacy information">
+        <strong>Parent-approved guest payment</strong>
+        <span>Enter the student's admission number. A one-time code will be sent only to the parent's saved email. The code permits fee payment and never opens the parent dashboard.</span>
+      </aside>
 
-        <label for="code">Verification Code <span class="required">*</span></label>
-        <input id="code" name="code" type="text" required>
+      <form id="otpRequestForm" autocomplete="off">
+        <label for="admissionNumber">Student admission number <span class="required">*</span></label>
+        <input id="admissionNumber" name="admissionNumber" type="text" maxlength="140" autocapitalize="characters" spellcheck="false" placeholder="Example: DCA/26/001" required>
 
-        <button type="submit" id="lookupBtn">Find Payable Fees</button>
-        <p id="paymentStatus" class="status" aria-live="polite"></p>
+        <button type="submit" id="sendOtpBtn">Send OTP to parent</button>
       </form>
+
+      <form id="paymentLookupForm" class="guest-otp-form" autocomplete="off" hidden>
+        <p id="otpDeliverySummary" class="guest-otp-summary"></p>
+
+        <label for="otp">Parent approval OTP <span class="required">*</span></label>
+        <input id="otp" name="otp" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="Enter the 6-digit OTP" required>
+
+        <div class="guest-otp-actions">
+          <button type="submit" id="lookupBtn">Verify OTP &amp; find fees</button>
+          <button type="button" class="btn secondary" id="restartOtpBtn">Use another admission number</button>
+        </div>
+      </form>
+      <p id="paymentStatus" class="status" aria-live="polite"></p>
 
       <section id="feePanel" class="fee-panel" hidden>
         <div class="verified-box" id="accountSummary"></div>
@@ -53,6 +68,6 @@
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/financial-values.js?v=20260803-finance-commas"></script>
   <script src="js/payment-methods.js?v=20260809-direct-transfer-sharp-text"></script>
-  <script src="js/payments.js?v=20260809-direct-transfer"></script>
+  <script src="js/payments.js?v=20260809-parent-otp"></script>
 </body>
 </html>

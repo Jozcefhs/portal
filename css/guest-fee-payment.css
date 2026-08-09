@@ -1,0 +1,53 @@
+.guest-payment-assurance {
+  display: grid;
+  gap: .35rem;
+  margin: 0 0 1rem;
+  padding: .85rem 1rem;
+  border: 1px solid #9bd9ca;
+  border-left: 4px solid #0b8f76;
+  border-radius: 10px;
+  background: #edf9f5;
+  color: #174d43;
+}
+
+.guest-payment-assurance strong { color: #075f4d; }
+.guest-payment-assurance span { font-size: .88rem; line-height: 1.45; }
+.guest-otp-form { margin-top: 1rem; }
+
+.guest-otp-summary {
+  margin: 0 0 .8rem;
+  padding: .75rem .85rem;
+  border-radius: 8px;
+  background: #eef5ff;
+  color: #17466f;
+  line-height: 1.45;
+}
+
+.guest-otp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .55rem;
+}
+
+.guest-otp-actions button { width: auto; margin: 0; }
+
+html[data-theme="dark"] .guest-payment-assurance {
+  border-color: #287c68;
+  background: #102f29;
+  color: #c5e9df;
+}
+
+html[data-theme="dark"] .guest-payment-assurance strong { color: #9ae7d1; }
+
+html[data-theme="dark"] .guest-otp-summary {
+  background: #142b45;
+  color: #d8e9fb;
+}
+
+@media (max-width: 520px) {
+  .guest-payment-assurance { padding: .7rem .8rem; }
+  .guest-payment-assurance span { font-size: .8rem; }
+  .guest-otp-actions { align-items: stretch; }
+  .guest-otp-actions button { font-size: .78rem; }
+}
