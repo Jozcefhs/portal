@@ -25,7 +25,7 @@ const [
   readFile(new URL('functions/api/verify-payment.js', portalRoot), 'utf8')
 ]);
 
-test('public giving page collects donor details before opening Paystack', () => {
+test('public giving page collects donor details before choosing a payment route', () => {
   assert.match(givingHtml, /id="publicGivingForm"/);
   assert.match(givingHtml, /name="DonorName"/);
   assert.match(givingHtml, /name="DonorEmail"/);
@@ -33,20 +33,22 @@ test('public giving page collects donor details before opening Paystack', () => 
   assert.match(givingHtml, /name="Currency"/);
   assert.match(givingHtml, /name="Amount"/);
   assert.match(givingHtml, /name="CompanyWebsite"/);
-  assert.match(givingHtml, /js\/give\.js\?v=20260803-donor-currency-attendance/);
+  assert.match(givingHtml, /js\/payment-methods\.js\?v=20260809-direct-transfer/);
+  assert.match(givingHtml, /js\/give\.js\?v=20260809-direct-transfer/);
   assert.match(givingJs, /getTurnstileToken\('church_giving'\)/);
   assert.match(givingJs, /fetch\('\/api\/public-church-payment'/);
   assert.match(givingJs, /'Idempotency-Key': idempotencyKey/);
   assert.match(givingJs, /window\.location\.assign\(paymentUrl\)/);
 });
 
-test('public giving API is bounded, rate limited and replay safe', () => {
-  assert.match(publicApi, /readJsonBody\(request, \{ maxBytes: 32 \* 1024 \}\)/);
+test('public giving API accepts bounded proof uploads, remains rate limited and replay safe', () => {
+  assert.match(publicApi, /readJsonBody\(request, \{ maxBytes: 768 \* 1024 \}\)/);
   assert.match(publicApi, /verifyTurnstile\(env, request, body, 'church_giving'\)/);
   assert.match(publicApi, /consumeRequestAllowance\(env, request/);
   assert.match(publicApi, /scope: 'public-church-giving'/);
   assert.match(publicApi, /beginIdempotentRequest\(env, request, body/);
   assert.match(publicApi, /initPublicChurchDonationPayment\(env, body/);
+  assert.match(publicApi, /initPublicChurchDonationDirectTransfer\(env, body/);
   assert.match(requestSecurity, /export async function consumeRequestAllowance/);
   assert.match(requestSecurity, /REQUEST_ALLOWANCE_COLLECTION = 'requestRateLimits'/);
 });

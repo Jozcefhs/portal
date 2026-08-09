@@ -30,7 +30,14 @@ export const BRANCH_PROFILE_OVERRIDE_FIELDS = Object.freeze([
   'CurrentTerm',
   'DeclarationStatement',
   'ResultDisplayMode',
-  'ShowResultsOnline'
+  'ShowResultsOnline',
+  'OnlinePaymentEnabled',
+  'DirectBankTransferEnabled',
+  'PaymentBankName',
+  'PaymentAccountName',
+  'PaymentAccountNumber',
+  'PaymentBankCurrency',
+  'PaymentTransferInstructions'
 ]);
 
 const FIELD_SET = new Set(BRANCH_PROFILE_OVERRIDE_FIELDS);
@@ -40,6 +47,9 @@ function profileObject(value) {
 }
 
 function normalizedValue(field, value) {
+  if (field === 'OnlinePaymentEnabled' || field === 'DirectBankTransferEnabled') {
+    return ['YES', 'NO'].includes(clean(value).toUpperCase()) ? clean(value).toUpperCase() : 'NO';
+  }
   if (field === 'ShowResultsOnline') {
     return ['YES', 'NO'].includes(clean(value).toUpperCase()) ? clean(value).toUpperCase() : 'NO';
   }

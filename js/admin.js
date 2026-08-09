@@ -2492,6 +2492,114 @@ function showAdmissionFormPurchaseQr(data = {}, qrWindow = null) {
   viewer.document.close();
 }
 
+function directTransferContextLabel(context = '') {
+  return ({
+    'admission-form': 'Admission form',
+    'school-payment': 'School payment',
+    'church-donation': 'Donation',
+    'organization-store': 'Store purchase'
+  })[clean(context)] || 'Payment';
+}
+
+function directTransferAmount(row = {}) {
+  const currency = clean(row.Currency || 'NGN').toUpperCase();
+  try {
+    return new Intl.NumberFormat('en-NG', { style: 'currency', currency, maximumFractionDigits: 2 }).format(Number(row.Amount || 0));
+  } catch (_) {
+    return `${currency} ${Number(row.Amount || 0).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`;
+  }
+}
+
+function directTransferVerificationWorkspace(id, title = 'Pending direct bank transfers') {
+  return `<section class="workflow-list-section direct-transfer-verification" id="${escapeHtml(id)}">
+    <div class="workflow-heading"><div><small>Manual bank verification</small><h2>${escapeHtml(title)}</h2><p class="muted">Approve only after confirming the credit in the organisation bank account. Final records and receipts are created after approval.</p></div></div>
+    <p class="muted" data-direct-transfer-loading>Loading pending transfers...</p>
+    <p class="status" data-direct-transfer-status role="status"></p>
+    <div class="workflow-record-list" data-direct-transfer-list></div>
+  </section>`;
+}
+
+async function refreshDirectTransferModule(contexts = []) {
+  if (contexts.includes('church-donation') && activeSection === 'donations') return loadChurchDonations();
+  if (contexts.includes('organization-store') && activeSection === 'organizationStore') return loadStaffStore('organizationStore');
+  if (contexts.includes('admission-form') && activeSection === 'formPurchases') {
+    return loadDashboard({ mode: 'section', section: 'formPurchases', merge: true });
+  }
+  if (contexts.includes('school-payment') && activeSection === 'accounts') {
+    return loadDashboard({ mode: 'section', section: 'accounts', merge: true });
+  }
+  return null;
+}
+
+async function loadDirectTransferVerification(contexts = [], workspaceId = '') {
+  const workspace = document.getElementById(workspaceId);
+  if (!workspace) return;
+  const loading = workspace.querySelector('[data-direct-transfer-loading]');
+  const status = workspace.querySelector('[data-direct-transfer-status]');
+  const list = workspace.querySelector('[data-direct-transfer-list]');
+  try {
+    const response = await staffFetch('/api/staff-direct-transfers', {
+      credentials: 'same-origin', cache: 'no-store'
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load pending bank transfers.');
+    if (!workspace.isConnected) return;
+    const permitted = new Set(contexts.map(clean));
+    const transfers = (data.transfers || []).filter((row) => permitted.has(clean(row.Context)));
+    loading.hidden = true;
+    list.innerHTML = transfers.length ? transfers.map((row) => {
+      const reference = clean(row.Reference);
+      const createdAt = clean(row.CreatedAt);
+      const proofUrl = `/api/staff-direct-transfers?reference=${encodeURIComponent(reference)}&proof=1`;
+      return `<article class="workflow-record direct-transfer-record">
+        <div class="workflow-record-heading"><div><strong>${escapeHtml(row.PayerName || row.PayerEmail || 'Payer')}</strong><small>${escapeHtml(reference)}</small></div><span class="workflow-state waiting">Awaiting verification</span></div>
+        <div class="workflow-record-meta">
+          <span>Purpose<strong>${escapeHtml(directTransferContextLabel(row.Context))}</strong></span>
+          <span>Amount<strong>${escapeHtml(directTransferAmount(row))}</strong></span>
+          <span>Bank reference<strong>${escapeHtml(row.BankReference || 'Not supplied')}</strong></span>
+          <span>Submitted<strong>${escapeHtml(createdAt ? new Date(createdAt).toLocaleString() : '')}</strong></span>
+        </div>
+        <small>${escapeHtml([row.PayerEmail, row.PayerPhone].filter(Boolean).join(' | '))}</small>
+        <div class="workflow-actions">
+          ${row.HasProof ? `<a class="button-link direct-transfer-proof" href="${escapeHtml(proofUrl)}" target="_blank" rel="noopener">View proof</a>` : '<span class="muted">No proof attached</span>'}
+          <button type="button" class="workflow-approve" data-direct-transfer-action="approve" data-direct-transfer-reference="${escapeHtml(reference)}">Approve</button>
+          <button type="button" class="workflow-reject" data-direct-transfer-action="reject" data-direct-transfer-reference="${escapeHtml(reference)}">Reject</button>
+        </div>
+      </article>`;
+    }).join('') : '<p class="muted">No direct bank transfer is awaiting verification here.</p>';
+    list.querySelectorAll('[data-direct-transfer-action]').forEach((button) => button.addEventListener('click', async () => {
+      const action = clean(button.dataset.directTransferAction);
+      const reference = clean(button.dataset.directTransferReference);
+      let reason = '';
+      if (action === 'approve' && !window.confirm('Have you confirmed this exact credit in the organisation bank account?')) return;
+      if (action === 'reject') {
+        reason = clean(window.prompt('Enter the reason for rejecting this transfer.'));
+        if (!reason) return;
+      }
+      const normalText = button.textContent;
+      setButtonLoading(button, true, action === 'approve' ? 'Approving...' : 'Rejecting...', normalText);
+      try {
+        const actionResponse = await staffFetch('/api/staff-direct-transfers', {
+          method: 'POST', credentials: 'same-origin', cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action, Reference: reference, Reason: reason })
+        });
+        const result = await actionResponse.json().catch(() => ({}));
+        if (!actionResponse.ok || !result.ok) throw new Error(result.message || `Could not ${action} this transfer.`);
+        setStatus(status, result.message, 'ok');
+        await refreshDirectTransferModule(contexts);
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+        if (button.isConnected) setButtonLoading(button, false, '', normalText);
+      }
+    }));
+  } catch (error) {
+    if (loading) loading.hidden = true;
+    if (list) list.innerHTML = '';
+    setStatus(status, error.message || String(error), 'bad');
+  }
+}
+
 function admissionFormPurchasesWorkspace(rows = []) {
   return `
     <section class="workflow-intro">
@@ -2504,7 +2612,8 @@ function admissionFormPurchasesWorkspace(rows = []) {
       { label: 'Email', value: (row) => pick(row, ['Email']) },
       { label: 'Class', value: (row) => pick(row, ['ClassApplyingFor']) },
       { label: 'Amount', value: (row) => money(pick(row, ['AmountPaid', 'Amount'])) }
-    ])}`;
+    ])}
+    ${directTransferVerificationWorkspace('admissionDirectTransferVerification', 'Admission transfers awaiting verification')}`;
 }
 
 function bindAdmissionFormPurchaseQr() {
@@ -2836,6 +2945,7 @@ function renderStaffStore(section, store) {
       { label: 'Price', value: (row) => money(pick(row, ['Price'])) }, { label: 'Stock', value: (row) => pick(row, ['Quantity']) },
       { label: 'Actions', render: (row) => `<button type="button" class="compact-icon-action compact-edit-action" data-edit-store-item="${escapeHtml(row.__id)}" aria-label="Edit ${escapeHtml(row.ItemName || row.ItemCode || 'store item')}" title="Edit item"><span aria-hidden="true">&#9998;</span></button>` }
     ])}
+    ${organisationStore ? directTransferVerificationWorkspace('organizationStoreDirectTransferVerification', 'Store transfers awaiting verification') : ''}
     <section id="staffStoreOrdersWorkspace"><h2>Paid Orders & Collection</h2><div class="workflow-record-list">${(store.orders || []).length ? (store.orders || []).map((order) => {
       const orderStatus = clean(order.Status || 'Paid - Awaiting Collection');
       const statusKey = orderStatus.toLowerCase();
@@ -2850,10 +2960,12 @@ function renderStaffStore(section, store) {
     }).join('') : '<p class="muted">No paid orders yet.</p>'}</div></section>`;
   mountWorkspaceTabs(section, [
     { key: 'sales', label: organisationStore ? 'Point of sale' : 'Sales', icon: '\u{1F6D2}', nodes: document.getElementById('organizationCommercePOS') },
+    ...(organisationStore ? [{ key: 'transfers', label: 'Transfer verification', icon: '\u{1F50E}', nodes: document.getElementById('organizationStoreDirectTransferVerification') }] : []),
     { key: 'items', label: 'Items', icon: '\u25A6', count: (store.items || []).length, nodes: [document.getElementById('staffStoreItemWorkspace'), workspaceTableNodes(`${label} Items`)] },
     { key: 'categories', label: 'Categories', icon: '\u{1F5C2}', count: categories.length, nodes: document.getElementById('staffStoreCategoryWorkspace') },
     { key: 'orders', label: 'Orders & collection', icon: '\u2713', count: (store.orders || []).length, nodes: document.getElementById('staffStoreOrdersWorkspace') }
   ]);
+  if (organisationStore) loadDirectTransferVerification(['organization-store'], 'organizationStoreDirectTransferVerification');
   if (organisationStore) bindOrganizationCommerceWorkspace(section, store);
   const itemForm = document.getElementById('staffStoreItemForm');
   const resetStoreItemForm = () => {
@@ -5176,14 +5288,17 @@ async function loadChurchDonations() {
         { label: 'Actor', value: (row) => pick(row, ['Actor']) },
         { label: 'Details', value: (row) => pick(row, ['Details']) }
       ])}
-      </section>`;
+      </section>
+      ${directTransferVerificationWorkspace('churchDirectTransferVerification', 'Donation transfers awaiting verification')}`;
     mountWorkspaceTabs('donations', [
       { key: 'overview', label: 'Overview', icon: '\u25A6', nodes: [...panelEl.querySelectorAll(':scope > .workflow-kpis, :scope > .church-dashboard-grid')] },
       { key: 'record', label: 'Record donation', icon: '+', nodes: document.getElementById('donationGivingPanel') },
       { key: 'donors', label: 'Donor register', icon: '\u{1F465}', count: donors.length, nodes: document.getElementById('donationDonorPanel') },
       { key: 'currency', label: 'Foreign currency', icon: '\u00A4', count: foreignHoldings.length, nodes: document.getElementById('donationCurrencyPanel') },
-      { key: 'records', label: 'Records & audit', icon: '\u{1F5C2}', count: (data.donations || []).length, nodes: document.getElementById('donationRecordsPanel') }
+      { key: 'records', label: 'Records & audit', icon: '\u{1F5C2}', count: (data.donations || []).length, nodes: document.getElementById('donationRecordsPanel') },
+      { key: 'transfers', label: 'Transfer verification', icon: '\u{1F50E}', nodes: document.getElementById('churchDirectTransferVerification') }
     ]);
+    loadDirectTransferVerification(['church-donation'], 'churchDirectTransferVerification');
     const form = document.getElementById('churchDonationForm');
     form?.elements.DonorId?.addEventListener('change', () => {
       const donor = donors.find((row) => clean(row.DonorId || row.__id) === clean(form.elements.DonorId.value));
@@ -8706,6 +8821,7 @@ function renderSection(active) {
   } else if (active === 'formPurchases') {
     panelEl.innerHTML = admissionFormPurchasesWorkspace(departments.formPurchases || []);
     bindAdmissionFormPurchaseQr();
+    loadDirectTransferVerification(['admission-form'], 'admissionDirectTransferVerification');
   } else if (active === 'students') {
     const students = departments.students || [];
     const handoff = takeRecordsDeskHandoff('students');
@@ -8776,11 +8892,13 @@ function renderSection(active) {
       { label: 'Fee', value: (row) => pick(row, ['FeeName', 'FeeCode']) },
       { label: 'Debit', value: (row) => money(pick(row, ['Debit', 'Amount'])) },
       { label: 'Status', value: (row) => pick(row, ['Status']) }
-    ]);
+    ]) + directTransferVerificationWorkspace('schoolDirectTransferVerification', 'School-payment transfers awaiting verification');
     mountWorkspaceTabs('accounts', [
       { key: 'payments', label: 'Payments', icon: '\u2713', count: payments.length, nodes: [panelEl.querySelector(':scope > .records-desk-handoff'), workspaceTableNodes('Payments')] },
-      { key: 'invoices', label: 'Invoices', icon: '\u{1F9FE}', count: invoices.length, nodes: workspaceTableNodes('Invoices') }
+      { key: 'invoices', label: 'Invoices', icon: '\u{1F9FE}', count: invoices.length, nodes: workspaceTableNodes('Invoices') },
+      { key: 'transfers', label: 'Transfer verification', icon: '\u{1F50E}', nodes: document.getElementById('schoolDirectTransferVerification') }
     ]);
+    loadDirectTransferVerification(['school-payment'], 'schoolDirectTransferVerification');
   } else if (active === 'clinic' || active === 'kitchen' || active === 'restaurant' || active === 'tuckShop') {
     panelEl.innerHTML = '<p class="muted">Loading department operations...</p>';
     loadDepartmentOperations(active);

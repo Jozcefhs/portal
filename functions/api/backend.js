@@ -3095,6 +3095,8 @@ export async function recordSale(env, body) {
     Used: body.Used || 'NO',
     RecordedBy: clean(body.RecordedBy) || 'Admissions Office',
     RecordedByUsername: clean(body.UserUsername),
+    BranchId: clean(body.BranchId || body.branchId || 'main').toLowerCase() || 'main',
+    SchoolSection: clean(body.SchoolSection || body.schoolSection),
     ProcessingStatus: 'Processing',
     ProcessingVersion: 2,
     ProcessingStartedAt: nowIso(),
@@ -6866,7 +6868,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       const backupPageToken = clean(body.PageToken || body.pageToken);
       const rootCollections = [
         'accounts', 'payments', 'paymentGatewayCharges', 'invoices', 'ledger', 'feeItems', 'billingCategories',
-        'settings', 'formSales', 'staffUsers', 'staffSecurityAudit',
+        'settings', 'formSales', 'directTransferRequests', 'verifiedBankReferences', 'staffUsers', 'staffSecurityAudit',
         'executiveCorrespondence', 'executiveCorrespondenceTemplates',
         'executiveCorrespondenceEndorsements', 'executiveCorrespondenceSnapshots',
         'executiveCorrespondenceTransitions', 'executiveCorrespondenceAudit',

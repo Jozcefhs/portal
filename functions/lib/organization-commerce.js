@@ -10,6 +10,7 @@ import {
   sendOrganizationCommercePaymentLinkEmail,
   sendOrganizationCommerceReceiptEmail
 } from './organization-commerce-email.js';
+import { createDirectTransferRequest, publicPaymentMethods } from './direct-bank-transfer.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -487,6 +488,11 @@ export async function recordManualOrganizationCommerceSale(env, section, body = 
     throw error('A sale with this request reference already exists.', 409);
   }
   const cart = await authoritativeCart(env, section, body, user);
+  const expectedAmount = money(body.ExpectedAmount || body.expectedAmount);
+  const currentAmount = money(cart.reduce((sum, item) => sum + item.Amount, 0));
+  if (expectedAmount > 0 && currentAmount !== expectedAmount) {
+    throw error('The current store total no longer matches the verified transfer amount. Review item prices before approving this transfer.', 409);
+  }
   const sale = baseSale(section, body, user, cart, id, method);
   sale.PaidAt = nowIso();
   if (method !== 'Cash' && !sale.PaymentReference) {
@@ -517,6 +523,8 @@ export async function recordManualOrganizationCommerceSale(env, section, body = 
 }
 
 export async function initializeOnlineOrganizationCommerceSale(env, request, section, body = {}, user = {}, options = {}) {
+  const paymentMethods = await publicPaymentMethods(env, clean(body.BranchId || user.branchId || 'main'));
+  if (!paymentMethods.online.enabled) throw error('Automated online payment is disabled for this branch.', 503);
   if (!clean(env.PAYSTACK_SECRET_KEY)) throw error('Paystack is not configured for online sales.', 503);
   const email = lower(body.CustomerEmail || body.customerEmail || body.Email || body.email);
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -629,6 +637,47 @@ export async function initializeOnlineOrganizationCommerceSale(env, request, sec
     authorizationUrl: updated.AuthorizationUrl,
     reference: updated.PaymentReference,
     emailDelivery
+  };
+}
+
+export async function initializeDirectTransferOrganizationCommerceSale(env, section, body = {}, user = {}) {
+  const email = lower(body.CustomerEmail || body.customerEmail || body.Email || body.email);
+  if (!email || !validEmail(email)) throw error('Enter the customer email for the payment confirmation and receipt.');
+  const id = saleId(body, section);
+  const cart = await authoritativeCart(env, section, body, user);
+  const sale = baseSale(section, body, user, cart, id, 'Bank Transfer');
+  const reference = safeId(`DBT-${id}`);
+  const result = await createDirectTransferRequest(env, {
+    reference,
+    context: 'organization-store',
+    branchId: sale.BranchId,
+    amount: sale.Amount,
+    currency: sale.Currency,
+    payerName: sale.CustomerName,
+    payerEmail: sale.CustomerEmail,
+    payerPhone: sale.CustomerPhone,
+    evidence: body,
+    payload: {
+      Section: section,
+      SaleRequestId: id,
+      BranchId: sale.BranchId,
+      OrganisationEdition: sale.OrganisationEdition,
+      CustomerName: sale.CustomerName,
+      CustomerEmail: sale.CustomerEmail,
+      CustomerPhone: sale.CustomerPhone,
+      Items: cart.map((item) => ({ Reference: item.InventoryDocumentId || item.ItemCode || item.ItemName, Quantity: item.Quantity })),
+      CheckoutSource: sale.CheckoutSource
+    }
+  });
+  return {
+    ...result,
+    sale: {
+      ...sale,
+      PaymentStatus: 'Awaiting Verification',
+      Status: 'Awaiting Verification',
+      InventoryStatus: 'Not deducted until verification',
+      PaymentReference: reference
+    }
   };
 }
 

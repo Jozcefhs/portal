@@ -103,8 +103,30 @@ function defaultProfile(env) {
     DataRetentionEndsAt: clean(env.DATA_RETENTION_ENDS_AT),
     UserLimit: Math.max(1, Number(env.USER_LIMIT || 5) || 5),
     TurnstileSiteKey: clean(env.TURNSTILE_SITE_KEY),
+    OnlinePaymentEnabled: clean(env.ONLINE_PAYMENT_ENABLED || (env.PAYSTACK_SECRET_KEY ? 'YES' : 'NO')).toUpperCase() === 'NO' ? 'NO' : 'YES',
+    DirectBankTransferEnabled: clean(env.DIRECT_BANK_TRANSFER_ENABLED || 'NO').toUpperCase() === 'YES' ? 'YES' : 'NO',
+    PaymentBankName: clean(env.PAYMENT_BANK_NAME),
+    PaymentAccountName: clean(env.PAYMENT_ACCOUNT_NAME),
+    PaymentAccountNumber: clean(env.PAYMENT_ACCOUNT_NUMBER),
+    PaymentBankCurrency: clean(env.PAYMENT_BANK_CURRENCY || 'NGN').toUpperCase(),
+    PaymentTransferInstructions: clean(env.PAYMENT_TRANSFER_INSTRUCTIONS),
     UpdatedAt: ''
   };
+}
+
+function validatePaymentSettings(profile = {}) {
+  if (clean(profile.DirectBankTransferEnabled).toUpperCase() !== 'YES') return;
+  const missing = [
+    ['bank name', profile.PaymentBankName],
+    ['account name', profile.PaymentAccountName],
+    ['account number', profile.PaymentAccountNumber],
+    ['account currency', profile.PaymentBankCurrency]
+  ].filter(([, value]) => !clean(value)).map(([label]) => label);
+  if (missing.length) {
+    const error = new Error(`Complete the direct-transfer ${missing.join(', ')} before enabling it.`);
+    error.status = 400;
+    throw error;
+  }
 }
 
 function profileEnvironmentKey(env, branchId = '') {
@@ -283,6 +305,7 @@ export async function onRequestPost(context) {
       action = 'save-branch-profile-overrides';
       requireFirestoreEnv(env);
       const defaults = await getProfile(env, { fresh: true });
+      validatePaymentSettings({ ...defaults, ...incoming });
       const saved = await saveBranchProfileOverrides(env, {
         branchId,
         defaultProfile: defaults,
@@ -376,6 +399,13 @@ export async function onRequestPost(context) {
       DataRetentionEndsAt: organization.DataRetentionEndsAt,
       SubscriptionReadOnly: organization.SubscriptionReadOnly,
       TrialDaysRemaining: organization.TrialDaysRemaining,
+      OnlinePaymentEnabled: clean(incoming.OnlinePaymentEnabled || existing.OnlinePaymentEnabled || 'YES').toUpperCase() === 'NO' ? 'NO' : 'YES',
+      DirectBankTransferEnabled: clean(incoming.DirectBankTransferEnabled || existing.DirectBankTransferEnabled || 'NO').toUpperCase() === 'YES' ? 'YES' : 'NO',
+      PaymentBankName: clean(incoming.PaymentBankName),
+      PaymentAccountName: clean(incoming.PaymentAccountName),
+      PaymentAccountNumber: clean(incoming.PaymentAccountNumber),
+      PaymentBankCurrency: clean(incoming.PaymentBankCurrency || 'NGN').toUpperCase().slice(0, 3),
+      PaymentTransferInstructions: clean(incoming.PaymentTransferInstructions).slice(0, 500),
       UserLimit: Math.max(1, Number(incoming.UserLimit || existing.UserLimit || 5) || 5),
       UpdatedAt: new Date().toISOString()
     };
@@ -388,6 +418,7 @@ export async function onRequestPost(context) {
       }
       await saveWebBranding(env, { WebLogoDataUrl: webLogo, UpdatedAt: new Date().toISOString() });
     }
+    validatePaymentSettings(profile);
     delete profile.WebLogoUrl;
     delete profile.WebLogoConfigured;
     delete profile.TurnstileSiteKey;

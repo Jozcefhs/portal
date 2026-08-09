@@ -13,6 +13,7 @@ import {
   readJsonBody,
   verifyTurnstile
 } from '../lib/request-security.js';
+import { createDirectTransferRequest, normalizePublicPaymentMethod, publicPaymentMethods } from '../lib/direct-bank-transfer.js';
 
 const PAYSTACK_INIT_URL = 'https://api.paystack.co/transaction/initialize';
 function cleanReference(value) {
@@ -134,7 +135,7 @@ export async function onRequestPost(context) {
   let idempotency = null;
   try {
     const { request, env } = context;
-    const body = await readJsonBody(request, { maxBytes: 512 * 1024 });
+    const body = await readJsonBody(request, { maxBytes: 768 * 1024 });
     const session = await readParentSession(env, request);
     const email = String(session?.email || body.email || '').trim().toLowerCase();
     const code = String(body.code || '').trim();
@@ -143,6 +144,7 @@ export async function onRequestPost(context) {
     const sourceType = String(body.sourceType || body.SourceType || '').trim();
     const scopePath = String(body.scopePath || body.ScopePath || '').trim();
     const requestedAmount = Number(String(body.amount || '0').replace(/,/g, ''));
+    const paymentMethod = normalizePublicPaymentMethod(body.paymentMethod || body.PaymentMethod);
 
     if (!email || (!session && !code) || !feeCode) {
       return Response.json({ ok: false, message: 'Email, password or verification code, and fee are required.' }, { status: 400 });
@@ -156,12 +158,6 @@ export async function onRequestPost(context) {
       return Response.json({ ok: false, message: 'Invalid parent email or password.' }, { status: 401 });
     }
     const authenticatedParentEmail = session?.email || (storedPassword.valid ? email : '');
-
-    if (!env.PAYSTACK_SECRET_KEY) {
-      const error = new Error('Online payment is not configured yet.');
-      error.status = 503;
-      throw error;
-    }
 
     let feeData = null;
     try {
@@ -350,9 +346,57 @@ export async function onRequestPost(context) {
       FeeCategory: fee.FeeCategory || '',
       Amount: amount,
       Currency: String(fee.Currency || 'NGN'),
-      Status: 'Pending',
+      PaymentMethod: paymentMethod === 'direct_bank_transfer' ? 'Direct Bank Transfer' : 'Paystack',
+      Status: paymentMethod === 'direct_bank_transfer' ? 'Awaiting Verification' : 'Pending',
       CreatedAt: new Date().toISOString()
     });
+
+    if (paymentMethod === 'direct_bank_transfer') {
+      const result = await createDirectTransferRequest(env, {
+        reference,
+        context: 'school-payment',
+        branchId: account.BranchId || body.branchId || body.BranchId || 'main',
+        amount,
+        currency: String(fee.Currency || 'NGN'),
+        payerName: account.DisplayName,
+        payerEmail: email,
+        payerPhone: account.ParentPhone || '',
+        evidence: body,
+        payload: {
+          AccountRef: account.AccountRef,
+          ApplicationReference: account.ApplicationReference || '',
+          AdmissionNo: account.AdmissionNo || '',
+          BranchId: account.BranchId || 'main',
+          SchoolSection: account.SchoolSection || '',
+          DisplayName: account.DisplayName || '',
+          ParentEmail: email,
+          ClassName: account.ClassName || '',
+          StudentType: account.StudentType || '',
+          AcademicSession: account.AcademicSession || fee.AcademicSession || '',
+          Term: account.Term || fee.Term || '',
+          FeeCode: feeCode,
+          FeeName: fee.FeeName,
+          FeeCategory: fee.FeeCategory || '',
+          Amount: amount,
+          Currency: String(fee.Currency || 'NGN'),
+          FeeItems: schoolFeeItems || [],
+          StoreCart: storeCart
+        }
+      });
+      await completeIdempotentRequest(env, idempotency, result, 200);
+      return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
+    }
+    const publicMethods = await publicPaymentMethods(env, account.BranchId || body.branchId || body.BranchId || 'main');
+    if (!publicMethods.online.enabled) {
+      const error = new Error('Automated online payment is disabled for this branch.');
+      error.status = 503;
+      throw error;
+    }
+    if (!env.PAYSTACK_SECRET_KEY) {
+      const error = new Error('Online payment is not configured yet.');
+      error.status = 503;
+      throw error;
+    }
 
     const paystackRes = await fetch(PAYSTACK_INIT_URL, {
       method: 'POST',

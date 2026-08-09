@@ -4,6 +4,7 @@
 import { getAdmissionClasses, getSchoolCode } from './backend.js';
 import { createDocumentIfAbsent, requireFirestoreEnv } from '../lib/firestore.js';
 import { normalizeClassKey } from '../lib/class-names.js';
+import { createDirectTransferRequest, normalizePublicPaymentMethod, publicPaymentMethods } from '../lib/direct-bank-transfer.js';
 import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
 import {
   beginIdempotentRequest,
@@ -84,21 +85,17 @@ export async function onRequestPost(context) {
   let idempotency = null;
   try {
     const { request, env } = context;
-    const body = await readJsonBody(request, { maxBytes: 128 * 1024 });
+    const body = await readJsonBody(request, { maxBytes: 768 * 1024 });
     const applicantName = String(body.applicantName || '').trim();
     const email = String(body.email || '').trim().toLowerCase();
     const phone = String(body.phone || '').trim();
     const classApplyingFor = String(body.classApplyingFor || '').trim();
+    const paymentMethod = normalizePublicPaymentMethod(body.paymentMethod || body.PaymentMethod);
 
     if (!applicantName || !email || !classApplyingFor) {
       return Response.json({ ok: false, message: 'Applicant name, parent email, and class are required.' }, { status: 400 });
     }
     await verifyTurnstile(env, request, body, 'init_form_payment');
-    if (!env.PAYSTACK_SECRET_KEY) {
-      const error = new Error('Online payment is not configured yet.');
-      error.status = 503;
-      throw error;
-    }
     const classSetup = await getAdmissionClassSetup(env, classApplyingFor);
     if (!classSetup.open) {
       return Response.json({ ok: false, message: `Admission is not currently open for ${classApplyingFor}.` }, { status: 400 });
@@ -137,9 +134,45 @@ export async function onRequestPost(context) {
       ClassApplyingFor: classApplyingFor,
       Amount: amount,
       Currency: 'NGN',
-      Status: 'Pending',
+      PaymentMethod: paymentMethod === 'direct_bank_transfer' ? 'Direct Bank Transfer' : 'Paystack',
+      Status: paymentMethod === 'direct_bank_transfer' ? 'Awaiting Verification' : 'Pending',
       CreatedAt: new Date().toISOString()
     });
+
+    if (paymentMethod === 'direct_bank_transfer') {
+      const result = await createDirectTransferRequest(env, {
+        reference,
+        context: 'admission-form',
+        branchId: body.branchId || body.BranchId || 'main',
+        amount,
+        currency: 'NGN',
+        payerName: applicantName,
+        payerEmail: email,
+        payerPhone: phone,
+        evidence: body,
+        payload: {
+          ApplicantName: applicantName,
+          Email: email,
+          Phone: phone,
+          ClassApplyingFor: classApplyingFor,
+          FormAmount: amount,
+          FormLink: `${new URL(request.url).origin}/verify.html`
+        }
+      });
+      await completeIdempotentRequest(env, idempotency, result, 200);
+      return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
+    }
+    const publicMethods = await publicPaymentMethods(env, body.branchId || body.BranchId || 'main');
+    if (!publicMethods.online.enabled) {
+      const error = new Error('Automated online payment is disabled for this branch.');
+      error.status = 503;
+      throw error;
+    }
+    if (!env.PAYSTACK_SECRET_KEY) {
+      const error = new Error('Online payment is not configured yet.');
+      error.status = 503;
+      throw error;
+    }
 
     const paystackRes = await fetch(PAYSTACK_INIT_URL, {
       method: 'POST',

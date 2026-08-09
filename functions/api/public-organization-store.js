@@ -1,9 +1,11 @@
 import { requireFirestoreEnv } from '../lib/firestore.js';
 import { requiredDeploymentIdentity } from '../lib/deployment-identity.js';
 import {
+  initializeDirectTransferOrganizationCommerceSale,
   initializeOnlineOrganizationCommerceSale,
   listPublicOrganizationStoreItems
 } from '../lib/organization-commerce.js';
+import { normalizePublicPaymentMethod } from '../lib/direct-bank-transfer.js';
 import {
   beginIdempotentRequest,
   completeIdempotentRequest,
@@ -69,7 +71,7 @@ export async function onRequestPost(context) {
     requireFirestoreEnv(env);
     const identity = requiredDeploymentIdentity(env);
     requirePublicStoreEdition(identity);
-    const body = await readJsonBody(request, { maxBytes: 64 * 1024 });
+    const body = await readJsonBody(request, { maxBytes: 768 * 1024 });
     if (clean(body.CompanyWebsite)) {
       const error = new Error('The store checkout could not be submitted.');
       error.status = 400;
@@ -108,16 +110,20 @@ export async function onRequestPost(context) {
       username: 'public-organisation-store',
       displayName: 'Public organisation store'
     };
-    const result = await initializeOnlineOrganizationCommerceSale(
-      env,
-      request,
-      'organizationStore',
-      { ...body, BranchId: branchId, PaymentMethod: 'Paystack Online', CheckoutSource: 'Public Store' },
-      user,
-      typeof context.waitUntil === 'function'
-        ? { waitUntil: (task) => context.waitUntil(task) }
-        : {}
-    );
+    const paymentMethod = normalizePublicPaymentMethod(body.PaymentMethod || body.paymentMethod);
+    const paymentBody = { ...body, BranchId: branchId, CheckoutSource: 'Public Store' };
+    const result = paymentMethod === 'direct_bank_transfer'
+      ? await initializeDirectTransferOrganizationCommerceSale(env, 'organizationStore', paymentBody, user)
+      : await initializeOnlineOrganizationCommerceSale(
+          env,
+          request,
+          'organizationStore',
+          { ...paymentBody, PaymentMethod: 'Paystack Online' },
+          user,
+          typeof context.waitUntil === 'function'
+            ? { waitUntil: (task) => context.waitUntil(task) }
+            : {}
+        );
     await completeIdempotentRequest(env, idempotency, result, 200);
     return Response.json(result, { headers: responseHeaders() });
   } catch (error) {

@@ -53,7 +53,7 @@ function storeItemDemand(items, storeType) {
   return [...demand.values()];
 }
 
-async function createPaidStoreOrder(env, orderData, items, storeType) {
+export async function createPaidStoreOrder(env, orderData, items, storeType) {
   const documentId = safeId(orderData.OrderNo);
   if (await getDocument(env, 'storeOrders', documentId).catch(() => null)) {
     return { created: false, warning: '' };

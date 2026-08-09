@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Settings</title>
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260808-paid-lifecycle">
+  <link rel="stylesheet" href="css/style.css?v=20260809-direct-transfer">
 </head>
 <body class="settings-page">
   <main class="settings-shell">
@@ -69,6 +69,7 @@
           <a href="#landing-settings" class="settings-nav-link"><span>05</span><div><strong>Landing page</strong><small>Public portal content</small></div></a>
           <a href="#licence-settings" class="settings-nav-link"><span>06</span><div><strong>Licensing</strong><small>Product access</small></div></a>
           <a href="#storage-settings" class="settings-nav-link"><span>07</span><div><strong>Storage</strong><small>Google documents</small></div></a>
+          <a href="#payment-settings" class="settings-nav-link"><span>08</span><div><strong>Payments</strong><small>Online and bank transfer</small></div></a>
         </nav>
         <div class="settings-sidebar-note">
           <strong>Tip</strong>
@@ -288,6 +289,32 @@
           </div>
         </section>
 
+        <section id="payment-settings" class="settings-section">
+          <div class="settings-section-heading">
+            <div><span class="settings-section-icon">&#8358;</span></div>
+            <div>
+              <p class="settings-eyebrow">Collection methods</p>
+              <h2>Payments and direct transfer</h2>
+              <p>Choose the payment routes customers can use. Direct transfers remain pending until an authorised user verifies them.</p>
+            </div>
+          </div>
+          <div class="settings-fields two-column">
+            <div class="settings-field">
+              <label for="onlinePaymentEnabled">Automated online payment</label>
+              <select id="onlinePaymentEnabled" name="OnlinePaymentEnabled"><option value="YES">Enabled &mdash; Card, USSD and bank through Paystack</option><option value="NO">Disabled</option></select>
+            </div>
+            <div class="settings-field">
+              <label for="directBankTransferEnabled">Direct bank transfer</label>
+              <select id="directBankTransferEnabled" name="DirectBankTransferEnabled"><option value="NO">Disabled</option><option value="YES">Enabled &mdash; manual verification required</option></select>
+            </div>
+            <div class="settings-field"><label for="paymentBankName">Bank name</label><input id="paymentBankName" name="PaymentBankName" autocomplete="organization"></div>
+            <div class="settings-field"><label for="paymentAccountName">Account name</label><input id="paymentAccountName" name="PaymentAccountName" autocomplete="organization"></div>
+            <div class="settings-field"><label for="paymentAccountNumber">Account number</label><input id="paymentAccountNumber" name="PaymentAccountNumber" inputmode="numeric" autocomplete="off"></div>
+            <div class="settings-field"><label for="paymentBankCurrency">Account currency</label><select id="paymentBankCurrency" name="PaymentBankCurrency"><option>NGN</option><option>USD</option><option>GBP</option><option>EUR</option><option>GHS</option><option>KES</option></select></div>
+            <div class="settings-field full-width"><label for="paymentTransferInstructions">Additional transfer instructions</label><textarea id="paymentTransferInstructions" name="PaymentTransferInstructions" rows="3" maxlength="500" placeholder="Example: Use the generated reference as the transfer narration."></textarea><small class="settings-help">Customers must enter a bank transaction reference. Proof upload is optional, and a receipt is issued only after verification.</small></div>
+          </div>
+        </section>
+
         <div class="settings-savebar">
           <div><strong id="settingsSaveScopeLabel">Organisation settings</strong><p id="setupStatus" class="status">Review your changes before saving.</p></div>
           <button id="saveSetupButton" type="submit">Save changes</button>
@@ -298,6 +325,6 @@
 
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
-  <script src="js/setup.js?v=20260807-branch-overrides"></script>
+  <script src="js/setup.js?v=20260809-direct-transfer"></script>
 </body>
 </html>

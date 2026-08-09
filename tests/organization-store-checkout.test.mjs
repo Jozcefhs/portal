@@ -36,7 +36,7 @@ test('public organisation store exposes a compact searchable catalogue and autho
   assert.match(storeHtml, /id="publicStoreCart"/);
   assert.match(storeHtml, /name="CustomerEmail"[^>]*required/);
   assert.match(storeHtml, /name="CompanyWebsite"/);
-  assert.match(storeHtml, /Secure Paystack payment/);
+  assert.match(storeHtml, /Secure payment choices/);
   assert.doesNotMatch(storeHtml, /school/i);
   assert.match(storeJs, /fetch\(`\/api\/public-organization-store\?branch=/);
   assert.match(storeJs, /getTurnstileToken\('organization_store'\)/);
@@ -48,7 +48,8 @@ test('public organisation store exposes a compact searchable catalogue and autho
   assert.match(storeHtml, /id="publicStoreCartShortcut"/);
   assert.match(storeHtml, /class="public-store-header" id="publicStoreHeader"/);
   assert.match(storeHtml, /id="publicStoreCheckout" tabindex="-1"/);
-  assert.match(storeHtml, /js\/store\.js\?v=20260802-receipt-only/);
+  assert.match(storeHtml, /js\/payment-methods\.js\?v=20260809-direct-transfer/);
+  assert.match(storeHtml, /js\/store\.js\?v=20260809-direct-transfer/);
   assert.match(storeCompactCss, /\.public-store-header\s*\{[\s\S]*?position: sticky;[\s\S]*?top: 0;[\s\S]*?z-index: 20;/);
   assert.match(storeCompactCss, /@media \(max-width: 820px\)[\s\S]*?\.public-store-header\s*\{[\s\S]*?gap: 6px;[\s\S]*?padding: 10px 12px;/);
   assert.match(storeCompactCss, /\.public-store-header > div:last-child > span\s*\{\s*display: none;/);
@@ -73,6 +74,7 @@ test('public store API is edition-bound, rate limited, replay safe and uses serv
   assert.match(publicApi, /consumeRequestAllowance\(env, request/);
   assert.match(publicApi, /beginIdempotentRequest\(env, request, body/);
   assert.match(publicApi, /initializeOnlineOrganizationCommerceSale/);
+  assert.match(publicApi, /initializeDirectTransferOrganizationCommerceSale/);
   assert.match(publicApi, /CheckoutSource: 'Public Store'/);
   assert.match(commerce, /export async function listPublicOrganizationStoreItems/);
   assert.match(commerce, /const cart = await authoritativeCart/);

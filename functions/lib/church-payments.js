@@ -15,6 +15,7 @@ import { getSchoolStructure } from './school-scope.js';
 import { getWebBranding } from './web-branding.js';
 import { ensureGivingTypes, resolveGivingType } from './church-funds.js';
 import { getDonationCurrencySettings, registerDonorFromPaidDonation } from './church-donation-management.js';
+import { createDirectTransferRequest, publicPaymentMethods } from './direct-bank-transfer.js';
 import {
   ACCOUNTING_BASE_CURRENCY,
   convertedDonationBaseAmount,
@@ -1274,6 +1275,8 @@ export async function initPublicChurchDonationPayment(env, body = {}, requestUrl
   if (!(structure.Branches || []).some((branch) => resolveMembershipBranch({}, branch.Id || branch.id || branch.Name) === branchId)) {
     inputError('Choose a valid giving branch.', 400);
   }
+  const paymentMethods = await publicPaymentMethods(env, branchId);
+  if (!paymentMethods.online.enabled) inputError('Automated online payment is disabled for this branch.', 503);
   const suppliedType = clean(body.PaymentType || body.paymentType) || 'Donation';
   const { givingTypes } = await ensureGivingTypes(env, branchId);
   const givingType = resolveGivingType(givingTypes, body.GivingTypeId || body.givingTypeId || suppliedType);
@@ -1301,6 +1304,45 @@ export async function initPublicChurchDonationPayment(env, body = {}, requestUrl
     BranchId: branchId,
     PublicGiving: 'yes'
   }, requestUrl);
+}
+
+export async function initPublicChurchDonationDirectTransfer(env, body = {}) {
+  await requireDonationsEdition(env);
+  if (clean(body.CompanyWebsite || body.companyWebsite)) inputError('The giving request could not be processed.', 400);
+  const structure = await getSchoolStructure(env);
+  const branchId = resolveMembershipBranch({}, body.BranchId || body.branchId || structure.ActiveBranchId || 'main');
+  if (!(structure.Branches || []).some((branch) => resolveMembershipBranch({}, branch.Id || branch.id || branch.Name) === branchId)) {
+    inputError('Choose a valid giving branch.', 400);
+  }
+  const suppliedType = clean(body.PaymentType || body.paymentType) || 'Donation';
+  const { givingTypes } = await ensureGivingTypes(env, branchId);
+  const givingType = resolveGivingType(givingTypes, body.GivingTypeId || body.givingTypeId || suppliedType);
+  if (!givingType || lower(givingType.Active || 'YES') === 'no') inputError('Choose a valid gift type.', 400);
+  const donorName = clean(body.DonorName || body.donorName).slice(0, 160);
+  const donorEmail = clean(body.DonorEmail || body.donorEmail).toLowerCase().slice(0, 254);
+  if (!donorName || !donorEmail) inputError('Enter the donor name and email address.', 400);
+  return createDirectTransferRequest(env, {
+    context: 'church-donation',
+    branchId,
+    amount: body.Amount || body.amount,
+    currency: clean(body.Currency || body.currency || 'NGN').toUpperCase(),
+    payerName: donorName,
+    payerEmail: donorEmail,
+    payerPhone: clean(body.DonorPhone || body.donorPhone).slice(0, 40),
+    evidence: body,
+    payload: {
+      DonorName: donorName,
+      DonorEmail: donorEmail,
+      DonorPhone: clean(body.DonorPhone || body.donorPhone).slice(0, 40),
+      Amount: body.Amount || body.amount,
+      Currency: clean(body.Currency || body.currency || 'NGN').toUpperCase(),
+      GivingTypeId: clean(givingType.GivingTypeId || givingType.__id),
+      PaymentType: clean(givingType.Name),
+      Notes: clean(body.Notes || body.notes).slice(0, 500),
+      BranchId: branchId,
+      PublicGiving: 'yes'
+    }
+  });
 }
 
 export async function getPublicChurchGivingTypes(env, branchHint = '') {

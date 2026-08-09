@@ -1,8 +1,10 @@
 import { requireFirestoreEnv } from '../lib/firestore.js';
 import {
   getPublicChurchGivingTypes,
+  initPublicChurchDonationDirectTransfer,
   initPublicChurchDonationPayment
 } from '../lib/church-payments.js';
+import { normalizePublicPaymentMethod } from '../lib/direct-bank-transfer.js';
 import {
   beginIdempotentRequest,
   completeIdempotentRequest,
@@ -43,7 +45,7 @@ export async function onRequestPost(context) {
   try {
     const { request, env } = context;
     requireFirestoreEnv(env);
-    const body = await readJsonBody(request, { maxBytes: 32 * 1024 });
+    const body = await readJsonBody(request, { maxBytes: 768 * 1024 });
     await verifyTurnstile(env, request, body, 'church_giving');
     const allowance = await consumeRequestAllowance(env, request, {
       scope: 'public-church-giving',
@@ -67,7 +69,10 @@ export async function onRequestPost(context) {
         headers: { 'Cache-Control': 'no-store', 'Idempotency-Replayed': 'true' }
       });
     }
-    const result = await initPublicChurchDonationPayment(env, body, new URL(request.url).origin);
+    const paymentMethod = normalizePublicPaymentMethod(body.PaymentMethod || body.paymentMethod);
+    const result = paymentMethod === 'direct_bank_transfer'
+      ? await initPublicChurchDonationDirectTransfer(env, body)
+      : await initPublicChurchDonationPayment(env, body, new URL(request.url).origin);
     await completeIdempotentRequest(env, idempotency, result, 200);
     return Response.json(result, {
       headers: {

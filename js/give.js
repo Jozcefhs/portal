@@ -26,7 +26,7 @@ function setGivingStatus(message = '', tone = '') {
 function setGivingBusy(busy) {
   givingButton.disabled = busy;
   givingButton.setAttribute('aria-busy', busy ? 'true' : 'false');
-  givingButton.textContent = busy ? 'Opening secure payment…' : 'Continue to secure payment';
+  givingButton.textContent = busy ? 'Opening payment choices…' : 'Choose payment method';
 }
 
 const requestedBranch = clean(new URLSearchParams(window.location.search).get('branch')).toLowerCase();
@@ -89,16 +89,26 @@ givingForm.addEventListener('input', () => {
 givingForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (givingButton.disabled) return;
+  let paymentChoice;
+  try {
+    paymentChoice = await window.DynamaxPaymentMethods.choose({ branchId: givingBranch.value, currency: givingCurrency.value, amount: givingForm.elements.Amount.value });
+    if (!paymentChoice) return;
+  } catch (error) {
+    setGivingStatus(error.message || String(error), 'bad');
+    return;
+  }
   const idempotencyKey = givingForm.dataset.idempotencyKey || givingRequestId();
   givingForm.dataset.idempotencyKey = idempotencyKey;
   setGivingBusy(true);
-  setGivingStatus('Preparing your secure payment…');
+  setGivingStatus('Preparing your payment choices…');
   try {
     const turnstile = window.DynamaxPublicApi?.getTurnstileToken
       ? await window.DynamaxPublicApi.getTurnstileToken('church_giving')
       : {};
     const payload = {
       ...Object.fromEntries(new FormData(givingForm).entries()),
+      ...paymentChoice,
+      PaymentMethod: paymentChoice.paymentMethod,
       ...turnstile,
       idempotencyKey
     };
@@ -129,6 +139,11 @@ givingForm.addEventListener('submit', async (event) => {
       } catch (_error) {
         // The secure payment flow continues even if this browser blocks storage.
       }
+    }
+    if (data.directTransfer) {
+      setGivingStatus(window.DynamaxPaymentMethods.directTransferMessage(data), 'ok');
+      setGivingBusy(false);
+      return;
     }
     const paymentUrl = clean(data.authorizationUrl);
     if (!/^https:\/\/[A-Za-z0-9.-]+(?:\/|$)/.test(paymentUrl)) {

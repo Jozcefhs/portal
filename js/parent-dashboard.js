@@ -767,7 +767,7 @@ function renderSubscriptionSelector(child, title, fees, options = {}) {
   }
 
   function chooseFee() {
-    delete payButton.dataset.idempotencyKey;
+        if (payButton) delete payButton.dataset.idempotencyKey;
     if (options.kind === 'bus') {
       selectedFee.current = fees.find((fee) => busRouteFor(fee) === routeSelect.value && busModeFor(fee) === modeSelect.value) || null;
     } else {
@@ -1008,10 +1008,18 @@ async function payItem(child, fee, container) {
   if (amount === null) return;
   const payButton = container?.querySelector('button');
   if (payButton?.disabled) return;
+  let paymentChoice;
+  try {
+    paymentChoice = await window.DynamaxPaymentMethods.choose({ branchId: child.BranchId || 'main', currency: fee.Currency || 'NGN', amount });
+    if (!paymentChoice) return;
+  } catch (error) {
+    setPaymentStatus(container, error.message || String(error), 'bad');
+    return;
+  }
   const idempotencyKey = payButton?.dataset.idempotencyKey || newIdempotencyKey();
   if (payButton) {
     payButton.dataset.idempotencyKey = idempotencyKey;
-    setActionLoading(payButton, true, 'Opening checkout...');
+    setActionLoading(payButton, true, paymentChoice.paymentMethod === 'direct_bank_transfer' ? 'Submitting transfer...' : 'Opening checkout...');
   }
   let responseReceived = false;
   try {
@@ -1033,6 +1041,7 @@ async function payItem(child, fee, container) {
         feeCode: fee.FeeCode,
         components: fee.Components || undefined,
         amount: (isWalletFee(fee) || isYes(fee.AllowInstallment)) ? amount : undefined,
+        ...paymentChoice,
         idempotencyKey,
         ...turnstile
       })
@@ -1041,6 +1050,12 @@ async function payItem(child, fee, container) {
     const data = await response.json();
     if (!response.ok || !data.ok) {
       throw new Error(data.message || 'Could not initialize payment.');
+    }
+    if (data.directTransfer) {
+      delete payButton.dataset.idempotencyKey;
+      setPaymentStatus(container, window.DynamaxPaymentMethods.directTransferMessage(data), 'ok');
+      setActionLoading(payButton, false);
+      return;
     }
     window.location.href = data.authorizationUrl;
   } catch (error) {
@@ -1060,7 +1075,7 @@ function renderPayableItems(child) {
   const optionalRecords = [...busFees, ...clubFees, ...otherFees];
   const payableError = childResult(dashboard.payableErrors, child, '');
   const loading = !loadedPayables.has(identity);
-  payableItems.innerHTML = directRecords.length ? '' : `<p class="${payableError ? 'status bad' : 'muted'}">${payableError || (loading ? 'Loading payable items...' : 'There are no regular online payment items due at the moment.')}</p>`;
+  payableItems.innerHTML = directRecords.length ? '' : `<p class="${payableError ? 'status bad' : 'muted'}">${payableError || (loading ? 'Loading payable items...' : 'There are no regular payment items due at the moment.')}</p>`;
   optionalPayments.innerHTML = optionalRecords.length ? '' : `<p class="${payableError ? 'status bad' : 'muted'}">${payableError || (loading ? 'Loading optional payments...' : 'There are no optional payment items available at the moment.')}</p>`;
   if (optionalRecords.length) {
     const optionalBox = document.createElement('div');
@@ -1725,8 +1740,16 @@ function renderStoreCart(child) {
   checkoutStoreCartBtn.onclick = async () => {
     if (checkoutStoreCartBtn.disabled) return;
     const normalText = checkoutStoreCartBtn.textContent;
-    setActionLoading(checkoutStoreCartBtn, true, 'Connecting to Paystack...', normalText);
-    if (storeCheckoutStatus) { storeCheckoutStatus.textContent = 'Connecting to Paystack...'; storeCheckoutStatus.className = 'status'; }
+    let paymentChoice;
+    try {
+      paymentChoice = await window.DynamaxPaymentMethods.choose({ branchId: child.BranchId || 'main', currency: 'NGN', amount: total });
+      if (!paymentChoice) return;
+    } catch (error) {
+      if (storeCheckoutStatus) { storeCheckoutStatus.textContent = error.message || String(error); storeCheckoutStatus.className = 'status bad'; }
+      return;
+    }
+    setActionLoading(checkoutStoreCartBtn, true, paymentChoice.paymentMethod === 'direct_bank_transfer' ? 'Submitting transfer...' : 'Connecting to Paystack...', normalText);
+    if (storeCheckoutStatus) { storeCheckoutStatus.textContent = paymentChoice.paymentMethod === 'direct_bank_transfer' ? 'Submitting transfer for verification...' : 'Connecting to Paystack...'; storeCheckoutStatus.className = 'status'; }
     let responseReceived = false;
     try {
       const cart = entries.map(([, entry]) => ({ itemCode: entry.item.ItemCode, storeType: entry.item.StoreType, quantity: entry.quantity }));
@@ -1749,6 +1772,7 @@ function renderStoreCart(child) {
           feeCode: 'STORE_CART',
           amount: total,
           storeCart: cart,
+          ...paymentChoice,
           idempotencyKey,
           ...turnstile
         })
@@ -1758,6 +1782,14 @@ function renderStoreCart(child) {
       let data = {};
       try { data = JSON.parse(responseText); } catch (_error) { throw new Error(`Checkout service returned an invalid response (HTTP ${response.status}). Please try again.`); }
       if (!response.ok || !data.ok) throw new Error(data.message || 'Could not start store checkout.');
+      if (data.directTransfer) {
+        delete checkoutStoreCartBtn.dataset.idempotencyKey;
+        if (storeCheckoutStatus) { storeCheckoutStatus.textContent = window.DynamaxPaymentMethods.directTransferMessage(data); storeCheckoutStatus.className = 'status ok'; }
+        storeCart.clear();
+        renderStores(child);
+        setActionLoading(checkoutStoreCartBtn, false, '', normalText);
+        return;
+      }
       if (!data.authorizationUrl) throw new Error('Paystack did not return a checkout link. Please contact the school accounts office.');
       if (storeCheckoutStatus) { storeCheckoutStatus.textContent = 'Opening Paystack secure checkout...'; storeCheckoutStatus.className = 'status ok'; }
       window.location.assign(data.authorizationUrl);

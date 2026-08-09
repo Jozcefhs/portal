@@ -3,6 +3,8 @@ const button = document.getElementById('purchaseBtn');
 const statusEl = document.getElementById('purchaseStatus');
 const classSelect = document.getElementById('classApplyingFor');
 let purchaseIdempotencyKey = '';
+let defaultFormAmount = 0;
+let classFormAmounts = new Map();
 
 function newIdempotencyKey() {
   if (window.crypto?.randomUUID) return window.crypto.randomUUID();
@@ -58,6 +60,11 @@ async function loadAdmissionClasses() {
     if (!data.ok) {
       throw new Error(data.message || 'Could not load available classes.');
     }
+    defaultFormAmount = Number(data.formAmount || 0);
+    classFormAmounts = new Map((data.allClasses || []).map((row) => [
+      String(row.ClassName || '').trim().toLowerCase(),
+      Number(row.FormAmount || 0)
+    ]));
     setClassOptions(Array.isArray(data.classes) ? data.classes : []);
   } catch (error) {
     setClassOptions([]);
@@ -67,9 +74,6 @@ async function loadAdmissionClasses() {
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  if (!window.DynamaxActionFeedback.begin(button, 'Starting checkout...')) return;
-  setStatus('Starting secure checkout...', '');
-
   const payload = {
     applicantName: document.getElementById('applicantName').value.trim(),
     email: document.getElementById('email').value.trim().toLowerCase(),
@@ -78,6 +82,12 @@ form.addEventListener('submit', async (event) => {
   };
 
   try {
+    const branchId = new URLSearchParams(window.location.search).get('branch') || 'main';
+    const amount = classFormAmounts.get(payload.classApplyingFor.toLowerCase()) || defaultFormAmount;
+    const paymentChoice = await window.DynamaxPaymentMethods.choose({ branchId, currency: 'NGN', amount });
+    if (!paymentChoice) return;
+    if (!window.DynamaxActionFeedback.begin(button, paymentChoice.paymentMethod === 'direct_bank_transfer' ? 'Submitting transfer...' : 'Starting checkout...')) return;
+    setStatus(paymentChoice.paymentMethod === 'direct_bank_transfer' ? 'Submitting your transfer for verification...' : 'Starting secure checkout...', '');
     purchaseIdempotencyKey = purchaseIdempotencyKey || newIdempotencyKey();
     const turnstile = window.DynamaxPublicApi?.getTurnstileToken
       ? await window.DynamaxPublicApi.getTurnstileToken('init_form_payment')
@@ -90,6 +100,8 @@ form.addEventListener('submit', async (event) => {
       },
       body: JSON.stringify({
         ...payload,
+        ...paymentChoice,
+        branchId,
         idempotencyKey: purchaseIdempotencyKey,
         ...turnstile
       })
@@ -100,6 +112,11 @@ form.addEventListener('submit', async (event) => {
       throw new Error(data?.message || 'Could not start payment.');
     }
     purchaseIdempotencyKey = '';
+    if (data.directTransfer) {
+      setStatus(window.DynamaxPaymentMethods.directTransferMessage(data), 'ok');
+      window.DynamaxActionFeedback.end(button);
+      return;
+    }
     window.location.href = data.authorizationUrl;
   } catch (error) {
     setStatus(error.message, 'bad');

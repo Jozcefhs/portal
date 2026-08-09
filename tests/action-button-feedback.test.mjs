@@ -72,9 +72,9 @@ test('parent payment, checkout, download, wallet and refresh actions show busy s
   assert.match(parentDashboardJs, /button\.classList\.toggle\('is-loading', loading\)/);
   assert.match(parentDashboardJs, /button\.setAttribute\('aria-busy', loading \? 'true' : 'false'\)/);
   [
-    "setActionLoading(payButton, true, 'Opening checkout...')",
+    "setActionLoading(payButton, true, paymentChoice.paymentMethod === 'direct_bank_transfer' ? 'Submitting transfer...' : 'Opening checkout...')",
     "setActionLoading(button, true, 'Preparing download...', originalLabel)",
-    "setActionLoading(checkoutStoreCartBtn, true, 'Connecting to Paystack...', normalText)",
+    "setActionLoading(checkoutStoreCartBtn, true, paymentChoice.paymentMethod === 'direct_bank_transfer' ? 'Submitting transfer...' : 'Connecting to Paystack...', normalText)",
     "setActionLoading(button, true, 'Saving...', normalText)",
     "setActionLoading(refreshDashboardBtn, true, 'Refreshing...', normalText)"
   ].forEach((source) => assert.equal(parentDashboardJs.includes(source), true));
@@ -98,9 +98,9 @@ test('shared public action feedback preserves labels and blocks repeated async a
 test('public submission, payment, setup, upload and install actions use shared busy feedback', () => {
   [
     [applicationJs, /DynamaxActionFeedback\.begin\(submitBtn, 'Submitting application\.\.\.'\)/],
-    [buyFormJs, /DynamaxActionFeedback\.begin\(button, 'Starting checkout\.\.\.'\)/],
+    [buyFormJs, /DynamaxActionFeedback\.begin\(button, paymentChoice\.paymentMethod === 'direct_bank_transfer' \? 'Submitting transfer\.\.\.' : 'Starting checkout\.\.\.'\)/],
     [paymentsJs, /DynamaxActionFeedback\.begin\(lookupBtn, 'Checking fees\.\.\.'\)/],
-    [paymentsJs, /DynamaxActionFeedback\.begin\(payBtn, 'Starting checkout\.\.\.'\)/],
+    [paymentsJs, /DynamaxActionFeedback\.begin\(payBtn, paymentChoice\.paymentMethod === 'direct_bank_transfer' \? 'Submitting transfer\.\.\.' : 'Starting checkout\.\.\.'\)/],
     [registrationJs, /DynamaxActionFeedback\.begin\(button, 'Submitting registration\.\.\.'\)/],
     [setupJs, /DynamaxActionFeedback\.begin\(button, 'Unlocking settings\.\.\.'\)/],
     [setupJs, /DynamaxActionFeedback\.begin\(saveSetupButton, 'Saving changes\.\.\.'\)/],

@@ -68,7 +68,14 @@ function profileFromForm() {
     OrganisationEdition: data.get('OrganisationEdition'),
     GoogleDocumentsUrl: data.get('GoogleDocumentsUrl'),
     SubscriptionPlan: data.get('SubscriptionPlan'),
-    UserLimit: data.get('UserLimit')
+    UserLimit: data.get('UserLimit'),
+    OnlinePaymentEnabled: data.get('OnlinePaymentEnabled'),
+    DirectBankTransferEnabled: data.get('DirectBankTransferEnabled'),
+    PaymentBankName: data.get('PaymentBankName'),
+    PaymentAccountName: data.get('PaymentAccountName'),
+    PaymentAccountNumber: data.get('PaymentAccountNumber'),
+    PaymentBankCurrency: data.get('PaymentBankCurrency'),
+    PaymentTransferInstructions: data.get('PaymentTransferInstructions')
   };
   if (webLogoChanged) profile.WebLogoDataUrl = webLogoDataUrl;
   return profile;
@@ -120,6 +127,13 @@ function applyProfile(profile = {}) {
   setField('googleDocumentsUrl', profile.GoogleDocumentsUrl);
   setField('subscriptionPlan', profile.SubscriptionPlan || 'Starter');
   setField('userLimit', profile.UserLimit || 5);
+  setField('onlinePaymentEnabled', profile.OnlinePaymentEnabled || 'YES');
+  setField('directBankTransferEnabled', profile.DirectBankTransferEnabled || 'NO');
+  setField('paymentBankName', profile.PaymentBankName);
+  setField('paymentAccountName', profile.PaymentAccountName);
+  setField('paymentAccountNumber', profile.PaymentAccountNumber);
+  setField('paymentBankCurrency', profile.PaymentBankCurrency || 'NGN');
+  setField('paymentTransferInstructions', profile.PaymentTransferInstructions);
   updateSettingsScopeUI(profile);
   alignPlanUserLimit();
 }

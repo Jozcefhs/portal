@@ -134,11 +134,19 @@ storeForm.addEventListener('input', invalidateCheckout);
 storeForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (!cart.size || storeButton.disabled) return;
+  let paymentChoice;
+  try {
+    paymentChoice = await window.DynamaxPaymentMethods.choose({ branchId: storeBranch.value, currency: 'NGN', amount: cartTotal() });
+    if (!paymentChoice) return;
+  } catch (error) {
+    setStatus(error.message || String(error), 'bad');
+    return;
+  }
   const idempotencyKey = storeForm.dataset.idempotencyKey || requestId();
   storeForm.dataset.idempotencyKey = idempotencyKey;
   storeButton.disabled = true;
   storeButton.textContent = 'Preparing payment…';
-  setStatus('Preparing your secure payment…');
+  setStatus('Preparing your payment choices…');
   try {
     const turnstile = window.DynamaxPublicApi?.getTurnstileToken
       ? await window.DynamaxPublicApi.getTurnstileToken('organization_store')
@@ -146,7 +154,8 @@ storeForm.addEventListener('submit', async (event) => {
     const payload = {
       ...Object.fromEntries(new FormData(storeForm).entries()),
       ...turnstile,
-      PaymentMethod: 'Paystack Online',
+      ...paymentChoice,
+      PaymentMethod: paymentChoice.paymentMethod,
       Items: [...cart.entries()].map(([Reference, entry]) => ({ Reference, Quantity: entry.quantity })),
       SaleRequestId: idempotencyKey,
       idempotencyKey
@@ -162,6 +171,14 @@ storeForm.addEventListener('submit', async (event) => {
       error.responseReceived = true;
       throw error;
     }
+    if (data.directTransfer) {
+      setStatus(window.DynamaxPaymentMethods.directTransferMessage(data), 'ok');
+      cart.clear();
+      renderProducts();
+      renderCart();
+      storeButton.textContent = 'Continue to payment';
+      return;
+    }
     const paymentUrl = clean(data.authorizationUrl || data.sale?.AuthorizationUrl);
     if (!/^https:\/\/[A-Za-z0-9.-]+(?:\/|$)/.test(paymentUrl)) throw new Error('The secure payment address was not returned.');
     setStatus('Opening secure payment now. Your receipt will be emailed after payment…', 'ok');
@@ -170,7 +187,7 @@ storeForm.addEventListener('submit', async (event) => {
     if (error.responseReceived) delete storeForm.dataset.idempotencyKey;
     setStatus(error.message || String(error), 'bad');
     storeButton.disabled = !cart.size;
-    storeButton.textContent = 'Continue to secure payment';
+    storeButton.textContent = 'Choose payment method';
   }
 });
 

@@ -57,14 +57,15 @@
           <label>Full name<input name="CustomerName" autocomplete="name" maxlength="160" required></label>
           <label>Email address<input name="CustomerEmail" type="email" autocomplete="email" maxlength="254" required><small>Your paid receipt will be sent here.</small></label>
           <label>Phone number <span>(optional)</span><input name="CustomerPhone" type="tel" autocomplete="tel" maxlength="40"></label>
-          <div class="public-store-payment-note"><span aria-hidden="true">&#128274;</span><div><strong>Secure Paystack payment</strong><small>Items are deducted from stock only after payment succeeds.</small></div></div>
+          <div class="public-store-payment-note"><span aria-hidden="true">&#128274;</span><div><strong>Secure payment choices</strong><small>Choose online payment or direct bank transfer. Stock is deducted only after payment is verified.</small></div></div>
           <p id="publicStoreStatus" class="public-store-status" role="status" aria-live="polite"></p>
-          <button type="submit" id="publicStoreCheckoutButton" disabled>Continue to secure payment</button>
+          <button type="submit" id="publicStoreCheckoutButton" disabled>Choose payment method</button>
         </form>
       </aside>
     </div>
   </main>
   <script src="js/site-config.js?v=20260728-quota-safety"></script>
-  <script src="js/store.js?v=20260802-receipt-only"></script>
+  <script src="js/payment-methods.js?v=20260809-direct-transfer"></script>
+  <script src="js/store.js?v=20260809-direct-transfer"></script>
 </body>
 </html>

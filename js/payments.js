@@ -13,6 +13,7 @@ let currentEmail = '';
 let currentCode = '';
 let currentFees = [];
 let currentBreakdown = [];
+let currentBranchId = 'main';
 let paymentIdempotencyKey = '';
 const debugMode = new URLSearchParams(window.location.search).get('debug') === '1';
 
@@ -256,6 +257,7 @@ function buildPayableItems(fees, breakdown) {
 }
 
 function renderFees(account, fees, breakdown) {
+  currentBranchId = String(account?.BranchId || 'main').trim().toLowerCase() || 'main';
   paymentIdempotencyKey = '';
   currentFees = buildPayableItems(fees || [], breakdown || []);
   feeList.innerHTML = '';
@@ -268,7 +270,7 @@ function renderFees(account, fees, breakdown) {
   if (!currentFees.length) {
     const empty = document.createElement('p');
     empty.className = 'muted';
-    empty.textContent = 'There are no online payment items due at the moment.';
+    empty.textContent = 'There are no payment items due at the moment.';
     feeList.appendChild(empty);
     payBtn.disabled = true;
     updateWalletAmountVisibility();
@@ -331,7 +333,7 @@ lookupForm.addEventListener('submit', async (event) => {
       throw new Error(data.message || 'Could not load payable fees.');
     }
     renderFees(data.account || {}, data.fees || [], data.schoolFeeBreakdown || []);
-    setStatus('Review the payable amount and continue to Paystack checkout.', 'ok');
+    setStatus('Review the payable amount, then choose a payment method.', 'ok');
   } catch (error) {
     setStatus(error.message, 'bad');
   } finally {
@@ -360,9 +362,12 @@ payBtn.addEventListener('click', async () => {
     return;
   }
 
-  if (!window.DynamaxActionFeedback.begin(payBtn, 'Starting checkout...')) return;
-  setStatus('Starting secure checkout...', '');
   try {
+    const amount = rules.show ? enteredAmount : toAmount(fee.Amount);
+    const paymentChoice = await window.DynamaxPaymentMethods.choose({ branchId: currentBranchId, currency: fee.Currency || 'NGN', amount });
+    if (!paymentChoice) return;
+    if (!window.DynamaxActionFeedback.begin(payBtn, paymentChoice.paymentMethod === 'direct_bank_transfer' ? 'Submitting transfer...' : 'Starting checkout...')) return;
+    setStatus(paymentChoice.paymentMethod === 'direct_bank_transfer' ? 'Submitting your transfer for verification...' : 'Starting secure checkout...', '');
     paymentIdempotencyKey = paymentIdempotencyKey || newIdempotencyKey();
     const turnstile = window.DynamaxPublicApi?.getTurnstileToken
       ? await window.DynamaxPublicApi.getTurnstileToken('init_payment')
@@ -379,6 +384,7 @@ payBtn.addEventListener('click', async () => {
         feeCode: fee.FeeCode,
         components: fee.Components || undefined,
         amount: rules.show ? enteredAmount : undefined,
+        ...paymentChoice,
         idempotencyKey: paymentIdempotencyKey,
         ...turnstile
       })
@@ -389,6 +395,11 @@ payBtn.addEventListener('click', async () => {
       throw new Error(data?.message || 'Could not initialize payment.');
     }
     paymentIdempotencyKey = '';
+    if (data.directTransfer) {
+      setStatus(window.DynamaxPaymentMethods.directTransferMessage(data), 'ok');
+      window.DynamaxActionFeedback.end(payBtn);
+      return;
+    }
     window.location.href = data.authorizationUrl;
   } catch (error) {
     setStatus(error.message, 'bad');

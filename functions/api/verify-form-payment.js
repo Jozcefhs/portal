@@ -102,7 +102,7 @@ function renderGreeting(template, applicantName, schoolName) {
     .replaceAll('{SCHOOL_NAME}', schoolName || '');
 }
 
-async function sendSchoolFormPurchaseEmail(env, sale) {
+export async function sendSchoolFormPurchaseEmail(env, sale) {
   const profile = await getSettingsDocument(env, 'schoolProfile');
   const brevo = await getSettingsDocument(env, 'brevo');
   const apiKey = String(env.BREVO_API_KEY || '').trim();

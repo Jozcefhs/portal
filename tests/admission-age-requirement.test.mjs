@@ -50,5 +50,5 @@ test('desktop setting is persisted and enforced in browser and server paths', as
   assert.match(application, /force: true/);
   assert.match(publicClasses, /'Cache-Control': 'no-store'/);
   assert.match(applicationHtml, /js\/application\.js\?v=20260802-admission-minimum-age/);
-  assert.match(buyFormHtml, /js\/buy-form\.js\?v=20260802-admission-minimum-age/);
+  assert.match(buyFormHtml, /js\/buy-form\.js\?v=20260809-direct-transfer/);
 });
