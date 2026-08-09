@@ -104,7 +104,7 @@ test('overview and department summary cards stay in one scrollable row', () => {
   assert.match(portalCss, /\.department-summary-grid \.module-stat > \*\s*\{[\s\S]*?white-space: nowrap;/);
 });
 
-test('sidebar keeps account actions in one compact overlay control', () => {
+test('sidebar keeps account actions in one compact opaque control without covering modules', () => {
   const actionsIndex = adminHtml.indexOf('class="staff-sidebar-actions"');
   const accountMenuIndex = adminHtml.indexOf('id="staffAccountMenu"');
   const databaseIndex = adminHtml.indexOf('<strong>Database live</strong>');
@@ -112,7 +112,8 @@ test('sidebar keeps account actions in one compact overlay control', () => {
   assert.doesNotMatch(adminHtml, /Firestore Live/);
   assert.match(portalCss, /\.staff-sidebar \.staff-tabs\{flex:1 1 auto;min-height:0\}/);
   assert.match(portalCss, /\.staff-sidebar-actions\{flex:0 0 auto;margin-top:auto\}/);
-  assert.match(portalCss, /\.staff-account-menu-panel\{position:absolute;[\s\S]*?bottom:calc\(100% \+ 8px\);[\s\S]*?overflow-y:auto/);
+  assert.match(portalCss, /\.staff-account-menu\[open\]\{display:flex;flex-direction:column-reverse;gap:8px\}/);
+  assert.match(portalCss, /\.staff-account-menu\[open\]>\.staff-account-menu-panel\{[\s\S]*?position:relative;[\s\S]*?width:100%;[\s\S]*?background-color:#071c31!important;[\s\S]*?opacity:1/);
   assert.match(portalCss, /\.staff-account-menu-panel\{[^}]*background:#071c31!important;[^}]*opacity:1/);
   assert.match(portalCss, /\.staff-account-menu-panel>\.staff-profile-settings,[\s\S]*?background:#15344f;[\s\S]*?opacity:1/);
   assert.match(portalCss, /\.staff-account-menu:not\(\[open\]\)>\.staff-account-menu-panel\{display:none\}/);

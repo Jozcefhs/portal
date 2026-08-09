@@ -1393,6 +1393,21 @@ html[data-theme="dark"] .staff-page .staff-tabs .child-card.subscription-restric
   border-top:1px solid rgba(255,255,255,.12);
   background:#0b2239;
 }
+.staff-account-menu[open]{display:flex;flex-direction:column-reverse;gap:8px}
+.staff-account-menu[open]>.staff-account-menu-panel{
+  position:relative;
+  inset:auto;
+  z-index:1;
+  flex:0 1 auto;
+  width:100%;
+  max-height:min(52vh,390px);
+  border:1px solid #526f88;
+  background-color:#071c31!important;
+  background-image:linear-gradient(#071c31,#071c31)!important;
+  box-shadow:0 -12px 28px rgba(0,8,18,.48);
+  opacity:1;
+}
+.staff-account-menu[open]>summary{flex:0 0 auto;background:#15344f}
 @media (min-width:681px){
   .staff-sidebar > .staff-tabs{
     overflow-x:hidden;

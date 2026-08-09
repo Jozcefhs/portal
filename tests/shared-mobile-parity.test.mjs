@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
-const sharedVersion = '20260809-direct-transfer';
+const sharedVersion = '20260809-opaque-account-panel-v2';
 const adminScriptVersion = '20260809-transfer-approval-stages';
 const parentScriptVersion = '20260809-direct-transfer';
 const notificationVersion = '20260804-read-efficiency';
@@ -101,7 +101,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v162-transfer-approval-stages/);
+  assert.match(serviceWorker, /dynamax-v163-opaque-account-panel/);
   assert.match(serviceWorker, /'\/js\/app-dialogs\.js'/);
   assert.match(serviceWorker, /'\/setup\.html'/);
   assert.match(serviceWorker, /'\/js\/setup\.js'/);
