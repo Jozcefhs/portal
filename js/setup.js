@@ -22,6 +22,103 @@ const organisationOnlyControlIds = [
   'productKeyMode', 'googleDocumentsUrl', 'subscriptionPlan', 'userLimit'
 ];
 
+const settingsTerminology = {
+  school: {
+    'settings-description': 'Manage your school identity, documents and portal experience.',
+    'unlock-title': 'Unlock school settings',
+    'sidebar-title': 'School settings',
+    'profile-eyebrow': 'School profile',
+    'name-label': 'School name',
+    'code-label': 'School code',
+    'email-label': 'School email',
+    'phone-label': 'School phone',
+    'address-label': 'School address',
+    'name-format-label': 'Student and applicant name format',
+    'documents-description': 'Set the default signatory and optional school-document alternatives.',
+    'default-signatory-help': 'Used when a document-specific name is blank.',
+    'web-logo-label': 'School web logo',
+    'signatory-name': 'Example: Principal name',
+    'signatory-title': 'Example: Principal',
+    'portal-notice': 'Example: Admission into JSS 1 closes on Friday.'
+  },
+  faith: {
+    'settings-description': 'Manage your church identity, documents and public portal experience.',
+    'unlock-title': 'Unlock church settings',
+    'sidebar-title': 'Church settings',
+    'profile-eyebrow': 'Church profile',
+    'name-label': 'Church name',
+    'code-label': 'Church code',
+    'email-label': 'Church email',
+    'phone-label': 'Church phone',
+    'address-label': 'Church address',
+    'name-format-label': 'Member and personnel name format',
+    'documents-description': 'Set the default signatory used on church documents and correspondence.',
+    'default-signatory-help': 'Used as the standard signatory on generated church documents.',
+    'web-logo-label': 'Church web logo',
+    'signatory-name': 'Example: Senior Pastor name',
+    'signatory-title': 'Example: Senior Pastor',
+    'portal-notice': 'Example: Sunday service begins at 8:00 a.m.'
+  },
+  organization: {
+    'settings-description': 'Manage your organisation identity, documents and public portal experience.',
+    'unlock-title': 'Unlock organisation settings',
+    'sidebar-title': 'Organisation settings',
+    'profile-eyebrow': 'Organisation profile',
+    'name-label': 'Organisation name',
+    'code-label': 'Organisation code',
+    'email-label': 'Organisation email',
+    'phone-label': 'Organisation phone',
+    'address-label': 'Organisation address',
+    'name-format-label': 'Personnel and contact name format',
+    'documents-description': 'Set the default signatory used on organisation documents and correspondence.',
+    'default-signatory-help': 'Used as the standard signatory on generated organisation documents.',
+    'web-logo-label': 'Organisation web logo',
+    'signatory-name': 'Example: Director name',
+    'signatory-title': 'Example: Director',
+    'portal-notice': 'Example: Add an important public announcement.'
+  }
+};
+
+function normalizeSettingsEdition(value) {
+  const edition = String(value || '').trim().toLowerCase();
+  if (['faith', 'church', 'religious'].includes(edition)) return 'faith';
+  if (['organization', 'organisation', 'other'].includes(edition)) return 'organization';
+  return 'school';
+}
+
+function applyEditionTerminology(profile = {}) {
+  const edition = normalizeSettingsEdition(profile.OrganisationEdition);
+  const copy = settingsTerminology[edition];
+  document.querySelectorAll('[data-edition-copy]').forEach((node) => {
+    const value = copy[node.dataset.editionCopy];
+    if (value) node.textContent = value;
+  });
+  document.querySelectorAll('[data-edition-placeholder]').forEach((node) => {
+    const value = copy[node.dataset.editionPlaceholder];
+    if (value) node.placeholder = value;
+  });
+  document.querySelectorAll('[data-school-settings-only]').forEach((node) => {
+    node.hidden = edition !== 'school';
+  });
+  const editionField = document.getElementById('organisationEdition');
+  if (editionField) {
+    const labels = { school: 'School', faith: 'Church', organization: 'Other organisation' };
+    editionField.innerHTML = `<option value="${edition}">${labels[edition]}</option>`;
+    editionField.value = edition;
+    editionField.disabled = true;
+  }
+  const visibleLinks = [...document.querySelectorAll('.settings-nav-link:not([hidden])')];
+  visibleLinks.forEach((link, index) => {
+    const number = link.querySelector(':scope > span');
+    if (number) number.textContent = String(index + 1).padStart(2, '0');
+  });
+  const activeLink = document.querySelector('.settings-nav-link.active');
+  if (activeLink?.hidden) {
+    activeLink.classList.remove('active');
+    visibleLinks[0]?.classList.add('active');
+  }
+}
+
 function alignPlanUserLimit() {
   const planField = document.getElementById('subscriptionPlan');
   const limitField = document.getElementById('userLimit');
@@ -49,7 +146,7 @@ function setField(id, value) {
 function revealRequestedSettingsSection() {
   const sectionId = window.location.hash.slice(1);
   const section = sectionId ? document.getElementById(sectionId) : null;
-  if (!section) return;
+  if (!section || section.hidden) return;
   document.querySelectorAll('.settings-nav-link').forEach((link) => {
     link.classList.toggle('active', link.getAttribute('href') === `#${sectionId}`);
   });
@@ -80,7 +177,7 @@ function profileFromForm() {
     ResultDisplayMode: data.get('ResultDisplayMode'),
     ShowResultsOnline: data.get('ShowResultsOnline'),
     ProductKeyMode: data.get('ProductKeyMode'),
-    OrganisationEdition: data.get('OrganisationEdition'),
+    OrganisationEdition: document.getElementById('organisationEdition').value,
     GoogleDocumentsUrl: data.get('GoogleDocumentsUrl'),
     SubscriptionPlan: data.get('SubscriptionPlan'),
     UserLimit: data.get('UserLimit'),
@@ -149,6 +246,7 @@ function applyProfile(profile = {}) {
   setField('paymentAccountNumber', profile.PaymentAccountNumber);
   setField('paymentBankCurrency', profile.PaymentBankCurrency || 'NGN');
   setField('paymentTransferInstructions', profile.PaymentTransferInstructions);
+  applyEditionTerminology(profile);
   updateSettingsScopeUI(profile);
   alignPlanUserLimit();
 }
@@ -166,7 +264,7 @@ function updateSettingsScopeUI(profile = {}) {
   organisationOnlyControlIds.forEach((id) => {
     const control = document.getElementById(id);
     if (!control) return;
-    control.disabled = branchMode;
+    control.disabled = branchMode || id === 'organisationEdition';
     control.closest('.settings-section, .settings-field, .settings-logo-card')?.classList.toggle('settings-scope-locked', branchMode);
   });
   if (branchMode) {

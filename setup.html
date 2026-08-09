@@ -15,7 +15,7 @@
         <div>
           <p class="settings-eyebrow">Administration</p>
           <h1>Settings</h1>
-          <p>Manage your school identity, documents and portal experience.</p>
+          <p data-edition-copy="settings-description">Manage your organisation identity, documents and portal experience.</p>
         </div>
       </div>
       <div class="settings-top-actions">
@@ -28,7 +28,7 @@
       <div class="settings-lock-icon" aria-hidden="true">&#128274;</div>
       <div class="settings-unlock-copy">
         <p class="settings-eyebrow">Restricted area</p>
-        <h2>Unlock school settings</h2>
+        <h2 data-edition-copy="unlock-title">Unlock organisation settings</h2>
         <p>Enter the setup password to view and update configuration.</p>
       </div>
       <div class="settings-unlock-control">
@@ -60,11 +60,11 @@
         <button id="resetBranchSettings" class="settings-text-button" type="button" hidden>Reset overrides</button>
       </section>
       <aside class="settings-sidebar">
-        <div class="settings-sidebar-title">School settings</div>
+        <div class="settings-sidebar-title" data-edition-copy="sidebar-title">Organisation settings</div>
         <nav aria-label="Settings sections">
           <a href="#general-settings" class="settings-nav-link active"><span>01</span><div><strong>General</strong><small>Identity and contact</small></div></a>
           <a href="#document-settings" class="settings-nav-link"><span>02</span><div><strong>Documents</strong><small>Signatories and email</small></div></a>
-          <a href="#parent-settings" class="settings-nav-link"><span>03</span><div><strong>Parent portal</strong><small>Results and visibility</small></div></a>
+          <a href="#parent-settings" class="settings-nav-link" data-school-settings-only><span>03</span><div><strong>Parent portal</strong><small>Results and visibility</small></div></a>
           <a href="#brand-settings" class="settings-nav-link"><span>04</span><div><strong>Branding</strong><small>Web logo</small></div></a>
           <a href="#landing-settings" class="settings-nav-link"><span>05</span><div><strong>Landing page</strong><small>Public portal content</small></div></a>
           <a href="#licence-settings" class="settings-nav-link"><span>06</span><div><strong>Licensing</strong><small>Product access</small></div></a>
@@ -82,30 +82,30 @@
           <div class="settings-section-heading">
             <div><span class="settings-section-icon">G</span></div>
             <div>
-              <p class="settings-eyebrow">School profile</p>
+              <p class="settings-eyebrow" data-edition-copy="profile-eyebrow">Organisation profile</p>
               <h2>General information</h2>
               <p>Core identity and contact details used across the portal.</p>
             </div>
           </div>
           <div class="settings-fields two-column">
             <div class="settings-field">
-              <label for="schoolName">School name <span class="required">*</span></label>
+              <label for="schoolName"><span data-edition-copy="name-label">Organisation name</span> <span class="required">*</span></label>
               <input id="schoolName" name="SchoolName" required>
             </div>
             <div class="settings-field compact-field">
-              <label for="schoolCode">School code</label>
+              <label for="schoolCode" data-edition-copy="code-label">Organisation code</label>
               <input id="schoolCode" name="SchoolCode" placeholder="DCA">
             </div>
             <div class="settings-field">
-              <label for="schoolEmail">School email</label>
+              <label for="schoolEmail" data-edition-copy="email-label">Organisation email</label>
               <input id="schoolEmail" name="SchoolEmail" type="email">
             </div>
             <div class="settings-field">
-              <label for="schoolPhone">School phone</label>
+              <label for="schoolPhone" data-edition-copy="phone-label">Organisation phone</label>
               <input id="schoolPhone" name="SchoolPhone" inputmode="tel">
             </div>
             <div class="settings-field full-width">
-              <label for="schoolAddress">School address</label>
+              <label for="schoolAddress" data-edition-copy="address-label">Organisation address</label>
               <input id="schoolAddress" name="SchoolAddress">
             </div>
             <div class="settings-field">
@@ -117,7 +117,7 @@
               </select>
             </div>
             <div class="settings-field full-width">
-              <label for="nameFormat">Student and applicant name format</label>
+              <label for="nameFormat" data-edition-copy="name-format-label">Personnel and contact name format</label>
               <select id="nameFormat" name="NameFormat">
                 <option value="First name, middle name, surname">First name, middle name, surname</option>
                 <option value="First name, surname, middle name">First name, surname, middle name</option>
@@ -137,17 +137,17 @@
             <div>
               <p class="settings-eyebrow">Communication</p>
               <h2>Documents and signatories</h2>
-              <p>Set the default signatory and optional document-specific alternatives.</p>
+              <p data-edition-copy="documents-description">Set the default signatory used on organisation documents and correspondence.</p>
             </div>
           </div>
           <div class="settings-subsection">
-            <div class="settings-subsection-title"><strong>Default signatory</strong><span>Used when a document-specific name is blank.</span></div>
+            <div class="settings-subsection-title"><strong>Default signatory</strong><span data-edition-copy="default-signatory-help">Used as the standard signatory on generated documents.</span></div>
             <div class="settings-fields two-column">
-              <div class="settings-field"><label for="schoolSignatoryName">Signatory name</label><input id="schoolSignatoryName" name="SchoolSignatoryName" placeholder="Example: Principal name"></div>
-              <div class="settings-field"><label for="schoolSignatoryTitle">Signatory title</label><input id="schoolSignatoryTitle" name="SchoolSignatoryTitle" placeholder="Example: Principal"></div>
+              <div class="settings-field"><label for="schoolSignatoryName">Signatory name</label><input id="schoolSignatoryName" name="SchoolSignatoryName" placeholder="Example: Authorised signatory name" data-edition-placeholder="signatory-name"></div>
+              <div class="settings-field"><label for="schoolSignatoryTitle">Signatory title</label><input id="schoolSignatoryTitle" name="SchoolSignatoryTitle" placeholder="Example: Authorised signatory title" data-edition-placeholder="signatory-title"></div>
             </div>
           </div>
-          <div class="settings-subsection">
+          <div class="settings-subsection" data-school-settings-only>
             <div class="settings-subsection-title"><strong>Document-specific signatories</strong><span>Leave any pair blank to use the default above.</span></div>
             <div class="settings-fields two-column">
               <div class="settings-field"><label for="resultSignatoryName">Result slip signatory</label><input id="resultSignatoryName" name="ResultSignatoryName"></div>
@@ -158,7 +158,7 @@
               <div class="settings-field"><label for="admissionSignatoryTitle">Admission letter title</label><input id="admissionSignatoryTitle" name="AdmissionSignatoryTitle"></div>
             </div>
           </div>
-          <div class="settings-subsection">
+          <div class="settings-subsection" data-school-settings-only>
             <div class="settings-fields">
               <div class="settings-field">
                 <label for="emailGreetingTemplate">Email greeting template</label>
@@ -169,7 +169,7 @@
           </div>
         </section>
 
-        <section id="parent-settings" class="settings-section">
+        <section id="parent-settings" class="settings-section" data-school-settings-only>
           <div class="settings-section-heading">
             <div><span class="settings-section-icon">P</span></div>
             <div>
@@ -208,7 +208,7 @@
           <div class="settings-logo-card">
             <div class="settings-logo-preview"><img id="webLogoPreview" src="images/Logo.png" alt="Current web logo"></div>
             <div class="settings-logo-copy">
-              <strong>School web logo</strong>
+              <strong data-edition-copy="web-logo-label">Organisation web logo</strong>
               <p>PNG, JPG or WebP. The image is resized automatically and does not affect PDF documents.</p>
               <div class="settings-file-actions">
                 <label for="webLogoFile" class="settings-file-button">Choose image</label>
@@ -231,7 +231,7 @@
           <div class="settings-fields">
             <div class="settings-field"><label for="portalHeadline">Headline</label><input id="portalHeadline" name="PortalHeadline"></div>
             <div class="settings-field"><label for="portalSubheading">Subheading</label><textarea id="portalSubheading" name="PortalSubheading" rows="3"></textarea></div>
-            <div class="settings-field"><label for="portalNotice">Optional notice</label><textarea id="portalNotice" name="PortalNotice" rows="2" placeholder="Example: Admission into JSS 1 closes on Friday."></textarea></div>
+            <div class="settings-field"><label for="portalNotice">Optional notice</label><textarea id="portalNotice" name="PortalNotice" rows="2" placeholder="Example: Add an important public announcement." data-edition-placeholder="portal-notice"></textarea></div>
           </div>
         </section>
 
@@ -256,17 +256,12 @@
               <input id="userLimit" name="UserLimit" type="number" min="1" value="5">
             </div>
             <div class="settings-field">
-              <label>Plan pricing</label>
-              <a class="settings-link" href="plan-management.html">Manage monthly and yearly pricing</a>
-              <small class="settings-help">This opens the protected Dynamax pricing catalogue and synchronizes configured prices with Paystack.</small>
-            </div>
-            <div class="settings-field">
               <label for="productKeyMode">Product key requirement</label>
               <select id="productKeyMode" name="ProductKeyMode">
                 <option value="off">Off for now</option>
                 <option value="required">Require product key before app use</option>
               </select>
-              <small class="settings-help">Enforcement should be connected to a school-specific license or activation record.</small>
+              <small class="settings-help">Enforcement is controlled by the organisation's subscription and activation record.</small>
             </div>
           </div>
         </section>
@@ -325,6 +320,6 @@
 
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
-  <script src="js/setup.js?v=20260809-payment-settings-nav"></script>
+  <script src="js/setup.js?v=20260809-edition-settings"></script>
 </body>
 </html>

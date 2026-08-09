@@ -223,7 +223,7 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(pricingJs, /<span>Yearly price \(<span data-price-currency>\$\{currency\}<\/span>\)<\/span>/);
   assert.match(pricingJs, /existing subscribers remain on their current Paystack plans/);
   assert.doesNotMatch(pricingJs, /class="sr-only"/);
-  assert.match(setupHtml, /href="plan-management\.html"/);
+  assert.doesNotMatch(setupHtml, /href="plan-management\.html"/);
   assert.match(setupHtml, /<option>Free<\/option>/);
   assert.match(registrationApi, /plan: planCode/);
   assert.match(registrationApi, /PAYSTACK_SECRET_KEY/);
