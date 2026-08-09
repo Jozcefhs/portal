@@ -64,7 +64,7 @@ const moduleGrid = document.getElementById('staffModuleGrid');
 const moduleCloseButton = document.getElementById('staffModuleClose');
 const requestedWorkspace = new URLSearchParams(window.location.search).get('workspace')?.trim().toLowerCase() || '';
 const requestedSection = new URLSearchParams(window.location.search).get('section')?.trim() || '';
-const legacyDashboardSections = new Set(['admissions', 'formPurchases', 'students', 'accounts']);
+const legacyDashboardSections = new Set(['schoolInsights', 'admissions', 'formPurchases', 'students', 'accounts']);
 
 let currentUser = null;
 let dashboardData = null;
@@ -242,6 +242,7 @@ function staffRolesForEdition(edition = resolveDashboardEdition(currentUser || {
 
 const tabIcons = {
   overview: '\u2302',
+  schoolInsights: '\u{1F4CA}',
   recordsDesk: '\u{1F5C2}',
   executiveOffice: '\u{1F4E8}',
   admissions: '\u{1F4DD}',
@@ -1152,11 +1153,16 @@ function executiveOfficeTitle() {
 }
 
 function staffTabLabel(key, fallback = '') {
+  if (key === 'schoolInsights') return 'School Insights';
   if (key === 'executiveOffice') return executiveOfficeTitle();
   if (resolveDashboardEdition(currentUser || {}) === 'organization') {
     return organizationTabLabels[key] || fallback;
   }
   return fallback;
+}
+
+function schoolInsightsAvailable(allowed = [], user = currentUser || {}) {
+  return resolveDashboardEdition(user) === 'school' && (allowed || []).includes('accounts');
 }
 
 const genericOrganizationTextReplacements = Object.freeze([
@@ -1449,7 +1455,11 @@ async function loadDashboard(options = {}) {
     showDashboard(currentUser, { refreshPasskeys: false });
     if (mode === 'shell') await refreshStaffSiteProfile();
     const allowed = data.allowedSections || currentUser.allowedSections || [];
-    const workspaceSections = ['overview', ...allowed];
+    const workspaceSections = [
+      'overview',
+      ...(schoolInsightsAvailable(allowed, data.user || currentUser || {}) ? ['schoolInsights'] : []),
+      ...allowed
+    ];
     if (!activeSection || !workspaceSections.includes(activeSection)) {
       activeSection = workspaceSections.includes(requestedSection) ? requestedSection : 'overview';
     }
@@ -1817,7 +1827,16 @@ function renderModuleSummary(active, liveData = null) {
   const departments = dashboardData?.departments || {};
   const icon = tabIcons[active];
   let cards = [];
-  if (active === 'executiveOffice' && liveData) {
+  if (active === 'schoolInsights') {
+    const summary = dashboardData?.summary || {};
+    const loaded = Boolean(departments.schoolInsights);
+    cards = loaded ? [
+      { icon: '\u{1F465}', label: 'Students', value: Number(summary.students || 0).toLocaleString(), note: `${Number(summary.dayStudents || 0).toLocaleString()} day / ${Number(summary.boardingStudents || 0).toLocaleString()} boarding` },
+      { icon: '\u{1F9FE}', label: 'Expected Fees', value: money(summary.totalInvoiced), note: `${Number(summary.studentAccounts || 0).toLocaleString()} student accounts` },
+      { icon: '\u2713', label: 'Fees Received', value: money(summary.totalPaid), note: `${Number(summary.collectionRate || 0).toFixed(1)}% collected` },
+      { icon: '\u26A0', label: 'Outstanding Fees', value: money(summary.outstandingFees), note: `${Number(summary.defaulters || 0).toLocaleString()} account(s) owing` }
+    ] : [{ icon, label: 'School Insights', value: 'Loading', note: 'Preparing fee and enrolment summaries' }];
+  } else if (active === 'executiveOffice' && liveData) {
     const selected = new Set(executiveSelectedMetricIds(liveData));
     cards = executiveMetricCatalog(liveData)
       .filter((metric) => selected.has(metric.id))
@@ -2010,9 +2029,18 @@ function renderTabs(allowed) {
     dashboardData?.restrictedSections || currentUser?.restrictedSections || []
   );
   const editionTabs = webTabsForEdition();
-  const tabs = [['overview', 'Dashboard'], ...editionTabs.filter(([key]) => allowedSet.has(key))];
+  const insightAllowed = schoolInsightsAvailable(allowed, currentUser || {});
+  const insightRestricted = resolveDashboardEdition(currentUser || {}) === 'school'
+    && !insightAllowed
+    && restrictedSet.has('accounts');
+  const tabs = [
+    ['overview', 'Dashboard'],
+    ...(insightAllowed ? [['schoolInsights', 'School Insights']] : []),
+    ...editionTabs.filter(([key]) => allowedSet.has(key))
+  ];
   const visibleTabs = [
     ['overview', 'Dashboard', false],
+    ...(insightAllowed || insightRestricted ? [['schoolInsights', 'School Insights', insightRestricted]] : []),
     ...editionTabs
       .filter(([key]) => allowedSet.has(key) || restrictedSet.has(key))
       .map(([key, label]) => [key, label, restrictedSet.has(key) && !allowedSet.has(key)])
@@ -8831,6 +8859,53 @@ async function loadStudentConduct() {
   }
 }
 
+function schoolInsightChartCards(charts = {}) {
+  const groups = [
+    ['Students by Gender', charts.studentGender || [], false],
+    ['New Intake / Returning', charts.studentCategory || [], false],
+    ['Fee Balance by Class', charts.classBalances || [], true],
+    ['Fee Position', charts.paymentPosition || [], true]
+  ];
+  return groups.map(([title, rows, currency]) => {
+    const max = Math.max(1, ...rows.map((row) => Number(row.value || 0)));
+    const bars = rows.length
+      ? rows.map((row) => `<div class="chart-row"><span title="${escapeHtml(row.label)}">${escapeHtml(row.label)}${row.secondary ? `<small>${escapeHtml(row.secondary)}</small>` : ''}</span><i><b style="width:${Math.max(2, Math.round(Number(row.value || 0) / max * 100))}%"></b></i><strong>${currency ? money(row.value) : escapeHtml(row.value)}</strong></div>`).join('')
+      : '<p class="muted">No data yet.</p>';
+    return `<article><h3>${escapeHtml(title)}</h3>${bars}</article>`;
+  }).join('');
+}
+
+function renderSchoolInsights() {
+  const insights = dashboardData?.departments?.schoolInsights || {};
+  const defaulters = insights.defaulters || [];
+  const branchName = availableBranches.find((branch) => clean(branch.id).toLowerCase() === clean(selectedBranchId).toLowerCase())?.name
+    || (clean(selectedBranchId) && selectedBranchId !== 'all' ? selectedBranchId : 'All permitted branches');
+  panelEl.innerHTML = `
+    <div class="workflow-ledger-heading">
+      <div><p class="eyebrow">School operations</p><h2>School Insights</h2><p class="muted">Enrolment and fee-payment information for ${escapeHtml(branchName)}. Figures load only when this workspace is opened.</p></div>
+      <button type="button" id="refreshSchoolInsights">Refresh</button>
+    </div>
+    <section class="dashboard-charts" aria-label="School enrolment and fee charts">${schoolInsightChartCards(dashboardData?.charts || {})}</section>
+    ${table('Top 10 Fee-Payment Defaulters', defaulters, [
+      { label: 'Student', value: (row) => pick(row, ['DisplayName', 'AccountRef']) },
+      { label: 'Admission / Account No.', value: (row) => pick(row, ['AdmissionNo', 'AccountRef']) },
+      { label: 'Class', value: (row) => pick(row, ['ClassName']) || 'Unspecified' },
+      { label: 'Expected', render: (row) => money(row.TotalDebit) },
+      { label: 'Paid', render: (row) => money(row.TotalCredit) },
+      { label: 'Outstanding', render: (row) => `<strong>${escapeHtml(money(row.OutstandingBalance))}</strong>` },
+      { label: 'Last Payment', value: (row) => pick(row, ['LastPaymentAt']) || 'No payment recorded' }
+    ])}`;
+  document.getElementById('refreshSchoolInsights')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    setButtonLoading(button, true, 'Refreshing...', 'Refresh');
+    try {
+      await loadDashboard({ mode: 'section', section: 'schoolInsights', merge: true });
+    } finally {
+      if (button.isConnected) setButtonLoading(button, false, 'Refreshing...', 'Refresh');
+    }
+  });
+}
+
 function renderSection(active) {
   if (!dashboardData) return;
   panelEl.classList.toggle('school-store-panel', active === 'bookstore' || active === 'uniformStore' || active === 'organizationStore');
@@ -8848,7 +8923,9 @@ function renderSection(active) {
     }
     return;
   }
-  if (active === 'recordsDesk') {
+  if (active === 'schoolInsights') {
+    renderSchoolInsights();
+  } else if (active === 'recordsDesk') {
     renderRecordsDesk();
   } else if (active === 'executiveOffice') {
     panelEl.innerHTML = `<div class="executive-loading"><span class="records-desk-spinner" aria-hidden="true"></span><strong>Opening ${escapeHtml(executiveOfficeTitle())}...</strong><small>Loading authorised metrics, directories, templates and correspondence.</small></div>`;

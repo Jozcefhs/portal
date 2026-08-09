@@ -1980,6 +1980,8 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
       AcademicProgress: clean(existing.AcademicProgress || normalized.AcademicProgress) || 'Promoted',
       AcademicSession: clean(existing.AcademicSession || normalized.AcademicSession || resolvedSchoolProfile.CurrentAcademicSession),
       Term: clean(existing.Term || normalized.Term || resolvedSchoolProfile.CurrentTerm) || 'First Term',
+      BranchId: clean(existing.BranchId || normalized.BranchId),
+      SchoolSection: clean(existing.SchoolSection || normalized.SchoolSection),
       Status: clean(existing.Status || normalized.Status),
       ResultStatus: clean(existing.ResultStatus || normalized.ResultStatus),
       OfferSent: clean(existing.OfferSent || normalized.OfferSent),
@@ -2010,6 +2012,8 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
     AcademicProgress: student.AcademicProgress,
     AcademicSession: student.AcademicSession,
     Term: student.Term,
+    BranchId: student.BranchId,
+    SchoolSection: student.SchoolSection,
     Status: student.Status || 'Active',
     Enrolled: 'YES'
   }));
@@ -2029,6 +2033,8 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
     AcademicProgress: app.AcademicProgress,
     AcademicSession: app.AcademicSession,
     Term: app.Term,
+    BranchId: app.BranchId,
+    SchoolSection: app.SchoolSection,
     Status: app.Status,
     ResultStatus: app.ResultStatus,
     OfferSent: app.OfferSent,
@@ -2045,6 +2051,8 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
     BillingCategory: row.BillingCategory,
     AcademicSession: row.AcademicSession,
     Term: row.Term,
+    BranchId: row.BranchId,
+    SchoolSection: row.SchoolSection,
     Status: 'Active'
   }));
   const ledger = [

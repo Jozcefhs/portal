@@ -82,12 +82,18 @@ export async function onRequestPost(context) {
     const body = await readJsonBody(request, { maxBytes: 32 * 1024 });
     const requestedSection = clean(body.section);
     const shellOnly = clean(body.mode).toLowerCase() === 'shell';
+    const schoolInsights = requestedSection === 'schoolInsights';
     if (!shellOnly && user.subscriptionActive === false) {
       const err = new Error(user.subscriptionMessage || 'This subscription is not active. Choose a paid subscription to continue.');
       err.status = 402;
       throw err;
     }
-    if (requestedSection && !allowed.has(requestedSection)) {
+    if (schoolInsights && (user.edition !== 'school' || !allowed.has('accounts'))) {
+      const err = new Error('School Insights requires school-edition Accounts access.');
+      err.status = 403;
+      throw err;
+    }
+    if (requestedSection && !schoolInsights && !allowed.has(requestedSection)) {
       const err = new Error('That dashboard section is not assigned to this staff account.');
       err.status = 403;
       throw err;
@@ -126,8 +132,11 @@ export async function onRequestPost(context) {
         summaryDeferred: true
       }, { headers: { 'Cache-Control': 'no-store' } });
     }
-    const shouldLoad = (section) => allowed.has(section)
-      && (!requestedSection || requestedSection === section);
+    const shouldLoad = (section) => {
+      if (schoolInsights && ['accounts', 'students'].includes(section)) return true;
+      return allowed.has(section)
+        && (!requestedSection || requestedSection === section || (schoolInsights && ['admissions', 'formPurchases'].includes(section)));
+    };
     const shouldLoadStore = () => ['bookstore', 'uniformStore', 'organizationStore']
       .some((section) => shouldLoad(section));
 
@@ -193,8 +202,8 @@ export async function onRequestPost(context) {
           invoices: staffScope(invoices),
           ledger: staffScope(ledger)
         };
-        if (shouldLoad('admissions')) overviewInputs.applications = applications;
-        if (shouldLoad('students')) overviewInputs.students = students;
+        if (schoolInsights || shouldLoad('admissions')) overviewInputs.applications = applications;
+        if (schoolInsights || shouldLoad('students')) overviewInputs.students = students;
         accountOverview = await getAccountsOverview(env, overviewInputs, {
           branchId: user.branchId,
           schoolSectionAccess: user.schoolSectionAccess
@@ -329,6 +338,38 @@ export async function onRequestPost(context) {
         .sort((a, b) => toNumber(b.OutstandingBalance ?? b.Balance) - toNumber(a.OutstandingBalance ?? a.Balance)).slice(0, 10)
         .map((row) => ({ label: clean(row.DisplayName || row.AccountRef), secondary: clean(row.ClassName), value: toNumber(row.OutstandingBalance ?? row.Balance) }))
     };
+
+    if (schoolInsights) {
+      const totalInvoiced = accountRows.reduce((sum, row) => sum + Math.max(0, toNumber(row.TotalDebit)), 0);
+      const totalPaid = accountRows.reduce((sum, row) => sum + Math.max(0, toNumber(row.TotalCredit)), 0);
+      const outstandingRows = accountRows
+        .filter((row) => toNumber(row.OutstandingBalance ?? row.Balance) > 0)
+        .sort((a, b) => toNumber(b.OutstandingBalance ?? b.Balance) - toNumber(a.OutstandingBalance ?? a.Balance));
+      const outstandingFees = outstandingRows.reduce((sum, row) => sum + toNumber(row.OutstandingBalance ?? row.Balance), 0);
+      summary.studentAccounts = accountRows.length;
+      summary.totalInvoiced = totalInvoiced;
+      summary.totalPaid = totalPaid;
+      summary.outstandingFees = outstandingFees;
+      summary.defaulters = outstandingRows.length;
+      summary.collectionRate = totalInvoiced > 0 ? Math.min(100, totalPaid / totalInvoiced * 100) : 0;
+      charts.paymentPosition = [
+        { label: 'Expected', value: totalInvoiced },
+        { label: 'Received', value: totalPaid },
+        { label: 'Outstanding', value: outstandingFees }
+      ];
+      departments.schoolInsights = {
+        defaulters: outstandingRows.slice(0, 10).map((row) => ({
+          AccountRef: clean(row.AccountRef),
+          AdmissionNo: clean(row.AdmissionNo),
+          DisplayName: clean(row.DisplayName || row.AccountRef),
+          ClassName: clean(row.ClassName),
+          TotalDebit: toNumber(row.TotalDebit),
+          TotalCredit: toNumber(row.TotalCredit),
+          OutstandingBalance: toNumber(row.OutstandingBalance ?? row.Balance),
+          LastPaymentAt: clean(row.LastPaymentAt)
+        }))
+      };
+    }
 
     return Response.json({
       ok: true,
