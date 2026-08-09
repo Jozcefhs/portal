@@ -14,6 +14,7 @@ import { createPaidStoreOrder } from './verify-payment.js';
 import { recordManualOrganizationCommerceSale } from '../lib/organization-commerce.js';
 import { saveChurchDonation } from '../lib/church-payments.js';
 import { sendSchoolPaymentReceiptEmail } from '../lib/school-payment-email.js';
+import { notifyParentPaymentReceived } from '../lib/notifications.js';
 
 const clean = (value) => String(value ?? '').trim();
 const safeId = (value) => clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140);
@@ -104,7 +105,9 @@ async function approveSchoolPayment(env, transfer, user) {
     Reference: transfer.Reference,
     GatewayReference: transfer.BankReference,
     PaidAt: new Date().toISOString(),
-    RecordedBy: clean(user.displayName || user.username)
+    RecordedBy: clean(user.displayName || user.username),
+    ReferenceIsDocumentId: true,
+    DeferNotifications: true
   });
   const storeCart = Array.isArray(payload.StoreCart) ? payload.StoreCart : [];
   const orders = [];
@@ -131,7 +134,12 @@ async function approveSchoolPayment(env, transfer, user) {
       CreatedAt: new Date().toISOString()
     }, items, storeType));
   }
-  const email = await sendSchoolPaymentReceiptEmail(env, recorded.payment || {
+  return { recorded, orders };
+}
+
+async function deliverSchoolPaymentReceipt(env, transfer) {
+  const payload = transfer.Payload || {};
+  const payment = await getDocument(env, 'payments', safeId(transfer.Reference)) || {
     ...payload,
     Amount: transfer.Amount,
     GrossAmount: transfer.Amount,
@@ -139,14 +147,19 @@ async function approveSchoolPayment(env, transfer, user) {
     Gateway: 'Direct Bank Transfer',
     Reference: transfer.Reference,
     GatewayReference: transfer.BankReference,
-    PaidAt: new Date().toISOString(),
+    PaidAt: clean(transfer.RecordingCompletedAt) || new Date().toISOString(),
     BranchId: transfer.BranchId,
     ParentEmail: payload.ParentEmail || transfer.PayerEmail
-  }).catch((mailError) => ({
+  };
+  const notification = await notifyParentPaymentReceived(env, payment).catch((notificationError) => ({
+    ok: false,
+    message: notificationError?.message || String(notificationError)
+  }));
+  const email = await sendSchoolPaymentReceiptEmail(env, payment).catch((mailError) => ({
     ok: false,
     message: mailError?.message || String(mailError)
   }));
-  return { recorded, orders, email };
+  return { notification, email };
 }
 
 async function approveOrganizationStore(env, transfer, user, context = {}) {
@@ -198,6 +211,36 @@ async function finalizeTransfer(context, transfer, user) {
   throw error('This transfer type cannot be finalized.', 400);
 }
 
+async function markTransferVerified(env, reference, transfer, user, result = {}) {
+  const intent = await getDocument(env, 'paymentIntents', reference).catch(() => null);
+  if (intent) {
+    await upsertDocument(env, 'paymentIntents', reference, {
+      ...withoutMetadata(intent),
+      Status: 'Completed',
+      CompletedAt: new Date().toISOString()
+    }).catch(() => null);
+  }
+  await upsertDocument(env, 'directTransferRequests', reference, {
+    ...withoutMetadata(transfer),
+    Status: 'Verified',
+    ApprovalStage: 'completed',
+    VerificationError: '',
+    ReviewedAt: new Date().toISOString(),
+    ReviewedBy: clean(user.displayName || user.username),
+    Result: result,
+    UpdatedAt: new Date().toISOString()
+  });
+}
+
+function continuationResponse(message, stage) {
+  return Response.json({
+    ok: true,
+    continueApproval: true,
+    stage,
+    message
+  }, { status: 202, headers: { 'Cache-Control': 'no-store' } });
+}
+
 export async function onRequestGet(context) {
   try {
     requireFirestoreEnv(context.env);
@@ -224,7 +267,7 @@ export async function onRequestGet(context) {
       });
     }
     const rows = await queryCollection(context.env, 'directTransferRequests', {
-      filters: [{ field: 'Status', op: '==', value: 'Awaiting Verification' }],
+      filters: [{ field: 'Status', op: 'in', value: ['Awaiting Verification', 'Verification in progress'] }],
       limit: 100
     });
     const transfers = rows.filter((row) => contextAllowed(user, clean(row.Context)))
@@ -244,7 +287,8 @@ export async function onRequestGet(context) {
 }
 
 export async function onRequestPost(context) {
-  let claimed = null;
+  let processingTransfer = null;
+  let processingReference = '';
   try {
     requireFirestoreEnv(context.env);
     const user = await requireStaffSession(context.env, context.request);
@@ -253,6 +297,8 @@ export async function onRequestPost(context) {
     const action = clean(body.action).toLowerCase();
     const transfer = reference ? await getDocument(context.env, 'directTransferRequests', reference) : null;
     if (!transfer) throw error('The transfer request was not found.', 404);
+    processingTransfer = transfer;
+    processingReference = reference;
     verifyScope(user, transfer);
     if (action === 'reject') {
       const reason = clean(body.Reason || body.reason).slice(0, 500);
@@ -270,45 +316,82 @@ export async function onRequestPost(context) {
       return Response.json({ ok: true, message: 'Transfer rejected. No receipt or accounting entry was created.' }, { headers: { 'Cache-Control': 'no-store' } });
     }
     if (action !== 'approve') throw error('Choose approve or reject.');
-    if (clean(transfer.Status) !== 'Awaiting Verification') throw error('This transfer has already been processed.', 409);
-    const bankReferenceMatches = await queryCollection(context.env, 'directTransferRequests', {
-      filters: [{ field: 'BankReference', op: '==', value: transfer.BankReference }],
-      limit: 20
-    });
-    const alreadyCredited = bankReferenceMatches.find((row) => clean(row.Reference) !== reference
-      && clean(row.BranchId || 'main').toLowerCase() === clean(transfer.BranchId || 'main').toLowerCase()
-      && clean(row.Currency).toUpperCase() === clean(transfer.Currency).toUpperCase()
-      && clean(row.Status).toLowerCase() === 'verified');
-    if (alreadyCredited) {
-      throw error(`Bank reference ${transfer.BankReference} was already approved for ${alreadyCredited.Reference}.`, 409);
+    const status = clean(transfer.Status).toLowerCase();
+    if (status === 'awaiting verification') {
+      const bankReferenceMatches = await queryCollection(context.env, 'directTransferRequests', {
+        filters: [{ field: 'BankReference', op: '==', value: transfer.BankReference }],
+        limit: 20
+      });
+      const alreadyCredited = bankReferenceMatches.find((row) => clean(row.Reference) !== reference
+        && clean(row.BranchId || 'main').toLowerCase() === clean(transfer.BranchId || 'main').toLowerCase()
+        && clean(row.Currency).toUpperCase() === clean(transfer.Currency).toUpperCase()
+        && clean(row.Status).toLowerCase() === 'verified');
+      if (alreadyCredited) {
+        throw error(`Bank reference ${transfer.BankReference} was already approved for ${alreadyCredited.Reference}.`, 409);
+      }
+      const bankClaimId = await bankReferenceClaimId(transfer);
+      const bankClaim = await createDocumentIfAbsent(context.env, 'verifiedBankReferences', bankClaimId, {
+        ClaimId: bankClaimId,
+        Reference: reference,
+        BankReference: transfer.BankReference,
+        BranchId: transfer.BranchId,
+        Currency: transfer.Currency,
+        CreatedAt: new Date().toISOString()
+      });
+      if (!bankClaim.created && clean(bankClaim.document?.Reference) !== reference) {
+        throw error(`Bank reference ${transfer.BankReference} is already assigned to another payment.`, 409);
+      }
+      const claimed = {
+        ...withoutMetadata(transfer),
+        Status: 'Verification in progress',
+        ApprovalStage: 'record',
+        VerificationError: '',
+        ApprovalStartedAt: new Date().toISOString(),
+        ApprovalStartedBy: clean(user.displayName || user.username),
+        UpdatedAt: new Date().toISOString()
+      };
+      await updateDocumentIfCurrent(context.env, 'directTransferRequests', reference, claimed, transfer);
+      return continuationResponse('Bank reference secured. Recording the payment now...', 'record');
     }
-    const bankClaimId = await bankReferenceClaimId(transfer);
-    const bankClaim = await createDocumentIfAbsent(context.env, 'verifiedBankReferences', bankClaimId, {
-      ClaimId: bankClaimId,
-      Reference: reference,
-      BankReference: transfer.BankReference,
-      BranchId: transfer.BranchId,
-      Currency: transfer.Currency,
-      CreatedAt: new Date().toISOString()
-    });
-    if (!bankClaim.created && clean(bankClaim.document?.Reference) !== reference) {
-      throw error(`Bank reference ${transfer.BankReference} is already assigned to another payment.`, 409);
+    if (status !== 'verification in progress') throw error('This transfer has already been processed.', 409);
+    const stage = clean(transfer.ApprovalStage || 'record').toLowerCase();
+    if (stage === 'record') {
+      const result = await finalizeTransfer(context, transfer, user);
+      if (transfer.Context !== 'school-payment') {
+        await markTransferVerified(context.env, reference, transfer, user, result);
+        return Response.json({ ok: true, message: 'Transfer verified and recorded.', result }, { headers: { 'Cache-Control': 'no-store' } });
+      }
+      const payment = result?.recorded?.payment || {};
+      await upsertDocument(context.env, 'directTransferRequests', reference, {
+        ...withoutMetadata(transfer),
+        Status: 'Verification in progress',
+        ApprovalStage: 'deliver-receipt',
+        VerificationError: '',
+        RecordingCompletedAt: new Date().toISOString(),
+        ReceiptNo: clean(payment.ReceiptNo || payment.PaymentId || payment.Reference),
+        UpdatedAt: new Date().toISOString()
+      });
+      return continuationResponse('Payment recorded. Preparing the parent notification and receipt...', 'deliver-receipt');
     }
-    claimed = { ...withoutMetadata(transfer), Status: 'Verification in progress', UpdatedAt: new Date().toISOString() };
-    await updateDocumentIfCurrent(context.env, 'directTransferRequests', reference, claimed, transfer);
-    const result = await finalizeTransfer(context, transfer, user);
-    await upsertDocument(context.env, 'directTransferRequests', reference, {
-      ...withoutMetadata(transfer),
-      Status: 'Verified',
-      VerificationError: '',
-      ReviewedAt: new Date().toISOString(),
-      ReviewedBy: clean(user.displayName || user.username),
-      Result: result,
-      UpdatedAt: new Date().toISOString()
-    });
-    const intent = await getDocument(context.env, 'paymentIntents', reference).catch(() => null);
-    if (intent) await upsertDocument(context.env, 'paymentIntents', reference, { ...withoutMetadata(intent), Status: 'Completed', CompletedAt: new Date().toISOString() });
-    const receiptDelivery = result?.email;
+    if (!['deliver-receipt', 'complete'].includes(stage) || transfer.Context !== 'school-payment') {
+      throw error('This transfer has an invalid approval stage. Contact the administrator.', 409);
+    }
+    if (stage === 'deliver-receipt') {
+      const deliveryResult = await deliverSchoolPaymentReceipt(context.env, transfer);
+      await upsertDocument(context.env, 'directTransferRequests', reference, {
+        ...withoutMetadata(transfer),
+        Status: 'Verification in progress',
+        ApprovalStage: 'complete',
+        VerificationError: '',
+        Result: deliveryResult,
+        ReceiptDeliveredAt: new Date().toISOString(),
+        UpdatedAt: new Date().toISOString()
+      });
+      return continuationResponse('Receipt delivery completed. Finalizing the verified transfer...', 'complete');
+    }
+    const result = transfer.Result || {};
+    await markTransferVerified(context.env, reference, transfer, user, result);
+    const receiptDelivery = result.email;
     const receiptNote = transfer.Context !== 'school-payment'
       ? ''
       : receiptDelivery?.ok
@@ -318,10 +401,11 @@ export async function onRequestPost(context) {
           : ` Payment was recorded, but the receipt email needs attention: ${clean(receiptDelivery?.message || 'delivery was not confirmed')}`;
     return Response.json({ ok: true, message: `Transfer verified and recorded.${receiptNote}`, result }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
-    if (claimed) {
-      await upsertDocument(context.env, 'directTransferRequests', safeId(claimed.Reference), {
-        ...claimed,
-        Status: 'Awaiting Verification',
+    if (processingTransfer && clean(processingTransfer.Status).toLowerCase() === 'verification in progress') {
+      await upsertDocument(context.env, 'directTransferRequests', processingReference, {
+        ...withoutMetadata(processingTransfer),
+        Status: 'Verification in progress',
+        ApprovalStage: clean(processingTransfer.ApprovalStage || 'record'),
         VerificationError: clean(error.message || error).slice(0, 500),
         UpdatedAt: new Date().toISOString()
       }).catch(() => null);

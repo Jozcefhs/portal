@@ -317,14 +317,15 @@ async function findStudentByWalletCard(env, cardId) {
   return rows.map(normalizeStudent).find((row) => clean(row.WalletCardId).toUpperCase() === wanted) || null;
 }
 
-async function findStudentByAccountRef(env, accountRef) {
+async function findStudentByAccountRef(env, accountRef, requestedScope = null) {
   const wanted = clean(accountRef);
   if (!wanted) return null;
-  const direct = await getSchoolDocumentById(env, 'students', safeDocumentId(wanted));
+  const direct = await getSchoolDocumentById(env, 'students', safeDocumentId(wanted), requestedScope);
   if (direct) return normalizeStudent(direct);
   for (const field of ['AdmissionNo', 'AccountRef', 'ApplicationReference']) {
     const rows = await querySchoolCollection(env, 'students', {
       filters: [{ field, op: '==', value: wanted }],
+      scope: requestedScope,
       limit: 1
     });
     if (rows[0]) return normalizeStudent(rows[0]);
@@ -3403,6 +3404,22 @@ async function seedDefaultFeeItems(env) {
 async function queryAccountRows(env, collection, accountRef) {
   const wanted = clean(accountRef);
   if (!wanted) return [];
+  const normalized = normalizeReferenceText(wanted);
+  try {
+    return await queryCollection(env, collection, {
+      filters: [
+        { field: 'AccountRefNormalized', op: '==', value: normalized },
+        { field: 'AccountRef', op: '==', value: wanted },
+        { field: 'AdmissionNo', op: '==', value: wanted },
+        { field: 'ApplicationReference', op: '==', value: wanted }
+      ],
+      filterJoin: 'OR'
+    });
+  } catch (error) {
+    // Older Firestore projects may not yet have the disjunction index. Keep
+    // their legacy three-query fallback while newly deployed indexes settle.
+    if (!/index|failed precondition/i.test(clean(error?.message))) throw error;
+  }
   const groups = await Promise.all(['AccountRef', 'AdmissionNo', 'ApplicationReference'].map((field) => {
     return queryCollection(env, collection, {
       filters: [{ field, op: '==', value: wanted }]
@@ -3421,10 +3438,11 @@ async function queryAccountRowsForReferences(env, collection, references = []) {
   return [...unique.values()];
 }
 
-async function findPaymentByReference(env, reference) {
+async function findPaymentByReference(env, reference, options = {}) {
   const documentId = safeDocumentId(reference);
   const direct = await getDocument(env, 'payments', documentId).catch(() => null);
   if (direct) return direct;
+  if (options.canonicalOnly) return null;
   const byReference = await findOneByField(env, 'payments', 'Reference', reference).catch(() => null);
   if (byReference) return byReference;
   return findOneByField(env, 'payments', 'GatewayReference', reference).catch(() => null);
@@ -3526,7 +3544,13 @@ export async function recordManualPayment(env, body) {
     err.status = 400;
     throw err;
   }
-  let existingPayment = await findPaymentByReference(env, reference);
+  const paymentScope = {
+    branchId: clean(body.BranchId || body.branchId),
+    schoolSectionAccess: clean(body.SchoolSection || body.schoolSection)
+  };
+  let existingPayment = await findPaymentByReference(env, reference, {
+    canonicalOnly: body.ReferenceIsDocumentId === true
+  });
   let payment = existingPayment ? normalizePayment(existingPayment) : null;
   let duplicate = Boolean(payment);
   let paymentDocumentId = safeDocumentId(existingPayment?.__id || reference);
@@ -3553,7 +3577,7 @@ export async function recordManualPayment(env, body) {
     : (directFee ? [normalizeFeeItem(directFee)] : []);
   const fee = configuredFees.find((item) => sameText(item.FeeCode, feeCode)) || normalizeFeeItem(body);
   const schoolFeeCodes = new Set(configuredFees.filter((item) => isSchoolFeeCategory(item.FeeCategory)).map((item) => normalizeReferenceText(item.FeeCode)));
-  const student = await findStudentByAccountRef(env, accountRef);
+  const student = await findStudentByAccountRef(env, accountRef, paymentScope);
   const paymentId = ledgerDocumentId('PAY');
   const grossAmount = asMoneyNumber(body.GrossAmount || amount);
   const gatewayFee = asMoneyNumber(body.GatewayFee);
@@ -3658,7 +3682,8 @@ export async function recordManualPayment(env, body) {
     UpdatedAt: nowIso()
   });
   await removeStandaloneAcceptanceInvoices(env, payment);
-  const matchingInvoices = (await queryAccountRows(env, 'invoices', accountRef)).map(normalizeInvoice).filter((invoice) => {
+  const accountInvoices = (await queryAccountRows(env, 'invoices', accountRef)).map(normalizeInvoice);
+  const matchingInvoices = accountInvoices.filter((invoice) => {
     return sameText(invoice.AccountRef, accountRef) &&
       (isSchoolFeesTotalPayment(payment)
         ? isSchoolFeeCategory(invoice.FeeCategory) || schoolFeeCodes.has(normalizeReferenceText(invoice.FeeCode))
@@ -3670,8 +3695,9 @@ export async function recordManualPayment(env, body) {
   const invoiceAllocationComplete = normalizeMatchText(payment.InvoiceAllocationStatus) === 'completed';
   const shouldApplyInvoiceAllocation = !duplicate || (unfinishedPayment && !invoiceAllocationComplete) ||
     (!existingLedger && !invoiceAllocationComplete);
+  let notificationSettings = null;
   if (shouldApplyInvoiceAllocation) {
-    const notificationSettings = await loadNotificationSettings(env);
+    notificationSettings = await loadNotificationSettings(env);
     const invoiceAllocation = calculateInvoiceCreditAllocations(matchingInvoices, paymentCredit);
     payment.InvoiceAllocationStatus = 'Completed';
     payment.InvoiceAllocationCompletedAt = nowIso();
@@ -3738,7 +3764,12 @@ export async function recordManualPayment(env, body) {
     try {
       await generateSchoolFeeInvoices(env, {
         AccountRef: accountRef,
-        RecordedBy: payment.RecordedBy
+        RecordedBy: payment.RecordedBy,
+        BranchId: payment.BranchId,
+        SchoolSection: payment.SchoolSection,
+        ResolvedStudent: student,
+        ExistingInvoices: accountInvoices,
+        NotificationSettings: notificationSettings
       });
     } catch (error) {
       invoicePostingWarning = error && error.message ? error.message : String(error);
@@ -3753,7 +3784,9 @@ export async function recordManualPayment(env, body) {
   payment.InvoicePostingStatus = invoicePostingWarning ? 'Warning' : (shouldGenerateSchoolInvoices ? 'Completed' : 'Not Required');
   payment.InvoicePostingWarning = invoicePostingWarning;
   await upsertDocument(env, 'payments', paymentDocumentId, payment);
-  await notifyParentPaymentReceived(env, payment).catch(() => null);
+  if (body.DeferNotifications !== true) {
+    await notifyParentPaymentReceived(env, payment).catch(() => null);
+  }
   return {
     ok: true,
     message: invoicePostingWarning
@@ -3809,9 +3842,14 @@ async function generateSchoolFeeInvoices(env, body) {
 }
 
 async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
-  const student = await findStudentByAccountRef(env, accountRef);
+  const student = body.ResolvedStudent || await findStudentByAccountRef(env, accountRef, {
+    branchId: clean(body.BranchId || body.branchId),
+    schoolSectionAccess: clean(body.SchoolSection || body.schoolSection)
+  });
   if (!student) throw applicationNotFound(accountRef);
-  const profileResult = await getSchoolProfile(env).catch(() => ({ profile: {} }));
+  const profileResult = student.AcademicSession && student.Term
+    ? { profile: {} }
+    : await getSchoolProfile(env).catch(() => ({ profile: {} }));
   const activeProfile = profileResult.profile || {};
   const billingApp = {
     ...student,
@@ -3835,7 +3873,9 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
     err.status = 400;
     throw err;
   }
-  const existing = (await queryAccountRows(env, 'invoices', accountRef)).map(normalizeInvoice);
+  const existing = (Array.isArray(body.ExistingInvoices)
+    ? body.ExistingInvoices
+    : await queryAccountRows(env, 'invoices', accountRef)).map(normalizeInvoice);
   const linkedReferences = [student.ApplicationReference].map(clean).filter(Boolean);
   const ledgerRows = (await queryAccountRowsForReferences(env, 'ledger', [accountRef, ...linkedReferences])).map(normalizeLedger).filter((row) => {
     const rowMatchesStudent = [row.AccountRef, row.AdmissionNo, row.ApplicationReference]
@@ -3855,7 +3895,8 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
   let created = 0;
   let updated = 0;
   const generatedInvoices = [];
-  const notificationSettings = await loadNotificationSettings(env);
+  const invoiceWrites = [];
+  const notificationSettings = body.NotificationSettings || await loadNotificationSettings(env);
   for (const fee of fees) {
     const invoiceSession = resolvedPeriodValue(fee.AcademicSession, billingSession);
     const invoiceTerm = resolvedPeriodValue(fee.Term, billingTerm);
@@ -3915,11 +3956,16 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
       RecordedBy: clean(body.RecordedBy) || duplicate?.RecordedBy || 'Accounts Office'
     };
     Object.assign(invoicePayload, invoiceReminderFields(invoicePayload, notificationSettings));
-    await upsertDocument(env, 'invoices', safeDocumentId(invoiceId), invoicePayload);
+    invoiceWrites.push({
+      collectionPath: 'invoices',
+      documentId: safeDocumentId(invoiceId),
+      data: invoicePayload
+    });
     generatedInvoices.push(invoicePayload);
     if (duplicate) updated += 1;
     else created += 1;
   }
+  if (invoiceWrites.length) await batchUpsertDocuments(env, invoiceWrites);
   await refreshAccountFinancialSummary(env, accountRef, linkedReferences);
   return { ok: true, message: `${created} school fee invoice item(s) generated, ${updated} updated.`, created, updated };
 }

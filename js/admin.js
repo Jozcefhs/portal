@@ -2611,8 +2611,9 @@ async function loadDirectTransferVerification(contexts = [], workspaceId = '') {
       const reference = clean(row.Reference);
       const createdAt = clean(row.CreatedAt);
       const proofUrl = `/api/staff-direct-transfers?reference=${encodeURIComponent(reference)}&proof=1`;
+      const processing = clean(row.Status).toLowerCase() === 'verification in progress';
       return `<article class="workflow-record direct-transfer-record">
-        <div class="workflow-record-heading"><div><strong>${escapeHtml(row.PayerName || row.PayerEmail || 'Payer')}</strong><small>${escapeHtml(reference)}</small></div><span class="workflow-state waiting">Awaiting verification</span></div>
+        <div class="workflow-record-heading"><div><strong>${escapeHtml(row.PayerName || row.PayerEmail || 'Payer')}</strong><small>${escapeHtml(reference)}</small></div><span class="workflow-state waiting">${processing ? 'Verification in progress' : 'Awaiting verification'}</span></div>
         <div class="workflow-record-meta">
           <span>Purpose<strong>${escapeHtml(directTransferContextLabel(row.Context))}</strong></span>
           <span>Amount<strong>${escapeHtml(directTransferAmount(row))}</strong></span>
@@ -2622,8 +2623,8 @@ async function loadDirectTransferVerification(contexts = [], workspaceId = '') {
         <small>${escapeHtml([row.PayerEmail, row.PayerPhone].filter(Boolean).join(' | '))}</small>
         <div class="workflow-actions">
           ${row.HasProof ? `<a class="button-link direct-transfer-proof" href="${escapeHtml(proofUrl)}" target="_blank" rel="noopener">View proof</a>` : '<span class="muted">No proof attached</span>'}
-          <button type="button" class="workflow-approve" data-direct-transfer-action="approve" data-direct-transfer-reference="${escapeHtml(reference)}">Approve</button>
-          <button type="button" class="workflow-reject" data-direct-transfer-action="reject" data-direct-transfer-reference="${escapeHtml(reference)}">Reject</button>
+          <button type="button" class="workflow-approve" data-direct-transfer-action="approve" data-direct-transfer-reference="${escapeHtml(reference)}">${processing ? 'Continue' : 'Approve'}</button>
+          ${processing ? '' : `<button type="button" class="workflow-reject" data-direct-transfer-action="reject" data-direct-transfer-reference="${escapeHtml(reference)}">Reject</button>`}
         </div>
       </article>`;
     }).join('') : '<p class="muted">No direct bank transfer is awaiting verification here.</p>';
@@ -2639,13 +2640,20 @@ async function loadDirectTransferVerification(contexts = [], workspaceId = '') {
       const normalText = button.textContent;
       setButtonLoading(button, true, action === 'approve' ? 'Approving...' : 'Rejecting...', normalText);
       try {
-        const actionResponse = await staffFetch('/api/staff-direct-transfers', {
-          method: 'POST', credentials: 'same-origin', cache: 'no-store',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action, Reference: reference, Reason: reason })
-        });
-        const result = await actionResponse.json().catch(() => ({}));
-        if (!actionResponse.ok || !result.ok) throw new Error(result.message || `Could not ${action} this transfer.`);
+        let result = {};
+        for (let step = 0; step < 4; step += 1) {
+          const actionResponse = await staffFetch('/api/staff-direct-transfers', {
+            method: 'POST', credentials: 'same-origin', cache: 'no-store',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action, Reference: reference, Reason: reason })
+          });
+          result = await actionResponse.json().catch(() => ({}));
+          if (!actionResponse.ok || !result.ok) throw new Error(result.message || `Could not ${action} this transfer.`);
+          if (!result.continueApproval) break;
+          setStatus(status, result.message || 'Continuing transfer verification...', '');
+          setButtonLoading(button, true, result.stage === 'deliver-receipt' ? 'Sending receipt...' : 'Recording...', normalText);
+        }
+        if (result.continueApproval) throw new Error('Transfer verification paused safely. Select Continue to resume.');
         setStatus(status, result.message, 'ok');
         await refreshDirectTransferModule(contexts);
       } catch (error) {

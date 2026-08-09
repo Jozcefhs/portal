@@ -24,12 +24,24 @@ test('school payment receipt resolves imported-student parent identity and finan
   assert.equal(details.reference, 'BANK-4455');
 });
 
-test('direct-transfer approval sends the receipt only after payment and store records are finalized', async () => {
+test('direct-transfer approval records first and delivers the receipt in a separate resumable stage', async () => {
   const source = await readFile(new URL('../functions/api/staff-direct-transfers.js', import.meta.url), 'utf8');
   const approvalStart = source.indexOf('async function approveSchoolPayment');
-  const approvalEnd = source.indexOf('async function approveOrganizationStore');
+  const approvalEnd = source.indexOf('async function deliverSchoolPaymentReceipt');
   const approval = source.slice(approvalStart, approvalEnd);
-  assert.ok(approval.indexOf('recordManualPayment') < approval.indexOf('sendSchoolPaymentReceiptEmail'));
-  assert.ok(approval.indexOf('createPaidStoreOrder') < approval.indexOf('sendSchoolPaymentReceiptEmail'));
-  assert.match(approval, /return \{ recorded, orders, email \}/);
+  const deliveryStart = source.indexOf('async function deliverSchoolPaymentReceipt');
+  const deliveryEnd = source.indexOf('async function approveOrganizationStore');
+  const delivery = source.slice(deliveryStart, deliveryEnd);
+  assert.match(approval, /recordManualPayment/);
+  assert.match(approval, /DeferNotifications: true/);
+  assert.match(approval, /ReferenceIsDocumentId: true/);
+  assert.match(approval, /createPaidStoreOrder/);
+  assert.doesNotMatch(approval, /sendSchoolPaymentReceiptEmail|notifyParentPaymentReceived/);
+  assert.match(approval, /return \{ recorded, orders \}/);
+  assert.match(delivery, /notifyParentPaymentReceived/);
+  assert.match(delivery, /sendSchoolPaymentReceiptEmail/);
+  assert.match(source, /ApprovalStage: 'record'/);
+  assert.match(source, /ApprovalStage: 'deliver-receipt'/);
+  assert.match(source, /ApprovalStage: 'complete'/);
+  assert.match(source, /continueApproval: true/);
 });

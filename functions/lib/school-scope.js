@@ -71,6 +71,15 @@ function legacyRowAllowed(row, scope) {
 }
 
 export async function listSchoolCollection(env, collection, requestedScope = null) {
+  const scope = accessScope(requestedScope || {});
+  const uniquePaths = await schoolCollectionPaths(env, collection, scope);
+  const groups = await Promise.all(uniquePaths.map((path) => listCollection(env, path)));
+  return groups.flatMap((rows, index) => rows
+    .filter((row) => index !== 0 || legacyRowAllowed(row, scope))
+    .map((row) => ({ ...row, __scopePath: uniquePaths[index] })));
+}
+
+export async function schoolCollectionPaths(env, collection, requestedScope = null) {
   const structure = await getSchoolStructure(env);
   const scope = accessScope(requestedScope || {});
   const branches = scope.branchId
@@ -81,24 +90,11 @@ export async function listSchoolCollection(env, collection, requestedScope = nul
   branches.forEach((branch) => sections.forEach((section) => {
     paths.push(scopedCollectionPath(collection, branch.Id, section));
   }));
-  const uniquePaths = [...new Set(paths)];
-  const groups = await Promise.all(uniquePaths.map((path) => listCollection(env, path)));
-  return groups.flatMap((rows, index) => rows
-    .filter((row) => index !== 0 || legacyRowAllowed(row, scope))
-    .map((row) => ({ ...row, __scopePath: uniquePaths[index] })));
-}
-
-export async function schoolCollectionPaths(env, collection) {
-  const structure = await getSchoolStructure(env);
-  const paths = [clean(collection)];
-  structure.Branches.forEach((branch) => structure.Sections.forEach((section) => {
-    paths.push(scopedCollectionPath(collection, branch.Id, section));
-  }));
   return [...new Set(paths)];
 }
 
-export async function getSchoolDocumentById(env, collection, documentId) {
-  const paths = await schoolCollectionPaths(env, collection);
+export async function getSchoolDocumentById(env, collection, documentId, requestedScope = null) {
+  const paths = await schoolCollectionPaths(env, collection, requestedScope);
   const groups = await Promise.all(paths.map(async (path) => {
     const row = await getDocument(env, path, documentId).catch(() => null);
     return row ? { ...row, __scopePath: path } : null;
@@ -125,9 +121,18 @@ export async function querySchoolCollection(env, collection, options = {}) {
   if (requestedScopePath && !scopePath) {
     throw new Error(`Invalid ${clean(collection)} collection scope.`);
   }
-  const paths = scopePath ? [scopePath] : await schoolCollectionPaths(env, collection);
+  const requestedScope = options.scope || {
+    branchId: options.branchId,
+    schoolSectionAccess: options.schoolSectionAccess || options.schoolSection || options.section
+  };
+  const paths = scopePath ? [scopePath] : await schoolCollectionPaths(env, collection, requestedScope);
   const queryOptions = { ...options };
   delete queryOptions.scopePath;
+  delete queryOptions.scope;
+  delete queryOptions.branchId;
+  delete queryOptions.schoolSectionAccess;
+  delete queryOptions.schoolSection;
+  delete queryOptions.section;
   const groups = await Promise.all(paths.map(async (path) => {
     const rows = await queryCollection(env, path, queryOptions);
     return rows.map((row) => ({ ...row, __scopePath: path }));

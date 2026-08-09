@@ -60,7 +60,27 @@ test('direct transfer never posts revenue, inventory or receipts before staff ap
   assert.match(verifier, /The parent receipt was emailed/);
   assert.match(verifier, /Status:\s*'Verified'/);
   assert.match(verifier, /verifiedBankReferences/);
+  assert.match(verifier, /Verification in progress/);
+  assert.match(verifier, /ApprovalStage:\s*'record'/);
+  assert.match(verifier, /ApprovalStage:\s*'deliver-receipt'/);
+  assert.match(verifier, /ApprovalStage:\s*'complete'/);
   assert.match(verifier, /No receipt or accounting entry was created/);
+});
+
+test('school transfer approval stays below the Worker request ceiling by scoping and batching work', async () => {
+  const verifier = await source('functions/api/staff-direct-transfers.js');
+  const backend = await source('functions/api/backend.js');
+  const schoolScope = await source('functions/lib/school-scope.js');
+  const admin = await source('js/admin.js');
+  assert.match(verifier, /continuationResponse/);
+  assert.match(verifier, /continueApproval: true/);
+  assert.match(verifier, /DeferNotifications: true/);
+  assert.match(backend, /filterJoin: 'OR'/);
+  assert.match(backend, /invoiceWrites/);
+  assert.match(backend, /batchUpsertDocuments\(env, invoiceWrites\)/);
+  assert.match(schoolScope, /schoolCollectionPaths\(env, collection, requestedScope = null\)/);
+  assert.match(schoolScope, /getSchoolDocumentById\(env, collection, documentId, requestedScope = null\)/);
+  assert.match(admin, /for \(let step = 0; step < 4; step \+= 1\)/);
 });
 
 test('direct-transfer settings are branch-overridable and enforced by public endpoints', async () => {
