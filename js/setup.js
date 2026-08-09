@@ -8,6 +8,11 @@ const settingsBranchField = document.getElementById('settingsBranch');
 const settingsScopeSummary = document.getElementById('settingsScopeSummary');
 const settingsSaveScopeLabel = document.getElementById('settingsSaveScopeLabel');
 const resetBranchSettingsButton = document.getElementById('resetBranchSettings');
+const requestedSettingsParams = new URLSearchParams(window.location.search);
+const requestedSettingsBranch = (requestedSettingsParams.get('branch') || '').trim();
+const requestedSettingsScope = requestedSettingsParams.get('scope') === 'branch' && requestedSettingsBranch
+  ? 'branch'
+  : 'organisation';
 let unlockedPassword = '';
 let webLogoDataUrl = '';
 let webLogoChanged = false;
@@ -39,6 +44,16 @@ function setLoginStatus(message, type) {
 function setField(id, value) {
   const node = document.getElementById(id);
   if (node) node.value = value || '';
+}
+
+function revealRequestedSettingsSection() {
+  const sectionId = window.location.hash.slice(1);
+  const section = sectionId ? document.getElementById(sectionId) : null;
+  if (!section) return;
+  document.querySelectorAll('.settings-nav-link').forEach((link) => {
+    link.classList.toggle('active', link.getAttribute('href') === `#${sectionId}`);
+  });
+  window.requestAnimationFrame(() => section.scrollIntoView({ behavior: 'smooth', block: 'start' }));
 }
 
 function profileFromForm() {
@@ -191,10 +206,15 @@ setupLoginForm.addEventListener('submit', async (event) => {
   try {
     setLoginStatus('Checking password...', '');
     unlockedPassword = document.getElementById('setupPassword').value;
-    await loadProfile(unlockedPassword);
+    settingsScopeField.value = requestedSettingsScope;
+    await loadProfile(unlockedPassword, {
+      scope: requestedSettingsScope,
+      branchId: requestedSettingsBranch
+    });
     setupLoginForm.hidden = true;
     setupForm.hidden = false;
     setStatus('Settings loaded and ready to edit.', 'ok');
+    revealRequestedSettingsSection();
   } catch (error) {
     unlockedPassword = '';
     setLoginStatus(error.message, 'bad');

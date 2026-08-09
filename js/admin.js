@@ -6,6 +6,7 @@ const passkeySetupButton = document.getElementById('staffPasskeySetup');
 const approvalSettingsButton = document.getElementById('staffApprovalSettings');
 const approvalSettingsDialog = document.getElementById('staffApprovalSettingsDialog');
 const approvalSettingsForm = document.getElementById('staffApprovalSettingsForm');
+const paymentSettingsButton = document.getElementById('staffPaymentSettings');
 const subscriptionButton = document.getElementById('staffSubscriptionButton');
 const subscriptionDialog = document.getElementById('staffSubscriptionDialog');
 const profileSubscriptionSection = document.getElementById('staffProfileSubscription');
@@ -992,6 +993,16 @@ function renderStaffBranchSelector(user = currentUser || {}) {
   branchSelector.disabled = branchSwitchInProgress;
 }
 
+function paymentSettingsUrl() {
+  const url = new URL('setup.html', window.location.href);
+  if (clean(selectedBranchId) && selectedBranchId !== 'all') {
+    url.searchParams.set('scope', 'branch');
+    url.searchParams.set('branch', selectedBranchId);
+  }
+  url.hash = 'payment-settings';
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 function clearBranchScopedWorkspaceData() {
   staffSessionAbortController.abort();
   staffSessionAbortController = new AbortController();
@@ -1268,6 +1279,7 @@ function showDashboard(user, options = {}) {
     isExecutiveRole ||
     user.approvalEnabled
   );
+  paymentSettingsButton.hidden = user.role !== 'Super Admin';
   subscriptionButton.hidden = user.role !== 'Super Admin';
   if (subscriptionAccessBanner) {
     const readOnly = user.subscriptionReadOnly === true;
@@ -10275,6 +10287,9 @@ headerRefreshButton.addEventListener('click', loadDashboard);
 themeToggleButton.addEventListener('click', toggleStaffTheme);
 sidebarThemeToggleButton.addEventListener('click', toggleStaffTheme);
 branchSelector.addEventListener('change', () => switchStaffBranch(branchSelector.value));
+paymentSettingsButton.addEventListener('click', () => {
+  window.location.assign(paymentSettingsUrl());
+});
 new MutationObserver(updateStaffThemeToggle).observe(document.documentElement, {
   attributes: true,
   attributeFilter: ['data-theme']
