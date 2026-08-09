@@ -83,3 +83,20 @@ test('failed family identity resolution leaves the passport private', async () =
   );
   assert.equal(allowed, false);
 });
+
+test('imported student passport photos accept the parent login identity in the student scope', async () => {
+  const student = {
+    AdmissionNo: 'DCA/26/000099',
+    ParentEmail: 'parent@example.test',
+    ParentLoginCode: 'PARENT-IMPORTED',
+    __scopePath: 'schoolBranches/main/sections/secondary/students',
+    __uploadCollection: 'students'
+  };
+  const allowed = await parentCanAccessPassportApplication(
+    {},
+    student,
+    'parent@example.test',
+    'PARENT-IMPORTED'
+  );
+  assert.equal(allowed, true);
+});

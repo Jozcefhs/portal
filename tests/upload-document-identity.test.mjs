@@ -7,9 +7,12 @@ import {
   applicationUploadIdentityMatches,
   canResumeSavedUploadOperation,
   findFirestoreApplication,
+  importedStudentUploadTarget,
   linkedUploadApplication,
-  studentUploadIdentityMatches
+  studentUploadIdentityMatches,
+  uploadTargetCollection
 } from '../functions/api/upload-document.js';
+import { admissionStudentScopePath } from '../functions/lib/document-files.js';
 
 function queryMatches(row, query = {}) {
   if (query.scopePath && String(row.__scopePath || '') !== String(query.scopePath)) return false;
@@ -48,6 +51,55 @@ test('student parent login identity links back to its application', () => {
   assert.equal(studentUploadIdentityMatches(student, 'parent@example.test', 'parent-918'), true);
   assert.equal(linkedUploadApplication([application], student), application);
   assert.equal(applicationUploadReferenceMatches(application, 'DCA/26/0007'), true);
+});
+
+test('an imported student without an application remains a secure upload target', async () => {
+  const student = {
+    __id: 'DCA-26-000099',
+    AdmissionNo: 'DCA/26/000099',
+    ParentEmail: 'parent@example.test',
+    ParentLoginCode: 'PARENT-IMPORTED',
+    __scopePath: 'schoolBranches/main/sections/secondary/students'
+  };
+  const records = { applications: [], students: [student] };
+  const options = {
+    requireFirestoreEnv() {},
+    async querySchoolCollection(_env, collection, query) {
+      return records[collection].filter((row) => queryMatches(row, query));
+    }
+  };
+
+  const target = await findFirestoreApplication(
+    {},
+    'parent@example.test',
+    'PARENT-IMPORTED',
+    options
+  );
+  assert.equal(target.AdmissionNo, student.AdmissionNo);
+  assert.equal(uploadTargetCollection(target), 'students');
+  assert.equal(admissionStudentScopePath(target.__scopePath), target.__scopePath);
+  assert.equal(uploadTargetCollection(importedStudentUploadTarget(student)), 'students');
+});
+
+test('an authenticated parent can target the selected imported student by scoped admission number', async () => {
+  const student = {
+    __id: 'DCA-26-000099',
+    AdmissionNo: 'DCA/26/000099',
+    ParentEmail: 'parent@example.test',
+    __scopePath: 'schoolBranches/main/sections/secondary/students'
+  };
+  const records = { applications: [], students: [student] };
+  const target = await findFirestoreApplication({}, 'parent@example.test', '', {
+    authenticated: true,
+    targetReference: student.AdmissionNo,
+    targetScopePath: student.__scopePath,
+    requireFirestoreEnv() {},
+    async querySchoolCollection(_env, collection, query) {
+      return records[collection].filter((row) => queryMatches(row, query));
+    }
+  });
+  assert.equal(target.AdmissionNo, student.AdmissionNo);
+  assert.equal(uploadTargetCollection(target), 'students');
 });
 
 test('application lookup supports parent login credentials without accepting an admission number alone', async () => {
@@ -427,4 +479,5 @@ test('targeted upload lookup uses bounded field queries instead of a collection 
   assert.match(source, /targetScopePath/);
   assert.match(source, /Math\.floor\(30 \/ fields\.length\)/);
   assert.match(source, /filterJoin: 'OR'/);
+  assert.match(source, /upsertSchoolDocument\(env, targetCollection/);
 });

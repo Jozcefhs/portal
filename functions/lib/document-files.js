@@ -50,6 +50,18 @@ export function admissionApplicationScopePath(value) {
     : '';
 }
 
+export function admissionStudentScopePath(value) {
+  const rawPath = clean(value).replace(/^\/+|\/+$/g, '');
+  const path = rawPath.toLowerCase() === 'applications'
+    ? 'students'
+    : rawPath.replace(/\/applications$/i, '/students');
+  if (!path) return '';
+  if (path.toLowerCase() === 'students') return 'students';
+  return /^schoolBranches\/[a-z0-9._-]+\/sections\/(?:primary|secondary)\/students$/i.test(path)
+    ? path
+    : '';
+}
+
 function thumbnailReference(value) {
   return clean(value).toLowerCase().replace(/[^a-z0-9]/g, '');
 }

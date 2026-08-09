@@ -8,6 +8,7 @@ import { readJsonBody } from '../lib/request-security.js';
 import { readParentSession, verifyStoredParentPassword } from '../lib/parent-auth.js';
 import {
   admissionApplicationScopePath,
+  admissionStudentScopePath,
   admissionThumbnailDocumentId,
   validateAdmissionThumbnail
 } from '../lib/document-files.js';
@@ -33,7 +34,24 @@ function pick(row, keys, fallback = '') {
 }
 
 function applicationReference(row) {
-  return clean(pick(row, ['ApplicationReference', 'applicationReference', 'ApplicationID', 'applicationId', '__id']));
+  return clean(pick(row, [
+    'ApplicationReference', 'applicationReference',
+    'ApplicationID', 'applicationId',
+    'AdmissionNo', 'admissionNo', 'AdmissionNumber',
+    'AccountRef', 'accountRef', '__id'
+  ]));
+}
+
+function passportTargetCollection(row = {}) {
+  return lower(row.__uploadCollection) === 'students' || /(?:^|\/)students$/i.test(clean(row.__scopePath))
+    ? 'students'
+    : 'applications';
+}
+
+function passportTargetScopePath(row = {}) {
+  return passportTargetCollection(row) === 'students'
+    ? (admissionStudentScopePath(row.__scopePath) || 'students')
+    : (admissionApplicationScopePath(row.__scopePath) || 'applications');
 }
 
 function safeDocumentId(value) {
@@ -54,15 +72,28 @@ function passportUrl(row) {
 
 function parentEmailOwnsApplication(row, email) {
   const parent = row && row.parent && typeof row.parent === 'object' ? row.parent : {};
-  const emails = [row.VerificationEmail, row.verificationEmail, row.ParentEmail, row.parentEmail, row.Email, row.email, parent.email]
+  const emails = [
+    row.VerificationEmail, row.verificationEmail,
+    row.ParentEmail, row.parentEmail,
+    row.Email, row.email,
+    row.FatherEmail, row.fatherEmail,
+    row.MotherEmail, row.motherEmail,
+    row.GuardianEmail, row.guardianEmail,
+    parent.email, parent.Email
+  ]
     .map(lower)
     .filter(Boolean);
   return emails.includes(lower(email));
 }
 
 function parentOwnsApplication(row, email, code) {
-  const rowCode = clean(pick(row, ['VerificationCode', 'verificationCode'])).toUpperCase();
-  return parentEmailOwnsApplication(row, email) && rowCode === clean(code).toUpperCase();
+  const wantedCode = clean(code).toUpperCase();
+  const codes = [
+    row.VerificationCode, row.verificationCode,
+    row.ParentLoginCode, row.parentLoginCode,
+    row.LoginCode, row.loginCode
+  ].map((value) => clean(value).toUpperCase()).filter(Boolean);
+  return parentEmailOwnsApplication(row, email) && codes.includes(wantedCode);
 }
 
 export async function parentCanAccessPassportApplication(env, application, email, code, options = {}) {
@@ -70,14 +101,14 @@ export async function parentCanAccessPassportApplication(env, application, email
   if (parentOwnsApplication(application, email, code)) return true;
   const resolveApplication = options.findFirestoreApplication || findFirestoreApplication;
   const reference = applicationReference(application);
-  const scopePath = admissionApplicationScopePath(application?.__scopePath) || 'applications';
+  const scopePath = passportTargetScopePath(application);
   if (!reference || !email || !code) return false;
   const authorized = await resolveApplication(env, email, code, {
     targetReference: reference,
     targetScopePath: scopePath
   }).catch(() => null);
   if (!authorized || !sameText(applicationReference(authorized), reference)) return false;
-  const authorizedScope = admissionApplicationScopePath(authorized.__scopePath) || 'applications';
+  const authorizedScope = passportTargetScopePath(authorized);
   return sameText(authorizedScope, scopePath);
 }
 
@@ -140,39 +171,55 @@ export async function onRequestPost(context) {
     requireFirestoreEnv(env);
     const body = await readJsonBody(request, { maxBytes: 64 * 1024 });
     const reference = clean(body.applicationReference || body.ApplicationReference || body.accountRef || body.AccountRef);
-    if (!reference) return Response.json({ ok: false, message: 'Application reference is required.' }, { status: 400 });
+    if (!reference) return Response.json({ ok: false, message: 'Student or application reference is required.' }, { status: 400 });
     const requestedScopePath = clean(body.scopePath || body.ScopePath);
-    const targetScopePath = admissionApplicationScopePath(requestedScopePath);
+    const targetCollection = /(?:^|\/)students$/i.test(requestedScopePath) ? 'students' : 'applications';
+    const targetScopePath = targetCollection === 'students'
+      ? admissionStudentScopePath(requestedScopePath)
+      : admissionApplicationScopePath(requestedScopePath);
     if (requestedScopePath && !targetScopePath) {
-      return Response.json({ ok: false, message: 'The application scope is invalid.' }, { status: 400 });
+      return Response.json({ ok: false, message: 'The student/application scope is invalid.' }, { status: 400 });
     }
 
     const direct = targetScopePath
       ? await getDocument(env, targetScopePath, safeDocumentId(reference)).catch(() => null)
-      : await getSchoolDocumentById(env, 'applications', safeDocumentId(reference)).catch(() => null);
+      : await getSchoolDocumentById(env, targetCollection, safeDocumentId(reference)).catch(() => null);
     const directApplication = direct
-      ? { ...direct, __scopePath: direct.__scopePath || targetScopePath || 'applications' }
+      ? {
+          ...direct,
+          __scopePath: direct.__scopePath || targetScopePath || targetCollection,
+          __uploadCollection: targetCollection
+        }
       : null;
     let candidates = directApplication &&
       (sameText(applicationReference(directApplication), reference) || sameText(directApplication.__id, reference))
       ? [directApplication]
       : [];
     if (!candidates.length || !targetScopePath) {
-      const queried = await querySchoolCollection(env, 'applications', {
-        filters: [
-          { field: 'ApplicationReference', op: '==', value: reference },
-          { field: 'ApplicationID', op: '==', value: reference }
-        ],
+      const queried = await querySchoolCollection(env, targetCollection, {
+        filters: targetCollection === 'students'
+          ? [
+              { field: 'ApplicationReference', op: '==', value: reference },
+              { field: 'AdmissionNo', op: '==', value: reference },
+              { field: 'AccountRef', op: '==', value: reference }
+            ]
+          : [
+              { field: 'ApplicationReference', op: '==', value: reference },
+              { field: 'ApplicationID', op: '==', value: reference }
+            ],
         filterJoin: 'OR',
         limit: 20,
         ...(targetScopePath ? { scopePath: targetScopePath } : {})
       }).catch(() => []);
-      candidates = uniqueApplications([...candidates, ...queried]).filter((row) =>
+      candidates = uniqueApplications([...candidates, ...queried.map((row) => ({
+        ...row,
+        __uploadCollection: targetCollection
+      }))]).filter((row) =>
         sameText(applicationReference(row), reference) || sameText(row.__id, reference)
       );
     }
     const application = candidates.length === 1 ? candidates[0] : null;
-    if (!application) return Response.json({ ok: false, message: 'Application was not found in the database.' }, { status: 404 });
+    if (!application) return Response.json({ ok: false, message: 'Student or application was not found in the database.' }, { status: 404 });
 
     const suppliedSecret = clean(body.Secret || body.secret);
     const staffAuthorized = Boolean(env.BACKEND_SHARED_SECRET) && suppliedSecret === clean(env.BACKEND_SHARED_SECRET);

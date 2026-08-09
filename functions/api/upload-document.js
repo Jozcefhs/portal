@@ -14,6 +14,7 @@ import {
 } from '../lib/school-scope.js';
 import {
   admissionApplicationScopePath,
+  admissionStudentScopePath,
   admissionThumbnailDocumentId,
   validateAdmissionDocumentFile,
   validateAdmissionThumbnail
@@ -136,6 +137,14 @@ export function linkedUploadApplication(applications, student, options = {}) {
   return matches.length === 1 ? matches[0] : null;
 }
 
+export function importedStudentUploadTarget(student = {}) {
+  return { ...student, __uploadCollection: 'students' };
+}
+
+export function uploadTargetCollection(row = {}) {
+  return lower(row.__uploadCollection) === 'students' ? 'students' : 'applications';
+}
+
 export function applicationUploadReferenceMatches(row, reference) {
   const wanted = identityReference(reference);
   if (!wanted) return true;
@@ -234,6 +243,7 @@ async function loadUploadOperation(env, operationId, expected = {}) {
     RequestFingerprint: clean(expected.RequestFingerprint),
     ApplicationReference: clean(expected.ApplicationReference),
     ApplicationScopePath: clean(expected.ApplicationScopePath),
+    TargetCollection: clean(expected.TargetCollection) || 'applications',
     DocumentType: clean(expected.DocumentType),
     FileDigest: clean(expected.FileDigest),
     FileName: clean(expected.FileName),
@@ -256,7 +266,10 @@ async function loadUploadOperation(env, operationId, expected = {}) {
     'FileDigest'
   ];
   const mismatch = immutableFields.find((field) => clean(operation[field]) !== clean(expected[field]));
-  if (mismatch) {
+  const targetCollectionMismatch = clean(operation.TargetCollection)
+    && clean(expected.TargetCollection)
+    && clean(operation.TargetCollection) !== clean(expected.TargetCollection);
+  if (mismatch || targetCollectionMismatch) {
     throw uploadError(
       'This upload operation is already bound to a different file or application.',
       409,
@@ -295,9 +308,10 @@ export async function findFirestoreApplication(env, email, code, options = {}) {
   const queryRows = options.querySchoolCollection || querySchoolCollection;
   const targetReference = clean(options.targetReference);
   const requestedTargetScopePath = clean(options.targetScopePath);
-  const targetScopePath = admissionApplicationScopePath(requestedTargetScopePath);
+  const targetApplicationScopePath = admissionApplicationScopePath(requestedTargetScopePath);
+  const targetStudentScopePath = admissionStudentScopePath(requestedTargetScopePath);
   requireEnv(env);
-  if (requestedTargetScopePath && !targetScopePath) return null;
+  if (requestedTargetScopePath && !targetApplicationScopePath && !targetStudentScopePath) return null;
 
   const queryByFields = async (collection, fields, wantedValues, limit = 20, scopePath = '') => {
     const distinctValues = [...new Set((wantedValues || []).map(clean).filter(Boolean))];
@@ -332,18 +346,62 @@ export async function findFirestoreApplication(env, email, code, options = {}) {
       applicationReferenceFields,
       [targetReference, targetReference.toUpperCase(), targetReference.toLowerCase()],
       20,
-      targetScopePath
+      targetApplicationScopePath
     );
     const matches = targetCandidates.filter((row) => (
       applicationUploadReferenceMatches(row, targetReference) &&
       applicationUploadEmailMatches(row, email) &&
-      applicationUploadScopeMatches(row, targetScopePath)
+      applicationUploadScopeMatches(row, targetApplicationScopePath)
     ));
-    if (!targetScopePath && matches.length !== 1) return null;
+    if (!targetApplicationScopePath && matches.length !== 1) return null;
     return matches[0] || null;
   };
+  const studentReferenceFields = [
+    'ApplicationReference', 'applicationReference',
+    'ApplicationID', 'applicationId',
+    'AdmissionNo', 'admissionNo', 'AdmissionNumber',
+    'AccountRef', 'accountRef'
+  ];
+  const findTargetStudent = async () => {
+    if (!targetReference) return null;
+    const candidates = await queryByFields(
+      'students',
+      studentReferenceFields,
+      [targetReference, targetReference.toUpperCase(), targetReference.toLowerCase()],
+      20,
+      targetStudentScopePath
+    );
+    const matches = candidates.filter((row) => (
+      applicationUploadReferenceMatches(row, targetReference) &&
+      applicationUploadEmailMatches(row, email)
+    ));
+    if (!targetStudentScopePath && matches.length !== 1) return null;
+    return matches[0] || null;
+  };
+  const uploadTargetForStudent = async (student) => {
+    if (!student) return null;
+    const applicationScopePath = admissionApplicationScopePath(student.__scopePath);
+    const studentScopePath = admissionStudentScopePath(student.__scopePath);
+    if (clean(student.__scopePath) && (!applicationScopePath || !studentScopePath)) return null;
+    const studentReferences = identityValues(student, studentReferenceFields);
+    const linkedApplications = await queryByFields(
+      'applications',
+      applicationReferenceFields,
+      studentReferences.flatMap((reference) => [reference, reference.toUpperCase(), reference.toLowerCase()]),
+      20,
+      applicationScopePath
+    );
+    return linkedUploadApplication(linkedApplications, student, {
+      email,
+      scopePath: applicationScopePath
+    }) || importedStudentUploadTarget(student);
+  };
   if (options.authenticated === true) {
-    if (targetReference) return findTargetApplication();
+    if (targetReference) {
+      const targetApplication = await findTargetApplication();
+      if (targetApplication) return targetApplication;
+      return uploadTargetForStudent(await findTargetStudent());
+    }
     const authenticatedApplications = await queryByFields('applications', [
       'VerificationEmail', 'verificationEmail',
       'ParentEmail', 'parentEmail',
@@ -358,7 +416,25 @@ export async function findFirestoreApplication(env, email, code, options = {}) {
         'UPLOAD_CHILD_SELECTION_REQUIRED'
       );
     }
-    return ownedApplications[0] || null;
+    if (ownedApplications[0]) return ownedApplications[0];
+    const authenticatedStudents = await queryByFields('students', [
+      'ParentEmail', 'parentEmail',
+      'VerificationEmail', 'verificationEmail',
+      'Email', 'email',
+      'FatherEmail', 'fatherEmail',
+      'MotherEmail', 'motherEmail',
+      'GuardianEmail', 'guardianEmail'
+    ], [email, email.toUpperCase()], 20);
+    const ownedStudents = uniqueIdentityRows(authenticatedStudents)
+      .filter((row) => applicationUploadEmailMatches(row, email));
+    if (ownedStudents.length > 1) {
+      throw uploadError(
+        'This parent account is linked to more than one child. Open the parent dashboard, select the child, and upload the document there.',
+        409,
+        'UPLOAD_CHILD_SELECTION_REQUIRED'
+      );
+    }
+    return uploadTargetForStudent(ownedStudents[0]);
   }
 
   const normalizedCode = clean(code).toUpperCase();
@@ -398,31 +474,19 @@ export async function findFirestoreApplication(env, email, code, options = {}) {
     student = authenticatedStudents[0] || null;
   }
   if (targetReference && (authenticatedApplication || student)) {
-    if (targetScopePath && authenticatedApplication &&
+    if (targetApplicationScopePath && authenticatedApplication &&
       applicationUploadReferenceMatches(authenticatedApplication, targetReference)
-      && applicationUploadScopeMatches(authenticatedApplication, targetScopePath)) {
+      && applicationUploadScopeMatches(authenticatedApplication, targetApplicationScopePath)) {
       return authenticatedApplication;
     }
-    return findTargetApplication();
+    if (authenticatedApplication) return findTargetApplication();
+    if (applicationUploadReferenceMatches(student, targetReference)) {
+      return uploadTargetForStudent(student);
+    }
+    return null;
   }
   if (!student) return null;
-  const studentScopePath = admissionApplicationScopePath(student.__scopePath);
-  if (clean(student.__scopePath) && !studentScopePath) return null;
-  const studentReferences = identityValues(student, [
-    'ApplicationReference', 'applicationReference',
-    'ApplicationID', 'applicationId',
-    'AdmissionNo', 'admissionNo', 'AdmissionNumber',
-    'AccountRef', 'accountRef'
-  ]);
-  const linkedApplications = await queryByFields('applications', applicationReferenceFields, studentReferences.flatMap((reference) => [
-    reference,
-    reference.toUpperCase(),
-    reference.toLowerCase()
-  ]), 20, studentScopePath);
-  return linkedUploadApplication(linkedApplications, student, {
-    email,
-    scopePath: studentScopePath
-  });
+  return uploadTargetForStudent(student);
 }
 
 async function enabledDocumentFields(env) {
@@ -433,8 +497,14 @@ async function enabledDocumentFields(env) {
 
 async function saveFirestoreDocumentMetadata(env, app, definition, file, url, replaceExisting, operationId) {
   const now = new Date().toISOString();
-  const reference = clean(pick(app, ['ApplicationReference', 'applicationReference', 'ApplicationID', '__id']));
-  if (!reference) throw new Error('The database application has no application reference.');
+  const targetCollection = uploadTargetCollection(app);
+  const reference = clean(pick(app, [
+    'ApplicationReference', 'applicationReference',
+    'ApplicationID', 'applicationId',
+    'AdmissionNo', 'admissionNo', 'AdmissionNumber',
+    'AccountRef', 'accountRef', '__id'
+  ]));
+  if (!reference) throw new Error('The student or application record has no stable reference.');
   const previousUrl = documentUrl(app, definition.key);
   const documents = app.documents && typeof app.documents === 'object' ? { ...app.documents } : {};
   const currentEntry = documentEntry(app, definition.key);
@@ -467,6 +537,7 @@ async function saveFirestoreDocumentMetadata(env, app, definition, file, url, re
     IntelligenceUpdatedAt: now,
     UpdatedAt: now
   };
+  delete next.__uploadCollection;
   const enabledFields = await enabledDocumentFields(env);
   const completed = enabledFields.filter((item) => documentUploaded(next, item.key)).length;
   next.DocumentsCompletion = `${enabledFields.length ? Math.round((completed / enabledFields.length) * 100) : 100}%`;
@@ -476,7 +547,7 @@ async function saveFirestoreDocumentMetadata(env, app, definition, file, url, re
   next.DocumentUploadHistory = clean(app.DocumentUploadHistory) ? `${clean(app.DocumentUploadHistory)}\n${historyLine}` : historyLine;
   delete next.__id;
   delete next.__name;
-  await upsertSchoolDocument(env, 'applications', safeDocumentId(reference), next);
+  await upsertSchoolDocument(env, targetCollection, safeDocumentId(reference), next);
   return { application: next, previousUrl };
 }
 
@@ -588,14 +659,22 @@ export async function onRequestPost(context) {
     if (!firestoreApp) {
       return Response.json({
         ok: false,
-        message: 'No application matched that email and verification or parent login code. Do not enter an admission number.'
+        message: 'No student or application matched that email and verification or parent login code.'
       }, { status: 404 });
     }
-    const applicationReference = clean(pick(firestoreApp, ['ApplicationReference', 'applicationReference', 'ApplicationID', '__id']));
+    const targetCollection = uploadTargetCollection(firestoreApp);
+    const applicationReference = clean(pick(firestoreApp, [
+      'ApplicationReference', 'applicationReference',
+      'ApplicationID', 'applicationId',
+      'AdmissionNo', 'admissionNo', 'AdmissionNumber',
+      'AccountRef', 'accountRef', '__id'
+    ]));
     if (!applicationReference) {
-      throw uploadError('The database application has no application reference.', 500, 'APPLICATION_REFERENCE_MISSING');
+      throw uploadError('The student or application record has no stable reference.', 500, 'APPLICATION_REFERENCE_MISSING');
     }
-    const applicationScopePath = admissionApplicationScopePath(firestoreApp.__scopePath) || 'applications';
+    const applicationScopePath = targetCollection === 'students'
+      ? (admissionStudentScopePath(firestoreApp.__scopePath) || 'students')
+      : (admissionApplicationScopePath(firestoreApp.__scopePath) || 'applications');
     const [fileDigest, thumbnailDigest, applicationScopeDigest] = await Promise.all([
       sha256(fileBase64),
       thumbnailBase64 ? sha256(thumbnailBase64) : Promise.resolve(''),
@@ -610,6 +689,7 @@ export async function onRequestPost(context) {
         email,
         applicationReference,
         applicationScopePath,
+        targetCollection,
         documentType: definition.key,
         fileName,
         mimeType,
@@ -661,6 +741,7 @@ export async function onRequestPost(context) {
       RequestFingerprint: idempotency.fingerprint,
       ApplicationReference: applicationReference,
       ApplicationScopePath: applicationScopePath,
+      TargetCollection: targetCollection,
       DocumentType: definition.key,
       FileDigest: fileDigest,
       FileName: fileName,
@@ -753,7 +834,7 @@ export async function onRequestPost(context) {
       const storage = await resolveDocumentStorage(env);
       if (!storage.url || !storage.secret) {
         throw uploadError(
-          'Database application lookup succeeded, but Google Drive file storage is not configured.',
+          'Database student/application lookup succeeded, but Google Drive file storage is not configured.',
           503,
           'DOCUMENT_STORAGE_NOT_CONFIGURED'
         );
@@ -887,7 +968,7 @@ export async function onRequestPost(context) {
     });
     if (!latestApplication) {
       throw uploadError(
-        'The application disappeared after Google Drive saved the file. Admissions must reconcile the saved file.',
+        'The student or application record disappeared after Google Drive saved the file. Admissions must reconcile the saved file.',
         503,
         'UPLOAD_METADATA_TARGET_MISSING'
       );
@@ -929,7 +1010,9 @@ export async function onRequestPost(context) {
       );
       await upsertDocument(env, 'applicationPassportThumbnails', thumbnailDocumentId, {
         ApplicationReference: applicationReference,
-        ApplicationScopePath: applicationScopePath,
+        ApplicationScopePath: admissionApplicationScopePath(applicationScopePath) || 'applications',
+        TargetCollection: targetCollection,
+        TargetScopePath: applicationScopePath,
         MimeType: thumbnailMimeType.toLowerCase().startsWith('image/') ? thumbnailMimeType : 'image/jpeg',
         FileBase64: thumbnailBase64,
         UploadOperationId: operationId,
@@ -943,6 +1026,7 @@ export async function onRequestPost(context) {
       documentUrl: savedDocumentUrl,
       previousDocumentUrl: saved.previousUrl,
       applicationReference,
+      targetCollection,
       backend: 'firestore'
     };
     await updateUploadOperation(env, operationId, {

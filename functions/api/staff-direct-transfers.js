@@ -13,6 +13,7 @@ import { sendSchoolFormPurchaseEmail } from './verify-form-payment.js';
 import { createPaidStoreOrder } from './verify-payment.js';
 import { recordManualOrganizationCommerceSale } from '../lib/organization-commerce.js';
 import { saveChurchDonation } from '../lib/church-payments.js';
+import { sendSchoolPaymentReceiptEmail } from '../lib/school-payment-email.js';
 
 const clean = (value) => String(value ?? '').trim();
 const safeId = (value) => clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140);
@@ -130,7 +131,22 @@ async function approveSchoolPayment(env, transfer, user) {
       CreatedAt: new Date().toISOString()
     }, items, storeType));
   }
-  return { recorded, orders };
+  const email = await sendSchoolPaymentReceiptEmail(env, recorded.payment || {
+    ...payload,
+    Amount: transfer.Amount,
+    GrossAmount: transfer.Amount,
+    Method: 'Bank Transfer',
+    Gateway: 'Direct Bank Transfer',
+    Reference: transfer.Reference,
+    GatewayReference: transfer.BankReference,
+    PaidAt: new Date().toISOString(),
+    BranchId: transfer.BranchId,
+    ParentEmail: payload.ParentEmail || transfer.PayerEmail
+  }).catch((mailError) => ({
+    ok: false,
+    message: mailError?.message || String(mailError)
+  }));
+  return { recorded, orders, email };
 }
 
 async function approveOrganizationStore(env, transfer, user, context = {}) {
@@ -292,7 +308,15 @@ export async function onRequestPost(context) {
     });
     const intent = await getDocument(context.env, 'paymentIntents', reference).catch(() => null);
     if (intent) await upsertDocument(context.env, 'paymentIntents', reference, { ...withoutMetadata(intent), Status: 'Completed', CompletedAt: new Date().toISOString() });
-    return Response.json({ ok: true, message: 'Transfer verified, recorded and receipted.', result }, { headers: { 'Cache-Control': 'no-store' } });
+    const receiptDelivery = result?.email;
+    const receiptNote = transfer.Context !== 'school-payment'
+      ? ''
+      : receiptDelivery?.ok
+        ? ' The parent receipt was emailed.'
+        : receiptDelivery?.skipped
+          ? ` Receipt email was skipped: ${clean(receiptDelivery.message)}`
+          : ` Payment was recorded, but the receipt email needs attention: ${clean(receiptDelivery?.message || 'delivery was not confirmed')}`;
+    return Response.json({ ok: true, message: `Transfer verified and recorded.${receiptNote}`, result }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     if (claimed) {
       await upsertDocument(context.env, 'directTransferRequests', safeId(claimed.Reference), {

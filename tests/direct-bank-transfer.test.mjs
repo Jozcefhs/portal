@@ -48,6 +48,8 @@ test('direct transfer never posts revenue, inventory or receipts before staff ap
   assert.match(verifier, /recordManualOrganizationCommerceSale/);
   assert.match(verifier, /saveChurchDonation/);
   assert.match(verifier, /sendSchoolFormPurchaseEmail/);
+  assert.match(verifier, /sendSchoolPaymentReceiptEmail/);
+  assert.match(verifier, /The parent receipt was emailed/);
   assert.match(verifier, /Status:\s*'Verified'/);
   assert.match(verifier, /verifiedBankReferences/);
   assert.match(verifier, /No receipt or accounting entry was created/);
