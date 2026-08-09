@@ -10,7 +10,7 @@
   <link rel="apple-touch-icon" href="images/Logo.png?v=20260801-transparent-app-logo">
   <script src="js/preferences.js?v=20260726-biometric"></script>
   <link rel="stylesheet" href="css/style.css?v=20260809-opaque-account-panel-v2">
-  <link rel="stylesheet" href="css/school-landing.css?v=20260809-compact-sticky-header">
+  <link rel="stylesheet" href="css/school-landing.css?v=20260809-compact-sticky-header-mobile-menu">
 </head>
 <body data-fresh-site-profile>
   <main class="landing-page">
@@ -22,11 +22,22 @@
           <span data-school-address></span>
         </div>
       </div>
-      <div class="nav-actions">
+      <div class="nav-actions landing-desktop-actions">
         <a href="index.html">Suite home</a>
         <a href="parent-dashboard.html">Parent dashboard</a>
         <a class="nav-action-primary" href="admin.html">Staff portal</a>
       </div>
+      <details class="landing-mobile-menu">
+        <summary aria-label="Open portal navigation">
+          <span>Menu</span>
+          <span class="landing-mobile-menu-icon" aria-hidden="true"><i></i><i></i><i></i></span>
+        </summary>
+        <div class="landing-mobile-menu-panel" aria-label="Portal navigation">
+          <a href="index.html">Suite home</a>
+          <a href="parent-dashboard.html">Parent dashboard</a>
+          <a class="nav-action-primary" href="admin.html">Staff portal</a>
+        </div>
+      </details>
     </nav>
 
     <aside class="landing-announcement portal-notice" data-portal-notice role="status" aria-live="polite" hidden></aside>

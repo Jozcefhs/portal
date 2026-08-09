@@ -99,6 +99,10 @@ test('guest authorization is accepted only by payment APIs and never by the pare
   assert.match(landingCss, /\.landing-hero \.hero-copy\s*\{\s*min-height: 310px;/);
   assert.match(landingCss, /\.landing-nav \[data-school-address\]\s*\{\s*display: none;/);
   assert.match(landingCss, /@media \(max-width: 620px\)/);
+  assert.match(landing, /class="landing-mobile-menu"/);
+  assert.match(landing, /class="nav-actions landing-desktop-actions"/);
+  assert.match(landingCss, /\.landing-nav \.landing-desktop-actions\s*\{\s*display: none !important;/);
+  assert.match(landingCss, /\.landing-mobile-menu-panel\s*\{[\s\S]*?position: absolute;/);
   assert.match(siteConfig, /hasAttribute\('data-fresh-site-profile'\)/);
   assert.match(siteConfig, /freshInitialSiteProfile\s*\?\s*refreshSiteProfile\(\)/);
 });
