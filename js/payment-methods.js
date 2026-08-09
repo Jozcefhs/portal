@@ -11,7 +11,7 @@
     if (document.querySelector('link[data-payment-method-styles]')) return;
     const link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = 'css/payment-methods.css?v=20260809-direct-transfer';
+    link.href = 'css/payment-methods.css?v=20260809-direct-transfer-sharp-text';
     link.dataset.paymentMethodStyles = 'true';
     document.head.appendChild(link);
   }

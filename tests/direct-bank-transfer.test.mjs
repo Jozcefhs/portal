@@ -37,6 +37,14 @@ test('every direct-transfer chooser receives and displays the exact payable amou
   }
 });
 
+test('shared payment chooser keeps instructions and bank details crisp and legible', async () => {
+  const styles = await source('css/payment-methods.css');
+  assert.match(styles, /\.payment-method-dialog\{[^}]*text-rendering:optimizeLegibility;[^}]*-webkit-font-smoothing:auto/);
+  assert.match(styles, /\.payment-method-option small\{[^}]*font-size:11px;[^}]*font-weight:500/);
+  assert.match(styles, /\.direct-transfer-panel dt\{[^}]*font-size:9px;[^}]*font-weight:800/);
+  assert.match(styles, /\.direct-transfer-panel input\{[^}]*font-size:13px;[^}]*font-weight:500/);
+});
+
 test('direct transfer never posts revenue, inventory or receipts before staff approval', async () => {
   const transfer = await source('functions/lib/direct-bank-transfer.js');
   assert.match(transfer, /Status:\s*'Awaiting Verification'/);
