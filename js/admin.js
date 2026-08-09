@@ -76,6 +76,7 @@ let securityAuditData = {
   rows: [], facets: {}, warnings: [], fromDate: '', toDate: '', totalMatches: 0, truncated: false,
   filters: { action: '', user: '', module: '', outcome: '', source: '', branchId: '', search: '' }
 };
+let dataBackupState = { envelope: null, fileName: '', summary: null, busy: false };
 let staffApprovalAccounts = [];
 let staffRoleAccessData = null;
 let staffRoleAccessSelectedRole = '';
@@ -177,6 +178,7 @@ const tabConfig = [
   ['uniformStore', 'Clothing & Supplies'],
   ['organizationStore', 'Organisation Store'],
   ['restaurant', 'Restaurant'],
+  ['dataBackup', 'Backup & Restore'],
   ['securityAudit', 'Security Audit Log'],
   ['staffUsers', 'Staff & Permissions']
 ];
@@ -226,6 +228,7 @@ const organizationTabLabels = Object.freeze({
   incomeAnalytics: 'Revenue Analytics',
   organizationStore: 'Inventory & Sales',
   restaurant: 'Catering Operations',
+  dataBackup: 'Backup & Restore',
   securityAudit: 'Security Audit Log',
   staffUsers: 'Users & Permissions'
 });
@@ -273,6 +276,7 @@ const tabIcons = {
   uniformStore: '\u{1F455}',
   organizationStore: '\u{1F3EA}',
   restaurant: '\u{1F37D}',
+  dataBackup: '\u{1F5C4}',
   securityAudit: '\u{1F6E1}',
   staffUsers: '\u2699'
 };
@@ -2032,6 +2036,13 @@ function renderModuleSummary(active, liveData = null) {
       { icon: '\u2713', label: 'Successful', value: rows.filter((row) => clean(row.Outcome) === 'Success').length },
       { icon: '\u26D4', label: 'Denied / failed', value: rows.filter((row) => /denied|failed/i.test(clean(row.Outcome))).length },
       { icon: '\u{1F465}', label: 'Users', value: new Set(rows.map((row) => clean(row.ActorUsername || row.Actor)).filter(Boolean)).size }
+    ];
+  } else if (active === 'dataBackup') {
+    cards = [
+      { icon, label: 'Coverage', value: 'All records' },
+      { icon: '\u{1F512}', label: 'Protection', value: 'Encrypted' },
+      { icon: '\u21BA', label: 'Restore mode', value: 'Point in time' },
+      { icon: '\u{1F6E1}', label: 'Access', value: 'Super Admin' }
     ];
   } else if (active === 'staffUsers' && liveData) {
     const rows = liveData.users || liveData;
@@ -8953,6 +8964,8 @@ function renderSection(active) {
   } else if (active === 'executiveOffice') {
     panelEl.innerHTML = `<div class="executive-loading"><span class="records-desk-spinner" aria-hidden="true"></span><strong>Opening ${escapeHtml(executiveOfficeTitle())}...</strong><small>Loading authorised metrics, directories, templates and correspondence.</small></div>`;
     loadExecutiveOffice();
+  } else if (active === 'dataBackup') {
+    renderDataBackup();
   } else if (active === 'securityAudit') {
     panelEl.innerHTML = '<p class="muted">Loading the aggregated security audit log...</p>';
     loadSecurityAudit();
@@ -9797,6 +9810,338 @@ async function loadFinanceWorkflow() {
   } catch (error) {
     if (activeSection === 'financeRequests') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
   }
+}
+
+async function dataBackupRequest(action, payload = {}) {
+  const response = await staffFetch('/api/data-backup', {
+    method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...payload })
+  });
+  const data = await response.json().catch(() => ({ ok: false, message: 'Backup service did not return JSON.' }));
+  if (response.status === 401) showLogin(data.message || 'Your staff session has expired.', 'bad');
+  if (!response.ok || !data.ok) throw new Error(data.message || 'Backup or restore failed.');
+  return data;
+}
+
+function setDataBackupStatus(message = '', tone = '') {
+  const status = document.getElementById('dataBackupStatus');
+  if (!status) return;
+  status.textContent = message;
+  status.className = `status${tone ? ` ${tone}` : ''}`;
+}
+
+function dataBackupProgress(label, current, total) {
+  const progress = document.getElementById('dataBackupProgress');
+  const bar = document.getElementById('dataBackupProgressBar');
+  if (!progress || !bar) return;
+  progress.hidden = false;
+  const percent = total > 0 ? Math.min(100, Math.round(current / total * 100)) : 0;
+  bar.style.width = `${percent}%`;
+  progress.querySelector('span').textContent = `${label} ${current.toLocaleString()} of ${total.toLocaleString()}`;
+}
+
+function hideDataBackupProgress() {
+  const progress = document.getElementById('dataBackupProgress');
+  if (progress) progress.hidden = true;
+}
+
+function base64FromBytes(bytes) {
+  let binary = '';
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, Math.min(index + 0x8000, bytes.length)));
+  }
+  return btoa(binary);
+}
+
+function bytesFromBase64(value) {
+  const binary = atob(String(value || ''));
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+async function deriveBackupEncryptionKey(password, salt, iterations = 250000) {
+  const material = await window.crypto.subtle.importKey(
+    'raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']
+  );
+  return window.crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations, hash: 'SHA-256' }, material, {
+    name: 'AES-GCM', length: 256
+  }, false, ['encrypt', 'decrypt']);
+}
+
+async function encryptOrganizationBackup(payload, password) {
+  const salt = window.crypto.getRandomValues(new Uint8Array(16));
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+  const iterations = 250000;
+  const key = await deriveBackupEncryptionKey(password, salt, iterations);
+  const encoded = new TextEncoder().encode(JSON.stringify(payload));
+  const ciphertext = new Uint8Array(await window.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoded));
+  return {
+    format: 'dynamax-encrypted-backup',
+    envelopeVersion: 1,
+    createdAt: payload.createdAt,
+    workspaceId: payload.workspaceId,
+    edition: payload.edition,
+    encryption: {
+      algorithm: 'AES-GCM',
+      keyDerivation: 'PBKDF2-SHA256',
+      iterations,
+      salt: base64FromBytes(salt),
+      iv: base64FromBytes(iv)
+    },
+    ciphertext: base64FromBytes(ciphertext)
+  };
+}
+
+async function decryptOrganizationBackup(envelope, password) {
+  if (clean(envelope?.format) === 'dynamax-organization-backup') return envelope;
+  if (clean(envelope?.format) !== 'dynamax-encrypted-backup') throw new Error('This is not a Dynamax backup file.');
+  try {
+    const salt = bytesFromBase64(envelope.encryption?.salt);
+    const iv = bytesFromBase64(envelope.encryption?.iv);
+    const ciphertext = bytesFromBase64(envelope.ciphertext);
+    const key = await deriveBackupEncryptionKey(password, salt, Number(envelope.encryption?.iterations || 250000));
+    const plaintext = await window.crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+    return JSON.parse(new TextDecoder().decode(plaintext));
+  } catch (_error) {
+    throw new Error('The backup password is incorrect, or the file has been altered.');
+  }
+}
+
+function downloadBackupFile(envelope, suffix = 'backup') {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const workspace = clean(envelope.workspaceId || 'organisation').replace(/[^a-z0-9._-]+/gi, '-');
+  const url = URL.createObjectURL(new Blob([JSON.stringify(envelope)], { type: 'application/json' }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `${workspace}-${suffix}-${stamp}.dynamax-backup.json`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function collectOrganizationBackup(progressLabel = 'Backing up') {
+  const collections = {};
+  let cursor = 0;
+  let pageToken = '';
+  let total = 0;
+  let identity = null;
+  let createdAt = '';
+  for (let part = 0; part < 10000; part += 1) {
+    const data = await dataBackupRequest('export', { cursor, pageToken });
+    identity ||= data.identity || null;
+    createdAt ||= data.exportedAt || new Date().toISOString();
+    Object.entries(data.collections || {}).forEach(([path, rows]) => {
+      if (!Array.isArray(rows)) throw new Error(`Backup data for ${path} is invalid.`);
+      if (!collections[path]) collections[path] = [];
+      collections[path].push(...rows);
+    });
+    const meta = data.backup || {};
+    total = Number(meta.totalCollections || total || Object.keys(collections).length);
+    const completed = meta.complete ? total : Number(meta.nextCursor ?? cursor);
+    dataBackupProgress(progressLabel, Math.min(completed, total), total);
+    if (meta.complete === true) {
+      return {
+        format: 'dynamax-organization-backup',
+        formatVersion: Number(meta.version || 3),
+        createdAt,
+        workspaceId: clean(identity?.workspaceId),
+        edition: clean(identity?.edition),
+        collections
+      };
+    }
+    const nextCursor = Number(meta.nextCursor);
+    const nextPageToken = clean(meta.nextPageToken);
+    if (!Number.isFinite(nextCursor) || nextCursor < cursor || (nextCursor === cursor && !nextPageToken)) {
+      throw new Error('The backup service did not provide a valid continuation.');
+    }
+    if (nextCursor === cursor && nextPageToken === pageToken) throw new Error('The backup service repeated the same continuation.');
+    cursor = nextCursor;
+    pageToken = nextPageToken;
+  }
+  throw new Error('The backup exceeded the safe continuation limit.');
+}
+
+function backupDocumentCount(payload) {
+  return Object.values(payload?.collections || {}).reduce((sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0), 0);
+}
+
+function renderSelectedBackupSummary() {
+  const summary = document.getElementById('selectedBackupSummary');
+  if (!summary) return;
+  if (!dataBackupState.envelope) {
+    summary.hidden = true;
+    summary.innerHTML = '';
+    return;
+  }
+  const envelope = dataBackupState.envelope;
+  summary.hidden = false;
+  summary.innerHTML = `<strong>${escapeHtml(dataBackupState.fileName || 'Selected backup')}</strong><span>Created ${escapeHtml(securityAuditDateTime(envelope.createdAt) || 'date unavailable')}</span><span>${escapeHtml(envelope.workspaceId || 'Workspace identity is encrypted')}</span><small>Enter the backup password below to verify its contents before restore.</small>`;
+}
+
+function chunkRestoreRows(rows, maxRows = 100, maxBytes = 5 * 1024 * 1024) {
+  const chunks = [];
+  let current = [];
+  let bytes = 0;
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const rowBytes = new TextEncoder().encode(JSON.stringify(row)).length;
+    if (current.length && (current.length >= maxRows || bytes + rowBytes > maxBytes)) {
+      chunks.push(current);
+      current = [];
+      bytes = 0;
+    }
+    current.push(row);
+    bytes += rowBytes;
+  });
+  if (current.length) chunks.push(current);
+  return chunks;
+}
+
+async function restoreOrganizationBackup(payload, password) {
+  const entries = Object.entries(payload.collections || {});
+  if (!entries.length) throw new Error('The selected backup contains no collections.');
+  setDataBackupStatus('Creating the mandatory pre-restore safety backup...');
+  const safetyPayload = await collectOrganizationBackup('Safety backup');
+  const safetyEnvelope = await encryptOrganizationBackup(safetyPayload, password);
+  downloadBackupFile(safetyEnvelope, 'pre-restore-safety-backup');
+  const prepared = await dataBackupRequest('prepare-restore', {
+    manifest: {
+      format: payload.format,
+      formatVersion: payload.formatVersion,
+      createdAt: payload.createdAt,
+      workspaceId: payload.workspaceId,
+      edition: payload.edition
+    },
+    collectionPaths: entries.map(([path]) => path),
+    safetyBackupCreated: true
+  });
+  let collectionIndex = 0;
+  for (const [collectionPath, rows] of entries) {
+    collectionIndex += 1;
+    setDataBackupStatus(`Restoring ${collectionPath} (${collectionIndex} of ${entries.length})...`);
+    dataBackupProgress('Restoring collections', collectionIndex - 1, entries.length);
+    for (let clearPass = 0; clearPass < 10000; clearPass += 1) {
+      const cleared = await dataBackupRequest('clear-collection', { jobId: prepared.jobId, collectionPath });
+      if (!cleared.more) break;
+      if (clearPass === 9999) throw new Error(`Could not finish clearing ${collectionPath}.`);
+    }
+    for (const documents of chunkRestoreRows(rows)) {
+      await dataBackupRequest('write-collection', { jobId: prepared.jobId, collectionPath, documents });
+    }
+    dataBackupProgress('Restoring collections', collectionIndex, entries.length);
+  }
+  return dataBackupRequest('complete-restore', { jobId: prepared.jobId });
+}
+
+function renderDataBackup() {
+  if (clean(currentUser?.role) !== 'Super Admin') {
+    panelEl.innerHTML = '<p class="status bad">Only a Super Administrator can access Backup &amp; Restore.</p>';
+    return;
+  }
+  panelEl.innerHTML = `
+    <section class="data-backup-workspace">
+      <div class="workflow-intro data-backup-heading">
+        <div><p class="eyebrow">Data protection</p><h2>Backup &amp; Restore</h2><p class="muted">Download an encrypted copy of the organisation database or return operational records to a previous backup.</p></div>
+        <span class="data-backup-admin-badge">Super Administrator only</span>
+      </div>
+      <div class="data-backup-warning"><strong>Keep backup files and passwords secure.</strong><span>They contain personal and financial records. Uploaded Google Drive documents remain in Drive; their database records and links are backed up.</span></div>
+      <div class="data-backup-grid">
+        <article class="data-backup-card">
+          <span class="data-backup-card-icon" aria-hidden="true">&#8681;</span>
+          <div><p class="eyebrow">Create recovery point</p><h3>Download encrypted backup</h3><p>Captures every current operational collection, branch and school section. Temporary request locks are excluded.</p></div>
+          <label>Backup password <input id="newBackupPassword" type="password" minlength="10" autocomplete="new-password" placeholder="At least 10 characters"></label>
+          <label>Confirm password <input id="confirmBackupPassword" type="password" minlength="10" autocomplete="new-password" placeholder="Repeat the password"></label>
+          <button type="button" id="downloadDataBackup">Download backup</button>
+        </article>
+        <article class="data-backup-card data-backup-restore-card">
+          <span class="data-backup-card-icon" aria-hidden="true">&#8634;</span>
+          <div><p class="eyebrow">Disaster recovery</p><h3>Restore a previous backup</h3><p>Replaces records in the selected backup collections. A fresh encrypted safety backup downloads automatically before changes begin.</p></div>
+          <label class="data-backup-file-label">Backup file <input id="restoreBackupFile" type="file" accept=".json,.dynamax-backup.json,application/json"></label>
+          <div id="selectedBackupSummary" class="selected-backup-summary" hidden></div>
+          <label>Backup password <input id="restoreBackupPassword" type="password" minlength="10" autocomplete="current-password" placeholder="Password used for this backup"></label>
+          <button type="button" id="restoreDataBackup" class="danger" disabled>Restore selected backup</button>
+        </article>
+      </div>
+      <div id="dataBackupProgress" class="data-backup-progress" hidden><i><b id="dataBackupProgressBar"></b></i><span></span></div>
+      <p id="dataBackupStatus" class="status" role="status" aria-live="polite"></p>
+      <aside class="data-backup-notes"><strong>Recovery safeguards</strong><ul><li>The backup must match this workspace and organisation edition.</li><li>The currently signed-in Super Administrator account and deployment/subscription identity are preserved.</li><li>Restore activity is written to the Security Audit Log.</li></ul></aside>
+    </section>`;
+  renderModuleSummary('dataBackup', true);
+  renderSelectedBackupSummary();
+  document.getElementById('downloadDataBackup')?.addEventListener('click', async (event) => {
+    const password = document.getElementById('newBackupPassword').value;
+    const confirmation = document.getElementById('confirmBackupPassword').value;
+    if (password.length < 10) return setDataBackupStatus('Use a backup password of at least 10 characters.', 'bad');
+    if (password !== confirmation) return setDataBackupStatus('The backup passwords do not match.', 'bad');
+    const button = event.currentTarget;
+    setButtonLoading(button, true, 'Preparing...', 'Download backup');
+    dataBackupState.busy = true;
+    try {
+      setDataBackupStatus('Collecting organisation records...');
+      const payload = await collectOrganizationBackup();
+      setDataBackupStatus('Encrypting the backup on this device...');
+      const envelope = await encryptOrganizationBackup(payload, password);
+      downloadBackupFile(envelope);
+      setDataBackupStatus(`Backup downloaded: ${Object.keys(payload.collections).length.toLocaleString()} collections and ${backupDocumentCount(payload).toLocaleString()} records.`, 'good');
+    } catch (error) {
+      setDataBackupStatus(error.message || String(error), 'bad');
+    } finally {
+      dataBackupState.busy = false;
+      hideDataBackupProgress();
+      if (button.isConnected) setButtonLoading(button, false, 'Preparing...', 'Download backup');
+    }
+  });
+  document.getElementById('restoreBackupFile')?.addEventListener('change', async (event) => {
+    dataBackupState.envelope = null;
+    dataBackupState.fileName = '';
+    const button = document.getElementById('restoreDataBackup');
+    button.disabled = true;
+    const file = event.target.files?.[0];
+    if (!file) return renderSelectedBackupSummary();
+    try {
+      if (file.size > 250 * 1024 * 1024) throw new Error('This backup file exceeds the 250 MB browser restore limit. Use the desktop recovery tool for larger archives.');
+      const envelope = JSON.parse(await file.text());
+      if (!['dynamax-encrypted-backup', 'dynamax-organization-backup'].includes(clean(envelope.format))) throw new Error('This is not a Dynamax backup file.');
+      dataBackupState.envelope = envelope;
+      dataBackupState.fileName = file.name;
+      button.disabled = false;
+      setDataBackupStatus('Backup file selected. Enter its password to verify and restore it.');
+    } catch (error) {
+      setDataBackupStatus(error.message || String(error), 'bad');
+    }
+    renderSelectedBackupSummary();
+  });
+  document.getElementById('restoreDataBackup')?.addEventListener('click', async (event) => {
+    const password = document.getElementById('restoreBackupPassword').value;
+    if (password.length < 10) return setDataBackupStatus('Enter the backup password of at least 10 characters.', 'bad');
+    const confirmation = await window.DynamaxDialogs.prompt({
+      title: 'Restore organisation data',
+      message: 'This replaces current records with the selected recovery point. A safety backup will download first. Type RESTORE to continue.',
+      label: 'Confirmation', placeholder: 'RESTORE', required: true, maxLength: 20,
+      tone: 'danger', confirmText: 'Continue to restore'
+    });
+    if (clean(confirmation).toUpperCase() !== 'RESTORE') {
+      if (confirmation !== null) setDataBackupStatus('Restore cancelled because the confirmation text did not match.', 'bad');
+      return;
+    }
+    const button = event.currentTarget;
+    setButtonLoading(button, true, 'Restoring...', 'Restore selected backup');
+    dataBackupState.busy = true;
+    try {
+      setDataBackupStatus('Decrypting and verifying the selected backup...');
+      const payload = await decryptOrganizationBackup(dataBackupState.envelope, password);
+      const result = await restoreOrganizationBackup(payload, password);
+      setDataBackupStatus(result.message || 'Organisation data restored successfully.', 'good');
+      await window.DynamaxDialogs.alert({ title: 'Restore completed', message: 'The organisation database has been restored. Reload the portal to use the restored records.', confirmText: 'Reload portal' });
+      window.location.reload();
+    } catch (error) {
+      setDataBackupStatus(`${error.message || String(error)} The downloaded safety backup can be used to recover the state from before this attempt.`, 'bad');
+    } finally {
+      dataBackupState.busy = false;
+      hideDataBackupProgress();
+      if (button.isConnected) setButtonLoading(button, false, 'Restoring...', 'Restore selected backup');
+    }
+  });
 }
 
 async function securityAuditRequest(action = 'list', payload = {}) {

@@ -15,6 +15,7 @@ const [
   departmentApi,
   verifyApi,
   backendApi,
+  backupSource,
   adminJs,
   portalCss,
   paymentSuccessJs
@@ -24,6 +25,7 @@ const [
   readFile(new URL('functions/api/staff-departments.js', portalRoot), 'utf8'),
   readFile(new URL('functions/api/verify-payment.js', portalRoot), 'utf8'),
   readFile(new URL('functions/api/backend.js', portalRoot), 'utf8'),
+  readFile(new URL('functions/lib/organization-backup.js', portalRoot), 'utf8'),
   readFile(new URL('js/admin.js', portalRoot), 'utf8'),
   readFile(new URL('css/style.css', portalRoot), 'utf8'),
   readFile(new URL('js/payment-success.js', portalRoot), 'utf8')
@@ -119,8 +121,8 @@ test('organisation commerce Paystack verification bypasses student fees and fina
 test('commerce accounting and complete backup include the new records', () => {
   assert.match(backendApi, /\['4120', 'Organisation Store Revenue'/);
   assert.match(backendApi, /\['4130', 'Restaurant and Catering Revenue'/);
-  assert.match(backendApi, /'restaurantInventory', 'restaurantMovements'/);
-  assert.match(backendApi, /'organizationCommerceSales', 'organizationCommerceMovements', 'organizationCommerceEmailDeliveries'/);
+  assert.match(backupSource, /listRootCollectionIds\(env\)/);
+  assert.match(backupSource, /\.filter\(\(collection\) => !EXCLUDED_ROOT_COLLECTIONS\.has\(collection\)\)/);
 });
 
 test('faith store and restaurant expose a compact sale workspace with payment choices and receipts', () => {

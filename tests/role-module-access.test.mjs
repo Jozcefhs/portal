@@ -50,13 +50,13 @@ test('saved role modules replace hardcoded role defaults without silently adding
   assert.equal(resolved.includes('staffAttendance'), false);
 });
 
-test('Super Admin can never lose security audit or permission settings modules', () => {
+test('Super Admin can never lose backup, security audit or permission settings modules', () => {
   const flags = featureFlagsForEdition('school');
   const scopes = withRoleModules({}, 'main', 'Super Admin', ['students'], 'school', flags);
-  assert.deepEqual(scopes.main['Super Admin'], ['students', 'securityAudit', 'staffUsers']);
+  assert.deepEqual(scopes.main['Super Admin'], ['students', 'dataBackup', 'securityAudit', 'staffUsers']);
   assert.deepEqual(
     allowedSectionsFor({ role: 'Super Admin' }, flags, { edition: 'school', roleModules: ['students'] }),
-    ['students', 'securityAudit', 'staffUsers']
+    ['students', 'dataBackup', 'securityAudit', 'staffUsers']
   );
 });
 

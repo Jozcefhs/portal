@@ -22,12 +22,13 @@ import { recordsDeskCapabilities } from '../functions/lib/records-desk.js';
 import { allowedSectionsFor } from '../functions/lib/staff-auth.js';
 
 const portalRoot = new URL('../', import.meta.url);
-const [endpoint, backend, backendSecurity, executiveSource, emailSource] = await Promise.all([
+const [endpoint, backend, backendSecurity, executiveSource, emailSource, backupSource] = await Promise.all([
   readFile(new URL('functions/api/staff-correspondence.js', portalRoot), 'utf8'),
   readFile(new URL('functions/api/backend.js', portalRoot), 'utf8'),
   readFile(new URL('functions/lib/backend-security.js', portalRoot), 'utf8'),
   readFile(new URL('functions/lib/executive-correspondence.js', portalRoot), 'utf8'),
-  readFile(new URL('functions/lib/email-service.js', portalRoot), 'utf8')
+  readFile(new URL('functions/lib/email-service.js', portalRoot), 'utf8'),
+  readFile(new URL('functions/lib/organization-backup.js', portalRoot), 'utf8')
 ]);
 
 test('principal also receives school conduct oversight while senior-minister defaults remain scoped', () => {
@@ -426,8 +427,8 @@ test('desktop Executive Office bridge fails closed without its shared secret', (
 });
 
 test('issued rendering is snapshot based and issue/send transitions are idempotent', () => {
-  assert.match(backend, /executiveCorrespondenceSnapshots/);
-  assert.match(backend, /executiveCorrespondenceTransitions/);
+  assert.match(backupSource, /listRootCollectionIds\(env\)/);
+  assert.match(backupSource, /EXCLUDED_ROOT_COLLECTIONS/);
   assert.match(endpoint, /verifyStaffApprovalPassword\(env, user\.username, password\)/);
   assert.match(
     executiveSource,

@@ -124,6 +124,43 @@ export function firestoreBaseUrl(env) {
   return `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`;
 }
 
+export function firestoreDatabaseUrl(env) {
+  requireFirestoreEnv(env);
+  const projectId = encodeURIComponent(env.FIREBASE_PROJECT_ID);
+  return `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)`;
+}
+
+export async function listRootCollectionIds(env, options = {}) {
+  const token = await getFirestoreAccessToken(env);
+  const requestedSize = Number(options.pageSize || 100);
+  const pageSize = Math.min(1000, Math.max(1, Number.isFinite(requestedSize) ? Math.floor(requestedSize) : 100));
+  const collectionIds = [];
+  let pageToken = clean(options.pageToken);
+  for (let page = 0; page < 100; page += 1) {
+    const response = await fetch(`${firestoreDatabaseUrl(env)}/documents:listCollectionIds`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pageSize, ...(pageToken ? { pageToken } : {}) })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(data?.error?.message || `Database collection discovery failed (${response.status})`);
+      const normalized = firestoreErrorStatus(data, response.status);
+      error.status = normalized.status;
+      error.code = normalized.code;
+      error.upstreamCode = normalized.upstreamCode;
+      throw error;
+    }
+    collectionIds.push(...(Array.isArray(data.collectionIds) ? data.collectionIds.map(clean).filter(Boolean) : []));
+    pageToken = clean(data.nextPageToken);
+    if (!pageToken) return [...new Set(collectionIds)].sort((a, b) => a.localeCompare(b));
+  }
+  const error = new Error('Database collection discovery exceeded the safe pagination limit.');
+  error.status = 413;
+  error.code = 'FIRESTORE_COLLECTION_DISCOVERY_LIMIT';
+  throw error;
+}
+
 export async function firestoreRequest(env, path, options = {}) {
   const token = await getFirestoreAccessToken(env);
   const cleanPath = String(path || '').replace(/^\/+/, '');

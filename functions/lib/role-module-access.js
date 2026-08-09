@@ -32,6 +32,7 @@ export const WEB_SECTION_CATALOG = Object.freeze([
   Object.freeze({ key: 'uniformStore', label: 'Clothing & Supplies' }),
   Object.freeze({ key: 'organizationStore', label: 'Organisation Store' }),
   Object.freeze({ key: 'restaurant', label: 'Restaurant' }),
+  Object.freeze({ key: 'dataBackup', label: 'Backup & Restore' }),
   Object.freeze({ key: 'securityAudit', label: 'Security Audit Log' }),
   Object.freeze({ key: 'staffUsers', label: 'Staff & Permissions' })
 ]);
@@ -49,6 +50,7 @@ export const ORGANIZATION_SECTION_LABELS = Object.freeze({
   incomeAnalytics: 'Revenue Analytics',
   organizationStore: 'Inventory & Sales',
   restaurant: 'Catering Operations',
+  dataBackup: 'Backup & Restore',
   securityAudit: 'Security Audit Log',
   staffUsers: 'Users & Permissions'
 });
@@ -69,7 +71,7 @@ export const STAFF_ROLE_OPTIONS = Object.freeze([
 ]);
 
 const LEGACY_ROLE_DEFAULTS = Object.freeze({
-  'Super Admin': ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'studentConduct', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'securityAudit', 'staffUsers'],
+  'Super Admin': ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'studentConduct', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'dataBackup', 'securityAudit', 'staffUsers'],
   Principal: ['recordsDesk', 'executiveOffice', 'studentConduct'],
   'Admissions Officer': ['recordsDesk', 'admissions', 'formPurchases', 'students', 'studentConduct', 'financeRequests', 'payroll'],
   'Accounts Officer': ['recordsDesk', 'students', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
@@ -154,7 +156,7 @@ export function defaultModulesForRole(role, { edition = 'school', featureFlags =
     ? departmentUserDefaults(department)
     : [...(LEGACY_ROLE_DEFAULTS[name] || []), ...(name ? ['humanResources'] : [])];
   if (name) base.push('staffAttendance');
-  if (name === 'Super Admin') base.push('securityAudit', 'staffUsers');
+  if (name === 'Super Admin') base.push('dataBackup', 'securityAudit', 'staffUsers');
   return normalizeModuleList(base, edition, featureFlags);
 }
 
@@ -165,6 +167,7 @@ export function roleAccessScope(user = {}) {
 function withRequiredRoleModules(role, modules = []) {
   const normalized = [...modules];
   if (role === 'Super Admin') {
+    if (!normalized.includes('dataBackup')) normalized.push('dataBackup');
     if (!normalized.includes('securityAudit')) normalized.push('securityAudit');
     if (!normalized.includes('staffUsers')) normalized.push('staffUsers');
   }

@@ -62,6 +62,13 @@ import { saveDocumentBranding } from '../lib/document-branding.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
 import {
+  clearOrganizationRestoreCollection,
+  completeOrganizationRestore,
+  exportOrganizationBackupPage,
+  prepareOrganizationRestore,
+  writeOrganizationRestoreChunk
+} from '../lib/organization-backup.js';
+import {
   loadNotificationSettings,
   notifyParentPaymentReceived,
   notifyStaffRequisitionEvent
@@ -654,7 +661,8 @@ export function requireBackendSecret(env, body) {
 }
 
 const VERIFIED_ACTOR_ACTIONS = new Set([
-  'exportBackup', 'getAccountingOverview', 'getSystemHealth', 'optimizeFirestoreData', 'getPayrollTaxConfiguration',
+  'exportBackup', 'prepareRestoreBackup', 'clearRestoreCollection', 'writeRestoreCollection', 'completeRestoreBackup',
+  'getAccountingOverview', 'getSystemHealth', 'optimizeFirestoreData', 'getPayrollTaxConfiguration',
   'seedTraditionalPayeConfiguration', 'savePayrollSalaryComponent', 'savePayrollTaxProfile',
   'clonePayrollTaxProfile', 'savePayrollTaxBands', 'savePayrollTaxReliefRules',
   'savePayrollLedgerMapping', 'validatePayrollTaxConfiguration', 'migratePayrollTaxPhase2',
@@ -6941,102 +6949,36 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     }
     case 'exportBackup': {
       requireAccountingRole(body, ['Super Admin']);
-      const backupCursor = Math.floor(Math.max(0, Number(body.Cursor || body.cursor || 0) || 0));
-      const backupPageToken = clean(body.PageToken || body.pageToken);
-      const rootCollections = [
-        'accounts', 'payments', 'paymentGatewayCharges', 'invoices', 'ledger', 'feeItems', 'billingCategories',
-        'settings', 'formSales', 'directTransferRequests', 'verifiedBankReferences', 'staffUsers', 'staffSecurityAudit',
-        'executiveCorrespondence', 'executiveCorrespondenceTemplates',
-        'executiveCorrespondenceEndorsements', 'executiveCorrespondenceSnapshots',
-        'executiveCorrespondenceTransitions', 'executiveCorrespondenceAudit',
-        'executiveMetricPreferences',
-        'accountingExpenses', 'accountingSupplierBills', 'accountingApprovalLimits',
-        'accountingAudit', 'accountingJournals', 'accountingBudgets', 'accountingBanks', 'chartOfAccounts',
-        'accountingPayrollProfiles', 'accountingPayrollRuns',
-        'payrollProfiles', 'payrollRuns', 'payrollItems', 'payrollPayments', 'payrollAudit',
-        PAYROLL_TAX_COLLECTIONS.components, PAYROLL_TAX_COLLECTIONS.profiles, PAYROLL_TAX_COLLECTIONS.bands,
-        PAYROLL_TAX_COLLECTIONS.reliefs, PAYROLL_TAX_COLLECTIONS.mappings, PAYROLL_TAX_COLLECTIONS.overrides, PAYROLL_TAX_COLLECTIONS.migrations,
-        'clinicRecords',
-        'clinicInventory', 'clinicMovements', 'kitchenInventory', 'kitchenMovements',
-        'restaurantInventory', 'restaurantMovements',
-        'tuckShopPurchases', 'storeItems', 'storeOrders', 'storeCategories',
-        'organizationCommerceSales', 'organizationCommerceMovements', 'organizationCommerceEmailDeliveries'
-      ];
-      const schoolCollections = ['applications', 'students'];
-      const [organizationProfile, legacyProfile] = await Promise.all([
-        getDocument(env, 'settings', 'organisationProfile').catch(() => null),
-        getDocument(env, 'settings', 'schoolProfile').catch(() => null)
-      ]);
-      const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile });
-      const structure = await getSchoolStructure(env);
-      const schoolPaths = (await Promise.all(schoolCollections.map((name) => schoolCollectionPaths(env, name)))).flat();
-      const churchPaths = ['church', 'faith', 'organization'].includes(organization.Edition)
-        ? (structure.Branches || [{ Id: 'main' }]).flatMap((branch) =>
-          Object.values(CHURCH_COLLECTIONS).map((collection) => churchCollectionPath(collection, branch.Id || branch.id || 'main')))
-        : [];
-      const descriptors = [
-        ...rootCollections.map((name) => ({ key: name, type: 'root', path: name })),
-        ...schoolPaths.map((path) => ({ key: path, type: 'root', path })),
-        ...churchPaths.map((path) => ({ key: path, type: 'root', path }))
-      ];
-      if (backupCursor >= descriptors.length && descriptors.length) {
-        const error = new Error('The backup cursor is outside the available collection range. Start a new backup from cursor 0.');
-        error.status = 400;
-        error.code = 'BACKUP_CURSOR_INVALID';
-        throw error;
-      }
-      const selected = descriptors.slice(backupCursor, backupCursor + 1);
-      const collections = {};
-      let continuationToken = '';
-      for (const descriptor of selected) {
-        const page = await listCollectionPage(env, descriptor.path, {
-          pageSize: 1000,
-          pageToken: backupPageToken
-        });
-        const rows = page.documents;
-        continuationToken = page.nextPageToken;
-        collections[descriptor.key] = descriptor.key === 'settings'
-          ? rows.map((row) => {
-              const copy = { ...row };
-              const redacted = [];
-              ['BrevoApiKey', 'ApiKey', 'Secret', 'PrivateKey', 'AccessToken'].forEach((field) => {
-                if (clean(copy[field])) {
-                  delete copy[field];
-                  redacted.push(field);
-                }
-              });
-              if (redacted.length) copy.__redactedFields = redacted;
-              return copy;
-            })
-          : rows;
-      }
-      const nextCursor = continuationToken ? backupCursor : backupCursor + selected.length;
-      const complete = !continuationToken && nextCursor >= descriptors.length;
-      return {
-        ok: true,
-        message: complete
-          ? 'Database backup completed.'
-          : continuationToken
-            ? `Backup page prepared for ${selected[0]?.key || 'collection'}. Continue the same collection.`
-            : `Backup collection prepared (${nextCursor} of ${descriptors.length}). Continue from cursor ${nextCursor}.`,
-        exportedAt: nowIso(),
-        collections,
-        backup: {
-          version: 2,
-          complete,
-          partial: !complete,
-          cursor: backupCursor,
-          nextCursor: complete ? null : nextCursor,
-          pageToken: backupPageToken || null,
-          nextPageToken: complete ? null : (continuationToken || null),
-          currentCollection: selected[0]?.key || '',
-          processedCollections: selected.length,
-          totalCollections: descriptors.length,
-          collectionLimit: 1,
-          pageSize: 1000
-        }
-      };
+      return exportOrganizationBackupPage(env, {
+        cursor: body.Cursor || body.cursor,
+        pageToken: body.PageToken || body.pageToken,
+        pageSize: 500
+      });
     }
+    case 'prepareRestoreBackup':
+      return prepareOrganizationRestore(env, {
+        username: body.UserUsername,
+        displayName: body.RecordedBy,
+        role: body.UserRole
+      }, body.Manifest || body.manifest, body.CollectionPaths || body.collectionPaths, body.SafetyBackupCreated === true || body.safetyBackupCreated === true);
+    case 'clearRestoreCollection':
+      return clearOrganizationRestoreCollection(env, {
+        username: body.UserUsername,
+        displayName: body.RecordedBy,
+        role: body.UserRole
+      }, body.JobId || body.jobId, body.CollectionPath || body.collectionPath);
+    case 'writeRestoreCollection':
+      return writeOrganizationRestoreChunk(env, {
+        username: body.UserUsername,
+        displayName: body.RecordedBy,
+        role: body.UserRole
+      }, body.JobId || body.jobId, body.CollectionPath || body.collectionPath, body.Documents || body.documents);
+    case 'completeRestoreBackup':
+      return completeOrganizationRestore(env, {
+        username: body.UserUsername,
+        displayName: body.RecordedBy,
+        role: body.UserRole
+      }, body.JobId || body.jobId);
     case 'getSystemHealth':
       return getSystemHealth(env, body);
     case 'optimizeFirestoreData':

@@ -265,7 +265,7 @@ export function allowedSectionsFor(user = {}, featureFlags = null, options = {})
   const custom = Array.isArray(user.tabAccess || user.TabAccess) ? (user.tabAccess || user.TabAccess).map(clean).filter(Boolean) : [];
   if (custom.length) {
     const inherited = role === 'Super Admin'
-      ? [...custom, 'humanResources', 'securityAudit', 'staffUsers']
+      ? [...custom, 'humanResources', 'dataBackup', 'securityAudit', 'staffUsers']
       : [...custom, 'humanResources'];
     const recordsDeskSources = new Set([
       'admissions', 'students', 'accounts', 'clinic', 'tuckShop',
@@ -277,6 +277,7 @@ export function allowedSectionsFor(user = {}, featureFlags = null, options = {})
   if (Array.isArray(options.roleModules)) {
     const configured = [...options.roleModules];
     if (role === 'Super Admin') {
+      if (!configured.includes('dataBackup')) configured.push('dataBackup');
       if (!configured.includes('securityAudit')) configured.push('securityAudit');
       if (!configured.includes('staffUsers')) configured.push('staffUsers');
     }

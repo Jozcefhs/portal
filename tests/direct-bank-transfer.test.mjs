@@ -117,7 +117,8 @@ test('staff queues exist in each relevant operational module', async () => {
 });
 
 test('direct-transfer audit and bank-reference claims are included in complete backups', async () => {
-  const backend = await source('functions/api/backend.js');
-  assert.match(backend, /'directTransferRequests'/);
-  assert.match(backend, /'verifiedBankReferences'/);
+  const backup = await source('functions/lib/organization-backup.js');
+  assert.match(backup, /listRootCollectionIds\(env\)/);
+  assert.doesNotMatch(backup, /'directTransferRequests'|\"directTransferRequests\"/);
+  assert.doesNotMatch(backup, /'verifiedBankReferences'|\"verifiedBankReferences\"/);
 });

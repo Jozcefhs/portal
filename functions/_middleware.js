@@ -34,6 +34,7 @@ const SUBSCRIPTION_RECOVERY_PATHS = new Set([
   '/api/subscription-policy',
   '/api/subscription-checkout',
   '/api/staff-subscription',
+  '/api/data-backup',
   '/api/register-organization',
   '/api/registration-status',
   '/api/tenant-activation',
