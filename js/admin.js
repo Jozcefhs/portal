@@ -2477,6 +2477,68 @@ function showOrganizationStoreQr(data = {}, qrWindow = null) {
   viewer.document.close();
 }
 
+function showAdmissionFormPurchaseQr(data = {}, qrWindow = null) {
+  const viewer = qrWindow || window.open('', '_blank', 'width=620,height=780');
+  if (!viewer) {
+    setStatus(dashboardStatus, 'Allow pop-ups to view and print the admission form purchase QR code.', 'bad');
+    return;
+  }
+  viewer.opener = null;
+  const organisation = clean(document.querySelector('[data-school-name]')?.textContent || staffBrand?.textContent) || 'Dynamax School';
+  const purchaseUrl = clean(data.purchaseUrl || data.paymentLink);
+  viewer.document.open();
+  viewer.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(organisation)} admission form QR</title><style>
+    @page{size:A5;margin:12mm}*{box-sizing:border-box}body{margin:0;background:#edf3f8;color:#17314b;font:15px/1.5 Arial,sans-serif}.sheet{max-width:540px;margin:24px auto;padding:28px;border-top:7px solid #1769e0;border-radius:16px;background:#fff;box-shadow:0 14px 35px #173b5820;text-align:center}.eyebrow{margin:0;color:#087d68;font-size:12px;font-weight:bold;letter-spacing:1.3px;text-transform:uppercase}h1{margin:5px 0 4px;color:#164a78;font-size:25px}.subtitle{margin:0 0 18px;color:#36536e}.qr{width:min(330px,90%);margin:0 auto;padding:12px;border:1px solid #cbd9e7;border-radius:14px;background:#fff}.qr svg{display:block;width:100%;height:auto}.instruction{margin:18px auto 8px;max-width:410px}.actions{display:flex;justify-content:center;gap:8px;margin-top:20px}.actions button,.actions a{display:inline-flex;align-items:center;width:fit-content;min-height:40px;padding:8px 14px;border:0;border-radius:8px;background:#1769e0;color:#fff;font-weight:bold;text-decoration:none;cursor:pointer}.actions a{background:#087d68}@media print{body{background:#fff}.sheet{margin:0;box-shadow:none}.actions{display:none}}</style></head><body><main class="sheet"><p class="eyebrow">Reusable applicant self-service</p><h1>${escapeHtml(organisation)}</h1><p class="subtitle">Admission Form Purchase</p><div class="qr">${data.qrSvg || ''}</div><p class="instruction">Scan this reusable code to enter the applicant's details, choose a class and purchase the admission form securely online.</p><div class="actions"><button type="button" onclick="window.print()">Print QR</button><a href="${escapeHtml(purchaseUrl)}" target="_blank" rel="noopener">Open purchase form</a></div></main></body></html>`);
+  viewer.document.close();
+}
+
+function admissionFormPurchasesWorkspace(rows = []) {
+  return `
+    <section class="workflow-intro">
+      <div><small>Applicant self-service</small><h2>Admission Form Purchases</h2><p class="muted">Share one reusable QR code that opens the public admission form purchase page.</p></div>
+      <button type="button" id="admissionFormPurchaseQrButton">&#9638; Purchase QR</button>
+    </section>
+    ${table('Purchase records', rows, [
+      { label: 'Receipt', value: (row) => pick(row, ['ReceiptNo', '__id']) },
+      { label: 'Applicant', value: (row) => pick(row, ['ApplicantName']) },
+      { label: 'Email', value: (row) => pick(row, ['Email']) },
+      { label: 'Class', value: (row) => pick(row, ['ClassApplyingFor']) },
+      { label: 'Amount', value: (row) => money(pick(row, ['AmountPaid', 'Amount'])) }
+    ])}`;
+}
+
+function bindAdmissionFormPurchaseQr() {
+  const qrButton = document.getElementById('admissionFormPurchaseQrButton');
+  if (!qrButton) return;
+  qrButton.addEventListener('click', async () => {
+    const normalMarkup = qrButton.innerHTML;
+    const viewer = window.open('', '_blank', 'width=620,height=780');
+    if (!viewer) {
+      setStatus(dashboardStatus, 'Allow pop-ups to view and print the admission form purchase QR code.', 'bad');
+      return;
+    }
+    viewer.document.write('<!doctype html><title>Preparing admission QR</title><p style="font:14px Arial;padding:24px">Preparing reusable admission form purchase QR code&hellip;</p>');
+    viewer.document.close();
+    setButtonLoading(qrButton, true, 'Preparing...', normalMarkup);
+    try {
+      const response = await staffFetch('/api/staff-admission-forms', {
+        method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'genericQr' })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.ok) throw receivedResponseError(result.message || 'Could not generate the admission form purchase QR code.');
+      showAdmissionFormPurchaseQr(result, viewer);
+    } catch (error) {
+      viewer.close();
+      setStatus(dashboardStatus, error.message || String(error), 'bad');
+    } finally {
+      setButtonLoading(qrButton, false, '', normalMarkup);
+      qrButton.innerHTML = normalMarkup;
+    }
+  });
+}
+
 function renderOrganizationCommerceWorkspace(section, data = {}) {
   const inventory = commerceInventory(section, data);
   syncCommerceCart(section, inventory);
@@ -8642,13 +8704,8 @@ function renderSection(active) {
     ]);
     bindDocumentDeleteEvents();
   } else if (active === 'formPurchases') {
-    panelEl.innerHTML = table('Admission Form Purchases', departments.formPurchases || [], [
-      { label: 'Receipt', value: (row) => pick(row, ['ReceiptNo', '__id']) },
-      { label: 'Applicant', value: (row) => pick(row, ['ApplicantName']) },
-      { label: 'Email', value: (row) => pick(row, ['Email']) },
-      { label: 'Class', value: (row) => pick(row, ['ClassApplyingFor']) },
-      { label: 'Amount', value: (row) => money(pick(row, ['AmountPaid', 'Amount'])) }
-    ]);
+    panelEl.innerHTML = admissionFormPurchasesWorkspace(departments.formPurchases || []);
+    bindAdmissionFormPurchaseQr();
   } else if (active === 'students') {
     const students = departments.students || [];
     const handoff = takeRecordsDeskHandoff('students');
