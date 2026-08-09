@@ -11,11 +11,17 @@ const tenantRequestRows = document.getElementById('tenantRequestRows');
 const tenantRetirementRows = document.getElementById('tenantRetirementRows');
 const platformPaymentStatus = document.getElementById('platformPaymentStatus');
 const platformTransferRows = document.getElementById('platformTransferRows');
+const platformTransferDecisionDialog = document.getElementById('platformTransferDecisionDialog');
+const platformTransferDecisionForm = document.getElementById('platformTransferDecisionForm');
+const platformTransferDecisionNotes = document.getElementById('platformTransferDecisionNotes');
+const platformTransferDecisionStatus = document.getElementById('platformTransferDecisionStatus');
+const platformTransferDecisionConfirm = document.getElementById('platformTransferDecisionConfirm');
 let unlockedPassword = '';
 let catalog = null;
 let tenantPoolState = null;
 let platformPaymentState = null;
 let selectedEntitlementEdition = 'school';
+let platformTransferDecisionResolver = null;
 
 document.getElementById('paystackWebhookUrl').textContent = `${window.location.origin}/api/paystack-subscription-webhook`;
 
@@ -38,6 +44,44 @@ function platformPaymentMoney(amount, currency) {
   } catch (_error) {
     return `${escapeHtml(currency || 'NGN')} ${Number(amount || 0).toLocaleString('en-NG')}`;
   }
+}
+
+function finishPlatformTransferDecision(result = null) {
+  const resolve = platformTransferDecisionResolver;
+  platformTransferDecisionResolver = null;
+  if (platformTransferDecisionDialog.open) platformTransferDecisionDialog.close();
+  if (resolve) resolve(result);
+}
+
+function requestPlatformTransferDecision(approve, reference) {
+  const transfer = (Array.isArray(platformPaymentState?.transfers) ? platformPaymentState.transfers : [])
+    .find((entry) => String(entry.Reference || '') === String(reference || '')) || {};
+  const rejecting = !approve;
+  platformTransferDecisionDialog.classList.toggle('is-rejection', rejecting);
+  platformTransferDecisionDialog.dataset.decision = approve ? 'approve' : 'reject';
+  document.getElementById('platformTransferDecisionIcon').textContent = approve ? '✓' : '!';
+  document.getElementById('platformTransferDecisionTitle').textContent = approve ? 'Approve subscription transfer' : 'Reject subscription transfer';
+  document.getElementById('platformTransferDecisionCopy').textContent = approve
+    ? 'Confirm that the bank credit has been received. Approval activates the subscriber’s selected plan.'
+    : 'Rejecting this transfer will not activate the selected plan. Record a clear reason for the subscriber.';
+  document.getElementById('platformDecisionSubscriber').textContent = transfer.OrganisationName || transfer.RegistrationReference || 'Subscriber';
+  document.getElementById('platformDecisionPlan').textContent = [transfer.Plan, transfer.BillingCycle].filter(Boolean).join(' • ') || '—';
+  document.getElementById('platformDecisionAmount').textContent = platformPaymentMoney(transfer.Amount, transfer.Currency);
+  document.getElementById('platformDecisionReference').textContent = transfer.BankReference || reference || '—';
+  document.getElementById('platformTransferDecisionNoteLabel').textContent = approve ? 'Approval note (optional)' : 'Rejection reason';
+  platformTransferDecisionNotes.value = '';
+  platformTransferDecisionNotes.required = rejecting;
+  platformTransferDecisionNotes.placeholder = approve
+    ? 'Example: Payment confirmed and subscription approved.'
+    : 'Explain why this transfer is being rejected.';
+  platformTransferDecisionConfirm.textContent = approve ? 'Approve transfer' : 'Reject transfer';
+  platformTransferDecisionConfirm.classList.toggle('danger', rejecting);
+  setStatus(platformTransferDecisionStatus, '');
+  return new Promise((resolve) => {
+    platformTransferDecisionResolver = resolve;
+    platformTransferDecisionDialog.showModal();
+    window.requestAnimationFrame(() => platformTransferDecisionNotes.focus());
+  });
 }
 
 async function platformPaymentRequest(payload) {
@@ -405,14 +449,9 @@ platformTransferRows?.addEventListener('click', async (event) => {
   const decisionButton = event.target.closest('[data-platform-transfer-decision][data-reference]');
   if (!decisionButton) return;
   const approve = decisionButton.dataset.platformTransferDecision === 'approve';
-  const notes = window.prompt(approve
-    ? 'Optional approval note:'
-    : 'Enter the reason for rejecting this transfer:', '') ?? '';
-  if (!approve && !notes.trim()) {
-    setStatus(platformPaymentStatus, 'A rejection reason is required.', 'bad');
-    return;
-  }
-  if (!window.confirm(`${approve ? 'Approve' : 'Reject'} this subscription transfer?`)) return;
+  const decision = await requestPlatformTransferDecision(approve, decisionButton.dataset.reference);
+  if (!decision) return;
+  const notes = decision.notes;
   if (!window.DynamaxActionFeedback.begin(decisionButton, approve ? 'Approving...' : 'Rejecting...')) return;
   try {
     platformPaymentState = await platformPaymentRequest({
@@ -428,6 +467,29 @@ platformTransferRows?.addEventListener('click', async (event) => {
   } finally {
     window.DynamaxActionFeedback.end(decisionButton);
   }
+});
+
+platformTransferDecisionForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const notes = platformTransferDecisionNotes.value.trim();
+  const rejecting = platformTransferDecisionDialog.dataset.decision === 'reject';
+  if (rejecting && !notes) {
+    setStatus(platformTransferDecisionStatus, 'Enter a rejection reason before continuing.', 'bad');
+    platformTransferDecisionNotes.focus();
+    return;
+  }
+  finishPlatformTransferDecision({ notes });
+});
+
+platformTransferDecisionDialog.querySelectorAll('[data-platform-decision-cancel]').forEach((button) => {
+  button.addEventListener('click', () => finishPlatformTransferDecision(null));
+});
+platformTransferDecisionDialog.addEventListener('cancel', (event) => {
+  event.preventDefault();
+  finishPlatformTransferDecision(null);
+});
+platformTransferDecisionDialog.addEventListener('click', (event) => {
+  if (event.target === platformTransferDecisionDialog) finishPlatformTransferDecision(null);
 });
 
 document.getElementById('planPricingCurrency')?.addEventListener('change', () => {
@@ -549,7 +611,7 @@ document.getElementById('saveTenantPoolPolicy')?.addEventListener('click', async
 
 tenantPoolRows?.addEventListener('click', async (event) => {
   const button = event.target.closest('[data-release-tenant-slot]');
-  if (!button || !window.confirm('Release this unused project back to the ready pool?')) return;
+  if (!button || !await window.DynamaxDialogs.confirm({ title: 'Release ready project', message: 'Release this unused project back to the ready pool?', confirmText: 'Release project' })) return;
   if (!window.DynamaxActionFeedback.begin(button, 'Releasing...')) return;
   try {
     const data = await tenantPoolRequest({ action: 'release', slotId: button.dataset.releaseTenantSlot });

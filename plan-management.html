@@ -7,7 +7,7 @@
   <title>Plans and pricing — Dynamax</title>
   <link rel="icon" href="images/Logo.png">
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260809-direct-transfer">
+  <link rel="stylesheet" href="css/style.css?v=20260809-direct-transfer-custom-decision-dialog">
 </head>
 <body class="settings-page">
   <main class="settings-shell plan-management-shell">
@@ -107,7 +107,31 @@
       <div class="settings-savebar"><div><strong>Publish plans, prices and module access</strong><p id="planPricingStatus" class="status">Review the plans before saving.</p></div><button id="savePlanPricing" type="submit">Save plans &amp; pricing</button></div>
     </form>
   </main>
+  <dialog id="platformTransferDecisionDialog" class="platform-transfer-decision-dialog" aria-labelledby="platformTransferDecisionTitle">
+    <form id="platformTransferDecisionForm">
+      <header>
+        <div class="platform-decision-heading">
+          <span id="platformTransferDecisionIcon" aria-hidden="true">&#10003;</span>
+          <div><small>Subscription transfer</small><h2 id="platformTransferDecisionTitle">Confirm decision</h2></div>
+        </div>
+        <button type="button" data-platform-decision-cancel aria-label="Close decision dialog">&times;</button>
+      </header>
+      <div class="platform-decision-body">
+        <p id="platformTransferDecisionCopy" class="platform-decision-copy"></p>
+        <dl class="platform-decision-summary">
+          <div><dt>Subscriber</dt><dd id="platformDecisionSubscriber"></dd></div>
+          <div><dt>Plan</dt><dd id="platformDecisionPlan"></dd></div>
+          <div><dt>Amount</dt><dd id="platformDecisionAmount"></dd></div>
+          <div><dt>Bank reference</dt><dd id="platformDecisionReference"></dd></div>
+        </dl>
+        <label for="platformTransferDecisionNotes"><span id="platformTransferDecisionNoteLabel">Approval note</span><textarea id="platformTransferDecisionNotes" rows="4" maxlength="500"></textarea></label>
+        <p id="platformTransferDecisionStatus" class="status" role="status"></p>
+      </div>
+      <footer><button type="button" class="secondary" data-platform-decision-cancel>Cancel</button><button id="platformTransferDecisionConfirm" type="submit">Confirm approval</button></footer>
+    </form>
+  </dialog>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
-  <script src="js/plan-management.js?v=20260809-platform-direct-transfer"></script>
+  <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
+  <script src="js/plan-management.js?v=20260809-platform-direct-transfer-custom-decision-dialog"></script>
 </body>
 </html>

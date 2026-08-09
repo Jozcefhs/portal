@@ -432,7 +432,7 @@ settingsBranchField?.addEventListener('change', reloadSelectedSettingsScope);
 
 resetBranchSettingsButton?.addEventListener('click', async () => {
   const branchName = settingsBranchField.selectedOptions[0]?.textContent || 'this branch';
-  if (!window.confirm(`Reset ${branchName} so every setting inherits the organisation defaults?`)) return;
+  if (!await window.DynamaxDialogs.confirm({ title: 'Reset branch settings', message: `Reset ${branchName} so every setting inherits the organisation defaults?`, tone: 'danger', confirmText: 'Reset branch' })) return;
   if (!window.DynamaxActionFeedback.begin(resetBranchSettingsButton, 'Resetting...')) return;
   try {
     const response = await fetch('/api/settings', {

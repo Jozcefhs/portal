@@ -22,7 +22,7 @@
   window.addEventListener('beforeinstallprompt', (event) => { event.preventDefault(); installEvent = event; showPrompt(); });
   window.installDynamaxApp = async (button = null) => {
     if (!installEvent) {
-      window.alert('Use your browser menu and choose “Install app” or “Add to Home screen”.');
+      await window.DynamaxDialogs.alert({ title: 'Install Dynamax', message: 'Use your browser menu and choose “Install app” or “Add to Home screen”.', confirmText: 'Got it' });
       return;
     }
     if (button && !window.DynamaxActionFeedback.begin(button, 'Opening installer...')) return;

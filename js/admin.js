@@ -2631,9 +2631,9 @@ async function loadDirectTransferVerification(contexts = [], workspaceId = '') {
       const action = clean(button.dataset.directTransferAction);
       const reference = clean(button.dataset.directTransferReference);
       let reason = '';
-      if (action === 'approve' && !window.confirm('Have you confirmed this exact credit in the organisation bank account?')) return;
+      if (action === 'approve' && !await window.DynamaxDialogs.confirm({ title: 'Approve bank transfer', message: 'Have you confirmed this exact credit in the organisation bank account?', confirmText: 'Approve transfer' })) return;
       if (action === 'reject') {
-        reason = clean(window.prompt('Enter the reason for rejecting this transfer.'));
+        reason = clean(await window.DynamaxDialogs.prompt({ title: 'Reject bank transfer', message: 'The payment will remain unverified and no receipt will be issued.', label: 'Rejection reason', required: true, tone: 'danger', confirmText: 'Reject transfer' }));
         if (!reason) return;
       }
       const normalText = button.textContent;
@@ -3043,7 +3043,7 @@ function renderStaffStore(section, store) {
     if (button?.disabled) return;
     const payload = Object.fromEntries(new FormData(form).entries()); payload.Active = form.elements.Active.checked;
     const match = activeCategories.find((row) => clean(row.Name).toLowerCase() === clean(payload.Category).toLowerCase());
-    if (!match && !window.confirm(`Create "${payload.Category}" as a new ${label} category?`)) return;
+    if (!match && !await window.DynamaxDialogs.confirm({ title: 'Create new category', message: `Create "${payload.Category}" as a new ${label} category?`, confirmText: 'Create category' })) return;
     payload.CategoryId = match?.CategoryId || ''; payload.CreateCategoryIfMissing = !match;
     const normalText = clean(button?.textContent) || 'Save item';
     setButtonLoading(button, true, 'Saving...', normalText);
@@ -3125,9 +3125,11 @@ function renderStaffStore(section, store) {
   }));
   panelEl.querySelectorAll('[data-store-order]').forEach((button) => button.addEventListener('click', async () => {
     const collectionReference = button.dataset.storeStatus === 'Collected'
-      ? window.prompt(organisationStore
-        ? 'Enter the order number or customer collection reference.'
-        : "Scan or enter the student's card ID, admission number, or parent verification code.")
+      ? await window.DynamaxDialogs.prompt({
+        title: 'Confirm item collection',
+        message: organisationStore ? 'Enter the order number or customer collection reference.' : "Scan or enter the student's card ID, admission number, or parent verification code.",
+        label: 'Collection reference', required: true, confirmText: 'Confirm collection'
+      })
       : '';
     if (button.dataset.storeStatus === 'Collected' && !clean(collectionReference)) return;
     const normalText = clean(button.textContent) || 'Update order';
@@ -4314,7 +4316,7 @@ async function loadOrganizationDepartments() {
       setStatus(status, 'Edit cancelled.');
     }));
     panelEl.querySelectorAll('[data-delete-department]').forEach((button) => button.addEventListener('click', async () => {
-      if (!window.confirm('Delete this department? Departments with members or meetings cannot be deleted.')) return;
+      if (!await window.DynamaxDialogs.confirm({ title: 'Delete department', message: 'Departments with members or meetings cannot be deleted.', tone: 'danger', confirmText: 'Delete department' })) return;
       try {
         await runButtonAction(button, 'Deleting...', async () => {
           await organizationDepartmentAction('deleteDepartment', { DepartmentId: button.dataset.deleteDepartment });
@@ -4325,7 +4327,7 @@ async function loadOrganizationDepartments() {
     }));
     panelEl.querySelectorAll('[data-delete-member]').forEach((button) => button.addEventListener('click', async () => {
       const memberName = clean(button.dataset.memberName) || 'this member';
-      if (!window.confirm(`Permanently delete ${memberName}'s member profile? Remove the member from every department first.`)) return;
+      if (!await window.DynamaxDialogs.confirm({ title: 'Delete member profile', message: `Permanently delete ${memberName}'s member profile? Remove the member from every department first.`, tone: 'danger', confirmText: 'Delete profile' })) return;
       try {
         await runButtonAction(button, 'Deleting...', async () => {
           const result = await organizationDepartmentAction('deleteMember', {
@@ -4340,7 +4342,7 @@ async function loadOrganizationDepartments() {
     }));
     panelEl.querySelectorAll('[data-delete-position]').forEach((button) => button.addEventListener('click', async () => {
       const positionName = clean(button.dataset.positionName) || 'this position';
-      if (!window.confirm(`Delete ${positionName}? Reassign or remove any member using this position first.`)) return;
+      if (!await window.DynamaxDialogs.confirm({ title: 'Delete position', message: `Delete ${positionName}? Reassign or remove any member using this position first.`, tone: 'danger', confirmText: 'Delete position' })) return;
       try {
         await runButtonAction(button, 'Deleting...', async () => {
           const result = await organizationDepartmentAction('deletePosition', {
@@ -4358,7 +4360,7 @@ async function loadOrganizationDepartments() {
       if (button.disabled) return;
       const memberName = clean(button.dataset.memberName) || 'this member';
       const departmentName = clean(button.dataset.departmentName) || 'this department';
-      if (!window.confirm(`Remove ${memberName} from ${departmentName}? The member's main record will be kept.`)) return;
+      if (!await window.DynamaxDialogs.confirm({ title: 'Remove department assignment', message: `Remove ${memberName} from ${departmentName}? The member's main record will be kept.`, confirmText: 'Remove assignment' })) return;
       const normalText = clean(button.textContent) || '×';
       setButtonLoading(button, true, '', normalText);
       try {
@@ -4375,7 +4377,7 @@ async function loadOrganizationDepartments() {
       }
     }));
     panelEl.querySelectorAll('[data-mark-offering-paid]').forEach((button) => button.addEventListener('click', async () => {
-      const reference = window.prompt('Enter the remittance reference:');
+      const reference = await window.DynamaxDialogs.prompt({ title: 'Post remittance', message: 'Enter the bank or payment reference for this remittance.', label: 'Remittance reference', required: true, confirmText: 'Post remittance' });
       if (reference === null) return;
       try {
         await runButtonAction(button, 'Posting...', async () => {
@@ -5553,7 +5555,7 @@ async function loadChurchDonations() {
       const donationId = clean(button.dataset.donationRate);
       const currency = clean(button.dataset.donationCurrency).toUpperCase();
       const row = (data.donations || []).find((item) => clean(item.DonationId || item.__id) === donationId);
-      const entered = window.prompt(`Enter the NGN value of 1 ${currency}. The rate will be frozen for this donation:`, '');
+      const entered = await window.DynamaxDialogs.prompt({ title: 'Set conversion rate', message: `Enter the NGN value of 1 ${currency}. The rate will be frozen for this donation.`, label: `NGN value of 1 ${currency}`, required: true, inputMode: 'decimal', confirmText: 'Save rate' });
       if (entered === null) return;
       const exchangeRate = Number(clean(entered).replace(/,/g, ''));
       if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
@@ -6256,7 +6258,7 @@ async function loadStaffAttendance() {
     panelEl.querySelectorAll('[data-delete-attendance-site]').forEach((button) => button.addEventListener('click', async () => {
       const siteId = clean(button.dataset.deleteAttendanceSite);
       const siteName = clean(button.dataset.attendanceSiteName) || 'this attendance location';
-      if (!siteId || !window.confirm(`Delete ${siteName}? Existing attendance history will remain unchanged.`)) return;
+      if (!siteId || !await window.DynamaxDialogs.confirm({ title: 'Delete attendance location', message: `Delete ${siteName}? Existing attendance history will remain unchanged.`, tone: 'danger', confirmText: 'Delete location' })) return;
       button.disabled = true;
       try {
         const result = await staffAttendanceRequest('deletesite', { SiteId: siteId });
@@ -6900,7 +6902,7 @@ function renderHumanResources(data) {
     'ClearanceStatus', 'FinalPayStatus', 'FinalDocumentReference', 'ExitInterviewNotes', 'Status'
   ]);
   panelEl.querySelectorAll('[data-repair-hr-exit]').forEach((button) => button.addEventListener('click', async () => {
-    if (!window.confirm('Disable this dismissed staff account and repair the completed exit record now?')) return;
+    if (!await window.DynamaxDialogs.confirm({ title: 'Repair staff exit', message: 'Disable this dismissed staff account and repair the completed exit record now?', confirmText: 'Repair access' })) return;
     const normalText = clean(button.textContent) || 'Repair access';
     setButtonLoading(button, true, 'Repairing...', normalText);
     try {
@@ -6914,7 +6916,7 @@ function renderHumanResources(data) {
   }));
   panelEl.querySelectorAll('[data-hr-leave-decision]').forEach((button) => button.addEventListener('click', async () => {
     const decision = button.dataset.hrLeaveDecision;
-    const note = window.prompt(`${decision} this leave request. Add an optional note:`, '');
+    const note = await window.DynamaxDialogs.prompt({ title: `${decision} leave request`, message: 'Review the request before recording this decision.', label: 'Decision note (optional)', confirmText: decision });
     if (note === null) return;
     setButtonLoading(button, true, `${decision}...`, decision);
     try {
@@ -6928,7 +6930,7 @@ function renderHumanResources(data) {
   }));
   panelEl.querySelectorAll('[data-hr-compensation-decision]').forEach((button) => button.addEventListener('click', async () => {
     const decision = button.dataset.hrCompensationDecision;
-    const note = window.prompt(`${decision} this pay or benefit change. Add an optional note:`, '');
+    const note = await window.DynamaxDialogs.prompt({ title: `${decision} pay or benefit change`, message: 'Review the change before recording this decision.', label: 'Decision note (optional)', confirmText: decision });
     if (note === null) return;
     setButtonLoading(button, true, `${decision}...`, decision === 'Implemented' ? 'Mark implemented' : decision);
     try {
@@ -7111,8 +7113,9 @@ async function loadChurchOfferings() {
           postchurchoffering: 'post'
         }[action] || action;
         if (!offeringId) return;
-        if ((actionLabel === 'approve' || actionLabel === 'reconcile' || actionLabel === 'post') && !window.confirm(`Confirm ${actionLabel} for ${offeringId}?`)) return;
-        const reason = actionLabel === 'reject' ? window.prompt(`Optional reason for rejecting ${offeringId}`) : '';
+        if ((actionLabel === 'approve' || actionLabel === 'reconcile' || actionLabel === 'post') && !await window.DynamaxDialogs.confirm({ title: `${actionLabel.charAt(0).toUpperCase()}${actionLabel.slice(1)} offering`, message: `Confirm ${actionLabel} for ${offeringId}?`, confirmText: actionLabel })) return;
+        const reason = actionLabel === 'reject' ? await window.DynamaxDialogs.prompt({ title: 'Reject offering', message: `Reject ${offeringId}?`, label: 'Reason (optional)', tone: 'danger', confirmText: 'Reject offering' }) : '';
+        if (actionLabel === 'reject' && reason === null) return;
         const idempotencyKey = button.dataset.idempotencyKey || newIdempotencyKey();
         button.dataset.idempotencyKey = idempotencyKey;
         const normalMarkup = button.innerHTML;
@@ -7154,7 +7157,7 @@ async function loadChurchOfferings() {
           return;
         }
         if (routeAction === 'deactivate') {
-          if (!window.confirm(`Deactivate route ${routeId}? It will not be used for new assignments.`)) return;
+          if (!await window.DynamaxDialogs.confirm({ title: 'Deactivate approval route', message: `Deactivate route ${routeId}? It will not be used for new assignments.`, confirmText: 'Deactivate route' })) return;
           try {
             await runButtonAction(button, 'Deactivating...', async () => {
               const data = await doOfferingRouteAction('deactivateofferingroute', { RouteId: routeId });
@@ -7167,7 +7170,7 @@ async function loadChurchOfferings() {
           return;
         }
         if (routeAction === 'delete') {
-          if (!window.confirm(`Delete route ${routeId}?`)) return;
+          if (!await window.DynamaxDialogs.confirm({ title: 'Delete approval route', message: `Delete route ${routeId}?`, tone: 'danger', confirmText: 'Delete route' })) return;
           try {
             await runButtonAction(button, 'Deleting...', async () => {
               const data = await doOfferingRouteAction('deleteofferingroute', { RouteId: routeId });
@@ -7465,7 +7468,7 @@ function recordsDeskFaceLookupAllowed() {
 
 async function openRecordsDeskFaceLookup(options = {}) {
   try {
-    const module = await import('./student-face-lookup.js?v=20260730-face-direct-enrollment');
+    const module = await import('./student-face-lookup.js?v=20260809-custom-dialogs');
     await module.openStudentFaceLookup(options);
   } catch (failure) {
     recordsDeskState.error = failure.message || String(failure);
@@ -8395,7 +8398,7 @@ function bindExecutiveOfficeEvents() {
     const original = button.innerHTML;
     const printableWindow = window.open('', '_blank', 'width=960,height=760');
     if (!printableWindow) {
-      window.alert('Allow pop-ups to view and print this document.');
+      await window.DynamaxDialogs.alert({ title: 'Pop-up blocked', message: 'Allow pop-ups to view and print this document.', confirmText: 'Close' });
       return;
     }
     printableWindow.document.write('<p style="font:14px Arial;padding:24px">Preparing official document...</p>');
@@ -8405,7 +8408,7 @@ function bindExecutiveOfficeEvents() {
       openExecutivePrint(data.correspondence || {}, data.printable || {}, printableWindow);
     } catch (error) {
       printableWindow.close();
-      window.alert(error.message || String(error));
+      await window.DynamaxDialogs.alert({ title: 'Document could not be opened', message: error.message || String(error), tone: 'danger', confirmText: 'Close' });
     } finally {
       setButtonLoading(button, false, '', '');
       button.innerHTML = original;
@@ -8775,7 +8778,7 @@ function renderStudentConduct(selected = {}) {
     if (row) { conductTabs?.activate('case'); renderStudentConduct(row); }
   }));
   panelEl.querySelectorAll('[data-delete-conduct]').forEach((button) => button.addEventListener('click', async () => {
-    if (!window.confirm('Delete this conduct case? The deletion will be audited.')) return;
+    if (!await window.DynamaxDialogs.confirm({ title: 'Delete conduct case', message: 'Delete this conduct case? The deletion will be audited.', tone: 'danger', confirmText: 'Delete case' })) return;
     try {
       await runButtonAction(button, 'Deleting...', async () => {
         await studentConductRequest('delete', { CaseId: button.dataset.deleteConduct });
@@ -8973,7 +8976,7 @@ function bindDocumentDeleteEvents() {
     const applicationReference = button.dataset.applicationReference;
     const scopePath = button.dataset.applicationScope || '';
     const documentType = button.dataset.deleteDocument;
-    if (!window.confirm('Delete this uploaded document? The file will be moved to Google Drive trash.')) return;
+    if (!await window.DynamaxDialogs.confirm({ title: 'Delete uploaded document', message: 'The file will be moved to Google Drive trash.', tone: 'danger', confirmText: 'Delete document' })) return;
     const normalMarkup = button.innerHTML;
     setButtonLoading(button, true, '', '');
     try {
@@ -9876,7 +9879,7 @@ function bindStaffUserEvents() {
     }
   });
   document.getElementById('resetRoleAccess')?.addEventListener('click', async (event) => {
-    if (!window.confirm(`Remove the saved ${staffRoleAccessSelectedRole} policy for this scope and use its inherited default?`)) return;
+    if (!await window.DynamaxDialogs.confirm({ title: 'Reset role policy', message: `Remove the saved ${staffRoleAccessSelectedRole} policy for this scope and use its inherited default?`, tone: 'danger', confirmText: 'Use inherited default' })) return;
     const button = event.currentTarget;
     setButtonLoading(button, true, 'Resetting...', 'Use inherited default');
     try {
@@ -9895,7 +9898,7 @@ function bindStaffUserEvents() {
   panelEl.querySelectorAll('[data-edit-user]').forEach((button) => button.addEventListener('click', () => openStaffUserDialog(button.dataset.editUser)));
   panelEl.querySelectorAll('[data-delete-user]').forEach((button) => button.addEventListener('click', async () => {
     const username = button.dataset.deleteUser;
-    if (!window.confirm(`Delete staff account ${username}? This cannot be undone.`)) return;
+    if (!await window.DynamaxDialogs.confirm({ title: 'Delete staff account', message: `Delete staff account ${username}? This cannot be undone.`, tone: 'danger', confirmText: 'Delete account' })) return;
     const normalMarkup = button.innerHTML;
     setButtonLoading(button, true, '', '');
     try {

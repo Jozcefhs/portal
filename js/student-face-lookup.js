@@ -390,7 +390,7 @@ export async function openStudentFaceLookup(options = {}) {
   });
 
   revokeButton?.addEventListener('click', async () => {
-    if (!window.confirm(`Remove face enrollment for ${studentId}? The encrypted face template will be deleted.`)) return;
+    if (!await window.DynamaxDialogs.confirm({ title: 'Remove face enrollment', message: `Remove face enrollment for ${studentId}? The encrypted face template will be deleted.`, tone: 'danger', confirmText: 'Remove enrollment' })) return;
     setBusy(revokeButton, true, 'Removing...');
     try {
       const result = await faceLookupRequest('revoke', { studentId, branchId });

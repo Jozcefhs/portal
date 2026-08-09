@@ -424,7 +424,11 @@
     const scheduledAt = scheduledValue ? new Date(scheduledValue) : null;
     if (scheduledAt && Number.isNaN(scheduledAt.getTime())) { status.textContent = 'Choose a valid delivery date and time.'; return; }
     const action = scheduledAt && scheduledAt.getTime() > Date.now() ? `schedule this message for ${scheduledAt.toLocaleString()}` : 'send this message now';
-    if (!window.confirm(`Are you sure you want to ${action} for ${recipientNames.join(', ')}?`)) return;
+    if (!await window.DynamaxDialogs.confirm({
+      title: scheduledAt && scheduledAt.getTime() > Date.now() ? 'Schedule notification' : 'Send notification',
+      message: `Are you sure you want to ${action} for ${recipientNames.join(', ')}?`,
+      confirmText: scheduledAt && scheduledAt.getTime() > Date.now() ? 'Schedule message' : 'Send message'
+    })) return;
     const submit = composeForm.querySelector('[type="submit"]');
     submit.disabled = true;
     status.textContent = scheduledAt && scheduledAt.getTime() > Date.now() ? 'Scheduling notification...' : 'Sending notification...';
