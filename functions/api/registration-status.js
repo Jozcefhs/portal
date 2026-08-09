@@ -8,6 +8,10 @@ const clean = (value) => String(value ?? '').trim();
 function statusMessage(registration, activation = {}) {
   if (activation.alreadyActivated) return 'Your administrator account is ready. Redirecting you to sign in.';
   if (activation.issued) return 'Your isolated workspace is ready. Redirecting you to create the first administrator account.';
+  if (clean(registration.PaymentStatus).toLowerCase() === 'awaiting verification'
+    || clean(registration.Status).toLowerCase().includes('payment verification')) {
+    return 'Your bank transfer is awaiting Dynamax verification. Workspace preparation will begin after the transfer is approved.';
+  }
   if (!clean(registration.WorkspaceId)) {
     return 'Your registration is secure. Dynamax is preparing an isolated workspace for your organisation.';
   }

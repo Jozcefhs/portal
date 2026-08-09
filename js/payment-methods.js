@@ -16,20 +16,23 @@
     document.head.appendChild(link);
   }
 
-  async function load(branchId = 'main') {
+  async function load(branchId = 'main', methodsUrl = '/api/payment-methods') {
     const branch = clean(branchId).toLowerCase() || 'main';
-    if (cache.has(branch)) return cache.get(branch);
-    const promise = fetch(`/api/payment-methods?branch=${encodeURIComponent(branch)}`, {
+    const endpoint = new URL(clean(methodsUrl) || '/api/payment-methods', window.location.origin);
+    endpoint.searchParams.set('branch', branch);
+    const cacheKey = `${endpoint.pathname}${endpoint.search}`;
+    if (cache.has(cacheKey)) return cache.get(cacheKey);
+    const promise = fetch(endpoint, {
       credentials: 'same-origin', cache: 'no-store'
     }).then(async (response) => {
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load the available payment methods.');
       return data.methods || {};
     }).catch((error) => {
-      cache.delete(branch);
+      cache.delete(cacheKey);
       throw error;
     });
-    cache.set(branch, promise);
+    cache.set(cacheKey, promise);
     return promise;
   }
 
@@ -66,7 +69,7 @@
     const amountText = Number.isFinite(amount) && amount > 0
       ? new Intl.NumberFormat('en-NG', { style: 'currency', currency, maximumFractionDigits: 2 }).format(amount)
       : '';
-    const methods = await load(branchId);
+    const methods = await load(branchId, options.methodsUrl);
     const onlineEnabled = Boolean(methods.online?.enabled);
     const transfer = methods.directTransfer || {};
     const transferEnabled = Boolean(transfer.enabled) && clean(transfer.currency).toUpperCase() === currency;

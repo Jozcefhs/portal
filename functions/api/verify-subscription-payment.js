@@ -62,6 +62,136 @@ export async function disablePaystackSubscription(env, subscriptionCode, fetchIm
   return { disabled: true };
 }
 
+export async function activateSavedSubscriptionPayment(env, options = {}) {
+  const platformEnv = options.platformEnv || requirePlatformFirestoreEnv(env);
+  const reference = safeId(options.reference);
+  const intent = options.intent || await getDocument(platformEnv, 'subscriptionPayments', reference);
+  const registrationReference = clean(options.registrationReference || intent?.RegistrationReference);
+  const savedRegistration = options.savedRegistration
+    || await getDocument(platformEnv, 'tenantRegistrations', registrationReference);
+  if (!reference || !intent) {
+    const error = new Error('The saved subscription payment request was not found.');
+    error.status = 409;
+    throw error;
+  }
+  if (!registrationReference || !savedRegistration) {
+    const error = new Error('The organisation registration for this payment was not found.');
+    error.status = 409;
+    throw error;
+  }
+  if (['retiring', 'retired'].includes(clean(savedRegistration.LifecycleStage).toLowerCase())) {
+    await upsertDocument(platformEnv, 'subscriptionPayments', reference, {
+      ...withoutFirestoreMetadata(intent),
+      Status: 'Paid After Retirement Deadline',
+      LastError: 'Payment arrived after permanent tenant retirement began. Manual support review and refund may be required.',
+      UpdatedAt: new Date().toISOString()
+    }).catch(() => null);
+    const error = new Error('This workspace has already entered permanent retirement. Contact Dynamax support so the payment can be reviewed.');
+    error.status = 410;
+    error.code = 'PAYMENT_AFTER_TENANT_RETIREMENT';
+    throw error;
+  }
+  const assignment = clean(savedRegistration.WorkspaceId)
+    ? { assigned: true, registration: savedRegistration }
+    : await reserveTenantProjectSlot(platformEnv, savedRegistration);
+  const registration = assignment.registration;
+  const provider = clean(options.provider || 'Paystack');
+  const paystack = provider.toLowerCase() === 'paystack';
+  const paidAt = clean(options.paidAt) || new Date().toISOString();
+  const updatedAt = new Date().toISOString();
+  const recoveryFields = paidSubscriptionRecoveryFields({
+    paidAt,
+    billingCycle: clean(intent.BillingCycle),
+    providerPaidThroughAt: clean(options.providerPaidThroughAt)
+  });
+  const providerFields = options.providerFields && typeof options.providerFields === 'object'
+    ? options.providerFields
+    : {};
+  const updatedRegistration = {
+    ...withoutFirestoreMetadata(registration),
+    Plan: clean(intent.Plan),
+    BillingCycle: clean(intent.BillingCycle),
+    UserLimit: Math.max(1, Number(intent.UserLimit || registration.UserLimit || 5) || 5),
+    FeatureEntitlements: intent.FeatureEntitlements || registration.FeatureEntitlements || [],
+    PlanCatalogRevision: clean(intent.PlanCatalogRevision || registration.PlanCatalogRevision),
+    Price: Number(intent.Amount || 0),
+    Currency: clean(intent.Currency || 'NGN'),
+    ...recoveryFields,
+    Status: 'Payment Confirmed',
+    SubscriptionPaymentProvider: provider,
+    SubscriptionPaymentReference: reference,
+    PreviousPaystackSubscriptionCode: clean(intent.PreviousPaystackSubscriptionCode),
+    PendingPlan: '',
+    PendingBillingCycle: '',
+    PendingPrice: 0,
+    PendingPaystackPlanCode: '',
+    PendingPaystackReference: '',
+    PendingAuthorizationUrl: '',
+    PendingPaymentMethod: '',
+    PendingDirectTransferReference: '',
+    AutoRenewalEnabled: paystack,
+    ...(paystack ? {
+      PaystackReference: reference,
+      PaystackPlanCode: clean(intent.PaystackPlanCode),
+      PaystackCustomerCode: clean(providerFields.PaystackCustomerCode),
+      PaystackSubscriptionCode: clean(providerFields.PaystackSubscriptionCode),
+      DirectTransferReference: ''
+    } : {
+      DirectTransferReference: reference,
+      PaystackPlanCode: '',
+      PaystackCustomerCode: '',
+      PaystackSubscriptionCode: ''
+    }),
+    UpdatedAt: updatedAt
+  };
+  await Promise.all([
+    upsertDocument(platformEnv, 'subscriptionPayments', reference, {
+      ...withoutFirestoreMetadata(intent),
+      Status: 'Paid',
+      PaymentMethod: provider,
+      PaidAt: paidAt,
+      ...providerFields,
+      UpdatedAt: updatedAt
+    }),
+    upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, updatedRegistration)
+  ]);
+  await syncRegistrationSubscriptionToWorkspace(env, updatedRegistration);
+  let activation = {};
+  if (clean(updatedRegistration.WorkspaceId)) {
+    try {
+      const issued = await issueTenantActivation(platformEnv, updatedRegistration, env);
+      activation = issued.issued ? {
+        activationUrl: issued.activationUrl,
+        activationExpiresAt: issued.expiresAt,
+        activationEmailSent: issued.emailSent,
+        activationEmailStatus: issued.emailStatus
+      } : issued.alreadyActivated ? {
+        administratorActivated: true,
+        loginUrl: issued.loginUrl
+      } : {};
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: 'tenant_activation_issue_failed',
+        registrationReference,
+        message: clean(error.message || error).slice(0, 300)
+      }));
+      activation = { activationPending: true };
+    }
+  }
+  return {
+    registrationReference,
+    plan: clean(intent.Plan),
+    billingCycle: clean(intent.BillingCycle),
+    amount: Number(intent.Amount || 0),
+    currency: clean(intent.Currency || 'NGN'),
+    workspaceId: clean(updatedRegistration.WorkspaceId),
+    portalUrl: clean(updatedRegistration.PortalUrl),
+    workspacePending: !clean(updatedRegistration.WorkspaceId),
+    updatedRegistration,
+    ...activation
+  };
+}
+
 export async function recordVerifiedSubscriptionPayment(env, transaction, requestedRegistrationReference = '') {
   const platformEnv = requirePlatformFirestoreEnv(env);
   const reference = safeId(transaction.reference);
@@ -92,18 +222,6 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
     error.status = 409;
     throw error;
   }
-  if (['retiring', 'retired'].includes(clean(savedRegistration.LifecycleStage).toLowerCase())) {
-    await upsertDocument(platformEnv, 'subscriptionPayments', reference, {
-      ...withoutFirestoreMetadata(intent),
-      Status: 'Paid After Retirement Deadline',
-      LastError: 'Payment arrived after permanent tenant retirement began. Manual support review and refund may be required.',
-      UpdatedAt: new Date().toISOString()
-    }).catch(() => null);
-    const error = new Error('This workspace has already entered permanent retirement. Contact Dynamax support so the payment can be reviewed.');
-    error.status = 410;
-    error.code = 'PAYMENT_AFTER_TENANT_RETIREMENT';
-    throw error;
-  }
   const paidAmount = Number(transaction.requested_amount || transaction.amount || 0) / 100;
   if (Math.abs(Number(intent.Amount || 0) - paidAmount) > 0.01) {
     const error = new Error('The verified amount does not match the selected subscription price.');
@@ -116,57 +234,25 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
     error.status = 409;
     throw error;
   }
-  const assignment = clean(savedRegistration.WorkspaceId)
-    ? { assigned: true, registration: savedRegistration }
-    : await reserveTenantProjectSlot(platformEnv, savedRegistration);
-  const registration = assignment.registration;
   const customerCode = clean(transaction.customer?.customer_code);
   const subscriptionCode = clean(transaction.subscription_code || transaction.subscription?.subscription_code);
   const paidAt = clean(transaction.paid_at || transaction.paidAt) || new Date().toISOString();
-  const updatedAt = new Date().toISOString();
-  const recoveryFields = paidSubscriptionRecoveryFields({
+  const result = await activateSavedSubscriptionPayment(env, {
+    platformEnv,
+    reference,
+    intent,
+    savedRegistration,
+    registrationReference,
+    provider: 'Paystack',
     paidAt,
-    billingCycle: clean(intent.BillingCycle),
-    providerPaidThroughAt: paystackPaidThroughAt(transaction)
-  });
-  const updatedRegistration = {
-    ...withoutFirestoreMetadata(registration),
-    Plan: clean(intent.Plan),
-    BillingCycle: clean(intent.BillingCycle),
-    UserLimit: Math.max(1, Number(intent.UserLimit || registration.UserLimit || 5) || 5),
-    FeatureEntitlements: intent.FeatureEntitlements || registration.FeatureEntitlements || [],
-    PlanCatalogRevision: clean(intent.PlanCatalogRevision || registration.PlanCatalogRevision),
-    Price: Number(intent.Amount || 0),
-    Currency: clean(intent.Currency || transaction.currency || 'NGN'),
-    ...recoveryFields,
-    Status: 'Payment Confirmed',
-    PaystackReference: reference,
-    PaystackPlanCode: clean(intent.PaystackPlanCode),
-    PaystackCustomerCode: customerCode,
-    PaystackSubscriptionCode: subscriptionCode,
-    PreviousPaystackSubscriptionCode: clean(intent.PreviousPaystackSubscriptionCode),
-    PendingPlan: '',
-    PendingBillingCycle: '',
-    PendingPrice: 0,
-    PendingPaystackPlanCode: '',
-    PendingPaystackReference: '',
-    PendingAuthorizationUrl: '',
-    AutoRenewalEnabled: true,
-    UpdatedAt: updatedAt
-  };
-  await Promise.all([
-    upsertDocument(platformEnv, 'subscriptionPayments', reference, {
-      ...withoutFirestoreMetadata(intent),
-      Status: 'Paid',
-      PaidAt: paidAt,
+    providerPaidThroughAt: paystackPaidThroughAt(transaction),
+    providerFields: {
       PaystackTransactionId: clean(transaction.id),
       PaystackCustomerCode: customerCode,
-      PaystackSubscriptionCode: subscriptionCode,
-      UpdatedAt: updatedAt
-    }),
-    upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, updatedRegistration)
-  ]);
-  await syncRegistrationSubscriptionToWorkspace(env, updatedRegistration);
+      PaystackSubscriptionCode: subscriptionCode
+    }
+  });
+  const updatedRegistration = result.updatedRegistration;
   const previousSubscriptionCode = clean(intent.PreviousPaystackSubscriptionCode);
   let previousSubscriptionWarning = '';
   if (previousSubscriptionCode && subscriptionCode && previousSubscriptionCode !== subscriptionCode) {
@@ -182,39 +268,10 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
       });
     }
   }
-  let activation = {};
-  if (clean(updatedRegistration.WorkspaceId)) {
-    try {
-      const issued = await issueTenantActivation(platformEnv, updatedRegistration, env);
-      activation = issued.issued ? {
-        activationUrl: issued.activationUrl,
-        activationExpiresAt: issued.expiresAt,
-        activationEmailSent: issued.emailSent,
-        activationEmailStatus: issued.emailStatus
-      } : issued.alreadyActivated ? {
-        administratorActivated: true,
-        loginUrl: issued.loginUrl
-      } : {};
-    } catch (error) {
-      console.error(JSON.stringify({
-        event: 'tenant_activation_issue_failed',
-        registrationReference,
-        message: clean(error.message || error).slice(0, 300)
-      }));
-      activation = { activationPending: true };
-    }
-  }
   return {
-    registrationReference,
-    plan: clean(intent.Plan),
-    billingCycle: clean(intent.BillingCycle),
-    amount: Number(intent.Amount || 0),
-    currency: clean(intent.Currency || transaction.currency || 'NGN'),
-    workspaceId: clean(updatedRegistration.WorkspaceId),
-    portalUrl: clean(updatedRegistration.PortalUrl),
-    workspacePending: !clean(updatedRegistration.WorkspaceId),
+    ...result,
+    updatedRegistration: undefined,
     warning: previousSubscriptionWarning,
-    ...activation
   };
 }
 

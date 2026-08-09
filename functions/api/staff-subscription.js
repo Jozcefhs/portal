@@ -58,11 +58,20 @@ export async function onRequestPost({ request, env }) {
   try {
     await requireSubscriptionAdmin(env, request);
     const identity = await loadDeploymentIdentity(env);
-    const body = await readJsonBody(request, { maxBytes: 16 * 1024 });
+    const body = await readJsonBody(request, { maxBytes: 700 * 1024 });
     const response = await fetch(new URL('/api/subscription-checkout', centralOrigin(env)), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Dynamax-Workspace': identity.workspaceId },
-      body: JSON.stringify({ workspaceId: identity.workspaceId, plan: clean(body.plan), billingCycle: clean(body.billingCycle), idempotencyKey: clean(body.idempotencyKey) })
+      body: JSON.stringify({
+        workspaceId: identity.workspaceId,
+        plan: clean(body.plan),
+        billingCycle: clean(body.billingCycle),
+        idempotencyKey: clean(body.idempotencyKey),
+        paymentMethod: clean(body.paymentMethod),
+        bankReference: clean(body.bankReference),
+        proofDataUrl: clean(body.proofDataUrl),
+        proofFileName: clean(body.proofFileName)
+      })
     });
     return Response.json(await centralJson(response), { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {

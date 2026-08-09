@@ -12,13 +12,13 @@
 <body class="settings-page">
   <main class="settings-shell plan-management-shell">
     <header class="settings-topbar">
-      <div class="settings-brand"><span class="settings-logo-wrap"><img src="images/Logo.png" alt="Dynamax logo" class="settings-logo"></span><div><p class="settings-eyebrow">Dynamax administration</p><h1>Plans and pricing</h1><p>Set public monthly and yearly prices and keep Paystack recurring plans synchronized.</p></div></div>
+      <div class="settings-brand"><span class="settings-logo-wrap"><img src="images/Logo.png" alt="Dynamax logo" class="settings-logo"></span><div><p class="settings-eyebrow">Dynamax administration</p><h1>Plans and pricing</h1><p>Set prices, payment methods and subscription module access.</p></div></div>
       <div class="settings-top-actions"><a href="register-organization.html#plans" class="settings-link">View public plans</a><a href="setup.html#licence-settings" class="settings-link">Organisation setup</a></div>
     </header>
 
     <form id="planPricingLoginForm" class="settings-unlock-card">
       <div class="settings-lock-icon" aria-hidden="true">&#128274;</div>
-      <div class="settings-unlock-copy"><p class="settings-eyebrow">Restricted area</p><h2>Unlock plans and pricing</h2><p>Use the Cloudflare administration password. Paystack keys remain on the server.</p></div>
+      <div class="settings-unlock-copy"><p class="settings-eyebrow">Restricted area</p><h2>Unlock plans and pricing</h2><p>Use the Cloudflare administration password. Payment credentials remain on the server.</p></div>
       <div class="settings-unlock-control"><label for="planPricingPassword">Administration password</label><input id="planPricingPassword" type="password" required autocomplete="current-password"></div>
       <button type="submit">Unlock plans</button>
       <p id="planPricingLoginStatus" class="status settings-login-status" aria-live="polite"></p>
@@ -34,6 +34,24 @@
           <p>Add this URL once in the Paystack Dashboard so renewals, failed payments and cancellations update Dynamax automatically.</p>
         </aside>
         <div id="planPricingCards" class="plan-pricing-grid" aria-live="polite"></div>
+      </section>
+      <section class="settings-section platform-payment-section">
+        <div class="settings-section-heading"><div><span class="settings-section-icon">&#8358;</span></div><div><p class="settings-eyebrow">Dynamax subscription collections</p><h2>Payment methods and verification</h2><p>Configure Dynamax's own bank account and approve direct subscription transfers. Subscriber organisation bank accounts remain separate.</p></div></div>
+        <div class="settings-fields two-column">
+          <div class="settings-field"><label for="platformOnlinePaymentEnabled">Automated online payment</label><select id="platformOnlinePaymentEnabled"><option value="YES">Enabled &mdash; Card, USSD and bank through Paystack</option><option value="NO">Disabled</option></select></div>
+          <div class="settings-field"><label for="platformDirectTransferEnabled">Direct bank transfer</label><select id="platformDirectTransferEnabled"><option value="NO">Disabled</option><option value="YES">Enabled &mdash; Dynamax approval required</option></select></div>
+          <div class="settings-field"><label for="platformPaymentBankName">Bank name</label><input id="platformPaymentBankName" autocomplete="organization"></div>
+          <div class="settings-field"><label for="platformPaymentAccountName">Account name</label><input id="platformPaymentAccountName" autocomplete="organization"></div>
+          <div class="settings-field"><label for="platformPaymentAccountNumber">Account number</label><input id="platformPaymentAccountNumber" inputmode="numeric" autocomplete="off"></div>
+          <div class="settings-field"><label for="platformPaymentBankCurrency">Account currency</label><select id="platformPaymentBankCurrency"><option>NGN</option><option>USD</option><option>GBP</option><option>EUR</option><option>GHS</option><option>KES</option></select></div>
+          <div class="settings-field full-width"><label for="platformPaymentTransferInstructions">Transfer instructions</label><textarea id="platformPaymentTransferInstructions" rows="3" maxlength="500" placeholder="Example: Use the generated transfer reference as the narration."></textarea><small class="settings-help">The account currency must match the published plan currency before direct transfer is offered.</small></div>
+        </div>
+        <div class="platform-payment-actions"><button id="savePlatformPaymentSettings" type="button">Save payment settings</button><button id="refreshPlatformTransfers" type="button" class="secondary">Refresh transfers</button></div>
+        <p id="platformPaymentStatus" class="status" aria-live="polite"></p>
+        <div class="settings-subsection">
+          <div class="settings-subsection-title"><strong>Direct subscription transfer queue</strong><span>Approving activates the selected plan; rejecting never activates it.</span></div>
+          <div class="tenant-pool-table-wrap"><table class="tenant-pool-table"><thead><tr><th>Subscriber</th><th>Plan</th><th>Amount</th><th>Bank reference</th><th>Proof</th><th>Status</th><th>Submitted</th><th>Decision</th></tr></thead><tbody id="platformTransferRows"></tbody></table></div>
+        </div>
       </section>
       <section class="settings-section plan-entitlement-section">
         <div class="settings-section-heading"><div><span class="settings-section-icon">M</span></div><div><p class="settings-eyebrow">Plan access matrix</p><h2>Features and modules</h2><p>Select the organisation type, then check the modules that each plan may use. Module dependencies are applied automatically.</p></div></div>
@@ -90,6 +108,6 @@
     </form>
   </main>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
-  <script src="js/plan-management.js?v=20260808-paid-lifecycle"></script>
+  <script src="js/plan-management.js?v=20260809-platform-direct-transfer"></script>
 </body>
 </html>

@@ -9,9 +9,12 @@ const tenantPoolSummary = document.getElementById('tenantPoolSummary');
 const tenantPoolRows = document.getElementById('tenantPoolRows');
 const tenantRequestRows = document.getElementById('tenantRequestRows');
 const tenantRetirementRows = document.getElementById('tenantRetirementRows');
+const platformPaymentStatus = document.getElementById('platformPaymentStatus');
+const platformTransferRows = document.getElementById('platformTransferRows');
 let unlockedPassword = '';
 let catalog = null;
 let tenantPoolState = null;
+let platformPaymentState = null;
 let selectedEntitlementEdition = 'school';
 
 document.getElementById('paystackWebhookUrl').textContent = `${window.location.origin}/api/paystack-subscription-webhook`;
@@ -25,6 +28,74 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (character) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[character]);
+}
+
+function platformPaymentMoney(amount, currency) {
+  try {
+    return new Intl.NumberFormat('en-NG', {
+      style: 'currency', currency: String(currency || 'NGN').toUpperCase(), maximumFractionDigits: 2
+    }).format(Number(amount || 0));
+  } catch (_error) {
+    return `${escapeHtml(currency || 'NGN')} ${Number(amount || 0).toLocaleString('en-NG')}`;
+  }
+}
+
+async function platformPaymentRequest(payload) {
+  const response = await fetch('/api/platform-payment-settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: unlockedPassword, ...payload })
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data?.ok) throw new Error(data?.message || 'Dynamax payment settings could not be loaded.');
+  return data;
+}
+
+function renderPlatformPaymentState() {
+  const settings = platformPaymentState?.settings || {};
+  document.getElementById('platformOnlinePaymentEnabled').value = settings.OnlinePaymentEnabled || 'YES';
+  document.getElementById('platformDirectTransferEnabled').value = settings.DirectBankTransferEnabled || 'NO';
+  document.getElementById('platformPaymentBankName').value = settings.PaymentBankName || '';
+  document.getElementById('platformPaymentAccountName').value = settings.PaymentAccountName || '';
+  document.getElementById('platformPaymentAccountNumber').value = settings.PaymentAccountNumber || '';
+  document.getElementById('platformPaymentBankCurrency').value = settings.PaymentBankCurrency || 'NGN';
+  document.getElementById('platformPaymentTransferInstructions').value = settings.PaymentTransferInstructions || '';
+  const transfers = Array.isArray(platformPaymentState?.transfers) ? platformPaymentState.transfers : [];
+  platformTransferRows.innerHTML = transfers.length ? transfers.map((transfer) => {
+    const awaiting = String(transfer.Status || '').toLowerCase() === 'awaiting verification';
+    return `<tr>
+      <td><strong>${escapeHtml(transfer.OrganisationName || transfer.RegistrationReference)}</strong><small>${escapeHtml(transfer.Email)}</small></td>
+      <td>${escapeHtml(transfer.Plan)}<small>${escapeHtml(transfer.BillingCycle)}</small></td>
+      <td>${escapeHtml(platformPaymentMoney(transfer.Amount, transfer.Currency))}</td>
+      <td>${escapeHtml(transfer.BankReference)}</td>
+      <td>${transfer.HasProof ? `<button type="button" class="compact-action" data-platform-transfer-proof="${escapeHtml(transfer.Reference)}">View proof</button>` : '<span class="muted">Not supplied</span>'}</td>
+      <td><span class="tenant-pool-status ${awaiting ? '' : String(transfer.Status).toLowerCase() === 'paid' ? 'ok' : 'bad'}">${escapeHtml(transfer.Status)}</span></td>
+      <td>${transfer.CreatedAt ? escapeHtml(new Date(transfer.CreatedAt).toLocaleString()) : '&mdash;'}</td>
+      <td>${awaiting ? `<span class="compact-row-actions"><button type="button" class="compact-action" data-platform-transfer-decision="approve" data-reference="${escapeHtml(transfer.Reference)}">Approve</button><button type="button" class="compact-action danger" data-platform-transfer-decision="reject" data-reference="${escapeHtml(transfer.Reference)}">Reject</button></span>` : escapeHtml(transfer.ReviewNotes || 'Closed')}</td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="8">No direct subscription transfers have been submitted.</td></tr>';
+}
+
+async function loadPlatformPayments(message = '') {
+  try {
+    platformPaymentState = await platformPaymentRequest({ action: 'load' });
+    renderPlatformPaymentState();
+    setStatus(platformPaymentStatus, message || 'Dynamax payment methods and transfer queue loaded.', 'ok');
+  } catch (error) {
+    setStatus(platformPaymentStatus, error.message || String(error), 'bad');
+  }
+}
+
+function platformPaymentSettingsFromForm() {
+  return {
+    OnlinePaymentEnabled: document.getElementById('platformOnlinePaymentEnabled').value,
+    DirectBankTransferEnabled: document.getElementById('platformDirectTransferEnabled').value,
+    PaymentBankName: document.getElementById('platformPaymentBankName').value,
+    PaymentAccountName: document.getElementById('platformPaymentAccountName').value,
+    PaymentAccountNumber: document.getElementById('platformPaymentAccountNumber').value,
+    PaymentBankCurrency: document.getElementById('platformPaymentBankCurrency').value,
+    PaymentTransferInstructions: document.getElementById('platformPaymentTransferInstructions').value
+  };
 }
 
 function selectedPricingCurrency() {
@@ -235,7 +306,7 @@ loginForm.addEventListener('submit', async (event) => {
     catalog = data.catalog;
     document.getElementById('planPricingCurrency').value = catalog.Currency || 'NGN';
     renderCatalog();
-    await loadTenantPool();
+    await Promise.all([loadTenantPool(), loadPlatformPayments()]);
     loginForm.hidden = true;
     pricingForm.hidden = false;
     setStatus(pricingStatus, 'Pricing loaded. Changes are not published until you save.', 'ok');
@@ -283,7 +354,80 @@ pricingForm.addEventListener('submit', async (event) => {
 });
 
 pricingForm.addEventListener('input', (event) => {
-  if (!event.target.closest('.tenant-pool-section')) setStatus(pricingStatus, 'You have unsaved pricing changes.');
+  if (!event.target.closest('.tenant-pool-section, .platform-payment-section')) setStatus(pricingStatus, 'You have unsaved pricing changes.');
+});
+
+document.getElementById('savePlatformPaymentSettings')?.addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  if (!window.DynamaxActionFeedback.begin(button, 'Saving...')) return;
+  try {
+    platformPaymentState = await platformPaymentRequest({ action: 'save', settings: platformPaymentSettingsFromForm() });
+    renderPlatformPaymentState();
+    setStatus(platformPaymentStatus, platformPaymentState.message, 'ok');
+  } catch (error) {
+    setStatus(platformPaymentStatus, error.message || String(error), 'bad');
+  } finally {
+    window.DynamaxActionFeedback.end(button);
+  }
+});
+
+document.getElementById('refreshPlatformTransfers')?.addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  if (!window.DynamaxActionFeedback.begin(button, 'Refreshing...')) return;
+  try {
+    await loadPlatformPayments('Subscription transfer queue refreshed.');
+  } finally {
+    window.DynamaxActionFeedback.end(button);
+  }
+});
+
+platformTransferRows?.addEventListener('click', async (event) => {
+  const proofButton = event.target.closest('[data-platform-transfer-proof]');
+  if (proofButton) {
+    if (!window.DynamaxActionFeedback.begin(proofButton, 'Opening...')) return;
+    try {
+      const data = await platformPaymentRequest({ action: 'proof', reference: proofButton.dataset.platformTransferProof });
+      const anchor = document.createElement('a');
+      anchor.href = data.proofDataUrl;
+      anchor.target = '_blank';
+      anchor.rel = 'noopener';
+      anchor.download = data.fileName || 'subscription-payment-proof';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+    } catch (error) {
+      setStatus(platformPaymentStatus, error.message || String(error), 'bad');
+    } finally {
+      window.DynamaxActionFeedback.end(proofButton);
+    }
+    return;
+  }
+  const decisionButton = event.target.closest('[data-platform-transfer-decision][data-reference]');
+  if (!decisionButton) return;
+  const approve = decisionButton.dataset.platformTransferDecision === 'approve';
+  const notes = window.prompt(approve
+    ? 'Optional approval note:'
+    : 'Enter the reason for rejecting this transfer:', '') ?? '';
+  if (!approve && !notes.trim()) {
+    setStatus(platformPaymentStatus, 'A rejection reason is required.', 'bad');
+    return;
+  }
+  if (!window.confirm(`${approve ? 'Approve' : 'Reject'} this subscription transfer?`)) return;
+  if (!window.DynamaxActionFeedback.begin(decisionButton, approve ? 'Approving...' : 'Rejecting...')) return;
+  try {
+    platformPaymentState = await platformPaymentRequest({
+      action: 'decision',
+      reference: decisionButton.dataset.reference,
+      decision: decisionButton.dataset.platformTransferDecision,
+      notes
+    });
+    renderPlatformPaymentState();
+    setStatus(platformPaymentStatus, platformPaymentState.message, platformPaymentState.warning ? 'bad' : 'ok');
+  } catch (error) {
+    setStatus(platformPaymentStatus, error.message || String(error), 'bad');
+  } finally {
+    window.DynamaxActionFeedback.end(decisionButton);
+  }
 });
 
 document.getElementById('planPricingCurrency')?.addEventListener('change', () => {

@@ -791,20 +791,47 @@ async function openStaffSubscription() {
 
 async function startSubscriptionUpgrade(plan, button) {
   const original = button.textContent;
-  setButtonLoading(button, true, 'Opening Paystack...', original);
+  let loading = false;
   try {
+    const planEntry = subscriptionData?.catalog?.Plans?.find((entry) => clean(entry.Name) === clean(plan));
+    const amount = subscriptionCycle === 'yearly'
+      ? Number(planEntry?.YearlyAmount || 0)
+      : Number(planEntry?.MonthlyAmount || 0);
+    const paymentChoice = await window.DynamaxPaymentMethods.choose({
+      methodsUrl: '/api/platform-payment-methods',
+      amount,
+      currency: subscriptionData?.catalog?.Currency || 'NGN'
+    });
+    if (!paymentChoice) return;
+    const loadingLabel = paymentChoice.paymentMethod === 'direct_bank_transfer' ? 'Submitting transfer...' : 'Opening Paystack...';
+    setButtonLoading(button, true, loadingLabel, original);
+    loading = true;
     const response = await staffFetch('/api/staff-subscription', {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ plan, billingCycle: subscriptionCycle, idempotencyKey: newIdempotencyKey() })
+      body: JSON.stringify({
+        plan,
+        billingCycle: subscriptionCycle,
+        idempotencyKey: newIdempotencyKey(),
+        paymentMethod: paymentChoice.paymentMethod,
+        bankReference: paymentChoice.bankReference || '',
+        proofDataUrl: paymentChoice.proofDataUrl || '',
+        proofFileName: paymentChoice.proofFileName || ''
+      })
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.ok) throw new Error(data.message || 'The upgrade checkout could not be started.');
+    if (data.directTransfer) {
+      setStatus(document.getElementById('staffSubscriptionStatus'), `Transfer submitted for verification. Reference: ${data.paymentReference}. Your current plan remains active until Dynamax approves it.`, 'ok');
+      setButtonLoading(button, false, 'Submitting transfer...', original);
+      loading = false;
+      return;
+    }
     const target = new URL(data.authorizationUrl);
     if (target.protocol !== 'https:') throw new Error('The payment provider returned an invalid checkout address.');
     window.location.assign(target.href);
   } catch (error) {
     setStatus(document.getElementById('staffSubscriptionStatus'), error.message || String(error), 'bad');
-    setButtonLoading(button, false, 'Opening Paystack...', original);
+    if (loading) setButtonLoading(button, false, 'Opening Paystack...', original);
   }
 }
 

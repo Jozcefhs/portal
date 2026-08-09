@@ -296,7 +296,7 @@ function renderPlans() {
   const amount = cycle === 'yearly' ? selected?.YearlyAmount : selected?.MonthlyAmount;
   if (submit) submit.textContent = selected?.Name === 'Free'
     ? 'Start free trial'
-    : Number(amount) > 0 ? 'Continue to Paystack' : 'Submit registration';
+    : Number(amount) > 0 ? 'Choose payment method' : 'Submit registration';
 }
 
 async function loadPlans() {
@@ -334,11 +334,30 @@ function shouldReleaseIdempotencyKey(response, data) {
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = event.submitter || form.querySelector('button[type="submit"]');
-  if (!window.DynamaxActionFeedback.begin(button, 'Submitting registration...')) return;
-  statusNode.className = 'status';
-  statusNode.textContent = 'Submitting registration...';
+  let actionStarted = false;
   try {
     const payload = Object.fromEntries(new FormData(form).entries());
+    const selectedPlan = visiblePlans().find((plan) => plan.Name === selectedPlanName());
+    const selectedAmount = billingCycle() === 'yearly'
+      ? Number(selectedPlan?.YearlyAmount || 0)
+      : Number(selectedPlan?.MonthlyAmount || 0);
+    let paymentChoice = {};
+    if (selectedPlan?.Name !== 'Free' && selectedAmount > 0) {
+      paymentChoice = await window.DynamaxPaymentMethods.choose({
+        methodsUrl: '/api/platform-payment-methods',
+        amount: selectedAmount,
+        currency: planCatalog?.Currency || 'NGN'
+      });
+      if (!paymentChoice) return;
+    }
+    if (!window.DynamaxActionFeedback.begin(button, paymentChoice.paymentMethod === 'direct_bank_transfer'
+      ? 'Submitting transfer...'
+      : 'Submitting registration...')) return;
+    actionStarted = true;
+    statusNode.className = 'status';
+    statusNode.textContent = paymentChoice.paymentMethod === 'direct_bank_transfer'
+      ? 'Submitting your bank reference for verification...'
+      : 'Submitting registration...';
     registrationIdempotencyKey = registrationIdempotencyKey || newIdempotencyKey();
     const turnstile = window.DynamaxPublicApi?.getTurnstileToken
       ? await window.DynamaxPublicApi.getTurnstileToken('register_organization')
@@ -351,6 +370,10 @@ form.addEventListener('submit', async (event) => {
       },
       body: JSON.stringify({
         ...payload,
+        PaymentMethod: paymentChoice.paymentMethod || '',
+        bankReference: paymentChoice.bankReference || '',
+        proofDataUrl: paymentChoice.proofDataUrl || '',
+        proofFileName: paymentChoice.proofFileName || '',
         idempotencyKey: registrationIdempotencyKey,
         ...turnstile
       })
@@ -373,13 +396,17 @@ form.addEventListener('submit', async (event) => {
         ? ' A prior activation email was sent recently; this is a fresh link you can use now.'
         : ' Save this activation link now because an activation email could not be delivered.'
       : '';
-    statusNode.innerHTML = `${escapeHtml(data.message)} Reference: ${escapeHtml(data.reference)}${escapeHtml(deliveryNote)}${accountLink}`;
+    const transferReference = data.directTransfer && data.paymentReference
+      ? ` Transfer reference: ${escapeHtml(data.paymentReference)}.`
+      : '';
+    statusNode.innerHTML = `${escapeHtml(data.message)} Reference: ${escapeHtml(data.reference)}.${transferReference}${escapeHtml(deliveryNote)}${accountLink}`;
     registrationIdempotencyKey = '';
     if (data.authorizationUrl) {
       statusNode.textContent = 'Opening Paystack secure checkout...';
       window.location.assign(data.authorizationUrl);
       return;
     }
+    if (data.directTransfer) return;
     if (data.activationUrl || data.loginUrl || data.onboardingUrl) {
       statusNode.textContent = data.activationUrl
         ? 'Opening secure administrator activation...'
@@ -395,7 +422,7 @@ form.addEventListener('submit', async (event) => {
     statusNode.className = 'status bad';
     statusNode.textContent = error.message || String(error);
   } finally {
-    window.DynamaxActionFeedback.end(button);
+    if (actionStarted) window.DynamaxActionFeedback.end(button);
   }
 });
 

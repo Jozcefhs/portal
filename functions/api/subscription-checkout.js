@@ -24,12 +24,18 @@ export async function onRequestPost({ request, env }) {
       error.status = 429;
       throw error;
     }
-    const body = await readJsonBody(request, { maxBytes: 32 * 1024 });
+    const body = await readJsonBody(request, { maxBytes: 700 * 1024 });
     const workspaceId = clean(body.workspaceId || request.headers.get('X-Dynamax-Workspace')).toLowerCase();
     if (!workspaceId) { const error = new Error('Workspace is required.'); error.status = 400; throw error; }
     idempotency = await beginIdempotentRequest(platformEnv, request, body, {
       scope: 'subscription-checkout', actor: workspaceId, ttlMinutes: 24 * 60,
-      fingerprintPayload: { workspaceId, plan: clean(body.plan), billingCycle: clean(body.billingCycle) }
+      fingerprintPayload: {
+        workspaceId,
+        plan: clean(body.plan),
+        billingCycle: clean(body.billingCycle),
+        paymentMethod: clean(body.paymentMethod),
+        bankReference: clean(body.bankReference)
+      }
     });
     if (idempotency.replay) {
       return Response.json(idempotency.response, {
@@ -59,9 +65,22 @@ export async function onRequestPost({ request, env }) {
     if (!decision.allowed) { const error = new Error(decision.reason); error.status = 409; throw error; }
     const catalog = normalizeSubscriptionPlanCatalog(await getDocument(platformEnv, 'settings', 'dynamaxPlanCatalog') || {});
     const checkout = await initializeSubscriptionCheckout({
-      request, env, platformEnv, registration, catalog, plan, billingCycle, preserveActivePlan: true
+      request,
+      env,
+      platformEnv,
+      registration,
+      catalog,
+      plan,
+      billingCycle,
+      preserveActivePlan: true,
+      paymentMethod: body.paymentMethod,
+      paymentEvidence: body
     });
-    if (!checkout?.authorizationUrl) { const error = new Error('This upgrade does not yet have an online checkout price.'); error.status = 409; throw error; }
+    if (!checkout?.authorizationUrl && !checkout?.directTransfer) {
+      const error = new Error('This subscription change does not have an available payment route.');
+      error.status = 409;
+      throw error;
+    }
     const result = { ok: true, ...checkout, plan, billingCycle, currency: catalog.Currency };
     await completeIdempotentRequest(platformEnv, idempotency, result, 200);
     return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });

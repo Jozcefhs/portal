@@ -212,7 +212,7 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(pricingHtml, /Monthly and yearly pricing/);
   assert.match(pricingHtml, /id="planEntitlementMatrix"/);
   assert.match(pricingHtml, /<select id="planPricingCurrency"><option value="NGN">NGN<\/option><option value="USD">USD<\/option><\/select>/);
-  assert.match(pricingHtml, /plan-management\.js\?v=20260808-paid-lifecycle/);
+  assert.match(pricingHtml, /plan-management\.js\?v=20260809-platform-direct-transfer/);
   assert.match(pricingHtml, /id="tenantPoolSummary"/);
   assert.match(pricingHtml, /Other organisation/);
   assert.match(pricingHtml, /Save plans &amp; pricing/);

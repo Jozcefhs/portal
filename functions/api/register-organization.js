@@ -29,9 +29,22 @@ import {
   recordTrialUseTombstone,
   tenantTrialFingerprint
 } from '../lib/tenant-trial-lifecycle.js';
+import {
+  platformTransferEvidence,
+  publicPlatformPaymentMethods
+} from '../lib/platform-direct-bank-transfer.js';
 
 const clean = (value) => String(value ?? '').trim();
 const PAYSTACK_INITIALIZE_URL = 'https://api.paystack.co/transaction/initialize';
+
+function normalizeSubscriptionPaymentMethod(value) {
+  const method = clean(value || 'paystack').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  if (['paystack', 'online', 'card', 'ussd', 'bank', 'paywithbank'].includes(method)) return 'paystack';
+  if (['directbanktransfer', 'directtransfer', 'manualtransfer', 'transfer'].includes(method)) return 'direct_bank_transfer';
+  const error = new Error('Choose Pay online or Direct bank transfer.');
+  error.status = 400;
+  throw error;
+}
 
 function comparable(value) {
   return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -58,6 +71,19 @@ function withoutFirestoreMetadata(document = {}) {
   delete value.__createTime;
   delete value.__updateTime;
   return value;
+}
+
+async function supersedePendingSubscriptionPayment(platformEnv, paymentReference, replacementReference) {
+  const reference = clean(paymentReference);
+  if (!reference || reference === clean(replacementReference)) return;
+  const payment = await getDocument(platformEnv, 'subscriptionPayments', reference).catch(() => null);
+  if (!payment || !['initializing', 'awaiting payment', 'awaiting verification'].includes(clean(payment.Status).toLowerCase())) return;
+  await upsertDocument(platformEnv, 'subscriptionPayments', reference, {
+    ...withoutFirestoreMetadata(payment),
+    Status: 'Superseded',
+    SupersededBy: clean(replacementReference),
+    UpdatedAt: new Date().toISOString()
+  });
 }
 
 async function loadPlanCatalog(platformEnv) {
@@ -104,7 +130,18 @@ async function onboardingResponse(request, platformEnv, registrationReference, a
   }
 }
 
-export async function initializeSubscriptionCheckout({ request, env, platformEnv, registration, catalog, plan, billingCycle, preserveActivePlan = false }) {
+export async function initializeSubscriptionCheckout({
+  request,
+  env,
+  platformEnv,
+  registration,
+  catalog,
+  plan,
+  billingCycle,
+  preserveActivePlan = false,
+  paymentMethod = 'paystack',
+  paymentEvidence = {}
+}) {
   const planEntry = catalog.Plans[plan];
   if (!planEntry.Active) {
     const error = new Error(`${plan} registration is not currently available.`);
@@ -219,6 +256,110 @@ export async function initializeSubscriptionCheckout({ request, env, platformEnv
     });
     return null;
   }
+  const selectedPaymentMethod = normalizeSubscriptionPaymentMethod(paymentMethod);
+  const availableMethods = await publicPlatformPaymentMethods(env);
+  if (selectedPaymentMethod === 'direct_bank_transfer') {
+    const directTransfer = availableMethods.directTransfer || {};
+    if (!directTransfer.enabled) {
+      const error = new Error('Dynamax direct bank transfer is not configured yet.');
+      error.status = 503;
+      throw error;
+    }
+    if (clean(directTransfer.currency).toUpperCase() !== clean(catalog.Currency).toUpperCase()) {
+      const error = new Error(`Dynamax direct transfer is available in ${directTransfer.currency}, not ${catalog.Currency}.`);
+      error.status = 409;
+      throw error;
+    }
+    const reusableReference = clean(registration.PendingDirectTransferReference)
+      || (!preserveActivePlan ? clean(registration.DirectTransferReference) : '');
+    if (clean(registration.PendingPlan || registration.Plan) === plan
+      && clean(registration.PendingBillingCycle || registration.BillingCycle) === billingCycle
+      && reusableReference) {
+      const prior = await getDocument(platformEnv, 'subscriptionPayments', reusableReference);
+      if (prior && ['awaiting verification', 'approval processing'].includes(clean(prior.Status).toLowerCase())) {
+        return {
+          directTransfer: true,
+          paymentMethod: 'Direct Bank Transfer',
+          paymentReference: reusableReference,
+          status: clean(prior.Status),
+          amount,
+          bankDetails: directTransfer
+        };
+      }
+    }
+    const evidence = platformTransferEvidence(paymentEvidence);
+    const reference = `DMX-TRF-${Date.now()}-${crypto.randomUUID().slice(0, 10).toUpperCase()}`;
+    const now = new Date().toISOString();
+    await upsertDocument(platformEnv, 'subscriptionPayments', reference, {
+      Reference: reference,
+      RegistrationReference: clean(registration.Reference || registration.__id),
+      OrganisationName: clean(registration.OrganisationName),
+      Email: clean(registration.Email).toLowerCase(),
+      Plan: plan,
+      BillingCycle: billingCycle,
+      Amount: amount,
+      Currency: catalog.Currency,
+      UserLimit: planEntry.UserLimit,
+      FeatureEntitlements: subscriptionPlanEntitlements(plan, clean(registration.Edition), catalog),
+      PlanCatalogRevision: catalog.PolicyRevision,
+      PreviousPaystackSubscriptionCode: clean(registration.PaystackSubscriptionCode),
+      PaymentMethod: 'Direct Bank Transfer',
+      PreserveActivePlan: Boolean(preserveActivePlan),
+      ...evidence,
+      BankName: clean(directTransfer.bankName),
+      AccountName: clean(directTransfer.accountName),
+      AccountNumber: clean(directTransfer.accountNumber),
+      Status: 'Awaiting Verification',
+      CreatedAt: now,
+      UpdatedAt: now
+    });
+    const priorReferences = preserveActivePlan
+      ? [registration.PendingDirectTransferReference, registration.PendingPaystackReference]
+      : [registration.DirectTransferReference, clean(registration.PaymentStatus).toLowerCase() === 'paid' ? '' : registration.PaystackReference];
+    await Promise.all(priorReferences.map((priorReference) =>
+      supersedePendingSubscriptionPayment(platformEnv, priorReference, reference)));
+    await upsertDocument(platformEnv, 'tenantRegistrations', clean(registration.Reference || registration.__id), preserveActivePlan ? {
+      ...withoutFirestoreMetadata(registration),
+      PendingPlan: plan,
+      PendingBillingCycle: billingCycle,
+      PendingPrice: amount,
+      PendingPaymentMethod: 'Direct Bank Transfer',
+      PendingDirectTransferReference: reference,
+      PendingPaystackPlanCode: '',
+      PendingPaystackReference: '',
+      PendingAuthorizationUrl: '',
+      UpdatedAt: now
+    } : {
+      ...withoutFirestoreMetadata(registration),
+      Plan: plan,
+      BillingCycle: billingCycle,
+      Price: amount,
+      Currency: catalog.Currency,
+      UserLimit: planEntry.UserLimit,
+      FeatureEntitlements: subscriptionPlanEntitlements(plan, clean(registration.Edition), catalog),
+      PlanCatalogRevision: catalog.PolicyRevision,
+      DirectTransferReference: reference,
+      PaystackPlanCode: '',
+      PaystackReference: '',
+      AuthorizationUrl: '',
+      PaymentStatus: 'Awaiting Verification',
+      Status: 'Awaiting Payment Verification',
+      UpdatedAt: now
+    });
+    return {
+      directTransfer: true,
+      paymentMethod: 'Direct Bank Transfer',
+      paymentReference: reference,
+      status: 'Awaiting Verification',
+      amount,
+      bankDetails: directTransfer
+    };
+  }
+  if (!availableMethods.online?.enabled) {
+    const error = new Error('Dynamax online subscription payment is currently disabled. Choose direct bank transfer instead.');
+    error.status = 503;
+    throw error;
+  }
   const planCode = subscriptionPaystackPlanCode(catalog, plan, billingCycle);
   if (!planCode) {
     const error = new Error(`${plan} ${billingCycle} pricing has not been synchronized with Paystack yet.`);
@@ -233,8 +374,8 @@ export async function initializeSubscriptionCheckout({ request, env, platformEnv
   const reusableAuthorizationUrl = clean(registration.PendingAuthorizationUrl)
     || (!clean(registration.WorkspaceId) ? clean(registration.AuthorizationUrl) : '');
   const reusableReference = clean(registration.PendingPaystackReference || registration.PaystackReference);
-  if (clean(registration.Plan) === plan
-    && clean(registration.BillingCycle) === billingCycle
+  if (clean(preserveActivePlan ? registration.PendingPlan || registration.Plan : registration.Plan) === plan
+    && clean(preserveActivePlan ? registration.PendingBillingCycle || registration.BillingCycle : registration.BillingCycle) === billingCycle
     && reusableAuthorizationUrl
     && reusableReference
     && clean(registration.PaymentStatus).toLowerCase() !== 'paid') {
@@ -310,6 +451,11 @@ export async function initializeSubscriptionCheckout({ request, env, platformEnv
     throw error;
   }
   const authorizationUrl = clean(data.data.authorization_url);
+  const priorReferences = preserveActivePlan
+    ? [registration.PendingDirectTransferReference, registration.PendingPaystackReference]
+    : [registration.DirectTransferReference, clean(registration.PaymentStatus).toLowerCase() === 'paid' ? '' : registration.PaystackReference];
+  await Promise.all(priorReferences.map((priorReference) =>
+    supersedePendingSubscriptionPayment(platformEnv, priorReference, reference)));
   await Promise.all([
     upsertDocument(platformEnv, 'subscriptionPayments', reference, {
       Reference: reference,
@@ -338,6 +484,8 @@ export async function initializeSubscriptionCheckout({ request, env, platformEnv
       PendingPaystackPlanCode: planCode,
       PendingPaystackReference: reference,
       PendingAuthorizationUrl: authorizationUrl,
+      PendingPaymentMethod: 'Paystack',
+      PendingDirectTransferReference: '',
       UpdatedAt: new Date().toISOString()
     } : {
       ...withoutFirestoreMetadata(registration),
@@ -350,6 +498,7 @@ export async function initializeSubscriptionCheckout({ request, env, platformEnv
       PlanCatalogRevision: catalog.PolicyRevision,
       PaystackPlanCode: planCode,
       PaystackReference: reference,
+      DirectTransferReference: '',
       AuthorizationUrl: authorizationUrl,
       PaymentStatus: 'Awaiting Payment',
       Status: 'Awaiting Payment',
@@ -368,7 +517,7 @@ export async function onRequestPost({ request, env }) {
   let platformEnv = null;
   try {
     platformEnv = requirePlatformFirestoreEnv(env);
-    const body = await readJsonBody(request, { maxBytes: 96 * 1024 });
+    const body = await readJsonBody(request, { maxBytes: 700 * 1024 });
     const name = clean(body.OrganisationName);
     const email = clean(body.Email).toLowerCase();
     const plan = normalizeSubscriptionPlan(body.Plan);
@@ -441,7 +590,9 @@ export async function onRequestPost({ request, env }) {
         registration: assignedRegistration,
         catalog,
         plan,
-        billingCycle
+        billingCycle,
+        paymentMethod: body.PaymentMethod,
+        paymentEvidence: body
       });
       const result = {
         ok: true,
@@ -454,7 +605,9 @@ export async function onRequestPost({ request, env }) {
           : checkout?.trialReserved
           ? 'Your free trial is reserved. Its 7-day clock will begin when your workspace is activated.'
           : checkout
-          ? 'Registration found. Continue to Paystack to confirm the selected subscription.'
+          ? checkout.directTransfer
+            ? 'Registration found. Your direct bank transfer is awaiting Dynamax verification.'
+            : 'Registration found. Continue to Paystack to confirm the selected subscription.'
           : 'This organisation registration has already been received.',
         ...(checkout || {})
       };
@@ -488,7 +641,17 @@ export async function onRequestPost({ request, env }) {
       ? await reserveTenantProjectSlot(platformEnv, savedRegistration)
       : { registration: savedRegistration, assigned: false };
     const registration = assignment.registration;
-    const checkout = await initializeSubscriptionCheckout({ request, env, platformEnv, registration, catalog, plan, billingCycle });
+    const checkout = await initializeSubscriptionCheckout({
+      request,
+      env,
+      platformEnv,
+      registration,
+      catalog,
+      plan,
+      billingCycle,
+      paymentMethod: body.PaymentMethod,
+      paymentEvidence: body
+    });
     const result = {
       ok: true,
       reference,
@@ -500,7 +663,9 @@ export async function onRequestPost({ request, env }) {
           ? `Your 7-day full-access trial is active until ${new Date(checkout.trialEndsAt).toLocaleString('en-NG')}.`
           : checkout.trialReserved
           ? 'Registration received. Your free trial is reserved, and its 7-day clock will begin when your workspace is activated.'
-          : 'Registration received. Continue to Paystack to activate the selected subscription.'
+          : checkout.directTransfer
+            ? 'Registration received. Your direct bank transfer is awaiting Dynamax verification.'
+            : 'Registration received. Continue to Paystack to activate the selected subscription.'
         : 'Registration received. Your Dynamax workspace will be activated after plan confirmation.',
       ...(checkout || {})
     };

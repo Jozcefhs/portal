@@ -101,7 +101,7 @@ test('public submission, payment, setup, upload and install actions use shared b
     [buyFormJs, /DynamaxActionFeedback\.begin\(button, paymentChoice\.paymentMethod === 'direct_bank_transfer' \? 'Submitting transfer\.\.\.' : 'Starting checkout\.\.\.'\)/],
     [paymentsJs, /DynamaxActionFeedback\.begin\(lookupBtn, 'Checking fees\.\.\.'\)/],
     [paymentsJs, /DynamaxActionFeedback\.begin\(payBtn, paymentChoice\.paymentMethod === 'direct_bank_transfer' \? 'Submitting transfer\.\.\.' : 'Starting checkout\.\.\.'\)/],
-    [registrationJs, /DynamaxActionFeedback\.begin\(button, 'Submitting registration\.\.\.'\)/],
+    [registrationJs, /DynamaxActionFeedback\.begin\(button,\s*paymentChoice\.paymentMethod === 'direct_bank_transfer'\s*\? 'Submitting transfer\.\.\.'\s*:\s*'Submitting registration\.\.\.'\)/s],
     [setupJs, /DynamaxActionFeedback\.begin\(button, 'Unlocking settings\.\.\.'\)/],
     [setupJs, /DynamaxActionFeedback\.begin\(saveSetupButton, 'Saving changes\.\.\.'\)/],
     [uploadDocumentsJs, /DynamaxActionFeedback\.begin\(button, 'Uploading documents\.\.\.'\)/],
