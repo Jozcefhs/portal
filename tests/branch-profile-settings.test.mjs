@@ -5,7 +5,8 @@ import test from 'node:test';
 import {
   applyBranchProfileOverrides,
   BRANCH_PROFILE_OVERRIDE_FIELDS,
-  deriveBranchProfileOverrides
+  deriveBranchProfileOverrides,
+  mergeBranchProfileSubmission
 } from '../functions/lib/branch-profile-settings.js';
 
 test('branch profiles store only differences from organisation defaults', () => {
@@ -50,6 +51,23 @@ test('effective branch settings preserve explicit blank overrides and inheritanc
   assert.equal(effective.SettingsScope, 'branch');
   assert.equal(effective.EffectiveBranchId, 'north-campus');
   assert.deepEqual(effective.BranchOverrideFields, ['SchoolEmail', 'SchoolSignatoryName']);
+});
+
+test('partial branch updates preserve previously saved web-only content', () => {
+  const submitted = mergeBranchProfileSubmission({
+    OverrideFields: ['PortalNotice', 'SchoolEmail'],
+    Values: {
+      PortalNotice: 'Admission closes on Friday.',
+      SchoolEmail: 'branch@example.org'
+    }
+  }, {
+    SchoolEmail: 'new-branch@example.org'
+  });
+
+  assert.deepEqual(submitted, {
+    PortalNotice: 'Admission closes on Friday.',
+    SchoolEmail: 'new-branch@example.org'
+  });
 });
 
 test('organisation editions tolerate a missing legacy school profile', () => {

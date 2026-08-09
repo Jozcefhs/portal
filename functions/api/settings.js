@@ -23,6 +23,12 @@ import {
 } from '../lib/branch-profile-settings.js';
 import { refreshOrganizationPlanPolicy } from '../lib/plan-policy-sync.js';
 import { readStaffSession } from '../lib/staff-auth.js';
+import { mergedProfileText } from '../lib/profile-settings-update.js';
+import {
+  applyPublicPortalContent,
+  PUBLIC_PORTAL_CONTENT_DOCUMENT,
+  publicPortalContent
+} from '../lib/public-portal-content.js';
 
 const PROFILE_CACHE_MS = 15000;
 let profileCache = null;
@@ -151,11 +157,12 @@ async function loadProfile(env, options = {}) {
   let savedOrganization = null;
   try {
     requireFirestoreEnv(env);
-    const [saved, storedOrganization, branding, structure] = await Promise.all([
+    const [saved, storedOrganization, branding, structure, savedPublicContent] = await Promise.all([
       getDocument(env, 'settings', 'schoolProfile'),
       getDocument(env, 'settings', 'organisationProfile'),
       getWebBranding(env),
-      getSchoolStructure(env)
+      getSchoolStructure(env),
+      getDocument(env, 'settings', PUBLIC_PORTAL_CONTENT_DOCUMENT).catch(() => null)
     ]);
     savedOrganization = storedOrganization
       ? await refreshOrganizationPlanPolicy(env, storedOrganization)
@@ -165,6 +172,7 @@ async function loadProfile(env, options = {}) {
         if (saved[key] !== undefined) profile[key] = saved[key];
       });
     }
+    profile = applyPublicPortalContent(profile, savedPublicContent);
     const identity = deploymentIdentityDetails({
       env,
       identity: deployment,
@@ -381,9 +389,9 @@ export async function onRequestPost(context) {
       AdmissionSignatoryTitle: clean(incoming.AdmissionSignatoryTitle),
       EmailGreetingTemplate: clean(incoming.EmailGreetingTemplate) || 'Dear Parent/Guardian,',
       NameFormat: clean(incoming.NameFormat) || 'Surname, first name, middle name',
-      PortalHeadline: clean(incoming.PortalHeadline),
-      PortalSubheading: clean(incoming.PortalSubheading),
-      PortalNotice: clean(incoming.PortalNotice),
+      PortalHeadline: mergedProfileText(existing, incoming, 'PortalHeadline'),
+      PortalSubheading: mergedProfileText(existing, incoming, 'PortalSubheading'),
+      PortalNotice: mergedProfileText(existing, incoming, 'PortalNotice'),
       ResultDisplayMode: ['subjects', 'percentage'].includes(clean(incoming.ResultDisplayMode)) ? clean(incoming.ResultDisplayMode) : 'subjects',
       ShowResultsOnline: ['YES', 'NO'].includes(clean(incoming.ShowResultsOnline).toUpperCase()) ? clean(incoming.ShowResultsOnline).toUpperCase() : 'NO',
       CurrentAcademicSession: clean(incoming.CurrentAcademicSession),
@@ -440,7 +448,14 @@ export async function onRequestPost(context) {
     }, {
       UpdatedAt: profile.UpdatedAt, UpdatedBy: 'Setup'
     }));
-    await upsertDocument(env, 'settings', 'schoolProfile', profile);
+    await Promise.all([
+      upsertDocument(env, 'settings', 'schoolProfile', profile),
+      upsertDocument(env, 'settings', PUBLIC_PORTAL_CONTENT_DOCUMENT, {
+        ...publicPortalContent(profile),
+        UpdatedAt: profile.UpdatedAt,
+        UpdatedBy: 'Setup'
+      })
+    ]);
     invalidateProfileCache();
     invalidateDeploymentIdentityCache();
     const savedProfile = await getProfile(env, { fresh: true });

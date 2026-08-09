@@ -89,6 +89,16 @@ function overrideValues(document = {}) {
     .map((field) => [field, normalizedValue(field, rawValues[field])]));
 }
 
+export function mergeBranchProfileSubmission(document = null, submittedProfile = {}) {
+  const supplied = profileObject(submittedProfile);
+  const permitted = Object.fromEntries(Object.entries(supplied)
+    .filter(([field]) => FIELD_SET.has(field)));
+  return {
+    ...overrideValues(document || {}),
+    ...permitted
+  };
+}
+
 export function applyBranchProfileOverrides(defaultProfile = {}, document = null, branchId = '') {
   const defaults = profileObject(defaultProfile);
   const normalizedBranchId = clean(branchId) ? safeScopeId(branchId) : '';
@@ -139,15 +149,20 @@ export async function saveBranchProfileOverrides(env, {
   branchId,
   defaultProfile = {},
   submittedProfile = {},
-  updatedBy = 'Administrator'
+  updatedBy = 'Administrator',
+  preserveOmitted = true
 } = {}) {
   const branch = await assertConfiguredProfileBranch(env, branchId);
-  const values = deriveBranchProfileOverrides(defaultProfile, submittedProfile);
+  const existing = preserveOmitted ? await loadBranchProfileOverride(env, branch.id) : null;
+  const mergedSubmission = preserveOmitted
+    ? mergeBranchProfileSubmission(existing, submittedProfile)
+    : submittedProfile;
+  const values = deriveBranchProfileOverrides(defaultProfile, mergedSubmission);
   const fields = Object.keys(values);
   if (!fields.length) {
-    const existing = await loadBranchProfileOverride(env, branch.id);
-    if (existing) await deleteDocument(env, BRANCH_PROFILE_OVERRIDE_COLLECTION, branch.id);
-    return { branch, values: {}, fields: [], deleted: Boolean(existing) };
+    const stored = existing || await loadBranchProfileOverride(env, branch.id);
+    if (stored) await deleteDocument(env, BRANCH_PROFILE_OVERRIDE_COLLECTION, branch.id);
+    return { branch, values: {}, fields: [], deleted: Boolean(stored) };
   }
   await upsertDocument(env, BRANCH_PROFILE_OVERRIDE_COLLECTION, branch.id, {
     BranchId: branch.id,

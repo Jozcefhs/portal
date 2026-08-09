@@ -25,6 +25,10 @@ import {
 import { organizationProfileDocument, resolveOrganizationConfig } from '../lib/organization-config.js';
 import { mergedProfileText } from '../lib/profile-settings-update.js';
 import {
+  applyPublicPortalContent,
+  PUBLIC_PORTAL_CONTENT_DOCUMENT
+} from '../lib/public-portal-content.js';
+import {
   accountingChartForEdition,
   accountingCodeAllowedForEdition,
   accountingJournalsForEdition
@@ -2401,10 +2405,12 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
         : `${saved.branch.name} now inherits every organisation setting.`
     };
   }
-  const [existingProfile, existingOrganization] = await Promise.all([
+  const [storedProfile, existingOrganization, savedPublicContent] = await Promise.all([
     getDocument(env, 'settings', 'schoolProfile').catch(() => null),
-    getDocument(env, 'settings', 'organisationProfile').catch(() => null)
+    getDocument(env, 'settings', 'organisationProfile').catch(() => null),
+    getDocument(env, 'settings', PUBLIC_PORTAL_CONTENT_DOCUMENT).catch(() => null)
   ]);
+  const existingProfile = applyPublicPortalContent(storedProfile || {}, savedPublicContent);
   const branchValues = Array.isArray(body.SchoolBranches) ? body.SchoolBranches : clean(body.SchoolBranches || body.schoolBranches || 'Main Branch').split(',');
   const requestedActiveBranchId = safeScopeId(body.ActiveBranchId || body.activeBranchId || 'main');
   const branches = branchValues.map((value) => {
@@ -2533,13 +2539,15 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
 }
 
 async function getSchoolProfile(env, options = {}) {
-  let [profile, branding, storedStructure, documentSettings, organizationProfile] = await Promise.all([
+  let [profile, branding, storedStructure, documentSettings, organizationProfile, savedPublicContent] = await Promise.all([
     getDocument(env, 'settings', 'schoolProfile').catch(() => null),
     getWebBranding(env).catch(() => null),
     getDocument(env, 'settings', 'schoolStructure').catch(() => null),
     getDocument(env, 'settings', 'admissionDocuments').catch(() => null),
-    getDocument(env, 'settings', 'organisationProfile').catch(() => null)
+    getDocument(env, 'settings', 'organisationProfile').catch(() => null),
+    getDocument(env, 'settings', PUBLIC_PORTAL_CONTENT_DOCUMENT).catch(() => null)
   ]);
+  profile = applyPublicPortalContent(profile || {}, savedPublicContent);
   if (organizationProfile) organizationProfile = await refreshOrganizationPlanPolicy(env, organizationProfile);
   const structure = storedStructure || await getSchoolStructure(env);
   const enabledDocuments = documentSettings?.Enabled && typeof documentSettings.Enabled === 'object' ? documentSettings.Enabled : {};
