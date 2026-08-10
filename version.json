@@ -2,6 +2,6 @@
   "version": "3.0.2",
   "channel": "stable",
   "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup.exe",
-  "sha256": "28ea2ec77c6e43bad662d09e172b60727472e64fa13d8d1c9ce7c25028a9d114",
-  "notes": "Dynamax Desktop v3.0.2 includes the current three-edition workspace, branch and subscription controls, protected backup and restore, and edition-correct finance terminology for school, church and other organisations."
+  "sha256": "754f622ec4354c8b88643d1ca8ca5fe6aa2d8d6b63b97429b35d6fc43b6afc54",
+  "notes": "Dynamax Desktop v3.0.2 includes the current three-edition workspace and a permission-safe per-user desktop shortcut that prevents Public Desktop access failures during installation."
 }
