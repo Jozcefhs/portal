@@ -154,14 +154,16 @@
   border-radius: 0;
   background: transparent;
 }
-.summary-icon {
+.landing-hero .hero-service-panel .summary-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  align-self: center;
   box-sizing: border-box;
   width: 32px;
   min-width: 32px;
   height: 32px;
+  margin: 0;
   padding: 0;
   border-radius: 9px;
   background: #eaf2ff;
