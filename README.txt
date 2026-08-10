@@ -40,6 +40,7 @@ Core:
 - FIREBASE_PRIVATE_KEY (encrypted)
 - BACKEND_SHARED_SECRET (encrypted)
 - STAFF_SESSION_SECRET (encrypted)
+- MFA_ENCRYPTION_SECRET (encrypted; recommended for staff authenticator seeds and recovery codes)
 - ADMIN_WEB_PASSWORD (encrypted)
 - ADMIN_WEB_USERNAME (optional; defaults to admin)
 

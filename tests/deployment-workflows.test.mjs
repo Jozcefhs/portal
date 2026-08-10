@@ -157,6 +157,7 @@ test('the tenant pool provisioner is opt-in, uses WIF and creates isolated deplo
   assert.match(tenantProvisionerScript, /projects\/\$\{projectId\}:addFirebase/);
   assert.match(tenantProvisionerScript, /firebase\.organization\.json/);
   assert.match(tenantProvisionerScript, /secret_text/);
+  assert.match(tenantProvisionerScript, /MFA_ENCRYPTION_SECRET: secret\(randomSecret\(\)\)/);
   assert.match(tenantProvisionerScript, /wrangler@4\.61\.0/);
   assert.doesNotMatch(tenantProvisionerScript, /DYNAMAX_PLATFORM_FIREBASE_(?:PRIVATE_KEY|CLIENT_EMAIL)/);
   assert.match(tenantFleet, /TENANT_POOL_FLEET_DEPLOY_ENABLED == 'true'/);

@@ -4,6 +4,7 @@ import {
   clearStaffApprovalProofCookie,
   clearStaffSessionCookie,
   createStaffSession,
+  finalizeStaffAuthentication,
   findStaffUserRecord,
   readStaffSession,
   staffSessionCookie,
@@ -18,6 +19,7 @@ import {
   clearStaffLoginFailures,
   recordStaffLoginFailure
 } from '../lib/login-protection.js';
+import { beginStaffMfaLogin } from '../lib/staff-mfa.js';
 import { readJsonBody } from '../lib/request-security.js';
 
 function response(data, status = 200, cookies = [], extraHeaders = {}) {
@@ -403,8 +405,8 @@ export async function onRequestPost(context) {
         { 'Retry-After': attempt.retryAfter }
       );
     }
-    const user = await authenticateStaff(env, body.username, body.password);
-    if (!user) {
+    const passwordUser = await authenticateStaff(env, body.username, body.password, { recordLogin: false });
+    if (!passwordUser) {
       const failure = await recordStaffLoginFailure(env, body.username, request, attempt);
       if (failure.locked) {
         return response(
@@ -417,6 +419,12 @@ export async function onRequestPost(context) {
       return response({ ok: false, message: 'Invalid username/password or inactive account.' }, 401);
     }
     await clearStaffLoginFailures(env, body.username, request, attempt);
+    const mfa = await beginStaffMfaLogin(env, passwordUser);
+    if (mfa.required) {
+      return response({ ok: true, ...mfa });
+    }
+    const user = await finalizeStaffAuthentication(env, passwordUser.username, 'Web Password');
+    if (!user) return response({ ok: false, message: 'This staff account is inactive or no longer exists.' }, 401);
     const staffRecord = await findStaffUserRecord(env, user.username).catch(() => null);
     const profileImage = await loadStaffProfileImage(env, staffRecord || {}, user);
     if (profileImage?.ProfilePhotoDataUrl) user.profilePhotoUrl = clean(profileImage.ProfilePhotoDataUrl);
@@ -426,6 +434,7 @@ export async function onRequestPost(context) {
       ok: true,
       authenticated: true,
       message: 'Signed in.',
+      mfaEnrollmentDueAt: clean(mfa.requirement?.dueAt),
       sessionToken: token,
       user: staffUserForAccess(user, access)
     }, 200, staffSessionCookie(token));

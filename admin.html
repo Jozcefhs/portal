@@ -6,7 +6,7 @@
   <title>Organisation Staff Portal</title>
   <meta name="theme-color" content="#071b33">
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260809-opaque-account-panel-v2-security-audit-data-backup">
+  <link rel="stylesheet" href="css/style.css?v=20260809-opaque-account-panel-v2-security-audit-data-backup-staff-two-factor-authentication">
   <link rel="stylesheet" href="css/notifications.css?v=20260804-read-efficiency">
 </head>
 <body class="staff-page">
@@ -85,6 +85,9 @@
                 </button>
                 <button type="button" id="staffSubscriptionButton" class="staff-profile-settings" hidden>
                   <span aria-hidden="true">&#8593;</span> Subscription
+                </button>
+                <button type="button" id="staffMfaSettings" class="staff-profile-settings">
+                  <span aria-hidden="true">&#128737;</span> Two-factor security
                 </button>
                 <button type="button" id="staffPasskeySetup" class="staff-passkey-setup" hidden>
                   <span aria-hidden="true">&#9673;</span> Set up biometric sign-in
@@ -198,6 +201,91 @@
     </form>
   </dialog>
 
+  <dialog id="staffMfaLoginDialog" class="workflow-dialog staff-mfa-dialog" aria-labelledby="staffMfaLoginTitle">
+    <div class="workflow-dialog-header">
+      <div><small>Protected sign-in</small><h2 id="staffMfaLoginTitle">Two-factor verification</h2></div>
+      <button type="button" id="staffMfaLoginCancel" aria-label="Cancel two-factor sign-in">&times;</button>
+    </div>
+    <section class="workflow-form staff-mfa-login-content">
+      <p id="staffMfaLoginMessage" class="muted">Complete one more security check to open your workspace.</p>
+      <div id="staffMfaLoginMethods" class="staff-mfa-methods" role="group" aria-label="Available verification methods">
+        <button type="button" id="staffMfaLoginPasskey" class="staff-mfa-method" hidden><span aria-hidden="true">&#128273;</span><strong>Use device unlock</strong><small>Fingerprint, face, PIN or device password</small></button>
+        <button type="button" id="staffMfaLoginTotp" class="staff-mfa-method" hidden><span aria-hidden="true">&#9201;</span><strong>Authenticator app</strong><small>Enter the current six-digit code</small></button>
+        <button type="button" id="staffMfaLoginRecovery" class="staff-mfa-method" hidden><span aria-hidden="true">&#128272;</span><strong>Recovery code</strong><small>Use one saved, single-use code</small></button>
+      </div>
+      <form id="staffMfaLoginCodeForm" class="staff-mfa-code-form" hidden>
+        <label id="staffMfaLoginCodeLabel">Authenticator code
+          <input id="staffMfaLoginCode" inputmode="numeric" autocomplete="one-time-code" maxlength="20" required>
+        </label>
+        <button id="staffMfaLoginVerify" type="submit">Verify and sign in</button>
+      </form>
+      <section id="staffMfaLoginSetup" class="staff-mfa-setup" hidden>
+        <div class="staff-mfa-setup-heading"><strong>Set up an authenticator app</strong><small>Use Google Authenticator, Microsoft Authenticator, 1Password, Authy or another standards-based app.</small></div>
+        <div id="staffMfaLoginQr" class="staff-mfa-qr"></div>
+        <div class="staff-mfa-secret"><span>Manual setup key</span><code id="staffMfaLoginSecret"></code></div>
+        <form id="staffMfaLoginSetupForm" class="staff-mfa-code-form">
+          <label>Six-digit code from the app<input id="staffMfaLoginSetupCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required></label>
+          <button id="staffMfaLoginSetupVerify" type="submit">Finish setup and sign in</button>
+        </form>
+      </section>
+      <section id="staffMfaLoginRecoveryCodes" class="staff-mfa-recovery" hidden>
+        <div><strong>Save your recovery codes before continuing</strong><small>They will not be shown again. Each code can be used only once.</small></div>
+        <pre id="staffMfaLoginRecoveryCodeList"></pre>
+        <div class="staff-mfa-primary-actions">
+          <button type="button" id="staffMfaLoginDownloadRecovery" class="secondary">Download codes</button>
+          <button type="button" id="staffMfaLoginContinue">Continue to workspace</button>
+        </div>
+      </section>
+      <p id="staffMfaLoginStatus" class="status" role="status"></p>
+    </section>
+  </dialog>
+
+  <dialog id="staffMfaDialog" class="workflow-dialog staff-mfa-dialog" aria-labelledby="staffMfaTitle">
+    <div class="workflow-dialog-header">
+      <div><small>Account security</small><h2 id="staffMfaTitle">Two-factor authentication</h2></div>
+      <button type="button" id="staffMfaClose" aria-label="Close two-factor settings">&times;</button>
+    </div>
+    <section class="workflow-form">
+      <div id="staffMfaSummary" class="staff-mfa-summary"></div>
+      <div class="staff-mfa-primary-actions">
+        <button type="button" id="staffMfaSetupTotp">Set up authenticator app</button>
+        <button type="button" id="staffMfaAddPasskey" class="secondary">Add a device passkey</button>
+      </div>
+      <section id="staffMfaSetupPanel" class="staff-mfa-setup" hidden>
+        <div class="staff-mfa-setup-heading"><strong>Connect your authenticator app</strong><small>Scan this QR code. If scanning is unavailable, enter the setup key manually.</small></div>
+        <div id="staffMfaQr" class="staff-mfa-qr"></div>
+        <div class="staff-mfa-secret"><span>Manual setup key</span><code id="staffMfaSecret"></code></div>
+        <form id="staffMfaSetupForm" class="staff-mfa-code-form">
+          <label>Current password<input name="currentPassword" type="password" autocomplete="current-password" required></label>
+          <label>Six-digit code<input id="staffMfaSetupCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required></label>
+          <button id="staffMfaSetupVerify" type="submit">Verify and enable</button>
+        </form>
+      </section>
+      <section id="staffMfaRecoveryCodes" class="staff-mfa-recovery" hidden>
+        <div><strong>Save these recovery codes now</strong><small>Each code works once. Keep them somewhere private, outside this device.</small></div>
+        <pre id="staffMfaRecoveryCodeList"></pre>
+        <button type="button" id="staffMfaDownloadRecovery" class="secondary">Download recovery codes</button>
+      </section>
+      <details class="staff-mfa-maintenance">
+        <summary>Recovery and method management</summary>
+        <form id="staffMfaRecoveryForm" class="staff-mfa-inline-form">
+          <strong>Replace recovery codes</strong>
+          <label>Current password<input name="currentPassword" type="password" autocomplete="current-password" required></label>
+          <label>Authenticator or recovery code<input name="code" autocomplete="one-time-code" required></label>
+          <button type="submit">Generate new codes</button>
+        </form>
+        <form id="staffMfaDisableForm" class="staff-mfa-inline-form">
+          <strong>Remove authenticator app</strong>
+          <small>A registered device passkey remains active. Organisation policy may prevent removal of the last factor.</small>
+          <label>Current password<input name="currentPassword" type="password" autocomplete="current-password" required></label>
+          <label>Authenticator or recovery code<input name="code" autocomplete="one-time-code" required></label>
+          <button type="submit" class="danger-button">Remove authenticator</button>
+        </form>
+      </details>
+      <p id="staffMfaStatus" class="status" role="status"></p>
+    </section>
+  </dialog>
+
   <dialog id="staffApprovalSettingsDialog" class="workflow-dialog staff-approval-settings-dialog">
     <div class="workflow-dialog-header">
       <div><small>User settings</small><h2>Approval Signature & Stamp</h2></div>
@@ -286,7 +374,7 @@
   <script src="js/financial-values.js?v=20260803-finance-commas"></script>
   <script src="js/payment-methods.js?v=20260809-platform-direct-transfer-sharp-text"></script>
   <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
-  <script src="js/admin.js?v=20260809-school-insights-security-audit-data-backup"></script>
+  <script src="js/admin.js?v=20260809-school-insights-staff-two-factor-authentication"></script>
   <script src="js/web-push.js?v=20260801-mobile-push"></script>
   <script src="js/notifications.js?v=20260804-read-efficiency-custom-dialogs"></script>
 </body>

@@ -5,6 +5,7 @@ import { persistRequestSecurityAudit, prepareSecurityAudit } from './lib/securit
 const LOW_READ_IDENTITY_PATHS = new Set([
   '/api/staff-session',
   '/api/staff-passkey',
+  '/api/staff-mfa',
   '/api/admin'
 ]);
 
@@ -27,6 +28,7 @@ const SUBSCRIPTION_RECOVERY_PATHS = new Set([
   '/api/admin',
   '/api/staff-session',
   '/api/staff-passkey',
+  '/api/staff-mfa',
   '/api/plan-catalog',
   '/api/platform-payment-methods',
   '/api/platform-payment-settings',

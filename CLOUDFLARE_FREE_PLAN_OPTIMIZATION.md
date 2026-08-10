@@ -238,6 +238,7 @@ HTML, CSS, JavaScript, images, icons, fonts, the manifest, service worker and fa
 - `FIREBASE_PRIVATE_KEY` — encrypted secret
 - `BACKEND_SHARED_SECRET` — encrypted secret used by the desktop bridge
 - `STAFF_SESSION_SECRET` — encrypted secret
+- `MFA_ENCRYPTION_SECRET` — recommended separate encrypted secret for staff authenticator seeds and recovery codes; new tenant-pool deployments generate it automatically
 - `ADMIN_WEB_PASSWORD` — encrypted secret
 - `ADMIN_WEB_USERNAME` — optional; defaults to `admin`
 

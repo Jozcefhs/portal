@@ -432,9 +432,10 @@ export function staffUserForAccess(user = {}, access = {}) {
   };
 }
 
-export async function authenticateStaff(env, username, password) {
+export async function authenticateStaff(env, username, password, options = {}) {
   const wanted = lower(username);
   if (!wanted || !password) return null;
+  const recordLogin = options.recordLogin !== false;
   const envUsername = lower(env.ADMIN_WEB_USERNAME || 'admin');
   let user = null;
   try {
@@ -446,6 +447,7 @@ export async function authenticateStaff(env, username, password) {
   if (user) {
     const active = user.Active === undefined ? true : !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(user.Active));
     if (active && await verifyDesktopPassword(user, password)) {
+      if (!recordLogin) return publicUser(user);
       const loginAt = new Date().toISOString();
       const saved = { ...user, LastLoginAt: loginAt };
       delete saved.__id;
@@ -473,7 +475,7 @@ export async function authenticateStaff(env, username, password) {
     if (configuredRecord && clean(configuredRecord.Role) === 'Super Admin') {
       const recoveredAt = new Date().toISOString();
       recoveredUser = { ...configuredRecord, ...(await hashStaffPassword(password)), MustChangePassword: false, PasswordChangedAt: recoveredAt,
-        UpdatedAt: recoveredAt, UpdatedBy: 'Cloudflare Admin Recovery', LastLoginAt: recoveredAt };
+        UpdatedAt: recoveredAt, UpdatedBy: 'Cloudflare Admin Recovery', ...(recordLogin ? { LastLoginAt: recoveredAt } : {}) };
       delete recoveredUser.__id; delete recoveredUser.__name;
       await upsertDocument(env, 'staffUsers', configuredRecord.__id, recoveredUser);
       const recoveryAuditId = `RECOVERY-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
@@ -490,17 +492,19 @@ export async function authenticateStaff(env, username, password) {
       branchId: clean(recoveredUser?.BranchId),
       schoolSectionAccess: clean(recoveredUser?.SchoolSectionAccess) || 'All'
     };
-    const auditId = `LOGIN-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-    await upsertDocument(env, 'staffSecurityAudit', auditId, {
-      Timestamp: new Date().toISOString(), Action: 'LOGIN', Username: envUser.username,
-      Role: envUser.role, Department: '', SourcePlatform: 'Web Environment Admin'
-    });
+    if (recordLogin) {
+      const auditId = `LOGIN-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+      await upsertDocument(env, 'staffSecurityAudit', auditId, {
+        Timestamp: new Date().toISOString(), Action: 'LOGIN', Username: envUser.username,
+        Role: envUser.role, Department: '', SourcePlatform: 'Web Environment Admin'
+      });
+    }
     return envUser;
   }
   return null;
 }
 
-export async function authenticateStaffPasskey(env, username) {
+export async function finalizeStaffAuthentication(env, username, sourcePlatform = 'Web') {
   const wanted = lower(username);
   if (!wanted) return null;
   let user = null;
@@ -536,9 +540,13 @@ export async function authenticateStaffPasskey(env, username) {
     Username: authenticated.username,
     Role: authenticated.role,
     Department: authenticated.department,
-    SourcePlatform: 'Web Passkey'
+    SourcePlatform: clean(sourcePlatform || 'Web')
   });
   return authenticated;
+}
+
+export async function authenticateStaffPasskey(env, username) {
+  return finalizeStaffAuthentication(env, username, 'Web Passkey');
 }
 
 export async function verifyStaffApprovalPassword(env, username, password) {

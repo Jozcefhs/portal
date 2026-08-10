@@ -62,7 +62,7 @@ test('credential-manager cold starts retry once without repeating the server cer
   assert.match(adminJs, /function warmPasskeyCredentialManager\(\)/);
   assert.match(adminJs, /isUserVerifyingPlatformAuthenticatorAvailable/);
   assert.equal((adminJs.match(/navigator\.credentials\.get\(/g) || []).length, 1);
-  assert.equal((adminJs.match(/getPasskeyCredential\(started\.options(?:, 'optional')?\)/g) || []).length, 3);
+  assert.equal((adminJs.match(/getPasskeyCredential\(started\.options(?:, 'optional')?\)/g) || []).length, 4);
   assert.equal((adminJs.match(/getPasskeyCredential\(started\.options, 'optional'\)/g) || []).length, 1);
   const retrySource = adminJs.slice(
     adminJs.indexOf('function retryableCredentialManagerError'),

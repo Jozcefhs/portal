@@ -3,6 +3,9 @@ const loginForm = document.getElementById('staffLoginForm');
 const loginButton = document.getElementById('staffLoginButton');
 const passkeyLoginButton = document.getElementById('staffPasskeyLogin');
 const passkeySetupButton = document.getElementById('staffPasskeySetup');
+const mfaSettingsButton = document.getElementById('staffMfaSettings');
+const mfaDialog = document.getElementById('staffMfaDialog');
+const mfaLoginDialog = document.getElementById('staffMfaLoginDialog');
 const approvalSettingsButton = document.getElementById('staffApprovalSettings');
 const approvalSettingsDialog = document.getElementById('staffApprovalSettingsDialog');
 const approvalSettingsForm = document.getElementById('staffApprovalSettingsForm');
@@ -97,6 +100,11 @@ let selectedBranchId = 'all';
 let availableBranches = [];
 let branchSwitchInProgress = false;
 let passkeyStatusRequest = null;
+let pendingMfaLogin = null;
+let pendingMfaCompletedLogin = null;
+let staffMfaData = null;
+let staffMfaAdminData = null;
+let latestRecoveryCodes = [];
 let organizationDepartmentWorkspaceTab = 'overview';
 let organizationDashboardChartsRequest = 0;
 let dashboardAttendanceRequest = 0;
@@ -554,6 +562,202 @@ async function passkeyRequest(action, extra = {}) {
   return data;
 }
 
+async function mfaRequest(action, extra = {}) {
+  const response = await staffFetch('/api/staff-mfa', {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...extra })
+  });
+  const data = await response.json().catch(() => ({ ok: false, message: 'Two-factor authentication did not return JSON.' }));
+  if (!response.ok || !data.ok) throw new Error(data.message || 'Two-factor authentication failed.');
+  return data;
+}
+
+function recoveryCodeDownload(codes = latestRecoveryCodes) {
+  const rows = Array.isArray(codes) ? codes.map(clean).filter(Boolean) : [];
+  if (!rows.length) return;
+  const account = clean(currentUser?.username || pendingMfaLogin?.username || 'staff-account');
+  const content = [
+    'Dynamax two-factor authentication recovery codes',
+    `Account: ${account}`,
+    `Generated: ${new Date().toLocaleString()}`,
+    '',
+    ...rows,
+    '',
+    'Each code works once. Store this file securely and do not share it.'
+  ].join('\n');
+  const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `dynamax-recovery-codes-${account.replace(/[^a-z0-9._-]+/gi, '-')}.txt`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function showRecoveryCodes(codes, listId, sectionId) {
+  latestRecoveryCodes = Array.isArray(codes) ? codes.map(clean).filter(Boolean) : [];
+  const list = document.getElementById(listId);
+  const section = document.getElementById(sectionId);
+  if (list) list.textContent = latestRecoveryCodes.join('\n');
+  if (section) section.hidden = !latestRecoveryCodes.length;
+}
+
+async function finishMfaClientLogin(data) {
+  const token = clean(data?.sessionToken);
+  if (!token) throw new Error('Two-factor verification did not return a staff session.');
+  pendingMfaLogin = null;
+  pendingMfaCompletedLogin = null;
+  latestRecoveryCodes = [];
+  if (mfaLoginDialog.open) mfaLoginDialog.close();
+  loginForm.reset();
+  setStatus(loginStatus, '');
+  await continueAfterAuthentication(await confirmFreshStaffSession(data.user, token));
+}
+
+function selectMfaLoginMethod(method) {
+  if (!pendingMfaLogin) return;
+  pendingMfaLogin.method = method;
+  const form = document.getElementById('staffMfaLoginCodeForm');
+  const input = document.getElementById('staffMfaLoginCode');
+  const label = document.getElementById('staffMfaLoginCodeLabel');
+  form.hidden = false;
+  input.value = '';
+  if (method === 'recovery') {
+    label.childNodes[0].nodeValue = 'Recovery code ';
+    input.inputMode = 'text';
+    input.maxLength = 20;
+    input.placeholder = 'DMX-XXXX-XXXX';
+  } else {
+    label.childNodes[0].nodeValue = 'Authenticator code ';
+    input.inputMode = 'numeric';
+    input.maxLength = 6;
+    input.placeholder = '000000';
+  }
+  document.querySelectorAll('#staffMfaLoginMethods .staff-mfa-method').forEach((button) => {
+    button.classList.toggle('active', button.id === (method === 'recovery' ? 'staffMfaLoginRecovery' : 'staffMfaLoginTotp'));
+  });
+  input.focus();
+}
+
+async function beginMfaLoginTotpSetup() {
+  if (!pendingMfaLogin?.ticket) return;
+  const status = document.getElementById('staffMfaLoginStatus');
+  setStatus(status, 'Preparing secure authenticator enrollment...');
+  try {
+    const data = await mfaRequest('setup-totp', { mfaTicket: pendingMfaLogin.ticket });
+    document.getElementById('staffMfaLoginMethods').hidden = true;
+    document.getElementById('staffMfaLoginCodeForm').hidden = true;
+    const panel = document.getElementById('staffMfaLoginSetup');
+    panel.hidden = false;
+    document.getElementById('staffMfaLoginQr').innerHTML = data.setup.qrSvg;
+    document.getElementById('staffMfaLoginSecret').textContent = data.setup.secret;
+    setStatus(status, 'Scan the QR code and enter the current six-digit code.', 'ok');
+    document.getElementById('staffMfaLoginSetupCode').focus();
+  } catch (error) {
+    setStatus(status, error.message || String(error), 'bad');
+  }
+}
+
+async function openMfaLogin(data, username = '') {
+  pendingMfaLogin = {
+    ticket: clean(data.mfaTicket),
+    methods: Array.isArray(data.methods) ? data.methods : [],
+    enrollmentRequired: data.enrollmentRequired === true,
+    username: clean(username),
+    method: ''
+  };
+  pendingMfaCompletedLogin = null;
+  showRecoveryCodes([], 'staffMfaLoginRecoveryCodeList', 'staffMfaLoginRecoveryCodes');
+  document.getElementById('staffMfaLoginMessage').textContent = data.message || 'Complete one more security check to open your workspace.';
+  document.getElementById('staffMfaLoginMethods').hidden = false;
+  document.getElementById('staffMfaLoginCodeForm').hidden = true;
+  document.getElementById('staffMfaLoginSetup').hidden = true;
+  setStatus(document.getElementById('staffMfaLoginStatus'), '');
+  const methodMap = {
+    passkey: document.getElementById('staffMfaLoginPasskey'),
+    totp: document.getElementById('staffMfaLoginTotp'),
+    recovery: document.getElementById('staffMfaLoginRecovery')
+  };
+  Object.entries(methodMap).forEach(([method, button]) => {
+    button.hidden = !pendingMfaLogin.methods.includes(method) || (method === 'passkey' && !passkeysSupported());
+    button.classList.remove('active');
+  });
+  mfaLoginDialog.showModal();
+  if (pendingMfaLogin.enrollmentRequired) {
+    await beginMfaLoginTotpSetup();
+  } else if (pendingMfaLogin.methods.length === 1 && ['totp', 'recovery'].includes(pendingMfaLogin.methods[0])) {
+    selectMfaLoginMethod(pendingMfaLogin.methods[0]);
+  }
+}
+
+async function verifyMfaLoginWithPasskey() {
+  if (!pendingMfaLogin?.ticket) return;
+  const button = document.getElementById('staffMfaLoginPasskey');
+  const status = document.getElementById('staffMfaLoginStatus');
+  const originalMarkup = button.innerHTML;
+  button.disabled = true;
+  button.classList.add('is-loading');
+  button.textContent = 'Checking device...';
+  setStatus(status, 'Follow your device prompt to approve this sign-in...');
+  try {
+    const started = await passkeyRequest('authentication-options', { mfaTicket: pendingMfaLogin.ticket });
+    const credential = await getPasskeyCredential(started.options);
+    if (!credential) throw new Error('No device credential was returned.');
+    const completed = await passkeyRequest('authentication-verify', {
+      mfaTicket: pendingMfaLogin.ticket,
+      ceremonyId: started.ceremonyId,
+      credential: credentialToJSON(credential)
+    });
+    await finishMfaClientLogin(completed);
+  } catch (error) {
+    setStatus(status, friendlyPasskeyError(error), 'bad');
+  } finally {
+    button.disabled = false;
+    button.classList.remove('is-loading');
+    button.innerHTML = originalMarkup;
+  }
+}
+
+function renderStaffMfaSummary(data = staffMfaData) {
+  const container = document.getElementById('staffMfaSummary');
+  if (!container || !data) return;
+  const profile = data.profile || {};
+  const policy = data.policy || {};
+  const requirement = data.requirement || {};
+  const policyLabels = {
+    DISABLED: 'Disabled by organisation',
+    OPTIONAL: 'Optional',
+    REQUIRED_ROLES: 'Required for selected roles',
+    REQUIRED_ALL: 'Required for all staff'
+  };
+  container.innerHTML = `
+    <article class="${profile.totpActive ? 'protected' : ''}"><small>Authenticator app</small><strong>${profile.totpActive ? 'Active' : 'Not set up'}</strong><span>Time-based six-digit codes</span></article>
+    <article class="${profile.passkeyCount > 0 ? 'protected' : ''}"><small>Device passkeys</small><strong>${Number(profile.passkeyCount || 0)}</strong><span>Fingerprint, face, PIN or device password</span></article>
+    <article class="${profile.recoveryCodesRemaining > 0 ? 'protected' : ''}"><small>Recovery codes</small><strong>${Number(profile.recoveryCodesRemaining || 0)}</strong><span>Unused single-use codes</span></article>
+    <article class="${requirement.required ? 'protected' : ''}"><small>Organisation policy</small><strong>${escapeHtml(policyLabels[policy.Mode] || 'Optional')}</strong><span>${requirement.dueAt ? `Enforcement begins ${escapeHtml(new Date(requirement.dueAt).toLocaleString())}` : (requirement.required ? 'Protection applies to this account' : 'You may enable protection voluntarily')}</span></article>
+  `;
+  document.getElementById('staffMfaSetupTotp').textContent = profile.totpActive ? 'Replace authenticator app' : 'Set up authenticator app';
+  document.getElementById('staffMfaAddPasskey').hidden = !passkeysSupported();
+  document.getElementById('staffMfaRecoveryForm').closest('details').hidden = !profile.totpActive;
+}
+
+async function openStaffMfaSettings() {
+  if (!currentUser) return;
+  document.getElementById('staffMfaSetupPanel').hidden = true;
+  showRecoveryCodes([], 'staffMfaRecoveryCodeList', 'staffMfaRecoveryCodes');
+  setStatus(document.getElementById('staffMfaStatus'), 'Loading two-factor security...');
+  mfaDialog.showModal();
+  try {
+    staffMfaData = await mfaRequest('status');
+    renderStaffMfaSummary();
+    setStatus(document.getElementById('staffMfaStatus'), 'Security settings loaded.', 'ok');
+  } catch (error) {
+    setStatus(document.getElementById('staffMfaStatus'), error.message || String(error), 'bad');
+  }
+}
+
 async function attendancePasskeyProof(siteId, direction) {
   const started = await passkeyRequest('attendance-options', { siteId, direction });
   const credential = await getPasskeyCredential(started.options);
@@ -956,6 +1160,11 @@ function clearStaffWorkspaceState() {
   staffApprovalAccounts = [];
   staffRoleAccessData = null;
   staffRoleAccessSelectedRole = '';
+  pendingMfaLogin = null;
+  pendingMfaCompletedLogin = null;
+  staffMfaData = null;
+  staffMfaAdminData = null;
+  latestRecoveryCodes = [];
   humanResourcesData = null;
   approvalProfile = null;
   approvalAssetState = { signature: '', stamp: '' };
@@ -1089,6 +1298,7 @@ function clearBranchScopedWorkspaceData() {
   staffApprovalAccounts = [];
   staffRoleAccessData = null;
   staffRoleAccessSelectedRole = '';
+  staffMfaAdminData = null;
   humanResourcesData = null;
   staffAttendanceReportFilters = null;
   approvalProfile = null;
@@ -10353,6 +10563,40 @@ function yes(value) {
   return value === true || ['yes', 'true', '1', 'active'].includes(clean(value).toLowerCase());
 }
 
+function staffMfaAccount(username = '') {
+  const key = clean(username).toLowerCase();
+  return (staffMfaAdminData?.accounts || []).find((account) => clean(account.username).toLowerCase() === key) || null;
+}
+
+function staffMfaAccountLabel(username = '') {
+  const account = staffMfaAccount(username);
+  if (!account) return 'Two-factor not enrolled';
+  const methods = [];
+  if (account.totpActive) methods.push('Authenticator');
+  if (Number(account.passkeyCount || 0) > 0) methods.push(`${Number(account.passkeyCount)} passkey${Number(account.passkeyCount) === 1 ? '' : 's'}`);
+  if (!methods.length) return 'Two-factor not enrolled';
+  return `${methods.join(' + ')} • ${Number(account.recoveryCodesRemaining || 0)} recovery code${Number(account.recoveryCodesRemaining || 0) === 1 ? '' : 's'}`;
+}
+
+function updateMfaPolicyEditor() {
+  const mode = document.getElementById('staffMfaPolicyMode');
+  if (!mode) return;
+  const policy = staffMfaAdminData?.policy || {};
+  const roleGroup = document.getElementById('staffMfaPolicyRoles');
+  const grace = document.getElementById('staffMfaPolicyGrace');
+  const requiredMode = ['REQUIRED_ROLES', 'REQUIRED_ALL'].includes(mode.value);
+  if (roleGroup) roleGroup.hidden = mode.value !== 'REQUIRED_ROLES';
+  if (grace) grace.disabled = !requiredMode;
+  const timing = document.getElementById('staffMfaPolicyTiming');
+  if (timing) {
+    timing.textContent = policy.EnforceFrom && requiredMode
+      ? `Current enforcement begins ${new Date(policy.EnforceFrom).toLocaleString()}. Saving a changed required policy starts a new grace period.`
+      : requiredMode
+        ? 'Saving this policy starts the selected grace period.'
+        : 'Existing enrolled staff remain protected when the policy is optional. Disabled mode bypasses two-factor sign-in.';
+  }
+}
+
 function renderStaffUsers() {
   if (activeSection !== 'staffUsers') return;
   const activeUsers = staffUsersData.filter((user) => yes(user.Active)).length;
@@ -10368,6 +10612,10 @@ function renderStaffUsers() {
     : permissionTabs.map(([key, label]) => ({ key, label }));
   if (!availableRoles.includes(staffRoleAccessSelectedRole)) staffRoleAccessSelectedRole = availableRoles[0] || '';
   const policyScope = clean(staffRoleAccessData?.scope || 'global');
+  const mfaPolicy = staffMfaAdminData?.policy || { Mode: 'OPTIONAL', RequiredRoles: [], GraceDays: 7, EnforceFrom: '' };
+  const mfaPolicyRoles = new Set(mfaPolicy.RequiredRoles || []);
+  const resettableStaff = staffUsersData.filter((user) => clean(user.Username).toLowerCase() !== clean(currentUser?.username).toLowerCase());
+  const canManageMfaPolicy = clean(currentUser?.role) === 'Super Admin';
   panelEl.innerHTML = `
     <div class="workflow-intro">
       <div><p class="eyebrow">Identity & access</p><h2>Staff & Permissions</h2><p class="muted">Shared database accounts for desktop and web access</p></div>
@@ -10384,7 +10632,7 @@ function renderStaffUsers() {
       ${staffUsersData.length ? staffUsersData.map((user) => `
         <article class="staff-user-row">
           <div class="staff-user-avatar">${escapeHtml((user.DisplayName || user.Username || 'U').split(/\s+/).slice(0,2).map((part) => part[0]).join('').toUpperCase())}</div>
-          <div class="staff-user-copy"><strong>${escapeHtml(user.DisplayName || user.LoginUsername || user.Username)}</strong><span>@${escapeHtml(user.LoginUsername || user.Username)} • ${escapeHtml(user.Role)}</span><small>${escapeHtml(user.Department || 'No department')} • ${escapeHtml(user.BranchId || 'All branches')}${schoolEdition ? ` / ${escapeHtml(user.SchoolSectionAccess || 'All sections')}` : ''}${yes(user.MustChangePassword) ? ' • Password change required' : ''}</small></div>
+          <div class="staff-user-copy"><strong>${escapeHtml(user.DisplayName || user.LoginUsername || user.Username)}</strong><span>@${escapeHtml(user.LoginUsername || user.Username)} • ${escapeHtml(user.Role)}</span><small>${escapeHtml(user.Department || 'No department')} • ${escapeHtml(user.BranchId || 'All branches')}${schoolEdition ? ` / ${escapeHtml(user.SchoolSectionAccess || 'All sections')}` : ''}${yes(user.MustChangePassword) ? ' • Password change required' : ''}</small><small class="staff-mfa-account-state">${escapeHtml(staffMfaAccountLabel(user.Username))}</small></div>
           <span class="workflow-status ${yes(user.Active) ? 'status-approved' : 'status-rejected'}">${yes(user.Active) ? 'Active' : 'Disabled'}</span>
           <div class="staff-user-actions"><button type="button" class="compact-icon-action compact-edit-action" data-edit-user="${escapeHtml(user.Username)}" aria-label="Edit ${escapeHtml(user.DisplayName || user.Username)}" title="Edit staff account"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action compact-delete-action" data-delete-user="${escapeHtml(user.Username)}" aria-label="Delete ${escapeHtml(user.DisplayName || user.Username)}" title="Delete staff account"><span aria-hidden="true">&#128465;&#65038;</span></button></div>
         </article>
@@ -10400,6 +10648,36 @@ function renderStaffUsers() {
         </div>
         <div class="role-access-actions"><p class="status" id="roleAccessStatus"></p><button type="button" class="secondary" id="resetRoleAccess">Use inherited default</button><button type="button" id="saveRoleAccess">Save role access</button></div>
       </div>
+    </section>
+    <section class="staff-mfa-policy-settings">
+      <div class="role-access-heading"><div><p class="eyebrow">Sign-in protection</p><h2>Two-factor authentication policy</h2><p class="muted">Control who must complete a second security check after entering a password. Staff may always enrol voluntarily unless protection is disabled.</p></div><span class="role-access-scope">Organisation-wide</span></div>
+      ${!canManageMfaPolicy ? '<p class="status">Only a Super Administrator can change organisation-wide two-factor policy or reset another staff member’s security methods.</p>' : staffMfaAdminData?.error ? `<p class="status bad">${escapeHtml(staffMfaAdminData.error)}</p>` : `
+      <div class="staff-mfa-policy-editor">
+        <div class="config-grid staff-mfa-policy-controls">
+          <label>Enforcement mode<select id="staffMfaPolicyMode">
+            <option value="DISABLED"${mfaPolicy.Mode === 'DISABLED' ? ' selected' : ''}>Disabled</option>
+            <option value="OPTIONAL"${mfaPolicy.Mode === 'OPTIONAL' ? ' selected' : ''}>Optional</option>
+            <option value="REQUIRED_ROLES"${mfaPolicy.Mode === 'REQUIRED_ROLES' ? ' selected' : ''}>Required for selected roles</option>
+            <option value="REQUIRED_ALL"${mfaPolicy.Mode === 'REQUIRED_ALL' ? ' selected' : ''}>Required for all staff</option>
+          </select></label>
+          <label>Grace period (days)<input id="staffMfaPolicyGrace" type="number" min="0" max="30" step="1" value="${Number(mfaPolicy.GraceDays ?? 7)}"><small>0 enforces immediately; maximum 30 days.</small></label>
+        </div>
+        <div class="config-option-list config-option-grid staff-mfa-policy-roles" id="staffMfaPolicyRoles"${mfaPolicy.Mode === 'REQUIRED_ROLES' ? '' : ' hidden'}>
+          <strong>Roles that require two-factor authentication</strong>
+          ${availableRoles.map((role) => `<label class="check-row"><input type="checkbox" name="StaffMfaRequiredRole" value="${escapeHtml(role)}"${mfaPolicyRoles.has(role) ? ' checked' : ''}> ${escapeHtml(role)}</label>`).join('')}
+        </div>
+        <p class="muted staff-mfa-policy-timing" id="staffMfaPolicyTiming"></p>
+        <div class="role-access-actions"><p class="status" id="staffMfaPolicyStatus"></p><button type="button" id="saveStaffMfaPolicy">Save two-factor policy</button></div>
+      </div>
+      <div class="staff-mfa-admin-reset">
+        <div><strong>Account recovery reset</strong><p class="muted">Use only after verifying the staff member's identity. This revokes every passkey, authenticator secret and unused recovery code for the selected account.</p></div>
+        <div class="staff-mfa-reset-form">
+          <label>Staff account<select id="staffMfaResetUser"><option value="">Choose staff account</option>${resettableStaff.map((user) => `<option value="${escapeHtml(user.Username)}">${escapeHtml(user.DisplayName || user.Username)} (@${escapeHtml(user.LoginUsername || user.Username)})</option>`).join('')}</select></label>
+          <label>Your current password<input id="staffMfaResetPassword" type="password" autocomplete="current-password"></label>
+          <button type="button" class="danger" id="resetStaffMfa">Reset two-factor methods</button>
+        </div>
+        <p class="status" id="staffMfaResetStatus"></p>
+      </div>`}
     </section>
     <section class="staff-security-activity">
       <h2>Recent Security Activity</h2>
@@ -10435,10 +10713,12 @@ function renderStaffUsers() {
     { key: 'overview', label: 'Overview', icon: '\u25A6', nodes: [document.getElementById('staffUsersStatus'), panelEl.querySelector(':scope > .workflow-kpis')] },
     { key: 'accounts', label: 'Staff accounts', icon: '\u{1F465}', count: staffUsersData.length, nodes: panelEl.querySelector(':scope > .staff-user-list') },
     { key: 'roleAccess', label: 'Role access', icon: '\u{1F511}', nodes: panelEl.querySelector(':scope > .role-access-settings') },
+    { key: 'mfaPolicy', label: 'Two-factor policy', icon: '\u{1F6E1}', nodes: panelEl.querySelector(':scope > .staff-mfa-policy-settings') },
     { key: 'security', label: 'Security activity', icon: '\u{1F6E1}', count: staffAuditData.length, nodes: panelEl.querySelector(':scope > .staff-security-activity') }
   ]);
   bindStaffUserEvents();
   renderRoleAccessEditor(staffRoleAccessSelectedRole, policyRoles);
+  updateMfaPolicyEditor();
 }
 
 function renderRoleAccessEditor(role = staffRoleAccessSelectedRole, roles = staffRoleAccessData?.roles || {}) {
@@ -10541,6 +10821,54 @@ function bindStaffUserEvents() {
     } finally {
       setButtonLoading(button, false, 'Resetting...', 'Use inherited default');
       renderRoleAccessEditor(staffRoleAccessSelectedRole);
+    }
+  });
+  document.getElementById('staffMfaPolicyMode')?.addEventListener('change', updateMfaPolicyEditor);
+  document.getElementById('saveStaffMfaPolicy')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const mode = document.getElementById('staffMfaPolicyMode').value;
+    const graceDays = Number(document.getElementById('staffMfaPolicyGrace').value || 0);
+    const requiredRoles = Array.from(document.querySelectorAll('[name="StaffMfaRequiredRole"]:checked')).map((input) => input.value);
+    setButtonLoading(button, true, 'Saving...', 'Save two-factor policy');
+    try {
+      const data = await mfaRequest('save-policy', { mode, graceDays, requiredRoles });
+      staffMfaAdminData = { ...(staffMfaAdminData || {}), policy: data.policy };
+      updateMfaPolicyEditor();
+      setStatus(document.getElementById('staffMfaPolicyStatus'), data.message, 'ok');
+    } catch (error) {
+      setStatus(document.getElementById('staffMfaPolicyStatus'), error.message || String(error), 'bad');
+    } finally {
+      setButtonLoading(button, false, 'Saving...', 'Save two-factor policy');
+    }
+  });
+  document.getElementById('resetStaffMfa')?.addEventListener('click', async (event) => {
+    const targetUsername = clean(document.getElementById('staffMfaResetUser')?.value);
+    const currentPassword = document.getElementById('staffMfaResetPassword')?.value || '';
+    const targetUser = staffUsersData.find((user) => clean(user.Username).toLowerCase() === targetUsername.toLowerCase());
+    if (!targetUsername) {
+      setStatus(document.getElementById('staffMfaResetStatus'), 'Choose the staff account to reset.', 'bad');
+      return;
+    }
+    if (!currentPassword) {
+      setStatus(document.getElementById('staffMfaResetStatus'), 'Enter your current administrator password.', 'bad');
+      return;
+    }
+    if (!await window.DynamaxDialogs.confirm({
+      title: 'Reset two-factor authentication',
+      message: `Revoke every two-factor method and recovery code for ${targetUser?.DisplayName || targetUsername}? The staff member will need to enrol again when policy requires it.`,
+      tone: 'danger',
+      confirmText: 'Reset security methods'
+    })) return;
+    const button = event.currentTarget;
+    setButtonLoading(button, true, 'Resetting...', 'Reset two-factor methods');
+    try {
+      const data = await mfaRequest('admin-reset', { targetUsername, currentPassword });
+      staffMfaAdminData = await mfaRequest('admin-status');
+      renderStaffUsers();
+      setStatus(document.getElementById('staffMfaResetStatus'), data.message, 'ok');
+    } catch (error) {
+      setStatus(document.getElementById('staffMfaResetStatus'), error.message || String(error), 'bad');
+      if (button.isConnected) setButtonLoading(button, false, 'Resetting...', 'Reset two-factor methods');
     }
   });
   document.querySelector('[data-close-user-dialog]')?.addEventListener('click', () => document.getElementById('staffUserDialog').close());
@@ -10691,11 +11019,17 @@ async function importStaffCsv(event) {
 async function loadStaffUsers() {
   if (activeSection !== 'staffUsers') return;
   try {
-    const data = await staffUserRequest('list');
+    const [data, mfaAdministration] = await Promise.all([
+      staffUserRequest('list'),
+      clean(currentUser?.role) === 'Super Admin'
+        ? mfaRequest('admin-status').catch((error) => ({ policy: null, accounts: [], error: error.message || String(error) }))
+        : Promise.resolve(null)
+    ]);
     staffUsersData = data.users || [];
     staffAuditData = data.audit || [];
     staffApprovalAccounts = data.approvalAccounts || [];
     staffRoleAccessData = data.roleAccess || null;
+    staffMfaAdminData = mfaAdministration;
     renderModuleSummary('staffUsers', staffUsersData);
     renderStaffUsers();
     const handoff = takeRecordsDeskHandoff('staffUsers');
@@ -10712,19 +11046,202 @@ loginForm.addEventListener('submit', async (event) => {
   setButtonLoading(loginButton, true, 'Signing in...', 'Sign In');
   setStatus(loginStatus, 'Verifying staff account...');
   try {
+    const username = document.getElementById('staffUsername').value.trim();
     const { response, data } = await sessionRequest('POST', {
       action: 'login',
-      username: document.getElementById('staffUsername').value.trim(),
+      username,
       password: document.getElementById('staffPassword').value
     });
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not sign in.');
+    if (data.mfaRequired) {
+      document.getElementById('staffPassword').value = '';
+      setStatus(loginStatus, 'Password verified. Complete two-factor authentication.');
+      await openMfaLogin(data, username);
+      return;
+    }
+    if (!data.authenticated || !data.user) throw new Error('Sign-in did not return an authenticated staff account.');
     loginForm.reset();
     setStatus(loginStatus, '');
     await continueAfterAuthentication(await confirmFreshStaffSession(data.user, clean(data.sessionToken)));
+    if (clean(data.mfaEnrollmentDueAt)) {
+      setStatus(
+        dashboardStatus,
+        `Two-factor authentication will become required on ${new Date(data.mfaEnrollmentDueAt).toLocaleString()}. Open Account & settings, then Two-factor security to enrol now.`
+      );
+    }
   } catch (error) {
     setStatus(loginStatus, error.message || String(error), 'bad');
   } finally {
     setButtonLoading(loginButton, false, 'Signing in...', 'Sign In');
+  }
+});
+
+document.getElementById('staffMfaLoginPasskey').addEventListener('click', verifyMfaLoginWithPasskey);
+document.getElementById('staffMfaLoginTotp').addEventListener('click', () => selectMfaLoginMethod('totp'));
+document.getElementById('staffMfaLoginRecovery').addEventListener('click', () => selectMfaLoginMethod('recovery'));
+document.getElementById('staffMfaLoginCodeForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!pendingMfaLogin?.ticket || !pendingMfaLogin.method) return;
+  const button = document.getElementById('staffMfaLoginVerify');
+  const status = document.getElementById('staffMfaLoginStatus');
+  setButtonLoading(button, true, 'Verifying...', 'Verify and sign in');
+  try {
+    const completed = await mfaRequest('verify-login', {
+      mfaTicket: pendingMfaLogin.ticket,
+      method: pendingMfaLogin.method,
+      code: document.getElementById('staffMfaLoginCode').value
+    });
+    await finishMfaClientLogin(completed);
+  } catch (error) {
+    setStatus(status, error.message || String(error), 'bad');
+    document.getElementById('staffMfaLoginCode').select();
+  } finally {
+    setButtonLoading(button, false, 'Verifying...', 'Verify and sign in');
+  }
+});
+document.getElementById('staffMfaLoginSetupForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!pendingMfaLogin?.ticket) return;
+  const button = document.getElementById('staffMfaLoginSetupVerify');
+  const status = document.getElementById('staffMfaLoginStatus');
+  setButtonLoading(button, true, 'Enabling...', 'Finish setup and sign in');
+  try {
+    const completed = await mfaRequest('confirm-totp-setup', {
+      mfaTicket: pendingMfaLogin.ticket,
+      code: document.getElementById('staffMfaLoginSetupCode').value
+    });
+    pendingMfaCompletedLogin = completed;
+    document.getElementById('staffMfaLoginSetup').hidden = true;
+    showRecoveryCodes(completed.recoveryCodes, 'staffMfaLoginRecoveryCodeList', 'staffMfaLoginRecoveryCodes');
+    setStatus(status, 'Authenticator enabled. Save the recovery codes before opening your workspace.', 'ok');
+  } catch (error) {
+    setStatus(status, error.message || String(error), 'bad');
+    document.getElementById('staffMfaLoginSetupCode').select();
+  } finally {
+    setButtonLoading(button, false, 'Enabling...', 'Finish setup and sign in');
+  }
+});
+document.getElementById('staffMfaLoginContinue').addEventListener('click', async () => {
+  if (!pendingMfaCompletedLogin) return;
+  try {
+    await finishMfaClientLogin(pendingMfaCompletedLogin);
+  } catch (error) {
+    setStatus(document.getElementById('staffMfaLoginStatus'), error.message || String(error), 'bad');
+  }
+});
+document.getElementById('staffMfaLoginDownloadRecovery').addEventListener('click', () => recoveryCodeDownload());
+document.getElementById('staffMfaLoginCancel').addEventListener('click', async () => {
+  if (pendingMfaCompletedLogin) await sessionRequest('POST', { action: 'logout' }).catch(() => null);
+  pendingMfaLogin = null;
+  pendingMfaCompletedLogin = null;
+  latestRecoveryCodes = [];
+  mfaLoginDialog.close();
+  setStatus(loginStatus, 'Two-factor sign-in cancelled. Enter your password to start again.');
+  document.getElementById('staffPassword').focus();
+});
+mfaLoginDialog.addEventListener('cancel', (event) => {
+  event.preventDefault();
+  document.getElementById('staffMfaLoginCancel').click();
+});
+
+mfaSettingsButton.addEventListener('click', openStaffMfaSettings);
+document.getElementById('staffMfaClose').addEventListener('click', () => mfaDialog.close());
+document.getElementById('staffMfaSetupTotp').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  const restingText = button.textContent;
+  const status = document.getElementById('staffMfaStatus');
+  setButtonLoading(button, true, 'Preparing...', restingText);
+  try {
+    const data = await mfaRequest('setup-totp');
+    document.getElementById('staffMfaSetupPanel').hidden = false;
+    document.getElementById('staffMfaQr').innerHTML = data.setup.qrSvg;
+    document.getElementById('staffMfaSecret').textContent = data.setup.secret;
+    document.getElementById('staffMfaSetupCode').value = '';
+    setStatus(status, data.message, 'ok');
+    document.getElementById('staffMfaSetupCode').focus();
+  } catch (error) {
+    setStatus(status, error.message || String(error), 'bad');
+  } finally {
+    setButtonLoading(button, false, 'Preparing...', restingText);
+  }
+});
+document.getElementById('staffMfaSetupForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = document.getElementById('staffMfaSetupVerify');
+  const status = document.getElementById('staffMfaStatus');
+  setButtonLoading(button, true, 'Verifying...', 'Verify and enable');
+  try {
+    const data = await mfaRequest('confirm-totp-setup', {
+      currentPassword: form.elements.currentPassword.value,
+      code: document.getElementById('staffMfaSetupCode').value
+    });
+    form.reset();
+    document.getElementById('staffMfaSetupPanel').hidden = true;
+    showRecoveryCodes(data.recoveryCodes, 'staffMfaRecoveryCodeList', 'staffMfaRecoveryCodes');
+    staffMfaData = await mfaRequest('status');
+    renderStaffMfaSummary();
+    setStatus(status, data.message, 'ok');
+  } catch (error) {
+    setStatus(status, error.message || String(error), 'bad');
+    document.getElementById('staffMfaSetupCode').select();
+  } finally {
+    setButtonLoading(button, false, 'Verifying...', 'Verify and enable');
+  }
+});
+document.getElementById('staffMfaDownloadRecovery').addEventListener('click', () => recoveryCodeDownload());
+document.getElementById('staffMfaAddPasskey').addEventListener('click', () => {
+  mfaDialog.close();
+  passkeySetupButton.click();
+});
+document.getElementById('staffMfaRecoveryForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  const status = document.getElementById('staffMfaStatus');
+  setButtonLoading(button, true, 'Generating...', 'Generate new codes');
+  try {
+    const data = await mfaRequest('regenerate-recovery', {
+      currentPassword: form.elements.currentPassword.value,
+      code: form.elements.code.value
+    });
+    form.reset();
+    showRecoveryCodes(data.recoveryCodes, 'staffMfaRecoveryCodeList', 'staffMfaRecoveryCodes');
+    staffMfaData = await mfaRequest('status');
+    renderStaffMfaSummary();
+    setStatus(status, data.message, 'ok');
+  } catch (error) {
+    setStatus(status, error.message || String(error), 'bad');
+  } finally {
+    setButtonLoading(button, false, 'Generating...', 'Generate new codes');
+  }
+});
+document.getElementById('staffMfaDisableForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (!await window.DynamaxDialogs.confirm({
+    title: 'Remove authenticator app',
+    message: 'Remove authenticator codes and invalidate every saved recovery code for this account?',
+    tone: 'danger',
+    confirmText: 'Remove authenticator'
+  })) return;
+  const button = form.querySelector('button[type="submit"]');
+  const status = document.getElementById('staffMfaStatus');
+  setButtonLoading(button, true, 'Removing...', 'Remove authenticator');
+  try {
+    const data = await mfaRequest('disable-totp', {
+      currentPassword: form.elements.currentPassword.value,
+      code: form.elements.code.value
+    });
+    form.reset();
+    showRecoveryCodes([], 'staffMfaRecoveryCodeList', 'staffMfaRecoveryCodes');
+    staffMfaData = await mfaRequest('status');
+    renderStaffMfaSummary();
+    setStatus(status, data.message, 'ok');
+  } catch (error) {
+    setStatus(status, error.message || String(error), 'bad');
+  } finally {
+    setButtonLoading(button, false, 'Removing...', 'Remove authenticator');
   }
 });
 

@@ -9,6 +9,7 @@ Add these encrypted variables to the Cloudflare Pages project:
 - `ADMIN_WEB_USERNAME` — initial web Super Admin username; defaults to `admin` when omitted.
 - `ADMIN_WEB_PASSWORD` — initial web Super Admin password.
 - `STAFF_SESSION_SECRET` — a long, random secret used only to sign staff sessions. Use at least 32 random characters and do not reuse the admin password.
+- `MFA_ENCRYPTION_SECRET` — a separate, long, random Cloudflare secret used to encrypt staff authenticator seeds and hash recovery codes. Do not rotate it without first resetting enrolled staff methods. Existing deployments fall back to `STAFF_SESSION_SECRET`, but a dedicated value is recommended.
 
 The existing Firestore service-account variables are also required:
 
@@ -59,6 +60,20 @@ Only password hashes and unique salts are synchronized. Plaintext passwords are 
 New or reset accounts can be marked `MustChangePassword`. Both desktop and web interfaces require the temporary password to be replaced before access is granted.
 
 Super Admins can use the web `Staff & Permissions` section to create, update, disable, reset or delete shared staff accounts. The system prevents deletion, deactivation or demotion of the final active Super Admin and records login/user-management activity in `staffSecurityAudit`.
+
+## Two-factor authentication
+
+Every staff member can open **Account & settings → Two-factor security** to add:
+
+- an authenticator app using a QR code or manual setup key;
+- a device passkey backed by fingerprint, face, device PIN or device password; and
+- ten single-use recovery codes, shown only when generated.
+
+Authenticator enrolment requires the current password. Authenticator secrets are encrypted with AES-GCM, recovery codes are stored only as keyed hashes, and login tickets expire after five minutes and five failed attempts. A successful password check does not create a staff session when a second factor is due. The session is issued only after the bound passkey, current authenticator code or an unused recovery code succeeds.
+
+Super Administrators manage the organisation policy in **Staff & Permissions → Two-factor policy**. Available modes are disabled, optional, required for selected roles and required for all staff. A changed required policy may have a 0–30 day grace period. After the deadline, an unenrolled targeted user must set up an authenticator app before entering the workspace. Administrator recovery reset requires the administrator's own current password, revokes all of the selected staff member's passkeys and codes, and is audit logged.
+
+The sensitive `staffMfaProfiles`, `staffMfaChallenges` and `staffPasskeys` collections are intentionally excluded from organisation backup/restore packages. Restoring credentials could otherwise reactivate old security methods. The policy itself remains in the normal settings backup.
 
 ## Current role access
 

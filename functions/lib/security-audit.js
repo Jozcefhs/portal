@@ -20,6 +20,7 @@ const ROUTE_MODULES = Object.freeze([
   ['/api/security-audit', 'Security audit'],
   ['/api/staff-session', 'Identity & access'],
   ['/api/staff-passkey', 'Identity & access'],
+  ['/api/staff-mfa', 'Identity & access'],
   ['/api/staff-users', 'Staff & permissions'],
   ['/api/staff-records', 'Records centre'],
   ['/api/staff-hr', 'Human Resources'],

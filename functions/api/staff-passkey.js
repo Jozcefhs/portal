@@ -27,6 +27,10 @@ import {
 } from '../lib/firestore.js';
 import { consumePasskeyAuthenticationOptionAllowance } from '../lib/login-protection.js';
 import { readJsonBody } from '../lib/request-security.js';
+import {
+  completeStaffMfaPasskeyLogin,
+  readStaffMfaLoginChallenge
+} from '../lib/staff-mfa.js';
 
 const encoder = new TextEncoder();
 const CEREMONY_SECONDS = 5 * 60;
@@ -101,6 +105,7 @@ async function saveCeremony(env, type, challenge, username = '', scope = {}) {
     RecordId: clean(scope.recordId),
     RecordType: lower(scope.recordType),
     DecisionAction: clean(scope.action),
+    MfaChallengeId: clean(scope.mfaChallengeId),
     CreatedAt: new Date(now).toISOString(),
     ExpiresAt: new Date(now + CEREMONY_SECONDS * 1000).toISOString()
   });
@@ -237,7 +242,15 @@ async function verifyRegistration(request, env, body) {
 }
 
 async function authenticationOptions(request, env, body) {
-  const allowance = await consumePasskeyAuthenticationOptionAllowance(env, body.username, request);
+  const mfaTicket = clean(body.mfaTicket);
+  const pendingMfa = mfaTicket ? await readStaffMfaLoginChallenge(env, mfaTicket) : null;
+  if (pendingMfa && !(pendingMfa.challenge.Methods || []).includes('passkey')) {
+    const error = new Error('Passkey verification is not available for this two-factor request.');
+    error.status = 400;
+    throw error;
+  }
+  const username = pendingMfa?.challenge?.Username || body.username;
+  const allowance = await consumePasskeyAuthenticationOptionAllowance(env, username, request);
   if (!allowance.allowed) {
     const error = new Error('Too many biometric sign-in requests. Please wait and try again.');
     error.status = 429;
@@ -245,14 +258,34 @@ async function authenticationOptions(request, env, body) {
     throw error;
   }
   const rp = relyingPartySettings(request, env);
+  const credentials = pendingMfa
+    ? (await userPasskeys(env, username)).filter((item) => isActive(item.Active))
+    : [];
+  if (pendingMfa && !credentials.length) {
+    const error = new Error('No active passkey is available for this staff account.');
+    error.status = 409;
+    throw error;
+  }
   const options = await generateAuthenticationOptions({
     rpID: rp.rpID,
+    ...(pendingMfa ? {
+      allowCredentials: credentials.map((item) => ({
+        id: item.CredentialId,
+        transports: Array.isArray(item.Transports) ? item.Transports : undefined
+      }))
+    } : {}),
     timeout: 60000,
     userVerification: 'required'
   });
   return response({
     ok: true,
-    ceremonyId: await saveCeremony(env, 'authentication', options.challenge),
+    ceremonyId: await saveCeremony(
+      env,
+      pendingMfa ? 'mfa-authentication' : 'authentication',
+      options.challenge,
+      username,
+      pendingMfa ? { mfaChallengeId: pendingMfa.id } : {}
+    ),
     options
   });
 }
@@ -325,10 +358,17 @@ async function attendanceOptions(request, env, body) {
 }
 
 async function verifyAuthentication(request, env, body) {
-  const ceremony = await consumeCeremony(env, body.ceremonyId, 'authentication');
+  const mfaTicket = clean(body.mfaTicket);
+  const pendingMfa = mfaTicket ? await readStaffMfaLoginChallenge(env, mfaTicket) : null;
+  const ceremony = await consumeCeremony(env, body.ceremonyId, pendingMfa ? 'mfa-authentication' : 'authentication');
+  if (pendingMfa && (clean(ceremony.MfaChallengeId) !== pendingMfa.id
+      || lower(ceremony.UsernameKey) !== lower(pendingMfa.challenge.UsernameKey))) {
+    return response({ ok: false, message: 'This passkey request does not match the pending two-factor sign-in.' }, 403);
+  }
   const credentialId = clean(body.credential?.id);
   const stored = credentialId ? await findOneByField(env, 'staffPasskeys', 'CredentialId', credentialId) : null;
-  if (!stored || !isActive(stored.Active)) {
+  if (!stored || !isActive(stored.Active)
+      || (pendingMfa && lower(stored.UsernameKey || stored.Username) !== lower(pendingMfa.challenge.UsernameKey))) {
     return response({ ok: false, message: 'Biometric sign-in was not recognized.' }, 401);
   }
   const rp = relyingPartySettings(request, env);
@@ -348,11 +388,21 @@ async function verifyAuthentication(request, env, body) {
   if (!verification.verified) {
     return response({ ok: false, message: 'Biometric sign-in could not be verified.' }, 401);
   }
+  await updateCredentialUsage(env, stored, verification.authenticationInfo.newCounter);
+  if (pendingMfa) {
+    const completed = await completeStaffMfaPasskeyLogin(env, mfaTicket, stored.Username);
+    return response({
+      ok: true,
+      authenticated: true,
+      message: 'Password and passkey verified.',
+      sessionToken: completed.sessionToken,
+      user: completed.user
+    }, 200, completed.sessionCookie);
+  }
   const user = await authenticateStaffPasskey(env, stored.Username);
   if (!user) {
     return response({ ok: false, message: 'This staff account is inactive or no longer exists.' }, 401);
   }
-  await updateCredentialUsage(env, stored, verification.authenticationInfo.newCounter);
   const access = await staffAccessFor(env, user);
   const token = await createStaffSession(env, user);
   return response({

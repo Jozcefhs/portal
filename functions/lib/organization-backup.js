@@ -23,6 +23,9 @@ const EXCLUDED_ROOT_COLLECTIONS = new Set([
   'requestIdempotency',
   'requestRateLimits',
   'staffLoginAttempts',
+  'staffMfaChallenges',
+  'staffMfaProfiles',
+  'staffPasskeys',
   'staffPasskeyChallenges',
   'staffPasskeyOptionAttempts',
   'applicationSubmissionClaims'

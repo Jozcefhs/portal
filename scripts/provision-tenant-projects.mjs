@@ -230,6 +230,7 @@ function deploymentVariables(projectId, serviceAccount, webConfig, privateKey) {
     WEBAUTHN_RP_ID: plain(`${projectId}.pages.dev`),
     BACKEND_SHARED_SECRET: secret(randomSecret()),
     STAFF_SESSION_SECRET: secret(randomSecret()),
+    MFA_ENCRYPTION_SECRET: secret(randomSecret()),
     PARENT_SESSION_SECRET: secret(randomSecret()),
     NOTIFICATION_SCHEDULER_SECRET: secret(randomSecret()),
     FACE_TEMPLATE_ENCRYPTION_KEY: secret(randomSecret())
