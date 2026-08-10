@@ -1,7 +1,7 @@
 {
-  "version": "3.0.1",
+  "version": "3.0.2",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/v3.0.1/Integrated_School_Management_Suite_Setup_v3.0.1.exe",
-  "sha256": "2fd4344713fcd42481d33d0043d536f5cd5e22f12d63231093ba29c6f40ad178",
-  "notes": "Dynamax Desktop v3.0.1 improves admission expiry consistency, form-purchase access, and synchronized operational records."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup.exe",
+  "sha256": "28ea2ec77c6e43bad662d09e172b60727472e64fa13d8d1c9ce7c25028a9d114",
+  "notes": "Dynamax Desktop v3.0.2 includes the current three-edition workspace, branch and subscription controls, protected backup and restore, and edition-correct finance terminology for school, church and other organisations."
 }
