@@ -154,7 +154,25 @@
   border-radius: 0;
   background: transparent;
 }
-.summary-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: #eaf2ff; color: var(--landing-blue); font-size: .64rem; font-weight: 900; letter-spacing: .04em; }
+.summary-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 9px;
+  background: #eaf2ff;
+  color: var(--landing-blue);
+  font-size: .64rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .04em;
+  line-height: 1;
+  text-align: center;
+}
 .landing-hero .service-summary strong { color: #153d67; font-size: .85rem; }
 .landing-hero .service-summary small { display: block; margin-top: 2px; color: #61758b; font-size: .69rem; line-height: 1.35; }
 
