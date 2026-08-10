@@ -341,5 +341,8 @@ test('public organisation registration stays aligned and legible in both themes'
   assert.match(css, /html\[data-theme="dark"\]\s+\.organisation-registration-card\s*\{[^}]*background:\s*#111e2e/s);
   assert.match(css, /html\[data-theme="dark"\]\s+\.organisation-registration-card\s+\.settings-field label/);
   assert.match(css, /html\[data-theme="dark"\]\s+\.plan-choice-card/);
-  assert.match(css, /@media \(max-width:\s*700px\)[\s\S]*?\.plan-choice-grid\s*\{[^}]*grid-auto-flow:\s*column[^}]*overflow-x:\s*auto/);
+  assert.match(html, /class="plan-mobile-hint">Swipe sideways to compare every plan/);
+  assert.match(html, /class="registration-actions full-width"/);
+  assert.match(css, /@media \(max-width:\s*700px\)[\s\S]*?\.plan-choice-grid\s*\{[^}]*grid-auto-flow:\s*column[^}]*grid-auto-columns:\s*100%[^}]*overflow-x:\s*auto[^}]*scrollbar-width:\s*none/);
+  assert.match(css, /@media \(max-width:\s*700px\)[\s\S]*?\.organisation-registration-card\s+\.settings-fields\s*\{[^}]*gap:\s*\.8rem/);
 });

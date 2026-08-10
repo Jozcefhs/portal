@@ -7,7 +7,7 @@
   <title>Register your organisation — Dynamax</title>
   <link rel="icon" href="images/Logo.png">
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260809-opaque-account-panel-v2">
+  <link rel="stylesheet" href="css/style.css?v=20260810-mobile-registration-v1">
 </head>
 <body class="auth-page">
   <main class="auth-shell">
@@ -33,6 +33,7 @@
             <!--button type="button" id="downloadPricingBook" class="plan-book-download">Download pricing book (PDF)</button-->
           </div>
           <section class="plan-book-spread" aria-label="Pricing plan book">
+            <p class="plan-mobile-hint">Swipe sideways to compare every plan.</p>
             <div class="plan-choice-grid" id="planChoiceGrid" aria-live="polite">
               <p class="muted">Loading current plans and pricing...</p>
             </div>
@@ -45,7 +46,7 @@
           </section>
         </div>
         <label class="inline-check full-width"><input type="checkbox" name="Consent" value="YES" required> I confirm that I am authorised to register this organisation.</label>
-        <button type="submit">Submit registration</button><a class="settings-link" href="index.html">Back to Dynamax</a>
+        <div class="registration-actions full-width"><button type="submit">Submit registration</button><a class="settings-link" href="index.html">Back to Dynamax</a></div>
         <p id="organisationRegistrationStatus" class="status full-width" aria-live="polite"></p>
       </form>
     </section>

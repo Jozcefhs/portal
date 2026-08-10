@@ -2092,6 +2092,7 @@ html[data-theme="dark"] .department-member-onboarding strong { color: #75dfbf; }
 .plan-book-download:hover { background: #0f56b4; }
 .plan-book-spread { position: relative; padding: 1rem; border-radius: 20px; border: 1px solid #d8e1ec; background: radial-gradient(circle at 15% 15%, #ffffffcc, #f4f7ff 42%, #eef3ff 78%); box-shadow: 0 18px 44px #0d234915; }
 .plan-book-spread::before { content: ""; position: absolute; inset: .65rem; border: 1px dashed #cad6ea; border-radius: 16px; pointer-events: none; }
+.plan-mobile-hint { display: none; }
 .billing-cycle-toggle { display: inline-flex; width: fit-content; margin: 0; padding: 3px; border: 1px solid #cbd8e6; border-radius: 999px; background: #edf3f8; }
 .billing-cycle-toggle label { margin: 0; cursor: pointer; }
 .billing-cycle-toggle input { position: absolute; width: 1px; height: 1px; opacity: 0; }
@@ -2130,6 +2131,9 @@ html[data-theme="dark"] .department-member-onboarding strong { color: #75dfbf; }
 .organisation-registration-card .inline-check input { width: auto; min-height: 0; }
 .organisation-registration-card button[type="submit"],
 .organisation-registration-card .settings-link { width: fit-content; justify-self: start; }
+.registration-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem; }
+.registration-actions button,
+.registration-actions .settings-link { margin: 0; }
 .activation-card { max-width: 780px; }
 .activation-summary { margin: 0 0 1rem; padding: .8rem 1rem; border: 1px solid #b9ded5; border-radius: 12px; background: #effaf7; }
 .activation-summary dl { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: .65rem 1rem; margin: 0; }
@@ -2192,22 +2196,41 @@ html[data-theme="dark"] .onboarding-progress li.is-complete { border-color: #315
 html[data-theme="dark"] .onboarding-progress li.is-complete > span { background: #21a890; color: #fff; }
 @media (max-width: 700px) {
   .auth-page { padding-bottom: 0; }
-  .auth-page .auth-shell { place-items: start center; padding: .75rem; }
-  .organisation-registration-card { width: 100%; padding: 1rem; }
-  .registration-brand { display: grid; grid-template-columns: 52px minmax(0,1fr); align-items: start; gap: .75rem; margin-bottom: 1rem; }
-  .registration-brand img { width: 52px; height: 52px; }
-  .registration-brand h1 { font-size: 24px; }
-  .registration-brand > div > p:last-child { font-size: 13px; line-height: 1.4; }
-  .plan-choice-grid { grid-auto-flow: column; grid-auto-columns: minmax(190px,78vw); grid-template-columns: none; overflow-x: auto; padding: 2px 2px .55rem; scroll-snap-type: x proximity; }
+  .auth-page .auth-shell { place-items: start center; padding: .5rem; }
+  .organisation-registration-card { width: 100%; padding: .8rem; border-radius: 14px; }
+  .organisation-registration-card .settings-fields { gap: .8rem; }
+  .organisation-registration-card .settings-field label { margin-bottom: .28rem; font-size: 12px; }
+  .organisation-registration-card .settings-field input,
+  .organisation-registration-card .settings-field select { min-height: 41px; padding: .5rem .65rem; }
+  .registration-brand { display: grid; grid-template-columns: 46px minmax(0,1fr); align-items: start; gap: .65rem; margin-bottom: .8rem; }
+  .registration-brand img { width: 46px; height: 46px; }
+  .registration-brand h1 { font-size: 22px; line-height: 1.05; }
+  .registration-brand > div > p:last-child { font-size: 12px; line-height: 1.35; }
+  .plan-selection-help { font-size: 12px; line-height: 1.4; }
+  .plan-book-spread { padding: .65rem; border-radius: 15px; box-shadow: 0 10px 24px #0d234912; }
+  .plan-book-spread::before { inset: .4rem; border-radius: 12px; }
+  .plan-mobile-hint { position: relative; z-index: 1; display: block; margin: 0 0 .45rem; color: #53677e; font-size: 11px; font-weight: 750; }
+  .plan-choice-grid { grid-auto-flow: column; grid-auto-columns: 100%; grid-template-columns: none; gap: .55rem; overflow-x: auto; padding: 2px; scroll-snap-type: x mandatory; overscroll-behavior-x: contain; scrollbar-width: none; }
+  .plan-choice-grid::-webkit-scrollbar { display: none; }
   .plan-choice-card { scroll-snap-align: start; }
+  .plan-choice-main { min-height: 112px; padding: .7rem .7rem .7rem 2.65rem; }
+  .plan-choice-main strong { font-size: 15px; }
+  .plan-choice-main small { min-height: 0; font-size: 11px; }
+  .plan-choice-main b { font-size: 14px; }
+  .plan-comparison-details { margin-top: .55rem; }
+  .plan-comparison-details > summary { margin: .55rem .65rem; font-size: 12px; }
   .plan-book-toolbar { align-items: flex-start; flex-direction: column; }
   .plan-book-download { width: 100%; }
+  .organisation-registration-card .inline-check { margin: .15rem 0; font-size: 12px; line-height: 1.35; }
+  .registration-actions { gap: .5rem; }
+  .registration-actions button,
+  .registration-actions .settings-link { min-height: 38px; padding: .5rem .7rem; font-size: 12px; }
   .activation-summary dl { grid-template-columns: 1fr; }
 }
 @media (max-width: 430px) {
-  .registration-brand { grid-template-columns: 44px minmax(0,1fr); gap: .65rem; }
-  .registration-brand img { width: 44px; height: 44px; }
-  .registration-brand h1 { font-size: 22px; }
+  .registration-brand { grid-template-columns: 42px minmax(0,1fr); gap: .55rem; }
+  .registration-brand img { width: 42px; height: 42px; }
+  .registration-brand h1 { font-size: 20px; }
   .plan-selection-heading { align-items: flex-start; flex-direction: column; gap: .5rem; }
   .plan-choice-main { min-height: 0; }
 }
