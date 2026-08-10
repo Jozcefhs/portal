@@ -80,12 +80,20 @@ test('mobile welcome heading uses the reduced type scale', () => {
   assert.match(portalCss, /@media \(max-width:380px\)\{[\s\S]*?\.staff-page \.staff-welcome h1\{font-size:19px\}/);
 });
 
-test('mobile summary cards are equal, centered, legible, and color coded', () => {
-  assert.match(portalCss, /\.staff-page \.staff-summary>div\{[\s\S]*?flex:0 0 144px;[\s\S]*?width:144px;[\s\S]*?height:98px;/);
+test('mobile summary cards resize to fit their contents and remain centered and color coded', () => {
+  assert.match(portalCss, /\.staff-page \.staff-summary>div\{[\s\S]*?flex:0 0 auto;[\s\S]*?width:max-content;[\s\S]*?min-width:128px;[\s\S]*?max-width:none;/);
+  assert.match(portalCss, /\.staff-page \.staff-summary>div strong,[\s\S]*?\.staff-page \.staff-summary>div small\{white-space:nowrap\}/);
+  assert.match(portalCss, /\.staff-page \.staff-summary \.student-summary-card\{[\s\S]*?flex-basis:auto;[\s\S]*?width:max-content;[\s\S]*?min-width:max-content;[\s\S]*?max-width:none/);
   assert.match(portalCss, /\.staff-page \.staff-summary>div\{[\s\S]*?align-items:center;[\s\S]*?justify-content:center;[\s\S]*?text-align:center;/);
   assert.match(portalCss, /\.staff-page \.staff-summary>div:nth-child\(4n\+2\)\{background:linear-gradient/);
   assert.match(portalCss, /\.staff-page \.staff-summary>div:nth-child\(4n\+3\)\{background:linear-gradient/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.staff-page \.staff-summary>div[\s\S]*?\{color:#fff\}/);
+});
+
+test('School Insights refresh becomes an accessible icon button on mobile', () => {
+  assert.match(adminJs, /id="refreshSchoolInsights" class="school-insights-refresh" aria-label="Refresh School Insights" title="Refresh School Insights"/);
+  assert.match(adminJs, /class="school-insights-refresh-icon" aria-hidden="true">&#8635;<\/span>/);
+  assert.match(portalCss, /@media \(max-width:680px\)\{[\s\S]*?\.school-insights-refresh\{flex:0 0 38px;width:38px;min-width:38px;max-width:38px;height:38px;[\s\S]*?\.school-insights-refresh-label\{display:none\}/);
 });
 
 test('summary-card contents are centered on desktop as well as mobile', () => {

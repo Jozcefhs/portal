@@ -777,12 +777,12 @@ html[data-theme="dark"] .material-entry-table output{color:#fff}
   .staff-page .staff-summary{margin:12px 0 10px}
   .staff-page .staff-summary>div{
     display:flex;
-    flex:0 0 144px;
-    width:144px;
-    height:98px;
-    min-width:144px;
+    flex:0 0 auto;
+    width:max-content;
+    height:auto;
+    min-width:128px;
     min-height:98px;
-    max-width:144px;
+    max-width:none;
     padding:12px;
     align-items:center;
     justify-content:center;
@@ -800,14 +800,17 @@ html[data-theme="dark"] .material-entry-table output{color:#fff}
   .staff-page .staff-summary>div small,
   .staff-page .staff-summary>div small b{color:#fff}
   .staff-page .staff-summary>div strong{font-size:24px;line-height:1}
-  .staff-page .staff-summary>div span{max-width:100%;margin-top:9px;line-height:1.25}
+  .staff-page .staff-summary>div strong,
+  .staff-page .staff-summary>div span,
+  .staff-page .staff-summary>div small{white-space:nowrap}
+  .staff-page .staff-summary>div span{max-width:none;margin-top:9px;line-height:1.25}
   .staff-page .staff-summary .student-summary-card{
-    flex-basis:144px;
-    width:144px;
-    min-width:144px;
-    max-width:144px;
+    flex-basis:auto;
+    width:max-content;
+    min-width:max-content;
+    max-width:none;
   }
-  .staff-page .student-summary-card small{flex-wrap:wrap;line-height:1.15}
+  .staff-page .student-summary-card small{flex-wrap:nowrap;line-height:1.15}
   html[data-theme="dark"] .staff-page .staff-summary>div,
   html[data-theme="dark"] .staff-page .staff-summary>div strong,
   html[data-theme="dark"] .staff-page .staff-summary>div span,
@@ -1052,6 +1055,17 @@ html[data-theme="dark"] .income-legend>div{border-color:#2c4055}
   .staff-shell,.staff-dashboard,.staff-app-layout,.staff-main-content,.staff-panel{display:block!important;width:100%!important;max-width:none!important;margin:0!important;padding:0!important;border:0!important;box-shadow:none!important}
   .income-analytics{gap:10px}.income-chart-card,.income-distribution-card,.income-transactions{break-inside:avoid;border-color:#bdcad8}
   .income-bar-chart{grid-template-columns:repeat(var(--income-buckets),minmax(0,1fr));overflow:visible;height:220px}.income-bar-item{min-width:0}.income-transactions .admin-table-wrap{max-height:none;overflow:visible}
+}
+
+/* School Insights keeps its action compact and lets mobile summary cards fit their values. */
+.school-insights-refresh{display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:0 0 auto;width:max-content;margin:0}
+.school-insights-refresh-icon{font-size:19px;line-height:1}
+.school-insights-refresh.is-loading .school-insights-refresh-icon{display:none}
+@media (max-width:680px){
+  .workflow-ledger-heading{align-items:flex-start}
+  .school-insights-refresh{flex:0 0 38px;width:38px;min-width:38px;max-width:38px;height:38px;min-height:38px;padding:0;border-radius:50%}
+  .school-insights-refresh-label{display:none}
+  .dashboard-charts>article{width:auto;min-width:0;max-width:none;height:auto}
 }
 
 /* Staff two-factor authentication and organisation enforcement policy. */

@@ -9127,7 +9127,10 @@ function renderSchoolInsights() {
   panelEl.innerHTML = `
     <div class="workflow-ledger-heading">
       <div><p class="eyebrow">School operations</p><h2>School Insights</h2><p class="muted">Enrolment and fee-payment information for ${escapeHtml(branchName)}. Figures load only when this workspace is opened.</p></div>
-      <button type="button" id="refreshSchoolInsights">Refresh</button>
+      <button type="button" id="refreshSchoolInsights" class="school-insights-refresh" aria-label="Refresh School Insights" title="Refresh School Insights">
+        <span class="school-insights-refresh-icon" aria-hidden="true">&#8635;</span>
+        <span class="school-insights-refresh-label">Refresh</span>
+      </button>
     </div>
     <section class="dashboard-charts" aria-label="School enrolment and fee charts">${schoolInsightChartCards(dashboardData?.charts || {})}</section>
     ${table('Top 10 Fee-Payment Defaulters', defaulters, [
@@ -9141,11 +9144,20 @@ function renderSchoolInsights() {
     ])}`;
   document.getElementById('refreshSchoolInsights')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
-    setButtonLoading(button, true, 'Refreshing...', 'Refresh');
+    const label = button.querySelector('.school-insights-refresh-label');
+    button.disabled = true;
+    button.classList.add('is-loading');
+    button.setAttribute('aria-busy', 'true');
+    if (label) label.textContent = 'Refreshing...';
     try {
       await loadDashboard({ mode: 'section', section: 'schoolInsights', merge: true });
     } finally {
-      if (button.isConnected) setButtonLoading(button, false, 'Refreshing...', 'Refresh');
+      if (button.isConnected) {
+        button.disabled = false;
+        button.classList.remove('is-loading');
+        button.removeAttribute('aria-busy');
+        if (label) label.textContent = 'Refresh';
+      }
     }
   });
 }
