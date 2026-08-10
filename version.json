@@ -1,7 +1,7 @@
 {
-  "version": "3.0.2",
+  "version": "3.0.3",
   "channel": "stable",
   "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup.exe",
-  "sha256": "754f622ec4354c8b88643d1ca8ca5fe6aa2d8d6b63b97429b35d6fc43b6afc54",
-  "notes": "Dynamax Desktop v3.0.2 includes the current three-edition workspace and a permission-safe per-user desktop shortcut that prevents Public Desktop access failures during installation."
+  "sha256": "bee94477506f50110e93c03541cf05e540470cf9ed1761bc795585e5468423f4",
+  "notes": "Dynamax Desktop v3.0.3 restores installed-app HTTPS connectivity with a verified bundled TLS CA certificate and clean-build release safeguards."
 }
