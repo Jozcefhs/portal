@@ -1,7 +1,7 @@
 {
-  "version": "3.0.3",
+  "version": "3.0.4",
   "channel": "stable",
   "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup.exe",
-  "sha256": "bee94477506f50110e93c03541cf05e540470cf9ed1761bc795585e5468423f4",
-  "notes": "Dynamax Desktop v3.0.3 restores installed-app HTTPS connectivity with a verified bundled TLS CA certificate and clean-build release safeguards."
+  "sha256": "d58757c7152a4ac562ad0c769c79e69d1073fb7de91a2c28b4ad51c8148e0ef2",
+  "notes": "Dynamax Desktop v3.0.4 automatically selects the sole matching student in Student Conduct searches while retaining the verified TLS and clean-build release safeguards."
 }
