@@ -101,10 +101,11 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v170-mobile-content-cards/);
+  assert.match(serviceWorker, /dynamax-v171-fast-face-capture/);
   assert.match(serviceWorker, /'\/css\/school-landing\.css'/);
   assert.match(serviceWorker, /'\/css\/guest-fee-payment\.css'/);
   assert.match(serviceWorker, /'\/js\/app-dialogs\.js'/);
+  assert.match(serviceWorker, /'\/js\/student-face-lookup\.js'/);
   assert.match(serviceWorker, /'\/setup\.html'/);
   assert.match(serviceWorker, /'\/js\/setup\.js'/);
   assert.match(serviceWorker, /'\/js\/financial-values\.js'/);

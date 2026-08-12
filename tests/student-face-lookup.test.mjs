@@ -315,10 +315,10 @@ test('the endpoint stores only encrypted templates, supports deletion, audits us
 
 test('the browser UI keeps frames on-device, requires a live blink and always stops camera tracks', () => {
   assert.match(uiSource, /navigator\.mediaDevices\.getUserMedia/);
-  assert.match(uiSource, /human\.detect\(video\)/);
-  assert.match(uiSource, /closedEyesSeen && !blinking/);
+  assert.match(uiSource, /human\.detect\(video, \{[\s\S]*?description: \{ enabled: blinkConfirmed \}/);
+  assert.match(uiSource, /closedEyesSeen && blink\.open/);
   assert.match(uiSource, /faces\.length !== 1/);
-  assert.match(uiSource, /faceIsCentered\(face, video\)/);
+  assert.match(uiSource, /captureReadiness\(face, video\)/);
   assert.match(uiSource, /getTracks\?\.\(\)\.forEach\(\(track\) => track\.stop\(\)\)/);
   assert.match(uiSource, /dialog\.addEventListener\('close', \(\) => \{[\s\S]*?stopCamera\(video\)/);
   assert.match(uiSource, /stopCamera\(video\);[\s\S]*?faceLookupRequest\('match'/);
@@ -326,6 +326,37 @@ test('the browser UI keeps frames on-device, requires a live blink and always st
     uiSource,
     /localStorage|sessionStorage|indexedDB|toDataURL|toBlob|FormData/
   );
+});
+
+test('the capture pipeline keeps enrollment strong while making routine checks fast and guided', () => {
+  assert.match(uiSource, /const ENROLLMENT_SAMPLE_COUNT = 3/);
+  assert.match(uiSource, /const ROUTINE_SAMPLE_COUNT = 1/);
+  assert.doesNotMatch(uiSource, /ATTENDANCE_VERIFY_SAMPLE_COUNT = 2/);
+  assert.match(uiSource, /warmup: 'face'/);
+  assert.match(uiSource, /cacheModels: true/);
+  assert.match(uiSource, /iris: \{ enabled: false/);
+  assert.match(uiSource, /const sampleCount = mode === 'enroll' \? ENROLLMENT_SAMPLE_COUNT : ROUTINE_SAMPLE_COUNT/);
+  assert.match(uiSource, /captureDescriptor\(dialog, human, sampleCount\)/);
+  assert.match(uiSource, /sampleCount: ENROLLMENT_SAMPLE_COUNT/);
+  assert.match(uiSource, /Move closer to the camera\./);
+  assert.match(uiSource, /Improve the lighting and hold the phone steady\./);
+  assert.match(uiSource, /Move your face toward the centre of the oval\./);
+  assert.match(uiSource, /Blink detected\. Open your eyes and hold still\./);
+  assert.match(uiSource, /You can try again without reopening the camera\./);
+});
+
+test('eligible Records Desk sessions prepare the model during idle time without opening the camera', () => {
+  assert.match(adminSource, /function preloadRecordsDeskFaceRecognition\(\)/);
+  assert.match(adminSource, /recordsDeskFaceLookupAllowed\(\)/);
+  assert.match(adminSource, /requestIdleCallback/);
+  assert.match(adminSource, /window\.setTimeout\(preload, 300\)/);
+  assert.match(adminSource, /preloadFaceRecognitionModel\(\)/);
+  assert.match(adminSource, /student-face-lookup\.js\?v=20260812-fast-face-capture/);
+  const preloaderStart = uiSource.indexOf('export function preloadFaceRecognitionModel');
+  const preloaderEnd = uiSource.indexOf('async function startCamera', preloaderStart);
+  const preloaderSource = uiSource.slice(preloaderStart, preloaderEnd);
+  assert.match(preloaderSource, /createHuman\(\)/);
+  assert.doesNotMatch(preloaderSource, /getUserMedia|openStudentFaceLookup/);
 });
 
 test('lookup and enrollment are explicitly initiated without consent fields, and a human confirms every match', () => {

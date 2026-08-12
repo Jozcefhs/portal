@@ -2903,7 +2903,12 @@ html[data-theme="dark"] .student-conduct-summary{scrollbar-color:#526d82 transpa
   border-radius:48% 48% 44% 44%;
   box-shadow:0 0 0 999px rgba(2,15,27,.22),0 0 20px rgba(68,223,180,.2);
   pointer-events:none;
+  transition:border-color .18s ease,box-shadow .18s ease;
 }
+.student-face-guide.is-searching{border-color:rgba(158,194,222,.9);box-shadow:0 0 0 999px rgba(2,15,27,.3),0 0 18px rgba(143,187,222,.16)}
+.student-face-guide.is-warning{border-color:rgba(255,194,80,.96);box-shadow:0 0 0 999px rgba(2,15,27,.28),0 0 22px rgba(255,178,43,.3)}
+.student-face-guide.is-ready{border-color:rgba(101,244,194,.98);box-shadow:0 0 0 999px rgba(2,15,27,.22),0 0 24px rgba(68,223,180,.36)}
+.student-face-guide.is-capture{border-color:#56a9ff;box-shadow:0 0 0 999px rgba(2,15,27,.2),0 0 26px rgba(60,157,255,.46)}
 .student-face-camera>p{
   position:absolute;
   right:12px;

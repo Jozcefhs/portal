@@ -118,6 +118,8 @@ let recordsDeskRequest = 0;
 let recordsDeskSearchTimer = 0;
 let recordsDeskAbortController = null;
 let recordsDeskHandoffContext = null;
+let recordsDeskFacePreloadPromise = null;
+let recordsDeskFacePreloadScheduled = false;
 let executiveOfficeData = null;
 let executiveOfficeTab = 'overview';
 let executiveDirectoryType = '';
@@ -7746,9 +7748,27 @@ function recordsDeskFaceLookupAllowed() {
     recordsDeskState.availableTypes.includes('students');
 }
 
+function preloadRecordsDeskFaceRecognition() {
+  if (!recordsDeskFaceLookupAllowed() || recordsDeskFacePreloadPromise || recordsDeskFacePreloadScheduled) return;
+  recordsDeskFacePreloadScheduled = true;
+  const preload = () => {
+    recordsDeskFacePreloadScheduled = false;
+    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260812-fast-face-capture')
+      .then((module) => module.preloadFaceRecognitionModel())
+      .catch(() => {
+        recordsDeskFacePreloadPromise = null;
+      });
+  };
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(preload, { timeout: 2000 });
+  } else {
+    window.setTimeout(preload, 300);
+  }
+}
+
 async function openRecordsDeskFaceLookup(options = {}) {
   try {
-    const module = await import('./student-face-lookup.js?v=20260809-custom-dialogs');
+    const module = await import('./student-face-lookup.js?v=20260812-fast-face-capture');
     await module.openStudentFaceLookup(options);
   } catch (failure) {
     recordsDeskState.error = failure.message || String(failure);
@@ -7855,6 +7875,7 @@ function renderRecordsDesk() {
     <article class="records-desk-detail-pane" aria-live="polite">${renderRecordsDeskDetail(recordsDeskState.detail)}</article>
   </section>`;
   bindRecordsDeskEvents();
+  preloadRecordsDeskFaceRecognition();
   renderModuleSummary('recordsDesk', recordsDeskState);
 }
 
