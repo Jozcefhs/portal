@@ -1,6 +1,6 @@
 (function () {
   const KEY = 'digc-suite-preferences';
-  const defaults = { theme: 'system', accent: 'blue', largeText: false, compact: false, reduceMotion: false, biometric: false };
+  const defaults = { theme: 'system', accent: 'blue', largeText: false, compact: false, reduceMotion: false, biometric: false, faceAudioGuidance: true };
 
   function read() {
     try {

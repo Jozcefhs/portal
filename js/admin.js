@@ -7753,7 +7753,7 @@ function preloadRecordsDeskFaceRecognition() {
   recordsDeskFacePreloadScheduled = true;
   const preload = () => {
     recordsDeskFacePreloadScheduled = false;
-    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260812-fast-face-capture')
+    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260812-audio-face-guidance')
       .then((module) => module.preloadFaceRecognitionModel())
       .catch(() => {
         recordsDeskFacePreloadPromise = null;
@@ -7768,7 +7768,7 @@ function preloadRecordsDeskFaceRecognition() {
 
 async function openRecordsDeskFaceLookup(options = {}) {
   try {
-    const module = await import('./student-face-lookup.js?v=20260812-fast-face-capture');
+    const module = await import('./student-face-lookup.js?v=20260812-audio-face-guidance');
     await module.openStudentFaceLookup(options);
   } catch (failure) {
     recordsDeskState.error = failure.message || String(failure);

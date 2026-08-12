@@ -3,10 +3,12 @@ const DESCRIPTOR_LENGTH = 1024;
 const ENROLLMENT_SAMPLE_COUNT = 3;
 const ROUTINE_SAMPLE_COUNT = 1;
 const CAPTURE_TIMEOUT_MS = 30000;
+const SPOKEN_GUIDANCE_DELAY_MS = 220;
 
 let humanInstancePromise = null;
 let activeStream = null;
 let activeDialog = null;
+const audioGuidanceStates = new WeakMap();
 
 const clean = (value) => String(value ?? '').trim();
 const escapeHtml = (value) => clean(value)
@@ -16,11 +18,115 @@ const escapeHtml = (value) => clean(value)
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&#39;');
 
+function audioGuidanceSupported() {
+  return 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
+}
+
+function audioGuidanceEnabled() {
+  return audioGuidanceSupported() && window.DIGCPreferences?.read?.().faceAudioGuidance !== false;
+}
+
+function saveAudioGuidancePreference(enabled) {
+  const preferences = window.DIGCPreferences?.read?.();
+  if (preferences && window.DIGCPreferences?.save) {
+    window.DIGCPreferences.save({ ...preferences, faceAudioGuidance: Boolean(enabled) });
+  }
+}
+
+function audioGuidanceState(dialog) {
+  if (!audioGuidanceStates.has(dialog)) {
+    audioGuidanceStates.set(dialog, { timer: 0, lastMessage: '', pendingMessage: '', utterance: null });
+  }
+  return audioGuidanceStates.get(dialog);
+}
+
+function stopAudioGuidance(dialog) {
+  const state = audioGuidanceStates.get(dialog);
+  if (state?.timer) window.clearTimeout(state.timer);
+  if (state) {
+    state.timer = 0;
+    state.pendingMessage = '';
+    state.utterance = null;
+  }
+  if (audioGuidanceSupported()) window.speechSynthesis.cancel();
+  audioGuidanceStates.delete(dialog);
+}
+
+function speakGuidance(dialog, message, { immediate = false, force = false } = {}) {
+  const spokenMessage = clean(message);
+  if (!dialog?.open || !spokenMessage || !audioGuidanceEnabled()) return;
+  const state = audioGuidanceState(dialog);
+  if (!force && (state.lastMessage === spokenMessage || state.pendingMessage === spokenMessage)) return;
+  if (state.timer) window.clearTimeout(state.timer);
+  state.pendingMessage = spokenMessage;
+  const speak = () => {
+    state.timer = 0;
+    state.pendingMessage = '';
+    if (!dialog.open || !audioGuidanceEnabled() || (!force && state.lastMessage === spokenMessage)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new window.SpeechSynthesisUtterance(spokenMessage);
+    utterance.lang = document.documentElement.lang || navigator.language || 'en-NG';
+    utterance.rate = 0.96;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+    state.lastMessage = spokenMessage;
+    state.utterance = utterance;
+    utterance.addEventListener('end', () => {
+      if (state.utterance === utterance) state.utterance = null;
+    }, { once: true });
+    utterance.addEventListener('error', () => {
+      if (state.utterance === utterance) state.utterance = null;
+    }, { once: true });
+    window.speechSynthesis.speak(utterance);
+  };
+  state.timer = window.setTimeout(speak, immediate ? 0 : SPOKEN_GUIDANCE_DELAY_MS);
+}
+
+function updateAudioGuidanceButton(dialog) {
+  const button = dialog?.querySelector('[data-face-audio]');
+  if (!button) return;
+  const supported = audioGuidanceSupported();
+  const enabled = audioGuidanceEnabled();
+  button.disabled = !supported;
+  button.setAttribute('aria-pressed', String(enabled));
+  button.title = supported
+    ? (enabled ? 'Turn spoken camera instructions off' : 'Turn spoken camera instructions on')
+    : 'Spoken instructions are not supported by this browser';
+  button.querySelector('[data-face-audio-icon]').textContent = supported && enabled ? '🔊' : '🔇';
+  button.querySelector('[data-face-audio-label]').textContent = supported
+    ? `Audio guidance ${enabled ? 'on' : 'off'}`
+    : 'Audio unavailable';
+}
+
+function initializeAudioGuidance(dialog) {
+  updateAudioGuidanceButton(dialog);
+  dialog?.querySelector('[data-face-audio]')?.addEventListener('click', () => {
+    if (!audioGuidanceSupported()) return;
+    const enabled = !audioGuidanceEnabled();
+    saveAudioGuidancePreference(enabled);
+    stopAudioGuidance(dialog);
+    updateAudioGuidanceButton(dialog);
+    if (enabled) {
+      const currentInstruction = dialog.querySelector('[data-face-overlay]')?.textContent ||
+        dialog.querySelector('[data-face-status]')?.textContent ||
+        'Audio guidance is on.';
+      speakGuidance(dialog, currentInstruction, { immediate: true, force: true });
+    }
+  });
+}
+
 function setStatus(dialog, message, tone = '') {
   const element = dialog?.querySelector('[data-face-status]');
   if (!element) return;
+  const normalizedMessage = clean(message);
   element.className = `student-face-status${tone ? ` ${tone}` : ''}`;
-  element.textContent = clean(message);
+  element.textContent = normalizedMessage;
+  const overlay = dialog.querySelector('[data-face-overlay]');
+  if (overlay) {
+    overlay.className = `student-face-live-guidance${tone ? ` ${tone}` : ''}`;
+    overlay.textContent = normalizedMessage;
+  }
+  speakGuidance(dialog, normalizedMessage);
 }
 
 function setGuideState(dialog, state = 'searching') {
@@ -343,10 +449,11 @@ function dialogMarkup(mode, student = {}) {
     <div class="student-face-camera">
       <video data-face-video playsinline muted aria-label="Live student face camera preview"></video>
       <div class="student-face-guide is-searching" aria-hidden="true"></div>
-      <p>Keep one face centred and blink once when prompted.</p>
+      <button type="button" class="student-face-audio-toggle" data-face-audio aria-pressed="true"><span data-face-audio-icon aria-hidden="true">🔊</span><span data-face-audio-label>Audio guidance on</span></button>
+      <p class="student-face-live-guidance" data-face-overlay aria-hidden="true">Keep one face centred and blink once when prompted.</p>
     </div>
     <progress data-face-progress value="0" max="${sampleCount}" hidden></progress>
-    <p class="student-face-status" data-face-status>Checking whether this school and staff account can use face lookup...</p>
+    <p class="student-face-status" data-face-status role="status" aria-live="polite" aria-atomic="true">Checking whether this school and staff account can use face lookup...</p>
     <div class="student-face-match" data-face-match hidden></div>
     <footer>
       <button type="button" class="secondary" data-face-start disabled>Start camera</button>
@@ -387,6 +494,7 @@ export async function openStudentFaceLookup(options = {}) {
   const studentId = clean(options.student?.id || options.student?.AccountRef || options.student?.studentId);
   const branchId = clean(options.student?.branchId || options.student?.BranchId);
   let status = null;
+  initializeAudioGuidance(dialog);
 
   const close = () => {
     stopCamera(video);
@@ -398,6 +506,7 @@ export async function openStudentFaceLookup(options = {}) {
     close();
   });
   dialog.addEventListener('close', () => {
+    stopAudioGuidance(dialog);
     stopCamera(video);
     dialog.remove();
     if (activeDialog === dialog) activeDialog = null;
@@ -541,10 +650,11 @@ function attendanceFaceDialogMarkup(mode) {
     <div class="student-face-camera">
       <video data-face-video playsinline muted aria-label="Live staff face camera preview"></video>
       <div class="student-face-guide is-searching" aria-hidden="true"></div>
-      <p>Keep one face centred and blink once when prompted.</p>
+      <button type="button" class="student-face-audio-toggle" data-face-audio aria-pressed="true"><span data-face-audio-icon aria-hidden="true">🔊</span><span data-face-audio-label>Audio guidance on</span></button>
+      <p class="student-face-live-guidance" data-face-overlay aria-hidden="true">Keep one face centred and blink once when prompted.</p>
     </div>
     <progress data-face-progress value="0" max="${sampleCount}" hidden></progress>
-    <p class="student-face-status" data-face-status>Ready to open the camera.</p>
+    <p class="student-face-status" data-face-status role="status" aria-live="polite" aria-atomic="true">Ready to open the camera.</p>
     <footer>
       <button type="button" class="secondary" data-face-start>Start camera</button>
       <button type="button" data-face-capture disabled>${enrollment ? 'Save enrollment' : 'Verify and continue'}</button>
@@ -566,6 +676,7 @@ export function captureStaffAttendanceFace(options = {}) {
   let settled = false;
   let preparing = false;
   let capturing = false;
+  initializeAudioGuidance(dialog);
 
   return new Promise((resolve, reject) => {
     const finish = (value, error = null) => {
@@ -582,6 +693,7 @@ export function captureStaffAttendanceFace(options = {}) {
       cancel();
     });
     dialog.addEventListener('close', () => {
+      stopAudioGuidance(dialog);
       stopCamera(video);
       dialog.remove();
       if (activeDialog === dialog) activeDialog = null;

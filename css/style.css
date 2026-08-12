@@ -2909,21 +2909,51 @@ html[data-theme="dark"] .student-conduct-summary{scrollbar-color:#526d82 transpa
 .student-face-guide.is-warning{border-color:rgba(255,194,80,.96);box-shadow:0 0 0 999px rgba(2,15,27,.28),0 0 22px rgba(255,178,43,.3)}
 .student-face-guide.is-ready{border-color:rgba(101,244,194,.98);box-shadow:0 0 0 999px rgba(2,15,27,.22),0 0 24px rgba(68,223,180,.36)}
 .student-face-guide.is-capture{border-color:#56a9ff;box-shadow:0 0 0 999px rgba(2,15,27,.2),0 0 26px rgba(60,157,255,.46)}
-.student-face-camera>p{
+.student-face-live-guidance{
   position:absolute;
   right:12px;
   bottom:10px;
   left:12px;
-  width:fit-content;
+  z-index:3;
+  width:min(94%,520px);
   margin:0 auto;
-  padding:5px 9px;
-  border-radius:999px;
-  background:rgba(3,17,29,.76);
-  color:#f0fff9;
-  font-size:9px;
+  padding:8px 12px;
+  border:1px solid rgba(255,255,255,.2);
+  border-radius:10px;
+  background:rgba(3,17,29,.9);
+  box-shadow:0 5px 18px rgba(0,0,0,.24);
+  color:#fff;
+  font-size:12px;
+  font-weight:750;
+  line-height:1.35;
   text-align:center;
   pointer-events:none;
 }
+.student-face-live-guidance.good{border-color:rgba(101,244,194,.7);background:rgba(5,78,66,.92)}
+.student-face-live-guidance.warn{border-color:rgba(255,194,80,.76);background:rgba(91,61,4,.94)}
+.student-face-live-guidance.bad{border-color:rgba(255,134,151,.72);background:rgba(117,18,36,.94)}
+.student-face-audio-toggle{
+  position:absolute;
+  top:10px;
+  right:10px;
+  z-index:4;
+  display:flex;
+  width:fit-content!important;
+  min-height:32px!important;
+  align-items:center;
+  gap:6px;
+  margin:0!important;
+  padding:6px 9px!important;
+  border:1px solid rgba(255,255,255,.3)!important;
+  border-radius:999px!important;
+  background:rgba(3,17,29,.88)!important;
+  box-shadow:0 4px 14px rgba(0,0,0,.24);
+  color:#fff!important;
+  font-size:9px!important;
+  font-weight:750!important;
+}
+.student-face-audio-toggle[aria-pressed="false"]{background:rgba(57,70,82,.9)!important;color:#e1e8ee!important}
+.student-face-audio-toggle:disabled{opacity:.78!important}
 .student-face-dialog>progress{
   display:block;
   width:calc(100% - 44px);
@@ -2996,6 +3026,8 @@ html[data-theme="dark"] .student-face-dialog>footer button.secondary{border-colo
   .student-face-notice{margin:12px 15px 9px}
   .student-face-camera{width:calc(100% - 30px);aspect-ratio:4/3;margin:0 15px}
   .student-face-guide{inset:10% 25%}
+  .student-face-live-guidance{right:8px;bottom:8px;left:8px;width:calc(100% - 16px);padding:7px 9px;font-size:11px}
+  .student-face-audio-toggle{top:8px;right:8px;min-height:30px!important;padding:5px 8px!important;font-size:8px!important}
   .student-face-dialog>progress{width:calc(100% - 30px);margin-left:15px}
   .student-face-status,.student-face-match{margin-right:15px;margin-left:15px}
   .student-face-match>div{grid-template-columns:40px minmax(0,1fr)}

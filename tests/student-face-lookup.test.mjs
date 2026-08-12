@@ -328,6 +328,23 @@ test('the browser UI keeps frames on-device, requires a live blink and always st
   );
 });
 
+test('face capture gives persistent visual and optional spoken guidance without recording audio', () => {
+  assert.match(uiSource, /SpeechSynthesisUtterance/);
+  assert.match(uiSource, /window\.speechSynthesis\.speak\(utterance\)/);
+  assert.match(uiSource, /state\.lastMessage === spokenMessage/);
+  assert.match(uiSource, /state\.pendingMessage === spokenMessage/);
+  assert.match(uiSource, /SPOKEN_GUIDANCE_DELAY_MS = 220/);
+  assert.match(uiSource, /faceAudioGuidance/);
+  assert.match(uiSource, /data-face-audio/);
+  assert.match(uiSource, /Audio guidance \$\{enabled \? 'on' : 'off'\}/);
+  assert.match(uiSource, /data-face-overlay/);
+  assert.match(uiSource, /role="status" aria-live="polite" aria-atomic="true"/);
+  assert.match(uiSource, /stopAudioGuidance\(dialog\)/);
+  assert.match(cssSource, /\.student-face-live-guidance/);
+  assert.match(cssSource, /\.student-face-audio-toggle/);
+  assert.match(uiSource, /audio: false/);
+});
+
 test('the capture pipeline keeps enrollment strong while making routine checks fast and guided', () => {
   assert.match(uiSource, /const ENROLLMENT_SAMPLE_COUNT = 3/);
   assert.match(uiSource, /const ROUTINE_SAMPLE_COUNT = 1/);
@@ -351,7 +368,7 @@ test('eligible Records Desk sessions prepare the model during idle time without 
   assert.match(adminSource, /requestIdleCallback/);
   assert.match(adminSource, /window\.setTimeout\(preload, 300\)/);
   assert.match(adminSource, /preloadFaceRecognitionModel\(\)/);
-  assert.match(adminSource, /student-face-lookup\.js\?v=20260812-fast-face-capture/);
+  assert.match(adminSource, /student-face-lookup\.js\?v=20260812-audio-face-guidance/);
   const preloaderStart = uiSource.indexOf('export function preloadFaceRecognitionModel');
   const preloaderEnd = uiSource.indexOf('async function startCamera', preloaderStart);
   const preloaderSource = uiSource.slice(preloaderStart, preloaderEnd);
@@ -382,5 +399,5 @@ test('lookup and enrollment are explicitly initiated without consent fields, and
   assert.match(cssSource, /\.student-face-dialog/);
   assert.match(cssSource, /html\[data-theme="dark"\] \.student-face-dialog/);
   assert.match(cssSource, /@media\(max-width:680px\)/);
-  assert.match(adminHtmlSource, /css\/style\.css\?v=20260809-opaque-account-panel-v2/);
+  assert.match(adminHtmlSource, /css\/style\.css\?v=20260812-audio-face-guidance/);
 });
