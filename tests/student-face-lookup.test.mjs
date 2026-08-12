@@ -368,7 +368,7 @@ test('eligible Records Desk sessions prepare the model during idle time without 
   assert.match(adminSource, /requestIdleCallback/);
   assert.match(adminSource, /window\.setTimeout\(preload, 300\)/);
   assert.match(adminSource, /preloadFaceRecognitionModel\(\)/);
-  assert.match(adminSource, /student-face-lookup\.js\?v=20260812-audio-face-guidance/);
+  assert.match(adminSource, /student-face-lookup\.js\?v=20260812-face-attendance-guidance/);
   const preloaderStart = uiSource.indexOf('export function preloadFaceRecognitionModel');
   const preloaderEnd = uiSource.indexOf('async function startCamera', preloaderStart);
   const preloaderSource = uiSource.slice(preloaderStart, preloaderEnd);

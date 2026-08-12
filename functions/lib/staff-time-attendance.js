@@ -18,7 +18,7 @@ const ATTENDANCE_ADMIN_ROLES = new Set([
 const REPORT_ROLES = new Set([...MANAGE_ROLES, 'Pastor', 'Treasurer', 'Auditor']);
 const ATTENDANCE_REPORT_LIMIT = 5000;
 const DAY_KEYS = Object.freeze(['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']);
-const IDENTITY_VERIFICATION_MODES = new Set(['NONE', 'PASSKEY']);
+const IDENTITY_VERIFICATION_MODES = new Set(['NONE', 'PASSKEY', 'FACE']);
 const PRESENCE_CHECK_MODES = new Set(['NONE', 'RANDOM']);
 const DEFAULT_ATTENDANCE_POLICY = Object.freeze({
   ResumptionTime: '08:00',
@@ -180,7 +180,7 @@ export function normalizeAttendancePolicy(input = {}, existing = {}) {
     fail('Enter a valid time zone, for example Africa/Lagos.');
   }
   const requestedIdentityVerification = clean(input.IdentityVerification ?? existing.IdentityVerification ?? DEFAULT_ATTENDANCE_POLICY.IdentityVerification).toUpperCase();
-  const identityVerification = ['FACE', 'PASSKEY_OR_FACE'].includes(requestedIdentityVerification)
+  const identityVerification = requestedIdentityVerification === 'PASSKEY_OR_FACE'
     ? 'PASSKEY'
     : requestedIdentityVerification;
   if (!IDENTITY_VERIFICATION_MODES.has(identityVerification)) fail('Choose a valid attendance identity verification method.');
@@ -385,10 +385,14 @@ function verifiedAttendanceIdentity(policy = {}, proof = null) {
   const required = clean(policy.IdentityVerification || 'NONE').toUpperCase();
   if (required === 'NONE') return 'Session identity';
   const method = lower(proof?.method);
-  if (required !== 'PASSKEY' || method !== 'passkey') {
-    fail('Verify your identity with the device unlock prompt before completing this attendance action.', 403);
+  const accepted = required === 'FACE' ? method === 'face' : method === 'passkey';
+  if (!accepted) {
+    const verification = required === 'FACE'
+      ? 'live face recognition'
+      : 'the device unlock prompt';
+    fail(`Verify your identity with ${verification} before completing this attendance action.`, 403);
   }
-  return 'Device unlock';
+  return method === 'face' ? 'Live face recognition' : 'Device unlock';
 }
 
 async function ipFingerprint(value) {
