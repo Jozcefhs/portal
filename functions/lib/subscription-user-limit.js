@@ -11,8 +11,28 @@ export function staffAccountIsActive(row = {}) {
   return !['no', 'false', '0', 'inactive', 'disabled'].includes(clean(value).toLowerCase());
 }
 
+export function staffAccountSeatIdentity(row = {}, fallback = '') {
+  const account = row || {};
+  return clean(
+    account.LoginUsername || account.loginUsername
+      || account.Username || account.username
+      || account.__id || fallback
+  ).toLowerCase();
+}
+
+export function activeStaffAccountIdentities(rows = []) {
+  const identities = new Set();
+  rows.forEach((row, index) => {
+    if (!staffAccountIsActive(row)) return;
+    // Records without a usable identity must still consume a seat. The indexed
+    // fallback prevents two malformed records from silently becoming one user.
+    identities.add(staffAccountSeatIdentity(row, `unknown-seat-${index}`));
+  });
+  return identities;
+}
+
 export function activeStaffAccountCount(rows = []) {
-  return rows.filter((row) => staffAccountIsActive(row)).length;
+  return activeStaffAccountIdentities(rows).size;
 }
 
 function staffAccountEdition(row = {}) {
@@ -54,11 +74,17 @@ export function subscriptionUserLimitError(limit, active = limit) {
 
 export function assertSubscriptionSeatAvailable(rows, existing, requestedActive, limit) {
   const normalizedLimit = Math.max(1, Number(limit || 5) || 5);
-  const active = activeStaffAccountCount(rows);
-  if (activeSeatDelta(existing, requestedActive) > 0 && active >= normalizedLimit) {
+  const activeIdentities = activeStaffAccountIdentities(rows);
+  const active = activeIdentities.size;
+  const existingIdentity = staffAccountSeatIdentity(existing);
+  const consumesNewIdentity = Boolean(requestedActive) && (
+    !existing || !staffAccountIsActive(existing)
+  ) && (!existingIdentity || !activeIdentities.has(existingIdentity));
+  const projected = active + Number(consumesNewIdentity);
+  if (projected > normalizedLimit) {
     throw subscriptionUserLimitError(normalizedLimit, active);
   }
-  return { active, limit: normalizedLimit };
+  return { active, projected, limit: normalizedLimit };
 }
 
 export async function loadSubscriptionUserLimit(env) {

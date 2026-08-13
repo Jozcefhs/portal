@@ -74,6 +74,7 @@ let dashboardData = null;
 let activeSection = '';
 let financeData = null;
 let staffUsersData = [];
+let staffSeatUsage = null;
 let staffAuditData = [];
 let securityAuditData = {
   rows: [], facets: {}, warnings: [], fromDate: '', toDate: '', totalMatches: 0, truncated: false,
@@ -1180,6 +1181,7 @@ function clearStaffWorkspaceState() {
   dashboardData = null;
   financeData = null;
   staffUsersData = [];
+  staffSeatUsage = null;
   staffAuditData = [];
   securityAuditData = {
     rows: [], facets: {}, warnings: [], fromDate: '', toDate: '', totalMatches: 0, truncated: false,
@@ -1318,6 +1320,7 @@ function clearBranchScopedWorkspaceData() {
   dashboardData = null;
   financeData = null;
   staffUsersData = [];
+  staffSeatUsage = null;
   staffAuditData = [];
   securityAuditData = {
     rows: [], facets: {}, warnings: [], fromDate: '', toDate: '', totalMatches: 0, truncated: false,
@@ -10698,6 +10701,9 @@ function updateMfaPolicyEditor() {
 function renderStaffUsers() {
   if (activeSection !== 'staffUsers') return;
   const activeUsers = staffUsersData.filter((user) => yes(user.Active)).length;
+  const organisationActiveUsers = Number(staffSeatUsage?.active ?? activeUsers);
+  const organisationUserLimit = Math.max(1, Number(staffSeatUsage?.limit || 5) || 5);
+  const otherBranchActiveUsers = Math.max(0, Number(staffSeatUsage?.otherBranchActive || 0));
   const admins = staffUsersData.filter((user) => user.Role === 'Super Admin' && yes(user.Active)).length;
   const schoolEdition = resolveDashboardEdition(currentUser || {}) === 'school';
   const availableRoles = Object.keys(staffRoleAccessData?.roles || {}).length
@@ -10722,10 +10728,11 @@ function renderStaffUsers() {
     <p id="staffUsersStatus" class="status"></p>
     <div class="workflow-kpis staff-user-kpis">
       <div><small>Total Accounts</small><strong>${staffUsersData.length}</strong><span>Database staff users</span></div>
-      <div><small>Active</small><strong>${activeUsers}</strong><span>Can sign in</span></div>
+      <div><small>Active</small><strong>${activeUsers}</strong><span>${otherBranchActiveUsers ? `${otherBranchActiveUsers} more in other branches` : 'Can sign in'}</span></div>
       <div><small>Super Admins</small><strong>${admins}</strong><span>Active administrators</span></div>
       <div><small>Disabled</small><strong>${staffUsersData.length - activeUsers}</strong><span>Access blocked</span></div>
     </div>
+    <p class="status staff-seat-scope-note">Organisation plan seats: ${organisationActiveUsers} of ${organisationUserLimit} active login${organisationActiveUsers === 1 ? '' : 's'}.${otherBranchActiveUsers ? ` This branch view excludes ${otherBranchActiveUsers} active login${otherBranchActiveUsers === 1 ? '' : 's'} assigned to other branches.` : ''}</p>
     <div class="staff-user-list">
       ${staffUsersData.length ? staffUsersData.map((user) => `
         <article class="staff-user-row">
@@ -11124,6 +11131,7 @@ async function loadStaffUsers() {
         : Promise.resolve(null)
     ]);
     staffUsersData = data.users || [];
+    staffSeatUsage = data.seatUsage || null;
     staffAuditData = data.audit || [];
     staffApprovalAccounts = data.approvalAccounts || [];
     staffRoleAccessData = data.roleAccess || null;

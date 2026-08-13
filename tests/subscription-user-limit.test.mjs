@@ -44,6 +44,34 @@ test('editing an active user and saving inactive users remain allowed at capacit
   assert.doesNotThrow(() => assertSubscriptionSeatAvailable(rows, null, false, 5));
 });
 
+test('duplicate Firestore documents for one login consume only one subscription seat', () => {
+  const rows = [
+    { __id: 'admin-legacy', Username: 'Admin', Active: true },
+    { __id: 'admin-main', LoginUsername: 'admin', Username: 'Admin', BranchId: 'main', Active: true },
+    { Username: 'second', Active: true },
+    { Username: 'third', Active: true },
+    { Username: 'fourth', Active: true }
+  ];
+  assert.equal(activeStaffAccountCount(rows), 4);
+  assert.doesNotThrow(() => assertSubscriptionSeatAvailable(
+    rows,
+    { Username: 'fifth', Active: false },
+    true,
+    5
+  ));
+});
+
+test('reactivating a duplicate document does not consume a second seat for the same login', () => {
+  const inactiveDuplicate = { __id: 'admin-copy', Username: 'Admin', Active: false };
+  const rows = [
+    { __id: 'admin-live', LoginUsername: 'admin', Active: true },
+    inactiveDuplicate,
+    ...Array.from({ length: 4 }, (_value, index) => ({ Username: `user-${index}`, Active: true }))
+  ];
+  assert.equal(activeStaffAccountCount(rows), 5);
+  assert.doesNotThrow(() => assertSubscriptionSeatAvailable(rows, inactiveDuplicate, true, 5));
+});
+
 test('reactivation counts only active accounts in the subscriber organisation edition', () => {
   const rows = [
     { Username: 'faith-admin', OrganisationEdition: 'faith', Active: true },
@@ -82,7 +110,8 @@ test('all staff write endpoints use the authoritative subscription guard', async
   ]);
   assert.match(webSource, /staffAccountsForSubscription\(rows, actor\.edition, actor\.username\)/);
   assert.match(webSource, /await enforceSubscriptionUserLimit\(env, subscriptionRows, existing, active\)/);
-  assert.match(webSource, /const seatDelta = activeSeatDelta\(existing, requestedActive\)/);
+  assert.match(webSource, /assertSubscriptionSeatAvailable\(plannedRows, existing, requestedActive, userLimit\)/);
+  assert.match(webSource, /otherBranchActive: Math\.max\(0, organisationActive - visibleActive\)/);
   assert.match(desktopSource, /staffAccountsForSubscription\(users, edition, body\.UserUsername\)/);
   assert.match(desktopSource, /await enforceSubscriptionUserLimit\(env, subscriptionRows, existing, active\)/);
 });

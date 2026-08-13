@@ -21,12 +21,11 @@ import {
   withoutRoleModules
 } from '../lib/role-module-access.js';
 import {
-  activeSeatDelta,
   activeStaffAccountCount,
+  assertSubscriptionSeatAvailable,
   enforceSubscriptionUserLimit,
   loadSubscriptionUserLimit,
-  staffAccountsForSubscription,
-  subscriptionUserLimitError
+  staffAccountsForSubscription
 } from '../lib/subscription-user-limit.js';
 
 function clean(value) { return String(value ?? '').trim(); }
@@ -118,8 +117,7 @@ function activeSuperAdmins(rows, excluding = '') {
     clean(row.Role) === 'Super Admin' && (row.Active === undefined || activeValue(row.Active)));
 }
 
-async function listUsers(env, actor) {
-  const rows = await listCollection(env, 'staffUsers');
+function listUsers(rows, actor) {
   return rows
     .filter((row) => staffRecordMatchesEdition(row, actor) && branchRecordVisible(row, actor))
     .map((row) => publicUser(row, actor.edition, actor.featureFlags))
@@ -211,7 +209,7 @@ async function importUsers(env, actor, body) {
   const edition = normalizeOrganizationEdition(actor.edition);
   const userLimit = await loadSubscriptionUserLimit(env);
   const subscriptionRows = staffAccountsForSubscription(existingRows, edition, actor.username);
-  let plannedActive = activeStaffAccountCount(subscriptionRows);
+  const plannedRows = subscriptionRows.map((row) => ({ ...row }));
   const existingByName = new Map(existingRows.map((row) => [lower(row.Username || row.__id), row]));
   const writes = []; const failures = []; const seen = new Set();
   for (let index = 0; index < users.length; index += 1) {
@@ -232,9 +230,12 @@ async function importUsers(env, actor, body) {
       const department = clean(row.Department || row.department);
       if (role === 'Department User' && !department) throw new Error('Department is required for a Department User.');
       const requestedActive = activeValue(row.Active === undefined ? true : row.Active);
-      const seatDelta = activeSeatDelta(existing, requestedActive);
-      if (seatDelta > 0 && plannedActive >= userLimit) throw subscriptionUserLimitError(userLimit, plannedActive);
-      plannedActive += seatDelta;
+      assertSubscriptionSeatAvailable(plannedRows, existing, requestedActive, userLimit);
+      const plannedIndex = existing ? plannedRows.findIndex((planned) => (
+        clean(planned.__id) && clean(planned.__id) === clean(existing.__id)
+      )) : -1;
+      if (plannedIndex >= 0) plannedRows[plannedIndex] = { ...plannedRows[plannedIndex], Active: requestedActive };
+      else plannedRows.push({ Username: username, LoginUsername: username, Active: requestedActive });
       const branchId = enforceActorBranch(
         actor,
         row.BranchId || row.branchId,
@@ -381,14 +382,32 @@ export async function onRequestPost(context) {
     const action = lower(body.action || 'list');
     let result;
     if (action === 'list') {
-      const [users, audit, accounts, roleAccess] = await Promise.all([
-        listUsers(env, actor),
+      const [staffRows, audit, accounts, roleAccess, userLimit] = await Promise.all([
+        listCollection(env, 'staffUsers'),
         listSecurityAudit(env, actor),
         listCollection(env, 'chartOfAccounts'),
-        roleAccessSettings(env, actor)
+        roleAccessSettings(env, actor),
+        loadSubscriptionUserLimit(env)
       ]);
+      const visibleRows = staffRows.filter((row) => staffRecordMatchesEdition(row, actor) && branchRecordVisible(row, actor));
+      const subscriptionRows = staffAccountsForSubscription(staffRows, actor.edition, actor.username);
+      const users = listUsers(staffRows, actor);
+      const visibleActive = activeStaffAccountCount(visibleRows);
+      const organisationActive = activeStaffAccountCount(subscriptionRows);
       const scopedAccounts = accountingChartForEdition(accounts, actor.edition);
-      result = { ok: true, users, audit, roleAccess, approvalAccounts: scopedAccounts.filter((row) => activeValue(row.Active === undefined ? true : row.Active)).map((row) => ({ Code: clean(row.Code || row.__id), Name: clean(row.Name) })).filter((row) => row.Code).sort((a, b) => a.Code.localeCompare(b.Code)) };
+      result = {
+        ok: true,
+        users,
+        audit,
+        roleAccess,
+        seatUsage: {
+          active: organisationActive,
+          visibleActive,
+          otherBranchActive: Math.max(0, organisationActive - visibleActive),
+          limit: userLimit
+        },
+        approvalAccounts: scopedAccounts.filter((row) => activeValue(row.Active === undefined ? true : row.Active)).map((row) => ({ Code: clean(row.Code || row.__id), Name: clean(row.Name) })).filter((row) => row.Code).sort((a, b) => a.Code.localeCompare(b.Code))
+      };
     }
     else if (action === 'save') result = await saveUser(env, actor, body);
     else if (action === 'delete') result = await deleteUser(env, actor, body);
