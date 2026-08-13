@@ -19,11 +19,12 @@ export async function onRequestPost(context) {
   try {
     requireFirestoreEnv(context.env);
     const user = await requireStaffSession(context.env, context.request);
-    if (!(user.allowedSections || []).includes('staffAttendance')) {
-      return Response.json({ ok: false, message: 'Staff attendance is not available to this account.' }, { status: 403 });
-    }
     const body = await readJsonBody(context.request, { maxBytes: 128 * 1024 });
     const action = clean(body.action || body.Action || 'list').toLowerCase();
+    const personalClockingActions = new Set(['quick', 'clock', 'presence']);
+    if (!personalClockingActions.has(action) && !(user.allowedSections || []).includes('staffAttendance')) {
+      return Response.json({ ok: false, message: 'Staff attendance administration is not available to this account.' }, { status: 403 });
+    }
     if (action === 'savesite' && ['yes', 'true', '1', 'on'].includes(clean(body.UseCurrentNetwork).toLowerCase())) {
       body.AllowedPublicIps = [
         ...new Set([

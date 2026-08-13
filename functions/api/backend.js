@@ -75,7 +75,7 @@ import {
 } from '../lib/notifications.js';
 import { invoiceReminderFields } from '../lib/notification-reminders.js';
 import { normalizeMinimumAdmissionAge } from '../lib/admission-age.js';
-import { enforceSubscriptionUserLimit } from '../lib/subscription-user-limit.js';
+import { enforceSubscriptionUserLimit, staffAccountsForSubscription } from '../lib/subscription-user-limit.js';
 import {
   accountingRequestBranch,
   accountingRowsForBranch,
@@ -6768,7 +6768,14 @@ async function saveStaffUserFromDesktop(env, body) {
   const role = clean(incoming.Role || incoming.role) || 'Front Desk';
   const department = clean(incoming.Department || incoming.department);
   const active = incoming.Active === undefined ? true : staffUserIsActive(incoming);
-  await enforceSubscriptionUserLimit(env, users, existing, active);
+  const edition = accountingEditionForRequest(env, {
+    ...body,
+    OrganisationEdition: incoming.OrganisationEdition || incoming.organisationEdition
+      || body.OrganisationEdition || body.organisationEdition
+      || existing?.OrganisationEdition || existing?.OrganizationEdition
+  });
+  const subscriptionRows = staffAccountsForSubscription(users, edition, body.UserUsername);
+  await enforceSubscriptionUserLimit(env, subscriptionRows, existing, active);
   if (role === 'Department User' && !department) { const err = new Error('Department is required for a Department User.'); err.status = 400; throw err; }
   if (!clean(incoming.Salt) || !clean(incoming.PasswordHash)) { const err = new Error('A password hash and salt are required.'); err.status = 400; throw err; }
   if (existing && clean(existing.Role) === 'Super Admin' && staffUserIsActive(existing) && (role !== 'Super Admin' || !active) && activeStaffSuperAdmins(users, username).length === 0) {

@@ -6,6 +6,7 @@ import {
   activeSeatDelta,
   activeStaffAccountCount,
   assertSubscriptionSeatAvailable,
+  staffAccountsForSubscription,
   staffAccountIsActive
 } from '../functions/lib/subscription-user-limit.js';
 
@@ -43,14 +44,47 @@ test('editing an active user and saving inactive users remain allowed at capacit
   assert.doesNotThrow(() => assertSubscriptionSeatAvailable(rows, null, false, 5));
 });
 
+test('reactivation counts only active accounts in the subscriber organisation edition', () => {
+  const rows = [
+    { Username: 'faith-admin', OrganisationEdition: 'faith', Active: true },
+    { Username: 'faith-two', OrganisationEdition: 'church', Active: 'YES' },
+    { Username: 'faith-three', OrganisationEdition: 'religious', Active: true },
+    { Username: 'faith-inactive', OrganisationEdition: 'faith', Active: false },
+    { Username: 'school-one', OrganisationEdition: 'school', Active: true },
+    { Username: 'school-two', Active: true }
+  ];
+  const faithRows = staffAccountsForSubscription(rows, 'faith', 'faith-admin');
+  assert.equal(faithRows.length, 4);
+  assert.equal(activeStaffAccountCount(faithRows), 3);
+  assert.doesNotThrow(() => assertSubscriptionSeatAvailable(faithRows, faithRows[3], true, 5));
+});
+
+test('seat limits remain organisation-wide across branches within one edition', () => {
+  const rows = [
+    { Username: 'one', OrganisationEdition: 'faith', BranchId: 'main', Active: true },
+    { Username: 'two', OrganisationEdition: 'faith', BranchId: 'branch-b', Active: true },
+    { Username: 'three', OrganisationEdition: 'faith', BranchId: 'branch-c', Active: true },
+    { Username: 'four', OrganisationEdition: 'faith', BranchId: 'main', Active: true },
+    { Username: 'five', OrganisationEdition: 'faith', BranchId: 'branch-b', Active: true },
+    { Username: 'inactive', OrganisationEdition: 'faith', BranchId: 'main', Active: false }
+  ];
+  const faithRows = staffAccountsForSubscription(rows, 'church', 'one');
+  assert.throws(
+    () => assertSubscriptionSeatAvailable(faithRows, faithRows[5], true, 5),
+    (error) => error.status === 409 && /5 are currently active across this organisation/.test(error.message)
+  );
+});
+
 test('all staff write endpoints use the authoritative subscription guard', async () => {
   const [webSource, desktopSource] = await Promise.all([
     readFile(new URL('../functions/api/staff-users.js', import.meta.url), 'utf8'),
     readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8')
   ]);
-  assert.match(webSource, /await enforceSubscriptionUserLimit\(env, rows, existing, active\)/);
+  assert.match(webSource, /staffAccountsForSubscription\(rows, actor\.edition, actor\.username\)/);
+  assert.match(webSource, /await enforceSubscriptionUserLimit\(env, subscriptionRows, existing, active\)/);
   assert.match(webSource, /const seatDelta = activeSeatDelta\(existing, requestedActive\)/);
-  assert.match(desktopSource, /await enforceSubscriptionUserLimit\(env, users, existing, active\)/);
+  assert.match(desktopSource, /staffAccountsForSubscription\(users, edition, body\.UserUsername\)/);
+  assert.match(desktopSource, /await enforceSubscriptionUserLimit\(env, subscriptionRows, existing, active\)/);
 });
 
 test('the staff account limit links administrators to the Dynamax plans', async () => {

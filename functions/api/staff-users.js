@@ -25,6 +25,7 @@ import {
   activeStaffAccountCount,
   enforceSubscriptionUserLimit,
   loadSubscriptionUserLimit,
+  staffAccountsForSubscription,
   subscriptionUserLimitError
 } from '../lib/subscription-user-limit.js';
 
@@ -142,6 +143,9 @@ async function saveUser(env, actor, body) {
   if (!id) { const err = new Error('Enter a valid username.'); err.status = 400; throw err; }
   const rows = await listCollection(env, 'staffUsers');
   const existing = rows.find((row) => lower(row.Username || row.__id) === lower(username));
+  if (existing && !staffRecordMatchesEdition(existing, actor)) {
+    const err = new Error('This staff account belongs to another organisation workspace.'); err.status = 403; throw err;
+  }
   if (existing && !branchRecordVisible(existing, actor)) {
     const err = new Error('This staff account belongs to another branch.'); err.status = 403; throw err;
   }
@@ -150,7 +154,8 @@ async function saveUser(env, actor, body) {
   ensureRoleAvailable(role, edition);
   const department = clean(body.Department || body.department);
   const active = activeValue(body.Active === undefined ? true : body.Active);
-  await enforceSubscriptionUserLimit(env, rows, existing, active);
+  const subscriptionRows = staffAccountsForSubscription(rows, actor.edition, actor.username);
+  await enforceSubscriptionUserLimit(env, subscriptionRows, existing, active);
   if (role === 'Department User' && !department) { const err = new Error('Department is required for a Department User.'); err.status = 400; throw err; }
   if (existing && clean(existing.Role) === 'Super Admin' && activeValue(existing.Active === undefined ? true : existing.Active) &&
       (role !== 'Super Admin' || !active) && activeSuperAdmins(rows, username).length === 0) {
@@ -205,7 +210,8 @@ async function importUsers(env, actor, body) {
   const existingRows = await listCollection(env, 'staffUsers');
   const edition = normalizeOrganizationEdition(actor.edition);
   const userLimit = await loadSubscriptionUserLimit(env);
-  let plannedActive = activeStaffAccountCount(existingRows);
+  const subscriptionRows = staffAccountsForSubscription(existingRows, edition, actor.username);
+  let plannedActive = activeStaffAccountCount(subscriptionRows);
   const existingByName = new Map(existingRows.map((row) => [lower(row.Username || row.__id), row]));
   const writes = []; const failures = []; const seen = new Set();
   for (let index = 0; index < users.length; index += 1) {
@@ -217,6 +223,7 @@ async function importUsers(env, actor, body) {
       if (seen.has(lower(username))) throw new Error('Duplicate username in this CSV.');
       seen.add(lower(username));
       const existing = existingByName.get(lower(username));
+      if (existing && !staffRecordMatchesEdition(existing, actor)) throw new Error('This staff account belongs to another organisation workspace.');
       if (existing && !branchRecordVisible(existing, actor)) throw new Error('This staff account belongs to another branch.');
       const password = String(row.Password || row.password || '');
       if (!existing && !password) throw new Error('Password is required for a new staff account.');
@@ -226,7 +233,7 @@ async function importUsers(env, actor, body) {
       if (role === 'Department User' && !department) throw new Error('Department is required for a Department User.');
       const requestedActive = activeValue(row.Active === undefined ? true : row.Active);
       const seatDelta = activeSeatDelta(existing, requestedActive);
-      if (seatDelta > 0 && plannedActive >= userLimit) throw subscriptionUserLimitError(userLimit);
+      if (seatDelta > 0 && plannedActive >= userLimit) throw subscriptionUserLimitError(userLimit, plannedActive);
       plannedActive += seatDelta;
       const branchId = enforceActorBranch(
         actor,

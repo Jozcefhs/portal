@@ -94,12 +94,6 @@ function encryptionSecret(env, record = {}) {
   return secret;
 }
 
-function ensureAttendanceAccess(user = {}) {
-  if (!(user.allowedSections || []).includes('staffAttendance')) {
-    failure('Staff attendance is not available to this account.', 403);
-  }
-}
-
 function ensureConfigured(env = {}) {
   if (!configured(env)) {
     failure('Staff face attendance requires FACE_TEMPLATE_ENCRYPTION_KEY and an enabled face-attendance setting.', 503);
@@ -235,7 +229,6 @@ export async function onRequestPost({ request, env }) {
   try {
     requireFirestoreEnv(env);
     const user = await requireStaffSession(env, request);
-    ensureAttendanceAccess(user);
     const body = await readJsonBody(request, { maxBytes: 128 * 1024 });
     const action = lower(body.action || 'status');
     const result = action === 'status'

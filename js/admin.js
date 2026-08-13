@@ -1818,8 +1818,8 @@ function updateDashboardClockFace() {
 }
 
 function attendanceDashboardAllowed() {
-  const sections = dashboardData?.allowedSections || currentUser?.allowedSections || [];
-  return sections.includes('staffAttendance');
+  if (!currentUser || currentUser.mustChangePassword) return false;
+  return dashboardData?.subscriptionActive !== false && currentUser.subscriptionActive !== false;
 }
 
 function dashboardAttendanceSiteStorageKey(branchId) {
@@ -1870,7 +1870,7 @@ function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
     <article class="dashboard-attendance-quick">
       <div class="dashboard-attendance-heading"><div><small>My attendance</small><strong>${loading ? 'Loading attendance...' : escapeHtml(stateLabel)}</strong></div>${data ? `<span class="dashboard-attendance-state state-${escapeHtml(state.toLowerCase())}">${escapeHtml(daily.AttendanceStatus || stateLabel)}</span>` : ''}</div>
       ${!attendanceDashboardAllowed()
-        ? '<p class="muted">Staff Attendance access has not been assigned to this account.</p>'
+        ? '<p class="muted">Attendance clocking is unavailable while this organisation subscription is inactive.</p>'
         : loading
           ? '<p class="muted">Loading today\'s attendance state and approved locations...</p>'
           : data

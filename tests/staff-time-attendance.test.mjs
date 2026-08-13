@@ -19,6 +19,7 @@ const adminHtml = await readFile(new URL('../admin.html', import.meta.url), 'utf
 const portalCss = await readFile(new URL('../css/style.css', import.meta.url), 'utf8');
 const attendanceSource = await readFile(new URL('../functions/lib/staff-time-attendance.js', import.meta.url), 'utf8');
 const attendanceApiSource = await readFile(new URL('../functions/api/staff-attendance.js', import.meta.url), 'utf8');
+const attendanceFaceApiSource = await readFile(new URL('../functions/api/staff-attendance-face.js', import.meta.url), 'utf8');
 const passkeyApiSource = await readFile(new URL('../functions/api/staff-passkey.js', import.meta.url), 'utf8');
 const attendanceActionStateSource = attendanceSource.slice(
   attendanceSource.indexOf('async function getStaffAttendanceActionState'),
@@ -298,6 +299,8 @@ test('dashboard provides a live clock and protected attendance quick action', ()
   assert.match(adminJs, /function updateDashboardClockFace\(\)/);
   assert.match(adminJs, /window\.setInterval\(updateDashboardClockFace, 1000\)/);
   assert.match(adminJs, /staffAttendanceRequest\('quick'\)/);
+  assert.match(adminJs, /if \(!currentUser \|\| currentUser\.mustChangePassword\) return false/);
+  assert.doesNotMatch(adminJs, /sections\.includes\('staffAttendance'\)/);
   assert.match(adminJs, /id="dashboardAttendanceClockButton"/);
   assert.match(adminJs, /attendanceVerificationEvidence\(policy, siteId, direction\)/);
   assert.match(adminJs, /staffAttendanceRequest\('clock'/);
@@ -314,6 +317,16 @@ test('dashboard provides a live clock and protected attendance quick action', ()
   assert.match(portalCss, /@media\(max-width:1200px\)\{\.attendance-clock-card\{grid-template-columns:1fr/);
   assert.match(portalCss, /@media\(max-width:760px\)\{\.management-split,\.attendance-clock-card\{grid-template-columns:1fr/);
   assert.match(portalCss, /@media\(max-width:760px\)\{\.dashboard-time-attendance\{grid-template-columns:1fr/);
+});
+
+test('every active staff account can use personal clocking while attendance administration remains permission-gated', () => {
+  assert.match(attendanceApiSource, /personalClockingActions = new Set\(\['quick', 'clock', 'presence'\]\)/);
+  assert.match(attendanceApiSource, /!personalClockingActions\.has\(action\) && !\(user\.allowedSections \|\| \[\]\)\.includes\('staffAttendance'\)/);
+  assert.match(attendanceApiSource, /Staff attendance administration is not available to this account/);
+  assert.match(attendanceFaceApiSource, /const user = await requireStaffSession\(env, request\)/);
+  assert.doesNotMatch(attendanceFaceApiSource, /allowedSections[\s\S]{0,80}staffAttendance/);
+  assert.match(attendanceSource, /if \(!canManageStaffAttendance\(user\)\) fail\('Only organisation or HR attendance administrators can manage daily work hours\.'/);
+  assert.match(attendanceSource, /if \(!canManageStaffAttendance\(user\)\) fail\('Only organisation or HR attendance administrators can manage attendance locations\.'/);
 });
 
 test('mobile attendance sequences location and configured identity checks without competing permission prompts', () => {
