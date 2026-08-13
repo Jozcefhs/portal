@@ -1,0 +1,30 @@
+name: Attendance presence notifications
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: attendance-presence-notifications
+  cancel-in-progress: false
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify staff of due presence checks
+        env:
+          ENDPOINT: ${{ secrets.NOTIFICATION_SCHEDULER_URL }}
+          SCHEDULER_SECRET: ${{ secrets.NOTIFICATION_SCHEDULER_SECRET }}
+        run: |
+          test -n "$ENDPOINT"
+          test -n "$SCHEDULER_SECRET"
+          for batch in 1 2 3 4 5; do
+            curl --fail-with-body --silent --show-error \
+              --retry 3 --retry-all-errors \
+              -X POST "$ENDPOINT" \
+              -H "Authorization: Bearer $SCHEDULER_SECRET" \
+              -H "Content-Type: application/json" \
+              --data '{"attendanceOnly":true,"attendanceLimit":2}'
+          done

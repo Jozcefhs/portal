@@ -1,4 +1,4 @@
-import { batchCommitDocuments, deleteDocument, getDocument, listCollection, queryCollection, upsertDocument } from './firestore.js';
+import { batchCommitDocuments, deleteDocument, getDocument, listCollection, patchDocumentFields, queryCollection, upsertDocument } from './firestore.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from './church-foundation.js';
 import { resolveMembershipBranch } from './church-membership.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
@@ -34,6 +34,7 @@ const DEFAULT_ATTENDANCE_POLICY = Object.freeze({
   PresenceCheckMinimumMinutes: 90,
   PresenceCheckMaximumMinutes: 180,
   PresenceCheckGraceMinutes: 20,
+  PresenceCheckPushEnabled: 'YES',
   Active: 'YES'
 });
 
@@ -230,6 +231,10 @@ export function normalizeAttendancePolicy(input = {}, existing = {}) {
       180,
       'Presence-check grace period'
     ),
+    PresenceCheckPushEnabled: activeValue(
+      input.PresenceCheckPushEnabled ?? existing.PresenceCheckPushEnabled,
+      true
+    ) ? 'YES' : 'NO',
     Active: activeValue(input.Active ?? existing.Active, true) ? 'YES' : 'NO'
   };
 }
@@ -587,6 +592,19 @@ async function synchronizeAutomaticAbsences(env, branchId, policy, now, director
   return [...refreshed, ...dailyRows.filter((row) => clean(row.Date) !== local.date)];
 }
 
+async function ensurePresenceNotificationSchedule(env, statePath, username, policy = {}, state = {}, presenceCheck = {}) {
+  const dueAt = clean(presenceCheck.dueAt || state.NextPresenceCheckDueAt);
+  const pushEnabled = clean(policy.PresenceCheckPushEnabled).toUpperCase() !== 'NO';
+  if (!pushEnabled || !presenceCheck.enabled || !dueAt) return;
+  if (clean(state.PresenceNotificationSentForDueAt) === dueAt || clean(state.NextPresenceNotificationAt) === dueAt) return;
+  await patchDocumentFields(env, statePath, safeChurchDocumentId(username), {
+    NextPresenceNotificationAt: dueAt,
+    PresenceNotificationTrackingVersion: 1
+  }, state.__updateTime ? { updateTime: state.__updateTime } : {}).catch((error) => {
+    if (![409, 412].includes(Number(error?.status))) throw error;
+  });
+}
+
 export async function getStaffAttendanceQuickState(env, user, body = {}) {
   const branchId = branchFor(user, body);
   const username = actorId(user);
@@ -596,11 +614,16 @@ export async function getStaffAttendanceQuickState(env, user, body = {}) {
   const storedPolicy = await policyDocumentPromise;
   const policy = normalizeAttendancePolicy(storedPolicy || { Active: 'NO' });
   const today = localAttendanceParts(new Date(), policy.TimeZone);
+  const statePath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeState, branchId);
   const todayDailyPromise = getDocument(env, dailyAttendancePath(branchId), dailyAttendanceId(today.date, username)).catch(() => null);
-  const [sites, todayDaily] = await Promise.all([sitesPromise, todayDailyPromise]);
+  const storedStatePromise = getDocument(env, statePath, safeChurchDocumentId(username)).catch(() => null);
+  const [sites, todayDaily, storedState] = await Promise.all([sitesPromise, todayDailyPromise, storedStatePromise]);
   const state = clean(todayDaily?.FirstClockIn)
     ? clean(todayDaily?.LastClockOut) ? 'COMPLETED' : 'CLOCKED_IN'
     : 'CLOCKED_OUT';
+  const todayStoredState = clean(storedState?.AttendanceDate) === today.date ? storedState : {};
+  const presenceCheck = presenceCheckView(policy, todayStoredState, state === 'CLOCKED_IN');
+  await ensurePresenceNotificationSchedule(env, statePath, username, policy, todayStoredState, presenceCheck);
   return {
     ok: true,
     branchId,
@@ -614,7 +637,8 @@ export async function getStaffAttendanceQuickState(env, user, body = {}) {
     todaySchedule: policy.DaySchedules?.[today.day] || null,
     todayDaily: todayDaily || null,
     state,
-    nextDirection: state === 'CLOCKED_IN' ? 'OUT' : state === 'CLOCKED_OUT' ? 'IN' : ''
+    nextDirection: state === 'CLOCKED_IN' ? 'OUT' : state === 'CLOCKED_OUT' ? 'IN' : '',
+    presenceCheck
   };
 }
 
@@ -684,6 +708,14 @@ export async function listStaffAttendance(env, user, body = {}) {
     : 'CLOCKED_OUT';
   const todayStoredState = clean(storedState?.AttendanceDate) === todayAttendanceDate ? storedState : {};
   const presenceCheck = presenceCheckView(policy, todayStoredState, todayState === 'CLOCKED_IN');
+  await ensurePresenceNotificationSchedule(
+    env,
+    churchCollectionPath(CHURCH_COLLECTIONS.staffTimeState, branchId),
+    username,
+    policy,
+    todayStoredState,
+    presenceCheck
+  );
   return {
     ok: true,
     branchId,
@@ -881,6 +913,7 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
   });
   const eventPath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeEvents, branchId);
   const nextPresenceDueAt = direction === 'IN' ? nextPresenceCheckAt(workspace.policy, timestamp) : '';
+  const presencePushEnabled = clean(workspace.policy.PresenceCheckPushEnabled).toUpperCase() !== 'NO';
   const stateDocument = {
     Username: username,
     BranchId: branchId,
@@ -889,6 +922,10 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
     AttendanceDate: daily.Date,
     LastPresenceCheckAt: direction === 'IN' ? '' : clean(workspace.presenceCheck?.lastConfirmedAt),
     NextPresenceCheckDueAt: nextPresenceDueAt,
+    NextPresenceNotificationAt: direction === 'IN' && presencePushEnabled ? nextPresenceDueAt : '',
+    PresenceNotificationSentForDueAt: '',
+    PresenceNotificationSentAt: '',
+    PresenceNotificationTrackingVersion: 1,
     PresenceCheckSequence: direction === 'IN' ? 0 : Number(workspace.presenceCheck?.sequence || 0),
     LastEventId: eventId,
     LastTimestamp: timestamp,
@@ -975,6 +1012,7 @@ export async function recordPresenceCheck(env, user, body = {}, requestContext =
     ManualOverride: false
   };
   const nextDueAt = nextPresenceCheckAt(policy, timestamp);
+  const presencePushEnabled = clean(policy.PresenceCheckPushEnabled).toUpperCase() !== 'NO';
   const state = {
     Username: username,
     BranchId: branchId,
@@ -985,6 +1023,10 @@ export async function recordPresenceCheck(env, user, body = {}, requestContext =
     LastTimestamp: timestamp,
     LastPresenceCheckAt: timestamp,
     NextPresenceCheckDueAt: nextDueAt,
+    NextPresenceNotificationAt: presencePushEnabled ? nextDueAt : '',
+    PresenceNotificationSentForDueAt: '',
+    PresenceNotificationSentAt: '',
+    PresenceNotificationTrackingVersion: 1,
     PresenceCheckSequence: Number(currentPresenceCheck.sequence || 0) + 1,
     UpdatedAt: timestamp
   };

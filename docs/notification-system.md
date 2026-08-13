@@ -101,6 +101,8 @@ Browser permission is requested only after the user selects **Enable on this dev
 
 The `Notification reminders` workflow runs daily at 05:15 UTC (06:15 Africa/Lagos). It is also manually runnable with an optional processing date. A separate `School announcement delivery` workflow calls the same protected endpoint every 15 minutes in announcement-only mode, using several bounded invocations to drain push batches without exceeding one Worker's subrequest allowance. Both workflows use the same school scheduler URL and Bearer secret.
 
+The `Attendance presence notifications` workflow calls the same protected scheduler every five minutes. For branches where **Staff Attendance → Work hours → Presence → Send a push notification** is enabled, each due random check creates one idempotent, urgent staff notification and clears its delivery marker after processing. Delivery still requires an active push subscription on the staff device and the Staff audience's Push channel and Attendance category to remain enabled. GitHub schedules can occasionally start late, so five minutes is the target interval rather than a guaranteed exact delivery time.
+
 For existing invoices, run the reminder metadata migration first in dry-run mode with the four required Firebase/workspace environment variables loaded in the shell:
 
 ```powershell

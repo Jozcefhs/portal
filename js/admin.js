@@ -6347,7 +6347,8 @@ async function loadStaffAttendance() {
               <label data-attendance-presence-setting>Maximum random interval (minutes) <input name="PresenceCheckMaximumMinutes" type="number" min="15" max="720" value="${Number(policy.PresenceCheckMaximumMinutes ?? 180)}" required></label>
               <label data-attendance-presence-setting>Confirmation grace period (minutes) <input name="PresenceCheckGraceMinutes" type="number" min="5" max="180" value="${Number(policy.PresenceCheckGraceMinutes ?? 20)}" required></label>
             </div>
-            <p class="attendance-settings-note">Random checks require the staff member to verify identity and location again during the working day. Missed checks are flagged for HR review.</p>
+            <label class="check-row config-switch"><input type="checkbox" name="PresenceCheckPushEnabled" value="YES" ${clean(policy.PresenceCheckPushEnabled).toUpperCase() !== 'NO' ? 'checked' : ''}><span>Send a push notification when each random confirmation becomes due</span></label>
+            <p class="attendance-settings-note">Random checks require the staff member to verify identity and location again during the working day. Missed checks are flagged for HR review. Push alerts also require notifications to be enabled on the staff member's device and for the Staff Attendance category.</p>
           </section>
           <section class="attendance-settings-panel" id="attendancePolicyPanelSchedule" role="tabpanel" aria-labelledby="attendancePolicyTabSchedule" data-attendance-policy-panel="schedule" hidden>
             <fieldset class="attendance-week-schedule"><legend>Working days and times</legend><div class="attendance-week-schedule-head"><span>Day</span><span>Working</span><span>Resumption</span><span>Closing</span></div>${attendanceDays.map(([day, label]) => { const schedule = daySchedules[day] || { Enabled: workDays.includes(day), ResumptionTime: policy.ResumptionTime || '08:00', ClosingTime: policy.ClosingTime || '17:00' }; return `<div class="attendance-week-schedule-row"><strong>${label}</strong><label class="check-row"><input type="checkbox" name="Schedule_${day}_Enabled" ${schedule.Enabled ? 'checked' : ''}><span>Working</span></label><label class="attendance-day-time"><span>${label} resumption</span><input name="Schedule_${day}_ResumptionTime" type="time" value="${escapeHtml(schedule.ResumptionTime)}" required></label><label class="attendance-day-time"><span>${label} closing</span><input name="Schedule_${day}_ClosingTime" type="time" value="${escapeHtml(schedule.ClosingTime)}" required></label></div>`; }).join('')}</fieldset>
@@ -6523,6 +6524,7 @@ async function loadStaffAttendance() {
           payload.ClosingTime = firstWorkingSchedule.ClosingTime;
         }
         payload.AutoRecordAbsence = formData.has('AutoRecordAbsence') ? 'YES' : 'NO';
+        payload.PresenceCheckPushEnabled = formData.has('PresenceCheckPushEnabled') ? 'YES' : 'NO';
         const result = await staffAttendanceRequest('savepolicy', payload);
         await loadStaffAttendance();
         setStatus(document.getElementById('staffAttendancePolicyStatus') || dashboardStatus, result.message, 'ok');
