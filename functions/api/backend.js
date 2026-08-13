@@ -2402,6 +2402,14 @@ async function saveBrevoSettings(env, body, deploymentIdentity = null) {
 async function saveSchoolProfile(env, body, deploymentIdentity) {
   const settingsScope = clean(body.SettingsScope || body.settingsScope).toLowerCase();
   if (settingsScope === 'branch') {
+    // Desktop releases before the dedicated structure action submitted the
+    // shared branch registry together with branch-profile overrides. Keep
+    // those installed clients working while the new desktop uses the explicit
+    // saveOrganisationStructure action.
+    const structureResult = (
+      Object.prototype.hasOwnProperty.call(body, 'SchoolBranches')
+      || Object.prototype.hasOwnProperty.call(body, 'schoolBranches')
+    ) ? await saveOrganisationStructure(env, body) : null;
     const defaults = (await getSchoolProfile(env)).profile;
     const submittedProfile = {};
     BRANCH_PROFILE_OVERRIDE_FIELDS.forEach((field) => {
@@ -2418,9 +2426,12 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
     const result = await getSchoolProfile(env, { branchId: saved.branch.id });
     return {
       ...result,
-      message: saved.fields.length
-        ? `${saved.branch.name} overrides saved; remaining settings inherit the organisation defaults.`
-        : `${saved.branch.name} now inherits every organisation setting.`
+      message: [
+        structureResult?.message,
+        saved.fields.length
+          ? `${saved.branch.name} overrides saved; remaining settings inherit the organisation defaults.`
+          : `${saved.branch.name} now inherits every organisation setting.`
+      ].filter(Boolean).join(' ')
     };
   }
   const [storedProfile, existingOrganization, savedPublicContent] = await Promise.all([
@@ -2554,6 +2565,52 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
   }));
   await upsertDocument(env, 'settings', 'schoolProfile', profile);
   return { ok: true, message: 'Organisation profile saved to the database.', profile };
+}
+
+function normalizedOrganisationStructure(body = {}, existing = {}) {
+  const rawBranches = Array.isArray(body.SchoolBranches)
+    ? body.SchoolBranches
+    : clean(body.SchoolBranches || body.schoolBranches || 'Main Branch').split(',');
+  const branches = rawBranches.map((value) => {
+    const name = clean(typeof value === 'string' ? value : value.Name || value.name || value.Id || value.id);
+    return {
+      Id: safeScopeId(typeof value === 'string' ? name : value.Id || value.id || name),
+      Name: name || 'Main Branch'
+    };
+  }).filter((row, index, rows) => row.Id && rows.findIndex((candidate) => candidate.Id === row.Id) === index);
+  const normalizedBranches = branches.length ? branches : [{ Id: 'main', Name: 'Main Branch' }];
+  const requestedActiveBranchId = safeScopeId(
+    body.ActiveBranchId || body.activeBranchId || existing.ActiveBranchId || normalizedBranches[0].Id || 'main'
+  );
+  if (!normalizedBranches.some((row) => row.Id === requestedActiveBranchId)) {
+    normalizedBranches[0] = { ...normalizedBranches[0], Id: requestedActiveBranchId };
+  }
+  const savedSections = Array.isArray(existing.Sections) && existing.Sections.length
+    ? existing.Sections
+    : ['primary', 'secondary'];
+  return {
+    Branches: normalizedBranches,
+    ActiveBranchId: requestedActiveBranchId,
+    Sections: savedSections
+  };
+}
+
+async function saveOrganisationStructure(env, body) {
+  const existing = await getDocument(env, 'settings', 'schoolStructure').catch(() => null) || {};
+  const structure = normalizedOrganisationStructure(body, existing);
+  const updatedBy = clean(body.UserRole || body.UpdatedBy || body.updatedBy) || 'Super Admin';
+  await upsertDocument(env, 'settings', 'schoolStructure', {
+    ...withoutFirestoreMetadata(existing),
+    ...structure,
+    UpdatedAt: nowIso(),
+    UpdatedBy: updatedBy
+  });
+  invalidateSchoolStructureCache();
+  return {
+    ok: true,
+    message: `${structure.Branches.length} organisation branch${structure.Branches.length === 1 ? '' : 'es'} saved and shared with the web companion.`,
+    structure
+  };
 }
 
 async function getSchoolProfile(env, options = {}) {
@@ -7334,6 +7391,8 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       return saveBrevoSettings(env, body, deploymentIdentity);
     case 'saveSchoolProfile':
       return saveSchoolProfile(env, body, deploymentIdentity);
+    case 'saveOrganisationStructure':
+      return saveOrganisationStructure(env, body);
     case 'getSchoolProfile':
       return getSchoolProfile(env, body);
     case 'resetBranchProfileOverrides': {
