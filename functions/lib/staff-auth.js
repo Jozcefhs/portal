@@ -19,6 +19,8 @@ const SESSION_SECONDS = 4 * 60 * 60;
 const APPROVAL_PROOF_COOKIE = 'staff_approval_proof';
 const APPROVAL_PROOF_SECONDS = 3 * 60;
 const ATTENDANCE_PROOF_SECONDS = 2 * 60;
+const ATTENDANCE_LIVENESS_CHALLENGE_SECONDS = 90;
+const ATTENDANCE_LIVENESS_ACTIONS = new Set(['BLINK', 'TURN_LEFT', 'TURN_RIGHT', 'CHIN_UP']);
 const WEB_PASSWORD_ITERATIONS = 10000;
 const WEB_PASSWORD_HASH_VERSION = 'pbkdf2-sha256-v1';
 const ACCESS_CONFIG_CACHE_MS = 15000;
@@ -679,11 +681,42 @@ export async function createStaffAttendanceProof(env, user, scope = {}) {
     siteId: clean(scope.siteId),
     direction: clean(scope.direction).toUpperCase(),
     method,
+    livenessAction: method === 'face' ? clean(scope.livenessAction).toUpperCase() : '',
     exp: Math.floor(Date.now() / 1000) + ATTENDANCE_PROOF_SECONDS,
     nonce: crypto.randomUUID()
   };
   const encoded = base64Url(JSON.stringify(payload));
   return `${encoded}.${await signPayload(env, encoded)}`;
+}
+
+export async function createStaffAttendanceLivenessChallenge(env, user, scope = {}) {
+  const action = clean(scope.action).toUpperCase();
+  if (!ATTENDANCE_LIVENESS_ACTIONS.has(action)) throw new Error('Choose a valid attendance liveness action.');
+  const payload = {
+    username: lower(user.username),
+    purpose: 'staff-attendance-liveness',
+    siteId: clean(scope.siteId),
+    direction: clean(scope.direction).toUpperCase(),
+    action,
+    exp: Math.floor(Date.now() / 1000) + ATTENDANCE_LIVENESS_CHALLENGE_SECONDS,
+    nonce: crypto.randomUUID()
+  };
+  const encoded = base64Url(JSON.stringify(payload));
+  return `${encoded}.${await signPayload(env, encoded)}`;
+}
+
+export async function readStaffAttendanceLivenessChallenge(env, token, username, scope = {}) {
+  const payload = await verifiedSignedPayload(env, clean(token));
+  const expectedAction = clean(scope.action).toUpperCase();
+  const valid = payload &&
+    payload.purpose === 'staff-attendance-liveness' &&
+    lower(payload.username) === lower(username) &&
+    clean(payload.siteId) === clean(scope.siteId) &&
+    clean(payload.direction).toUpperCase() === clean(scope.direction).toUpperCase() &&
+    ATTENDANCE_LIVENESS_ACTIONS.has(clean(payload.action).toUpperCase()) &&
+    (!expectedAction || clean(payload.action).toUpperCase() === expectedAction) &&
+    Number(payload.exp) > Math.floor(Date.now() / 1000);
+  return valid ? payload : null;
 }
 
 export async function readStaffAttendanceProof(env, token, username, scope = {}) {

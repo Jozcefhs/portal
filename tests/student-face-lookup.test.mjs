@@ -313,10 +313,10 @@ test('the endpoint stores only encrypted templates, supports deletion, audits us
   assert.doesNotMatch(endpointSource, /ProfilePhotoDataUrl|ParentLoginCode|PasswordHash/);
 });
 
-test('the browser UI keeps frames on-device, requires a live blink and always stops camera tracks', () => {
+test('the browser UI keeps frames on-device, requires a live action and always stops camera tracks', () => {
   assert.match(uiSource, /navigator\.mediaDevices\.getUserMedia/);
-  assert.match(uiSource, /human\.detect\(video, \{[\s\S]*?description: \{ enabled: blinkConfirmed \}/);
-  assert.match(uiSource, /closedEyesSeen && blink\.open/);
+  assert.match(uiSource, /human\.detect\(video, \{[\s\S]*?description: \{ enabled: livenessConfirmed \}/);
+  assert.match(uiSource, /actionObserved && blink\.open/);
   assert.match(uiSource, /faces\.length !== 1/);
   assert.match(uiSource, /captureReadiness\(face, video\)/);
   assert.match(uiSource, /getTracks\?\.\(\)\.forEach\(\(track\) => track\.stop\(\)\)/);
@@ -362,13 +362,29 @@ test('the capture pipeline keeps enrollment strong while making routine checks f
   assert.match(uiSource, /You can try again without reopening the camera\./);
 });
 
+test('staff attendance uses a server-issued random blink or head-pose challenge', () => {
+  for (const action of ['BLINK', 'TURN_LEFT', 'TURN_RIGHT', 'CHIN_UP']) {
+    assert.match(uiSource, new RegExp(action));
+  }
+  assert.match(uiSource, /face\?\.rotation\?\.angle/);
+  assert.match(uiSource, /TURN_YAW_THRESHOLD = 0\.22/);
+  assert.match(uiSource, /CHIN_UP_PITCH_THRESHOLD = 0\.17/);
+  assert.match(uiSource, /neutralFrames >= NEUTRAL_POSE_FRAMES/);
+  assert.match(uiSource, /returnFrames >= RETURN_POSE_FRAMES/);
+  assert.match(uiSource, /staffAttendanceFaceRequest\('challenge'/);
+  assert.match(uiSource, /LivenessChallengeToken: activeChallenge\?\.challengeToken/);
+  assert.match(uiSource, /LivenessEvidence: livenessEvidence/);
+  assert.match(uiSource, /one random live action is required for each attendance check/);
+  assert.match(cssSource, /\.student-face-challenge/);
+});
+
 test('eligible Records Desk sessions prepare the model during idle time without opening the camera', () => {
   assert.match(adminSource, /function preloadRecordsDeskFaceRecognition\(\)/);
   assert.match(adminSource, /recordsDeskFaceLookupAllowed\(\)/);
   assert.match(adminSource, /requestIdleCallback/);
   assert.match(adminSource, /window\.setTimeout\(preload, 300\)/);
   assert.match(adminSource, /preloadFaceRecognitionModel\(\)/);
-  assert.match(adminSource, /student-face-lookup\.js\?v=20260812-face-attendance-guidance/);
+  assert.match(adminSource, /student-face-lookup\.js\?v=20260813-random-liveness-challenge/);
   const preloaderStart = uiSource.indexOf('export function preloadFaceRecognitionModel');
   const preloaderEnd = uiSource.indexOf('async function startCamera', preloaderStart);
   const preloaderSource = uiSource.slice(preloaderStart, preloaderEnd);
@@ -399,5 +415,5 @@ test('lookup and enrollment are explicitly initiated without consent fields, and
   assert.match(cssSource, /\.student-face-dialog/);
   assert.match(cssSource, /html\[data-theme="dark"\] \.student-face-dialog/);
   assert.match(cssSource, /@media\(max-width:680px\)/);
-  assert.match(adminHtmlSource, /css\/style\.css\?v=20260812-audio-face-guidance/);
+  assert.match(adminHtmlSource, /css\/style\.css\?v=20260813-random-liveness-challenge/);
 });

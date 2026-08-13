@@ -392,7 +392,15 @@ function verifiedAttendanceIdentity(policy = {}, proof = null) {
       : 'the device unlock prompt';
     fail(`Verify your identity with ${verification} before completing this attendance action.`, 403);
   }
-  return method === 'face' ? 'Live face recognition' : 'Device unlock';
+  if (method !== 'face') return 'Device unlock';
+  const actionLabels = {
+    BLINK: 'blink challenge',
+    TURN_LEFT: 'left-turn challenge',
+    TURN_RIGHT: 'right-turn challenge',
+    CHIN_UP: 'chin-up challenge'
+  };
+  const livenessLabel = actionLabels[clean(proof?.livenessAction).toUpperCase()];
+  return livenessLabel ? `Live face recognition (${livenessLabel})` : 'Live face recognition';
 }
 
 async function ipFingerprint(value) {

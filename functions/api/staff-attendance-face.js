@@ -2,7 +2,9 @@ import { batchCommitDocuments, getDocument, requireFirestoreEnv } from '../lib/f
 import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from '../lib/church-foundation.js';
 import { resolveMembershipBranch } from '../lib/church-membership.js';
 import {
+  createStaffAttendanceLivenessChallenge,
   createStaffAttendanceProof,
+  readStaffAttendanceLivenessChallenge,
   readStaffAttendanceProof,
   requireStaffSession
 } from '../lib/staff-auth.js';
@@ -19,6 +21,12 @@ import {
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
+const LIVENESS_CHALLENGES = Object.freeze([
+  { action: 'BLINK', label: 'Blink once', instruction: 'Blink once, then keep looking at the camera.', symbol: '\u25c9' },
+  { action: 'TURN_LEFT', label: 'Turn left', instruction: 'Turn your head towards the left arrow, then return to the centre.', symbol: '\u2190' },
+  { action: 'TURN_RIGHT', label: 'Turn right', instruction: 'Turn your head towards the right arrow, then return to the centre.', symbol: '\u2192' },
+  { action: 'CHIN_UP', label: 'Raise your chin', instruction: 'Raise your chin slightly, then return your face to the centre.', symbol: '\u2191' }
+]);
 
 function failure(message, status = 400) {
   const error = new Error(message);
@@ -100,7 +108,7 @@ function ensureConfigured(env = {}) {
   }
 }
 
-function auditWrite(env, user, branchId, action, result) {
+function auditWrite(env, user, branchId, action, result, details = {}) {
   const id = safeChurchDocumentId(`STAFF-FACE-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`);
   return {
     collectionPath: churchCollectionPath(CHURCH_COLLECTIONS.staffTimeAudit, branchId),
@@ -114,10 +122,68 @@ function auditWrite(env, user, branchId, action, result) {
       Result: clean(result),
       Timestamp: new Date().toISOString(),
       WorkspaceId: workspaceId(env),
-      SourcePlatform: 'Web staff attendance'
+      SourcePlatform: 'Web staff attendance',
+      ...details
     },
     exists: false
   };
+}
+
+function attendanceScope(body = {}) {
+  const direction = clean(body.Direction || body.direction).toUpperCase();
+  const siteId = clean(body.SiteId || body.siteId);
+  if (!siteId || !['IN', 'OUT', 'CHECK'].includes(direction)) {
+    failure('The attendance face-verification request is invalid.');
+  }
+  return { direction, siteId };
+}
+
+function randomLivenessChallenge() {
+  const random = crypto.getRandomValues(new Uint32Array(1))[0];
+  return LIVENESS_CHALLENGES[random % LIVENESS_CHALLENGES.length];
+}
+
+async function challenge(env, user, body) {
+  ensureConfigured(env);
+  const { direction, siteId } = attendanceScope(body);
+  const selected = randomLivenessChallenge();
+  const challengeToken = await createStaffAttendanceLivenessChallenge(env, user, {
+    siteId,
+    direction,
+    action: selected.action
+  });
+  return {
+    ok: true,
+    challengeToken,
+    action: selected.action,
+    label: selected.label,
+    instruction: selected.instruction,
+    symbol: selected.symbol,
+    expiresInSeconds: 90
+  };
+}
+
+function validateLivenessEvidence(action, evidence = {}) {
+  const suppliedAction = clean(evidence.action).toUpperCase();
+  const durationMs = Number(evidence.durationMs);
+  if (suppliedAction !== action || evidence.completed !== true || evidence.neutralEstablished !== true ||
+      evidence.actionObserved !== true || evidence.returnedToCentre !== true ||
+      !Number.isFinite(durationMs) || durationMs < 250 || durationMs > 45000) {
+    failure('The requested live face action was not completed reliably.', 403);
+  }
+  const observedGesture = lower(evidence.observedGesture);
+  const maximumAbsoluteYawDelta = Number(evidence.maximumAbsoluteYawDelta);
+  const maximumAbsolutePitchDelta = Number(evidence.maximumAbsolutePitchDelta);
+  const actionPassed = action === 'BLINK'
+    ? evidence.blinkClosedSeen === true
+    : action === 'TURN_LEFT'
+      ? observedGesture === 'facing left' && Number.isFinite(maximumAbsoluteYawDelta) && maximumAbsoluteYawDelta >= 0.18
+      : action === 'TURN_RIGHT'
+        ? observedGesture === 'facing right' && Number.isFinite(maximumAbsoluteYawDelta) && maximumAbsoluteYawDelta >= 0.18
+        : action === 'CHIN_UP'
+          ? observedGesture === 'head up' && Number.isFinite(maximumAbsolutePitchDelta) && maximumAbsolutePitchDelta >= 0.14
+          : false;
+  if (!actionPassed) failure('The requested head movement was not detected clearly enough.', 403);
 }
 
 async function status(env, user, body) {
@@ -197,9 +263,16 @@ async function revoke(env, user, body) {
 
 async function verify(env, user, body) {
   ensureConfigured(env);
-  const direction = clean(body.Direction || body.direction).toUpperCase();
-  const siteId = clean(body.SiteId || body.siteId);
-  if (!siteId || !['IN', 'OUT', 'CHECK'].includes(direction)) failure('The attendance face-verification request is invalid.');
+  const { direction, siteId } = attendanceScope(body);
+  const issuedChallenge = await readStaffAttendanceLivenessChallenge(
+    env,
+    body.LivenessChallengeToken,
+    usernameFor(user),
+    { siteId, direction }
+  );
+  if (!issuedChallenge) failure('The live face instruction has expired or does not belong to this attendance action. Try again.', 403);
+  const livenessAction = clean(issuedChallenge.action).toUpperCase();
+  validateLivenessEvidence(livenessAction, body.LivenessEvidence);
   if (clean(body.modelId) !== STUDENT_FACE_MODEL_ID) failure('The captured face template uses an unsupported model.');
   const query = validateFaceDescriptor(body.descriptor);
   const branchId = branchFor(user, body);
@@ -214,9 +287,21 @@ async function verify(env, user, body) {
   const similarity = faceDescriptorSimilarity(query, stored);
   const threshold = matchThreshold(env);
   const matched = similarity >= threshold;
-  await batchCommitDocuments(env, [auditWrite(env, user, branchId, 'VERIFY ATTENDANCE FACE', matched ? 'matched' : 'rejected')]);
+  await batchCommitDocuments(env, [auditWrite(
+    env,
+    user,
+    branchId,
+    'VERIFY ATTENDANCE FACE',
+    matched ? 'matched' : 'rejected',
+    { LivenessAction: livenessAction }
+  )]);
   if (!matched) failure('Live face recognition did not match the signed-in staff account.', 401);
-  const proof = await createStaffAttendanceProof(env, user, { siteId, direction, method: 'face' });
+  const proof = await createStaffAttendanceProof(env, user, {
+    siteId,
+    direction,
+    method: 'face',
+    livenessAction
+  });
   return {
     ok: true,
     attendanceProof: proof,
@@ -233,6 +318,8 @@ export async function onRequestPost({ request, env }) {
     const action = lower(body.action || 'status');
     const result = action === 'status'
       ? await status(env, user, body)
+      : action === 'challenge'
+        ? await challenge(env, user, body)
       : action === 'enroll'
         ? await enroll(env, user, body)
         : action === 'revoke'

@@ -7,7 +7,9 @@ import {
   relyingPartySettings
 } from '../functions/api/staff-passkey.js';
 import {
+  createStaffAttendanceLivenessChallenge,
   createStaffAttendanceProof,
+  readStaffAttendanceLivenessChallenge,
   readStaffAttendanceProof
 } from '../functions/lib/staff-auth.js';
 
@@ -133,4 +135,33 @@ test('attendance identity proofs are short-lived and scoped to user, location an
   assert.equal(await readStaffAttendanceProof(env, proof, 'ada', {
     siteId: 'main-premises', direction: 'OUT'
   }), null);
+});
+
+test('attendance liveness challenges are signed and scoped to the staff member, site, direction and action', async () => {
+  const env = { STAFF_SESSION_SECRET: 'attendance-test-secret-that-is-long-enough' };
+  const token = await createStaffAttendanceLivenessChallenge(env, { username: 'Ada' }, {
+    siteId: 'main-premises', direction: 'IN', action: 'TURN_LEFT'
+  });
+  const accepted = await readStaffAttendanceLivenessChallenge(env, token, 'ada', {
+    siteId: 'main-premises', direction: 'IN', action: 'TURN_LEFT'
+  });
+  assert.equal(accepted.action, 'TURN_LEFT');
+  assert.equal(await readStaffAttendanceLivenessChallenge(env, token, 'another-user', {
+    siteId: 'main-premises', direction: 'IN', action: 'TURN_LEFT'
+  }), null);
+  assert.equal(await readStaffAttendanceLivenessChallenge(env, token, 'ada', {
+    siteId: 'other-site', direction: 'IN', action: 'TURN_LEFT'
+  }), null);
+  assert.equal(await readStaffAttendanceLivenessChallenge(env, token, 'ada', {
+    siteId: 'main-premises', direction: 'OUT', action: 'TURN_LEFT'
+  }), null);
+  assert.equal(await readStaffAttendanceLivenessChallenge(env, token, 'ada', {
+    siteId: 'main-premises', direction: 'IN', action: 'BLINK'
+  }), null);
+  await assert.rejects(
+    createStaffAttendanceLivenessChallenge(env, { username: 'Ada' }, {
+      siteId: 'main-premises', direction: 'IN', action: 'SMILE'
+    }),
+    /valid attendance liveness action/i
+  );
 });

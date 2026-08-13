@@ -262,7 +262,21 @@ test('attendance UI and API support device unlock, guided live face checks, and 
   assert.match(attendanceSource, /Random presence check missed/);
   assert.match(attendanceSource, /IDENTITY_VERIFICATION_MODES = new Set\(\['NONE', 'PASSKEY', 'FACE'\]\)/);
   assert.match(attendanceSource, /required === 'FACE' \? method === 'face' : method === 'passkey'/);
-  assert.match(attendanceSource, /return method === 'face' \? 'Live face recognition' : 'Device unlock'/);
+  assert.match(attendanceSource, /Live face recognition \(\$\{livenessLabel\}\)/);
+  assert.match(attendanceSource, /if \(method !== 'face'\) return 'Device unlock'/);
+});
+
+test('face attendance issues and verifies a signed random liveness challenge without storing camera frames', () => {
+  for (const action of ['BLINK', 'TURN_LEFT', 'TURN_RIGHT', 'CHIN_UP']) {
+    assert.match(attendanceFaceApiSource, new RegExp(action));
+  }
+  assert.match(attendanceFaceApiSource, /crypto\.getRandomValues\(new Uint32Array\(1\)\)/);
+  assert.match(attendanceFaceApiSource, /createStaffAttendanceLivenessChallenge/);
+  assert.match(attendanceFaceApiSource, /readStaffAttendanceLivenessChallenge/);
+  assert.match(attendanceFaceApiSource, /validateLivenessEvidence/);
+  assert.match(attendanceFaceApiSource, /LivenessAction: livenessAction/);
+  assert.match(attendanceFaceApiSource, /livenessAction/);
+  assert.doesNotMatch(attendanceFaceApiSource, /toDataURL|toBlob|FormData|CameraFrame|ImageData/);
 });
 
 test('continued-presence confirmation uses focused reads and updates the UI without a full reload', () => {

@@ -778,7 +778,7 @@ async function attendancePasskeyProof(siteId, direction) {
 
 function attendanceFaceModule() {
   if (!attendanceFaceModulePromise) {
-    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260812-face-attendance-guidance').catch((error) => {
+    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260813-random-liveness-challenge').catch((error) => {
       attendanceFaceModulePromise = null;
       throw error;
     });
@@ -7821,7 +7821,7 @@ function preloadRecordsDeskFaceRecognition() {
   recordsDeskFacePreloadScheduled = true;
   const preload = () => {
     recordsDeskFacePreloadScheduled = false;
-    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260812-face-attendance-guidance')
+    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260813-random-liveness-challenge')
       .then((module) => module.preloadFaceRecognitionModel())
       .catch(() => {
         recordsDeskFacePreloadPromise = null;
@@ -7836,7 +7836,7 @@ function preloadRecordsDeskFaceRecognition() {
 
 async function openRecordsDeskFaceLookup(options = {}) {
   try {
-    const module = await import('./student-face-lookup.js?v=20260812-face-attendance-guidance');
+    const module = await import('./student-face-lookup.js?v=20260813-random-liveness-challenge');
     await module.openStudentFaceLookup(options);
   } catch (failure) {
     recordsDeskState.error = failure.message || String(failure);

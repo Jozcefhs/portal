@@ -4,6 +4,12 @@ const ENROLLMENT_SAMPLE_COUNT = 3;
 const ROUTINE_SAMPLE_COUNT = 1;
 const CAPTURE_TIMEOUT_MS = 30000;
 const SPOKEN_GUIDANCE_DELAY_MS = 220;
+const LIVENESS_ACTIONS = new Set(['BLINK', 'TURN_LEFT', 'TURN_RIGHT', 'CHIN_UP']);
+const NEUTRAL_POSE_FRAMES = 2;
+const RETURN_POSE_FRAMES = 2;
+const TURN_YAW_THRESHOLD = 0.22;
+const CHIN_UP_PITCH_THRESHOLD = 0.17;
+const RETURN_POSE_THRESHOLD = 0.1;
 
 let humanInstancePromise = null;
 let activeStream = null;
@@ -133,6 +139,18 @@ function setGuideState(dialog, state = 'searching') {
   const guide = dialog?.querySelector('.student-face-guide');
   if (!guide) return;
   guide.className = `student-face-guide is-${state}`;
+}
+
+function setLivenessChallenge(dialog, challenge = null) {
+  const element = dialog?.querySelector('[data-face-challenge]');
+  if (!element) return;
+  const action = clean(challenge?.action).toUpperCase();
+  const visible = LIVENESS_ACTIONS.has(action);
+  element.hidden = !visible;
+  if (!visible) return;
+  element.dataset.action = action;
+  element.querySelector('[data-face-challenge-symbol]').textContent = clean(challenge.symbol) || '◉';
+  element.querySelector('[data-face-challenge-label]').textContent = clean(challenge.label) || 'Live action';
 }
 
 function setBusy(button, busy, busyText = 'Working...') {
@@ -328,6 +346,26 @@ function blinkFrameState(face, result) {
   };
 }
 
+function facePose(face) {
+  const angle = face?.rotation?.angle || {};
+  const yaw = Number(angle.yaw);
+  const pitch = Number(angle.pitch);
+  const roll = Number(angle.roll);
+  return [yaw, pitch, roll].every(Number.isFinite) ? { yaw, pitch, roll } : null;
+}
+
+function normalizeLivenessChallenge(challenge = {}) {
+  const action = clean(challenge.action || 'BLINK').toUpperCase();
+  return {
+    action: LIVENESS_ACTIONS.has(action) ? action : 'BLINK',
+    instruction: clean(challenge.instruction) || 'Blink once, then keep looking at the camera.'
+  };
+}
+
+function roundedMovement(value) {
+  return Math.round(Number(value || 0) * 1000) / 1000;
+}
+
 function captureReadiness(face, video) {
   const geometry = faceGeometry(face, video);
   const score = Number(face?.faceScore || face?.boxScore || 0);
@@ -343,7 +381,7 @@ function captureReadiness(face, video) {
   if (!geometry.centred) {
     return { ready: false, state: 'warning', message: 'Move your face toward the centre of the oval.' };
   }
-  return { ready: true, state: 'ready', message: 'Position is good. Blink once while looking at the camera.' };
+  return { ready: true, state: 'ready', message: 'Position is good. Hold still for your live instruction.' };
 }
 
 function averageDescriptors(samples) {
@@ -359,23 +397,37 @@ function averageDescriptors(samples) {
   return average.map((value) => Math.round((value / samples.length) * 1e6) / 1e6);
 }
 
-async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_SAMPLE_COUNT) {
+async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_SAMPLE_COUNT, options = {}) {
   const video = dialog.querySelector('[data-face-video]');
   const progress = dialog.querySelector('[data-face-progress]');
   if (!activeStream || !video.srcObject) throw new Error('Start the camera first.');
+  const challenge = normalizeLivenessChallenge(options.challenge);
   const samples = [];
   const started = Date.now();
+  let neutralPose = null;
+  let neutralFrames = 0;
+  let actionObserved = false;
+  let returnFrames = 0;
   let closedEyesSeen = false;
-  let blinkConfirmed = false;
+  let livenessConfirmed = false;
+  let observedGesture = '';
   let lastCaptureAt = 0;
+  const movement = {
+    maximumYawDelta: 0,
+    minimumYawDelta: 0,
+    maximumPitchDelta: 0,
+    minimumPitchDelta: 0,
+    maximumAbsoluteYawDelta: 0,
+    maximumAbsolutePitchDelta: 0
+  };
   setGuideState(dialog, 'searching');
-  setStatus(dialog, 'Blink once while looking at the camera.');
+  setStatus(dialog, 'Centre your face and hold still to begin the live check.');
   progress.hidden = false;
   progress.max = sampleCount;
   progress.value = 0;
   while (Date.now() - started < CAPTURE_TIMEOUT_MS && samples.length < sampleCount) {
     const result = await human.detect(video, {
-      face: { description: { enabled: blinkConfirmed } }
+      face: { description: { enabled: livenessConfirmed } }
     });
     const faces = result?.face || [];
     if (faces.length !== 1) {
@@ -386,18 +438,74 @@ async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_SAMPLE_
     }
     const face = faces[0];
     const readiness = captureReadiness(face, video);
+    const pose = facePose(face);
+    const gestures = flattenedGestures(result);
     const blink = blinkFrameState(face, result);
-    if (readiness.ready && blink.closed) closedEyesSeen = true;
-    if (closedEyesSeen && blink.open) blinkConfirmed = true;
+    if (readiness.ready && pose && !neutralPose) {
+      const neutralNow = gestures.includes('facing center') &&
+        Math.abs(pose.yaw) <= 0.24 && Math.abs(pose.pitch) <= 0.24 && Math.abs(pose.roll) <= 0.28;
+      neutralFrames = neutralNow ? neutralFrames + 1 : 0;
+      if (neutralFrames >= NEUTRAL_POSE_FRAMES) {
+        neutralPose = { ...pose };
+        setGuideState(dialog, 'ready');
+        setStatus(dialog, challenge.instruction, 'good');
+      }
+    }
+    if (readiness.ready && neutralPose && !livenessConfirmed) {
+      const yawDelta = pose ? pose.yaw - neutralPose.yaw : 0;
+      const pitchDelta = pose ? pose.pitch - neutralPose.pitch : 0;
+      movement.maximumYawDelta = Math.max(movement.maximumYawDelta, yawDelta);
+      movement.minimumYawDelta = Math.min(movement.minimumYawDelta, yawDelta);
+      movement.maximumPitchDelta = Math.max(movement.maximumPitchDelta, pitchDelta);
+      movement.minimumPitchDelta = Math.min(movement.minimumPitchDelta, pitchDelta);
+      movement.maximumAbsoluteYawDelta = Math.max(movement.maximumAbsoluteYawDelta, Math.abs(yawDelta));
+      movement.maximumAbsolutePitchDelta = Math.max(movement.maximumAbsolutePitchDelta, Math.abs(pitchDelta));
+      if (challenge.action === 'BLINK') {
+        if (blink.closed) {
+          closedEyesSeen = true;
+          actionObserved = true;
+        }
+        if (actionObserved && blink.open) {
+          returnFrames += 1;
+          if (returnFrames >= RETURN_POSE_FRAMES) livenessConfirmed = true;
+        }
+      } else {
+        const wantedGesture = challenge.action === 'TURN_LEFT'
+          ? 'facing left'
+          : challenge.action === 'TURN_RIGHT'
+            ? 'facing right'
+            : 'head up';
+        const movementDetected = gestures.includes(wantedGesture) &&
+          (challenge.action === 'CHIN_UP'
+            ? Math.abs(pitchDelta) >= CHIN_UP_PITCH_THRESHOLD
+            : Math.abs(yawDelta) >= TURN_YAW_THRESHOLD);
+        if (movementDetected) {
+          actionObserved = true;
+          observedGesture = wantedGesture;
+        }
+        if (actionObserved) {
+          const returned = Math.abs(yawDelta) <= RETURN_POSE_THRESHOLD &&
+            Math.abs(pitchDelta) <= RETURN_POSE_THRESHOLD &&
+            (challenge.action === 'CHIN_UP' || gestures.includes('facing center'));
+          returnFrames = returned ? returnFrames + 1 : 0;
+          if (returnFrames >= RETURN_POSE_FRAMES) livenessConfirmed = true;
+        }
+      }
+    }
     const embeddingReady = Array.isArray(face.embedding) && face.embedding.length === DESCRIPTOR_LENGTH;
     if (!readiness.ready) {
       setGuideState(dialog, readiness.state);
       setStatus(dialog, readiness.message, 'warn');
-    } else if (!blinkConfirmed) {
-      setGuideState(dialog, closedEyesSeen ? 'capture' : 'ready');
-      setStatus(dialog, closedEyesSeen
-        ? 'Blink detected. Open your eyes and hold still.'
-        : readiness.message, 'good');
+    } else if (!neutralPose) {
+      setGuideState(dialog, 'ready');
+      setStatus(dialog, 'Look straight at the camera and hold still for a moment.', 'good');
+    } else if (!livenessConfirmed) {
+      setGuideState(dialog, actionObserved ? 'capture' : 'ready');
+      setStatus(dialog, actionObserved
+        ? (challenge.action === 'BLINK'
+            ? 'Blink detected. Open your eyes and hold still.'
+            : 'Movement detected. Return your face to the centre and hold still.')
+        : challenge.instruction, 'good');
     } else if (!embeddingReady) {
       setGuideState(dialog, 'capture');
       setStatus(dialog, 'Liveness confirmed. Hold still while the face template is prepared.', 'good');
@@ -415,6 +523,22 @@ async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_SAMPLE_
     setGuideState(dialog, 'warning');
     throw new Error('A reliable live face sample was not captured in time. Try again or use manual search.');
   }
+  options.onLivenessEvidence?.({
+    action: challenge.action,
+    completed: true,
+    neutralEstablished: Boolean(neutralPose),
+    actionObserved,
+    returnedToCentre: livenessConfirmed,
+    blinkClosedSeen: closedEyesSeen,
+    observedGesture,
+    durationMs: Date.now() - started,
+    maximumYawDelta: roundedMovement(movement.maximumYawDelta),
+    minimumYawDelta: roundedMovement(movement.minimumYawDelta),
+    maximumPitchDelta: roundedMovement(movement.maximumPitchDelta),
+    minimumPitchDelta: roundedMovement(movement.minimumPitchDelta),
+    maximumAbsoluteYawDelta: roundedMovement(movement.maximumAbsoluteYawDelta),
+    maximumAbsolutePitchDelta: roundedMovement(movement.maximumAbsolutePitchDelta)
+  });
   return averageDescriptors(samples);
 }
 
@@ -645,13 +769,17 @@ function attendanceFaceDialogMarkup(mode) {
     </header>
     <div class="student-face-notice">
       <span aria-hidden="true">&#128737;</span>
-      <p><strong>Privacy protected</strong><small>Camera frames remain on this device. Only an encrypted mathematical template is stored, and a blink is required for every live check.</small></p>
+      <p><strong>Privacy protected</strong><small>Camera frames remain on this device. Only an encrypted mathematical template is stored, and one random live action is required for each attendance check.</small></p>
     </div>
     <div class="student-face-camera">
       <video data-face-video playsinline muted aria-label="Live staff face camera preview"></video>
       <div class="student-face-guide is-searching" aria-hidden="true"></div>
+      <div class="student-face-challenge" data-face-challenge hidden aria-live="assertive">
+        <span data-face-challenge-symbol aria-hidden="true">◉</span>
+        <strong data-face-challenge-label>Live action</strong>
+      </div>
       <button type="button" class="student-face-audio-toggle" data-face-audio aria-pressed="true"><span data-face-audio-icon aria-hidden="true">🔊</span><span data-face-audio-label>Audio guidance on</span></button>
-      <p class="student-face-live-guidance" data-face-overlay aria-hidden="true">Keep one face centred and blink once when prompted.</p>
+      <p class="student-face-live-guidance" data-face-overlay aria-hidden="true">Keep one face centred and follow the spoken live instruction.</p>
     </div>
     <progress data-face-progress value="0" max="${sampleCount}" hidden></progress>
     <p class="student-face-status" data-face-status role="status" aria-live="polite" aria-atomic="true">Ready to open the camera.</p>
@@ -673,6 +801,7 @@ export function captureStaffAttendanceFace(options = {}) {
   const startButton = dialog.querySelector('[data-face-start]');
   const captureButton = dialog.querySelector('[data-face-capture]');
   const sampleCount = mode === 'enroll' ? ENROLLMENT_SAMPLE_COUNT : ROUTINE_SAMPLE_COUNT;
+  let activeChallenge = null;
   let settled = false;
   let preparing = false;
   let capturing = false;
@@ -709,18 +838,35 @@ export function captureStaffAttendanceFace(options = {}) {
       setBusy(captureButton, true, mode === 'enroll' ? 'Saving...' : 'Verifying...');
       try {
         const human = await loadHuman(dialog);
-        const descriptor = await captureDescriptor(dialog, human, sampleCount);
+        if (mode === 'verify' && !activeChallenge) {
+          activeChallenge = await staffAttendanceFaceRequest('challenge', {
+            SiteId: options.siteId,
+            Direction: options.direction
+          });
+          setLivenessChallenge(dialog, activeChallenge);
+        }
+        let livenessEvidence = null;
+        const descriptor = await captureDescriptor(dialog, human, sampleCount, {
+          challenge: mode === 'verify' ? activeChallenge : { action: 'BLINK' },
+          onLivenessEvidence: (evidence) => { livenessEvidence = evidence; }
+        });
         const result = await staffAttendanceFaceRequest(mode === 'enroll' ? 'enroll' : 'verify', {
           modelId: MODEL_ID,
           descriptor,
           sampleCount,
           SiteId: options.siteId,
           Direction: options.direction,
-          AttendanceProof: options.attendanceProof
+          AttendanceProof: options.attendanceProof,
+          LivenessChallengeToken: activeChallenge?.challengeToken,
+          LivenessEvidence: livenessEvidence
         });
         setStatus(dialog, result.message, 'good');
         finish(result);
       } catch (error) {
+        if (mode === 'verify') {
+          activeChallenge = null;
+          setLivenessChallenge(dialog, null);
+        }
         setGuideState(dialog, 'warning');
         setStatus(dialog, `${formatCameraError(error)} You can try again without reopening the camera.`, 'bad');
       } finally {
@@ -737,13 +883,23 @@ export function captureStaffAttendanceFace(options = {}) {
       preparing = true;
       setBusy(startButton, true, 'Preparing camera...');
       try {
-        await Promise.all([startCamera(dialog), loadHuman(dialog)]);
+        const challengePromise = mode === 'verify'
+          ? staffAttendanceFaceRequest('challenge', {
+              SiteId: options.siteId,
+              Direction: options.direction
+            })
+          : Promise.resolve(null);
+        const [, , challengeResult] = await Promise.all([startCamera(dialog), loadHuman(dialog), challengePromise]);
+        activeChallenge = challengeResult;
+        setLivenessChallenge(dialog, activeChallenge);
         if (!dialog.isConnected || !dialog.open) {
           stopCamera(video);
           return;
         }
         captureButton.disabled = false;
-        setStatus(dialog, captureAutomatically ? 'Camera ready. Blink once to verify.' : 'Camera and private face model are ready.', 'good');
+        setStatus(dialog, captureAutomatically
+          ? (activeChallenge?.instruction || 'Camera ready. Follow the live instruction.')
+          : 'Camera and private face model are ready.', 'good');
         if (captureAutomatically) await captureAndSubmit();
       } catch (error) {
         stopCamera(video);
