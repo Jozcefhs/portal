@@ -1850,6 +1850,7 @@ function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
   const direction = clean(data?.nextDirection || (state === 'CLOCKED_IN' ? 'OUT' : 'IN')).toUpperCase();
   const sites = data?.sites || [];
   const policy = data?.policy || {};
+  const presenceCheck = data?.presenceCheck || {};
   warmAttendanceIdentity(policy);
   const identityMode = clean(policy.IdentityVerification || 'NONE').toUpperCase();
   const todaySchedule = data?.todaySchedule || {};
@@ -1882,7 +1883,13 @@ function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
                 <label>Location<select id="dashboardAttendanceSite" ${sites.length ? '' : 'disabled'}>${sites.length ? sites.map((site) => { const id = clean(site.SiteId || site.__id); return `<option value="${escapeHtml(id)}"${id === selectedSiteId ? ' selected' : ''}>${escapeHtml(site.Name)}</option>`; }).join('') : '<option value="">No approved location</option>'}</select></label>
                 ${identityControl}
                 <button type="button" id="dashboardAttendanceClockButton" ${sites.length && !complete && !refreshing ? '' : 'disabled'}>${refreshing ? 'Refreshing...' : complete ? 'Completed' : direction === 'OUT' ? 'Clock out' : 'Clock in'}</button>
-              </div>`
+              </div>
+              ${presenceCheck.enabled && state === 'CLOCKED_IN'
+                ? `<div class="attendance-presence-check dashboard-attendance-presence${presenceCheck.status === 'OVERDUE' ? ' is-overdue' : presenceCheck.status === 'DUE' ? ' is-due' : ''}">
+                    <div><strong>Random presence confirmation</strong><small>${escapeHtml(attendancePresenceStatusText(presenceCheck))}</small></div>
+                    <button type="button" id="dashboardAttendancePresenceButton" ${presenceCheck.canConfirm && sites.length && !refreshing ? '' : 'disabled'}>Confirm presence</button>
+                  </div>`
+                : ''}`
             : '<p class="muted">Attendance information could not be loaded.</p>'}
       <p id="dashboardAttendanceStatus" class="status ${tone}">${escapeHtml(message)}</p>
     </article>`;
@@ -1914,6 +1921,36 @@ function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
       setStatus(status, error.message || String(error), 'bad');
     } finally {
       if (button.isConnected) setButtonLoading(button, false, 'Verifying...', normalText);
+    }
+  });
+  document.getElementById('dashboardAttendancePresenceButton')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const status = document.getElementById('dashboardAttendanceStatus');
+    const siteId = clean(siteSelect?.value);
+    if (!siteId) {
+      setStatus(status, 'Choose the attendance location before confirming your presence.', 'bad');
+      return;
+    }
+    setButtonLoading(button, true, 'Confirming...', 'Confirm presence');
+    try {
+      const { location, attendanceProof } = await attendanceVerificationEvidence(policy, siteId, 'CHECK');
+      const result = await staffAttendanceRequest('presence', {
+        SiteId: siteId,
+        Location: location,
+        AttendanceProof: attendanceProof
+      });
+      const cached = dashboardAttendanceCache?.data;
+      if (cached) {
+        cached.presenceCheck = result.presenceCheck || {};
+        if (result.daily) cached.todayDaily = { ...(cached.todayDaily || {}), ...result.daily };
+        renderDashboardTimeAttendance(cached, result.message, 'ok');
+      } else {
+        await loadDashboardAttendanceCard(true, result.message, 'ok');
+      }
+    } catch (error) {
+      setStatus(status, error.message || String(error), 'bad');
+    } finally {
+      if (button.isConnected) setButtonLoading(button, false, 'Confirming...', 'Confirm presence');
     }
   });
 }

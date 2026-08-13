@@ -37,6 +37,10 @@ const presenceButtonSource = adminJs.slice(
   adminJs.indexOf("document.getElementById('staffPresenceButton')"),
   adminJs.indexOf("document.getElementById('setupAttendancePasskey')")
 );
+const dashboardPresenceButtonSource = adminJs.slice(
+  adminJs.indexOf("document.getElementById('dashboardAttendancePresenceButton')"),
+  adminJs.indexOf('async function loadDashboardAttendanceCard')
+);
 
 test('geofence distance is calculated in metres', () => {
   assert.ok(haversineDistanceMetres(9.0765, 7.3986, 9.0765, 7.3986) < 1);
@@ -316,9 +320,16 @@ test('dashboard provides a live clock and protected attendance quick action', ()
   assert.match(adminJs, /if \(!currentUser \|\| currentUser\.mustChangePassword\) return false/);
   assert.doesNotMatch(adminJs, /sections\.includes\('staffAttendance'\)/);
   assert.match(adminJs, /id="dashboardAttendanceClockButton"/);
+  assert.match(adminJs, /id="dashboardAttendancePresenceButton"/);
+  assert.match(adminJs, /presenceCheck\.enabled && state === 'CLOCKED_IN'/);
+  assert.match(adminJs, /attendancePresenceStatusText\(presenceCheck\)/);
   assert.match(adminJs, /attendanceVerificationEvidence\(policy, siteId, direction\)/);
   assert.match(adminJs, /staffAttendanceRequest\('clock'/);
   assert.match(adminJs, /Location: location/);
+  assert.match(dashboardPresenceButtonSource, /attendanceVerificationEvidence\(policy, siteId, 'CHECK'\)/);
+  assert.match(dashboardPresenceButtonSource, /staffAttendanceRequest\('presence'/);
+  assert.match(dashboardPresenceButtonSource, /cached\.presenceCheck = result\.presenceCheck/);
+  assert.doesNotMatch(dashboardPresenceButtonSource, /sections\.includes\('staffAttendance'\)/);
   assert.match(attendanceSource, /export async function getStaffAttendanceQuickState/);
   assert.match(attendanceSource, /todayDaily: todayDaily \|\| null/);
   assert.match(attendanceApiSource, /!\['list', 'quick'\]\.includes\(action\)/);
@@ -331,6 +342,8 @@ test('dashboard provides a live clock and protected attendance quick action', ()
   assert.match(portalCss, /@media\(max-width:1200px\)\{\.attendance-clock-card\{grid-template-columns:1fr/);
   assert.match(portalCss, /@media\(max-width:760px\)\{\.management-split,\.attendance-clock-card\{grid-template-columns:1fr/);
   assert.match(portalCss, /@media\(max-width:760px\)\{\.dashboard-time-attendance\{grid-template-columns:1fr/);
+  assert.match(portalCss, /\.dashboard-attendance-presence\{margin-top:9px\}/);
+  assert.match(portalCss, /\.dashboard-attendance-presence\{align-items:stretch;flex-direction:column/);
 });
 
 test('every active staff account can use personal clocking while attendance administration remains permission-gated', () => {
