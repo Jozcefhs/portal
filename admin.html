@@ -6,7 +6,7 @@
   <title>Organisation Staff Portal</title>
   <meta name="theme-color" content="#071b33">
   <script src="js/preferences.js?v=20260812-audio-face-guidance"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260813-dashboard-presence">
+  <link rel="stylesheet" href="css/style.css?v=20260814-imprest-petty-cash">
   <link rel="stylesheet" href="css/notifications.css?v=20260804-read-efficiency">
 </head>
 <body class="staff-page">
@@ -352,6 +352,14 @@
     <form id="financeDecisionForm" class="workflow-form">
       <p id="financeDecisionRecord" class="decision-record-reference"></p>
       <label>Decision notes<textarea name="notes" rows="2"></textarea></label>
+      <fieldset id="financeDecisionExtra" class="decision-verification" hidden>
+        <legend id="financeDecisionExtraLegend">Imprest details</legend>
+        <label data-decision-extra="approvedAmount">Approved amount<input name="approvedAmount" type="number" min="0.01" step="0.01" inputmode="decimal" data-finance-input></label>
+        <label data-decision-extra="paymentAccount">Payment account code<input name="paymentAccount" value="1020"></label>
+        <label data-decision-extra="disbursementReference">Disbursement reference<input name="disbursementReference"></label>
+        <label data-decision-extra="issueDate">Issue date<input name="issueDate" type="date"></label>
+        <label data-decision-extra="retirementDate">Retirement date<input name="retirementDate" type="date"></label>
+      </fieldset>
       <fieldset id="financeEndorsementOptions" class="approval-defaults">
         <legend>Apply to this document</legend>
         <label class="check-row"><input name="applySignature" type="checkbox"> Signature</label>
@@ -374,7 +382,7 @@
   <script src="js/financial-values.js?v=20260803-finance-commas"></script>
   <script src="js/payment-methods.js?v=20260809-platform-direct-transfer-sharp-text"></script>
   <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
-  <script src="js/admin.js?v=20260813-presence-push"></script>
+  <script src="js/admin.js?v=20260814-imprest-petty-cash"></script>
   <script src="js/web-push.js?v=20260801-mobile-push"></script>
   <script src="js/notifications.js?v=20260804-read-efficiency-custom-dialogs"></script>
 </body>

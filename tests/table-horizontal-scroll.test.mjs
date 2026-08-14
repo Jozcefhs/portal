@@ -12,5 +12,5 @@ test('shared admin tables keep cell content on one line and scroll horizontally'
 });
 
 test('the staff portal requests the non-wrapping table stylesheet version', () => {
-  assert.match(adminHtml, /css\/style\.css\?v=20260813-dashboard-presence/);
+  assert.match(adminHtml, /css\/style\.css\?v=20260814-imprest-petty-cash/);
 });

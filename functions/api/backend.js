@@ -88,6 +88,13 @@ import {
   saveBranchProfileOverrides
 } from '../lib/branch-profile-settings.js';
 import { refreshOrganizationPlanPolicy } from '../lib/plan-policy-sync.js';
+import {
+  IMPREST_ADVANCE_ACCOUNT,
+  buildImprestIssueJournal,
+  buildImprestRetirementJournal,
+  isOpenImprestStatus,
+  validateImprestRetirement
+} from '../lib/imprest.js';
 
 export const SCHOOL_FEES_TOTAL_CODE = 'SCHOOL_FEES_TOTAL';
 
@@ -684,6 +691,8 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'getStudentConductCases', 'saveStudentConductCase', 'deleteStudentConductCase',
   'getAccountingRequisitionDocument', 'syncAccountingRevenue', 'saveChartAccount',
   'saveAccountingJournal', 'saveAccountingExpense', 'saveAccountingBudget',
+  'submitAccountingImprest', 'reviewAccountingImprest', 'issueAccountingImprest',
+  'submitAccountingImprestRetirement', 'verifyAccountingImprestRetirement',
   'saveAccountingBank', 'saveAccountingReconciliation', 'saveAccountingPeriod',
   'saveAccountingOpeningBalance', 'saveAccountingVendor', 'saveAccountingSupplierBill',
   'payAccountingSupplierBill', 'saveAccountingAsset', 'postAccountingDepreciation',
@@ -4596,6 +4605,7 @@ const DEFAULT_CHART_OF_ACCOUNTS = [
   ['1010', 'Cash on Hand', 'Asset', 'Cash and Bank', 'Debit'],
   ['1020', 'Main Bank Account', 'Asset', 'Cash and Bank', 'Debit'],
   ['1030', 'Online Payment Clearing', 'Asset', 'Cash and Bank', 'Debit'],
+  ['1080', 'Staff Imprest and Cash Advances', 'Asset', 'Current Assets', 'Debit'],
   ['1100', 'Student Accounts Receivable', 'Asset', 'Receivables', 'Debit'],
   ['1200', 'Inventory', 'Asset', 'Current Assets', 'Debit'],
   ['1500', 'Property and Equipment', 'Asset', 'Fixed Assets', 'Debit'],
@@ -5462,6 +5472,323 @@ async function saveAccountingExpense(env, body) {
   return { ok: true, message: `Expense saved as ${requestedStatus}.`, expense: payload };
 }
 
+function validImprestDate(value, label) {
+  const date = clean(value);
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00.000Z`) : null;
+  if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+    const err = new Error(`A valid ${label} is required.`);
+    err.status = 400;
+    throw err;
+  }
+  return date;
+}
+
+async function accountingImprestRecord(env, body) {
+  const id = clean(body.ImprestNo || body.imprestNo || body.RecordId || body.recordId);
+  const branch = accountingRequestBranch(body);
+  const record = accountingRowsForBranch(await listCollection(env, 'accountingImprests'), branch)
+    .find((row) => sameText(row.ImprestNo, id) || sameText(row.__id, safeDocumentId(id)));
+  if (!record) {
+    const err = new Error('The selected imprest was not found in this branch.');
+    err.status = 404;
+    throw err;
+  }
+  return record;
+}
+
+function accountingImprestOpenClaimId(record = {}) {
+  return safeDocumentId(`${clean(record.BranchId || 'main').toLowerCase()}-${clean(record.CustodianUsername || record.RequestedByUsername).toLowerCase()}`);
+}
+
+async function requireDesktopImprestApproval(env, body, value) {
+  if (clean(body.UserRole) === 'Super Admin') return;
+  const users = await listCollection(env, 'staffUsers');
+  const user = users.find((row) => sameText(row.Username || row.__id, body.UserUsername));
+  if (!user || yesNo(user.ApprovalEnabled ?? 'NO') !== 'YES' ||
+    asMoneyNumber(user.ApprovalMaxAmount) <= 0 || asMoneyNumber(value) > asMoneyNumber(user.ApprovalMaxAmount)) {
+    const err = new Error('This user does not have administrator-granted approval rights for this imprest amount.');
+    err.status = 403;
+    throw err;
+  }
+}
+
+async function submitAccountingImprest(env, body) {
+  requireAccountingRole(body, ['Super Admin', 'Accounts Officer', 'Management', ...DEPARTMENT_ACCOUNTING_ROLES]);
+  const department = accountingDepartment(body) || clean(body.Department);
+  if (!department) {
+    const err = new Error('A department must be assigned before requesting an imprest.');
+    err.status = 403;
+    throw err;
+  }
+  const requestedAmount = asMoneyNumber(body.AmountRequested || body.Amount);
+  const purpose = clean(body.Purpose || body.purpose);
+  const date = validImprestDate(body.Date || nowIso().slice(0, 10), 'request date');
+  const dueDate = validImprestDate(body.DueDate, 'retirement due date');
+  if (!purpose || requestedAmount <= 0) {
+    const err = new Error('Purpose and an amount greater than zero are required.');
+    err.status = 400;
+    throw err;
+  }
+  if (dueDate < date) {
+    const err = new Error('The retirement due date cannot be earlier than the request date.');
+    err.status = 400;
+    throw err;
+  }
+  const branchId = accountingWriteBranch(body);
+  const username = clean(body.UserUsername);
+  const open = (await listCollection(env, 'accountingImprests')).find((row) =>
+    sameText(row.BranchId || 'main', branchId) &&
+    sameText(row.CustodianUsername || row.RequestedByUsername, username) &&
+    isOpenImprestStatus(row.Status));
+  if (open) {
+    const err = new Error(`Retire or close ${open.ImprestNo || 'the current imprest'} before requesting another imprest.`);
+    err.status = 409;
+    throw err;
+  }
+  const id = ledgerDocumentId('IMP');
+  const timestamp = nowIso();
+  const payload = {
+    ImprestNo: id,
+    ImprestType: ['Standing', 'Special'].includes(clean(body.ImprestType)) ? clean(body.ImprestType) : 'Special',
+    Date: date,
+    DueDate: dueDate,
+    Purpose: purpose,
+    AmountRequested: requestedAmount,
+    AmountApproved: 0,
+    AmountIssued: 0,
+    ExpenseTotal: 0,
+    ReturnedAmount: 0,
+    OutstandingAmount: requestedAmount,
+    AdvanceAccount: IMPREST_ADVANCE_ACCOUNT,
+    PaymentAccount: clean(body.PaymentAccount) || '1020',
+    Department: department,
+    CostCentre: clean(body.CostCentre),
+    CustodianName: clean(body.RecordedBy),
+    CustodianUsername: username,
+    RequestedBy: clean(body.RecordedBy),
+    RequestedByUsername: username,
+    RequestedAt: timestamp,
+    Notes: clean(body.Notes),
+    Status: 'Submitted',
+    CreatedAt: timestamp,
+    UpdatedAt: timestamp,
+    SourcePlatform: 'Desktop',
+    BranchId: branchId,
+    SchoolSection: clean(body.SchoolSection || 'Secondary')
+  };
+  try {
+    await batchUpsertDocuments(env, [
+      {
+        collectionPath: 'accountingImprestOpenClaims',
+        documentId: accountingImprestOpenClaimId(payload),
+        data: {
+          ClaimId: accountingImprestOpenClaimId(payload),
+          ImprestNo: id,
+          BranchId: branchId,
+          CustodianUsername: username,
+          CreatedAt: timestamp
+        },
+        exists: false
+      },
+      { collectionPath: 'accountingImprests', documentId: safeDocumentId(id), data: payload, exists: false }
+    ]);
+  } catch (error) {
+    if ([409, 412].includes(Number(error?.status)) || error?.code === 'FIRESTORE_WRITE_CONFLICT') {
+      const conflict = new Error('You already have an open imprest in this branch. Retire or close it before requesting another one.');
+      conflict.status = 409;
+      conflict.code = 'OPEN_IMPREST_EXISTS';
+      throw conflict;
+    }
+    throw error;
+  }
+  await writeAccountingAudit(env, 'SUBMIT', 'Imprest', id, body, `${payload.ImprestType}: ${purpose}; ${requestedAmount}`);
+  return { ok: true, message: 'Imprest request submitted.', imprest: payload };
+}
+
+async function reviewAccountingImprest(env, body) {
+  requireAccountingRole(body, ['Super Admin', 'Accounts Officer', 'Management']);
+  const record = await accountingImprestRecord(env, body);
+  if (lower(record.Status) !== 'submitted') {
+    const err = new Error('Only a Submitted imprest can be approved or rejected.');
+    err.status = 409;
+    throw err;
+  }
+  const decision = clean(body.Decision || body.Status);
+  if (!['Approved', 'Rejected'].includes(decision)) {
+    const err = new Error('Decision must be Approved or Rejected.');
+    err.status = 400;
+    throw err;
+  }
+  const approved = asMoneyNumber(body.AmountApproved || record.AmountRequested);
+  if (decision === 'Approved') {
+    if (approved <= 0 || approved > asMoneyNumber(record.AmountRequested)) {
+      const err = new Error('Approved amount must be greater than zero and cannot exceed the requested amount.');
+      err.status = 400;
+      throw err;
+    }
+    await requireDesktopImprestApproval(env, body, approved);
+  }
+  const timestamp = nowIso();
+  const payload = {
+    ...record,
+    Status: decision,
+    AmountApproved: decision === 'Approved' ? approved : 0,
+    OutstandingAmount: decision === 'Approved' ? approved : 0,
+    ReviewNotes: clean(body.Notes),
+    UpdatedAt: timestamp,
+    ...(decision === 'Approved'
+      ? { ApprovedAt: timestamp, ApprovedBy: clean(body.RecordedBy), ApprovedByUsername: clean(body.UserUsername) }
+      : { RejectedAt: timestamp, RejectedBy: clean(body.RecordedBy), RejectedByUsername: clean(body.UserUsername) })
+  };
+  delete payload.__id; delete payload.__name; delete payload.__updateTime; delete payload.__createTime;
+  const writes = [
+    { collectionPath: 'accountingImprests', documentId: safeDocumentId(record.ImprestNo), data: payload }
+  ];
+  if (decision === 'Rejected') writes.push({
+    collectionPath: 'accountingImprestOpenClaims',
+    documentId: accountingImprestOpenClaimId(record),
+    operation: 'delete'
+  });
+  await batchUpsertDocuments(env, writes);
+  await writeAccountingAudit(env, decision.toUpperCase(), 'Imprest', record.ImprestNo, body, clean(body.Notes));
+  return { ok: true, message: `Imprest ${decision.toLowerCase()}.`, imprest: payload };
+}
+
+async function issueAccountingImprest(env, body) {
+  requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
+  const record = await accountingImprestRecord(env, body);
+  if (lower(record.Status) !== 'approved') {
+    const err = new Error('Only an Approved imprest can be issued.');
+    err.status = 409;
+    throw err;
+  }
+  const reference = clean(body.DisbursementReference || body.Reference);
+  if (!reference) {
+    const err = new Error('Enter the cash, bank or payment reference used for disbursement.');
+    err.status = 400;
+    throw err;
+  }
+  await seedAccountingChart(env);
+  const timestamp = nowIso();
+  const payload = {
+    ...record,
+    Status: 'Issued',
+    AmountIssued: asMoneyNumber(record.AmountApproved),
+    OutstandingAmount: asMoneyNumber(record.AmountApproved),
+    PaymentAccount: clean(body.PaymentAccount) || '1020',
+    DisbursementReference: reference,
+    IssueDate: validImprestDate(body.IssueDate || nowIso().slice(0, 10), 'issue date'),
+    IssuedAt: timestamp,
+    IssuedBy: clean(body.RecordedBy),
+    IssuedByUsername: clean(body.UserUsername),
+    UpdatedAt: timestamp
+  };
+  delete payload.__id; delete payload.__name; delete payload.__updateTime; delete payload.__createTime;
+  const journal = await saveAccountingJournal(env, buildImprestIssueJournal(payload, clean(body.RecordedBy)), true);
+  payload.IssueJournalNo = journal.JournalNo;
+  await upsertDocument(env, 'accountingImprests', safeDocumentId(record.ImprestNo), payload);
+  await writeAccountingAudit(env, 'ISSUE', 'Imprest', record.ImprestNo, body, reference);
+  return { ok: true, message: 'Imprest issued and posted to staff advances.', imprest: payload };
+}
+
+async function submitAccountingImprestRetirement(env, body) {
+  requireAccountingRole(body, ['Super Admin', 'Accounts Officer', 'Management', ...DEPARTMENT_ACCOUNTING_ROLES]);
+  const record = await accountingImprestRecord(env, body);
+  if (lower(record.Status) !== 'issued') {
+    const err = new Error('Only an Issued imprest can be retired.');
+    err.status = 409;
+    throw err;
+  }
+  if (!['Super Admin', 'Accounts Officer'].includes(clean(body.UserRole)) &&
+    !sameText(record.CustodianUsername || record.RequestedByUsername, body.UserUsername)) {
+    const err = new Error('Only the imprest custodian or Accounts can submit this retirement.');
+    err.status = 403;
+    throw err;
+  }
+  let retirement;
+  try {
+    retirement = validateImprestRetirement(record.AmountIssued, body.RetirementLines || body.Lines);
+  } catch (error) {
+    error.status = 400;
+    throw error;
+  }
+  const returnReference = clean(body.ReturnReference);
+  if (retirement.returnedAmount > 0 && !returnReference) {
+    const err = new Error('Enter the cash or bank return reference for the unused balance.');
+    err.status = 400;
+    throw err;
+  }
+  const payload = {
+    ...record,
+    Status: 'Retirement Submitted',
+    RetirementLines: retirement.lines,
+    ExpenseTotal: retirement.expenseTotal,
+    ReturnedAmount: retirement.returnedAmount,
+    OutstandingAmount: asMoneyNumber(record.AmountIssued),
+    ReturnReference: returnReference,
+    RetirementNotes: clean(body.Notes),
+    RetirementSubmittedAt: nowIso(),
+    RetirementSubmittedBy: clean(body.RecordedBy),
+    RetirementSubmittedByUsername: clean(body.UserUsername),
+    UpdatedAt: nowIso()
+  };
+  delete payload.__id; delete payload.__name; delete payload.__updateTime; delete payload.__createTime;
+  await upsertDocument(env, 'accountingImprests', safeDocumentId(record.ImprestNo), payload);
+  await writeAccountingAudit(env, 'SUBMIT RETIREMENT', 'Imprest', record.ImprestNo, body, `${retirement.lines.length} receipt(s)`);
+  return { ok: true, message: 'Imprest retirement submitted for verification.', imprest: payload };
+}
+
+async function verifyAccountingImprestRetirement(env, body) {
+  requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
+  const record = await accountingImprestRecord(env, body);
+  if (lower(record.Status) !== 'retirement submitted') {
+    const err = new Error('Only a submitted imprest retirement can be reviewed.');
+    err.status = 409;
+    throw err;
+  }
+  const decision = clean(body.Decision || 'Verified');
+  if (decision === 'Returned for Correction') {
+    if (!clean(body.Notes)) {
+      const err = new Error('Explain what the custodian must correct.');
+      err.status = 400;
+      throw err;
+    }
+    const payload = { ...record, Status: 'Issued', RetirementReviewNotes: clean(body.Notes), RetirementReturnedAt: nowIso(), RetirementReturnedBy: clean(body.RecordedBy), UpdatedAt: nowIso() };
+    delete payload.__id; delete payload.__name; delete payload.__updateTime; delete payload.__createTime;
+    await upsertDocument(env, 'accountingImprests', safeDocumentId(record.ImprestNo), payload);
+    await writeAccountingAudit(env, 'RETURN RETIREMENT', 'Imprest', record.ImprestNo, body, clean(body.Notes));
+    return { ok: true, message: 'Retirement returned for correction.', imprest: payload };
+  }
+  await seedAccountingChart(env);
+  const journal = await saveAccountingJournal(env, buildImprestRetirementJournal({
+    ...record,
+    RetirementDate: validImprestDate(body.RetirementDate || nowIso().slice(0, 10), 'retirement date')
+  }, clean(body.RecordedBy)), true);
+  const payload = {
+    ...record,
+    Status: 'Retired',
+    OutstandingAmount: 0,
+    RetirementDate: journal.Date,
+    RetirementJournalNo: journal.JournalNo,
+    RetirementReviewNotes: clean(body.Notes),
+    RetiredAt: nowIso(),
+    RetiredBy: clean(body.RecordedBy),
+    RetiredByUsername: clean(body.UserUsername),
+    UpdatedAt: nowIso()
+  };
+  delete payload.__id; delete payload.__name; delete payload.__updateTime; delete payload.__createTime;
+  await batchUpsertDocuments(env, [
+    { collectionPath: 'accountingImprests', documentId: safeDocumentId(record.ImprestNo), data: payload },
+    {
+      collectionPath: 'accountingImprestOpenClaims',
+      documentId: accountingImprestOpenClaimId(record),
+      operation: 'delete'
+    }
+  ]);
+  await writeAccountingAudit(env, 'VERIFY RETIREMENT', 'Imprest', record.ImprestNo, body, clean(body.Notes));
+  return { ok: true, message: 'Imprest fully retired and posted to expense accounts.', imprest: payload };
+}
+
 async function saveAccountingBudget(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer', 'Management']);
   const requestedId = clean(body.BudgetId || body.budgetId);
@@ -5574,14 +5901,16 @@ async function saveAccountingPeriod(env, body) {
 const DEFAULT_ACCOUNTING_APPROVAL_LIMITS = [
   { Role: 'Management', TransactionType: 'Expense', MaxAmount: 5000000 },
   { Role: 'Management', TransactionType: 'Supplier Bill', MaxAmount: 5000000 },
+  { Role: 'Management', TransactionType: 'Imprest', MaxAmount: 5000000 },
   { Role: 'Management', TransactionType: 'Concession', MaxAmount: 1000000 },
   { Role: 'Super Admin', TransactionType: 'Expense', MaxAmount: 999999999999 },
   { Role: 'Super Admin', TransactionType: 'Supplier Bill', MaxAmount: 999999999999 },
+  { Role: 'Super Admin', TransactionType: 'Imprest', MaxAmount: 999999999999 },
   { Role: 'Super Admin', TransactionType: 'Concession', MaxAmount: 999999999999 }
 ];
 
 const DEFAULT_CLOSE_CHECKLIST = [
-  'Revenue subledgers synchronized', 'All expense vouchers reviewed', 'Bank accounts reconciled',
+  'Revenue subledgers synchronized', 'All expense vouchers reviewed', 'All imprests and staff advances reviewed', 'Bank accounts reconciled',
   'Student receivables reviewed', 'Supplier payables reviewed', 'Depreciation posted',
   'Trial balance reviewed', 'Financial statements approved', 'Accounting backup/export completed'
 ];
@@ -6234,15 +6563,16 @@ async function getAccountingOverview(env, body = {}) {
     const department = accountingDepartment(body);
     if (!department) { const err = new Error('A department must be assigned to this user.'); err.status = 403; throw err; }
     await seedAccountingChart(env);
-    const [chart, expenses, budgets, vendors, supplierBills] = await Promise.all([
+    const [chart, expenses, budgets, vendors, supplierBills, imprests] = await Promise.all([
       listCollection(env, 'chartOfAccounts'), listCollection(env, 'accountingExpenses'), listCollection(env, 'accountingBudgets'),
-      listCollection(env, 'accountingVendors'), listCollection(env, 'accountingSupplierBills')
+      listCollection(env, 'accountingVendors'), listCollection(env, 'accountingSupplierBills'), listCollection(env, 'accountingImprests').catch(() => [])
     ]);
     return {
       ok: true, message: `${department} requisitions and bills loaded.`, synchronized: 0,
       branchId, chart: accountingChartForEdition(chart, edition), expenses: branchRows(expenses).filter((row) => sameText(row.Department, department)),
       budgets: branchRows(budgets).filter((row) => sameText(row.Department, department)), vendors: branchRows(vendors),
       supplierBills: branchRows(supplierBills).filter((row) => sameText(row.Department, department)),
+      imprests: branchRows(imprests).filter((row) => sameText(row.Department, department)),
       journals: [], banks: [], reconciliations: [], periods: [], audit: [], supplierPayments: [], assets: [], adjustments: [],
       approvalLimits: [], closeChecklist: [], bankStatementItems: [], donations: [], reports: {}
     };
@@ -6252,11 +6582,11 @@ async function getAccountingOverview(env, body = {}) {
   // causing Cloudflare Workers to exceed their per-request subrequest quota.
   // Administrators can still run the explicit "Synchronize Revenue" action.
   const synchronized = 0;
-  const [chart, journals, expenses, budgets, banks, reconciliations, periods, audit, vendors, supplierBills, supplierPayments, assets, adjustments, approvalLimits, closeChecklist, bankStatementItems, invoices, payments, formSales, gatewayCharges, payrollProfiles, payrollRuns, payrollItems, payrollPayments, payrollAudit, payrollTaxProfiles, payrollTaxOverrides, payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings, donations] = await Promise.all([
+  const [chart, journals, expenses, budgets, banks, reconciliations, periods, audit, vendors, supplierBills, supplierPayments, imprests, assets, adjustments, approvalLimits, closeChecklist, bankStatementItems, invoices, payments, formSales, gatewayCharges, payrollProfiles, payrollRuns, payrollItems, payrollPayments, payrollAudit, payrollTaxProfiles, payrollTaxOverrides, payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings, donations] = await Promise.all([
     listCollection(env, 'chartOfAccounts'), listCollection(env, 'accountingJournals'), listCollection(env, 'accountingExpenses'),
     listCollection(env, 'accountingBudgets'), listCollection(env, 'accountingBanks'), listCollection(env, 'accountingReconciliations'),
     listCollection(env, 'accountingPeriods'), listCollection(env, 'accountingAudit'), listCollection(env, 'accountingVendors'),
-    listCollection(env, 'accountingSupplierBills'), listCollection(env, 'accountingSupplierPayments'), listCollection(env, 'accountingAssets'),
+    listCollection(env, 'accountingSupplierBills'), listCollection(env, 'accountingSupplierPayments'), listCollection(env, 'accountingImprests').catch(() => []), listCollection(env, 'accountingAssets'),
     listCollection(env, 'accountingAdjustments'), listCollection(env, 'accountingApprovalLimits'), listCollection(env, 'accountingCloseChecklist'),
     listCollection(env, 'accountingBankStatementItems'), listCollection(env, 'invoices'), listCollection(env, 'payments'),
     listCollection(env, 'formSales').catch(() => []), listCollection(env, 'paymentGatewayCharges').catch(() => []),
@@ -6275,6 +6605,7 @@ async function getAccountingOverview(env, body = {}) {
   const scopedVendors = branchRows(vendors);
   const scopedSupplierBills = branchRows(supplierBills);
   const scopedSupplierPayments = branchRows(supplierPayments);
+  const scopedImprests = branchRows(imprests);
   const scopedAssets = branchRows(assets);
   const scopedAdjustments = branchRows(adjustments);
   const scopedCloseChecklist = branchRows(closeChecklist);
@@ -6302,7 +6633,7 @@ async function getAccountingOverview(env, body = {}) {
   reports.payablesAgeing = buildAgeing(scopedSupplierBills, filter.DateTo || nowIso().slice(0, 10), 'payable');
   const gatewayReport = buildGatewayCollectionsReport(scopedFormSales, scopedGatewayCharges, filter, scopedPayments, scopedDonations);
   return { ok: true, message: `Finance and accounting records loaded for ${branchId === 'all' ? 'all branches' : `branch ${branchId}`}.`, synchronized, branchId, filter, chart: scopedChart, journals: scopedJournals, expenses: scopedExpenses, budgets: scopedBudgets, banks: scopedBanks, reconciliations: scopedReconciliations, periods, audit: scopedAudit,
-    vendors: scopedVendors, supplierBills: scopedSupplierBills, supplierPayments: scopedSupplierPayments, assets: scopedAssets, adjustments: scopedAdjustments, approvalLimits, closeChecklist: scopedCloseChecklist, bankStatementItems: scopedBankStatementItems,
+    vendors: scopedVendors, supplierBills: scopedSupplierBills, supplierPayments: scopedSupplierPayments, imprests: scopedImprests, assets: scopedAssets, adjustments: scopedAdjustments, approvalLimits, closeChecklist: scopedCloseChecklist, bankStatementItems: scopedBankStatementItems,
     payrollProfiles: scopedPayrollProfiles, payrollRuns: scopedPayrollRuns, payrollItems: scopedPayrollItems, payrollPayments: scopedPayrollPayments, payrollAudit: scopedPayrollAudit, payrollTaxProfiles: payrollTaxProfilesWithUsage, payrollTaxOverrides: scopedPayrollTaxOverrides,
     payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings, donations: scopedDonations, gatewayReport, reports };
 }
@@ -7357,6 +7688,16 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       return { ok: true, message: 'Journal saved.', journal: await saveAccountingJournal(env, body) };
     case 'saveAccountingExpense':
       return saveAccountingExpense(env, body);
+    case 'submitAccountingImprest':
+      return submitAccountingImprest(env, body);
+    case 'reviewAccountingImprest':
+      return reviewAccountingImprest(env, body);
+    case 'issueAccountingImprest':
+      return issueAccountingImprest(env, body);
+    case 'submitAccountingImprestRetirement':
+      return submitAccountingImprestRetirement(env, body);
+    case 'verifyAccountingImprestRetirement':
+      return verifyAccountingImprestRetirement(env, body);
     case 'saveAccountingBudget':
       return saveAccountingBudget(env, body);
     case 'saveAccountingBank':

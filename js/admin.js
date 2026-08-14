@@ -182,7 +182,7 @@ const tabConfig = [
   ['donations', 'Donations'],
   ['accounts', 'Accounts'],
   ['incomeAnalytics', 'Income Analytics'],
-  ['financeRequests', 'Bills & Requisitions'],
+  ['financeRequests', 'Finance Requests & Imprest'],
   ['payroll', 'My Payroll'],
   ['clinic', 'Clinic'],
   ['kitchen', 'Kitchen'],
@@ -9542,8 +9542,10 @@ async function financeRequest(action, payload = {}, options = {}) {
 function openFinanceDecision(button) {
   const action = button.dataset.workflowAction;
   const decision = button.dataset.decision || '';
-  const secureDecision = decision === 'Approved' || action === 'accountsReview';
+  const secureDecision = decision === 'Approved' || action === 'accountsReview' ||
+    action === 'issueImprest' || (action === 'reviewImprestRetirement' && decision === 'Verified');
   const posting = action === 'accountsReview';
+  const imprestAction = ['reviewImprest', 'issueImprest', 'reviewImprestRetirement'].includes(action);
   const profile = financeData?.approvalProfile || {};
   pendingFinanceDecision = {
     button,
@@ -9551,17 +9553,41 @@ function openFinanceDecision(button) {
     decision,
     recordType: button.dataset.recordType,
     recordId: button.dataset.recordId,
+    amount: Number(button.dataset.amount || 0),
     idempotencyKey: newIdempotencyKey()
   };
   financeDecisionBiometricVerified = false;
   financeDecisionApprovalProof = '';
   financeDecisionForm.reset();
-  document.getElementById('financeDecisionTitle').textContent = decision === 'Rejected'
-    ? 'Reject Document'
-    : posting ? 'Accounts Review / Posting' : 'Approve Document';
+  document.getElementById('financeDecisionTitle').textContent = action === 'issueImprest'
+    ? 'Issue Imprest'
+    : action === 'reviewImprestRetirement'
+      ? (decision === 'Verified' ? 'Verify Imprest Retirement' : 'Return Retirement for Correction')
+      : decision === 'Rejected'
+        ? (imprestAction ? 'Reject Imprest' : 'Reject Document')
+        : posting ? 'Accounts Review / Posting' : imprestAction ? 'Approve Imprest' : 'Approve Document';
   document.getElementById('financeDecisionRecord').textContent = button.dataset.recordId;
-  document.getElementById('financeEndorsementOptions').hidden = !secureDecision;
+  document.getElementById('financeEndorsementOptions').hidden = !secureDecision || imprestAction;
   document.getElementById('financeDecisionVerification').hidden = !secureDecision;
+  const extra = document.getElementById('financeDecisionExtra');
+  const extraFields = {
+    approvedAmount: action === 'reviewImprest' && decision === 'Approved',
+    paymentAccount: action === 'issueImprest',
+    disbursementReference: action === 'issueImprest',
+    issueDate: action === 'issueImprest',
+    retirementDate: action === 'reviewImprestRetirement' && decision === 'Verified'
+  };
+  extra.hidden = !Object.values(extraFields).some(Boolean);
+  extra.querySelectorAll('[data-decision-extra]').forEach((label) => {
+    const visible = Boolean(extraFields[label.dataset.decisionExtra]);
+    label.hidden = !visible;
+    const input = label.querySelector('input');
+    input.required = visible;
+  });
+  financeDecisionForm.elements.approvedAmount.value = extraFields.approvedAmount ? String(pendingFinanceDecision.amount || '') : '';
+  financeDecisionForm.elements.paymentAccount.value = '1020';
+  financeDecisionForm.elements.issueDate.value = new Date().toISOString().slice(0, 10);
+  financeDecisionForm.elements.retirementDate.value = new Date().toISOString().slice(0, 10);
   const signatureInput = financeDecisionForm.elements.applySignature;
   const stampInput = financeDecisionForm.elements.applyStamp;
   signatureInput.disabled = !profile.HasSignature;
@@ -9576,7 +9602,11 @@ function openFinanceDecision(button) {
   biometricButton.innerHTML = '<span aria-hidden="true">◉</span> Verify with biometric';
   setStatus(document.getElementById('financeDecisionVerificationStatus'), '');
   setStatus(document.getElementById('financeDecisionStatus'), '');
-  document.getElementById('financeDecisionSubmit').textContent = decision === 'Rejected' ? 'Reject Document' : 'Confirm Decision';
+  document.getElementById('financeDecisionSubmit').textContent = action === 'issueImprest'
+    ? 'Issue Imprest'
+    : action === 'reviewImprestRetirement'
+      ? (decision === 'Verified' ? 'Verify and Retire' : 'Return for Correction')
+      : decision === 'Rejected' ? 'Reject' : 'Confirm Decision';
   financeDecisionDialog.showModal();
 }
 
@@ -9588,7 +9618,15 @@ async function verifyFinanceDecisionBiometric() {
     const started = await passkeyRequest('approval-options', {
       recordId: pendingFinanceDecision?.recordId,
       recordType: pendingFinanceDecision?.recordType,
-      decisionAction: pendingFinanceDecision?.action === 'accountsReview' ? 'accountsReview' : 'review:Approved'
+      decisionAction: pendingFinanceDecision?.action === 'accountsReview'
+        ? 'accountsReview'
+        : pendingFinanceDecision?.action === 'issueImprest'
+          ? 'imprest:issue'
+          : pendingFinanceDecision?.action === 'reviewImprestRetirement'
+            ? 'imprest:verify'
+            : pendingFinanceDecision?.action === 'reviewImprest'
+              ? 'imprest:approve'
+              : 'review:Approved'
     });
     const credential = await getPasskeyCredential(started.options);
     if (!credential) throw new Error('No biometric credential was returned.');
@@ -9617,7 +9655,8 @@ async function submitFinanceDecision(event) {
   event.preventDefault();
   if (!pendingFinanceDecision) return;
   const context = pendingFinanceDecision;
-  const secureDecision = context.decision === 'Approved' || context.action === 'accountsReview';
+  const secureDecision = context.decision === 'Approved' || context.action === 'accountsReview' ||
+    context.action === 'issueImprest' || (context.action === 'reviewImprestRetirement' && context.decision === 'Verified');
   const password = financeDecisionForm.elements.approvalPassword.value;
   if (secureDecision && !password && !financeDecisionBiometricVerified) {
     setStatus(document.getElementById('financeDecisionVerificationStatus'), 'Enter your current password or verify with biometric.', 'bad');
@@ -9631,6 +9670,11 @@ async function submitFinanceDecision(event) {
       recordId: context.recordId,
       decision: context.decision,
       notes: financeDecisionForm.elements.notes.value,
+      approvedAmount: financeDecisionForm.elements.approvedAmount.value,
+      paymentAccount: financeDecisionForm.elements.paymentAccount.value,
+      disbursementReference: financeDecisionForm.elements.disbursementReference.value,
+      issueDate: financeDecisionForm.elements.issueDate.value,
+      retirementDate: financeDecisionForm.elements.retirementDate.value,
       approvalPassword: password,
       applySignature: financeDecisionForm.elements.applySignature.checked,
       applyStamp: financeDecisionForm.elements.applyStamp.checked,
@@ -9650,7 +9694,11 @@ async function submitFinanceDecision(event) {
     }
     setStatus(document.getElementById('financeDecisionStatus'), error.message || String(error), 'bad');
   } finally {
-    setButtonLoading(submitButton, false, 'Saving...', context.decision === 'Rejected' ? 'Reject Document' : 'Confirm Decision');
+    setButtonLoading(submitButton, false, 'Saving...', context.action === 'issueImprest'
+      ? 'Issue Imprest'
+      : context.action === 'reviewImprestRetirement'
+        ? (context.decision === 'Verified' ? 'Verify and Retire' : 'Return for Correction')
+        : context.decision === 'Rejected' ? 'Reject' : 'Confirm Decision');
   }
 }
 
@@ -9780,12 +9828,103 @@ function openFinanceRecordPrint(record, type, endorsements = {}, printableWindow
   window.setTimeout(() => printable.print(), 250);
 }
 
+function imprestRecordRow(record, capabilities) {
+  const id = pick(record, ['ImprestNo', '__id']);
+  const status = clean(record.Status || 'Submitted');
+  const statusKey = status.toLowerCase();
+  const amountRequested = Number(record.AmountRequested || 0);
+  const amountIssued = Number(record.AmountIssued || record.AmountApproved || 0);
+  const isCustodian = clean(record.CustodianUsername || record.RequestedByUsername).toLowerCase() === clean(currentUser?.username).toLowerCase();
+  let actions = `<button type="button" class="compact-icon-action compact-print-action" data-print-imprest="${escapeHtml(id)}" aria-label="Print ${escapeHtml(id)}" title="View and print"><span aria-hidden="true">&#128424;&#65038;</span></button>`;
+  if (capabilities.canApprove && statusKey === 'submitted') {
+    actions += `<button type="button" class="compact-icon-action compact-approve-action" data-workflow-action="reviewImprest" data-decision="Approved" data-record-type="imprest" data-record-id="${escapeHtml(id)}" data-amount="${escapeHtml(amountRequested)}" aria-label="Approve ${escapeHtml(id)}" title="Approve"><span aria-hidden="true">&#10003;</span></button>`;
+    actions += `<button type="button" class="compact-icon-action compact-reject-action" data-workflow-action="reviewImprest" data-decision="Rejected" data-record-type="imprest" data-record-id="${escapeHtml(id)}" aria-label="Reject ${escapeHtml(id)}" title="Reject"><span aria-hidden="true">&#10005;</span></button>`;
+  }
+  if (capabilities.canAccountsReview && statusKey === 'approved') {
+    actions += `<button type="button" class="compact-text-action" data-workflow-action="issueImprest" data-decision="Issued" data-record-type="imprest" data-record-id="${escapeHtml(id)}" aria-label="Issue ${escapeHtml(id)}">Issue</button>`;
+  }
+  if ((isCustodian || capabilities.canAccountsReview) && statusKey === 'issued') {
+    actions += `<button type="button" class="compact-text-action" data-open-imprest-retirement="${escapeHtml(id)}">Retire</button>`;
+  }
+  if (capabilities.canAccountsReview && statusKey === 'retirement submitted') {
+    actions += `<button type="button" class="compact-icon-action compact-approve-action" data-workflow-action="reviewImprestRetirement" data-decision="Verified" data-record-type="imprest" data-record-id="${escapeHtml(id)}" aria-label="Verify retirement ${escapeHtml(id)}" title="Verify retirement"><span aria-hidden="true">&#10003;</span></button>`;
+    actions += `<button type="button" class="compact-icon-action compact-reject-action" data-workflow-action="reviewImprestRetirement" data-decision="Returned for Correction" data-record-type="imprest" data-record-id="${escapeHtml(id)}" aria-label="Return retirement ${escapeHtml(id)}" title="Return for correction"><span aria-hidden="true">&#8630;</span></button>`;
+  }
+  const outstanding = Number(record.OutstandingAmount ?? (['issued', 'retirement submitted'].includes(statusKey) ? amountIssued : 0));
+  return `<tr>
+    <td>${escapeHtml(id)}</td><td>${escapeHtml(record.ImprestType || 'Special')}</td>
+    <td>${escapeHtml(record.Purpose || '-')}</td><td>${escapeHtml(record.CustodianName || record.RequestedBy || '-')}</td>
+    <td>${escapeHtml(record.Department || '-')}</td><td>${escapeHtml(money(amountRequested))}</td>
+    <td>${escapeHtml(money(amountIssued))}</td><td>${escapeHtml(money(outstanding))}</td>
+    <td>${escapeHtml(record.DueDate || '-')}</td>
+    <td><span class="workflow-status status-${escapeHtml(statusKey.replace(/\s+/g, '-'))}">${escapeHtml(status)}</span></td>
+    <td><div class="finance-row-actions">${actions}</div></td>
+  </tr>`;
+}
+
+function imprestRecordsSection(records, capabilities) {
+  return `<section class="workflow-list-section imprest-list-section">
+    <div class="workflow-ledger-heading"><div><h2>Imprest &amp; Petty Cash <small>(${records.length})</small></h2><p class="muted">Controlled staff advances, receipt-backed retirement and unused-cash returns.</p></div><button type="button" class="secondary" data-print-imprest-report>Print report</button></div>
+    <div class="admin-table-wrap finance-record-table-wrap"><table class="admin-table finance-record-table imprest-record-table">
+      <thead><tr><th>Reference</th><th>Type</th><th>Purpose</th><th>Custodian</th><th>Department</th><th>Requested</th><th>Issued</th><th>Outstanding</th><th>Due</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>${records.length ? records.map((record) => imprestRecordRow(record, capabilities)).join('') : '<tr><td colspan="11">No imprest records found.</td></tr>'}</tbody>
+    </table></div>
+  </section>`;
+}
+
+function imprestRetirementEntryRow(index) {
+  const today = new Date().toISOString().slice(0, 10);
+  return `<tr data-imprest-retirement-row>
+    <td data-imprest-retirement-serial>${index}</td>
+    <td><input data-imprest-retirement-field="date" type="date" value="${today}" required></td>
+    <td><input data-imprest-retirement-field="description" required></td>
+    <td><input data-imprest-retirement-field="expenseAccount" value="6090" required></td>
+    <td><input data-imprest-retirement-field="amount" type="number" min="0.01" step="0.01" inputmode="decimal" data-finance-input required></td>
+    <td><input data-imprest-retirement-field="receiptUrl" type="url" placeholder="https://..." required></td>
+    <td><button type="button" class="compact-icon-action compact-delete-action" data-remove-imprest-retirement aria-label="Delete line"><span aria-hidden="true">&#128465;&#65038;</span></button></td>
+  </tr>`;
+}
+
+function imprestRetirementItems(form) {
+  return [...form.querySelectorAll('[data-imprest-retirement-row]')].map((row) => ({
+    date: row.querySelector('[data-imprest-retirement-field="date"]')?.value,
+    description: clean(row.querySelector('[data-imprest-retirement-field="description"]')?.value),
+    expenseAccount: clean(row.querySelector('[data-imprest-retirement-field="expenseAccount"]')?.value),
+    amount: financialNumber(row.querySelector('[data-imprest-retirement-field="amount"]')?.value),
+    receiptUrl: clean(row.querySelector('[data-imprest-retirement-field="receiptUrl"]')?.value)
+  }));
+}
+
+function updateImprestRetirementTotals(form) {
+  const issued = Number(form.dataset.amountIssued || 0);
+  const rows = [...form.querySelectorAll('[data-imprest-retirement-row]')];
+  const expenses = rows.reduce((sum, row, index) => {
+    row.querySelector('[data-imprest-retirement-serial]').textContent = index + 1;
+    return sum + financialNumber(row.querySelector('[data-imprest-retirement-field="amount"]')?.value);
+  }, 0);
+  form.querySelector('[data-imprest-issued-total]').textContent = money(issued);
+  form.querySelector('[data-imprest-expense-total]').textContent = money(expenses);
+  form.querySelector('[data-imprest-return-total]').textContent = money(Math.max(0, issued - expenses));
+}
+
+function printImprestReport(records, selected = null) {
+  const rows = selected ? [selected] : records;
+  const printable = window.open('', '_blank', 'width=1100,height=760');
+  if (!printable) return setStatus(document.getElementById('financeWorkflowStatus'), 'Allow pop-ups to print the imprest report.', 'bad');
+  const retirementLines = (record) => Array.isArray(record.RetirementLines) && record.RetirementLines.length
+    ? `<table><thead><tr><th>Date</th><th>Description</th><th>Account</th><th>Amount</th><th>Receipt</th></tr></thead><tbody>${record.RetirementLines.map((line) => `<tr><td>${escapeHtml(line.Date)}</td><td>${escapeHtml(line.Description)}</td><td>${escapeHtml(line.ExpenseAccount)}</td><td>${escapeHtml(money(line.Amount))}</td><td>${line.ReceiptUrl ? `<a href="${escapeHtml(line.ReceiptUrl)}">View</a>` : '-'}</td></tr>`).join('')}</tbody></table>` : '';
+  printable.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Imprest report</title><style>body{font:12px Arial;color:#102a43;margin:28px}h1{font-size:22px}section{margin:0 0 24px;break-inside:avoid}table{width:100%;border-collapse:collapse;margin:8px 0}th,td{border:1px solid #ccd8e5;padding:7px;text-align:left}th{background:#edf3f8}.money{text-align:right}.print{padding:8px 14px;background:#123f67;color:white;border:0;border-radius:6px}@media print{.print{display:none}body{margin:10mm}}</style></head><body><button class="print" onclick="window.print()">Print</button><h1>Imprest &amp; Petty Cash Report</h1>${rows.map((record) => `<section><h2>${escapeHtml(record.ImprestNo)} &middot; ${escapeHtml(record.Status)}</h2><table><tbody><tr><th>Custodian</th><td>${escapeHtml(record.CustodianName)}</td><th>Department</th><td>${escapeHtml(record.Department)}</td></tr><tr><th>Purpose</th><td colspan="3">${escapeHtml(record.Purpose)}</td></tr><tr><th>Requested</th><td>${escapeHtml(money(record.AmountRequested))}</td><th>Issued</th><td>${escapeHtml(money(record.AmountIssued || record.AmountApproved))}</td></tr><tr><th>Expenses</th><td>${escapeHtml(money(record.ExpenseTotal))}</td><th>Cash returned</th><td>${escapeHtml(money(record.ReturnedAmount))}</td></tr><tr><th>Due date</th><td>${escapeHtml(record.DueDate || '-')}</td><th>Return reference</th><td>${escapeHtml(record.ReturnReference || '-')}</td></tr></tbody></table>${retirementLines(record)}</section>`).join('')}</body></html>`);
+  printable.document.close();
+}
+
 function renderFinanceWorkflow() {
   if (!financeData || activeSection !== 'financeRequests') return;
   const capabilities = financeData.capabilities || {};
   const department = financeData.department || 'Unassigned';
   const requisitions = financeData.requisitions || [];
   const bills = financeData.bills || [];
+  const imprests = financeData.imprests || [];
+  const imprestSummary = financeData.imprestSummary || {};
   const allRecords = [...requisitions, ...bills];
   const statusCount = (status) => allRecords.filter((record) => clean(record.Status).toLowerCase() === status).length;
   const pendingValue = allRecords
@@ -9857,13 +9996,40 @@ function renderFinanceWorkflow() {
           <p class="status" data-form-status></p>
         </form>
       </dialog>
+      <dialog id="imprestRequestDialog" class="workflow-dialog imprest-dialog">
+        <div class="workflow-dialog-header"><div><small>${escapeHtml(department)}</small><h2>Request Imprest / Petty Cash</h2></div><button type="button" data-close-dialog aria-label="Close">&times;</button></div>
+        <form id="imprestRequestForm" class="workflow-form">
+          <label>Type <span class="required">*</span><select name="imprestType" required><option>Special</option><option>Standing</option></select></label>
+          <label>Purpose <span class="required">*</span><textarea name="purpose" rows="3" required></textarea></label>
+          <label>Amount requested <span class="required">*</span><input name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" data-finance-input required></label>
+          <label>Request date <span class="required">*</span><input name="date" type="date" value="${new Date().toISOString().slice(0, 10)}" required></label>
+          <label>Retirement due date <span class="required">*</span><input name="dueDate" type="date" required></label>
+          <label>Cost centre<input name="costCentre"></label>
+          <label>Notes<textarea name="notes" rows="2"></textarea></label>
+          <p class="muted">Only one open imprest is allowed per staff custodian. A new request becomes available after the current imprest is retired, rejected or closed.</p>
+          <button type="submit">Submit Imprest Request</button><p class="status" data-form-status></p>
+        </form>
+      </dialog>
+      <dialog id="imprestRetirementDialog" class="workflow-dialog material-requisition-dialog imprest-dialog">
+        <div class="workflow-dialog-header"><div><small>Receipt-backed retirement</small><h2>Retire Imprest <span data-imprest-retirement-reference></span></h2></div><button type="button" data-close-dialog aria-label="Close">&times;</button></div>
+        <form id="imprestRetirementForm" class="workflow-form">
+          <input name="recordId" type="hidden">
+          <div class="imprest-retirement-summary"><span>Issued <strong data-imprest-issued-total>${money(0)}</strong></span><span>Expenses <strong data-imprest-expense-total>${money(0)}</strong></span><span>Return <strong data-imprest-return-total>${money(0)}</strong></span></div>
+          <p class="muted">Every expense line requires a receipt URL. The unused balance is calculated automatically.</p>
+          <div class="admin-table-wrap material-entry-wrap"><table class="admin-table material-entry-table imprest-retirement-table"><thead><tr><th>#</th><th>Date</th><th>Description</th><th>Expense account</th><th>Amount</th><th>Receipt URL</th><th></th></tr></thead><tbody data-imprest-retirement-items>${imprestRetirementEntryRow(1)}</tbody></table></div>
+          <div class="material-entry-actions"><button type="button" data-add-imprest-retirement>+ Add Expense</button></div>
+          <label>Unused cash / bank return reference<input name="returnReference" placeholder="Required when a balance is returned"></label>
+          <label>Retirement notes<textarea name="notes" rows="2"></textarea></label>
+          <button type="submit">Submit Retirement</button><p class="status" data-form-status></p>
+        </form>
+      </dialog>
   ` : '';
 
   panelEl.innerHTML = `
     <div class="workflow-intro">
-      <div><p class="eyebrow">Department finance</p><h2>Bills & Requisitions</h2><p class="muted">${escapeHtml(department)} workspace</p></div>
+      <div><p class="eyebrow">Department finance</p><h2>Finance Requests &amp; Imprest</h2><p class="muted">${escapeHtml(department)} workspace</p></div>
       <div class="workflow-primary-actions">
-        ${capabilities.canSubmit ? '<button type="button" data-open-dialog="requisitionDialog" title="New Requisition">+ Request</button><button type="button" class="workflow-secondary-action" data-open-dialog="materialRequisitionDialog" title="Material Requisition">+ Materials</button><button type="button" class="workflow-secondary-action" data-open-dialog="supplierBillDialog" title="Supplier Bill">+ Invoice</button>' : ''}
+        ${capabilities.canSubmit ? '<button type="button" data-open-dialog="requisitionDialog" title="New Requisition">+ Request</button><button type="button" class="workflow-secondary-action" data-open-dialog="materialRequisitionDialog" title="Material Requisition">+ Materials</button><button type="button" class="workflow-secondary-action" data-open-dialog="supplierBillDialog" title="Supplier Bill">+ Invoice</button><button type="button" class="workflow-secondary-action" data-open-dialog="imprestRequestDialog" title="Imprest and petty cash">+ Imprest</button>' : ''}
         <button type="button" class="workflow-icon-action finance-workflow-refresh" id="refreshFinanceWorkflow" aria-label="Refresh requests" title="Refresh"><span aria-hidden="true">&#8635;</span></button>
       </div>
     </div>
@@ -9875,16 +10041,24 @@ function renderFinanceWorkflow() {
       <div><small>Rejected</small><strong>${statusCount('rejected')}</strong><span>Requires attention</span></div>
       <div><small>Total Records</small><strong>${allRecords.length}</strong><span>Current view</span></div>
     </div>
+    <div class="workflow-kpis imprest-kpis">
+      <div><small>Open Imprests</small><strong>${Number(imprestSummary.open || 0)}</strong><span>Awaiting retirement or decision</span></div>
+      <div><small>Overdue</small><strong>${Number(imprestSummary.overdue || 0)}</strong><span>Past retirement due date</span></div>
+      <div><small>Outstanding</small><strong>${escapeHtml(money(imprestSummary.outstanding || 0))}</strong><span>Unretired staff advances</span></div>
+      <div><small>Imprest Records</small><strong>${Number(imprestSummary.total || 0)}</strong><span>Current branch view</span></div>
+    </div>
     <div class="workflow-ledger-heading"><div><h2>Recent Transactions</h2><p class="muted">Requisitions and bills synchronized with desktop accounting</p></div></div>
     ${financeRecordsSection('Expense Requisitions', requisitions, 'requisition', capabilities)}
     ${financeRecordsSection('Supplier Bills', bills, 'bill', capabilities)}
+    ${imprestRecordsSection(imprests, capabilities)}
     ${submissionDialogs}
   `;
   const financeLists = [...panelEl.querySelectorAll(':scope > .workflow-list-section')];
   mountWorkspaceTabs('financeRequests', [
     { key: 'overview', label: 'Overview', icon: '\u25A6', nodes: [[...panelEl.querySelectorAll(':scope > p.status')], panelEl.querySelector(':scope > .workflow-kpis'), panelEl.querySelector(':scope > .workflow-ledger-heading')] },
     { key: 'requisitions', label: 'Requisitions', icon: '\u{1F4CB}', count: requisitions.length, nodes: financeLists[0] },
-    { key: 'bills', label: 'Supplier bills', icon: '\u{1F9FE}', count: bills.length, nodes: financeLists[1] }
+    { key: 'bills', label: 'Supplier bills', icon: '\u{1F9FE}', count: bills.length, nodes: financeLists[1] },
+    { key: 'imprest', label: 'Imprest & petty cash', icon: '\u{1F4B5}', count: imprests.length, nodes: [[panelEl.querySelector(':scope > .imprest-kpis')], financeLists[2]] }
   ]);
   bindFinanceWorkflowEvents();
 }
@@ -10072,7 +10246,9 @@ function bindSubmissionForm(formId, action, successText) {
     const initiallyResubmitting = action === 'submitRequisition' && clean(form.elements.recordId?.value);
     button.dataset.normalText = initiallyResubmitting
       ? 'Resubmit Requisition'
-      : action === 'submitBill' ? 'Submit Supplier Bill' : 'Submit Requisition';
+      : action === 'submitBill'
+        ? 'Submit Supplier Bill'
+        : action === 'submitImprest' ? 'Submit Imprest Request' : 'Submit Requisition';
     setButtonLoading(button, true, 'Submitting...', button.dataset.normalText);
     setStatus(status, 'Saving to database...');
     try {
@@ -10099,6 +10275,62 @@ function bindSubmissionForm(formId, action, successText) {
   });
 }
 
+function bindImprestWorkflowForms() {
+  bindSubmissionForm('imprestRequestForm', 'submitImprest', 'Imprest request submitted.');
+  const form = document.getElementById('imprestRetirementForm');
+  if (!form) return;
+  const body = form.querySelector('[data-imprest-retirement-items]');
+  form.querySelector('[data-add-imprest-retirement]')?.addEventListener('click', () => {
+    body.insertAdjacentHTML('beforeend', imprestRetirementEntryRow(body.querySelectorAll('[data-imprest-retirement-row]').length + 1));
+    updateImprestRetirementTotals(form);
+  });
+  body.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-remove-imprest-retirement]');
+    if (!button) return;
+    const rows = body.querySelectorAll('[data-imprest-retirement-row]');
+    if (rows.length === 1) rows[0].querySelectorAll('input').forEach((input) => { if (input.type !== 'date') input.value = ''; });
+    else button.closest('[data-imprest-retirement-row]')?.remove();
+    updateImprestRetirementTotals(form);
+  });
+  body.addEventListener('input', () => updateImprestRetirementTotals(form));
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    const button = form.querySelector('button[type="submit"]');
+    const status = form.querySelector('[data-form-status]');
+    setButtonLoading(button, true, 'Submitting...', 'Submit Retirement');
+    try {
+      const data = await financeRequest('submitImprestRetirement', {
+        recordId: form.elements.recordId.value,
+        lines: imprestRetirementItems(form),
+        returnReference: form.elements.returnReference.value,
+        notes: form.elements.notes.value,
+        idempotencyKey: form.dataset.idempotencyKey || newIdempotencyKey()
+      });
+      form.closest('dialog')?.close();
+      setStatus(document.getElementById('financeWorkflowStatus'), data.message, 'ok');
+      await loadFinanceWorkflow();
+    } catch (error) {
+      setStatus(status, error.message || String(error), 'bad');
+    } finally {
+      setButtonLoading(button, false, 'Submitting...', 'Submit Retirement');
+    }
+  });
+  panelEl.querySelectorAll('[data-open-imprest-retirement]').forEach((button) => button.addEventListener('click', () => {
+    const record = (financeData?.imprests || []).find((row) => clean(row.ImprestNo || row.__id) === clean(button.dataset.openImprestRetirement));
+    if (!record) return;
+    form.reset();
+    form.elements.recordId.value = clean(record.ImprestNo || record.__id);
+    form.dataset.amountIssued = String(Number(record.AmountIssued || record.AmountApproved || 0));
+    form.dataset.idempotencyKey = newIdempotencyKey();
+    form.querySelector('[data-imprest-retirement-reference]').textContent = form.elements.recordId.value;
+    body.innerHTML = imprestRetirementEntryRow(1);
+    updateImprestRetirementTotals(form);
+    setStatus(form.querySelector('[data-form-status]'), '');
+    form.closest('dialog')?.showModal();
+  }));
+}
+
 function bindFinanceWorkflowEvents() {
   document.getElementById('refreshFinanceWorkflow')?.addEventListener('click', (event) => {
     runButtonAction(event.currentTarget, 'Refreshing...', loadFinanceWorkflow);
@@ -10118,6 +10350,12 @@ function bindFinanceWorkflowEvents() {
   bindSubmissionForm('requisitionForm', 'submitRequisition', 'Requisition submitted.');
   bindMaterialRequisitionForm();
   bindSubmissionForm('supplierBillForm', 'submitBill', 'Supplier bill submitted.');
+  bindImprestWorkflowForms();
+  panelEl.querySelectorAll('[data-print-imprest]').forEach((button) => button.addEventListener('click', () => {
+    const record = (financeData?.imprests || []).find((row) => clean(row.ImprestNo || row.__id) === clean(button.dataset.printImprest));
+    if (record) printImprestReport(financeData.imprests || [], record);
+  }));
+  panelEl.querySelector('[data-print-imprest-report]')?.addEventListener('click', () => printImprestReport(financeData?.imprests || []));
   panelEl.querySelectorAll('[data-print-finance-record]').forEach((button) => {
     button.addEventListener('click', async () => {
       const type = button.dataset.recordType;

@@ -3274,3 +3274,25 @@ html[data-theme="dark"] .security-audit-heading h2{color:#f4f8ff}html[data-theme
   body.security-audit-print .security-audit-table th,body.security-audit-print .security-audit-table td{padding:4px!important;white-space:normal!important;font-size:7px!important;line-height:1.25}
   body.security-audit-print .security-audit-outcome{padding:1px 3px;font-size:6px}
 }
+/* Controlled imprest and petty-cash workspace */
+.imprest-kpis{margin-top:12px}
+.imprest-dialog{width:min(980px,calc(100vw - 28px))}
+.imprest-retirement-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.imprest-retirement-summary span{display:flex;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid #cbd7e5;border-radius:8px;background:#f5f9fc;color:#45647e}
+.imprest-retirement-summary strong{color:#0b3c68}
+.imprest-retirement-table{min-width:900px}
+.imprest-retirement-table input{min-width:105px}
+.imprest-retirement-table input[data-imprest-retirement-field="description"]{min-width:220px}
+.imprest-retirement-table input[data-imprest-retirement-field="receiptUrl"]{min-width:230px}
+.imprest-record-table{min-width:1240px}
+.compact-text-action{width:max-content;white-space:nowrap;padding:5px 8px;border:0;border-radius:6px;background:#0b8c79;color:#fff;font:700 10px/1.1 inherit;cursor:pointer}
+.status-retirement-submitted{background:#fff0c7;color:#795300}
+.status-issued{background:#e2efff;color:#0b4f8a}
+.status-retired{background:#dff7eb;color:#0a6b4f}
+@media (max-width:680px){
+  .imprest-retirement-summary{grid-template-columns:1fr}
+  .imprest-dialog .workflow-form{padding:10px 12px 14px;font-size:10px}
+  .imprest-dialog .workflow-form label{font-size:10px}
+  .imprest-kpis{display:flex;overflow-x:auto;gap:8px;scrollbar-width:thin}
+  .imprest-kpis>div{min-width:max-content}
+}

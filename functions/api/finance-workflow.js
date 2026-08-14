@@ -8,6 +8,14 @@ import {
 import { loadStaffApprovalProfile, publicStaffApprovalProfile } from '../lib/staff-approval-profile.js';
 import { notifyStaffRequisitionEvent, notifyStaffRequisitionSubmitted } from '../lib/notifications.js';
 import {
+  IMPREST_ADVANCE_ACCOUNT,
+  buildImprestIssueJournal,
+  buildImprestRetirementJournal,
+  imprestReportSummary,
+  isOpenImprestStatus,
+  validateImprestRetirement
+} from '../lib/imprest.js';
+import {
   beginIdempotentRequest,
   completeIdempotentRequest,
   failIdempotentRequest,
@@ -343,15 +351,17 @@ async function writeAudit(env, user, action, recordType, recordId, details = '')
 
 async function listWorkflow(env, user) {
   const access = capabilities(user);
-  const [requests, bills, approvalProfile] = await Promise.all([
+  const [requests, bills, imprests, approvalProfile] = await Promise.all([
     listCollection(env, 'accountingExpenses'),
     listCollection(env, 'accountingSupplierBills'),
+    listCollection(env, 'accountingImprests').catch(() => []),
     loadStaffApprovalProfile(env, user.username)
   ]);
   const approvalProfileSummary = publicStaffApprovalProfile(approvalProfile || {});
   delete approvalProfileSummary.SignatureDataUrl;
   delete approvalProfileSummary.StampDataUrl;
   const sortRecent = (rows) => [...rows].sort((a, b) => clean(b.UpdatedAt || b.CreatedAt || b.Date).localeCompare(clean(a.UpdatedAt || a.CreatedAt || a.Date)));
+  const scopedImprests = publicRows(sortRecent(scopedRows(imprests, user, access))).slice(0, 250);
   return {
     ok: true,
     message: 'Department finance workflow loaded.',
@@ -359,7 +369,9 @@ async function listWorkflow(env, user) {
     capabilities: access,
     approvalProfile: approvalProfileSummary,
     requisitions: publicRows(sortRecent(scopedRows(requests, user, access))).slice(0, 150),
-    bills: publicRows(sortRecent(scopedRows(bills, user, access))).slice(0, 150)
+    bills: publicRows(sortRecent(scopedRows(bills, user, access))).slice(0, 150),
+    imprests: scopedImprests,
+    imprestSummary: imprestReportSummary(scopedImprests)
   };
 }
 
@@ -775,6 +787,414 @@ async function accountsReview(env, user, body, request) {
   return { ok: true, message: 'Marked as reviewed by Accounts. Post or pay it from the desktop Finance & Accounting tab.', record: payload };
 }
 
+function validIsoDate(value, label) {
+  const date = clean(value);
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00.000Z`) : null;
+  if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+    const err = new Error(`A valid ${label} is required.`);
+    err.status = 400;
+    throw err;
+  }
+  return date;
+}
+
+async function findImprest(env, user, body) {
+  const id = clean(body.recordId || body.ImprestNo || body.imprestNo);
+  if (!id) {
+    const err = new Error('Select an imprest record.');
+    err.status = 400;
+    throw err;
+  }
+  const direct = await getDocument(env, 'accountingImprests', safeId(id));
+  const existing = direct || (await listCollection(env, 'accountingImprests'))
+    .find((row) => same(row.ImprestNo, id) || same(row.__id, safeId(id)));
+  if (!existing || !scopedRows([existing], user, capabilities(user)).length) {
+    const err = new Error('The selected imprest record was not found in this branch.');
+    err.status = 404;
+    throw err;
+  }
+  return existing;
+}
+
+function imprestOpenClaimId(record = {}) {
+  return safeId(`${clean(record.BranchId || 'main').toLowerCase()}-${clean(record.CustodianUsername || record.RequestedByUsername).toLowerCase()}`);
+}
+
+async function ensureImprestAdvanceAccount(env) {
+  const existing = await getDocument(env, 'chartOfAccounts', IMPREST_ADVANCE_ACCOUNT).catch(() => null);
+  if (existing) return existing;
+  const payload = {
+    Code: IMPREST_ADVANCE_ACCOUNT,
+    Name: 'Staff Imprest and Cash Advances',
+    Type: 'Asset',
+    Group: 'Current Assets',
+    NormalBalance: 'Debit',
+    Active: 'YES',
+    System: 'YES',
+    CreatedAt: nowIso(),
+    UpdatedAt: nowIso()
+  };
+  await upsertDocument(env, 'chartOfAccounts', IMPREST_ADVANCE_ACCOUNT, payload);
+  return payload;
+}
+
+function postedJournalPayload(journal, user) {
+  const timestamp = nowIso();
+  return {
+    ...journal,
+    CreatedAt: timestamp,
+    CreatedBy: actor(user),
+    UpdatedAt: timestamp,
+    UpdatedBy: actor(user),
+    PostedAt: timestamp,
+    PostedBy: actor(user),
+    System: 'YES',
+    TotalDebit: amount(journal.Lines.reduce((sum, line) => sum + amount(line.Debit), 0)),
+    TotalCredit: amount(journal.Lines.reduce((sum, line) => sum + amount(line.Credit), 0))
+  };
+}
+
+async function validateImprestPosting(env, journal) {
+  const date = clean(journal.Date).slice(0, 10);
+  const periods = await listCollection(env, 'accountingPeriods').catch(() => []);
+  if (periods.some((row) => lower(row.Status) === 'closed' &&
+    date >= clean(row.StartDate) && date <= clean(row.EndDate))) {
+    const err = new Error('This accounting period is closed. Reopen it or use a valid open posting date.');
+    err.status = 409;
+    throw err;
+  }
+  const chart = await listCollection(env, 'chartOfAccounts');
+  const activeCodes = new Set(chart.filter((row) => !['no', 'false', 'inactive'].includes(lower(row.Active || 'YES')))
+    .map((row) => clean(row.Code || row.__id)));
+  const invalid = journal.Lines.find((line) => !activeCodes.has(clean(line.AccountCode)));
+  if (invalid) {
+    const err = new Error(`Journal account ${invalid.AccountCode} does not exist or is inactive.`);
+    err.status = 400;
+    throw err;
+  }
+  const debit = amount(journal.Lines.reduce((sum, line) => sum + amount(line.Debit), 0));
+  const credit = amount(journal.Lines.reduce((sum, line) => sum + amount(line.Credit), 0));
+  if (Math.abs(debit - credit) > 0.005) {
+    const err = new Error('The imprest journal is not balanced.');
+    err.status = 500;
+    throw err;
+  }
+}
+
+async function submitImprest(env, user, body) {
+  const department = requireSubmitter(user);
+  const requestedAmount = amount(body.amount || body.AmountRequested || body.Amount);
+  const purpose = clean(body.purpose || body.Purpose);
+  const date = validIsoDate(body.date || body.Date || dateToday(), 'request date');
+  const dueDate = validIsoDate(body.dueDate || body.DueDate, 'retirement due date');
+  if (!purpose || requestedAmount <= 0) {
+    const err = new Error('Purpose and an amount greater than zero are required.');
+    err.status = 400;
+    throw err;
+  }
+  if (dueDate < date) {
+    const err = new Error('The retirement due date cannot be earlier than the request date.');
+    err.status = 400;
+    throw err;
+  }
+  const username = clean(user.username);
+  const branchId = clean(user.branchId) || 'main';
+  const existingOpen = (await listCollection(env, 'accountingImprests').catch(() => []))
+    .find((row) => same(row.CustodianUsername || row.RequestedByUsername, username) &&
+      same(row.BranchId || 'main', branchId) && isOpenImprestStatus(row.Status));
+  if (existingOpen) {
+    const err = new Error(`Retire or close ${existingOpen.ImprestNo || 'the current imprest'} before requesting another imprest.`);
+    err.status = 409;
+    err.code = 'OPEN_IMPREST_EXISTS';
+    throw err;
+  }
+  const imprestNo = requestNumber('IMP');
+  const timestamp = nowIso();
+  const payload = {
+    ImprestNo: imprestNo,
+    ImprestType: ['Standing', 'Special'].includes(clean(body.imprestType || body.ImprestType))
+      ? clean(body.imprestType || body.ImprestType)
+      : 'Special',
+    Date: date,
+    DueDate: dueDate,
+    Purpose: purpose,
+    AmountRequested: requestedAmount,
+    AmountApproved: 0,
+    AmountIssued: 0,
+    ExpenseTotal: 0,
+    ReturnedAmount: 0,
+    OutstandingAmount: requestedAmount,
+    AdvanceAccount: IMPREST_ADVANCE_ACCOUNT,
+    PaymentAccount: clean(body.paymentAccount || body.PaymentAccount) || '1020',
+    Department: department,
+    CostCentre: clean(body.costCentre || body.CostCentre),
+    CustodianName: actor(user),
+    CustodianUsername: username,
+    RequestedBy: actor(user),
+    RequestedByUsername: username,
+    RequestedAt: timestamp,
+    Notes: clean(body.notes || body.Notes),
+    Status: 'Submitted',
+    CreatedAt: timestamp,
+    UpdatedAt: timestamp,
+    SourcePlatform: 'Web',
+    BranchId: branchId,
+    SchoolSection: clean(user.schoolSectionAccess) === 'All' ? 'Secondary' : clean(user.schoolSectionAccess || 'Secondary')
+  };
+  try {
+    await commitFinanceDecision(env, [
+      {
+        collectionPath: 'accountingImprestOpenClaims',
+        documentId: imprestOpenClaimId(payload),
+        data: {
+          ClaimId: imprestOpenClaimId(payload), ImprestNo: imprestNo, BranchId: branchId,
+          CustodianUsername: username, CreatedAt: timestamp
+        },
+        exists: false
+      },
+      { collectionPath: 'accountingImprests', documentId: safeId(imprestNo), data: payload, exists: false },
+      auditWrite(user, 'SUBMIT', 'Imprest', imprestNo, `${payload.ImprestType}: ${purpose}; ${requestedAmount}`, timestamp, payload)
+    ]);
+  } catch (error) {
+    if (error?.code === 'FINANCE_WRITE_CONFLICT') {
+      const conflict = new Error('You already have an open imprest in this branch. Retire or close it before requesting another one.');
+      conflict.status = 409;
+      conflict.code = 'OPEN_IMPREST_EXISTS';
+      throw conflict;
+    }
+    throw error;
+  }
+  return { ok: true, message: 'Imprest request submitted for approval.', imprest: payload };
+}
+
+async function reviewImprest(env, user, body, request) {
+  const access = capabilities(user);
+  if (!access.canApprove) {
+    const err = new Error('Approval rights have not been enabled for this account.');
+    err.status = 403;
+    throw err;
+  }
+  const existing = await findImprest(env, user, body);
+  if (lower(existing.Status) !== 'submitted') {
+    const err = new Error('Only a Submitted imprest can be approved or rejected.');
+    err.status = 409;
+    throw err;
+  }
+  const decision = clean(body.decision);
+  if (!['Approved', 'Rejected'].includes(decision)) {
+    const err = new Error('Decision must be Approved or Rejected.');
+    err.status = 400;
+    throw err;
+  }
+  const approvedAmount = amount(body.approvedAmount || body.AmountApproved || existing.AmountRequested);
+  if (decision === 'Approved') {
+    if (approvedAmount <= 0 || approvedAmount > amount(existing.AmountRequested)) {
+      const err = new Error('Approved amount must be greater than zero and cannot exceed the requested amount.');
+      err.status = 400;
+      throw err;
+    }
+    if (!(await approvalLimitAllows(env, user, 'Imprest', approvedAmount))) {
+      const err = new Error(`${user.role} approval limit is insufficient for this imprest.`);
+      err.status = 403;
+      throw err;
+    }
+    await requireDecisionAuthorization(env, user, body, request, 'imprest:approve');
+  }
+  const timestamp = nowIso();
+  const payload = removeFirestoreMetadata({
+    ...existing,
+    Status: decision,
+    AmountApproved: decision === 'Approved' ? approvedAmount : 0,
+    OutstandingAmount: decision === 'Approved' ? approvedAmount : 0,
+    ReviewNotes: clean(body.notes),
+    UpdatedAt: timestamp,
+    ...(decision === 'Approved'
+      ? { ApprovedAt: timestamp, ApprovedBy: actor(user), ApprovedByUsername: clean(user.username) }
+      : { RejectedAt: timestamp, RejectedBy: actor(user), RejectedByUsername: clean(user.username) })
+  });
+  const writes = [
+    {
+      collectionPath: 'accountingImprests', documentId: safeId(existing.ImprestNo), data: payload,
+      updateTime: documentVersion(existing)
+    },
+    auditWrite(user, decision.toUpperCase(), 'Imprest', existing.ImprestNo, clean(body.notes), timestamp, existing)
+  ];
+  if (decision === 'Rejected') writes.push({
+    collectionPath: 'accountingImprestOpenClaims', documentId: imprestOpenClaimId(existing), operation: 'delete'
+  });
+  await commitFinanceDecision(env, writes);
+  return { ok: true, message: `Imprest ${decision.toLowerCase()}.`, imprest: payload };
+}
+
+async function issueImprest(env, user, body, request) {
+  if (!capabilities(user).canAccountsReview) {
+    const err = new Error('Only Accounts or Super Admin can issue an approved imprest.');
+    err.status = 403;
+    throw err;
+  }
+  const existing = await findImprest(env, user, body);
+  if (lower(existing.Status) !== 'approved') {
+    const err = new Error('Only an Approved imprest can be issued.');
+    err.status = 409;
+    throw err;
+  }
+  const paymentAccount = clean(body.paymentAccount || body.PaymentAccount) || '1020';
+  const reference = clean(body.disbursementReference || body.DisbursementReference);
+  if (!reference) {
+    const err = new Error('Enter the cash, bank or payment reference used for the disbursement.');
+    err.status = 400;
+    throw err;
+  }
+  await requireDecisionAuthorization(env, user, body, request, 'imprest:issue');
+  await ensureImprestAdvanceAccount(env);
+  const timestamp = nowIso();
+  const payload = removeFirestoreMetadata({
+    ...existing,
+    Status: 'Issued',
+    AmountIssued: amount(existing.AmountApproved),
+    OutstandingAmount: amount(existing.AmountApproved),
+    PaymentAccount: paymentAccount,
+    DisbursementReference: reference,
+    IssueDate: validIsoDate(body.issueDate || body.IssueDate || dateToday(), 'issue date'),
+    IssuedAt: timestamp,
+    IssuedBy: actor(user),
+    IssuedByUsername: clean(user.username),
+    UpdatedAt: timestamp
+  });
+  const journal = postedJournalPayload(buildImprestIssueJournal(payload, actor(user)), user);
+  await validateImprestPosting(env, journal);
+  payload.IssueJournalNo = journal.JournalNo;
+  await commitFinanceDecision(env, [
+    { collectionPath: 'accountingJournals', documentId: safeId(journal.JournalNo), data: journal, exists: false },
+    {
+      collectionPath: 'accountingImprests', documentId: safeId(existing.ImprestNo), data: payload,
+      updateTime: documentVersion(existing)
+    },
+    auditWrite(user, 'ISSUE', 'Imprest', existing.ImprestNo, `${paymentAccount}: ${reference}`, timestamp, existing)
+  ]);
+  return { ok: true, message: 'Imprest issued and posted to the staff advance account.', imprest: payload };
+}
+
+async function submitImprestRetirement(env, user, body) {
+  const existing = await findImprest(env, user, body);
+  const access = capabilities(user);
+  if (!same(existing.CustodianUsername || existing.RequestedByUsername, user.username) && !access.canAccountsReview) {
+    const err = new Error('Only the imprest custodian or Accounts can submit this retirement.');
+    err.status = 403;
+    throw err;
+  }
+  if (lower(existing.Status) !== 'issued') {
+    const err = new Error('Only an Issued imprest can be retired.');
+    err.status = 409;
+    throw err;
+  }
+  let retirement;
+  try {
+    retirement = validateImprestRetirement(existing.AmountIssued, body.lines || body.RetirementLines);
+  } catch (error) {
+    error.status = 400;
+    throw error;
+  }
+  const returnReference = clean(body.returnReference || body.ReturnReference);
+  if (retirement.returnedAmount > 0 && !returnReference) {
+    const err = new Error('Enter the cash or bank return reference for the unused balance.');
+    err.status = 400;
+    throw err;
+  }
+  const timestamp = nowIso();
+  const payload = removeFirestoreMetadata({
+    ...existing,
+    Status: 'Retirement Submitted',
+    RetirementLines: retirement.lines,
+    ExpenseTotal: retirement.expenseTotal,
+    ReturnedAmount: retirement.returnedAmount,
+    OutstandingAmount: amount(existing.AmountIssued),
+    ReturnReference: returnReference,
+    RetirementNotes: clean(body.notes || body.RetirementNotes),
+    RetirementSubmittedAt: timestamp,
+    RetirementSubmittedBy: actor(user),
+    RetirementSubmittedByUsername: clean(user.username),
+    UpdatedAt: timestamp
+  });
+  await commitFinanceDecision(env, [
+    {
+      collectionPath: 'accountingImprests', documentId: safeId(existing.ImprestNo), data: payload,
+      updateTime: documentVersion(existing)
+    },
+    auditWrite(user, 'SUBMIT RETIREMENT', 'Imprest', existing.ImprestNo, `${retirement.lines.length} receipt(s); expenses ${retirement.expenseTotal}; return ${retirement.returnedAmount}`, timestamp, existing)
+  ]);
+  return { ok: true, message: 'Imprest retirement submitted to Accounts for verification.', imprest: payload };
+}
+
+async function reviewImprestRetirement(env, user, body, request) {
+  if (!capabilities(user).canAccountsReview) {
+    const err = new Error('Only Accounts or Super Admin can verify an imprest retirement.');
+    err.status = 403;
+    throw err;
+  }
+  const existing = await findImprest(env, user, body);
+  if (lower(existing.Status) !== 'retirement submitted') {
+    const err = new Error('Only a submitted imprest retirement can be reviewed.');
+    err.status = 409;
+    throw err;
+  }
+  const decision = clean(body.decision || 'Verified');
+  const timestamp = nowIso();
+  if (decision === 'Returned for Correction') {
+    const notes = clean(body.notes);
+    if (!notes) {
+      const err = new Error('Explain what the custodian must correct.');
+      err.status = 400;
+      throw err;
+    }
+    const payload = removeFirestoreMetadata({
+      ...existing,
+      Status: 'Issued',
+      RetirementReviewNotes: notes,
+      RetirementReturnedAt: timestamp,
+      RetirementReturnedBy: actor(user),
+      UpdatedAt: timestamp
+    });
+    await commitFinanceDecision(env, [
+      {
+        collectionPath: 'accountingImprests', documentId: safeId(existing.ImprestNo), data: payload,
+        updateTime: documentVersion(existing)
+      },
+      auditWrite(user, 'RETURN RETIREMENT', 'Imprest', existing.ImprestNo, notes, timestamp, existing)
+    ]);
+    return { ok: true, message: 'Retirement returned to the custodian for correction.', imprest: payload };
+  }
+  await requireDecisionAuthorization(env, user, body, request, 'imprest:verify');
+  await ensureImprestAdvanceAccount(env);
+  const journal = postedJournalPayload(buildImprestRetirementJournal({
+    ...existing,
+    RetirementDate: validIsoDate(body.retirementDate || body.RetirementDate || dateToday(), 'retirement date')
+  }, actor(user)), user);
+  await validateImprestPosting(env, journal);
+  const payload = removeFirestoreMetadata({
+    ...existing,
+    Status: 'Retired',
+    OutstandingAmount: 0,
+    RetirementDate: journal.Date,
+    RetirementJournalNo: journal.JournalNo,
+    RetirementReviewNotes: clean(body.notes),
+    RetiredAt: timestamp,
+    RetiredBy: actor(user),
+    RetiredByUsername: clean(user.username),
+    UpdatedAt: timestamp
+  });
+  await commitFinanceDecision(env, [
+    { collectionPath: 'accountingJournals', documentId: safeId(journal.JournalNo), data: journal, exists: false },
+    {
+      collectionPath: 'accountingImprests', documentId: safeId(existing.ImprestNo), data: payload,
+      updateTime: documentVersion(existing)
+    },
+    { collectionPath: 'accountingImprestOpenClaims', documentId: imprestOpenClaimId(existing), operation: 'delete' },
+    auditWrite(user, 'VERIFY RETIREMENT', 'Imprest', existing.ImprestNo, clean(body.notes), timestamp, existing)
+  ]);
+  return { ok: true, message: 'Imprest fully retired and posted to the expense accounts.', imprest: payload };
+}
+
 function endorsementId(recordId, stage) {
   return safeId(`${recordId}-${stage}`);
 }
@@ -848,7 +1268,12 @@ export async function onRequestPost(context) {
       'resubmitrequisition',
       'submitbill',
       'review',
-      'accountsreview'
+      'accountsreview',
+      'submitimprest',
+      'reviewimprest',
+      'issueimprest',
+      'submitimprestretirement',
+      'reviewimprestretirement'
     ]);
     if (mutationActions.has(action)) {
       idempotency = await beginIdempotentRequest(env, request, body, {
@@ -874,6 +1299,11 @@ export async function onRequestPost(context) {
     else if (action === 'submitbill') data = await submitBill(env, user, body);
     else if (action === 'review') data = await reviewRecord(env, user, body, request);
     else if (action === 'accountsreview') data = await accountsReview(env, user, body, request);
+    else if (action === 'submitimprest') data = await submitImprest(env, user, body);
+    else if (action === 'reviewimprest') data = await reviewImprest(env, user, body, request);
+    else if (action === 'issueimprest') data = await issueImprest(env, user, body, request);
+    else if (action === 'submitimprestretirement') data = await submitImprestRetirement(env, user, body);
+    else if (action === 'reviewimprestretirement') data = await reviewImprestRetirement(env, user, body, request);
     else if (action === 'document') data = await documentRecord(env, user, body);
     else {
       const err = new Error('Unknown finance workflow action.');
@@ -881,7 +1311,9 @@ export async function onRequestPost(context) {
       throw err;
     }
     const headers = { 'Cache-Control': 'no-store' };
-    if (action === 'review' || action === 'accountsreview') headers['Set-Cookie'] = clearStaffApprovalProofCookie();
+    if (['review', 'accountsreview', 'reviewimprest', 'issueimprest', 'reviewimprestretirement'].includes(action)) {
+      headers['Set-Cookie'] = clearStaffApprovalProofCookie();
+    }
     if (mutationActions.has(action)) await completeIdempotentRequest(env, idempotency, data, 200);
     return Response.json(data, { headers });
   } catch (err) {

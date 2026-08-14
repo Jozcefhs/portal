@@ -23,7 +23,7 @@ export const WEB_SECTION_CATALOG = Object.freeze([
   Object.freeze({ key: 'donations', label: 'Donations' }),
   Object.freeze({ key: 'accounts', label: 'Accounts' }),
   Object.freeze({ key: 'incomeAnalytics', label: 'Income Analytics' }),
-  Object.freeze({ key: 'financeRequests', label: 'Bills & Requisitions' }),
+  Object.freeze({ key: 'financeRequests', label: 'Finance Requests & Imprest' }),
   Object.freeze({ key: 'payroll', label: 'My Payroll' }),
   Object.freeze({ key: 'clinic', label: 'Clinic' }),
   Object.freeze({ key: 'kitchen', label: 'Kitchen' }),
