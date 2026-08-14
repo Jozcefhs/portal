@@ -348,15 +348,17 @@ test('the browser UI keeps frames on-device, requires a live action and always s
   );
 });
 
-test('front and back camera selection is limited to staff attendance enrollment', () => {
+test('front and back camera selection is limited to staff enrollment and student point-of-service verification', () => {
   assert.match(uiSource, /facingMode: \{ ideal: facingMode \}/);
   assert.match(uiSource, /cameraFacingLabel\(facingMode\)/);
   assert.match(uiSource, /setAttribute\('data-facing-mode', facingMode\)/);
   assert.match(cssSource, /data-facing-mode="environment"/);
   assert.match(uiSource, /\$\{enrollment \? '<label class="student-face-camera-select"/);
   assert.match(uiSource, /if \(mode === 'enroll'\) bindCameraSelector\(dialog, captureButton\)/);
-  const lookupMarkup = uiSource.slice(uiSource.indexOf('function dialogMarkup'), uiSource.indexOf('function renderPossibleMatch'));
-  assert.doesNotMatch(lookupMarkup, /data-face-camera-select/);
+  assert.match(uiSource, /allowCameraSelection \? '<label class="student-face-camera-select"/);
+  assert.match(uiSource, /if \(allowCameraSelection\) bindCameraSelector\(dialog, captureButton\)/);
+  assert.match(adminSource, /purpose: 'tuck-shop-purchase',[\s\S]*?allowCameraSelection: true/);
+  assert.match(adminSource, /purpose: section === 'bookstore' \? 'bookstore-collection' : 'uniform-store-collection',[\s\S]*?allowCameraSelection: true/);
 });
 
 test('face capture gives persistent visual and optional spoken guidance without recording audio', () => {
@@ -415,7 +417,7 @@ test('eligible Records Desk sessions prepare the model during idle time without 
   assert.match(adminSource, /requestIdleCallback/);
   assert.match(adminSource, /window\.setTimeout\(preload, 300\)/);
   assert.match(adminSource, /preloadFaceRecognitionModel\(\)/);
-  assert.match(adminSource, /student-face-lookup\.js\?v=20260814-shared-student-face-lookup/);
+  assert.match(adminSource, /student-face-lookup\.js\?v=20260814-pos-camera-selection/);
   const preloaderStart = uiSource.indexOf('export function preloadFaceRecognitionModel');
   const preloaderEnd = uiSource.indexOf('async function startCamera', preloaderStart);
   const preloaderSource = uiSource.slice(preloaderStart, preloaderEnd);
@@ -452,5 +454,5 @@ test('lookup and enrollment are explicitly initiated without consent fields, and
   assert.match(cssSource, /\.student-face-dialog/);
   assert.match(cssSource, /html\[data-theme="dark"\] \.student-face-dialog/);
   assert.match(cssSource, /@media\(max-width:680px\)/);
-  assert.match(adminHtmlSource, /css\/style\.css\?v=20260814-shared-student-face-lookup/);
+  assert.match(adminHtmlSource, /css\/style\.css\?v=20260814-pos-camera-selection/);
 });

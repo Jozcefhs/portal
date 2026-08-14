@@ -778,7 +778,7 @@ async function attendancePasskeyProof(siteId, direction) {
 
 function attendanceFaceModule() {
   if (!attendanceFaceModulePromise) {
-    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260814-shared-student-face-lookup').catch((error) => {
+    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260814-pos-camera-selection').catch((error) => {
       attendanceFaceModulePromise = null;
       throw error;
     });
@@ -3503,6 +3503,7 @@ function renderStaffStore(section, store) {
     try {
       await openStudentFaceLookupDialog({
         purpose: section === 'bookstore' ? 'bookstore-collection' : 'uniform-store-collection',
+        allowCameraSelection: true,
         confirmText: 'Confirm collection identity',
         onMatch: (match) => updateStoreOrder(statusButton, match.id)
       });
@@ -3817,6 +3818,7 @@ function renderDepartmentOperations(section, data) {
     try {
       await openStudentFaceLookupDialog({
         purpose: 'tuck-shop-purchase',
+        allowCameraSelection: true,
         confirmText: 'Use for this purchase',
         onMatch: (match) => {
           if (!form?.elements?.AccountRef) return;
@@ -7898,7 +7900,7 @@ function preloadRecordsDeskFaceRecognition() {
   recordsDeskFacePreloadScheduled = true;
   const preload = () => {
     recordsDeskFacePreloadScheduled = false;
-    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260814-shared-student-face-lookup')
+    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260814-pos-camera-selection')
       .then((module) => module.preloadFaceRecognitionModel())
       .catch(() => {
         recordsDeskFacePreloadPromise = null;
@@ -7912,7 +7914,7 @@ function preloadRecordsDeskFaceRecognition() {
 }
 
 async function openStudentFaceLookupDialog(options = {}) {
-  const module = await import('./student-face-lookup.js?v=20260814-shared-student-face-lookup');
+  const module = await import('./student-face-lookup.js?v=20260814-pos-camera-selection');
   return module.openStudentFaceLookup(options);
 }
 

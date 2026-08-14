@@ -593,7 +593,7 @@ function formatCameraError(failure) {
   return clean(failure?.message || failure) || 'The camera could not be used.';
 }
 
-function dialogMarkup(mode, student = {}) {
+function dialogMarkup(mode, student = {}, allowCameraSelection = false) {
   const enrollment = mode === 'enroll';
   const sampleCount = enrollment ? ENROLLMENT_SAMPLE_COUNT : ROUTINE_SAMPLE_COUNT;
   const studentName = clean(student.title || student.StudentName || student.studentName);
@@ -616,6 +616,7 @@ function dialogMarkup(mode, student = {}) {
     <div class="student-face-camera">
       <video data-face-video playsinline muted aria-label="Live student face camera preview"></video>
       <div class="student-face-guide is-searching" aria-hidden="true"></div>
+      ${allowCameraSelection ? '<label class="student-face-camera-select"><span>Camera</span><select data-face-camera-select aria-label="Choose front or back camera for student verification"><option value="user">Front</option><option value="environment">Back</option></select></label>' : ''}
       <button type="button" class="student-face-audio-toggle" data-face-audio aria-pressed="true"><span data-face-audio-icon aria-hidden="true">🔊</span><span data-face-audio-label>Audio guidance on</span></button>
       <p class="student-face-live-guidance" data-face-overlay aria-hidden="true">Keep one face centred and blink once when prompted.</p>
     </div>
@@ -650,8 +651,9 @@ function renderPossibleMatch(dialog, match, onMatch, confirmText = 'Confirm and 
 export async function openStudentFaceLookup(options = {}) {
   const mode = options.mode === 'enroll' ? 'enroll' : 'lookup';
   const sampleCount = mode === 'enroll' ? ENROLLMENT_SAMPLE_COUNT : ROUTINE_SAMPLE_COUNT;
+  const allowCameraSelection = mode === 'lookup' && options.allowCameraSelection === true;
   if (activeDialog?.open) activeDialog.close();
-  document.body.insertAdjacentHTML('beforeend', dialogMarkup(mode, options.student || {}));
+  document.body.insertAdjacentHTML('beforeend', dialogMarkup(mode, options.student || {}, allowCameraSelection));
   const dialog = document.body.lastElementChild;
   activeDialog = dialog;
   const video = dialog.querySelector('[data-face-video]');
@@ -663,6 +665,7 @@ export async function openStudentFaceLookup(options = {}) {
   const purpose = mode === 'enroll' ? 'records-desk' : (clean(options.purpose) || 'records-desk');
   let status = null;
   initializeAudioGuidance(dialog);
+  if (allowCameraSelection) bindCameraSelector(dialog, captureButton);
 
   const close = () => {
     stopCamera(video);
