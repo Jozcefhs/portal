@@ -9539,6 +9539,118 @@ async function financeRequest(action, payload = {}, options = {}) {
   return data;
 }
 
+const FINANCE_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
+const FINANCE_ATTACHMENT_ACCEPT = '.pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg';
+
+function financeAttachmentField(kind, label = 'Supporting document') {
+  return `<div class="finance-attachment-field" data-finance-attachment>
+    <span class="finance-attachment-label">${escapeHtml(label)}</span>
+    <div class="finance-attachment-control">
+      <label class="finance-attachment-button"><span aria-hidden="true">&#128206;</span> Choose file
+        <input name="attachmentFile" type="file" accept="${FINANCE_ATTACHMENT_ACCEPT}" data-finance-attachment-file data-finance-attachment-kind="${escapeHtml(kind)}">
+      </label>
+      <span class="finance-attachment-name" data-finance-attachment-name>No file selected</span>
+      <a class="finance-attachment-link" data-finance-attachment-link href="#" target="_blank" rel="noopener noreferrer" hidden>View current document</a>
+    </div>
+    <input name="attachmentUrl" type="hidden" data-finance-attachment-url>
+    <small>PDF, PNG or JPG, maximum 8 MB. The file is stored in the organisation's Google Drive.</small>
+  </div>`;
+}
+
+function readFinanceAttachmentBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const encoded = String(reader.result || '').split(',')[1] || '';
+      if (!encoded) reject(new Error('The selected document could not be read.'));
+      else resolve(encoded);
+    };
+    reader.onerror = () => reject(new Error('The selected document could not be read.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function validateFinanceAttachmentFile(file) {
+  if (!file) return;
+  const extensionOk = /\.(?:pdf|png|jpe?g)$/i.test(file.name || '');
+  const browserMime = clean(file.type).toLowerCase();
+  const mimeOk = !browserMime || ['application/pdf', 'image/png', 'image/jpeg'].includes(browserMime);
+  if (!extensionOk || !mimeOk) throw new Error('Choose a PDF, PNG or JPG document.');
+  if (file.size < 1) throw new Error('The selected document is empty.');
+  if (file.size > FINANCE_ATTACHMENT_MAX_BYTES) throw new Error('The selected document exceeds the 8 MB upload limit.');
+}
+
+function setFinanceAttachmentLink(container, url, fileName = '') {
+  if (!container) return;
+  const hidden = container.querySelector('[data-finance-attachment-url], [data-imprest-retirement-field="receiptUrl"]');
+  if (hidden) hidden.value = clean(url);
+  const link = container.querySelector('[data-finance-attachment-link]');
+  if (link) {
+    link.href = clean(url) || '#';
+    link.hidden = !clean(url);
+    link.textContent = fileName ? `View ${fileName}` : 'View current document';
+  }
+}
+
+function updateFinanceAttachmentSelection(input) {
+  const container = input?.closest('[data-finance-attachment]');
+  const name = container?.querySelector('[data-finance-attachment-name]');
+  const file = input?.files?.[0];
+  if (name) name.textContent = file?.name || 'No file selected';
+  delete input.dataset.uploadedUrl;
+  input.dataset.uploadIdempotencyKey = newIdempotencyKey();
+}
+
+function bindFinanceAttachmentControl(root) {
+  root?.addEventListener('change', (event) => {
+    const input = event.target.closest('[data-finance-attachment-file]');
+    if (input) updateFinanceAttachmentSelection(input);
+  });
+}
+
+async function uploadFinanceAttachmentInput(input, options = {}) {
+  const file = input?.files?.[0];
+  if (!file) return clean(input?.dataset.uploadedUrl);
+  validateFinanceAttachmentFile(file);
+  if (clean(input.dataset.uploadedUrl)) return clean(input.dataset.uploadedUrl);
+  const idempotencyKey = clean(input.dataset.uploadIdempotencyKey) || newIdempotencyKey();
+  input.dataset.uploadIdempotencyKey = idempotencyKey;
+  const response = await staffFetch('/api/finance-attachment', {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify({
+      kind: clean(options.kind || input.dataset.financeAttachmentKind),
+      recordId: clean(options.recordId),
+      fileName: file.name,
+      mimeType: file.type,
+      fileBase64: await readFinanceAttachmentBase64(file)
+    })
+  });
+  const data = await response.json().catch(() => ({ ok: false, message: 'Document storage did not return JSON.' }));
+  if (response.status === 401) showLogin(data.message || 'Your staff session has expired.', 'bad');
+  if (!response.ok || !data.ok) {
+    if (!data.outcomeUncertain) delete input.dataset.uploadIdempotencyKey;
+    const error = receivedResponseError(data.message || 'The document could not be uploaded.');
+    error.outcomeUncertain = Boolean(data.outcomeUncertain);
+    throw error;
+  }
+  input.dataset.uploadedUrl = clean(data.documentUrl);
+  setFinanceAttachmentLink(input.closest('[data-finance-attachment]'), data.documentUrl, file.name);
+  return clean(data.documentUrl);
+}
+
+async function uploadFinanceFormAttachment(form, status) {
+  const input = form?.querySelector('[data-finance-attachment-file]');
+  if (!input?.files?.[0]) return clean(form?.elements?.attachmentUrl?.value);
+  setStatus(status, 'Uploading the supporting document to Google Drive...');
+  return uploadFinanceAttachmentInput(input, {
+    kind: input.dataset.financeAttachmentKind,
+    recordId: form.elements.recordId?.value || 'pending'
+  });
+}
+
 function openFinanceDecision(button) {
   const action = button.dataset.workflowAction;
   const decision = button.dataset.decision || '';
@@ -9880,7 +9992,14 @@ function imprestRetirementEntryRow(index) {
     <td><input data-imprest-retirement-field="description" required></td>
     <td><input data-imprest-retirement-field="expenseAccount" value="6090" required></td>
     <td><input data-imprest-retirement-field="amount" type="number" min="0.01" step="0.01" inputmode="decimal" data-finance-input required></td>
-    <td><input data-imprest-retirement-field="receiptUrl" type="url" placeholder="https://..." required></td>
+    <td><div class="finance-attachment-field finance-attachment-compact" data-finance-attachment>
+      <label class="finance-attachment-button"><span aria-hidden="true">&#128206;</span> Upload receipt
+        <input type="file" accept="${FINANCE_ATTACHMENT_ACCEPT}" data-finance-attachment-file data-finance-attachment-kind="imprest-receipt" required>
+      </label>
+      <span class="finance-attachment-name" data-finance-attachment-name>No file selected</span>
+      <a class="finance-attachment-link" data-finance-attachment-link href="#" target="_blank" rel="noopener noreferrer" hidden>View receipt</a>
+      <input data-imprest-retirement-field="receiptUrl" type="hidden">
+    </div></td>
     <td><button type="button" class="compact-icon-action compact-delete-action" data-remove-imprest-retirement aria-label="Delete line"><span aria-hidden="true">&#128465;&#65038;</span></button></td>
   </tr>`;
 }
@@ -9941,7 +10060,7 @@ function renderFinanceWorkflow() {
           <label>Preferred vendor<input name="vendor"></label>
           <label>Required date <span class="required">*</span><input name="date" type="date" required></label>
           <label>Reference<input name="reference"></label>
-          <label>Supporting document URL<input name="attachmentUrl" type="url"></label>
+          ${financeAttachmentField('expense-requisition')}
           <label>Notes<textarea name="notes" rows="2"></textarea></label>
           <button type="submit" data-create-label="Submit Requisition">Submit Requisition</button>
           <p class="status" data-form-status></p>
@@ -9974,7 +10093,7 @@ function renderFinanceWorkflow() {
           <label>Preferred vendor<input name="vendor"></label>
           <label>Required date <span class="required">*</span><input name="date" type="date" required></label>
           <label>Reference<input name="reference"></label>
-          <label>Supporting document URL<input name="attachmentUrl" type="url"></label>
+          ${financeAttachmentField('material-requisition')}
           <label>Notes<textarea name="notes" rows="2"></textarea></label>
           <button type="submit" data-create-label="Submit Material Requisition">Submit Material Requisition</button>
           <p class="status" data-form-status></p>
@@ -10018,8 +10137,8 @@ function renderFinanceWorkflow() {
       <form id="imprestRetirementForm" class="workflow-form">
         <input name="recordId" type="hidden">
         <div class="imprest-retirement-summary"><span>Issued <strong data-imprest-issued-total>${money(0)}</strong></span><span>Expenses <strong data-imprest-expense-total>${money(0)}</strong></span><span>Return <strong data-imprest-return-total>${money(0)}</strong></span></div>
-        <p class="muted">Every expense line requires a receipt URL. The unused balance is calculated automatically.</p>
-        <div class="admin-table-wrap material-entry-wrap"><table class="admin-table material-entry-table imprest-retirement-table"><thead><tr><th>#</th><th>Date</th><th>Description</th><th>Expense account</th><th>Amount</th><th>Receipt URL</th><th></th></tr></thead><tbody data-imprest-retirement-items>${imprestRetirementEntryRow(1)}</tbody></table></div>
+        <p class="muted">Upload one receipt for every expense line. Receipts are stored in the organisation's Google Drive and the unused balance is calculated automatically.</p>
+        <div class="admin-table-wrap material-entry-wrap"><table class="admin-table material-entry-table imprest-retirement-table"><thead><tr><th>#</th><th>Date</th><th>Description</th><th>Expense account</th><th>Amount</th><th>Receipt</th><th></th></tr></thead><tbody data-imprest-retirement-items>${imprestRetirementEntryRow(1)}</tbody></table></div>
         <div class="material-entry-actions"><button type="button" data-add-imprest-retirement>+ Add Expense</button></div>
         <label>Unused cash / bank return reference<input name="returnReference" placeholder="Required when a balance is returned"></label>
         <label>Retirement notes<textarea name="notes" rows="2"></textarea></label>
@@ -10067,7 +10186,7 @@ function renderFinanceWorkflow() {
 }
 
 function formPayload(form) {
-  return Object.fromEntries(new FormData(form).entries());
+  return Object.fromEntries([...new FormData(form).entries()].filter(([, value]) => !(value instanceof File)));
 }
 
 function materialEntryRow(index) {
@@ -10127,6 +10246,17 @@ function resetRequisitionEditor(form) {
   if (submitButton) submitButton.textContent = submitButton.dataset.createLabel ||
     (isMaterial ? 'Submit Material Requisition' : 'Submit Requisition');
   setStatus(form.querySelector('[data-form-status]'), '');
+  const attachment = form.querySelector('[data-finance-attachment]');
+  if (attachment) {
+    setFinanceAttachmentLink(attachment, '');
+    const fileName = attachment.querySelector('[data-finance-attachment-name]');
+    if (fileName) fileName.textContent = 'No file selected';
+    const fileInput = attachment.querySelector('[data-finance-attachment-file]');
+    if (fileInput) {
+      delete fileInput.dataset.uploadedUrl;
+      delete fileInput.dataset.uploadIdempotencyKey;
+    }
+  }
   if (isMaterial) {
     const itemsBody = form.querySelector('[data-material-items]');
     itemsBody.innerHTML = materialEntryRow(1);
@@ -10157,6 +10287,7 @@ function openRequisitionEditor(record) {
   setRequisitionEditorValue(form, 'date', clean(record.Date).slice(0, 10));
   setRequisitionEditorValue(form, 'reference', record.Reference);
   setRequisitionEditorValue(form, 'attachmentUrl', record.AttachmentUrl);
+  setFinanceAttachmentLink(form.querySelector('[data-finance-attachment]'), record.AttachmentUrl);
   setRequisitionEditorValue(form, 'notes', record.Notes);
   if (isMaterial) {
     const items = Array.isArray(record.MaterialItems) && record.MaterialItems.length
@@ -10190,6 +10321,7 @@ function openRequisitionEditor(record) {
 function bindMaterialRequisitionForm() {
   const form = document.getElementById('materialRequisitionForm');
   if (!form) return;
+  bindFinanceAttachmentControl(form);
   const itemsBody = form.querySelector('[data-material-items]');
   form.querySelector('[data-add-material-item]').addEventListener('click', () => {
     itemsBody.insertAdjacentHTML('beforeend', materialEntryRow(itemsBody.querySelectorAll('[data-material-row]').length + 1));
@@ -10221,6 +10353,8 @@ function bindMaterialRequisitionForm() {
     setButtonLoading(button, true, 'Submitting...', buttonLabel);
     setStatus(status, 'Saving to database...');
     try {
+      payload.attachmentUrl = await uploadFinanceFormAttachment(form, status);
+      setStatus(status, 'Saving the material requisition...');
       if (resubmitting) await financeRequest('resubmitRequisition', payload);
       else await financeRequest('submitMaterialRequisition', payload);
       delete form.dataset.idempotencyKey;
@@ -10242,6 +10376,7 @@ function bindMaterialRequisitionForm() {
 function bindSubmissionForm(formId, action, successText) {
   const form = document.getElementById(formId);
   if (!form) return;
+  if (formId === 'requisitionForm') bindFinanceAttachmentControl(form);
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const button = form.querySelector('button[type="submit"]');
@@ -10258,6 +10393,10 @@ function bindSubmissionForm(formId, action, successText) {
       const idempotencyKey = form.dataset.idempotencyKey || newIdempotencyKey();
       form.dataset.idempotencyKey = idempotencyKey;
       const payload = { ...formPayload(form), idempotencyKey };
+      if (formId === 'requisitionForm') {
+        payload.attachmentUrl = await uploadFinanceFormAttachment(form, status);
+        setStatus(status, 'Saving the expense requisition...');
+      }
       const effectiveAction = action === 'submitRequisition' && clean(payload.recordId)
         ? 'resubmitRequisition'
         : action;
@@ -10283,6 +10422,7 @@ function bindImprestWorkflowForms() {
   const form = document.getElementById('imprestRetirementForm');
   if (!form) return;
   const body = form.querySelector('[data-imprest-retirement-items]');
+  bindFinanceAttachmentControl(body);
   form.querySelector('[data-add-imprest-retirement]')?.addEventListener('click', () => {
     body.insertAdjacentHTML('beforeend', imprestRetirementEntryRow(body.querySelectorAll('[data-imprest-retirement-row]').length + 1));
     updateImprestRetirementTotals(form);
@@ -10303,8 +10443,23 @@ function bindImprestWorkflowForms() {
     const status = form.querySelector('[data-form-status]');
     setButtonLoading(button, true, 'Submitting...', 'Submit Retirement');
     try {
+      const issued = Number(form.dataset.amountIssued || 0);
+      const expenseTotal = imprestRetirementItems(form).reduce((sum, line) => sum + Number(line.amount || 0), 0);
+      if (expenseTotal > issued) throw new Error('Retirement expenses cannot exceed the amount issued.');
+      if (issued - expenseTotal > 0.005 && !clean(form.elements.returnReference.value)) {
+        form.elements.returnReference.focus();
+        throw new Error('Enter the unused cash or bank return reference before uploading receipts.');
+      }
+      const recordId = clean(form.elements.recordId.value);
+      const rows = [...body.querySelectorAll('[data-imprest-retirement-row]')];
+      for (let index = 0; index < rows.length; index += 1) {
+        const input = rows[index].querySelector('[data-finance-attachment-file]');
+        setStatus(status, `Uploading receipt ${index + 1} of ${rows.length} to Google Drive...`);
+        await uploadFinanceAttachmentInput(input, { kind: 'imprest-receipt', recordId });
+      }
+      setStatus(status, 'Saving the imprest retirement...');
       const data = await financeRequest('submitImprestRetirement', {
-        recordId: form.elements.recordId.value,
+        recordId,
         lines: imprestRetirementItems(form),
         returnReference: form.elements.returnReference.value,
         notes: form.elements.notes.value,

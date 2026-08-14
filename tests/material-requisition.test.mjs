@@ -34,6 +34,8 @@ test('material requisition is an additional workflow with a multi-item table', (
   assert.match(adminJs, /data-open-dialog="materialRequisitionDialog" title="Material Requisition">\+ Materials/);
   assert.match(adminJs, /<th>S\/No\.<\/th><th>Item<\/th><th>Specification<\/th><th>Quantity<\/th><th>Unit Price<\/th><th>Total<\/th>/);
   assert.match(adminJs, /data-add-material-item/);
+  assert.match(adminJs, /financeAttachmentField\('material-requisition'\)/);
+  assert.match(adminJs, /uploadFinanceFormAttachment\(form, status\)/);
   assert.match(adminJs, /financeRequest\('submitMaterialRequisition', payload\)/);
   assert.match(adminJs, /materialItemsTable\(record\.MaterialItems \|\| record\.Items, record\.Amount\)/);
   assert.match(adminJs, /name="description"[\s\S]*?required[\s\S]*?State the purpose of this material request/);
@@ -45,6 +47,7 @@ test('material requisition is an additional workflow with a multi-item table', (
   assert.match(workflowApi, /action === 'submitmaterialrequisition'/);
   assert.match(portalCss, /\.material-requisition-dialog\{width:min\(1000px/);
   assert.match(portalCss, /\.material-grand-total-row th\{/);
+  assert.match(portalCss, /\.finance-attachment-button/);
 });
 
 test('material requisition dialog is compact on mobile', () => {

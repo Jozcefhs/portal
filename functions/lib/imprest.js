@@ -59,7 +59,7 @@ export function validateImprestRetirement(issuedAmount, value) {
     !line.Description || !line.ExpenseAccount || line.Amount <= 0 || !line.ReceiptUrl
   );
   if (invalid) {
-    throw new Error(`Complete the date, description, expense account, amount and receipt URL for retirement line ${invalid?.SNo || 1}.`);
+    throw new Error(`Complete the date, description, expense account, amount and uploaded receipt for retirement line ${invalid?.SNo || 1}.`);
   }
   const expenseTotal = money(lines.reduce((sum, line) => sum + line.Amount, 0));
   if (expenseTotal > amountIssued) {

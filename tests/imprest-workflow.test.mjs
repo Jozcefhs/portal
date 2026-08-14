@@ -62,7 +62,7 @@ test('retirement requires receipts and clears the entire staff advance', () => {
   ]);
   assert.throws(() => validateImprestRetirement(1000, [
     { Date: '2026-08-14', Description: 'Taxi', ExpenseAccount: '6030', Amount: 1000 }
-  ]), /receipt URL/i);
+  ]), /uploaded receipt/i);
   assert.throws(() => validateImprestRetirement(1000, [
     { Date: '2026-08-14', Description: 'Taxi', ExpenseAccount: '6030', Amount: 1200, ReceiptUrl: 'https://files.example/taxi.jpg' }
   ]), /cannot exceed/i);
@@ -93,6 +93,9 @@ test('web and desktop expose the same controlled imprest lifecycle', () => {
   assert.match(adminJs, /Imprest &amp; Petty Cash/);
   assert.match(adminJs, /Only one open imprest is allowed per staff custodian/);
   assert.match(adminJs, /const imprestRetirementDialog =/);
+  assert.match(adminJs, /data-finance-attachment-kind="imprest-receipt"/);
+  assert.match(adminJs, /Upload receipt/);
+  assert.match(adminJs, /uploadFinanceAttachmentInput\(input, \{ kind: 'imprest-receipt', recordId \}\)/);
   assert.match(adminJs, /\$\{submissionDialogs\}[\s\S]*\$\{imprestRetirementDialog\}/);
   assert.match(adminHtml, /financeDecisionExtra/);
   assert.match(portalCss, /\.imprest-retirement-summary/);
