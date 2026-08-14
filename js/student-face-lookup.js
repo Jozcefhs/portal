@@ -616,7 +616,7 @@ function dialogMarkup(mode, student = {}, allowCameraSelection = false) {
     <div class="student-face-camera">
       <video data-face-video playsinline muted aria-label="Live student face camera preview"></video>
       <div class="student-face-guide is-searching" aria-hidden="true"></div>
-      ${allowCameraSelection ? '<label class="student-face-camera-select"><span>Camera</span><select data-face-camera-select aria-label="Choose front or back camera for student verification"><option value="user">Front</option><option value="environment">Back</option></select></label>' : ''}
+      ${allowCameraSelection ? '<label class="student-face-camera-select"><span>Camera</span><select data-face-camera-select aria-label="Choose front or back camera for student face capture"><option value="user">Front</option><option value="environment">Back</option></select></label>' : ''}
       <button type="button" class="student-face-audio-toggle" data-face-audio aria-pressed="true"><span data-face-audio-icon aria-hidden="true">🔊</span><span data-face-audio-label>Audio guidance on</span></button>
       <p class="student-face-live-guidance" data-face-overlay aria-hidden="true">Keep one face centred and blink once when prompted.</p>
     </div>
@@ -651,7 +651,7 @@ function renderPossibleMatch(dialog, match, onMatch, confirmText = 'Confirm and 
 export async function openStudentFaceLookup(options = {}) {
   const mode = options.mode === 'enroll' ? 'enroll' : 'lookup';
   const sampleCount = mode === 'enroll' ? ENROLLMENT_SAMPLE_COUNT : ROUTINE_SAMPLE_COUNT;
-  const allowCameraSelection = mode === 'lookup' && options.allowCameraSelection === true;
+  const allowCameraSelection = mode === 'enroll' || options.allowCameraSelection === true;
   if (activeDialog?.open) activeDialog.close();
   document.body.insertAdjacentHTML('beforeend', dialogMarkup(mode, options.student || {}, allowCameraSelection));
   const dialog = document.body.lastElementChild;

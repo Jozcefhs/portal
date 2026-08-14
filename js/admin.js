@@ -778,7 +778,7 @@ async function attendancePasskeyProof(siteId, direction) {
 
 function attendanceFaceModule() {
   if (!attendanceFaceModulePromise) {
-    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260814-pos-camera-selection').catch((error) => {
+    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260814-records-desk-enrollment-camera').catch((error) => {
       attendanceFaceModulePromise = null;
       throw error;
     });
@@ -7900,7 +7900,7 @@ function preloadRecordsDeskFaceRecognition() {
   recordsDeskFacePreloadScheduled = true;
   const preload = () => {
     recordsDeskFacePreloadScheduled = false;
-    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260814-pos-camera-selection')
+    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260814-records-desk-enrollment-camera')
       .then((module) => module.preloadFaceRecognitionModel())
       .catch(() => {
         recordsDeskFacePreloadPromise = null;
@@ -7914,7 +7914,7 @@ function preloadRecordsDeskFaceRecognition() {
 }
 
 async function openStudentFaceLookupDialog(options = {}) {
-  const module = await import('./student-face-lookup.js?v=20260814-pos-camera-selection');
+  const module = await import('./student-face-lookup.js?v=20260814-records-desk-enrollment-camera');
   return module.openStudentFaceLookup(options);
 }
 
