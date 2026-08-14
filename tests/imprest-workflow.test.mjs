@@ -110,5 +110,8 @@ test('retirement remains available independently of new-request permission', () 
   assert.doesNotMatch(adminJs.slice(gatedStart, retirementStart), /id="imprestRetirementDialog"/);
   assert.match(adminJs.slice(retirementStart), /id="imprestRetirementDialog"/);
   assert.match(adminJs, /data-open-imprest-retirement/);
+  assert.match(adminJs, /const dialog = form\.closest\('dialog'\)/);
+  assert.match(adminJs, /dialog\?\.querySelector\('\[data-imprest-retirement-reference\]'\)/);
+  assert.doesNotMatch(adminJs, /form\.querySelector\('\[data-imprest-retirement-reference\]'\)\.textContent/);
   assert.match(desktopAccounting, /selected = tree\.selection\(\)/);
 });

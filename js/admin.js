@@ -10322,15 +10322,17 @@ function bindImprestWorkflowForms() {
   panelEl.querySelectorAll('[data-open-imprest-retirement]').forEach((button) => button.addEventListener('click', () => {
     const record = (financeData?.imprests || []).find((row) => clean(row.ImprestNo || row.__id) === clean(button.dataset.openImprestRetirement));
     if (!record) return;
+    const dialog = form.closest('dialog');
     form.reset();
     form.elements.recordId.value = clean(record.ImprestNo || record.__id);
     form.dataset.amountIssued = String(Number(record.AmountIssued || record.AmountApproved || 0));
     form.dataset.idempotencyKey = newIdempotencyKey();
-    form.querySelector('[data-imprest-retirement-reference]').textContent = form.elements.recordId.value;
+    const reference = dialog?.querySelector('[data-imprest-retirement-reference]');
+    if (reference) reference.textContent = form.elements.recordId.value;
     body.innerHTML = imprestRetirementEntryRow(1);
     updateImprestRetirementTotals(form);
     setStatus(form.querySelector('[data-form-status]'), '');
-    form.closest('dialog')?.showModal();
+    if (dialog && !dialog.open) dialog.showModal();
   }));
 }
 
