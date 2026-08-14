@@ -2980,6 +2980,22 @@ html[data-theme="dark"] .student-conduct-summary{scrollbar-color:#526d82 transpa
 }
 .student-face-audio-toggle[aria-pressed="false"]{background:rgba(57,70,82,.9)!important;color:#e1e8ee!important}
 .student-face-audio-toggle:disabled{opacity:.78!important}
+.student-face-camera-toolbar{
+  display:flex;
+  width:calc(100% - 44px);
+  min-height:52px;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin:0 22px 9px;
+  padding:8px 10px;
+  border:1px solid #c9d9e6;
+  border-radius:11px;
+  background:#f4f8fb;
+}
+.student-face-camera-toolbar>small{color:#526f87;font-size:9px;line-height:1.35;text-align:right}
+.student-face-camera-field{display:flex;width:fit-content;flex:0 0 auto;align-items:center;gap:8px;margin:0;color:#173b58;font-size:10px;font-weight:800}
+.student-face-camera-field select{width:auto;min-width:118px;min-height:34px;margin:0;padding:6px 28px 6px 9px;border:1px solid #9bb4c8;border-radius:8px;background:#fff;color:#102f4b;font-size:11px;font-weight:700}
 .student-face-camera-select{
   position:absolute;
   top:48px;
@@ -3068,6 +3084,10 @@ html[data-theme="dark"] .student-face-dialog>header p{color:#abc0d4}
 html[data-theme="dark"] .student-face-close{border-color:#385069!important;background:#172b40!important;color:#e8f2fb!important}
 html[data-theme="dark"] .student-face-notice{border-color:#286b60;background:#12342f;color:#d8fff4}
 html[data-theme="dark"] .student-face-notice small{color:#a9d2c8}
+html[data-theme="dark"] .student-face-camera-toolbar{border-color:#385069;background:#13263a}
+html[data-theme="dark"] .student-face-camera-toolbar>small{color:#b5c7d8}
+html[data-theme="dark"] .student-face-camera-field{color:#edf4fc}
+html[data-theme="dark"] .student-face-camera-field select{border-color:#4b657d;background:#0e2032;color:#f0f6fc}
 html[data-theme="dark"] .student-face-status{border-color:#30465b;background:#13263a;color:#c4d4e3}
 html[data-theme="dark"] .student-face-status.good{border-color:#287967;background:#12392f;color:#bdf3e5}
 html[data-theme="dark"] .student-face-status.warn{border-color:#79652d;background:#322b18;color:#ffe9a9}
@@ -3082,6 +3102,10 @@ html[data-theme="dark"] .student-face-dialog>footer button.secondary{border-colo
   .student-face-dialog>header{padding:16px 15px 13px}
   .student-face-dialog>header h2{font-size:19px!important}
   .student-face-notice{margin:12px 15px 9px}
+  .student-face-camera-toolbar{display:grid;width:calc(100% - 30px);gap:5px;margin:0 15px 8px;padding:8px}
+  .student-face-camera-toolbar>small{text-align:left}
+  .student-face-camera-field{width:100%;justify-content:space-between}
+  .student-face-camera-field select{min-width:132px}
   .student-face-camera{width:calc(100% - 30px);aspect-ratio:4/3;margin:0 15px}
   .student-face-guide{inset:10% 25%}
   .student-face-challenge{top:8px;left:8px;max-width:calc(100% - 126px);min-height:36px;padding:5px 8px}

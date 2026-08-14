@@ -613,10 +613,10 @@ function dialogMarkup(mode, student = {}, allowCameraSelection = false) {
       <span aria-hidden="true">🛡️</span>
       <p><strong>Private assisted lookup</strong><small>Camera frames stay on this device. A mathematical face template is sent securely for comparison within this school scope. This does not authenticate a student or make an automatic decision.</small></p>
     </div>
+    ${allowCameraSelection ? '<div class="student-face-camera-toolbar"><label class="student-face-camera-field"><span>Camera for this lookup</span><select data-face-camera-select aria-label="Choose front or back camera for student face capture"><option value="user">Front camera</option><option value="environment">Back camera</option></select></label><small>Choose before starting. You can switch again while the camera is open.</small></div>' : ''}
     <div class="student-face-camera">
       <video data-face-video playsinline muted aria-label="Live student face camera preview"></video>
       <div class="student-face-guide is-searching" aria-hidden="true"></div>
-      ${allowCameraSelection ? '<label class="student-face-camera-select"><span>Camera</span><select data-face-camera-select aria-label="Choose front or back camera for student face capture"><option value="user">Front</option><option value="environment">Back</option></select></label>' : ''}
       <button type="button" class="student-face-audio-toggle" data-face-audio aria-pressed="true"><span data-face-audio-icon aria-hidden="true">🔊</span><span data-face-audio-label>Audio guidance on</span></button>
       <p class="student-face-live-guidance" data-face-overlay aria-hidden="true">Keep one face centred and blink once when prompted.</p>
     </div>

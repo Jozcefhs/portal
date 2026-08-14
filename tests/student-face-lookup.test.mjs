@@ -355,7 +355,10 @@ test('front and back camera selection covers staff enrollment and every student 
   assert.match(cssSource, /data-facing-mode="environment"/);
   assert.match(uiSource, /\$\{enrollment \? '<label class="student-face-camera-select"/);
   assert.match(uiSource, /if \(mode === 'enroll'\) bindCameraSelector\(dialog, captureButton\)/);
-  assert.match(uiSource, /allowCameraSelection \? '<label class="student-face-camera-select"/);
+  assert.match(uiSource, /allowCameraSelection \? '<div class="student-face-camera-toolbar"/);
+  assert.match(uiSource, /Camera for this lookup/);
+  assert.match(uiSource, /Front camera/);
+  assert.match(uiSource, /Back camera/);
   assert.match(uiSource, /const allowCameraSelection = options\.allowCameraSelection !== false/);
   assert.match(uiSource, /if \(allowCameraSelection\) bindCameraSelector\(dialog, captureButton\)/);
   assert.match(adminSource, /purpose: 'tuck-shop-purchase',[\s\S]*?allowCameraSelection: true/);
@@ -418,7 +421,7 @@ test('eligible Records Desk sessions prepare the model during idle time without 
   assert.match(adminSource, /requestIdleCallback/);
   assert.match(adminSource, /window\.setTimeout\(preload, 300\)/);
   assert.match(adminSource, /preloadFaceRecognitionModel\(\)/);
-  assert.match(adminSource, /student-face-lookup\.js\?v=20260814-all-student-camera-selection/);
+  assert.match(adminSource, /student-face-lookup\.js\?v=20260814-visible-camera-controls/);
   const preloaderStart = uiSource.indexOf('export function preloadFaceRecognitionModel');
   const preloaderEnd = uiSource.indexOf('async function startCamera', preloaderStart);
   const preloaderSource = uiSource.slice(preloaderStart, preloaderEnd);
@@ -453,7 +456,8 @@ test('lookup and enrollment are explicitly initiated without consent fields, and
   assert.match(adminSource, /'bookstore-collection'/);
   assert.match(adminSource, /'uniform-store-collection'/);
   assert.match(cssSource, /\.student-face-dialog/);
+  assert.match(cssSource, /\.student-face-camera-toolbar/);
   assert.match(cssSource, /html\[data-theme="dark"\] \.student-face-dialog/);
   assert.match(cssSource, /@media\(max-width:680px\)/);
-  assert.match(adminHtmlSource, /css\/style\.css\?v=20260814-pos-camera-selection/);
+  assert.match(adminHtmlSource, /css\/style\.css\?v=20260814-visible-camera-controls/);
 });
