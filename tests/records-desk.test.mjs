@@ -29,6 +29,14 @@ const [apiSource, adminJs, portalCss, staffAuth] = await Promise.all([
 const roleAccessSource = await readFile(new URL('../functions/lib/role-module-access.js', import.meta.url), 'utf8');
 
 test('record types are derived from the signed-in edition and allowed sections', () => {
+  const recordsDeskOnly = recordsDeskCapabilities({
+    edition: 'school',
+    role: 'Front Desk',
+    allowedSections: ['recordsDesk']
+  });
+  assert.deepEqual(allowedRecordsDeskTypes(recordsDeskOnly), ['students']);
+  assert.equal(recordsDeskOnly.canUseStudentFaceLookup, true);
+
   const schoolAccounts = recordsDeskCapabilities({
     edition: 'school',
     role: 'Accounts Officer',

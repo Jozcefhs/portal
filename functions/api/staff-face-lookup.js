@@ -40,6 +40,12 @@ const LOOKUP_WINDOW_MS = 5 * 60 * 1000;
 const LOOKUP_LIMIT = 20;
 const DEFAULT_DIRECT_GALLERY_LIMIT = 250;
 const lookupWindows = new Map();
+const LOOKUP_PURPOSES = Object.freeze({
+  'records-desk': Object.freeze({ section: 'recordsDesk', source: 'Web Records Desk' }),
+  'tuck-shop-purchase': Object.freeze({ section: 'tuckShop', source: 'Web Tuck Shop POS' }),
+  'bookstore-collection': Object.freeze({ section: 'bookstore', source: 'Web Bookstore Collection' }),
+  'uniform-store-collection': Object.freeze({ section: 'uniformStore', source: 'Web Uniform Store Collection' })
+});
 
 function error(message, status = 400) {
   const failure = new Error(message);
@@ -96,29 +102,44 @@ function explicitLookupPermission(user = {}) {
     ['yes', 'true', '1', 'enabled'].includes(lower(user.BiometricLookupEnabled));
 }
 
-function ensureSchoolRecordsDesk(user = {}) {
+export function normalizeStudentFaceLookupPurpose(value) {
+  const purpose = lower(value || 'records-desk');
+  if (!LOOKUP_PURPOSES[purpose]) throw error('Choose a valid student face-lookup purpose.');
+  return purpose;
+}
+
+export function staffCanUseStudentFaceLookup(user = {}, purpose = 'records-desk') {
+  const normalizedPurpose = normalizeStudentFaceLookupPurpose(purpose);
+  if (lower(user.edition) !== 'school') return false;
+  const allowed = new Set((user.allowedSections || []).map(clean).filter(Boolean));
+  if (normalizedPurpose === 'records-desk') {
+    const capabilities = recordsDeskCapabilities(user);
+    return capabilities.enabled && capabilities.canSearchStudents;
+  }
+  return allowed.has(LOOKUP_PURPOSES[normalizedPurpose].section);
+}
+
+function ensureSchoolFaceAccess(user = {}, purpose = 'records-desk') {
+  const normalizedPurpose = normalizeStudentFaceLookupPurpose(purpose);
   const capabilities = recordsDeskCapabilities(user);
   if (lower(user.edition) !== 'school') {
     throw error('Student face lookup is available only in a school workspace.', 403);
   }
-  if (!capabilities.enabled || !capabilities.canSearchStudents) {
-    throw error('This staff account cannot search student records.', 403);
+  if (!staffCanUseStudentFaceLookup(user, normalizedPurpose)) {
+    throw error(normalizedPurpose === 'records-desk'
+      ? 'This staff account cannot use the Records Desk.'
+      : 'This staff account cannot use face lookup in that purchase or collection workspace.', 403);
   }
   return capabilities;
 }
 
 function canManageTemplates(user = {}) {
-  return explicitLookupPermission(user) && MANAGER_ROLES.has(clean(user.role));
+  return staffCanUseStudentFaceLookup(user, 'records-desk') &&
+    explicitLookupPermission(user) && MANAGER_ROLES.has(clean(user.role));
 }
 
 function canEraseTemplates(user = {}) {
-  return MANAGER_ROLES.has(clean(user.role));
-}
-
-function ensureLookupPermission(user = {}) {
-  if (!explicitLookupPermission(user)) {
-    throw error('Student face lookup has not been enabled for this staff account.', 403);
-  }
+  return staffCanUseStudentFaceLookup(user, 'records-desk') && MANAGER_ROLES.has(clean(user.role));
 }
 
 function ensureConfigured(env = {}) {
@@ -228,7 +249,8 @@ function faceAuditWrite(env, user, action, details = {}) {
       Result: clean(details.Result),
       ModelId: clean(details.ModelId || STUDENT_FACE_MODEL_ID),
       WorkspaceId: workspaceId(env),
-      SourcePlatform: 'Web Records Desk'
+      Purpose: clean(details.Purpose || 'records-desk'),
+      SourcePlatform: clean(details.SourcePlatform || 'Web Records Desk')
     }
   };
 }
@@ -255,13 +277,13 @@ function templateEncryptionSecret(env, template = {}) {
   return secret;
 }
 
-async function status(env, user, body) {
+async function status(env, user, body, purpose) {
   const configured = studentFaceLookupConfigured(env);
   const result = {
     ok: true,
     enabled: studentFaceLookupEnabled(env),
     configured,
-    canLookup: explicitLookupPermission(user),
+    canLookup: staffCanUseStudentFaceLookup(user, purpose),
     canManage: canManageTemplates(user),
     canErase: canEraseTemplates(user),
     modelId: STUDENT_FACE_MODEL_ID,
@@ -393,9 +415,8 @@ function candidateStudent(rows, template) {
   ) || null;
 }
 
-async function match(env, user, body) {
+async function match(env, user, body, purpose) {
   ensureConfigured(env);
-  ensureLookupPermission(user);
   await enforceLookupRate(user, env);
   const modelId = clean(body.modelId);
   if (modelId !== STUDENT_FACE_MODEL_ID) {
@@ -443,7 +464,9 @@ async function match(env, user, body) {
     SchoolSection: matched ? schoolSectionFor(matched) : user.schoolSectionAccess,
     StudentRef: matched ? studentReference(matched) : '',
     Result: result.outcome,
-    ModelId: modelId
+    ModelId: modelId,
+    Purpose: purpose,
+    SourcePlatform: LOOKUP_PURPOSES[purpose].source
   });
   if (!matched) {
     return {
@@ -468,7 +491,7 @@ async function match(env, user, body) {
       schoolSection: card.schoolSection,
       scoreBand: result.match.similarity >= 0.82 ? 'very-high' : 'high'
     },
-    message: 'A possible student match was found. Confirm the student before opening the record.'
+    message: 'A possible student match was found. Confirm the student before continuing.'
   };
 }
 
@@ -476,14 +499,21 @@ export async function onRequestPost({ request, env }) {
   try {
     requireFirestoreEnv(env);
     const user = await requireStaffSession(env, request);
-    ensureSchoolRecordsDesk(user);
     const body = await readJsonBody(request, { maxBytes: 128 * 1024 });
+    const purpose = normalizeStudentFaceLookupPurpose(body.purpose);
+    ensureSchoolFaceAccess(user, purpose);
     const action = lower(body.action || 'status');
     let result;
-    if (action === 'status') result = await status(env, user, body);
-    else if (action === 'enroll') result = await enroll(env, user, body);
-    else if (action === 'revoke') result = await revoke(env, user, body);
-    else if (action === 'match') result = await match(env, user, body);
+    if (action === 'status') result = await status(env, user, body, purpose);
+    else if (action === 'enroll') {
+      ensureSchoolFaceAccess(user, 'records-desk');
+      result = await enroll(env, user, body);
+    }
+    else if (action === 'revoke') {
+      ensureSchoolFaceAccess(user, 'records-desk');
+      result = await revoke(env, user, body);
+    }
+    else if (action === 'match') result = await match(env, user, body, purpose);
     else throw error('Choose a valid student face-lookup action.');
     return Response.json(result, {
       headers: {

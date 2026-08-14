@@ -265,16 +265,27 @@ export function preloadStaffAttendanceFace() {
   return preloadFaceRecognitionModel();
 }
 
+function selectedCameraFacingMode(dialog) {
+  return dialog?.querySelector('[data-face-camera-select]')?.value === 'environment'
+    ? 'environment'
+    : 'user';
+}
+
+function cameraFacingLabel(facingMode) {
+  return facingMode === 'environment' ? 'Back camera' : 'Front camera';
+}
+
 async function startCamera(dialog) {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error('This browser does not provide secure camera access.');
   }
   const video = dialog.querySelector('[data-face-video]');
+  const facingMode = selectedCameraFacingMode(dialog);
   stopCamera(video);
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
-      facingMode: 'user',
+      facingMode: { ideal: facingMode },
       width: { ideal: 640 },
       height: { ideal: 480 }
     }
@@ -284,6 +295,12 @@ async function startCamera(dialog) {
     throw new Error('Face verification was cancelled.');
   }
   activeStream = stream;
+  const actualFacingMode = clean(stream.getVideoTracks?.()[0]?.getSettings?.().facingMode);
+  if (['user', 'environment'].includes(actualFacingMode) && actualFacingMode !== facingMode) {
+    stopCamera();
+    throw new Error(`${cameraFacingLabel(facingMode)} is not available on this device.`);
+  }
+  dialog.querySelector('.student-face-camera')?.setAttribute('data-facing-mode', facingMode);
   video.srcObject = activeStream;
   await new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => reject(new Error('The camera did not become ready.')), 10000);
@@ -293,7 +310,33 @@ async function startCamera(dialog) {
     };
   });
   await video.play();
-  setStatus(dialog, 'Camera ready. Preparing the private face model...', 'good');
+  setStatus(dialog, `${cameraFacingLabel(facingMode)} ready. Preparing the private face model...`, 'good');
+}
+
+function bindCameraSelector(dialog, captureButton) {
+  const select = dialog?.querySelector('[data-face-camera-select]');
+  const video = dialog?.querySelector('[data-face-video]');
+  if (!select || !video) return;
+  select.addEventListener('change', async () => {
+    const facingMode = selectedCameraFacingMode(dialog);
+    dialog.querySelector('.student-face-camera')?.setAttribute('data-facing-mode', facingMode);
+    if (!activeStream || !video.srcObject) {
+      setStatus(dialog, `${cameraFacingLabel(facingMode)} selected. Choose Start camera when ready.`, 'good');
+      return;
+    }
+    select.disabled = true;
+    captureButton.disabled = true;
+    try {
+      await startCamera(dialog);
+      captureButton.disabled = false;
+      setStatus(dialog, `${cameraFacingLabel(facingMode)} is ready. Continue with the live face check.`, 'good');
+    } catch (failure) {
+      stopCamera(video);
+      setStatus(dialog, formatCameraError(failure), 'bad');
+    } finally {
+      select.disabled = false;
+    }
+  });
 }
 
 function flattenedGestures(result = {}) {
@@ -588,14 +631,14 @@ function dialogMarkup(mode, student = {}) {
   </dialog>`;
 }
 
-function renderPossibleMatch(dialog, match, onMatch) {
+function renderPossibleMatch(dialog, match, onMatch, confirmText = 'Confirm and open') {
   const container = dialog.querySelector('[data-face-match]');
   container.hidden = false;
   container.innerHTML = `<div>
     <span class="student-face-match-avatar">${escapeHtml(clean(match.title).split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase())}</span>
     <p><small>Possible match · ${escapeHtml(match.scoreBand === 'very-high' ? 'very high confidence' : 'high confidence')}</small>
       <strong>${escapeHtml(match.title)}</strong><span>${escapeHtml(match.subtitle || match.id)}</span></p>
-    <button type="button" data-face-confirm>Confirm and open</button>
+    <button type="button" data-face-confirm>${escapeHtml(confirmText)}</button>
   </div>
   <small>Confirm the student visually. If this is not the student, close this result and use manual search.</small>`;
   container.querySelector('[data-face-confirm]')?.addEventListener('click', () => {
@@ -617,6 +660,7 @@ export async function openStudentFaceLookup(options = {}) {
   const revokeButton = dialog.querySelector('[data-face-revoke]');
   const studentId = clean(options.student?.id || options.student?.AccountRef || options.student?.studentId);
   const branchId = clean(options.student?.branchId || options.student?.BranchId);
+  const purpose = mode === 'enroll' ? 'records-desk' : (clean(options.purpose) || 'records-desk');
   let status = null;
   initializeAudioGuidance(dialog);
 
@@ -668,6 +712,7 @@ export async function openStudentFaceLookup(options = {}) {
         const result = await faceLookupRequest('enroll', {
           studentId,
           branchId,
+          purpose,
           modelId: MODEL_ID,
           descriptor,
           sampleCount: ENROLLMENT_SAMPLE_COUNT
@@ -677,12 +722,12 @@ export async function openStudentFaceLookup(options = {}) {
         setStatus(dialog, result.message, 'good');
         options.onEnrollmentChange?.(true);
       } else {
-        const result = await faceLookupRequest('match', { modelId: MODEL_ID, descriptor });
+        const result = await faceLookupRequest('match', { modelId: MODEL_ID, descriptor, purpose });
         if (!result.match) {
           setStatus(dialog, result.message, result.outcome === 'ambiguous' ? 'warn' : 'bad');
         } else {
           setStatus(dialog, result.message, 'good');
-          renderPossibleMatch(dialog, result.match, options.onMatch);
+          renderPossibleMatch(dialog, result.match, options.onMatch, options.confirmText);
         }
       }
     } catch (failure) {
@@ -701,7 +746,7 @@ export async function openStudentFaceLookup(options = {}) {
     if (!await window.DynamaxDialogs.confirm({ title: 'Remove face enrollment', message: `Remove face enrollment for ${studentId}? The encrypted face template will be deleted.`, tone: 'danger', confirmText: 'Remove enrollment' })) return;
     setBusy(revokeButton, true, 'Removing...');
     try {
-      const result = await faceLookupRequest('revoke', { studentId, branchId });
+      const result = await faceLookupRequest('revoke', { studentId, branchId, purpose });
       status = { ...status, enrolled: false };
       revokeButton.hidden = true;
       setStatus(dialog, result.message, 'good');
@@ -715,14 +760,14 @@ export async function openStudentFaceLookup(options = {}) {
 
   dialog.showModal();
   try {
-    status = await faceLookupRequest('status', { studentId, branchId });
+    status = await faceLookupRequest('status', { studentId, branchId, purpose });
     const allowed = status.enabled && status.configured && status.canLookup &&
       (mode !== 'enroll' || status.canManage);
     startButton.disabled = !allowed;
     if (revokeButton) revokeButton.hidden = !(status.enrolled || status.expired) || !status.canErase;
     if (!status.enabled) setStatus(dialog, 'Student face lookup is disabled for this school.', 'bad');
     else if (!status.configured) setStatus(dialog, status.message, 'bad');
-    else if (!status.canLookup) setStatus(dialog, 'This staff account has not been granted biometric lookup permission.', 'bad');
+    else if (!status.canLookup) setStatus(dialog, 'This staff account cannot use face lookup in this workspace.', 'bad');
     else if (mode === 'enroll' && !status.canManage) setStatus(dialog, 'This staff account cannot manage face enrollment.', 'bad');
     else if (status.expired) setStatus(dialog, status.enrollmentMessage, 'warn');
     else setStatus(dialog, status.enrolled ? 'A face template is already enrolled. A new enrollment will replace it.' : 'Ready. Start the camera when the student is present.', 'good');
@@ -774,6 +819,7 @@ function attendanceFaceDialogMarkup(mode) {
     <div class="student-face-camera">
       <video data-face-video playsinline muted aria-label="Live staff face camera preview"></video>
       <div class="student-face-guide is-searching" aria-hidden="true"></div>
+      ${enrollment ? '<label class="student-face-camera-select"><span>Camera</span><select data-face-camera-select aria-label="Choose front or back camera for face enrollment"><option value="user">Front</option><option value="environment">Back</option></select></label>' : ''}
       <div class="student-face-challenge" data-face-challenge hidden aria-live="assertive">
         <span data-face-challenge-symbol aria-hidden="true">◉</span>
         <strong data-face-challenge-label>Live action</strong>
@@ -806,6 +852,7 @@ export function captureStaffAttendanceFace(options = {}) {
   let preparing = false;
   let capturing = false;
   initializeAudioGuidance(dialog);
+  if (mode === 'enroll') bindCameraSelector(dialog, captureButton);
 
   return new Promise((resolve, reject) => {
     const finish = (value, error = null) => {

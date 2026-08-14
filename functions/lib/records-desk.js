@@ -60,9 +60,9 @@ export function recordsDeskCapabilities(user = {}) {
   return {
     enabled,
     edition,
-    canSearchStudents: enabled && schoolEdition &&
-      (schoolExecutive ||
-      ['students', 'accounts', 'clinic', 'tuckShop', 'studentConduct'].some((section) => allowed.has(section))),
+    // Records Desk is itself the delegated student-directory permission. Detail
+    // fields and workflow hand-offs remain independently limited below.
+    canSearchStudents: enabled && schoolEdition,
     canSearchApplicants: enabled && schoolEdition && allowed.has('admissions'),
     canSearchStaff: enabled && (
       (allowed.has('staffUsers') && role === 'Super Admin') ||
@@ -77,7 +77,7 @@ export function recordsDeskCapabilities(user = {}) {
     canViewStudentClinic: allowed.has('clinic'),
     canViewStudentWallet: allowed.has('tuckShop') || allowed.has('accounts'),
     canViewStudentConduct: schoolEdition && allowed.has('studentConduct'),
-    canUseStudentFaceLookup: enabled && schoolEdition && enabledValue(user.biometricLookupEnabled),
+    canUseStudentFaceLookup: enabled && schoolEdition,
     canManageStudentFaceTemplates: enabled && schoolEdition && enabledValue(user.biometricLookupEnabled) &&
       ['Super Admin', 'Principal', 'Admissions Officer'].includes(role),
     canViewStaffSecurity: allowed.has('staffUsers') && clean(user.role) === 'Super Admin',

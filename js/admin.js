@@ -778,7 +778,7 @@ async function attendancePasskeyProof(siteId, direction) {
 
 function attendanceFaceModule() {
   if (!attendanceFaceModulePromise) {
-    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260813-random-liveness-challenge').catch((error) => {
+    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260814-shared-student-face-lookup').catch((error) => {
       attendanceFaceModulePromise = null;
       throw error;
     });
@@ -3364,7 +3364,10 @@ function renderStaffStore(section, store) {
       return `
       <article class="workflow-record store-order-record"><div class="workflow-record-heading"><div><strong>${escapeHtml(order.DisplayName || order.CustomerName || order.AccountRef || 'Customer')}</strong><small>${escapeHtml(order.OrderNo)}</small></div></div>
       <p>${money(order.Amount)} &middot; ${escapeHtml(order.PaidAt || order.CreatedAt || '')}</p>
-      <button type="button" class="store-order-status ${collected ? 'is-collected' : ''}" data-store-order="${escapeHtml(order.OrderNo)}" data-store-status="${escapeHtml(nextStatus)}" aria-label="${escapeHtml(statusLabel)} for ${escapeHtml(order.DisplayName || order.AccountRef)}" ${collected ? 'disabled' : ''}>${escapeHtml(statusLabel)}</button></article>`;
+      <div class="store-order-actions">
+        ${!organisationStore && ready ? `<button type="button" class="student-face-workflow-action" data-store-face-order="${escapeHtml(order.OrderNo)}" aria-label="Find ${escapeHtml(order.DisplayName || order.AccountRef)} by face for collection">&#128247; Verify by face</button>` : ''}
+        <button type="button" class="store-order-status ${collected ? 'is-collected' : ''}" data-store-order="${escapeHtml(order.OrderNo)}" data-store-status="${escapeHtml(nextStatus)}" aria-label="${escapeHtml(statusLabel)} for ${escapeHtml(order.DisplayName || order.AccountRef)}" ${collected ? 'disabled' : ''}>${escapeHtml(statusLabel)}</button>
+      </div></article>`;
     }).join('') : '<p class="muted">No paid orders yet.</p>'}</div></section>`;
   mountWorkspaceTabs(section, [
     { key: 'sales', label: organisationStore ? 'Point of sale' : 'Sales', icon: '\u{1F6D2}', nodes: document.getElementById('organizationCommercePOS') },
@@ -3471,15 +3474,7 @@ function renderStaffStore(section, store) {
       setStatus(dashboardStatus, error.message || String(error), 'bad');
     }
   }));
-  panelEl.querySelectorAll('[data-store-order]').forEach((button) => button.addEventListener('click', async () => {
-    const collectionReference = button.dataset.storeStatus === 'Collected'
-      ? await window.DynamaxDialogs.prompt({
-        title: 'Confirm item collection',
-        message: organisationStore ? 'Enter the order number or customer collection reference.' : "Scan or enter the student's card ID, admission number, or parent verification code.",
-        label: 'Collection reference', required: true, confirmText: 'Confirm collection'
-      })
-      : '';
-    if (button.dataset.storeStatus === 'Collected' && !clean(collectionReference)) return;
+  const updateStoreOrder = async (button, collectionReference = '') => {
     const normalText = clean(button.textContent) || 'Update order';
     setButtonLoading(button, true, 'Updating...', normalText);
     try {
@@ -3489,6 +3484,30 @@ function renderStaffStore(section, store) {
       setStatus(dashboardStatus, error.message || String(error), 'bad');
     } finally {
       if (button.isConnected) setButtonLoading(button, false, 'Updating...', normalText);
+    }
+  };
+  panelEl.querySelectorAll('[data-store-order]').forEach((button) => button.addEventListener('click', async () => {
+    const collectionReference = button.dataset.storeStatus === 'Collected'
+      ? await window.DynamaxDialogs.prompt({
+        title: 'Confirm item collection',
+        message: organisationStore ? 'Enter the order number or customer collection reference.' : "Scan or enter the student's card ID, admission number, or parent verification code.",
+        label: 'Collection reference', required: true, confirmText: 'Confirm collection'
+      })
+      : '';
+    if (button.dataset.storeStatus === 'Collected' && !clean(collectionReference)) return;
+    await updateStoreOrder(button, collectionReference);
+  }));
+  panelEl.querySelectorAll('[data-store-face-order]').forEach((faceButton) => faceButton.addEventListener('click', async () => {
+    const statusButton = panelEl.querySelector(`[data-store-order="${CSS.escape(faceButton.dataset.storeFaceOrder)}"][data-store-status="Collected"]`);
+    if (!statusButton) return;
+    try {
+      await openStudentFaceLookupDialog({
+        purpose: section === 'bookstore' ? 'bookstore-collection' : 'uniform-store-collection',
+        confirmText: 'Confirm collection identity',
+        onMatch: (match) => updateStoreOrder(statusButton, match.id)
+      });
+    } catch (error) {
+      setStatus(dashboardStatus, error.message || String(error), 'bad');
     }
   }));
 }
@@ -3655,7 +3674,7 @@ function renderDepartmentOperations(section, data) {
       <form id="walletLookupForm" class="workflow-form workflow-form-grid config-form">
         <label>Wallet card ID<input name="WalletCardId" autocomplete="off" placeholder="Scan or enter card ID"></label>
         <label>Admission number<input name="AccountRef" autocomplete="off" placeholder="Or enter admission number"></label>
-        <div class="config-actionbar"><p class="status" data-department-status></p><div class="inline-action-group"><button type="button" id="tuckShopNfcScan">&#9673; Scan NFC Card</button><button type="submit">&#128269; Find Student Wallet</button></div></div>
+        <div class="config-actionbar"><p class="status" data-department-status></p><div class="inline-action-group"><button type="button" id="tuckShopNfcScan">&#9673; Scan NFC Card</button><button type="button" id="tuckShopFaceLookup" class="student-face-workflow-action">&#128247; Find by face</button><button type="submit">&#128269; Find Student Wallet</button></div></div>
       </form>
       ${wallet ? `<div class="wallet-account-result">
         <div><small>Student</small><strong>${escapeHtml(wallet.DisplayName)}</strong><span>${escapeHtml(wallet.AdmissionNo || wallet.AccountRef)} &middot; ${escapeHtml(wallet.ClassName || '')}</span></div>
@@ -3791,6 +3810,25 @@ function renderDepartmentOperations(section, data) {
     const button = event.submitter || form.querySelector('button[type="submit"]');
     try { await runButtonAction(button, 'Looking up...', () => requestDepartmentAction(section, 'lookupWallet', Object.fromEntries(new FormData(form).entries()))); }
     catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+  });
+  document.getElementById('tuckShopFaceLookup')?.addEventListener('click', async () => {
+    const form = document.getElementById('walletLookupForm');
+    const status = form?.querySelector('[data-department-status]');
+    try {
+      await openStudentFaceLookupDialog({
+        purpose: 'tuck-shop-purchase',
+        confirmText: 'Use for this purchase',
+        onMatch: (match) => {
+          if (!form?.elements?.AccountRef) return;
+          form.elements.WalletCardId.value = '';
+          form.elements.AccountRef.value = match.id;
+          setStatus(status, `${match.title} confirmed by face. Loading the student wallet...`, 'ok');
+          form.requestSubmit();
+        }
+      });
+    } catch (error) {
+      setStatus(status, error.message || String(error), 'bad');
+    }
   });
   const nfcButton = document.getElementById('tuckShopNfcScan');
   if (nfcButton) {
@@ -7840,7 +7878,7 @@ function inferredRecordsDeskTypes() {
   const edition = resolveDashboardEdition(currentUser || {});
   const school = edition === 'school';
   return [
-    school && ['students', 'accounts', 'clinic', 'tuckShop', 'studentConduct'].some((key) => allowed.has(key)) && 'students',
+    school && allowed.has('recordsDesk') && 'students',
     school && allowed.has('admissions') && 'applicants',
     allowed.has('staffUsers') && 'staff',
     !school && allowed.has('members') && 'members',
@@ -7851,7 +7889,7 @@ function inferredRecordsDeskTypes() {
 
 function recordsDeskFaceLookupAllowed() {
   return resolveDashboardEdition(currentUser || {}) === 'school' &&
-    yes(currentUser?.biometricLookupEnabled) &&
+    (currentUser?.allowedSections || []).includes('recordsDesk') &&
     recordsDeskState.availableTypes.includes('students');
 }
 
@@ -7860,7 +7898,7 @@ function preloadRecordsDeskFaceRecognition() {
   recordsDeskFacePreloadScheduled = true;
   const preload = () => {
     recordsDeskFacePreloadScheduled = false;
-    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260813-random-liveness-challenge')
+    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260814-shared-student-face-lookup')
       .then((module) => module.preloadFaceRecognitionModel())
       .catch(() => {
         recordsDeskFacePreloadPromise = null;
@@ -7873,10 +7911,14 @@ function preloadRecordsDeskFaceRecognition() {
   }
 }
 
+async function openStudentFaceLookupDialog(options = {}) {
+  const module = await import('./student-face-lookup.js?v=20260814-shared-student-face-lookup');
+  return module.openStudentFaceLookup(options);
+}
+
 async function openRecordsDeskFaceLookup(options = {}) {
   try {
-    const module = await import('./student-face-lookup.js?v=20260813-random-liveness-challenge');
-    await module.openStudentFaceLookup(options);
+    await openStudentFaceLookupDialog(options);
   } catch (failure) {
     recordsDeskState.error = failure.message || String(failure);
     renderRecordsDesk();
@@ -11245,7 +11287,7 @@ function renderStaffUsers() {
         <section class="config-group"><header><strong>Web companion access</strong><small>Optional user-specific override. Leave all clear to inherit the module access saved for the selected role.</small></header><div class="approval-account-list config-option-list config-option-grid">${permissionTabs.map(([key, label]) => `<label class="check-row"><input type="checkbox" name="TabAccessOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}</div></section>
         <section class="config-group"><header><strong>Security</strong><small>Password and account-state controls.</small></header><div class="config-grid">
           <label>New or reset password<input name="Password" type="password" minlength="6" autocomplete="new-password"><small>Required for a new account. Leave blank when editing unless resetting it.</small></label>
-          <div class="config-toggle-stack"><label class="check-row"><input name="Active" type="checkbox" checked> Account active</label><label class="check-row"><input name="MustChangePassword" type="checkbox" checked> Require password change at next sign-in</label>${schoolEdition ? '<label class="check-row sensitive-access-toggle"><input name="BiometricLookupEnabled" type="checkbox"> Allow student face lookup</label>' : ''}</div>
+          <div class="config-toggle-stack"><label class="check-row"><input name="Active" type="checkbox" checked> Account active</label><label class="check-row"><input name="MustChangePassword" type="checkbox" checked> Require password change at next sign-in</label>${schoolEdition ? '<label class="check-row sensitive-access-toggle"><input name="BiometricLookupEnabled" type="checkbox"> Allow student face-enrollment management</label>' : ''}</div>
         </div></section>
         <div class="config-dialog-actions"><p class="status" data-user-form-status></p><div class="config-dialog-action-buttons"><a class="subscription-plans-link" data-subscription-plans-link href="register-organization.html#plans" target="_blank" rel="noopener" hidden>View Dynamax plans</a><button type="submit">Save staff account</button></div></div>
       </form>

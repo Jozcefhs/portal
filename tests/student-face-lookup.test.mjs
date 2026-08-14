@@ -24,6 +24,10 @@ import {
   validateFaceDescriptor
 } from '../functions/lib/student-face-templates.js';
 import { recordsDeskCapabilities } from '../functions/lib/records-desk.js';
+import {
+  normalizeStudentFaceLookupPurpose,
+  staffCanUseStudentFaceLookup
+} from '../functions/api/staff-face-lookup.js';
 
 const portalRoot = new URL('../', import.meta.url);
 const [templateSource, endpointSource, uiSource, adminSource, staffSessionSource, staffUsersSource, cssSource, adminHtmlSource] = await Promise.all([
@@ -249,12 +253,14 @@ test('inactive and retention-expired templates cannot participate in matching', 
   assert.equal(result.match.id, 'active-weaker');
 });
 
-test('the face endpoint is staff-authenticated, school-only, explicitly delegated and scoped', () => {
+test('the face endpoint is staff-authenticated, school-only, purpose delegated and scoped', () => {
   assert.match(endpointSource, /requireStaffSession\(env, request\)/);
-  assert.match(endpointSource, /ensureSchoolRecordsDesk\(user\)/);
+  assert.match(endpointSource, /ensureSchoolFaceAccess\(user, purpose\)/);
   assert.match(endpointSource, /lower\(user\.edition\) !== 'school'/);
-  assert.match(endpointSource, /ensureLookupPermission\(user\)/);
-  assert.match(endpointSource, /biometricLookupEnabled === true/);
+  assert.match(endpointSource, /'tuck-shop-purchase'.*section: 'tuckShop'/);
+  assert.match(endpointSource, /'bookstore-collection'.*section: 'bookstore'/);
+  assert.match(endpointSource, /'uniform-store-collection'.*section: 'uniformStore'/);
+  assert.match(endpointSource, /Purpose: clean\(details\.Purpose/);
   assert.match(templateSource, /STUDENT_FACE_LOOKUP_ENABLED/);
   assert.match(templateSource, /FACE_TEMPLATE_ENCRYPTION_KEY/);
   assert.match(
@@ -273,15 +279,17 @@ test('the face endpoint is staff-authenticated, school-only, explicitly delegate
   assert.match(endpointSource, /readJsonBody\(request, \{ maxBytes: 128 \* 1024 \}\)/);
 });
 
-test('biometric capability is an explicit school permission and deletion survives feature disablement', () => {
+test('Records Desk itself delegates lookup while enrollment management remains explicit', () => {
   const base = {
     edition: 'school',
     role: 'Principal',
     allowedSections: ['recordsDesk'],
     biometricLookupEnabled: 'false'
   };
-  assert.equal(recordsDeskCapabilities(base).canUseStudentFaceLookup, false);
+  assert.equal(recordsDeskCapabilities(base).canUseStudentFaceLookup, true);
+  assert.equal(recordsDeskCapabilities(base).canManageStudentFaceTemplates, false);
   assert.equal(recordsDeskCapabilities({ ...base, biometricLookupEnabled: 'true' }).canUseStudentFaceLookup, true);
+  assert.equal(recordsDeskCapabilities({ ...base, biometricLookupEnabled: 'true' }).canManageStudentFaceTemplates, true);
   assert.equal(recordsDeskCapabilities({
     ...base,
     edition: 'faith',
@@ -293,6 +301,18 @@ test('biometric capability is an explicit school permission and deletion survive
   const revokeSource = endpointSource.slice(revokeStart, revokeEnd);
   assert.match(revokeSource, /canEraseTemplates\(user\)/);
   assert.doesNotMatch(revokeSource, /ensureConfigured\(env\)/);
+});
+
+test('face lookup purposes follow Records Desk and point-of-service module access', () => {
+  const base = { edition: 'school', role: 'Front Desk', allowedSections: [] };
+  assert.equal(staffCanUseStudentFaceLookup({ ...base, allowedSections: ['recordsDesk'] }), true);
+  assert.equal(staffCanUseStudentFaceLookup({ ...base, allowedSections: ['tuckShop'] }, 'tuck-shop-purchase'), true);
+  assert.equal(staffCanUseStudentFaceLookup({ ...base, allowedSections: ['bookstore'] }, 'bookstore-collection'), true);
+  assert.equal(staffCanUseStudentFaceLookup({ ...base, allowedSections: ['uniformStore'] }, 'uniform-store-collection'), true);
+  assert.equal(staffCanUseStudentFaceLookup(base, 'tuck-shop-purchase'), false);
+  assert.equal(staffCanUseStudentFaceLookup({ ...base, edition: 'faith', allowedSections: ['recordsDesk'] }), false);
+  assert.equal(normalizeStudentFaceLookupPurpose(''), 'records-desk');
+  assert.throws(() => normalizeStudentFaceLookupPurpose('unknown-workflow'), /valid student face-lookup purpose/i);
 });
 
 test('the endpoint stores only encrypted templates, supports deletion, audits use and never caches results', () => {
@@ -309,7 +329,7 @@ test('the endpoint stores only encrypted templates, supports deletion, audits us
   assert.match(endpointSource, /writeAudit\(env, user, 'FACE LOOKUP'/);
   assert.match(endpointSource, /Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'/);
   assert.match(endpointSource, /studentSearchCard\(matched\)/);
-  assert.match(endpointSource, /Confirm the student before opening the record/);
+  assert.match(endpointSource, /Confirm the student before continuing/);
   assert.doesNotMatch(endpointSource, /ProfilePhotoDataUrl|ParentLoginCode|PasswordHash/);
 });
 
@@ -326,6 +346,17 @@ test('the browser UI keeps frames on-device, requires a live action and always s
     uiSource,
     /localStorage|sessionStorage|indexedDB|toDataURL|toBlob|FormData/
   );
+});
+
+test('front and back camera selection is limited to staff attendance enrollment', () => {
+  assert.match(uiSource, /facingMode: \{ ideal: facingMode \}/);
+  assert.match(uiSource, /cameraFacingLabel\(facingMode\)/);
+  assert.match(uiSource, /setAttribute\('data-facing-mode', facingMode\)/);
+  assert.match(cssSource, /data-facing-mode="environment"/);
+  assert.match(uiSource, /\$\{enrollment \? '<label class="student-face-camera-select"/);
+  assert.match(uiSource, /if \(mode === 'enroll'\) bindCameraSelector\(dialog, captureButton\)/);
+  const lookupMarkup = uiSource.slice(uiSource.indexOf('function dialogMarkup'), uiSource.indexOf('function renderPossibleMatch'));
+  assert.doesNotMatch(lookupMarkup, /data-face-camera-select/);
 });
 
 test('face capture gives persistent visual and optional spoken guidance without recording audio', () => {
@@ -384,7 +415,7 @@ test('eligible Records Desk sessions prepare the model during idle time without 
   assert.match(adminSource, /requestIdleCallback/);
   assert.match(adminSource, /window\.setTimeout\(preload, 300\)/);
   assert.match(adminSource, /preloadFaceRecognitionModel\(\)/);
-  assert.match(adminSource, /student-face-lookup\.js\?v=20260813-random-liveness-challenge/);
+  assert.match(adminSource, /student-face-lookup\.js\?v=20260814-shared-student-face-lookup/);
   const preloaderStart = uiSource.indexOf('export function preloadFaceRecognitionModel');
   const preloaderEnd = uiSource.indexOf('async function startCamera', preloaderStart);
   const preloaderSource = uiSource.slice(preloaderStart, preloaderEnd);
@@ -399,7 +430,8 @@ test('lookup and enrollment are explicitly initiated without consent fields, and
   assert.doesNotMatch(uiSource, /consentGuardianName|consentReference|consentExpiresAt|consentGranted/);
   assert.doesNotMatch(endpointSource, /ConsentGranted|ConsentReference|ConsentGuardianName|ConsentExpiresAt/);
   assert.match(endpointSource, /TemplateExpiresAt: studentFaceTemplateExpiresAt/);
-  assert.match(uiSource, /data-face-confirm>Confirm and open/);
+  assert.match(uiSource, /data-face-confirm>\$\{escapeHtml\(confirmText\)\}/);
+  assert.match(uiSource, /confirmText = 'Confirm and open'/);
   assert.match(uiSource, /Use manual search/);
   assert.match(uiSource, /credentials: 'same-origin'/);
   assert.match(uiSource, /cache: 'no-store'/);
@@ -412,8 +444,13 @@ test('lookup and enrollment are explicitly initiated without consent fields, and
     /onMatch: \(match\) => loadRecordsDeskDetail\('students', match\.id, match\.branchId\)/
   );
   assert.match(adminSource, /action\?\.id === 'student-face-enroll'/);
+  assert.match(adminSource, /id="tuckShopFaceLookup"/);
+  assert.match(adminSource, /purpose: 'tuck-shop-purchase'/);
+  assert.match(adminSource, /data-store-face-order/);
+  assert.match(adminSource, /'bookstore-collection'/);
+  assert.match(adminSource, /'uniform-store-collection'/);
   assert.match(cssSource, /\.student-face-dialog/);
   assert.match(cssSource, /html\[data-theme="dark"\] \.student-face-dialog/);
   assert.match(cssSource, /@media\(max-width:680px\)/);
-  assert.match(adminHtmlSource, /css\/style\.css\?v=20260814-finance-drive-uploads/);
+  assert.match(adminHtmlSource, /css\/style\.css\?v=20260814-shared-student-face-lookup/);
 });
