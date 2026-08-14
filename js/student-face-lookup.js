@@ -651,7 +651,7 @@ function renderPossibleMatch(dialog, match, onMatch, confirmText = 'Confirm and 
 export async function openStudentFaceLookup(options = {}) {
   const mode = options.mode === 'enroll' ? 'enroll' : 'lookup';
   const sampleCount = mode === 'enroll' ? ENROLLMENT_SAMPLE_COUNT : ROUTINE_SAMPLE_COUNT;
-  const allowCameraSelection = mode === 'enroll' || options.allowCameraSelection === true;
+  const allowCameraSelection = options.allowCameraSelection !== false;
   if (activeDialog?.open) activeDialog.close();
   document.body.insertAdjacentHTML('beforeend', dialogMarkup(mode, options.student || {}, allowCameraSelection));
   const dialog = document.body.lastElementChild;
