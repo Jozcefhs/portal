@@ -10010,20 +10010,22 @@ function renderFinanceWorkflow() {
           <button type="submit">Submit Imprest Request</button><p class="status" data-form-status></p>
         </form>
       </dialog>
-      <dialog id="imprestRetirementDialog" class="workflow-dialog material-requisition-dialog imprest-dialog">
-        <div class="workflow-dialog-header"><div><small>Receipt-backed retirement</small><h2>Retire Imprest <span data-imprest-retirement-reference></span></h2></div><button type="button" data-close-dialog aria-label="Close">&times;</button></div>
-        <form id="imprestRetirementForm" class="workflow-form">
-          <input name="recordId" type="hidden">
-          <div class="imprest-retirement-summary"><span>Issued <strong data-imprest-issued-total>${money(0)}</strong></span><span>Expenses <strong data-imprest-expense-total>${money(0)}</strong></span><span>Return <strong data-imprest-return-total>${money(0)}</strong></span></div>
-          <p class="muted">Every expense line requires a receipt URL. The unused balance is calculated automatically.</p>
-          <div class="admin-table-wrap material-entry-wrap"><table class="admin-table material-entry-table imprest-retirement-table"><thead><tr><th>#</th><th>Date</th><th>Description</th><th>Expense account</th><th>Amount</th><th>Receipt URL</th><th></th></tr></thead><tbody data-imprest-retirement-items>${imprestRetirementEntryRow(1)}</tbody></table></div>
-          <div class="material-entry-actions"><button type="button" data-add-imprest-retirement>+ Add Expense</button></div>
-          <label>Unused cash / bank return reference<input name="returnReference" placeholder="Required when a balance is returned"></label>
-          <label>Retirement notes<textarea name="notes" rows="2"></textarea></label>
-          <button type="submit">Submit Retirement</button><p class="status" data-form-status></p>
-        </form>
-      </dialog>
   ` : '';
+
+  const imprestRetirementDialog = `
+    <dialog id="imprestRetirementDialog" class="workflow-dialog material-requisition-dialog imprest-dialog">
+      <div class="workflow-dialog-header"><div><small>Receipt-backed retirement</small><h2>Retire Imprest <span data-imprest-retirement-reference></span></h2></div><button type="button" data-close-dialog aria-label="Close">&times;</button></div>
+      <form id="imprestRetirementForm" class="workflow-form">
+        <input name="recordId" type="hidden">
+        <div class="imprest-retirement-summary"><span>Issued <strong data-imprest-issued-total>${money(0)}</strong></span><span>Expenses <strong data-imprest-expense-total>${money(0)}</strong></span><span>Return <strong data-imprest-return-total>${money(0)}</strong></span></div>
+        <p class="muted">Every expense line requires a receipt URL. The unused balance is calculated automatically.</p>
+        <div class="admin-table-wrap material-entry-wrap"><table class="admin-table material-entry-table imprest-retirement-table"><thead><tr><th>#</th><th>Date</th><th>Description</th><th>Expense account</th><th>Amount</th><th>Receipt URL</th><th></th></tr></thead><tbody data-imprest-retirement-items>${imprestRetirementEntryRow(1)}</tbody></table></div>
+        <div class="material-entry-actions"><button type="button" data-add-imprest-retirement>+ Add Expense</button></div>
+        <label>Unused cash / bank return reference<input name="returnReference" placeholder="Required when a balance is returned"></label>
+        <label>Retirement notes<textarea name="notes" rows="2"></textarea></label>
+        <button type="submit">Submit Retirement</button><p class="status" data-form-status></p>
+      </form>
+    </dialog>`;
 
   panelEl.innerHTML = `
     <div class="workflow-intro">
@@ -10052,6 +10054,7 @@ function renderFinanceWorkflow() {
     ${financeRecordsSection('Supplier Bills', bills, 'bill', capabilities)}
     ${imprestRecordsSection(imprests, capabilities)}
     ${submissionDialogs}
+    ${imprestRetirementDialog}
   `;
   const financeLists = [...panelEl.querySelectorAll(':scope > .workflow-list-section')];
   mountWorkspaceTabs('financeRequests', [

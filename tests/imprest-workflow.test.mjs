@@ -92,6 +92,8 @@ test('web and desktop expose the same controlled imprest lifecycle', () => {
   assert.match(backendApi, /\['1080', 'Staff Imprest and Cash Advances', 'Asset', 'Current Assets', 'Debit'\]/);
   assert.match(adminJs, /Imprest &amp; Petty Cash/);
   assert.match(adminJs, /Only one open imprest is allowed per staff custodian/);
+  assert.match(adminJs, /const imprestRetirementDialog =/);
+  assert.match(adminJs, /\$\{submissionDialogs\}[\s\S]*\$\{imprestRetirementDialog\}/);
   assert.match(adminHtml, /financeDecisionExtra/);
   assert.match(portalCss, /\.imprest-retirement-summary/);
   assert.match(desktopAccounting, /\(self\.imprest_tab, "Imprest & Petty Cash"\)/);
@@ -99,4 +101,14 @@ test('web and desktop expose the same controlled imprest lifecycle', () => {
   assert.match(backendApi, /accountingImprestOpenClaims/);
   assert.match(workflowApi, /OPEN_IMPREST_EXISTS/);
   assert.match(backendApi, /OPEN_IMPREST_EXISTS/);
+});
+
+test('retirement remains available independently of new-request permission', () => {
+  const gatedStart = adminJs.indexOf('const submissionDialogs');
+  const retirementStart = adminJs.indexOf('const imprestRetirementDialog');
+  assert.ok(gatedStart >= 0 && retirementStart > gatedStart);
+  assert.doesNotMatch(adminJs.slice(gatedStart, retirementStart), /id="imprestRetirementDialog"/);
+  assert.match(adminJs.slice(retirementStart), /id="imprestRetirementDialog"/);
+  assert.match(adminJs, /data-open-imprest-retirement/);
+  assert.match(desktopAccounting, /selected = tree\.selection\(\)/);
 });
