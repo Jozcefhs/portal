@@ -9480,17 +9480,11 @@ function academicStructureWorkspace(data, rows) {
     rows.arms.filter((arm) => arm.ArmTemplateId === template.ArmTemplateId).map((arm) => arm.ClassId)
   ).size;
   const unappliedArmTemplates = activeArmTemplates.filter((template) => armTemplateUsage(template) === 0).length;
-  const armCatalogueStatus = rows.armTemplates.length ? `<div class="academic-view-only-note">
+  const armCatalogueStatus = `<div class="academic-view-only-note">
     <strong>${activeArmTemplates.length} reusable arm definition${activeArmTemplates.length === 1 ? '' : 's'}; ${unappliedArmTemplates} not yet applied</strong>
     <span>Reusable definitions do not become class arms until they are assigned to classes. Use Bulk setup → Apply arms to classes.</span>
     ${canManage ? '<button type="button" class="secondary" data-academic-view="bulkSetup">Open arm assignment</button>' : ''}
-  </div>${table('Reusable Arm Definitions (not class arms)', rows.armTemplates, [
-    { label: 'Code', value: (row) => row.Code },
-    { label: 'Definition', value: (row) => row.Name },
-    { label: 'Applied classes', value: (row) => { const count = armTemplateUsage(row); return count ? `${count} class${count === 1 ? '' : 'es'}` : 'Not applied'; } },
-    { label: 'Default capacity', value: (row) => Number(row.DefaultCapacity) > 0 ? row.DefaultCapacity : 'Unlimited' },
-    { label: 'Status', value: (row) => row.Status }
-  ])}` : '';
+  </div>`;
   const forms = canManage ? `
     <div class="academic-management-editor-grid">
       <form class="academic-management-editor" data-academic-form="session">
@@ -9556,6 +9550,14 @@ function academicStructureWorkspace(data, rows) {
         { label: 'Enrolled', value: (row) => rows.studentMemberships.filter((membership) => academicIsActive(membership) && membership.ClassId === row.ClassId).length },
         { label: 'Capacity', value: (row) => Number(row.Capacity) > 0 ? row.Capacity : 'Unlimited' }, { label: 'Status', value: (row) => row.Status },
         { label: 'Actions', render: (row) => academicActionButtons('class', row, canManage, permissions.canArchive, permissions.canDelete) }
+      ])}
+      ${table('Reusable Arm Catalogue', rows.armTemplates, [
+        { label: 'Code', value: (row) => row.Code },
+        { label: 'Reusable arm', value: (row) => row.Name },
+        { label: 'Applied classes', value: (row) => { const count = armTemplateUsage(row); return count ? `${count} class${count === 1 ? '' : 'es'}` : 'Not applied'; } },
+        { label: 'Default capacity', value: (row) => Number(row.DefaultCapacity) > 0 ? row.DefaultCapacity : 'Unlimited' },
+        { label: 'Status', value: (row) => row.Status },
+        { label: 'Actions', render: (row) => academicActionButtons('armTemplate', row, canManage, permissions.canArchive, permissions.canDelete) }
       ])}
       ${table('Class Arms', rows.arms, [
         { label: 'Class', value: (row) => academicLabel(rows.classes, row.ClassId) }, { label: 'Arm', value: (row) => row.Name },
@@ -10050,7 +10052,13 @@ function bindAcademicManagement() {
     if (form?.dataset.academicForm === 'teacherAllocation') syncAcademicTeacherAssignmentForm(form);
   }));
   panelEl.querySelectorAll('[data-academic-edit]').forEach((button) => button.addEventListener('click', () => {
-    populateAcademicForm(button.dataset.academicEdit, academicFind(academicRecordRows(button.dataset.academicEdit), button.dataset.academicId));
+    const type = button.dataset.academicEdit;
+    const record = academicFind(academicRecordRows(type), button.dataset.academicId);
+    if (type === 'armTemplate' && !panelEl.querySelector('[data-academic-form="armTemplate"]')) {
+      academicManagementView = 'bulkSetup';
+      renderAcademicManagement(academicManagementData || {});
+    }
+    populateAcademicForm(type, record);
   }));
   panelEl.querySelectorAll('[data-academic-move]').forEach((button) => button.addEventListener('click', () => {
     const record = academicFind(academicManagementData?.studentMemberships || [], button.dataset.academicMove);

@@ -339,7 +339,18 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.doesNotMatch(adminSource, /data-academic-form="subject"[\s\S]{0,1200}name="Category"/);
   assert.match(adminSource, /data-academic-delete=/);
   assert.match(adminSource, /Permanently delete academic record/);
-  assert.match(adminSource, /Reusable Arm Definitions \(not class arms\)/);
+  assert.doesNotMatch(adminSource, /Reusable Arm Definitions \(not class arms\)/);
+  const structureWorkspace = adminSource.slice(
+    adminSource.indexOf('function academicStructureWorkspace'),
+    adminSource.indexOf('function academicBulkSetupWorkspace')
+  );
+  assert.match(structureWorkspace, /table\('Reusable Arm Catalogue', rows\.armTemplates/);
+  assert.match(structureWorkspace, /academicActionButtons\('armTemplate', row, canManage, permissions\.canArchive, permissions\.canDelete\)/);
+  assert.ok(
+    structureWorkspace.indexOf("table('Reusable Arm Catalogue'") > structureWorkspace.indexOf('academic-management-registers'),
+    'the reusable arm catalogue should render inside the Structure register grid'
+  );
+  assert.match(adminSource, /type === 'armTemplate' && !panelEl\.querySelector\('\[data-academic-form="armTemplate"\]'\)/);
   assert.match(adminSource, /This step does not create class arms/);
   assert.match(adminSource, /academicActionButtons\('department',[\s\S]{0,150}permissions\?\.canDelete/);
   assert.match(adminSource, /academicActionButtons\('armTemplate',[\s\S]{0,150}permissions\?\.canDelete/);
@@ -354,7 +365,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
   assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-tabs button\{[^}]*font-size:12px/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-shared-list-sorting/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-arm-catalogue-structure/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

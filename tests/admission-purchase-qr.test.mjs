@@ -26,5 +26,5 @@ test('staff endpoint protects and generates the canonical public purchase QR', (
 });
 
 test('admin bundle cache key includes the current payment release', () => {
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-shared-list-sorting/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-arm-catalogue-structure/);
 });
