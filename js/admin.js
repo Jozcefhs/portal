@@ -9436,6 +9436,7 @@ function academicIsActive(row = {}) {
 
 function academicFind(rows = [], id = '') {
   const wanted = clean(id);
+  if (!wanted) return null;
   return rows.find((row) => [academicRecordId(row), clean(row.Username), clean(row.StudentRef)].includes(wanted)) || null;
 }
 
@@ -9788,7 +9789,7 @@ function academicClassroomStaffForm({ role, existing, staff, sessionId, termId, 
     <input type="hidden" name="AllocationRole" value="${escapeHtml(role)}">
     <input type="hidden" name="SubjectId" value="">
     <input type="hidden" name="Status" value="Active">
-    <div class="academic-management-editor-heading"><div><small>Step 5</small><h3>${escapeHtml(role)}</h3><p class="muted">${role === 'Form Teacher' ? 'The staff member responsible for this classroom.' : 'The staff member who supports the form teacher in this classroom.'}</p></div></div>
+    <div class="academic-management-editor-heading"><div><small>Classroom staff</small><h3>${escapeHtml(role)}</h3><p class="muted">${role === 'Form Teacher' ? 'Choose the staff member responsible for this classroom.' : 'Choose the staff member who assists the form teacher.'}</p></div></div>
     <label>${escapeHtml(role)}<select name="TeacherUsername" required>${academicSelectOptions(staff, existing?.TeacherUsername || '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, `Choose ${role.toLowerCase()}`)}</select></label>
     <button type="submit" data-academic-classroom-staff-submit="${escapeHtml(roleKey)}">${existing ? 'Change' : 'Assign'} ${escapeHtml(role.toLowerCase())}</button>
   </form>`;
@@ -9807,7 +9808,8 @@ function academicClassroomWorkspace(data, rows) {
   const classes = rows.classes.filter(academicIsActive);
   const templates = rows.armTemplates.filter(academicIsActive);
   const departments = rows.departments.filter(academicIsActive);
-  const classrooms = rows.arms.filter(academicIsActive).sort((left, right) => (
+  const classrooms = rows.arms.filter((row) => academicIsActive(row)
+    && (row.IsClassroom === true || /^(yes|true|1)$/i.test(clean(row.IsClassroom)))).sort((left, right) => (
     academicLabel(classes, left.ClassId).localeCompare(academicLabel(classes, right.ClassId), undefined, { numeric: true, sensitivity: 'base' })
     || clean(left.Name).localeCompare(clean(right.Name), undefined, { numeric: true, sensitivity: 'base' })
   ));
@@ -9848,16 +9850,15 @@ function academicClassroomWorkspace(data, rows) {
     <input type="hidden" name="Name" value="${escapeHtml(selectedArm?.Name || selectedTemplate?.Name || '')}">
     <input type="hidden" name="Code" value="${escapeHtml(selectedArm?.Code || selectedTemplate?.Code || '')}">
     <input type="hidden" name="Capacity" value="${escapeHtml(selectedArm?.Capacity ?? selectedTemplate?.DefaultCapacity ?? 0)}">
+    <input type="hidden" name="IsClassroom" value="YES">
     <input type="hidden" name="Status" value="Active">
-    <div class="academic-management-editor-heading"><div><small>Open a classroom</small><h3>Create classroom</h3><p class="muted">Select the reusable class and arm. Senior classrooms also receive their academic department here.</p></div></div>
+    <div class="academic-management-editor-heading"><div><small>Classrooms</small><h3>Create classroom</h3><p class="muted">Choose a reusable class and arm. For Senior Secondary, also choose the department.</p></div></div>
     <div class="academic-classroom-flow-grid">
-      <label><span class="academic-classroom-step">1</span> Reusable class<select name="ClassId" required>${academicSelectOptions(classes, selectedClass?.ClassId || '', (row) => `${row.Code} - ${row.Name} · ${academicSchoolStageLabel(row.SchoolStage)}`, 'Choose reusable class')}</select></label>
-      <label><span class="academic-classroom-step">2</span> Reusable arm<select name="ArmTemplateId" required>${academicSelectOptions(templates, selectedTemplate?.ArmTemplateId || '', (row) => `${row.Code} - ${row.Name}`, 'Choose reusable arm')}</select></label>
-      <label data-academic-classroom-department><span class="academic-classroom-step">3</span> Academic department<select name="DepartmentId">${academicSelectOptions(departments, selectedArm?.DepartmentId || '', (row) => `${row.Code} - ${row.Name}`, 'Choose Senior department')}</select><small>Required for Senior Secondary; skipped automatically for Primary and Junior Secondary.</small></label>
-      <label>Room or location<input name="Room" value="${escapeHtml(selectedArm?.Room || '')}" placeholder="Optional, for example Room 4"></label>
+      <label>Reusable class<select name="ClassId" required>${academicSelectOptions(classes, selectedClass?.ClassId || '', (row) => `${row.Code} - ${row.Name} · ${academicSchoolStageLabel(row.SchoolStage)}`, 'Choose reusable class')}</select></label>
+      <label>Reusable arm<select name="ArmTemplateId" required>${academicSelectOptions(templates, selectedTemplate?.ArmTemplateId || '', (row) => `${row.Code} - ${row.Name}`, 'Choose reusable arm')}</select></label>
+      <label data-academic-classroom-department>Academic department<select name="DepartmentId">${academicSelectOptions(departments, selectedArm?.DepartmentId || '', (row) => `${row.Code} - ${row.Name}`, 'Choose Senior department')}</select><small>Required only for Senior Secondary.</small></label>
     </div>
-    <p class="academic-classroom-editor-status" data-academic-classroom-editor-status></p>
-    <button type="submit" data-academic-classroom-submit>Create and open classroom</button>
+    <button type="submit" data-academic-classroom-submit>Create classroom</button>
   </form>` : '<div class="academic-view-only-note"><strong>Classroom workspace</strong><span>Your role can open assigned classrooms but cannot create or reconfigure them.</span></div>';
 
   let selectedWorkspace = '<div class="academic-classroom-empty"><strong>No classroom is open.</strong><span>Create one above, or open an existing classroom from the register below.</span></div>';
@@ -9875,7 +9876,7 @@ function academicClassroomWorkspace(data, rows) {
       <input type="hidden" name="ClassId" value="${escapeHtml(selectedClass.ClassId)}">
       <input type="hidden" name="ArmId" value="${escapeHtml(selectedArm.ArmId)}">
       <input type="hidden" name="DepartmentId" value="${escapeHtml(selectedArm.DepartmentId || '')}">
-      <div class="academic-management-editor-heading"><div><small>Step 4</small><h3>Assign students</h3><p class="muted">Only unassigned students whose existing class is ${escapeHtml(selectedClass.Name)} are shown.</p></div></div>
+      <div class="academic-management-editor-heading"><div><small>Classroom students</small><h3>Assign students</h3><p class="muted">Only unassigned students whose existing class is ${escapeHtml(selectedClass.Name)} are shown.</p></div></div>
       <label>Find student<input type="search" data-academic-student-candidate-search placeholder="Search by name or admission number" autocomplete="off"><small>Search does not clear students already selected.</small></label>
       ${academicCheckboxField({ name: 'StudentRefs', label: 'Students ready for this classroom', options: candidateOptions, required: true, max: 100, idPrefix: 'classroom-students', purpose: 'student-arm-candidates', help: candidateSummary })}
       <label>Allocation note<input name="Reason" placeholder="Classroom allocation"></label>
@@ -9886,8 +9887,7 @@ function academicClassroomWorkspace(data, rows) {
       ${academicClassroomStaffForm({ role: 'Assistant Teacher', existing: assistantTeacher, staff, sessionId, termId, schoolClass: selectedClass, arm: selectedArm, section })}
     </div>` : '';
     selectedWorkspace = `<section class="academic-classroom-open">
-      <div class="academic-classroom-heading"><div><small>OPEN CLASSROOM</small><h3>${escapeHtml(selectedClass.Name)} / ${escapeHtml(selectedArm.Name)}</h3><p>${selectedStage === 'senior-secondary' ? escapeHtml(selectedDepartment?.Name || 'Department not assigned') : `${escapeHtml(academicSchoolStageLabel(selectedStage))} · no department required`}</p></div><div><strong>${classroomMemberships.length}</strong><span>students this term</span></div></div>
-      <ol class="academic-classroom-progress" aria-label="Classroom setup flow"><li class="complete">Class selected</li><li class="complete">Arm selected</li><li class="${seniorNeedsDepartment ? 'pending' : 'complete'}">${selectedStage === 'senior-secondary' ? 'Department assigned' : 'Department skipped'}</li><li class="${classroomMemberships.length ? 'complete' : 'pending'}">Students assigned</li><li class="${formTeacher && assistantTeacher ? 'complete' : 'pending'}">Form staff assigned</li></ol>
+      <div class="academic-classroom-current"><div><small>Current classroom</small><h3>${escapeHtml(selectedClass.Name)} / ${escapeHtml(selectedArm.Name)}</h3><p>${selectedStage === 'senior-secondary' ? escapeHtml(selectedDepartment?.Name || 'Department not assigned') : escapeHtml(academicSchoolStageLabel(selectedStage))}</p></div><div><strong>${classroomMemberships.length}</strong><span>students this term</span></div></div>
       ${studentForm}${staffForms}
     </section>`;
   }
@@ -9928,15 +9928,10 @@ function syncAcademicClassroomEditor(form) {
   if (form.elements.Name) form.elements.Name.value = clean(classroom?.Name || template?.Name);
   if (form.elements.Code) form.elements.Code.value = clean(classroom?.Code || template?.Code);
   if (form.elements.Capacity) form.elements.Capacity.value = classroom?.Capacity ?? template?.DefaultCapacity ?? 0;
-  if (form.elements.Room) form.elements.Room.value = clean(classroom?.Room);
-  const status = form.querySelector('[data-academic-classroom-editor-status]');
-  if (status) status.textContent = !classId || !templateId ? 'Choose a reusable class and arm.'
-    : classroom ? `${academicLabel(academicManagementData.classes, classId)} / ${classroom.Name} already exists. Saving will open it and apply any permitted department or room update.`
-      : `${academicLabel(academicManagementData.classes, classId)} / ${academicLabel(academicManagementData.armTemplates, templateId)} is ready to be created.`;
   const submit = form.querySelector('[data-academic-classroom-submit]');
   if (submit) {
     submit.disabled = !schoolClass || !template || (senior && !clean(department?.value));
-    submit.textContent = classroom ? 'Save and open classroom' : 'Create and open classroom';
+    submit.textContent = 'Create classroom';
   }
 }
 

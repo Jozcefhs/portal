@@ -306,6 +306,7 @@ export function normalizeAcademicArm(input = {}, context = {}, existing = null) 
     ...(existing || {}), RecordId: armId, ArmId: armId, ClassId: classId, Name: name,
     ArmTemplateId: clean(input.ArmTemplateId ?? existing?.ArmTemplateId),
     DepartmentId: clean(input.DepartmentId ?? existing?.DepartmentId),
+    IsClassroom: activeValue(input.IsClassroom ?? existing?.IsClassroom, false),
     Code: clean(input.Code || input.ArmCode || existing?.Code).toUpperCase(),
     Capacity: wholeNumber(input.Capacity, wholeNumber(existing?.Capacity, 0), 0, 10000),
     Room: clean(input.Room ?? existing?.Room),
@@ -538,7 +539,9 @@ export function applyAcademicStudentCurriculum(state = {}, record = {}, options 
     && row.SessionId === record.SessionId && row.TermId === record.TermId && row.ClassId === record.ClassId
     && (!row.ArmId || row.ArmId === record.ArmId));
   const available = new Set(offerings.map((row) => row.SubjectId));
-  if (!offerings.length) throw failure('Offer subjects to this class or arm before allocating students.');
+  if (!offerings.length && options.allowIncompleteCurriculum !== true) {
+    throw failure('Offer subjects to this class or arm before allocating students.');
+  }
   const requestedSubjects = uniqueIds(record.SubjectIds);
   const invalidSubjects = requestedSubjects.filter((subjectId) => !available.has(subjectId));
   if (invalidSubjects.length) throw failure('One or more selected subjects are not offered to this class or arm.');
@@ -563,7 +566,9 @@ export function applyAcademicStudentCurriculum(state = {}, record = {}, options 
       assertReference(department, 'Choose an active senior secondary department for this student.');
       if (department.SchoolStage !== 'senior-secondary') throw failure('The selected department is not a Senior Secondary department.');
       const missingCore = (department.CoreSubjectIds || []).filter((subjectId) => !available.has(subjectId));
-      if (missingCore.length) throw failure('Offer every department core subject to this senior class before allocating students.');
+      if (missingCore.length && options.allowIncompleteCurriculum !== true) {
+        throw failure('Offer every department core subject to this senior class before allocating students.');
+      }
       coreSubjectIds = uniqueIds([...coreSubjectIds, ...(department.CoreSubjectIds || [])]);
     }
   } else {
@@ -601,9 +606,9 @@ export function applyAcademicStudentCurriculum(state = {}, record = {}, options 
         ? 'Trade Subjects Not Configured'
         : record.TradeSubjectIds.length ? 'Complete' : 'Pending Trade Selection';
   } else {
-    record.CurriculumStatus = 'Complete';
+    record.CurriculumStatus = coreSubjectIds.length ? 'Complete' : 'Subjects Not Configured';
   }
-  if (!record.SubjectIds.length && !(record.SchoolStage === 'senior-secondary' && options.allowIncompleteCurriculum === true)) {
+  if (!record.SubjectIds.length && options.allowIncompleteCurriculum !== true) {
     throw failure('Choose at least one offered subject for this student.');
   }
   return record;
@@ -1486,7 +1491,9 @@ export async function bulkAllocateAcademicStudents(env, user = {}, input = {}) {
     const record = normalizeAcademicStudentMembership({
       ...input, StudentRef: studentRef, Status: 'Active', SubjectIds: [], CoreSubjectIds: [], TradeSubjectIds: [], OptionalSubjectIds: []
     }, scope, existing);
-    validateAcademicRecord(projected, 'studentmembership', record, { ...people, existing });
+    validateAcademicRecord(projected, 'studentmembership', record, {
+      ...people, existing, allowIncompleteCurriculum: true
+    });
     if (existing) {
       if (!membershipMateriallyChanged(existing, record)) {
         skipped.push(studentRef);

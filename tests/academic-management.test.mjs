@@ -63,6 +63,7 @@ test('AM-003 sessions and terms are effective-dated and date validated', () => {
 test('AM-003 classes and arms retain branch and school-section isolation', () => {
   const schoolClass = normalizeAcademicClass({ Name: 'JSS 1', Code: 'JSS1', Capacity: 90 }, scope);
   const arm = normalizeAcademicArm({ ClassId: schoolClass.ClassId, Name: 'Excellence', Capacity: 30 }, scope);
+  const classroom = normalizeAcademicArm({ ClassId: schoolClass.ClassId, Name: 'Brilliance', IsClassroom: 'YES' }, scope);
   const departmentalArm = normalizeAcademicArm({ ClassId: 'sss-1', Name: 'Science', DepartmentId: 'science' }, scope);
   const otherBranch = normalizeAcademicClass({ Name: 'JSS 1', Code: 'JSS1' }, { branchId: 'south', section: 'secondary' });
   const otherSection = normalizeAcademicClass({ Name: 'JSS 1', Code: 'JSS1' }, { branchId: 'north-campus', section: 'primary' });
@@ -70,6 +71,8 @@ test('AM-003 classes and arms retain branch and school-section isolation', () =>
   assert.equal(schoolClass.ClassId, 'class__north-campus__secondary__jss-1');
   assert.equal(arm.ArmId, `${schoolClass.ClassId}__arm__excellence`);
   assert.equal(departmentalArm.DepartmentId, 'science');
+  assert.equal(arm.IsClassroom, false);
+  assert.equal(classroom.IsClassroom, true);
   assert.notEqual(schoolClass.ClassId, otherBranch.ClassId);
   assert.notEqual(schoolClass.ClassId, otherSection.ClassId);
   assert.equal(schoolClass.LegacyDocumentId, 'JSS_1');
@@ -282,6 +285,11 @@ test('AM-002 Junior takes all offerings while Senior inherits department core su
   assert.throws(() => applyAcademicStudentCurriculum({ offerings: offerings.filter((row) => row.SubjectId !== 'physics'), departments }, {
     ...base, SchoolStage: 'senior-secondary', DepartmentId: 'science', SubjectIds: []
   }), /Offer every department core subject/);
+  const incompleteSenior = applyAcademicStudentCurriculum({ offerings: [], departments }, {
+    ...base, SchoolStage: 'senior-secondary', DepartmentId: 'science', SubjectIds: []
+  }, { allowIncompleteCurriculum: true });
+  assert.deepEqual(incompleteSenior.SubjectIds, ['physics']);
+  assert.equal(incompleteSenior.CurriculumStatus, 'Trade Subjects Not Configured');
 });
 
 test('AM-002 Senior arm subjects lock core, require Trade and retain optional selections', () => {
@@ -460,6 +468,7 @@ test('bulk student allocation maps every selected reference into membership and 
   assert.doesNotMatch(bulkAllocationSource, /\.\.\.input,\s*StudentRef(?:\s*[,}])/);
   assert.match(librarySource, /type === 'studentmembership' && arm\.DepartmentId/);
   assert.match(librarySource, /record\.DepartmentId = arm\.DepartmentId/);
+  assert.match(bulkAllocationSource, /allowIncompleteCurriculum: true/);
 });
 
 test('staff web workspace exposes responsive academic registers and online-only success', () => {
@@ -469,9 +478,12 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /function academicClassroomWorkspace/);
   assert.match(adminSource, /function syncAcademicClassroomEditor/);
   assert.match(adminSource, /data-academic-classroom-editor/);
-  assert.match(adminSource, /Create and open classroom/);
+  assert.match(adminSource, /Create classroom/);
   assert.match(adminSource, /Reusable class/);
   assert.match(adminSource, /Reusable arm/);
+  assert.match(adminSource, /name="IsClassroom" value="YES"/);
+  assert.match(adminSource, /row\.IsClassroom === true/);
+  assert.match(adminSource, /if \(!wanted\) return null/);
   assert.match(adminSource, /Students ready for this classroom/);
   assert.match(adminSource, /data-academic-classroom-staff-role/);
   assert.match(adminSource, /\['classrooms', 'Classrooms'\]/);
@@ -558,7 +570,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-checkbox-count\{/);
   assert.match(styleSource, /\.academic-checkbox-count-limit\{/);
   assert.match(styleSource, /\.academic-classroom-flow-grid\{/);
-  assert.match(styleSource, /\.academic-classroom-progress\{/);
+  assert.match(styleSource, /\.academic-classroom-current\{/);
   assert.match(styleSource, /\.academic-classroom-staff-grid\{/);
   assert.match(styleSource, /\.academic-checkbox-option input\[type="checkbox"\]/);
   assert.match(styleSource, /\[data-academic-checkbox-purpose="student-arm-candidates"\] \.academic-checkbox-options\{max-height:320px\}/);
@@ -571,7 +583,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
   assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-tabs button\{[^}]*font-size:12px/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-classroom-first-academics/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-explicit-classrooms/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
