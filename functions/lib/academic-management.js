@@ -27,6 +27,7 @@ export const ACADEMIC_SESSION_STATUSES = Object.freeze(['Planned', 'Active', 'Cl
 export const ACADEMIC_TERM_STATUSES = Object.freeze(['Planned', 'Active', 'Closed', 'Archived']);
 export const ACADEMIC_RECORD_STATUSES = Object.freeze(['Active', 'Inactive', 'Archived']);
 export const ACADEMIC_MEMBERSHIP_STATUSES = Object.freeze(['Active', 'Inactive', 'Withdrawn', 'Archived']);
+export const ACADEMIC_SUBJECT_ROLES = Object.freeze(['Core', 'Trade', 'Optional']);
 export const ACADEMIC_STUDENT_MOVEMENT_TYPES = Object.freeze([
   'Allocation', 'Class Transfer', 'Arm Transfer', 'Department Change', 'Subject Change', 'Withdrawal', 'Reinstatement'
 ]);
@@ -53,6 +54,15 @@ function activeValue(value, fallback = true) {
 function oneOf(value, choices, fallback) {
   const wanted = lower(value);
   return choices.find((choice) => lower(choice) === wanted) || fallback;
+}
+
+export function academicOfferingSubjectRole(offering = {}, schoolStage = '') {
+  if (schoolStageValue(schoolStage) === 'junior-secondary') return 'Core';
+  return oneOf(
+    offering.SubjectRole || offering.RequirementType,
+    ACADEMIC_SUBJECT_ROLES,
+    offering.Compulsory === true ? 'Core' : 'Optional'
+  );
 }
 
 function wholeNumber(value, fallback = 0, minimum = 0, maximum = 1000000) {
@@ -337,10 +347,15 @@ export function normalizeAcademicOffering(input = {}, context = {}, existing = n
   const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || existing?.SchoolSection });
   const offeringId = clean(existing?.OfferingId || input.OfferingId || input.RecordId)
     || academicId('offering', branchId, section, sessionId, termId, classId, armId || 'all-arms', subjectId);
+  const suppliedRole = clean(input.SubjectRole || input.RequirementType);
+  const fallbackRole = input.Compulsory !== undefined
+    ? (activeValue(input.Compulsory, false) ? 'Core' : 'Optional')
+    : academicOfferingSubjectRole(existing || {});
+  const subjectRole = oneOf(suppliedRole, ACADEMIC_SUBJECT_ROLES, fallbackRole);
   return {
     ...(existing || {}), RecordId: offeringId, OfferingId: offeringId,
     SessionId: sessionId, TermId: termId, ClassId: classId, ArmId: armId, SubjectId: subjectId,
-    Compulsory: activeValue(input.Compulsory, activeValue(existing?.Compulsory, false)),
+    SubjectRole: subjectRole, Compulsory: subjectRole === 'Core',
     Status: oneOf(input.Status, ACADEMIC_RECORD_STATUSES, existing?.Status || 'Active'),
     BranchId: branchId, SchoolSection: section
   };
@@ -393,6 +408,10 @@ export function normalizeAcademicStudentMembership(input = {}, context = {}, exi
     SessionId: sessionId, TermId: termId, StudentRef: studentRef,
     ClassId: classId, ArmId: armId, DepartmentId: clean(input.DepartmentId ?? existing?.DepartmentId),
     SubjectIds: uniqueIds(input.SubjectIds ?? existing?.SubjectIds ?? []),
+    CoreSubjectIds: uniqueIds(input.CoreSubjectIds ?? existing?.CoreSubjectIds ?? []),
+    TradeSubjectIds: uniqueIds(input.TradeSubjectIds ?? existing?.TradeSubjectIds ?? []),
+    OptionalSubjectIds: uniqueIds(input.OptionalSubjectIds ?? existing?.OptionalSubjectIds ?? []),
+    CurriculumStatus: clean(input.CurriculumStatus ?? existing?.CurriculumStatus),
     Status: oneOf(input.Status, ACADEMIC_MEMBERSHIP_STATUSES, existing?.Status || 'Active'),
     BranchId: branchId, SchoolSection: section
   };
@@ -456,29 +475,69 @@ function assertReference(row, message) {
   return row;
 }
 
-export function applyAcademicStudentCurriculum(state = {}, record = {}) {
+export function applyAcademicStudentCurriculum(state = {}, record = {}, options = {}) {
   const offerings = (state.offerings || []).filter((row) => statusActive(row)
     && row.SessionId === record.SessionId && row.TermId === record.TermId && row.ClassId === record.ClassId
     && (!row.ArmId || row.ArmId === record.ArmId));
   const available = new Set(offerings.map((row) => row.SubjectId));
-  const compulsory = offerings.filter((row) => row.Compulsory === true).map((row) => row.SubjectId);
   if (!offerings.length) throw failure('Offer subjects to this class or arm before allocating students.');
+  const requestedSubjects = uniqueIds(record.SubjectIds);
+  const invalidSubjects = requestedSubjects.filter((subjectId) => !available.has(subjectId));
+  if (invalidSubjects.length) throw failure('One or more selected subjects are not offered to this class or arm.');
+  const roleBySubject = new Map();
+  const rolePriority = { Optional: 1, Trade: 2, Core: 3 };
+  offerings.forEach((offering) => {
+    const role = academicOfferingSubjectRole(offering, record.SchoolStage);
+    const current = roleBySubject.get(offering.SubjectId) || 'Optional';
+    if (rolePriority[role] >= rolePriority[current]) roleBySubject.set(offering.SubjectId, role);
+  });
+  const offeredCore = offerings.map((row) => row.SubjectId).filter((subjectId) => roleBySubject.get(subjectId) === 'Core');
+  let coreSubjectIds = uniqueIds(offeredCore);
   if (record.SchoolStage === 'junior-secondary') {
     record.DepartmentId = '';
-    record.SubjectIds = [...available];
+    coreSubjectIds = uniqueIds(offerings.map((row) => row.SubjectId));
   } else if (record.SchoolStage === 'senior-secondary') {
     const department = assertReference(findById(state.departments || [], record.DepartmentId), 'Choose an active senior secondary department for this student.');
     if (department.SchoolStage !== 'senior-secondary') throw failure('The selected department is not a Senior Secondary department.');
     const missingCore = (department.CoreSubjectIds || []).filter((subjectId) => !available.has(subjectId));
     if (missingCore.length) throw failure('Offer every department core subject to this senior class before allocating students.');
-    record.SubjectIds = uniqueIds([...record.SubjectIds, ...compulsory, ...(department.CoreSubjectIds || [])]);
+    coreSubjectIds = uniqueIds([...coreSubjectIds, ...(department.CoreSubjectIds || [])]);
   } else {
     record.DepartmentId = '';
-    record.SubjectIds = uniqueIds([...record.SubjectIds, ...compulsory]);
+  }
+  const coreSet = new Set(coreSubjectIds);
+  const tradeAvailable = [...available].filter((subjectId) => !coreSet.has(subjectId) && roleBySubject.get(subjectId) === 'Trade');
+  const tradeSet = new Set(tradeAvailable);
+  const optionalAvailable = [...available].filter((subjectId) => !coreSet.has(subjectId) && !tradeSet.has(subjectId));
+  const optionalSet = new Set(optionalAvailable);
+  const suppliedTrade = uniqueIds(record.TradeSubjectIds);
+  const suppliedOptional = uniqueIds(record.OptionalSubjectIds);
+  if (suppliedTrade.some((subjectId) => !tradeSet.has(subjectId))) {
+    throw failure('One or more selected Trade subjects are not offered as Trade subjects to this class or arm.');
+  }
+  if (suppliedOptional.some((subjectId) => !optionalSet.has(subjectId))) {
+    throw failure('One or more selected optional subjects are not offered as optional subjects to this class or arm.');
+  }
+  const selectedTrade = uniqueIds([...suppliedTrade, ...requestedSubjects.filter((subjectId) => tradeSet.has(subjectId))]);
+  const selectedOptional = uniqueIds([...suppliedOptional, ...requestedSubjects.filter((subjectId) => optionalSet.has(subjectId))]);
+  if (record.SchoolStage === 'senior-secondary' && options.requireTradeSelection === true) {
+    if (!tradeAvailable.length) throw failure('Configure at least one Trade subject for this Senior Secondary class or arm before completing subject selection.');
+    if (!selectedTrade.length) throw failure('Every Senior Secondary student must select at least one Trade subject.');
+  }
+  record.CoreSubjectIds = coreSubjectIds;
+  record.TradeSubjectIds = record.SchoolStage === 'senior-secondary' ? selectedTrade : [];
+  record.OptionalSubjectIds = record.SchoolStage === 'junior-secondary' ? [] : selectedOptional;
+  record.SubjectIds = record.SchoolStage === 'junior-secondary'
+    ? coreSubjectIds
+    : uniqueIds([...requestedSubjects, ...coreSubjectIds, ...record.TradeSubjectIds, ...record.OptionalSubjectIds]);
+  if (record.SchoolStage === 'senior-secondary') {
+    record.CurriculumStatus = !tradeAvailable.length
+      ? 'Trade Subjects Not Configured'
+      : record.TradeSubjectIds.length ? 'Complete' : 'Pending Trade Selection';
+  } else {
+    record.CurriculumStatus = 'Complete';
   }
   if (!record.SubjectIds.length) throw failure('Choose at least one offered subject for this student.');
-  const invalid = record.SubjectIds.filter((subjectId) => !available.has(subjectId));
-  if (invalid.length) throw failure('One or more selected subjects are not offered to this class or arm.');
   return record;
 }
 
@@ -488,7 +547,10 @@ function sortedIds(value) {
 
 function membershipMateriallyChanged(before = {}, after = {}) {
   return ['ClassId', 'ArmId', 'DepartmentId', 'Status'].some((key) => clean(before[key]) !== clean(after[key]))
-    || JSON.stringify(sortedIds(before.SubjectIds)) !== JSON.stringify(sortedIds(after.SubjectIds));
+    || ['SubjectIds', 'CoreSubjectIds', 'TradeSubjectIds', 'OptionalSubjectIds'].some((key) => (
+      JSON.stringify(sortedIds(before[key])) !== JSON.stringify(sortedIds(after[key]))
+    ))
+    || clean(before.CurriculumStatus) !== clean(after.CurriculumStatus);
 }
 
 function membershipSnapshot(record = {}, prefix = '') {
@@ -496,7 +558,11 @@ function membershipSnapshot(record = {}, prefix = '') {
     [`${prefix}ClassId`]: clean(record.ClassId),
     [`${prefix}ArmId`]: clean(record.ArmId),
     [`${prefix}DepartmentId`]: clean(record.DepartmentId),
-    [`${prefix}SubjectIds`]: uniqueIds(record.SubjectIds)
+    [`${prefix}SubjectIds`]: uniqueIds(record.SubjectIds),
+    [`${prefix}CoreSubjectIds`]: uniqueIds(record.CoreSubjectIds),
+    [`${prefix}TradeSubjectIds`]: uniqueIds(record.TradeSubjectIds),
+    [`${prefix}OptionalSubjectIds`]: uniqueIds(record.OptionalSubjectIds),
+    [`${prefix}CurriculumStatus`]: clean(record.CurriculumStatus)
   };
 }
 
@@ -647,7 +713,11 @@ function validateAcademicRecord(state, type, record, people = {}) {
     if (subject.SchoolSection !== record.SchoolSection) throw failure('The selected subject belongs to another school section.');
   }
   if (type === 'offering' && record.SchoolStage === 'junior-secondary') {
+    record.SubjectRole = 'Core';
     record.Compulsory = true;
+  }
+  if (type === 'offering' && record.SubjectRole === 'Trade' && record.SchoolStage !== 'senior-secondary') {
+    throw failure('Trade subjects can be configured only for Senior Secondary classes.');
   }
   if (type === 'teacherallocation') {
     const teacher = people.staff.find((row) => lower(row.Username || row.username || row.__id) === record.TeacherUsername);
@@ -1233,12 +1303,14 @@ export async function bulkApplyAcademicSubjects(env, user = {}, input = {}) {
     for (const subject of subjects) {
       const record = normalizeAcademicOffering({
         SessionId: input.SessionId, TermId: input.TermId, ClassId: schoolClass.ClassId,
-        ArmId: '', SubjectId: subject.SubjectId, Compulsory: input.Compulsory, Status: 'Active'
+        ArmId: '', SubjectId: subject.SubjectId,
+        SubjectRole: input.SubjectRole || input.RequirementType, Compulsory: input.Compulsory, Status: 'Active'
       }, scope);
       validateAcademicRecord(projected, 'offering', record, {});
       const existing = findById(projected.offerings, record.OfferingId);
       if (existing) {
-        if (sameSetupRecord(existing, record, ['SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId', 'Compulsory'])) {
+        if (sameSetupRecord(existing, record, ['SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId'])
+          && academicOfferingSubjectRole(existing, record.SchoolStage) === record.SubjectRole) {
           skipped += 1;
           continue;
         }
@@ -1277,7 +1349,9 @@ export async function bulkAllocateAcademicStudents(env, user = {}, input = {}) {
   for (const studentRef of studentRefs) {
     const existingId = academicId('student', scope.branchId, scope.section, input.SessionId, input.TermId, studentRef);
     const existing = findById(projected.studentMemberships, existingId);
-    const record = normalizeAcademicStudentMembership({ ...input, StudentRef, Status: 'Active' }, scope, existing);
+    const record = normalizeAcademicStudentMembership({
+      ...input, StudentRef, Status: 'Active', SubjectIds: [], CoreSubjectIds: [], TradeSubjectIds: [], OptionalSubjectIds: []
+    }, scope, existing);
     validateAcademicRecord(projected, 'studentmembership', record, { ...people, existing });
     if (existing) {
       if (!membershipMateriallyChanged(existing, record)) {
@@ -1317,6 +1391,96 @@ export async function bulkAllocateAcademicStudents(env, user = {}, input = {}) {
     ? `${created} student${created === 1 ? '' : 's'} allocated online${skipped.length ? `; ${skipped.length} already matched and were skipped` : ''}.`
     : 'Every selected student already has this exact allocation.';
   response.bulkResult = { Requested: studentRefs.length, Created: created, Skipped: skipped.length };
+  return response;
+}
+
+export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageAllocations');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  let assignments = input.Assignments || input.StudentSubjectAssignments || [];
+  if (typeof assignments === 'string') {
+    try { assignments = JSON.parse(assignments); } catch (_error) { assignments = []; }
+  }
+  if (!Array.isArray(assignments) || !assignments.length) throw failure('Choose at least one student subject selection to save.');
+  if (assignments.length > 200) throw failure('Update at most 200 student subject selections in one arm batch.');
+  const sessionId = clean(input.SessionId);
+  const termId = clean(input.TermId);
+  const classId = clean(input.ClassId);
+  const armId = clean(input.ArmId);
+  if (!sessionId || !termId || !classId || !armId) throw failure('Choose the session, term, Senior Secondary class and arm.');
+  const state = await loadAcademicState(env, scope.branchId);
+  const session = assertReference(findById(state.sessions, sessionId), 'The selected session is not active.');
+  const term = assertReference(findById(state.terms, termId), 'The selected term is not active.');
+  if (term.SessionId !== session.SessionId) throw failure('The selected term does not belong to this academic session.');
+  const schoolClass = assertReference(findById(state.classes, classId), 'The selected class is not active.');
+  if (schoolClass.SchoolSection !== scope.section) throw failure('The selected class belongs to another school section.');
+  const schoolStage = schoolStageValue(schoolClass.SchoolStage, schoolClass.SchoolSection, schoolClass.Name);
+  if (schoolStage !== 'senior-secondary') throw failure('Trade and optional subject selection is available only for Senior Secondary classes.');
+  const arm = assertReference(findById(state.arms, armId), 'The selected class arm is not active.');
+  if (arm.ClassId !== classId) throw failure('The selected class arm does not belong to this class.');
+
+  const projected = { ...state, studentMemberships: [...state.studentMemberships] };
+  const writes = [];
+  const skipped = [];
+  const seen = new Set();
+  const reason = clean(input.Reason) || 'Arm-level Trade and optional subject selection updated.';
+  for (const assignment of assignments) {
+    const membershipId = clean(assignment?.MembershipId || assignment?.RecordId);
+    if (!membershipId || seen.has(lower(membershipId))) throw failure('Every student subject selection must identify one unique membership.');
+    seen.add(lower(membershipId));
+    const existing = findById(projected.studentMemberships, membershipId);
+    if (!existing || !statusActive(existing)) throw failure('One selected student membership is not active.', 409, 'ACADEMIC_REFERENCE_INVALID');
+    if (existing.SessionId !== sessionId || existing.TermId !== termId || existing.ClassId !== classId || existing.ArmId !== armId) {
+      throw failure(`${existing.StudentRef || 'A selected student'} does not belong to the selected class arm and period.`, 409, 'ACADEMIC_MEMBERSHIP_SCOPE_MISMATCH');
+    }
+    const revisionToken = clean(assignment.RevisionToken);
+    if (!revisionToken || revisionToken !== clean(existing.__updateTime)) {
+      throw failure(`${existing.StudentRef || 'A selected student'} changed after this arm register was loaded. Reload before saving.`, 409, 'ACADEMIC_WRITE_CONFLICT');
+    }
+    const tradeSubjectIds = uniqueIds(assignment.TradeSubjectIds);
+    const optionalSubjectIds = uniqueIds(assignment.OptionalSubjectIds);
+    const record = normalizeAcademicStudentMembership({
+      ...withoutMetadata(existing), SubjectIds: [...tradeSubjectIds, ...optionalSubjectIds],
+      CoreSubjectIds: [], TradeSubjectIds: tradeSubjectIds, OptionalSubjectIds: optionalSubjectIds,
+      CurriculumStatus: '', Status: existing.Status
+    }, scope, existing);
+    record.SchoolStage = schoolStage;
+    applyAcademicStudentCurriculum(projected, record, { requireTradeSelection: true });
+    if (!membershipMateriallyChanged(existing, record)) {
+      skipped.push(existing.StudentRef);
+      continue;
+    }
+    stampAcademicRecord(record, user, existing);
+    projected.studentMemberships = projected.studentMemberships.map((row) => recordId(row) === membershipId ? record : row);
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+      documentId: membershipId, data: withoutMetadata(record), updateTime: revisionToken
+    });
+    writes.push(movementWrite(user, academicMovementForState(projected, {
+      ...input, StudentRef: existing.StudentRef, Reason: reason, MovementType: 'Subject Change'
+    }, scope, existing, record)));
+  }
+  const updated = assignments.length - skipped.length;
+  if (updated) {
+    writes.push(auditWrite(user, 'BULK SUBJECT ASSIGNMENT', 'studentmembership', {
+      BranchId: scope.branchId, SchoolSection: scope.section, SessionId: sessionId, TermId: termId,
+      MembershipId: `arm-subjects-${Date.now()}`
+    }, `${updated} student subject selection(s) updated in ${schoolClass.Name} / ${arm.Name}; ${skipped.length} unchanged.`));
+    try {
+      await batchCommitDocuments(env, writes);
+    } catch (error) {
+      if ([409, 412].includes(Number(error?.status))) {
+        throw failure('A student membership changed while arm subjects were being saved. Reload and try again.', 409, 'ACADEMIC_WRITE_CONFLICT');
+      }
+      throw error;
+    }
+  }
+  const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section });
+  response.message = updated
+    ? `${updated} student subject selection${updated === 1 ? '' : 's'} saved online${skipped.length ? `; ${skipped.length} unchanged` : ''}.`
+    : 'Every student already has the selected Trade and optional subjects.';
+  response.bulkResult = { Requested: assignments.length, Updated: updated, Skipped: skipped.length };
   return response;
 }
 
@@ -1570,6 +1734,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['bulkcreateacademicsubjects', 'bulkcreatesubjects'].includes(action)) return bulkCreateAcademicSubjects(env, user, input);
   if (['bulkapplyacademicsubjects', 'bulkapplysubjects'].includes(action)) return bulkApplyAcademicSubjects(env, user, input);
   if (['bulkallocateacademicstudents', 'bulkallocatestudents'].includes(action)) return bulkAllocateAcademicStudents(env, user, input);
+  if (['bulkassignacademicarmstudentsubjects', 'bulkassignarmstudentsubjects'].includes(action)) return bulkAssignAcademicArmStudentSubjects(env, user, input);
   if (['manageacademicstudentmembership', 'moveacademicstudentmembership', 'withdrawacademicstudentmembership', 'reinstateacademicstudentmembership'].includes(action)) {
     const inferredOperation = ({
       withdrawacademicstudentmembership: 'withdraw',

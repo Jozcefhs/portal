@@ -7,6 +7,7 @@ import {
   assertAcademicMembershipCapacity,
   academicPermanentDeleteDependants,
   academicManagementCapabilities,
+  academicOfferingSubjectRole,
   academicStudentMatchesClass,
   normalizeAcademicArm,
   normalizeAcademicArmTemplate,
@@ -168,6 +169,14 @@ test('AM-002 subjects, offerings and teacher allocations retain period scope', (
 
   assert.equal(subject.Code, 'MATH');
   assert.equal(offering.Compulsory, true);
+  assert.equal(offering.SubjectRole, 'Core');
+  const tradeOffering = normalizeAcademicOffering({
+    SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', SubjectId: subject.SubjectId,
+    SubjectRole: 'Trade'
+  }, scope);
+  assert.equal(tradeOffering.SubjectRole, 'Trade');
+  assert.equal(tradeOffering.Compulsory, false);
+  assert.equal(academicOfferingSubjectRole({ Compulsory: false }), 'Optional');
   assert.match(offering.OfferingId, /session-1__term-1__class-1__arm-a/);
   assert.match(allocation.AllocationId, /ada\.teacher/);
   assert.equal(allocation.TeacherUsername, 'ada.teacher');
@@ -236,6 +245,35 @@ test('AM-002 Junior takes all offerings while Senior inherits department core su
   }), /Offer every department core subject/);
 });
 
+test('AM-002 Senior arm subjects lock core, require Trade and retain optional selections', () => {
+  const state = {
+    offerings: [
+      { SessionId: 'session-1', TermId: 'term-1', ClassId: 'sss-1', ArmId: '', SubjectId: 'english', SubjectRole: 'Core', Status: 'Active' },
+      { SessionId: 'session-1', TermId: 'term-1', ClassId: 'sss-1', ArmId: '', SubjectId: 'physics', SubjectRole: 'Optional', Status: 'Active' },
+      { SessionId: 'session-1', TermId: 'term-1', ClassId: 'sss-1', ArmId: '', SubjectId: 'catering', SubjectRole: 'Trade', Status: 'Active' },
+      { SessionId: 'session-1', TermId: 'term-1', ClassId: 'sss-1', ArmId: '', SubjectId: 'music', SubjectRole: 'Optional', Status: 'Active' }
+    ],
+    departments: [{ DepartmentId: 'science', SchoolStage: 'senior-secondary', CoreSubjectIds: ['physics'], Status: 'Active' }]
+  };
+  const base = {
+    SessionId: 'session-1', TermId: 'term-1', ClassId: 'sss-1', ArmId: 'excellence',
+    SchoolStage: 'senior-secondary', DepartmentId: 'science', SubjectIds: []
+  };
+  const pending = applyAcademicStudentCurriculum(state, { ...base });
+  assert.deepEqual(pending.CoreSubjectIds, ['english', 'physics']);
+  assert.deepEqual(pending.TradeSubjectIds, []);
+  assert.equal(pending.CurriculumStatus, 'Pending Trade Selection');
+  assert.throws(() => applyAcademicStudentCurriculum(state, { ...base }, { requireTradeSelection: true }), /at least one Trade subject/);
+  const complete = applyAcademicStudentCurriculum(state, {
+    ...base, TradeSubjectIds: ['catering'], OptionalSubjectIds: ['music'], SubjectIds: ['catering', 'music']
+  }, { requireTradeSelection: true });
+  assert.deepEqual(complete.CoreSubjectIds, ['english', 'physics']);
+  assert.deepEqual(complete.TradeSubjectIds, ['catering']);
+  assert.deepEqual(complete.OptionalSubjectIds, ['music']);
+  assert.deepEqual(complete.SubjectIds, ['catering', 'music', 'english', 'physics']);
+  assert.equal(complete.CurriculumStatus, 'Complete');
+});
+
 test('AM-003 movements preserve before and after membership snapshots', () => {
   const before = {
     StudentRef: 'DCA/2026/001', SessionId: 'session-1', TermId: 'term-1',
@@ -292,12 +330,16 @@ test('Academic writes are audited, optimistic and preserve legacy class/student 
   assert.match(librarySource, /settings\/academics\/classes/);
   assert.match(librarySource, /ClassName: clean\(schoolClass\?\.Name\)/);
   assert.match(librarySource, /SubjectIds: uniqueIds/);
-  assert.match(librarySource, /record\.SubjectIds = \[\.\.\.available\]/);
+  assert.match(librarySource, /record\.CoreSubjectIds = coreSubjectIds/);
+  assert.match(librarySource, /record\.CurriculumStatus = !tradeAvailable\.length/);
   assert.match(librarySource, /department\.CoreSubjectIds/);
   assert.match(librarySource, /AcademicDepartment: clean\(department\?\.Name\)/);
   assert.match(librarySource, /ACADEMIC_MOVEMENT_REQUIRED/);
   assert.match(librarySource, /academicStudentMovements/);
   assert.match(librarySource, /Allocate at most 100 students in one batch/);
+  assert.match(librarySource, /Update at most 200 student subject selections in one arm batch/);
+  assert.match(librarySource, /ACADEMIC_SUBJECT_ROLES/);
+  assert.match(librarySource, /Every Senior Secondary student must select at least one Trade subject/);
   assert.match(librarySource, /ACADEMIC_STUDENT_CLASS_MISMATCH/);
   assert.match(librarySource, /AcademicClassId: academicStudentClassId\(row, classes\)/);
   assert.match(librarySource, /Create at most 50 classes in one batch/);
@@ -330,6 +372,8 @@ test('Web and desktop transports share one protected Academic Management handler
   assert.match(backendSource, /case 'deleteAcademicRecord'/);
   assert.match(backendSource, /case 'saveAcademicStudentMembership'/);
   assert.match(backendSource, /case 'bulkAllocateAcademicStudents'/);
+  assert.match(backendSource, /case 'bulkAssignAcademicArmStudentSubjects'/);
+  assert.match(librarySource, /assignments\.length > 200/);
   assert.match(backendSource, /case 'moveAcademicStudentMembership'/);
   assert.match(backendSource, /case 'withdrawAcademicStudentMembership'/);
   assert.match(backendSource, /handleAcademicManagementAction/);
@@ -340,7 +384,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /function renderAcademicManagement/);
   assert.match(adminSource, /function academicManagementRequest/);
   assert.match(adminSource, /function academicDepartmentsWorkspace/);
-  assert.match(adminSource, /Junior receives every offering/);
+  assert.match(adminSource, /Junior Secondary offerings become Core automatically/);
   assert.match(adminSource, /The same staff member can also teach different subjects in other classes and arms/);
   assert.match(adminSource, /function syncAcademicTeacherAssignmentForm/);
   assert.match(adminSource, /function academicCheckboxField/);
@@ -350,6 +394,12 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /name: 'CoreSubjectIds'/);
   assert.doesNotMatch(adminSource, /select name="(?:CoreSubjectIds|StudentRefs|SubjectIds)" multiple/);
   assert.match(adminSource, /data-academic-workflow="bulkAllocateAcademicStudents"/);
+  assert.match(adminSource, /data-academic-workflow="bulkAssignAcademicArmStudentSubjects"/);
+  assert.match(adminSource, /function academicArmSubjectRegister/);
+  assert.match(adminSource, /Core · locked/);
+  assert.match(adminSource, /Trade · choose at least one/);
+  assert.match(adminSource, /must have at least one Trade subject/);
+  assert.doesNotMatch(adminSource, /name: 'SubjectIds', label: 'Optional subjects'/);
   assert.match(adminSource, /data-academic-student-placement="bulk"/);
   assert.doesNotMatch(adminSource, /data-academic-form="studentMembership"/);
   assert.doesNotMatch(adminSource, /Single allocation/);
@@ -402,13 +452,15 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-checkbox-option input\[type="checkbox"\]/);
   assert.match(styleSource, /\[data-academic-checkbox-purpose="student-arm-candidates"\] \.academic-checkbox-options\{max-height:320px\}/);
   assert.match(styleSource, /\.academic-student-allocation-layout\{grid-column:1\/-1/);
+  assert.match(styleSource, /\.academic-arm-student-subject-list/);
+  assert.match(styleSource, /\.academic-subject-locked/);
   assert.match(styleSource, /grid-template-areas:"register controls"/);
   assert.match(styleSource, /grid-template-areas:"controls" "register"/);
   assert.match(styleSource, /\.academic-management-tabs button\{[^}]*font-size:13px/);
   assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
   assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-tabs button\{[^}]*font-size:12px/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-unassigned-register/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-arm-subjects/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

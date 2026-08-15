@@ -135,6 +135,7 @@ let academicManagementData = null;
 let academicManagementView = 'structure';
 let academicManagementFilters = { section: '', sessionId: '', termId: '' };
 let academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
+let academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
 const organizationCommerceCarts = {
   organizationStore: new Map(),
   restaurant: new Map()
@@ -1226,6 +1227,7 @@ function clearStaffWorkspaceState() {
   academicManagementView = 'structure';
   academicManagementFilters = { section: '', sessionId: '', termId: '' };
   academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
+  academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
   activeSection = '';
   activeTabs = [];
   recordsDeskHandoffContext = null;
@@ -1354,6 +1356,7 @@ function clearBranchScopedWorkspaceData() {
   academicManagementView = 'structure';
   academicManagementFilters = { section: '', sessionId: '', termId: '' };
   academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
+  academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
   Object.values(organizationCommerceCarts).forEach((cart) => cart.clear());
   organizationCommerceLastSale.organizationStore = null;
   organizationCommerceLastSale.restaurant = null;
@@ -9369,6 +9372,13 @@ function academicSchoolStageLabel(value = '') {
   return ({ primary: 'Primary', 'junior-secondary': 'Junior Secondary', 'senior-secondary': 'Senior Secondary' })[clean(value).toLowerCase()] || 'Not classified';
 }
 
+function academicOfferingSubjectRole(offering = {}, schoolStage = '') {
+  if (clean(schoolStage).toLowerCase() === 'junior-secondary') return 'Core';
+  const role = clean(offering.SubjectRole || offering.RequirementType);
+  const supported = ['Core', 'Trade', 'Optional'].find((value) => value.toLowerCase() === role.toLowerCase());
+  return supported || (offering.Compulsory === true ? 'Core' : 'Optional');
+}
+
 function academicIsActive(row = {}) {
   return !/archived|inactive|closed|withdrawn/i.test(clean(row.Status));
 }
@@ -9435,6 +9445,35 @@ function validateAcademicCheckboxFields(form) {
       throw new Error(`Choose no more than ${maximum} ${label.toLowerCase()}.`);
     }
   });
+}
+
+function academicStudentSubjectProfile(data, membership) {
+  const schoolClass = academicFind(data.classes || [], membership.ClassId);
+  const stage = clean(schoolClass?.SchoolStage).toLowerCase();
+  const applicable = (data.offerings || []).filter((offering) => academicIsActive(offering)
+    && offering.SessionId === membership.SessionId && offering.TermId === membership.TermId
+    && offering.ClassId === membership.ClassId && (!offering.ArmId || offering.ArmId === membership.ArmId));
+  const rolePriority = { Optional: 1, Trade: 2, Core: 3 };
+  const roles = new Map();
+  applicable.forEach((offering) => {
+    const role = academicOfferingSubjectRole(offering, stage);
+    const current = roles.get(offering.SubjectId);
+    if (!current || rolePriority[role] > rolePriority[current]) roles.set(offering.SubjectId, role);
+  });
+  const department = academicFind(data.departments || [], membership.DepartmentId);
+  (department?.CoreSubjectIds || []).forEach((subjectId) => roles.set(subjectId, 'Core'));
+  const idsFor = (role) => [...roles.entries()].filter(([, value]) => value === role).map(([subjectId]) => subjectId);
+  const coreSubjectIds = idsFor('Core');
+  const tradeSubjectIds = idsFor('Trade').filter((subjectId) => !coreSubjectIds.includes(subjectId));
+  const optionalSubjectIds = idsFor('Optional').filter((subjectId) => !coreSubjectIds.includes(subjectId) && !tradeSubjectIds.includes(subjectId));
+  const selected = new Set(membership.SubjectIds || []);
+  return {
+    coreSubjectIds,
+    tradeSubjectIds,
+    optionalSubjectIds,
+    selectedTradeSubjectIds: (membership.TradeSubjectIds || tradeSubjectIds.filter((id) => selected.has(id))).filter((id) => tradeSubjectIds.includes(id)),
+    selectedOptionalSubjectIds: (membership.OptionalSubjectIds || optionalSubjectIds.filter((id) => selected.has(id))).filter((id) => optionalSubjectIds.includes(id))
+  };
 }
 
 function academicStudentBelongsToClass(student = {}, schoolClass = {}) {
@@ -9751,7 +9790,7 @@ function academicBulkSetupWorkspace(data, rows) {
       <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
       ${academicCheckboxField({ name: 'ClassIds', label: 'Classes', options: classOptions, required: true, idPrefix: 'subject-application-classes', help: 'Every selected subject will be offered to every selected class for this term.' })}
       ${academicCheckboxField({ name: 'SubjectIds', label: 'Reusable subjects', options: subjectOptions, required: true, idPrefix: 'subject-application-subjects', help: 'The subject records remain reusable; this creates term-specific class offerings without duplicating the catalogue.' })}
-      <label>Requirement<select name="Compulsory"><option value="true">Compulsory</option><option value="false">Optional</option></select><small>Junior Secondary offerings are compulsory automatically.</small></label>
+      <label>Subject role<select name="SubjectRole"><option>Core</option><option>Trade</option><option>Optional</option></select><small>Junior Secondary offerings become Core automatically. Trade is available only to Senior Secondary.</small></label>
       <button type="submit">Apply selected subjects</button>
     </form>
   </div>
@@ -9806,7 +9845,7 @@ function academicOfferingsWorkspace(data, rows) {
     <form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="bulkApplyAcademicSubjects">
       <div class="academic-management-editor-heading"><div><small>Junior Secondary curriculum</small><h3>Select subjects applicable to Junior Secondary</h3><p class="muted">Select the JSS classes and reusable subjects below. Every selected subject is assigned to every selected class and is compulsory for all students in those classes.</p></div></div>
       <input type="hidden" name="SchoolSection" value="secondary">
-      <input type="hidden" name="Compulsory" value="true">
+      <input type="hidden" name="SubjectRole" value="Core">
       <div class="academic-management-form-grid">
         <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
         <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
@@ -9834,8 +9873,8 @@ function academicOfferingsWorkspace(data, rows) {
       <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select></label>
       <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
     </div>
-    <label class="academic-inline-check"><input name="Compulsory" type="checkbox"> Compulsory for every student in this class or arm</label>
-    <p class="muted">For Junior Secondary classes, every active offering is compulsory automatically. Senior Secondary students also receive every core subject assigned to their department.</p>
+    <label>Subject role<select name="SubjectRole"><option>Core</option><option>Trade</option><option>Optional</option></select><small>Core is locked for every applicable student. Every Senior student must select at least one Trade subject. Optional subjects can be selected per student in the arm register.</small></label>
+    <p class="muted">Junior Secondary offerings become Core automatically. A Senior department's core subjects are also locked for every student assigned to that department.</p>
     <button type="submit">Save subject offering</button>
   </form>` : '';
   return `${juniorCurriculumForm}${form}${table('Subject Offerings', rows.offerings, [
@@ -9843,7 +9882,7 @@ function academicOfferingsWorkspace(data, rows) {
     { label: 'Division', value: (row) => academicSchoolStageLabel(academicFind(rows.classes, row.ClassId)?.SchoolStage) },
     { label: 'Arm', value: (row) => row.ArmId ? academicLabel(rows.arms, row.ArmId) : 'All arms' },
     { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId) },
-    { label: 'Requirement', value: (row) => row.Compulsory ? 'Compulsory' : 'Optional' },
+    { label: 'Subject role', value: (row) => academicOfferingSubjectRole(row, academicFind(rows.classes, row.ClassId)?.SchoolStage) },
     { label: 'Status', value: (row) => row.Status },
     { label: 'Actions', render: (row) => academicActionButtons('offering', row, canManage, data.permissions?.canArchive, data.permissions?.canDelete) }
   ])}`;
@@ -9895,13 +9934,73 @@ function academicStudentMembershipActions(row, canManage) {
   </div>`;
 }
 
+function academicArmSubjectRegister(data, rows, canManage) {
+  if (academicManagementFilters.section !== 'secondary') return '';
+  const sessions = rows.sessions.filter(academicIsActive);
+  const preferredSessionId = academicArmSubjectDraft.sessionId || academicManagementFilters.sessionId;
+  const sessionId = clean(academicFind(sessions, preferredSessionId)?.SessionId || sessions.find(academicIsActive)?.SessionId);
+  const terms = (data.terms || []).filter((row) => academicIsActive(row) && row.SessionId === sessionId);
+  const termId = clean(academicFind(terms, academicArmSubjectDraft.termId || academicManagementFilters.termId)?.TermId || terms.find(academicIsActive)?.TermId);
+  const seniorClasses = rows.classes.filter((row) => academicIsActive(row) && clean(row.SchoolStage).toLowerCase() === 'senior-secondary');
+  const preferredClassId = academicArmSubjectDraft.classId || academicStudentAllocationDraft.classId;
+  const classId = clean(academicFind(seniorClasses, preferredClassId)?.ClassId);
+  const arms = rows.arms.filter((row) => academicIsActive(row) && row.ClassId === classId);
+  const armId = clean(academicFind(arms, academicArmSubjectDraft.armId)?.ArmId
+    || academicFind(arms, academicStudentAllocationDraft.armId)?.ArmId);
+  academicArmSubjectDraft = { sessionId, termId, classId, armId };
+  const memberships = (data.studentMemberships || []).filter((membership) => academicIsActive(membership)
+    && membership.SessionId === sessionId && membership.TermId === termId
+    && membership.ClassId === classId && membership.ArmId === armId)
+    .sort((left, right) => academicLabel(data.students, left.StudentRef, left.StudentRef)
+      .localeCompare(academicLabel(data.students, right.StudentRef, right.StudentRef), undefined, { sensitivity: 'base' }));
+  const studentCards = memberships.map((membership, index) => {
+    const profile = academicStudentSubjectProfile(data, membership);
+    const studentName = academicLabel(data.students, membership.StudentRef, membership.StudentRef);
+    const department = membership.DepartmentId ? academicLabel(rows.departments, membership.DepartmentId) : 'No Senior department';
+    const subjectChecks = (role, subjectIds, selectedIds = [], locked = false) => subjectIds.length
+      ? subjectIds.map((subjectId) => {
+        const id = `arm-subject-${index}-${role.toLowerCase()}-${clean(subjectId).replace(/[^a-z0-9_-]+/gi, '-')}`;
+        return `<label class="academic-checkbox-option${locked ? ' academic-subject-locked' : ''}" for="${escapeHtml(id)}"><input id="${escapeHtml(id)}" type="checkbox" value="${escapeHtml(subjectId)}" data-academic-student-subject-role="${escapeHtml(role)}"${locked || selectedIds.includes(subjectId) ? ' checked' : ''}${locked ? ' disabled aria-readonly="true"' : ''}><span>${escapeHtml(academicLabel(rows.subjects, subjectId, subjectId))}</span></label>`;
+      }).join('')
+      : `<span class="academic-checkbox-empty">No ${escapeHtml(role.toLowerCase())} subjects are configured for this arm.</span>`;
+    return `<article class="academic-arm-student-subject-card" data-academic-arm-subject-student data-membership-id="${escapeHtml(academicRecordId(membership))}" data-revision-token="${escapeHtml(membership.RevisionToken || '')}" data-student-name="${escapeHtml(studentName)}">
+      <header><div><strong>${escapeHtml(studentName)}</strong><small>${escapeHtml(membership.StudentRef)} · ${escapeHtml(department)}</small></div><span>${escapeHtml(membership.CurriculumStatus || 'Pending Trade Selection')}</span></header>
+      <div class="academic-arm-student-subject-groups">
+        <fieldset><legend>Core · locked</legend><div class="academic-checkbox-options">${subjectChecks('Core', profile.coreSubjectIds, profile.coreSubjectIds, true)}</div></fieldset>
+        <fieldset><legend>Trade · choose at least one</legend><div class="academic-checkbox-options">${subjectChecks('Trade', profile.tradeSubjectIds, profile.selectedTradeSubjectIds)}</div></fieldset>
+        <fieldset><legend>Optional</legend><div class="academic-checkbox-options">${subjectChecks('Optional', profile.optionalSubjectIds, profile.selectedOptionalSubjectIds)}</div></fieldset>
+      </div>
+    </article>`;
+  }).join('');
+  const tradeConfigured = memberships.length && memberships.every((membership) => academicStudentSubjectProfile(data, membership).tradeSubjectIds.length);
+  const help = !classId ? 'Choose a Senior Secondary class.'
+    : !armId ? 'Choose a class arm to display its assigned students.'
+      : !memberships.length ? 'No students are assigned to this arm for the selected period.'
+        : !tradeConfigured ? 'Configure at least one Trade subject offering for this class or arm before saving student selections.'
+          : `${memberships.length} assigned student${memberships.length === 1 ? '' : 's'} shown. Core subjects are already selected and cannot be cleared.`;
+  const body = canManage ? `<form class="academic-management-editor academic-management-editor-wide academic-arm-subject-register" data-academic-workflow="bulkAssignAcademicArmStudentSubjects" data-academic-arm-subject-register>
+    <div class="academic-management-editor-heading"><div><small>Senior Secondary arm curriculum</small><h3>Assign Trade and Optional subjects</h3><p class="muted">Open an arm after placement. Department and offering core subjects are checked and locked for each student; select at least one Trade subject and any Optional subjects they offer.</p></div></div>
+    <input type="hidden" name="SchoolSection" value="secondary">
+    <div class="academic-management-form-grid academic-management-form-grid-4">
+      <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, sessionId, (row) => row.Name, 'Choose session')}</select></label>
+      <label>Term<select name="TermId" required>${academicSelectOptions(terms, termId, (row) => row.Name, 'Choose term')}</select></label>
+      <label>Senior class<select name="ClassId" required>${academicSelectOptions(seniorClasses, classId, (row) => row.Name, 'Choose class')}</select></label>
+      <label>Arm<select name="ArmId" required${classId ? '' : ' disabled'}>${academicSelectOptions(arms, armId, (row) => row.Name, classId ? 'Choose arm' : 'Choose class first')}</select></label>
+    </div>
+    <p class="academic-arm-subject-summary${memberships.length && tradeConfigured ? '' : ' academic-arm-subject-warning'}">${escapeHtml(help)}</p>
+    <div class="academic-arm-student-subject-list">${studentCards || '<div class="academic-checkbox-empty">Select a class and arm to open its student subject register.</div>'}</div>
+    <label>Curriculum note<input name="Reason" placeholder="Senior subject selections confirmed"></label>
+    <button type="submit"${memberships.length && tradeConfigured ? '' : ' disabled'}>Save subject selections for this arm</button>
+  </form>` : '<div class="academic-view-only-note"><strong>Senior arm subject register</strong><span>Core, Trade and Optional selections are shown in each membership below. Only authorised administrators can change them.</span></div>';
+  return body;
+}
+
 function academicStudentWorkspace(data, rows) {
   const canManage = data.permissions?.canManageAllocations === true;
   const sessions = rows.sessions.filter(academicIsActive);
   const terms = (data.terms || []).filter((row) => academicIsActive(row) && (!academicManagementFilters.sessionId || row.SessionId === academicManagementFilters.sessionId));
   const classes = rows.classes.filter(academicIsActive);
   const arms = rows.arms.filter(academicIsActive);
-  const subjects = rows.subjects.filter(academicIsActive);
   const departments = rows.departments.filter(academicIsActive);
   const activeMemberships = rows.studentMemberships.filter(academicIsActive);
   const periodFields = `
@@ -9911,7 +10010,6 @@ function academicStudentWorkspace(data, rows) {
     <label>Class<select name="ClassId" required>${academicSelectOptions(classes, '', (row) => `${row.Name} — ${academicSchoolStageLabel(row.SchoolStage)}`, 'Choose class')}</select></label>
     <label>Arm<select name="ArmId" required>${academicSelectOptions(arms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'Choose arm')}</select></label>
     ${academicManagementFilters.section === 'secondary' ? `<label>Senior department<select name="DepartmentId">${academicSelectOptions(departments, '', (row) => `${row.Code} - ${row.Name}`, 'Not applicable / choose for Senior')}</select></label>` : ''}`;
-  const subjectCheckboxOptions = subjects.map((row) => ({ value: row.SubjectId, label: `${row.Code} - ${row.Name}` }));
   const draftSessionId = clean(academicFind(sessions, academicStudentAllocationDraft.sessionId)?.SessionId
     || academicFind(sessions, academicManagementFilters.sessionId)?.SessionId);
   const bulkTerms = (data.terms || []).filter((row) => academicIsActive(row) && row.SessionId === draftSessionId);
@@ -9935,7 +10033,6 @@ function academicStudentWorkspace(data, rows) {
         <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
         ${bulkPeriodFields}
         ${bulkTargetFields}
-        ${academicCheckboxField({ name: 'SubjectIds', label: 'Optional subjects', options: subjectCheckboxOptions, idPrefix: 'bulk-allocation-subjects', help: 'Junior receives every offering; Senior receives department core subjects automatically.' })}
         <label>Allocation note<input name="Reason" placeholder="New term allocation"></label>
         <button type="submit">Allocate selected students</button>
       </section>
@@ -9950,17 +10047,17 @@ function academicStudentWorkspace(data, rows) {
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="RevisionToken">
       <label>Current membership<select name="RecordId" required>${academicSelectOptions(activeMemberships, '', (row) => `${academicLabel(data.students, row.StudentRef, row.StudentRef)} — ${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}`, 'Choose active membership')}</select></label>
       ${periodFields}${targetFields}
-      ${academicCheckboxField({ name: 'SubjectIds', label: 'Optional subjects', options: subjectCheckboxOptions, idPrefix: 'movement-subjects' })}
       <label>Effective date<input type="date" name="EffectiveDate" value="${new Date().toISOString().slice(0, 10)}" required></label>
-      <label>Reason<textarea name="Reason" rows="3" required placeholder="Explain the approved class, arm, department or subject change"></textarea></label>
+      <label>Reason<textarea name="Reason" rows="3" required placeholder="Explain the approved class, arm or department change"></textarea></label>
       <button type="submit">Record movement</button>
     </form>
   </div>` : '<div class="academic-view-only-note"><strong>My class registers</strong><span>Students and movement history shown here come only from your teaching allocations.</span></div>';
-  return `${forms}${table('Student Class & Subject Memberships', rows.studentMemberships, [
+  return `${forms}${academicArmSubjectRegister(data, rows, canManage)}${table('Student Class & Subject Memberships', rows.studentMemberships, [
     { label: 'Student', value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
     { label: 'Class / Arm', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
     { label: 'Department', value: (row) => row.DepartmentId ? academicLabel(rows.departments, row.DepartmentId) : '-' },
     { label: 'Subjects', value: (row) => (row.SubjectIds || []).map((id) => academicLabel(rows.subjects, id, id)).join(', ') || 'None' },
+    { label: 'Curriculum', value: (row) => row.CurriculumStatus || '-' },
     { label: 'Status', value: (row) => row.Status },
     { label: 'Actions', render: (row) => academicStudentMembershipActions(row, canManage) }
   ])}${table('Student Movement History', rows.studentMovements, [
@@ -9985,7 +10082,7 @@ function academicManagementHeader(data, rows, message = '') {
     ? [['structure', 'Catalogue'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['teachers', 'My allocations'], ['students', 'My registers']]
     : [['structure', 'Structure'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Teacher allocations'], ['students', 'Student memberships']];
   return `<div class="academic-management-heading">
-    <div><p class="eyebrow">AM-002 / AM-003</p><h2>Academic Management</h2><p class="muted">Branch-isolated structure with Junior all-subject rules and Senior department core curricula.</p></div>
+    <div><p class="eyebrow">AM-002 / AM-003</p><h2>Academic Management</h2><p class="muted">Branch-isolated structure with Junior all-subject rules and Senior Core, Trade and Optional curricula.</p></div>
     <button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button>
   </div>
   <div class="academic-management-filterbar">
@@ -10068,7 +10165,7 @@ function academicFormPayload(form) {
     const name = field.dataset.academicCheckboxName;
     payload[name] = academicCheckedValues(form, name);
   });
-  if (form.dataset.academicForm === 'offering') payload.Compulsory = form.elements.Compulsory.checked;
+  if (form.dataset.academicForm === 'offering') payload.Compulsory = payload.SubjectRole === 'Core';
   if (form.dataset.academicForm === 'studentMembership') {
     payload.SubjectIds = academicCheckedValues(form, 'SubjectIds');
   }
@@ -10079,6 +10176,27 @@ function academicFormPayload(form) {
 }
 
 function academicWorkflowPayload(form) {
+  if (form.dataset.academicWorkflow === 'bulkAssignAcademicArmStudentSubjects') {
+    const assignments = [...form.querySelectorAll('[data-academic-arm-subject-student]')].map((row) => {
+      const tradeSubjectIds = [...row.querySelectorAll('[data-academic-student-subject-role="Trade"]:checked')].map((input) => input.value);
+      if (!tradeSubjectIds.length) {
+        row.querySelector('[data-academic-student-subject-role="Trade"]')?.focus();
+        throw new Error(`${row.dataset.studentName || 'Each student'} must have at least one Trade subject.`);
+      }
+      return {
+        MembershipId: row.dataset.membershipId,
+        RevisionToken: row.dataset.revisionToken,
+        TradeSubjectIds: tradeSubjectIds,
+        OptionalSubjectIds: [...row.querySelectorAll('[data-academic-student-subject-role="Optional"]:checked')].map((input) => input.value)
+      };
+    });
+    if (!assignments.length) throw new Error('Choose an arm with assigned students first.');
+    return {
+      SchoolSection: 'secondary', SessionId: form.elements.SessionId.value, TermId: form.elements.TermId.value,
+      ClassId: form.elements.ClassId.value, ArmId: form.elements.ArmId.value, Reason: form.elements.Reason.value,
+      Assignments
+    };
+  }
   validateAcademicCheckboxFields(form);
   const payload = Object.fromEntries(new FormData(form).entries());
   form.querySelectorAll('[data-academic-checkbox-field]').forEach((field) => {
@@ -10094,7 +10212,6 @@ function populateAcademicMovementForm(form, record) {
     const control = form.elements.namedItem(key);
     if (control) control.value = key === 'RecordId' ? academicRecordId(record) : (key === 'RevisionToken' ? record.RevisionToken : (record[key] || ''));
   });
-  setAcademicCheckedValues(form, 'SubjectIds', record.SubjectIds || []);
 }
 
 function academicRecordRows(type) {
@@ -10121,6 +10238,9 @@ function populateAcademicForm(type, record) {
   });
   form.elements.RecordId.value = academicRecordId(record);
   form.elements.RevisionToken.value = record.RevisionToken || '';
+  if (type === 'offering' && form.elements.SubjectRole) {
+    form.elements.SubjectRole.value = academicOfferingSubjectRole(record, academicFind(academicManagementData?.classes || [], record.ClassId)?.SchoolStage);
+  }
   if (type === 'teacherAllocation') syncAcademicTeacherAssignmentForm(form);
   form.scrollIntoView({ behavior: 'smooth', block: 'start' });
   form.querySelector('input:not([type="hidden"]), select')?.focus();
@@ -10156,6 +10276,7 @@ function bindAcademicManagement() {
   document.getElementById('academicManagementSection')?.addEventListener('change', (event) => {
     academicManagementFilters.section = event.target.value;
     academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
+    academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
     void loadAcademicManagement({ section: event.target.value });
   });
   document.getElementById('academicManagementSession')?.addEventListener('change', (event) => {
@@ -10165,12 +10286,20 @@ function bindAcademicManagement() {
     academicStudentAllocationDraft = {
       sessionId: academicManagementFilters.sessionId, termId: academicManagementFilters.termId, classId: '', armId: ''
     };
+    academicArmSubjectDraft = {
+      sessionId: academicManagementFilters.sessionId, termId: academicManagementFilters.termId, classId: '', armId: ''
+    };
     renderAcademicManagement(academicManagementData || {});
   });
   document.getElementById('academicManagementTerm')?.addEventListener('change', (event) => {
     academicManagementFilters.termId = event.target.value;
     academicStudentAllocationDraft = {
       ...academicStudentAllocationDraft,
+      sessionId: academicManagementFilters.sessionId,
+      termId: academicManagementFilters.termId
+    };
+    academicArmSubjectDraft = {
+      ...academicArmSubjectDraft,
       sessionId: academicManagementFilters.sessionId,
       termId: academicManagementFilters.termId
     };
@@ -10185,6 +10314,21 @@ function bindAcademicManagement() {
     });
     form.querySelector('[data-academic-student-candidate-search]')?.addEventListener('input', () => filterAcademicStudentCandidateOptions(form));
     syncAcademicStudentPlacementForm(form);
+  });
+  const armSubjectForm = panelEl.querySelector('[data-academic-arm-subject-register]');
+  ['SessionId', 'TermId', 'ClassId', 'ArmId'].forEach((name) => {
+    armSubjectForm?.elements.namedItem(name)?.addEventListener('change', (event) => {
+      academicArmSubjectDraft = {
+        ...academicArmSubjectDraft,
+        sessionId: name === 'SessionId' ? event.target.value : academicArmSubjectDraft.sessionId,
+        termId: name === 'TermId' ? event.target.value : academicArmSubjectDraft.termId,
+        classId: name === 'ClassId' ? event.target.value : academicArmSubjectDraft.classId,
+        armId: name === 'ArmId' ? event.target.value : academicArmSubjectDraft.armId
+      };
+      if (name === 'SessionId') academicArmSubjectDraft.termId = '';
+      if (name === 'ClassId') academicArmSubjectDraft.armId = '';
+      renderAcademicManagement(academicManagementData || {});
+    });
   });
   panelEl.querySelectorAll('[data-academic-form]').forEach((form) => form.addEventListener('submit', async (event) => {
     event.preventDefault();
