@@ -345,12 +345,15 @@ test('staff web workspace exposes responsive academic registers and online-only 
     adminSource.indexOf('function academicBulkSetupWorkspace')
   );
   assert.match(structureWorkspace, /table\('Reusable Arm Catalogue', rows\.armTemplates/);
-  assert.match(structureWorkspace, /academicActionButtons\('armTemplate', row, canManage, permissions\.canArchive, permissions\.canDelete\)/);
+  assert.match(structureWorkspace, /data-academic-apply-arm-template/);
+  assert.match(structureWorkspace, /table\('Applied Class Arms', rows\.arms/);
+  assert.match(structureWorkspace, /No reusable arm has been applied to a class yet/);
   assert.ok(
     structureWorkspace.indexOf("table('Reusable Arm Catalogue'") > structureWorkspace.indexOf('academic-management-registers'),
     'the reusable arm catalogue should render inside the Structure register grid'
   );
   assert.match(adminSource, /type === 'armTemplate' && !panelEl\.querySelector\('\[data-academic-form="armTemplate"\]'\)/);
+  assert.match(adminSource, /setAcademicCheckedValues\(form, 'ArmTemplateIds', \[templateId\]\)/);
   assert.match(adminSource, /This step does not create class arms/);
   assert.match(adminSource, /academicActionButtons\('department',[\s\S]{0,150}permissions\?\.canDelete/);
   assert.match(adminSource, /academicActionButtons\('armTemplate',[\s\S]{0,150}permissions\?\.canDelete/);
@@ -365,7 +368,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
   assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-tabs button\{[^}]*font-size:12px/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-arm-catalogue-structure/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-applied-arm-guidance/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

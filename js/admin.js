@@ -2503,7 +2503,7 @@ document.addEventListener('change', (event) => {
   if (select) applyAdminListSort(select);
 });
 
-function table(title, rows, columns) {
+function table(title, rows, columns, options = {}) {
   const sourceRows = Array.isArray(rows) ? rows : [];
   const mode = savedAdminListSort(title);
   const entries = sourceRows.map((row, index) => ({
@@ -2516,7 +2516,7 @@ function table(title, rows, columns) {
   const sortedEntries = sortAdminListEntries(entries, mode);
   const body = sortedEntries.length
     ? sortedEntries.map((entry) => `<tr data-list-row data-list-index="${entry.index}" data-list-name="${escapeHtml(entry.name)}" data-list-created="${entry.created}" data-list-modified="${entry.modified}">${columns.map((column) => `<td>${column.render ? column.render(entry.row) : escapeHtml(column.value(entry.row))}</td>`).join('')}</tr>`).join('')
-    : `<tr><td colspan="${columns.length}">No records found.</td></tr>`;
+    : `<tr><td colspan="${columns.length}">${escapeHtml(options.emptyMessage || 'No records found.')}</td></tr>`;
   const storageKey = adminListStorageKey(title);
   return `
     <h2>${escapeHtml(title)}</h2>
@@ -9453,10 +9453,11 @@ function academicCurrentRows(data = academicManagementData || {}) {
   };
 }
 
-function academicActionButtons(type, row, canEdit = false, canArchive = false, canDelete = false) {
+function academicActionButtons(type, row, canEdit = false, canArchive = false, canDelete = false, extraButtons = '') {
   const id = academicRecordId(row);
-  if (!canEdit && !canArchive && !canDelete) return '<span class="muted">View only</span>';
+  if (!canEdit && !canArchive && !canDelete && !extraButtons) return '<span class="muted">View only</span>';
   return `<div class="academic-management-row-actions">
+    ${extraButtons}
     ${canEdit ? `<button type="button" class="compact-icon-action compact-edit-action" data-academic-edit="${escapeHtml(type)}" data-academic-id="${escapeHtml(id)}" aria-label="Edit this academic record" title="Edit"><span aria-hidden="true">&#9998;</span></button>` : ''}
     ${canArchive && academicIsActive(row) ? `<button type="button" class="compact-icon-action academic-archive-action" data-academic-archive="${escapeHtml(type)}" data-academic-id="${escapeHtml(id)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" aria-label="Archive this academic record" title="Archive"><span aria-hidden="true">&#128451;</span></button>` : ''}
     ${canDelete ? `<button type="button" class="compact-icon-action academic-archive-action" data-academic-delete="${escapeHtml(type)}" data-academic-id="${escapeHtml(id)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" aria-label="Permanently delete this academic record" title="Delete permanently"><span aria-hidden="true">&#128465;</span></button>` : ''}
@@ -9557,14 +9558,17 @@ function academicStructureWorkspace(data, rows) {
         { label: 'Applied classes', value: (row) => { const count = armTemplateUsage(row); return count ? `${count} class${count === 1 ? '' : 'es'}` : 'Not applied'; } },
         { label: 'Default capacity', value: (row) => Number(row.DefaultCapacity) > 0 ? row.DefaultCapacity : 'Unlimited' },
         { label: 'Status', value: (row) => row.Status },
-        { label: 'Actions', render: (row) => academicActionButtons('armTemplate', row, canManage, permissions.canArchive, permissions.canDelete) }
+        { label: 'Actions', render: (row) => academicActionButtons(
+          'armTemplate', row, canManage, permissions.canArchive, permissions.canDelete,
+          canManage ? `<button type="button" class="compact-icon-action" data-academic-apply-arm-template="${escapeHtml(academicRecordId(row))}" aria-label="Apply ${escapeHtml(row.Name)} to classes" title="Apply to classes"><span aria-hidden="true">&#10132;</span></button>` : ''
+        ) }
       ])}
-      ${table('Class Arms', rows.arms, [
+      ${table('Applied Class Arms', rows.arms, [
         { label: 'Class', value: (row) => academicLabel(rows.classes, row.ClassId) }, { label: 'Arm', value: (row) => row.Name },
         { label: 'Enrolled', value: (row) => rows.studentMemberships.filter((membership) => academicIsActive(membership) && membership.ArmId === row.ArmId).length },
         { label: 'Capacity', value: (row) => Number(row.Capacity) > 0 ? row.Capacity : 'Unlimited' }, { label: 'Room', value: (row) => row.Room || '-' },
         { label: 'Status', value: (row) => row.Status }, { label: 'Actions', render: (row) => academicActionButtons('arm', row, canManage, permissions.canArchive, permissions.canDelete) }
-      ])}
+      ], { emptyMessage: 'No reusable arm has been applied to a class yet. Use Apply to classes in the Reusable Arm Catalogue above.' })}
       ${table('Reusable Subject Catalogue', rows.subjects, [
         { label: 'Code', value: (row) => row.Code }, { label: 'Subject', value: (row) => row.Name },
         { label: 'Status', value: (row) => row.Status },
@@ -9995,6 +9999,15 @@ function bindAcademicManagement() {
   panelEl.querySelectorAll('[data-academic-view]').forEach((button) => button.addEventListener('click', () => {
     academicManagementView = button.dataset.academicView;
     renderAcademicManagement(academicManagementData || {});
+  }));
+  panelEl.querySelectorAll('[data-academic-apply-arm-template]').forEach((button) => button.addEventListener('click', () => {
+    const templateId = button.dataset.academicApplyArmTemplate;
+    academicManagementView = 'bulkSetup';
+    renderAcademicManagement(academicManagementData || {});
+    const form = panelEl.querySelector('[data-academic-workflow="bulkApplyAcademicArmTemplates"]');
+    setAcademicCheckedValues(form, 'ArmTemplateIds', [templateId]);
+    form?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    form?.querySelector('input[name="ClassIds"]')?.focus();
   }));
   document.getElementById('refreshAcademicManagement')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', () => loadAcademicManagement()));
   document.getElementById('academicManagementSection')?.addEventListener('change', (event) => {

@@ -39,7 +39,7 @@ test('created and modified sorting are independent and keep missing dates last',
 });
 
 test('every shared web register renders a remembered sorting selector', () => {
-  assert.match(adminSource, /function table\(title, rows, columns\)[\s\S]*data-admin-list-sort/);
+  assert.match(adminSource, /function table\(title, rows, columns, options = \{\}\)[\s\S]*data-admin-list-sort/);
   assert.match(adminSource, /window\.localStorage\.setItem\(select\.dataset\.listStorageKey/);
   assert.match(adminSource, /ADMIN_LIST_CREATED_FIELDS/);
   assert.match(adminSource, /ADMIN_LIST_MODIFIED_FIELDS/);
