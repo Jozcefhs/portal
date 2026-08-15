@@ -9503,6 +9503,50 @@ function academicStudentAllocationCandidates(sessionId, termId, classId) {
   };
 }
 
+const ACADEMIC_STUDENT_IMPORT_COLUMNS = [
+  'StudentRef', 'StudentName', 'ClassCode', 'ArmCode', 'DepartmentCode',
+  'TradeSubjectCodes', 'OptionalSubjectCodes', 'Reason'
+];
+
+function academicStudentMembershipImportRows(data, sessionId, termId) {
+  const assigned = new Set((data.studentMemberships || [])
+    .filter((row) => row.SessionId === sessionId && row.TermId === termId)
+    .map((row) => clean(row.StudentRef).toLowerCase()));
+  return (data.students || []).filter((student) => !assigned.has(clean(student.StudentRef).toLowerCase())).map((student) => {
+    const schoolClass = academicFind(data.classes || [], student.AcademicClassId)
+      || (data.classes || []).find((row) => academicStudentBelongsToClass(student, row));
+    const classArms = (data.arms || []).filter((row) => row.ClassId === schoolClass?.ClassId);
+    const arm = academicFind(classArms, student.AcademicArmId)
+      || classArms.find((row) => clean(row.Name).toLowerCase() === clean(student.ClassArm).toLowerCase());
+    return {
+      StudentRef: clean(student.StudentRef),
+      StudentName: clean(student.StudentName),
+      ClassCode: clean(schoolClass?.Code || schoolClass?.Name || student.ClassName || student.ClassAdmitted),
+      ArmCode: clean(arm?.Code || arm?.Name || student.ClassArm),
+      DepartmentCode: clean(student.AcademicDepartmentCode),
+      TradeSubjectCodes: '', OptionalSubjectCodes: '', Reason: ''
+    };
+  }).sort((left, right) => clean(left.StudentName).localeCompare(clean(right.StudentName), undefined, { sensitivity: 'base' }));
+}
+
+function academicStudentMembershipImportCsv(data, sessionId, termId) {
+  const rows = academicStudentMembershipImportRows(data, sessionId, termId);
+  return [ACADEMIC_STUDENT_IMPORT_COLUMNS, ...rows.map((row) => ACADEMIC_STUDENT_IMPORT_COLUMNS.map((column) => row[column] || ''))]
+    .map((row) => row.map(csvCell).join(','))
+    .join('\r\n');
+}
+
+function syncAcademicStudentImportPeriod(form) {
+  if (!form || !academicManagementData) return;
+  const sessionId = clean(form.elements.SessionId.value);
+  const terms = (academicManagementData.terms || []).filter((row) => academicIsActive(row) && row.SessionId === sessionId);
+  const currentTermId = clean(form.elements.TermId.value);
+  const selectedTermId = academicFind(terms, currentTermId)?.TermId
+    || academicFind(terms, academicManagementFilters.termId)?.TermId
+    || terms.find(academicIsActive)?.TermId || '';
+  form.elements.TermId.innerHTML = academicSelectOptions(terms, selectedTermId, (row) => row.Name, 'Choose term');
+}
+
 function filterAcademicStudentCandidateOptions(form) {
   const search = form?.querySelector('[data-academic-student-candidate-search]');
   const field = form?.querySelector('[data-academic-checkbox-purpose="student-arm-candidates"]');
@@ -10051,6 +10095,17 @@ function academicStudentWorkspace(data, rows) {
       <label>Reason<textarea name="Reason" rows="3" required placeholder="Explain the approved class, arm or department change"></textarea></label>
       <button type="submit">Record movement</button>
     </form>
+    <form class="academic-management-editor academic-student-import-layout" data-academic-student-membership-import>
+      <div class="academic-management-editor-heading"><div><small>Existing student migration</small><h3>Import class-arm memberships</h3><p class="muted">Download a CSV pre-filled with students not yet assigned in this period. Enter reusable class and arm codes; enter a Senior department code where applicable. Separate multiple Trade or Optional subject codes with semicolons. Core subjects are derived and locked by the server.</p></div></div>
+      <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
+      <div class="academic-management-form-grid academic-management-form-grid-2">${periodFields}</div>
+      <div class="academic-student-import-actions">
+        <button type="button" data-academic-download-student-import>Download pre-filled CSV</button>
+        <button type="button" data-academic-import-student-memberships class="secondary">Import completed CSV</button>
+        <input type="file" accept=".csv,text/csv" data-academic-student-import-file hidden>
+      </div>
+      <small class="muted">Maximum 100 rows per import. StudentName is for checking only; StudentRef identifies the existing student. Conflicting current-term memberships are rejected and must use Transfer or change.</small>
+    </form>
   </div>` : '<div class="academic-view-only-note"><strong>My class registers</strong><span>Students and movement history shown here come only from your teaching allocations.</span></div>';
   return `${forms}${academicArmSubjectRegister(data, rows, canManage)}${table('Student Class & Subject Memberships', rows.studentMemberships, [
     { label: 'Student', value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
@@ -10314,6 +10369,60 @@ function bindAcademicManagement() {
     });
     form.querySelector('[data-academic-student-candidate-search]')?.addEventListener('input', () => filterAcademicStudentCandidateOptions(form));
     syncAcademicStudentPlacementForm(form);
+  });
+  const studentImportForm = panelEl.querySelector('[data-academic-student-membership-import]');
+  studentImportForm?.elements.SessionId?.addEventListener('change', () => syncAcademicStudentImportPeriod(studentImportForm));
+  syncAcademicStudentImportPeriod(studentImportForm);
+  const studentImportFile = studentImportForm?.querySelector('[data-academic-student-import-file]');
+  const studentImportButton = studentImportForm?.querySelector('[data-academic-import-student-memberships]');
+  studentImportForm?.querySelector('[data-academic-download-student-import]')?.addEventListener('click', (event) => {
+    const status = document.getElementById('academicManagementStatus');
+    const sessionId = clean(studentImportForm.elements.SessionId.value);
+    const termId = clean(studentImportForm.elements.TermId.value);
+    if (!sessionId || !termId) {
+      setStatus(status, 'Choose the academic session and term before downloading the student template.', 'bad');
+      return;
+    }
+    const rows = academicStudentMembershipImportRows(academicManagementData || {}, sessionId, termId);
+    if (!rows.length) {
+      setStatus(status, 'Every fetched student already has a membership in this period; there are no unassigned students to place in the template.', 'bad');
+      return;
+    }
+    const sessionName = academicLabel(academicManagementData?.sessions || [], sessionId, 'session');
+    const termName = academicLabel(academicManagementData?.terms || [], termId, 'term');
+    const filePart = `${academicManagementFilters.section}-${sessionName}-${termName}`.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    downloadCsvFile(`academic-student-memberships-${filePart}.csv`, academicStudentMembershipImportCsv(academicManagementData || {}, sessionId, termId));
+    setStatus(status, `${rows.length} existing student${rows.length === 1 ? '' : 's'} added to the pre-filled CSV template.`, 'ok');
+    event.currentTarget.blur();
+  });
+  studentImportButton?.addEventListener('click', () => studentImportFile?.click());
+  studentImportFile?.addEventListener('change', async () => {
+    const file = studentImportFile.files?.[0];
+    if (!file) return;
+    const status = document.getElementById('academicManagementStatus');
+    const normalText = clean(studentImportButton?.textContent) || 'Import completed CSV';
+    if (studentImportButton) setButtonLoading(studentImportButton, true, 'Importing...', normalText);
+    try {
+      const sessionId = clean(studentImportForm.elements.SessionId.value);
+      const termId = clean(studentImportForm.elements.TermId.value);
+      if (!sessionId || !termId) throw new Error('Choose the academic session and term for this import.');
+      const rows = parseCsv(await file.text());
+      if (!rows.length) throw new Error('The CSV has no data rows. Download the pre-filled template and try again.');
+      if (rows.length > 100) throw new Error('Import at most 100 student memberships at a time.');
+      const headers = new Set(Object.keys(rows[0] || {}));
+      const missing = ACADEMIC_STUDENT_IMPORT_COLUMNS.filter((column) => !headers.has(column));
+      if (missing.length) throw new Error(`The CSV is missing required column${missing.length === 1 ? '' : 's'}: ${missing.join(', ')}.`);
+      setStatus(status, `Validating and importing ${rows.length} existing student membership${rows.length === 1 ? '' : 's'} online...`);
+      const data = await academicManagementRequest('bulkImportAcademicStudentMemberships', {
+        SchoolSection: academicManagementFilters.section, SessionId: sessionId, TermId: termId, Rows: rows
+      });
+      renderAcademicManagement(data, data.message || 'Existing student memberships imported online.');
+    } catch (error) {
+      setStatus(status, error.message || String(error), 'bad');
+    } finally {
+      studentImportFile.value = '';
+      if (studentImportButton?.isConnected) setButtonLoading(studentImportButton, false, 'Importing...', normalText);
+    }
   });
   const armSubjectForm = panelEl.querySelector('[data-academic-arm-subject-register]');
   ['SessionId', 'TermId', 'ClassId', 'ArmId'].forEach((name) => {

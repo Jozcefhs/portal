@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
+  ACADEMIC_STUDENT_IMPORT_COLUMNS,
   applyAcademicStudentCurriculum,
   assertAcademicMembershipCapacity,
   academicPermanentDeleteDependants,
@@ -16,6 +17,7 @@ import {
   normalizeAcademicOffering,
   normalizeAcademicSession,
   normalizeAcademicStudentMembership,
+  normalizeAcademicStudentImportRows,
   normalizeAcademicStudentMovement,
   normalizeAcademicSubject,
   normalizeAcademicTeacherAllocation,
@@ -213,6 +215,21 @@ test('AM-002 student memberships allocate one arm and a unique subject set per t
   }, scope), /class and arm/);
 });
 
+test('AM-002 existing-student import rows use reusable codes and semicolon subject lists', () => {
+  assert.deepEqual(ACADEMIC_STUDENT_IMPORT_COLUMNS, [
+    'StudentRef', 'StudentName', 'ClassCode', 'ArmCode', 'DepartmentCode',
+    'TradeSubjectCodes', 'OptionalSubjectCodes', 'Reason'
+  ]);
+  assert.deepEqual(normalizeAcademicStudentImportRows([{
+    AdmissionNo: 'DCA/2026/001', DisplayName: 'Ada Student', ClassCode: 'SS1', ArmCode: 'EXC',
+    DepartmentCode: 'SCI', TradeSubjectCodes: 'CATER; AGR | CATER', OptionalSubjectCodes: 'BIO;MUSIC'
+  }]), [{
+    StudentRef: 'DCA/2026/001', StudentName: 'Ada Student', ClassCode: 'SS1', ArmCode: 'EXC',
+    DepartmentCode: 'SCI', TradeSubjectCodes: ['CATER', 'AGR'], OptionalSubjectCodes: ['BIO', 'MUSIC'], Reason: ''
+  }]);
+  assert.deepEqual(normalizeAcademicStudentImportRows('not-json'), []);
+});
+
 test('AM-002 arm allocation candidates must belong to the selected existing class', () => {
   const gradeSeven = { ClassId: 'grade-7', Name: 'Grade 7', Code: 'JSS1', LegacyDocumentId: 'Grade_7' };
   assert.equal(academicStudentMatchesClass({ ClassName: 'Grade 7' }, gradeSeven), true);
@@ -337,6 +354,9 @@ test('Academic writes are audited, optimistic and preserve legacy class/student 
   assert.match(librarySource, /ACADEMIC_MOVEMENT_REQUIRED/);
   assert.match(librarySource, /academicStudentMovements/);
   assert.match(librarySource, /Allocate at most 100 students in one batch/);
+  assert.match(librarySource, /Import at most 100 student memberships at a time/);
+  assert.match(librarySource, /ACADEMIC_IMPORT_MEMBERSHIP_CONFLICT/);
+  assert.match(librarySource, /Imported into Academic Management/);
   assert.match(librarySource, /Update at most 200 student subject selections in one arm batch/);
   assert.match(librarySource, /ACADEMIC_SUBJECT_ROLES/);
   assert.match(librarySource, /Every Senior Secondary student must select at least one Trade subject/);
@@ -372,6 +392,7 @@ test('Web and desktop transports share one protected Academic Management handler
   assert.match(backendSource, /case 'deleteAcademicRecord'/);
   assert.match(backendSource, /case 'saveAcademicStudentMembership'/);
   assert.match(backendSource, /case 'bulkAllocateAcademicStudents'/);
+  assert.match(backendSource, /case 'bulkImportAcademicStudentMemberships'/);
   assert.match(backendSource, /case 'bulkAssignAcademicArmStudentSubjects'/);
   assert.match(librarySource, /assignments\.length > 200/);
   assert.match(backendSource, /case 'moveAcademicStudentMembership'/);
@@ -394,6 +415,11 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /name: 'CoreSubjectIds'/);
   assert.doesNotMatch(adminSource, /select name="(?:CoreSubjectIds|StudentRefs|SubjectIds)" multiple/);
   assert.match(adminSource, /data-academic-workflow="bulkAllocateAcademicStudents"/);
+  assert.match(adminSource, /data-academic-student-membership-import/);
+  assert.match(adminSource, /data-academic-download-student-import/);
+  assert.match(adminSource, /bulkImportAcademicStudentMemberships/);
+  assert.match(adminSource, /function academicStudentMembershipImportCsv/);
+  assert.match(adminSource, /Separate multiple Trade or Optional subject codes with semicolons/);
   assert.match(adminSource, /data-academic-workflow="bulkAssignAcademicArmStudentSubjects"/);
   assert.match(adminSource, /function academicArmSubjectRegister/);
   assert.match(adminSource, /Core · locked/);
@@ -460,7 +486,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
   assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-tabs button\{[^}]*font-size:12px/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-arm-subjects/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-student-membership-import/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
