@@ -2198,7 +2198,7 @@ function renderModuleSummary(active, liveData = null) {
   } else if (active === 'academics' && liveData) {
     const summary = liveData.summary || {};
     cards = [
-      { icon, label: 'Classes', value: summary.Classes || 0, note: `${summary.Arms || 0} active arm(s)` },
+      { icon, label: 'Classes', value: summary.Classes || 0, note: `${summary.Arms || 0} active arm(s) from ${summary.ArmTemplates || 0} reusable definition(s)` },
       { icon: '\u{1F4DA}', label: 'Subjects', value: summary.Subjects || 0, note: `${summary.Departments || 0} senior department(s)` },
       { icon: '\u{1F9D1}\u200D\u{1F3EB}', label: 'Teacher allocations', value: summary.TeacherAllocations || 0, note: 'Selected branch and scope' },
       { icon: '\u{1F393}', label: 'Student memberships', value: summary.StudentMemberships || 0, note: 'Class, arm and subjects' }
@@ -9371,7 +9371,7 @@ function academicCurrentRows(data = academicManagementData || {}) {
   const section = academicManagementFilters.section;
   const sessionId = academicManagementFilters.sessionId;
   const termId = academicManagementFilters.termId;
-  const sectionRows = (rows = []) => rows.filter((row) => !section || clean(row.SchoolSection) === section);
+  const sectionRows = (rows = []) => rows.filter((row) => !section || ['all', section].includes(clean(row.SchoolSection)));
   const periodRows = (rows = []) => sectionRows(rows).filter((row) => (
     (!sessionId || row.SessionId === sessionId) && (!termId || row.TermId === termId)
   ));
@@ -9379,6 +9379,7 @@ function academicCurrentRows(data = academicManagementData || {}) {
     sessions: data.sessions || [],
     terms: (data.terms || []).filter((row) => !sessionId || row.SessionId === sessionId),
     classes: sectionRows(data.classes || []),
+    armTemplates: sectionRows(data.armTemplates || []),
     arms: sectionRows(data.arms || []),
     subjects: sectionRows(data.subjects || []),
     departments: sectionRows(data.departments || []),
@@ -9488,6 +9489,60 @@ function academicStructureWorkspace(data, rows) {
         { label: 'Actions', render: (row) => academicActionButtons('subject', row, canManage, permissions.canArchive) }
       ])}
     </div>`;
+}
+
+function academicBulkSetupWorkspace(data, rows) {
+  const canManage = data.permissions?.canManageStructure === true;
+  if (!canManage) return '<div class="academic-view-only-note"><strong>Bulk academic setup</strong><span>Your role cannot change the class or reusable arm catalogue.</span></div>';
+  const classes = rows.classes.filter(academicIsActive);
+  const templates = rows.armTemplates.filter(academicIsActive);
+  const secondary = academicManagementFilters.section === 'secondary';
+  const classExample = secondary
+    ? 'JSS 1 | JSS1 | Junior Secondary | 120\nJSS 2 | JSS2 | Junior Secondary | 120\nSS 1 | SS1 | Senior Secondary | 120'
+    : 'Primary 1 | PRI1 | 40\nPrimary 2 | PRI2 | 40\nPrimary 3 | PRI3 | 40';
+  const classHelp = secondary
+    ? 'One class per line: Name | Code | Junior Secondary or Senior Secondary | Capacity.'
+    : 'One class per line: Name | Code | Capacity.';
+  const classOptions = classes.map((row) => ({ value: row.ClassId, label: `${row.Code} - ${row.Name}` }));
+  const templateOptions = templates.map((row) => ({ value: row.ArmTemplateId, label: `${row.Code} - ${row.Name}` }));
+  return `<div class="academic-management-editor-grid">
+    <form class="academic-management-editor" data-academic-workflow="bulkCreateAcademicClasses">
+      <div class="academic-management-editor-heading"><div><small>Up to 50 at once</small><h3>Build class catalogue</h3></div></div>
+      <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
+      <label>Class definitions<textarea name="ClassLines" rows="9" required placeholder="${escapeHtml(classExample)}"></textarea><small>${escapeHtml(classHelp)} Zero capacity means unlimited.</small></label>
+      <button type="submit">Create all classes</button>
+    </form>
+    <form class="academic-management-editor" data-academic-workflow="bulkCreateAcademicArmTemplates">
+      <div class="academic-management-editor-heading"><div><small>Reusable catalogue</small><h3>Create reusable arms</h3></div></div>
+      <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
+      <label>Arm definitions<textarea name="ArmTemplateLines" rows="9" required placeholder="A | A | 40&#10;B | B | 40&#10;Gold | GOLD | 35"></textarea><small>One reusable arm per line: Name | Code | Default capacity. Create each name once, then apply it to any class.</small></label>
+      <button type="submit">Create all reusable arms</button>
+    </form>
+    <form class="academic-management-editor" data-academic-form="armTemplate">
+      ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Catalogue maintenance</small><h3>Edit one reusable arm</h3></div><button type="button" class="academic-form-reset" data-academic-reset="armTemplate">Clear</button></div>
+      <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
+      <label>Arm name<input name="Name" required placeholder="Gold"></label>
+      <label>Stable code<input name="Code" required placeholder="GOLD"></label>
+      <label>Default capacity<input name="DefaultCapacity" type="number" min="0" max="10000" value="0"><small>Zero means unlimited. Applied class arms can still be edited independently.</small></label>
+      <label>Display order<input name="SortOrder" type="number" min="1" value="100"></label>
+      <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
+      <button type="submit">Save reusable arm</button>
+    </form>
+    <form class="academic-management-editor" data-academic-workflow="bulkApplyAcademicArmTemplates">
+      <div class="academic-management-editor-heading"><div><small>Atomic assignment</small><h3>Apply arms to classes</h3></div></div>
+      <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
+      ${academicCheckboxField({ name: 'ClassIds', label: 'Classes', options: classOptions, required: true, idPrefix: 'arm-application-classes', help: 'Every selected reusable arm will be applied to every selected class.' })}
+      ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Reusable arms', options: templateOptions, required: true, idPrefix: 'arm-application-templates', help: 'Existing matching class arms are skipped; no class arm is overwritten.' })}
+      <button type="submit">Apply selected arms</button>
+    </form>
+  </div>
+  ${table('Reusable Arm Catalogue', rows.armTemplates, [
+    { label: 'Code', value: (row) => row.Code },
+    { label: 'Reusable arm', value: (row) => row.Name },
+    { label: 'Default capacity', value: (row) => Number(row.DefaultCapacity) > 0 ? row.DefaultCapacity : 'Unlimited' },
+    { label: 'Status', value: (row) => row.Status },
+    { label: 'Actions', render: (row) => academicActionButtons('armTemplate', row, canManage, data.permissions?.canArchive) }
+  ])}`;
 }
 
 function academicDepartmentsWorkspace(data, rows) {
@@ -9680,7 +9735,7 @@ function academicManagementHeader(data, rows, message = '') {
   ));
   const views = data.permissions?.teacherView
     ? [['structure', 'Catalogue'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['teachers', 'My allocations'], ['students', 'My registers']]
-    : [['structure', 'Structure'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Subject offerings'], ['teachers', 'Teacher allocations'], ['students', 'Student memberships']];
+    : [['structure', 'Structure'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Subject offerings'], ['teachers', 'Teacher allocations'], ['students', 'Student memberships']];
   return `<div class="academic-management-heading">
     <div><p class="eyebrow">AM-002 / AM-003</p><h2>Academic Management</h2><p class="muted">Branch-isolated structure with Junior all-subject rules and Senior department core curricula.</p></div>
     <button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button>
@@ -9716,7 +9771,8 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
   }
   const rows = academicCurrentRows(data);
   let workspace = '';
-  if (academicManagementView === 'offerings') workspace = academicOfferingsWorkspace(data, rows);
+  if (academicManagementView === 'bulkSetup') workspace = academicBulkSetupWorkspace(data, rows);
+  else if (academicManagementView === 'offerings') workspace = academicOfferingsWorkspace(data, rows);
   else if (academicManagementView === 'departments') workspace = academicDepartmentsWorkspace(data, rows);
   else if (academicManagementView === 'teachers') workspace = academicTeacherWorkspace(data, rows);
   else if (academicManagementView === 'students') workspace = academicStudentWorkspace(data, rows);
@@ -9760,6 +9816,10 @@ function academicFormPayload(form) {
   validateAcademicCheckboxFields(form);
   const data = new FormData(form);
   const payload = Object.fromEntries(data.entries());
+  form.querySelectorAll('[data-academic-checkbox-field]').forEach((field) => {
+    const name = field.dataset.academicCheckboxName;
+    payload[name] = academicCheckedValues(form, name);
+  });
   if (form.dataset.academicForm === 'offering') payload.Compulsory = form.elements.Compulsory.checked;
   if (form.dataset.academicForm === 'studentMembership') {
     payload.SubjectIds = academicCheckedValues(form, 'SubjectIds');
@@ -9773,12 +9833,10 @@ function academicFormPayload(form) {
 function academicWorkflowPayload(form) {
   validateAcademicCheckboxFields(form);
   const payload = Object.fromEntries(new FormData(form).entries());
-  if (form.querySelector('[data-academic-checkbox-name="StudentRefs"]')) {
-    payload.StudentRefs = academicCheckedValues(form, 'StudentRefs');
-  }
-  if (form.querySelector('[data-academic-checkbox-name="SubjectIds"]')) {
-    payload.SubjectIds = academicCheckedValues(form, 'SubjectIds');
-  }
+  form.querySelectorAll('[data-academic-checkbox-field]').forEach((field) => {
+    const name = field.dataset.academicCheckboxName;
+    payload[name] = academicCheckedValues(form, name);
+  });
   return payload;
 }
 
@@ -9794,7 +9852,7 @@ function populateAcademicMovementForm(form, record) {
 function academicRecordRows(type) {
   const key = ({
     session: 'sessions', term: 'terms', class: 'classes', arm: 'arms', subject: 'subjects', department: 'departments',
-    offering: 'offerings', teacherAllocation: 'teacherAllocations', studentMembership: 'studentMemberships'
+    armTemplate: 'armTemplates', offering: 'offerings', teacherAllocation: 'teacherAllocations', studentMembership: 'studentMemberships'
   })[type];
   return academicManagementData?.[key] || [];
 }

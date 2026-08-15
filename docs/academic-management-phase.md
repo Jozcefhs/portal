@@ -21,7 +21,10 @@ Teacher read-only registers, and compatibility updates for existing class and
 student records. Student allocation now supports atomic batches of up to 100,
 class and arm capacity enforcement, controlled class/arm/department/subject
 changes, withdrawal and reinstatement, and immutable before/after movement
-history on web and desktop. Promotion intake, result enforcement, score processing,
+history on web and desktop. Administrators can also create up to 50 classes or
+reusable arm definitions in one online batch, then apply selected catalogue
+arms across selected classes in an atomic class-arm batch. Promotion intake,
+result enforcement, score processing,
 timetables, attendance and CBT remain pending milestones; configuring a policy
 or academic structure does not yet publish or unlock parent results.
 
@@ -211,6 +214,9 @@ The foundation module manages:
 - school sections and class levels, with Secondary divided into Junior
   Secondary and Senior Secondary;
 - class arms, capacities, rooms and form teachers;
+- a reusable, branch-scoped arm catalogue: arm definitions are
+  created once and may be applied to many classes without coupling the
+  catalogue entry to any single class or school section;
 - subjects, subject groups, subject codes and compulsory/elective status;
 - configurable Senior Secondary departments such as Sciences, Arts and Social
   Sciences, each with a reusable department-wide core-subject set;
@@ -234,6 +240,14 @@ The foundation module manages:
 
 Stable identifiers, rather than display names, link all academic records.
 Renaming a class or subject must not orphan scores or results.
+
+Bulk class setup accepts a maximum of 50 class definitions per submission.
+Bulk reusable-arm setup accepts a maximum of 50 catalogue entries, and arm
+application accepts at most 200 class-arm combinations. Each operation is
+atomic, skips exact retries, refuses to overwrite a conflicting existing
+record and reports success only after the online commit succeeds. Applying a
+catalogue arm creates an independent class-specific arm whose capacity and room
+may subsequently be adjusted without changing the reusable definition.
 
 Senior department core subjects are not copied into a particular class
 definition. A department is a branch-scoped Senior Secondary curriculum entity

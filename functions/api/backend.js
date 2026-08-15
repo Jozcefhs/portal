@@ -692,7 +692,8 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'sendOfficialCorrespondence', 'saveExecutiveDashboardPreferences',
   'getStudentConductCases', 'saveStudentConductCase', 'deleteStudentConductCase',
   'getAcademicManagement', 'saveAcademicSession', 'saveAcademicTerm', 'saveAcademicClass',
-  'saveAcademicArm', 'saveAcademicSubject', 'saveAcademicDepartment', 'saveAcademicOffering',
+  'saveAcademicArmTemplate', 'saveAcademicArm', 'saveAcademicSubject', 'saveAcademicDepartment', 'saveAcademicOffering',
+  'bulkCreateAcademicClasses', 'bulkCreateAcademicArmTemplates', 'bulkApplyAcademicArmTemplates',
   'saveAcademicTeacherAllocation', 'saveAcademicStudentMembership', 'bulkAllocateAcademicStudents',
   'moveAcademicStudentMembership', 'withdrawAcademicStudentMembership', 'reinstateAcademicStudentMembership',
   'archiveAcademicRecord',
@@ -7420,12 +7421,16 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'saveAcademicSession':
     case 'saveAcademicTerm':
     case 'saveAcademicClass':
+    case 'saveAcademicArmTemplate':
     case 'saveAcademicArm':
     case 'saveAcademicSubject':
     case 'saveAcademicDepartment':
     case 'saveAcademicOffering':
     case 'saveAcademicTeacherAllocation':
     case 'saveAcademicStudentMembership':
+    case 'bulkCreateAcademicClasses':
+    case 'bulkCreateAcademicArmTemplates':
+    case 'bulkApplyAcademicArmTemplates':
     case 'bulkAllocateAcademicStudents':
     case 'moveAcademicStudentMembership':
     case 'withdrawAcademicStudentMembership':

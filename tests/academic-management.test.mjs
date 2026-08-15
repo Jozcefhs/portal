@@ -7,6 +7,7 @@ import {
   assertAcademicMembershipCapacity,
   academicManagementCapabilities,
   normalizeAcademicArm,
+  normalizeAcademicArmTemplate,
   normalizeAcademicClass,
   normalizeAcademicDepartment,
   normalizeAcademicOffering,
@@ -15,7 +16,9 @@ import {
   normalizeAcademicStudentMovement,
   normalizeAcademicSubject,
   normalizeAcademicTeacherAllocation,
-  normalizeAcademicTerm
+  normalizeAcademicTerm,
+  parseAcademicArmTemplateBatch,
+  parseAcademicClassBatch
 } from '../functions/lib/academic-management.js';
 import { staffRoleAllowedForEdition } from '../functions/lib/organization-config.js';
 import { defaultModulesForRole, modulesForEdition } from '../functions/lib/role-module-access.js';
@@ -62,6 +65,28 @@ test('AM-003 classes and arms retain branch and school-section isolation', () =>
   assert.equal(schoolClass.SchoolStage, 'junior-secondary');
   assert.equal(normalizeAcademicClass({ Name: 'SS 2', Code: 'SS2', SchoolStage: 'senior-secondary' }, scope).SchoolStage, 'senior-secondary');
   assert.throws(() => normalizeAcademicClass({ Name: 'Year 10', Code: 'Y10' }, scope), /Junior Secondary or Senior Secondary/);
+});
+
+test('AM-003 bulk classes stay section scoped while reusable arm templates are branch wide', () => {
+  const secondaryClasses = parseAcademicClassBatch({
+    ClassLines: 'JSS 1 | JSS1 | Junior Secondary | 120\nSS 1 | SS1 | Senior Secondary | 100'
+  }, scope);
+  const primaryClasses = parseAcademicClassBatch({ ClassLines: 'Primary 1 | PRI1 | 40' }, { ...scope, section: 'primary' });
+  const armRows = parseAcademicArmTemplateBatch({ ArmTemplateLines: 'A | A | 40\nGold | GOLD | 35' });
+  const template = normalizeAcademicArmTemplate(armRows[1], scope);
+  const appliedArm = normalizeAcademicArm({
+    ClassId: 'class-1', Name: template.Name, Code: template.Code,
+    ArmTemplateId: template.ArmTemplateId, Capacity: template.DefaultCapacity
+  }, scope);
+
+  assert.deepEqual(secondaryClasses.map((row) => row.SchoolStage), ['Junior Secondary', 'Senior Secondary']);
+  assert.equal(secondaryClasses[0].Capacity, '120');
+  assert.equal(primaryClasses[0].SchoolStage, 'primary');
+  assert.equal(template.ArmTemplateId, 'arm-template__north-campus__gold');
+  assert.equal(template.SchoolSection, 'all');
+  assert.equal(template.DefaultCapacity, 35);
+  assert.equal(appliedArm.ArmTemplateId, template.ArmTemplateId);
+  assert.equal(appliedArm.Capacity, 35);
 });
 
 test('AM-002 senior departments own reusable core-subject sets', () => {
@@ -209,6 +234,9 @@ test('Academic writes are audited, optimistic and preserve legacy class/student 
   assert.match(librarySource, /ACADEMIC_MOVEMENT_REQUIRED/);
   assert.match(librarySource, /academicStudentMovements/);
   assert.match(librarySource, /Allocate at most 100 students in one batch/);
+  assert.match(librarySource, /Create at most 50 classes in one batch/);
+  assert.match(librarySource, /Apply at most 200 class-arm combinations in one batch/);
+  assert.match(librarySource, /academicArmTemplates/);
   assert.match(librarySource, /ACADEMIC_TEACHER_SECTION_INVALID/);
   assert.match(librarySource, /Archive the \$\{dependants\.length\} active dependent record/);
 });
@@ -222,6 +250,10 @@ test('Web and desktop transports share one protected Academic Management handler
   assert.match(backendSource, /case 'getAcademicManagement'/);
   assert.match(backendSource, /case 'saveAcademicTeacherAllocation'/);
   assert.match(backendSource, /case 'saveAcademicDepartment'/);
+  assert.match(backendSource, /case 'saveAcademicArmTemplate'/);
+  assert.match(backendSource, /case 'bulkCreateAcademicClasses'/);
+  assert.match(backendSource, /case 'bulkCreateAcademicArmTemplates'/);
+  assert.match(backendSource, /case 'bulkApplyAcademicArmTemplates'/);
   assert.match(backendSource, /case 'saveAcademicStudentMembership'/);
   assert.match(backendSource, /case 'bulkAllocateAcademicStudents'/);
   assert.match(backendSource, /case 'moveAcademicStudentMembership'/);
@@ -239,10 +271,16 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /function syncAcademicTeacherAssignmentForm/);
   assert.match(adminSource, /function academicCheckboxField/);
   assert.match(adminSource, /function validateAcademicCheckboxFields/);
-  assert.match(adminSource, /academicCheckedValues\(form, 'StudentRefs'\)/);
-  assert.match(adminSource, /academicCheckedValues\(form, 'CoreSubjectIds'\)/);
+  assert.match(adminSource, /payload\[name\] = academicCheckedValues\(form, name\)/);
+  assert.match(adminSource, /name: 'StudentRefs'/);
+  assert.match(adminSource, /name: 'CoreSubjectIds'/);
   assert.doesNotMatch(adminSource, /select name="(?:CoreSubjectIds|StudentRefs|SubjectIds)" multiple/);
   assert.match(adminSource, /data-academic-workflow="bulkAllocateAcademicStudents"/);
+  assert.match(adminSource, /function academicBulkSetupWorkspace/);
+  assert.match(adminSource, /data-academic-workflow="bulkCreateAcademicClasses"/);
+  assert.match(adminSource, /data-academic-workflow="bulkCreateAcademicArmTemplates"/);
+  assert.match(adminSource, /data-academic-workflow="bulkApplyAcademicArmTemplates"/);
+  assert.match(adminSource, /Reusable Arm Catalogue/);
   assert.match(adminSource, /Student Movement History/);
   assert.match(adminSource, /staffFetch\('\/api\/staff-academics'/);
   assert.match(adminSource, /active === 'academics'/);
@@ -250,10 +288,10 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-checkbox-options/);
   assert.match(styleSource, /\.academic-checkbox-option input\[type="checkbox"\]/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-academic-checkboxes/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-bulk-class-arm-setup/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
   assert.match(backupSource, /listRootCollectionIds/);
-  assert.doesNotMatch(backupSource, /EXCLUDED_ROOT_COLLECTIONS[\s\S]{0,500}academic(?:Sessions|Terms|Classes|Arms|Subjects|StudentMovements)/);
+  assert.doesNotMatch(backupSource, /EXCLUDED_ROOT_COLLECTIONS[\s\S]{0,500}academic(?:Sessions|Terms|Classes|ArmTemplates|Arms|Subjects|StudentMovements)/);
 });
