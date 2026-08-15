@@ -493,6 +493,15 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /The same staff member can also teach different subjects in other classes and arms/);
   assert.match(adminSource, /row\.Department \? ` · \$\{row\.Department\}`/);
   assert.match(adminSource, /function syncAcademicTeacherAssignmentForm/);
+  const teacherWorkspace = adminSource.slice(
+    adminSource.indexOf('function academicTeacherWorkspace'),
+    adminSource.indexOf('function academicStudentMembershipActions')
+  );
+  assert.match(teacherWorkspace, /const armTemplates = rows\.armTemplates\.filter\(academicIsActive\)/);
+  assert.match(teacherWorkspace, /select name="ArmTemplateId" data-academic-teacher-arm-template/);
+  assert.match(teacherWorkspace, /input type="hidden" name="ArmId" data-academic-teacher-arm/);
+  assert.doesNotMatch(teacherWorkspace, /academicLabel\(classes, row\.ClassId\) \/ \$\{row\.Name\}/);
+  assert.match(adminSource, /This reusable arm has not been applied to the selected class/);
   assert.match(adminSource, /function academicCheckboxField/);
   assert.match(adminSource, /data-academic-checkbox-count/);
   assert.match(adminSource, /function bindAcademicCheckboxField/);
@@ -583,7 +592,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
   assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-tabs button\{[^}]*font-size:12px/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-explicit-classrooms/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-reusable-teacher-arms/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

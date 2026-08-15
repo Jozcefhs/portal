@@ -10208,7 +10208,7 @@ function academicTeacherWorkspace(data, rows) {
   const sessions = rows.sessions.filter(academicIsActive);
   const terms = (data.terms || []).filter((row) => academicIsActive(row) && (!academicManagementFilters.sessionId || row.SessionId === academicManagementFilters.sessionId));
   const classes = rows.classes.filter(academicIsActive);
-  const arms = rows.arms.filter(academicIsActive);
+  const armTemplates = rows.armTemplates.filter(academicIsActive);
   const subjects = rows.subjects.filter(academicIsActive);
   const staff = (data.staff || []).filter((row) => {
     const assigned = clean(row.SchoolSectionAccess).toLowerCase();
@@ -10222,7 +10222,7 @@ function academicTeacherWorkspace(data, rows) {
       <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
       <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, 'Choose teacher')}</select></label>
       <label>Class<select name="ClassId" required>${academicSelectOptions(classes, '', (row) => row.Name, 'Choose class')}</select></label>
-      <label>Arm<select name="ArmId" data-academic-teacher-arm>${academicSelectOptions(arms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'All arms (subject teaching only)')}</select></label>
+      <label>Arm<select name="ArmTemplateId" data-academic-teacher-arm-template>${academicSelectOptions(armTemplates, '', (row) => row.Name, 'All arms (subject teaching only)')}</select><input type="hidden" name="ArmId" data-academic-teacher-arm><small>Shows the reusable arm catalogue without repeating every class.</small></label>
       <label>Responsibility<select name="AllocationRole" data-academic-teacher-role><option>Subject Teacher</option><option>Form Teacher</option><option>Assistant Teacher</option></select></label>
       <label>Subject<select name="SubjectId" data-academic-teacher-subject>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Required for Subject Teacher')}</select><small>Not applicable to Form Teacher or Assistant Teacher responsibility.</small></label>
       <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
@@ -10568,7 +10568,16 @@ function populateAcademicForm(type, record) {
   if (type === 'offering' && form.elements.SubjectRole) {
     form.elements.SubjectRole.value = academicOfferingSubjectRole(record, academicFind(academicManagementData?.classes || [], record.ClassId)?.SchoolStage);
   }
-  if (type === 'teacherAllocation') syncAcademicTeacherAssignmentForm(form);
+  if (type === 'teacherAllocation') {
+    const selectedArm = academicFind(academicManagementData?.arms || [], record.ArmId);
+    const selectedTemplate = academicFind(academicManagementData?.armTemplates || [], selectedArm?.ArmTemplateId)
+      || (academicManagementData?.armTemplates || []).find((row) => selectedArm && (
+        clean(row.Name).toLowerCase() === clean(selectedArm.Name).toLowerCase()
+        || (clean(row.Code) && clean(row.Code).toLowerCase() === clean(selectedArm.Code).toLowerCase())
+      ));
+    if (form.elements.ArmTemplateId) form.elements.ArmTemplateId.value = clean(selectedTemplate?.ArmTemplateId);
+    syncAcademicTeacherAssignmentForm(form);
+  }
   form.scrollIntoView({ behavior: 'smooth', block: 'start' });
   form.querySelector('input:not([type="hidden"]), select')?.focus();
 }
@@ -10576,10 +10585,21 @@ function populateAcademicForm(type, record) {
 function syncAcademicTeacherAssignmentForm(form) {
   const role = form?.querySelector('[data-academic-teacher-role]');
   const arm = form?.querySelector('[data-academic-teacher-arm]');
+  const armTemplate = form?.querySelector('[data-academic-teacher-arm-template]');
   const subject = form?.querySelector('[data-academic-teacher-subject]');
-  if (!role || !arm || !subject) return;
+  if (!role || !arm || !armTemplate || !subject) return;
   const subjectTeacher = role.value === 'Subject Teacher';
-  arm.required = !subjectTeacher;
+  const classId = clean(form.elements.ClassId?.value);
+  const templateId = clean(armTemplate.value);
+  const selectedTemplate = academicFind(academicManagementData?.armTemplates || [], templateId);
+  const matchingArm = (academicManagementData?.arms || []).find((row) => academicIsActive(row)
+    && row.ClassId === classId && (row.ArmTemplateId === templateId
+      || (selectedTemplate && (clean(row.Name).toLowerCase() === clean(selectedTemplate.Name).toLowerCase()
+        || (clean(row.Code) && clean(row.Code).toLowerCase() === clean(selectedTemplate.Code).toLowerCase())))));
+  arm.value = clean(matchingArm?.ArmId);
+  armTemplate.required = !subjectTeacher;
+  armTemplate.setCustomValidity(classId && templateId && !matchingArm
+    ? 'This reusable arm has not been applied to the selected class.' : '');
   subject.required = subjectTeacher;
   subject.disabled = !subjectTeacher;
   if (!subjectTeacher) subject.value = '';
@@ -10667,7 +10687,9 @@ function bindAcademicManagement() {
     form.querySelector('[data-academic-student-candidate-search]')?.addEventListener('input', () => filterAcademicStudentCandidateOptions(form));
   });
   const teacherAssignmentForm = panelEl.querySelector('[data-academic-form="teacherAllocation"]');
-  teacherAssignmentForm?.querySelector('[data-academic-teacher-role]')?.addEventListener('change', () => syncAcademicTeacherAssignmentForm(teacherAssignmentForm));
+  ['AllocationRole', 'ClassId', 'ArmTemplateId'].forEach((name) => (
+    teacherAssignmentForm?.elements.namedItem(name)?.addEventListener('change', () => syncAcademicTeacherAssignmentForm(teacherAssignmentForm))
+  ));
   syncAcademicTeacherAssignmentForm(teacherAssignmentForm);
   panelEl.querySelectorAll('[data-academic-student-placement]').forEach((form) => {
     ['SessionId', 'TermId', 'ClassId', 'ArmId'].forEach((name) => {
