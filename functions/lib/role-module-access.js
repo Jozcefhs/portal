@@ -13,6 +13,7 @@ export const WEB_SECTION_CATALOG = Object.freeze([
   Object.freeze({ key: 'admissions', label: 'Admissions' }),
   Object.freeze({ key: 'formPurchases', label: 'Form Purchases' }),
   Object.freeze({ key: 'students', label: 'Students' }),
+  Object.freeze({ key: 'academics', label: 'Academic Management' }),
   Object.freeze({ key: 'studentConduct', label: 'Student Conduct & Discipline' }),
   Object.freeze({ key: 'humanResources', label: 'Human Resources' }),
   Object.freeze({ key: 'members', label: 'Departments & Members' }),
@@ -56,7 +57,7 @@ export const ORGANIZATION_SECTION_LABELS = Object.freeze({
 });
 
 export const STAFF_ROLE_OPTIONS = Object.freeze([
-  'Super Admin', 'Principal', 'Senior Pastor', 'Head Minister',
+  'Super Admin', 'Principal', 'Teacher', 'Senior Pastor', 'Head Minister',
   'Admissions Officer', 'Student Welfare Officer', 'Accounts Officer',
   'Management', 'Department User', 'Tuck Shop User', 'Clinic User',
   'Kitchen User', 'Store User', 'Restaurant User', 'Front Desk', 'Pastor',
@@ -71,11 +72,12 @@ export const STAFF_ROLE_OPTIONS = Object.freeze([
 ]);
 
 const LEGACY_ROLE_DEFAULTS = Object.freeze({
-  'Super Admin': ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'studentConduct', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'dataBackup', 'securityAudit', 'staffUsers'],
-  Principal: ['recordsDesk', 'executiveOffice', 'studentConduct'],
-  'Admissions Officer': ['recordsDesk', 'admissions', 'formPurchases', 'students', 'studentConduct', 'financeRequests', 'payroll'],
+  'Super Admin': ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'dataBackup', 'securityAudit', 'staffUsers'],
+  Principal: ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct'],
+  Teacher: ['academics'],
+  'Admissions Officer': ['recordsDesk', 'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'financeRequests', 'payroll'],
   'Accounts Officer': ['recordsDesk', 'students', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
-  Management: ['recordsDesk', 'admissions', 'formPurchases', 'students', 'studentConduct', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
+  Management: ['recordsDesk', 'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
   'Student Welfare Officer': ['recordsDesk', 'students', 'studentConduct'],
   'Tuck Shop User': ['recordsDesk', 'tuckShop', 'financeRequests', 'payroll'],
   'Clinic User': ['recordsDesk', 'clinic', 'financeRequests', 'payroll'],
@@ -123,7 +125,7 @@ export function rolesForEdition(edition) {
 export function modulesForEdition(edition, featureFlags = null) {
   const allowed = new Set(filterSectionsForFeatures(WEB_SECTION_KEYS, featureFlags));
   if (normalizeOrganizationEdition(edition) !== 'school') {
-    ['admissions', 'formPurchases', 'students', 'studentConduct', 'accounts', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore']
+    ['admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore']
       .forEach((key) => allowed.delete(key));
   }
   return WEB_SECTION_CATALOG

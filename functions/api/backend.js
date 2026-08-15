@@ -57,6 +57,8 @@ import { handleOrganizationDepartmentAction } from '../lib/organization-departme
 import { assertOrganizationDepartmentWorkspaceAccess } from '../lib/organization-department-gate.js';
 import { handleExecutiveOfficeAction } from '../lib/executive-correspondence.js';
 import { handleStudentConductAction } from '../lib/student-conduct.js';
+import { handleAcademicManagementAction } from '../lib/academic-management.js';
+import { defaultModulesForRole } from '../lib/role-module-access.js';
 import { getWebBranding, saveWebBranding } from '../lib/web-branding.js';
 import { saveDocumentBranding } from '../lib/document-branding.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
@@ -689,6 +691,9 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'getOfficialCorrespondenceDocument', 'issueOfficialCorrespondence',
   'sendOfficialCorrespondence', 'saveExecutiveDashboardPreferences',
   'getStudentConductCases', 'saveStudentConductCase', 'deleteStudentConductCase',
+  'getAcademicManagement', 'saveAcademicSession', 'saveAcademicTerm', 'saveAcademicClass',
+  'saveAcademicArm', 'saveAcademicSubject', 'saveAcademicOffering',
+  'saveAcademicTeacherAllocation', 'saveAcademicStudentMembership', 'archiveAcademicRecord',
   'getAccountingRequisitionDocument', 'syncAccountingRevenue', 'saveChartAccount',
   'saveAccountingJournal', 'saveAccountingExpense', 'saveAccountingBudget',
   'submitAccountingImprest', 'reviewAccountingImprest', 'issueAccountingImprest',
@@ -7409,6 +7414,33 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
           deleteStudentConductCase: 'delete'
         })[action]
       });
+    case 'getAcademicManagement':
+    case 'saveAcademicSession':
+    case 'saveAcademicTerm':
+    case 'saveAcademicClass':
+    case 'saveAcademicArm':
+    case 'saveAcademicSubject':
+    case 'saveAcademicOffering':
+    case 'saveAcademicTeacherAllocation':
+    case 'saveAcademicStudentMembership':
+    case 'archiveAcademicRecord': {
+      const role = clean(body.UserRole);
+      const configuredTabs = Array.isArray(body.UserTabAccess) ? body.UserTabAccess.map(clean).filter(Boolean) : [];
+      return handleAcademicManagementAction(env, {
+        username: clean(body.UserUsername),
+        displayName: clean(body.RecordedBy),
+        role,
+        department: clean(body.UserDepartment),
+        branchId: clean(body.UserBranchId),
+        schoolSectionAccess: clean(body.UserSchoolSectionAccess || 'All'),
+        edition: deploymentIdentity?.edition || 'school',
+        allowedSections: configuredTabs.length
+          ? configuredTabs
+          : defaultModulesForRole(role, { edition: deploymentIdentity?.edition || 'school' }),
+        subscriptionActive: true,
+        subscriptionReadOnly: false
+      }, body);
+    }
     case 'getExecutiveOffice':
     case 'searchExecutiveDirectory':
     case 'listOfficialCorrespondence':

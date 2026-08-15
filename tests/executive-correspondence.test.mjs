@@ -34,7 +34,7 @@ const [endpoint, backend, backendSecurity, executiveSource, emailSource, backupS
 test('principal also receives school conduct oversight while senior-minister defaults remain scoped', () => {
   assert.deepEqual(
     allowedSectionsFor({ role: 'Principal' }, featureFlagsForEdition('school')),
-    ['recordsDesk', 'executiveOffice', 'studentConduct', 'humanResources', 'staffAttendance']
+    ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct', 'humanResources', 'staffAttendance']
   );
   assert.deepEqual(
     allowedSectionsFor({ role: 'Senior Pastor' }, featureFlagsForEdition('faith')),

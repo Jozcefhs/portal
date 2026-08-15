@@ -2,14 +2,22 @@
 
 Status: approved baseline; implementation in progress.
 
-Implementation status (2026-08-15): Milestone 1 has started. The School
-edition now has an effective-dated academic-policy schema, immutable policy
-revisions, separate draft and active states, organisation-to-branch
+Implementation status (2026-08-15): Milestones 1 and 2 are in progress. The
+School edition now has an effective-dated academic-policy schema, immutable
+policy revisions, separate draft and active states, organisation-to-branch
 inheritance, activation validation and administrator controls for result
 visibility, financial clearance, positions, assessment components, grading
-and promotion. Section, class and subject administration, result enforcement,
-score processing and CBT remain pending milestones; configuring a policy does
-not yet publish or unlock parent results.
+and promotion. The first AM-002/AM-003 vertical slice is also operational on
+web and desktop: branch-isolated sessions, terms, Primary/Secondary classes,
+arms, subjects, subject offerings, teacher allocations and term-specific
+student class/arm/subject memberships share one protected online model. It
+includes stable identifiers, effective-period scope, server-side role and
+section enforcement, optimistic concurrency, audit history, archive guards,
+Teacher read-only registers, and compatibility updates for existing class and
+student records. Bulk allocations, transfers, withdrawals, promotion intake,
+full historical movement workflows, result enforcement, score processing,
+timetables, attendance and CBT remain pending milestones; configuring a policy
+or academic structure does not yet publish or unlock parent results.
 
 This document is the authoritative product and engineering specification for
 the Dynamax Academic Management phase. It covers the School edition of the web

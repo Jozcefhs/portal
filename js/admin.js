@@ -131,6 +131,9 @@ let executiveDirectoryResults = [];
 let executiveAvailableDirectoryTypes = [];
 let executiveSelectedRecipient = null;
 let studentConductData = null;
+let academicManagementData = null;
+let academicManagementView = 'structure';
+let academicManagementFilters = { section: '', sessionId: '', termId: '' };
 const organizationCommerceCarts = {
   organizationStore: new Map(),
   restaurant: new Map()
@@ -172,6 +175,7 @@ const tabConfig = [
   ['admissions', 'Admissions'],
   ['formPurchases', 'Form Purchases'],
   ['students', 'Students'],
+  ['academics', 'Academic Management'],
   ['studentConduct', 'Student Conduct & Discipline'],
   ['humanResources', 'Human Resources'],
   ['members', 'Departments & Members'],
@@ -197,12 +201,12 @@ const tabConfig = [
 ];
 
 const schoolOnlyWebSections = new Set([
-  'admissions', 'formPurchases', 'students', 'studentConduct', 'accounts',
+  'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts',
   'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'
 ]);
 
 const staffRoleOptions = [
-  'Super Admin', 'Principal', 'Senior Pastor', 'Head Minister',
+  'Super Admin', 'Principal', 'Teacher', 'Senior Pastor', 'Head Minister',
   'Admissions Officer', 'Student Welfare Officer', 'Accounts Officer',
   'Management', 'Department User', 'Tuck Shop User', 'Clinic User',
   'Kitchen User', 'Store User', 'Restaurant User', 'Front Desk', 'Pastor',
@@ -217,7 +221,7 @@ const staffRoleOptions = [
 ];
 
 const schoolOnlyStaffRoles = new Set([
-  'Principal', 'Admissions Officer', 'Student Welfare Officer',
+  'Principal', 'Teacher', 'Admissions Officer', 'Student Welfare Officer',
   'Tuck Shop User', 'Clinic User', 'Kitchen User'
 ]);
 
@@ -270,6 +274,7 @@ const tabIcons = {
   admissions: '\u{1F4DD}',
   formPurchases: '\u{1F9FE}',
   students: '\u{1F465}',
+  academics: '\u{1F393}',
   studentConduct: '\u2696',
   humanResources: '\u{1F465}',
   members: '\u{1F465}',
@@ -1216,6 +1221,9 @@ function clearStaffWorkspaceState() {
   executiveDirectoryResults = [];
   executiveAvailableDirectoryTypes = [];
   executiveSelectedRecipient = null;
+  academicManagementData = null;
+  academicManagementView = 'structure';
+  academicManagementFilters = { section: '', sessionId: '', termId: '' };
   activeSection = '';
   activeTabs = [];
   recordsDeskHandoffContext = null;
@@ -1340,6 +1348,9 @@ function clearBranchScopedWorkspaceData() {
   executiveAvailableDirectoryTypes = [];
   executiveSelectedRecipient = null;
   studentConductData = null;
+  academicManagementData = null;
+  academicManagementView = 'structure';
+  academicManagementFilters = { section: '', sessionId: '', termId: '' };
   Object.values(organizationCommerceCarts).forEach((cart) => cart.clear());
   organizationCommerceLastSale.organizationStore = null;
   organizationCommerceLastSale.restaurant = null;
@@ -2183,6 +2194,14 @@ function renderModuleSummary(active, liveData = null) {
       { icon: '\u2713', label: 'Active', value: rows.filter((row) => !/inactive|withdrawn|disabled/i.test(clean(pick(row, ['Status'])))).length },
       { icon: '\u2600', label: 'Day Students', value: rows.filter((row) => /day/i.test(clean(pick(row, ['StudentType'])))).length },
       { icon: '\u2302', label: 'Boarding', value: rows.filter((row) => /board/i.test(clean(pick(row, ['StudentType'])))).length }
+    ];
+  } else if (active === 'academics' && liveData) {
+    const summary = liveData.summary || {};
+    cards = [
+      { icon, label: 'Classes', value: summary.Classes || 0, note: `${summary.Arms || 0} active arm(s)` },
+      { icon: '\u{1F4DA}', label: 'Subjects', value: summary.Subjects || 0, note: 'Current section catalogue' },
+      { icon: '\u{1F9D1}\u200D\u{1F3EB}', label: 'Teacher allocations', value: summary.TeacherAllocations || 0, note: 'Selected branch and scope' },
+      { icon: '\u{1F393}', label: 'Student memberships', value: summary.StudentMemberships || 0, note: 'Class, arm and subjects' }
     ];
   } else if (active === 'accounts') {
     const data = departments.accounts || {};
@@ -9275,6 +9294,429 @@ async function loadStudentConduct() {
   }
 }
 
+function academicRecordId(row = {}) {
+  return clean(row.RecordId || row.SessionId || row.TermId || row.ClassId || row.ArmId
+    || row.SubjectId || row.OfferingId || row.AllocationId || row.MembershipId);
+}
+
+function academicIsActive(row = {}) {
+  return !/archived|inactive|closed/i.test(clean(row.Status));
+}
+
+function academicFind(rows = [], id = '') {
+  const wanted = clean(id);
+  return rows.find((row) => [academicRecordId(row), clean(row.Username), clean(row.StudentRef)].includes(wanted)) || null;
+}
+
+function academicLabel(rows = [], id = '', fallback = 'Not selected') {
+  const row = academicFind(rows, id);
+  return clean(row?.Name || row?.DisplayName || row?.StudentName || row?.Code || id) || fallback;
+}
+
+function academicSelectOptions(rows = [], selected = '', label = (row) => row.Name, placeholder = 'Choose') {
+  return `<option value="">${escapeHtml(placeholder)}</option>${rows.map((row) => {
+    const value = academicRecordId(row) || clean(row.Username || row.StudentRef);
+    return `<option value="${escapeHtml(value)}"${value === clean(selected) ? ' selected' : ''}>${escapeHtml(label(row))}</option>`;
+  }).join('')}`;
+}
+
+function academicCurrentRows(data = academicManagementData || {}) {
+  const section = academicManagementFilters.section;
+  const sessionId = academicManagementFilters.sessionId;
+  const termId = academicManagementFilters.termId;
+  const sectionRows = (rows = []) => rows.filter((row) => !section || clean(row.SchoolSection) === section);
+  const periodRows = (rows = []) => sectionRows(rows).filter((row) => (
+    (!sessionId || row.SessionId === sessionId) && (!termId || row.TermId === termId)
+  ));
+  return {
+    sessions: data.sessions || [],
+    terms: (data.terms || []).filter((row) => !sessionId || row.SessionId === sessionId),
+    classes: sectionRows(data.classes || []),
+    arms: sectionRows(data.arms || []),
+    subjects: sectionRows(data.subjects || []),
+    offerings: periodRows(data.offerings || []),
+    teacherAllocations: periodRows(data.teacherAllocations || []),
+    studentMemberships: periodRows(data.studentMemberships || [])
+  };
+}
+
+function academicActionButtons(type, row, canEdit = false, canArchive = false) {
+  const id = academicRecordId(row);
+  if (!canEdit && !canArchive) return '<span class="muted">View only</span>';
+  return `<div class="academic-management-row-actions">
+    ${canEdit ? `<button type="button" class="compact-icon-action compact-edit-action" data-academic-edit="${escapeHtml(type)}" data-academic-id="${escapeHtml(id)}" aria-label="Edit this academic record" title="Edit"><span aria-hidden="true">&#9998;</span></button>` : ''}
+    ${canArchive && academicIsActive(row) ? `<button type="button" class="compact-icon-action academic-archive-action" data-academic-archive="${escapeHtml(type)}" data-academic-id="${escapeHtml(id)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" aria-label="Archive this academic record" title="Archive"><span aria-hidden="true">&#128451;</span></button>` : ''}
+  </div>`;
+}
+
+function academicRecordFields() {
+  return '<input type="hidden" name="RecordId"><input type="hidden" name="RevisionToken">';
+}
+
+function academicStructureWorkspace(data, rows) {
+  const permissions = data.permissions || {};
+  const canManage = permissions.canManageStructure === true;
+  const activeSessions = rows.sessions.filter(academicIsActive);
+  const activeClasses = rows.classes.filter(academicIsActive);
+  const sessionOptions = academicSelectOptions(activeSessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session');
+  const classOptions = academicSelectOptions(activeClasses, '', (row) => row.Name, 'Choose class');
+  const nextClassOptions = academicSelectOptions(activeClasses, '', (row) => row.Name, 'No next class');
+  const forms = canManage ? `
+    <div class="academic-management-editor-grid">
+      <form class="academic-management-editor" data-academic-form="session">
+        ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Academic calendar</small><h3>Session</h3></div><button type="button" class="academic-form-reset" data-academic-reset="session">Clear</button></div>
+        <label>Session name<input name="Name" placeholder="2026/2027" required></label>
+        <div class="academic-management-form-grid"><label>Starts<input name="StartDate" type="date" required></label><label>Ends<input name="EndDate" type="date" required></label></div>
+        <label>Status<select name="Status"><option>Planned</option><option>Active</option><option>Closed</option></select></label>
+        <button type="submit">Save session</button>
+      </form>
+      <form class="academic-management-editor" data-academic-form="term">
+        ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Academic calendar</small><h3>Term</h3></div><button type="button" class="academic-form-reset" data-academic-reset="term">Clear</button></div>
+        <label>Session<select name="SessionId" required>${sessionOptions}</select></label>
+        <label>Term name<input name="Name" placeholder="First Term" required></label>
+        <div class="academic-management-form-grid"><label>Starts<input name="StartDate" type="date" required></label><label>Ends<input name="EndDate" type="date" required></label></div>
+        <label>Status<select name="Status"><option>Planned</option><option>Active</option><option>Closed</option></select></label>
+        <button type="submit">Save term</button>
+      </form>
+      <form class="academic-management-editor" data-academic-form="class">
+        ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>${escapeHtml(academicManagementFilters.section)}</small><h3>Class</h3></div><button type="button" class="academic-form-reset" data-academic-reset="class">Clear</button></div>
+        <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
+        <div class="academic-management-form-grid"><label>Class name<input name="Name" placeholder="JSS 1" required></label><label>Code<input name="Code" placeholder="JSS1" required></label></div>
+        <div class="academic-management-form-grid"><label>Capacity<input name="Capacity" type="number" min="0" value="0"></label><label>Order<input name="SortOrder" type="number" min="1" value="100"></label></div>
+        <label>Next class<select name="NextClassId">${nextClassOptions}</select></label>
+        <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
+        <button type="submit">Save class</button>
+      </form>
+      <form class="academic-management-editor" data-academic-form="arm">
+        ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Placement</small><h3>Class arm</h3></div><button type="button" class="academic-form-reset" data-academic-reset="arm">Clear</button></div>
+        <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
+        <label>Class<select name="ClassId" required>${classOptions}</select></label>
+        <label>Arm name<input name="Name" placeholder="Excellence" required></label>
+        <div class="academic-management-form-grid"><label>Capacity<input name="Capacity" type="number" min="0" value="0"></label><label>Room<input name="Room" placeholder="Room 4"></label></div>
+        <div class="academic-management-form-grid"><label>Order<input name="SortOrder" type="number" min="1" value="100"></label><label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label></div>
+        <button type="submit">Save arm</button>
+      </form>
+      <form class="academic-management-editor" data-academic-form="subject">
+        ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Curriculum catalogue</small><h3>Subject</h3></div><button type="button" class="academic-form-reset" data-academic-reset="subject">Clear</button></div>
+        <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
+        <div class="academic-management-form-grid"><label>Subject name<input name="Name" placeholder="Mathematics" required></label><label>Code<input name="Code" placeholder="MATH" required></label></div>
+        <label>Category<select name="Category"><option>Core</option><option>Elective</option><option>Vocational</option><option>Co-curricular</option></select></label>
+        <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
+        <button type="submit">Save subject</button>
+      </form>
+    </div>` : '<div class="academic-view-only-note"><strong>View-only academic catalogue</strong><span>Your role can see the structure but cannot change it.</span></div>';
+  return `${forms}
+    <div class="academic-management-registers">
+      ${table('Academic Sessions', rows.sessions, [
+        { label: 'Session', value: (row) => row.Name }, { label: 'Starts', value: (row) => row.StartDate },
+        { label: 'Ends', value: (row) => row.EndDate }, { label: 'Status', value: (row) => row.Status },
+        { label: 'Actions', render: (row) => academicActionButtons('session', row, canManage, permissions.canArchive) }
+      ])}
+      ${table('Terms', rows.terms, [
+        { label: 'Term', value: (row) => row.Name }, { label: 'Starts', value: (row) => row.StartDate },
+        { label: 'Ends', value: (row) => row.EndDate }, { label: 'Status', value: (row) => row.Status },
+        { label: 'Actions', render: (row) => academicActionButtons('term', row, canManage, permissions.canArchive) }
+      ])}
+      ${table(`${academicManagementFilters.section} Classes`, rows.classes, [
+        { label: 'Class', value: (row) => row.Name }, { label: 'Code', value: (row) => row.Code },
+        { label: 'Capacity', value: (row) => row.Capacity }, { label: 'Status', value: (row) => row.Status },
+        { label: 'Actions', render: (row) => academicActionButtons('class', row, canManage, permissions.canArchive) }
+      ])}
+      ${table('Class Arms', rows.arms, [
+        { label: 'Class', value: (row) => academicLabel(rows.classes, row.ClassId) }, { label: 'Arm', value: (row) => row.Name },
+        { label: 'Capacity', value: (row) => row.Capacity }, { label: 'Room', value: (row) => row.Room || '-' },
+        { label: 'Status', value: (row) => row.Status }, { label: 'Actions', render: (row) => academicActionButtons('arm', row, canManage, permissions.canArchive) }
+      ])}
+      ${table('Subjects', rows.subjects, [
+        { label: 'Code', value: (row) => row.Code }, { label: 'Subject', value: (row) => row.Name },
+        { label: 'Category', value: (row) => row.Category }, { label: 'Status', value: (row) => row.Status },
+        { label: 'Actions', render: (row) => academicActionButtons('subject', row, canManage, permissions.canArchive) }
+      ])}
+    </div>`;
+}
+
+function academicOfferingsWorkspace(data, rows) {
+  const canManage = data.permissions?.canManageStructure === true;
+  const sessions = rows.sessions.filter(academicIsActive);
+  const terms = (data.terms || []).filter((row) => academicIsActive(row) && (!academicManagementFilters.sessionId || row.SessionId === academicManagementFilters.sessionId));
+  const classes = rows.classes.filter(academicIsActive);
+  const arms = rows.arms.filter(academicIsActive);
+  const subjects = rows.subjects.filter(academicIsActive);
+  const form = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-form="offering">
+    ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Curriculum delivery</small><h3>Offer a subject</h3></div><button type="button" class="academic-form-reset" data-academic-reset="offering">Clear</button></div>
+    <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
+    <div class="academic-management-form-grid academic-management-form-grid-3">
+      <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
+      <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
+      <label>Class<select name="ClassId" required>${academicSelectOptions(classes, '', (row) => row.Name, 'Choose class')}</select></label>
+      <label>Arm<select name="ArmId">${academicSelectOptions(arms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'All arms')}</select></label>
+      <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select></label>
+      <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
+    </div>
+    <label class="academic-inline-check"><input name="Compulsory" type="checkbox"> Compulsory for every student in this class or arm</label>
+    <button type="submit">Save subject offering</button>
+  </form>` : '';
+  return `${form}${table('Subject Offerings', rows.offerings, [
+    { label: 'Class', value: (row) => academicLabel(rows.classes, row.ClassId) },
+    { label: 'Arm', value: (row) => row.ArmId ? academicLabel(rows.arms, row.ArmId) : 'All arms' },
+    { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId) },
+    { label: 'Requirement', value: (row) => row.Compulsory ? 'Compulsory' : 'Optional' },
+    { label: 'Status', value: (row) => row.Status },
+    { label: 'Actions', render: (row) => academicActionButtons('offering', row, canManage, data.permissions?.canArchive) }
+  ])}`;
+}
+
+function academicTeacherWorkspace(data, rows) {
+  const canManage = data.permissions?.canManageAllocations === true;
+  const sessions = rows.sessions.filter(academicIsActive);
+  const terms = (data.terms || []).filter((row) => academicIsActive(row) && (!academicManagementFilters.sessionId || row.SessionId === academicManagementFilters.sessionId));
+  const classes = rows.classes.filter(academicIsActive);
+  const arms = rows.arms.filter(academicIsActive);
+  const subjects = rows.subjects.filter(academicIsActive);
+  const staff = (data.staff || []).filter((row) => {
+    const assigned = clean(row.SchoolSectionAccess).toLowerCase();
+    return !['primary', 'secondary'].includes(assigned) || assigned === academicManagementFilters.section;
+  });
+  const form = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-form="teacherAllocation">
+    ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Teaching responsibility</small><h3>Allocate teacher</h3></div><button type="button" class="academic-form-reset" data-academic-reset="teacherAllocation">Clear</button></div>
+    <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
+    <div class="academic-management-form-grid academic-management-form-grid-3">
+      <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
+      <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
+      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role})`, 'Choose teacher')}</select></label>
+      <label>Class<select name="ClassId" required>${academicSelectOptions(classes, '', (row) => row.Name, 'Choose class')}</select></label>
+      <label>Arm<select name="ArmId">${academicSelectOptions(arms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'All arms')}</select></label>
+      <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select></label>
+      <label>Responsibility<select name="AllocationRole"><option>Subject Teacher</option><option>Form Teacher</option><option>Assistant Teacher</option></select></label>
+      <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
+    </div><button type="submit">Save teacher allocation</button>
+  </form>` : '<div class="academic-view-only-note"><strong>My teaching allocations</strong><span>Only administrators can change allocations.</span></div>';
+  return `${form}${table('Teacher Allocations', rows.teacherAllocations, [
+    { label: 'Teacher', value: (row) => academicLabel(data.staff, row.TeacherUsername, row.TeacherUsername) },
+    { label: 'Class / Arm', value: (row) => `${academicLabel(rows.classes, row.ClassId)}${row.ArmId ? ` / ${academicLabel(rows.arms, row.ArmId)}` : ' / All arms'}` },
+    { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId) },
+    { label: 'Role', value: (row) => row.AllocationRole }, { label: 'Status', value: (row) => row.Status },
+    { label: 'Actions', render: (row) => academicActionButtons('teacherAllocation', row, canManage, canManage) }
+  ])}`;
+}
+
+function academicStudentWorkspace(data, rows) {
+  const canManage = data.permissions?.canManageAllocations === true;
+  const sessions = rows.sessions.filter(academicIsActive);
+  const terms = (data.terms || []).filter((row) => academicIsActive(row) && (!academicManagementFilters.sessionId || row.SessionId === academicManagementFilters.sessionId));
+  const classes = rows.classes.filter(academicIsActive);
+  const arms = rows.arms.filter(academicIsActive);
+  const subjects = rows.subjects.filter(academicIsActive);
+  const students = (data.students || []).filter((row) => {
+    const assigned = clean(row.SchoolSection).toLowerCase();
+    return !assigned || assigned === academicManagementFilters.section;
+  });
+  const form = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-form="studentMembership">
+    ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Class register</small><h3>Allocate student</h3></div><button type="button" class="academic-form-reset" data-academic-reset="studentMembership">Clear</button></div>
+    <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
+    <div class="academic-management-form-grid academic-management-form-grid-3">
+      <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
+      <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
+      <label>Student<select name="StudentRef" required>${academicSelectOptions(students, '', (row) => `${row.StudentName} (${row.StudentRef})`, 'Choose student')}</select></label>
+      <label>Class<select name="ClassId" required>${academicSelectOptions(classes, '', (row) => row.Name, 'Choose class')}</select></label>
+      <label>Arm<select name="ArmId" required>${academicSelectOptions(arms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'Choose arm')}</select></label>
+      <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
+    </div>
+    <label>Registered subjects<select name="SubjectIds" multiple size="${Math.min(8, Math.max(4, subjects.length))}">${subjects.map((row) => `<option value="${escapeHtml(row.SubjectId)}">${escapeHtml(`${row.Code} - ${row.Name}`)}</option>`).join('')}</select><small>Choose all subjects taken by this student. Compulsory offerings are added automatically.</small></label>
+    <button type="submit">Save student membership</button>
+  </form>` : '<div class="academic-view-only-note"><strong>My class registers</strong><span>Students shown here come only from your teaching allocations.</span></div>';
+  return `${form}${table('Student Class & Subject Memberships', rows.studentMemberships, [
+    { label: 'Student', value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
+    { label: 'Class / Arm', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
+    { label: 'Subjects', value: (row) => (row.SubjectIds || []).map((id) => academicLabel(rows.subjects, id, id)).join(', ') || 'None' },
+    { label: 'Status', value: (row) => row.Status },
+    { label: 'Actions', render: (row) => academicActionButtons('studentMembership', row, canManage, canManage) }
+  ])}`;
+}
+
+function academicManagementHeader(data, rows, message = '') {
+  const sessions = (data.sessions || []).filter(academicIsActive);
+  const terms = (data.terms || []).filter((row) => !academicManagementFilters.sessionId || row.SessionId === academicManagementFilters.sessionId);
+  const permittedSection = clean(currentUser?.schoolSectionAccess).toLowerCase();
+  const sections = (data.sections || ['primary', 'secondary']).filter((section) => (
+    !['primary', 'secondary'].includes(permittedSection) || section === permittedSection
+  ));
+  const views = data.permissions?.teacherView
+    ? [['structure', 'Catalogue'], ['teachers', 'My allocations'], ['students', 'My registers']]
+    : [['structure', 'Structure'], ['offerings', 'Subject offerings'], ['teachers', 'Teacher allocations'], ['students', 'Student memberships']];
+  return `<div class="academic-management-heading">
+    <div><p class="eyebrow">AM-002 / AM-003</p><h2>Academic Management</h2><p class="muted">Branch-isolated sessions, terms, classes, arms, subjects and effective-dated allocations.</p></div>
+    <button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button>
+  </div>
+  <div class="academic-management-filterbar">
+    <label>School section<select id="academicManagementSection">${sections.map((section) => `<option value="${escapeHtml(section)}"${section === academicManagementFilters.section ? ' selected' : ''}>${escapeHtml(section.charAt(0).toUpperCase() + section.slice(1))}</option>`).join('')}</select></label>
+    <label>Academic session<select id="academicManagementSession">${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'All sessions')}</select></label>
+    <label>Term<select id="academicManagementTerm">${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'All terms')}</select></label>
+    <div><small>Branch</small><strong>${escapeHtml(availableBranches.find((branch) => branch.id === selectedBranchId)?.name || selectedBranchId)}</strong></div>
+  </div>
+  <nav class="workspace-subtabs academic-management-tabs" aria-label="Academic Management workspaces">${views.map(([key, label]) => `<button type="button" data-academic-view="${key}" class="${key === academicManagementView ? 'selected' : ''}">${escapeHtml(label)}</button>`).join('')}</nav>
+  <p id="academicManagementStatus" class="status ${message ? 'ok' : ''}" role="status">${escapeHtml(message)}</p>`;
+}
+
+function renderAcademicManagement(data = academicManagementData || {}, message = '') {
+  academicManagementData = data;
+  const permittedSection = clean(currentUser?.schoolSectionAccess).toLowerCase();
+  const responseSection = clean(data.scope?.SchoolSection).toLowerCase();
+  if (!academicManagementFilters.section) {
+    academicManagementFilters.section = ['primary', 'secondary'].includes(responseSection)
+      ? responseSection
+      : ['primary', 'secondary'].includes(permittedSection)
+        ? permittedSection
+        : clean(data.sections?.[0] || 'primary');
+  }
+  const sessions = data.sessions || [];
+  if (!academicFind(sessions, academicManagementFilters.sessionId)) {
+    academicManagementFilters.sessionId = clean(data.selection?.SessionId || sessions.find(academicIsActive)?.SessionId);
+  }
+  const terms = (data.terms || []).filter((row) => !academicManagementFilters.sessionId || row.SessionId === academicManagementFilters.sessionId);
+  if (!academicFind(terms, academicManagementFilters.termId)) {
+    academicManagementFilters.termId = clean(data.selection?.TermId || terms.find(academicIsActive)?.TermId);
+  }
+  const rows = academicCurrentRows(data);
+  let workspace = '';
+  if (academicManagementView === 'offerings') workspace = academicOfferingsWorkspace(data, rows);
+  else if (academicManagementView === 'teachers') workspace = academicTeacherWorkspace(data, rows);
+  else if (academicManagementView === 'students') workspace = academicStudentWorkspace(data, rows);
+  else workspace = academicStructureWorkspace(data, rows);
+  panelEl.innerHTML = `${academicManagementHeader(data, rows, message)}<section class="academic-management-workspace">${workspace}</section>`;
+  renderModuleSummary('academics', data);
+  bindAcademicManagement();
+}
+
+async function academicManagementRequest(action, payload = {}) {
+  const branchId = clean(selectedBranchId || currentUser?.branchId);
+  if (!branchId || branchId === 'all') throw new Error('Select one school branch before using Academic Management.');
+  const response = await staffFetch('/api/staff-academics', {
+    method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, BranchId: branchId, ...payload })
+  });
+  const data = await response.json().catch(() => ({ ok: false, message: 'Academic Management did not return JSON.' }));
+  if (response.status === 401) { showLogin(data.message || 'Your staff session has expired.', 'bad'); throw new Error(data.message || 'Your session expired.'); }
+  if (!response.ok || !data.ok) throw new Error(data.message || 'Academic Management could not complete this request.');
+  return data;
+}
+
+async function loadAcademicManagement(options = {}) {
+  if (activeSection !== 'academics') return;
+  const section = clean(options.section ?? academicManagementFilters.section);
+  try {
+    const data = await academicManagementRequest('bootstrap', {
+      SchoolSection: section,
+      SessionId: academicManagementFilters.sessionId,
+      TermId: academicManagementFilters.termId
+    });
+    if (activeSection !== 'academics') return;
+    academicManagementFilters.section = section || academicManagementFilters.section;
+    renderAcademicManagement(data, options.message || 'Academic records loaded.');
+  } catch (error) {
+    if (activeSection === 'academics') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+  }
+}
+
+function academicFormPayload(form) {
+  const data = new FormData(form);
+  const payload = Object.fromEntries(data.entries());
+  if (form.dataset.academicForm === 'offering') payload.Compulsory = form.elements.Compulsory.checked;
+  if (form.dataset.academicForm === 'studentMembership') {
+    payload.SubjectIds = [...form.elements.SubjectIds.selectedOptions].map((option) => option.value);
+  }
+  return { ...payload, RecordType: form.dataset.academicForm };
+}
+
+function academicRecordRows(type) {
+  const key = ({
+    session: 'sessions', term: 'terms', class: 'classes', arm: 'arms', subject: 'subjects',
+    offering: 'offerings', teacherAllocation: 'teacherAllocations', studentMembership: 'studentMemberships'
+  })[type];
+  return academicManagementData?.[key] || [];
+}
+
+function populateAcademicForm(type, record) {
+  const form = panelEl.querySelector(`[data-academic-form="${type}"]`);
+  if (!form || !record) return;
+  Object.entries(record).forEach(([key, value]) => {
+    const control = form.elements.namedItem(key);
+    if (!control) return;
+    if (control.type === 'checkbox') control.checked = value === true;
+    else if (control.multiple) [...control.options].forEach((option) => { option.selected = (value || []).includes(option.value); });
+    else control.value = value ?? '';
+  });
+  form.elements.RecordId.value = academicRecordId(record);
+  form.elements.RevisionToken.value = record.RevisionToken || '';
+  form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  form.querySelector('input:not([type="hidden"]), select')?.focus();
+}
+
+function bindAcademicManagement() {
+  panelEl.querySelectorAll('[data-academic-view]').forEach((button) => button.addEventListener('click', () => {
+    academicManagementView = button.dataset.academicView;
+    renderAcademicManagement(academicManagementData || {});
+  }));
+  document.getElementById('refreshAcademicManagement')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', () => loadAcademicManagement()));
+  document.getElementById('academicManagementSection')?.addEventListener('change', (event) => {
+    academicManagementFilters.section = event.target.value;
+    void loadAcademicManagement({ section: event.target.value });
+  });
+  document.getElementById('academicManagementSession')?.addEventListener('change', (event) => {
+    academicManagementFilters.sessionId = event.target.value;
+    const terms = (academicManagementData?.terms || []).filter((row) => !event.target.value || row.SessionId === event.target.value);
+    academicManagementFilters.termId = clean(terms.find(academicIsActive)?.TermId || '');
+    renderAcademicManagement(academicManagementData || {});
+  });
+  document.getElementById('academicManagementTerm')?.addEventListener('change', (event) => {
+    academicManagementFilters.termId = event.target.value;
+    renderAcademicManagement(academicManagementData || {});
+  });
+  panelEl.querySelectorAll('[data-academic-form]').forEach((form) => form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = form.querySelector('button[type="submit"]');
+    await runButtonAction(button, 'Saving...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('save', academicFormPayload(form));
+        renderAcademicManagement(data, data.message || 'Academic record saved.');
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+      }
+    });
+  }));
+  panelEl.querySelectorAll('[data-academic-reset]').forEach((button) => button.addEventListener('click', () => {
+    const form = panelEl.querySelector(`[data-academic-form="${button.dataset.academicReset}"]`);
+    form?.reset();
+    if (form?.elements.RecordId) form.elements.RecordId.value = '';
+    if (form?.elements.RevisionToken) form.elements.RevisionToken.value = '';
+  }));
+  panelEl.querySelectorAll('[data-academic-edit]').forEach((button) => button.addEventListener('click', () => {
+    populateAcademicForm(button.dataset.academicEdit, academicFind(academicRecordRows(button.dataset.academicEdit), button.dataset.academicId));
+  }));
+  panelEl.querySelectorAll('[data-academic-archive]').forEach((button) => button.addEventListener('click', async () => {
+    const type = button.dataset.academicArchive;
+    const record = academicFind(academicRecordRows(type), button.dataset.academicId);
+    if (!record || !await window.DynamaxDialogs.confirm({
+      title: 'Archive academic record',
+      message: 'Archive this record? Active dependent records must be archived first, and history will be retained.',
+      tone: 'danger', confirmText: 'Archive record'
+    })) return;
+    await runButtonAction(button, 'Archiving...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('archive', {
+          RecordType: type, RecordId: academicRecordId(record), RevisionToken: record.RevisionToken,
+          SchoolSection: record.SchoolSection
+        });
+        renderAcademicManagement(data, data.message || 'Academic record archived.');
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+      }
+    });
+  }));
+}
+
 function schoolInsightChartCards(charts = {}) {
   const groups = [
     ['Students by Gender', charts.studentGender || [], false],
@@ -9372,6 +9814,9 @@ function renderSection(active) {
   } else if (active === 'studentConduct') {
     panelEl.innerHTML = '<p class="muted">Loading Student Conduct & Discipline Committee cases...</p>';
     loadStudentConduct();
+  } else if (active === 'academics') {
+    panelEl.innerHTML = '<p class="muted">Loading Academic Management...</p>';
+    loadAcademicManagement();
   } else if (active === 'payroll') {
     panelEl.innerHTML = '<p class="muted">Loading your payroll history...</p>';
     loadMyPayroll();

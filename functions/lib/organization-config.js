@@ -10,12 +10,12 @@ const clean = (value) => String(value ?? '').trim();
 export const ORGANIZATION_EDITIONS = Object.freeze(['school', 'faith', 'organization']);
 
 export const SCHOOL_ONLY_SECTION_KEYS = Object.freeze([
-  'admissions', 'formPurchases', 'students', 'studentConduct', 'accounts',
+  'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts',
   'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'
 ]);
 
 export const SCHOOL_ONLY_STAFF_ROLES = Object.freeze([
-  'Principal', 'Admissions Officer', 'Student Welfare Officer',
+  'Principal', 'Teacher', 'Admissions Officer', 'Student Welfare Officer',
   'Tuck Shop User', 'Clinic User', 'Kitchen User'
 ]);
 
@@ -312,6 +312,7 @@ const SECTION_FEATURES = Object.freeze({
   admissions: 'admissions',
   formPurchases: 'admissions',
   students: 'students',
+  academics: 'students',
   studentConduct: 'studentConduct',
   accounts: Object.freeze(['students', 'accounting']),
   incomeAnalytics: 'accounting',

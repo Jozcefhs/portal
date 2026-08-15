@@ -35,5 +35,5 @@ test('both receipt print buttons wait for the selected format', () => {
 test('receipt chooser is compact, responsive and cache-busted', () => {
   assert.match(styleSource, /\.receipt-format-options\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(styleSource, /@media\(max-width:520px\)\{\.receipt-format-options\{grid-template-columns:1fr/);
-  assert.match(adminHtml, /css\/style\.css\?v=20260815-academic-policy/);
+  assert.match(adminHtml, /css\/style\.css\?v=20260815-academic-management/);
 });
