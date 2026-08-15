@@ -215,7 +215,9 @@ The foundation module manages:
 - configurable Senior Secondary departments such as Sciences, Arts and Social
   Sciences, each with a reusable department-wide core-subject set;
 - subject availability by section, class and term;
-- teacher allocation to classes, arms and subjects;
+- many-to-many teacher allocation: one teacher can hold multiple subject
+  assignments across different classes and arms in the same term, with one
+  auditable allocation record per class, arm and subject combination;
 - student enrollment in a session, class and arm;
 - automatic assignment of every offered subject to Junior Secondary students,
   who do not select electives;

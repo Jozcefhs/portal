@@ -9517,7 +9517,7 @@ function academicTeacherWorkspace(data, rows) {
     return !['primary', 'secondary'].includes(assigned) || assigned === academicManagementFilters.section;
   });
   const form = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-form="teacherAllocation">
-    ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Teaching responsibility</small><h3>Allocate teacher</h3></div><button type="button" class="academic-form-reset" data-academic-reset="teacherAllocation">Clear</button></div>
+    ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Teaching responsibility</small><h3>Allocate teacher</h3><p class="muted">Create one assignment for each class, arm and subject combination. A teacher may hold any number of different assignments in the same term.</p></div><button type="button" class="academic-form-reset" data-academic-reset="teacherAllocation">Clear</button></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
     <div class="academic-management-form-grid academic-management-form-grid-3">
       <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
@@ -9528,7 +9528,7 @@ function academicTeacherWorkspace(data, rows) {
       <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select></label>
       <label>Responsibility<select name="AllocationRole"><option>Subject Teacher</option><option>Form Teacher</option><option>Assistant Teacher</option></select></label>
       <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
-    </div><button type="submit">Save teacher allocation</button>
+    </div><button type="submit">Save this teacher assignment</button>
   </form>` : '<div class="academic-view-only-note"><strong>My teaching allocations</strong><span>Only administrators can change allocations.</span></div>';
   return `${form}${table('Teacher Allocations', rows.teacherAllocations, [
     { label: 'Teacher', value: (row) => academicLabel(data.staff, row.TeacherUsername, row.TeacherUsername) },

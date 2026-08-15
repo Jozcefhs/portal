@@ -94,6 +94,23 @@ test('AM-002 subjects, offerings and teacher allocations retain period scope', (
   assert.equal(allocation.TeacherUsername, 'ada.teacher');
 });
 
+test('AM-002 one teacher can hold different subjects across classes and arms', () => {
+  const common = {
+    SessionId: 'session-1', TermId: 'term-1', TeacherUsername: 'Ada.Teacher',
+    AllocationRole: 'Subject Teacher'
+  };
+  const assignments = [
+    normalizeAcademicTeacherAllocation({ ...common, ClassId: 'jss-1', ArmId: 'arm-a', SubjectId: 'math' }, scope),
+    normalizeAcademicTeacherAllocation({ ...common, ClassId: 'jss-1', ArmId: 'arm-b', SubjectId: 'math' }, scope),
+    normalizeAcademicTeacherAllocation({ ...common, ClassId: 'sss-2', ArmId: 'arm-a', SubjectId: 'physics' }, scope)
+  ];
+
+  assert.equal(new Set(assignments.map((row) => row.AllocationId)).size, 3);
+  assert.ok(assignments.every((row) => row.TeacherUsername === 'ada.teacher'));
+  assert.notEqual(assignments[0].AllocationId, assignments[1].AllocationId);
+  assert.notEqual(assignments[0].AllocationId, assignments[2].AllocationId);
+});
+
 test('AM-002 student memberships allocate one arm and a unique subject set per term', () => {
   const membership = normalizeAcademicStudentMembership({
     SessionId: 'session-1', TermId: 'term-1', StudentRef: 'DCA/2026/001',
@@ -217,6 +234,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /function academicManagementRequest/);
   assert.match(adminSource, /function academicDepartmentsWorkspace/);
   assert.match(adminSource, /Junior receives every offering/);
+  assert.match(adminSource, /A teacher may hold any number of different assignments in the same term/);
   assert.match(adminSource, /data-academic-workflow="bulkAllocateAcademicStudents"/);
   assert.match(adminSource, /Student Movement History/);
   assert.match(adminSource, /staffFetch\('\/api\/staff-academics'/);

@@ -770,7 +770,11 @@ function sortAcademicState(state) {
     classes: [...state.classes].sort(byOrder), arms: [...state.arms].sort(byOrder),
     subjects: [...state.subjects].sort(byName), departments: [...state.departments].sort(byName),
     offerings: [...state.offerings].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId)) || clean(a.SubjectId).localeCompare(clean(b.SubjectId))),
-    teacherAllocations: [...state.teacherAllocations].sort((a, b) => clean(a.TeacherUsername).localeCompare(clean(b.TeacherUsername))),
+    teacherAllocations: [...state.teacherAllocations].sort((a, b) =>
+      clean(a.TeacherUsername).localeCompare(clean(b.TeacherUsername))
+      || clean(a.ClassId).localeCompare(clean(b.ClassId))
+      || clean(a.ArmId).localeCompare(clean(b.ArmId))
+      || clean(a.SubjectId).localeCompare(clean(b.SubjectId))),
     studentMemberships: [...state.studentMemberships].sort((a, b) => clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
     studentMovements: [...state.studentMovements].sort((a, b) => clean(b.RecordedAt || b.EffectiveDate).localeCompare(clean(a.RecordedAt || a.EffectiveDate)))
   };
