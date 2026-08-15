@@ -500,7 +500,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
   assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-tabs button\{[^}]*font-size:12px/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-academics-department-users/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-presence-read-aloud/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

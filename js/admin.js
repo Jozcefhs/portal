@@ -112,6 +112,8 @@ let dashboardAttendanceRequest = 0;
 let dashboardAttendanceCache = null;
 let dashboardClockTimer = 0;
 let dashboardClockTimeZone = '';
+let latestPresenceCheckForReadAloud = null;
+let lastPresenceReadAloudKey = '';
 const dashboardSectionRequests = new Map();
 let incomeAnalyticsData = null;
 let incomeAnalyticsFilter = { period: 'monthly' };
@@ -1868,6 +1870,7 @@ function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
   const sites = data?.sites || [];
   const policy = data?.policy || {};
   const presenceCheck = data?.presenceCheck || {};
+  if (state === 'CLOCKED_IN') announceRandomPresenceConfirmation(presenceCheck);
   warmAttendanceIdentity(policy);
   const identityMode = clean(policy.IdentityVerification || 'NONE').toUpperCase();
   const todaySchedule = data?.todaySchedule || {};
@@ -6209,6 +6212,48 @@ function attendancePresenceStatusText(presenceCheck = {}) {
   return 'No random presence confirmation is currently due.';
 }
 
+function randomPresenceAnnouncementStorageKey() {
+  const username = clean(currentUser?.username || currentUser?.Username || 'staff').toLowerCase();
+  return `dynamax:attendance:presence-read-aloud:${username}`;
+}
+
+function announceRandomPresenceConfirmation(presenceCheck = {}) {
+  latestPresenceCheckForReadAloud = presenceCheck;
+  const status = clean(presenceCheck.status).toUpperCase();
+  if (!['DUE', 'OVERDUE'].includes(status) || presenceCheck.canConfirm !== true) return false;
+  if (document.visibilityState !== 'visible') return false;
+  if (!('speechSynthesis' in window) || !('SpeechSynthesisUtterance' in window)) return false;
+  const dueKey = clean(presenceCheck.dueAt) || `${status}:${Number(presenceCheck.sequence || 0)}`;
+  const storageKey = randomPresenceAnnouncementStorageKey();
+  const announcementKey = `${storageKey}|${dueKey}`;
+  if (lastPresenceReadAloudKey === announcementKey) return false;
+  try {
+    if (window.sessionStorage.getItem(storageKey) === dueKey) return false;
+  } catch (_error) { /* In-memory deduplication remains available. */ }
+  const message = status === 'OVERDUE'
+    ? 'Random presence confirmation is overdue. Please confirm your presence immediately.'
+    : 'Random presence confirmation required. Please confirm your presence now.';
+  const utterance = new window.SpeechSynthesisUtterance(message);
+  utterance.lang = clean(window.navigator.language) || 'en';
+  utterance.rate = 0.95;
+  utterance.pitch = 1;
+  utterance.volume = 1;
+  try {
+    window.speechSynthesis.speak(utterance);
+  } catch (_error) {
+    return false;
+  }
+  lastPresenceReadAloudKey = announcementKey;
+  try { window.sessionStorage.setItem(storageKey, dueKey); } catch (_error) { /* Storage is optional. */ }
+  return true;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && latestPresenceCheckForReadAloud) {
+    announceRandomPresenceConfirmation(latestPresenceCheckForReadAloud);
+  }
+});
+
 function updateAttendancePresenceCard(card, presenceCheck = {}) {
   if (!card) return;
   card.classList.toggle('is-overdue', presenceCheck.status === 'OVERDUE');
@@ -6387,6 +6432,7 @@ async function loadStaffAttendance() {
     const identityMode = clean(policy.IdentityVerification || 'NONE').toUpperCase();
     warmAttendanceIdentity(policy);
     const presenceCheck = data.presenceCheck || { enabled: false };
+    if (stateIn) announceRandomPresenceConfirmation(presenceCheck);
     const presenceStatusText = attendancePresenceStatusText(presenceCheck);
     const identityChoice = identityMode === 'PASSKEY'
       ? '<input id="staffAttendanceIdentityMethod" type="hidden" value="PASSKEY"><small>Unlock this device with its configured PIN, password or secure screen-lock method.</small>'
