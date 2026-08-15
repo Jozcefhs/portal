@@ -9624,14 +9624,26 @@ function validateFinanceAttachmentFile(file) {
   if (file.size > FINANCE_ATTACHMENT_MAX_BYTES) throw new Error('The selected document exceeds the 8 MB upload limit.');
 }
 
-function setFinanceAttachmentLink(container, url, fileName = '') {
+function protectedFinanceDocumentUrl({ recordType = '', recordId = '', line = '', mode = 'view' } = {}) {
+  if (!clean(recordType) || !clean(recordId)) return '';
+  const params = new URLSearchParams({
+    recordType: clean(recordType),
+    recordId: clean(recordId),
+    mode: clean(mode) === 'download' ? 'download' : 'view'
+  });
+  if (line !== '' && line !== null && line !== undefined) params.set('line', String(line));
+  return new URL(`/api/finance-document?${params.toString()}`, window.location.origin).toString();
+}
+
+function setFinanceAttachmentLink(container, url, fileName = '', access = {}) {
   if (!container) return;
   const hidden = container.querySelector('[data-finance-attachment-url], [data-imprest-retirement-field="receiptUrl"]');
   if (hidden) hidden.value = clean(url);
   const link = container.querySelector('[data-finance-attachment-link]');
   if (link) {
-    link.href = clean(url) || '#';
-    link.hidden = !clean(url);
+    const protectedUrl = clean(url) ? protectedFinanceDocumentUrl(access) : '';
+    link.href = protectedUrl || '#';
+    link.hidden = !protectedUrl;
     link.textContent = fileName ? `View ${fileName}` : 'View current document';
   }
 }
@@ -10075,7 +10087,7 @@ function printImprestReport(records, selected = null) {
   const printable = window.open('', '_blank', 'width=1100,height=760');
   if (!printable) return setStatus(document.getElementById('financeWorkflowStatus'), 'Allow pop-ups to print the imprest report.', 'bad');
   const retirementLines = (record) => Array.isArray(record.RetirementLines) && record.RetirementLines.length
-    ? `<table><thead><tr><th>Date</th><th>Description</th><th>Account</th><th>Amount</th><th>Receipt</th></tr></thead><tbody>${record.RetirementLines.map((line) => `<tr><td>${escapeHtml(line.Date)}</td><td>${escapeHtml(line.Description)}</td><td>${escapeHtml(line.ExpenseAccount)}</td><td>${escapeHtml(money(line.Amount))}</td><td>${line.ReceiptUrl ? `<a href="${escapeHtml(line.ReceiptUrl)}">View</a>` : '-'}</td></tr>`).join('')}</tbody></table>` : '';
+    ? `<table><thead><tr><th>Date</th><th>Description</th><th>Account</th><th>Amount</th><th>Receipt</th></tr></thead><tbody>${record.RetirementLines.map((line, index) => `<tr><td>${escapeHtml(line.Date)}</td><td>${escapeHtml(line.Description)}</td><td>${escapeHtml(line.ExpenseAccount)}</td><td>${escapeHtml(money(line.Amount))}</td><td>${line.ReceiptUrl ? `<a href="${escapeHtml(protectedFinanceDocumentUrl({ recordType: 'imprest-receipt', recordId: record.ImprestNo || record.__id, line: index }))}" target="_blank" rel="noopener noreferrer">View</a>` : '-'}</td></tr>`).join('')}</tbody></table>` : '';
   printable.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Imprest report</title><style>body{font:12px Arial;color:#102a43;margin:28px}h1{font-size:22px}section{margin:0 0 24px;break-inside:avoid}table{width:100%;border-collapse:collapse;margin:8px 0}th,td{border:1px solid #ccd8e5;padding:7px;text-align:left}th{background:#edf3f8}.money{text-align:right}.print{padding:8px 14px;background:#123f67;color:white;border:0;border-radius:6px}@media print{.print{display:none}body{margin:10mm}}</style></head><body><button class="print" onclick="window.print()">Print</button><h1>Imprest &amp; Petty Cash Report</h1>${rows.map((record) => `<section><h2>${escapeHtml(record.ImprestNo)} &middot; ${escapeHtml(record.Status)}</h2><table><tbody><tr><th>Custodian</th><td>${escapeHtml(record.CustodianName)}</td><th>Department</th><td>${escapeHtml(record.Department)}</td></tr><tr><th>Purpose</th><td colspan="3">${escapeHtml(record.Purpose)}</td></tr><tr><th>Requested</th><td>${escapeHtml(money(record.AmountRequested))}</td><th>Issued</th><td>${escapeHtml(money(record.AmountIssued || record.AmountApproved))}</td></tr><tr><th>Expenses</th><td>${escapeHtml(money(record.ExpenseTotal))}</td><th>Cash returned</th><td>${escapeHtml(money(record.ReturnedAmount))}</td></tr><tr><th>Due date</th><td>${escapeHtml(record.DueDate || '-')}</td><th>Return reference</th><td>${escapeHtml(record.ReturnReference || '-')}</td></tr></tbody></table>${retirementLines(record)}</section>`).join('')}</body></html>`);
   printable.document.close();
 }
@@ -10331,7 +10343,10 @@ function openRequisitionEditor(record) {
   setRequisitionEditorValue(form, 'date', clean(record.Date).slice(0, 10));
   setRequisitionEditorValue(form, 'reference', record.Reference);
   setRequisitionEditorValue(form, 'attachmentUrl', record.AttachmentUrl);
-  setFinanceAttachmentLink(form.querySelector('[data-finance-attachment]'), record.AttachmentUrl);
+  setFinanceAttachmentLink(form.querySelector('[data-finance-attachment]'), record.AttachmentUrl, '', {
+    recordType: isMaterial ? 'material-requisition' : 'expense-requisition',
+    recordId: id
+  });
   setRequisitionEditorValue(form, 'notes', record.Notes);
   if (isMaterial) {
     const items = Array.isArray(record.MaterialItems) && record.MaterialItems.length
