@@ -89,6 +89,8 @@ test('AM-003 bulk classes stay section scoped while reusable arm templates are b
   assert.equal(template.DefaultCapacity, 35);
   assert.equal(appliedArm.ArmTemplateId, template.ArmTemplateId);
   assert.equal(appliedArm.Capacity, 35);
+  assert.throws(() => parseAcademicArmTemplateBatch({ ArmTemplateLines: 'Brilliance BRI 30' }), /Line 1 is not in the required format/);
+  assert.throws(() => parseAcademicClassBatch({ ClassLines: 'Grade 7 JSS1 Junior Secondary 200' }, scope), /Line 1 is not in the required format/);
 });
 
 test('AM-002 subjects are bulk-created once and reused through class offerings', () => {
@@ -105,20 +107,23 @@ test('AM-002 subjects are bulk-created once and reused through class offerings',
   assert.equal(subjects[0].SubjectId, 'subject__north-campus__secondary__math');
   assert.equal(subjects[1].Category, 'Vocational');
   assert.equal(offering.SubjectId, subjects[0].SubjectId);
+  assert.throws(() => parseAcademicSubjectBatch({ SubjectLines: 'Mathematics MATH Core' }), /Line 1 is not in the required format/);
 });
 
 test('AM-003 permanent deletion detects current and historical academic references', () => {
   const state = {
     classes: [{ ClassId: 'jss-2', NextClassId: 'jss-3' }],
-    arms: [{ ArmId: 'arm-a', ClassId: 'jss-1' }],
+    arms: [{ ArmId: 'arm-a', ArmTemplateId: 'template-a', ClassId: 'jss-1' }],
     subjects: [], departments: [{ DepartmentId: 'science', CoreSubjectIds: ['physics'], Status: 'Archived' }],
     offerings: [], teacherAllocations: [], studentMemberships: [],
-    studentMovements: [{ MovementId: 'move-1', FromClassId: 'jss-1', ToClassId: 'jss-2', FromArmId: 'arm-a', FromSubjectIds: ['physics'] }]
+    studentMovements: [{ MovementId: 'move-1', FromClassId: 'jss-1', ToClassId: 'jss-2', FromArmId: 'arm-a', FromDepartmentId: 'science', FromSubjectIds: ['physics'] }]
   };
 
   assert.equal(academicPermanentDeleteDependants(state, 'class', { ClassId: 'jss-1' }).length, 2);
   assert.equal(academicPermanentDeleteDependants(state, 'arm', { ArmId: 'arm-a' }).length, 1);
+  assert.equal(academicPermanentDeleteDependants(state, 'armTemplate', { ArmTemplateId: 'template-a' }).length, 1);
   assert.equal(academicPermanentDeleteDependants(state, 'subject', { SubjectId: 'physics' }).length, 2);
+  assert.equal(academicPermanentDeleteDependants(state, 'department', { DepartmentId: 'science' }).length, 1);
   assert.equal(academicPermanentDeleteDependants(state, 'class', { ClassId: 'unused' }).length, 0);
 });
 
@@ -273,6 +278,7 @@ test('Academic writes are audited, optimistic and preserve legacy class/student 
   assert.match(librarySource, /Create at most 50 subjects in one batch/);
   assert.match(librarySource, /Apply at most 200 class-subject combinations in one batch/);
   assert.match(librarySource, /ACADEMIC_DELETE_REFERENCED/);
+  assert.match(librarySource, /class, reusable arm definition, arm, subject or department can be permanently deleted/);
   assert.match(librarySource, /academicArmTemplates/);
   assert.match(librarySource, /ACADEMIC_TEACHER_SECTION_INVALID/);
   assert.match(librarySource, /Archive the \$\{dependants\.length\} active dependent record/);
@@ -324,6 +330,10 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /data-academic-workflow="bulkApplyAcademicSubjects"/);
   assert.match(adminSource, /data-academic-delete=/);
   assert.match(adminSource, /Permanently delete academic record/);
+  assert.match(adminSource, /Reusable Arm Definitions \(not class arms\)/);
+  assert.match(adminSource, /This step does not create class arms/);
+  assert.match(adminSource, /academicActionButtons\('department',[\s\S]{0,150}permissions\?\.canDelete/);
+  assert.match(adminSource, /academicActionButtons\('armTemplate',[\s\S]{0,150}permissions\?\.canDelete/);
   assert.match(adminSource, /Reusable Arm Catalogue/);
   assert.match(adminSource, /Student Movement History/);
   assert.match(adminSource, /staffFetch\('\/api\/staff-academics'/);
@@ -332,7 +342,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-checkbox-options/);
   assert.match(styleSource, /\.academic-checkbox-option input\[type="checkbox"\]/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-bulk-subject-delete/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-arm-visibility-department-delete/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

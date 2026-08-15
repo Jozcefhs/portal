@@ -9412,6 +9412,22 @@ function academicStructureWorkspace(data, rows) {
   const sessionOptions = academicSelectOptions(activeSessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session');
   const classOptions = academicSelectOptions(activeClasses, '', (row) => row.Name, 'Choose class');
   const nextClassOptions = academicSelectOptions(activeClasses, '', (row) => row.Name, 'No next class');
+  const activeArmTemplates = rows.armTemplates.filter(academicIsActive);
+  const armTemplateUsage = (template) => new Set(
+    rows.arms.filter((arm) => arm.ArmTemplateId === template.ArmTemplateId).map((arm) => arm.ClassId)
+  ).size;
+  const unappliedArmTemplates = activeArmTemplates.filter((template) => armTemplateUsage(template) === 0).length;
+  const armCatalogueStatus = rows.armTemplates.length ? `<div class="academic-view-only-note">
+    <strong>${activeArmTemplates.length} reusable arm definition${activeArmTemplates.length === 1 ? '' : 's'}; ${unappliedArmTemplates} not yet applied</strong>
+    <span>Reusable definitions do not become class arms until they are assigned to classes. Use Bulk setup → Apply arms to classes.</span>
+    ${canManage ? '<button type="button" class="secondary" data-academic-view="bulkSetup">Open arm assignment</button>' : ''}
+  </div>${table('Reusable Arm Definitions (not class arms)', rows.armTemplates, [
+    { label: 'Code', value: (row) => row.Code },
+    { label: 'Definition', value: (row) => row.Name },
+    { label: 'Applied classes', value: (row) => { const count = armTemplateUsage(row); return count ? `${count} class${count === 1 ? '' : 'es'}` : 'Not applied'; } },
+    { label: 'Default capacity', value: (row) => Number(row.DefaultCapacity) > 0 ? row.DefaultCapacity : 'Unlimited' },
+    { label: 'Status', value: (row) => row.Status }
+  ])}` : '';
   const forms = canManage ? `
     <div class="academic-management-editor-grid">
       <form class="academic-management-editor" data-academic-form="session">
@@ -9459,7 +9475,7 @@ function academicStructureWorkspace(data, rows) {
         <button type="submit">Save subject</button>
       </form>
     </div>` : '<div class="academic-view-only-note"><strong>View-only academic catalogue</strong><span>Your role can see the structure but cannot change it.</span></div>';
-  return `${forms}
+  return `${forms}${armCatalogueStatus}
     <div class="academic-management-registers">
       ${table('Academic Sessions', rows.sessions, [
         { label: 'Session', value: (row) => row.Name }, { label: 'Starts', value: (row) => row.StartDate },
@@ -9518,10 +9534,10 @@ function academicBulkSetupWorkspace(data, rows) {
       <button type="submit">Create all classes</button>
     </form>
     <form class="academic-management-editor" data-academic-workflow="bulkCreateAcademicArmTemplates">
-      <div class="academic-management-editor-heading"><div><small>Reusable catalogue</small><h3>Create reusable arms</h3></div></div>
+      <div class="academic-management-editor-heading"><div><small>Definitions only</small><h3>Create reusable arm definitions</h3></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
-      <label>Arm definitions<textarea name="ArmTemplateLines" rows="9" required placeholder="A | A | 40&#10;B | B | 40&#10;Gold | GOLD | 35"></textarea><small>One reusable arm per line: Name | Code | Default capacity. Create each name once, then apply it to any class.</small></label>
-      <button type="submit">Create all reusable arms</button>
+      <label>Arm definitions<textarea name="ArmTemplateLines" rows="9" required placeholder="A | A | 40&#10;B | B | 40&#10;Gold | GOLD | 35"></textarea><small>One reusable definition per line: Name | Code | Default capacity. The | separators are required. This step does not create class arms; use Apply arms to classes afterward.</small></label>
+      <button type="submit">Create reusable definitions</button>
     </form>
     <form class="academic-management-editor" data-academic-form="armTemplate">
       ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Catalogue maintenance</small><h3>Edit one reusable arm</h3></div><button type="button" class="academic-form-reset" data-academic-reset="armTemplate">Clear</button></div>
@@ -9562,7 +9578,7 @@ function academicBulkSetupWorkspace(data, rows) {
     { label: 'Reusable arm', value: (row) => row.Name },
     { label: 'Default capacity', value: (row) => Number(row.DefaultCapacity) > 0 ? row.DefaultCapacity : 'Unlimited' },
     { label: 'Status', value: (row) => row.Status },
-    { label: 'Actions', render: (row) => academicActionButtons('armTemplate', row, canManage, data.permissions?.canArchive) }
+    { label: 'Actions', render: (row) => academicActionButtons('armTemplate', row, canManage, data.permissions?.canArchive, data.permissions?.canDelete) }
   ])}`;
 }
 
@@ -9592,7 +9608,7 @@ function academicDepartmentsWorkspace(data, rows) {
     { label: 'Department', value: (row) => row.Name },
     { label: 'Core subjects', value: (row) => (row.CoreSubjectIds || []).map((id) => academicLabel(rows.subjects, id, id)).join(', ') || 'None' },
     { label: 'Status', value: (row) => row.Status },
-    { label: 'Actions', render: (row) => academicActionButtons('department', row, canManage, data.permissions?.canArchive) }
+    { label: 'Actions', render: (row) => academicActionButtons('department', row, canManage, data.permissions?.canArchive, data.permissions?.canDelete) }
   ])}`;
 }
 

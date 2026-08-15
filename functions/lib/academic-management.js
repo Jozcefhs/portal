@@ -943,11 +943,22 @@ function batchLines(value) {
   return clean(value).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
+function batchParts(line, index, expectedCount, format) {
+  const parts = line.split('|').map((part) => part.trim());
+  if (parts.length !== expectedCount) {
+    throw failure(`Line ${index + 1} is not in the required format. Use ${format}.`);
+  }
+  return parts;
+}
+
 export function parseAcademicClassBatch(input = {}, context = {}) {
   const section = scopedSection({ SchoolSection: context.section || input.SchoolSection });
   if (Array.isArray(input.Classes)) return input.Classes.map((row, index) => ({ ...row, SortOrder: row.SortOrder || (index + 1) * 10 }));
   return batchLines(input.ClassLines || input.Classes).map((line, index) => {
-    const parts = line.split('|').map((part) => part.trim());
+    const parts = batchParts(
+      line, index, section === 'secondary' ? 4 : 3,
+      section === 'secondary' ? 'Name | Code | Junior Secondary or Senior Secondary | Capacity' : 'Name | Code | Capacity'
+    );
     return section === 'secondary'
       ? { Name: parts[0], Code: parts[1], SchoolStage: parts[2], Capacity: parts[3], SortOrder: (index + 1) * 10 }
       : { Name: parts[0], Code: parts[1], Capacity: parts[2], SchoolStage: 'primary', SortOrder: (index + 1) * 10 };
@@ -957,15 +968,15 @@ export function parseAcademicClassBatch(input = {}, context = {}) {
 export function parseAcademicArmTemplateBatch(input = {}) {
   if (Array.isArray(input.ArmTemplates)) return input.ArmTemplates.map((row, index) => ({ ...row, SortOrder: row.SortOrder || (index + 1) * 10 }));
   return batchLines(input.ArmTemplateLines || input.ArmTemplates).map((line, index) => {
-    const parts = line.split('|').map((part) => part.trim());
+    const parts = batchParts(line, index, 3, 'Name | Code | Default capacity');
     return { Name: parts[0], Code: parts[1], DefaultCapacity: parts[2], SortOrder: (index + 1) * 10 };
   });
 }
 
 export function parseAcademicSubjectBatch(input = {}) {
   if (Array.isArray(input.Subjects)) return input.Subjects.map((row) => ({ ...row }));
-  return batchLines(input.SubjectLines || input.Subjects).map((line) => {
-    const parts = line.split('|').map((part) => part.trim());
+  return batchLines(input.SubjectLines || input.Subjects).map((line, index) => {
+    const parts = batchParts(line, index, 3, 'Name | Code | Category');
     return { Name: parts[0], Code: parts[1], Category: parts[2] };
   });
 }
@@ -1385,6 +1396,9 @@ export function academicPermanentDeleteDependants(state = {}, typeValue = '', re
       ...(state.studentMovements || []).filter((row) => row.FromClassId === id || row.ToClassId === id)
     ];
   }
+  if (type === 'armtemplate') {
+    return (state.arms || []).filter((row) => row.ArmTemplateId === id);
+  }
   if (type === 'arm') {
     return [
       ...(state.offerings || []).filter((row) => row.ArmId === id),
@@ -1405,6 +1419,12 @@ export function academicPermanentDeleteDependants(state = {}, typeValue = '', re
       ...(state.teacherAllocations || []).filter(usesSubject),
       ...(state.studentMemberships || []).filter(usesSubject),
       ...(state.studentMovements || []).filter(usesSubject)
+    ];
+  }
+  if (type === 'department') {
+    return [
+      ...(state.studentMemberships || []).filter((row) => row.DepartmentId === id),
+      ...(state.studentMovements || []).filter((row) => row.FromDepartmentId === id || row.ToDepartmentId === id)
     ];
   }
   return [];
@@ -1450,19 +1470,21 @@ export async function deleteAcademicManagementRecord(env, user = {}, input = {})
   requireWritableSubscription(user);
   requireCapability(user, 'canDelete');
   const type = normalizedRecordType(input.RecordType || input.recordType || input.Type);
-  if (!['class', 'arm', 'subject'].includes(type)) {
-    throw failure('Only an unused class, arm or subject can be permanently deleted.');
+  if (!['class', 'armtemplate', 'arm', 'subject', 'department'].includes(type)) {
+    throw failure('Only an unused class, reusable arm definition, arm, subject or department can be permanently deleted.');
   }
   const definition = RECORD_TYPES[type];
-  const scope = await academicScope(env, user, input, { requireSection: true });
+  const requiresSection = type !== 'armtemplate';
+  const scope = await academicScope(env, user, input, { requireSection: requiresSection });
   const state = await loadAcademicState(env, scope.branchId);
   const stateKey = Object.keys(ACADEMIC_MANAGEMENT_COLLECTIONS).find((key) => ACADEMIC_MANAGEMENT_COLLECTIONS[key] === definition.collection);
   const existing = findById(state[stateKey] || [], input.RecordId);
   if (!existing) throw failure('The academic record was not found in the selected branch.', 404);
-  if (lower(existing.SchoolSection) !== scope.section) throw failure('This academic record belongs to another school section.', 403);
+  if (requiresSection && lower(existing.SchoolSection) !== scope.section) throw failure('This academic record belongs to another school section.', 403);
   const dependants = academicPermanentDeleteDependants(state, type, existing);
   if (dependants.length) {
-    throw failure(`This ${type} is referenced by ${dependants.length} academic record${dependants.length === 1 ? '' : 's'}. Remove those references or archive this record instead.`, 409, 'ACADEMIC_DELETE_REFERENCED');
+    const label = type === 'armtemplate' ? 'reusable arm definition' : type;
+    throw failure(`This ${label} is referenced by ${dependants.length} academic record${dependants.length === 1 ? '' : 's'}. Remove those references or archive this record instead.`, 409, 'ACADEMIC_DELETE_REFERENCED');
   }
   const revisionToken = clean(input.RevisionToken);
   if (!revisionToken || revisionToken !== clean(existing.__updateTime)) {

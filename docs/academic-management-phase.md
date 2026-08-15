@@ -250,6 +250,10 @@ atomic, skips exact retries, refuses to overwrite a conflicting existing
 record and reports success only after the online commit succeeds. Applying a
 catalogue arm creates an independent class-specific arm whose capacity and room
 may subsequently be adjusted without changing the reusable definition.
+Catalogue definitions are displayed separately from applied class arms, with
+an applied-class count and a direct route to the assignment controls. Text
+batch formats require their documented `|` separators and reject malformed
+lines instead of silently creating a combined name and generated code.
 
 Subjects are reusable within their selected school section. Bulk subject setup
 accepts a maximum of 50 catalogue entries, and subject application accepts at
@@ -259,7 +263,8 @@ curricula rather than copied for every use. Junior Secondary offerings are
 made compulsory by the server.
 
 Archive retains a record and its identity. Permanent deletion is separately
-available only for classes, arms and subjects that have no references in
+available only for classes, reusable arm definitions, class arms, subjects and
+Senior departments that have no references in
 current or historical academic records. The server checks class sequences,
 arms, offerings, teacher allocations, student memberships and immutable
 movement history before deleting, and every accepted deletion is audited.
