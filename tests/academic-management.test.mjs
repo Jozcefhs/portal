@@ -335,6 +335,11 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /data-academic-workflow="bulkApplyAcademicArmTemplates"/);
   assert.match(adminSource, /data-academic-workflow="bulkCreateAcademicSubjects"/);
   assert.match(adminSource, /data-academic-workflow="bulkApplyAcademicSubjects"/);
+  assert.match(adminSource, /Select subjects applicable to Junior Secondary/);
+  assert.match(adminSource, /name: 'ClassIds', label: 'Junior Secondary classes'/);
+  assert.match(adminSource, /name: 'SubjectIds', label: 'Applicable Junior Secondary subjects'/);
+  assert.match(adminSource, /Every selected subject is assigned to every selected class and is compulsory/);
+  assert.match(adminSource, /\['offerings', 'Class subjects'\]/);
   assert.match(adminSource, /Core status is assigned within each Senior Secondary department/);
   assert.doesNotMatch(adminSource, /data-academic-form="subject"[\s\S]{0,1200}name="Category"/);
   assert.match(adminSource, /data-academic-delete=/);
@@ -368,7 +373,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
   assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-tabs button\{[^}]*font-size:12px/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-applied-arm-guidance/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-junior-subject-selection/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

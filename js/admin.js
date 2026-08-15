@@ -9687,6 +9687,28 @@ function academicOfferingsWorkspace(data, rows) {
   const classes = rows.classes.filter(academicIsActive);
   const arms = rows.arms.filter(academicIsActive);
   const subjects = rows.subjects.filter(academicIsActive);
+  const juniorClasses = classes.filter((row) => clean(row.SchoolStage).toLowerCase() === 'junior-secondary');
+  const juniorCurriculumForm = canManage && academicManagementFilters.section === 'secondary' ? `
+    <form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="bulkApplyAcademicSubjects">
+      <div class="academic-management-editor-heading"><div><small>Junior Secondary curriculum</small><h3>Select subjects applicable to Junior Secondary</h3><p class="muted">Select the JSS classes and reusable subjects below. Every selected subject is assigned to every selected class and is compulsory for all students in those classes.</p></div></div>
+      <input type="hidden" name="SchoolSection" value="secondary">
+      <input type="hidden" name="Compulsory" value="true">
+      <div class="academic-management-form-grid">
+        <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
+        <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
+      </div>
+      ${academicCheckboxField({
+        name: 'ClassIds', label: 'Junior Secondary classes', required: true, idPrefix: 'junior-curriculum-classes',
+        options: juniorClasses.map((row) => ({ value: row.ClassId, label: `${row.Code} - ${row.Name}` })),
+        help: juniorClasses.length ? 'Choose one or more JSS classes that use this subject set.' : 'Create or classify at least one Junior Secondary class first.'
+      })}
+      ${academicCheckboxField({
+        name: 'SubjectIds', label: 'Applicable Junior Secondary subjects', required: true, idPrefix: 'junior-curriculum-subjects',
+        options: subjects.map((row) => ({ value: row.SubjectId, label: `${row.Code} - ${row.Name}` })),
+        help: 'Choose every subject taken by students in the selected JSS classes. Existing matching assignments are retained and skipped safely.'
+      })}
+      <button type="submit">Apply subjects to selected JSS classes</button>
+    </form>` : '';
   const form = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-form="offering">
     ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Curriculum delivery</small><h3>Offer a subject</h3></div><button type="button" class="academic-form-reset" data-academic-reset="offering">Clear</button></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
@@ -9702,8 +9724,9 @@ function academicOfferingsWorkspace(data, rows) {
     <p class="muted">For Junior Secondary classes, every active offering is compulsory automatically. Senior Secondary students also receive every core subject assigned to their department.</p>
     <button type="submit">Save subject offering</button>
   </form>` : '';
-  return `${form}${table('Subject Offerings', rows.offerings, [
+  return `${juniorCurriculumForm}${form}${table('Subject Offerings', rows.offerings, [
     { label: 'Class', value: (row) => academicLabel(rows.classes, row.ClassId) },
+    { label: 'Division', value: (row) => academicSchoolStageLabel(academicFind(rows.classes, row.ClassId)?.SchoolStage) },
     { label: 'Arm', value: (row) => row.ArmId ? academicLabel(rows.arms, row.ArmId) : 'All arms' },
     { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId) },
     { label: 'Requirement', value: (row) => row.Compulsory ? 'Compulsory' : 'Optional' },
@@ -9840,7 +9863,7 @@ function academicManagementHeader(data, rows, message = '') {
   ));
   const views = data.permissions?.teacherView
     ? [['structure', 'Catalogue'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['teachers', 'My allocations'], ['students', 'My registers']]
-    : [['structure', 'Structure'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Subject offerings'], ['teachers', 'Teacher allocations'], ['students', 'Student memberships']];
+    : [['structure', 'Structure'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Teacher allocations'], ['students', 'Student memberships']];
   return `<div class="academic-management-heading">
     <div><p class="eyebrow">AM-002 / AM-003</p><h2>Academic Management</h2><p class="muted">Branch-isolated structure with Junior all-subject rules and Senior department core curricula.</p></div>
     <button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button>
