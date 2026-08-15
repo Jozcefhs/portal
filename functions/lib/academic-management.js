@@ -30,7 +30,6 @@ export const ACADEMIC_MEMBERSHIP_STATUSES = Object.freeze(['Active', 'Inactive',
 export const ACADEMIC_STUDENT_MOVEMENT_TYPES = Object.freeze([
   'Allocation', 'Class Transfer', 'Arm Transfer', 'Department Change', 'Subject Change', 'Withdrawal', 'Reinstatement'
 ]);
-export const ACADEMIC_SUBJECT_CATEGORIES = Object.freeze(['Core', 'Elective', 'Vocational', 'Co-curricular']);
 export const ACADEMIC_SCHOOL_STAGES = Object.freeze(['primary', 'junior-secondary', 'senior-secondary']);
 export const ACADEMIC_TEACHER_ALLOCATION_ROLES = Object.freeze(['Subject Teacher', 'Form Teacher', 'Assistant Teacher']);
 
@@ -317,12 +316,14 @@ export function normalizeAcademicSubject(input = {}, context = {}, existing = nu
   const branchId = safeScopeId(context.branchId || input.BranchId || existing?.BranchId);
   const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || existing?.SchoolSection });
   const subjectId = clean(existing?.SubjectId || input.SubjectId || input.RecordId) || academicId('subject', branchId, section, code);
-  return {
+  const record = {
     ...(existing || {}), RecordId: subjectId, SubjectId: subjectId, Name: name, Code: code,
-    Category: oneOf(input.Category, ACADEMIC_SUBJECT_CATEGORIES, existing?.Category || 'Core'),
     Status: oneOf(input.Status, ACADEMIC_RECORD_STATUSES, existing?.Status || 'Active'),
     BranchId: branchId, SchoolSection: section
   };
+  delete record.Category;
+  delete record.SubjectCategory;
+  return record;
 }
 
 export function normalizeAcademicOffering(input = {}, context = {}, existing = null) {
@@ -977,8 +978,8 @@ export function parseAcademicArmTemplateBatch(input = {}) {
 export function parseAcademicSubjectBatch(input = {}) {
   if (Array.isArray(input.Subjects)) return input.Subjects.map((row) => ({ ...row }));
   return batchLines(input.SubjectLines || input.Subjects).map((line, index) => {
-    const parts = batchParts(line, index, 3, 'Name | Code | Category');
-    return { Name: parts[0], Code: parts[1], Category: parts[2] };
+    const parts = batchParts(line, index, 2, 'Name | Code');
+    return { Name: parts[0], Code: parts[1] };
   });
 }
 
@@ -1097,14 +1098,10 @@ export async function bulkCreateAcademicSubjects(env, user = {}, input = {}) {
   const createdRecords = [];
   let skipped = 0;
   for (const row of rows) {
-    const requestedCategory = clean(row.Category || 'Core');
-    if (!ACADEMIC_SUBJECT_CATEGORIES.some((category) => lower(category) === lower(requestedCategory))) {
-      throw failure(`${requestedCategory} is not a valid subject category. Choose Core, Elective, Vocational or Co-curricular.`);
-    }
     const record = normalizeAcademicSubject({ ...row, Status: 'Active' }, scope);
     const existing = findById(projected.subjects, record.SubjectId);
     if (existing) {
-      if (sameSetupRecord(existing, record, ['Name', 'Code', 'Category'])) {
+      if (sameSetupRecord(existing, record, ['Name', 'Code'])) {
         skipped += 1;
         continue;
       }

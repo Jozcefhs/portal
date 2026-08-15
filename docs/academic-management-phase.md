@@ -262,6 +262,12 @@ by class offerings, Senior departments, teacher allocations and student
 curricula rather than copied for every use. Junior Secondary offerings are
 made compulsory by the server.
 
+A subject catalogue record stores its name, stable code and lifecycle status;
+it is not globally labelled Core or non-Core. Senior Secondary core status is
+owned by each department's core-subject selection, so the same subject may be
+core in one department without being core in another. Class-offering
+compulsory status remains a separate term-specific setting.
+
 Archive retains a record and its identity. Permanent deletion is separately
 available only for classes, reusable arm definitions, class arms, subjects and
 Senior departments that have no references in

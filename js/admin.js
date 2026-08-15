@@ -9470,7 +9470,7 @@ function academicStructureWorkspace(data, rows) {
         ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Curriculum catalogue</small><h3>Subject</h3></div><button type="button" class="academic-form-reset" data-academic-reset="subject">Clear</button></div>
         <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
         <div class="academic-management-form-grid"><label>Subject name<input name="Name" placeholder="Mathematics" required></label><label>Code<input name="Code" placeholder="MATH" required></label></div>
-        <label>Category<select name="Category"><option>Core</option><option>Elective</option><option>Vocational</option><option>Co-curricular</option></select></label>
+        <p class="muted">Core status is assigned within each Senior Secondary department, not on the subject catalogue record.</p>
         <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
         <button type="submit">Save subject</button>
       </form>
@@ -9502,7 +9502,7 @@ function academicStructureWorkspace(data, rows) {
       ])}
       ${table('Reusable Subject Catalogue', rows.subjects, [
         { label: 'Code', value: (row) => row.Code }, { label: 'Subject', value: (row) => row.Name },
-        { label: 'Category', value: (row) => row.Category }, { label: 'Status', value: (row) => row.Status },
+        { label: 'Status', value: (row) => row.Status },
         { label: 'Actions', render: (row) => academicActionButtons('subject', row, canManage, permissions.canArchive, permissions.canDelete) }
       ])}
     </div>`;
@@ -9559,7 +9559,7 @@ function academicBulkSetupWorkspace(data, rows) {
     <form class="academic-management-editor" data-academic-workflow="bulkCreateAcademicSubjects">
       <div class="academic-management-editor-heading"><div><small>Up to 50 at once</small><h3>Build reusable subject catalogue</h3></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
-      <label>Subject definitions<textarea name="SubjectLines" rows="9" required placeholder="Mathematics | MATH | Core&#10;English Language | ENG | Core&#10;Computer Studies | COMP | Vocational"></textarea><small>One subject per line: Name | Code | Category. Categories are Core, Elective, Vocational or Co-curricular. Create a subject once for this school section, then reuse it across classes, departments and teacher allocations.</small></label>
+      <label>Subject definitions<textarea name="SubjectLines" rows="9" required placeholder="Mathematics | MATH&#10;English Language | ENG&#10;Computer Studies | COMP"></textarea><small>One subject per line: Name | Code. Create a subject once for this school section, then reuse it across classes, departments and teacher allocations. Core subjects are selected inside each Senior Secondary department.</small></label>
       <button type="submit">Create all reusable subjects</button>
     </form>
     <form class="academic-management-editor" data-academic-workflow="bulkApplyAcademicSubjects">

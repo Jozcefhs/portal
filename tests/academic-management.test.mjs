@@ -98,17 +98,20 @@ test('AM-003 bulk classes stay section scoped while reusable arm templates are b
 
 test('AM-002 subjects are bulk-created once and reused through class offerings', () => {
   const rows = parseAcademicSubjectBatch({
-    SubjectLines: 'Mathematics | MATH | Core\nComputer Studies | COMP | Vocational'
+    SubjectLines: 'Mathematics | MATH\nComputer Studies | COMP'
   });
-  const subjects = rows.map((row) => normalizeAcademicSubject(row, scope));
+  const subjects = rows.map((row) => normalizeAcademicSubject({ ...row, Category: 'Core' }, scope));
   const offering = normalizeAcademicOffering({
     SessionId: 'session-1', TermId: 'term-1', ClassId: 'jss-1',
     SubjectId: subjects[0].SubjectId, Compulsory: true
   }, scope);
 
-  assert.deepEqual(rows.map((row) => row.Category), ['Core', 'Vocational']);
+  assert.deepEqual(rows, [
+    { Name: 'Mathematics', Code: 'MATH' },
+    { Name: 'Computer Studies', Code: 'COMP' }
+  ]);
   assert.equal(subjects[0].SubjectId, 'subject__north-campus__secondary__math');
-  assert.equal(subjects[1].Category, 'Vocational');
+  assert.equal('Category' in subjects[0], false);
   assert.equal(offering.SubjectId, subjects[0].SubjectId);
   assert.throws(() => parseAcademicSubjectBatch({ SubjectLines: 'Mathematics MATH Core' }), /Line 1 is not in the required format/);
 });
@@ -280,6 +283,7 @@ test('Academic writes are audited, optimistic and preserve legacy class/student 
   assert.match(librarySource, /Apply at most 200 class-arm combinations in one batch/);
   assert.match(librarySource, /Create at most 50 subjects in one batch/);
   assert.match(librarySource, /Apply at most 200 class-subject combinations in one batch/);
+  assert.doesNotMatch(librarySource, /ACADEMIC_SUBJECT_CATEGORIES/);
   assert.match(librarySource, /ACADEMIC_DELETE_REFERENCED/);
   assert.match(librarySource, /class, reusable arm definition, arm, subject or department can be permanently deleted/);
   assert.match(librarySource, /academicArmTemplates/);
@@ -331,6 +335,8 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /data-academic-workflow="bulkApplyAcademicArmTemplates"/);
   assert.match(adminSource, /data-academic-workflow="bulkCreateAcademicSubjects"/);
   assert.match(adminSource, /data-academic-workflow="bulkApplyAcademicSubjects"/);
+  assert.match(adminSource, /Core status is assigned within each Senior Secondary department/);
+  assert.doesNotMatch(adminSource, /data-academic-form="subject"[\s\S]{0,1200}name="Category"/);
   assert.match(adminSource, /data-academic-delete=/);
   assert.match(adminSource, /Permanently delete academic record/);
   assert.match(adminSource, /Reusable Arm Definitions \(not class arms\)/);
@@ -344,8 +350,11 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-management-editor-grid/);
   assert.match(styleSource, /\.academic-checkbox-options/);
   assert.match(styleSource, /\.academic-checkbox-option input\[type="checkbox"\]/);
+  assert.match(styleSource, /\.academic-management-tabs button\{[^}]*font-size:13px/);
+  assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
+  assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-tabs button\{[^}]*font-size:12px/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-arm-visibility-department-delete/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-department-core-subjects/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
