@@ -1,6 +1,15 @@
 # Academic Management Phase
 
-Status: approved planning baseline; implementation has not started.
+Status: approved baseline; implementation in progress.
+
+Implementation status (2026-08-15): Milestone 1 has started. The School
+edition now has an effective-dated academic-policy schema, immutable policy
+revisions, separate draft and active states, organisation-to-branch
+inheritance, activation validation and administrator controls for result
+visibility, financial clearance, positions, assessment components, grading
+and promotion. Section, class and subject administration, result enforcement,
+score processing and CBT remain pending milestones; configuring a policy does
+not yet publish or unlock parent results.
 
 This document is the authoritative product and engineering specification for
 the Dynamax Academic Management phase. It covers the School edition of the web

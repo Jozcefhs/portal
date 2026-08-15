@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Settings</title>
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260814-visible-camera-controls">
+  <link rel="stylesheet" href="css/style.css?v=20260815-academic-policy">
 </head>
 <body class="settings-page">
   <main class="settings-shell">
@@ -65,11 +65,12 @@
           <a href="#general-settings" class="settings-nav-link active"><span>01</span><div><strong>General</strong><small>Identity and contact</small></div></a>
           <a href="#document-settings" class="settings-nav-link"><span>02</span><div><strong>Documents</strong><small>Signatories and email</small></div></a>
           <a href="#parent-settings" class="settings-nav-link" data-school-settings-only><span>03</span><div><strong>Parent portal</strong><small>Results and visibility</small></div></a>
-          <a href="#brand-settings" class="settings-nav-link"><span>04</span><div><strong>Branding</strong><small>Web logo</small></div></a>
-          <a href="#landing-settings" class="settings-nav-link"><span>05</span><div><strong>Landing page</strong><small>Public portal content</small></div></a>
-          <a href="#licence-settings" class="settings-nav-link"><span>06</span><div><strong>Licensing</strong><small>Product access</small></div></a>
-          <a href="#storage-settings" class="settings-nav-link"><span>07</span><div><strong>Storage</strong><small>Google documents</small></div></a>
-          <a href="#payment-settings" class="settings-nav-link"><span>08</span><div><strong>Payments</strong><small>Online and bank transfer</small></div></a>
+          <a href="#academic-policy-settings" class="settings-nav-link" data-school-settings-only><span>04</span><div><strong>Academics</strong><small>Policies and grading</small></div></a>
+          <a href="#brand-settings" class="settings-nav-link"><span>05</span><div><strong>Branding</strong><small>Web logo</small></div></a>
+          <a href="#landing-settings" class="settings-nav-link"><span>06</span><div><strong>Landing page</strong><small>Public portal content</small></div></a>
+          <a href="#licence-settings" class="settings-nav-link"><span>07</span><div><strong>Licensing</strong><small>Product access</small></div></a>
+          <a href="#storage-settings" class="settings-nav-link"><span>08</span><div><strong>Storage</strong><small>Google documents</small></div></a>
+          <a href="#payment-settings" class="settings-nav-link"><span>09</span><div><strong>Payments</strong><small>Online and bank transfer</small></div></a>
         </nav>
         <div class="settings-sidebar-note">
           <strong>Tip</strong>
@@ -193,6 +194,121 @@
                 <option value="YES">Show when applicant result is enabled</option>
               </select>
             </div>
+          </div>
+        </section>
+
+        <section id="academic-policy-settings" class="settings-section" data-school-settings-only>
+          <div class="settings-section-heading">
+            <div><span class="settings-section-icon">A</span></div>
+            <div>
+              <p class="settings-eyebrow">Academic policy</p>
+              <h2>Results, grading and promotion</h2>
+              <p>Configure an effective-dated draft, review validation, then activate it for the selected scope.</p>
+            </div>
+          </div>
+
+          <div class="academic-policy-state" id="academicPolicyState">
+            <div><strong id="academicPolicyStateTitle">No policy loaded</strong><small id="academicPolicyStateSummary">Choose a session and term to begin.</small></div>
+            <button id="loadAcademicPolicyButton" type="button" class="settings-text-button">Load policy</button>
+          </div>
+
+          <div class="settings-subsection">
+            <div class="settings-subsection-title"><strong>Effective period</strong><span>Policies are saved separately for each academic period.</span></div>
+            <div class="settings-fields two-column">
+              <div class="settings-field"><label for="academicPolicySession">Academic session</label><input id="academicPolicySession" name="CurrentAcademicSession" placeholder="2026/2027" autocomplete="off"></div>
+              <div class="settings-field"><label for="academicPolicyTerm">Term</label><select id="academicPolicyTerm" name="CurrentTerm"><option>First Term</option><option>Second Term</option><option>Third Term</option></select></div>
+            </div>
+          </div>
+
+          <div class="settings-subsection">
+            <div class="settings-subsection-title"><strong>Parent result access</strong><span>The protected result module will enforce the active policy when it is introduced.</span></div>
+            <div class="settings-fields two-column">
+              <div class="settings-field">
+                <label for="academicResultVisibility">Published results parents may access</label>
+                <select id="academicResultVisibility">
+                  <option value="unconfigured">Choose a policy</option>
+                  <option value="current-term">Current published term only</option>
+                  <option value="current-session">Published terms in the current session</option>
+                  <option value="all-published">All published term results</option>
+                  <option value="published-and-transcripts">Published results and approved transcripts</option>
+                </select>
+              </div>
+              <div class="settings-field">
+                <label for="academicFeeClearanceMode">Financial-clearance rule</label>
+                <select id="academicFeeClearanceMode">
+                  <option value="unconfigured">Choose a policy</option>
+                  <option value="none">Do not restrict results by fee balance</option>
+                  <option value="any-balance">Block when any applicable balance remains</option>
+                  <option value="minimum-paid-percentage">Require a minimum percentage paid</option>
+                  <option value="maximum-outstanding">Allow up to a maximum outstanding amount</option>
+                  <option value="selected-fee-categories">Check selected fee categories</option>
+                  <option value="manual-clearance">Require explicit manual clearance</option>
+                </select>
+              </div>
+              <div class="settings-field" data-fee-policy-field="minimum-paid-percentage"><label for="academicMinimumPaidPercentage">Minimum paid percentage</label><input id="academicMinimumPaidPercentage" type="number" min="0" max="100" step="0.01" value="100"></div>
+              <div class="settings-field" data-fee-policy-field="maximum-outstanding"><label for="academicMaximumOutstanding">Maximum outstanding amount</label><input id="academicMaximumOutstanding" type="number" min="0" step="0.01" value="0"></div>
+              <div class="settings-field full-width" data-fee-policy-field="selected-fee-categories"><label for="academicFeeCategoryIds">Applicable fee-category IDs</label><input id="academicFeeCategoryIds" placeholder="tuition, examination, boarding"><small class="settings-help">Enter stable fee-category IDs separated by commas.</small></div>
+            </div>
+            <div class="academic-policy-checks">
+              <label><input id="academicRecognizeScholarships" type="checkbox" checked> Recognize approved scholarships</label>
+              <label><input id="academicRecognizePaymentPlans" type="checkbox" checked> Recognize approved payment plans</label>
+              <label><input id="academicAllowManualExemptions" type="checkbox" checked> Allow audited manual exemptions</label>
+            </div>
+          </div>
+
+          <div class="settings-subsection">
+            <div class="settings-subsection-title"><strong>Position policy</strong><span>Calculation and parent display remain separate choices.</span></div>
+            <div class="settings-fields two-column">
+              <div class="settings-field">
+                <label for="academicPositionMode">Position handling</label>
+                <select id="academicPositionMode">
+                  <option value="unconfigured">Choose a policy</option>
+                  <option value="none">Do not calculate positions</option>
+                  <option value="internal-only">Calculate but hide from parents</option>
+                  <option value="exact-overall">Display exact overall position</option>
+                  <option value="subject-only">Display subject positions only</option>
+                  <option value="percentile-band">Display percentile or performance band</option>
+                  <option value="assessed-count">Display assessed-student count only</option>
+                </select>
+              </div>
+              <div class="settings-field"><label for="academicTieMode">Tied-score handling</label><select id="academicTieMode"><option value="competition">Competition ranking</option><option value="dense">Dense ranking</option><option value="shared">Shared position</option></select></div>
+              <div class="settings-field"><label for="academicMinimumAssessedSubjects">Minimum assessed subjects</label><input id="academicMinimumAssessedSubjects" type="number" min="1" max="100" value="1"></div>
+            </div>
+          </div>
+
+          <div class="settings-subsection">
+            <div class="settings-subsection-title"><strong>Assessment components</strong><span>Component weights must total 100%.</span></div>
+            <div class="academic-policy-grid-head academic-component-grid"><span>Name</span><span>Maximum</span><span>Weight %</span><span>Source</span><span>Required</span><span></span></div>
+            <div id="academicComponents" class="academic-policy-rows"></div>
+            <button id="addAcademicComponent" type="button" class="settings-text-button academic-add-row">Add component</button>
+          </div>
+
+          <div class="settings-subsection">
+            <div class="settings-subsection-title"><strong>Grade bands</strong><span>Bands must cover 0 through 100 without gaps or overlaps.</span></div>
+            <div class="academic-policy-grid-head academic-grade-grid"><span>Grade</span><span>Minimum</span><span>Maximum</span><span>Point</span><span>Class</span><span>Remark</span><span></span></div>
+            <div id="academicGradeBands" class="academic-policy-rows"></div>
+            <button id="addAcademicGradeBand" type="button" class="settings-text-button academic-add-row">Add grade band</button>
+          </div>
+
+          <div class="settings-subsection">
+            <div class="settings-subsection-title"><strong>Promotion</strong><span>Criteria produce recommendations; authorized staff approve final decisions.</span></div>
+            <div class="settings-fields two-column">
+              <div class="settings-field"><label for="academicPromotionMode">Promotion method</label><select id="academicPromotionMode"><option value="unconfigured">Choose a policy</option><option value="manual-review">Manual review</option><option value="criteria">Configured criteria</option></select></div>
+              <div class="settings-field"><label for="academicMinimumOverallAverage">Minimum overall average</label><input id="academicMinimumOverallAverage" type="number" min="0" max="100" step="0.01"></div>
+              <div class="settings-field"><label for="academicRequiredCoreSubjects">Required core-subject IDs</label><input id="academicRequiredCoreSubjects" placeholder="english, mathematics"></div>
+              <div class="settings-field"><label for="academicMaximumFailedSubjects">Maximum failed subjects</label><input id="academicMaximumFailedSubjects" type="number" min="0" max="100"></div>
+              <div class="settings-field"><label for="academicMinimumAttendance">Minimum attendance percentage</label><input id="academicMinimumAttendance" type="number" min="0" max="100" step="0.01"></div>
+              <div class="settings-field"><label for="academicRequireAllTerms">Completed terms</label><select id="academicRequireAllTerms"><option value="YES">Require every configured term</option><option value="NO">Allow incomplete-term review</option></select></div>
+              <div class="settings-field"><label for="academicManualReviewMinimum">Manual-review minimum</label><input id="academicManualReviewMinimum" type="number" min="0" max="100" step="0.01"></div>
+              <div class="settings-field"><label for="academicManualReviewMaximum">Manual-review maximum</label><input id="academicManualReviewMaximum" type="number" min="0" max="100" step="0.01"></div>
+            </div>
+          </div>
+
+          <div class="academic-policy-validation"><strong>Activation readiness</strong><ul id="academicPolicyIssues"><li>Load or save a policy to review its requirements.</li></ul></div>
+          <div class="academic-policy-actions">
+            <button id="inheritAcademicPolicyButton" type="button" class="settings-text-button" hidden>Use organisation policy</button>
+            <button id="saveAcademicPolicyButton" type="button" class="settings-text-button">Save draft</button>
+            <button id="activateAcademicPolicyButton" type="button" disabled>Activate policy</button>
           </div>
         </section>
 
@@ -321,6 +437,6 @@
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
-  <script src="js/setup.js?v=20260809-live-settings-custom-dialogs"></script>
+  <script src="js/setup.js?v=20260815-academic-policy"></script>
 </body>
 </html>

@@ -8,6 +8,10 @@ const settingsBranchField = document.getElementById('settingsBranch');
 const settingsScopeSummary = document.getElementById('settingsScopeSummary');
 const settingsSaveScopeLabel = document.getElementById('settingsSaveScopeLabel');
 const resetBranchSettingsButton = document.getElementById('resetBranchSettings');
+const academicPolicySection = document.getElementById('academic-policy-settings');
+const academicPolicyIssues = document.getElementById('academicPolicyIssues');
+const activateAcademicPolicyButton = document.getElementById('activateAcademicPolicyButton');
+const inheritAcademicPolicyButton = document.getElementById('inheritAcademicPolicyButton');
 const requestedSettingsParams = new URLSearchParams(window.location.search);
 const requestedSettingsBranch = (requestedSettingsParams.get('branch') || '').trim();
 const requestedSettingsScope = requestedSettingsParams.get('scope') === 'branch' && requestedSettingsBranch
@@ -16,6 +20,8 @@ const requestedSettingsScope = requestedSettingsParams.get('scope') === 'branch'
 let unlockedPassword = '';
 let webLogoDataUrl = '';
 let webLogoChanged = false;
+let activeSettingsEdition = 'school';
+let loadedAcademicPolicyView = null;
 const fixedPlanUserLimits = { Free: 5, Starter: 5, Standard: 20, Professional: 50 };
 const organisationOnlyControlIds = [
   'organisationEdition', 'nameFormat', 'webLogoFile', 'removeWebLogo',
@@ -88,6 +94,7 @@ function normalizeSettingsEdition(value) {
 
 function applyEditionTerminology(profile = {}) {
   const edition = normalizeSettingsEdition(profile.OrganisationEdition);
+  activeSettingsEdition = edition;
   const copy = settingsTerminology[edition];
   document.querySelectorAll('[data-edition-copy]').forEach((node) => {
     const value = copy[node.dataset.editionCopy];
@@ -159,6 +166,307 @@ function setField(id, value) {
   if (node) node.value = value || '';
 }
 
+function policyField(id) {
+  return document.getElementById(id);
+}
+
+function policyNumber(id, fallback = null) {
+  const value = policyField(id)?.value?.trim();
+  if (value === '' || value === undefined) return fallback;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function policyList(id) {
+  const seen = new Set();
+  return String(policyField(id)?.value || '').split(',').map((item) => item.trim()).filter((item) => {
+    const key = item.toLowerCase();
+    if (!item || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function createPolicySelect(options, value, label) {
+  const select = document.createElement('select');
+  select.setAttribute('aria-label', label);
+  options.forEach(([optionValue, optionLabel]) => {
+    const option = document.createElement('option');
+    option.value = optionValue;
+    option.textContent = optionLabel;
+    select.appendChild(option);
+  });
+  select.value = value || options[0][0];
+  return select;
+}
+
+function createPolicyInput(type, value, label, attributes = {}) {
+  const input = document.createElement('input');
+  input.type = type;
+  input.value = value ?? '';
+  input.setAttribute('aria-label', label);
+  Object.entries(attributes).forEach(([key, attributeValue]) => input.setAttribute(key, attributeValue));
+  return input;
+}
+
+function createAcademicComponentRow(component = {}, index = 0) {
+  const row = document.createElement('div');
+  row.className = 'academic-policy-row academic-component-grid';
+  row.dataset.policyId = component.Id || '';
+  const name = createPolicyInput('text', component.Name, 'Assessment component name');
+  const maximum = createPolicyInput('number', component.MaximumScore, 'Maximum score', { min: '0', step: '0.01' });
+  const weight = createPolicyInput('number', component.WeightPercentage, 'Weight percentage', { min: '0', max: '100', step: '0.01' });
+  const source = createPolicySelect([
+    ['any', 'Any approved source'],
+    ['manual', 'Manual scorebook'],
+    ['spreadsheet', 'Spreadsheet import'],
+    ['built-in-cbt', 'Built-in CBT'],
+    ['external-cbt', 'External CBT']
+  ], component.SourceMode || 'any', 'Allowed score source');
+  const required = createPolicyInput('checkbox', '', 'Required assessment component');
+  required.checked = component.Required !== false;
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'academic-remove-row';
+  remove.setAttribute('aria-label', `Remove assessment component ${index + 1}`);
+  remove.textContent = '×';
+  remove.addEventListener('click', () => row.remove());
+  row.append(name, maximum, weight, source, required, remove);
+  return row;
+}
+
+function createAcademicGradeRow(band = {}, index = 0) {
+  const row = document.createElement('div');
+  row.className = 'academic-policy-row academic-grade-grid';
+  row.dataset.policyId = band.Id || '';
+  const grade = createPolicyInput('text', band.Grade, 'Grade');
+  const minimum = createPolicyInput('number', band.MinimumPercentage, 'Minimum percentage', { min: '0', max: '100', step: '0.01' });
+  const maximum = createPolicyInput('number', band.MaximumPercentage, 'Maximum percentage', { min: '0', max: '100', step: '0.01' });
+  const point = createPolicyInput('number', band.GradePoint, 'Grade point', { min: '0', step: '0.01' });
+  const classification = createPolicySelect([['pass', 'Pass'], ['fail', 'Fail']], band.Classification || 'pass', 'Pass or fail classification');
+  const remark = createPolicyInput('text', band.Remark, 'Grade remark');
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'academic-remove-row';
+  remove.setAttribute('aria-label', `Remove grade band ${index + 1}`);
+  remove.textContent = '×';
+  remove.addEventListener('click', () => row.remove());
+  row.append(grade, minimum, maximum, point, classification, remark, remove);
+  return row;
+}
+
+function renderAcademicComponents(components = []) {
+  const container = policyField('academicComponents');
+  container.replaceChildren(...components.map(createAcademicComponentRow));
+}
+
+function renderAcademicGradeBands(bands = []) {
+  const container = policyField('academicGradeBands');
+  container.replaceChildren(...bands.map(createAcademicGradeRow));
+}
+
+function updateAcademicPolicyConditionalFields() {
+  const feeMode = policyField('academicFeeClearanceMode')?.value || 'unconfigured';
+  document.querySelectorAll('[data-fee-policy-field]').forEach((field) => {
+    field.hidden = field.dataset.feePolicyField !== feeMode;
+  });
+  const criteria = policyField('academicPromotionMode')?.value === 'criteria';
+  [
+    'academicMinimumOverallAverage',
+    'academicRequiredCoreSubjects',
+    'academicMaximumFailedSubjects',
+    'academicMinimumAttendance',
+    'academicRequireAllTerms',
+    'academicManualReviewMinimum',
+    'academicManualReviewMaximum'
+  ].forEach((id) => {
+    const field = policyField(id);
+    if (field) field.disabled = !criteria;
+  });
+}
+
+function renderAcademicPolicy(policy = {}) {
+  const result = policy.ResultAccess || {};
+  const clearance = result.FinancialClearance || {};
+  const position = policy.Position || {};
+  const assessment = policy.Assessment || {};
+  const promotion = policy.Promotion || {};
+  setField('academicResultVisibility', result.VisibilityMode || 'unconfigured');
+  setField('academicFeeClearanceMode', clearance.Mode || 'unconfigured');
+  setField('academicMinimumPaidPercentage', clearance.MinimumPaidPercentage ?? 100);
+  setField('academicMaximumOutstanding', clearance.MaximumOutstanding ?? 0);
+  setField('academicFeeCategoryIds', (clearance.FeeCategoryIds || []).join(', '));
+  policyField('academicRecognizeScholarships').checked = clearance.RecognizeScholarships !== false;
+  policyField('academicRecognizePaymentPlans').checked = clearance.RecognizePaymentPlans !== false;
+  policyField('academicAllowManualExemptions').checked = clearance.AllowManualExemptions !== false;
+  setField('academicPositionMode', position.Mode || 'unconfigured');
+  setField('academicTieMode', position.TieMode || 'competition');
+  setField('academicMinimumAssessedSubjects', position.MinimumAssessedSubjects || 1);
+  renderAcademicComponents(assessment.Components || []);
+  renderAcademicGradeBands(assessment.GradeBands || []);
+  setField('academicPromotionMode', promotion.Mode || 'unconfigured');
+  setField('academicMinimumOverallAverage', promotion.MinimumOverallAverage ?? '');
+  setField('academicRequiredCoreSubjects', (promotion.RequiredCoreSubjectIds || []).join(', '));
+  setField('academicMaximumFailedSubjects', promotion.MaximumFailedSubjects ?? '');
+  setField('academicMinimumAttendance', promotion.MinimumAttendancePercentage ?? '');
+  setField('academicRequireAllTerms', promotion.RequireAllTerms === false ? 'NO' : 'YES');
+  setField('academicManualReviewMinimum', promotion.ManualReviewMinimum ?? '');
+  setField('academicManualReviewMaximum', promotion.ManualReviewMaximum ?? '');
+  updateAcademicPolicyConditionalFields();
+}
+
+function academicPolicyFromForm() {
+  const components = [...policyField('academicComponents').children].map((row, index) => {
+    const [name, maximum, weight, source, required] = row.children;
+    return {
+      Id: row.dataset.policyId,
+      Name: name.value,
+      MaximumScore: Number(maximum.value || 0),
+      WeightPercentage: Number(weight.value || 0),
+      SourceMode: source.value,
+      Required: required.checked,
+      Order: index + 1
+    };
+  });
+  const gradeBands = [...policyField('academicGradeBands').children].map((row, index) => {
+    const [grade, minimum, maximum, point, classification, remark] = row.children;
+    return {
+      Id: row.dataset.policyId,
+      Grade: grade.value,
+      MinimumPercentage: Number(minimum.value || 0),
+      MaximumPercentage: Number(maximum.value || 0),
+      GradePoint: Number(point.value || 0),
+      Classification: classification.value,
+      Remark: remark.value,
+      Order: index + 1
+    };
+  });
+  return {
+    ResultAccess: {
+      VisibilityMode: policyField('academicResultVisibility').value,
+      FinancialClearance: {
+        Mode: policyField('academicFeeClearanceMode').value,
+        MinimumPaidPercentage: policyNumber('academicMinimumPaidPercentage', 100),
+        MaximumOutstanding: policyNumber('academicMaximumOutstanding', 0),
+        FeeCategoryIds: policyList('academicFeeCategoryIds'),
+        RecognizeScholarships: policyField('academicRecognizeScholarships').checked,
+        RecognizePaymentPlans: policyField('academicRecognizePaymentPlans').checked,
+        AllowManualExemptions: policyField('academicAllowManualExemptions').checked
+      }
+    },
+    Position: {
+      Mode: policyField('academicPositionMode').value,
+      TieMode: policyField('academicTieMode').value,
+      MinimumAssessedSubjects: policyNumber('academicMinimumAssessedSubjects', 1)
+    },
+    Assessment: { Components: components, GradeBands: gradeBands },
+    Promotion: {
+      Mode: policyField('academicPromotionMode').value,
+      MinimumOverallAverage: policyNumber('academicMinimumOverallAverage'),
+      RequiredCoreSubjectIds: policyList('academicRequiredCoreSubjects'),
+      MaximumFailedSubjects: policyNumber('academicMaximumFailedSubjects'),
+      MinimumAttendancePercentage: policyNumber('academicMinimumAttendance'),
+      RequireAllTerms: policyField('academicRequireAllTerms').value === 'YES',
+      ManualReviewMinimum: policyNumber('academicManualReviewMinimum'),
+      ManualReviewMaximum: policyNumber('academicManualReviewMaximum')
+    }
+  };
+}
+
+function renderAcademicPolicyIssues(issues = [], hasDraft = false) {
+  const validation = academicPolicyIssues.closest('.academic-policy-validation');
+  academicPolicyIssues.replaceChildren();
+  if (!issues.length && hasDraft) {
+    const item = document.createElement('li');
+    item.textContent = 'The draft is complete and ready for activation.';
+    academicPolicyIssues.appendChild(item);
+    validation.classList.add('ready');
+    return;
+  }
+  validation.classList.remove('ready');
+  const messages = issues.length
+    ? issues.map((issue) => issue.message)
+    : ['Save a draft to validate this policy.'];
+  messages.forEach((message) => {
+    const item = document.createElement('li');
+    item.textContent = message;
+    academicPolicyIssues.appendChild(item);
+  });
+}
+
+function renderAcademicPolicyView(view = {}, message = '') {
+  loadedAcademicPolicyView = view;
+  renderAcademicPolicy(view.Policy || {});
+  const hasDraft = Boolean(view.DraftRevisionId);
+  const active = Boolean(view.ActiveRevisionId);
+  policyField('academicPolicyStateTitle').textContent = hasDraft && view.DraftRevisionId !== view.ActiveRevisionId
+    ? 'Draft saved; activation pending'
+    : active
+      ? 'Active academic policy'
+      : 'No active academic policy';
+  policyField('academicPolicyStateSummary').textContent = message || (hasDraft
+    ? `${view.Period?.Session || ''} / ${view.Period?.Term || ''} · ${view.Scope?.Type || 'organisation'} scope`
+    : 'Complete and save a draft before activation.');
+  renderAcademicPolicyIssues(view.ActivationIssues || [], hasDraft);
+  activateAcademicPolicyButton.disabled = !view.CanActivate;
+  inheritAcademicPolicyButton.hidden = settingsScopeField.value !== 'branch';
+}
+
+function academicPolicyRequestBody(action, extra = {}) {
+  const session = policyField('academicPolicySession').value.trim();
+  const term = policyField('academicPolicyTerm').value.trim();
+  if (!session || !term) throw new Error('Enter the academic session and term before loading or saving a policy.');
+  return {
+    action,
+    password: unlockedPassword,
+    SettingsScope: settingsScopeField.value,
+    BranchId: settingsScopeField.value === 'branch' ? settingsBranchField.value : '',
+    Session: session,
+    Term: term,
+    ...extra
+  };
+}
+
+async function requestAcademicPolicy(action, extra = {}) {
+  if (activeSettingsEdition !== 'school') return null;
+  const response = await fetch('/api/academic-policy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(academicPolicyRequestBody(action, extra))
+  });
+  const data = await response.json();
+  if (!response.ok || !data.ok) {
+    const error = new Error(data.message || 'Academic policy request failed.');
+    error.issues = data.issues || [];
+    throw error;
+  }
+  renderAcademicPolicyView(data.view || {}, data.message);
+  return data.view || {};
+}
+
+async function loadAcademicPolicy({ silent = false } = {}) {
+  if (!unlockedPassword || activeSettingsEdition !== 'school') return null;
+  const session = policyField('academicPolicySession')?.value.trim();
+  const term = policyField('academicPolicyTerm')?.value.trim();
+  if (!session || !term) {
+    loadedAcademicPolicyView = null;
+    policyField('academicPolicyStateTitle').textContent = 'Academic period required';
+    policyField('academicPolicyStateSummary').textContent = 'Enter a session and term, then load the policy.';
+    activateAcademicPolicyButton.disabled = true;
+    return null;
+  }
+  try {
+    return await requestAcademicPolicy('load');
+  } catch (error) {
+    if (!silent) throw error;
+    loadedAcademicPolicyView = null;
+    policyField('academicPolicyStateTitle').textContent = 'Policy could not be loaded';
+    policyField('academicPolicyStateSummary').textContent = error.message;
+    activateAcademicPolicyButton.disabled = true;
+    return null;
+  }
+}
+
 function revealRequestedSettingsSection() {
   const sectionId = window.location.hash.slice(1);
   const section = sectionId ? document.getElementById(sectionId) : null;
@@ -203,7 +511,9 @@ function profileFromForm() {
     PaymentAccountName: data.get('PaymentAccountName'),
     PaymentAccountNumber: data.get('PaymentAccountNumber'),
     PaymentBankCurrency: data.get('PaymentBankCurrency'),
-    PaymentTransferInstructions: data.get('PaymentTransferInstructions')
+    PaymentTransferInstructions: data.get('PaymentTransferInstructions'),
+    CurrentAcademicSession: data.get('CurrentAcademicSession'),
+    CurrentTerm: data.get('CurrentTerm')
   };
   if (webLogoChanged) profile.WebLogoDataUrl = webLogoDataUrl;
   return profile;
@@ -262,6 +572,8 @@ function applyProfile(profile = {}) {
   setField('paymentAccountNumber', profile.PaymentAccountNumber);
   setField('paymentBankCurrency', profile.PaymentBankCurrency || 'NGN');
   setField('paymentTransferInstructions', profile.PaymentTransferInstructions);
+  setField('academicPolicySession', profile.CurrentAcademicSession);
+  setField('academicPolicyTerm', profile.CurrentTerm || 'First Term');
   applyEditionTerminology(profile);
   updateSettingsScopeUI(profile);
   alignPlanUserLimit();
@@ -306,6 +618,7 @@ async function loadProfile(password = '', { scope = settingsScopeField.value, br
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load setup.');
     applyProfile(data.profile || {});
+    if (password && activeSettingsEdition === 'school') await loadAcademicPolicy({ silent: true });
     return data.profile || {};
   } catch (error) {
     setStatus(error.message, 'bad');
@@ -408,11 +721,89 @@ setupForm.addEventListener('submit', async (event) => {
   }
 });
 
-setupForm.addEventListener('input', () => {
+setupForm.addEventListener('input', (event) => {
+  if (academicPolicySection?.contains(event.target)) return;
   setStatus('You have unsaved changes.', '');
 });
 
 document.getElementById('subscriptionPlan')?.addEventListener('change', alignPlanUserLimit);
+
+policyField('addAcademicComponent')?.addEventListener('click', () => {
+  policyField('academicComponents').appendChild(createAcademicComponentRow({}, policyField('academicComponents').children.length));
+});
+
+policyField('addAcademicGradeBand')?.addEventListener('click', () => {
+  policyField('academicGradeBands').appendChild(createAcademicGradeRow({}, policyField('academicGradeBands').children.length));
+});
+
+policyField('academicFeeClearanceMode')?.addEventListener('change', updateAcademicPolicyConditionalFields);
+policyField('academicPromotionMode')?.addEventListener('change', updateAcademicPolicyConditionalFields);
+
+policyField('loadAcademicPolicyButton')?.addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  if (!window.DynamaxActionFeedback.begin(button, 'Loading policy...')) return;
+  try {
+    await loadAcademicPolicy();
+    setStatus('Academic policy loaded for the selected period.', 'ok');
+  } catch (error) {
+    setStatus(error.message, 'bad');
+  } finally {
+    window.DynamaxActionFeedback.end(button);
+  }
+});
+
+policyField('saveAcademicPolicyButton')?.addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  if (!window.DynamaxActionFeedback.begin(button, 'Saving draft...')) return;
+  try {
+    await requestAcademicPolicy('saveDraft', { policy: academicPolicyFromForm() });
+    setStatus('Academic policy draft saved. It is not active until validation passes and you activate it.', 'ok');
+  } catch (error) {
+    renderAcademicPolicyIssues(error.issues || [], false);
+    setStatus(error.message, 'bad');
+  } finally {
+    window.DynamaxActionFeedback.end(button);
+  }
+});
+
+activateAcademicPolicyButton?.addEventListener('click', async (event) => {
+  if (!await window.DynamaxDialogs.confirm({
+    title: 'Activate academic policy',
+    message: 'Activate this policy for the selected scope, session and term? New academic records will use this effective policy.',
+    confirmText: 'Activate policy'
+  })) return;
+  const button = event.currentTarget;
+  if (!window.DynamaxActionFeedback.begin(button, 'Activating...')) return;
+  try {
+    await requestAcademicPolicy('activate');
+    setStatus('Academic policy activated successfully.', 'ok');
+  } catch (error) {
+    renderAcademicPolicyIssues(error.issues || [], Boolean(loadedAcademicPolicyView?.DraftRevisionId));
+    setStatus(error.message, 'bad');
+  } finally {
+    window.DynamaxActionFeedback.end(button);
+  }
+});
+
+inheritAcademicPolicyButton?.addEventListener('click', async (event) => {
+  const branchName = settingsBranchField.selectedOptions[0]?.textContent || 'this branch';
+  if (!await window.DynamaxDialogs.confirm({
+    title: 'Use organisation academic policy',
+    message: `Remove the active and draft academic-policy overrides for ${branchName} in this session and term?`,
+    tone: 'danger',
+    confirmText: 'Use organisation policy'
+  })) return;
+  const button = event.currentTarget;
+  if (!window.DynamaxActionFeedback.begin(button, 'Resetting policy...')) return;
+  try {
+    await requestAcademicPolicy('inherit');
+    setStatus(`${branchName} now inherits the organisation academic policy for this period.`, 'ok');
+  } catch (error) {
+    setStatus(error.message, 'bad');
+  } finally {
+    window.DynamaxActionFeedback.end(button);
+  }
+});
 
 async function reloadSelectedSettingsScope() {
   if (!unlockedPassword) return;

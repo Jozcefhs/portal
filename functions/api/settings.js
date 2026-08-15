@@ -1,5 +1,4 @@
 import { getDocument, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
-import { secureTextEqual } from '../lib/backend-security.js';
 import {
   requireAppsScriptWebAppUrl,
   selectDocumentStorageUrl
@@ -23,6 +22,7 @@ import {
 } from '../lib/branch-profile-settings.js';
 import { refreshOrganizationPlanPolicy } from '../lib/plan-policy-sync.js';
 import { readStaffSession } from '../lib/staff-auth.js';
+import { requireSetupAdministrator } from '../lib/setup-auth.js';
 import { mergedProfileText } from '../lib/profile-settings-update.js';
 import {
   applyPublicPortalContent,
@@ -39,21 +39,6 @@ function clean(value) {
 
 function normalizeSchoolCode(value) {
   return clean(value).toUpperCase().replace(/[^A-Z0-9]/g, '') || 'DCA';
-}
-
-async function requireAdmin(env, request, password) {
-  const expected = clean(env.ADMIN_WEB_PASSWORD);
-  if (expected && secureTextEqual(password, expected)) return;
-  const staff = await readStaffSession(env, request).catch(() => null);
-  if (staff && clean(staff.role || staff.Role) === 'Super Admin') return;
-  if (!expected) {
-    const err = new Error('Setup login is not configured. Add ADMIN_WEB_PASSWORD in Cloudflare.');
-    err.status = 503;
-    throw err;
-  }
-  const err = new Error('Invalid setup password or Super Administrator session.');
-  err.status = 401;
-  throw err;
 }
 
 function defaultProfile(env) {
@@ -288,7 +273,7 @@ export async function onRequestPost(context) {
     const { request, env } = context;
     const deployment = requiredDeploymentIdentity(env);
     const body = await readJsonBody(request, { maxBytes: 1024 * 1024 });
-    await requireAdmin(env, request, body.password);
+    await requireSetupAdministrator(env, request, body.password);
     const settingsScope = clean(body.SettingsScope || body.settingsScope).toLowerCase();
     const branchId = clean(body.BranchId || body.branchId);
     if (clean(body.action || body.Action) === 'load') {
