@@ -706,7 +706,7 @@ function legacyClassWrite(state, projectedRecord, type) {
     ? [...state.arms.filter((row) => recordId(row) !== recordId(projectedRecord)), projectedRecord]
     : state.arms;
   const arms = projectedArms.filter((row) => row.ClassId === schoolClass.ClassId && statusActive(row))
-    .sort((a, b) => Number(a.SortOrder || 100) - Number(b.SortOrder || 100))
+    .sort((a, b) => clean(a.Name).localeCompare(clean(b.Name), undefined, { numeric: true, sensitivity: 'base' }))
     .map((row) => clean(row.Name)).filter(Boolean);
   return {
     collectionPath: 'settings/academics/classes',
@@ -794,12 +794,12 @@ function displayStudents(rows = []) {
 }
 
 function sortAcademicState(state) {
-  const byName = (a, b) => clean(a.Name).localeCompare(clean(b.Name));
+  const byName = (a, b) => clean(a.Name).localeCompare(clean(b.Name), undefined, { numeric: true, sensitivity: 'base' });
   const byOrder = (a, b) => Number(a.SortOrder || 100) - Number(b.SortOrder || 100) || byName(a, b);
   return {
     sessions: [...state.sessions].sort((a, b) => clean(b.StartDate).localeCompare(clean(a.StartDate))),
     terms: [...state.terms].sort((a, b) => clean(a.StartDate).localeCompare(clean(b.StartDate))),
-    classes: [...state.classes].sort(byOrder), armTemplates: [...state.armTemplates].sort(byOrder), arms: [...state.arms].sort(byOrder),
+    classes: [...state.classes].sort(byOrder), armTemplates: [...state.armTemplates].sort(byName), arms: [...state.arms].sort(byName),
     subjects: [...state.subjects].sort(byName), departments: [...state.departments].sort(byName),
     offerings: [...state.offerings].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId)) || clean(a.SubjectId).localeCompare(clean(b.SubjectId))),
     teacherAllocations: [...state.teacherAllocations].sort((a, b) =>

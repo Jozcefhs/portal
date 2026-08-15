@@ -2458,13 +2458,76 @@ function renderMobileNavigation(tabs, visibleTabs = tabs.map(([key, label]) => [
   }).join('');
 }
 
+const {
+  modes: ADMIN_LIST_SORT_MODES,
+  createdFields: ADMIN_LIST_CREATED_FIELDS,
+  modifiedFields: ADMIN_LIST_MODIFIED_FIELDS,
+  nameValue: adminListNameValue,
+  timestamp: adminListTimestamp,
+  sortEntries: sortAdminListEntries
+} = window.DynamaxListSorting;
+
+function adminListStorageKey(title) {
+  const identity = clean(title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'records';
+  return `dynamax:list-sort:${clean(activeSection) || 'workspace'}:${identity}`;
+}
+
+function savedAdminListSort(title) {
+  try {
+    const saved = clean(window.localStorage.getItem(adminListStorageKey(title)));
+    if (ADMIN_LIST_SORT_MODES.some(([mode]) => mode === saved)) return saved;
+  } catch (_error) {
+    // Sorting still works when browser storage is unavailable.
+  }
+  return 'default';
+}
+
+function applyAdminListSort(select) {
+  const wrap = select.closest('.admin-table-wrap');
+  const body = wrap?.querySelector(':scope > table.admin-table > tbody');
+  if (!body) return;
+  const rows = [...body.querySelectorAll(':scope > tr[data-list-row]')];
+  const entries = rows.map((row) => ({
+    row,
+    index: Number(row.dataset.listIndex || 0),
+    name: row.dataset.listName || '',
+    created: Number(row.dataset.listCreated || 0),
+    modified: Number(row.dataset.listModified || 0)
+  }));
+  sortAdminListEntries(entries, select.value).forEach((entry) => body.append(entry.row));
+  try { window.localStorage.setItem(select.dataset.listStorageKey, select.value); } catch (_error) { /* optional */ }
+}
+
+document.addEventListener('change', (event) => {
+  const select = event.target.closest?.('[data-admin-list-sort]');
+  if (select) applyAdminListSort(select);
+});
+
 function table(title, rows, columns) {
-  const body = rows && rows.length
-    ? rows.map((row) => `<tr>${columns.map((column) => `<td>${column.render ? column.render(row) : escapeHtml(column.value(row))}</td>`).join('')}</tr>`).join('')
+  const sourceRows = Array.isArray(rows) ? rows : [];
+  const mode = savedAdminListSort(title);
+  const entries = sourceRows.map((row, index) => ({
+    row,
+    index,
+    name: adminListNameValue(row, columns),
+    created: adminListTimestamp(row, ADMIN_LIST_CREATED_FIELDS),
+    modified: adminListTimestamp(row, ADMIN_LIST_MODIFIED_FIELDS)
+  }));
+  const sortedEntries = sortAdminListEntries(entries, mode);
+  const body = sortedEntries.length
+    ? sortedEntries.map((entry) => `<tr data-list-row data-list-index="${entry.index}" data-list-name="${escapeHtml(entry.name)}" data-list-created="${entry.created}" data-list-modified="${entry.modified}">${columns.map((column) => `<td>${column.render ? column.render(entry.row) : escapeHtml(column.value(entry.row))}</td>`).join('')}</tr>`).join('')
     : `<tr><td colspan="${columns.length}">No records found.</td></tr>`;
+  const storageKey = adminListStorageKey(title);
   return `
     <h2>${escapeHtml(title)}</h2>
     <div class="admin-table-wrap">
+      <div class="admin-list-sort-toolbar">
+        <label>Sort list
+          <select data-admin-list-sort data-list-storage-key="${escapeHtml(storageKey)}" aria-label="Sort ${escapeHtml(title)}">
+            ${ADMIN_LIST_SORT_MODES.map(([value, label]) => `<option value="${value}"${mode === value ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+          </select>
+        </label>
+      </div>
       <table class="admin-table">
         <thead><tr>${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join('')}</tr></thead>
         <tbody>${body}</tbody>
@@ -7440,7 +7503,7 @@ async function loadChurchOfferings() {
             <label>Route ID <input name="RouteId" placeholder="Blank for auto generated"></label>
             <label>Fund <select name="FundId">${routeFundOptions.map((row) => `<option value="${escapeHtml(row.value)}">${escapeHtml(row.label)}</option>`).join('')}</select></label>
             <label>Description <input name="Description" required placeholder="General approvals"></label>
-            <label>Sort order <input name="SortOrder" type="number" min="0" step="1" value="100"></label>
+            <label>Route priority <input name="SortOrder" type="number" min="0" step="1" value="100"><small>Lower priority is selected first when routes otherwise match.</small></label>
             <label>Status <select name="Active"><option value="YES">Active</option><option value="NO">Inactive</option></select></label>
           </div>
           <label>Approval roles <input name="ApprovalRoles" required placeholder="Super Admin, Church Administrator, Treasurer" value="Super Admin, Church Administrator, Treasurer"></label>
@@ -7463,7 +7526,7 @@ async function loadChurchOfferings() {
           { label: 'Description', value: (row) => pick(row, ['Description']) },
           { label: 'Approval roles', value: (row) => roleListInput(row, 'ApprovalRoles') },
           { label: 'Posting roles', value: (row) => roleListInput(row, 'PostingRoles') },
-          { label: 'Sort', value: (row) => pick(row, ['SortOrder']) },
+          { label: 'Priority', value: (row) => pick(row, ['SortOrder']) },
           { label: 'Active', value: (row) => isRouteActive(row.Active) ? 'YES' : 'NO' },
           {
             label: 'Actions',
@@ -9452,7 +9515,7 @@ function academicStructureWorkspace(data, rows) {
         ${academicManagementFilters.section === 'secondary'
           ? '<label>Secondary division<select name="SchoolStage" required><option value="">Choose division</option><option value="junior-secondary">Junior Secondary</option><option value="senior-secondary">Senior Secondary</option></select></label>'
           : '<input type="hidden" name="SchoolStage" value="primary">'}
-        <div class="academic-management-form-grid"><label>Capacity<input name="Capacity" type="number" min="0" value="0"></label><label>Order<input name="SortOrder" type="number" min="1" value="100"></label></div>
+        <div class="academic-management-form-grid"><label>Capacity<input name="Capacity" type="number" min="0" value="0"></label><label>Progression order<input name="SortOrder" type="number" min="1" value="100"><small>Used only for the class progression sequence.</small></label></div>
         <label>Next class<select name="NextClassId">${nextClassOptions}</select></label>
         <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
         <button type="submit">Save class</button>
@@ -9463,7 +9526,7 @@ function academicStructureWorkspace(data, rows) {
         <label>Class<select name="ClassId" required>${classOptions}</select></label>
         <label>Arm name<input name="Name" placeholder="Excellence" required></label>
         <div class="academic-management-form-grid"><label>Capacity<input name="Capacity" type="number" min="0" value="0"></label><label>Room<input name="Room" placeholder="Room 4"></label></div>
-        <div class="academic-management-form-grid"><label>Order<input name="SortOrder" type="number" min="1" value="100"></label><label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label></div>
+        <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
         <button type="submit">Save arm</button>
       </form>
       <form class="academic-management-editor" data-academic-form="subject">
@@ -9545,7 +9608,6 @@ function academicBulkSetupWorkspace(data, rows) {
       <label>Arm name<input name="Name" required placeholder="Gold"></label>
       <label>Stable code<input name="Code" required placeholder="GOLD"></label>
       <label>Default capacity<input name="DefaultCapacity" type="number" min="0" max="10000" value="0"><small>Zero means unlimited. Applied class arms can still be edited independently.</small></label>
-      <label>Display order<input name="SortOrder" type="number" min="1" value="100"></label>
       <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
       <button type="submit">Save reusable arm</button>
     </form>
