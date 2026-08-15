@@ -9929,25 +9929,21 @@ function academicStudentWorkspace(data, rows) {
     <label>Arm<select name="ArmId" required${draftClassId ? '' : ' disabled'}>${academicSelectOptions(bulkArms, draftArmId, (row) => row.Name, draftClassId ? 'Choose arm' : 'Choose class first')}</select></label>
     ${academicManagementFilters.section === 'secondary' ? `<label>Senior department<select name="DepartmentId">${academicSelectOptions(departments, '', (row) => `${row.Code} - ${row.Name}`, 'Not applicable / choose for Senior')}</select></label>` : ''}`;
   const forms = canManage ? `<div class="academic-management-editor-grid">
-    <form class="academic-management-editor" data-academic-form="studentMembership" data-academic-student-placement="single">
-      ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Single allocation</small><h3>Allocate student</h3></div><button type="button" class="academic-form-reset" data-academic-reset="studentMembership">Clear</button></div>
-      <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
-      ${periodFields}
-      ${targetFields}
-      <label>Student<select name="StudentRef" data-academic-student-candidate-select required><option value="">Choose the class and arm first</option></select><small>Only students whose existing class matches the selected class and who have no arm assignment for this period are shown.</small></label>
-      ${academicCheckboxField({ name: 'SubjectIds', label: 'Optional subjects', options: subjectCheckboxOptions, idPrefix: 'single-student-subjects', help: 'Junior receives every offering; Senior receives department core subjects automatically.' })}
-      <input type="hidden" name="Status" value="Active"><button type="submit">Allocate student</button>
-    </form>
-    <form class="academic-management-editor" data-academic-workflow="bulkAllocateAcademicStudents" data-academic-student-placement="bulk">
-      <div class="academic-management-editor-heading"><div><small>Up to 100 at once</small><h3>Assign students to a class arm</h3><p class="muted">Choose a class and arm to see only students already in that class who are still unassigned for the selected period.</p></div></div>
-      <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
-      ${bulkPeriodFields}
-      ${bulkTargetFields}
-      <label>Find student<input type="search" data-academic-student-candidate-search placeholder="Search by name or admission number" autocomplete="off"><small>Search narrows the checkbox list without clearing students already selected.</small></label>
-      ${academicCheckboxField({ name: 'StudentRefs', label: 'Unassigned students', options: [], required: true, max: 100, idPrefix: 'bulk-allocation-students', purpose: 'student-arm-candidates', help: 'Choose the session, term, class and arm to display unassigned students.' })}
-      ${academicCheckboxField({ name: 'SubjectIds', label: 'Optional subjects', options: subjectCheckboxOptions, idPrefix: 'bulk-allocation-subjects' })}
-      <label>Allocation note<input name="Reason" placeholder="New term allocation"></label>
-      <button type="submit">Allocate selected students</button>
+    <form class="academic-student-allocation-layout" data-academic-workflow="bulkAllocateAcademicStudents" data-academic-student-placement="bulk">
+      <section class="academic-management-editor academic-student-allocation-controls">
+        <div class="academic-management-editor-heading"><div><small>One or up to 100 at once</small><h3>Assign students to a class arm</h3><p class="muted">Choose a class and arm to show only students already in that class who remain unassigned for the selected period.</p></div></div>
+        <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
+        ${bulkPeriodFields}
+        ${bulkTargetFields}
+        ${academicCheckboxField({ name: 'SubjectIds', label: 'Optional subjects', options: subjectCheckboxOptions, idPrefix: 'bulk-allocation-subjects', help: 'Junior receives every offering; Senior receives department core subjects automatically.' })}
+        <label>Allocation note<input name="Reason" placeholder="New term allocation"></label>
+        <button type="submit">Allocate selected students</button>
+      </section>
+      <section class="academic-management-editor academic-student-allocation-register">
+        <div class="academic-management-editor-heading"><div><small>Class-specific register</small><h3>Unassigned students</h3><p class="muted">Select one student or several students. The list refreshes immediately after each successful allocation.</p></div></div>
+        <label>Find student<input type="search" data-academic-student-candidate-search placeholder="Search by name or admission number" autocomplete="off"><small>Search narrows this register without clearing students already selected.</small></label>
+        ${academicCheckboxField({ name: 'StudentRefs', label: 'Students awaiting an arm', options: [], required: true, max: 100, idPrefix: 'bulk-allocation-students', purpose: 'student-arm-candidates', help: 'Choose the session, term, class and arm to display unassigned students.' })}
+      </section>
     </form>
     <form class="academic-management-editor" data-academic-workflow="moveAcademicStudentMembership">
       <div class="academic-management-editor-heading"><div><small>Audited history</small><h3>Transfer or change</h3></div></div>

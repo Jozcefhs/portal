@@ -351,10 +351,14 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.doesNotMatch(adminSource, /select name="(?:CoreSubjectIds|StudentRefs|SubjectIds)" multiple/);
   assert.match(adminSource, /data-academic-workflow="bulkAllocateAcademicStudents"/);
   assert.match(adminSource, /data-academic-student-placement="bulk"/);
+  assert.doesNotMatch(adminSource, /data-academic-form="studentMembership"/);
+  assert.doesNotMatch(adminSource, /Single allocation/);
+  assert.match(adminSource, /class="academic-student-allocation-layout"/);
+  assert.match(adminSource, /One or up to 100 at once/);
   assert.match(adminSource, /function academicStudentAllocationCandidates/);
   assert.match(adminSource, /data-academic-checkbox-purpose="student-arm-candidates"/);
   assert.match(adminSource, /remain unassigned for this period/);
-  assert.match(adminSource, /Only students whose existing class matches the selected class/);
+  assert.match(adminSource, /Students awaiting an arm/);
   assert.match(adminSource, /function academicBulkSetupWorkspace/);
   assert.match(adminSource, /data-academic-workflow="bulkCreateAcademicClasses"/);
   assert.match(adminSource, /data-academic-workflow="bulkCreateAcademicArmTemplates"/);
@@ -397,11 +401,14 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-checkbox-options/);
   assert.match(styleSource, /\.academic-checkbox-option input\[type="checkbox"\]/);
   assert.match(styleSource, /\[data-academic-checkbox-purpose="student-arm-candidates"\] \.academic-checkbox-options\{max-height:320px\}/);
+  assert.match(styleSource, /\.academic-student-allocation-layout\{grid-column:1\/-1/);
+  assert.match(styleSource, /grid-template-areas:"register controls"/);
+  assert.match(styleSource, /grid-template-areas:"controls" "register"/);
   assert.match(styleSource, /\.academic-management-tabs button\{[^}]*font-size:13px/);
   assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
   assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-tabs button\{[^}]*font-size:12px/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-class-arm-students/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-unassigned-register/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
