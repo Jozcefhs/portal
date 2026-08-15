@@ -692,7 +692,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'sendOfficialCorrespondence', 'saveExecutiveDashboardPreferences',
   'getStudentConductCases', 'saveStudentConductCase', 'deleteStudentConductCase',
   'getAcademicManagement', 'saveAcademicSession', 'saveAcademicTerm', 'saveAcademicClass',
-  'saveAcademicArm', 'saveAcademicSubject', 'saveAcademicOffering',
+  'saveAcademicArm', 'saveAcademicSubject', 'saveAcademicDepartment', 'saveAcademicOffering',
   'saveAcademicTeacherAllocation', 'saveAcademicStudentMembership', 'archiveAcademicRecord',
   'getAccountingRequisitionDocument', 'syncAccountingRevenue', 'saveChartAccount',
   'saveAccountingJournal', 'saveAccountingExpense', 'saveAccountingBudget',
@@ -7420,6 +7420,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'saveAcademicClass':
     case 'saveAcademicArm':
     case 'saveAcademicSubject':
+    case 'saveAcademicDepartment':
     case 'saveAcademicOffering':
     case 'saveAcademicTeacherAllocation':
     case 'saveAcademicStudentMembership':

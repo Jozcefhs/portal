@@ -2199,7 +2199,7 @@ function renderModuleSummary(active, liveData = null) {
     const summary = liveData.summary || {};
     cards = [
       { icon, label: 'Classes', value: summary.Classes || 0, note: `${summary.Arms || 0} active arm(s)` },
-      { icon: '\u{1F4DA}', label: 'Subjects', value: summary.Subjects || 0, note: 'Current section catalogue' },
+      { icon: '\u{1F4DA}', label: 'Subjects', value: summary.Subjects || 0, note: `${summary.Departments || 0} senior department(s)` },
       { icon: '\u{1F9D1}\u200D\u{1F3EB}', label: 'Teacher allocations', value: summary.TeacherAllocations || 0, note: 'Selected branch and scope' },
       { icon: '\u{1F393}', label: 'Student memberships', value: summary.StudentMemberships || 0, note: 'Class, arm and subjects' }
     ];
@@ -9296,7 +9296,11 @@ async function loadStudentConduct() {
 
 function academicRecordId(row = {}) {
   return clean(row.RecordId || row.SessionId || row.TermId || row.ClassId || row.ArmId
-    || row.SubjectId || row.OfferingId || row.AllocationId || row.MembershipId);
+    || row.SubjectId || row.DepartmentId || row.OfferingId || row.AllocationId || row.MembershipId);
+}
+
+function academicSchoolStageLabel(value = '') {
+  return ({ primary: 'Primary', 'junior-secondary': 'Junior Secondary', 'senior-secondary': 'Senior Secondary' })[clean(value).toLowerCase()] || 'Not classified';
 }
 
 function academicIsActive(row = {}) {
@@ -9334,6 +9338,7 @@ function academicCurrentRows(data = academicManagementData || {}) {
     classes: sectionRows(data.classes || []),
     arms: sectionRows(data.arms || []),
     subjects: sectionRows(data.subjects || []),
+    departments: sectionRows(data.departments || []),
     offerings: periodRows(data.offerings || []),
     teacherAllocations: periodRows(data.teacherAllocations || []),
     studentMemberships: periodRows(data.studentMemberships || [])
@@ -9382,6 +9387,9 @@ function academicStructureWorkspace(data, rows) {
         ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>${escapeHtml(academicManagementFilters.section)}</small><h3>Class</h3></div><button type="button" class="academic-form-reset" data-academic-reset="class">Clear</button></div>
         <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
         <div class="academic-management-form-grid"><label>Class name<input name="Name" placeholder="JSS 1" required></label><label>Code<input name="Code" placeholder="JSS1" required></label></div>
+        ${academicManagementFilters.section === 'secondary'
+          ? '<label>Secondary division<select name="SchoolStage" required><option value="">Choose division</option><option value="junior-secondary">Junior Secondary</option><option value="senior-secondary">Senior Secondary</option></select></label>'
+          : '<input type="hidden" name="SchoolStage" value="primary">'}
         <div class="academic-management-form-grid"><label>Capacity<input name="Capacity" type="number" min="0" value="0"></label><label>Order<input name="SortOrder" type="number" min="1" value="100"></label></div>
         <label>Next class<select name="NextClassId">${nextClassOptions}</select></label>
         <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
@@ -9419,6 +9427,7 @@ function academicStructureWorkspace(data, rows) {
       ])}
       ${table(`${academicManagementFilters.section} Classes`, rows.classes, [
         { label: 'Class', value: (row) => row.Name }, { label: 'Code', value: (row) => row.Code },
+        { label: 'Division', value: (row) => academicSchoolStageLabel(row.SchoolStage) },
         { label: 'Capacity', value: (row) => row.Capacity }, { label: 'Status', value: (row) => row.Status },
         { label: 'Actions', render: (row) => academicActionButtons('class', row, canManage, permissions.canArchive) }
       ])}
@@ -9433,6 +9442,32 @@ function academicStructureWorkspace(data, rows) {
         { label: 'Actions', render: (row) => academicActionButtons('subject', row, canManage, permissions.canArchive) }
       ])}
     </div>`;
+}
+
+function academicDepartmentsWorkspace(data, rows) {
+  const canManage = data.permissions?.canManageStructure === true;
+  if (academicManagementFilters.section !== 'secondary') {
+    return '<div class="academic-view-only-note"><strong>Senior Secondary departments</strong><span>Departments apply only to Senior Secondary. Junior Secondary students take every subject offered to their class or arm.</span></div>';
+  }
+  const subjects = rows.subjects.filter(academicIsActive);
+  const form = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-form="department">
+    ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Senior Secondary curriculum</small><h3>Create department</h3></div><button type="button" class="academic-form-reset" data-academic-reset="department">Clear</button></div>
+    <input type="hidden" name="SchoolSection" value="secondary">
+    <div class="academic-management-form-grid academic-management-form-grid-3">
+      <label>Department name<input name="Name" placeholder="Sciences" required></label>
+      <label>Stable code<input name="Code" placeholder="SCI" required></label>
+      <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
+    </div>
+    <label>Department core subjects<select name="CoreSubjectIds" multiple required size="${Math.min(10, Math.max(5, subjects.length))}">${subjects.map((row) => `<option value="${escapeHtml(row.SubjectId)}">${escapeHtml(`${row.Code} - ${row.Name}`)}</option>`).join('')}</select><small>These subjects apply to every Senior Secondary student assigned to this department, regardless of class. They must also be offered to each applicable class or arm.</small></label>
+    <button type="submit">Save department</button>
+  </form>` : '<div class="academic-view-only-note"><strong>Senior Secondary departments</strong><span>Your role can view department core subjects but cannot change them.</span></div>';
+  return `${form}${table('Senior Secondary Departments', rows.departments, [
+    { label: 'Code', value: (row) => row.Code },
+    { label: 'Department', value: (row) => row.Name },
+    { label: 'Core subjects', value: (row) => (row.CoreSubjectIds || []).map((id) => academicLabel(rows.subjects, id, id)).join(', ') || 'None' },
+    { label: 'Status', value: (row) => row.Status },
+    { label: 'Actions', render: (row) => academicActionButtons('department', row, canManage, data.permissions?.canArchive) }
+  ])}`;
 }
 
 function academicOfferingsWorkspace(data, rows) {
@@ -9454,6 +9489,7 @@ function academicOfferingsWorkspace(data, rows) {
       <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
     </div>
     <label class="academic-inline-check"><input name="Compulsory" type="checkbox"> Compulsory for every student in this class or arm</label>
+    <p class="muted">For Junior Secondary classes, every active offering is compulsory automatically. Senior Secondary students also receive every core subject assigned to their department.</p>
     <button type="submit">Save subject offering</button>
   </form>` : '';
   return `${form}${table('Subject Offerings', rows.offerings, [
@@ -9507,6 +9543,7 @@ function academicStudentWorkspace(data, rows) {
   const classes = rows.classes.filter(academicIsActive);
   const arms = rows.arms.filter(academicIsActive);
   const subjects = rows.subjects.filter(academicIsActive);
+  const departments = rows.departments.filter(academicIsActive);
   const students = (data.students || []).filter((row) => {
     const assigned = clean(row.SchoolSection).toLowerCase();
     return !assigned || assigned === academicManagementFilters.section;
@@ -9518,16 +9555,18 @@ function academicStudentWorkspace(data, rows) {
       <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
       <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
       <label>Student<select name="StudentRef" required>${academicSelectOptions(students, '', (row) => `${row.StudentName} (${row.StudentRef})`, 'Choose student')}</select></label>
-      <label>Class<select name="ClassId" required>${academicSelectOptions(classes, '', (row) => row.Name, 'Choose class')}</select></label>
+      <label>Class<select name="ClassId" required>${academicSelectOptions(classes, '', (row) => `${row.Name} — ${academicSchoolStageLabel(row.SchoolStage)}`, 'Choose class')}</select></label>
       <label>Arm<select name="ArmId" required>${academicSelectOptions(arms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'Choose arm')}</select></label>
+      ${academicManagementFilters.section === 'secondary' ? `<label>Senior department<select name="DepartmentId">${academicSelectOptions(departments, '', (row) => `${row.Code} - ${row.Name}`, 'Not applicable / choose for Senior')}</select></label>` : ''}
       <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
     </div>
-    <label>Registered subjects<select name="SubjectIds" multiple size="${Math.min(8, Math.max(4, subjects.length))}">${subjects.map((row) => `<option value="${escapeHtml(row.SubjectId)}">${escapeHtml(`${row.Code} - ${row.Name}`)}</option>`).join('')}</select><small>Choose all subjects taken by this student. Compulsory offerings are added automatically.</small></label>
+    <label>Optional / selected subjects<select name="SubjectIds" multiple size="${Math.min(8, Math.max(4, subjects.length))}">${subjects.map((row) => `<option value="${escapeHtml(row.SubjectId)}">${escapeHtml(`${row.Code} - ${row.Name}`)}</option>`).join('')}</select><small>Junior Secondary ignores this selection and automatically receives every offered subject. Senior Secondary automatically receives common compulsory offerings and all core subjects of the chosen department; use this list for any additional subjects.</small></label>
     <button type="submit">Save student membership</button>
   </form>` : '<div class="academic-view-only-note"><strong>My class registers</strong><span>Students shown here come only from your teaching allocations.</span></div>';
   return `${form}${table('Student Class & Subject Memberships', rows.studentMemberships, [
     { label: 'Student', value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
     { label: 'Class / Arm', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
+    { label: 'Department', value: (row) => row.DepartmentId ? academicLabel(rows.departments, row.DepartmentId) : '-' },
     { label: 'Subjects', value: (row) => (row.SubjectIds || []).map((id) => academicLabel(rows.subjects, id, id)).join(', ') || 'None' },
     { label: 'Status', value: (row) => row.Status },
     { label: 'Actions', render: (row) => academicActionButtons('studentMembership', row, canManage, canManage) }
@@ -9542,10 +9581,10 @@ function academicManagementHeader(data, rows, message = '') {
     !['primary', 'secondary'].includes(permittedSection) || section === permittedSection
   ));
   const views = data.permissions?.teacherView
-    ? [['structure', 'Catalogue'], ['teachers', 'My allocations'], ['students', 'My registers']]
-    : [['structure', 'Structure'], ['offerings', 'Subject offerings'], ['teachers', 'Teacher allocations'], ['students', 'Student memberships']];
+    ? [['structure', 'Catalogue'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['teachers', 'My allocations'], ['students', 'My registers']]
+    : [['structure', 'Structure'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Subject offerings'], ['teachers', 'Teacher allocations'], ['students', 'Student memberships']];
   return `<div class="academic-management-heading">
-    <div><p class="eyebrow">AM-002 / AM-003</p><h2>Academic Management</h2><p class="muted">Branch-isolated sessions, terms, classes, arms, subjects and effective-dated allocations.</p></div>
+    <div><p class="eyebrow">AM-002 / AM-003</p><h2>Academic Management</h2><p class="muted">Branch-isolated structure with Junior all-subject rules and Senior department core curricula.</p></div>
     <button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button>
   </div>
   <div class="academic-management-filterbar">
@@ -9580,6 +9619,7 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
   const rows = academicCurrentRows(data);
   let workspace = '';
   if (academicManagementView === 'offerings') workspace = academicOfferingsWorkspace(data, rows);
+  else if (academicManagementView === 'departments') workspace = academicDepartmentsWorkspace(data, rows);
   else if (academicManagementView === 'teachers') workspace = academicTeacherWorkspace(data, rows);
   else if (academicManagementView === 'students') workspace = academicStudentWorkspace(data, rows);
   else workspace = academicStructureWorkspace(data, rows);
@@ -9625,12 +9665,15 @@ function academicFormPayload(form) {
   if (form.dataset.academicForm === 'studentMembership') {
     payload.SubjectIds = [...form.elements.SubjectIds.selectedOptions].map((option) => option.value);
   }
+  if (form.dataset.academicForm === 'department') {
+    payload.CoreSubjectIds = [...form.elements.CoreSubjectIds.selectedOptions].map((option) => option.value);
+  }
   return { ...payload, RecordType: form.dataset.academicForm };
 }
 
 function academicRecordRows(type) {
   const key = ({
-    session: 'sessions', term: 'terms', class: 'classes', arm: 'arms', subject: 'subjects',
+    session: 'sessions', term: 'terms', class: 'classes', arm: 'arms', subject: 'subjects', department: 'departments',
     offering: 'offerings', teacherAllocation: 'teacherAllocations', studentMembership: 'studentMemberships'
   })[type];
   return academicManagementData?.[key] || [];

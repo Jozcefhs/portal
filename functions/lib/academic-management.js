@@ -14,6 +14,7 @@ export const ACADEMIC_MANAGEMENT_COLLECTIONS = Object.freeze({
   classes: 'academicClasses',
   arms: 'academicArms',
   subjects: 'academicSubjects',
+  departments: 'academicDepartments',
   offerings: 'academicSubjectOfferings',
   teacherAllocations: 'academicTeacherAllocations',
   studentMemberships: 'academicStudentMemberships',
@@ -24,6 +25,7 @@ export const ACADEMIC_SESSION_STATUSES = Object.freeze(['Planned', 'Active', 'Cl
 export const ACADEMIC_TERM_STATUSES = Object.freeze(['Planned', 'Active', 'Closed', 'Archived']);
 export const ACADEMIC_RECORD_STATUSES = Object.freeze(['Active', 'Inactive', 'Archived']);
 export const ACADEMIC_SUBJECT_CATEGORIES = Object.freeze(['Core', 'Elective', 'Vocational', 'Co-curricular']);
+export const ACADEMIC_SCHOOL_STAGES = Object.freeze(['primary', 'junior-secondary', 'senior-secondary']);
 export const ACADEMIC_TEACHER_ALLOCATION_ROLES = Object.freeze(['Subject Teacher', 'Form Teacher', 'Assistant Teacher']);
 
 const STRUCTURE_MANAGERS = new Set(['Super Admin', 'Principal', 'Management']);
@@ -71,6 +73,17 @@ function uniqueIds(value) {
   return [...new Set(supplied.map((item) => clean(item)).filter(Boolean))];
 }
 
+function schoolStageValue(value, section = '', className = '') {
+  if (lower(section) === 'primary') return 'primary';
+  const wanted = lower(value).replace(/[\s_]+/g, '-');
+  if (['junior', 'jss', 'junior-secondary'].includes(wanted)) return 'junior-secondary';
+  if (['senior', 'sss', 'senior-secondary'].includes(wanted)) return 'senior-secondary';
+  const name = lower(className);
+  if (/\b(jss|junior)(?:[\s_-]*\d+)?\b/.test(name)) return 'junior-secondary';
+  if (/\b(sss?|senior)(?:[\s_-]*\d+)?\b/.test(name)) return 'senior-secondary';
+  return '';
+}
+
 function academicId(...parts) {
   const normalized = parts.map((part) => safeScopeId(part, '')).filter(Boolean);
   if (normalized.length !== parts.length) throw failure('Academic record identifiers cannot be blank.');
@@ -97,7 +110,7 @@ function actorUsername(user = {}) {
 function recordId(row = {}) {
   return clean(
     row.RecordId || row.recordId || row.SessionId || row.TermId || row.ClassId || row.ArmId
-      || row.SubjectId || row.OfferingId || row.AllocationId || row.MembershipId || row.__id
+      || row.SubjectId || row.DepartmentId || row.OfferingId || row.AllocationId || row.MembershipId || row.__id
   );
 }
 
@@ -215,6 +228,8 @@ export function normalizeAcademicClass(input = {}, context = {}, existing = null
   if (!name) throw failure('Enter the class name.');
   const branchId = safeScopeId(context.branchId || input.BranchId || existing?.BranchId);
   const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || existing?.SchoolSection });
+  const schoolStage = schoolStageValue(input.SchoolStage || input.SecondaryDivision || existing?.SchoolStage, section, name);
+  if (section === 'secondary' && !schoolStage) throw failure('Choose Junior Secondary or Senior Secondary for this class.');
   const classId = clean(existing?.ClassId || input.ClassId || input.RecordId) || academicId('class', branchId, section, name);
   return {
     ...(existing || {}), RecordId: classId, ClassId: classId, Name: name,
@@ -222,9 +237,29 @@ export function normalizeAcademicClass(input = {}, context = {}, existing = null
     Capacity: wholeNumber(input.Capacity, wholeNumber(existing?.Capacity, 0), 0, 10000),
     SortOrder: wholeNumber(input.SortOrder, wholeNumber(existing?.SortOrder, 100), 1, 10000),
     NextClassId: clean(input.NextClassId ?? existing?.NextClassId),
+    SchoolStage: schoolStage,
     Status: oneOf(input.Status, ACADEMIC_RECORD_STATUSES, existing?.Status || 'Active'),
     LegacyDocumentId: clean(existing?.LegacyDocumentId) || legacyDocumentId(name),
     BranchId: branchId, SchoolSection: section
+  };
+}
+
+export function normalizeAcademicDepartment(input = {}, context = {}, existing = null) {
+  const name = clean(input.Name || input.DepartmentName);
+  const code = clean(input.Code || input.DepartmentCode).toUpperCase();
+  if (!name) throw failure('Enter the senior secondary department name.');
+  if (!code) throw failure('Enter a stable department code.');
+  const branchId = safeScopeId(context.branchId || input.BranchId || existing?.BranchId);
+  const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || existing?.SchoolSection });
+  if (section !== 'secondary') throw failure('Academic departments are available only in Secondary school.');
+  const departmentId = clean(existing?.DepartmentId || input.DepartmentId || input.RecordId)
+    || academicId('department', branchId, 'senior-secondary', code);
+  return {
+    ...(existing || {}), RecordId: departmentId, DepartmentId: departmentId,
+    Name: name, Code: code,
+    CoreSubjectIds: uniqueIds(input.CoreSubjectIds ?? existing?.CoreSubjectIds ?? []),
+    Status: oneOf(input.Status, ACADEMIC_RECORD_STATUSES, existing?.Status || 'Active'),
+    BranchId: branchId, SchoolSection: 'secondary', SchoolStage: 'senior-secondary'
   };
 }
 
@@ -322,7 +357,8 @@ export function normalizeAcademicStudentMembership(input = {}, context = {}, exi
   return {
     ...(existing || {}), RecordId: membershipId, MembershipId: membershipId,
     SessionId: sessionId, TermId: termId, StudentRef: studentRef,
-    ClassId: classId, ArmId: armId, SubjectIds: uniqueIds(input.SubjectIds ?? existing?.SubjectIds ?? []),
+    ClassId: classId, ArmId: armId, DepartmentId: clean(input.DepartmentId ?? existing?.DepartmentId),
+    SubjectIds: uniqueIds(input.SubjectIds ?? existing?.SubjectIds ?? []),
     Status: oneOf(input.Status, ACADEMIC_RECORD_STATUSES, existing?.Status || 'Active'),
     BranchId: branchId, SchoolSection: section
   };
@@ -334,6 +370,7 @@ const RECORD_TYPES = Object.freeze({
   class: { collection: ACADEMIC_MANAGEMENT_COLLECTIONS.classes, normalize: normalizeAcademicClass, capability: 'canManageStructure' },
   arm: { collection: ACADEMIC_MANAGEMENT_COLLECTIONS.arms, normalize: normalizeAcademicArm, capability: 'canManageStructure' },
   subject: { collection: ACADEMIC_MANAGEMENT_COLLECTIONS.subjects, normalize: normalizeAcademicSubject, capability: 'canManageStructure' },
+  department: { collection: ACADEMIC_MANAGEMENT_COLLECTIONS.departments, normalize: normalizeAcademicDepartment, capability: 'canManageStructure' },
   offering: { collection: ACADEMIC_MANAGEMENT_COLLECTIONS.offerings, normalize: normalizeAcademicOffering, capability: 'canManageStructure' },
   teacherallocation: { collection: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations, normalize: normalizeAcademicTeacherAllocation, capability: 'canManageAllocations' },
   studentmembership: { collection: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships, normalize: normalizeAcademicStudentMembership, capability: 'canManageAllocations' }
@@ -365,6 +402,32 @@ function assertReference(row, message) {
   return row;
 }
 
+export function applyAcademicStudentCurriculum(state = {}, record = {}) {
+  const offerings = (state.offerings || []).filter((row) => statusActive(row)
+    && row.SessionId === record.SessionId && row.TermId === record.TermId && row.ClassId === record.ClassId
+    && (!row.ArmId || row.ArmId === record.ArmId));
+  const available = new Set(offerings.map((row) => row.SubjectId));
+  const compulsory = offerings.filter((row) => row.Compulsory === true).map((row) => row.SubjectId);
+  if (!offerings.length) throw failure('Offer subjects to this class or arm before allocating students.');
+  if (record.SchoolStage === 'junior-secondary') {
+    record.DepartmentId = '';
+    record.SubjectIds = [...available];
+  } else if (record.SchoolStage === 'senior-secondary') {
+    const department = assertReference(findById(state.departments || [], record.DepartmentId), 'Choose an active senior secondary department for this student.');
+    if (department.SchoolStage !== 'senior-secondary') throw failure('The selected department is not a Senior Secondary department.');
+    const missingCore = (department.CoreSubjectIds || []).filter((subjectId) => !available.has(subjectId));
+    if (missingCore.length) throw failure('Offer every department core subject to this senior class before allocating students.');
+    record.SubjectIds = uniqueIds([...record.SubjectIds, ...compulsory, ...(department.CoreSubjectIds || [])]);
+  } else {
+    record.DepartmentId = '';
+    record.SubjectIds = uniqueIds([...record.SubjectIds, ...compulsory]);
+  }
+  if (!record.SubjectIds.length) throw failure('Choose at least one offered subject for this student.');
+  const invalid = record.SubjectIds.filter((subjectId) => !available.has(subjectId));
+  if (invalid.length) throw failure('One or more selected subjects are not offered to this class or arm.');
+  return record;
+}
+
 function validateActiveConflict(state, type, record, existing) {
   if (!statusActive(record)) return;
   if (type === 'session') {
@@ -387,12 +450,24 @@ function validateAcademicRecord(state, type, record, people = {}) {
     const schoolClass = assertReference(findById(state.classes, record.ClassId), 'The selected class is not active.');
     if (schoolClass.SchoolSection !== record.SchoolSection) throw failure('The class arm must belong to the same school section as its class.');
   }
+  if (type === 'department') {
+    if (!record.CoreSubjectIds.length) throw failure('Assign at least one core subject to this senior secondary department.');
+    const invalidSubjects = record.CoreSubjectIds.filter((subjectId) => {
+      const subject = findById(state.subjects, subjectId);
+      return !subject || !statusActive(subject) || subject.SchoolSection !== 'secondary';
+    });
+    if (invalidSubjects.length) throw failure('Every department core subject must be an active Secondary subject.');
+  }
   if (['offering', 'teacherallocation', 'studentmembership'].includes(type)) {
     const session = assertReference(findById(state.sessions, record.SessionId), 'The selected session is not active.');
     const term = assertReference(findById(state.terms, record.TermId), 'The selected term is not active.');
     const schoolClass = assertReference(findById(state.classes, record.ClassId), 'The selected class is not active.');
     if (term.SessionId !== session.SessionId) throw failure('The selected term does not belong to this academic session.');
     if (schoolClass.SchoolSection !== record.SchoolSection) throw failure('The selected class belongs to another school section.');
+    record.SchoolStage = schoolStageValue(schoolClass.SchoolStage, schoolClass.SchoolSection, schoolClass.Name);
+    if (schoolClass.SchoolSection === 'secondary' && !record.SchoolStage) {
+      throw failure('Classify this class as Junior Secondary or Senior Secondary before using it for allocations.');
+    }
     if (record.ArmId) {
       const arm = assertReference(findById(state.arms, record.ArmId), 'The selected class arm is not active.');
       if (arm.ClassId !== record.ClassId) throw failure('The selected class arm does not belong to this class.');
@@ -401,6 +476,9 @@ function validateAcademicRecord(state, type, record, people = {}) {
   if (['offering', 'teacherallocation'].includes(type)) {
     const subject = assertReference(findById(state.subjects, record.SubjectId), 'The selected subject is not active.');
     if (subject.SchoolSection !== record.SchoolSection) throw failure('The selected subject belongs to another school section.');
+  }
+  if (type === 'offering' && record.SchoolStage === 'junior-secondary') {
+    record.Compulsory = true;
   }
   if (type === 'teacherallocation') {
     const teacher = people.staff.find((row) => lower(row.Username || row.username || row.__id) === record.TeacherUsername);
@@ -418,15 +496,7 @@ function validateAcademicRecord(state, type, record, people = {}) {
   if (type === 'studentmembership') {
     const student = people.students.find((row) => lower(studentReference(row)) === lower(record.StudentRef));
     if (!student) throw failure('The selected student was not found in this branch and school section.', 404);
-    const offerings = state.offerings.filter((row) => statusActive(row)
-      && row.SessionId === record.SessionId && row.TermId === record.TermId && row.ClassId === record.ClassId
-      && (!row.ArmId || row.ArmId === record.ArmId));
-    const available = new Set(offerings.map((row) => row.SubjectId));
-    const compulsory = offerings.filter((row) => row.Compulsory === true).map((row) => row.SubjectId);
-    record.SubjectIds = uniqueIds([...record.SubjectIds, ...compulsory]);
-    if (offerings.length && !record.SubjectIds.length) throw failure('Choose at least one offered subject for this student.');
-    const invalid = record.SubjectIds.filter((subjectId) => !available.has(subjectId));
-    if (invalid.length) throw failure('One or more selected subjects are not offered to this class or arm.');
+    applyAcademicStudentCurriculum(state, record);
   }
 }
 
@@ -477,6 +547,7 @@ function legacyClassWrite(state, projectedRecord, type) {
     documentId: clean(schoolClass.LegacyDocumentId) || legacyDocumentId(schoolClass.Name),
     data: {
       ClassName: schoolClass.Name,
+      SchoolStage: schoolClass.SchoolStage,
       Arms: arms.join(', '),
       Active: statusActive(schoolClass) ? 'YES' : 'NO',
       SortOrder: Number(schoolClass.SortOrder || 100),
@@ -492,6 +563,7 @@ function studentCompatibilityWrite(people, state, record) {
   const arm = findById(state.arms, record.ArmId);
   const session = findById(state.sessions, record.SessionId);
   const term = findById(state.terms, record.TermId);
+  const department = findById(state.departments, record.DepartmentId);
   if (!student || !student.__scopePath || !student.__id || !student.__updateTime) return null;
   return {
     collectionPath: student.__scopePath,
@@ -502,6 +574,9 @@ function studentCompatibilityWrite(people, state, record) {
       ClassName: clean(schoolClass?.Name),
       ClassAdmitted: clean(schoolClass?.Name),
       ClassArm: clean(arm?.Name),
+      SchoolStage: clean(record.SchoolStage || schoolClass?.SchoolStage),
+      AcademicDepartment: clean(department?.Name),
+      AcademicDepartmentCode: clean(department?.Code),
       AcademicSession: clean(session?.Name),
       Term: clean(term?.Name),
       UpdatedAt: nowIso(),
@@ -554,7 +629,8 @@ function sortAcademicState(state) {
     sessions: [...state.sessions].sort((a, b) => clean(b.StartDate).localeCompare(clean(a.StartDate))),
     terms: [...state.terms].sort((a, b) => clean(a.StartDate).localeCompare(clean(b.StartDate))),
     classes: [...state.classes].sort(byOrder), arms: [...state.arms].sort(byOrder),
-    subjects: [...state.subjects].sort(byName), offerings: [...state.offerings].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId)) || clean(a.SubjectId).localeCompare(clean(b.SubjectId))),
+    subjects: [...state.subjects].sort(byName), departments: [...state.departments].sort(byName),
+    offerings: [...state.offerings].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId)) || clean(a.SubjectId).localeCompare(clean(b.SubjectId))),
     teacherAllocations: [...state.teacherAllocations].sort((a, b) => clean(a.TeacherUsername).localeCompare(clean(b.TeacherUsername))),
     studentMemberships: [...state.studentMemberships].sort((a, b) => clean(a.StudentRef).localeCompare(clean(b.StudentRef)))
   };
@@ -609,6 +685,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
       Classes: state.classes.filter(statusActive).length,
       Arms: state.arms.filter(statusActive).length,
       Subjects: state.subjects.filter(statusActive).length,
+      Departments: state.departments.filter(statusActive).length,
       TeacherAllocations: state.teacherAllocations.filter(statusActive).length,
       StudentMemberships: state.studentMemberships.filter(statusActive).length
     }
@@ -664,7 +741,8 @@ function activeDependants(state, type, record) {
   if (type === 'term') return [...state.offerings, ...state.teacherAllocations, ...state.studentMemberships].filter((row) => row.TermId === id && statusActive(row));
   if (type === 'class') return [...state.arms, ...state.offerings, ...state.teacherAllocations, ...state.studentMemberships].filter((row) => row.ClassId === id && statusActive(row));
   if (type === 'arm') return [...state.offerings, ...state.teacherAllocations, ...state.studentMemberships].filter((row) => row.ArmId === id && statusActive(row));
-  if (type === 'subject') return [...state.offerings, ...state.teacherAllocations, ...state.studentMemberships].filter((row) => (row.SubjectId === id || (row.SubjectIds || []).includes(id)) && statusActive(row));
+  if (type === 'subject') return [...state.departments, ...state.offerings, ...state.teacherAllocations, ...state.studentMemberships].filter((row) => (row.SubjectId === id || (row.SubjectIds || []).includes(id) || (row.CoreSubjectIds || []).includes(id)) && statusActive(row));
+  if (type === 'department') return state.studentMemberships.filter((row) => row.DepartmentId === id && statusActive(row));
   if (type === 'offering') return [...state.teacherAllocations, ...state.studentMemberships].filter((row) => row.SessionId === record.SessionId && row.TermId === record.TermId && row.ClassId === record.ClassId && (row.SubjectId === record.SubjectId || (row.SubjectIds || []).includes(record.SubjectId)) && statusActive(row));
   return [];
 }
@@ -705,10 +783,10 @@ export async function archiveAcademicManagementRecord(env, user = {}, input = {}
 export async function handleAcademicManagementAction(env, user = {}, input = {}) {
   const action = lower(input.action || input.Action).replace(/[^a-z]/g, '');
   if (['bootstrap', 'list', 'getacademicmanagement'].includes(action)) return bootstrapAcademicManagement(env, user, input);
-  if (['save', 'saverecord', 'saveacademicsession', 'saveacademicterm', 'saveacademicclass', 'saveacademicarm', 'saveacademicsubject', 'saveacademicoffering', 'saveacademicteacherallocation', 'saveacademicstudentmembership'].includes(action)) {
+  if (['save', 'saverecord', 'saveacademicsession', 'saveacademicterm', 'saveacademicclass', 'saveacademicarm', 'saveacademicsubject', 'saveacademicdepartment', 'saveacademicoffering', 'saveacademicteacherallocation', 'saveacademicstudentmembership'].includes(action)) {
     const inferredType = ({
       saveacademicsession: 'session', saveacademicterm: 'term', saveacademicclass: 'class', saveacademicarm: 'arm',
-      saveacademicsubject: 'subject', saveacademicoffering: 'offering', saveacademicteacherallocation: 'teacherAllocation',
+      saveacademicsubject: 'subject', saveacademicdepartment: 'department', saveacademicoffering: 'offering', saveacademicteacherallocation: 'teacherAllocation',
       saveacademicstudentmembership: 'studentMembership'
     })[action];
     return saveAcademicManagementRecord(env, user, { ...input, RecordType: input.RecordType || inferredType });

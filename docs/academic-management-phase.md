@@ -8,9 +8,13 @@ policy revisions, separate draft and active states, organisation-to-branch
 inheritance, activation validation and administrator controls for result
 visibility, financial clearance, positions, assessment components, grading
 and promotion. The first AM-002/AM-003 vertical slice is also operational on
-web and desktop: branch-isolated sessions, terms, Primary/Secondary classes,
-arms, subjects, subject offerings, teacher allocations and term-specific
-student class/arm/subject memberships share one protected online model. It
+web and desktop: branch-isolated sessions, terms, Primary classes, distinct
+Junior/Senior Secondary classes, arms, subjects, Senior departments and their
+core subjects, subject offerings, teacher allocations and term-specific
+student class/arm/department/subject memberships share one protected online
+model. Junior students automatically receive every subject offered to their
+class or arm; Senior students receive common compulsory offerings, their
+department core subjects and any selected additional subjects. It
 includes stable identifiers, effective-period scope, server-side role and
 section enforcement, optimistic concurrency, audit history, archive guards,
 Teacher read-only registers, and compatibility updates for existing class and
@@ -202,19 +206,33 @@ The foundation module manages:
 
 - academic sessions and terms, including one controlled current session and
   current term;
-- school sections and class levels;
+- school sections and class levels, with Secondary divided into Junior
+  Secondary and Senior Secondary;
 - class arms, capacities, rooms and form teachers;
 - subjects, subject groups, subject codes and compulsory/elective status;
+- configurable Senior Secondary departments such as Sciences, Arts and Social
+  Sciences, each with a reusable department-wide core-subject set;
 - subject availability by section, class and term;
 - teacher allocation to classes, arms and subjects;
 - student enrollment in a session, class and arm;
-- compulsory-subject assignment and elective-subject registration;
+- automatic assignment of every offered subject to Junior Secondary students,
+  who do not select electives;
+- assignment of Senior Secondary students to a department, automatically
+  adding that department's core subjects and common compulsory offerings while
+  permitting additional subject selection;
 - bulk allocation, promotion intake, transfer and withdrawal;
 - movement between arms without destroying earlier membership; and
 - class, subject, teacher and student allocation history.
 
 Stable identifiers, rather than display names, link all academic records.
 Renaming a class or subject must not orphan scores or results.
+
+Senior department core subjects are not copied into a particular class
+definition. A department is a branch-scoped Senior Secondary curriculum entity
+that can be reused across SS classes. Before a student is allocated, each core
+subject must be available as an active subject offering for the selected class
+or arm. Junior subject membership is derived from the active offerings and
+cannot be reduced by an elective choice in either the web or desktop client.
 
 ## 6. Roles and permissions
 

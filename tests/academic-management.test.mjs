@@ -3,9 +3,11 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
+  applyAcademicStudentCurriculum,
   academicManagementCapabilities,
   normalizeAcademicArm,
   normalizeAcademicClass,
+  normalizeAcademicDepartment,
   normalizeAcademicOffering,
   normalizeAcademicSession,
   normalizeAcademicStudentMembership,
@@ -55,6 +57,20 @@ test('AM-003 classes and arms retain branch and school-section isolation', () =>
   assert.notEqual(schoolClass.ClassId, otherBranch.ClassId);
   assert.notEqual(schoolClass.ClassId, otherSection.ClassId);
   assert.equal(schoolClass.LegacyDocumentId, 'JSS_1');
+  assert.equal(schoolClass.SchoolStage, 'junior-secondary');
+  assert.equal(normalizeAcademicClass({ Name: 'SS 2', Code: 'SS2', SchoolStage: 'senior-secondary' }, scope).SchoolStage, 'senior-secondary');
+  assert.throws(() => normalizeAcademicClass({ Name: 'Year 10', Code: 'Y10' }, scope), /Junior Secondary or Senior Secondary/);
+});
+
+test('AM-002 senior departments own reusable core-subject sets', () => {
+  const department = normalizeAcademicDepartment({
+    Name: 'Sciences', Code: 'sci', CoreSubjectIds: ['math', 'physics', 'math']
+  }, scope);
+
+  assert.equal(department.DepartmentId, 'department__north-campus__senior-secondary__sci');
+  assert.equal(department.SchoolStage, 'senior-secondary');
+  assert.deepEqual(department.CoreSubjectIds, ['math', 'physics']);
+  assert.throws(() => normalizeAcademicDepartment({ Name: 'Sciences', Code: 'SCI' }, { branchId: 'north-campus', section: 'primary' }), /only in Secondary/);
 });
 
 test('AM-002 subjects, offerings and teacher allocations retain period scope', () => {
@@ -89,6 +105,29 @@ test('AM-002 student memberships allocate one arm and a unique subject set per t
   }, scope), /class and arm/);
 });
 
+test('AM-002 Junior takes all offerings while Senior inherits department core subjects', () => {
+  const offerings = [
+    { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: '', SubjectId: 'english', Compulsory: true, Status: 'Active' },
+    { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: 'arm-a', SubjectId: 'physics', Compulsory: false, Status: 'Active' },
+    { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: 'arm-a', SubjectId: 'music', Compulsory: false, Status: 'Active' }
+  ];
+  const departments = [{ DepartmentId: 'science', SchoolStage: 'senior-secondary', CoreSubjectIds: ['physics'], Status: 'Active' }];
+  const base = { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: 'arm-a' };
+  const junior = applyAcademicStudentCurriculum({ offerings, departments }, {
+    ...base, SchoolStage: 'junior-secondary', DepartmentId: 'science', SubjectIds: []
+  });
+  const senior = applyAcademicStudentCurriculum({ offerings, departments }, {
+    ...base, SchoolStage: 'senior-secondary', DepartmentId: 'science', SubjectIds: ['music']
+  });
+
+  assert.equal(junior.DepartmentId, '');
+  assert.deepEqual(junior.SubjectIds, ['english', 'physics', 'music']);
+  assert.deepEqual(senior.SubjectIds, ['music', 'english', 'physics']);
+  assert.throws(() => applyAcademicStudentCurriculum({ offerings: offerings.filter((row) => row.SubjectId !== 'physics'), departments }, {
+    ...base, SchoolStage: 'senior-secondary', DepartmentId: 'science', SubjectIds: []
+  }), /Offer every department core subject/);
+});
+
 test('Academic Management is a School-only role module with a constrained Teacher role', () => {
   assert.equal(staffRoleAllowedForEdition('Teacher', 'school'), true);
   assert.equal(staffRoleAllowedForEdition('Teacher', 'faith'), false);
@@ -111,6 +150,9 @@ test('Academic writes are audited, optimistic and preserve legacy class/student 
   assert.match(librarySource, /settings\/academics\/classes/);
   assert.match(librarySource, /ClassName: clean\(schoolClass\?\.Name\)/);
   assert.match(librarySource, /SubjectIds: uniqueIds/);
+  assert.match(librarySource, /record\.SubjectIds = \[\.\.\.available\]/);
+  assert.match(librarySource, /department\.CoreSubjectIds/);
+  assert.match(librarySource, /AcademicDepartment: clean\(department\?\.Name\)/);
   assert.match(librarySource, /ACADEMIC_TEACHER_SECTION_INVALID/);
   assert.match(librarySource, /Archive the \$\{dependants\.length\} active dependent record/);
 });
@@ -123,6 +165,7 @@ test('Web and desktop transports share one protected Academic Management handler
   assert.match(apiSource, /Cache-Control': 'no-store/);
   assert.match(backendSource, /case 'getAcademicManagement'/);
   assert.match(backendSource, /case 'saveAcademicTeacherAllocation'/);
+  assert.match(backendSource, /case 'saveAcademicDepartment'/);
   assert.match(backendSource, /case 'saveAcademicStudentMembership'/);
   assert.match(backendSource, /handleAcademicManagementAction/);
 });
@@ -131,6 +174,8 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /\['academics', 'Academic Management'\]/);
   assert.match(adminSource, /function renderAcademicManagement/);
   assert.match(adminSource, /function academicManagementRequest/);
+  assert.match(adminSource, /function academicDepartmentsWorkspace/);
+  assert.match(adminSource, /Junior Secondary ignores this selection and automatically receives every offered subject/);
   assert.match(adminSource, /staffFetch\('\/api\/staff-academics'/);
   assert.match(adminSource, /active === 'academics'/);
   assert.match(styleSource, /\.academic-management-editor-grid/);
