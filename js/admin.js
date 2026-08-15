@@ -9463,9 +9463,9 @@ function academicCheckboxField({ name, label, options = [], help = '', required 
   const legendId = `${prefix}-legend`;
   const helpId = `${prefix}-help`;
   return `<fieldset class="academic-checkbox-field" data-academic-checkbox-field data-academic-checkbox-name="${escapeHtml(name)}" data-academic-checkbox-label="${escapeHtml(label)}"${required ? ' data-academic-checkbox-required="true"' : ''}${max ? ` data-academic-checkbox-max="${max}"` : ''}${purpose ? ` data-academic-checkbox-purpose="${escapeHtml(purpose)}"` : ''}>
-    <legend id="${escapeHtml(legendId)}">${escapeHtml(label)}${required ? ' <span aria-hidden="true">*</span>' : ''}</legend>
+    <legend id="${escapeHtml(legendId)}">${escapeHtml(label)}${required ? ' <span aria-hidden="true">*</span>' : ''}<span class="academic-checkbox-count" data-academic-checkbox-count aria-live="polite" title="Select one checkbox, then hold Shift while selecting another to select the range.">0 selected</span></legend>
     <div class="academic-checkbox-options" role="group" aria-labelledby="${escapeHtml(legendId)}"${help ? ` aria-describedby="${escapeHtml(helpId)}"` : ''}>${academicCheckboxChoices(name, options, idPrefix)}</div>
-    ${help ? `<small id="${escapeHtml(helpId)}">${escapeHtml(help)}</small>` : ''}
+    ${help ? `<small id="${escapeHtml(helpId)}" data-academic-checkbox-help>${escapeHtml(help)}</small>` : ''}
   </fieldset>`;
 }
 
@@ -9474,8 +9474,65 @@ function academicCheckedValues(form, name) {
 }
 
 function setAcademicCheckedValues(form, name, values = []) {
+  if (!form) return;
   const selected = new Set(values || []);
   form.querySelectorAll(`input[type="checkbox"][name="${name}"]`).forEach((input) => { input.checked = selected.has(input.value); });
+  const field = form.querySelector(`[data-academic-checkbox-name="${name}"]`);
+  if (field) updateAcademicCheckboxCount(field);
+}
+
+function academicCheckboxInputs(field, visibleOnly = false) {
+  return [...field.querySelectorAll('input[type="checkbox"]')].filter((input) => {
+    if (input.disabled) return false;
+    return !visibleOnly || !input.closest('.academic-checkbox-option')?.hidden;
+  });
+}
+
+function updateAcademicCheckboxCount(field) {
+  if (!field) return;
+  const selected = academicCheckboxInputs(field).filter((input) => input.checked).length;
+  const maximum = Number(field.dataset.academicCheckboxMax || 0);
+  const count = field.querySelector('[data-academic-checkbox-count]');
+  if (!count) return;
+  count.textContent = `${selected} selected${maximum ? ` of ${maximum}` : ''}${maximum && selected >= maximum ? ' - maximum' : ''}`;
+  count.classList.toggle('academic-checkbox-count-limit', Boolean(maximum && selected >= maximum));
+}
+
+function bindAcademicCheckboxField(field) {
+  if (!field || field.dataset.academicCheckboxBound === 'true') return;
+  field.dataset.academicCheckboxBound = 'true';
+  field.addEventListener('click', (event) => {
+    const target = event.target.closest('input[type="checkbox"]');
+    if (!target || !field.contains(target) || target.disabled) return;
+    const maximum = Number(field.dataset.academicCheckboxMax || 0);
+    const inputs = academicCheckboxInputs(field, true);
+    const anchor = field._academicShiftAnchor;
+    if (event.shiftKey && anchor && inputs.includes(anchor) && inputs.includes(target)) {
+      const first = inputs.indexOf(anchor);
+      const last = inputs.indexOf(target);
+      const range = inputs.slice(Math.min(first, last), Math.max(first, last) + 1);
+      if (target.checked) {
+        const rangeSet = new Set(range);
+        let selected = academicCheckboxInputs(field).filter((input) => input.checked && !rangeSet.has(input)).length;
+        range.forEach((input) => {
+          if (!maximum || selected < maximum) {
+            input.checked = true;
+            selected += 1;
+          } else {
+            input.checked = false;
+          }
+        });
+      } else {
+        range.forEach((input) => { input.checked = false; });
+      }
+    } else if (target.checked && maximum && academicCheckboxInputs(field).filter((input) => input.checked).length > maximum) {
+      target.checked = false;
+    }
+    field._academicShiftAnchor = target;
+    updateAcademicCheckboxCount(field);
+  });
+  field.addEventListener('change', () => updateAcademicCheckboxCount(field));
+  updateAcademicCheckboxCount(field);
 }
 
 function validateAcademicCheckboxFields(form) {
@@ -9606,7 +9663,7 @@ function filterAcademicStudentCandidateOptions(form) {
     option.hidden = !matches;
     if (matches) visible += 1;
   });
-  const help = field.querySelector('small');
+  const help = field.querySelector('[data-academic-checkbox-help]');
   const summary = field.dataset.academicCandidateSummary || '';
   if (help) help.textContent = query ? `${visible} matching student${visible === 1 ? '' : 's'}. ${summary}` : summary;
 }
@@ -9648,7 +9705,7 @@ function syncAcademicStudentPlacementForm(form, changedName = '') {
   if (sessionId && selectedTermId && selectedClassId && !selectedArmId) summary = `Choose an arm for ${className} to display its unassigned students.`;
   else if (selectedArmId && !students.length) summary = `No students with ${className} as their existing class were found.`;
   else if (selectedArmId && !candidates.length) summary = `All ${students.length} ${className} student${students.length === 1 ? '' : 's'} already have arm assignments for this period.`;
-  else if (selectedArmId) summary = `${candidates.length} of ${students.length} ${className} student${students.length === 1 ? '' : 's'} remain unassigned for this period. Select up to 100.`;
+  else if (selectedArmId) summary = `${candidates.length} of ${students.length} ${className} student${students.length === 1 ? '' : 's'} remain unassigned for this period. Select up to 100. Shift-click to select a range.`;
 
   const candidateSelect = form.querySelector('[data-academic-student-candidate-select]');
   if (candidateSelect) {
@@ -9659,9 +9716,11 @@ function syncAcademicStudentPlacementForm(form, changedName = '') {
   if (candidateField) {
     const options = candidates.map((row) => ({ value: row.StudentRef, label: `${row.StudentName} (${row.StudentRef})` }));
     candidateField.querySelector('.academic-checkbox-options').innerHTML = academicCheckboxChoices('StudentRefs', options, 'bulk-allocation-students');
+    candidateField._academicShiftAnchor = null;
     candidateField.dataset.academicCandidateSummary = summary;
-    const help = candidateField.querySelector('small');
+    const help = candidateField.querySelector('[data-academic-checkbox-help]');
     if (help) help.textContent = summary;
+    updateAcademicCheckboxCount(candidateField);
   }
   const search = form.querySelector('[data-academic-student-candidate-search]');
   if (search) {
@@ -10131,7 +10190,7 @@ function academicStudentWorkspace(data, rows) {
       <section class="academic-management-editor academic-student-allocation-register">
         <div class="academic-management-editor-heading"><div><small>Class-specific register</small><h3>Unassigned students</h3><p class="muted">Select one student or several students. The list refreshes immediately after each successful allocation.</p></div></div>
         <label>Find student<input type="search" data-academic-student-candidate-search placeholder="Search by name or admission number" autocomplete="off"><small>Search narrows this register without clearing students already selected.</small></label>
-        ${academicCheckboxField({ name: 'StudentRefs', label: 'Students awaiting an arm', options: [], required: true, max: 100, idPrefix: 'bulk-allocation-students', purpose: 'student-arm-candidates', help: 'Choose the session, term, class and arm to display unassigned students.' })}
+        ${academicCheckboxField({ name: 'StudentRefs', label: 'Students awaiting an arm', options: [], required: true, max: 100, idPrefix: 'bulk-allocation-students', purpose: 'student-arm-candidates', help: 'Choose the session, term, class and arm to display unassigned students. Select one checkbox, then Shift-click another to select the range.' })}
       </section>
     </form>
     <form class="academic-management-editor" data-academic-workflow="moveAcademicStudentMembership">
@@ -10362,6 +10421,7 @@ function syncAcademicTeacherAssignmentForm(form) {
 }
 
 function bindAcademicManagement() {
+  panelEl.querySelectorAll('[data-academic-checkbox-field]').forEach(bindAcademicCheckboxField);
   panelEl.querySelectorAll('[data-academic-view]').forEach((button) => button.addEventListener('click', () => {
     academicManagementView = button.dataset.academicView;
     renderAcademicManagement(academicManagementData || {});
