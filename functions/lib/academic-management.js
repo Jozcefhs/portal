@@ -1474,6 +1474,98 @@ export async function bulkApplyAcademicSubjects(env, user = {}, input = {}) {
   return response;
 }
 
+export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageAllocations');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const classIds = uniqueIds(input.ClassIds || input.ClassId);
+  const armTemplateIds = uniqueIds(input.ArmTemplateIds || input.ArmTemplateId);
+  const sessionId = clean(input.SessionId);
+  const termId = clean(input.TermId);
+  const teacherUsername = lower(input.TeacherUsername || input.Username);
+  const subjectId = clean(input.SubjectId);
+  if (!sessionId || !termId || !teacherUsername || !subjectId) {
+    throw failure('Choose the session, term, teacher and subject.');
+  }
+  if (!classIds.length || !armTemplateIds.length) {
+    throw failure('Choose at least one class and one reusable arm.');
+  }
+  if (classIds.length * armTemplateIds.length > 200) {
+    throw failure('Assign at most 200 class-arm combinations in one batch.');
+  }
+  const [state, people] = await Promise.all([loadAcademicState(env, scope.branchId), loadPeople(env, user, scope)]);
+  const projected = { ...state, teacherAllocations: [...state.teacherAllocations] };
+  const classes = classIds.map((id) => assertReference(findById(state.classes, id), 'One selected class is not active.'));
+  const armTemplates = armTemplateIds.map((id) => assertReference(findById(state.armTemplates, id), 'One selected reusable arm is not active.'));
+  const subject = assertReference(findById(state.subjects, subjectId), 'The selected subject is not active.');
+  if (classes.some((row) => lower(row.SchoolSection) !== scope.section) || lower(subject.SchoolSection) !== scope.section) {
+    throw failure('Every selected class and the subject must belong to the selected school section.', 409, 'ACADEMIC_SECTION_MISMATCH');
+  }
+  const writes = [];
+  let created = 0;
+  let restored = 0;
+  let skipped = 0;
+  for (const schoolClass of classes) {
+    for (const armTemplate of armTemplates) {
+      const arm = state.arms.find((row) => statusActive(row) && row.ClassId === schoolClass.ClassId && (
+        row.ArmTemplateId === armTemplate.ArmTemplateId
+        || lower(row.Name) === lower(armTemplate.Name)
+        || (clean(row.Code) && lower(row.Code) === lower(armTemplate.Code))
+      ));
+      if (!arm) {
+        throw failure(`${armTemplate.Name} has not been applied to ${schoolClass.Name}. Apply that reusable arm to the class before assigning the teacher.`, 409, 'ACADEMIC_ARM_NOT_APPLIED');
+      }
+      const candidate = normalizeAcademicTeacherAllocation({
+        SessionId: sessionId, TermId: termId, TeacherUsername: teacherUsername,
+        ClassId: schoolClass.ClassId, ArmId: arm.ArmId, SubjectId: subject.SubjectId,
+        AllocationRole: 'Subject Teacher', Status: 'Active'
+      }, scope);
+      const existing = findById(projected.teacherAllocations, candidate.AllocationId);
+      if (existing && statusActive(existing)) {
+        skipped += 1;
+        continue;
+      }
+      const record = existing
+        ? normalizeAcademicTeacherAllocation({ ...candidate, Status: 'Active' }, scope, existing)
+        : candidate;
+      if (existing) {
+        delete record.ArchivedAt;
+        delete record.ArchivedBy;
+      }
+      validateAcademicRecord(projected, 'teacherallocation', record, { ...people, existing });
+      stampAcademicRecord(record, user, existing);
+      if (existing) {
+        projected.teacherAllocations = projected.teacherAllocations.map((row) => recordId(row) === record.AllocationId ? record : row);
+        writes.push({
+          collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
+          documentId: record.AllocationId, data: withoutMetadata(record), updateTime: clean(existing.__updateTime)
+        });
+        restored += 1;
+      } else {
+        projected.teacherAllocations.push(record);
+        writes.push({
+          collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
+          documentId: record.AllocationId, data: withoutMetadata(record), exists: false
+        });
+        created += 1;
+      }
+    }
+  }
+  if (created || restored) {
+    writes.push(auditWrite(user, 'BULK ASSIGN', 'teacherallocation', {
+      BranchId: scope.branchId, SchoolSection: scope.section, SessionId: sessionId, TermId: termId,
+      TeacherUsername: teacherUsername, SubjectId: subject.SubjectId, AllocationId: `bulk-${Date.now()}`
+    }, `${created} subject-teacher allocation(s) created; ${restored} restored; ${skipped} already active.`));
+  }
+  await commitAcademicBatch(env, writes, 'A selected class, arm or teacher allocation changed while the batch was being saved. Reload and try again.');
+  const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section });
+  response.message = created || restored
+    ? `${created + restored} subject-teacher assignment${created + restored === 1 ? '' : 's'} saved online${skipped ? `; ${skipped} already existed` : ''}. Repeat for another subject if needed.`
+    : 'Every selected subject-teacher assignment already exists.';
+  response.bulkResult = { Requested: classIds.length * armTemplateIds.length, Created: created, Restored: restored, Skipped: skipped };
+  return response;
+}
+
 export async function bulkAllocateAcademicStudents(env, user = {}, input = {}) {
   requireWritableSubscription(user);
   requireCapability(user, 'canManageAllocations');
@@ -2041,6 +2133,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['bulkapplyacademicarmtemplates', 'bulkapplyarmtemplates'].includes(action)) return bulkApplyAcademicArmTemplates(env, user, input);
   if (['bulkcreateacademicsubjects', 'bulkcreatesubjects'].includes(action)) return bulkCreateAcademicSubjects(env, user, input);
   if (['bulkapplyacademicsubjects', 'bulkapplysubjects'].includes(action)) return bulkApplyAcademicSubjects(env, user, input);
+  if (['bulkassignacademicsubjectteacher', 'bulkassignsubjectteacher'].includes(action)) return bulkAssignAcademicSubjectTeacher(env, user, input);
   if (['bulkallocateacademicstudents', 'bulkallocatestudents'].includes(action)) return bulkAllocateAcademicStudents(env, user, input);
   if (['bulkimportacademicstudentmemberships', 'importacademicstudentmemberships'].includes(action)) return bulkImportAcademicStudentMemberships(env, user, input);
   if (['bulkassignacademicarmstudentsubjects', 'bulkassignarmstudentsubjects'].includes(action)) return bulkAssignAcademicArmStudentSubjects(env, user, input);

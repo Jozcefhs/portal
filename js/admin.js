@@ -10210,30 +10210,40 @@ function academicTeacherWorkspace(data, rows) {
   const classes = rows.classes.filter(academicIsActive);
   const armTemplates = rows.armTemplates.filter(academicIsActive);
   const subjects = rows.subjects.filter(academicIsActive);
+  const subjectAllocations = rows.teacherAllocations.filter((row) => row.AllocationRole === 'Subject Teacher');
   const staff = (data.staff || []).filter((row) => {
     const assigned = clean(row.SchoolSectionAccess).toLowerCase();
     return !['primary', 'secondary'].includes(assigned) || assigned === academicManagementFilters.section;
   });
-  const form = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-form="teacherAllocation">
-    ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Teaching responsibility</small><h3>Allocate teacher</h3><p class="muted">Form and Assistant Teachers own a class-arm responsibility without a subject. The same staff member can also teach different subjects in other classes and arms.</p></div><button type="button" class="academic-form-reset" data-academic-reset="teacherAllocation">Clear</button></div>
+  const form = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="bulkAssignAcademicSubjectTeacher">
+    <div class="academic-management-editor-heading"><div><small>Subject teaching</small><h3>Assign a subject teacher</h3><p class="muted">Choose one teacher and one subject, then select every class and reusable arm taught for that subject. Repeat the process if the teacher handles another subject.</p></div></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
     <div class="academic-management-form-grid academic-management-form-grid-3">
+      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, 'Choose teacher')}</select></label>
+      <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select></label>
       <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
       <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
-      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, 'Choose teacher')}</select></label>
-      <label>Class<select name="ClassId" required>${academicSelectOptions(classes, '', (row) => row.Name, 'Choose class')}</select></label>
-      <label>Arm<select name="ArmTemplateId" data-academic-teacher-arm-template>${academicSelectOptions(armTemplates, '', (row) => row.Name, 'All arms (subject teaching only)')}</select><input type="hidden" name="ArmId" data-academic-teacher-arm><small>Shows the reusable arm catalogue without repeating every class.</small></label>
-      <label>Responsibility<select name="AllocationRole" data-academic-teacher-role><option>Subject Teacher</option><option>Form Teacher</option><option>Assistant Teacher</option></select></label>
-      <label>Subject<select name="SubjectId" data-academic-teacher-subject>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Required for Subject Teacher')}</select><small>Not applicable to Form Teacher or Assistant Teacher responsibility.</small></label>
-      <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
-    </div><button type="submit">Save this teacher assignment</button>
+    </div>
+    <div class="academic-management-form-grid">
+      ${academicCheckboxField({
+        name: 'ClassIds', label: 'Classes taught for this subject', required: true, idPrefix: 'subject-teacher-classes',
+        options: classes.map((row) => ({ value: row.ClassId, label: row.Name })),
+        help: 'Choose one class or several classes.'
+      })}
+      ${academicCheckboxField({
+        name: 'ArmTemplateIds', label: 'Arms taught for this subject', required: true, idPrefix: 'subject-teacher-arms',
+        options: armTemplates.map((row) => ({ value: row.ArmTemplateId, label: row.Name })),
+        help: 'Choose one or more reusable arms. Each selected arm is matched inside every selected class.'
+      })}
+    </div>
+    <button type="submit">Save subject-teacher assignments</button>
   </form>` : '<div class="academic-view-only-note"><strong>My teaching allocations</strong><span>Only administrators can change allocations.</span></div>';
-  return `${form}${table('Teacher Allocations', rows.teacherAllocations, [
+  return `${form}${table('Subject Teacher Allocations', subjectAllocations, [
     { label: 'Teacher', value: (row) => academicLabel(data.staff, row.TeacherUsername, row.TeacherUsername) },
     { label: 'Class / Arm', value: (row) => `${academicLabel(rows.classes, row.ClassId)}${row.ArmId ? ` / ${academicLabel(rows.arms, row.ArmId)}` : ' / All arms'}` },
     { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId, 'Class responsibility') },
-    { label: 'Role', value: (row) => row.AllocationRole }, { label: 'Status', value: (row) => row.Status },
-    { label: 'Actions', render: (row) => academicActionButtons('teacherAllocation', row, canManage, canManage) }
+    { label: 'Status', value: (row) => row.Status },
+    { label: 'Actions', render: (row) => academicActionButtons('teacherAllocation', row, false, canManage) }
   ])}`;
 }
 
@@ -10568,41 +10578,8 @@ function populateAcademicForm(type, record) {
   if (type === 'offering' && form.elements.SubjectRole) {
     form.elements.SubjectRole.value = academicOfferingSubjectRole(record, academicFind(academicManagementData?.classes || [], record.ClassId)?.SchoolStage);
   }
-  if (type === 'teacherAllocation') {
-    const selectedArm = academicFind(academicManagementData?.arms || [], record.ArmId);
-    const selectedTemplate = academicFind(academicManagementData?.armTemplates || [], selectedArm?.ArmTemplateId)
-      || (academicManagementData?.armTemplates || []).find((row) => selectedArm && (
-        clean(row.Name).toLowerCase() === clean(selectedArm.Name).toLowerCase()
-        || (clean(row.Code) && clean(row.Code).toLowerCase() === clean(selectedArm.Code).toLowerCase())
-      ));
-    if (form.elements.ArmTemplateId) form.elements.ArmTemplateId.value = clean(selectedTemplate?.ArmTemplateId);
-    syncAcademicTeacherAssignmentForm(form);
-  }
   form.scrollIntoView({ behavior: 'smooth', block: 'start' });
   form.querySelector('input:not([type="hidden"]), select')?.focus();
-}
-
-function syncAcademicTeacherAssignmentForm(form) {
-  const role = form?.querySelector('[data-academic-teacher-role]');
-  const arm = form?.querySelector('[data-academic-teacher-arm]');
-  const armTemplate = form?.querySelector('[data-academic-teacher-arm-template]');
-  const subject = form?.querySelector('[data-academic-teacher-subject]');
-  if (!role || !arm || !armTemplate || !subject) return;
-  const subjectTeacher = role.value === 'Subject Teacher';
-  const classId = clean(form.elements.ClassId?.value);
-  const templateId = clean(armTemplate.value);
-  const selectedTemplate = academicFind(academicManagementData?.armTemplates || [], templateId);
-  const matchingArm = (academicManagementData?.arms || []).find((row) => academicIsActive(row)
-    && row.ClassId === classId && (row.ArmTemplateId === templateId
-      || (selectedTemplate && (clean(row.Name).toLowerCase() === clean(selectedTemplate.Name).toLowerCase()
-        || (clean(row.Code) && clean(row.Code).toLowerCase() === clean(selectedTemplate.Code).toLowerCase())))));
-  arm.value = clean(matchingArm?.ArmId);
-  armTemplate.required = !subjectTeacher;
-  armTemplate.setCustomValidity(classId && templateId && !matchingArm
-    ? 'This reusable arm has not been applied to the selected class.' : '');
-  subject.required = subjectTeacher;
-  subject.disabled = !subjectTeacher;
-  if (!subjectTeacher) subject.value = '';
 }
 
 function bindAcademicManagement() {
@@ -10686,11 +10663,6 @@ function bindAcademicManagement() {
     if (field && help) field.dataset.academicCandidateSummary = help.textContent;
     form.querySelector('[data-academic-student-candidate-search]')?.addEventListener('input', () => filterAcademicStudentCandidateOptions(form));
   });
-  const teacherAssignmentForm = panelEl.querySelector('[data-academic-form="teacherAllocation"]');
-  ['AllocationRole', 'ClassId', 'ArmTemplateId'].forEach((name) => (
-    teacherAssignmentForm?.elements.namedItem(name)?.addEventListener('change', () => syncAcademicTeacherAssignmentForm(teacherAssignmentForm))
-  ));
-  syncAcademicTeacherAssignmentForm(teacherAssignmentForm);
   panelEl.querySelectorAll('[data-academic-student-placement]').forEach((form) => {
     ['SessionId', 'TermId', 'ClassId', 'ArmId'].forEach((name) => {
       form.elements.namedItem(name)?.addEventListener('change', () => syncAcademicStudentPlacementForm(form, name));
@@ -10813,7 +10785,6 @@ function bindAcademicManagement() {
     form?.reset();
     if (form?.elements.RecordId) form.elements.RecordId.value = '';
     if (form?.elements.RevisionToken) form.elements.RevisionToken.value = '';
-    if (form?.dataset.academicForm === 'teacherAllocation') syncAcademicTeacherAssignmentForm(form);
     if (form?.dataset.academicStudentPlacement) syncAcademicStudentPlacementForm(form);
   }));
   panelEl.querySelectorAll('[data-academic-edit]').forEach((button) => button.addEventListener('click', () => {
