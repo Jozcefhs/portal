@@ -151,18 +151,26 @@ function isSchoolEdition(user = {}) {
   return lower(user.edition || user.Edition || user.OrganisationEdition || user.OrganizationEdition) === 'school';
 }
 
+function isAcademicsDepartmentUser(user = {}) {
+  const role = clean(user.role || user.Role);
+  const department = lower(user.department || user.Department);
+  return role === 'Department User'
+    && (department === 'academic' || department === 'academics' || department.startsWith('academic ') || department.startsWith('academics '));
+}
+
 export function academicManagementCapabilities(user = {}) {
   const role = clean(user.role || user.Role);
   const allowed = new Set((user.allowedSections || user.TabAccess || []).map(clean).filter(Boolean));
   const school = isSchoolEdition(user);
-  const enabled = school && allowed.has('academics');
+  const academicsDepartmentUser = isAcademicsDepartmentUser(user);
+  const enabled = school && (allowed.has('academics') || academicsDepartmentUser);
   return {
     enabled,
     canManageStructure: enabled && STRUCTURE_MANAGERS.has(role),
     canManageAllocations: enabled && ALLOCATION_MANAGERS.has(role),
     canArchive: enabled && STRUCTURE_MANAGERS.has(role),
     canDelete: enabled && STRUCTURE_MANAGERS.has(role),
-    teacherView: enabled && role === 'Teacher'
+    teacherView: enabled && (role === 'Teacher' || academicsDepartmentUser)
   };
 }
 
@@ -864,6 +872,7 @@ async function loadPeople(env, user, scope) {
   ]);
   return {
     staff: staff.filter((row) => staffRecordMatchesEdition(row, { ...user, edition: 'school' })
+      && activeValue(row.Active, true)
       && lower(row.BranchId || 'main') === lower(scope.branchId)),
     students
   };
@@ -878,7 +887,7 @@ function displayStaff(rows = []) {
   return rows.map((row) => ({
     Username: clean(row.Username || row.username || row.__id),
     DisplayName: clean(row.DisplayName || row.displayName || row.Username || row.__id),
-    Role: clean(row.Role || row.role),
+    Role: clean(row.Role || row.role), Department: clean(row.Department || row.department),
     SchoolSectionAccess: clean(row.SchoolSectionAccess || row.schoolSectionAccess || 'All')
   })).sort((a, b) => a.DisplayName.localeCompare(b.DisplayName));
 }

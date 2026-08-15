@@ -143,6 +143,9 @@ export function normalizeModuleList(value, edition, featureFlags = null) {
 
 function departmentUserDefaults(department) {
   const normalized = lower(department);
+  if (normalized === 'academic' || normalized === 'academics' || normalized.startsWith('academic ') || normalized.startsWith('academics ')) {
+    return ['academics', 'humanResources', 'financeRequests', 'payroll'];
+  }
   if (normalized.includes('clinic')) return ['recordsDesk', 'clinic', 'humanResources', 'financeRequests', 'payroll'];
   if (normalized.includes('kitchen')) return ['kitchen', 'humanResources', 'financeRequests', 'payroll'];
   if (normalized.includes('restaurant') || normalized.includes('catering')) return ['restaurant', 'humanResources', 'financeRequests', 'payroll'];

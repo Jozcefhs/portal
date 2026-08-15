@@ -81,5 +81,5 @@ test('executive office remains responsive and readable in dark mode', () => {
   assert.match(portalCss, /html\[data-theme="dark"\] \.executive-empty-chart\{[^}]*background:#112438;[^}]*color:#edf5ff\}/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.executive-empty-chart \.muted\{color:#b8cada!important\}/);
   assert.match(portalCss, /@media\(max-width:680px\)\{[\s\S]*?\.executive-directory-layout\{grid-template-columns:1fr/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-student-membership-import/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-academics-department-users/);
 });

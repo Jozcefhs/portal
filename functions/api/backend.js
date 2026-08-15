@@ -7456,7 +7456,9 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
         edition: deploymentIdentity?.edition || 'school',
         allowedSections: configuredTabs.length
           ? configuredTabs
-          : defaultModulesForRole(role, { edition: deploymentIdentity?.edition || 'school' }),
+          : defaultModulesForRole(role, {
+            edition: deploymentIdentity?.edition || 'school', department: clean(body.UserDepartment)
+          }),
         subscriptionActive: true,
         subscriptionReadOnly: false
       }, body);

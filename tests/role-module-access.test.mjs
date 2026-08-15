@@ -86,6 +86,22 @@ test('legacy defaults remain only as an unsaved starting policy', () => {
   assert.equal(view.roles['Membership Officer'].locallyConfigured, false);
 });
 
+test('Academics department users retain the School academic workspace', () => {
+  const flags = featureFlagsForEdition('school');
+  assert.equal(defaultModulesForRole('Department User', {
+    edition: 'school', featureFlags: flags, department: 'Academics'
+  }).includes('academics'), true);
+  assert.equal(allowedSectionsFor({
+    role: 'Department User', department: 'Academics', TabAccess: ['financeRequests']
+  }, flags, { edition: 'school', roleModules: ['financeRequests'] }).includes('academics'), true);
+  assert.equal(allowedSectionsFor({
+    role: 'Department User', department: 'Accounts'
+  }, flags, { edition: 'school', roleModules: ['financeRequests'] }).includes('academics'), false);
+  assert.equal(defaultModulesForRole('Department User', {
+    edition: 'faith', featureFlags: featureFlagsForEdition('faith'), department: 'Academics'
+  }).includes('academics'), false);
+});
+
 test('staff settings API and interface expose persisted role module controls', () => {
   assert.doesNotMatch(staffUsersApi, /WEB_SECTION_KEYS\.has\(/);
   assert.match(staffUsersApi, /WEB_SECTION_KEY_SET\.has\(section\)/);

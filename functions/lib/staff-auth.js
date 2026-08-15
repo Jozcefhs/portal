@@ -264,6 +264,14 @@ function publicUser(user) {
 export function allowedSectionsFor(user = {}, featureFlags = null, options = {}) {
   const role = clean(user.role || user.Role);
   const department = lower(user.department || user.Department);
+  const departmentEntitlements = role === 'Department User'
+    && (department === 'academic' || department === 'academics' || department.startsWith('academic ') || department.startsWith('academics '))
+    ? ['academics']
+    : [];
+  const withDepartmentEntitlements = (modules) => filterSectionsForFeatures(
+    [...new Set([...modules, ...departmentEntitlements])],
+    featureFlags
+  );
   const custom = Array.isArray(user.tabAccess || user.TabAccess) ? (user.tabAccess || user.TabAccess).map(clean).filter(Boolean) : [];
   if (custom.length) {
     const inherited = role === 'Super Admin'
@@ -274,7 +282,7 @@ export function allowedSectionsFor(user = {}, featureFlags = null, options = {})
       'staffUsers', 'members', 'funds', 'offerings', 'executiveOffice'
     ]);
     if (inherited.some((section) => recordsDeskSources.has(section))) inherited.push('recordsDesk');
-    return filterSectionsForFeatures([...new Set(inherited)], featureFlags);
+    return withDepartmentEntitlements(inherited);
   }
   if (Array.isArray(options.roleModules)) {
     const configured = [...options.roleModules];
@@ -283,13 +291,13 @@ export function allowedSectionsFor(user = {}, featureFlags = null, options = {})
       if (!configured.includes('securityAudit')) configured.push('securityAudit');
       if (!configured.includes('staffUsers')) configured.push('staffUsers');
     }
-    return filterSectionsForFeatures([...new Set(configured)], featureFlags);
+    return withDepartmentEntitlements(configured);
   }
-  return defaultModulesForRole(role, {
+  return withDepartmentEntitlements(defaultModulesForRole(role, {
     edition: options.edition || 'school',
     featureFlags,
     department
-  });
+  }));
 }
 
 export function invalidateStaffAccessCache() {

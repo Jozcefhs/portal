@@ -9949,7 +9949,7 @@ function academicTeacherWorkspace(data, rows) {
     <div class="academic-management-form-grid academic-management-form-grid-3">
       <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
       <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
-      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role})`, 'Choose teacher')}</select></label>
+      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, 'Choose teacher')}</select></label>
       <label>Class<select name="ClassId" required>${academicSelectOptions(classes, '', (row) => row.Name, 'Choose class')}</select></label>
       <label>Arm<select name="ArmId" data-academic-teacher-arm>${academicSelectOptions(arms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'All arms (subject teaching only)')}</select></label>
       <label>Responsibility<select name="AllocationRole" data-academic-teacher-role><option>Subject Teacher</option><option>Form Teacher</option><option>Assistant Teacher</option></select></label>

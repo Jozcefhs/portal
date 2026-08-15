@@ -337,6 +337,16 @@ test('Academic Management is a School-only role module with a constrained Teache
   assert.equal(teacher.canManageStructure, false);
   assert.equal(teacher.canManageAllocations, false);
   assert.equal(teacher.canDelete, false);
+  const academicsDepartmentUser = academicManagementCapabilities({
+    edition: 'school', role: 'Department User', department: 'Academics', allowedSections: []
+  });
+  assert.equal(academicsDepartmentUser.enabled, true);
+  assert.equal(academicsDepartmentUser.teacherView, true);
+  assert.equal(academicsDepartmentUser.canManageStructure, false);
+  assert.equal(academicsDepartmentUser.canManageAllocations, false);
+  assert.equal(academicManagementCapabilities({
+    edition: 'school', role: 'Department User', department: 'Accounts', allowedSections: []
+  }).enabled, false);
   assert.equal(academicManagementCapabilities({ edition: 'faith', role: 'Teacher', allowedSections: ['academics'] }).enabled, false);
 });
 
@@ -371,6 +381,8 @@ test('Academic writes are audited, optimistic and preserve legacy class/student 
   assert.match(librarySource, /class, reusable arm definition, arm, subject, department or subject offering can be permanently deleted/);
   assert.match(librarySource, /academicArmTemplates/);
   assert.match(librarySource, /ACADEMIC_TEACHER_SECTION_INVALID/);
+  assert.match(librarySource, /activeValue\(row\.Active, true\)/);
+  assert.match(librarySource, /Department: clean\(row\.Department/);
   assert.match(librarySource, /Archive the \$\{dependants\.length\} active dependent record/);
 });
 
@@ -393,6 +405,7 @@ test('Web and desktop transports share one protected Academic Management handler
   assert.match(backendSource, /case 'saveAcademicStudentMembership'/);
   assert.match(backendSource, /case 'bulkAllocateAcademicStudents'/);
   assert.match(backendSource, /case 'bulkImportAcademicStudentMemberships'/);
+  assert.match(backendSource, /department: clean\(body\.UserDepartment\)/);
   assert.match(backendSource, /case 'bulkAssignAcademicArmStudentSubjects'/);
   assert.match(librarySource, /assignments\.length > 200/);
   assert.match(backendSource, /case 'moveAcademicStudentMembership'/);
@@ -407,6 +420,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /function academicDepartmentsWorkspace/);
   assert.match(adminSource, /Junior Secondary offerings become Core automatically/);
   assert.match(adminSource, /The same staff member can also teach different subjects in other classes and arms/);
+  assert.match(adminSource, /row\.Department \? ` · \$\{row\.Department\}`/);
   assert.match(adminSource, /function syncAcademicTeacherAssignmentForm/);
   assert.match(adminSource, /function academicCheckboxField/);
   assert.match(adminSource, /function validateAcademicCheckboxFields/);
@@ -486,7 +500,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
   assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-tabs button\{[^}]*font-size:12px/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-student-membership-import/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-academics-department-users/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
