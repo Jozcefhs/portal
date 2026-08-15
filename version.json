@@ -1,7 +1,7 @@
 {
-  "version": "3.0.6",
+  "version": "3.0.7",
   "channel": "stable",
   "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup.exe",
-  "sha256": "018bf1ec28c1ccc149562f987e11e6da0714388aff017660ffa69aa3ddb2721d",
-  "notes": "Dynamax Desktop v3.0.6 defaults settings to organisation scope, locks organisation-wide controls while editing branch overrides, and confirms success only after web companion synchronization succeeds. The shared implementation applies to School, Church and Other Organisation editions."
+  "sha256": "bd5b3d940a78741b0128ebcb0a0f698e5de56bb516812c64635aef963cfba957",
+  "notes": "Dynamax Desktop v3.0.7 adds the School-edition Academic Management workspace for sessions, terms, classes, arms, subjects, offerings, teacher allocations and student memberships. It shares protected online records with the web companion and enforces branch, school-section and role boundaries; Church and Other Organisation workspaces remain isolated from School academic features."
 }
