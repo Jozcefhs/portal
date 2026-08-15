@@ -238,7 +238,7 @@ export async function onRequestPost(context) {
 
     const allDepartments = {
       admissions: publicRows(sortRecent(visibleApplications, ['SubmittedAt', 'UpdatedAt', 'Timestamp']), 80),
-      students: publicRows(sortRecent(visibleStudents, ['UpdatedAt', 'EnrolledAt', 'CreatedAt']), 80),
+      students: publicRows(sortRecent(visibleStudents, ['UpdatedAt', 'EnrolledAt', 'CreatedAt']), visibleStudents.length),
       formPurchases: publicRows(sortRecent(visibleFormSales, ['PaymentDate', 'UpdatedAt', 'CreatedAt']), 80),
       accounts: {
         payments: publicRows(sortRecent(visiblePayments, ['PaidAt', 'Date', 'RecordedAt']), 80),
@@ -287,6 +287,7 @@ export async function onRequestPost(context) {
     if (shouldLoad('admissions')) summary.applications = visibleApplications.length;
     if (shouldLoad('students')) {
       summary.students = visibleStudents.length;
+      summary.activeStudents = visibleStudents.filter((row) => !/inactive|withdrawn|disabled/i.test(clean(row.Status))).length;
       summary.boardingStudents = visibleStudents.filter(isBoardingStudent).length;
       summary.dayStudents = visibleStudents.length - summary.boardingStudents;
     }

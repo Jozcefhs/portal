@@ -2198,11 +2198,12 @@ function renderModuleSummary(active, liveData = null) {
     ];
   } else if (active === 'students') {
     const rows = departments.students || [];
+    const summary = dashboardData?.summary || {};
     cards = [
-      { icon, label: 'Students', value: rows.length },
-      { icon: '\u2713', label: 'Active', value: rows.filter((row) => !/inactive|withdrawn|disabled/i.test(clean(pick(row, ['Status'])))).length },
-      { icon: '\u2600', label: 'Day Students', value: rows.filter((row) => /day/i.test(clean(pick(row, ['StudentType'])))).length },
-      { icon: '\u2302', label: 'Boarding', value: rows.filter((row) => /board/i.test(clean(pick(row, ['StudentType'])))).length }
+      { icon, label: 'Students', value: summary.students ?? rows.length },
+      { icon: '\u2713', label: 'Active', value: summary.activeStudents ?? rows.filter((row) => !/inactive|withdrawn|disabled/i.test(clean(pick(row, ['Status'])))).length },
+      { icon: '\u2600', label: 'Day Students', value: summary.dayStudents ?? rows.filter((row) => /day/i.test(clean(pick(row, ['StudentType'])))).length },
+      { icon: '\u2302', label: 'Boarding', value: summary.boardingStudents ?? rows.filter((row) => /board/i.test(clean(pick(row, ['StudentType'])))).length }
     ];
   } else if (active === 'academics' && liveData) {
     const summary = liveData.summary || {};
