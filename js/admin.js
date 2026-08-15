@@ -9390,12 +9390,13 @@ function academicCurrentRows(data = academicManagementData || {}) {
   };
 }
 
-function academicActionButtons(type, row, canEdit = false, canArchive = false) {
+function academicActionButtons(type, row, canEdit = false, canArchive = false, canDelete = false) {
   const id = academicRecordId(row);
-  if (!canEdit && !canArchive) return '<span class="muted">View only</span>';
+  if (!canEdit && !canArchive && !canDelete) return '<span class="muted">View only</span>';
   return `<div class="academic-management-row-actions">
     ${canEdit ? `<button type="button" class="compact-icon-action compact-edit-action" data-academic-edit="${escapeHtml(type)}" data-academic-id="${escapeHtml(id)}" aria-label="Edit this academic record" title="Edit"><span aria-hidden="true">&#9998;</span></button>` : ''}
     ${canArchive && academicIsActive(row) ? `<button type="button" class="compact-icon-action academic-archive-action" data-academic-archive="${escapeHtml(type)}" data-academic-id="${escapeHtml(id)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" aria-label="Archive this academic record" title="Archive"><span aria-hidden="true">&#128451;</span></button>` : ''}
+    ${canDelete ? `<button type="button" class="compact-icon-action academic-archive-action" data-academic-delete="${escapeHtml(type)}" data-academic-id="${escapeHtml(id)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" aria-label="Permanently delete this academic record" title="Delete permanently"><span aria-hidden="true">&#128465;</span></button>` : ''}
   </div>`;
 }
 
@@ -9475,18 +9476,18 @@ function academicStructureWorkspace(data, rows) {
         { label: 'Division', value: (row) => academicSchoolStageLabel(row.SchoolStage) },
         { label: 'Enrolled', value: (row) => rows.studentMemberships.filter((membership) => academicIsActive(membership) && membership.ClassId === row.ClassId).length },
         { label: 'Capacity', value: (row) => Number(row.Capacity) > 0 ? row.Capacity : 'Unlimited' }, { label: 'Status', value: (row) => row.Status },
-        { label: 'Actions', render: (row) => academicActionButtons('class', row, canManage, permissions.canArchive) }
+        { label: 'Actions', render: (row) => academicActionButtons('class', row, canManage, permissions.canArchive, permissions.canDelete) }
       ])}
       ${table('Class Arms', rows.arms, [
         { label: 'Class', value: (row) => academicLabel(rows.classes, row.ClassId) }, { label: 'Arm', value: (row) => row.Name },
         { label: 'Enrolled', value: (row) => rows.studentMemberships.filter((membership) => academicIsActive(membership) && membership.ArmId === row.ArmId).length },
         { label: 'Capacity', value: (row) => Number(row.Capacity) > 0 ? row.Capacity : 'Unlimited' }, { label: 'Room', value: (row) => row.Room || '-' },
-        { label: 'Status', value: (row) => row.Status }, { label: 'Actions', render: (row) => academicActionButtons('arm', row, canManage, permissions.canArchive) }
+        { label: 'Status', value: (row) => row.Status }, { label: 'Actions', render: (row) => academicActionButtons('arm', row, canManage, permissions.canArchive, permissions.canDelete) }
       ])}
-      ${table('Subjects', rows.subjects, [
+      ${table('Reusable Subject Catalogue', rows.subjects, [
         { label: 'Code', value: (row) => row.Code }, { label: 'Subject', value: (row) => row.Name },
         { label: 'Category', value: (row) => row.Category }, { label: 'Status', value: (row) => row.Status },
-        { label: 'Actions', render: (row) => academicActionButtons('subject', row, canManage, permissions.canArchive) }
+        { label: 'Actions', render: (row) => academicActionButtons('subject', row, canManage, permissions.canArchive, permissions.canDelete) }
       ])}
     </div>`;
 }
@@ -9496,6 +9497,9 @@ function academicBulkSetupWorkspace(data, rows) {
   if (!canManage) return '<div class="academic-view-only-note"><strong>Bulk academic setup</strong><span>Your role cannot change the class or reusable arm catalogue.</span></div>';
   const classes = rows.classes.filter(academicIsActive);
   const templates = rows.armTemplates.filter(academicIsActive);
+  const subjects = rows.subjects.filter(academicIsActive);
+  const sessions = rows.sessions.filter(academicIsActive);
+  const terms = rows.terms.filter(academicIsActive);
   const secondary = academicManagementFilters.section === 'secondary';
   const classExample = secondary
     ? 'JSS 1 | JSS1 | Junior Secondary | 120\nJSS 2 | JSS2 | Junior Secondary | 120\nSS 1 | SS1 | Senior Secondary | 120'
@@ -9505,6 +9509,7 @@ function academicBulkSetupWorkspace(data, rows) {
     : 'One class per line: Name | Code | Capacity.';
   const classOptions = classes.map((row) => ({ value: row.ClassId, label: `${row.Code} - ${row.Name}` }));
   const templateOptions = templates.map((row) => ({ value: row.ArmTemplateId, label: `${row.Code} - ${row.Name}` }));
+  const subjectOptions = subjects.map((row) => ({ value: row.SubjectId, label: `${row.Code} - ${row.Name}` }));
   return `<div class="academic-management-editor-grid">
     <form class="academic-management-editor" data-academic-workflow="bulkCreateAcademicClasses">
       <div class="academic-management-editor-heading"><div><small>Up to 50 at once</small><h3>Build class catalogue</h3></div></div>
@@ -9534,6 +9539,22 @@ function academicBulkSetupWorkspace(data, rows) {
       ${academicCheckboxField({ name: 'ClassIds', label: 'Classes', options: classOptions, required: true, idPrefix: 'arm-application-classes', help: 'Every selected reusable arm will be applied to every selected class.' })}
       ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Reusable arms', options: templateOptions, required: true, idPrefix: 'arm-application-templates', help: 'Existing matching class arms are skipped; no class arm is overwritten.' })}
       <button type="submit">Apply selected arms</button>
+    </form>
+    <form class="academic-management-editor" data-academic-workflow="bulkCreateAcademicSubjects">
+      <div class="academic-management-editor-heading"><div><small>Up to 50 at once</small><h3>Build reusable subject catalogue</h3></div></div>
+      <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
+      <label>Subject definitions<textarea name="SubjectLines" rows="9" required placeholder="Mathematics | MATH | Core&#10;English Language | ENG | Core&#10;Computer Studies | COMP | Vocational"></textarea><small>One subject per line: Name | Code | Category. Categories are Core, Elective, Vocational or Co-curricular. Create a subject once for this school section, then reuse it across classes, departments and teacher allocations.</small></label>
+      <button type="submit">Create all reusable subjects</button>
+    </form>
+    <form class="academic-management-editor" data-academic-workflow="bulkApplyAcademicSubjects">
+      <div class="academic-management-editor-heading"><div><small>Up to 200 combinations</small><h3>Apply subjects to classes</h3></div></div>
+      <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
+      <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
+      <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
+      ${academicCheckboxField({ name: 'ClassIds', label: 'Classes', options: classOptions, required: true, idPrefix: 'subject-application-classes', help: 'Every selected subject will be offered to every selected class for this term.' })}
+      ${academicCheckboxField({ name: 'SubjectIds', label: 'Reusable subjects', options: subjectOptions, required: true, idPrefix: 'subject-application-subjects', help: 'The subject records remain reusable; this creates term-specific class offerings without duplicating the catalogue.' })}
+      <label>Requirement<select name="Compulsory"><option value="true">Compulsory</option><option value="false">Optional</option></select><small>Junior Secondary offerings are compulsory automatically.</small></label>
+      <button type="submit">Apply selected subjects</button>
     </form>
   </div>
   ${table('Reusable Arm Catalogue', rows.armTemplates, [
@@ -10003,6 +10024,27 @@ function bindAcademicManagement() {
           SchoolSection: record.SchoolSection
         });
         renderAcademicManagement(data, data.message || 'Academic record archived.');
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+      }
+    });
+  }));
+  panelEl.querySelectorAll('[data-academic-delete]').forEach((button) => button.addEventListener('click', async () => {
+    const type = button.dataset.academicDelete;
+    const record = academicFind(academicRecordRows(type), button.dataset.academicId);
+    if (!record || !await window.DynamaxDialogs.confirm({
+      title: 'Permanently delete academic record',
+      message: `Permanently delete ${record.Name || record.Code || 'this record'}? This cannot be undone. Any active or historical reference will block the deletion.`,
+      tone: 'danger', confirmText: 'Delete permanently'
+    })) return;
+    await runButtonAction(button, 'Deleting...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('deleteAcademicRecord', {
+          RecordType: type, RecordId: academicRecordId(record), RevisionToken: record.RevisionToken,
+          SchoolSection: record.SchoolSection
+        });
+        renderAcademicManagement(data, data.message || 'Academic record deleted permanently.');
       } catch (error) {
         setStatus(status, error.message || String(error), 'bad');
       }

@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   applyAcademicStudentCurriculum,
   assertAcademicMembershipCapacity,
+  academicPermanentDeleteDependants,
   academicManagementCapabilities,
   normalizeAcademicArm,
   normalizeAcademicArmTemplate,
@@ -18,7 +19,8 @@ import {
   normalizeAcademicTeacherAllocation,
   normalizeAcademicTerm,
   parseAcademicArmTemplateBatch,
-  parseAcademicClassBatch
+  parseAcademicClassBatch,
+  parseAcademicSubjectBatch
 } from '../functions/lib/academic-management.js';
 import { staffRoleAllowedForEdition } from '../functions/lib/organization-config.js';
 import { defaultModulesForRole, modulesForEdition } from '../functions/lib/role-module-access.js';
@@ -87,6 +89,37 @@ test('AM-003 bulk classes stay section scoped while reusable arm templates are b
   assert.equal(template.DefaultCapacity, 35);
   assert.equal(appliedArm.ArmTemplateId, template.ArmTemplateId);
   assert.equal(appliedArm.Capacity, 35);
+});
+
+test('AM-002 subjects are bulk-created once and reused through class offerings', () => {
+  const rows = parseAcademicSubjectBatch({
+    SubjectLines: 'Mathematics | MATH | Core\nComputer Studies | COMP | Vocational'
+  });
+  const subjects = rows.map((row) => normalizeAcademicSubject(row, scope));
+  const offering = normalizeAcademicOffering({
+    SessionId: 'session-1', TermId: 'term-1', ClassId: 'jss-1',
+    SubjectId: subjects[0].SubjectId, Compulsory: true
+  }, scope);
+
+  assert.deepEqual(rows.map((row) => row.Category), ['Core', 'Vocational']);
+  assert.equal(subjects[0].SubjectId, 'subject__north-campus__secondary__math');
+  assert.equal(subjects[1].Category, 'Vocational');
+  assert.equal(offering.SubjectId, subjects[0].SubjectId);
+});
+
+test('AM-003 permanent deletion detects current and historical academic references', () => {
+  const state = {
+    classes: [{ ClassId: 'jss-2', NextClassId: 'jss-3' }],
+    arms: [{ ArmId: 'arm-a', ClassId: 'jss-1' }],
+    subjects: [], departments: [{ DepartmentId: 'science', CoreSubjectIds: ['physics'], Status: 'Archived' }],
+    offerings: [], teacherAllocations: [], studentMemberships: [],
+    studentMovements: [{ MovementId: 'move-1', FromClassId: 'jss-1', ToClassId: 'jss-2', FromArmId: 'arm-a', FromSubjectIds: ['physics'] }]
+  };
+
+  assert.equal(academicPermanentDeleteDependants(state, 'class', { ClassId: 'jss-1' }).length, 2);
+  assert.equal(academicPermanentDeleteDependants(state, 'arm', { ArmId: 'arm-a' }).length, 1);
+  assert.equal(academicPermanentDeleteDependants(state, 'subject', { SubjectId: 'physics' }).length, 2);
+  assert.equal(academicPermanentDeleteDependants(state, 'class', { ClassId: 'unused' }).length, 0);
 });
 
 test('AM-002 senior departments own reusable core-subject sets', () => {
@@ -218,6 +251,7 @@ test('Academic Management is a School-only role module with a constrained Teache
   assert.equal(teacher.teacherView, true);
   assert.equal(teacher.canManageStructure, false);
   assert.equal(teacher.canManageAllocations, false);
+  assert.equal(teacher.canDelete, false);
   assert.equal(academicManagementCapabilities({ edition: 'faith', role: 'Teacher', allowedSections: ['academics'] }).enabled, false);
 });
 
@@ -236,6 +270,9 @@ test('Academic writes are audited, optimistic and preserve legacy class/student 
   assert.match(librarySource, /Allocate at most 100 students in one batch/);
   assert.match(librarySource, /Create at most 50 classes in one batch/);
   assert.match(librarySource, /Apply at most 200 class-arm combinations in one batch/);
+  assert.match(librarySource, /Create at most 50 subjects in one batch/);
+  assert.match(librarySource, /Apply at most 200 class-subject combinations in one batch/);
+  assert.match(librarySource, /ACADEMIC_DELETE_REFERENCED/);
   assert.match(librarySource, /academicArmTemplates/);
   assert.match(librarySource, /ACADEMIC_TEACHER_SECTION_INVALID/);
   assert.match(librarySource, /Archive the \$\{dependants\.length\} active dependent record/);
@@ -254,6 +291,9 @@ test('Web and desktop transports share one protected Academic Management handler
   assert.match(backendSource, /case 'bulkCreateAcademicClasses'/);
   assert.match(backendSource, /case 'bulkCreateAcademicArmTemplates'/);
   assert.match(backendSource, /case 'bulkApplyAcademicArmTemplates'/);
+  assert.match(backendSource, /case 'bulkCreateAcademicSubjects'/);
+  assert.match(backendSource, /case 'bulkApplyAcademicSubjects'/);
+  assert.match(backendSource, /case 'deleteAcademicRecord'/);
   assert.match(backendSource, /case 'saveAcademicStudentMembership'/);
   assert.match(backendSource, /case 'bulkAllocateAcademicStudents'/);
   assert.match(backendSource, /case 'moveAcademicStudentMembership'/);
@@ -280,6 +320,10 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /data-academic-workflow="bulkCreateAcademicClasses"/);
   assert.match(adminSource, /data-academic-workflow="bulkCreateAcademicArmTemplates"/);
   assert.match(adminSource, /data-academic-workflow="bulkApplyAcademicArmTemplates"/);
+  assert.match(adminSource, /data-academic-workflow="bulkCreateAcademicSubjects"/);
+  assert.match(adminSource, /data-academic-workflow="bulkApplyAcademicSubjects"/);
+  assert.match(adminSource, /data-academic-delete=/);
+  assert.match(adminSource, /Permanently delete academic record/);
   assert.match(adminSource, /Reusable Arm Catalogue/);
   assert.match(adminSource, /Student Movement History/);
   assert.match(adminSource, /staffFetch\('\/api\/staff-academics'/);
@@ -288,7 +332,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-checkbox-options/);
   assert.match(styleSource, /\.academic-checkbox-option input\[type="checkbox"\]/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-bulk-class-arm-setup/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-bulk-subject-delete/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

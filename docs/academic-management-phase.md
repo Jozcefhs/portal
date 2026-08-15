@@ -21,9 +21,11 @@ Teacher read-only registers, and compatibility updates for existing class and
 student records. Student allocation now supports atomic batches of up to 100,
 class and arm capacity enforcement, controlled class/arm/department/subject
 changes, withdrawal and reinstatement, and immutable before/after movement
-history on web and desktop. Administrators can also create up to 50 classes or
-reusable arm definitions in one online batch, then apply selected catalogue
-arms across selected classes in an atomic class-arm batch. Promotion intake,
+history on web and desktop. Administrators can also create up to 50 classes,
+reusable arm definitions or reusable subject definitions in one online batch,
+then apply selected catalogue arms or subjects across selected classes in an
+atomic batch. Unused classes, arms and subjects can be permanently deleted,
+but active or historical references block deletion. Promotion intake,
 result enforcement, score processing,
 timetables, attendance and CBT remain pending milestones; configuring a policy
 or academic structure does not yet publish or unlock parent results.
@@ -248,6 +250,19 @@ atomic, skips exact retries, refuses to overwrite a conflicting existing
 record and reports success only after the online commit succeeds. Applying a
 catalogue arm creates an independent class-specific arm whose capacity and room
 may subsequently be adjusted without changing the reusable definition.
+
+Subjects are reusable within their selected school section. Bulk subject setup
+accepts a maximum of 50 catalogue entries, and subject application accepts at
+most 200 term-specific class-subject combinations. Subject records are reused
+by class offerings, Senior departments, teacher allocations and student
+curricula rather than copied for every use. Junior Secondary offerings are
+made compulsory by the server.
+
+Archive retains a record and its identity. Permanent deletion is separately
+available only for classes, arms and subjects that have no references in
+current or historical academic records. The server checks class sequences,
+arms, offerings, teacher allocations, student memberships and immutable
+movement history before deleting, and every accepted deletion is audited.
 
 Senior department core subjects are not copied into a particular class
 definition. A department is a branch-scoped Senior Secondary curriculum entity

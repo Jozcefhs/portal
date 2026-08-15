@@ -694,9 +694,10 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'getAcademicManagement', 'saveAcademicSession', 'saveAcademicTerm', 'saveAcademicClass',
   'saveAcademicArmTemplate', 'saveAcademicArm', 'saveAcademicSubject', 'saveAcademicDepartment', 'saveAcademicOffering',
   'bulkCreateAcademicClasses', 'bulkCreateAcademicArmTemplates', 'bulkApplyAcademicArmTemplates',
+  'bulkCreateAcademicSubjects', 'bulkApplyAcademicSubjects',
   'saveAcademicTeacherAllocation', 'saveAcademicStudentMembership', 'bulkAllocateAcademicStudents',
   'moveAcademicStudentMembership', 'withdrawAcademicStudentMembership', 'reinstateAcademicStudentMembership',
-  'archiveAcademicRecord',
+  'archiveAcademicRecord', 'deleteAcademicRecord',
   'getAccountingRequisitionDocument', 'syncAccountingRevenue', 'saveChartAccount',
   'saveAccountingJournal', 'saveAccountingExpense', 'saveAccountingBudget',
   'submitAccountingImprest', 'reviewAccountingImprest', 'issueAccountingImprest',
@@ -7431,11 +7432,14 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'bulkCreateAcademicClasses':
     case 'bulkCreateAcademicArmTemplates':
     case 'bulkApplyAcademicArmTemplates':
+    case 'bulkCreateAcademicSubjects':
+    case 'bulkApplyAcademicSubjects':
     case 'bulkAllocateAcademicStudents':
     case 'moveAcademicStudentMembership':
     case 'withdrawAcademicStudentMembership':
     case 'reinstateAcademicStudentMembership':
-    case 'archiveAcademicRecord': {
+    case 'archiveAcademicRecord':
+    case 'deleteAcademicRecord': {
       const role = clean(body.UserRole);
       const configuredTabs = Array.isArray(body.UserTabAccess) ? body.UserTabAccess.map(clean).filter(Boolean) : [];
       return handleAcademicManagementAction(env, {

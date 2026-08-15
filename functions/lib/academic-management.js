@@ -148,6 +148,7 @@ export function academicManagementCapabilities(user = {}) {
     canManageStructure: enabled && STRUCTURE_MANAGERS.has(role),
     canManageAllocations: enabled && ALLOCATION_MANAGERS.has(role),
     canArchive: enabled && STRUCTURE_MANAGERS.has(role),
+    canDelete: enabled && STRUCTURE_MANAGERS.has(role),
     teacherView: enabled && role === 'Teacher'
   };
 }
@@ -961,6 +962,14 @@ export function parseAcademicArmTemplateBatch(input = {}) {
   });
 }
 
+export function parseAcademicSubjectBatch(input = {}) {
+  if (Array.isArray(input.Subjects)) return input.Subjects.map((row) => ({ ...row }));
+  return batchLines(input.SubjectLines || input.Subjects).map((line) => {
+    const parts = line.split('|').map((part) => part.trim());
+    return { Name: parts[0], Code: parts[1], Category: parts[2] };
+  });
+}
+
 function sameSetupRecord(existing, record, keys) {
   return statusActive(existing) && keys.every((key) => {
     if (['Capacity', 'DefaultCapacity', 'SortOrder'].includes(key)) return Number(existing[key] || 0) === Number(record[key] || 0);
@@ -1063,6 +1072,49 @@ export async function bulkCreateAcademicArmTemplates(env, user = {}, input = {})
   return response;
 }
 
+export async function bulkCreateAcademicSubjects(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageStructure');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const rows = parseAcademicSubjectBatch(input);
+  if (!rows.length) throw failure('Enter at least one subject definition.');
+  if (rows.length > 50) throw failure('Create at most 50 subjects in one batch.');
+  const state = await loadAcademicState(env, scope.branchId);
+  const projected = { ...state, subjects: [...state.subjects] };
+  const writes = [];
+  const createdRecords = [];
+  let skipped = 0;
+  for (const row of rows) {
+    const requestedCategory = clean(row.Category || 'Core');
+    if (!ACADEMIC_SUBJECT_CATEGORIES.some((category) => lower(category) === lower(requestedCategory))) {
+      throw failure(`${requestedCategory} is not a valid subject category. Choose Core, Elective, Vocational or Co-curricular.`);
+    }
+    const record = normalizeAcademicSubject({ ...row, Status: 'Active' }, scope);
+    const existing = findById(projected.subjects, record.SubjectId);
+    if (existing) {
+      if (sameSetupRecord(existing, record, ['Name', 'Code', 'Category'])) {
+        skipped += 1;
+        continue;
+      }
+      throw failure(`${record.Name} already exists with different subject settings. Edit that subject instead.`, 409, 'ACADEMIC_BULK_SUBJECT_CONFLICT');
+    }
+    stampAcademicRecord(record, user);
+    projected.subjects.push(record);
+    createdRecords.push(record);
+    writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.subjects, documentId: record.SubjectId, data: withoutMetadata(record), exists: false });
+  }
+  if (createdRecords.length) writes.push(auditWrite(user, 'BULK CREATE', 'subject', {
+    BranchId: scope.branchId, SchoolSection: scope.section, SubjectId: `bulk-${Date.now()}`
+  }, `${createdRecords.length} reusable subject(s) created; ${skipped} already matched.`));
+  await commitAcademicBatch(env, writes, 'The subject catalogue changed while this batch was being saved. Reload and try again.');
+  const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section });
+  response.message = createdRecords.length
+    ? `${createdRecords.length} reusable subject${createdRecords.length === 1 ? '' : 's'} created online${skipped ? `; ${skipped} already matched and were skipped` : ''}.`
+    : 'Every submitted subject already exists with the same settings.';
+  response.bulkResult = { Requested: rows.length, Created: createdRecords.length, Skipped: skipped };
+  return response;
+}
+
 export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) {
   requireWritableSubscription(user);
   requireCapability(user, 'canManageStructure');
@@ -1117,6 +1169,62 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
     ? `${createdRecords.length} class-arm assignment${createdRecords.length === 1 ? '' : 's'} created online${skipped ? `; ${skipped} already matched and were skipped` : ''}.`
     : 'Every selected class already has the selected reusable arms.';
   response.bulkResult = { Requested: classIds.length * templateIds.length, Created: createdRecords.length, Skipped: skipped };
+  return response;
+}
+
+export async function bulkApplyAcademicSubjects(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageStructure');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const classIds = uniqueIds(input.ClassIds || input.ClassId);
+  const subjectIds = uniqueIds(input.SubjectIds || input.SubjectId);
+  if (!clean(input.SessionId) || !clean(input.TermId)) throw failure('Choose the academic session and term.');
+  if (!classIds.length || !subjectIds.length) throw failure('Choose at least one class and one reusable subject.');
+  if (classIds.length * subjectIds.length > 200) throw failure('Apply at most 200 class-subject combinations in one batch.');
+  const state = await loadAcademicState(env, scope.branchId);
+  const projected = { ...state, offerings: [...state.offerings] };
+  const classes = classIds.map((id) => assertReference(findById(state.classes, id), 'One selected class is not active.'));
+  const subjects = subjectIds.map((id) => assertReference(findById(state.subjects, id), 'One selected subject is not active.'));
+  if (classes.some((row) => lower(row.SchoolSection) !== scope.section)) {
+    throw failure('Every selected class must belong to the selected school section.', 409, 'ACADEMIC_SECTION_MISMATCH');
+  }
+  if (subjects.some((row) => lower(row.SchoolSection) !== scope.section)) {
+    throw failure('Every selected subject must belong to the selected school section.', 409, 'ACADEMIC_SECTION_MISMATCH');
+  }
+  const writes = [];
+  const createdRecords = [];
+  let skipped = 0;
+  for (const schoolClass of classes) {
+    for (const subject of subjects) {
+      const record = normalizeAcademicOffering({
+        SessionId: input.SessionId, TermId: input.TermId, ClassId: schoolClass.ClassId,
+        ArmId: '', SubjectId: subject.SubjectId, Compulsory: input.Compulsory, Status: 'Active'
+      }, scope);
+      validateAcademicRecord(projected, 'offering', record, {});
+      const existing = findById(projected.offerings, record.OfferingId);
+      if (existing) {
+        if (sameSetupRecord(existing, record, ['SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId', 'Compulsory'])) {
+          skipped += 1;
+          continue;
+        }
+        throw failure(`${schoolClass.Name} / ${subject.Name} already exists with different offering settings. Edit that offering instead.`, 409, 'ACADEMIC_BULK_SUBJECT_OFFERING_CONFLICT');
+      }
+      stampAcademicRecord(record, user);
+      projected.offerings.push(record);
+      createdRecords.push(record);
+      writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.offerings, documentId: record.OfferingId, data: withoutMetadata(record), exists: false });
+    }
+  }
+  if (createdRecords.length) writes.push(auditWrite(user, 'BULK APPLY', 'offering', {
+    BranchId: scope.branchId, SchoolSection: scope.section,
+    SessionId: clean(input.SessionId), TermId: clean(input.TermId), OfferingId: `bulk-${Date.now()}`
+  }, `${createdRecords.length} class-subject offering(s) created; ${skipped} already matched.`));
+  await commitAcademicBatch(env, writes, 'The class or subject catalogue changed while offerings were being saved. Reload and try again.');
+  const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section });
+  response.message = createdRecords.length
+    ? `${createdRecords.length} class-subject offering${createdRecords.length === 1 ? '' : 's'} created online${skipped ? `; ${skipped} already matched and were skipped` : ''}.`
+    : 'Every selected class already has the selected reusable subjects.';
+  response.bulkResult = { Requested: classIds.length * subjectIds.length, Created: createdRecords.length, Skipped: skipped };
   return response;
 }
 
@@ -1264,6 +1372,44 @@ function activeDependants(state, type, record) {
   return [];
 }
 
+export function academicPermanentDeleteDependants(state = {}, typeValue = '', record = {}) {
+  const type = normalizedRecordType(typeValue);
+  const id = recordId(record);
+  if (type === 'class') {
+    return [
+      ...(state.classes || []).filter((row) => recordId(row) !== id && row.NextClassId === id),
+      ...(state.arms || []).filter((row) => row.ClassId === id),
+      ...(state.offerings || []).filter((row) => row.ClassId === id),
+      ...(state.teacherAllocations || []).filter((row) => row.ClassId === id),
+      ...(state.studentMemberships || []).filter((row) => row.ClassId === id),
+      ...(state.studentMovements || []).filter((row) => row.FromClassId === id || row.ToClassId === id)
+    ];
+  }
+  if (type === 'arm') {
+    return [
+      ...(state.offerings || []).filter((row) => row.ArmId === id),
+      ...(state.teacherAllocations || []).filter((row) => row.ArmId === id),
+      ...(state.studentMemberships || []).filter((row) => row.ArmId === id),
+      ...(state.studentMovements || []).filter((row) => row.FromArmId === id || row.ToArmId === id)
+    ];
+  }
+  if (type === 'subject') {
+    const usesSubject = (row) => row.SubjectId === id
+      || (row.SubjectIds || []).includes(id)
+      || (row.CoreSubjectIds || []).includes(id)
+      || (row.FromSubjectIds || []).includes(id)
+      || (row.ToSubjectIds || []).includes(id);
+    return [
+      ...(state.departments || []).filter(usesSubject),
+      ...(state.offerings || []).filter(usesSubject),
+      ...(state.teacherAllocations || []).filter(usesSubject),
+      ...(state.studentMemberships || []).filter(usesSubject),
+      ...(state.studentMovements || []).filter(usesSubject)
+    ];
+  }
+  return [];
+}
+
 export async function archiveAcademicManagementRecord(env, user = {}, input = {}) {
   requireWritableSubscription(user);
   const type = normalizedRecordType(input.RecordType || input.recordType || input.Type);
@@ -1300,6 +1446,51 @@ export async function archiveAcademicManagementRecord(env, user = {}, input = {}
   return bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section });
 }
 
+export async function deleteAcademicManagementRecord(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canDelete');
+  const type = normalizedRecordType(input.RecordType || input.recordType || input.Type);
+  if (!['class', 'arm', 'subject'].includes(type)) {
+    throw failure('Only an unused class, arm or subject can be permanently deleted.');
+  }
+  const definition = RECORD_TYPES[type];
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const state = await loadAcademicState(env, scope.branchId);
+  const stateKey = Object.keys(ACADEMIC_MANAGEMENT_COLLECTIONS).find((key) => ACADEMIC_MANAGEMENT_COLLECTIONS[key] === definition.collection);
+  const existing = findById(state[stateKey] || [], input.RecordId);
+  if (!existing) throw failure('The academic record was not found in the selected branch.', 404);
+  if (lower(existing.SchoolSection) !== scope.section) throw failure('This academic record belongs to another school section.', 403);
+  const dependants = academicPermanentDeleteDependants(state, type, existing);
+  if (dependants.length) {
+    throw failure(`This ${type} is referenced by ${dependants.length} academic record${dependants.length === 1 ? '' : 's'}. Remove those references or archive this record instead.`, 409, 'ACADEMIC_DELETE_REFERENCED');
+  }
+  const revisionToken = clean(input.RevisionToken);
+  if (!revisionToken || revisionToken !== clean(existing.__updateTime)) {
+    throw failure('This academic record changed after it was loaded. Reload before deleting.', 409, 'ACADEMIC_WRITE_CONFLICT');
+  }
+  const writes = [
+    { collectionPath: definition.collection, documentId: recordId(existing), operation: 'delete', updateTime: revisionToken },
+    auditWrite(user, 'DELETE', type, existing, clean(existing.Name || existing.Code))
+  ];
+  if (type === 'class') {
+    writes.push({
+      collectionPath: 'settings/academics/classes',
+      documentId: clean(existing.LegacyDocumentId) || legacyDocumentId(existing.Name),
+      operation: 'delete'
+    });
+  }
+  if (type === 'arm') {
+    const projected = { ...state, arms: state.arms.filter((row) => recordId(row) !== recordId(existing)) };
+    const schoolClass = findById(projected.classes, existing.ClassId);
+    const compatibility = schoolClass ? legacyClassWrite(projected, schoolClass, 'class') : null;
+    if (compatibility) writes.push(compatibility);
+  }
+  await commitAcademicBatch(env, writes, 'This academic record changed while it was being deleted. Reload and try again.');
+  const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section });
+  response.message = `${existing.Name || existing.Code || 'Academic record'} deleted permanently online.`;
+  return response;
+}
+
 export async function handleAcademicManagementAction(env, user = {}, input = {}) {
   const action = lower(input.action || input.Action).replace(/[^a-z]/g, '');
   if (['bootstrap', 'list', 'getacademicmanagement'].includes(action)) return bootstrapAcademicManagement(env, user, input);
@@ -1315,6 +1506,8 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['bulkcreateacademicclasses', 'bulkcreateclasses'].includes(action)) return bulkCreateAcademicClasses(env, user, input);
   if (['bulkcreateacademicarmtemplates', 'bulkcreatearmtemplates'].includes(action)) return bulkCreateAcademicArmTemplates(env, user, input);
   if (['bulkapplyacademicarmtemplates', 'bulkapplyarmtemplates'].includes(action)) return bulkApplyAcademicArmTemplates(env, user, input);
+  if (['bulkcreateacademicsubjects', 'bulkcreatesubjects'].includes(action)) return bulkCreateAcademicSubjects(env, user, input);
+  if (['bulkapplyacademicsubjects', 'bulkapplysubjects'].includes(action)) return bulkApplyAcademicSubjects(env, user, input);
   if (['bulkallocateacademicstudents', 'bulkallocatestudents'].includes(action)) return bulkAllocateAcademicStudents(env, user, input);
   if (['manageacademicstudentmembership', 'moveacademicstudentmembership', 'withdrawacademicstudentmembership', 'reinstateacademicstudentmembership'].includes(action)) {
     const inferredOperation = ({
@@ -1325,5 +1518,6 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
     return manageAcademicStudentMembership(env, user, { ...input, Operation: input.Operation || inferredOperation });
   }
   if (['archive', 'archiverecord', 'archiveacademicrecord'].includes(action)) return archiveAcademicManagementRecord(env, user, input);
+  if (['delete', 'deleterecord', 'deleteacademicrecord'].includes(action)) return deleteAcademicManagementRecord(env, user, input);
   throw failure('Choose a valid Academic Management action.');
 }
