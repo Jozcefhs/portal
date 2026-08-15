@@ -218,6 +218,10 @@ The foundation module manages:
 - many-to-many teacher allocation: one teacher can hold multiple subject
   assignments across different classes and arms in the same term, with one
   auditable allocation record per class, arm and subject combination;
+- independent teacher responsibilities: a Form Teacher or Assistant Teacher is
+  assigned to a specific class arm without an artificial subject, and the same
+  staff member may concurrently hold Subject Teacher assignments in other
+  classes and arms;
 - student enrollment in a session, class and arm;
 - automatic assignment of every offered subject to Junior Secondary students,
   who do not select electives;
@@ -261,9 +265,12 @@ Initial role capabilities are configurable but must preserve these boundaries:
 - **Principal/Head Teacher:** reviews and approves policies, results and final
   promotion decisions when delegated.
 - **Form Teacher:** works with an assigned class, attendance, comments and
-  class-level review.
+  class-level review. An Assistant Teacher may share the class responsibility.
 - **Subject Teacher:** marks attendance and records scores only for allocated
   subject offerings.
+- Class responsibility does not itself grant subject-score access. A Form
+  Teacher or Assistant Teacher who also teaches subjects receives separate
+  Subject Teacher allocations for those other classes, arms and offerings.
 - **Examination Officer:** prepares assessment schemes, imports, CBT sessions,
   result calculations and examination review.
 - **Finance Officer:** manages financial-clearance rules and exemptions without

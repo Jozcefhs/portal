@@ -84,7 +84,7 @@ test('AM-002 subjects, offerings and teacher allocations retain period scope', (
   const allocation = normalizeAcademicTeacherAllocation({
     SessionId: 'session-1', TermId: 'term-1', TeacherUsername: 'Ada.Teacher',
     ClassId: 'class-1', ArmId: 'arm-a', SubjectId: subject.SubjectId,
-    AllocationRole: 'Form Teacher'
+    AllocationRole: 'Subject Teacher'
   }, scope);
 
   assert.equal(subject.Code, 'MATH');
@@ -94,21 +94,22 @@ test('AM-002 subjects, offerings and teacher allocations retain period scope', (
   assert.equal(allocation.TeacherUsername, 'ada.teacher');
 });
 
-test('AM-002 one teacher can hold different subjects across classes and arms', () => {
-  const common = {
-    SessionId: 'session-1', TermId: 'term-1', TeacherUsername: 'Ada.Teacher',
-    AllocationRole: 'Subject Teacher'
-  };
+test('AM-002 one staff member can combine form, assistant and subject responsibilities', () => {
+  const common = { SessionId: 'session-1', TermId: 'term-1', TeacherUsername: 'Ada.Teacher' };
   const assignments = [
-    normalizeAcademicTeacherAllocation({ ...common, ClassId: 'jss-1', ArmId: 'arm-a', SubjectId: 'math' }, scope),
-    normalizeAcademicTeacherAllocation({ ...common, ClassId: 'jss-1', ArmId: 'arm-b', SubjectId: 'math' }, scope),
-    normalizeAcademicTeacherAllocation({ ...common, ClassId: 'sss-2', ArmId: 'arm-a', SubjectId: 'physics' }, scope)
+    normalizeAcademicTeacherAllocation({ ...common, ClassId: 'jss-1', ArmId: 'arm-a', AllocationRole: 'Form Teacher' }, scope),
+    normalizeAcademicTeacherAllocation({ ...common, ClassId: 'jss-2', ArmId: 'arm-b', AllocationRole: 'Assistant Teacher' }, scope),
+    normalizeAcademicTeacherAllocation({ ...common, ClassId: 'jss-3', ArmId: 'arm-a', SubjectId: 'math', AllocationRole: 'Subject Teacher' }, scope),
+    normalizeAcademicTeacherAllocation({ ...common, ClassId: 'sss-2', ArmId: 'arm-b', SubjectId: 'physics', AllocationRole: 'Subject Teacher' }, scope)
   ];
 
-  assert.equal(new Set(assignments.map((row) => row.AllocationId)).size, 3);
+  assert.equal(new Set(assignments.map((row) => row.AllocationId)).size, 4);
   assert.ok(assignments.every((row) => row.TeacherUsername === 'ada.teacher'));
-  assert.notEqual(assignments[0].AllocationId, assignments[1].AllocationId);
-  assert.notEqual(assignments[0].AllocationId, assignments[2].AllocationId);
+  assert.equal(assignments[0].SubjectId, '');
+  assert.equal(assignments[1].SubjectId, '');
+  assert.equal(assignments[2].SubjectId, 'math');
+  assert.throws(() => normalizeAcademicTeacherAllocation({ ...common, ClassId: 'jss-3', ArmId: 'arm-a', AllocationRole: 'Subject Teacher' }, scope), /Choose a subject/);
+  assert.throws(() => normalizeAcademicTeacherAllocation({ ...common, ClassId: 'jss-3', AllocationRole: 'Form Teacher' }, scope), /Choose the class arm/);
 });
 
 test('AM-002 student memberships allocate one arm and a unique subject set per term', () => {
@@ -234,14 +235,15 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /function academicManagementRequest/);
   assert.match(adminSource, /function academicDepartmentsWorkspace/);
   assert.match(adminSource, /Junior receives every offering/);
-  assert.match(adminSource, /A teacher may hold any number of different assignments in the same term/);
+  assert.match(adminSource, /The same staff member can also teach different subjects in other classes and arms/);
+  assert.match(adminSource, /function syncAcademicTeacherAssignmentForm/);
   assert.match(adminSource, /data-academic-workflow="bulkAllocateAcademicStudents"/);
   assert.match(adminSource, /Student Movement History/);
   assert.match(adminSource, /staffFetch\('\/api\/staff-academics'/);
   assert.match(adminSource, /active === 'academics'/);
   assert.match(styleSource, /\.academic-management-editor-grid/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-class-movements/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-teacher-responsibilities/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

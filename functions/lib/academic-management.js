@@ -328,19 +328,24 @@ export function normalizeAcademicTeacherAllocation(input = {}, context = {}, exi
   const teacherUsername = lower(input.TeacherUsername || input.Username || existing?.TeacherUsername);
   const classId = clean(input.ClassId || existing?.ClassId);
   const armId = clean(input.ArmId ?? existing?.ArmId);
-  const subjectId = clean(input.SubjectId || existing?.SubjectId);
-  if (!sessionId || !termId || !teacherUsername || !classId || !subjectId) {
-    throw failure('Choose a session, term, teacher, class and subject for this allocation.');
+  const allocationRole = oneOf(input.AllocationRole, ACADEMIC_TEACHER_ALLOCATION_ROLES, existing?.AllocationRole || 'Subject Teacher');
+  const subjectTeacher = allocationRole === 'Subject Teacher';
+  const subjectId = subjectTeacher ? clean(input.SubjectId ?? existing?.SubjectId) : '';
+  if (!sessionId || !termId || !teacherUsername || !classId) {
+    throw failure('Choose a session, term, teacher and class for this allocation.');
   }
+  if (subjectTeacher && !subjectId) throw failure('Choose a subject for a Subject Teacher assignment.');
+  if (!subjectTeacher && !armId) throw failure('Choose the class arm for a Form Teacher or Assistant Teacher assignment.');
   const branchId = safeScopeId(context.branchId || input.BranchId || existing?.BranchId);
   const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || existing?.SchoolSection });
+  const responsibilityId = subjectTeacher ? subjectId : lower(allocationRole);
   const allocationId = clean(existing?.AllocationId || input.AllocationId || input.RecordId)
-    || academicId('teacher', branchId, section, sessionId, termId, teacherUsername, classId, armId || 'all-arms', subjectId);
+    || academicId('teacher', branchId, section, sessionId, termId, teacherUsername, classId, armId || 'all-arms', responsibilityId);
   return {
     ...(existing || {}), RecordId: allocationId, AllocationId: allocationId,
     SessionId: sessionId, TermId: termId, TeacherUsername: teacherUsername,
     ClassId: classId, ArmId: armId, SubjectId: subjectId,
-    AllocationRole: oneOf(input.AllocationRole, ACADEMIC_TEACHER_ALLOCATION_ROLES, existing?.AllocationRole || 'Subject Teacher'),
+    AllocationRole: allocationRole,
     Status: oneOf(input.Status, ACADEMIC_RECORD_STATUSES, existing?.Status || 'Active'),
     BranchId: branchId, SchoolSection: section
   };
@@ -593,7 +598,7 @@ function validateAcademicRecord(state, type, record, people = {}) {
       if (arm.ClassId !== record.ClassId) throw failure('The selected class arm does not belong to this class.');
     }
   }
-  if (['offering', 'teacherallocation'].includes(type)) {
+  if (type === 'offering' || (type === 'teacherallocation' && record.AllocationRole === 'Subject Teacher')) {
     const subject = assertReference(findById(state.subjects, record.SubjectId), 'The selected subject is not active.');
     if (subject.SchoolSection !== record.SchoolSection) throw failure('The selected subject belongs to another school section.');
   }
@@ -607,11 +612,13 @@ function validateAcademicRecord(state, type, record, people = {}) {
     if (['primary', 'secondary'].includes(teacherSection) && teacherSection !== record.SchoolSection) {
       throw failure('The selected teacher is restricted to another school section.', 409, 'ACADEMIC_TEACHER_SECTION_INVALID');
     }
-    const offering = state.offerings.find((row) => statusActive(row)
-      && row.SessionId === record.SessionId && row.TermId === record.TermId
-      && row.ClassId === record.ClassId && row.SubjectId === record.SubjectId
-      && (!row.ArmId || !record.ArmId || row.ArmId === record.ArmId));
-    if (!offering) throw failure('Offer this subject to the selected class or arm before allocating a teacher.');
+    if (record.AllocationRole === 'Subject Teacher') {
+      const offering = state.offerings.find((row) => statusActive(row)
+        && row.SessionId === record.SessionId && row.TermId === record.TermId
+        && row.ClassId === record.ClassId && row.SubjectId === record.SubjectId
+        && (!row.ArmId || !record.ArmId || row.ArmId === record.ArmId));
+      if (!offering) throw failure('Offer this subject to the selected class or arm before allocating a teacher.');
+    }
   }
   if (type === 'studentmembership') {
     const student = people.students.find((row) => lower(studentReference(row)) === lower(record.StudentRef));

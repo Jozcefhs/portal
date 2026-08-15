@@ -9487,7 +9487,7 @@ function academicOfferingsWorkspace(data, rows) {
       <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
       <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
       <label>Class<select name="ClassId" required>${academicSelectOptions(classes, '', (row) => row.Name, 'Choose class')}</select></label>
-      <label>Arm<select name="ArmId">${academicSelectOptions(arms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'All arms')}</select></label>
+      <label>Arm<select name="ArmId" data-academic-teacher-arm>${academicSelectOptions(arms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'All arms (subject teaching only)')}</select></label>
       <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select></label>
       <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
     </div>
@@ -9517,7 +9517,7 @@ function academicTeacherWorkspace(data, rows) {
     return !['primary', 'secondary'].includes(assigned) || assigned === academicManagementFilters.section;
   });
   const form = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-form="teacherAllocation">
-    ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Teaching responsibility</small><h3>Allocate teacher</h3><p class="muted">Create one assignment for each class, arm and subject combination. A teacher may hold any number of different assignments in the same term.</p></div><button type="button" class="academic-form-reset" data-academic-reset="teacherAllocation">Clear</button></div>
+    ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Teaching responsibility</small><h3>Allocate teacher</h3><p class="muted">Form and Assistant Teachers own a class-arm responsibility without a subject. The same staff member can also teach different subjects in other classes and arms.</p></div><button type="button" class="academic-form-reset" data-academic-reset="teacherAllocation">Clear</button></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
     <div class="academic-management-form-grid academic-management-form-grid-3">
       <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
@@ -9525,15 +9525,15 @@ function academicTeacherWorkspace(data, rows) {
       <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role})`, 'Choose teacher')}</select></label>
       <label>Class<select name="ClassId" required>${academicSelectOptions(classes, '', (row) => row.Name, 'Choose class')}</select></label>
       <label>Arm<select name="ArmId">${academicSelectOptions(arms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'All arms')}</select></label>
-      <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select></label>
-      <label>Responsibility<select name="AllocationRole"><option>Subject Teacher</option><option>Form Teacher</option><option>Assistant Teacher</option></select></label>
+      <label>Responsibility<select name="AllocationRole" data-academic-teacher-role><option>Subject Teacher</option><option>Form Teacher</option><option>Assistant Teacher</option></select></label>
+      <label>Subject<select name="SubjectId" data-academic-teacher-subject>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Required for Subject Teacher')}</select><small>Not applicable to Form Teacher or Assistant Teacher responsibility.</small></label>
       <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
     </div><button type="submit">Save this teacher assignment</button>
   </form>` : '<div class="academic-view-only-note"><strong>My teaching allocations</strong><span>Only administrators can change allocations.</span></div>';
   return `${form}${table('Teacher Allocations', rows.teacherAllocations, [
     { label: 'Teacher', value: (row) => academicLabel(data.staff, row.TeacherUsername, row.TeacherUsername) },
     { label: 'Class / Arm', value: (row) => `${academicLabel(rows.classes, row.ClassId)}${row.ArmId ? ` / ${academicLabel(rows.arms, row.ArmId)}` : ' / All arms'}` },
-    { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId) },
+    { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId, 'Class responsibility') },
     { label: 'Role', value: (row) => row.AllocationRole }, { label: 'Status', value: (row) => row.Status },
     { label: 'Actions', render: (row) => academicActionButtons('teacherAllocation', row, canManage, canManage) }
   ])}`;
@@ -9763,8 +9763,21 @@ function populateAcademicForm(type, record) {
   });
   form.elements.RecordId.value = academicRecordId(record);
   form.elements.RevisionToken.value = record.RevisionToken || '';
+  if (type === 'teacherAllocation') syncAcademicTeacherAssignmentForm(form);
   form.scrollIntoView({ behavior: 'smooth', block: 'start' });
   form.querySelector('input:not([type="hidden"]), select')?.focus();
+}
+
+function syncAcademicTeacherAssignmentForm(form) {
+  const role = form?.querySelector('[data-academic-teacher-role]');
+  const arm = form?.querySelector('[data-academic-teacher-arm]');
+  const subject = form?.querySelector('[data-academic-teacher-subject]');
+  if (!role || !arm || !subject) return;
+  const subjectTeacher = role.value === 'Subject Teacher';
+  arm.required = !subjectTeacher;
+  subject.required = subjectTeacher;
+  subject.disabled = !subjectTeacher;
+  if (!subjectTeacher) subject.value = '';
 }
 
 function bindAcademicManagement() {
@@ -9787,6 +9800,9 @@ function bindAcademicManagement() {
     academicManagementFilters.termId = event.target.value;
     renderAcademicManagement(academicManagementData || {});
   });
+  const teacherAssignmentForm = panelEl.querySelector('[data-academic-form="teacherAllocation"]');
+  teacherAssignmentForm?.querySelector('[data-academic-teacher-role]')?.addEventListener('change', () => syncAcademicTeacherAssignmentForm(teacherAssignmentForm));
+  syncAcademicTeacherAssignmentForm(teacherAssignmentForm);
   panelEl.querySelectorAll('[data-academic-form]').forEach((form) => form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const button = form.querySelector('button[type="submit"]');
@@ -9822,6 +9838,7 @@ function bindAcademicManagement() {
     form?.reset();
     if (form?.elements.RecordId) form.elements.RecordId.value = '';
     if (form?.elements.RevisionToken) form.elements.RevisionToken.value = '';
+    if (form?.dataset.academicForm === 'teacherAllocation') syncAcademicTeacherAssignmentForm(form);
   }));
   panelEl.querySelectorAll('[data-academic-edit]').forEach((button) => button.addEventListener('click', () => {
     populateAcademicForm(button.dataset.academicEdit, academicFind(academicRecordRows(button.dataset.academicEdit), button.dataset.academicId));
