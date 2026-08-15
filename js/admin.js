@@ -134,6 +134,7 @@ let studentConductData = null;
 let academicManagementData = null;
 let academicManagementView = 'structure';
 let academicManagementFilters = { section: '', sessionId: '', termId: '' };
+let academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
 const organizationCommerceCarts = {
   organizationStore: new Map(),
   restaurant: new Map()
@@ -1224,6 +1225,7 @@ function clearStaffWorkspaceState() {
   academicManagementData = null;
   academicManagementView = 'structure';
   academicManagementFilters = { section: '', sessionId: '', termId: '' };
+  academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
   activeSection = '';
   activeTabs = [];
   recordsDeskHandoffContext = null;
@@ -1351,6 +1353,7 @@ function clearBranchScopedWorkspaceData() {
   academicManagementData = null;
   academicManagementView = 'structure';
   academicManagementFilters = { section: '', sessionId: '', termId: '' };
+  academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
   Object.values(organizationCommerceCarts).forEach((cart) => cart.clear());
   organizationCommerceLastSale.organizationStore = null;
   organizationCommerceLastSale.restaurant = null;
@@ -9387,19 +9390,23 @@ function academicSelectOptions(rows = [], selected = '', label = (row) => row.Na
   }).join('')}`;
 }
 
-function academicCheckboxField({ name, label, options = [], help = '', required = false, max = 0, idPrefix = name }) {
+function academicCheckboxChoices(name, options = [], idPrefix = name) {
   const prefix = clean(idPrefix).replace(/[^a-z0-9_-]+/gi, '-').toLowerCase();
-  const legendId = `${prefix}-legend`;
-  const helpId = `${prefix}-help`;
-  const choices = options.length
+  return options.length
     ? options.map((option, index) => {
       const inputId = `${prefix}-${index + 1}`;
       return `<label class="academic-checkbox-option" for="${escapeHtml(inputId)}"><input type="checkbox" id="${escapeHtml(inputId)}" name="${escapeHtml(name)}" value="${escapeHtml(option.value)}"><span>${escapeHtml(option.label)}</span></label>`;
     }).join('')
     : '<span class="academic-checkbox-empty">No choices are currently available.</span>';
-  return `<fieldset class="academic-checkbox-field" data-academic-checkbox-field data-academic-checkbox-name="${escapeHtml(name)}" data-academic-checkbox-label="${escapeHtml(label)}"${required ? ' data-academic-checkbox-required="true"' : ''}${max ? ` data-academic-checkbox-max="${max}"` : ''}>
+}
+
+function academicCheckboxField({ name, label, options = [], help = '', required = false, max = 0, idPrefix = name, purpose = '' }) {
+  const prefix = clean(idPrefix).replace(/[^a-z0-9_-]+/gi, '-').toLowerCase();
+  const legendId = `${prefix}-legend`;
+  const helpId = `${prefix}-help`;
+  return `<fieldset class="academic-checkbox-field" data-academic-checkbox-field data-academic-checkbox-name="${escapeHtml(name)}" data-academic-checkbox-label="${escapeHtml(label)}"${required ? ' data-academic-checkbox-required="true"' : ''}${max ? ` data-academic-checkbox-max="${max}"` : ''}${purpose ? ` data-academic-checkbox-purpose="${escapeHtml(purpose)}"` : ''}>
     <legend id="${escapeHtml(legendId)}">${escapeHtml(label)}${required ? ' <span aria-hidden="true">*</span>' : ''}</legend>
-    <div class="academic-checkbox-options" role="group" aria-labelledby="${escapeHtml(legendId)}"${help ? ` aria-describedby="${escapeHtml(helpId)}"` : ''}>${choices}</div>
+    <div class="academic-checkbox-options" role="group" aria-labelledby="${escapeHtml(legendId)}"${help ? ` aria-describedby="${escapeHtml(helpId)}"` : ''}>${academicCheckboxChoices(name, options, idPrefix)}</div>
     ${help ? `<small id="${escapeHtml(helpId)}">${escapeHtml(help)}</small>` : ''}
   </fieldset>`;
 }
@@ -9428,6 +9435,113 @@ function validateAcademicCheckboxFields(form) {
       throw new Error(`Choose no more than ${maximum} ${label.toLowerCase()}.`);
     }
   });
+}
+
+function academicStudentBelongsToClass(student = {}, schoolClass = {}) {
+  const classId = clean(schoolClass.ClassId || academicRecordId(schoolClass));
+  if (clean(student.AcademicClassId)) return clean(student.AcademicClassId).toLowerCase() === classId.toLowerCase();
+  const classKeys = [schoolClass.Name, schoolClass.Code, schoolClass.LegacyDocumentId]
+    .map((value) => clean(value).toLowerCase().replace(/[^a-z0-9]/g, '')).filter(Boolean);
+  return [student.ClassName, student.ClassAdmitted]
+    .map((value) => clean(value).toLowerCase().replace(/[^a-z0-9]/g, '')).filter(Boolean)
+    .some((key) => classKeys.includes(key));
+}
+
+function academicStudentAllocationCandidates(sessionId, termId, classId) {
+  const schoolClass = academicFind(academicManagementData?.classes || [], classId);
+  if (!schoolClass || !sessionId || !termId) return { schoolClass, students: [], candidates: [] };
+  const students = (academicManagementData?.students || []).filter((student) => {
+    const section = clean(student.SchoolSection).toLowerCase();
+    return (!section || section === academicManagementFilters.section) && academicStudentBelongsToClass(student, schoolClass);
+  }).sort((left, right) => clean(left.StudentName).localeCompare(clean(right.StudentName), undefined, { sensitivity: 'base' }));
+  const assigned = new Set((academicManagementData?.studentMemberships || [])
+    .filter((membership) => membership.SessionId === sessionId && membership.TermId === termId)
+    .map((membership) => clean(membership.StudentRef).toLowerCase()));
+  return {
+    schoolClass,
+    students,
+    candidates: students.filter((student) => !assigned.has(clean(student.StudentRef).toLowerCase()))
+  };
+}
+
+function filterAcademicStudentCandidateOptions(form) {
+  const search = form?.querySelector('[data-academic-student-candidate-search]');
+  const field = form?.querySelector('[data-academic-checkbox-purpose="student-arm-candidates"]');
+  if (!search || !field) return;
+  const query = clean(search.value).toLowerCase();
+  let visible = 0;
+  field.querySelectorAll('.academic-checkbox-option').forEach((option) => {
+    const matches = !query || clean(option.textContent).toLowerCase().includes(query);
+    option.hidden = !matches;
+    if (matches) visible += 1;
+  });
+  const help = field.querySelector('small');
+  const summary = field.dataset.academicCandidateSummary || '';
+  if (help) help.textContent = query ? `${visible} matching student${visible === 1 ? '' : 's'}. ${summary}` : summary;
+}
+
+function syncAcademicStudentPlacementForm(form, changedName = '') {
+  if (!form || !academicManagementData) return;
+  const sessionControl = form.elements.namedItem('SessionId');
+  const termControl = form.elements.namedItem('TermId');
+  const classControl = form.elements.namedItem('ClassId');
+  const armControl = form.elements.namedItem('ArmId');
+  if (!sessionControl || !termControl || !classControl || !armControl) return;
+
+  const sessionId = clean(sessionControl.value);
+  const termRows = (academicManagementData.terms || []).filter((row) => academicIsActive(row) && row.SessionId === sessionId);
+  const currentTermId = clean(termControl.value);
+  const termId = changedName !== 'SessionId' && academicFind(termRows, currentTermId)
+    ? currentTermId
+    : clean(academicFind(termRows, academicManagementFilters.termId)?.TermId || termRows.find(academicIsActive)?.TermId || termRows[0]?.TermId);
+  termControl.innerHTML = academicSelectOptions(termRows, termId, (row) => row.Name, 'Choose term');
+
+  const classId = clean(classControl.value);
+  const classRows = (academicManagementData.classes || []).filter((row) => academicIsActive(row)
+    && (!academicManagementFilters.section || clean(row.SchoolSection).toLowerCase() === academicManagementFilters.section));
+  if (!academicFind(classRows, classId)) classControl.value = '';
+  const selectedClassId = clean(classControl.value);
+  const armRows = (academicManagementData.arms || []).filter((row) => academicIsActive(row) && row.ClassId === selectedClassId);
+  const currentArmId = clean(armControl.value);
+  const armId = changedName !== 'ClassId' && academicFind(armRows, currentArmId) ? currentArmId : '';
+  armControl.innerHTML = academicSelectOptions(armRows, armId, (row) => row.Name, selectedClassId ? 'Choose arm' : 'Choose class first');
+  armControl.disabled = !selectedClassId;
+
+  const selectedTermId = clean(termControl.value);
+  const selectedArmId = clean(armControl.value);
+  const { schoolClass, students, candidates } = selectedArmId
+    ? academicStudentAllocationCandidates(sessionId, selectedTermId, selectedClassId)
+    : { schoolClass: academicFind(classRows, selectedClassId), students: [], candidates: [] };
+  const className = clean(schoolClass?.Name) || 'the selected class';
+  let summary = 'Choose the session, term, class and arm to display unassigned students.';
+  if (sessionId && selectedTermId && selectedClassId && !selectedArmId) summary = `Choose an arm for ${className} to display its unassigned students.`;
+  else if (selectedArmId && !students.length) summary = `No students with ${className} as their existing class were found.`;
+  else if (selectedArmId && !candidates.length) summary = `All ${students.length} ${className} student${students.length === 1 ? '' : 's'} already have arm assignments for this period.`;
+  else if (selectedArmId) summary = `${candidates.length} of ${students.length} ${className} student${students.length === 1 ? '' : 's'} remain unassigned for this period. Select up to 100.`;
+
+  const candidateSelect = form.querySelector('[data-academic-student-candidate-select]');
+  if (candidateSelect) {
+    const currentStudent = clean(candidateSelect.value);
+    candidateSelect.innerHTML = academicSelectOptions(candidates, academicFind(candidates, currentStudent) ? currentStudent : '', (row) => `${row.StudentName} (${row.StudentRef})`, summary);
+  }
+  const candidateField = form.querySelector('[data-academic-checkbox-purpose="student-arm-candidates"]');
+  if (candidateField) {
+    const options = candidates.map((row) => ({ value: row.StudentRef, label: `${row.StudentName} (${row.StudentRef})` }));
+    candidateField.querySelector('.academic-checkbox-options').innerHTML = academicCheckboxChoices('StudentRefs', options, 'bulk-allocation-students');
+    candidateField.dataset.academicCandidateSummary = summary;
+    const help = candidateField.querySelector('small');
+    if (help) help.textContent = summary;
+  }
+  const search = form.querySelector('[data-academic-student-candidate-search]');
+  if (search) {
+    search.disabled = !candidates.length;
+    filterAcademicStudentCandidateOptions(form);
+  }
+  const submit = form.querySelector('button[type="submit"]');
+  if (submit) submit.disabled = !selectedArmId || !candidates.length;
+  if (form.dataset.academicStudentPlacement === 'bulk') {
+    academicStudentAllocationDraft = { sessionId, termId: selectedTermId, classId: selectedClassId, armId: selectedArmId };
+  }
 }
 
 function academicCurrentRows(data = academicManagementData || {}) {
@@ -9789,13 +9903,7 @@ function academicStudentWorkspace(data, rows) {
   const arms = rows.arms.filter(academicIsActive);
   const subjects = rows.subjects.filter(academicIsActive);
   const departments = rows.departments.filter(academicIsActive);
-  const students = (data.students || []).filter((row) => {
-    const assigned = clean(row.SchoolSection).toLowerCase();
-    return !assigned || assigned === academicManagementFilters.section;
-  });
   const activeMemberships = rows.studentMemberships.filter(academicIsActive);
-  const allocated = new Set(rows.studentMemberships.map((row) => clean(row.StudentRef).toLowerCase()));
-  const unallocatedStudents = students.filter((row) => !allocated.has(clean(row.StudentRef).toLowerCase()));
   const periodFields = `
     <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
     <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>`;
@@ -9804,23 +9912,39 @@ function academicStudentWorkspace(data, rows) {
     <label>Arm<select name="ArmId" required>${academicSelectOptions(arms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'Choose arm')}</select></label>
     ${academicManagementFilters.section === 'secondary' ? `<label>Senior department<select name="DepartmentId">${academicSelectOptions(departments, '', (row) => `${row.Code} - ${row.Name}`, 'Not applicable / choose for Senior')}</select></label>` : ''}`;
   const subjectCheckboxOptions = subjects.map((row) => ({ value: row.SubjectId, label: `${row.Code} - ${row.Name}` }));
-  const studentCheckboxOptions = unallocatedStudents.map((row) => ({ value: row.StudentRef, label: `${row.StudentName} (${row.StudentRef})` }));
+  const draftSessionId = clean(academicFind(sessions, academicStudentAllocationDraft.sessionId)?.SessionId
+    || academicFind(sessions, academicManagementFilters.sessionId)?.SessionId);
+  const bulkTerms = (data.terms || []).filter((row) => academicIsActive(row) && row.SessionId === draftSessionId);
+  const draftTermId = clean(academicFind(bulkTerms, academicStudentAllocationDraft.termId)?.TermId
+    || academicFind(bulkTerms, academicManagementFilters.termId)?.TermId || bulkTerms.find(academicIsActive)?.TermId);
+  const draftClassId = clean(academicFind(classes, academicStudentAllocationDraft.classId)?.ClassId);
+  const bulkArms = arms.filter((row) => row.ClassId === draftClassId);
+  const draftArmId = clean(academicFind(bulkArms, academicStudentAllocationDraft.armId)?.ArmId);
+  academicStudentAllocationDraft = { sessionId: draftSessionId, termId: draftTermId, classId: draftClassId, armId: draftArmId };
+  const bulkPeriodFields = `
+    <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, draftSessionId, (row) => row.Name, 'Choose session')}</select></label>
+    <label>Term<select name="TermId" required>${academicSelectOptions(bulkTerms, draftTermId, (row) => row.Name, 'Choose term')}</select></label>`;
+  const bulkTargetFields = `
+    <label>Class<select name="ClassId" required>${academicSelectOptions(classes, draftClassId, (row) => `${row.Name} — ${academicSchoolStageLabel(row.SchoolStage)}`, 'Choose class')}</select></label>
+    <label>Arm<select name="ArmId" required${draftClassId ? '' : ' disabled'}>${academicSelectOptions(bulkArms, draftArmId, (row) => row.Name, draftClassId ? 'Choose arm' : 'Choose class first')}</select></label>
+    ${academicManagementFilters.section === 'secondary' ? `<label>Senior department<select name="DepartmentId">${academicSelectOptions(departments, '', (row) => `${row.Code} - ${row.Name}`, 'Not applicable / choose for Senior')}</select></label>` : ''}`;
   const forms = canManage ? `<div class="academic-management-editor-grid">
-    <form class="academic-management-editor" data-academic-form="studentMembership">
+    <form class="academic-management-editor" data-academic-form="studentMembership" data-academic-student-placement="single">
       ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Single allocation</small><h3>Allocate student</h3></div><button type="button" class="academic-form-reset" data-academic-reset="studentMembership">Clear</button></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
       ${periodFields}
-      <label>Student<select name="StudentRef" required>${academicSelectOptions(unallocatedStudents, '', (row) => `${row.StudentName} (${row.StudentRef})`, 'Choose unallocated student')}</select></label>
       ${targetFields}
+      <label>Student<select name="StudentRef" data-academic-student-candidate-select required><option value="">Choose the class and arm first</option></select><small>Only students whose existing class matches the selected class and who have no arm assignment for this period are shown.</small></label>
       ${academicCheckboxField({ name: 'SubjectIds', label: 'Optional subjects', options: subjectCheckboxOptions, idPrefix: 'single-student-subjects', help: 'Junior receives every offering; Senior receives department core subjects automatically.' })}
       <input type="hidden" name="Status" value="Active"><button type="submit">Allocate student</button>
     </form>
-    <form class="academic-management-editor" data-academic-workflow="bulkAllocateAcademicStudents">
-      <div class="academic-management-editor-heading"><div><small>Up to 100 at once</small><h3>Bulk allocate</h3></div></div>
+    <form class="academic-management-editor" data-academic-workflow="bulkAllocateAcademicStudents" data-academic-student-placement="bulk">
+      <div class="academic-management-editor-heading"><div><small>Up to 100 at once</small><h3>Assign students to a class arm</h3><p class="muted">Choose a class and arm to see only students already in that class who are still unassigned for the selected period.</p></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
-      ${periodFields}
-      ${academicCheckboxField({ name: 'StudentRefs', label: 'Students', options: studentCheckboxOptions, required: true, max: 100, idPrefix: 'bulk-allocation-students', help: 'Select up to 100 unallocated students. The entire batch is validated before saving.' })}
-      ${targetFields}
+      ${bulkPeriodFields}
+      ${bulkTargetFields}
+      <label>Find student<input type="search" data-academic-student-candidate-search placeholder="Search by name or admission number" autocomplete="off"><small>Search narrows the checkbox list without clearing students already selected.</small></label>
+      ${academicCheckboxField({ name: 'StudentRefs', label: 'Unassigned students', options: [], required: true, max: 100, idPrefix: 'bulk-allocation-students', purpose: 'student-arm-candidates', help: 'Choose the session, term, class and arm to display unassigned students.' })}
       ${academicCheckboxField({ name: 'SubjectIds', label: 'Optional subjects', options: subjectCheckboxOptions, idPrefix: 'bulk-allocation-subjects' })}
       <label>Allocation note<input name="Reason" placeholder="New term allocation"></label>
       <button type="submit">Allocate selected students</button>
@@ -10035,21 +10159,37 @@ function bindAcademicManagement() {
   document.getElementById('refreshAcademicManagement')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', () => loadAcademicManagement()));
   document.getElementById('academicManagementSection')?.addEventListener('change', (event) => {
     academicManagementFilters.section = event.target.value;
+    academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
     void loadAcademicManagement({ section: event.target.value });
   });
   document.getElementById('academicManagementSession')?.addEventListener('change', (event) => {
     academicManagementFilters.sessionId = event.target.value;
     const terms = (academicManagementData?.terms || []).filter((row) => !event.target.value || row.SessionId === event.target.value);
     academicManagementFilters.termId = clean(terms.find(academicIsActive)?.TermId || '');
+    academicStudentAllocationDraft = {
+      sessionId: academicManagementFilters.sessionId, termId: academicManagementFilters.termId, classId: '', armId: ''
+    };
     renderAcademicManagement(academicManagementData || {});
   });
   document.getElementById('academicManagementTerm')?.addEventListener('change', (event) => {
     academicManagementFilters.termId = event.target.value;
+    academicStudentAllocationDraft = {
+      ...academicStudentAllocationDraft,
+      sessionId: academicManagementFilters.sessionId,
+      termId: academicManagementFilters.termId
+    };
     renderAcademicManagement(academicManagementData || {});
   });
   const teacherAssignmentForm = panelEl.querySelector('[data-academic-form="teacherAllocation"]');
   teacherAssignmentForm?.querySelector('[data-academic-teacher-role]')?.addEventListener('change', () => syncAcademicTeacherAssignmentForm(teacherAssignmentForm));
   syncAcademicTeacherAssignmentForm(teacherAssignmentForm);
+  panelEl.querySelectorAll('[data-academic-student-placement]').forEach((form) => {
+    ['SessionId', 'TermId', 'ClassId', 'ArmId'].forEach((name) => {
+      form.elements.namedItem(name)?.addEventListener('change', () => syncAcademicStudentPlacementForm(form, name));
+    });
+    form.querySelector('[data-academic-student-candidate-search]')?.addEventListener('input', () => filterAcademicStudentCandidateOptions(form));
+    syncAcademicStudentPlacementForm(form);
+  });
   panelEl.querySelectorAll('[data-academic-form]').forEach((form) => form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const button = form.querySelector('button[type="submit"]');
@@ -10086,6 +10226,7 @@ function bindAcademicManagement() {
     if (form?.elements.RecordId) form.elements.RecordId.value = '';
     if (form?.elements.RevisionToken) form.elements.RevisionToken.value = '';
     if (form?.dataset.academicForm === 'teacherAllocation') syncAcademicTeacherAssignmentForm(form);
+    if (form?.dataset.academicStudentPlacement) syncAcademicStudentPlacementForm(form);
   }));
   panelEl.querySelectorAll('[data-academic-edit]').forEach((button) => button.addEventListener('click', () => {
     const type = button.dataset.academicEdit;

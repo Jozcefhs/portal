@@ -432,6 +432,25 @@ function studentReference(row = {}) {
   return clean(row.AdmissionNo || row.AccountRef || row.ApplicationReference || row.__id);
 }
 
+export function academicStudentMatchesClass(student = {}, schoolClass = {}) {
+  const selectedClassId = clean(schoolClass.ClassId || schoolClass.RecordId);
+  const existingClassId = clean(student.AcademicClassId);
+  if (existingClassId && selectedClassId) return lower(existingClassId) === lower(selectedClassId);
+  const studentClassKeys = [
+    student.ClassName, student.ClassAdmitted, student.ClassApplyingFor, student.CurrentClass
+  ].map(normalizeClassKey).filter(Boolean);
+  const selectedClassKeys = [
+    schoolClass.Name, schoolClass.Code, schoolClass.LegacyDocumentId
+  ].map(normalizeClassKey).filter(Boolean);
+  return studentClassKeys.some((key) => selectedClassKeys.includes(key));
+}
+
+function academicStudentClassId(student = {}, classes = []) {
+  const direct = findById(classes, student.AcademicClassId);
+  if (direct) return clean(direct.ClassId);
+  return clean(classes.find((schoolClass) => academicStudentMatchesClass(student, schoolClass))?.ClassId);
+}
+
 function assertReference(row, message) {
   if (!row || !statusActive(row)) throw failure(message, 409, 'ACADEMIC_REFERENCE_INVALID');
   return row;
@@ -648,6 +667,11 @@ function validateAcademicRecord(state, type, record, people = {}) {
   if (type === 'studentmembership') {
     const student = people.students.find((row) => lower(studentReference(row)) === lower(record.StudentRef));
     if (!student) throw failure('The selected student was not found in this branch and school section.', 404);
+    const schoolClass = findById(state.classes, record.ClassId);
+    if (!people.existing && !academicStudentMatchesClass(student, schoolClass)) {
+      const currentClass = clean(student.ClassName || student.ClassAdmitted || student.ClassApplyingFor) || 'another class';
+      throw failure(`${record.StudentRef} belongs to ${currentClass}. Choose an arm within that student\u2019s existing class.`, 409, 'ACADEMIC_STUDENT_CLASS_MISMATCH');
+    }
     applyAcademicStudentCurriculum(state, record);
     assertAcademicMembershipCapacity(state, record, recordId(people.existing || {}));
   }
@@ -785,11 +809,13 @@ function displayStaff(rows = []) {
   })).sort((a, b) => a.DisplayName.localeCompare(b.DisplayName));
 }
 
-function displayStudents(rows = []) {
+function displayStudents(rows = [], classes = []) {
   return rows.map((row) => ({
     StudentRef: studentReference(row),
     StudentName: clean(row.DisplayName || row.ApplicantName || row.StudentName || studentReference(row)),
-    ClassName: clean(row.ClassName), ClassArm: clean(row.ClassArm), SchoolSection: clean(row.SchoolSection)
+    AcademicClassId: academicStudentClassId(row, classes),
+    ClassName: clean(row.ClassName || row.ClassAdmitted), ClassAdmitted: clean(row.ClassAdmitted),
+    ClassArm: clean(row.ClassArm), SchoolSection: clean(row.SchoolSection)
   })).filter((row) => row.StudentRef).sort((a, b) => a.StudentName.localeCompare(b.StudentName));
 }
 
@@ -854,7 +880,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     selection,
     ...Object.fromEntries(Object.entries(state).map(([key, rows]) => [key, rows.map(publicRecord)])),
     staff: displayStaff(permissions.teacherView ? people.staff.filter((row) => lower(row.Username || row.__id) === actorUsername(user)) : people.staff),
-    students: displayStudents(students),
+    students: displayStudents(students, state.classes),
     audit: audit.filter((row) => lower(row.BranchId || 'main') === lower(scope.branchId))
       .sort((a, b) => clean(b.Timestamp).localeCompare(clean(a.Timestamp))).slice(0, 100).map(publicRecord),
     summary: {

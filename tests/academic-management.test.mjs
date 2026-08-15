@@ -7,6 +7,7 @@ import {
   assertAcademicMembershipCapacity,
   academicPermanentDeleteDependants,
   academicManagementCapabilities,
+  academicStudentMatchesClass,
   normalizeAcademicArm,
   normalizeAcademicArmTemplate,
   normalizeAcademicClass,
@@ -203,6 +204,15 @@ test('AM-002 student memberships allocate one arm and a unique subject set per t
   }, scope), /class and arm/);
 });
 
+test('AM-002 arm allocation candidates must belong to the selected existing class', () => {
+  const gradeSeven = { ClassId: 'grade-7', Name: 'Grade 7', Code: 'JSS1', LegacyDocumentId: 'Grade_7' };
+  assert.equal(academicStudentMatchesClass({ ClassName: 'Grade 7' }, gradeSeven), true);
+  assert.equal(academicStudentMatchesClass({ ClassAdmitted: 'JSS 1' }, gradeSeven), true);
+  assert.equal(academicStudentMatchesClass({ AcademicClassId: 'grade-7', ClassName: 'Grade 8' }, gradeSeven), true);
+  assert.equal(academicStudentMatchesClass({ AcademicClassId: 'grade-8', ClassName: 'Grade 7' }, gradeSeven), false);
+  assert.equal(academicStudentMatchesClass({ ClassName: 'Grade 8' }, gradeSeven), false);
+});
+
 test('AM-002 Junior takes all offerings while Senior inherits department core subjects', () => {
   const offerings = [
     { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: '', SubjectId: 'english', Compulsory: true, Status: 'Active' },
@@ -288,6 +298,8 @@ test('Academic writes are audited, optimistic and preserve legacy class/student 
   assert.match(librarySource, /ACADEMIC_MOVEMENT_REQUIRED/);
   assert.match(librarySource, /academicStudentMovements/);
   assert.match(librarySource, /Allocate at most 100 students in one batch/);
+  assert.match(librarySource, /ACADEMIC_STUDENT_CLASS_MISMATCH/);
+  assert.match(librarySource, /AcademicClassId: academicStudentClassId\(row, classes\)/);
   assert.match(librarySource, /Create at most 50 classes in one batch/);
   assert.match(librarySource, /Apply at most 200 class-arm combinations in one batch/);
   assert.match(librarySource, /Create at most 50 subjects in one batch/);
@@ -338,6 +350,11 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /name: 'CoreSubjectIds'/);
   assert.doesNotMatch(adminSource, /select name="(?:CoreSubjectIds|StudentRefs|SubjectIds)" multiple/);
   assert.match(adminSource, /data-academic-workflow="bulkAllocateAcademicStudents"/);
+  assert.match(adminSource, /data-academic-student-placement="bulk"/);
+  assert.match(adminSource, /function academicStudentAllocationCandidates/);
+  assert.match(adminSource, /data-academic-checkbox-purpose="student-arm-candidates"/);
+  assert.match(adminSource, /remain unassigned for this period/);
+  assert.match(adminSource, /Only students whose existing class matches the selected class/);
   assert.match(adminSource, /function academicBulkSetupWorkspace/);
   assert.match(adminSource, /data-academic-workflow="bulkCreateAcademicClasses"/);
   assert.match(adminSource, /data-academic-workflow="bulkCreateAcademicArmTemplates"/);
@@ -379,11 +396,12 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-management-editor-grid/);
   assert.match(styleSource, /\.academic-checkbox-options/);
   assert.match(styleSource, /\.academic-checkbox-option input\[type="checkbox"\]/);
+  assert.match(styleSource, /\[data-academic-checkbox-purpose="student-arm-candidates"\] \.academic-checkbox-options\{max-height:320px\}/);
   assert.match(styleSource, /\.academic-management-tabs button\{[^}]*font-size:13px/);
   assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
   assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-tabs button\{[^}]*font-size:12px/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-offering-delete/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-class-arm-students/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
