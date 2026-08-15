@@ -1460,7 +1460,7 @@ export async function bulkAllocateAcademicStudents(env, user = {}, input = {}) {
     const existingId = academicId('student', scope.branchId, scope.section, input.SessionId, input.TermId, studentRef);
     const existing = findById(projected.studentMemberships, existingId);
     const record = normalizeAcademicStudentMembership({
-      ...input, StudentRef, Status: 'Active', SubjectIds: [], CoreSubjectIds: [], TradeSubjectIds: [], OptionalSubjectIds: []
+      ...input, StudentRef: studentRef, Status: 'Active', SubjectIds: [], CoreSubjectIds: [], TradeSubjectIds: [], OptionalSubjectIds: []
     }, scope, existing);
     validateAcademicRecord(projected, 'studentmembership', record, { ...people, existing });
     if (existing) {
@@ -1476,7 +1476,7 @@ export async function bulkAllocateAcademicStudents(env, user = {}, input = {}) {
       collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
       documentId: record.MembershipId, data: withoutMetadata(record), exists: false
     });
-    writes.push(movementWrite(user, academicMovementForState(projected, { ...input, StudentRef }, scope, null, record)));
+    writes.push(movementWrite(user, academicMovementForState(projected, { ...input, StudentRef: studentRef }, scope, null, record)));
     const compatibility = studentCompatibilityWrite(people, projected, record);
     if (compatibility) writes.push(compatibility);
   }

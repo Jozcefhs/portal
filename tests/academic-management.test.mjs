@@ -449,6 +449,15 @@ test('Web and desktop transports share one protected Academic Management handler
   assert.match(backendSource, /handleAcademicManagementAction/);
 });
 
+test('bulk student allocation maps every selected reference into membership and movement records', () => {
+  const bulkAllocationSource = librarySource.slice(
+    librarySource.indexOf('export async function bulkAllocateAcademicStudents'),
+    librarySource.indexOf('export async function bulkImportAcademicStudentMemberships')
+  );
+  assert.equal([...bulkAllocationSource.matchAll(/StudentRef: studentRef/g)].length, 2);
+  assert.doesNotMatch(bulkAllocationSource, /\.\.\.input,\s*StudentRef(?:\s*[,}])/);
+});
+
 test('staff web workspace exposes responsive academic registers and online-only success', () => {
   assert.match(adminSource, /\['academics', 'Academic Management'\]/);
   assert.match(adminSource, /function renderAcademicManagement/);
