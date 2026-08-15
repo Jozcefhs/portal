@@ -2,7 +2,9 @@ import { batchCommitDocuments, listCollection } from './firestore.js';
 import { enforceActorBranch } from './branch-scope.js';
 import { normalizeClassKey } from './class-names.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
-import { getSchoolStructure, listSchoolCollection, safeScopeId } from './school-scope.js';
+import {
+  getSchoolStructure, listSchoolCollection, safeScopeId, schoolSectionFor, scopedCollectionPath
+} from './school-scope.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -463,6 +465,49 @@ function studentReference(row = {}) {
   return clean(row.AdmissionNo || row.AccountRef || row.ApplicationReference || row.__id);
 }
 
+function academicStudentDocumentId(reference) {
+  return clean(reference)
+    .replace(/[\/\\?#\[\]]/g, '-')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/-+/g, '-')
+    .slice(0, 140);
+}
+
+export function importedAcademicStudentProfile(row, scope, schoolClass, arm, session, term, user) {
+  const timestamp = nowIso();
+  const studentRef = clean(row.StudentRef);
+  const studentName = clean(row.StudentName);
+  const documentId = academicStudentDocumentId(studentRef);
+  return {
+    __id: documentId,
+    __scopePath: scopedCollectionPath('students', scope.branchId, scope.section),
+    AdmissionNo: studentRef,
+    AccountRef: studentRef,
+    DisplayName: studentName,
+    ApplicantName: studentName,
+    BranchId: scope.branchId,
+    SchoolSection: scope.section,
+    ClassName: clean(schoolClass?.Name),
+    ClassAdmitted: clean(schoolClass?.Name),
+    ClassArm: clean(arm?.Name),
+    AcademicClassId: clean(schoolClass?.ClassId),
+    AcademicArmId: clean(arm?.ArmId),
+    AcademicSession: clean(session?.Name),
+    Term: clean(term?.Name),
+    EnrollmentCategory: 'Returning',
+    Status: 'Active',
+    ProfileCompletionStatus: 'Needs completion',
+    ImportedAt: timestamp,
+    ImportedBy: actorName(user),
+    ImportSource: 'Academic Management',
+    CreatedAt: timestamp,
+    CreatedBy: actorName(user),
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName(user)
+  };
+}
+
 export function academicStudentMatchesClass(student = {}, schoolClass = {}) {
   const selectedClassId = clean(schoolClass.ClassId || schoolClass.RecordId);
   const existingClassId = clean(student.AcademicClassId);
@@ -509,11 +554,17 @@ export function applyAcademicStudentCurriculum(state = {}, record = {}, options 
     record.DepartmentId = '';
     coreSubjectIds = uniqueIds(offerings.map((row) => row.SubjectId));
   } else if (record.SchoolStage === 'senior-secondary') {
-    const department = assertReference(findById(state.departments || [], record.DepartmentId), 'Choose an active senior secondary department for this student.');
-    if (department.SchoolStage !== 'senior-secondary') throw failure('The selected department is not a Senior Secondary department.');
-    const missingCore = (department.CoreSubjectIds || []).filter((subjectId) => !available.has(subjectId));
-    if (missingCore.length) throw failure('Offer every department core subject to this senior class before allocating students.');
-    coreSubjectIds = uniqueIds([...coreSubjectIds, ...(department.CoreSubjectIds || [])]);
+    const department = findById(state.departments || [], record.DepartmentId);
+    if (!department && options.allowIncompleteCurriculum !== true) {
+      throw failure('Choose an active senior secondary department for this student.');
+    }
+    if (department) {
+      assertReference(department, 'Choose an active senior secondary department for this student.');
+      if (department.SchoolStage !== 'senior-secondary') throw failure('The selected department is not a Senior Secondary department.');
+      const missingCore = (department.CoreSubjectIds || []).filter((subjectId) => !available.has(subjectId));
+      if (missingCore.length) throw failure('Offer every department core subject to this senior class before allocating students.');
+      coreSubjectIds = uniqueIds([...coreSubjectIds, ...(department.CoreSubjectIds || [])]);
+    }
   } else {
     record.DepartmentId = '';
   }
@@ -543,13 +594,17 @@ export function applyAcademicStudentCurriculum(state = {}, record = {}, options 
     ? coreSubjectIds
     : uniqueIds([...requestedSubjects, ...coreSubjectIds, ...record.TradeSubjectIds, ...record.OptionalSubjectIds]);
   if (record.SchoolStage === 'senior-secondary') {
-    record.CurriculumStatus = !tradeAvailable.length
-      ? 'Trade Subjects Not Configured'
-      : record.TradeSubjectIds.length ? 'Complete' : 'Pending Trade Selection';
+    record.CurriculumStatus = !record.DepartmentId
+      ? 'Pending Department Selection'
+      : !tradeAvailable.length
+        ? 'Trade Subjects Not Configured'
+        : record.TradeSubjectIds.length ? 'Complete' : 'Pending Trade Selection';
   } else {
     record.CurriculumStatus = 'Complete';
   }
-  if (!record.SubjectIds.length) throw failure('Choose at least one offered subject for this student.');
+  if (!record.SubjectIds.length && !(record.SchoolStage === 'senior-secondary' && options.allowIncompleteCurriculum === true)) {
+    throw failure('Choose at least one offered subject for this student.');
+  }
   return record;
 }
 
@@ -754,7 +809,9 @@ function validateAcademicRecord(state, type, record, people = {}) {
       const currentClass = clean(student.ClassName || student.ClassAdmitted || student.ClassApplyingFor) || 'another class';
       throw failure(`${record.StudentRef} belongs to ${currentClass}. Choose an arm within that student\u2019s existing class.`, 409, 'ACADEMIC_STUDENT_CLASS_MISMATCH');
     }
-    applyAcademicStudentCurriculum(state, record);
+    applyAcademicStudentCurriculum(state, record, {
+      allowIncompleteCurriculum: people.allowIncompleteCurriculum === true
+    });
     assertAcademicMembershipCapacity(state, record, recordId(people.existing || {}));
   }
 }
@@ -1457,7 +1514,11 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
   const sessionId = clean(input.SessionId);
   const termId = clean(input.TermId);
   if (!sessionId || !termId) throw failure('Choose the academic session and term for this import.');
-  const [state, people] = await Promise.all([loadAcademicState(env, scope.branchId), loadPeople(env, user, scope)]);
+  const [state, people, allStudents] = await Promise.all([
+    loadAcademicState(env, scope.branchId),
+    loadPeople(env, user, scope),
+    listSchoolCollection(env, 'students')
+  ]);
   const session = assertReference(findById(state.sessions, sessionId), 'The selected session is not active.');
   const term = assertReference(findById(state.terms, termId), 'The selected term is not active.');
   if (term.SessionId !== session.SessionId) throw failure('The selected term does not belong to this academic session.');
@@ -1465,6 +1526,7 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
   const writes = [];
   const skipped = [];
   const imported = [];
+  const createdProfiles = [];
   const seenStudents = new Set();
 
   for (let index = 0; index < rows.length; index += 1) {
@@ -1475,8 +1537,6 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
       const studentKey = lower(row.StudentRef);
       if (seenStudents.has(studentKey)) throw failure(`Row ${rowNumber}: ${row.StudentRef} appears more than once in this import.`);
       seenStudents.add(studentKey);
-      const student = people.students.find((candidate) => lower(studentReference(candidate)) === studentKey);
-      if (!student) throw failure(`Row ${rowNumber}: student "${row.StudentRef}" was not found in this branch and school section.`, 404, 'ACADEMIC_IMPORT_STUDENT_INVALID');
       const schoolClass = academicImportReference(
         state.classes.filter((candidate) => lower(candidate.SchoolSection) === scope.section),
         row.ClassCode,
@@ -1491,9 +1551,35 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
         'arm code',
         rowNumber
       );
+      let student = people.students.find((candidate) => lower(studentReference(candidate)) === studentKey);
+      let createdProfile = null;
+      if (!student) {
+        const conflictingStudent = allStudents.find((candidate) => lower(studentReference(candidate)) === studentKey);
+        if (conflictingStudent) {
+          const conflictingBranch = safeScopeId(conflictingStudent.BranchId || conflictingStudent.branchId || 'main');
+          const conflictingSection = schoolSectionFor(conflictingStudent);
+          throw failure(
+            `Row ${rowNumber}: student "${row.StudentRef}" already exists in branch "${conflictingBranch}", ${conflictingSection}. Switch to that scope or correct the student profile first.`,
+            409,
+            'ACADEMIC_IMPORT_STUDENT_SCOPE_CONFLICT'
+          );
+        }
+        if (!row.StudentName) {
+          throw failure(`Row ${rowNumber}: enter StudentName so a profile can be created for "${row.StudentRef}".`, 400, 'ACADEMIC_IMPORT_STUDENT_NAME_REQUIRED');
+        }
+        const documentId = academicStudentDocumentId(row.StudentRef);
+        const documentConflict = allStudents.find((candidate) => lower(candidate.__id) === lower(documentId));
+        if (documentConflict) {
+          throw failure(`Row ${rowNumber}: student reference "${row.StudentRef}" conflicts with another student record.`, 409, 'ACADEMIC_IMPORT_STUDENT_ID_CONFLICT');
+        }
+        createdProfile = importedAcademicStudentProfile(row, scope, schoolClass, arm, session, term, user);
+        student = createdProfile;
+        people.students.push(student);
+        allStudents.push(student);
+      }
       const schoolStage = schoolStageValue(schoolClass.SchoolStage, schoolClass.SchoolSection, schoolClass.Name);
       let departmentId = '';
-      if (schoolStage === 'senior-secondary') {
+      if (schoolStage === 'senior-secondary' && row.DepartmentCode) {
         departmentId = academicImportReference(
           state.departments.filter((candidate) => candidate.SchoolStage === 'senior-secondary'),
           row.DepartmentCode,
@@ -1519,7 +1605,25 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
         SubjectIds: [...tradeSubjectIds, ...optionalSubjectIds], CoreSubjectIds: [],
         TradeSubjectIds: tradeSubjectIds, OptionalSubjectIds: optionalSubjectIds, CurriculumStatus: '', Status: 'Active'
       }, scope, existing);
-      validateAcademicRecord(projected, 'studentmembership', record, { ...people, existing });
+      validateAcademicRecord(projected, 'studentmembership', record, {
+        ...people, existing, allowIncompleteCurriculum: true
+      });
+      if (createdProfile) {
+        const department = findById(projected.departments, record.DepartmentId);
+        createdProfile.AcademicDepartmentId = clean(record.DepartmentId);
+        createdProfile.AcademicDepartment = clean(department?.Name);
+        createdProfile.AcademicDepartmentCode = clean(department?.Code);
+        createdProfile.AcademicMembershipId = clean(record.MembershipId);
+        createdProfile.AcademicEnrollmentStatus = clean(record.Status);
+        createdProfile.SchoolStage = clean(record.SchoolStage || schoolClass.SchoolStage);
+        createdProfiles.push(createdProfile);
+        writes.push({
+          collectionPath: createdProfile.__scopePath,
+          documentId: createdProfile.__id,
+          data: withoutMetadata(createdProfile),
+          exists: false
+        });
+      }
       if (existing) {
         if (!membershipMateriallyChanged(existing, record)) {
           skipped.push(row.StudentRef);
@@ -1546,18 +1650,23 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
     }
   }
 
-  if (imported.length) {
+  if (imported.length || createdProfiles.length) {
     writes.push(auditWrite(user, 'BULK IMPORT', 'studentmembership', {
       BranchId: scope.branchId, SchoolSection: scope.section,
       SessionId: sessionId, TermId: termId, MembershipId: `import-${Date.now()}`
-    }, `${imported.length} existing student membership(s) imported; ${skipped.length} exact match(es) skipped.`));
+    }, `${imported.length} student membership(s) imported; ${createdProfiles.length} incomplete student profile(s) created; ${skipped.length} exact match(es) skipped.`));
     await commitAcademicBatch(env, writes, 'A selected student changed while the CSV was being imported. Reload and try again.');
   }
   const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section });
-  response.message = imported.length
-    ? `${imported.length} existing student membership${imported.length === 1 ? '' : 's'} imported online${skipped.length ? `; ${skipped.length} exact match${skipped.length === 1 ? '' : 'es'} skipped` : ''}.`
+  response.message = imported.length || createdProfiles.length
+    ? `${imported.length} student membership${imported.length === 1 ? '' : 's'} imported online${createdProfiles.length ? `; ${createdProfiles.length} missing student profile${createdProfiles.length === 1 ? '' : 's'} created for completion in Students` : ''}${skipped.length ? `; ${skipped.length} exact match${skipped.length === 1 ? '' : 'es'} skipped` : ''}.`
     : 'Every CSV row already has this exact academic membership.';
-  response.importResult = { Requested: rows.length, Imported: imported.length, Skipped: skipped.length };
+  response.importResult = {
+    Requested: rows.length,
+    Imported: imported.length,
+    ProfilesCreated: createdProfiles.length,
+    Skipped: skipped.length
+  };
   return response;
 }
 

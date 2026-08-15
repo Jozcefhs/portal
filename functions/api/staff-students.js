@@ -47,7 +47,7 @@ export async function onRequestPost(context) {
       'BloodGroup', 'Genotype', 'MedicalCondition', 'EmergencyContactName',
       'EmergencyContactPhone', 'PreviousSchool', 'VerificationCode', 'ParentLoginCode',
       'WalletCardId', 'WalletCardStatus', 'Status', 'StatusReason', 'StatusEffectiveDate',
-      'ExpectedReturnDate'
+      'ExpectedReturnDate', 'ProfileCompletionStatus'
     ];
     const updated = { ...existing };
     editableFields.forEach((field) => {

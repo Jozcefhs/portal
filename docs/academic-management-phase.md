@@ -282,6 +282,15 @@ subject must be available as an active subject offering for the selected class
 or arm. Junior subject membership is derived from the active offerings and
 cannot be reduced by an elective choice in either the web or desktop client.
 
+The existing-student migration CSV may seed a missing master student profile
+from StudentRef, StudentName, class and arm. Seeded profiles are written only to
+the selected branch and school section, are marked `Needs completion`, and can
+be completed in the Students workspace. A reference already present in another
+scope is rejected instead of duplicated. Senior department, Trade and Optional
+codes may be omitted during migration; those memberships remain visibly
+`Pending Department Selection` until the authorised in-app workflow completes
+their curriculum.
+
 Each student has at most one current membership for a branch, section, session
 and term. A new term creates a new membership rather than overwriting an older
 period. Within a term, class, arm, department and subject changes use a

@@ -395,7 +395,7 @@ async function updateStudentProfile(env, body) {
     'BloodGroup', 'Genotype', 'MedicalCondition', 'EmergencyContactName',
     'EmergencyContactPhone', 'PreviousSchool', 'VerificationCode', 'ParentLoginCode',
     'WalletCardId', 'WalletCardStatus', 'Status', 'StatusReason', 'StatusEffectiveDate',
-    'ExpectedReturnDate'
+    'ExpectedReturnDate', 'ProfileCompletionStatus'
   ];
   const updated = { ...existing };
   editableFields.forEach((field) => {

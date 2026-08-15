@@ -2662,7 +2662,7 @@ const studentProfileSections = [
   ['Enrollment', ['ClassName', 'ClassArm', 'StudentType', 'BillingCategory', 'EnrollmentCategory', 'AcademicProgress', 'AcademicSession', 'Term']],
   ['Parent and login', ['ParentName', 'ParentPhone', 'ParentEmail', 'ParentLoginCode', 'ResidentialAddress', 'CityArea', 'StateOfResidence']],
   ['Medical and emergency', ['BloodGroup', 'Genotype', 'MedicalCondition', 'EmergencyContactName', 'EmergencyContactPhone']],
-  ['Status and student card', ['Status', 'StatusReason', 'StatusEffectiveDate', 'ExpectedReturnDate', 'WalletCardId', 'WalletCardStatus']]
+  ['Status and student card', ['ProfileCompletionStatus', 'Status', 'StatusReason', 'StatusEffectiveDate', 'ExpectedReturnDate', 'WalletCardId', 'WalletCardStatus']]
 ];
 
 function studentFieldLabel(field) {
@@ -2677,6 +2677,7 @@ function studentFieldControl(field, value) {
     EnrollmentCategory: ['New Intake', 'Returning'],
     AcademicProgress: ['Promoted', 'Repeating'],
     Term: ['First Term', 'Second Term', 'Third Term'],
+    ProfileCompletionStatus: ['', 'Needs completion', 'Complete'],
     Status: ['Active', 'Enrolled', 'Withdrawn', 'Expelled', 'Graduated'],
     WalletCardStatus: ['', 'Active', 'Blocked', 'Lost', 'Replaced']
   };
@@ -10142,7 +10143,7 @@ function academicStudentWorkspace(data, rows) {
       <button type="submit">Record movement</button>
     </form>
     <form class="academic-management-editor academic-student-import-layout" data-academic-student-membership-import>
-      <div class="academic-management-editor-heading"><div><small>Existing student migration</small><h3>Import class-arm memberships</h3><p class="muted">Download a CSV pre-filled with students not yet assigned in this period. Enter reusable class and arm codes; enter a Senior department code where applicable. Separate multiple Trade or Optional subject codes with semicolons. Core subjects are derived and locked by the server.</p></div></div>
+      <div class="academic-management-editor-heading"><div><small>Existing student migration</small><h3>Import class-arm memberships</h3><p class="muted">Enter each admission number, student name, reusable class code and arm code. If the student is not yet in the master register, a branch-scoped profile marked Needs completion will be created automatically. Senior department, Trade and Optional subject codes may be left blank and completed in the app.</p></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
       <div class="academic-management-form-grid academic-management-form-grid-2">${periodFields}</div>
       <div class="academic-student-import-actions">
@@ -10150,7 +10151,7 @@ function academicStudentWorkspace(data, rows) {
         <button type="button" data-academic-import-student-memberships class="secondary">Import completed CSV</button>
         <input type="file" accept=".csv,text/csv" data-academic-student-import-file hidden>
       </div>
-      <small class="muted">Maximum 100 rows per import. StudentName is for checking only; StudentRef identifies the existing student. Conflicting current-term memberships are rejected and must use Transfer or change.</small>
+      <small class="muted">Maximum 100 rows per import. StudentRef remains the unique identity. A StudentName is required when creating a missing profile. References already registered in another branch or school section are rejected; conflicting current-term memberships must use Transfer or change.</small>
     </form>
   </div>` : '<div class="academic-view-only-note"><strong>My class registers</strong><span>Students and movement history shown here come only from your teaching allocations.</span></div>';
   return `${forms}${academicArmSubjectRegister(data, rows, canManage)}${table('Student Class & Subject Memberships', rows.studentMemberships, [
@@ -10430,15 +10431,13 @@ function bindAcademicManagement() {
       return;
     }
     const rows = academicStudentMembershipImportRows(academicManagementData || {}, sessionId, termId);
-    if (!rows.length) {
-      setStatus(status, 'Every fetched student already has a membership in this period; there are no unassigned students to place in the template.', 'bad');
-      return;
-    }
     const sessionName = academicLabel(academicManagementData?.sessions || [], sessionId, 'session');
     const termName = academicLabel(academicManagementData?.terms || [], termId, 'term');
     const filePart = `${academicManagementFilters.section}-${sessionName}-${termName}`.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     downloadCsvFile(`academic-student-memberships-${filePart}.csv`, academicStudentMembershipImportCsv(academicManagementData || {}, sessionId, termId));
-    setStatus(status, `${rows.length} existing student${rows.length === 1 ? '' : 's'} added to the pre-filled CSV template.`, 'ok');
+    setStatus(status, rows.length
+      ? `${rows.length} existing student${rows.length === 1 ? '' : 's'} added to the pre-filled CSV template.`
+      : 'Blank student migration template downloaded. Add admission numbers, names, class codes and arm codes before importing.', 'ok');
     event.currentTarget.blur();
   });
   studentImportButton?.addEventListener('click', () => studentImportFile?.click());
@@ -10750,6 +10749,7 @@ function renderSection(active) {
       { label: 'Name', value: (row) => pick(row, ['DisplayName', 'ApplicantName', 'StudentName']) },
       { label: 'Class', value: (row) => [pick(row, ['ClassName']), pick(row, ['ClassArm'])].filter(Boolean).join(' ') },
       { label: 'Type', value: (row) => pick(row, ['StudentType']) },
+      { label: 'Profile data', value: (row) => pick(row, ['ProfileCompletionStatus']) || 'Not marked' },
       { label: 'Status', value: (row) => pick(row, ['Status']) },
       { label: 'Profile', render: (row) => {
         const studentRef = escapeHtml(pick(row, ['AdmissionNo', 'AccountRef', '__id']));

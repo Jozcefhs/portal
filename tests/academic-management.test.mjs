@@ -10,6 +10,7 @@ import {
   academicManagementCapabilities,
   academicOfferingSubjectRole,
   academicStudentMatchesClass,
+  importedAcademicStudentProfile,
   normalizeAcademicArm,
   normalizeAcademicArmTemplate,
   normalizeAcademicClass,
@@ -30,10 +31,11 @@ import {
 import { staffRoleAllowedForEdition } from '../functions/lib/organization-config.js';
 import { defaultModulesForRole, modulesForEdition } from '../functions/lib/role-module-access.js';
 
-const [librarySource, apiSource, backendSource, backupSource, adminSource, styleSource, adminHtml] = await Promise.all([
+const [librarySource, apiSource, backendSource, staffStudentsSource, backupSource, adminSource, styleSource, adminHtml] = await Promise.all([
   readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8'),
   readFile(new URL('../functions/api/staff-academics.js', import.meta.url), 'utf8'),
   readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8'),
+  readFile(new URL('../functions/api/staff-students.js', import.meta.url), 'utf8'),
   readFile(new URL('../functions/lib/organization-backup.js', import.meta.url), 'utf8'),
   readFile(new URL('../js/admin.js', import.meta.url), 'utf8'),
   readFile(new URL('../css/style.css', import.meta.url), 'utf8'),
@@ -230,6 +232,24 @@ test('AM-002 existing-student import rows use reusable codes and semicolon subje
   assert.deepEqual(normalizeAcademicStudentImportRows('not-json'), []);
 });
 
+test('AM-002 migration can stage a missing student profile for completion in Students', () => {
+  const profile = importedAcademicStudentProfile(
+    { StudentRef: 'DCA/21/0777', StudentName: 'Nnaemeka Jerry' },
+    scope,
+    { ClassId: 'jss-1', Name: 'JSS 1', SchoolStage: 'junior-secondary' },
+    { ArmId: 'jss-1-bri', Name: 'Brilliance' },
+    { Name: '2026/2027' },
+    { Name: 'First Term' },
+    { displayName: 'School Admin' }
+  );
+  assert.equal(profile.AdmissionNo, 'DCA/21/0777');
+  assert.equal(profile.__id, 'DCA-21-0777');
+  assert.equal(profile.__scopePath, 'schoolBranches/north-campus/sections/secondary/students');
+  assert.equal(profile.ProfileCompletionStatus, 'Needs completion');
+  assert.equal(profile.ClassName, 'JSS 1');
+  assert.equal(profile.ClassArm, 'Brilliance');
+});
+
 test('AM-002 arm allocation candidates must belong to the selected existing class', () => {
   const gradeSeven = { ClassId: 'grade-7', Name: 'Grade 7', Code: 'JSS1', LegacyDocumentId: 'Grade_7' };
   assert.equal(academicStudentMatchesClass({ ClassName: 'Grade 7' }, gradeSeven), true);
@@ -289,6 +309,14 @@ test('AM-002 Senior arm subjects lock core, require Trade and retain optional se
   assert.deepEqual(complete.OptionalSubjectIds, ['music']);
   assert.deepEqual(complete.SubjectIds, ['catering', 'music', 'english', 'physics']);
   assert.equal(complete.CurriculumStatus, 'Complete');
+  const pendingDepartment = applyAcademicStudentCurriculum(state, {
+    ...base, DepartmentId: '', TradeSubjectIds: [], OptionalSubjectIds: [], SubjectIds: []
+  }, { allowIncompleteCurriculum: true });
+  assert.deepEqual(pendingDepartment.CoreSubjectIds, ['english']);
+  assert.equal(pendingDepartment.CurriculumStatus, 'Pending Department Selection');
+  assert.throws(() => applyAcademicStudentCurriculum(state, {
+    ...base, DepartmentId: '', TradeSubjectIds: [], OptionalSubjectIds: [], SubjectIds: []
+  }), /Choose an active senior secondary department/);
 });
 
 test('AM-003 movements preserve before and after membership snapshots', () => {
@@ -358,13 +386,21 @@ test('Academic writes are audited, optimistic and preserve legacy class/student 
   assert.match(librarySource, /ClassName: clean\(schoolClass\?\.Name\)/);
   assert.match(librarySource, /SubjectIds: uniqueIds/);
   assert.match(librarySource, /record\.CoreSubjectIds = coreSubjectIds/);
-  assert.match(librarySource, /record\.CurriculumStatus = !tradeAvailable\.length/);
+  assert.match(librarySource, /record\.CurriculumStatus = !record\.DepartmentId/);
   assert.match(librarySource, /department\.CoreSubjectIds/);
   assert.match(librarySource, /AcademicDepartment: clean\(department\?\.Name\)/);
   assert.match(librarySource, /ACADEMIC_MOVEMENT_REQUIRED/);
   assert.match(librarySource, /academicStudentMovements/);
   assert.match(librarySource, /Allocate at most 100 students in one batch/);
   assert.match(librarySource, /Import at most 100 student memberships at a time/);
+  assert.match(librarySource, /ProfileCompletionStatus: 'Needs completion'/);
+  assert.match(librarySource, /scopedCollectionPath\('students', scope\.branchId, scope\.section\)/);
+  assert.match(librarySource, /ACADEMIC_IMPORT_STUDENT_SCOPE_CONFLICT/);
+  assert.match(librarySource, /allowIncompleteCurriculum: true/);
+  assert.match(adminSource, /Senior department, Trade and Optional subject codes may be left blank and completed in the app/);
+  assert.match(adminSource, /ProfileCompletionStatus/);
+  assert.match(backendSource, /ProfileCompletionStatus/);
+  assert.match(staffStudentsSource, /ProfileCompletionStatus/);
   assert.match(librarySource, /ACADEMIC_IMPORT_MEMBERSHIP_CONFLICT/);
   assert.match(librarySource, /Imported into Academic Management/);
   assert.match(librarySource, /Update at most 200 student subject selections in one arm batch/);
@@ -433,7 +469,8 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /data-academic-download-student-import/);
   assert.match(adminSource, /bulkImportAcademicStudentMemberships/);
   assert.match(adminSource, /function academicStudentMembershipImportCsv/);
-  assert.match(adminSource, /Separate multiple Trade or Optional subject codes with semicolons/);
+  assert.match(adminSource, /profile marked Needs completion will be created automatically/);
+  assert.match(adminSource, /Blank student migration template downloaded/);
   assert.match(adminSource, /data-academic-workflow="bulkAssignAcademicArmStudentSubjects"/);
   assert.match(adminSource, /function academicArmSubjectRegister/);
   assert.match(adminSource, /Core · locked/);
@@ -500,7 +537,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
   assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-tabs button\{[^}]*font-size:12px/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-presence-read-aloud/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-staged-student-import/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
