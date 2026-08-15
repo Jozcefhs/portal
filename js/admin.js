@@ -9731,7 +9731,7 @@ function academicOfferingsWorkspace(data, rows) {
     { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId) },
     { label: 'Requirement', value: (row) => row.Compulsory ? 'Compulsory' : 'Optional' },
     { label: 'Status', value: (row) => row.Status },
-    { label: 'Actions', render: (row) => academicActionButtons('offering', row, canManage, data.permissions?.canArchive) }
+    { label: 'Actions', render: (row) => academicActionButtons('offering', row, canManage, data.permissions?.canArchive, data.permissions?.canDelete) }
   ])}`;
 }
 

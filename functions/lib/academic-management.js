@@ -1425,6 +1425,20 @@ export function academicPermanentDeleteDependants(state = {}, typeValue = '', re
       ...(state.studentMovements || []).filter((row) => row.FromDepartmentId === id || row.ToDepartmentId === id)
     ];
   }
+  if (type === 'offering') {
+    const matchesPeriod = (row) => row.SessionId === record.SessionId && row.TermId === record.TermId;
+    const matchesArm = (armId) => !record.ArmId || armId === record.ArmId;
+    return [
+      ...(state.teacherAllocations || []).filter((row) => matchesPeriod(row) && row.ClassId === record.ClassId
+        && row.SubjectId === record.SubjectId && matchesArm(row.ArmId)),
+      ...(state.studentMemberships || []).filter((row) => matchesPeriod(row) && row.ClassId === record.ClassId
+        && (row.SubjectIds || []).includes(record.SubjectId) && matchesArm(row.ArmId)),
+      ...(state.studentMovements || []).filter((row) => matchesPeriod(row) && (
+        (row.FromClassId === record.ClassId && (row.FromSubjectIds || []).includes(record.SubjectId) && matchesArm(row.FromArmId))
+        || (row.ToClassId === record.ClassId && (row.ToSubjectIds || []).includes(record.SubjectId) && matchesArm(row.ToArmId))
+      ))
+    ];
+  }
   return [];
 }
 
@@ -1468,8 +1482,8 @@ export async function deleteAcademicManagementRecord(env, user = {}, input = {})
   requireWritableSubscription(user);
   requireCapability(user, 'canDelete');
   const type = normalizedRecordType(input.RecordType || input.recordType || input.Type);
-  if (!['class', 'armtemplate', 'arm', 'subject', 'department'].includes(type)) {
-    throw failure('Only an unused class, reusable arm definition, arm, subject or department can be permanently deleted.');
+  if (!['class', 'armtemplate', 'arm', 'subject', 'department', 'offering'].includes(type)) {
+    throw failure('Only an unused class, reusable arm definition, arm, subject, department or subject offering can be permanently deleted.');
   }
   const definition = RECORD_TYPES[type];
   const requiresSection = type !== 'armtemplate';
@@ -1481,16 +1495,17 @@ export async function deleteAcademicManagementRecord(env, user = {}, input = {})
   if (requiresSection && lower(existing.SchoolSection) !== scope.section) throw failure('This academic record belongs to another school section.', 403);
   const dependants = academicPermanentDeleteDependants(state, type, existing);
   if (dependants.length) {
-    const label = type === 'armtemplate' ? 'reusable arm definition' : type;
+    const label = type === 'armtemplate' ? 'reusable arm definition' : (type === 'offering' ? 'subject offering' : type);
     throw failure(`This ${label} is referenced by ${dependants.length} academic record${dependants.length === 1 ? '' : 's'}. Remove those references or archive this record instead.`, 409, 'ACADEMIC_DELETE_REFERENCED');
   }
   const revisionToken = clean(input.RevisionToken);
   if (!revisionToken || revisionToken !== clean(existing.__updateTime)) {
     throw failure('This academic record changed after it was loaded. Reload before deleting.', 409, 'ACADEMIC_WRITE_CONFLICT');
   }
+  const deletedLabel = type === 'offering' ? 'Subject offering' : clean(existing.Name || existing.Code || 'Academic record');
   const writes = [
     { collectionPath: definition.collection, documentId: recordId(existing), operation: 'delete', updateTime: revisionToken },
-    auditWrite(user, 'DELETE', type, existing, clean(existing.Name || existing.Code))
+    auditWrite(user, 'DELETE', type, existing, deletedLabel)
   ];
   if (type === 'class') {
     writes.push({
@@ -1507,7 +1522,7 @@ export async function deleteAcademicManagementRecord(env, user = {}, input = {})
   }
   await commitAcademicBatch(env, writes, 'This academic record changed while it was being deleted. Reload and try again.');
   const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section });
-  response.message = `${existing.Name || existing.Code || 'Academic record'} deleted permanently online.`;
+  response.message = `${deletedLabel} deleted permanently online.`;
   return response;
 }
 
