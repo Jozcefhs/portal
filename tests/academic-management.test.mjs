@@ -20,7 +20,8 @@ import {
   normalizeAcademicTerm,
   parseAcademicArmTemplateBatch,
   parseAcademicClassBatch,
-  parseAcademicSubjectBatch
+  parseAcademicSubjectBatch,
+  scopedSection
 } from '../functions/lib/academic-management.js';
 import { staffRoleAllowedForEdition } from '../functions/lib/organization-config.js';
 import { defaultModulesForRole, modulesForEdition } from '../functions/lib/role-module-access.js';
@@ -87,6 +88,8 @@ test('AM-003 bulk classes stay section scoped while reusable arm templates are b
   assert.equal(template.ArmTemplateId, 'arm-template__north-campus__gold');
   assert.equal(template.SchoolSection, 'all');
   assert.equal(template.DefaultCapacity, 35);
+  assert.equal(scopedSection({ SchoolSection: template.SchoolSection }, false), '');
+  assert.throws(() => scopedSection({ SchoolSection: template.SchoolSection }, true), /Choose Primary or Secondary/);
   assert.equal(appliedArm.ArmTemplateId, template.ArmTemplateId);
   assert.equal(appliedArm.Capacity, 35);
   assert.throws(() => parseAcademicArmTemplateBatch({ ArmTemplateLines: 'Brilliance BRI 30' }), /Line 1 is not in the required format/);

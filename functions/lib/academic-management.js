@@ -168,9 +168,10 @@ function requireWritableSubscription(user = {}) {
   }
 }
 
-function scopedSection(input = {}, required = true) {
+export function scopedSection(input = {}, required = true) {
   const value = lower(input.SchoolSection || input.schoolSection || input.Section || input.section);
   if (!value && !required) return '';
+  if (value === 'all' && !required) return '';
   if (!['primary', 'secondary'].includes(value)) throw failure('Choose Primary or Secondary school section.');
   return value;
 }
