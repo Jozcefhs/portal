@@ -1,7 +1,7 @@
 {
-  "version": "3.0.5",
+  "version": "3.0.6",
   "channel": "stable",
   "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup.exe",
-  "sha256": "5e52cea86e29cee0500c2f4460a348c7182f838fb71e01be979954875710e2da",
-  "notes": "Dynamax Desktop v3.0.5 fixes scaled desktop dialog button labels and automatically selects the sole matching student in Student Conduct searches. The installer retains the verified TLS certificate bundle and clean-build safeguards."
+  "sha256": "018bf1ec28c1ccc149562f987e11e6da0714388aff017660ffa69aa3ddb2721d",
+  "notes": "Dynamax Desktop v3.0.6 defaults settings to organisation scope, locks organisation-wide controls while editing branch overrides, and confirms success only after web companion synchronization succeeds. The shared implementation applies to School, Church and Other Organisation editions."
 }
