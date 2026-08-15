@@ -237,13 +237,20 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /Junior receives every offering/);
   assert.match(adminSource, /The same staff member can also teach different subjects in other classes and arms/);
   assert.match(adminSource, /function syncAcademicTeacherAssignmentForm/);
+  assert.match(adminSource, /function academicCheckboxField/);
+  assert.match(adminSource, /function validateAcademicCheckboxFields/);
+  assert.match(adminSource, /academicCheckedValues\(form, 'StudentRefs'\)/);
+  assert.match(adminSource, /academicCheckedValues\(form, 'CoreSubjectIds'\)/);
+  assert.doesNotMatch(adminSource, /select name="(?:CoreSubjectIds|StudentRefs|SubjectIds)" multiple/);
   assert.match(adminSource, /data-academic-workflow="bulkAllocateAcademicStudents"/);
   assert.match(adminSource, /Student Movement History/);
   assert.match(adminSource, /staffFetch\('\/api\/staff-academics'/);
   assert.match(adminSource, /active === 'academics'/);
   assert.match(styleSource, /\.academic-management-editor-grid/);
+  assert.match(styleSource, /\.academic-checkbox-options/);
+  assert.match(styleSource, /\.academic-checkbox-option input\[type="checkbox"\]/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-teacher-responsibilities/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-academic-checkboxes/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

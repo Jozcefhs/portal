@@ -9324,6 +9324,49 @@ function academicSelectOptions(rows = [], selected = '', label = (row) => row.Na
   }).join('')}`;
 }
 
+function academicCheckboxField({ name, label, options = [], help = '', required = false, max = 0, idPrefix = name }) {
+  const prefix = clean(idPrefix).replace(/[^a-z0-9_-]+/gi, '-').toLowerCase();
+  const legendId = `${prefix}-legend`;
+  const helpId = `${prefix}-help`;
+  const choices = options.length
+    ? options.map((option, index) => {
+      const inputId = `${prefix}-${index + 1}`;
+      return `<label class="academic-checkbox-option" for="${escapeHtml(inputId)}"><input type="checkbox" id="${escapeHtml(inputId)}" name="${escapeHtml(name)}" value="${escapeHtml(option.value)}"><span>${escapeHtml(option.label)}</span></label>`;
+    }).join('')
+    : '<span class="academic-checkbox-empty">No choices are currently available.</span>';
+  return `<fieldset class="academic-checkbox-field" data-academic-checkbox-field data-academic-checkbox-name="${escapeHtml(name)}" data-academic-checkbox-label="${escapeHtml(label)}"${required ? ' data-academic-checkbox-required="true"' : ''}${max ? ` data-academic-checkbox-max="${max}"` : ''}>
+    <legend id="${escapeHtml(legendId)}">${escapeHtml(label)}${required ? ' <span aria-hidden="true">*</span>' : ''}</legend>
+    <div class="academic-checkbox-options" role="group" aria-labelledby="${escapeHtml(legendId)}"${help ? ` aria-describedby="${escapeHtml(helpId)}"` : ''}>${choices}</div>
+    ${help ? `<small id="${escapeHtml(helpId)}">${escapeHtml(help)}</small>` : ''}
+  </fieldset>`;
+}
+
+function academicCheckedValues(form, name) {
+  return [...form.querySelectorAll(`input[type="checkbox"][name="${name}"]:checked`)].map((input) => input.value);
+}
+
+function setAcademicCheckedValues(form, name, values = []) {
+  const selected = new Set(values || []);
+  form.querySelectorAll(`input[type="checkbox"][name="${name}"]`).forEach((input) => { input.checked = selected.has(input.value); });
+}
+
+function validateAcademicCheckboxFields(form) {
+  form.querySelectorAll('[data-academic-checkbox-field]').forEach((field) => {
+    const name = field.dataset.academicCheckboxName;
+    const label = field.dataset.academicCheckboxLabel || 'choice';
+    const selected = academicCheckedValues(form, name);
+    const maximum = Number(field.dataset.academicCheckboxMax || 0);
+    if (field.dataset.academicCheckboxRequired === 'true' && !selected.length) {
+      field.querySelector('input[type="checkbox"]')?.focus();
+      throw new Error(`Choose at least one ${label.toLowerCase()}.`);
+    }
+    if (maximum && selected.length > maximum) {
+      field.querySelector('input[type="checkbox"]:checked')?.focus();
+      throw new Error(`Choose no more than ${maximum} ${label.toLowerCase()}.`);
+    }
+  });
+}
+
 function academicCurrentRows(data = academicManagementData || {}) {
   const section = academicManagementFilters.section;
   const sessionId = academicManagementFilters.sessionId;
@@ -9461,7 +9504,11 @@ function academicDepartmentsWorkspace(data, rows) {
       <label>Stable code<input name="Code" placeholder="SCI" required></label>
       <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
     </div>
-    <label>Department core subjects<select name="CoreSubjectIds" multiple required size="${Math.min(10, Math.max(5, subjects.length))}">${subjects.map((row) => `<option value="${escapeHtml(row.SubjectId)}">${escapeHtml(`${row.Code} - ${row.Name}`)}</option>`).join('')}</select><small>These subjects apply to every Senior Secondary student assigned to this department, regardless of class. They must also be offered to each applicable class or arm.</small></label>
+    ${academicCheckboxField({
+      name: 'CoreSubjectIds', label: 'Department core subjects', required: true, idPrefix: 'department-core-subjects',
+      options: subjects.map((row) => ({ value: row.SubjectId, label: `${row.Code} - ${row.Name}` })),
+      help: 'These subjects apply to every Senior Secondary student assigned to this department, regardless of class. They must also be offered to each applicable class or arm.'
+    })}
     <button type="submit">Save department</button>
   </form>` : '<div class="academic-view-only-note"><strong>Senior Secondary departments</strong><span>Your role can view department core subjects but cannot change them.</span></div>';
   return `${form}${table('Senior Secondary Departments', rows.departments, [
@@ -9487,7 +9534,7 @@ function academicOfferingsWorkspace(data, rows) {
       <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
       <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
       <label>Class<select name="ClassId" required>${academicSelectOptions(classes, '', (row) => row.Name, 'Choose class')}</select></label>
-      <label>Arm<select name="ArmId" data-academic-teacher-arm>${academicSelectOptions(arms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'All arms (subject teaching only)')}</select></label>
+      <label>Arm<select name="ArmId">${academicSelectOptions(arms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'All arms')}</select></label>
       <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select></label>
       <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
     </div>
@@ -9524,7 +9571,7 @@ function academicTeacherWorkspace(data, rows) {
       <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
       <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role})`, 'Choose teacher')}</select></label>
       <label>Class<select name="ClassId" required>${academicSelectOptions(classes, '', (row) => row.Name, 'Choose class')}</select></label>
-      <label>Arm<select name="ArmId">${academicSelectOptions(arms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'All arms')}</select></label>
+      <label>Arm<select name="ArmId" data-academic-teacher-arm>${academicSelectOptions(arms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'All arms (subject teaching only)')}</select></label>
       <label>Responsibility<select name="AllocationRole" data-academic-teacher-role><option>Subject Teacher</option><option>Form Teacher</option><option>Assistant Teacher</option></select></label>
       <label>Subject<select name="SubjectId" data-academic-teacher-subject>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Required for Subject Teacher')}</select><small>Not applicable to Form Teacher or Assistant Teacher responsibility.</small></label>
       <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
@@ -9573,7 +9620,8 @@ function academicStudentWorkspace(data, rows) {
     <label>Class<select name="ClassId" required>${academicSelectOptions(classes, '', (row) => `${row.Name} — ${academicSchoolStageLabel(row.SchoolStage)}`, 'Choose class')}</select></label>
     <label>Arm<select name="ArmId" required>${academicSelectOptions(arms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'Choose arm')}</select></label>
     ${academicManagementFilters.section === 'secondary' ? `<label>Senior department<select name="DepartmentId">${academicSelectOptions(departments, '', (row) => `${row.Code} - ${row.Name}`, 'Not applicable / choose for Senior')}</select></label>` : ''}`;
-  const subjectOptions = subjects.map((row) => `<option value="${escapeHtml(row.SubjectId)}">${escapeHtml(`${row.Code} - ${row.Name}`)}</option>`).join('');
+  const subjectCheckboxOptions = subjects.map((row) => ({ value: row.SubjectId, label: `${row.Code} - ${row.Name}` }));
+  const studentCheckboxOptions = unallocatedStudents.map((row) => ({ value: row.StudentRef, label: `${row.StudentName} (${row.StudentRef})` }));
   const forms = canManage ? `<div class="academic-management-editor-grid">
     <form class="academic-management-editor" data-academic-form="studentMembership">
       ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Single allocation</small><h3>Allocate student</h3></div><button type="button" class="academic-form-reset" data-academic-reset="studentMembership">Clear</button></div>
@@ -9581,16 +9629,16 @@ function academicStudentWorkspace(data, rows) {
       ${periodFields}
       <label>Student<select name="StudentRef" required>${academicSelectOptions(unallocatedStudents, '', (row) => `${row.StudentName} (${row.StudentRef})`, 'Choose unallocated student')}</select></label>
       ${targetFields}
-      <label>Optional subjects<select name="SubjectIds" multiple size="5">${subjectOptions}</select><small>Junior receives every offering; Senior receives department core subjects automatically.</small></label>
+      ${academicCheckboxField({ name: 'SubjectIds', label: 'Optional subjects', options: subjectCheckboxOptions, idPrefix: 'single-student-subjects', help: 'Junior receives every offering; Senior receives department core subjects automatically.' })}
       <input type="hidden" name="Status" value="Active"><button type="submit">Allocate student</button>
     </form>
     <form class="academic-management-editor" data-academic-workflow="bulkAllocateAcademicStudents">
       <div class="academic-management-editor-heading"><div><small>Up to 100 at once</small><h3>Bulk allocate</h3></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
       ${periodFields}
-      <label>Students<select name="StudentRefs" multiple required size="7">${unallocatedStudents.map((row) => `<option value="${escapeHtml(row.StudentRef)}">${escapeHtml(`${row.StudentName} (${row.StudentRef})`)}</option>`).join('')}</select><small>Select several unallocated students. The entire batch is validated before saving.</small></label>
+      ${academicCheckboxField({ name: 'StudentRefs', label: 'Students', options: studentCheckboxOptions, required: true, max: 100, idPrefix: 'bulk-allocation-students', help: 'Select up to 100 unallocated students. The entire batch is validated before saving.' })}
       ${targetFields}
-      <label>Optional subjects<select name="SubjectIds" multiple size="5">${subjectOptions}</select></label>
+      ${academicCheckboxField({ name: 'SubjectIds', label: 'Optional subjects', options: subjectCheckboxOptions, idPrefix: 'bulk-allocation-subjects' })}
       <label>Allocation note<input name="Reason" placeholder="New term allocation"></label>
       <button type="submit">Allocate selected students</button>
     </form>
@@ -9599,7 +9647,7 @@ function academicStudentWorkspace(data, rows) {
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="RevisionToken">
       <label>Current membership<select name="RecordId" required>${academicSelectOptions(activeMemberships, '', (row) => `${academicLabel(data.students, row.StudentRef, row.StudentRef)} — ${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}`, 'Choose active membership')}</select></label>
       ${periodFields}${targetFields}
-      <label>Optional subjects<select name="SubjectIds" multiple size="5">${subjectOptions}</select></label>
+      ${academicCheckboxField({ name: 'SubjectIds', label: 'Optional subjects', options: subjectCheckboxOptions, idPrefix: 'movement-subjects' })}
       <label>Effective date<input type="date" name="EffectiveDate" value="${new Date().toISOString().slice(0, 10)}" required></label>
       <label>Reason<textarea name="Reason" rows="3" required placeholder="Explain the approved class, arm, department or subject change"></textarea></label>
       <button type="submit">Record movement</button>
@@ -9709,25 +9757,27 @@ async function loadAcademicManagement(options = {}) {
 }
 
 function academicFormPayload(form) {
+  validateAcademicCheckboxFields(form);
   const data = new FormData(form);
   const payload = Object.fromEntries(data.entries());
   if (form.dataset.academicForm === 'offering') payload.Compulsory = form.elements.Compulsory.checked;
   if (form.dataset.academicForm === 'studentMembership') {
-    payload.SubjectIds = [...form.elements.SubjectIds.selectedOptions].map((option) => option.value);
+    payload.SubjectIds = academicCheckedValues(form, 'SubjectIds');
   }
   if (form.dataset.academicForm === 'department') {
-    payload.CoreSubjectIds = [...form.elements.CoreSubjectIds.selectedOptions].map((option) => option.value);
+    payload.CoreSubjectIds = academicCheckedValues(form, 'CoreSubjectIds');
   }
   return { ...payload, RecordType: form.dataset.academicForm };
 }
 
 function academicWorkflowPayload(form) {
+  validateAcademicCheckboxFields(form);
   const payload = Object.fromEntries(new FormData(form).entries());
-  if (form.elements.StudentRefs?.multiple) {
-    payload.StudentRefs = [...form.elements.StudentRefs.selectedOptions].map((option) => option.value);
+  if (form.querySelector('[data-academic-checkbox-name="StudentRefs"]')) {
+    payload.StudentRefs = academicCheckedValues(form, 'StudentRefs');
   }
-  if (form.elements.SubjectIds?.multiple) {
-    payload.SubjectIds = [...form.elements.SubjectIds.selectedOptions].map((option) => option.value);
+  if (form.querySelector('[data-academic-checkbox-name="SubjectIds"]')) {
+    payload.SubjectIds = academicCheckedValues(form, 'SubjectIds');
   }
   return payload;
 }
@@ -9738,9 +9788,7 @@ function populateAcademicMovementForm(form, record) {
     const control = form.elements.namedItem(key);
     if (control) control.value = key === 'RecordId' ? academicRecordId(record) : (key === 'RevisionToken' ? record.RevisionToken : (record[key] || ''));
   });
-  if (form.elements.SubjectIds) {
-    [...form.elements.SubjectIds.options].forEach((option) => { option.selected = (record.SubjectIds || []).includes(option.value); });
-  }
+  setAcademicCheckedValues(form, 'SubjectIds', record.SubjectIds || []);
 }
 
 function academicRecordRows(type) {
@@ -9755,6 +9803,10 @@ function populateAcademicForm(type, record) {
   const form = panelEl.querySelector(`[data-academic-form="${type}"]`);
   if (!form || !record) return;
   Object.entries(record).forEach(([key, value]) => {
+    if (form.querySelector(`[data-academic-checkbox-name="${key}"]`) && Array.isArray(value)) {
+      setAcademicCheckedValues(form, key, value);
+      return;
+    }
     const control = form.elements.namedItem(key);
     if (!control) return;
     if (control.type === 'checkbox') control.checked = value === true;
