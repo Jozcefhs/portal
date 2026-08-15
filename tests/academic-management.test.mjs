@@ -63,11 +63,13 @@ test('AM-003 sessions and terms are effective-dated and date validated', () => {
 test('AM-003 classes and arms retain branch and school-section isolation', () => {
   const schoolClass = normalizeAcademicClass({ Name: 'JSS 1', Code: 'JSS1', Capacity: 90 }, scope);
   const arm = normalizeAcademicArm({ ClassId: schoolClass.ClassId, Name: 'Excellence', Capacity: 30 }, scope);
+  const departmentalArm = normalizeAcademicArm({ ClassId: 'sss-1', Name: 'Science', DepartmentId: 'science' }, scope);
   const otherBranch = normalizeAcademicClass({ Name: 'JSS 1', Code: 'JSS1' }, { branchId: 'south', section: 'secondary' });
   const otherSection = normalizeAcademicClass({ Name: 'JSS 1', Code: 'JSS1' }, { branchId: 'north-campus', section: 'primary' });
 
   assert.equal(schoolClass.ClassId, 'class__north-campus__secondary__jss-1');
   assert.equal(arm.ArmId, `${schoolClass.ClassId}__arm__excellence`);
+  assert.equal(departmentalArm.DepartmentId, 'science');
   assert.notEqual(schoolClass.ClassId, otherBranch.ClassId);
   assert.notEqual(schoolClass.ClassId, otherSection.ClassId);
   assert.equal(schoolClass.LegacyDocumentId, 'JSS_1');
@@ -125,7 +127,7 @@ test('AM-002 subjects are bulk-created once and reused through class offerings',
 test('AM-003 permanent deletion detects current and historical academic references', () => {
   const state = {
     classes: [{ ClassId: 'jss-2', NextClassId: 'jss-3' }],
-    arms: [{ ArmId: 'arm-a', ArmTemplateId: 'template-a', ClassId: 'jss-1' }],
+    arms: [{ ArmId: 'arm-a', ArmTemplateId: 'template-a', ClassId: 'jss-1', DepartmentId: 'science' }],
     subjects: [], departments: [{ DepartmentId: 'science', CoreSubjectIds: ['physics'], Status: 'Archived' }],
     offerings: [], teacherAllocations: [], studentMemberships: [],
     studentMovements: [{ MovementId: 'move-1', FromClassId: 'jss-1', ToClassId: 'jss-2', FromArmId: 'arm-a', FromDepartmentId: 'science', FromSubjectIds: ['physics'] }]
@@ -135,7 +137,7 @@ test('AM-003 permanent deletion detects current and historical academic referenc
   assert.equal(academicPermanentDeleteDependants(state, 'arm', { ArmId: 'arm-a' }).length, 1);
   assert.equal(academicPermanentDeleteDependants(state, 'armTemplate', { ArmTemplateId: 'template-a' }).length, 1);
   assert.equal(academicPermanentDeleteDependants(state, 'subject', { SubjectId: 'physics' }).length, 2);
-  assert.equal(academicPermanentDeleteDependants(state, 'department', { DepartmentId: 'science' }).length, 1);
+  assert.equal(academicPermanentDeleteDependants(state, 'department', { DepartmentId: 'science' }).length, 2);
   assert.equal(academicPermanentDeleteDependants(state, 'class', { ClassId: 'unused' }).length, 0);
 
   const offering = { OfferingId: 'offering-1', SessionId: 'session-1', TermId: 'term-1', ClassId: 'jss-1', ArmId: '', SubjectId: 'physics' };
@@ -456,11 +458,23 @@ test('bulk student allocation maps every selected reference into membership and 
   );
   assert.equal([...bulkAllocationSource.matchAll(/StudentRef: studentRef/g)].length, 2);
   assert.doesNotMatch(bulkAllocationSource, /\.\.\.input,\s*StudentRef(?:\s*[,}])/);
+  assert.match(librarySource, /type === 'studentmembership' && arm\.DepartmentId/);
+  assert.match(librarySource, /record\.DepartmentId = arm\.DepartmentId/);
 });
 
 test('staff web workspace exposes responsive academic registers and online-only success', () => {
   assert.match(adminSource, /\['academics', 'Academic Management'\]/);
   assert.match(adminSource, /function renderAcademicManagement/);
+  assert.match(adminSource, /let academicManagementView = 'classrooms'/);
+  assert.match(adminSource, /function academicClassroomWorkspace/);
+  assert.match(adminSource, /function syncAcademicClassroomEditor/);
+  assert.match(adminSource, /data-academic-classroom-editor/);
+  assert.match(adminSource, /Create and open classroom/);
+  assert.match(adminSource, /Reusable class/);
+  assert.match(adminSource, /Reusable arm/);
+  assert.match(adminSource, /Students ready for this classroom/);
+  assert.match(adminSource, /data-academic-classroom-staff-role/);
+  assert.match(adminSource, /\['classrooms', 'Classrooms'\]/);
   assert.match(adminSource, /function academicManagementRequest/);
   assert.match(adminSource, /function academicDepartmentsWorkspace/);
   assert.match(adminSource, /Junior Secondary offerings become Core automatically/);
@@ -543,6 +557,9 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-checkbox-options/);
   assert.match(styleSource, /\.academic-checkbox-count\{/);
   assert.match(styleSource, /\.academic-checkbox-count-limit\{/);
+  assert.match(styleSource, /\.academic-classroom-flow-grid\{/);
+  assert.match(styleSource, /\.academic-classroom-progress\{/);
+  assert.match(styleSource, /\.academic-classroom-staff-grid\{/);
   assert.match(styleSource, /\.academic-checkbox-option input\[type="checkbox"\]/);
   assert.match(styleSource, /\[data-academic-checkbox-purpose="student-arm-candidates"\] \.academic-checkbox-options\{max-height:320px\}/);
   assert.match(styleSource, /\.academic-student-allocation-layout\{grid-column:1\/-1/);
@@ -554,7 +571,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
   assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-tabs button\{[^}]*font-size:12px/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-checkbox-range-selection/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-classroom-first-academics/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

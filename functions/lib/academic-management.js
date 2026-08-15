@@ -305,6 +305,7 @@ export function normalizeAcademicArm(input = {}, context = {}, existing = null) 
   return {
     ...(existing || {}), RecordId: armId, ArmId: armId, ClassId: classId, Name: name,
     ArmTemplateId: clean(input.ArmTemplateId ?? existing?.ArmTemplateId),
+    DepartmentId: clean(input.DepartmentId ?? existing?.DepartmentId),
     Code: clean(input.Code || input.ArmCode || existing?.Code).toUpperCase(),
     Capacity: wholeNumber(input.Capacity, wholeNumber(existing?.Capacity, 0), 0, 10000),
     Room: clean(input.Room ?? existing?.Room),
@@ -719,6 +720,23 @@ function validateAcademicRecord(state, type, record, people = {}) {
   if (type === 'arm') {
     const schoolClass = assertReference(findById(state.classes, record.ClassId), 'The selected class is not active.');
     if (schoolClass.SchoolSection !== record.SchoolSection) throw failure('The class arm must belong to the same school section as its class.');
+    const schoolStage = schoolStageValue(schoolClass.SchoolStage, schoolClass.SchoolSection, schoolClass.Name);
+    if (record.DepartmentId) {
+      if (schoolStage !== 'senior-secondary') throw failure('Academic departments can be assigned only to Senior Secondary classrooms.');
+      const department = assertReference(findById(state.departments, record.DepartmentId), 'Choose an active Senior Secondary department for this classroom.');
+      if (department.SchoolStage !== 'senior-secondary' || department.SchoolSection !== 'secondary') {
+        throw failure('The selected department is not a Senior Secondary academic department.');
+      }
+    }
+    const existingDepartmentId = clean(people.existing?.DepartmentId);
+    if (people.existing && existingDepartmentId !== clean(record.DepartmentId)) {
+      const membershipDepartments = new Set(state.studentMemberships
+        .filter((row) => statusActive(row) && row.ArmId === record.ArmId)
+        .map((row) => clean(row.DepartmentId)));
+      if (membershipDepartments.size && !(membershipDepartments.size === 1 && membershipDepartments.has(clean(record.DepartmentId)))) {
+        throw failure('This classroom already contains students from another department. Move or correct those memberships before changing its department.', 409, 'ACADEMIC_CLASSROOM_DEPARTMENT_CONFLICT');
+      }
+    }
   }
   if (type === 'class') {
     if (record.NextClassId) {
@@ -773,6 +791,12 @@ function validateAcademicRecord(state, type, record, people = {}) {
     if (record.ArmId) {
       const arm = assertReference(findById(state.arms, record.ArmId), 'The selected class arm is not active.');
       if (arm.ClassId !== record.ClassId) throw failure('The selected class arm does not belong to this class.');
+      if (type === 'studentmembership' && arm.DepartmentId) {
+        if (record.DepartmentId && record.DepartmentId !== arm.DepartmentId) {
+          throw failure('The selected student department does not match this classroom department.', 409, 'ACADEMIC_CLASSROOM_DEPARTMENT_MISMATCH');
+        }
+        record.DepartmentId = arm.DepartmentId;
+      }
     }
   }
   if (type === 'offering' || (type === 'teacherallocation' && record.AllocationRole === 'Subject Teacher')) {
@@ -1842,7 +1866,7 @@ function activeDependants(state, type, record) {
   if (type === 'class') return [...state.arms, ...state.offerings, ...state.teacherAllocations, ...state.studentMemberships].filter((row) => row.ClassId === id && statusActive(row));
   if (type === 'arm') return [...state.offerings, ...state.teacherAllocations, ...state.studentMemberships].filter((row) => row.ArmId === id && statusActive(row));
   if (type === 'subject') return [...state.departments, ...state.offerings, ...state.teacherAllocations, ...state.studentMemberships].filter((row) => (row.SubjectId === id || (row.SubjectIds || []).includes(id) || (row.CoreSubjectIds || []).includes(id)) && statusActive(row));
-  if (type === 'department') return state.studentMemberships.filter((row) => row.DepartmentId === id && statusActive(row));
+  if (type === 'department') return [...state.arms, ...state.studentMemberships].filter((row) => row.DepartmentId === id && statusActive(row));
   if (type === 'offering') return [...state.teacherAllocations, ...state.studentMemberships].filter((row) => row.SessionId === record.SessionId && row.TermId === record.TermId && row.ClassId === record.ClassId && (row.SubjectId === record.SubjectId || (row.SubjectIds || []).includes(record.SubjectId)) && statusActive(row));
   return [];
 }
@@ -1887,6 +1911,7 @@ export function academicPermanentDeleteDependants(state = {}, typeValue = '', re
   }
   if (type === 'department') {
     return [
+      ...(state.arms || []).filter((row) => row.DepartmentId === id),
       ...(state.studentMemberships || []).filter((row) => row.DepartmentId === id),
       ...(state.studentMovements || []).filter((row) => row.FromDepartmentId === id || row.ToDepartmentId === id)
     ];
