@@ -693,7 +693,9 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'getStudentConductCases', 'saveStudentConductCase', 'deleteStudentConductCase',
   'getAcademicManagement', 'saveAcademicSession', 'saveAcademicTerm', 'saveAcademicClass',
   'saveAcademicArm', 'saveAcademicSubject', 'saveAcademicDepartment', 'saveAcademicOffering',
-  'saveAcademicTeacherAllocation', 'saveAcademicStudentMembership', 'archiveAcademicRecord',
+  'saveAcademicTeacherAllocation', 'saveAcademicStudentMembership', 'bulkAllocateAcademicStudents',
+  'moveAcademicStudentMembership', 'withdrawAcademicStudentMembership', 'reinstateAcademicStudentMembership',
+  'archiveAcademicRecord',
   'getAccountingRequisitionDocument', 'syncAccountingRevenue', 'saveChartAccount',
   'saveAccountingJournal', 'saveAccountingExpense', 'saveAccountingBudget',
   'submitAccountingImprest', 'reviewAccountingImprest', 'issueAccountingImprest',
@@ -7424,6 +7426,10 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'saveAcademicOffering':
     case 'saveAcademicTeacherAllocation':
     case 'saveAcademicStudentMembership':
+    case 'bulkAllocateAcademicStudents':
+    case 'moveAcademicStudentMembership':
+    case 'withdrawAcademicStudentMembership':
+    case 'reinstateAcademicStudentMembership':
     case 'archiveAcademicRecord': {
       const role = clean(body.UserRole);
       const configuredTabs = Array.isArray(body.UserTabAccess) ? body.UserTabAccess.map(clean).filter(Boolean) : [];

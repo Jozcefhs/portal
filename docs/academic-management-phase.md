@@ -18,8 +18,10 @@ department core subjects and any selected additional subjects. It
 includes stable identifiers, effective-period scope, server-side role and
 section enforcement, optimistic concurrency, audit history, archive guards,
 Teacher read-only registers, and compatibility updates for existing class and
-student records. Bulk allocations, transfers, withdrawals, promotion intake,
-full historical movement workflows, result enforcement, score processing,
+student records. Student allocation now supports atomic batches of up to 100,
+class and arm capacity enforcement, controlled class/arm/department/subject
+changes, withdrawal and reinstatement, and immutable before/after movement
+history on web and desktop. Promotion intake, result enforcement, score processing,
 timetables, attendance and CBT remain pending milestones; configuring a policy
 or academic structure does not yet publish or unlock parent results.
 
@@ -233,6 +235,21 @@ that can be reused across SS classes. Before a student is allocated, each core
 subject must be available as an active subject offering for the selected class
 or arm. Junior subject membership is derived from the active offerings and
 cannot be reduced by an elective choice in either the web or desktop client.
+
+Each student has at most one current membership for a branch, section, session
+and term. A new term creates a new membership rather than overwriting an older
+period. Within a term, class, arm, department and subject changes use a
+controlled movement workflow; ordinary record editing cannot bypass it. Every
+applied movement stores immutable before and after placement/subject snapshots,
+effective date, reason and recording officer. Withdrawal closes the current
+membership without deleting its placement, while reinstatement is separately
+authorized and recorded.
+
+Single and bulk allocations enforce configured class and arm capacities on the
+server. Zero capacity means no configured limit. Bulk allocation is atomic:
+all new memberships, student compatibility updates and movement records pass
+validation together or none are saved. An exact retry skips already matching
+memberships, while a conflicting membership must use the transfer workflow.
 
 ## 6. Roles and permissions
 

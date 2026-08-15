@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import {
   applyAcademicStudentCurriculum,
+  assertAcademicMembershipCapacity,
   academicManagementCapabilities,
   normalizeAcademicArm,
   normalizeAcademicClass,
@@ -11,6 +12,7 @@ import {
   normalizeAcademicOffering,
   normalizeAcademicSession,
   normalizeAcademicStudentMembership,
+  normalizeAcademicStudentMovement,
   normalizeAcademicSubject,
   normalizeAcademicTeacherAllocation,
   normalizeAcademicTerm
@@ -128,6 +130,39 @@ test('AM-002 Junior takes all offerings while Senior inherits department core su
   }), /Offer every department core subject/);
 });
 
+test('AM-003 movements preserve before and after membership snapshots', () => {
+  const before = {
+    StudentRef: 'DCA/2026/001', SessionId: 'session-1', TermId: 'term-1',
+    ClassId: 'jss-1', ArmId: 'a', DepartmentId: '', SubjectIds: ['math'],
+    BranchId: scope.branchId, SchoolSection: scope.section
+  };
+  const after = { ...before, ClassId: 'jss-2', ArmId: 'b', SubjectIds: ['math', 'english'] };
+  const movement = normalizeAcademicStudentMovement({
+    EffectiveDate: '2026-10-02', Reason: 'Approved class correction'
+  }, scope, before, after);
+
+  assert.equal(movement.MovementType, 'Class Transfer');
+  assert.equal(movement.FromClassId, 'jss-1');
+  assert.equal(movement.ToClassId, 'jss-2');
+  assert.deepEqual(movement.FromSubjectIds, ['math']);
+  assert.deepEqual(movement.ToSubjectIds, ['math', 'english']);
+  assert.throws(() => normalizeAcademicStudentMovement({ EffectiveDate: '2026-10-02' }, scope, before, after), /reason/);
+});
+
+test('AM-003 class and arm capacities fail closed during allocation', () => {
+  const capacityState = {
+    classes: [{ ClassId: 'class-1', Name: 'JSS 1', Capacity: 2, Status: 'Active' }],
+    arms: [{ ArmId: 'arm-a', ClassId: 'class-1', Name: 'A', Capacity: 1, Status: 'Active' }],
+    studentMemberships: [{
+      MembershipId: 'existing', SessionId: 'session-1', TermId: 'term-1',
+      ClassId: 'class-1', ArmId: 'arm-a', Status: 'Active'
+    }]
+  };
+  const candidate = { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: 'arm-a', Status: 'Active' };
+  assert.throws(() => assertAcademicMembershipCapacity(capacityState, candidate), /configured capacity/);
+  assert.doesNotThrow(() => assertAcademicMembershipCapacity(capacityState, candidate, 'existing'));
+});
+
 test('Academic Management is a School-only role module with a constrained Teacher role', () => {
   assert.equal(staffRoleAllowedForEdition('Teacher', 'school'), true);
   assert.equal(staffRoleAllowedForEdition('Teacher', 'faith'), false);
@@ -153,6 +188,9 @@ test('Academic writes are audited, optimistic and preserve legacy class/student 
   assert.match(librarySource, /record\.SubjectIds = \[\.\.\.available\]/);
   assert.match(librarySource, /department\.CoreSubjectIds/);
   assert.match(librarySource, /AcademicDepartment: clean\(department\?\.Name\)/);
+  assert.match(librarySource, /ACADEMIC_MOVEMENT_REQUIRED/);
+  assert.match(librarySource, /academicStudentMovements/);
+  assert.match(librarySource, /Allocate at most 100 students in one batch/);
   assert.match(librarySource, /ACADEMIC_TEACHER_SECTION_INVALID/);
   assert.match(librarySource, /Archive the \$\{dependants\.length\} active dependent record/);
 });
@@ -167,6 +205,9 @@ test('Web and desktop transports share one protected Academic Management handler
   assert.match(backendSource, /case 'saveAcademicTeacherAllocation'/);
   assert.match(backendSource, /case 'saveAcademicDepartment'/);
   assert.match(backendSource, /case 'saveAcademicStudentMembership'/);
+  assert.match(backendSource, /case 'bulkAllocateAcademicStudents'/);
+  assert.match(backendSource, /case 'moveAcademicStudentMembership'/);
+  assert.match(backendSource, /case 'withdrawAcademicStudentMembership'/);
   assert.match(backendSource, /handleAcademicManagementAction/);
 });
 
@@ -175,15 +216,17 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /function renderAcademicManagement/);
   assert.match(adminSource, /function academicManagementRequest/);
   assert.match(adminSource, /function academicDepartmentsWorkspace/);
-  assert.match(adminSource, /Junior Secondary ignores this selection and automatically receives every offered subject/);
+  assert.match(adminSource, /Junior receives every offering/);
+  assert.match(adminSource, /data-academic-workflow="bulkAllocateAcademicStudents"/);
+  assert.match(adminSource, /Student Movement History/);
   assert.match(adminSource, /staffFetch\('\/api\/staff-academics'/);
   assert.match(adminSource, /active === 'academics'/);
   assert.match(styleSource, /\.academic-management-editor-grid/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-academic-management/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260815-class-movements/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
   assert.match(backupSource, /listRootCollectionIds/);
-  assert.doesNotMatch(backupSource, /EXCLUDED_ROOT_COLLECTIONS[\s\S]{0,500}academic(?:Sessions|Terms|Classes|Arms|Subjects)/);
+  assert.doesNotMatch(backupSource, /EXCLUDED_ROOT_COLLECTIONS[\s\S]{0,500}academic(?:Sessions|Terms|Classes|Arms|Subjects|StudentMovements)/);
 });

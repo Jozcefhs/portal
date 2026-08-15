@@ -9295,8 +9295,8 @@ async function loadStudentConduct() {
 }
 
 function academicRecordId(row = {}) {
-  return clean(row.RecordId || row.SessionId || row.TermId || row.ClassId || row.ArmId
-    || row.SubjectId || row.DepartmentId || row.OfferingId || row.AllocationId || row.MembershipId);
+  return clean(row.RecordId || row.MovementId || row.MembershipId || row.AllocationId || row.OfferingId
+    || row.DepartmentId || row.SubjectId || row.ArmId || row.ClassId || row.TermId || row.SessionId);
 }
 
 function academicSchoolStageLabel(value = '') {
@@ -9304,7 +9304,7 @@ function academicSchoolStageLabel(value = '') {
 }
 
 function academicIsActive(row = {}) {
-  return !/archived|inactive|closed/i.test(clean(row.Status));
+  return !/archived|inactive|closed|withdrawn/i.test(clean(row.Status));
 }
 
 function academicFind(rows = [], id = '') {
@@ -9341,7 +9341,8 @@ function academicCurrentRows(data = academicManagementData || {}) {
     departments: sectionRows(data.departments || []),
     offerings: periodRows(data.offerings || []),
     teacherAllocations: periodRows(data.teacherAllocations || []),
-    studentMemberships: periodRows(data.studentMemberships || [])
+    studentMemberships: periodRows(data.studentMemberships || []),
+    studentMovements: periodRows(data.studentMovements || [])
   };
 }
 
@@ -9428,12 +9429,14 @@ function academicStructureWorkspace(data, rows) {
       ${table(`${academicManagementFilters.section} Classes`, rows.classes, [
         { label: 'Class', value: (row) => row.Name }, { label: 'Code', value: (row) => row.Code },
         { label: 'Division', value: (row) => academicSchoolStageLabel(row.SchoolStage) },
-        { label: 'Capacity', value: (row) => row.Capacity }, { label: 'Status', value: (row) => row.Status },
+        { label: 'Enrolled', value: (row) => rows.studentMemberships.filter((membership) => academicIsActive(membership) && membership.ClassId === row.ClassId).length },
+        { label: 'Capacity', value: (row) => Number(row.Capacity) > 0 ? row.Capacity : 'Unlimited' }, { label: 'Status', value: (row) => row.Status },
         { label: 'Actions', render: (row) => academicActionButtons('class', row, canManage, permissions.canArchive) }
       ])}
       ${table('Class Arms', rows.arms, [
         { label: 'Class', value: (row) => academicLabel(rows.classes, row.ClassId) }, { label: 'Arm', value: (row) => row.Name },
-        { label: 'Capacity', value: (row) => row.Capacity }, { label: 'Room', value: (row) => row.Room || '-' },
+        { label: 'Enrolled', value: (row) => rows.studentMemberships.filter((membership) => academicIsActive(membership) && membership.ArmId === row.ArmId).length },
+        { label: 'Capacity', value: (row) => Number(row.Capacity) > 0 ? row.Capacity : 'Unlimited' }, { label: 'Room', value: (row) => row.Room || '-' },
         { label: 'Status', value: (row) => row.Status }, { label: 'Actions', render: (row) => academicActionButtons('arm', row, canManage, permissions.canArchive) }
       ])}
       ${table('Subjects', rows.subjects, [
@@ -9536,6 +9539,18 @@ function academicTeacherWorkspace(data, rows) {
   ])}`;
 }
 
+function academicStudentMembershipActions(row, canManage) {
+  if (!canManage) return '<span class="muted">View only</span>';
+  const id = escapeHtml(academicRecordId(row));
+  const withdrawn = clean(row.Status).toLowerCase() === 'withdrawn';
+  if (!withdrawn && !academicIsActive(row)) return '<span class="muted">Historical</span>';
+  return `<div class="academic-management-row-actions">
+    ${withdrawn
+      ? `<button type="button" class="compact-icon-action" data-academic-reinstate="${id}" title="Reinstate" aria-label="Reinstate this student">&#8634;</button>`
+      : `<button type="button" class="compact-icon-action compact-edit-action" data-academic-move="${id}" title="Transfer or change" aria-label="Transfer or change this membership">&#8644;</button><button type="button" class="compact-icon-action academic-archive-action" data-academic-withdraw="${id}" title="Withdraw" aria-label="Withdraw this student">&#10005;</button>`}
+  </div>`;
+}
+
 function academicStudentWorkspace(data, rows) {
   const canManage = data.permissions?.canManageAllocations === true;
   const sessions = rows.sessions.filter(academicIsActive);
@@ -9548,28 +9563,63 @@ function academicStudentWorkspace(data, rows) {
     const assigned = clean(row.SchoolSection).toLowerCase();
     return !assigned || assigned === academicManagementFilters.section;
   });
-  const form = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-form="studentMembership">
-    ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Class register</small><h3>Allocate student</h3></div><button type="button" class="academic-form-reset" data-academic-reset="studentMembership">Clear</button></div>
-    <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
-    <div class="academic-management-form-grid academic-management-form-grid-3">
-      <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
-      <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
-      <label>Student<select name="StudentRef" required>${academicSelectOptions(students, '', (row) => `${row.StudentName} (${row.StudentRef})`, 'Choose student')}</select></label>
-      <label>Class<select name="ClassId" required>${academicSelectOptions(classes, '', (row) => `${row.Name} — ${academicSchoolStageLabel(row.SchoolStage)}`, 'Choose class')}</select></label>
-      <label>Arm<select name="ArmId" required>${academicSelectOptions(arms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'Choose arm')}</select></label>
-      ${academicManagementFilters.section === 'secondary' ? `<label>Senior department<select name="DepartmentId">${academicSelectOptions(departments, '', (row) => `${row.Code} - ${row.Name}`, 'Not applicable / choose for Senior')}</select></label>` : ''}
-      <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
-    </div>
-    <label>Optional / selected subjects<select name="SubjectIds" multiple size="${Math.min(8, Math.max(4, subjects.length))}">${subjects.map((row) => `<option value="${escapeHtml(row.SubjectId)}">${escapeHtml(`${row.Code} - ${row.Name}`)}</option>`).join('')}</select><small>Junior Secondary ignores this selection and automatically receives every offered subject. Senior Secondary automatically receives common compulsory offerings and all core subjects of the chosen department; use this list for any additional subjects.</small></label>
-    <button type="submit">Save student membership</button>
-  </form>` : '<div class="academic-view-only-note"><strong>My class registers</strong><span>Students shown here come only from your teaching allocations.</span></div>';
-  return `${form}${table('Student Class & Subject Memberships', rows.studentMemberships, [
+  const activeMemberships = rows.studentMemberships.filter(academicIsActive);
+  const allocated = new Set(rows.studentMemberships.map((row) => clean(row.StudentRef).toLowerCase()));
+  const unallocatedStudents = students.filter((row) => !allocated.has(clean(row.StudentRef).toLowerCase()));
+  const periodFields = `
+    <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
+    <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>`;
+  const targetFields = `
+    <label>Class<select name="ClassId" required>${academicSelectOptions(classes, '', (row) => `${row.Name} — ${academicSchoolStageLabel(row.SchoolStage)}`, 'Choose class')}</select></label>
+    <label>Arm<select name="ArmId" required>${academicSelectOptions(arms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'Choose arm')}</select></label>
+    ${academicManagementFilters.section === 'secondary' ? `<label>Senior department<select name="DepartmentId">${academicSelectOptions(departments, '', (row) => `${row.Code} - ${row.Name}`, 'Not applicable / choose for Senior')}</select></label>` : ''}`;
+  const subjectOptions = subjects.map((row) => `<option value="${escapeHtml(row.SubjectId)}">${escapeHtml(`${row.Code} - ${row.Name}`)}</option>`).join('');
+  const forms = canManage ? `<div class="academic-management-editor-grid">
+    <form class="academic-management-editor" data-academic-form="studentMembership">
+      ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Single allocation</small><h3>Allocate student</h3></div><button type="button" class="academic-form-reset" data-academic-reset="studentMembership">Clear</button></div>
+      <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
+      ${periodFields}
+      <label>Student<select name="StudentRef" required>${academicSelectOptions(unallocatedStudents, '', (row) => `${row.StudentName} (${row.StudentRef})`, 'Choose unallocated student')}</select></label>
+      ${targetFields}
+      <label>Optional subjects<select name="SubjectIds" multiple size="5">${subjectOptions}</select><small>Junior receives every offering; Senior receives department core subjects automatically.</small></label>
+      <input type="hidden" name="Status" value="Active"><button type="submit">Allocate student</button>
+    </form>
+    <form class="academic-management-editor" data-academic-workflow="bulkAllocateAcademicStudents">
+      <div class="academic-management-editor-heading"><div><small>Up to 100 at once</small><h3>Bulk allocate</h3></div></div>
+      <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
+      ${periodFields}
+      <label>Students<select name="StudentRefs" multiple required size="7">${unallocatedStudents.map((row) => `<option value="${escapeHtml(row.StudentRef)}">${escapeHtml(`${row.StudentName} (${row.StudentRef})`)}</option>`).join('')}</select><small>Select several unallocated students. The entire batch is validated before saving.</small></label>
+      ${targetFields}
+      <label>Optional subjects<select name="SubjectIds" multiple size="5">${subjectOptions}</select></label>
+      <label>Allocation note<input name="Reason" placeholder="New term allocation"></label>
+      <button type="submit">Allocate selected students</button>
+    </form>
+    <form class="academic-management-editor" data-academic-workflow="moveAcademicStudentMembership">
+      <div class="academic-management-editor-heading"><div><small>Audited history</small><h3>Transfer or change</h3></div></div>
+      <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="RevisionToken">
+      <label>Current membership<select name="RecordId" required>${academicSelectOptions(activeMemberships, '', (row) => `${academicLabel(data.students, row.StudentRef, row.StudentRef)} — ${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}`, 'Choose active membership')}</select></label>
+      ${periodFields}${targetFields}
+      <label>Optional subjects<select name="SubjectIds" multiple size="5">${subjectOptions}</select></label>
+      <label>Effective date<input type="date" name="EffectiveDate" value="${new Date().toISOString().slice(0, 10)}" required></label>
+      <label>Reason<textarea name="Reason" rows="3" required placeholder="Explain the approved class, arm, department or subject change"></textarea></label>
+      <button type="submit">Record movement</button>
+    </form>
+  </div>` : '<div class="academic-view-only-note"><strong>My class registers</strong><span>Students and movement history shown here come only from your teaching allocations.</span></div>';
+  return `${forms}${table('Student Class & Subject Memberships', rows.studentMemberships, [
     { label: 'Student', value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
     { label: 'Class / Arm', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
     { label: 'Department', value: (row) => row.DepartmentId ? academicLabel(rows.departments, row.DepartmentId) : '-' },
     { label: 'Subjects', value: (row) => (row.SubjectIds || []).map((id) => academicLabel(rows.subjects, id, id)).join(', ') || 'None' },
     { label: 'Status', value: (row) => row.Status },
-    { label: 'Actions', render: (row) => academicActionButtons('studentMembership', row, canManage, canManage) }
+    { label: 'Actions', render: (row) => academicStudentMembershipActions(row, canManage) }
+  ])}${table('Student Movement History', rows.studentMovements, [
+    { label: 'Date', value: (row) => row.EffectiveDate },
+    { label: 'Student', value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
+    { label: 'Movement', value: (row) => row.MovementType },
+    { label: 'From', value: (row) => row.FromClassId ? `${academicLabel(rows.classes, row.FromClassId)} / ${academicLabel(rows.arms, row.FromArmId)}` : '-' },
+    { label: 'To', value: (row) => row.ToClassId ? `${academicLabel(rows.classes, row.ToClassId)} / ${academicLabel(rows.arms, row.ToArmId)}` : '-' },
+    { label: 'Reason', value: (row) => row.Reason || '-' },
+    { label: 'Recorded by', value: (row) => row.RecordedBy || '-' }
   ])}`;
 }
 
@@ -9671,6 +9721,28 @@ function academicFormPayload(form) {
   return { ...payload, RecordType: form.dataset.academicForm };
 }
 
+function academicWorkflowPayload(form) {
+  const payload = Object.fromEntries(new FormData(form).entries());
+  if (form.elements.StudentRefs?.multiple) {
+    payload.StudentRefs = [...form.elements.StudentRefs.selectedOptions].map((option) => option.value);
+  }
+  if (form.elements.SubjectIds?.multiple) {
+    payload.SubjectIds = [...form.elements.SubjectIds.selectedOptions].map((option) => option.value);
+  }
+  return payload;
+}
+
+function populateAcademicMovementForm(form, record) {
+  if (!form || !record) return;
+  ['RecordId', 'RevisionToken', 'SessionId', 'TermId', 'ClassId', 'ArmId', 'DepartmentId'].forEach((key) => {
+    const control = form.elements.namedItem(key);
+    if (control) control.value = key === 'RecordId' ? academicRecordId(record) : (key === 'RevisionToken' ? record.RevisionToken : (record[key] || ''));
+  });
+  if (form.elements.SubjectIds) {
+    [...form.elements.SubjectIds.options].forEach((option) => { option.selected = (record.SubjectIds || []).includes(option.value); });
+  }
+}
+
 function academicRecordRows(type) {
   const key = ({
     session: 'sessions', term: 'terms', class: 'classes', arm: 'arms', subject: 'subjects', department: 'departments',
@@ -9728,6 +9800,23 @@ function bindAcademicManagement() {
       }
     });
   }));
+  panelEl.querySelectorAll('[data-academic-workflow]').forEach((form) => form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = form.querySelector('button[type="submit"]');
+    await runButtonAction(button, 'Saving...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest(form.dataset.academicWorkflow, academicWorkflowPayload(form));
+        renderAcademicManagement(data, data.message || 'Academic workflow completed online.');
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+      }
+    });
+  }));
+  const movementForm = panelEl.querySelector('[data-academic-workflow="moveAcademicStudentMembership"]');
+  movementForm?.elements.RecordId?.addEventListener('change', (event) => {
+    populateAcademicMovementForm(movementForm, academicFind(academicManagementData?.studentMemberships || [], event.target.value));
+  });
   panelEl.querySelectorAll('[data-academic-reset]').forEach((button) => button.addEventListener('click', () => {
     const form = panelEl.querySelector(`[data-academic-form="${button.dataset.academicReset}"]`);
     form?.reset();
@@ -9736,6 +9825,40 @@ function bindAcademicManagement() {
   }));
   panelEl.querySelectorAll('[data-academic-edit]').forEach((button) => button.addEventListener('click', () => {
     populateAcademicForm(button.dataset.academicEdit, academicFind(academicRecordRows(button.dataset.academicEdit), button.dataset.academicId));
+  }));
+  panelEl.querySelectorAll('[data-academic-move]').forEach((button) => button.addEventListener('click', () => {
+    const record = academicFind(academicManagementData?.studentMemberships || [], button.dataset.academicMove);
+    populateAcademicMovementForm(movementForm, record);
+    movementForm?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
+  panelEl.querySelectorAll('[data-academic-withdraw], [data-academic-reinstate]').forEach((button) => button.addEventListener('click', async () => {
+    const reinstate = Boolean(button.dataset.academicReinstate);
+    const id = button.dataset.academicReinstate || button.dataset.academicWithdraw;
+    const record = academicFind(academicManagementData?.studentMemberships || [], id);
+    if (!record) return;
+    if (!reinstate && !await window.DynamaxDialogs.confirm({
+      title: 'Withdraw student membership',
+      message: 'This closes the student’s current-term membership but preserves the class and subject history.',
+      tone: 'danger', confirmText: 'Continue'
+    })) return;
+    const reason = clean(await window.DynamaxDialogs.prompt({
+      title: reinstate ? 'Reinstate student membership' : 'Record withdrawal reason',
+      message: reinstate ? 'The student will return to the same allocation unless you transfer them afterwards.' : 'This reason becomes part of the immutable movement history.',
+      label: 'Reason', required: true, confirmText: reinstate ? 'Reinstate' : 'Withdraw', tone: reinstate ? 'default' : 'danger'
+    }));
+    if (!reason) return;
+    await runButtonAction(button, reinstate ? 'Reinstating...' : 'Withdrawing...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest(reinstate ? 'reinstateAcademicStudentMembership' : 'withdrawAcademicStudentMembership', {
+          RecordId: academicRecordId(record), RevisionToken: record.RevisionToken,
+          SchoolSection: record.SchoolSection, Reason, EffectiveDate: new Date().toISOString().slice(0, 10)
+        });
+        renderAcademicManagement(data, data.message);
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+      }
+    });
   }));
   panelEl.querySelectorAll('[data-academic-archive]').forEach((button) => button.addEventListener('click', async () => {
     const type = button.dataset.academicArchive;

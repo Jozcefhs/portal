@@ -18,12 +18,17 @@ export const ACADEMIC_MANAGEMENT_COLLECTIONS = Object.freeze({
   offerings: 'academicSubjectOfferings',
   teacherAllocations: 'academicTeacherAllocations',
   studentMemberships: 'academicStudentMemberships',
+  studentMovements: 'academicStudentMovements',
   audit: 'academicManagementAudit'
 });
 
 export const ACADEMIC_SESSION_STATUSES = Object.freeze(['Planned', 'Active', 'Closed', 'Archived']);
 export const ACADEMIC_TERM_STATUSES = Object.freeze(['Planned', 'Active', 'Closed', 'Archived']);
 export const ACADEMIC_RECORD_STATUSES = Object.freeze(['Active', 'Inactive', 'Archived']);
+export const ACADEMIC_MEMBERSHIP_STATUSES = Object.freeze(['Active', 'Inactive', 'Withdrawn', 'Archived']);
+export const ACADEMIC_STUDENT_MOVEMENT_TYPES = Object.freeze([
+  'Allocation', 'Class Transfer', 'Arm Transfer', 'Department Change', 'Subject Change', 'Withdrawal', 'Reinstatement'
+]);
 export const ACADEMIC_SUBJECT_CATEGORIES = Object.freeze(['Core', 'Elective', 'Vocational', 'Co-curricular']);
 export const ACADEMIC_SCHOOL_STAGES = Object.freeze(['primary', 'junior-secondary', 'senior-secondary']);
 export const ACADEMIC_TEACHER_ALLOCATION_ROLES = Object.freeze(['Subject Teacher', 'Form Teacher', 'Assistant Teacher']);
@@ -109,13 +114,13 @@ function actorUsername(user = {}) {
 
 function recordId(row = {}) {
   return clean(
-    row.RecordId || row.recordId || row.SessionId || row.TermId || row.ClassId || row.ArmId
-      || row.SubjectId || row.DepartmentId || row.OfferingId || row.AllocationId || row.MembershipId || row.__id
+    row.RecordId || row.recordId || row.MovementId || row.MembershipId || row.AllocationId || row.OfferingId
+      || row.DepartmentId || row.SubjectId || row.ArmId || row.ClassId || row.TermId || row.SessionId || row.__id
   );
 }
 
 function statusActive(row = {}) {
-  return !['archived', 'inactive', 'closed'].includes(lower(row.Status));
+  return !['archived', 'inactive', 'closed', 'withdrawn'].includes(lower(row.Status));
 }
 
 function publicRecord(row = {}) {
@@ -359,7 +364,7 @@ export function normalizeAcademicStudentMembership(input = {}, context = {}, exi
     SessionId: sessionId, TermId: termId, StudentRef: studentRef,
     ClassId: classId, ArmId: armId, DepartmentId: clean(input.DepartmentId ?? existing?.DepartmentId),
     SubjectIds: uniqueIds(input.SubjectIds ?? existing?.SubjectIds ?? []),
-    Status: oneOf(input.Status, ACADEMIC_RECORD_STATUSES, existing?.Status || 'Active'),
+    Status: oneOf(input.Status, ACADEMIC_MEMBERSHIP_STATUSES, existing?.Status || 'Active'),
     BranchId: branchId, SchoolSection: section
   };
 }
@@ -428,6 +433,89 @@ export function applyAcademicStudentCurriculum(state = {}, record = {}) {
   return record;
 }
 
+function sortedIds(value) {
+  return uniqueIds(value).sort((a, b) => a.localeCompare(b));
+}
+
+function membershipMateriallyChanged(before = {}, after = {}) {
+  return ['ClassId', 'ArmId', 'DepartmentId', 'Status'].some((key) => clean(before[key]) !== clean(after[key]))
+    || JSON.stringify(sortedIds(before.SubjectIds)) !== JSON.stringify(sortedIds(after.SubjectIds));
+}
+
+function membershipSnapshot(record = {}, prefix = '') {
+  return {
+    [`${prefix}ClassId`]: clean(record.ClassId),
+    [`${prefix}ArmId`]: clean(record.ArmId),
+    [`${prefix}DepartmentId`]: clean(record.DepartmentId),
+    [`${prefix}SubjectIds`]: uniqueIds(record.SubjectIds)
+  };
+}
+
+function movementType(before, after, operation = '') {
+  const requested = lower(operation);
+  if (requested === 'withdraw') return 'Withdrawal';
+  if (requested === 'reinstate') return 'Reinstatement';
+  if (!before) return 'Allocation';
+  if (before.ClassId !== after.ClassId) return 'Class Transfer';
+  if (before.ArmId !== after.ArmId) return 'Arm Transfer';
+  if (before.DepartmentId !== after.DepartmentId) return 'Department Change';
+  return 'Subject Change';
+}
+
+export function normalizeAcademicStudentMovement(input = {}, context = {}, before = null, after = null) {
+  const branchId = safeScopeId(context.branchId || input.BranchId || before?.BranchId || after?.BranchId);
+  const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || before?.SchoolSection || after?.SchoolSection });
+  const studentRef = clean(input.StudentRef || before?.StudentRef || after?.StudentRef);
+  const sessionId = clean(input.SessionId || before?.SessionId || after?.SessionId);
+  const termId = clean(input.TermId || before?.TermId || after?.TermId);
+  if (!studentRef || !sessionId || !termId) throw failure('Student, session and term are required for an academic movement.');
+  const type = oneOf(input.MovementType || movementType(before, after, input.Operation), ACADEMIC_STUDENT_MOVEMENT_TYPES, 'Allocation');
+  const effectiveDate = dateValue(input.EffectiveDate || nowIso().slice(0, 10), 'movement effective date');
+  const reason = clean(input.Reason || input.MovementReason);
+  if (type !== 'Allocation' && !reason) throw failure('Enter the reason for this student movement.');
+  const token = typeof globalThis.crypto?.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const movementId = clean(input.MovementId) || academicId('movement', branchId, section, sessionId, termId, studentRef, token);
+  return {
+    RecordId: movementId, MovementId: movementId, MovementType: type,
+    StudentRef: studentRef, SessionId: sessionId, TermId: termId,
+    ...membershipSnapshot(before || {}, 'From'),
+    ...membershipSnapshot(after || {}, 'To'),
+    EffectiveDate: effectiveDate, Reason: reason,
+    BranchId: branchId, SchoolSection: section, Status: 'Applied'
+  };
+}
+
+function academicMovementForState(state, input, context, before = null, after = null) {
+  const termId = clean(input.TermId || before?.TermId || after?.TermId);
+  const term = assertReference(findById(state.terms || [], termId), 'The selected term is not active.');
+  const effectiveDate = clean(input.EffectiveDate) || clean(term.StartDate) || nowIso().slice(0, 10);
+  if (term.StartDate && effectiveDate < term.StartDate) throw failure('Movement date cannot be before the selected term starts.');
+  if (term.EndDate && effectiveDate > term.EndDate) throw failure('Movement date cannot be after the selected term ends.');
+  return normalizeAcademicStudentMovement({ ...input, EffectiveDate: effectiveDate }, context, before, after);
+}
+
+export function assertAcademicMembershipCapacity(state = {}, record = {}, excludeMembershipId = '') {
+  if (!statusActive(record)) return { ClassCount: 0, ClassCapacity: 0, ArmCount: 0, ArmCapacity: 0 };
+  const activeMemberships = (state.studentMemberships || []).filter((row) => statusActive(row)
+    && recordId(row) !== clean(excludeMembershipId)
+    && row.SessionId === record.SessionId && row.TermId === record.TermId);
+  const schoolClass = assertReference(findById(state.classes || [], record.ClassId), 'The selected class is not active.');
+  const classCapacity = wholeNumber(schoolClass.Capacity, 0, 0, 10000);
+  const classCount = activeMemberships.filter((row) => row.ClassId === record.ClassId).length;
+  if (classCapacity && classCount >= classCapacity) {
+    throw failure(`${schoolClass.Name || 'The selected class'} has reached its configured capacity.`, 409, 'ACADEMIC_CLASS_CAPACITY_REACHED');
+  }
+  const arm = assertReference(findById(state.arms || [], record.ArmId), 'The selected class arm is not active.');
+  const armCapacity = wholeNumber(arm.Capacity, 0, 0, 10000);
+  const armCount = activeMemberships.filter((row) => row.ClassId === record.ClassId && row.ArmId === record.ArmId).length;
+  if (armCapacity && armCount >= armCapacity) {
+    throw failure(`${arm.Name || 'The selected arm'} has reached its configured capacity.`, 409, 'ACADEMIC_ARM_CAPACITY_REACHED');
+  }
+  return { ClassCount: classCount, ClassCapacity: classCapacity, ArmCount: armCount, ArmCapacity: armCapacity };
+}
+
 function validateActiveConflict(state, type, record, existing) {
   if (!statusActive(record)) return;
   if (type === 'session') {
@@ -449,6 +537,38 @@ function validateAcademicRecord(state, type, record, people = {}) {
   if (type === 'arm') {
     const schoolClass = assertReference(findById(state.classes, record.ClassId), 'The selected class is not active.');
     if (schoolClass.SchoolSection !== record.SchoolSection) throw failure('The class arm must belong to the same school section as its class.');
+  }
+  if (type === 'class') {
+    if (record.NextClassId) {
+      if (record.NextClassId === record.ClassId) throw failure('A class cannot be its own next class.');
+      const nextClass = assertReference(findById(state.classes, record.NextClassId), 'The selected next class is not active.');
+      if (nextClass.SchoolSection !== record.SchoolSection) throw failure('The next class must belong to the same school section.');
+      const visited = new Set([record.ClassId]);
+      let cursor = nextClass;
+      while (cursor) {
+        if (visited.has(cursor.ClassId)) throw failure('The next-class sequence cannot contain a cycle.');
+        visited.add(cursor.ClassId);
+        cursor = cursor.NextClassId ? findById(state.classes, cursor.NextClassId) : null;
+      }
+    }
+    const capacity = wholeNumber(record.Capacity, 0, 0, 10000);
+    const periodCounts = new Map();
+    state.studentMemberships.filter((row) => statusActive(row) && row.ClassId === record.ClassId).forEach((row) => {
+      const key = `${row.SessionId}|${row.TermId}`;
+      periodCounts.set(key, (periodCounts.get(key) || 0) + 1);
+    });
+    const highestEnrollment = Math.max(0, ...periodCounts.values());
+    if (capacity && highestEnrollment > capacity) throw failure(`Class capacity cannot be below its current enrollment of ${highestEnrollment}.`, 409);
+  }
+  if (type === 'arm') {
+    const capacity = wholeNumber(record.Capacity, 0, 0, 10000);
+    const periodCounts = new Map();
+    state.studentMemberships.filter((row) => statusActive(row) && row.ArmId === record.ArmId).forEach((row) => {
+      const key = `${row.SessionId}|${row.TermId}`;
+      periodCounts.set(key, (periodCounts.get(key) || 0) + 1);
+    });
+    const highestEnrollment = Math.max(0, ...periodCounts.values());
+    if (capacity && highestEnrollment > capacity) throw failure(`Arm capacity cannot be below its current enrollment of ${highestEnrollment}.`, 409);
   }
   if (type === 'department') {
     if (!record.CoreSubjectIds.length) throw failure('Assign at least one core subject to this senior secondary department.');
@@ -497,6 +617,7 @@ function validateAcademicRecord(state, type, record, people = {}) {
     const student = people.students.find((row) => lower(studentReference(row)) === lower(record.StudentRef));
     if (!student) throw failure('The selected student was not found in this branch and school section.', 404);
     applyAcademicStudentCurriculum(state, record);
+    assertAcademicMembershipCapacity(state, record, recordId(people.existing || {}));
   }
 }
 
@@ -521,6 +642,19 @@ function auditWrite(user, action, type, record, details = '') {
       SessionId: clean(record.SessionId), TermId: clean(record.TermId),
       Actor: actorName(user), ActorUsername: actorUsername(user), ActorRole: clean(user.role || user.Role),
       Details: clean(details).slice(0, 1000)
+    }
+  };
+}
+
+function movementWrite(user, movement) {
+  const recordedAt = nowIso();
+  return {
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMovements,
+    documentId: movement.MovementId,
+    exists: false,
+    data: {
+      ...withoutMetadata(movement), RecordedAt: recordedAt,
+      RecordedBy: actorName(user), RecordedByUsername: actorUsername(user), RecordedByRole: clean(user.role || user.Role)
     }
   };
 }
@@ -574,7 +708,12 @@ function studentCompatibilityWrite(people, state, record) {
       ClassName: clean(schoolClass?.Name),
       ClassAdmitted: clean(schoolClass?.Name),
       ClassArm: clean(arm?.Name),
+      AcademicClassId: clean(record.ClassId),
+      AcademicArmId: clean(record.ArmId),
+      AcademicMembershipId: clean(record.MembershipId),
+      AcademicEnrollmentStatus: clean(record.Status),
       SchoolStage: clean(record.SchoolStage || schoolClass?.SchoolStage),
+      AcademicDepartmentId: clean(record.DepartmentId),
       AcademicDepartment: clean(department?.Name),
       AcademicDepartmentCode: clean(department?.Code),
       AcademicSession: clean(session?.Name),
@@ -632,7 +771,8 @@ function sortAcademicState(state) {
     subjects: [...state.subjects].sort(byName), departments: [...state.departments].sort(byName),
     offerings: [...state.offerings].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId)) || clean(a.SubjectId).localeCompare(clean(b.SubjectId))),
     teacherAllocations: [...state.teacherAllocations].sort((a, b) => clean(a.TeacherUsername).localeCompare(clean(b.TeacherUsername))),
-    studentMemberships: [...state.studentMemberships].sort((a, b) => clean(a.StudentRef).localeCompare(clean(b.StudentRef)))
+    studentMemberships: [...state.studentMemberships].sort((a, b) => clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
+    studentMovements: [...state.studentMovements].sort((a, b) => clean(b.RecordedAt || b.EffectiveDate).localeCompare(clean(a.RecordedAt || a.EffectiveDate)))
   };
 }
 
@@ -664,6 +804,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
       visibleKeys.has(`${row.ClassId}|${row.ArmId}`) || visibleKeys.has(`${row.ClassId}|*`)
     ));
     const visibleStudents = new Set(state.studentMemberships.map((row) => lower(row.StudentRef)));
+    state.studentMovements = state.studentMovements.filter((row) => visibleStudents.has(lower(row.StudentRef)));
     students = students.filter((row) => visibleStudents.has(lower(studentReference(row))));
   }
   state = sortAcademicState(state);
@@ -687,7 +828,8 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
       Subjects: state.subjects.filter(statusActive).length,
       Departments: state.departments.filter(statusActive).length,
       TeacherAllocations: state.teacherAllocations.filter(statusActive).length,
-      StudentMemberships: state.studentMemberships.filter(statusActive).length
+      StudentMemberships: state.studentMemberships.filter(statusActive).length,
+      StudentMovements: state.studentMovements.length
     }
   };
 }
@@ -705,8 +847,12 @@ export async function saveAcademicManagementRecord(env, user = {}, input = {}) {
   const existing = requestedId ? findById(state[Object.keys(ACADEMIC_MANAGEMENT_COLLECTIONS).find((key) => ACADEMIC_MANAGEMENT_COLLECTIONS[key] === definition.collection)] || [], requestedId) : null;
   if (requestedId && !existing) throw failure('The academic record was not found in the selected branch.', 404);
   if (existing && requiresSection && lower(existing.SchoolSection) !== scope.section) throw failure('This academic record belongs to another school section.', 403);
-  const record = definition.normalize(input, scope, existing);
+  const normalizedInput = type === 'studentmembership' && !existing ? { ...input, Status: 'Active' } : input;
+  const record = definition.normalize(normalizedInput, scope, existing);
   validateAcademicRecord(state, type, record, { ...people, existing });
+  if (type === 'studentmembership' && existing && membershipMateriallyChanged(existing, record)) {
+    throw failure('Use the transfer, curriculum-change, withdrawal or reinstatement workflow so this membership change is preserved in history.', 409, 'ACADEMIC_MOVEMENT_REQUIRED');
+  }
   const timestamp = nowIso();
   record.CreatedAt = clean(existing?.CreatedAt) || timestamp;
   record.CreatedBy = clean(existing?.CreatedBy) || actorName(user);
@@ -715,6 +861,9 @@ export async function saveAcademicManagementRecord(env, user = {}, input = {}) {
   const precondition = writePrecondition(existing, input.RevisionToken);
   const writes = [{ collectionPath: definition.collection, documentId: recordId(record), data: withoutMetadata(record), ...precondition }];
   writes.push(auditWrite(user, existing ? 'UPDATE' : 'CREATE', type, record, clean(record.Name || record.StudentRef || record.TeacherUsername)));
+  if (type === 'studentmembership' && !existing) {
+    writes.push(movementWrite(user, academicMovementForState(state, input, scope, null, record)));
+  }
   if (['class', 'arm'].includes(type)) {
     const compatibility = legacyClassWrite(state, record, type);
     if (compatibility) writes.push(compatibility);
@@ -735,6 +884,158 @@ export async function saveAcademicManagementRecord(env, user = {}, input = {}) {
   return bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section });
 }
 
+function uniqueStudentReferences(value) {
+  const supplied = Array.isArray(value) ? value : clean(value).split(',');
+  const seen = new Set();
+  return supplied.map(clean).filter((reference) => {
+    const key = lower(reference);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function stampAcademicRecord(record, user, existing = null) {
+  const timestamp = nowIso();
+  record.CreatedAt = clean(existing?.CreatedAt) || timestamp;
+  record.CreatedBy = clean(existing?.CreatedBy) || actorName(user);
+  record.UpdatedAt = timestamp;
+  record.UpdatedBy = actorName(user);
+  return record;
+}
+
+export async function bulkAllocateAcademicStudents(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageAllocations');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const studentRefs = uniqueStudentReferences(input.StudentRefs || input.StudentRef);
+  if (!studentRefs.length) throw failure('Choose at least one student for bulk allocation.');
+  if (studentRefs.length > 100) throw failure('Allocate at most 100 students in one batch.');
+  const [state, people] = await Promise.all([loadAcademicState(env, scope.branchId), loadPeople(env, user, scope)]);
+  const projected = { ...state, studentMemberships: [...state.studentMemberships] };
+  const writes = [];
+  const skipped = [];
+  for (const studentRef of studentRefs) {
+    const existingId = academicId('student', scope.branchId, scope.section, input.SessionId, input.TermId, studentRef);
+    const existing = findById(projected.studentMemberships, existingId);
+    const record = normalizeAcademicStudentMembership({ ...input, StudentRef, Status: 'Active' }, scope, existing);
+    validateAcademicRecord(projected, 'studentmembership', record, { ...people, existing });
+    if (existing) {
+      if (!membershipMateriallyChanged(existing, record)) {
+        skipped.push(studentRef);
+        continue;
+      }
+      throw failure(`${studentRef} already has a different membership in this term. Use the transfer workflow instead.`, 409, 'ACADEMIC_BULK_MEMBERSHIP_CONFLICT');
+    }
+    stampAcademicRecord(record, user);
+    projected.studentMemberships.push(record);
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+      documentId: record.MembershipId, data: withoutMetadata(record), exists: false
+    });
+    writes.push(movementWrite(user, academicMovementForState(projected, { ...input, StudentRef }, scope, null, record)));
+    const compatibility = studentCompatibilityWrite(people, projected, record);
+    if (compatibility) writes.push(compatibility);
+  }
+  const created = studentRefs.length - skipped.length;
+  if (created) {
+    writes.push(auditWrite(user, 'BULK ALLOCATE', 'studentmembership', {
+      BranchId: scope.branchId, SchoolSection: scope.section,
+      SessionId: clean(input.SessionId), TermId: clean(input.TermId),
+      MembershipId: `bulk-${Date.now()}`
+    }, `${created} student(s) allocated; ${skipped.length} already matched.`));
+    try {
+      await batchCommitDocuments(env, writes);
+    } catch (error) {
+      if ([409, 412].includes(Number(error?.status))) {
+        throw failure('A selected student changed while the batch was being saved. Reload and try again.', 409, 'ACADEMIC_WRITE_CONFLICT');
+      }
+      throw error;
+    }
+  }
+  const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section });
+  response.message = created
+    ? `${created} student${created === 1 ? '' : 's'} allocated online${skipped.length ? `; ${skipped.length} already matched and were skipped` : ''}.`
+    : 'Every selected student already has this exact allocation.';
+  response.bulkResult = { Requested: studentRefs.length, Created: created, Skipped: skipped.length };
+  return response;
+}
+
+export async function manageAcademicStudentMembership(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageAllocations');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const [state, people] = await Promise.all([loadAcademicState(env, scope.branchId), loadPeople(env, user, scope)]);
+  const existing = findById(state.studentMemberships, input.RecordId || input.MembershipId);
+  if (!existing) throw failure('The selected student membership was not found.', 404);
+  if (lower(existing.SchoolSection) !== scope.section) throw failure('This membership belongs to another school section.', 403);
+  const expected = clean(input.RevisionToken);
+  if (!expected || expected !== clean(existing.__updateTime)) {
+    throw failure('This student membership changed after it was loaded. Reload before continuing.', 409, 'ACADEMIC_WRITE_CONFLICT');
+  }
+  const operation = lower(input.Operation || input.MovementOperation || 'transfer').replace(/[^a-z]/g, '');
+  if (!['transfer', 'move', 'change', 'withdraw', 'withdrawal', 'reinstate', 'reinstatement'].includes(operation)) {
+    throw failure('Choose transfer, withdrawal or reinstatement for this student movement.');
+  }
+  const reason = clean(input.Reason || input.MovementReason);
+  if (!reason) throw failure('Enter the reason for this student movement.');
+  let record;
+  if (operation === 'withdraw' || operation === 'withdrawal') {
+    if (!statusActive(existing)) throw failure('Only an active membership can be withdrawn.', 409);
+    record = {
+      ...withoutMetadata(existing), Status: 'Withdrawn',
+      WithdrawalDate: dateValue(input.EffectiveDate || nowIso().slice(0, 10), 'withdrawal date'),
+      WithdrawalReason: reason
+    };
+  } else {
+    const reinstating = operation === 'reinstate' || operation === 'reinstatement';
+    if (reinstating && lower(existing.Status) !== 'withdrawn') throw failure('Only a withdrawn membership can be reinstated.', 409);
+    if (!reinstating && !statusActive(existing)) throw failure('Only an active membership can be transferred or changed.', 409);
+    record = normalizeAcademicStudentMembership({
+      ...input, SessionId: existing.SessionId, TermId: existing.TermId,
+      StudentRef: existing.StudentRef, Status: 'Active'
+    }, scope, existing);
+    validateAcademicRecord(state, 'studentmembership', record, { ...people, existing });
+    if (!reinstating && !membershipMateriallyChanged(existing, record)) {
+      throw failure('Choose a different class, arm, department or subject allocation before recording a movement.');
+    }
+    if (reinstating) {
+      delete record.WithdrawalDate;
+      delete record.WithdrawalReason;
+    }
+  }
+  stampAcademicRecord(record, user, existing);
+  const movement = academicMovementForState(state, {
+    ...input, StudentRef: existing.StudentRef,
+    Operation: operation, MovementType: movementType(existing, record, operation)
+  }, scope, existing, operation.startsWith('withdraw') ? null : record);
+  const projected = {
+    ...state,
+    studentMemberships: [...state.studentMemberships.filter((row) => recordId(row) !== recordId(existing)), record]
+  };
+  const writes = [
+    {
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+      documentId: existing.MembershipId, data: withoutMetadata(record), updateTime: expected
+    },
+    movementWrite(user, movement),
+    auditWrite(user, movement.MovementType, 'studentmembership', record, reason)
+  ];
+  const compatibility = studentCompatibilityWrite(people, projected, record);
+  if (compatibility) writes.push(compatibility);
+  try {
+    await batchCommitDocuments(env, writes);
+  } catch (error) {
+    if ([409, 412].includes(Number(error?.status))) {
+      throw failure('This student or membership changed while the movement was being saved. Reload and try again.', 409, 'ACADEMIC_WRITE_CONFLICT');
+    }
+    throw error;
+  }
+  const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section });
+  response.message = `${movement.MovementType} recorded online for ${existing.StudentRef}.`;
+  return response;
+}
+
 function activeDependants(state, type, record) {
   const id = recordId(record);
   if (type === 'session') return [...state.terms, ...state.offerings, ...state.teacherAllocations, ...state.studentMemberships].filter((row) => row.SessionId === id && statusActive(row));
@@ -752,6 +1053,9 @@ export async function archiveAcademicManagementRecord(env, user = {}, input = {}
   const type = normalizedRecordType(input.RecordType || input.recordType || input.Type);
   const definition = RECORD_TYPES[type];
   if (!definition) throw failure('Choose a valid academic record type.');
+  if (type === 'studentmembership') {
+    throw failure('Use the withdrawal workflow for student memberships so the change is preserved in movement history.', 409, 'ACADEMIC_MOVEMENT_REQUIRED');
+  }
   requireCapability(user, ['teacherallocation', 'studentmembership'].includes(type) ? 'canManageAllocations' : 'canArchive');
   const requiresSection = !['session', 'term'].includes(type);
   const scope = await academicScope(env, user, input, { requireSection: requiresSection });
@@ -790,6 +1094,15 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
       saveacademicstudentmembership: 'studentMembership'
     })[action];
     return saveAcademicManagementRecord(env, user, { ...input, RecordType: input.RecordType || inferredType });
+  }
+  if (['bulkallocateacademicstudents', 'bulkallocatestudents'].includes(action)) return bulkAllocateAcademicStudents(env, user, input);
+  if (['manageacademicstudentmembership', 'moveacademicstudentmembership', 'withdrawacademicstudentmembership', 'reinstateacademicstudentmembership'].includes(action)) {
+    const inferredOperation = ({
+      withdrawacademicstudentmembership: 'withdraw',
+      reinstateacademicstudentmembership: 'reinstate',
+      moveacademicstudentmembership: 'transfer'
+    })[action];
+    return manageAcademicStudentMembership(env, user, { ...input, Operation: input.Operation || inferredOperation });
   }
   if (['archive', 'archiverecord', 'archiveacademicrecord'].includes(action)) return archiveAcademicManagementRecord(env, user, input);
   throw failure('Choose a valid Academic Management action.');
