@@ -15,6 +15,8 @@ Architecture
 - Paystack, Brevo and Google document services are called only from backend
   Functions; private credentials must never be put in browser JavaScript.
 - The Windows desktop suite uses /api/backend as an authenticated bridge.
+- docs/academic-management-phase.md is the authoritative specification for the
+  planned School-edition academic management and local/offline CBT phase.
 
 Main public flows
 -----------------
