@@ -6,7 +6,8 @@ Implementation status (2026-08-16): Milestones 1 and 2 are in progress, the
 secure parent-access slice of Milestone 3 is operational, Milestone 4 is
 operational, and the Milestone 5 assessment, scorebook and spreadsheet-import
 slice is operational on the web companion and desktop source. The Milestone 6
-local CBT foundation is also operational in the desktop source. The School
+local CBT foundation and Milestone 7 examination-authoring/document-delivery
+slice are also operational in the desktop source. The School
 edition now has an effective-dated academic-policy schema, immutable
 policy revisions, separate draft and active states, organisation-to-branch
 inheritance, activation validation and administrator controls for result
@@ -84,13 +85,24 @@ focus/connectivity events, final submission and no service-worker candidate
 caching. The authorized desktop console starts and monitors the server, shows
 the school-network address and QR code, opens readiness sessions from current
 academic allocations, manages examination state and candidate access codes,
-and performs controlled device transfers. The packaged client assets are in
+and performs controlled device transfers. Examination officers can now create
+native single-answer, multiple-answer, true/false, short and extended questions,
+attach validated JPEG/PNG question media, or create Document and Mapped Document
+examinations from validated JPEG, PNG or PDF papers. Candidate sessions receive
+only safe question metadata; answer keys and original PDFs stay server-side.
+PDF pages are rendered to optimized authenticated images and progressively
+loaded inside the same responsive Android/Windows examination screen, with
+mapped source-page and region navigation. Active PDF content, damaged files,
+oversized files and unsupported signatures are rejected. Unused trial
+examinations can be deleted, while attempt history blocks destructive deletion.
+The packaged client assets are in
 the desktop build definition, but the desktop application will not be compiled
 until the remaining milestones are complete.
 Result production and publication, finance-officer clearance administration,
 promotion intake, transcripts and parent progress remain pending work. CBT
-question authoring and document upload modes, marking, external adapters and
-online score synchronization remain Milestones 7 and 8;
+marking, external adapters and online score synchronization remain Milestone 8;
+OCR-assisted question suggestions remain a separate review-gated authoring
+slice and are not yet operational;
 configuring a policy, academic structure or score sheet does not itself publish
 a result.
 
@@ -530,7 +542,7 @@ server remains the authoritative examination record.
 The built-in CBT supports native question authoring and JPEG, PNG and PDF
 uploads.
 
-Supported document modes are:
+Target document modes are:
 
 1. **Document examination:** display the uploaded paper while students answer
    in a separate numbered response panel.
@@ -542,6 +554,11 @@ Supported document modes are:
 
 OCR is never treated as perfectly reliable. Formulae, diagrams, tables, poor
 scans and handwriting require human review.
+
+Implementation status: native question authoring, per-question JPEG/PNG media,
+Document examination and Mapped document examination are operational in the
+desktop source. OCR-assisted import remains pending and will not bypass the
+mandatory authorized review described above.
 
 Native question types include single-answer objective, multiple-response,
 true/false, short answer and extended written answer. Questions may include
