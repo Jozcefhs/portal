@@ -9921,7 +9921,7 @@ function organizeAcademicManagementWorkspace(view) {
   tasks.forEach((task) => {
     const content = shell.querySelector(`[data-academic-task-panel="${task.key}"] .academic-task-content`);
     task.nodes.forEach((node) => content.append(node));
-    if (task.nodes.length === 2 && !task.nodes.some((node) => node.hidden) && task.nodes.some((node) => node.matches?.('form')) && task.nodes.some((node) => node.matches?.('.academic-register-card'))) {
+    if (task.nodes.length === 2 && !task.nodes.some((node) => node.hidden) && task.nodes.some((node) => node.matches?.('form')) && !task.nodes.some((node) => node.matches?.('form.academic-management-editor-wide')) && task.nodes.some((node) => node.matches?.('.academic-register-card'))) {
       content.classList.add('academic-task-content-split');
     }
   });
@@ -10736,7 +10736,7 @@ function academicTimetableWorkspace(data, rows) {
   const constraintForm = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="saveAcademicTimetableConstraint" data-academic-timetable-constraint>
     <div class="academic-management-editor-heading"><div><small>Teacher protection</small><h3>Availability and workload limits</h3><p class="muted">Use one line per day, for example MON | P1,P2. Enter 0 for an unlimited daily or weekly load.</p></div><button type="button" class="academic-form-reset" data-academic-timetable-constraint-clear>Clear</button></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}"><input type="hidden" name="RevisionToken">
-    <div class="academic-management-form-grid academic-management-form-grid-4">
+    <div class="academic-management-form-grid academic-timetable-constraint-grid">
       <label>Teacher<select name="TeacherUsername" data-academic-timetable-constraint-teacher required>${academicSelectOptions(data.staff || [], '', (row) => `${row.DisplayName} · ${row.Role}`, 'Choose teacher')}</select></label>
       <label>Unavailable lesson slots<textarea name="UnavailableSlots" rows="5" placeholder="MON | P1,P2&#10;FRI | P5"></textarea></label>
       <label>Maximum periods per day<input type="number" name="MaxPeriodsPerDay" min="0" max="100" value="0"></label>

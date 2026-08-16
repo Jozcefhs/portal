@@ -154,6 +154,8 @@ test('staff workspace exposes focused timetable and attendance interfaces', () =
   assert.match(adminSource, /data-academic-timetable-entry/);
   assert.match(adminSource, /data-academic-timetable-status/);
   assert.match(adminSource, /data-academic-timetable-constraint/);
+  assert.match(adminSource, /form\.academic-management-editor-wide/);
+  assert.match(adminSource, /academic-management-form-grid academic-timetable-constraint-grid/);
   assert.match(adminSource, /data-academic-timetable-copy/);
   assert.match(adminSource, /data-academic-timetable-print="class"/);
   assert.match(adminSource, /Print-ready schedules/);
@@ -163,8 +165,10 @@ test('staff workspace exposes focused timetable and attendance interfaces', () =
   assert.match(adminSource, /data-academic-attendance-all="Present"/);
   assert.match(adminSource, /data-academic-attendance-decision/);
   assert.match(adminSource, /All students start as Present/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260816-timetable-operations/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260816-timetable-layout-fix/);
   assert.match(portalCss, /\.academic-attendance-table\{max-height:480px;overflow:auto/);
+  assert.match(portalCss, /\.academic-timetable-constraint-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(portalCss, /\[data-academic-timetable-constraint-clear\]\{flex:0 0 auto;min-width:max-content;white-space:nowrap\}/);
 });
 
 test('parents receive only the published class schedule and their linked child attendance summary', () => {
