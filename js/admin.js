@@ -10276,7 +10276,7 @@ function academicStudentMembershipActions(row, canManage) {
   if (!withdrawn && !academicIsActive(row)) return '<span class="muted">Historical</span>';
   return `<div class="academic-management-row-actions">
     ${withdrawn
-      ? `<button type="button" class="compact-icon-action" data-academic-reinstate="${id}" title="Reinstate" aria-label="Reinstate this student">&#8634;</button>`
+      ? `<button type="button" class="compact-icon-action compact-edit-action" data-academic-move="${id}" title="Reassign to another classroom" aria-label="Reassign this withdrawn student to another classroom">&#8644;</button><button type="button" class="compact-icon-action" data-academic-reinstate="${id}" title="Reinstate original classroom" aria-label="Reinstate this student in the original classroom">&#8634;</button>`
       : `<button type="button" class="compact-icon-action compact-edit-action" data-academic-move="${id}" title="Transfer or change" aria-label="Transfer or change this membership">&#8644;</button><button type="button" class="compact-icon-action academic-archive-action" data-academic-withdraw="${id}" title="Withdraw" aria-label="Withdraw this student">&#10005;</button>`}
   </div>`;
 }
@@ -10349,7 +10349,7 @@ function academicStudentWorkspace(data, rows) {
   const classes = rows.classes.filter(academicIsActive);
   const arms = rows.arms.filter(academicIsActive);
   const departments = rows.departments.filter(academicIsActive);
-  const activeMemberships = rows.studentMemberships.filter(academicIsActive);
+  const movableMemberships = rows.studentMemberships.filter((row) => academicIsActive(row) || clean(row.Status).toLowerCase() === 'withdrawn');
   const periodFields = `
     <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
     <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>`;
@@ -10390,13 +10390,13 @@ function academicStudentWorkspace(data, rows) {
       </section>
     </form>
     <form class="academic-management-editor" data-academic-workflow="moveAcademicStudentMembership">
-      <div class="academic-management-editor-heading"><div><small>Audited history</small><h3>Transfer or change</h3></div></div>
+      <div class="academic-management-editor-heading"><div><small>Audited history</small><h3>Transfer or reassign</h3><p class="muted">Move an active student directly, or reassign a withdrawn student to a different classroom.</p></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="RevisionToken">
-      <label>Current membership<select name="RecordId" required>${academicSelectOptions(activeMemberships, '', (row) => `${academicLabel(data.students, row.StudentRef, row.StudentRef)} — ${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}`, 'Choose active membership')}</select></label>
+      <label>Current membership<select name="RecordId" required>${academicSelectOptions(movableMemberships, '', (row) => `${academicLabel(data.students, row.StudentRef, row.StudentRef)} — ${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}${clean(row.Status).toLowerCase() === 'withdrawn' ? ' — Withdrawn' : ''}`, 'Choose student membership')}</select></label>
       ${periodFields}${targetFields}
       <label>Effective date<input type="date" name="EffectiveDate" value="${new Date().toISOString().slice(0, 10)}" required></label>
       <label>Reason<textarea name="Reason" rows="3" required placeholder="Explain the approved class, arm or department change"></textarea></label>
-      <button type="submit">Record movement</button>
+      <button type="submit">Transfer or reassign student</button>
     </form>
     <form class="academic-management-editor academic-student-import-layout" data-academic-student-membership-import>
       <div class="academic-management-editor-heading"><div><small>Existing student migration</small><h3>Import class-arm memberships</h3><p class="muted">Enter each admission number, student name, reusable class code and arm code. If the student is not yet in the master register, a branch-scoped profile marked Needs completion will be created automatically. Senior department, Trade and Optional subject codes may be left blank and completed in the app.</p></div></div>
@@ -10846,8 +10846,8 @@ function bindAcademicManagement() {
     if (!record) return;
     if (!reinstate && !await window.DynamaxDialogs.confirm({
       title: 'Withdraw student membership',
-      message: 'This closes the student’s current-term membership but preserves the class and subject history.',
-      tone: 'danger', confirmText: 'Continue'
+      message: 'Withdrawal is for a student leaving the current term. To move a student between classrooms, use Transfer or change instead.',
+      tone: 'danger', confirmText: 'Withdraw anyway'
     })) return;
     const reason = clean(await window.DynamaxDialogs.prompt({
       title: reinstate ? 'Reinstate student membership' : 'Record withdrawal reason',
@@ -10860,7 +10860,7 @@ function bindAcademicManagement() {
       try {
         const data = await academicManagementRequest(reinstate ? 'reinstateAcademicStudentMembership' : 'withdrawAcademicStudentMembership', {
           RecordId: academicRecordId(record), RevisionToken: record.RevisionToken,
-          SchoolSection: record.SchoolSection, Reason, EffectiveDate: new Date().toISOString().slice(0, 10)
+          SchoolSection: record.SchoolSection, Reason: reason, EffectiveDate: new Date().toISOString().slice(0, 10)
         });
         renderAcademicManagement(data, data.message);
       } catch (error) {

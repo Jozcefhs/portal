@@ -502,6 +502,22 @@ test('subject-teacher allocations can be corrected atomically or permanently del
   assert.match(librarySource, /'offering', 'teacherallocation'/);
 });
 
+test('student withdrawal sends its reason and withdrawn memberships can be reassigned safely', () => {
+  const movementSource = librarySource.slice(
+    librarySource.indexOf('export async function manageAcademicStudentMembership'),
+    librarySource.indexOf('function activeDependants')
+  );
+  assert.match(adminSource, /Reason: reason, EffectiveDate/);
+  assert.doesNotMatch(adminSource, /SchoolSection: record\.SchoolSection, Reason, EffectiveDate/);
+  assert.match(adminSource, /const movableMemberships = rows\.studentMemberships\.filter/);
+  assert.match(adminSource, /Reassign to another classroom/);
+  assert.match(adminSource, /Withdrawal is for a student leaving the current term/);
+  assert.match(movementSource, /const reassigningWithdrawn = !reinstating/);
+  assert.match(movementSource, /active or withdrawn membership can be transferred or changed/);
+  assert.match(movementSource, /use Reinstate to restore the student to the original classroom/);
+  assert.match(movementSource, /reinstating \|\| reassigningWithdrawn/);
+});
+
 test('staff web workspace exposes responsive academic registers and online-only success', () => {
   assert.match(adminSource, /\['academics', 'Academic Management'\]/);
   assert.match(adminSource, /function renderAcademicManagement/);
@@ -633,7 +649,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
   assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-tabs button\{[^}]*font-size:12px/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260816-subject-teacher-corrections/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260816-student-reassignment-fix/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

@@ -1956,17 +1956,21 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
     };
   } else {
     const reinstating = operation === 'reinstate' || operation === 'reinstatement';
+    const reassigningWithdrawn = !reinstating && lower(existing.Status) === 'withdrawn';
     if (reinstating && lower(existing.Status) !== 'withdrawn') throw failure('Only a withdrawn membership can be reinstated.', 409);
-    if (!reinstating && !statusActive(existing)) throw failure('Only an active membership can be transferred or changed.', 409);
+    if (!reinstating && !statusActive(existing) && !reassigningWithdrawn) throw failure('Only an active or withdrawn membership can be transferred or changed.', 409);
     record = normalizeAcademicStudentMembership({
       ...input, SessionId: existing.SessionId, TermId: existing.TermId,
       StudentRef: existing.StudentRef, Status: 'Active'
     }, scope, existing);
     validateAcademicRecord(state, 'studentmembership', record, { ...people, existing });
+    if (reassigningWithdrawn && existing.ClassId === record.ClassId && existing.ArmId === record.ArmId) {
+      throw failure('Choose a different classroom, or use Reinstate to restore the student to the original classroom.');
+    }
     if (!reinstating && !membershipMateriallyChanged(existing, record)) {
       throw failure('Choose a different class, arm, department or subject allocation before recording a movement.');
     }
-    if (reinstating) {
+    if (reinstating || reassigningWithdrawn) {
       delete record.WithdrawalDate;
       delete record.WithdrawalReason;
     }
