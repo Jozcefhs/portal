@@ -10716,7 +10716,7 @@ function academicWorkflowPayload(form) {
     return {
       SchoolSection: 'secondary', SessionId: form.elements.SessionId.value, TermId: form.elements.TermId.value,
       ClassId: form.elements.ClassId.value, ArmId: form.elements.ArmId.value, Reason: form.elements.Reason.value,
-      Assignments
+      Assignments: assignments
     };
   }
   validateAcademicCheckboxFields(form);

@@ -626,6 +626,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /Core · locked/);
   assert.match(adminSource, /Trade · choose at least one/);
   assert.match(adminSource, /must have at least one Trade subject/);
+  assert.match(adminSource, /Assignments: assignments/);
   assert.doesNotMatch(adminSource, /name: 'SubjectIds', label: 'Optional subjects'/);
   assert.match(adminSource, /data-academic-student-placement="bulk"/);
   assert.doesNotMatch(adminSource, /data-academic-form="studentMembership"/);
@@ -721,7 +722,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /showAcademicManagementTask\('students', 'transfer'\)/);
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260816-senior-curriculum-isolation/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260816-arm-subject-assignment-fix/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
