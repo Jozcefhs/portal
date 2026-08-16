@@ -30,6 +30,7 @@ export const ACADEMIC_TERM_STATUSES = Object.freeze(['Planned', 'Active', 'Close
 export const ACADEMIC_RECORD_STATUSES = Object.freeze(['Active', 'Inactive', 'Archived']);
 export const ACADEMIC_MEMBERSHIP_STATUSES = Object.freeze(['Active', 'Inactive', 'Withdrawn', 'Archived']);
 export const ACADEMIC_SUBJECT_ROLES = Object.freeze(['Core', 'Trade', 'Optional']);
+export const ACADEMIC_SENIOR_CHOICE_ROLES = Object.freeze(['Trade', 'Optional']);
 export const ACADEMIC_STUDENT_IMPORT_COLUMNS = Object.freeze([
   'StudentRef', 'StudentName', 'ClassCode', 'ArmCode', 'DepartmentCode',
   'TradeSubjectCodes', 'OptionalSubjectCodes', 'Reason'
@@ -342,8 +343,12 @@ export function normalizeAcademicSubject(input = {}, context = {}, existing = nu
   const branchId = safeScopeId(context.branchId || input.BranchId || existing?.BranchId);
   const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || existing?.SchoolSection });
   const subjectId = clean(existing?.SubjectId || input.SubjectId || input.RecordId) || academicId('subject', branchId, section, code);
+  const seniorChoiceRole = input.SeniorChoiceRole === undefined
+    ? oneOf(existing?.SeniorChoiceRole, ACADEMIC_SENIOR_CHOICE_ROLES, '')
+    : oneOf(input.SeniorChoiceRole, ACADEMIC_SENIOR_CHOICE_ROLES, '');
   const record = {
     ...(existing || {}), RecordId: subjectId, SubjectId: subjectId, Name: name, Code: code,
+    SeniorChoiceRole: section === 'secondary' ? seniorChoiceRole : '',
     Status: oneOf(input.Status, ACADEMIC_RECORD_STATUSES, existing?.Status || 'Active'),
     BranchId: branchId, SchoolSection: section
   };
@@ -538,13 +543,6 @@ export function applyAcademicStudentCurriculum(state = {}, record = {}, options 
   const offerings = (state.offerings || []).filter((row) => statusActive(row)
     && row.SessionId === record.SessionId && row.TermId === record.TermId && row.ClassId === record.ClassId
     && (!row.ArmId || row.ArmId === record.ArmId));
-  const available = new Set(offerings.map((row) => row.SubjectId));
-  if (!offerings.length && options.allowIncompleteCurriculum !== true) {
-    throw failure('Offer subjects to this class or arm before allocating students.');
-  }
-  const requestedSubjects = uniqueIds(record.SubjectIds);
-  const invalidSubjects = requestedSubjects.filter((subjectId) => !available.has(subjectId));
-  if (invalidSubjects.length) throw failure('One or more selected subjects are not offered to this class or arm.');
   const roleBySubject = new Map();
   const rolePriority = { Optional: 1, Trade: 2, Core: 3 };
   offerings.forEach((offering) => {
@@ -552,6 +550,17 @@ export function applyAcademicStudentCurriculum(state = {}, record = {}, options 
     const current = roleBySubject.get(offering.SubjectId) || 'Optional';
     if (rolePriority[role] >= rolePriority[current]) roleBySubject.set(offering.SubjectId, role);
   });
+  const seniorChoiceSubjects = record.SchoolStage === 'senior-secondary'
+    ? (state.subjects || []).filter((subject) => statusActive(subject)
+      && subject.SchoolSection === 'secondary'
+      && ACADEMIC_SENIOR_CHOICE_ROLES.includes(subject.SeniorChoiceRole))
+    : [];
+  seniorChoiceSubjects.forEach((subject) => {
+    const role = subject.SeniorChoiceRole;
+    const current = roleBySubject.get(subject.SubjectId) || 'Optional';
+    if (rolePriority[role] >= rolePriority[current]) roleBySubject.set(subject.SubjectId, role);
+  });
+  const available = new Set([...offerings.map((row) => row.SubjectId), ...seniorChoiceSubjects.map((row) => row.SubjectId)]);
   const offeredCore = offerings.map((row) => row.SubjectId).filter((subjectId) => roleBySubject.get(subjectId) === 'Core');
   let coreSubjectIds = uniqueIds(offeredCore);
   if (record.SchoolStage === 'junior-secondary') {
@@ -565,19 +574,28 @@ export function applyAcademicStudentCurriculum(state = {}, record = {}, options 
     if (department) {
       assertReference(department, 'Choose an active senior secondary department for this student.');
       if (department.SchoolStage !== 'senior-secondary') throw failure('The selected department is not a Senior Secondary department.');
-      const missingCore = (department.CoreSubjectIds || []).filter((subjectId) => !available.has(subjectId));
-      if (missingCore.length && options.allowIncompleteCurriculum !== true) {
-        throw failure('Offer every department core subject to this senior class before allocating students.');
-      }
       coreSubjectIds = uniqueIds([...coreSubjectIds, ...(department.CoreSubjectIds || [])]);
+      coreSubjectIds.forEach((subjectId) => {
+        available.add(subjectId);
+        roleBySubject.set(subjectId, 'Core');
+      });
     }
   } else {
     record.DepartmentId = '';
   }
+  if (!available.size && options.allowIncompleteCurriculum !== true) {
+    throw failure(record.SchoolStage === 'senior-secondary'
+      ? 'Configure department core subjects and the Senior Trade subject list before allocating students.'
+      : 'Offer subjects to this class or arm before allocating students.');
+  }
+  const requestedSubjects = uniqueIds(record.SubjectIds);
+  const invalidSubjects = requestedSubjects.filter((subjectId) => !available.has(subjectId));
+  if (invalidSubjects.length) throw failure('One or more selected subjects are not available to this class or arm.');
   const coreSet = new Set(coreSubjectIds);
   const tradeAvailable = [...available].filter((subjectId) => !coreSet.has(subjectId) && roleBySubject.get(subjectId) === 'Trade');
   const tradeSet = new Set(tradeAvailable);
-  const optionalAvailable = [...available].filter((subjectId) => !coreSet.has(subjectId) && !tradeSet.has(subjectId));
+  const optionalAvailable = [...available].filter((subjectId) => !coreSet.has(subjectId)
+    && !tradeSet.has(subjectId) && roleBySubject.get(subjectId) === 'Optional');
   const optionalSet = new Set(optionalAvailable);
   const suppliedTrade = uniqueIds(record.TradeSubjectIds);
   const suppliedOptional = uniqueIds(record.OptionalSubjectIds);
@@ -590,7 +608,7 @@ export function applyAcademicStudentCurriculum(state = {}, record = {}, options 
   const selectedTrade = uniqueIds([...suppliedTrade, ...requestedSubjects.filter((subjectId) => tradeSet.has(subjectId))]);
   const selectedOptional = uniqueIds([...suppliedOptional, ...requestedSubjects.filter((subjectId) => optionalSet.has(subjectId))]);
   if (record.SchoolStage === 'senior-secondary' && options.requireTradeSelection === true) {
-    if (!tradeAvailable.length) throw failure('Configure at least one Trade subject for this Senior Secondary class or arm before completing subject selection.');
+    if (!tradeAvailable.length) throw failure('Configure at least one school-wide Senior Trade subject before completing subject selection.');
     if (!selectedTrade.length) throw failure('Every Senior Secondary student must select at least one Trade subject.');
   }
   record.CoreSubjectIds = coreSubjectIds;
@@ -827,7 +845,12 @@ function validateAcademicRecord(state, type, record, people = {}) {
         && row.SessionId === record.SessionId && row.TermId === record.TermId
         && row.ClassId === record.ClassId && row.SubjectId === record.SubjectId
         && (!row.ArmId || !record.ArmId || row.ArmId === record.ArmId));
-      if (!offering) throw failure('Offer this subject to the selected class or arm before allocating a teacher.');
+      const subject = findById(state.subjects, record.SubjectId);
+      const globallyAvailableSeniorChoice = record.SchoolStage === 'senior-secondary'
+        && ACADEMIC_SENIOR_CHOICE_ROLES.includes(subject?.SeniorChoiceRole);
+      if (!offering && !globallyAvailableSeniorChoice) {
+        throw failure('Offer this subject to the selected class or configure it as a school-wide Senior Trade or Optional subject before allocating a teacher.');
+      }
     }
   }
   if (type === 'studentmembership') {
@@ -1356,6 +1379,71 @@ export async function bulkCreateAcademicSubjects(env, user = {}, input = {}) {
     ? `${createdRecords.length} reusable subject${createdRecords.length === 1 ? '' : 's'} created online${skipped ? `; ${skipped} already matched and were skipped` : ''}.`
     : 'Every submitted subject already exists with the same settings.';
   response.bulkResult = { Requested: rows.length, Created: createdRecords.length, Skipped: skipped };
+  return response;
+}
+
+export async function configureAcademicSeniorChoiceSubjects(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageStructure');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  if (scope.section !== 'secondary') {
+    throw failure('Senior Trade and Optional subjects can be configured only in the Secondary school section.');
+  }
+  const tradeSubjectIds = uniqueIds(input.TradeSubjectIds || input.TradeSubjectId);
+  const optionalSubjectIds = uniqueIds(input.OptionalSubjectIds || input.OptionalSubjectId);
+  if (!tradeSubjectIds.length) throw failure('Choose at least one school-wide Senior Trade subject.');
+  const tradeSet = new Set(tradeSubjectIds);
+  const overlap = optionalSubjectIds.filter((subjectId) => tradeSet.has(subjectId));
+  if (overlap.length) throw failure('A subject cannot be both Trade and Optional. Choose only one category for each subject.');
+
+  const state = await loadAcademicState(env, scope.branchId);
+  const configuredIds = new Set([...tradeSubjectIds, ...optionalSubjectIds]);
+  configuredIds.forEach((subjectId) => {
+    const subject = assertReference(findById(state.subjects, subjectId), 'Every selected Senior choice subject must be active.');
+    if (lower(subject.SchoolSection) !== 'secondary') {
+      throw failure('Every selected Senior choice subject must belong to the Secondary subject catalogue.');
+    }
+  });
+
+  const writes = [];
+  let updated = 0;
+  state.subjects.filter((subject) => lower(subject.SchoolSection) === 'secondary').forEach((subject) => {
+    const desiredRole = tradeSet.has(subject.SubjectId)
+      ? 'Trade'
+      : optionalSubjectIds.includes(subject.SubjectId) ? 'Optional' : '';
+    if (clean(subject.SeniorChoiceRole) === desiredRole) return;
+    const record = normalizeAcademicSubject({
+      ...subject,
+      SeniorChoiceRole: desiredRole
+    }, scope, subject);
+    stampAcademicRecord(record, user, subject);
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.subjects,
+      documentId: record.SubjectId,
+      data: withoutMetadata(record),
+      updateTime: subject.__updateTime
+    });
+    updated += 1;
+  });
+  if (updated) writes.push(auditWrite(user, 'CONFIGURE', 'subject', {
+    BranchId: scope.branchId,
+    SchoolSection: scope.section,
+    SubjectId: `senior-choices-${Date.now()}`
+  }, `${tradeSubjectIds.length} school-wide Senior Trade subject(s) and ${optionalSubjectIds.length} Optional subject(s) configured.`));
+  await commitAcademicBatch(env, writes, 'The subject catalogue changed while Senior choices were being saved. Reload and try again.');
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input,
+    BranchId: scope.branchId,
+    SchoolSection: scope.section
+  });
+  response.message = updated
+    ? 'Senior Trade and Optional subjects saved online and made available to every Senior classroom.'
+    : 'Senior Trade and Optional subjects already match the saved configuration.';
+  response.seniorChoiceResult = {
+    TradeSubjects: tradeSubjectIds.length,
+    OptionalSubjects: optionalSubjectIds.length,
+    Updated: updated
+  };
   return response;
 }
 
@@ -2182,6 +2270,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['bulkcreateacademicarmtemplates', 'bulkcreatearmtemplates'].includes(action)) return bulkCreateAcademicArmTemplates(env, user, input);
   if (['bulkapplyacademicarmtemplates', 'bulkapplyarmtemplates'].includes(action)) return bulkApplyAcademicArmTemplates(env, user, input);
   if (['bulkcreateacademicsubjects', 'bulkcreatesubjects'].includes(action)) return bulkCreateAcademicSubjects(env, user, input);
+  if (['configureacademicseniorchoicesubjects', 'configureseniorchoicesubjects'].includes(action)) return configureAcademicSeniorChoiceSubjects(env, user, input);
   if (['bulkapplyacademicsubjects', 'bulkapplysubjects'].includes(action)) return bulkApplyAcademicSubjects(env, user, input);
   if (['bulkassignacademicsubjectteacher', 'bulkassignsubjectteacher'].includes(action)) return bulkAssignAcademicSubjectTeacher(env, user, input);
   if (['updateacademicsubjectteacherallocation', 'updatesubjectteacherallocation'].includes(action)) return updateAcademicSubjectTeacherAllocation(env, user, input);

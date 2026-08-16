@@ -127,6 +127,19 @@ test('AM-002 subjects are bulk-created once and reused through class offerings',
   assert.throws(() => parseAcademicSubjectBatch({ SubjectLines: 'Mathematics MATH Core' }), /Line 1 is not in the required format/);
 });
 
+test('AM-002 reusable Secondary subjects carry one school-wide Senior choice role', () => {
+  const trade = normalizeAcademicSubject({ Name: 'Catering Craft', Code: 'CATER', SeniorChoiceRole: 'Trade' }, scope);
+  const optional = normalizeAcademicSubject({ Name: 'Music', Code: 'MUSIC', SeniorChoiceRole: 'Optional' }, scope);
+  const primary = normalizeAcademicSubject(
+    { Name: 'Creative Arts', Code: 'CCA', SeniorChoiceRole: 'Trade' },
+    { ...scope, section: 'primary' }
+  );
+
+  assert.equal(trade.SeniorChoiceRole, 'Trade');
+  assert.equal(optional.SeniorChoiceRole, 'Optional');
+  assert.equal(primary.SeniorChoiceRole, '');
+});
+
 test('AM-003 permanent deletion detects current and historical academic references', () => {
   const state = {
     classes: [{ ClassId: 'jss-2', NextClassId: 'jss-3' }],
@@ -282,9 +295,10 @@ test('AM-002 Junior takes all offerings while Senior inherits department core su
   assert.equal(junior.DepartmentId, '');
   assert.deepEqual(junior.SubjectIds, ['english', 'physics', 'music']);
   assert.deepEqual(senior.SubjectIds, ['music', 'english', 'physics']);
-  assert.throws(() => applyAcademicStudentCurriculum({ offerings: offerings.filter((row) => row.SubjectId !== 'physics'), departments }, {
+  const seniorWithoutDuplicatedCoreOffering = applyAcademicStudentCurriculum({ offerings: offerings.filter((row) => row.SubjectId !== 'physics'), departments }, {
     ...base, SchoolStage: 'senior-secondary', DepartmentId: 'science', SubjectIds: []
-  }), /Offer every department core subject/);
+  });
+  assert.deepEqual(seniorWithoutDuplicatedCoreOffering.CoreSubjectIds, ['english', 'physics']);
   const incompleteSenior = applyAcademicStudentCurriculum({ offerings: [], departments }, {
     ...base, SchoolStage: 'senior-secondary', DepartmentId: 'science', SubjectIds: []
   }, { allowIncompleteCurriculum: true });
@@ -295,10 +309,12 @@ test('AM-002 Junior takes all offerings while Senior inherits department core su
 test('AM-002 Senior arm subjects lock core, require Trade and retain optional selections', () => {
   const state = {
     offerings: [
-      { SessionId: 'session-1', TermId: 'term-1', ClassId: 'sss-1', ArmId: '', SubjectId: 'english', SubjectRole: 'Core', Status: 'Active' },
-      { SessionId: 'session-1', TermId: 'term-1', ClassId: 'sss-1', ArmId: '', SubjectId: 'physics', SubjectRole: 'Optional', Status: 'Active' },
-      { SessionId: 'session-1', TermId: 'term-1', ClassId: 'sss-1', ArmId: '', SubjectId: 'catering', SubjectRole: 'Trade', Status: 'Active' },
-      { SessionId: 'session-1', TermId: 'term-1', ClassId: 'sss-1', ArmId: '', SubjectId: 'music', SubjectRole: 'Optional', Status: 'Active' }
+      { SessionId: 'session-1', TermId: 'term-1', ClassId: 'sss-1', ArmId: '', SubjectId: 'english', SubjectRole: 'Core', Status: 'Active' }
+    ],
+    subjects: [
+      { SubjectId: 'physics', SchoolSection: 'secondary', SeniorChoiceRole: 'Optional', Status: 'Active' },
+      { SubjectId: 'catering', SchoolSection: 'secondary', SeniorChoiceRole: 'Trade', Status: 'Active' },
+      { SubjectId: 'music', SchoolSection: 'secondary', SeniorChoiceRole: 'Optional', Status: 'Active' }
     ],
     departments: [{ DepartmentId: 'science', SchoolStage: 'senior-secondary', CoreSubjectIds: ['physics'], Status: 'Active' }]
   };
@@ -415,6 +431,9 @@ test('Academic writes are audited, optimistic and preserve legacy class/student 
   assert.match(librarySource, /Imported into Academic Management/);
   assert.match(librarySource, /Update at most 200 student subject selections in one arm batch/);
   assert.match(librarySource, /ACADEMIC_SUBJECT_ROLES/);
+  assert.match(librarySource, /ACADEMIC_SENIOR_CHOICE_ROLES/);
+  assert.match(librarySource, /configureAcademicSeniorChoiceSubjects/);
+  assert.match(librarySource, /SeniorChoiceRole/);
   assert.match(librarySource, /Every Senior Secondary student must select at least one Trade subject/);
   assert.match(librarySource, /ACADEMIC_STUDENT_CLASS_MISMATCH/);
   assert.match(librarySource, /AcademicClassId: academicStudentClassId\(row, classes\)/);
@@ -446,6 +465,7 @@ test('Web and desktop transports share one protected Academic Management handler
   assert.match(backendSource, /case 'bulkCreateAcademicArmTemplates'/);
   assert.match(backendSource, /case 'bulkApplyAcademicArmTemplates'/);
   assert.match(backendSource, /case 'bulkCreateAcademicSubjects'/);
+  assert.match(backendSource, /case 'configureAcademicSeniorChoiceSubjects'/);
   assert.match(backendSource, /case 'bulkApplyAcademicSubjects'/);
   assert.match(backendSource, /case 'bulkAssignAcademicSubjectTeacher'/);
   assert.match(backendSource, /case 'updateAcademicSubjectTeacherAllocation'/);
@@ -599,6 +619,12 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /data-academic-workflow="bulkApplyAcademicArmTemplates"/);
   assert.match(adminSource, /data-academic-workflow="bulkCreateAcademicSubjects"/);
   assert.match(adminSource, /data-academic-workflow="bulkApplyAcademicSubjects"/);
+  assert.match(adminSource, /data-academic-workflow="configureAcademicSeniorChoiceSubjects"/);
+  assert.match(adminSource, /name: 'TradeSubjectIds', label: 'Trade subjects'/);
+  assert.match(adminSource, /name: 'OptionalSubjectIds', label: 'Optional subjects'/);
+  assert.match(adminSource, /every current and future Senior Secondary classroom/);
+  assert.match(adminSource, /subject\.SeniorChoiceRole === 'Trade'/);
+  assert.match(adminSource, /subject\.SeniorChoiceRole === 'Optional'/);
   assert.match(adminSource, /Select subjects applicable to Junior Secondary/);
   assert.match(adminSource, /name: 'ClassIds', label: 'Junior Secondary classes'/);
   assert.match(adminSource, /name: 'SubjectIds', label: 'Applicable Junior Secondary subjects'/);
@@ -655,7 +681,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /showAcademicManagementTask\('students', 'transfer'\)/);
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260816-academic-workspace-layout/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260816-senior-choice-subjects/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

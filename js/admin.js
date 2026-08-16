@@ -137,7 +137,7 @@ let academicManagementData = null;
 let academicManagementView = 'classrooms';
 let academicManagementTaskViews = {
   classrooms: 'register', structure: 'classes', bulkSetup: 'classes', departments: 'register',
-  offerings: 'offer', teachers: 'assign', students: 'allocate'
+  offerings: 'seniorChoices', teachers: 'assign', students: 'allocate'
 };
 let academicManagementFilters = { section: '', sessionId: '', termId: '' };
 let academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
@@ -9573,6 +9573,14 @@ function academicStudentSubjectProfile(data, membership) {
     const current = roles.get(offering.SubjectId);
     if (!current || rolePriority[role] > rolePriority[current]) roles.set(offering.SubjectId, role);
   });
+  if (stage === 'senior-secondary') {
+    (data.subjects || []).filter((subject) => academicIsActive(subject)
+      && ['Trade', 'Optional'].includes(subject.SeniorChoiceRole)).forEach((subject) => {
+      const role = subject.SeniorChoiceRole;
+      const current = roles.get(subject.SubjectId);
+      if (!current || rolePriority[role] > rolePriority[current]) roles.set(subject.SubjectId, role);
+    });
+  }
   const department = academicFind(data.departments || [], membership.DepartmentId);
   (department?.CoreSubjectIds || []).forEach((subjectId) => roles.set(subjectId, 'Core'));
   const idsFor = (role) => [...roles.entries()].filter(([, value]) => value === role).map(([subjectId]) => subjectId);
@@ -9833,7 +9841,8 @@ function academicTaskDefinitions(view, root) {
       { key: 'manage', label: 'Create or edit', title: 'Create or edit a department', description: 'Define a department and select the subjects that are core for its students.', nodes: nodes(form('[data-academic-form="department"]')) }
     ],
     offerings: [
-      { key: 'offer', label: 'Offer a subject', title: 'Create a class subject offering', description: 'Choose the exact period, class, arm, subject and curriculum role.', nodes: nodes(form('[data-academic-form="offering"]')) },
+      { key: 'seniorChoices', label: 'Senior choices', title: 'Senior Trade and Optional subjects', description: 'Select reusable subjects once and make them available for student choice in every Senior classroom.', nodes: nodes(form('[data-academic-senior-choice-subjects]')) },
+      { key: 'offer', label: 'Class exception', title: 'Create a class-specific subject offering', description: 'Use this only when a subject applies to one class, arm or academic period.', nodes: nodes(form('[data-academic-form="offering"]')) },
       { key: 'junior', label: 'Junior curriculum', title: 'Junior Secondary subjects', description: 'Apply the compulsory subject set to one or more Junior Secondary classes.', nodes: nodes(form('[data-academic-workflow="bulkApplyAcademicSubjects"]')) },
       { key: 'register', label: 'Offering register', title: 'Saved subject offerings', description: 'Review, correct or remove class subject offerings.', nodes: nodes(register('Subject Offerings')) }
     ],
@@ -10161,6 +10170,7 @@ function academicStructureWorkspace(data, rows) {
       ], { emptyMessage: 'No reusable arm has been applied to a class yet. Use Apply to classes in the Reusable Arm Catalogue above.' })}
       ${table('Reusable Subject Catalogue', rows.subjects, [
         { label: 'Code', value: (row) => row.Code }, { label: 'Subject', value: (row) => row.Name },
+        { label: 'Senior choice', value: (row) => row.SeniorChoiceRole || 'General / department Core' },
         { label: 'Status', value: (row) => row.Status },
         { label: 'Actions', render: (row) => academicActionButtons('subject', row, canManage, permissions.canArchive, permissions.canDelete) }
       ])}
@@ -10257,7 +10267,7 @@ function academicDepartmentsWorkspace(data, rows) {
     ${academicCheckboxField({
       name: 'CoreSubjectIds', label: 'Department core subjects', required: true, idPrefix: 'department-core-subjects',
       options: subjects.map((row) => ({ value: row.SubjectId, label: `${row.Code} - ${row.Name}` })),
-      help: 'These subjects apply to every Senior Secondary student assigned to this department, regardless of class. They must also be offered to each applicable class or arm.'
+      help: 'These subjects apply automatically to every Senior Secondary student assigned to this department, regardless of class. Core subjects do not need a separate class offering.'
     })}
     <button type="submit">Save department</button>
   </form>` : '<div class="academic-view-only-note"><strong>Senior Secondary departments</strong><span>Your role can view department core subjects but cannot change them.</span></div>';
@@ -10278,6 +10288,23 @@ function academicOfferingsWorkspace(data, rows) {
   const arms = rows.arms.filter(academicIsActive);
   const subjects = rows.subjects.filter(academicIsActive);
   const juniorClasses = classes.filter((row) => clean(row.SchoolStage).toLowerCase() === 'junior-secondary');
+  const seniorChoiceForm = canManage && academicManagementFilters.section === 'secondary' ? `
+    <form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="configureAcademicSeniorChoiceSubjects" data-academic-senior-choice-subjects>
+      <div class="academic-management-editor-heading"><div><small>School-wide Senior curriculum</small><h3>Configure Senior subject choices</h3><p class="muted">Choose from the reusable subject catalogue once. These Trade and Optional subjects become available to students in every current and future Senior Secondary classroom.</p></div></div>
+      <input type="hidden" name="SchoolSection" value="secondary">
+      ${academicCheckboxField({
+        name: 'TradeSubjectIds', label: 'Trade subjects', required: true, idPrefix: 'senior-choice-trade-subjects',
+        options: subjects.map((row) => ({ value: row.SubjectId, label: `${row.Code} - ${row.Name}` })),
+        help: 'Every Senior student must choose at least one of these subjects. Trade subjects are not tied to a department.'
+      })}
+      ${academicCheckboxField({
+        name: 'OptionalSubjectIds', label: 'Optional subjects', idPrefix: 'senior-choice-optional-subjects',
+        options: subjects.map((row) => ({ value: row.SubjectId, label: `${row.Code} - ${row.Name}` })),
+        help: 'Students may choose any applicable Optional subjects from this school-wide list. A subject cannot be both Trade and Optional.'
+      })}
+      <p class="muted">Department Core subjects remain configured in Senior departments. They are checked and locked automatically for each student.</p>
+      <button type="submit">Save Senior subject choices</button>
+    </form>` : '';
   const juniorCurriculumForm = canManage && academicManagementFilters.section === 'secondary' ? `
     <form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="bulkApplyAcademicSubjects">
       <div class="academic-management-editor-heading"><div><small>Junior Secondary curriculum</small><h3>Select subjects applicable to Junior Secondary</h3><p class="muted">Select the JSS classes and reusable subjects below. Every selected subject is assigned to every selected class and is compulsory for all students in those classes.</p></div></div>
@@ -10314,7 +10341,7 @@ function academicOfferingsWorkspace(data, rows) {
     <p class="muted">Junior Secondary offerings become Core automatically. A Senior department's core subjects are also locked for every student assigned to that department.</p>
     <button type="submit">Save subject offering</button>
   </form>` : '';
-  return `${juniorCurriculumForm}${form}${table('Subject Offerings', rows.offerings, [
+  return `${seniorChoiceForm}${juniorCurriculumForm}${form}${table('Subject Offerings', rows.offerings, [
     { label: 'Class', value: (row) => academicLabel(rows.classes, row.ClassId) },
     { label: 'Division', value: (row) => academicSchoolStageLabel(academicFind(rows.classes, row.ClassId)?.SchoolStage) },
     { label: 'Arm', value: (row) => row.ArmId ? academicLabel(rows.arms, row.ArmId) : 'All arms' },
@@ -10437,10 +10464,10 @@ function academicArmSubjectRegister(data, rows, canManage) {
   const help = !classId ? 'Choose a Senior Secondary class.'
     : !armId ? 'Choose a class arm to display its assigned students.'
       : !memberships.length ? 'No students are assigned to this arm for the selected period.'
-        : !tradeConfigured ? 'Configure at least one Trade subject offering for this class or arm before saving student selections.'
+        : !tradeConfigured ? 'Configure at least one school-wide Senior Trade subject before saving student selections.'
           : `${memberships.length} assigned student${memberships.length === 1 ? '' : 's'} shown. Core subjects are already selected and cannot be cleared.`;
   const body = canManage ? `<form class="academic-management-editor academic-management-editor-wide academic-arm-subject-register" data-academic-workflow="bulkAssignAcademicArmStudentSubjects" data-academic-arm-subject-register>
-    <div class="academic-management-editor-heading"><div><small>Senior Secondary arm curriculum</small><h3>Assign Trade and Optional subjects</h3><p class="muted">Open an arm after placement. Department and offering core subjects are checked and locked for each student; select at least one Trade subject and any Optional subjects they offer.</p></div></div>
+    <div class="academic-management-editor-heading"><div><small>Senior Secondary arm curriculum</small><h3>Assign Trade and Optional subjects</h3><p class="muted">Open an arm after placement. Department Core subjects are checked and locked for each student; select from the school-wide Trade and Optional subject lists.</p></div></div>
     <input type="hidden" name="SchoolSection" value="secondary">
     <div class="academic-management-form-grid academic-management-form-grid-4">
       <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, sessionId, (row) => row.Name, 'Choose session')}</select></label>
@@ -10685,6 +10712,12 @@ function academicWorkflowPayload(form) {
     const name = field.dataset.academicCheckboxName;
     payload[name] = academicCheckedValues(form, name);
   });
+  if (form.dataset.academicWorkflow === 'configureAcademicSeniorChoiceSubjects') {
+    const tradeSubjects = new Set(payload.TradeSubjectIds || []);
+    if ((payload.OptionalSubjectIds || []).some((subjectId) => tradeSubjects.has(subjectId))) {
+      throw new Error('A subject cannot be both Trade and Optional. Choose only one category for each subject.');
+    }
+  }
   return payload;
 }
 
@@ -10734,6 +10767,23 @@ function populateAcademicForm(type, record) {
 
 function bindAcademicManagement() {
   panelEl.querySelectorAll('[data-academic-checkbox-field]').forEach(bindAcademicCheckboxField);
+  const seniorChoiceForm = panelEl.querySelector('[data-academic-senior-choice-subjects]');
+  if (seniorChoiceForm) {
+    setAcademicCheckedValues(seniorChoiceForm, 'TradeSubjectIds', (academicManagementData?.subjects || [])
+      .filter((subject) => academicIsActive(subject) && subject.SeniorChoiceRole === 'Trade').map((subject) => subject.SubjectId));
+    setAcademicCheckedValues(seniorChoiceForm, 'OptionalSubjectIds', (academicManagementData?.subjects || [])
+      .filter((subject) => academicIsActive(subject) && subject.SeniorChoiceRole === 'Optional').map((subject) => subject.SubjectId));
+    seniorChoiceForm.addEventListener('change', (event) => {
+      const selected = event.target.closest('input[type="checkbox"]:checked');
+      if (!selected || !seniorChoiceForm.contains(selected)) return;
+      const otherName = selected.name === 'TradeSubjectIds' ? 'OptionalSubjectIds' : 'TradeSubjectIds';
+      const duplicate = [...seniorChoiceForm.querySelectorAll(`input[name="${otherName}"]`)]
+        .find((input) => input.value === selected.value);
+      if (!duplicate?.checked) return;
+      duplicate.checked = false;
+      updateAcademicCheckboxCount(duplicate.closest('[data-academic-checkbox-field]'));
+    });
+  }
   panelEl.querySelectorAll('[data-academic-task]').forEach((button) => button.addEventListener('click', () => {
     showAcademicManagementTask(academicManagementView, button.dataset.academicTask, { focus: true });
   }));
@@ -10755,6 +10805,7 @@ function bindAcademicManagement() {
   document.getElementById('refreshAcademicManagement')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', () => loadAcademicManagement()));
   document.getElementById('academicManagementSection')?.addEventListener('change', (event) => {
     academicManagementFilters.section = event.target.value;
+    academicManagementTaskViews.offerings = event.target.value === 'secondary' ? 'seniorChoices' : 'offer';
     academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
     academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
     academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
