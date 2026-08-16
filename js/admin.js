@@ -9833,8 +9833,7 @@ function academicTaskDefinitions(view, root) {
       { key: 'classes', label: 'Build classes', title: 'Create classes in bulk', description: 'Paste several reusable class definitions and create them in one operation.', nodes: nodes(form('[data-academic-workflow="bulkCreateAcademicClasses"]')) },
       { key: 'arms', label: 'Build arms', title: 'Create reusable arms', description: 'Bulk-create arm definitions or correct one existing definition.', nodes: nodes(form('[data-academic-workflow="bulkCreateAcademicArmTemplates"]'), form('[data-academic-form="armTemplate"]'), register('Reusable Arm Catalogue')) },
       { key: 'applyArms', label: 'Apply arms', title: 'Apply arms to classes', description: 'Select the class and reusable arm combinations that should become classrooms.', nodes: nodes(form('[data-academic-workflow="bulkApplyAcademicArmTemplates"]')) },
-      { key: 'subjects', label: 'Build subjects', title: 'Create subjects in bulk', description: 'Add several reusable subjects and their stable codes at once.', nodes: nodes(form('[data-academic-workflow="bulkCreateAcademicSubjects"]')) },
-      { key: 'applySubjects', label: 'Apply subjects', title: 'Apply subjects to classes', description: 'Create the selected class-subject combinations for the academic period.', nodes: nodes(form('[data-academic-workflow="bulkApplyAcademicSubjects"]')) }
+      { key: 'subjects', label: 'Build subjects', title: 'Create subjects in bulk', description: 'Add several reusable subjects and their stable codes at once.', nodes: nodes(form('[data-academic-workflow="bulkCreateAcademicSubjects"]')) }
     ],
     departments: [
       { key: 'register', label: 'Department register', title: 'Senior Secondary departments', description: 'Review departments and their core subject sets.', nodes: nodes(register('Senior Secondary Departments')) },
@@ -9843,7 +9842,7 @@ function academicTaskDefinitions(view, root) {
     offerings: [
       { key: 'seniorChoices', label: 'Senior choices', title: 'Senior Trade and Optional subjects', description: 'Select reusable subjects once and make them available for student choice in every Senior classroom.', nodes: nodes(form('[data-academic-senior-choice-subjects]')) },
       { key: 'offer', label: 'Class exception', title: 'Create a class-specific subject offering', description: 'Use this only when a subject applies to one class, arm or academic period.', nodes: nodes(form('[data-academic-form="offering"]')) },
-      { key: 'junior', label: 'Junior curriculum', title: 'Junior Secondary subjects', description: 'Apply the compulsory subject set to one or more Junior Secondary classes.', nodes: nodes(form('[data-academic-workflow="bulkApplyAcademicSubjects"]')) },
+      { key: 'curriculum', label: sectionName === 'secondary' ? 'Junior curriculum' : 'Primary curriculum', title: sectionName === 'secondary' ? 'Junior Secondary subjects' : 'Primary subjects', description: `Apply the compulsory subject set to one or more ${sectionName === 'secondary' ? 'Junior Secondary' : 'Primary'} classes.`, nodes: nodes(form('[data-academic-workflow="bulkApplyAcademicSubjects"]')) },
       { key: 'register', label: 'Offering register', title: 'Saved subject offerings', description: 'Review, correct or remove class subject offerings.', nodes: nodes(register('Subject Offerings')) }
     ],
     teachers: [
@@ -10182,9 +10181,6 @@ function academicBulkSetupWorkspace(data, rows) {
   if (!canManage) return '<div class="academic-view-only-note"><strong>Bulk academic setup</strong><span>Your role cannot change the class or reusable arm catalogue.</span></div>';
   const classes = rows.classes.filter(academicIsActive);
   const templates = rows.armTemplates.filter(academicIsActive);
-  const subjects = rows.subjects.filter(academicIsActive);
-  const sessions = rows.sessions.filter(academicIsActive);
-  const terms = rows.terms.filter(academicIsActive);
   const secondary = academicManagementFilters.section === 'secondary';
   const classExample = secondary
     ? 'JSS 1 | JSS1 | Junior Secondary | 120\nJSS 2 | JSS2 | Junior Secondary | 120\nSS 1 | SS1 | Senior Secondary | 120'
@@ -10194,7 +10190,6 @@ function academicBulkSetupWorkspace(data, rows) {
     : 'One class per line: Name | Code | Capacity.';
   const classOptions = classes.map((row) => ({ value: row.ClassId, label: `${row.Code} - ${row.Name}` }));
   const templateOptions = templates.map((row) => ({ value: row.ArmTemplateId, label: `${row.Code} - ${row.Name}` }));
-  const subjectOptions = subjects.map((row) => ({ value: row.SubjectId, label: `${row.Code} - ${row.Name}` }));
   return `<div class="academic-management-editor-grid">
     <form class="academic-management-editor" data-academic-workflow="bulkCreateAcademicClasses">
       <div class="academic-management-editor-heading"><div><small>Up to 50 at once</small><h3>Build class catalogue</h3></div></div>
@@ -10229,16 +10224,6 @@ function academicBulkSetupWorkspace(data, rows) {
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
       <label>Subject definitions<textarea name="SubjectLines" rows="9" required placeholder="Mathematics | MATH&#10;English Language | ENG&#10;Computer Studies | COMP"></textarea><small>One subject per line: Name | Code. Create a subject once for this school section, then reuse it across classes, departments and teacher allocations. Core subjects are selected inside each Senior Secondary department.</small></label>
       <button type="submit">Create all reusable subjects</button>
-    </form>
-    <form class="academic-management-editor" data-academic-workflow="bulkApplyAcademicSubjects">
-      <div class="academic-management-editor-heading"><div><small>Up to 200 combinations</small><h3>Apply subjects to classes</h3></div></div>
-      <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
-      <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
-      <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
-      ${academicCheckboxField({ name: 'ClassIds', label: 'Classes', options: classOptions, required: true, idPrefix: 'subject-application-classes', help: 'Every selected subject will be offered to every selected class for this term.' })}
-      ${academicCheckboxField({ name: 'SubjectIds', label: 'Reusable subjects', options: subjectOptions, required: true, idPrefix: 'subject-application-subjects', help: 'The subject records remain reusable; this creates term-specific class offerings without duplicating the catalogue.' })}
-      <label>Subject role<select name="SubjectRole"><option>Core</option><option>Trade</option><option>Optional</option></select><small>Junior Secondary offerings become Core automatically. Trade is available only to Senior Secondary.</small></label>
-      <button type="submit">Apply selected subjects</button>
     </form>
   </div>
   ${table('Reusable Arm Catalogue', rows.armTemplates, [
@@ -10291,6 +10276,8 @@ function academicOfferingsWorkspace(data, rows) {
   const arms = rows.arms.filter(academicIsActive);
   const subjects = rows.subjects.filter(academicIsActive);
   const juniorClasses = classes.filter((row) => clean(row.SchoolStage).toLowerCase() === 'junior-secondary');
+  const secondary = academicManagementFilters.section === 'secondary';
+  const curriculumClasses = secondary ? juniorClasses : classes;
   const coreUsage = new Map();
   rows.departments.filter(academicIsActive).forEach((department) => {
     (department.CoreSubjectIds || []).forEach((subjectId) => {
@@ -10307,7 +10294,7 @@ function academicOfferingsWorkspace(data, rows) {
       disabled: departments.length > 0
     };
   });
-  const seniorChoiceForm = canManage && academicManagementFilters.section === 'secondary' ? `
+  const seniorChoiceForm = canManage && secondary ? `
     <form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="configureAcademicSeniorChoiceSubjects" data-academic-senior-choice-subjects>
       <div class="academic-management-editor-heading"><div><small>School-wide Senior curriculum</small><h3>Configure Senior subject choices</h3><p class="muted">Choose from the reusable subject catalogue once. These Trade and Optional subjects become available to students in every current and future Senior Secondary classroom.</p></div></div>
       <input type="hidden" name="SchoolSection" value="secondary">
@@ -10324,26 +10311,26 @@ function academicOfferingsWorkspace(data, rows) {
       <p class="muted">Department Core subjects remain configured in Senior departments. They are checked and locked automatically for each student.</p>
       <button type="submit">Save Senior subject choices</button>
     </form>` : '';
-  const juniorCurriculumForm = canManage && academicManagementFilters.section === 'secondary' ? `
+  const compulsoryCurriculumForm = canManage ? `
     <form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="bulkApplyAcademicSubjects">
-      <div class="academic-management-editor-heading"><div><small>Junior Secondary curriculum</small><h3>Select subjects applicable to Junior Secondary</h3><p class="muted">Select the JSS classes and reusable subjects below. Every selected subject is assigned to every selected class and is compulsory for all students in those classes.</p></div></div>
-      <input type="hidden" name="SchoolSection" value="secondary">
+      <div class="academic-management-editor-heading"><div><small>${secondary ? 'Junior Secondary' : 'Primary'} curriculum</small><h3>Select subjects applicable to ${secondary ? 'Junior Secondary' : 'Primary'}</h3><p class="muted">Select the ${secondary ? 'JSS' : 'Primary'} classes and reusable subjects below. Every selected subject is assigned to every selected class and is compulsory for all students in those classes.</p></div></div>
+      <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
       <input type="hidden" name="SubjectRole" value="Core">
       <div class="academic-management-form-grid">
         <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
         <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
       </div>
       ${academicCheckboxField({
-        name: 'ClassIds', label: 'Junior Secondary classes', required: true, idPrefix: 'junior-curriculum-classes',
-        options: juniorClasses.map((row) => ({ value: row.ClassId, label: `${row.Code} - ${row.Name}` })),
-        help: juniorClasses.length ? 'Choose one or more JSS classes that use this subject set.' : 'Create or classify at least one Junior Secondary class first.'
+        name: 'ClassIds', label: secondary ? 'Junior Secondary classes' : 'Primary classes', required: true, idPrefix: 'compulsory-curriculum-classes',
+        options: curriculumClasses.map((row) => ({ value: row.ClassId, label: `${row.Code} - ${row.Name}` })),
+        help: curriculumClasses.length ? `Choose one or more ${secondary ? 'JSS' : 'Primary'} classes that use this subject set.` : `Create or classify at least one ${secondary ? 'Junior Secondary' : 'Primary'} class first.`
       })}
       ${academicCheckboxField({
-        name: 'SubjectIds', label: 'Applicable Junior Secondary subjects', required: true, idPrefix: 'junior-curriculum-subjects',
+        name: 'SubjectIds', label: secondary ? 'Applicable Junior Secondary subjects' : 'Applicable Primary subjects', required: true, idPrefix: 'compulsory-curriculum-subjects',
         options: subjects.map((row) => ({ value: row.SubjectId, label: `${row.Code} - ${row.Name}` })),
-        help: 'Choose every subject taken by students in the selected JSS classes. Existing matching assignments are retained and skipped safely.'
+        help: `Choose every subject taken by students in the selected ${secondary ? 'JSS' : 'Primary'} classes. Existing matching assignments are retained and skipped safely.`
       })}
-      <button type="submit">Apply subjects to selected JSS classes</button>
+      <button type="submit">Apply subjects to selected ${secondary ? 'JSS' : 'Primary'} classes</button>
     </form>` : '';
   const form = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-form="offering">
     ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Curriculum delivery</small><h3>Offer a subject</h3></div><button type="button" class="academic-form-reset" data-academic-reset="offering">Clear</button></div>
@@ -10360,7 +10347,7 @@ function academicOfferingsWorkspace(data, rows) {
     <p class="muted">Junior Secondary offerings become Core automatically. A Senior department's core subjects are also locked for every student assigned to that department.</p>
     <button type="submit">Save subject offering</button>
   </form>` : '';
-  return `${seniorChoiceForm}${juniorCurriculumForm}${form}${table('Subject Offerings', rows.offerings, [
+  return `${seniorChoiceForm}${compulsoryCurriculumForm}${form}${table('Subject Offerings', rows.offerings, [
     { label: 'Class', value: (row) => academicLabel(rows.classes, row.ClassId) },
     { label: 'Division', value: (row) => academicSchoolStageLabel(academicFind(rows.classes, row.ClassId)?.SchoolStage) },
     { label: 'Arm', value: (row) => row.ArmId ? academicLabel(rows.arms, row.ArmId) : 'All arms' },
@@ -10824,7 +10811,7 @@ function bindAcademicManagement() {
   document.getElementById('refreshAcademicManagement')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', () => loadAcademicManagement()));
   document.getElementById('academicManagementSection')?.addEventListener('change', (event) => {
     academicManagementFilters.section = event.target.value;
-    academicManagementTaskViews.offerings = event.target.value === 'secondary' ? 'seniorChoices' : 'offer';
+    academicManagementTaskViews.offerings = event.target.value === 'secondary' ? 'seniorChoices' : 'curriculum';
     academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
     academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
     academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };

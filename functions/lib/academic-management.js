@@ -1535,6 +1535,9 @@ export async function bulkApplyAcademicSubjects(env, user = {}, input = {}) {
   if (classes.some((row) => lower(row.SchoolSection) !== scope.section)) {
     throw failure('Every selected class must belong to the selected school section.', 409, 'ACADEMIC_SECTION_MISMATCH');
   }
+  if (scope.section === 'secondary' && classes.some((row) => schoolStageValue(row.SchoolStage, row.SchoolSection, row.Name) !== 'junior-secondary')) {
+    throw failure('Bulk subject application in the Secondary section is only for Junior Secondary classes. Configure Senior subjects through departments and Senior choices.', 409, 'ACADEMIC_JUNIOR_SUBJECT_APPLICATION_ONLY');
+  }
   if (subjects.some((row) => lower(row.SchoolSection) !== scope.section)) {
     throw failure('Every selected subject must belong to the selected school section.', 409, 'ACADEMIC_SECTION_MISMATCH');
   }
@@ -1546,7 +1549,9 @@ export async function bulkApplyAcademicSubjects(env, user = {}, input = {}) {
       const record = normalizeAcademicOffering({
         SessionId: input.SessionId, TermId: input.TermId, ClassId: schoolClass.ClassId,
         ArmId: '', SubjectId: subject.SubjectId,
-        SubjectRole: input.SubjectRole || input.RequirementType, Compulsory: input.Compulsory, Status: 'Active'
+        SubjectRole: scope.section === 'secondary' ? 'Core' : (input.SubjectRole || input.RequirementType || 'Core'),
+        Compulsory: scope.section === 'secondary' ? true : input.Compulsory,
+        Status: 'Active'
       }, scope);
       validateAcademicRecord(projected, 'offering', record, {});
       const existing = findById(projected.offerings, record.OfferingId);

@@ -640,10 +640,19 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /Department Core subjects are disabled/);
   assert.match(adminSource, /option\.disabled \? ' disabled' : ''/);
   assert.match(adminSource, /input\.checked = !input\.disabled && selected\.has/);
-  assert.match(adminSource, /Select subjects applicable to Junior Secondary/);
-  assert.match(adminSource, /name: 'ClassIds', label: 'Junior Secondary classes'/);
-  assert.match(adminSource, /name: 'SubjectIds', label: 'Applicable Junior Secondary subjects'/);
+  assert.match(adminSource, /Select subjects applicable to \$\{secondary \? 'Junior Secondary' : 'Primary'\}/);
+  assert.match(adminSource, /name: 'ClassIds', label: secondary \? 'Junior Secondary classes' : 'Primary classes'/);
+  assert.match(adminSource, /name: 'SubjectIds', label: secondary \? 'Applicable Junior Secondary subjects' : 'Applicable Primary subjects'/);
+  assert.match(adminSource, /label: sectionName === 'secondary' \? 'Junior curriculum' : 'Primary curriculum'/);
   assert.match(adminSource, /Every selected subject is assigned to every selected class and is compulsory/);
+  const bulkSetupWorkspace = adminSource.slice(
+    adminSource.indexOf('function academicBulkSetupWorkspace'),
+    adminSource.indexOf('function academicDepartmentsWorkspace')
+  );
+  assert.doesNotMatch(bulkSetupWorkspace, /bulkApplyAcademicSubjects/);
+  assert.doesNotMatch(adminSource, /key: 'applySubjects'/);
+  assert.match(librarySource, /ACADEMIC_JUNIOR_SUBJECT_APPLICATION_ONLY/);
+  assert.match(librarySource, /scope\.section === 'secondary' \? 'Core'/);
   assert.match(adminSource, /\['offerings', 'Class subjects'\]/);
   assert.match(adminSource, /Core status is assigned within each Senior Secondary department/);
   assert.doesNotMatch(adminSource, /data-academic-form="subject"[\s\S]{0,1200}name="Category"/);
@@ -696,7 +705,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /showAcademicManagementTask\('students', 'transfer'\)/);
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260816-core-subject-lock/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260816-junior-curriculum-only/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
