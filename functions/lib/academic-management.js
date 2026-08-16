@@ -3,6 +3,8 @@ import { enforceActorBranch } from './branch-scope.js';
 import { normalizeClassKey } from './class-names.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
 import { createNotification } from './notifications.js';
+import { academicPolicyScopeChain } from './academic-policy.js';
+import { loadAcademicPolicyView } from './academic-policy-store.js';
 import {
   getSchoolStructure, listSchoolCollection, safeScopeId, schoolSectionFor, scopedCollectionPath
 } from './school-scope.js';
@@ -19,6 +21,15 @@ import {
   normalizeAcademicTimetableEntry,
   normalizeAcademicTimetablePeriods
 } from './academic-timetable-attendance.js';
+import {
+  ACADEMIC_SCORE_IMPORT_MODES,
+  ACADEMIC_SCORE_SHEET_STATUSES,
+  academicAssessmentScheme,
+  academicScoreSourceIssues,
+  calculateAcademicStudentScore,
+  normalizeAcademicComponentScores,
+  validateAcademicScoreImport
+} from './academic-scorebook.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -43,6 +54,9 @@ export const ACADEMIC_MANAGEMENT_COLLECTIONS = Object.freeze({
   timetableSubstitutions: 'academicTimetableSubstitutions',
   studentAttendance: 'academicStudentAttendance',
   attendanceCorrections: 'academicAttendanceCorrections',
+  scoreSheets: 'academicScoreSheets',
+  studentScores: 'academicStudentScores',
+  scoreImports: 'academicScoreImports',
   audit: 'academicManagementAudit'
 });
 
@@ -66,6 +80,8 @@ const STRUCTURE_MANAGERS = new Set(['Super Admin', 'Principal', 'Management']);
 const ALLOCATION_MANAGERS = new Set([...STRUCTURE_MANAGERS, 'Admissions Officer']);
 const TIMETABLE_MANAGERS = new Set([...STRUCTURE_MANAGERS, 'Examination Officer']);
 const TIMETABLE_PUBLISHERS = new Set(['Super Admin', 'Principal', 'Management']);
+const SCORE_REVIEWERS = new Set([...STRUCTURE_MANAGERS, 'Examination Officer']);
+const SCORE_APPROVERS = new Set([...STRUCTURE_MANAGERS, 'Examination Officer']);
 
 function failure(message, status = 400, code = '') {
   const error = new Error(message);
@@ -154,7 +170,7 @@ function actorUsername(user = {}) {
 
 function recordId(row = {}) {
   return clean(
-    row.RecordId || row.recordId || row.SubstitutionId || row.AttendanceId || row.EntryId || row.VersionId || row.ConstraintId || row.TimetableSettingId
+    row.RecordId || row.recordId || row.ImportId || row.ScoreId || row.SheetId || row.SubstitutionId || row.AttendanceId || row.EntryId || row.VersionId || row.ConstraintId || row.TimetableSettingId
       || row.MovementId || row.MembershipId || row.AllocationId || row.OfferingId
       || row.DepartmentId || row.SubjectId || row.ArmId || row.ArmTemplateId || row.ClassId || row.TermId || row.SessionId || row.__id
   );
@@ -202,6 +218,10 @@ export function academicManagementCapabilities(user = {}) {
     canManageTimetables: enabled && TIMETABLE_MANAGERS.has(role),
     canPublishTimetables: enabled && TIMETABLE_PUBLISHERS.has(role),
     canMarkAttendance: enabled && (TIMETABLE_MANAGERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
+    canEnterScores: enabled && (SCORE_REVIEWERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
+    canReviewScores: enabled && SCORE_REVIEWERS.has(role),
+    canApproveScores: enabled && SCORE_APPROVERS.has(role),
+    canImportScores: enabled && (SCORE_REVIEWERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
     canArchive: enabled && STRUCTURE_MANAGERS.has(role),
     canDelete: enabled && STRUCTURE_MANAGERS.has(role),
     teacherView: enabled && (role === 'Teacher' || academicsDepartmentUser)
@@ -1089,7 +1109,12 @@ function sortAcademicState(state) {
       || clean(a.TimetableEntryId).localeCompare(clean(b.TimetableEntryId))),
     studentAttendance: [...state.studentAttendance].sort((a, b) => clean(b.AttendanceDate).localeCompare(clean(a.AttendanceDate))
       || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
-    attendanceCorrections: [...state.attendanceCorrections].sort((a, b) => clean(b.RequestedAt).localeCompare(clean(a.RequestedAt)))
+    attendanceCorrections: [...state.attendanceCorrections].sort((a, b) => clean(b.RequestedAt).localeCompare(clean(a.RequestedAt))),
+    scoreSheets: [...state.scoreSheets].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId))
+      || clean(a.ArmId).localeCompare(clean(b.ArmId)) || clean(a.SubjectId).localeCompare(clean(b.SubjectId))),
+    studentScores: [...state.studentScores].sort((a, b) => clean(a.SheetId).localeCompare(clean(b.SheetId))
+      || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
+    scoreImports: [...state.scoreImports].sort((a, b) => clean(b.CommittedAt || b.CreatedAt).localeCompare(clean(a.CommittedAt || a.CreatedAt)))
   };
 }
 
@@ -1137,10 +1162,25 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     state.timetableConstraints = state.timetableConstraints.filter((row) => lower(row.TeacherUsername) === username);
     state.studentAttendance = state.studentAttendance.filter((row) => visibleStudents.has(lower(row.StudentRef)));
     state.attendanceCorrections = state.attendanceCorrections.filter((row) => lower(row.RequestedByUsername) === username);
+    state.scoreSheets = state.scoreSheets.filter((row) => lower(row.TeacherUsername) === username
+      || visibleKeys.has(`${row.ClassId}|${row.ArmId}`) || visibleKeys.has(`${row.ClassId}|*`));
+    const visibleScoreSheets = new Set(state.scoreSheets.map((row) => row.SheetId));
+    state.studentScores = state.studentScores.filter((row) => visibleScoreSheets.has(row.SheetId) && visibleStudents.has(lower(row.StudentRef)));
+    state.scoreImports = state.scoreImports.filter((row) => visibleScoreSheets.has(row.SheetId));
     students = students.filter((row) => visibleStudents.has(lower(studentReference(row))));
   }
   state = sortAcademicState(state);
   const selection = currentSelection(state, input);
+  const selectedSession = findById(state.sessions, selection.SessionId);
+  const selectedTerm = findById(state.terms, selection.TermId);
+  let assessmentScheme = academicAssessmentScheme({});
+  if (selectedSession && selectedTerm) {
+    try {
+      assessmentScheme = await academicAssessmentForPeriod(env, scope, selectedSession, selectedTerm, { required: false });
+    } catch (error) {
+      assessmentScheme = { ...academicAssessmentScheme({}), Issues: [clean(error?.message || error)] };
+    }
+  }
   return {
     ok: true,
     message: 'Academic structure and allocations loaded.',
@@ -1148,6 +1188,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     scope: { BranchId: scope.branchId, SchoolSection: scope.section || 'all' },
     sections: scope.structure.Sections,
     selection,
+    assessmentScheme,
     ...Object.fromEntries(Object.entries(state).map(([key, rows]) => [key, rows.map(publicRecord)])),
     staff: displayStaff(permissions.teacherView ? people.staff.filter((row) => lower(row.Username || row.__id) === actorUsername(user)) : people.staff),
     students: displayStudents(students, state.classes),
@@ -1168,7 +1209,10 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
       TimetableEntries: state.timetableEntries.length,
       TimetableSubstitutions: state.timetableSubstitutions.filter(statusActive).length,
       AttendanceRecords: state.studentAttendance.length,
-      AttendanceCorrections: state.attendanceCorrections.length
+      AttendanceCorrections: state.attendanceCorrections.length,
+      ScoreSheets: state.scoreSheets.length,
+      StudentScores: state.studentScores.length,
+      ScoreImports: state.scoreImports.length
     }
   };
 }
@@ -3057,6 +3101,424 @@ export async function decideAcademicAttendanceCorrection(env, user = {}, input =
     `Attendance correction ${decision.toLowerCase()}${absenceNotifications ? '; the parent was notified of the approved absence' : ''}.`);
 }
 
+async function academicAssessmentFingerprint(scheme = {}) {
+  const material = JSON.stringify({ Components: scheme.Components || [], GradeBands: scheme.GradeBands || [] });
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
+  return `assessment-${[...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('').slice(0, 32)}`;
+}
+
+async function academicAssessmentForPeriod(env, scope, session, term, { required = true, classId = '', subjectId = '' } = {}) {
+  const scopeChain = academicPolicyScopeChain({
+    BranchId: scope.branchId, SectionId: scope.section, ClassId: classId, SubjectId: subjectId
+  });
+  const view = await loadAcademicPolicyView(env, {
+    scope: scopeChain.at(-1),
+    scopeChain,
+    period: { Session: session.Name, Term: term.Name }
+  });
+  const sourceRevisionIds = (view.Sources || []).map((row) => clean(row.RevisionId)).filter(Boolean);
+  const scheme = academicAssessmentScheme(view.ActivePolicy);
+  if (sourceRevisionIds.length) {
+    scheme.RevisionId = await academicAssessmentFingerprint(scheme);
+    scheme.SourceRevisionIds = sourceRevisionIds;
+  } else {
+    scheme.Ready = false;
+    scheme.Issues = [...scheme.Issues, 'Activate the assessment and grading policy for this academic period.'];
+  }
+  if (required && !scheme.Ready) {
+    throw failure(scheme.Issues[0] || 'Configure and activate the assessment and grading policy first.', 409, 'ACADEMIC_ASSESSMENT_SCHEME_REQUIRED');
+  }
+  return scheme;
+}
+
+function academicScoreSheetId(scope, sessionId, termId, classId, armId, subjectId) {
+  return academicId('score-sheet', scope.branchId, scope.section, sessionId, termId, classId, armId, subjectId);
+}
+
+function academicStudentScoreId(sheetId, studentRef) {
+  return academicId('student-score', sheetId, studentRef);
+}
+
+function academicScoreRoster(state, candidate) {
+  return state.studentMemberships.filter((row) => statusActive(row)
+    && row.SessionId === candidate.SessionId && row.TermId === candidate.TermId
+    && row.ClassId === candidate.ClassId && row.ArmId === candidate.ArmId
+    && (row.SubjectIds || []).includes(candidate.SubjectId));
+}
+
+function academicScoreTeacherAllocations(state, candidate) {
+  return state.teacherAllocations.filter((row) => statusActive(row)
+    && row.SessionId === candidate.SessionId && row.TermId === candidate.TermId
+    && lower(row.AllocationRole) === 'subject teacher'
+    && row.ClassId === candidate.ClassId && (!row.ArmId || row.ArmId === candidate.ArmId)
+    && row.SubjectId === candidate.SubjectId);
+}
+
+function assertAcademicScoreSheetAuthority(user, permissions, state, candidate, existing = null) {
+  const allocations = academicScoreTeacherAllocations(state, candidate);
+  if (!allocations.length) throw failure('Assign a subject teacher to this classroom and subject before opening its scorebook.', 409, 'ACADEMIC_SCORE_TEACHER_REQUIRED');
+  const username = actorUsername(user);
+  const requestedTeacher = lower(existing?.TeacherUsername || candidate.TeacherUsername || (permissions.teacherView ? username : ''));
+  const allocation = allocations.find((row) => !requestedTeacher || lower(row.TeacherUsername) === requestedTeacher);
+  if (!allocation) throw failure('The selected teacher is not allocated to this subject and classroom.', 403, 'ACADEMIC_SCORE_ALLOCATION_FORBIDDEN');
+  if (permissions.teacherView && lower(allocation.TeacherUsername) !== username) {
+    throw failure('Teachers may enter scores only for their own allocated subjects and classrooms.', 403, 'ACADEMIC_SCORE_ALLOCATION_FORBIDDEN');
+  }
+  return allocation;
+}
+
+async function academicScoreSheetContext(env, user, input, capability = 'canEnterScores') {
+  const context = await academicOperationalContext(env, user, input, capability);
+  const { permissions, scope, state, session, term } = context;
+  const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
+  const arm = assertReference(findById(state.arms, input.ArmId), 'Choose an active classroom arm.');
+  const subject = assertReference(findById(state.subjects, input.SubjectId), 'Choose an active subject.');
+  if (arm.ClassId !== schoolClass.ClassId) throw failure('The selected arm does not belong to this class.');
+  if (schoolClass.SchoolSection !== scope.section || subject.SchoolSection !== scope.section) {
+    throw failure('The selected scorebook belongs to another school section.', 403, 'ACADEMIC_SECTION_FORBIDDEN');
+  }
+  const candidate = {
+    SessionId: session.SessionId, TermId: term.TermId, ClassId: schoolClass.ClassId,
+    ArmId: arm.ArmId, SubjectId: subject.SubjectId, TeacherUsername: lower(input.TeacherUsername)
+  };
+  const SheetId = academicScoreSheetId(scope, session.SessionId, term.TermId, schoolClass.ClassId, arm.ArmId, subject.SubjectId);
+  const existing = findById(state.scoreSheets, input.SheetId || SheetId);
+  if (input.SheetId && !existing) throw failure('The selected score sheet was not found.', 404);
+  if (existing && existing.SheetId !== SheetId) throw failure('The selected score sheet belongs to another classroom, subject or period.', 403);
+  const allocation = assertAcademicScoreSheetAuthority(user, permissions, state, candidate, existing);
+  const roster = academicScoreRoster(state, candidate);
+  if (!roster.length) throw failure('No students in this classroom are allocated to the selected subject.', 409, 'ACADEMIC_SCORE_ROSTER_EMPTY');
+  let scheme;
+  if (existing) {
+    scheme = academicAssessmentScheme({ Assessment: {
+      Components: existing.AssessmentComponents || [], GradeBands: existing.GradeBands || []
+    } }, { RevisionId: existing.AssessmentRevisionId });
+    scheme.SourceRevisionIds = existing.AssessmentSourceRevisionIds || [];
+    if (!scheme.Ready || !scheme.RevisionId) {
+      throw failure('This score sheet has an invalid historical assessment snapshot. An academic administrator must review it before scores can change.', 409, 'ACADEMIC_SCORE_SNAPSHOT_INVALID');
+    }
+  } else {
+    scheme = await academicAssessmentForPeriod(env, scope, session, term, {
+      classId: schoolClass.ClassId, subjectId: subject.SubjectId
+    });
+  }
+  return { ...context, schoolClass, arm, subject, SheetId, existing, allocation, roster, scheme };
+}
+
+function academicScoreSheetRecord(context, existing, user, timestamp, updates = {}) {
+  const { scope, session, term, schoolClass, arm, subject, SheetId, allocation, roster, scheme } = context;
+  return {
+    ...(existing || {}), RecordId: SheetId, SheetId,
+    SessionId: session.SessionId, TermId: term.TermId,
+    ClassId: schoolClass.ClassId, ArmId: arm.ArmId, SubjectId: subject.SubjectId,
+    TeacherUsername: lower(existing?.TeacherUsername || allocation.TeacherUsername),
+    AssessmentRevisionId: scheme.RevisionId,
+    AssessmentSourceRevisionIds: scheme.SourceRevisionIds || [],
+    AssessmentComponents: scheme.Components,
+    GradeBands: scheme.GradeBands,
+    RosterCount: roster.length,
+    Status: existing?.Status || 'Draft',
+    BranchId: scope.branchId, SchoolSection: scope.section,
+    CreatedAt: clean(existing?.CreatedAt) || timestamp,
+    CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+    UpdatedAt: timestamp, UpdatedBy: actorName(user),
+    ...updates
+  };
+}
+
+function academicScoreRowsInput(value) {
+  let rows = value;
+  if (typeof rows === 'string') {
+    try { rows = JSON.parse(rows); } catch (_error) { rows = []; }
+  }
+  return Array.isArray(rows) ? rows : [];
+}
+
+export async function getAcademicScorebookContext(env, user = {}, input = {}) {
+  const context = await academicScoreSheetContext(env, user, input, 'canEnterScores');
+  const response = await academicOperationalResponse(env, user, input, context.scope, 'Scorebook context loaded.');
+  response.assessmentScheme = context.scheme;
+  response.scorebookContext = {
+    SheetId: context.SheetId,
+    ClassId: context.schoolClass.ClassId,
+    ArmId: context.arm.ArmId,
+    SubjectId: context.subject.SubjectId,
+    TeacherUsername: context.allocation.TeacherUsername,
+    RosterCount: context.roster.length
+  };
+  return response;
+}
+
+function academicScoreSheetCounts(scores = []) {
+  return {
+    EnteredCount: scores.length,
+    CompleteCount: scores.filter((row) => row.CompletionStatus === 'Complete').length,
+    IncompleteCount: scores.filter((row) => row.CompletionStatus !== 'Complete').length
+  };
+}
+
+export async function saveAcademicScoreDraft(env, user = {}, input = {}) {
+  const context = await academicScoreSheetContext(env, user, input, 'canEnterScores');
+  const { scope, state, SheetId, existing, roster, scheme } = context;
+  if (existing && lower(existing.Status) !== 'draft') throw failure('Only a Draft score sheet can be edited.', 409, 'ACADEMIC_SCORE_SHEET_LOCKED');
+  const suppliedRows = academicScoreRowsInput(input.Rows);
+  if (!suppliedRows.length) throw failure('Enter at least one student score before saving.');
+  if (suppliedRows.length > 200) throw failure('Save at most 200 student scores at a time.');
+  const rosterRefs = new Set(roster.map((row) => lower(row.StudentRef)));
+  const seen = new Set();
+  const timestamp = nowIso();
+  const updatedScores = suppliedRows.map((row) => {
+    const studentRef = clean(row.StudentRef);
+    const key = lower(studentRef);
+    if (!studentRef || !rosterRefs.has(key)) throw failure(`${studentRef || 'A selected student'} is not in this subject roster.`, 409, 'ACADEMIC_SCORE_STUDENT_INVALID');
+    if (seen.has(key)) throw failure(`${studentRef} appears more than once in this score save.`);
+    seen.add(key);
+    const ScoreId = academicStudentScoreId(SheetId, studentRef);
+    const previous = findById(state.studentScores, ScoreId);
+    const normalizedScores = normalizeAcademicComponentScores(row.ComponentScores, scheme, {
+      existing: previous?.ComponentScores || [], partial: true
+    });
+    const previousScores = normalizeAcademicComponentScores(previous?.ComponentScores || [], scheme);
+    const previousByComponent = new Map(previousScores.map((score) => [score.ComponentId, score]));
+    const changedScores = normalizedScores.filter((score) => {
+      const before = previousByComponent.get(score.ComponentId);
+      return !before || before.State !== score.State || Number(before.RawScore ?? 0) !== Number(score.RawScore ?? 0);
+    });
+    const sourceIssues = academicScoreSourceIssues(scheme, changedScores, 'manual');
+    if (sourceIssues.length) throw failure(sourceIssues[0], 409, 'ACADEMIC_SCORE_SOURCE_FORBIDDEN');
+    const calculated = calculateAcademicStudentScore(scheme, normalizedScores);
+    return {
+      previous,
+      record: {
+        ...(previous || {}), RecordId: ScoreId, ScoreId, SheetId, StudentRef: studentRef,
+        SessionId: context.session.SessionId, TermId: context.term.TermId,
+        ClassId: context.schoolClass.ClassId, ArmId: context.arm.ArmId, SubjectId: context.subject.SubjectId,
+        AssessmentRevisionId: scheme.RevisionId,
+        ...calculated,
+        SourceType: 'Manual', SourceId: '',
+        BranchId: scope.branchId, SchoolSection: scope.section,
+        CreatedAt: clean(previous?.CreatedAt) || timestamp,
+        CreatedBy: clean(previous?.CreatedBy) || actorName(user),
+        UpdatedAt: timestamp, UpdatedBy: actorName(user), UpdatedByUsername: actorUsername(user)
+      },
+      revisionToken: clean(row.RevisionToken)
+    };
+  });
+  const projectedScores = [
+    ...state.studentScores.filter((row) => row.SheetId === SheetId && !updatedScores.some((item) => item.record.ScoreId === row.ScoreId)),
+    ...updatedScores.map((item) => item.record)
+  ];
+  const sheet = academicScoreSheetRecord(context, existing, user, timestamp, {
+    ...academicScoreSheetCounts(projectedScores), LastSavedAt: timestamp, LastSavedBy: actorName(user)
+  });
+  const writes = updatedScores.map(({ previous, record, revisionToken }) => ({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores,
+    documentId: record.ScoreId, data: withoutMetadata(record), ...writePrecondition(previous, revisionToken)
+  }));
+  writes.push({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,
+    documentId: SheetId, data: withoutMetadata(sheet), ...writePrecondition(existing, input.SheetRevisionToken)
+  });
+  writes.push(auditWrite(user, 'SAVE_DRAFT', 'scoreSheet', sheet, `${updatedScores.length} student score${updatedScores.length === 1 ? '' : 's'}`));
+  await commitAcademicBatch(env, writes, 'The score sheet changed while it was being saved. Reload before entering scores again.');
+  return academicOperationalResponse(env, user, input, scope, `${updatedScores.length} student score${updatedScores.length === 1 ? '' : 's'} saved as a draft.`);
+}
+
+function assertAcademicScoreSheetComplete(state, sheet, roster) {
+  const scores = state.studentScores.filter((row) => row.SheetId === sheet.SheetId);
+  const complete = new Set(scores.filter((row) => row.CompletionStatus === 'Complete').map((row) => lower(row.StudentRef)));
+  const pending = roster.filter((row) => !complete.has(lower(row.StudentRef)));
+  if (pending.length) throw failure(`${pending.length} student score${pending.length === 1 ? ' is' : 's are'} incomplete. Complete every required component before submission.`, 409, 'ACADEMIC_SCORE_SHEET_INCOMPLETE');
+  return scores;
+}
+
+export async function changeAcademicScoreSheetStatus(env, user = {}, input = {}) {
+  const context = await academicScoreSheetContext(env, user, input, 'canEnterScores');
+  const { permissions, scope, state, existing, roster } = context;
+  if (!existing) throw failure('Save at least one draft score before changing the score-sheet status.', 409);
+  const target = oneOf(input.Status || input.TargetStatus, ACADEMIC_SCORE_SHEET_STATUSES, '');
+  if (!target) throw failure('Choose Draft, Submitted, Approved or Locked.');
+  const current = clean(existing.Status || 'Draft');
+  const reason = clean(input.Reason).slice(0, 500);
+  const normalTransition = (current === 'Draft' && target === 'Submitted')
+    || (current === 'Submitted' && target === 'Approved')
+    || (current === 'Approved' && target === 'Locked');
+  const reopening = target === 'Draft' && ['Submitted', 'Approved', 'Locked'].includes(current);
+  if (!normalTransition && !reopening) throw failure(`${current} score sheets cannot move directly to ${target}.`, 409, 'ACADEMIC_SCORE_STATUS_INVALID');
+  if (target === 'Submitted') assertAcademicScoreSheetComplete(state, existing, roster);
+  if (target === 'Approved' && !permissions.canReviewScores) throw failure('Only an academic reviewer may approve submitted scores.', 403);
+  if (target === 'Locked' && !permissions.canApproveScores) throw failure('Only an academic approver may lock approved scores.', 403);
+  if (reopening && !permissions.canReviewScores) throw failure('Only an academic reviewer may reopen a score sheet.', 403);
+  if (reopening && !reason) throw failure('Enter the approved reason for reopening this score sheet.');
+  const timestamp = nowIso();
+  const eventName = target === 'Submitted' ? 'Submitted' : target === 'Approved' ? 'Approved' : target === 'Locked' ? 'Locked' : 'Reopened';
+  const record = academicScoreSheetRecord(context, existing, user, timestamp, {
+    Status: target,
+    [`${eventName}At`]: timestamp,
+    [`${eventName}By`]: actorName(user),
+    [`${eventName}ByUsername`]: actorUsername(user),
+    ...(reopening ? { ReopenReason: reason } : {})
+  });
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets, documentId: record.SheetId,
+      data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken || input.SheetRevisionToken) },
+    auditWrite(user, eventName.toUpperCase(), 'scoreSheet', record, reason || `${current} -> ${target}`)
+  ], 'The score sheet changed while its status was being updated. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope,
+    reopening ? `Score sheet reopened as Draft: ${reason}` : `Score sheet moved from ${current} to ${target}.`);
+}
+
+export async function previewAcademicScoreImport(env, user = {}, input = {}) {
+  const context = await academicScoreSheetContext(env, user, input, 'canImportScores');
+  if (context.existing && lower(context.existing.Status) !== 'draft') throw failure('Spreadsheet imports are allowed only while the score sheet is Draft.', 409);
+  const preview = validateAcademicScoreImport(input.Rows, {
+    scheme: context.scheme,
+    roster: context.roster,
+    sourceMode: 'spreadsheet',
+    existingScores: context.state.studentScores.filter((row) => row.SheetId === context.SheetId)
+  });
+  const response = await academicOperationalResponse(env, user, input, context.scope,
+    `${preview.ValidRows} of ${preview.TotalRows} spreadsheet row${preview.TotalRows === 1 ? '' : 's'} passed validation.`);
+  response.scoreImportPreview = preview;
+  return response;
+}
+
+function normalizedImportKey(value) {
+  const key = clean(value).replace(/[^a-zA-Z0-9_-]/g, '-').replace(/-+/g, '-').slice(0, 100);
+  if (key.length < 8) throw failure('The score import needs a stable idempotency key of at least 8 characters.');
+  return key;
+}
+
+export async function importAcademicScores(env, user = {}, input = {}) {
+  const context = await academicScoreSheetContext(env, user, input, 'canImportScores');
+  const { scope, state, SheetId, existing, scheme } = context;
+  if (existing && lower(existing.Status) !== 'draft') throw failure('Spreadsheet imports are allowed only while the score sheet is Draft.', 409);
+  const mode = oneOf(input.CommitMode, ACADEMIC_SCORE_IMPORT_MODES, 'all-or-nothing');
+  const importKey = normalizedImportKey(input.ImportKey || input.IdempotencyKey);
+  const ImportId = academicId('score-import', SheetId, importKey);
+  const previousImport = findById(state.scoreImports, ImportId);
+  if (previousImport) {
+    const response = await academicOperationalResponse(env, user, input, scope, 'This spreadsheet import was already processed; no score was duplicated.');
+    response.scoreImport = publicRecord(previousImport);
+    return response;
+  }
+  const preview = validateAcademicScoreImport(input.Rows, {
+    scheme,
+    roster: context.roster,
+    sourceMode: 'spreadsheet',
+    existingScores: state.studentScores.filter((row) => row.SheetId === SheetId)
+  });
+  if (!preview.TotalRows) throw failure('The spreadsheet has no score rows.');
+  if (preview.TotalRows > 200) throw failure('Import at most 200 student scores at a time.');
+  if (mode === 'all-or-nothing' && preview.InvalidRows) {
+    const error = failure(`The import has ${preview.InvalidRows} invalid row${preview.InvalidRows === 1 ? '' : 's'}. Correct every row before committing an all-or-nothing import.`, 409, 'ACADEMIC_SCORE_IMPORT_INVALID');
+    error.preview = preview;
+    throw error;
+  }
+  const valid = preview.Rows.filter((row) => row.Valid);
+  if (!valid.length) throw failure('No valid score rows are available to import.', 409, 'ACADEMIC_SCORE_IMPORT_INVALID');
+  const timestamp = nowIso();
+  const PreviousScores = [];
+  const importedScores = valid.map((row) => {
+    const ScoreId = academicStudentScoreId(SheetId, row.StudentRef);
+    const previous = findById(state.studentScores, ScoreId);
+    PreviousScores.push({ ScoreId, Existed: Boolean(previous), Data: previous ? withoutMetadata(previous) : null });
+    return {
+      previous,
+      record: {
+        ...(previous || {}), RecordId: ScoreId, ScoreId, SheetId, StudentRef: row.StudentRef,
+        SessionId: context.session.SessionId, TermId: context.term.TermId,
+        ClassId: context.schoolClass.ClassId, ArmId: context.arm.ArmId, SubjectId: context.subject.SubjectId,
+        AssessmentRevisionId: scheme.RevisionId,
+        ...row.Calculated,
+        SourceType: 'SpreadsheetImport', SourceId: ImportId,
+        BranchId: scope.branchId, SchoolSection: scope.section,
+        CreatedAt: clean(previous?.CreatedAt) || timestamp,
+        CreatedBy: clean(previous?.CreatedBy) || actorName(user),
+        UpdatedAt: timestamp, UpdatedBy: actorName(user), UpdatedByUsername: actorUsername(user)
+      }
+    };
+  });
+  const projectedScores = [
+    ...state.studentScores.filter((row) => row.SheetId === SheetId && !importedScores.some((item) => item.record.ScoreId === row.ScoreId)),
+    ...importedScores.map((item) => item.record)
+  ];
+  const sheet = academicScoreSheetRecord(context, existing, user, timestamp, {
+    ...academicScoreSheetCounts(projectedScores), LastSavedAt: timestamp, LastSavedBy: actorName(user), LastImportId: ImportId
+  });
+  const importRecord = {
+    RecordId: ImportId, ImportId, ImportKey: importKey, SheetId, Status: 'Committed', CommitMode: mode,
+    SourceFileName: clean(input.SourceFileName).slice(0, 240),
+    SourceFormat: oneOf(input.SourceFormat, ['CSV', 'XLSX'], 'CSV'),
+    TotalRows: preview.TotalRows, ImportedRows: valid.length, RejectedRows: preview.InvalidRows,
+    Rejected: preview.Rows.filter((row) => !row.Valid).map((row) => ({ RowNumber: row.RowNumber, StudentRef: row.StudentRef, Issues: row.Issues })),
+    AffectedScoreIds: importedScores.map((row) => row.record.ScoreId), PreviousScores,
+    SessionId: context.session.SessionId, TermId: context.term.TermId,
+    ClassId: context.schoolClass.ClassId, ArmId: context.arm.ArmId, SubjectId: context.subject.SubjectId,
+    AssessmentRevisionId: scheme.RevisionId,
+    BranchId: scope.branchId, SchoolSection: scope.section,
+    CommittedAt: timestamp, CommittedBy: actorName(user), CommittedByUsername: actorUsername(user)
+  };
+  const writes = importedScores.map(({ previous, record }) => ({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores,
+    documentId: record.ScoreId, data: withoutMetadata(record), ...(previous ? { updateTime: previous.__updateTime } : { exists: false })
+  }));
+  writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets, documentId: SheetId,
+    data: withoutMetadata(sheet), ...(existing ? { updateTime: existing.__updateTime } : { exists: false }) });
+  writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreImports, documentId: ImportId,
+    data: withoutMetadata(importRecord), exists: false });
+  writes.push(auditWrite(user, 'IMPORT', 'scoreSheet', sheet, `${valid.length} imported; ${preview.InvalidRows} rejected; ${mode}`));
+  await commitAcademicBatch(env, writes, 'The score sheet changed while the spreadsheet was being imported. Preview the file again.');
+  const response = await academicOperationalResponse(env, user, input, scope,
+    `${valid.length} spreadsheet score${valid.length === 1 ? '' : 's'} imported as Draft${preview.InvalidRows ? `; ${preview.InvalidRows} invalid row${preview.InvalidRows === 1 ? '' : 's'} skipped` : ''}.`);
+  response.scoreImport = publicRecord(importRecord);
+  return response;
+}
+
+export async function rollbackAcademicScoreImport(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canImportScores');
+  const { permissions, scope, state } = context;
+  const importRecord = findById(state.scoreImports, input.ImportId || input.RecordId);
+  if (!importRecord || lower(importRecord.Status) !== 'committed') throw failure('The committed score import was not found.', 404);
+  const sheet = findById(state.scoreSheets, importRecord.SheetId);
+  if (!sheet || lower(sheet.Status) !== 'draft') throw failure('Only an unpublished Draft score import can be rolled back.', 409, 'ACADEMIC_SCORE_IMPORT_LOCKED');
+  assertAcademicScoreSheetAuthority(user, permissions, state, sheet, sheet);
+  const reason = clean(input.Reason).slice(0, 500);
+  if (!reason) throw failure('Enter the approved reason for rolling back this score import.');
+  const previousById = new Map((importRecord.PreviousScores || []).map((row) => [row.ScoreId, row]));
+  const currentScores = (importRecord.AffectedScoreIds || []).map((scoreId) => findById(state.studentScores, scoreId));
+  if (currentScores.some((row) => !row || row.SourceId !== importRecord.ImportId || row.UpdatedAt !== importRecord.CommittedAt)) {
+    throw failure('One or more imported scores changed after this import. Reopen and correct them manually instead of rolling back.', 409, 'ACADEMIC_SCORE_IMPORT_CHANGED');
+  }
+  const timestamp = nowIso();
+  const writes = currentScores.map((current) => {
+    const previous = previousById.get(current.ScoreId);
+    return previous?.Existed
+      ? { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores, documentId: current.ScoreId,
+          data: previous.Data, updateTime: current.__updateTime }
+      : { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores, documentId: current.ScoreId,
+          operation: 'delete', updateTime: current.__updateTime };
+  });
+  const restoredScores = state.studentScores.filter((row) => row.SheetId === sheet.SheetId
+    && !(importRecord.AffectedScoreIds || []).includes(row.ScoreId));
+  (importRecord.PreviousScores || []).filter((row) => row.Existed).forEach((row) => restoredScores.push(row.Data));
+  const updatedSheet = {
+    ...sheet, ...academicScoreSheetCounts(restoredScores), LastImportId: '',
+    UpdatedAt: timestamp, UpdatedBy: actorName(user)
+  };
+  const rolledBack = {
+    ...importRecord, Status: 'RolledBack', RollbackReason: reason,
+    RolledBackAt: timestamp, RolledBackBy: actorName(user), RolledBackByUsername: actorUsername(user)
+  };
+  writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets, documentId: sheet.SheetId,
+    data: withoutMetadata(updatedSheet), updateTime: sheet.__updateTime });
+  writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreImports, documentId: importRecord.ImportId,
+    data: withoutMetadata(rolledBack), ...writePrecondition(importRecord, input.RevisionToken) });
+  writes.push(auditWrite(user, 'ROLLBACK_IMPORT', 'scoreSheet', sheet, reason));
+  await commitAcademicBatch(env, writes, 'The score import changed while it was being rolled back. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, `${currentScores.length} imported student score${currentScores.length === 1 ? '' : 's'} rolled back.`);
+}
+
 export async function handleAcademicManagementAction(env, user = {}, input = {}) {
   const action = lower(input.action || input.Action).replace(/[^a-z]/g, '');
   if (['bootstrap', 'list', 'getacademicmanagement'].includes(action)) return bootstrapAcademicManagement(env, user, input);
@@ -3094,6 +3556,12 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['changeacademictimetableversionstatus', 'changetimetableversionstatus'].includes(action)) return changeAcademicTimetableVersionStatus(env, user, input);
   if (['saveacademicstudentattendance', 'saveacademicattendance'].includes(action)) return saveAcademicStudentAttendance(env, user, input);
   if (['decideacademicattendancecorrection', 'decideattendancecorrection'].includes(action)) return decideAcademicAttendanceCorrection(env, user, input);
+  if (['saveacademicscoredraft', 'saveacademicstudentscores'].includes(action)) return saveAcademicScoreDraft(env, user, input);
+  if (['getacademicscorebookcontext', 'openscorebook'].includes(action)) return getAcademicScorebookContext(env, user, input);
+  if (['changeacademicscoresheetstatus', 'changescoresheetstatus'].includes(action)) return changeAcademicScoreSheetStatus(env, user, input);
+  if (['previewacademicscoreimport', 'previewscoresheetimport'].includes(action)) return previewAcademicScoreImport(env, user, input);
+  if (['importacademicscores', 'commitscoreimport'].includes(action)) return importAcademicScores(env, user, input);
+  if (['rollbackacademicscoreimport', 'rollbackscoreimport'].includes(action)) return rollbackAcademicScoreImport(env, user, input);
   if (['manageacademicstudentmembership', 'moveacademicstudentmembership', 'withdrawacademicstudentmembership', 'reinstateacademicstudentmembership'].includes(action)) {
     const inferredOperation = ({
       withdrawacademicstudentmembership: 'withdraw',

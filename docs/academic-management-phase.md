@@ -3,8 +3,9 @@
 Status: approved baseline; implementation in progress.
 
 Implementation status (2026-08-16): Milestones 1 and 2 are in progress, the
-secure parent-access slice of Milestone 3 is operational, and Milestone 4 is
-operational on the web companion and desktop source. The School
+secure parent-access slice of Milestone 3 is operational, Milestone 4 is
+operational, and the Milestone 5 assessment, scorebook and spreadsheet-import
+slice is operational on the web companion and desktop source. The School
 edition now has an effective-dated academic-policy schema, immutable
 policy revisions, separate draft and active states, organisation-to-branch
 inheritance, activation validation and administrator controls for result
@@ -56,12 +57,25 @@ and workload, and authorize the substitute to mark the exact Period register.
 Attendance changes are recoverable as device-local drafts until online
 synchronization succeeds on both web and desktop. Confirmed absences create
 idempotent parent in-app/push notifications, and per-student term summaries can
-be reviewed and printed by classroom and register type. The future scorebook
-link remains dependent on Milestone 5 score processing rather than reopening
-Milestone 4.
+be reviewed and printed by classroom and register type. Score sheets now
+capture an immutable active assessment-scheme revision, restrict entry to the
+allocated subject teacher or authorized academic staff, validate configured
+component maxima and special Missing/Absent/Exempt/Incomplete states, and
+calculate weighted totals, grade points, classifications and remarks. Their
+audited lifecycle is Draft, Submitted, Approved and Locked, with authorized
+reasoned reopening. Pre-filled CSV templates and CSV/XLSX imports provide an
+online validation preview, all-or-nothing or valid-row-only commit policy,
+stable idempotency and rollback while the affected score sheet remains an
+unpublished Draft. Source restrictions are enforced per component: manual-only
+components remain locked during imports, while spreadsheet/CBT-only components
+remain visible but locked during manual entry. Partial imports merge their
+supplied components with existing scores instead of clearing scores captured
+through another approved source. The desktop source uses the same protected
+online actions and reads XLSX files without adding a runtime package.
 Result production and publication, finance-officer clearance administration,
-promotion intake, score processing and CBT remain pending work; configuring a
-policy or academic structure does not itself publish a result.
+promotion intake, transcripts, parent progress and CBT remain pending work;
+configuring a policy, academic structure or score sheet does not itself publish
+a result.
 
 This document is the authoritative product and engineering specification for
 the Dynamax Academic Management phase. It covers the School edition of the web
@@ -439,6 +453,10 @@ CSV and XLSX imports provide:
 - an administrator-selectable all-or-nothing or valid-rows-only policy;
 - an idempotency key and immutable import record; and
 - rollback while imported scores remain unpublished.
+
+Templates include only assessment components whose configured source accepts
+spreadsheet entry. A partial component import preserves the student's existing
+manual or CBT component scores and recalculates from the merged draft.
 
 Imports never create a class, student, subject or allocation implicitly.
 

@@ -459,5 +459,5 @@ test('lookup and enrollment are explicitly initiated without consent fields, and
   assert.match(cssSource, /\.student-face-camera-toolbar/);
   assert.match(cssSource, /html\[data-theme="dark"\] \.student-face-dialog/);
   assert.match(cssSource, /@media\(max-width:680px\)/);
-  assert.match(adminHtmlSource, /css\/style\.css\?v=20260816-attendance-report-layout/);
+  assert.match(adminHtmlSource, /css\/style\.css\?v=20260816-milestone-5-scorebook/);
 });

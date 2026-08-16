@@ -138,7 +138,7 @@ let academicManagementView = 'classrooms';
 let academicManagementTaskViews = {
   classrooms: 'register', structure: 'classes', bulkSetup: 'classes', departments: 'register',
   offerings: 'seniorChoices', teachers: 'assign', students: 'allocate',
-  timetable: 'builder', attendance: 'mark'
+  timetable: 'builder', attendance: 'mark', scorebook: 'entry'
 };
 let academicManagementFilters = { section: '', sessionId: '', termId: '' };
 let academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
@@ -146,6 +146,7 @@ let academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', a
 let academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
 let academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
 let academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
+let academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
 const organizationCommerceCarts = {
   organizationStore: new Map(),
   restaurant: new Map()
@@ -1241,6 +1242,7 @@ function clearStaffWorkspaceState() {
   academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
   academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
   academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
+  academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
   activeSection = '';
   activeTabs = [];
   recordsDeskHandoffContext = null;
@@ -1373,6 +1375,7 @@ function clearBranchScopedWorkspaceData() {
   academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
   academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
   academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
+  academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
   Object.values(organizationCommerceCarts).forEach((cart) => cart.clear());
   organizationCommerceLastSale.organizationStore = null;
   organizationCommerceLastSale.restaurant = null;
@@ -9426,7 +9429,7 @@ async function loadStudentConduct() {
 }
 
 function academicRecordId(row = {}) {
-  return clean(row.RecordId || row.CorrectionId || row.AttendanceId || row.EntryId || row.VersionId || row.TimetableSettingId
+  return clean(row.RecordId || row.ImportId || row.ScoreId || row.SheetId || row.CorrectionId || row.AttendanceId || row.EntryId || row.VersionId || row.TimetableSettingId
     || row.MovementId || row.MembershipId || row.AllocationId || row.OfferingId
     || row.DepartmentId || row.SubjectId || row.ArmId || row.ArmTemplateId || row.ClassId || row.TermId || row.SessionId);
 }
@@ -9792,7 +9795,10 @@ function academicCurrentRows(data = academicManagementData || {}) {
     timetableEntries: periodRows(data.timetableEntries || []),
     timetableSubstitutions: periodRows(data.timetableSubstitutions || []),
     studentAttendance: periodRows(data.studentAttendance || []),
-    attendanceCorrections: periodRows(data.attendanceCorrections || [])
+    attendanceCorrections: periodRows(data.attendanceCorrections || []),
+    scoreSheets: periodRows(data.scoreSheets || []),
+    studentScores: periodRows(data.studentScores || []),
+    scoreImports: periodRows(data.scoreImports || [])
   };
 }
 
@@ -9888,6 +9894,12 @@ function academicTaskDefinitions(view, root) {
       { key: 'register', label: 'Attendance history', title: 'Saved attendance', description: 'Review the class, status and marker for every saved student attendance record.', nodes: nodes(register('Student Attendance History')) },
       { key: 'reports', label: 'Term reports', title: 'Term attendance summaries', description: 'Review and print per-student totals and attendance percentages for the selected classroom and register type.', nodes: nodes(form('[data-academic-attendance-report]')) },
       { key: 'corrections', label: 'Corrections', title: 'Late correction requests', description: 'Teachers submit corrections for approval; academic administrators approve or reject them with a reason.', nodes: nodes(register('Attendance Correction Requests')) }
+    ],
+    scorebook: [
+      { key: 'entry', label: 'Enter scores', title: 'Class subject scorebook', description: 'Choose one allocated classroom and subject, then enter every configured assessment component for its students.', nodes: nodes(form('[data-academic-scorebook]')) },
+      { key: 'workflow', label: 'Review and approval', title: 'Score-sheet workflow', description: 'Submit complete sheets, review them, approve them and lock final score records without silent edits.', nodes: nodes(register('Score Sheet Workflow')) },
+      { key: 'imports', label: 'Spreadsheet imports', title: 'Preview and import scores', description: 'Download a stable template, preview CSV or XLSX rows, choose the commit policy, and roll back unpublished imports.', nodes: nodes(form('[data-academic-score-import]'), register('Score Import History')) },
+      { key: 'scheme', label: 'Assessment scheme', title: 'Active components and grading', description: 'Review the activated policy revision used to validate scores, calculate weighted totals and assign grades.', nodes: nodes(form('[data-academic-assessment-scheme]')) }
     ]
   };
   return (definitions[view] || []).filter((task) => task.nodes.length);
@@ -11016,6 +11028,129 @@ function academicAttendanceWorkspace(data, rows) {
   return `${markForm}${history}${reportForm}${corrections}`;
 }
 
+function academicScoreStateOptions(selected = 'Missing') {
+  return ['Numeric', 'Absent', 'Exempt', 'Missing', 'Incomplete']
+    .map((state) => `<option value="${state}"${state === selected ? ' selected' : ''}>${state === 'Numeric' ? 'Score' : state}</option>`).join('');
+}
+
+function academicScoreSheetActions(row, permissions = {}) {
+  const status = clean(row.Status || 'Draft');
+  const actions = [];
+  if (status === 'Draft' && permissions.canEnterScores) actions.push(['Submitted', 'Submit complete sheet', '&#10148;']);
+  if (status === 'Submitted' && permissions.canReviewScores) actions.push(['Approved', 'Approve submitted sheet', '&#10003;']);
+  if (status === 'Approved' && permissions.canApproveScores) actions.push(['Locked', 'Lock approved sheet', '&#128274;']);
+  if (['Submitted', 'Approved', 'Locked'].includes(status) && permissions.canReviewScores) actions.push(['Draft', 'Reopen as Draft', '&#8634;']);
+  return actions.length ? `<div class="academic-management-row-actions">${actions.map(([target, title, icon]) => `<button type="button" class="compact-icon-action ${target === 'Draft' ? 'academic-archive-action' : 'compact-edit-action'}" data-academic-score-status="${target}" data-academic-id="${escapeHtml(row.SheetId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${icon}</button>`).join('')}</div>` : '<span class="muted">View only</span>';
+}
+
+function academicScorebookWorkspace(data, rows) {
+  let scheme = data.assessmentScheme || { Ready: false, Components: [], GradeBands: [], Issues: ['No assessment scheme is loaded.'] };
+  const sessionId = academicManagementFilters.sessionId;
+  const termId = academicManagementFilters.termId;
+  const classrooms = rows.arms.filter((row) => academicIsActive(row)
+    && (row.IsClassroom === true || /^(yes|true|1)$/i.test(clean(row.IsClassroom))));
+  const allocations = rows.teacherAllocations.filter((row) => academicIsActive(row)
+    && row.AllocationRole === 'Subject Teacher');
+  const permittedClassrooms = classrooms.filter((arm) => allocations.some((allocation) => allocation.ClassId === arm.ClassId
+    && (!allocation.ArmId || allocation.ArmId === arm.ArmId)));
+  let selectedArm = academicFind(permittedClassrooms, academicScorebookDraft.armId) || permittedClassrooms[0] || null;
+  const selectedClass = academicFind(rows.classes, selectedArm?.ClassId);
+  const selectedAllocations = allocations.filter((row) => selectedArm && row.ClassId === selectedArm.ClassId && (!row.ArmId || row.ArmId === selectedArm.ArmId));
+  let selectedAllocation = selectedAllocations.find((row) => row.SubjectId === academicScorebookDraft.subjectId
+    && (!academicScorebookDraft.teacherUsername || clean(row.TeacherUsername).toLowerCase() === academicScorebookDraft.teacherUsername.toLowerCase())) || selectedAllocations[0] || null;
+  academicScorebookDraft = {
+    ...academicScorebookDraft,
+    classId: clean(selectedArm?.ClassId), armId: clean(selectedArm?.ArmId),
+    subjectId: clean(selectedAllocation?.SubjectId), teacherUsername: clean(selectedAllocation?.TeacherUsername)
+  };
+  const contextKey = [academicManagementFilters.sessionId, academicManagementFilters.termId, selectedArm?.ClassId, selectedArm?.ArmId,
+    selectedAllocation?.SubjectId, clean(selectedAllocation?.TeacherUsername).toLowerCase()].map(clean).join('|');
+  const responseContextKey = [data.scorebookContext?.SessionId || academicManagementFilters.sessionId,
+    data.scorebookContext?.TermId || academicManagementFilters.termId, data.scorebookContext?.ClassId, data.scorebookContext?.ArmId,
+    data.scorebookContext?.SubjectId, clean(data.scorebookContext?.TeacherUsername).toLowerCase()].map(clean).join('|');
+  if (data.scorebookContext && contextKey === responseContextKey) academicScorebookDraft.contextKey = contextKey;
+  else if (selectedAllocation) {
+    academicScorebookDraft.contextKey = '';
+    scheme = { Ready: false, Components: [], GradeBands: [], Issues: ['Loading the selected classroom and subject assessment scheme.'] };
+  }
+  const selectedSubject = academicFind(rows.subjects, selectedAllocation?.SubjectId);
+  const sheet = rows.scoreSheets.find((row) => row.ClassId === selectedArm?.ClassId && row.ArmId === selectedArm?.ArmId
+    && row.SubjectId === selectedAllocation?.SubjectId) || null;
+  const sheetScores = rows.studentScores.filter((row) => row.SheetId === sheet?.SheetId);
+  const scoreByStudent = new Map(sheetScores.map((row) => [clean(row.StudentRef).toLowerCase(), row]));
+  const roster = rows.studentMemberships.filter((row) => academicIsActive(row)
+    && row.ClassId === selectedArm?.ClassId && row.ArmId === selectedArm?.ArmId
+    && (row.SubjectIds || []).includes(selectedAllocation?.SubjectId))
+    .sort((a, b) => academicLabel(data.students, a.StudentRef, a.StudentRef).localeCompare(academicLabel(data.students, b.StudentRef, b.StudentRef), undefined, { sensitivity: 'base' }));
+  const canEdit = data.permissions?.canEnterScores === true && (!sheet || sheet.Status === 'Draft') && scheme.Ready;
+  const classroomLabel = (arm) => `${academicLabel(rows.classes, arm.ClassId)} / ${arm.Name}`;
+  const allocationValue = (row) => `${row.SubjectId}::${clean(row.TeacherUsername).toLowerCase()}`;
+  const selectedAllocationValue = selectedAllocation ? allocationValue(selectedAllocation) : '';
+  const componentHeaders = (scheme.Components || []).map((component) => `<th>${escapeHtml(component.Name)}<small>${component.MaximumScore} marks · ${component.WeightPercentage}% · ${escapeHtml(component.SourceMode || 'any source')}</small></th>`).join('');
+  const scoreRows = roster.map((membership) => {
+    const score = scoreByStudent.get(clean(membership.StudentRef).toLowerCase()) || {};
+    const byComponent = new Map((score.ComponentScores || []).map((entry) => [entry.ComponentId, entry]));
+    const componentCells = (scheme.Components || []).map((component) => {
+      const entry = byComponent.get(component.Id) || { State: 'Missing', RawScore: '' };
+      const numeric = entry.State === 'Numeric';
+      const sourceMode = clean(component.SourceMode || 'any').toLowerCase();
+      const manualAllowed = ['any', 'manual'].includes(sourceMode);
+      return `<td><div class="academic-score-component${manualAllowed ? '' : ' is-source-locked'}" data-academic-score-component="${escapeHtml(component.Id)}" data-maximum="${component.MaximumScore}" data-weight="${component.WeightPercentage}" data-required="${component.Required === false ? 'false' : 'true'}" data-manual-allowed="${manualAllowed ? 'true' : 'false'}"><input type="number" min="0" max="${component.MaximumScore}" step="0.01" value="${numeric ? escapeHtml(entry.RawScore) : ''}" data-academic-score-value ${numeric && canEdit && manualAllowed ? '' : 'disabled'} aria-label="${escapeHtml(component.Name)} score for ${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}"><select data-academic-score-state ${canEdit && manualAllowed ? '' : 'disabled'} aria-label="${escapeHtml(component.Name)} status">${academicScoreStateOptions(entry.State || 'Missing')}</select></div></td>`;
+    }).join('');
+    return `<tr data-academic-score-student="${escapeHtml(membership.StudentRef)}" data-score-id="${escapeHtml(score.ScoreId || '')}" data-revision-token="${escapeHtml(score.RevisionToken || '')}"><td><strong>${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}</strong><small>${escapeHtml(membership.StudentRef)}</small></td>${componentCells}<td data-academic-score-total>${score.Percentage === null || score.Percentage === undefined ? '—' : `${score.Percentage}%`}</td><td data-academic-score-grade>${escapeHtml(score.Grade || '—')}</td><td data-academic-score-completion>${escapeHtml(score.CompletionStatus || 'Incomplete')}</td></tr>`;
+  }).join('');
+  const blocking = scheme.Ready
+    ? `<div class="academic-score-scheme-banner is-ready"><strong>Active scheme</strong><span>${scheme.Components.length} components · ${scheme.GradeBands.length} grade bands · revision ${escapeHtml(scheme.RevisionId)}</span></div>`
+    : `<div class="academic-score-scheme-banner has-errors"><strong>Score entry is blocked</strong><span>${escapeHtml((scheme.Issues || []).join(' '))}</span></div>`;
+  const scorebook = `<form class="academic-management-editor academic-management-editor-wide academic-scorebook" data-academic-scorebook data-editable="${canEdit ? 'true' : 'false'}">
+    <div class="academic-management-editor-heading"><div><small>AM-009 score recording</small><h3>Enter student scores</h3><p class="muted">Scores remain Draft until the complete class-subject sheet is submitted. Missing and Incomplete block submission; Absent counts as zero; Exempt is excluded from the applicable weight.</p></div><strong>${roster.length} students</strong></div>
+    ${blocking}
+    <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}"><input type="hidden" name="SheetId" value="${escapeHtml(sheet?.SheetId || '')}"><input type="hidden" name="SheetRevisionToken" value="${escapeHtml(sheet?.RevisionToken || '')}">
+    <div class="academic-management-form-grid academic-management-form-grid-3">
+      <label>Classroom<select name="ArmId" data-academic-scorebook-classroom required>${academicSelectOptions(permittedClassrooms, selectedArm?.ArmId, classroomLabel, 'Choose allocated classroom')}</select></label>
+      <label>Subject and teacher<select name="AllocationId" data-academic-scorebook-allocation required><option value="">Choose allocated subject</option>${selectedAllocations.map((allocation) => `<option value="${escapeHtml(allocationValue(allocation))}"${allocationValue(allocation) === selectedAllocationValue ? ' selected' : ''}>${escapeHtml(`${academicLabel(rows.subjects, allocation.SubjectId)} · ${academicLabel(data.staff, allocation.TeacherUsername, allocation.TeacherUsername)}`)}</option>`).join('')}</select></label>
+      <label>Workflow status<input value="${escapeHtml(sheet?.Status || 'New Draft')}" readonly></label>
+    </div>
+    <div class="academic-attendance-table academic-scorebook-table"><table><thead><tr><th>Student</th>${componentHeaders}<th>Total</th><th>Grade</th><th>Completion</th></tr></thead><tbody>${scoreRows || `<tr><td colspan="${(scheme.Components || []).length + 4}">Choose an allocated classroom and subject with active students.</td></tr>`}</tbody></table></div>
+    <div class="academic-scorebook-actions"><button type="submit" ${canEdit && roster.length ? '' : 'disabled'}>Save score draft</button>${sheet?.Status === 'Draft' && data.permissions?.canEnterScores ? `<button type="button" class="secondary" data-academic-score-status="Submitted" data-academic-id="${escapeHtml(sheet.SheetId)}" data-academic-revision="${escapeHtml(sheet.RevisionToken)}">Submit complete sheet</button>` : ''}</div>
+  </form>`;
+  const workflow = table('Score Sheet Workflow', rows.scoreSheets, [
+    { label: 'Classroom', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
+    { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId) },
+    { label: 'Teacher', value: (row) => academicLabel(data.staff, row.TeacherUsername, row.TeacherUsername) },
+    { label: 'Entered', value: (row) => `${row.CompleteCount || 0} / ${row.RosterCount || 0}` },
+    { label: 'Scheme revision', value: (row) => row.AssessmentRevisionId || 'Not captured' },
+    { label: 'Status', value: (row) => row.Status },
+    { label: 'Actions', render: (row) => academicScoreSheetActions(row, data.permissions || {}) }
+  ]);
+  const preview = academicScorebookDraft.importPreview;
+  const spreadsheetComponents = (scheme.Components || []).filter((component) => ['any', 'spreadsheet'].includes(clean(component.SourceMode || 'any').toLowerCase()));
+  const previewRows = (preview?.Rows || []).map((row) => `<tr><td>${row.RowNumber}</td><td>${escapeHtml(row.StudentRef || '—')}</td><td>${row.Valid ? 'Valid' : 'Invalid'}</td><td>${escapeHtml((row.Issues || []).join(' ') || 'Ready to import')}</td></tr>`).join('');
+  const importPanel = `<form class="academic-management-editor academic-management-editor-wide academic-score-import" data-academic-score-import>
+    <div class="academic-management-editor-heading"><div><small>AM-010 spreadsheet import</small><h3>Preview before importing</h3><p class="muted">The selected scorebook determines the roster and component columns. CSV and XLSX files are validated online before any score is written.</p></div></div>
+    <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}"><input type="hidden" name="ClassId" value="${escapeHtml(selectedArm?.ClassId || '')}"><input type="hidden" name="ArmId" value="${escapeHtml(selectedArm?.ArmId || '')}"><input type="hidden" name="SubjectId" value="${escapeHtml(selectedAllocation?.SubjectId || '')}"><input type="hidden" name="TeacherUsername" value="${escapeHtml(selectedAllocation?.TeacherUsername || '')}"><input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" data-academic-score-import-file hidden>
+    <div class="academic-score-import-toolbar"><button type="button" class="secondary" data-academic-score-template ${scheme.Ready && roster.length && spreadsheetComponents.length ? '' : 'disabled'}>Download score template</button><button type="button" class="secondary" data-academic-score-import-choose ${scheme.Ready && roster.length && spreadsheetComponents.length && (!sheet || sheet.Status === 'Draft') ? '' : 'disabled'}>Choose CSV or XLSX</button><label>Commit policy<select name="CommitMode"><option value="all-or-nothing">All rows must be valid</option><option value="valid-rows-only">Import valid rows only</option></select></label></div>
+    ${scheme.Ready && !spreadsheetComponents.length ? '<p class="muted">This assessment scheme has no components that accept spreadsheet scores.</p>' : ''}
+    <p class="muted">${academicScorebookDraft.importFileName ? `Selected: ${escapeHtml(academicScorebookDraft.importFileName)} · ${preview?.ValidRows || 0} valid · ${preview?.InvalidRows || 0} invalid` : 'Download the pre-filled template, enter scores, then choose the completed file.'}</p>
+    ${preview ? `<div class="academic-attendance-table academic-score-import-preview"><table><thead><tr><th>Row</th><th>Student</th><th>Validation</th><th>Issue</th></tr></thead><tbody>${previewRows}</tbody></table></div><button type="submit" ${preview.ValidRows ? '' : 'disabled'}>Import previewed scores as Draft</button>` : ''}
+  </form>`;
+  const imports = table('Score Import History', rows.scoreImports, [
+    { label: 'File', value: (row) => row.SourceFileName || row.SourceFormat || 'Spreadsheet' },
+    { label: 'Classroom', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
+    { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId) },
+    { label: 'Imported', value: (row) => `${row.ImportedRows || 0} of ${row.TotalRows || 0}` },
+    { label: 'Status', value: (row) => row.Status },
+    { label: 'Committed', value: (row) => row.CommittedAt || '-' },
+    { label: 'Actions', render: (row) => row.Status === 'Committed' && data.permissions?.canImportScores ? `<button type="button" class="compact-icon-action academic-archive-action" data-academic-score-import-rollback="${escapeHtml(row.ImportId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Roll back unpublished import" aria-label="Roll back unpublished import">&#8634;</button>` : '<span class="muted">View only</span>' }
+  ]);
+  const schemePanel = `<section class="academic-management-editor academic-management-editor-wide academic-assessment-scheme" data-academic-assessment-scheme>
+    <div class="academic-management-editor-heading"><div><small>Active policy snapshot</small><h3>Assessment components and grading bands</h3><p class="muted">Configure and activate these choices in Account &amp; settings. Each created score sheet permanently captures the revision shown here.</p></div><strong>${scheme.Ready ? 'Ready' : 'Not ready'}</strong></div>
+    ${blocking}
+    <div class="academic-assessment-scheme-grid"><section><h4>Assessment components</h4>${(scheme.Components || []).map((row) => `<div><strong>${escapeHtml(row.Name)}</strong><span>${row.MaximumScore} marks · ${row.WeightPercentage}% · ${escapeHtml(row.SourceMode || 'any source')}</span></div>`).join('') || '<p>No components configured.</p>'}</section><section><h4>Grading bands</h4>${(scheme.GradeBands || []).map((row) => `<div><strong>${escapeHtml(row.Grade)}</strong><span>${row.MinimumPercentage}–${row.MaximumPercentage}% · ${row.GradePoint} points · ${escapeHtml(row.Remark || row.Classification)}</span></div>`).join('') || '<p>No grading bands configured.</p>'}</section></div>
+  </section>`;
+  return `${scorebook}${workflow}${importPanel}${imports}${schemePanel}`;
+}
+
 function academicManagementHeader(data, rows, message = '') {
   const sessions = (data.sessions || []).filter(academicIsActive);
   const terms = (data.terms || []).filter((row) => !academicManagementFilters.sessionId || row.SessionId === academicManagementFilters.sessionId);
@@ -11024,10 +11159,10 @@ function academicManagementHeader(data, rows, message = '') {
     !['primary', 'secondary'].includes(permittedSection) || section === permittedSection
   ));
   const views = data.permissions?.teacherView
-    ? [['classrooms', 'Classrooms'], ['structure', 'Catalogue'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['teachers', 'My allocations'], ['students', 'My registers'], ['timetable', 'Timetable'], ['attendance', 'Attendance']]
-    : [['classrooms', 'Classrooms'], ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', 'Student records'], ['timetable', 'Timetable'], ['attendance', 'Attendance']];
+    ? [['classrooms', 'Classrooms'], ['structure', 'Catalogue'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['teachers', 'My allocations'], ['students', 'My registers'], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook']]
+    : [['classrooms', 'Classrooms'], ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', 'Student records'], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook']];
   return `<div class="academic-management-heading">
-    <div><p class="eyebrow">AM-002 / AM-003 / AM-004</p><h2>Academic Management</h2><p class="muted">Branch-isolated structure, conflict-checked timetables and auditable student attendance.</p></div>
+    <div><p class="eyebrow">AM-002 to AM-010</p><h2>Academic Management</h2><p class="muted">Branch-isolated structure, timetables, attendance and policy-driven assessment records.</p></div>
     <button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button>
   </div>
   <div class="academic-management-filterbar">
@@ -11069,11 +11204,13 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
   else if (academicManagementView === 'students') workspace = academicStudentWorkspace(data, rows);
   else if (academicManagementView === 'timetable') workspace = academicTimetableWorkspace(data, rows);
   else if (academicManagementView === 'attendance') workspace = academicAttendanceWorkspace(data, rows);
+  else if (academicManagementView === 'scorebook') workspace = academicScorebookWorkspace(data, rows);
   else workspace = academicStructureWorkspace(data, rows);
   panelEl.innerHTML = `${academicManagementHeader(data, rows, message)}<section class="academic-management-workspace">${workspace}</section>`;
   organizeAcademicManagementWorkspace(academicManagementView);
   renderModuleSummary('academics', data);
   bindAcademicManagement();
+  if (academicManagementView === 'scorebook') queueMicrotask(() => { void loadAcademicScorebookContext(); });
 }
 
 async function academicManagementRequest(action, payload = {}) {
@@ -11240,6 +11377,112 @@ function populateAcademicForm(type, record) {
   form.querySelector('input:not([type="hidden"]), select')?.focus();
 }
 
+function academicScorebookRowPayload(row) {
+  return {
+    StudentRef: row.dataset.academicScoreStudent,
+    RevisionToken: row.dataset.revisionToken || '',
+    ComponentScores: [...row.querySelectorAll('[data-academic-score-component][data-manual-allowed="true"]')].map((component) => ({
+      ComponentId: component.dataset.academicScoreComponent,
+      State: component.querySelector('[data-academic-score-state]').value,
+      RawScore: component.querySelector('[data-academic-score-value]').value
+    }))
+  };
+}
+
+function updateAcademicScorebookRow(row, scheme = academicManagementData?.assessmentScheme || {}) {
+  let includedWeight = 0;
+  let weightedEarned = 0;
+  const unresolved = [];
+  row.querySelectorAll('[data-academic-score-component]').forEach((component) => {
+    const state = component.querySelector('[data-academic-score-state]').value;
+    const input = component.querySelector('[data-academic-score-value]');
+    const maximum = Number(component.dataset.maximum || 0);
+    const weight = Number(component.dataset.weight || 0);
+    const required = component.dataset.required !== 'false';
+    const manualAllowed = component.dataset.manualAllowed === 'true';
+    input.disabled = !manualAllowed || state !== 'Numeric' || row.closest('[data-academic-scorebook]')?.dataset.editable !== 'true';
+    if (state === 'Exempt') return;
+    includedWeight += weight;
+    if (state === 'Numeric' && input.value !== '' && Number.isFinite(Number(input.value))) {
+      weightedEarned += (Number(input.value) / maximum) * weight;
+    } else if (required && ['Missing', 'Incomplete', 'Numeric'].includes(state)) unresolved.push(component.dataset.academicScoreComponent);
+  });
+  const percentage = includedWeight > 0 ? Math.round((weightedEarned * 100 / includedWeight + Number.EPSILON) * 100) / 100 : null;
+  const complete = percentage !== null && unresolved.length === 0;
+  const band = complete ? (scheme.GradeBands || []).find((grade) => percentage >= Number(grade.MinimumPercentage)
+    && percentage <= Number(grade.MaximumPercentage) + 0.0001) : null;
+  const totalCell = row.querySelector('[data-academic-score-total]');
+  const gradeCell = row.querySelector('[data-academic-score-grade]');
+  const completionCell = row.querySelector('[data-academic-score-completion]');
+  if (totalCell) totalCell.textContent = percentage === null ? '—' : `${percentage}%`;
+  if (gradeCell) gradeCell.textContent = band?.Grade || '—';
+  if (completionCell) completionCell.textContent = complete ? 'Complete' : 'Incomplete';
+}
+
+function academicScoreTemplateCsv(data = academicManagementData || {}) {
+  const currentRows = academicCurrentRows(data);
+  const scheme = data.assessmentScheme || { Components: [] };
+  const roster = currentRows.studentMemberships.filter((row) => academicIsActive(row)
+    && row.ClassId === academicScorebookDraft.classId && row.ArmId === academicScorebookDraft.armId
+    && (row.SubjectIds || []).includes(academicScorebookDraft.subjectId));
+  const quote = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+  const components = (scheme.Components || []).filter((component) => ['any', 'spreadsheet'].includes(clean(component.SourceMode || 'any').toLowerCase()));
+  const headers = ['StudentRef', 'StudentName', ...components.map((component) => component.Id)];
+  return [headers.map(quote).join(','), ...roster.map((membership) => [
+    membership.StudentRef, academicLabel(data.students || [], membership.StudentRef, membership.StudentRef),
+    ...components.map(() => '')
+  ].map(quote).join(','))].join('\r\n');
+}
+
+function academicScoreSheetRequestPayload(sheet, extra = {}) {
+  return {
+    SchoolSection: academicManagementFilters.section,
+    SessionId: sheet.SessionId || academicManagementFilters.sessionId,
+    TermId: sheet.TermId || academicManagementFilters.termId,
+    ClassId: sheet.ClassId,
+    ArmId: sheet.ArmId,
+    SubjectId: sheet.SubjectId,
+    TeacherUsername: sheet.TeacherUsername,
+    SheetId: sheet.SheetId,
+    RevisionToken: sheet.RevisionToken,
+    ...extra
+  };
+}
+
+function academicScorebookContextPayload(data = academicManagementData || {}) {
+  const rows = academicCurrentRows(data);
+  const arm = academicFind(rows.arms, academicScorebookDraft.armId);
+  const allocations = rows.teacherAllocations.filter((row) => academicIsActive(row) && row.AllocationRole === 'Subject Teacher'
+    && row.ClassId === arm?.ClassId && (!row.ArmId || row.ArmId === arm?.ArmId));
+  const allocation = allocations.find((row) => row.SubjectId === academicScorebookDraft.subjectId
+    && (!academicScorebookDraft.teacherUsername || clean(row.TeacherUsername).toLowerCase() === clean(academicScorebookDraft.teacherUsername).toLowerCase())) || allocations[0];
+  if (!arm || !allocation) return null;
+  academicScorebookDraft = {
+    ...academicScorebookDraft, classId: arm.ClassId, armId: arm.ArmId,
+    subjectId: allocation.SubjectId, teacherUsername: clean(allocation.TeacherUsername).toLowerCase()
+  };
+  return {
+    SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId,
+    TermId: academicManagementFilters.termId, ClassId: arm.ClassId, ArmId: arm.ArmId,
+    SubjectId: allocation.SubjectId, TeacherUsername: allocation.TeacherUsername
+  };
+}
+
+async function loadAcademicScorebookContext() {
+  const payload = academicScorebookContextPayload();
+  if (!payload) return;
+  const key = [payload.SessionId, payload.TermId, payload.ClassId, payload.ArmId, payload.SubjectId,
+    clean(payload.TeacherUsername).toLowerCase()].map(clean).join('|');
+  if (academicScorebookDraft.contextKey === key) return;
+  const status = document.getElementById('academicManagementStatus');
+  try {
+    setStatus(status, 'Loading the selected scorebook and assessment scheme...');
+    const data = await academicManagementRequest('getAcademicScorebookContext', payload);
+    academicScorebookDraft.contextKey = key;
+    renderAcademicManagement(data, data.message || 'Scorebook context loaded.');
+  } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+}
+
 function bindAcademicManagement() {
   panelEl.querySelectorAll('[data-academic-checkbox-field]').forEach(bindAcademicCheckboxField);
   const seniorChoiceForm = panelEl.querySelector('[data-academic-senior-choice-subjects]');
@@ -11266,6 +11509,7 @@ function bindAcademicManagement() {
     academicManagementView = button.dataset.academicView;
     if (button.closest('[data-academic-catalogue-note="arms"]')) academicManagementTaskViews.bulkSetup = 'applyArms';
     renderAcademicManagement(academicManagementData || {});
+    if (academicManagementView === 'scorebook') void loadAcademicScorebookContext();
   }));
   panelEl.querySelectorAll('[data-academic-timetable-version-select]').forEach((select) => select.addEventListener('change', (event) => {
     academicTimetableDraft.versionId = event.target.value;
@@ -11571,6 +11815,143 @@ function bindAcademicManagement() {
       } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
     });
   }));
+  const scorebookForm = panelEl.querySelector('[data-academic-scorebook]');
+  scorebookForm?.querySelector('[data-academic-scorebook-classroom]')?.addEventListener('change', (event) => {
+    const arm = academicFind(academicManagementData?.arms || [], event.target.value);
+    academicScorebookDraft = {
+      classId: clean(arm?.ClassId), armId: clean(arm?.ArmId), subjectId: '', teacherUsername: '',
+      importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV'
+    };
+    void loadAcademicScorebookContext();
+  });
+  scorebookForm?.querySelector('[data-academic-scorebook-allocation]')?.addEventListener('change', (event) => {
+    const [subjectId, teacherUsername] = clean(event.target.value).split('::', 2);
+    academicScorebookDraft = {
+      ...academicScorebookDraft, subjectId, teacherUsername,
+      importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV'
+    };
+    void loadAcademicScorebookContext();
+  });
+  scorebookForm?.querySelectorAll('[data-academic-score-student]').forEach((row) => updateAcademicScorebookRow(row));
+  scorebookForm?.addEventListener('change', (event) => {
+    if (!event.target.matches('[data-academic-score-state]')) return;
+    const component = event.target.closest('[data-academic-score-component]');
+    const input = component?.querySelector('[data-academic-score-value]');
+    if (event.target.value !== 'Numeric' && input) input.value = '';
+    updateAcademicScorebookRow(event.target.closest('[data-academic-score-student]'));
+  });
+  scorebookForm?.addEventListener('input', (event) => {
+    if (event.target.matches('[data-academic-score-value]')) updateAcademicScorebookRow(event.target.closest('[data-academic-score-student]'));
+  });
+  scorebookForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = scorebookForm.querySelector('button[type="submit"]');
+    await runButtonAction(button, 'Saving...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const classroom = academicFind(academicManagementData?.arms || [], scorebookForm.elements.ArmId.value);
+        const [subjectId, teacherUsername] = clean(scorebookForm.elements.AllocationId.value).split('::', 2);
+        const data = await academicManagementRequest('saveAcademicScoreDraft', {
+          SchoolSection: academicManagementFilters.section,
+          SessionId: academicManagementFilters.sessionId, TermId: academicManagementFilters.termId,
+          ClassId: classroom?.ClassId, ArmId: classroom?.ArmId, SubjectId: subjectId, TeacherUsername: teacherUsername,
+          SheetId: scorebookForm.elements.SheetId.value, SheetRevisionToken: scorebookForm.elements.SheetRevisionToken.value,
+          Rows: [...scorebookForm.querySelectorAll('[data-academic-score-student]')].map(academicScorebookRowPayload)
+        });
+        renderAcademicManagement(data, data.message || 'Scores saved as Draft.');
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  });
+  panelEl.querySelectorAll('[data-academic-score-status]').forEach((button) => button.addEventListener('click', async () => {
+    const sheet = academicFind(academicManagementData?.scoreSheets || [], button.dataset.academicId);
+    if (!sheet) return;
+    const target = button.dataset.academicScoreStatus;
+    let reason = '';
+    if (target === 'Draft') {
+      reason = clean(await window.DynamaxDialogs.prompt({
+        title: 'Reopen score sheet', message: 'Reopening restores editing and is recorded in the audit trail.',
+        label: 'Approved reason', required: true, tone: 'danger', confirmText: 'Reopen as Draft'
+      }));
+      if (!reason) return;
+    } else if (!await window.DynamaxDialogs.confirm({
+      title: `${target} score sheet`,
+      message: target === 'Locked' ? 'Lock this approved sheet against further changes?' : `Move this score sheet to ${target}?`,
+      confirmText: target
+    })) return;
+    await runButtonAction(button, 'Updating...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('changeAcademicScoreSheetStatus', academicScoreSheetRequestPayload(sheet, { Status: target, Reason: reason }));
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  }));
+  const scoreImportForm = panelEl.querySelector('[data-academic-score-import]');
+  const scoreImportFile = scoreImportForm?.querySelector('[data-academic-score-import-file]');
+  scoreImportForm?.querySelector('[data-academic-score-template]')?.addEventListener('click', () => {
+    const className = academicLabel(academicManagementData?.classes || [], academicScorebookDraft.classId, 'class');
+    const armName = academicLabel(academicManagementData?.arms || [], academicScorebookDraft.armId, 'arm');
+    const subjectName = academicLabel(academicManagementData?.subjects || [], academicScorebookDraft.subjectId, 'subject');
+    const filePart = `${className}-${armName}-${subjectName}`.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    downloadCsvFile(`score-template-${filePart}.csv`, academicScoreTemplateCsv());
+    setStatus(document.getElementById('academicManagementStatus'), 'Pre-filled score template downloaded.', 'ok');
+  });
+  scoreImportForm?.querySelector('[data-academic-score-import-choose]')?.addEventListener('click', () => scoreImportFile?.click());
+  scoreImportFile?.addEventListener('change', async () => {
+    const file = scoreImportFile.files?.[0];
+    if (!file) return;
+    const status = document.getElementById('academicManagementStatus');
+    try {
+      const rows = await parseAcademicScoreSpreadsheet(file);
+      if (!rows.length) throw new Error('The score spreadsheet has no data rows.');
+      if (rows.length > 200) throw new Error('Import at most 200 student scores at a time.');
+      const payload = Object.fromEntries(new FormData(scoreImportForm).entries());
+      delete payload.CommitMode;
+      const data = await academicManagementRequest('previewAcademicScoreImport', { ...payload, Rows: rows });
+      academicScorebookDraft = {
+        ...academicScorebookDraft, importPreview: data.scoreImportPreview, importRows: rows,
+        importFileName: file.name, importFormat: /\.xlsx$/i.test(file.name) ? 'XLSX' : 'CSV', importKey: crypto.randomUUID()
+      };
+      renderAcademicManagement(data, data.message || 'Spreadsheet preview is ready.');
+    } catch (error) {
+      setStatus(status, error.message || String(error), 'bad');
+    } finally { scoreImportFile.value = ''; }
+  });
+  scoreImportForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = scoreImportForm.querySelector('button[type="submit"]');
+    await runButtonAction(button, 'Importing...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const payload = Object.fromEntries(new FormData(scoreImportForm).entries());
+        const data = await academicManagementRequest('importAcademicScores', {
+          ...payload, Rows: academicScorebookDraft.importRows,
+          ImportKey: academicScorebookDraft.importKey || crypto.randomUUID(),
+          SourceFileName: academicScorebookDraft.importFileName, SourceFormat: academicScorebookDraft.importFormat
+        });
+        academicScorebookDraft = { ...academicScorebookDraft, importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV', importKey: '' };
+        renderAcademicManagement(data, data.message || 'Scores imported as Draft.');
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  });
+  panelEl.querySelectorAll('[data-academic-score-import-rollback]').forEach((button) => button.addEventListener('click', async () => {
+    const reason = clean(await window.DynamaxDialogs.prompt({
+      title: 'Roll back score import', message: 'Only scores that remain unchanged and unpublished can be restored.',
+      label: 'Rollback reason', required: true, tone: 'danger', confirmText: 'Roll back import'
+    }));
+    if (!reason) return;
+    await runButtonAction(button, 'Rolling back...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('rollbackAcademicScoreImport', {
+          SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId,
+          TermId: academicManagementFilters.termId, ImportId: button.dataset.academicScoreImportRollback,
+          RevisionToken: button.dataset.academicRevision, Reason: reason
+        });
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  }));
   panelEl.querySelectorAll('[data-academic-apply-arm-template]').forEach((button) => button.addEventListener('click', () => {
     const templateId = button.dataset.academicApplyArmTemplate;
     academicManagementView = 'bulkSetup';
@@ -11590,6 +11971,7 @@ function bindAcademicManagement() {
     academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
     academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
     academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
+    academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
     void loadAcademicManagement({ section: event.target.value });
   });
   document.getElementById('academicManagementSession')?.addEventListener('change', (event) => {
@@ -11607,6 +11989,7 @@ function bindAcademicManagement() {
     };
     academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
     academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
+    academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
     renderAcademicManagement(academicManagementData || {});
   });
   document.getElementById('academicManagementTerm')?.addEventListener('change', (event) => {
@@ -11626,6 +12009,7 @@ function bindAcademicManagement() {
     };
     academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
     academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
+    academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
     renderAcademicManagement(academicManagementData || {});
   });
   const classroomEditor = panelEl.querySelector('[data-academic-classroom-editor]');
@@ -14151,6 +14535,82 @@ function parseCsv(text) {
   if (rows.length < 2) return [];
   const headers = rows[0].map((value) => clean(value).replace(/^\uFEFF/, ''));
   return rows.slice(1).map((values) => Object.fromEntries(headers.map((header, index) => [header, clean(values[index])])));
+}
+
+async function academicUnzipEntries(arrayBuffer) {
+  const bytes = new Uint8Array(arrayBuffer);
+  const view = new DataView(arrayBuffer);
+  let end = -1;
+  for (let offset = Math.max(0, bytes.length - 65557); offset <= bytes.length - 22; offset += 1) {
+    if (view.getUint32(offset, true) === 0x06054b50) end = offset;
+  }
+  if (end < 0) throw new Error('This XLSX file is not a valid spreadsheet archive.');
+  const count = view.getUint16(end + 10, true);
+  let offset = view.getUint32(end + 16, true);
+  const decoder = new TextDecoder('utf-8');
+  const entries = new Map();
+  for (let index = 0; index < count; index += 1) {
+    if (view.getUint32(offset, true) !== 0x02014b50) throw new Error('This XLSX file has a damaged directory.');
+    const method = view.getUint16(offset + 10, true);
+    const compressedSize = view.getUint32(offset + 20, true);
+    const nameLength = view.getUint16(offset + 28, true);
+    const extraLength = view.getUint16(offset + 30, true);
+    const commentLength = view.getUint16(offset + 32, true);
+    const localOffset = view.getUint32(offset + 42, true);
+    const name = decoder.decode(bytes.slice(offset + 46, offset + 46 + nameLength));
+    const localNameLength = view.getUint16(localOffset + 26, true);
+    const localExtraLength = view.getUint16(localOffset + 28, true);
+    const start = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = bytes.slice(start, start + compressedSize);
+    let value;
+    if (method === 0) value = compressed;
+    else if (method === 8 && typeof DecompressionStream !== 'undefined') {
+      const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      value = new Uint8Array(await new Response(stream).arrayBuffer());
+    } else throw new Error('This browser cannot read the compression used by the XLSX file. Save it as CSV and try again.');
+    entries.set(name, value);
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+function academicXlsxCellColumn(reference = '') {
+  const letters = clean(reference).match(/^[A-Z]+/i)?.[0]?.toUpperCase() || 'A';
+  return [...letters].reduce((value, letter) => value * 26 + letter.charCodeAt(0) - 64, 0) - 1;
+}
+
+async function parseAcademicScoreSpreadsheet(file) {
+  if (/\.csv$/i.test(file.name) || /text\/csv/i.test(file.type)) return parseCsv(await file.text());
+  if (!/\.xlsx$/i.test(file.name)) throw new Error('Choose a CSV or XLSX score spreadsheet.');
+  const entries = await academicUnzipEntries(await file.arrayBuffer());
+  const decoder = new TextDecoder('utf-8');
+  const parseXml = (path) => {
+    const value = entries.get(path);
+    if (!value) return null;
+    const documentValue = new DOMParser().parseFromString(decoder.decode(value), 'application/xml');
+    if (documentValue.querySelector('parsererror')) throw new Error(`The XLSX file contains invalid XML in ${path}.`);
+    return documentValue;
+  };
+  const sharedDocument = parseXml('xl/sharedStrings.xml');
+  const sharedStrings = sharedDocument ? [...sharedDocument.getElementsByTagName('si')]
+    .map((node) => [...node.getElementsByTagName('t')].map((textNode) => textNode.textContent || '').join('')) : [];
+  const sheetPath = [...entries.keys()].filter((path) => /^xl\/worksheets\/sheet\d+\.xml$/i.test(path)).sort()[0];
+  if (!sheetPath) throw new Error('The XLSX file has no worksheet.');
+  const sheet = parseXml(sheetPath);
+  const matrix = [...sheet.getElementsByTagName('row')].map((row) => {
+    const values = [];
+    [...row.getElementsByTagName('c')].forEach((cell) => {
+      const column = academicXlsxCellColumn(cell.getAttribute('r'));
+      const type = cell.getAttribute('t');
+      const raw = cell.getElementsByTagName('v')[0]?.textContent ?? '';
+      const inline = [...cell.getElementsByTagName('t')].map((node) => node.textContent || '').join('');
+      values[column] = type === 's' ? (sharedStrings[Number(raw)] || '') : (type === 'inlineStr' ? inline : raw);
+    });
+    return values;
+  }).filter((row) => row.some((value) => clean(value)));
+  if (matrix.length < 2) return [];
+  const headers = matrix[0].map((value) => clean(value).replace(/^\uFEFF/, ''));
+  return matrix.slice(1).map((values) => Object.fromEntries(headers.map((header, index) => [header, clean(values[index])])));
 }
 
 function downloadCsvFile(fileName, content) {

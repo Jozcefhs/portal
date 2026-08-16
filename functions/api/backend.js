@@ -7442,6 +7442,26 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'bulkAllocateAcademicStudents':
     case 'bulkImportAcademicStudentMemberships':
     case 'bulkAssignAcademicArmStudentSubjects':
+    case 'saveAcademicTimetableSettings':
+    case 'saveAcademicTimetableConstraint':
+    case 'deleteAcademicTimetableConstraint':
+    case 'createAcademicTimetableVersion':
+    case 'copyAcademicTimetableVersion':
+    case 'previewAcademicTimetableCopy':
+    case 'copyAcademicTimetableSelection':
+    case 'saveAcademicTimetableEntry':
+    case 'deleteAcademicTimetableEntry':
+    case 'saveAcademicTimetableSubstitution':
+    case 'cancelAcademicTimetableSubstitution':
+    case 'changeAcademicTimetableVersionStatus':
+    case 'saveAcademicStudentAttendance':
+    case 'decideAcademicAttendanceCorrection':
+    case 'getAcademicScorebookContext':
+    case 'saveAcademicScoreDraft':
+    case 'changeAcademicScoreSheetStatus':
+    case 'previewAcademicScoreImport':
+    case 'importAcademicScores':
+    case 'rollbackAcademicScoreImport':
     case 'moveAcademicStudentMembership':
     case 'withdrawAcademicStudentMembership':
     case 'reinstateAcademicStudentMembership':
