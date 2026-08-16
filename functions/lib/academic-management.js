@@ -1478,8 +1478,7 @@ export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {
   requireWritableSubscription(user);
   requireCapability(user, 'canManageAllocations');
   const scope = await academicScope(env, user, input, { requireSection: true });
-  const classIds = uniqueIds(input.ClassIds || input.ClassId);
-  const armTemplateIds = uniqueIds(input.ArmTemplateIds || input.ArmTemplateId);
+  const classroomIds = uniqueIds(input.ClassroomIds || input.ArmIds || input.ArmId);
   const sessionId = clean(input.SessionId);
   const termId = clean(input.TermId);
   const teacherUsername = lower(input.TeacherUsername || input.Username);
@@ -1487,68 +1486,64 @@ export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {
   if (!sessionId || !termId || !teacherUsername || !subjectId) {
     throw failure('Choose the session, term, teacher and subject.');
   }
-  if (!classIds.length || !armTemplateIds.length) {
-    throw failure('Choose at least one class and one reusable arm.');
+  if (!classroomIds.length) {
+    throw failure('Choose at least one classroom.');
   }
-  if (classIds.length * armTemplateIds.length > 200) {
-    throw failure('Assign at most 200 class-arm combinations in one batch.');
+  if (classroomIds.length > 200) {
+    throw failure('Assign at most 200 classrooms in one batch.');
   }
   const [state, people] = await Promise.all([loadAcademicState(env, scope.branchId), loadPeople(env, user, scope)]);
   const projected = { ...state, teacherAllocations: [...state.teacherAllocations] };
-  const classes = classIds.map((id) => assertReference(findById(state.classes, id), 'One selected class is not active.'));
-  const armTemplates = armTemplateIds.map((id) => assertReference(findById(state.armTemplates, id), 'One selected reusable arm is not active.'));
+  const classrooms = classroomIds.map((id) => assertReference(findById(state.arms, id), 'One selected classroom is not active.'));
   const subject = assertReference(findById(state.subjects, subjectId), 'The selected subject is not active.');
-  if (classes.some((row) => lower(row.SchoolSection) !== scope.section) || lower(subject.SchoolSection) !== scope.section) {
-    throw failure('Every selected class and the subject must belong to the selected school section.', 409, 'ACADEMIC_SECTION_MISMATCH');
+  if (lower(subject.SchoolSection) !== scope.section) {
+    throw failure('The subject must belong to the selected school section.', 409, 'ACADEMIC_SECTION_MISMATCH');
   }
   const writes = [];
   let created = 0;
   let restored = 0;
   let skipped = 0;
-  for (const schoolClass of classes) {
-    for (const armTemplate of armTemplates) {
-      const arm = state.arms.find((row) => statusActive(row) && row.ClassId === schoolClass.ClassId && (
-        row.ArmTemplateId === armTemplate.ArmTemplateId
-        || lower(row.Name) === lower(armTemplate.Name)
-        || (clean(row.Code) && lower(row.Code) === lower(armTemplate.Code))
-      ));
-      if (!arm) {
-        throw failure(`${armTemplate.Name} has not been applied to ${schoolClass.Name}. Apply that reusable arm to the class before assigning the teacher.`, 409, 'ACADEMIC_ARM_NOT_APPLIED');
-      }
-      const candidate = normalizeAcademicTeacherAllocation({
-        SessionId: sessionId, TermId: termId, TeacherUsername: teacherUsername,
-        ClassId: schoolClass.ClassId, ArmId: arm.ArmId, SubjectId: subject.SubjectId,
-        AllocationRole: 'Subject Teacher', Status: 'Active'
-      }, scope);
-      const existing = findById(projected.teacherAllocations, candidate.AllocationId);
-      if (existing && statusActive(existing)) {
-        skipped += 1;
-        continue;
-      }
-      const record = existing
-        ? normalizeAcademicTeacherAllocation({ ...candidate, Status: 'Active' }, scope, existing)
-        : candidate;
-      if (existing) {
-        delete record.ArchivedAt;
-        delete record.ArchivedBy;
-      }
-      validateAcademicRecord(projected, 'teacherallocation', record, { ...people, existing });
-      stampAcademicRecord(record, user, existing);
-      if (existing) {
-        projected.teacherAllocations = projected.teacherAllocations.map((row) => recordId(row) === record.AllocationId ? record : row);
-        writes.push({
-          collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
-          documentId: record.AllocationId, data: withoutMetadata(record), updateTime: clean(existing.__updateTime)
-        });
-        restored += 1;
-      } else {
-        projected.teacherAllocations.push(record);
-        writes.push({
-          collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
-          documentId: record.AllocationId, data: withoutMetadata(record), exists: false
-        });
-        created += 1;
-      }
+  for (const classroom of classrooms) {
+    if (!activeValue(classroom.IsClassroom, false)) {
+      throw failure(`${classroom.Name} is an arm definition, not an opened classroom.`, 409, 'ACADEMIC_CLASSROOM_REQUIRED');
+    }
+    const schoolClass = assertReference(findById(state.classes, classroom.ClassId), 'The class for one selected classroom is not active.');
+    if (lower(schoolClass.SchoolSection) !== scope.section || lower(classroom.SchoolSection) !== scope.section) {
+      throw failure('Every selected classroom must belong to the selected school section.', 409, 'ACADEMIC_SECTION_MISMATCH');
+    }
+    const candidate = normalizeAcademicTeacherAllocation({
+      SessionId: sessionId, TermId: termId, TeacherUsername: teacherUsername,
+      ClassId: schoolClass.ClassId, ArmId: classroom.ArmId, SubjectId: subject.SubjectId,
+      AllocationRole: 'Subject Teacher', Status: 'Active'
+    }, scope);
+    const existing = findById(projected.teacherAllocations, candidate.AllocationId);
+    if (existing && statusActive(existing)) {
+      skipped += 1;
+      continue;
+    }
+    const record = existing
+      ? normalizeAcademicTeacherAllocation({ ...candidate, Status: 'Active' }, scope, existing)
+      : candidate;
+    if (existing) {
+      delete record.ArchivedAt;
+      delete record.ArchivedBy;
+    }
+    validateAcademicRecord(projected, 'teacherallocation', record, { ...people, existing });
+    stampAcademicRecord(record, user, existing);
+    if (existing) {
+      projected.teacherAllocations = projected.teacherAllocations.map((row) => recordId(row) === record.AllocationId ? record : row);
+      writes.push({
+        collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
+        documentId: record.AllocationId, data: withoutMetadata(record), updateTime: clean(existing.__updateTime)
+      });
+      restored += 1;
+    } else {
+      projected.teacherAllocations.push(record);
+      writes.push({
+        collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
+        documentId: record.AllocationId, data: withoutMetadata(record), exists: false
+      });
+      created += 1;
     }
   }
   if (created || restored) {
@@ -1562,7 +1557,7 @@ export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {
   response.message = created || restored
     ? `${created + restored} subject-teacher assignment${created + restored === 1 ? '' : 's'} saved online${skipped ? `; ${skipped} already existed` : ''}. Repeat for another subject if needed.`
     : 'Every selected subject-teacher assignment already exists.';
-  response.bulkResult = { Requested: classIds.length * armTemplateIds.length, Created: created, Restored: restored, Skipped: skipped };
+  response.bulkResult = { Requested: classroomIds.length, Created: created, Restored: restored, Skipped: skipped };
   return response;
 }
 

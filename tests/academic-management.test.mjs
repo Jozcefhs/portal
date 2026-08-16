@@ -472,15 +472,16 @@ test('bulk student allocation maps every selected reference into membership and 
   assert.match(bulkAllocationSource, /allowIncompleteCurriculum: true/);
 });
 
-test('subject teachers are batch-assigned across selected classes and reusable arms', () => {
+test('subject teachers are batch-assigned only to the exact selected classrooms', () => {
   const bulkTeacherSource = librarySource.slice(
     librarySource.indexOf('export async function bulkAssignAcademicSubjectTeacher'),
     librarySource.indexOf('export async function bulkAllocateAcademicStudents')
   );
-  assert.match(bulkTeacherSource, /const classIds = uniqueIds\(input\.ClassIds/);
-  assert.match(bulkTeacherSource, /const armTemplateIds = uniqueIds\(input\.ArmTemplateIds/);
-  assert.match(bulkTeacherSource, /for \(const schoolClass of classes\)/);
-  assert.match(bulkTeacherSource, /for \(const armTemplate of armTemplates\)/);
+  assert.match(bulkTeacherSource, /const classroomIds = uniqueIds\(input\.ClassroomIds/);
+  assert.match(bulkTeacherSource, /for \(const classroom of classrooms\)/);
+  assert.match(bulkTeacherSource, /activeValue\(classroom\.IsClassroom, false\)/);
+  assert.doesNotMatch(bulkTeacherSource, /for \(const schoolClass of classes\)/);
+  assert.doesNotMatch(bulkTeacherSource, /for \(const armTemplate of armTemplates\)/);
   assert.match(bulkTeacherSource, /AllocationRole: 'Subject Teacher'/);
   assert.match(bulkTeacherSource, /Repeat for another subject if needed/);
   assert.match(librarySource, /bulkassignacademicsubjectteacher/);
@@ -510,18 +511,18 @@ test('staff web workspace exposes responsive academic registers and online-only 
     adminSource.indexOf('function academicTeacherWorkspace'),
     adminSource.indexOf('function academicStudentMembershipActions')
   );
-  assert.match(teacherWorkspace, /const armTemplates = rows\.armTemplates\.filter\(academicIsActive\)/);
+  assert.match(teacherWorkspace, /const classrooms = rows\.arms\.filter/);
   assert.match(teacherWorkspace, /data-academic-workflow="bulkAssignAcademicSubjectTeacher"/);
-  assert.match(teacherWorkspace, /name: 'ClassIds', label: 'Classes taught for this subject'/);
-  assert.match(teacherWorkspace, /name: 'ArmTemplateIds', label: 'Arms taught for this subject'/);
+  assert.match(teacherWorkspace, /name: 'ClassroomIds', label: 'Classrooms taught for this subject'/);
+  assert.match(teacherWorkspace, /Only checked classrooms will be saved/);
   assert.match(teacherWorkspace, /Repeat the process if the teacher handles another subject/);
   assert.doesNotMatch(teacherWorkspace, /name="AllocationRole"/);
   assert.doesNotMatch(teacherWorkspace, /data-academic-form="teacherAllocation"/);
   assert.match(teacherWorkspace, /Subject Teacher Allocations/);
   assert.match(teacherWorkspace, /subjectAllocations/);
   assert.match(librarySource, /export async function bulkAssignAcademicSubjectTeacher/);
-  assert.match(librarySource, /Assign at most 200 class-arm combinations/);
-  assert.match(librarySource, /ACADEMIC_ARM_NOT_APPLIED/);
+  assert.match(librarySource, /Assign at most 200 classrooms/);
+  assert.match(librarySource, /ACADEMIC_CLASSROOM_REQUIRED/);
   assert.match(adminSource, /function academicCheckboxField/);
   assert.match(adminSource, /data-academic-checkbox-count/);
   assert.match(adminSource, /function bindAcademicCheckboxField/);
@@ -612,7 +613,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
   assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-tabs button\{[^}]*font-size:12px/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260815-batch-subject-teachers/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260816-classroom-subject-teachers/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

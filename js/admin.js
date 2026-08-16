@@ -10208,7 +10208,15 @@ function academicTeacherWorkspace(data, rows) {
   const sessions = rows.sessions.filter(academicIsActive);
   const terms = (data.terms || []).filter((row) => academicIsActive(row) && (!academicManagementFilters.sessionId || row.SessionId === academicManagementFilters.sessionId));
   const classes = rows.classes.filter(academicIsActive);
-  const armTemplates = rows.armTemplates.filter(academicIsActive);
+  const classrooms = rows.arms.filter((row) => academicIsActive(row)
+    && (row.IsClassroom === true || /^(yes|true|1)$/i.test(clean(row.IsClassroom)))
+    && Boolean(academicFind(classes, row.ClassId))).sort((left, right) => {
+    const leftClass = academicFind(classes, left.ClassId);
+    const rightClass = academicFind(classes, right.ClassId);
+    const order = Number(leftClass?.SortOrder || 0) - Number(rightClass?.SortOrder || 0);
+    return order || clean(leftClass?.Name).localeCompare(clean(rightClass?.Name), undefined, { sensitivity: 'base' })
+      || clean(left.Name).localeCompare(clean(right.Name), undefined, { sensitivity: 'base' });
+  });
   const subjects = rows.subjects.filter(academicIsActive);
   const subjectAllocations = rows.teacherAllocations.filter((row) => row.AllocationRole === 'Subject Teacher');
   const staff = (data.staff || []).filter((row) => {
@@ -10216,7 +10224,7 @@ function academicTeacherWorkspace(data, rows) {
     return !['primary', 'secondary'].includes(assigned) || assigned === academicManagementFilters.section;
   });
   const form = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="bulkAssignAcademicSubjectTeacher">
-    <div class="academic-management-editor-heading"><div><small>Subject teaching</small><h3>Assign a subject teacher</h3><p class="muted">Choose one teacher and one subject, then select every class and reusable arm taught for that subject. Repeat the process if the teacher handles another subject.</p></div></div>
+    <div class="academic-management-editor-heading"><div><small>Subject teaching</small><h3>Assign a subject teacher</h3><p class="muted">Choose one teacher and one subject, then select the exact classrooms taught for that subject. Repeat the process if the teacher handles another subject.</p></div></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
     <div class="academic-management-form-grid academic-management-form-grid-3">
       <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, 'Choose teacher')}</select></label>
@@ -10224,18 +10232,11 @@ function academicTeacherWorkspace(data, rows) {
       <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
       <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
     </div>
-    <div class="academic-management-form-grid">
-      ${academicCheckboxField({
-        name: 'ClassIds', label: 'Classes taught for this subject', required: true, idPrefix: 'subject-teacher-classes',
-        options: classes.map((row) => ({ value: row.ClassId, label: row.Name })),
-        help: 'Choose one class or several classes.'
-      })}
-      ${academicCheckboxField({
-        name: 'ArmTemplateIds', label: 'Arms taught for this subject', required: true, idPrefix: 'subject-teacher-arms',
-        options: armTemplates.map((row) => ({ value: row.ArmTemplateId, label: row.Name })),
-        help: 'Choose one or more reusable arms. Each selected arm is matched inside every selected class.'
-      })}
-    </div>
+    ${academicCheckboxField({
+      name: 'ClassroomIds', label: 'Classrooms taught for this subject', required: true, idPrefix: 'subject-teacher-classrooms',
+      options: classrooms.map((row) => ({ value: row.ArmId, label: `${academicLabel(classes, row.ClassId)} / ${row.Name}` })),
+      help: classrooms.length ? 'Choose the exact class-and-arm combinations. Only checked classrooms will be saved.' : 'Create classrooms before assigning subject teachers.'
+    })}
     <button type="submit">Save subject-teacher assignments</button>
   </form>` : '<div class="academic-view-only-note"><strong>My teaching allocations</strong><span>Only administrators can change allocations.</span></div>';
   return `${form}${table('Subject Teacher Allocations', subjectAllocations, [
