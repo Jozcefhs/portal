@@ -9461,7 +9461,7 @@ function academicCheckboxChoices(name, options = [], idPrefix = name) {
   return options.length
     ? options.map((option, index) => {
       const inputId = `${prefix}-${index + 1}`;
-      return `<label class="academic-checkbox-option" for="${escapeHtml(inputId)}"><input type="checkbox" id="${escapeHtml(inputId)}" name="${escapeHtml(name)}" value="${escapeHtml(option.value)}"><span>${escapeHtml(option.label)}</span></label>`;
+      return `<label class="academic-checkbox-option${option.disabled ? ' academic-subject-locked' : ''}" for="${escapeHtml(inputId)}"${option.disabled ? ' aria-disabled="true"' : ''}><input type="checkbox" id="${escapeHtml(inputId)}" name="${escapeHtml(name)}" value="${escapeHtml(option.value)}"${option.disabled ? ' disabled' : ''}><span>${escapeHtml(option.label)}</span></label>`;
     }).join('')
     : '<span class="academic-checkbox-empty">No choices are currently available.</span>';
 }
@@ -9484,7 +9484,7 @@ function academicCheckedValues(form, name) {
 function setAcademicCheckedValues(form, name, values = []) {
   if (!form) return;
   const selected = new Set(values || []);
-  form.querySelectorAll(`input[type="checkbox"][name="${name}"]`).forEach((input) => { input.checked = selected.has(input.value); });
+  form.querySelectorAll(`input[type="checkbox"][name="${name}"]`).forEach((input) => { input.checked = !input.disabled && selected.has(input.value); });
   const field = form.querySelector(`[data-academic-checkbox-name="${name}"]`);
   if (field) updateAcademicCheckboxCount(field);
 }
@@ -10266,7 +10266,10 @@ function academicDepartmentsWorkspace(data, rows) {
     </div>
     ${academicCheckboxField({
       name: 'CoreSubjectIds', label: 'Department core subjects', required: true, idPrefix: 'department-core-subjects',
-      options: subjects.map((row) => ({ value: row.SubjectId, label: `${row.Code} - ${row.Name}` })),
+      options: subjects.map((row) => ({
+        value: row.SubjectId,
+        label: `${row.Code} - ${row.Name}${row.SeniorChoiceRole ? ` (${row.SeniorChoiceRole} choice - remove it there first)` : ''}`
+      })),
       help: 'These subjects apply automatically to every Senior Secondary student assigned to this department, regardless of class. Core subjects do not need a separate class offering.'
     })}
     <button type="submit">Save department</button>
@@ -10288,19 +10291,35 @@ function academicOfferingsWorkspace(data, rows) {
   const arms = rows.arms.filter(academicIsActive);
   const subjects = rows.subjects.filter(academicIsActive);
   const juniorClasses = classes.filter((row) => clean(row.SchoolStage).toLowerCase() === 'junior-secondary');
+  const coreUsage = new Map();
+  rows.departments.filter(academicIsActive).forEach((department) => {
+    (department.CoreSubjectIds || []).forEach((subjectId) => {
+      const names = coreUsage.get(subjectId) || [];
+      names.push(department.Name || department.Code || 'a Senior department');
+      coreUsage.set(subjectId, names);
+    });
+  });
+  const seniorChoiceOptions = subjects.map((row) => {
+    const departments = coreUsage.get(row.SubjectId) || [];
+    return {
+      value: row.SubjectId,
+      label: `${row.Code} - ${row.Name}${departments.length ? ` (Core in ${departments.join(', ')} - unavailable)` : ''}`,
+      disabled: departments.length > 0
+    };
+  });
   const seniorChoiceForm = canManage && academicManagementFilters.section === 'secondary' ? `
     <form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="configureAcademicSeniorChoiceSubjects" data-academic-senior-choice-subjects>
       <div class="academic-management-editor-heading"><div><small>School-wide Senior curriculum</small><h3>Configure Senior subject choices</h3><p class="muted">Choose from the reusable subject catalogue once. These Trade and Optional subjects become available to students in every current and future Senior Secondary classroom.</p></div></div>
       <input type="hidden" name="SchoolSection" value="secondary">
       ${academicCheckboxField({
         name: 'TradeSubjectIds', label: 'Trade subjects', required: true, idPrefix: 'senior-choice-trade-subjects',
-        options: subjects.map((row) => ({ value: row.SubjectId, label: `${row.Code} - ${row.Name}` })),
-        help: 'Every Senior student must choose at least one of these subjects. Trade subjects are not tied to a department.'
+        options: seniorChoiceOptions,
+        help: 'Every Senior student must choose at least one of these subjects. Subjects already used as department Core are disabled.'
       })}
       ${academicCheckboxField({
         name: 'OptionalSubjectIds', label: 'Optional subjects', idPrefix: 'senior-choice-optional-subjects',
-        options: subjects.map((row) => ({ value: row.SubjectId, label: `${row.Code} - ${row.Name}` })),
-        help: 'Students may choose any applicable Optional subjects from this school-wide list. A subject cannot be both Trade and Optional.'
+        options: seniorChoiceOptions,
+        help: 'Students may choose from this school-wide list. Department Core subjects are disabled, and a subject cannot be both Trade and Optional.'
       })}
       <p class="muted">Department Core subjects remain configured in Senior departments. They are checked and locked automatically for each student.</p>
       <button type="submit">Save Senior subject choices</button>

@@ -9,6 +9,7 @@ import {
   academicPermanentDeleteDependants,
   academicManagementCapabilities,
   academicOfferingSubjectRole,
+  academicSeniorCoreSubjectIds,
   academicStudentMatchesClass,
   importedAcademicStudentProfile,
   normalizeAcademicArm,
@@ -138,6 +139,14 @@ test('AM-002 reusable Secondary subjects carry one school-wide Senior choice rol
   assert.equal(trade.SeniorChoiceRole, 'Trade');
   assert.equal(optional.SeniorChoiceRole, 'Optional');
   assert.equal(primary.SeniorChoiceRole, '');
+});
+
+test('AM-002 active Senior departments reserve their Core subjects from school-wide choices', () => {
+  assert.deepEqual(academicSeniorCoreSubjectIds([
+    { DepartmentId: 'science', CoreSubjectIds: ['physics', 'chemistry'], Status: 'Active' },
+    { DepartmentId: 'arts', CoreSubjectIds: ['literature', 'physics'], Status: 'Active' },
+    { DepartmentId: 'old', CoreSubjectIds: ['history'], Status: 'Archived' }
+  ]), ['physics', 'chemistry', 'literature']);
 });
 
 test('AM-003 permanent deletion detects current and historical academic references', () => {
@@ -434,6 +443,8 @@ test('Academic writes are audited, optimistic and preserve legacy class/student 
   assert.match(librarySource, /ACADEMIC_SENIOR_CHOICE_ROLES/);
   assert.match(librarySource, /configureAcademicSeniorChoiceSubjects/);
   assert.match(librarySource, /SeniorChoiceRole/);
+  assert.match(librarySource, /Subjects already assigned as department Core cannot be selected as Senior Trade or Optional subjects/);
+  assert.match(librarySource, /A department Core subject cannot also be a school-wide Senior Trade or Optional subject/);
   assert.match(librarySource, /Every Senior Secondary student must select at least one Trade subject/);
   assert.match(librarySource, /ACADEMIC_STUDENT_CLASS_MISMATCH/);
   assert.match(librarySource, /AcademicClassId: academicStudentClassId\(row, classes\)/);
@@ -625,6 +636,10 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /every current and future Senior Secondary classroom/);
   assert.match(adminSource, /subject\.SeniorChoiceRole === 'Trade'/);
   assert.match(adminSource, /subject\.SeniorChoiceRole === 'Optional'/);
+  assert.match(adminSource, /disabled: departments\.length > 0/);
+  assert.match(adminSource, /Department Core subjects are disabled/);
+  assert.match(adminSource, /option\.disabled \? ' disabled' : ''/);
+  assert.match(adminSource, /input\.checked = !input\.disabled && selected\.has/);
   assert.match(adminSource, /Select subjects applicable to Junior Secondary/);
   assert.match(adminSource, /name: 'ClassIds', label: 'Junior Secondary classes'/);
   assert.match(adminSource, /name: 'SubjectIds', label: 'Applicable Junior Secondary subjects'/);
@@ -681,7 +696,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /showAcademicManagementTask\('students', 'transfer'\)/);
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260816-senior-choice-subjects/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260816-core-subject-lock/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

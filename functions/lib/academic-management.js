@@ -140,6 +140,10 @@ function statusActive(row = {}) {
   return !['archived', 'inactive', 'closed', 'withdrawn'].includes(lower(row.Status));
 }
 
+export function academicSeniorCoreSubjectIds(departments = []) {
+  return uniqueIds((departments || []).filter(statusActive).flatMap((department) => department.CoreSubjectIds || []));
+}
+
 function publicRecord(row = {}) {
   const copy = { ...row, RecordId: recordId(row), RevisionToken: clean(row.__updateTime) };
   delete copy.__name;
@@ -800,6 +804,13 @@ function validateAcademicRecord(state, type, record, people = {}) {
       return !subject || !statusActive(subject) || subject.SchoolSection !== 'secondary';
     });
     if (invalidSubjects.length) throw failure('Every department core subject must be an active Secondary subject.');
+    const seniorChoiceSubjects = record.CoreSubjectIds.filter((subjectId) => {
+      const subject = findById(state.subjects, subjectId);
+      return ACADEMIC_SENIOR_CHOICE_ROLES.includes(subject?.SeniorChoiceRole);
+    });
+    if (seniorChoiceSubjects.length) {
+      throw failure('A department Core subject cannot also be a school-wide Senior Trade or Optional subject. Remove it from Senior choices first.');
+    }
   }
   if (['offering', 'teacherallocation', 'studentmembership'].includes(type)) {
     const session = assertReference(findById(state.sessions, record.SessionId), 'The selected session is not active.');
@@ -1398,6 +1409,10 @@ export async function configureAcademicSeniorChoiceSubjects(env, user = {}, inpu
 
   const state = await loadAcademicState(env, scope.branchId);
   const configuredIds = new Set([...tradeSubjectIds, ...optionalSubjectIds]);
+  const coreSubjectIds = new Set(academicSeniorCoreSubjectIds(state.departments));
+  if ([...configuredIds].some((subjectId) => coreSubjectIds.has(subjectId))) {
+    throw failure('Subjects already assigned as department Core cannot be selected as Senior Trade or Optional subjects.');
+  }
   configuredIds.forEach((subjectId) => {
     const subject = assertReference(findById(state.subjects, subjectId), 'Every selected Senior choice subject must be active.');
     if (lower(subject.SchoolSection) !== 'secondary') {
