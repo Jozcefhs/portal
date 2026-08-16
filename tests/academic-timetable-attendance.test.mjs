@@ -229,6 +229,7 @@ test('staff workspace exposes focused timetable and attendance interfaces', () =
   assert.match(portalCss, /\.academic-attendance-table\{max-height:480px;overflow:auto/);
   assert.match(portalCss, /\.academic-attendance-table th\{[^}]*white-space:nowrap;overflow-wrap:normal;word-break:normal/);
   assert.match(portalCss, /\.academic-attendance-report \.academic-attendance-table td:first-child\{font-size:12px;line-height:1\.3\}/);
+  assert.match(portalCss, /\.academic-attendance-register \.academic-attendance-table td:first-child\{font-size:12px;line-height:1\.25\}/);
   assert.match(portalCss, /\.academic-management-editor>button\{width:fit-content;max-width:100%;margin:1px 0 0\}/);
   assert.match(portalCss, /\.academic-timetable-constraint-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(portalCss, /\.academic-attendance-draft-bar\{/);
