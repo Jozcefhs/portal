@@ -2,7 +2,7 @@
 // Parent-facing dashboard for child activity and wallet restrictions.
 
 import { getPayableFees } from './backend.js';
-import { getDocument, listCollection, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { createDocumentIfAbsent, getDocument, listCollection, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import {
   querySchoolCollection,
   schoolCollectionPaths,
@@ -36,6 +36,14 @@ import {
   savePushSubscription
 } from '../lib/firebase-messaging.js';
 import { effectiveBranchProfile } from '../lib/branch-profile-settings.js';
+import { academicPolicyIssues, academicPolicyScopeChain } from '../lib/academic-policy.js';
+import { loadAcademicPolicyView } from '../lib/academic-policy-store.js';
+import {
+  academicFeeCategoryBalances,
+  academicFinancialSummary,
+  evaluateAcademicResultAccess,
+  publicAcademicResult
+} from '../lib/academic-result-access.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -918,6 +926,136 @@ export function accountSummaryForKeys(accounts, keys, ledgerEntries, invoiceEntr
   return normalizeAccountSummary(account) || feeAccountSummary(ledgerEntries);
 }
 
+function academicResultId(row = {}) {
+  return clean(row.ResultId || row.__id || row.__name).split('/').pop();
+}
+
+function academicResultPeriod(row = {}) {
+  return {
+    Session: clean(row.AcademicSession || row.SessionName || row.SessionId),
+    Term: clean(row.Term || row.TermName || row.TermId)
+  };
+}
+
+function academicResultBelongsToChild(row = {}, child = {}) {
+  return [row.StudentRef, row.AdmissionNo, row.AccountRef]
+    .map(clean)
+    .filter(Boolean)
+    .some((reference) => financialReferenceMatches(reference, child));
+}
+
+function academicClearanceForResult(clearances = [], result = {}) {
+  const resultId = academicResultId(result);
+  const period = academicResultPeriod(result);
+  return (clearances || []).find((row) => {
+    const scopedResultId = clean(row.ResultId);
+    if (scopedResultId && lower(scopedResultId) !== lower(resultId)) return false;
+    const clearanceSession = clean(row.AcademicSession || row.SessionName || row.SessionId);
+    const clearanceTerm = clean(row.Term || row.TermName || row.TermId);
+    return (!clearanceSession || sameText(clearanceSession, period.Session)) &&
+      (!clearanceTerm || sameText(clearanceTerm, period.Term));
+  }) || null;
+}
+
+function academicResultAuditId() {
+  const suffix = typeof globalThis.crypto?.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `academic-result-access-${suffix}`;
+}
+
+async function auditParentAcademicResultAccess(env, {
+  email, child, selectedScope, purpose, results
+} = {}) {
+  if (!(results || []).length) return;
+  const auditId = academicResultAuditId();
+  const now = new Date().toISOString();
+  const record = {
+    AuditId: auditId,
+    EventType: 'Parent Academic Result Access',
+    Purpose: clean(purpose || 'View'),
+    ParentEmail: lower(email),
+    StudentRef: clean(child.AccountRef || child.AdmissionNo),
+    BranchId: clean(selectedScope.branchId),
+    SchoolSection: clean(selectedScope.schoolSection),
+    Results: results.map((row) => ({
+      ResultId: clean(row.ResultId),
+      Allowed: row.Access?.Allowed === true,
+      DecisionCode: clean(row.Access?.Code),
+      UsedExemption: row.Access?.UsedExemption === true
+    })),
+    CreatedAt: now
+  };
+  const created = await createDocumentIfAbsent(env, 'academicResultAccessAudits', auditId, record);
+  if (!created.created) {
+    const error = new Error('Result access could not be audited. Please try again.');
+    error.status = 503;
+    throw error;
+  }
+}
+
+async function parentAcademicResults(env, {
+  email,
+  child,
+  selectedScope,
+  schoolProfile,
+  resultRows = [],
+  clearanceRows = [],
+  accountSummary = {},
+  invoices = [],
+  ledger = [],
+  purpose = 'View',
+  requestedResultId = ''
+} = {}) {
+  const requestedId = clean(requestedResultId);
+  const scopedClearances = (clearanceRows || []).filter((row) =>
+    recordMatchesSelectedChildScope(row, selectedScope) && academicResultBelongsToChild(row, child));
+  const rows = (resultRows || []).filter((row) =>
+    recordMatchesSelectedChildScope(row, selectedScope) &&
+    academicResultBelongsToChild(row, child) &&
+    (!requestedId || lower(academicResultId(row)) === lower(requestedId))
+  ).sort((left, right) => clean(right.PublishedAt || right.UpdatedAt).localeCompare(clean(left.PublishedAt || left.UpdatedAt)));
+  const financialSummary = academicFinancialSummary(invoices, ledger);
+  const output = [];
+  for (const result of rows) {
+    const period = academicResultPeriod(result);
+    const chain = academicPolicyScopeChain({
+      BranchId: selectedScope.branchId,
+      SectionId: selectedScope.schoolSection,
+      ClassId: result.ClassId
+    });
+    let view = null;
+    try {
+      view = await loadAcademicPolicyView(env, { scope: chain.at(-1), scopeChain: chain, period });
+    } catch (_error) {
+      view = null;
+    }
+    const activePolicy = view?.ActivePolicy || {};
+    const hasActivePolicy = Boolean(view?.Sources?.length) &&
+      academicPolicyIssues(activePolicy, { forActivation: true }).length === 0;
+    const access = evaluateAcademicResultAccess({
+      result,
+      policy: activePolicy,
+      hasActivePolicy,
+      currentPeriod: {
+        CurrentAcademicSession: schoolProfile.CurrentAcademicSession,
+        CurrentTerm: schoolProfile.CurrentTerm,
+        SessionId: schoolProfile.CurrentAcademicSessionId,
+        TermId: schoolProfile.CurrentTermId
+      },
+      finance: {
+        ...accountSummary,
+        ...financialSummary,
+        FeeCategoryBalances: academicFeeCategoryBalances(invoices, ledger)
+      },
+      clearance: academicClearanceForResult(scopedClearances, result)
+    });
+    output.push(publicAcademicResult(result, access, activePolicy));
+  }
+  await auditParentAcademicResultAccess(env, { email, child, selectedScope, purpose, results: output });
+  return output;
+}
+
 function isWalletFee(fee) {
   return clean(fee.FeeCode) === 'WALLET_TOPUP' || lower(fee.FeeCategory) === 'wallet';
 }
@@ -1503,7 +1641,7 @@ async function getDashboard(env, body, options = {}) {
   };
 }
 
-async function getChildActivity(env, body) {
+async function getChildActivity(env, body, options = {}) {
   const email = lower(body.email || body.ParentEmail || body.Email);
   const code = clean(body.code || body.VerificationCode).toUpperCase();
   const accountRef = clean(body.accountRef || body.AccountRef || body.AdmissionNo);
@@ -1574,7 +1712,7 @@ async function getChildActivity(env, body) {
   child.BranchId = selectedScope.branchId;
   child.SchoolSection = selectedScope.schoolSection;
   const keys = accountKeys(child);
-  const [ledgerRows, invoiceRows, paymentRows, clinicRows, summaryRows, linkedApplication, storeItems, storeOrderRows] = await Promise.all([
+  const [ledgerRows, invoiceRows, paymentRows, clinicRows, summaryRows, linkedApplication, storeItems, storeOrderRows, academicResultRows, academicClearanceRows] = await Promise.all([
     queryRowsForReferences(env, 'ledger', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
     queryRowsForReferences(env, 'invoices', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
     queryRowsForReferences(env, 'payments', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
@@ -1589,7 +1727,9 @@ async function getChildActivity(env, body) {
         )
       : Promise.resolve(null),
     listCollection(env, 'storeItems').catch(() => []),
-    queryRowsForReferences(env, 'storeOrders', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys)
+    queryRowsForReferences(env, 'storeOrders', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
+    queryRowsForReferences(env, 'academicResults', ['StudentRef', 'AdmissionNo', 'AccountRef'], keys),
+    queryRowsForReferences(env, 'academicResultClearances', ['StudentRef', 'AdmissionNo', 'AccountRef'], keys)
   ]);
   if (linkedApplication && !findScopedChildApplication(applications, child)) {
     applications.push(linkedApplication);
@@ -1619,6 +1759,19 @@ async function getChildActivity(env, body) {
   const result = buildEntranceResult(resultSource, schoolProfile);
   const childPayments = paymentHistoryForChild(child, payments, ledger);
   const childDueNotifications = invoiceDueNotifications(invoices, keys, accountSummary, child);
+  const academicResults = await parentAcademicResults(env, {
+    email,
+    child,
+    selectedScope,
+    schoolProfile,
+    resultRows: academicResultRows,
+    clearanceRows: academicClearanceRows,
+    accountSummary,
+    invoices,
+    ledger,
+    purpose: options.academicResultPurpose || 'View',
+    requestedResultId: options.requestedAcademicResultId
+  });
   const notificationData = await parentNotifications(env, email, [child]);
   return {
     ok: true,
@@ -1634,11 +1787,37 @@ async function getChildActivity(env, body) {
     clinicVisits: clinic.filter((record) => financialReferenceMatches(record.AdmissionNo, child)).sort((a, b) => clean(b.Date).localeCompare(clean(a.Date))),
     showResultsOnline: schoolResultsAreVisible(schoolProfile),
     resultDisplayMode: lower(schoolProfile.ResultDisplayMode) === 'percentage' ? 'percentage' : 'subjects',
+    academicResults,
     entranceResults: result ? [result] : [],
     storeCatalog: (storeItems || []).filter((row) => isYes(row.Active === undefined ? 'YES' : row.Active) && asMoneyNumber(row.Quantity) > 0),
     storeOrders: scopedStoreOrderRows.filter((row) =>
       financialReferenceMatches(row.AccountRef || row.AdmissionNo || row.ApplicationReference, child))
   };
+}
+
+async function getAcademicResultForPrint(env, body) {
+  const requestedResultId = clean(body.resultId || body.ResultId);
+  if (!requestedResultId) {
+    const error = new Error('Choose an academic result to print.');
+    error.status = 400;
+    throw error;
+  }
+  const activity = await getChildActivity(env, body, {
+    academicResultPurpose: 'Print',
+    requestedAcademicResultId: requestedResultId
+  });
+  const result = (activity.academicResults || []).find((row) => lower(row.ResultId) === lower(requestedResultId));
+  if (!result) {
+    const error = new Error('That academic result is not available for the selected student.');
+    error.status = 404;
+    throw error;
+  }
+  if (result.Access?.Allowed !== true) {
+    const error = new Error(result.Access?.Message || 'This academic result is not available for printing.');
+    error.status = 403;
+    throw error;
+  }
+  return { ok: true, academicResult: result };
 }
 
 async function updateWalletRestrictions(env, body) {
@@ -1978,6 +2157,8 @@ export async function onRequestPost(context) {
       data = await updateParentNotificationState(env, body);
     } else if (['subscribePush', 'unsubscribePush', 'testPush'].includes(action)) {
       data = await updateParentNotificationConfiguration(env, body, request);
+    } else if (action === 'getAcademicResultForPrint') {
+      data = await getAcademicResultForPrint(env, body);
     } else if (action === 'getChildActivity') {
       data = await getChildActivity(env, body);
     } else if (action === 'getChildPayable') {

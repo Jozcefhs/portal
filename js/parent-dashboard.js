@@ -11,6 +11,7 @@ const optionalPayments = document.getElementById('optionalPayments');
 const accountCreditSummary = document.getElementById('accountCreditSummary');
 const paymentRecords = document.getElementById('paymentRecords');
 const entranceResultPanel = document.getElementById('entranceResultPanel');
+const academicTermResults = document.getElementById('academicTermResults');
 const entranceResults = document.getElementById('entranceResults');
 const clinicRecords = document.getElementById('clinicRecords');
 const schoolStores = document.getElementById('schoolStores');
@@ -127,6 +128,7 @@ function normalizeChildResultMaps(data) {
     'payableErrors',
     'dueNotifications',
     'clinicVisits',
+    'academicResults',
     'entranceResults'
   ];
   fields.forEach((field) => {
@@ -853,6 +855,7 @@ async function loadPayablesForSelected(force = false) {
   dashboard.walletActivity = dashboard.walletActivity || {};
   dashboard.paymentRecords = dashboard.paymentRecords || {};
   dashboard.clinicVisits = dashboard.clinicVisits || {};
+  dashboard.academicResults = dashboard.academicResults || {};
   dashboard.entranceResults = dashboard.entranceResults || {};
   dashboard.storeCatalogByChild = dashboard.storeCatalogByChild || {};
   dashboard.storeOrdersByChild = dashboard.storeOrdersByChild || {};
@@ -864,6 +867,7 @@ async function loadPayablesForSelected(force = false) {
   renderWallet(child);
   renderPayments(child);
   renderClinic(child);
+  renderAcademicResults(child);
   renderEntranceResults(child);
   try {
     const baseBody = {
@@ -927,6 +931,7 @@ async function loadPayablesForSelected(force = false) {
       }
       setChildResult(dashboard.paymentRecords, child, activityData.paymentRecords || []);
       setChildResult(dashboard.clinicVisits, child, activityData.clinicVisits || []);
+      setChildResult(dashboard.academicResults, child, activityData.academicResults || []);
       setChildResult(dashboard.entranceResults, child, activityData.entranceResults || []);
       dashboard.storeCatalogByChild[identity] = activityData.storeCatalog || [];
       dashboard.storeOrdersByChild[identity] = activityData.storeOrders || [];
@@ -956,6 +961,7 @@ async function loadPayablesForSelected(force = false) {
   renderWallet(child);
   renderPayments(child);
   renderClinic(child);
+  renderAcademicResults(child);
   renderEntranceResults(child);
   renderStores(child);
 }
@@ -1207,6 +1213,117 @@ function renderPayments(child) {
   });
 }
 
+function academicResultSubjectRows(record) {
+  return (record.Subjects || []).map((subject) => `<tr>
+    <td>${escapeHtml(subject.SubjectName || subject.SubjectId || 'Subject')}</td>
+    <td>${escapeHtml(subject.Total ?? '-')}</td>
+    <td>${escapeHtml(subject.Grade || '-')}</td>
+    <td>${escapeHtml(subject.GradePoint ?? '-')}</td>
+    <td>${escapeHtml(subject.Position ?? subject.AssessedCount ?? '-')}</td>
+    <td>${escapeHtml(subject.Remark || '')}</td>
+  </tr>`).join('');
+}
+
+function academicResultPrintMarkup(child, record) {
+  const schoolName = window.SCHOOL_PROFILE?.SchoolName || window.SCHOOL_PROFILE?.OrganizationName || 'School';
+  const summary = [
+    record.OverallAverage !== '' && record.OverallAverage !== undefined ? `Average: ${record.OverallAverage}` : '',
+    record.OverallGrade ? `Grade: ${record.OverallGrade}` : '',
+    record.OverallPosition !== '' && record.OverallPosition !== undefined ? `Position: ${record.OverallPosition}` : '',
+    record.PerformanceBand ? `Band: ${record.PerformanceBand}` : '',
+    record.AssessedStudentCount !== '' && record.AssessedStudentCount !== undefined ? `Assessed students: ${record.AssessedStudentCount}` : ''
+  ].filter(Boolean).join(' · ');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(record.Term || 'Academic Result')}</title><style>
+    body{font:14px Arial,sans-serif;color:#17324d;margin:32px}header{border-bottom:2px solid #08735f;padding-bottom:12px;margin-bottom:18px}h1,h2{margin:0 0 6px}p{margin:5px 0}.meta{color:#526b80}.summary{margin:16px 0;padding:10px;background:#edf8f5;font-weight:700}table{width:100%;border-collapse:collapse;margin-top:14px}th,td{border:1px solid #cad8e3;padding:7px;text-align:left}th{background:#eef4f8}.remarks{margin-top:18px}.reference{margin-top:22px;font-size:11px;color:#647b90}@media print{body{margin:15mm}}
+  </style></head><body><header><h1>${escapeHtml(schoolName)}</h1><h2>Academic Result</h2><p><strong>${escapeHtml(child.DisplayName || child.AccountRef || 'Student')}</strong></p><p class="meta">${escapeHtml([record.ClassName, record.AcademicSession, record.Term].filter(Boolean).join(' · '))}</p></header>
+  ${summary ? `<div class="summary">${escapeHtml(summary)}</div>` : ''}
+  <table><thead><tr><th>Subject</th><th>Total</th><th>Grade</th><th>Point</th><th>Position / assessed</th><th>Remark</th></tr></thead><tbody>${academicResultSubjectRows(record)}</tbody></table>
+  <div class="remarks"><p><strong>Teacher:</strong> ${escapeHtml(record.TeacherRemark || '-')}</p><p><strong>Principal:</strong> ${escapeHtml(record.PrincipalRemark || '-')}</p></div>
+  <p class="reference">Result reference: ${escapeHtml(record.ResultReference || record.ResultId)}</p></body></html>`;
+}
+
+async function printAcademicResult(child, record, button) {
+  const originalLabel = button.textContent;
+  const printWindow = window.open('', '_blank', 'width=980,height=760');
+  if (printWindow) {
+    printWindow.opener = null;
+    printWindow.document.write('<p style="font:16px Arial;padding:24px">Rechecking result access...</p>');
+  }
+  setActionLoading(button, true, 'Preparing...', originalLabel);
+  try {
+    const response = await fetch('/api/parent-dashboard', {
+      method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+      body: freshBody({
+        action: 'getAcademicResultForPrint',
+        ...authPayload(),
+        accountRef: child.AccountRef,
+        sourceType: child.SourceType || 'Student',
+        scopePath: child.__scopePath || '',
+        resultId: record.ResultId
+      })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok || !data.academicResult) throw new Error(data.message || 'Could not prepare this result for printing.');
+    if (!printWindow) throw new Error('Allow pop-ups for this site, then try printing again.');
+    printWindow.document.open();
+    printWindow.document.write(academicResultPrintMarkup(child, data.academicResult));
+    printWindow.document.close();
+    printWindow.focus();
+    window.setTimeout(() => printWindow.print(), 250);
+  } catch (error) {
+    printWindow?.close();
+    setStatus(error.message || String(error), 'bad');
+  } finally {
+    if (button.isConnected) setActionLoading(button, false, '', originalLabel);
+  }
+}
+
+function renderAcademicResults(child) {
+  if (!academicTermResults) return;
+  const records = childResult(dashboard.academicResults, child, []);
+  academicTermResults.innerHTML = records.length ? '' : '<p class="muted">No published academic result is currently available.</p>';
+  records.forEach((record) => {
+    const item = document.createElement('article');
+    item.className = `activity-item academic-result-card${record.Access?.Allowed ? '' : ' academic-result-restricted'}`;
+    item.innerHTML = `<header><div><strong>${escapeHtml([record.Term, record.AcademicSession].filter(Boolean).join(' · ') || 'Academic result')}</strong><span>${escapeHtml(record.ClassName || '')}</span></div><span>${record.Access?.Allowed ? 'Available' : 'Restricted'}</span></header>`;
+    if (!record.Access?.Allowed) {
+      const message = document.createElement('p');
+      message.className = 'academic-result-access-message';
+      message.textContent = record.Access?.Message || 'This result is not currently available.';
+      item.appendChild(message);
+      academicTermResults.appendChild(item);
+      return;
+    }
+    const summary = document.createElement('div');
+    summary.className = 'academic-result-summary';
+    [
+      ['Average', record.OverallAverage],
+      ['Grade', record.OverallGrade],
+      ['Position', record.OverallPosition],
+      ['Band', record.PerformanceBand],
+      ['Assessed', record.AssessedStudentCount]
+    ].filter(([, value]) => value !== '' && value !== undefined).forEach(([label, value]) => {
+      summary.insertAdjacentHTML('beforeend', `<span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(label)}</small></span>`);
+    });
+    item.appendChild(summary);
+    if ((record.Subjects || []).length) {
+      const table = document.createElement('div');
+      table.className = 'admin-table-wrap academic-result-subject-table';
+      table.innerHTML = `<table><thead><tr><th>Subject</th><th>Total</th><th>Grade</th><th>Point</th><th>Position / assessed</th><th>Remark</th></tr></thead><tbody>${academicResultSubjectRows(record)}</tbody></table>`;
+      item.appendChild(table);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'academic-result-actions';
+    const printButton = document.createElement('button');
+    printButton.type = 'button';
+    printButton.textContent = 'Print result';
+    printButton.addEventListener('click', () => printAcademicResult(child, record, printButton));
+    actions.appendChild(printButton);
+    item.appendChild(actions);
+    academicTermResults.appendChild(item);
+  });
+}
+
 function resultDisplayMode(child) {
   return dashboard?.resultSettingsByChild?.[childIdentity(child)]?.resultDisplayMode
     || window.SCHOOL_PROFILE?.ResultDisplayMode
@@ -1362,6 +1479,7 @@ function renderDashboard() {
   renderDueNotifications(child);
   renderPayableItems(child);
   renderAccountCredit(child);
+  renderAcademicResults(child);
   renderEntranceResults(child);
   renderWallet(child);
   renderPayments(child);
@@ -2078,7 +2196,10 @@ if (dashboardNav) {
     if (!button) return;
     showDashboardView(button.dataset.dashboardTarget, true);
     const child = selectedChild();
-    if (child && button.dataset.dashboardTarget === 'results') renderEntranceResults(child);
+    if (child && button.dataset.dashboardTarget === 'results') {
+      renderAcademicResults(child);
+      renderEntranceResults(child);
+    }
   });
 }
 
@@ -2099,5 +2220,8 @@ loadParentDocumentSettings();
 
 window.addEventListener('school-profile-ready', () => {
   const child = selectedChild();
-  if (child) renderEntranceResults(child);
+  if (child) {
+    renderAcademicResults(child);
+    renderEntranceResults(child);
+  }
 });

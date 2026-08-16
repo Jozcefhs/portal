@@ -2,8 +2,9 @@
 
 Status: approved baseline; implementation in progress.
 
-Implementation status (2026-08-15): Milestones 1 and 2 are in progress. The
-School edition now has an effective-dated academic-policy schema, immutable
+Implementation status (2026-08-16): Milestones 1 and 2 are in progress, and
+the first secure vertical slice of Milestone 3 is operational. The School
+edition now has an effective-dated academic-policy schema, immutable
 policy revisions, separate draft and active states, organisation-to-branch
 inheritance, activation validation and administrator controls for result
 visibility, financial clearance, positions, assessment components, grading
@@ -25,10 +26,16 @@ history on web and desktop. Administrators can also create up to 50 classes,
 reusable arm definitions or reusable subject definitions in one online batch,
 then apply selected catalogue arms or subjects across selected classes in an
 atomic batch. Unused classes, arms and subjects can be permanently deleted,
-but active or historical references block deletion. Promotion intake,
-result enforcement, score processing,
-timetables, attendance and CBT remain pending milestones; configuring a policy
-or academic structure does not yet publish or unlock parent results.
+but active or historical references block deletion. The parent dashboard now
+evaluates published academic-result records against the active inherited
+visibility and financial-clearance policy on the server, fails closed when the
+policy is missing or incomplete, limits records to the linked child and
+selected branch/section, withholds score details when access is blocked,
+rechecks access before printing and audits view, denial, exemption and print
+decisions without copying ledger details. Result production and publication,
+finance-officer clearance administration, promotion intake, score processing,
+timetables, attendance and CBT remain pending work; configuring a policy or
+academic structure does not itself publish a result.
 
 This document is the authoritative product and engineering specification for
 the Dynamax Academic Management phase. It covers the School edition of the web
