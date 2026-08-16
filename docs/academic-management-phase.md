@@ -597,14 +597,16 @@ other assets are optimized and progressively loaded for lower-powered tablets.
    before securing the examination package locally.
 2. The package is downloaded to the local server and verified before the
    examination begins.
-3. The local server starts an examination session and displays a local address
-   and QR joining code.
-4. A candidate enters the examination code and admission number, then signs in
-   with their personal student password or a live check against their enrolled
-   face. The admission number is always matched to exactly one authorized
-   attempt before either proof is accepted. Password login uses a short-lived,
-   single-use challenge and sends only a derived proof; the typed password does
-   not leave the candidate device.
+3. The local server starts examination sessions and displays one school-network
+   address and QR joining code.
+4. A candidate enters only their admission number, then signs in with their
+   personal student password or a live check against their enrolled face. The
+   local server resolves the admission number to exactly one currently active,
+   authorized examination before either proof is accepted. Overlapping active
+   schedules fail closed for invigilator correction instead of selecting an
+   examination silently. Password login uses a short-lived, single-use
+   challenge and sends only a derived proof; the typed password does not leave
+   the candidate device.
 5. The client loads the examination from the local server and continuously
    saves answers locally.
 6. A brief Wi-Fi interruption buffers recent answers on the device and resumes

@@ -11317,7 +11317,7 @@ function academicCbtWorkspace(data, rows) {
       <label>Multiple-choice style<small>Controls the answer choices shown to students.</small><select name="OptionStyle" data-academic-cbt-option-style>${Object.keys(ACADEMIC_CBT_OPTION_STYLES).map((key) => `<option value="${key}"${key === academicCbtDraft.optionStyle ? ' selected' : ''}>${key === 'TRUE_FALSE' ? 'True / False' : key}</option>`).join('')}</select></label>
     </div>
     <div class="academic-cbt-roster-note"><strong>${selectedContext?.rosterCount || 0} students</strong><span>The online server validates and snapshots this subject roster when the test is saved.</span></div>
-    <button type="submit"${scheduleReady && selectedContext ? '' : ' disabled'}>Next: upload paper and answers</button>
+    <div class="academic-cbt-form-actions"><button type="submit"${scheduleReady && selectedContext ? '' : ' disabled'}>Next: upload paper and answers</button></div>
   </div>`;
 
   const answerRows = Array.from({ length: questionCount }, (_unused, index) => `<div class="academic-cbt-answer-row"><strong>${index + 1}</strong><div>${options.map((answer) => `<label><input type="radio" name="AcademicCbtAnswer-${index}" value="${escapeHtml(answer)}" data-academic-cbt-answer="${index}"${academicCbtDraft.answerKey[index] === answer ? ' checked' : ''}><span>${escapeHtml(answer)}</span></label>`).join('')}</div></div>`).join('');

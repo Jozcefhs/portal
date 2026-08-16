@@ -36,8 +36,9 @@ test('CBT Drive uploads use storage-only compatibility and an isolated CBT refer
 test('CBT option styles and the two-step web authoring contract stay aligned', async () => {
   assert.deepEqual(ACADEMIC_CBT_OPTION_STYLES.ABCD, ['A', 'B', 'C', 'D']);
   assert.deepEqual(ACADEMIC_CBT_OPTION_STYLES.TRUE_FALSE, ['True', 'False']);
-  const [admin, backend, endpoint] = await Promise.all([
+  const [admin, styles, backend, endpoint] = await Promise.all([
     readFile(new URL('js/admin.js', portalRoot), 'utf8'),
+    readFile(new URL('css/style.css', portalRoot), 'utf8'),
     readFile(new URL('functions/lib/academic-management.js', portalRoot), 'utf8'),
     readFile(new URL('functions/api/staff-cbt-paper.js', portalRoot), 'utf8')
   ]);
@@ -48,6 +49,8 @@ test('CBT option styles and the two-step web authoring contract stay aligned', a
   assert.match(admin, /data-academic-cbt-answer/);
   assert.match(admin, /data-academic-cbt-edit/);
   assert.match(admin, /data-academic-cbt-delete/);
+  assert.match(admin, /academic-cbt-form-actions"><button type="submit"[^>]*>Next: upload paper and answers/);
+  assert.match(styles, /\.academic-cbt-form-actions button\{[^}]*width:max-content/);
   assert.match(backend, /academicScoreSheetContext\(env, user, input, 'canCreateCbt'\)/);
   assert.match(backend, /LocalDownloadedAt/);
   assert.doesNotMatch(backend, /\['saveacademiccbttest', 'savecbttest'\]/);
