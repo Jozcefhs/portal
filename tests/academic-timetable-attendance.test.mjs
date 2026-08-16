@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 import {
   academicAttendanceSummary,
+  academicTermAttendanceSummary,
   academicTeacherLoadIssues,
   academicTimetableConflicts,
   academicTimetablePeriodCodes,
@@ -14,7 +15,7 @@ import {
   normalizeAcademicTimetableEntry,
   normalizeAcademicTimetablePeriods
 } from '../functions/lib/academic-timetable-attendance.js';
-import { academicManagementCapabilities } from '../functions/lib/academic-management.js';
+import { academicManagementCapabilities, academicTimetableTargetCopyPlan } from '../functions/lib/academic-management.js';
 
 const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
 const adminSource = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
@@ -118,6 +119,51 @@ test('attendance entries remain classroom-scoped and provide status totals', () 
   assert.throws(() => normalizeAcademicAttendanceEntries([{ StudentRef: 'S-1', Status: 'Unknown' }], ['S-1']), /invalid status/i);
 });
 
+test('term attendance summaries keep register modes explicit and calculate promotion-ready percentages', () => {
+  const memberships = [
+    { StudentRef: 'S-1', SessionId: '2026', TermId: 'term-1', ClassId: 'class-10', ArmId: 'arm-a', Status: 'Active' },
+    { StudentRef: 'S-2', SessionId: '2026', TermId: 'term-1', ClassId: 'class-10', ArmId: 'arm-a', Status: 'Active' }
+  ];
+  const attendance = [
+    { StudentRef: 'S-1', SessionId: '2026', TermId: 'term-1', ClassId: 'class-10', ArmId: 'arm-a', Mode: 'Daily', Status: 'Present' },
+    { StudentRef: 'S-1', SessionId: '2026', TermId: 'term-1', ClassId: 'class-10', ArmId: 'arm-a', Mode: 'Daily', Status: 'Late' },
+    { StudentRef: 'S-1', SessionId: '2026', TermId: 'term-1', ClassId: 'class-10', ArmId: 'arm-a', Mode: 'Daily', Status: 'Absent' },
+    { StudentRef: 'S-1', SessionId: '2026', TermId: 'term-1', ClassId: 'class-10', ArmId: 'arm-a', Mode: 'Period', Status: 'Absent' }
+  ];
+  const summary = academicTermAttendanceSummary(attendance, memberships, {
+    SessionId: '2026', TermId: 'term-1', ClassId: 'class-10', ArmId: 'arm-a', Mode: 'Daily'
+  });
+  assert.equal(summary[0].AttendancePercentage, 66.7);
+  assert.equal(summary[0].Total, 3);
+  assert.equal(summary[1].Total, 0);
+});
+
+test('targeted timetable copying maps one classroom into a draft and previews allocation failures', () => {
+  const sourceVersion = { VersionId: 'source', Name: 'Source', Status: 'Published', SessionId: '2025', TermId: 'old-term', ...settings };
+  const targetVersion = { VersionId: 'target', Name: 'Target', Status: 'Draft', SessionId: '2026', TermId: 'term-1', ...settings };
+  const state = {
+    classes: [{ ClassId: 'class-10', Status: 'Active' }, { ClassId: 'class-11', Status: 'Active' }],
+    arms: [{ ArmId: 'arm-a', ClassId: 'class-10', Status: 'Active' }, { ArmId: 'arm-b', ClassId: 'class-11', Status: 'Active' }],
+    timetableVersions: [sourceVersion, targetVersion], timetableConstraints: [],
+    timetableEntries: [{
+      EntryId: 'lesson-1', VersionId: 'source', SessionId: '2025', TermId: 'old-term',
+      DayCode: 'MON', StartPeriodCode: 'P1', DurationPeriods: 1, PeriodCodes: ['P1'],
+      ClassId: 'class-10', ArmId: 'arm-a', SubjectId: 'math', TeacherUsername: 'teacher-a', Status: 'Active'
+    }],
+    teacherAllocations: [{
+      AllocationId: 'allocation-1', SessionId: '2026', TermId: 'term-1', ClassId: 'class-11', ArmId: 'arm-b',
+      SubjectId: 'math', TeacherUsername: 'teacher-a', AllocationRole: 'Subject Teacher', Status: 'Active'
+    }]
+  };
+  const input = { SourceVersionId: 'source', TargetVersionId: 'target', SourceClassId: 'class-10', SourceArmId: 'arm-a', TargetClassId: 'class-11', TargetArmId: 'arm-b' };
+  const context = { session: { SessionId: '2026' }, term: { TermId: 'term-1' }, scope: { branchId: 'main', section: 'secondary' } };
+  const plan = academicTimetableTargetCopyPlan(state, input, context);
+  assert.equal(plan.NewCount, 1);
+  assert.equal(plan.Issues.length, 0);
+  state.teacherAllocations = [];
+  assert.match(academicTimetableTargetCopyPlan(state, input, context).Issues[0].Message, /allocation is not active/i);
+});
+
 test('academic roles separate timetable publishing from allocated attendance marking', () => {
   const principal = academicManagementCapabilities({ edition: 'school', role: 'Principal', allowedSections: ['academics'] });
   const teacher = academicManagementCapabilities({ edition: 'school', role: 'Teacher', allowedSections: ['academics'] });
@@ -132,6 +178,8 @@ test('timetable publication and attendance corrections use protected audited wor
   for (const action of [
     'saveAcademicTimetableSettings', 'createAcademicTimetableVersion', 'saveAcademicTimetableEntry',
     'saveAcademicTimetableConstraint', 'copyAcademicTimetableVersion', 'changeAcademicTimetableVersionStatus',
+    'previewAcademicTimetableCopy', 'copyAcademicTimetableSelection',
+    'saveAcademicTimetableSubstitution', 'cancelAcademicTimetableSubstitution',
     'saveAcademicStudentAttendance', 'decideAcademicAttendanceCorrection'
   ]) assert.match(source, new RegExp(`export async function ${action}`));
   assert.match(source, /ACADEMIC_TIMETABLE_CONFLICT/);
@@ -142,6 +190,11 @@ test('timetable publication and attendance corrections use protected audited wor
   assert.match(source, /REQUEST_CORRECTION/);
   assert.match(source, /APPROVE_CORRECTION/);
   assert.match(source, /AttendanceRevision/);
+  assert.match(source, /academicTimetableSubstitutions/);
+  assert.match(source, /academic-absence:/);
+  assert.match(source, /TargetAccountRefs: contacts\.accountRefs/);
+  assert.match(source, /The substitute teacher already has another substitution during this period/);
+  assert.match(source, /substituteClassrooms\.forEach\(\(row\) => visibleKeys\.add/);
   assert.match(source, /Enter the reason for withdrawing this timetable/);
 });
 
@@ -157,6 +210,9 @@ test('staff workspace exposes focused timetable and attendance interfaces', () =
   assert.match(adminSource, /form\.academic-management-editor-wide/);
   assert.match(adminSource, /academic-management-form-grid academic-timetable-constraint-grid/);
   assert.match(adminSource, /data-academic-timetable-copy/);
+  assert.match(adminSource, /data-academic-timetable-target-copy/);
+  assert.match(adminSource, /data-academic-timetable-copy-preview/);
+  assert.match(adminSource, /data-academic-timetable-substitution/);
   assert.match(adminSource, /data-academic-timetable-print="class"/);
   assert.match(adminSource, /Print-ready schedules/);
   assert.match(adminSource, /data-academic-timetable-open-version/);
@@ -164,10 +220,16 @@ test('staff workspace exposes focused timetable and attendance interfaces', () =
   assert.match(adminSource, /data-academic-attendance-register/);
   assert.match(adminSource, /data-academic-attendance-all="Present"/);
   assert.match(adminSource, /data-academic-attendance-decision/);
+  assert.match(adminSource, /ACADEMIC_ATTENDANCE_DRAFT_PREFIX/);
+  assert.match(adminSource, /data-academic-attendance-save-draft/);
+  assert.match(adminSource, /data-academic-attendance-report/);
+  assert.match(adminSource, /printAcademicAttendanceReport/);
   assert.match(adminSource, /All students start as Present/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260816-timetable-layout-fix/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260816-milestone-4-complete/);
   assert.match(portalCss, /\.academic-attendance-table\{max-height:480px;overflow:auto/);
   assert.match(portalCss, /\.academic-timetable-constraint-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(portalCss, /\.academic-attendance-draft-bar\{/);
+  assert.match(portalCss, /\.academic-timetable-copy-preview\{/);
   assert.match(portalCss, /\[data-academic-timetable-constraint-clear\]\{flex:0 0 auto;min-width:max-content;white-space:nowrap\}/);
 });
 

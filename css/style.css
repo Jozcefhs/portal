@@ -222,6 +222,8 @@ img{max-width:100%}
 .academic-attendance-register>.academic-management-editor-heading>strong{border-radius:999px;background:#e5f6f1;color:#087865;padding:7px 11px;font-size:12px}
 .academic-attendance-bulk-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 11px;border:1px solid #cbdbe7;border-radius:10px;background:#f6f9fc}
 .academic-attendance-bulk-actions>span{margin-left:auto;color:#365168;font-size:12px;font-weight:700}
+.academic-attendance-draft-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:9px 11px;border-left:4px solid #087865;border-radius:8px;background:#eaf7f3;color:#365168;font-size:11px;font-weight:650}.academic-attendance-draft-bar>div{display:flex;gap:7px;flex-wrap:wrap}.academic-attendance-draft-bar button{width:max-content;min-height:32px;margin:0;padding:6px 9px;font-size:10px}
+.academic-timetable-copy-preview{padding:10px 12px;border:1px solid #cbdbe7;border-radius:9px;background:#f6f9fc;color:#526d82;font-size:11px;line-height:1.5}.academic-timetable-copy-preview.is-valid{border-color:#82cdbd;background:#eaf7f3;color:#086b59}.academic-timetable-copy-preview.has-errors{border-color:#e7a3ad;background:#fff3f5;color:#a31831}.academic-timetable-copy-preview ul{margin:7px 0 0;padding-left:18px}.academic-timetable-copy-preview li+li{margin-top:4px}
 .academic-attendance-table{max-height:480px;overflow:auto;border:1px solid #cbdbe7;border-radius:10px;background:#fff}
 .academic-attendance-table table{width:100%;min-width:760px;border-collapse:collapse}
 .academic-attendance-table th{position:sticky;top:0;z-index:1;background:#edf3f8;color:#365168;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
@@ -231,7 +233,7 @@ img{max-width:100%}
 .academic-attendance-table select,.academic-attendance-table input{box-sizing:border-box;width:100%;min-width:0}
 .academic-attendance-table td:nth-child(3){width:130px}
 .academic-attendance-table td:nth-child(4){width:30%}
-@media(max-width:760px){.academic-attendance-bulk-actions>span{width:100%;margin-left:0}.academic-attendance-table{max-height:420px}}
+@media(max-width:760px){.academic-attendance-bulk-actions>span{width:100%;margin-left:0}.academic-attendance-draft-bar{align-items:flex-start;flex-direction:column}.academic-attendance-table{max-height:420px}}
 .parent-academic-schedule-day>div{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:8px}
 .parent-academic-schedule-day>div>span{display:grid;gap:3px;padding:9px;border:1px solid #d8e4ed;border-radius:9px;background:#f8fbfd}
 .parent-academic-schedule-day b{color:#087865;font-size:12px}.parent-academic-schedule-day em{color:#123f67;font-style:normal;font-weight:700}.parent-academic-schedule-day small{color:#6d8091}

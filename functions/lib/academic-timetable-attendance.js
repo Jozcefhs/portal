@@ -308,3 +308,33 @@ export function academicAttendanceSummary(rows = []) {
   });
   return { ...summary, Total: rows.length };
 }
+
+export function academicTermAttendanceSummary(attendance = [], memberships = [], options = {}) {
+  const matches = (row = {}) => (!clean(options.SessionId) || clean(row.SessionId) === clean(options.SessionId))
+    && (!clean(options.TermId) || clean(row.TermId) === clean(options.TermId))
+    && (!clean(options.ClassId) || clean(row.ClassId) === clean(options.ClassId))
+    && (!clean(options.ArmId) || clean(row.ArmId) === clean(options.ArmId));
+  const mode = lower(options.Mode);
+  const eligible = new Map((memberships || []).filter(matches)
+    .filter((row) => !['withdrawn', 'inactive', 'archived'].includes(lower(row.Status)))
+    .map((row) => [lower(row.StudentRef), clean(row.StudentRef)]));
+  const grouped = new Map([...eligible].map(([key, studentRef]) => [key, {
+    StudentRef: studentRef, Present: 0, Absent: 0, Late: 0, Excused: 0, LeftEarly: 0, Total: 0
+  }]));
+  (attendance || []).filter(matches).filter((row) => !mode || mode === 'all' || lower(row.Mode) === mode).forEach((row) => {
+    const key = lower(row.StudentRef);
+    if (eligible.size && !eligible.has(key)) return;
+    if (!grouped.has(key)) grouped.set(key, {
+      StudentRef: clean(row.StudentRef), Present: 0, Absent: 0, Late: 0, Excused: 0, LeftEarly: 0, Total: 0
+    });
+    const result = grouped.get(key);
+    const status = oneOf(row.Status, ACADEMIC_ATTENDANCE_STATUSES, 'Present').replace(/\s+/g, '');
+    result[status] += 1;
+    result.Total += 1;
+  });
+  return [...grouped.values()].map((row) => ({
+    ...row,
+    Attended: row.Present + row.Late + row.LeftEarly,
+    AttendancePercentage: row.Total ? Math.round(((row.Present + row.Late + row.LeftEarly) / row.Total) * 1000) / 10 : 0
+  })).sort((left, right) => left.StudentRef.localeCompare(right.StudentRef, undefined, { numeric: true, sensitivity: 'base' }));
+}

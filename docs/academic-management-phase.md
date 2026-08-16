@@ -3,8 +3,8 @@
 Status: approved baseline; implementation in progress.
 
 Implementation status (2026-08-16): Milestones 1 and 2 are in progress, the
-secure parent-access slice of Milestone 3 is operational, and the first
-operational vertical slice of Milestone 4 is available. The School
+secure parent-access slice of Milestone 3 is operational, and Milestone 4 is
+operational on the web companion and desktop source. The School
 edition now has an effective-dated academic-policy schema, immutable
 policy revisions, separate draft and active states, organisation-to-branch
 inheritance, activation validation and administrator controls for result
@@ -48,9 +48,16 @@ lesson slots and optional daily/weekly period limits per teacher; those rules
 are enforced when lessons are saved and again before approval or publication.
 An existing timetable version can be copied safely into a revalidated Draft
 using resumable database batches, and web and desktop provide print-ready class
-and teacher schedules using the version's saved day-specific times. Targeted
-copying between selected arms/classes/terms, substitutions, offline attendance
-drafts, absence notifications and term attendance reporting remain within
+and teacher schedules using the version's saved day-specific times. Managers
+can also preview and copy one classroom between selected arms, classes or terms
+without duplicating matching lessons. Dated teacher substitutions preserve the
+published timetable, validate subject qualification, conflicts, availability
+and workload, and authorize the substitute to mark the exact Period register.
+Attendance changes are recoverable as device-local drafts until online
+synchronization succeeds on both web and desktop. Confirmed absences create
+idempotent parent in-app/push notifications, and per-student term summaries can
+be reviewed and printed by classroom and register type. The future scorebook
+link remains dependent on Milestone 5 score processing rather than reopening
 Milestone 4.
 Result production and publication, finance-officer clearance administration,
 promotion intake, score processing and CBT remain pending work; configuring a

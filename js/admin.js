@@ -145,7 +145,7 @@ let academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: ''
 let academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
 let academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
 let academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
-let academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '' };
+let academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
 const organizationCommerceCarts = {
   organizationStore: new Map(),
   restaurant: new Map()
@@ -1240,7 +1240,7 @@ function clearStaffWorkspaceState() {
   academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
   academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
   academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
-  academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '' };
+  academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
   activeSection = '';
   activeTabs = [];
   recordsDeskHandoffContext = null;
@@ -1372,7 +1372,7 @@ function clearBranchScopedWorkspaceData() {
   academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
   academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
   academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
-  academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '' };
+  academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
   Object.values(organizationCommerceCarts).forEach((cart) => cart.clear());
   organizationCommerceLastSale.organizationStore = null;
   organizationCommerceLastSale.restaurant = null;
@@ -9790,6 +9790,7 @@ function academicCurrentRows(data = academicManagementData || {}) {
     timetableConstraints: periodRows(data.timetableConstraints || []),
     timetableVersions: periodRows(data.timetableVersions || []),
     timetableEntries: periodRows(data.timetableEntries || []),
+    timetableSubstitutions: periodRows(data.timetableSubstitutions || []),
     studentAttendance: periodRows(data.studentAttendance || []),
     attendanceCorrections: periodRows(data.attendanceCorrections || [])
   };
@@ -9876,6 +9877,8 @@ function academicTaskDefinitions(view, root) {
       { key: 'builder', label: 'Build timetable', title: 'Schedule lessons', description: 'Add lessons to a draft version with automatic classroom, teacher and room conflict checks.', nodes: nodes(form('[data-academic-timetable-entry]')) },
       { key: 'schedule', label: 'Lesson register', title: 'Scheduled lessons', description: 'Review the exact lessons in the selected timetable version and correct draft entries.', nodes: nodes(register('Timetable Lessons')) },
       { key: 'versions', label: 'Versions', title: 'Create, copy and publish', description: 'Create a blank draft or safely copy an existing version before approval and publication.', nodes: nodes(form('[data-academic-timetable-version]'), form('[data-academic-timetable-copy]'), register('Timetable Versions')) },
+      { key: 'reuse', label: 'Copy lessons', title: 'Copy selected classroom lessons', description: 'Preview and copy one classroom between arms, classes or terms without duplicating valid existing lessons.', nodes: nodes(form('[data-academic-timetable-target-copy]')) },
+      { key: 'substitutions', label: 'Substitutions', title: 'Controlled teacher substitutions', description: 'Schedule a dated substitute for a published lesson with subject qualification, conflict and workload checks.', nodes: nodes(form('[data-academic-timetable-substitution]'), register('Teacher Substitutions')) },
       { key: 'limits', label: 'Teacher limits', title: 'Teacher availability and workload', description: 'Block unavailable lesson slots and set optional daily or weekly period limits for each teacher.', nodes: nodes(form('[data-academic-timetable-constraint]'), register('Teacher Timetable Limits')) },
       { key: 'preview', label: 'Preview and print', title: 'Print-ready schedules', description: 'Open class or teacher schedules using the selected version and its saved day-specific times.', nodes: nodes(form('[data-academic-timetable-preview]')) },
       { key: 'settings', label: 'Days and periods', title: 'Configure the school week', description: 'Define reusable school days, lesson periods, breaks and assemblies for this term.', nodes: nodes(form('[data-academic-timetable-settings]')) }
@@ -9883,6 +9886,7 @@ function academicTaskDefinitions(view, root) {
     attendance: [
       { key: 'mark', label: 'Mark register', title: 'Mark student attendance', description: 'Start with every student Present, then record only the exceptions before saving.', nodes: nodes(form('[data-academic-attendance-register]')) },
       { key: 'register', label: 'Attendance history', title: 'Saved attendance', description: 'Review the class, status and marker for every saved student attendance record.', nodes: nodes(register('Student Attendance History')) },
+      { key: 'reports', label: 'Term reports', title: 'Term attendance summaries', description: 'Review and print per-student totals and attendance percentages for the selected classroom and register type.', nodes: nodes(form('[data-academic-attendance-report]')) },
       { key: 'corrections', label: 'Corrections', title: 'Late correction requests', description: 'Teachers submit corrections for approval; academic administrators approve or reject them with a reason.', nodes: nodes(register('Attendance Correction Requests')) }
     ]
   };
@@ -10691,6 +10695,7 @@ function academicTimetableWorkspace(data, rows) {
   const settings = rows.timetableSettings.find((row) => row.SessionId === sessionId && row.TermId === termId);
   const constraints = rows.timetableConstraints.filter((row) => row.SessionId === sessionId && row.TermId === termId);
   const versions = rows.timetableVersions.filter((row) => row.SessionId === sessionId && row.TermId === termId);
+  const allVersions = (data.timetableVersions || []).filter((row) => row.Status !== 'Copying');
   let version = academicFind(versions, academicTimetableDraft.versionId)
     || versions.find((row) => row.Status === 'Draft') || versions.find((row) => row.Status === 'Published') || versions[0];
   academicTimetableDraft.versionId = clean(version?.VersionId);
@@ -10713,6 +10718,8 @@ function academicTimetableWorkspace(data, rows) {
   const dayLines = (settings?.Days || []).map((row) => `${row.DayCode} | ${row.Name} | ${row.SortOrder}`).join('\n');
   const periodLines = (settings?.Periods || []).map((row) => `${Array.isArray(row.DayCodes) ? row.DayCodes.join(',') : clean(row.DayCodes || row.DayCode || 'ALL')} | ${row.PeriodCode} | ${row.Name} | ${row.StartTime} | ${row.EndTime} | ${row.Kind} | ${row.SortOrder}`).join('\n');
   const classroomLabel = (arm) => `${academicLabel(rows.classes, arm.ClassId)} / ${arm.Name}`;
+  const allClassrooms = (data.arms || []).filter(academicIsActive);
+  const allClassroomLabel = (arm) => `${academicLabel(data.classes, arm.ClassId)} / ${arm.Name}`;
   const settingsForm = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="saveAcademicTimetableSettings" data-academic-timetable-settings>
     <div class="academic-management-editor-heading"><div><small>School week</small><h3>Days and periods</h3><p class="muted">Use one line per item. Each new timetable version keeps a snapshot; later setting changes apply to versions created afterwards.</p></div></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}"><input type="hidden" name="RevisionToken" value="${escapeHtml(settings?.RevisionToken || '')}">
@@ -10733,6 +10740,42 @@ function academicTimetableWorkspace(data, rows) {
     <label>New draft name<input name="Name" required placeholder="For example Revised timetable"></label>
     <button type="submit" ${versions.some((row) => row.Status !== 'Copying') ? '' : 'disabled'}>Copy into new Draft</button>
   </form>` : '';
+  const targetCopyForm = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-timetable-target-copy>
+    <div class="academic-management-editor-heading"><div><small>Validated reuse</small><h3>Copy one classroom between arms, classes or terms</h3><p class="muted">Preview first. The server remaps the classroom, keeps the subject and teacher, and checks target allocations, periods, rooms, conflicts and teacher limits.</p></div></div>
+    <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}">
+    <div class="academic-management-form-grid academic-management-form-grid-2">
+      <label>Source timetable version<select name="SourceVersionId" required>${academicSelectOptions(allVersions, '', (row) => `${row.Name} · ${academicLabel(data.sessions, row.SessionId)} / ${academicLabel(data.terms, row.TermId)} · ${row.Status}`, 'Choose source version')}</select></label>
+      <label>Source classroom<select name="SourceArmId" required>${academicSelectOptions(allClassrooms, '', allClassroomLabel, 'Choose source classroom')}</select></label>
+      <label>Target Draft version<select name="TargetVersionId" required>${academicSelectOptions(versions.filter((row) => row.Status === 'Draft'), '', (row) => row.Name, 'Choose target Draft')}</select></label>
+      <label>Target classroom<select name="TargetArmId" required>${academicSelectOptions(classrooms, '', classroomLabel, 'Choose target classroom')}</select></label>
+    </div>
+    <div class="academic-attendance-bulk-actions"><button type="button" class="secondary" data-academic-timetable-copy-preview>Preview validation</button><button type="button" data-academic-timetable-copy-confirm disabled>Copy validated lessons</button></div>
+    <div class="academic-timetable-copy-preview" data-academic-timetable-copy-result role="status">Choose the source and destination, then preview the copy.</div>
+  </form>` : '';
+  const publishedVersionIds = new Set(versions.filter((row) => row.Status === 'Published').map((row) => row.VersionId));
+  const publishedLessons = rows.timetableEntries.filter((row) => publishedVersionIds.has(row.VersionId));
+  const substitutions = rows.timetableSubstitutions.filter((row) => row.SessionId === sessionId && row.TermId === termId);
+  const substitutionLessonLabel = (row) => `${row.DayCode} ${row.PeriodCodes?.join('+')} · ${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)} · ${academicLabel(rows.subjects, row.SubjectId)}`;
+  const substitutionForm = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="saveAcademicTimetableSubstitution" data-academic-timetable-substitution>
+    <div class="academic-management-editor-heading"><div><small>Dated operational change</small><h3>Schedule teacher substitution</h3><p class="muted">The published timetable remains unchanged. This dated substitution authorizes the replacement teacher to mark that period's attendance.</p></div><button type="button" class="academic-form-reset" data-academic-timetable-substitution-clear>Clear</button></div>
+    <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}"><input type="hidden" name="SubstitutionId"><input type="hidden" name="RevisionToken">
+    <div class="academic-management-form-grid academic-management-form-grid-2">
+      <label>Published lesson<select name="TimetableEntryId" required>${academicSelectOptions(publishedLessons, '', substitutionLessonLabel, 'Choose published lesson')}</select></label>
+      <label>Substitute teacher<select name="SubstituteTeacherUsername" required>${academicSelectOptions(data.staff || [], '', (row) => `${row.DisplayName} · ${row.Role}`, 'Choose substitute teacher')}</select></label>
+      <label>Substitution date<input name="SubstitutionDate" type="date" value="${new Date().toISOString().slice(0, 10)}" required></label>
+      <label>Approved reason<input name="Reason" maxlength="500" required placeholder="For example teacher on approved leave"></label>
+    </div>
+    <button type="submit" ${publishedLessons.length ? '' : 'disabled'}>Schedule substitution</button>
+  </form>` : '';
+  const substitutionActions = (row) => canManage && row.Status === 'Scheduled' ? `<div class="academic-management-row-actions"><button type="button" class="compact-icon-action compact-edit-action" data-academic-timetable-substitution-edit="${escapeHtml(row.SubstitutionId)}" title="Edit substitution">&#9998;</button><button type="button" class="compact-icon-action academic-archive-action" data-academic-timetable-substitution-cancel="${escapeHtml(row.SubstitutionId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Cancel substitution">&#10005;</button></div>` : '<span class="muted">Locked</span>';
+  const substitutionTable = table('Teacher Substitutions', substitutions, [
+    { label: 'Date', value: (row) => row.SubstitutionDate },
+    { label: 'Lesson', value: (row) => `${row.DayCode} ${row.PeriodCodes?.join('+')} · ${academicLabel(rows.subjects, row.SubjectId)}` },
+    { label: 'Classroom', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
+    { label: 'Original teacher', value: (row) => academicLabel(data.staff, row.OriginalTeacherUsername, row.OriginalTeacherUsername) },
+    { label: 'Substitute', value: (row) => academicLabel(data.staff, row.SubstituteTeacherUsername, row.SubstituteTeacherUsername) },
+    { label: 'Status', value: (row) => row.Status }, { label: 'Action', render: substitutionActions }
+  ]);
   const constraintForm = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="saveAcademicTimetableConstraint" data-academic-timetable-constraint>
     <div class="academic-management-editor-heading"><div><small>Teacher protection</small><h3>Availability and workload limits</h3><p class="muted">Use one line per day, for example MON | P1,P2. Enter 0 for an unlimited daily or weekly load.</p></div><button type="button" class="academic-form-reset" data-academic-timetable-constraint-clear>Clear</button></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}"><input type="hidden" name="RevisionToken">
@@ -10799,7 +10842,101 @@ function academicTimetableWorkspace(data, rows) {
     { label: 'Teacher', value: (row) => academicLabel(data.staff, row.TeacherUsername, row.TeacherUsername) },
     { label: 'Room', value: (row) => row.Room || '-' }, { label: 'Action', render: entryActions }
   ]);
-  return `${entryForm}${entryTable}${versionForm}${copyForm}${versionTable}${constraintForm}${constraintTable}${previewForm}${settingsForm}`;
+  return `${entryForm}${entryTable}${versionForm}${copyForm}${versionTable}${targetCopyForm}${substitutionForm}${substitutionTable}${constraintForm}${constraintTable}${previewForm}${settingsForm}`;
+}
+
+const ACADEMIC_ATTENDANCE_DRAFT_PREFIX = 'dynamax:academic-attendance-draft:v1:';
+
+function academicAttendanceLocalDraftKey(form) {
+  if (!form) return '';
+  const classroomId = clean(form.elements.ClassroomId?.value);
+  const mode = clean(form.elements.Mode?.value || 'Daily');
+  const sourceId = mode === 'Period' ? clean(form.elements.TimetableEntryId?.value)
+    : mode === 'Subject' ? clean(form.elements.SubjectId?.value) : 'daily';
+  return `${ACADEMIC_ATTENDANCE_DRAFT_PREFIX}${[
+    clean(currentUser?.username).toLowerCase(), clean(selectedBranchId).toLowerCase(), clean(academicManagementFilters.section).toLowerCase(),
+    clean(form.elements.SessionId?.value), clean(form.elements.TermId?.value), clean(form.elements.AttendanceDate?.value),
+    classroomId, mode.toLowerCase(), sourceId
+  ].map((value) => encodeURIComponent(value || '-')).join(':')}`;
+}
+
+function academicAttendanceDraftEntries(form) {
+  return [...(form?.querySelectorAll('[data-academic-attendance-student]') || [])].map((row) => ({
+    StudentRef: row.dataset.studentRef,
+    Status: row.querySelector('[data-academic-attendance-status]')?.value || 'Present',
+    MinutesLate: row.querySelector('[data-academic-attendance-minutes]')?.value || '',
+    Note: row.querySelector('[data-academic-attendance-note]')?.value || ''
+  }));
+}
+
+function saveAcademicAttendanceLocalDraft(form) {
+  const key = academicAttendanceLocalDraftKey(form);
+  const entries = academicAttendanceDraftEntries(form);
+  if (!key || !entries.length) return false;
+  try {
+    localStorage.setItem(key, JSON.stringify({ savedAt: new Date().toISOString(), entries }));
+    const status = form.querySelector('[data-academic-attendance-draft-status]');
+    if (status) status.textContent = `Offline draft saved on this device at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
+    return true;
+  } catch (_error) {
+    const status = form.querySelector('[data-academic-attendance-draft-status]');
+    if (status) status.textContent = 'This browser could not save the offline draft.';
+    return false;
+  }
+}
+
+function restoreAcademicAttendanceLocalDraft(form) {
+  const key = academicAttendanceLocalDraftKey(form);
+  if (!key) return false;
+  try {
+    const draft = JSON.parse(localStorage.getItem(key) || 'null');
+    if (!draft?.entries?.length) return false;
+    const byStudent = new Map(draft.entries.map((row) => [clean(row.StudentRef).toLowerCase(), row]));
+    form.querySelectorAll('[data-academic-attendance-student]').forEach((row) => {
+      const saved = byStudent.get(clean(row.dataset.studentRef).toLowerCase());
+      if (!saved) return;
+      row.querySelector('[data-academic-attendance-status]').value = saved.Status || 'Present';
+      row.querySelector('[data-academic-attendance-minutes]').value = saved.MinutesLate || '';
+      row.querySelector('[data-academic-attendance-note]').value = saved.Note || '';
+    });
+    const status = form.querySelector('[data-academic-attendance-draft-status]');
+    if (status) status.textContent = `Recovered offline draft saved ${new Date(draft.savedAt).toLocaleString()}.`;
+    return true;
+  } catch (_error) { return false; }
+}
+
+function clearAcademicAttendanceLocalDraft(form) {
+  const key = academicAttendanceLocalDraftKey(form);
+  if (key) localStorage.removeItem(key);
+}
+
+function academicTermAttendanceRows(rows, armId, mode = 'Daily') {
+  const memberships = rows.studentMemberships.filter((row) => academicIsActive(row) && row.ArmId === armId);
+  const summaries = new Map(memberships.map((row) => [clean(row.StudentRef).toLowerCase(), {
+    StudentRef: row.StudentRef, Present: 0, Absent: 0, Late: 0, Excused: 0, LeftEarly: 0, Total: 0
+  }]));
+  rows.studentAttendance.filter((row) => row.ArmId === armId && (mode === 'All' || row.Mode === mode)).forEach((row) => {
+    const key = clean(row.StudentRef).toLowerCase();
+    if (!summaries.has(key)) return;
+    const summary = summaries.get(key);
+    const status = clean(row.Status).replace(/\s+/g, '') || 'Present';
+    if (Object.hasOwn(summary, status)) summary[status] += 1;
+    summary.Total += 1;
+  });
+  return [...summaries.values()].map((row) => ({
+    ...row, Attended: row.Present + row.Late + row.LeftEarly,
+    AttendancePercentage: row.Total ? Math.round(((row.Present + row.Late + row.LeftEarly) / row.Total) * 1000) / 10 : 0
+  }));
+}
+
+function printAcademicAttendanceReport(data, rows, arm, mode, reportRows) {
+  const printable = window.open('', '_blank', 'width=1100,height=760');
+  if (!printable) return;
+  printable.opener = null;
+  const classroom = `${academicLabel(rows.classes, arm.ClassId)} / ${academicLabel(rows.arms, arm.ArmId)}`;
+  printable.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(classroom)} attendance</title><style>@page{size:A4 landscape;margin:10mm}body{margin:28px;color:#102a43;font:12px Arial,sans-serif}h1{margin:0 0 5px}p{color:#526d82}table{width:100%;border-collapse:collapse}th,td{padding:7px;border:1px solid #cbd7e5;text-align:left}th{background:#edf3f8;font-size:10px;text-transform:uppercase}button{margin-bottom:15px;padding:8px 14px;border:0;background:#1769e0;color:#fff}@media print{button{display:none}}</style></head><body><button onclick="window.print()">Print attendance summary</button><h1>${escapeHtml(classroom)}</h1><p>${escapeHtml(academicLabel(data.sessions, academicManagementFilters.sessionId))} · ${escapeHtml(academicLabel(data.terms, academicManagementFilters.termId))} · ${escapeHtml(mode)} registers</p><table><thead><tr><th>Student</th><th>Present</th><th>Absent</th><th>Late</th><th>Excused</th><th>Left early</th><th>Registers</th><th>Attendance</th></tr></thead><tbody>${reportRows.map((row) => `<tr><td>${escapeHtml(academicLabel(data.students, row.StudentRef, row.StudentRef))}</td><td>${row.Present}</td><td>${row.Absent}</td><td>${row.Late}</td><td>${row.Excused}</td><td>${row.LeftEarly}</td><td>${row.Total}</td><td>${row.AttendancePercentage}%</td></tr>`).join('')}</tbody></table></body></html>`);
+  printable.document.close();
+  printable.focus();
 }
 
 function academicAttendanceWorkspace(data, rows) {
@@ -10835,7 +10972,7 @@ function academicAttendanceWorkspace(data, rows) {
     ? `<label>Subject<select data-academic-attendance-source name="SubjectId" required>${academicSelectOptions(subjectIds.map((id) => ({ RecordId: id, Name: academicLabel(rows.subjects, id) })), academicAttendanceDraft.subjectId, (row) => row.Name, 'Choose subject')}</select></label>`
     : mode === 'Period' ? `<label>Published lesson<select data-academic-attendance-source name="TimetableEntryId" required>${academicSelectOptions(lessons, academicAttendanceDraft.timetableEntryId, lessonLabel, 'Choose lesson')}</select></label>` : '';
   const markForm = canMark ? `<form class="academic-management-editor academic-management-editor-wide academic-attendance-register" data-academic-workflow="saveAcademicStudentAttendance" data-academic-attendance-register>
-    <div class="academic-management-editor-heading"><div><small>Student register</small><h3>Mark attendance</h3><p class="muted">All students start as Present. Change only the exceptions; changes to saved records follow the correction workflow.</p></div><strong data-academic-attendance-count>${roster.length} students</strong></div>
+    <div class="academic-management-editor-heading"><div><small>Student register</small><h3>Mark attendance</h3><p class="muted">All students start as Present. Changes are kept as a recoverable device draft until online synchronization succeeds; changes to saved records follow the correction workflow.</p></div><strong data-academic-attendance-count>${roster.length} students</strong></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}">
     <div class="academic-management-form-grid academic-management-form-grid-4">
       <label>Date<input type="date" name="AttendanceDate" data-academic-attendance-filter value="${escapeHtml(academicAttendanceDraft.date)}" required></label>
@@ -10844,9 +10981,10 @@ function academicAttendanceWorkspace(data, rows) {
       ${sourceControl}
     </div>
     <div class="academic-attendance-bulk-actions"><button type="button" class="secondary" data-academic-attendance-all="Present">Mark all Present</button><button type="button" class="secondary" data-academic-attendance-all="Absent">Mark all Absent</button><span data-academic-attendance-summary></span></div>
+    <div class="academic-attendance-draft-bar"><span data-academic-attendance-draft-status>Changes are automatically saved on this device.</span><div><button type="button" class="secondary" data-academic-attendance-save-draft>Save offline draft</button><button type="button" class="secondary" data-academic-attendance-discard-draft>Discard draft</button></div></div>
     <div class="academic-attendance-table"><table><thead><tr><th>Student</th><th>Status</th><th>Minutes late</th><th>Note</th></tr></thead><tbody>${rosterRows || '<tr><td colspan="4">No active students are assigned to this classroom.</td></tr>'}</tbody></table></div>
     <label>Correction reason <input name="CorrectionReason" placeholder="Required only when changing attendance already saved"></label>
-    <button type="submit" ${roster.length && (mode === 'Daily' || sourceId) ? '' : 'disabled'}>Save attendance register</button>
+    <button type="submit" ${roster.length && (mode === 'Daily' || sourceId) ? '' : 'disabled'}>Synchronize attendance online</button>
   </form>` : '';
   const history = table('Student Attendance History', rows.studentAttendance, [
     { label: 'Date', value: (row) => row.AttendanceDate }, { label: 'Student', value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
@@ -10861,7 +10999,21 @@ function academicAttendanceWorkspace(data, rows) {
     { label: 'Requested by', value: (row) => row.RequestedBy }, { label: 'Status', value: (row) => row.Status },
     { label: 'Action', render: correctionActions }
   ]);
-  return `${markForm}${history}${corrections}`;
+  const reportArm = academicFind(classrooms, academicAttendanceDraft.reportArmId) || selectedArm || classrooms[0];
+  academicAttendanceDraft.reportArmId = clean(reportArm?.ArmId);
+  const reportMode = academicAttendanceDraft.reportMode || 'Daily';
+  const reportRows = reportArm ? academicTermAttendanceRows(rows, reportArm.ArmId, reportMode) : [];
+  const reportTableRows = reportRows.map((row) => `<tr><td>${escapeHtml(academicLabel(data.students, row.StudentRef, row.StudentRef))}<small>${escapeHtml(row.StudentRef)}</small></td><td>${row.Present}</td><td>${row.Absent}</td><td>${row.Late}</td><td>${row.Excused}</td><td>${row.LeftEarly}</td><td>${row.Total}</td><td><strong>${row.AttendancePercentage}%</strong></td></tr>`).join('');
+  const reportForm = `<form class="academic-management-editor academic-management-editor-wide academic-attendance-report" data-academic-attendance-report>
+    <div class="academic-management-editor-heading"><div><small>Term reporting</small><h3>Student attendance summary</h3><p class="muted">Counts are calculated from the selected term and classroom. Attendance percentage counts Present, Late and Left Early as attended registers.</p></div><strong>${reportRows.length} students</strong></div>
+    <div class="academic-management-form-grid academic-management-form-grid-2">
+      <label>Classroom<select name="ReportArmId" data-academic-attendance-report-filter>${academicSelectOptions(classrooms, reportArm?.ArmId, classroomLabel, 'Choose classroom')}</select></label>
+      <label>Register type<select name="ReportMode" data-academic-attendance-report-filter><option${reportMode === 'Daily' ? ' selected' : ''}>Daily</option><option${reportMode === 'Period' ? ' selected' : ''}>Period</option><option${reportMode === 'Subject' ? ' selected' : ''}>Subject</option><option${reportMode === 'All' ? ' selected' : ''}>All</option></select></label>
+    </div>
+    <div class="academic-attendance-table"><table><thead><tr><th>Student</th><th>Present</th><th>Absent</th><th>Late</th><th>Excused</th><th>Left early</th><th>Registers</th><th>Attendance</th></tr></thead><tbody>${reportTableRows || '<tr><td colspan="8">No active students are assigned to this classroom.</td></tr>'}</tbody></table></div>
+    <button type="button" data-academic-attendance-report-print ${reportArm && reportRows.length ? '' : 'disabled'}>Print term attendance report</button>
+  </form>`;
+  return `${markForm}${history}${reportForm}${corrections}`;
 }
 
 function academicManagementHeader(data, rows, message = '') {
@@ -11257,6 +11409,82 @@ function bindAcademicManagement() {
     const entries = currentRows.timetableEntries.filter((row) => row.VersionId === version?.VersionId);
     printAcademicTimetableSchedule(button.dataset.academicTimetablePrint, version, entries, academicManagementData || {}, currentRows);
   }));
+  const targetCopyForm = panelEl.querySelector('[data-academic-timetable-target-copy]');
+  const targetCopyResult = targetCopyForm?.querySelector('[data-academic-timetable-copy-result]');
+  const targetCopyConfirm = targetCopyForm?.querySelector('[data-academic-timetable-copy-confirm]');
+  const targetCopyPayload = () => Object.fromEntries(new FormData(targetCopyForm).entries());
+  const resetTargetCopyPreview = () => {
+    if (targetCopyConfirm) targetCopyConfirm.disabled = true;
+    if (targetCopyResult) {
+      targetCopyResult.className = 'academic-timetable-copy-preview';
+      targetCopyResult.textContent = 'Preview the updated selection before copying.';
+    }
+  };
+  targetCopyForm?.querySelectorAll('select').forEach((control) => control.addEventListener('change', resetTargetCopyPreview));
+  targetCopyForm?.querySelector('[data-academic-timetable-copy-preview]')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    await runButtonAction(button, 'Validating...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('previewAcademicTimetableCopy', targetCopyPayload());
+        academicManagementData = data;
+        const preview = data.copyPreview || {};
+        const issues = preview.Issues || [];
+        if (targetCopyResult) {
+          targetCopyResult.className = `academic-timetable-copy-preview ${issues.length ? 'has-errors' : 'is-valid'}`;
+          targetCopyResult.innerHTML = `<strong>${preview.ValidCount || 0} of ${preview.SourceCount || 0} lessons passed validation.</strong> ${preview.NewCount || 0} new; ${preview.ExistingCount || 0} already present.${issues.length ? `<ul>${issues.map((issue) => `<li><strong>${escapeHtml(`${issue.DayCode || ''} ${issue.StartPeriodCode || ''}`)}</strong> ${escapeHtml(academicLabel(data.subjects, issue.SubjectId, issue.SubjectId))}: ${escapeHtml(issue.Message)}</li>`).join('')}</ul>` : '<span> Ready to copy.</span>'}`;
+        }
+        if (targetCopyConfirm) targetCopyConfirm.disabled = Boolean(issues.length) || !Number(preview.NewCount || 0);
+        setStatus(status, data.message, issues.length ? 'bad' : 'ok');
+      } catch (error) {
+        resetTargetCopyPreview();
+        setStatus(status, error.message || String(error), 'bad');
+      }
+    });
+  });
+  targetCopyConfirm?.addEventListener('click', async () => {
+    await runButtonAction(targetCopyConfirm, 'Copying...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('copyAcademicTimetableSelection', targetCopyPayload());
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  });
+  const substitutionForm = panelEl.querySelector('[data-academic-timetable-substitution]');
+  const clearSubstitutionForm = () => {
+    substitutionForm?.reset();
+    if (substitutionForm?.elements.SubstitutionId) substitutionForm.elements.SubstitutionId.value = '';
+    if (substitutionForm?.elements.RevisionToken) substitutionForm.elements.RevisionToken.value = '';
+  };
+  panelEl.querySelector('[data-academic-timetable-substitution-clear]')?.addEventListener('click', clearSubstitutionForm);
+  panelEl.querySelectorAll('[data-academic-timetable-substitution-edit]').forEach((button) => button.addEventListener('click', () => {
+    const record = academicFind(academicManagementData?.timetableSubstitutions || [], button.dataset.academicTimetableSubstitutionEdit);
+    if (!record || !substitutionForm) return;
+    showAcademicManagementTask('timetable', 'substitutions');
+    ['SubstitutionId', 'RevisionToken', 'TimetableEntryId', 'SubstituteTeacherUsername', 'SubstitutionDate', 'Reason'].forEach((key) => {
+      if (substitutionForm.elements[key]) substitutionForm.elements[key].value = key === 'RevisionToken' ? record.RevisionToken : (record[key] || '');
+    });
+    substitutionForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
+  panelEl.querySelectorAll('[data-academic-timetable-substitution-cancel]').forEach((button) => button.addEventListener('click', async () => {
+    const reason = clean(await window.DynamaxDialogs.prompt({
+      title: 'Cancel teacher substitution', message: 'The original published teacher will again own this dated lesson.',
+      label: 'Cancellation reason', required: true, tone: 'danger', confirmText: 'Cancel substitution'
+    }));
+    if (!reason) return;
+    await runButtonAction(button, 'Cancelling...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('cancelAcademicTimetableSubstitution', {
+          SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId,
+          TermId: academicManagementFilters.termId, SubstitutionId: button.dataset.academicTimetableSubstitutionCancel,
+          RevisionToken: button.dataset.academicRevision, Reason: reason
+        });
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  }));
   const attendanceForm = panelEl.querySelector('[data-academic-attendance-register]');
   const updateAttendanceSummary = () => {
     if (!attendanceForm) return;
@@ -11265,6 +11493,7 @@ function bindAcademicManagement() {
     const summary = attendanceForm.querySelector('[data-academic-attendance-summary]');
     if (summary) summary.textContent = ['Present', 'Absent', 'Late', 'Excused', 'Left Early'].filter((key) => counts[key]).map((key) => `${counts[key]} ${key.toLowerCase()}`).join(' · ');
   };
+  restoreAcademicAttendanceLocalDraft(attendanceForm);
   attendanceForm?.querySelector('[data-academic-attendance-classroom]')?.addEventListener('change', (event) => {
     const arm = academicFind(academicManagementData?.arms || [], event.target.value);
     academicAttendanceDraft.classId = clean(arm?.ClassId);
@@ -11288,11 +11517,37 @@ function bindAcademicManagement() {
   attendanceForm?.querySelectorAll('[data-academic-attendance-all]').forEach((button) => button.addEventListener('click', () => {
     attendanceForm.querySelectorAll('[data-academic-attendance-status]').forEach((control) => { control.value = button.dataset.academicAttendanceAll; });
     updateAttendanceSummary();
+    saveAcademicAttendanceLocalDraft(attendanceForm);
   }));
+  attendanceForm?.addEventListener('input', (event) => {
+    if (!event.target.matches('[data-academic-attendance-minutes], [data-academic-attendance-note]')) return;
+    saveAcademicAttendanceLocalDraft(attendanceForm);
+  });
   attendanceForm?.addEventListener('change', (event) => {
-    if (event.target.matches('[data-academic-attendance-status]')) updateAttendanceSummary();
+    if (!event.target.matches('[data-academic-attendance-status]')) return;
+    updateAttendanceSummary();
+    saveAcademicAttendanceLocalDraft(attendanceForm);
+  });
+  attendanceForm?.querySelector('[data-academic-attendance-save-draft]')?.addEventListener('click', () => saveAcademicAttendanceLocalDraft(attendanceForm));
+  attendanceForm?.querySelector('[data-academic-attendance-discard-draft]')?.addEventListener('click', async () => {
+    if (!await window.DynamaxDialogs.confirm({ title: 'Discard offline attendance draft', message: 'Discard the recoverable draft on this device and reload the last online records?', tone: 'danger', confirmText: 'Discard draft' })) return;
+    clearAcademicAttendanceLocalDraft(attendanceForm);
+    renderAcademicManagement(academicManagementData || {}, 'Offline attendance draft discarded.');
   });
   updateAttendanceSummary();
+  const attendanceReportForm = panelEl.querySelector('[data-academic-attendance-report]');
+  attendanceReportForm?.querySelectorAll('[data-academic-attendance-report-filter]').forEach((control) => control.addEventListener('change', () => {
+    academicAttendanceDraft.reportArmId = clean(attendanceReportForm.elements.ReportArmId.value);
+    academicAttendanceDraft.reportMode = clean(attendanceReportForm.elements.ReportMode.value || 'Daily');
+    renderAcademicManagement(academicManagementData || {});
+  }));
+  attendanceReportForm?.querySelector('[data-academic-attendance-report-print]')?.addEventListener('click', () => {
+    const currentRows = academicCurrentRows(academicManagementData || {});
+    const arm = academicFind(currentRows.arms, academicAttendanceDraft.reportArmId);
+    if (!arm) return;
+    const mode = academicAttendanceDraft.reportMode || 'Daily';
+    printAcademicAttendanceReport(academicManagementData || {}, currentRows, arm, mode, academicTermAttendanceRows(currentRows, arm.ArmId, mode));
+  });
   panelEl.querySelectorAll('[data-academic-attendance-decision]').forEach((button) => button.addEventListener('click', async () => {
     const decision = button.dataset.academicAttendanceDecision;
     const reason = clean(await window.DynamaxDialogs.prompt({
@@ -11334,7 +11589,7 @@ function bindAcademicManagement() {
     academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
     academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
     academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
-    academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '' };
+    academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
     void loadAcademicManagement({ section: event.target.value });
   });
   document.getElementById('academicManagementSession')?.addEventListener('change', (event) => {
@@ -11351,7 +11606,7 @@ function bindAcademicManagement() {
       sessionId: academicManagementFilters.sessionId, termId: academicManagementFilters.termId, classId: '', armId: ''
     };
     academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
-    academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '' };
+    academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
     renderAcademicManagement(academicManagementData || {});
   });
   document.getElementById('academicManagementTerm')?.addEventListener('change', (event) => {
@@ -11370,7 +11625,7 @@ function bindAcademicManagement() {
       termId: academicManagementFilters.termId
     };
     academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
-    academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '' };
+    academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
     renderAcademicManagement(academicManagementData || {});
   });
   const classroomEditor = panelEl.querySelector('[data-academic-classroom-editor]');
@@ -11511,12 +11766,14 @@ function bindAcademicManagement() {
   }));
   panelEl.querySelectorAll('[data-academic-workflow]').forEach((form) => form.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (form.dataset.academicWorkflow === 'saveAcademicStudentAttendance') saveAcademicAttendanceLocalDraft(form);
     const button = form.querySelector('button[type="submit"]');
     await runButtonAction(button, 'Saving...', async () => {
       const status = document.getElementById('academicManagementStatus');
       try {
         const data = await academicManagementRequest(form.dataset.academicWorkflow, academicWorkflowPayload(form));
         if (form.dataset.academicWorkflow === 'saveAcademicTimetableEntry') academicTimetableDraft.entryId = '';
+        if (form.dataset.academicWorkflow === 'saveAcademicStudentAttendance') clearAcademicAttendanceLocalDraft(form);
         renderAcademicManagement(data, data.message || 'Academic workflow completed online.');
       } catch (error) {
         setStatus(status, error.message || String(error), 'bad');

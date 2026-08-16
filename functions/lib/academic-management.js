@@ -2,6 +2,7 @@ import { batchCommitDocuments, listCollection } from './firestore.js';
 import { enforceActorBranch } from './branch-scope.js';
 import { normalizeClassKey } from './class-names.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
+import { createNotification } from './notifications.js';
 import {
   getSchoolStructure, listSchoolCollection, safeScopeId, schoolSectionFor, scopedCollectionPath
 } from './school-scope.js';
@@ -39,6 +40,7 @@ export const ACADEMIC_MANAGEMENT_COLLECTIONS = Object.freeze({
   timetableConstraints: 'academicTimetableConstraints',
   timetableVersions: 'academicTimetableVersions',
   timetableEntries: 'academicTimetableEntries',
+  timetableSubstitutions: 'academicTimetableSubstitutions',
   studentAttendance: 'academicStudentAttendance',
   attendanceCorrections: 'academicAttendanceCorrections',
   audit: 'academicManagementAudit'
@@ -152,14 +154,14 @@ function actorUsername(user = {}) {
 
 function recordId(row = {}) {
   return clean(
-    row.RecordId || row.recordId || row.AttendanceId || row.EntryId || row.VersionId || row.ConstraintId || row.TimetableSettingId
+    row.RecordId || row.recordId || row.SubstitutionId || row.AttendanceId || row.EntryId || row.VersionId || row.ConstraintId || row.TimetableSettingId
       || row.MovementId || row.MembershipId || row.AllocationId || row.OfferingId
       || row.DepartmentId || row.SubjectId || row.ArmId || row.ArmTemplateId || row.ClassId || row.TermId || row.SessionId || row.__id
   );
 }
 
 function statusActive(row = {}) {
-  return !['archived', 'inactive', 'closed', 'withdrawn'].includes(lower(row.Status));
+  return !['archived', 'inactive', 'closed', 'withdrawn', 'cancelled'].includes(lower(row.Status));
 }
 
 export function academicSeniorCoreSubjectIds(departments = []) {
@@ -1083,6 +1085,8 @@ function sortAcademicState(state) {
     timetableEntries: [...state.timetableEntries].sort((a, b) => clean(a.DayCode).localeCompare(clean(b.DayCode))
       || clean(a.StartPeriodCode).localeCompare(clean(b.StartPeriodCode))
       || clean(a.ClassId).localeCompare(clean(b.ClassId))),
+    timetableSubstitutions: [...state.timetableSubstitutions].sort((a, b) => clean(b.SubstitutionDate).localeCompare(clean(a.SubstitutionDate))
+      || clean(a.TimetableEntryId).localeCompare(clean(b.TimetableEntryId))),
     studentAttendance: [...state.studentAttendance].sort((a, b) => clean(b.AttendanceDate).localeCompare(clean(a.AttendanceDate))
       || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
     attendanceCorrections: [...state.attendanceCorrections].sort((a, b) => clean(b.RequestedAt).localeCompare(clean(a.RequestedAt)))
@@ -1111,8 +1115,12 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
   let students = people.students;
   if (permissions.teacherView) {
     const username = actorUsername(user);
+    const substituteEntryIds = new Set(state.timetableSubstitutions.filter((row) => lower(row.Status) === 'scheduled'
+      && lower(row.SubstituteTeacherUsername) === username).map((row) => row.TimetableEntryId));
+    const substituteClassrooms = state.timetableEntries.filter((row) => substituteEntryIds.has(row.EntryId));
     state.teacherAllocations = state.teacherAllocations.filter((row) => lower(row.TeacherUsername) === username);
     const visibleKeys = new Set(state.teacherAllocations.map((row) => `${row.ClassId}|${row.ArmId || '*'}`));
+    substituteClassrooms.forEach((row) => visibleKeys.add(`${row.ClassId}|${row.ArmId}`));
     state.studentMemberships = state.studentMemberships.filter((row) => (
       visibleKeys.has(`${row.ClassId}|${row.ArmId}`) || visibleKeys.has(`${row.ClassId}|*`)
     ));
@@ -1121,7 +1129,11 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     const publishedVersions = new Set(state.timetableVersions.filter((row) => lower(row.Status) === 'published').map((row) => row.VersionId));
     state.timetableVersions = state.timetableVersions.filter((row) => publishedVersions.has(row.VersionId));
     state.timetableEntries = state.timetableEntries.filter((row) => publishedVersions.has(row.VersionId)
-      && (lower(row.TeacherUsername) === username || visibleKeys.has(`${row.ClassId}|${row.ArmId}`) || visibleKeys.has(`${row.ClassId}|*`)));
+      && (lower(row.TeacherUsername) === username || substituteEntryIds.has(row.EntryId)
+        || visibleKeys.has(`${row.ClassId}|${row.ArmId}`) || visibleKeys.has(`${row.ClassId}|*`)));
+    const visibleEntries = new Set(state.timetableEntries.map((row) => row.EntryId));
+    state.timetableSubstitutions = state.timetableSubstitutions.filter((row) => visibleEntries.has(row.TimetableEntryId)
+      || lower(row.SubstituteTeacherUsername) === username);
     state.timetableConstraints = state.timetableConstraints.filter((row) => lower(row.TeacherUsername) === username);
     state.studentAttendance = state.studentAttendance.filter((row) => visibleStudents.has(lower(row.StudentRef)));
     state.attendanceCorrections = state.attendanceCorrections.filter((row) => lower(row.RequestedByUsername) === username);
@@ -1154,6 +1166,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
       TimetableVersions: state.timetableVersions.length,
       TimetableConstraints: state.timetableConstraints.filter(statusActive).length,
       TimetableEntries: state.timetableEntries.length,
+      TimetableSubstitutions: state.timetableSubstitutions.filter(statusActive).length,
       AttendanceRecords: state.studentAttendance.length,
       AttendanceCorrections: state.attendanceCorrections.length
     }
@@ -2548,6 +2561,112 @@ export async function copyAcademicTimetableVersion(env, user = {}, input = {}) {
   return academicOperationalResponse(env, user, input, scope, `${sourceEntries.length} lesson${sourceEntries.length === 1 ? '' : 's'} copied into ${name} as a new draft.`);
 }
 
+export function academicTimetableTargetCopyPlan(state = {}, input = {}, context = {}) {
+  const source = findById(state.timetableVersions, input.SourceVersionId);
+  const target = findById(state.timetableVersions, input.TargetVersionId);
+  if (!source || lower(source.Status) === 'copying') throw failure('Choose an available source timetable version.');
+  if (!target || target.SessionId !== context.session?.SessionId || target.TermId !== context.term?.TermId) {
+    throw failure('Choose a target timetable version from the selected academic period.');
+  }
+  if (lower(target.Status) !== 'draft') throw failure('Targeted lessons can be copied only into a Draft timetable version.', 409, 'ACADEMIC_TIMETABLE_LOCKED');
+  const sourceArm = assertReference(findById(state.arms, input.SourceArmId), 'Choose the source classroom arm.');
+  const targetArm = assertReference(findById(state.arms, input.TargetArmId), 'Choose the target classroom arm.');
+  const sourceClass = assertReference(findById(state.classes, input.SourceClassId || sourceArm.ClassId), 'Choose the source class.');
+  const targetClass = assertReference(findById(state.classes, input.TargetClassId || targetArm.ClassId), 'Choose the target class.');
+  if (sourceArm.ClassId !== sourceClass.ClassId || targetArm.ClassId !== targetClass.ClassId) {
+    throw failure('Each selected arm must belong to its selected class.');
+  }
+  const sourceEntries = state.timetableEntries.filter((row) => statusActive(row) && row.VersionId === source.VersionId
+    && row.ClassId === sourceClass.ClassId && row.ArmId === sourceArm.ArmId);
+  if (!sourceEntries.length) throw failure('The selected source classroom has no lessons in that timetable version.');
+  const existingTargetEntries = state.timetableEntries.filter((row) => statusActive(row) && row.VersionId === target.VersionId);
+  const planned = [];
+  const issues = [];
+  sourceEntries.forEach((sourceEntry) => {
+    const entryId = academicId('timetable-target-copy', target.VersionId, sourceEntry.EntryId, targetClass.ClassId, targetArm.ArmId);
+    try {
+      const candidate = {
+        ...normalizeAcademicTimetableEntry({
+          ...sourceEntry, ClassId: targetClass.ClassId, ArmId: targetArm.ArmId
+        }, target),
+        RecordId: entryId, EntryId: entryId, VersionId: target.VersionId,
+        SessionId: context.session.SessionId, TermId: context.term.TermId,
+        BranchId: context.scope.branchId, SchoolSection: context.scope.section,
+        CopySourceEntryId: sourceEntry.EntryId, CopySourceVersionId: source.VersionId,
+        CopySourceClassId: sourceClass.ClassId, CopySourceArmId: sourceArm.ArmId,
+        Status: 'Active'
+      };
+      if (!academicSubjectTeacherAllocation(state, candidate)) {
+        throw failure('The same subject-teacher allocation is not active in the target classroom and term.');
+      }
+      const combined = [...existingTargetEntries, ...planned.map((row) => row.Entry)];
+      const conflicts = academicTimetableConflicts(candidate, combined);
+      if (conflicts.length) {
+        const types = [...new Set(conflicts.map((row) => row.Type))].join(', ').toLowerCase();
+        throw failure(`The copied lesson has a ${types} conflict in the target timetable.`);
+      }
+      assertAcademicTeacherScheduleRules(state, candidate, combined);
+      planned.push({ Entry: candidate, Existing: Boolean(findById(existingTargetEntries, entryId)) });
+    } catch (error) {
+      issues.push({
+        SourceEntryId: sourceEntry.EntryId,
+        DayCode: sourceEntry.DayCode,
+        StartPeriodCode: sourceEntry.StartPeriodCode,
+        SubjectId: sourceEntry.SubjectId,
+        Message: clean(error?.message || error || 'This lesson cannot be copied.')
+      });
+    }
+  });
+  return {
+    SourceVersionId: source.VersionId, SourceVersionName: source.Name,
+    TargetVersionId: target.VersionId, TargetVersionName: target.Name,
+    SourceClassId: sourceClass.ClassId, SourceArmId: sourceArm.ArmId,
+    TargetClassId: targetClass.ClassId, TargetArmId: targetArm.ArmId,
+    SourceCount: sourceEntries.length, ValidCount: planned.length,
+    ExistingCount: planned.filter((row) => row.Existing).length,
+    NewCount: planned.filter((row) => !row.Existing).length,
+    Issues: issues, PlannedEntries: planned
+  };
+}
+
+export async function previewAcademicTimetableCopy(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const plan = academicTimetableTargetCopyPlan(context.state, input, context);
+  const response = await academicOperationalResponse(env, user, input, context.scope,
+    plan.Issues.length
+      ? `${plan.ValidCount} of ${plan.SourceCount} lessons passed validation; resolve ${plan.Issues.length} issue${plan.Issues.length === 1 ? '' : 's'} before copying.`
+      : `${plan.NewCount} lesson${plan.NewCount === 1 ? '' : 's'} are ready to copy; ${plan.ExistingCount} matching lesson${plan.ExistingCount === 1 ? '' : 's'} already exist.`);
+  response.copyPreview = { ...plan, PlannedEntries: undefined };
+  return response;
+}
+
+export async function copyAcademicTimetableSelection(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const plan = academicTimetableTargetCopyPlan(context.state, input, context);
+  if (plan.Issues.length) {
+    throw failure(`Resolve the ${plan.Issues.length} targeted-copy validation issue${plan.Issues.length === 1 ? '' : 's'} before copying.`, 409, 'ACADEMIC_TIMETABLE_COPY_INVALID');
+  }
+  const timestamp = nowIso();
+  const writes = plan.PlannedEntries.filter((row) => !row.Existing).map(({ Entry }) => ({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableEntries,
+    documentId: Entry.EntryId,
+    data: withoutMetadata({ ...Entry, CreatedAt: timestamp, CreatedBy: actorName(user), UpdatedAt: timestamp, UpdatedBy: actorName(user) }),
+    exists: false
+  }));
+  for (let offset = 0; offset < writes.length; offset += 450) {
+    await commitAcademicBatch(env, writes.slice(offset, offset + 450), 'The target timetable changed while lessons were being copied. Preview the selection again.');
+  }
+  await commitAcademicBatch(env, [auditWrite(user, 'TARGETED_COPY', 'timetableEntry', {
+    RecordId: plan.TargetVersionId, VersionId: plan.TargetVersionId,
+    BranchId: context.scope.branchId, SchoolSection: context.scope.section,
+    SessionId: context.session.SessionId, TermId: context.term.TermId
+  }, `${plan.SourceVersionName}: ${plan.SourceClassId}/${plan.SourceArmId} -> ${plan.TargetVersionName}: ${plan.TargetClassId}/${plan.TargetArmId}; ${writes.length} lesson(s)`)]);
+  return academicOperationalResponse(env, user, input, context.scope,
+    writes.length
+      ? `${writes.length} validated lesson${writes.length === 1 ? '' : 's'} copied into ${plan.TargetVersionName}.`
+      : `Every selected lesson already exists in ${plan.TargetVersionName}; nothing was duplicated.`);
+}
+
 function academicSubjectTeacherAllocation(state, candidate) {
   return state.teacherAllocations.find((row) => statusActive(row)
     && row.SessionId === candidate.SessionId && row.TermId === candidate.TermId
@@ -2615,6 +2734,100 @@ export async function deleteAcademicTimetableEntry(env, user = {}, input = {}) {
   return academicOperationalResponse(env, user, input, scope, 'Timetable lesson deleted.');
 }
 
+function academicIsoWeekdayCode(value) {
+  const date = new Date(`${clean(value)}T12:00:00Z`);
+  return Number.isNaN(date.getTime()) ? '' : ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'][date.getUTCDay()];
+}
+
+export async function saveAcademicTimetableSubstitution(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const { scope, state, session, term } = context;
+  const lesson = assertReference(findById(state.timetableEntries, input.TimetableEntryId), 'Choose a published timetable lesson.');
+  const version = findById(state.timetableVersions, lesson.VersionId);
+  if (!version || lower(version.Status) !== 'published') throw failure('Teacher substitutions can be scheduled only for a published timetable.');
+  const substitutionDate = dateValue(input.SubstitutionDate, 'substitution date');
+  if (substitutionDate < term.StartDate || substitutionDate > term.EndDate) throw failure('The substitution date must fall within the selected term.');
+  const weekday = academicIsoWeekdayCode(substitutionDate);
+  if (/^(SUN|MON|TUE|WED|THU|FRI|SAT)$/.test(clean(lesson.DayCode).toUpperCase()) && weekday !== clean(lesson.DayCode).toUpperCase()) {
+    throw failure(`The selected lesson runs on ${lesson.DayCode}, but ${substitutionDate} is ${weekday}.`);
+  }
+  const substituteUsername = lower(input.SubstituteTeacherUsername);
+  if (!substituteUsername) throw failure('Choose the substitute teacher.');
+  if (substituteUsername === lower(lesson.TeacherUsername)) throw failure('Choose a different teacher for this substitution.');
+  const people = await loadPeople(env, user, scope);
+  const substitute = people.staff.find((row) => lower(row.Username || row.username || row.__id) === substituteUsername);
+  if (!substitute) throw failure('The substitute teacher was not found in this branch.');
+  const qualified = state.teacherAllocations.some((row) => statusActive(row)
+    && row.SessionId === session.SessionId && row.TermId === term.TermId
+    && lower(row.AllocationRole) === 'subject teacher' && row.SubjectId === lesson.SubjectId
+    && lower(row.TeacherUsername) === substituteUsername);
+  if (!qualified) throw failure('Assign this subject to the substitute teacher in the selected term before scheduling the substitution.');
+  const candidate = { ...lesson, TeacherUsername: substituteUsername };
+  const substitutionId = academicId('timetable-substitution', scope.branchId, scope.section, session.SessionId, term.TermId, substitutionDate, lesson.EntryId);
+  const requestedExisting = clean(input.SubstitutionId || input.RecordId)
+    ? findById(state.timetableSubstitutions, input.SubstitutionId || input.RecordId) : null;
+  if (clean(input.SubstitutionId || input.RecordId) && !requestedExisting) throw failure('The teacher substitution being edited was not found.', 404);
+  if (requestedExisting && lower(requestedExisting.Status) !== 'scheduled') throw failure('Only a scheduled teacher substitution can be edited.', 409);
+  const conflicts = academicTimetableConflicts(candidate, state.timetableEntries.filter((row) => statusActive(row) && row.VersionId === version.VersionId));
+  const teacherConflict = conflicts.find((row) => row.Type === 'Teacher');
+  if (teacherConflict) throw failure('The substitute teacher already has another lesson during this period.', 409, 'ACADEMIC_TIMETABLE_CONFLICT');
+  const occupied = new Set(lesson.PeriodCodes || []);
+  const substitutionConflict = state.timetableSubstitutions.some((row) => lower(row.Status) === 'scheduled'
+    && ![substitutionId, requestedExisting?.SubstitutionId].includes(row.SubstitutionId) && row.SubstitutionDate === substitutionDate
+    && lower(row.SubstituteTeacherUsername) === substituteUsername
+    && (row.PeriodCodes || []).some((periodCode) => occupied.has(periodCode)));
+  if (substitutionConflict) throw failure('The substitute teacher already has another substitution during this period.', 409, 'ACADEMIC_TIMETABLE_CONFLICT');
+  assertAcademicTeacherScheduleRules(state, candidate);
+  const reason = clean(input.Reason).slice(0, 500);
+  if (!reason) throw failure('Enter the approved reason for this teacher substitution.');
+  const existing = findById(state.timetableSubstitutions, substitutionId);
+  if (existing && requestedExisting && existing.SubstitutionId !== requestedExisting.SubstitutionId) {
+    throw failure('Another substitution is already scheduled for this lesson and date.', 409, 'ACADEMIC_WRITE_CONFLICT');
+  }
+  const previous = requestedExisting || existing;
+  const timestamp = nowIso();
+  const record = {
+    ...(previous || {}), RecordId: substitutionId, SubstitutionId: substitutionId,
+    SessionId: session.SessionId, TermId: term.TermId, VersionId: version.VersionId,
+    TimetableEntryId: lesson.EntryId, SubstitutionDate: substitutionDate,
+    OriginalTeacherUsername: lesson.TeacherUsername, SubstituteTeacherUsername: substituteUsername,
+    ClassId: lesson.ClassId, ArmId: lesson.ArmId, SubjectId: lesson.SubjectId,
+    DayCode: lesson.DayCode, PeriodCodes: lesson.PeriodCodes || [], Reason: reason, Status: 'Scheduled',
+    BranchId: scope.branchId, SchoolSection: scope.section,
+    CreatedAt: clean(previous?.CreatedAt) || timestamp, CreatedBy: clean(previous?.CreatedBy) || actorName(user),
+    UpdatedAt: timestamp, UpdatedBy: actorName(user)
+  };
+  const relocating = previous && previous.SubstitutionId !== substitutionId;
+  await commitAcademicBatch(env, [
+    ...(relocating ? [{ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableSubstitutions,
+      documentId: previous.SubstitutionId, operation: 'delete', updateTime: clean(input.RevisionToken) }] : []),
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableSubstitutions, documentId: substitutionId,
+      data: withoutMetadata(record), ...(relocating ? { exists: false } : writePrecondition(existing, input.RevisionToken)) },
+    auditWrite(user, previous ? 'UPDATE_SUBSTITUTION' : 'CREATE_SUBSTITUTION', 'timetableSubstitution', record, reason)
+  ], 'This teacher substitution changed while it was being saved. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, 'Teacher substitution scheduled and conflict-checked online.');
+}
+
+export async function cancelAcademicTimetableSubstitution(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const { scope, state } = context;
+  const existing = findById(state.timetableSubstitutions, input.SubstitutionId || input.RecordId);
+  if (!existing || lower(existing.Status) !== 'scheduled') throw failure('The scheduled teacher substitution was not found.', 404);
+  const reason = clean(input.Reason).slice(0, 500);
+  if (!reason) throw failure('Enter the reason for cancelling this substitution.');
+  const timestamp = nowIso();
+  const updated = {
+    ...existing, Status: 'Cancelled', CancellationReason: reason,
+    CancelledAt: timestamp, CancelledBy: actorName(user), UpdatedAt: timestamp, UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableSubstitutions, documentId: existing.SubstitutionId,
+      data: withoutMetadata(updated), ...writePrecondition(existing, input.RevisionToken) },
+    auditWrite(user, 'CANCEL_SUBSTITUTION', 'timetableSubstitution', updated, reason)
+  ], 'This teacher substitution changed while it was being cancelled. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, 'Teacher substitution cancelled.');
+}
+
 export async function changeAcademicTimetableVersionStatus(env, user = {}, input = {}) {
   const context = await academicOperationalContext(env, user, input, 'canPublishTimetables');
   const { scope, state, session, term } = context;
@@ -2657,7 +2870,11 @@ function academicAttendanceAuthority(user, state, input, permissions) {
   const mode = oneOf(input.Mode, ACADEMIC_ATTENDANCE_MODES, 'Daily');
   if (mode === 'Period') {
     const entry = findById(state.timetableEntries, input.TimetableEntryId);
-    return Boolean(entry && lower(entry.TeacherUsername) === username && entry.ClassId === input.ClassId && entry.ArmId === input.ArmId);
+    const substitution = entry && state.timetableSubstitutions.some((row) => lower(row.Status) === 'scheduled'
+      && row.TimetableEntryId === entry.EntryId && row.SubstitutionDate === clean(input.AttendanceDate)
+      && lower(row.SubstituteTeacherUsername) === username);
+    return Boolean(entry && entry.ClassId === input.ClassId && entry.ArmId === input.ArmId
+      && (lower(entry.TeacherUsername) === username || substitution));
   }
   return state.teacherAllocations.some((row) => statusActive(row) && lower(row.TeacherUsername) === username
     && row.SessionId === input.SessionId && row.TermId === input.TermId && row.ClassId === input.ClassId
@@ -2665,6 +2882,42 @@ function academicAttendanceAuthority(user, state, input, permissions) {
     && (mode === 'Daily'
       ? ['form teacher', 'assistant teacher'].includes(lower(row.AllocationRole))
       : lower(row.AllocationRole) === 'subject teacher' && row.SubjectId === input.SubjectId));
+}
+
+function academicParentContacts(student = {}) {
+  const emails = uniqueIds([
+    ...(Array.isArray(student.ParentEmails) ? student.ParentEmails : []),
+    student.ParentEmail, student.VerificationEmail, student.Email,
+    student.FatherEmail, student.MotherEmail, student.GuardianEmail
+  ]).map(lower).filter((value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value));
+  const accountRefs = uniqueIds([
+    studentReference(student), student.AccountRef, student.AdmissionNo, student.ApplicationReference
+  ]).map(lower).filter(Boolean);
+  return { emails, accountRefs };
+}
+
+async function notifyAcademicAbsences(env, students = [], records = [], context = {}) {
+  const byStudent = new Map(students.map((row) => [lower(studentReference(row)), row]));
+  const uniqueRecords = new Map(records.filter((row) => lower(row.Status) === 'absent')
+    .map((row) => [row.AttendanceId, row]));
+  const results = await Promise.allSettled([...uniqueRecords.values()].map((record) => {
+    const student = byStudent.get(lower(record.StudentRef)) || {};
+    const contacts = academicParentContacts(student);
+    const studentName = clean(student.DisplayName || student.ApplicantName || student.StudentName || record.StudentRef);
+    const eventRevision = clean(record.MarkedAt || record.UpdatedAt || record.CreatedAt || record.AttendanceDate);
+    return createNotification(env, {
+      EventKey: `academic-absence:${record.AttendanceId}:${eventRevision}`,
+      Type: 'Student absence', Category: 'Attendance', Audience: 'Parent', Channels: ['InApp', 'Push'],
+      TargetEmails: contacts.emails, TargetAccountRefs: contacts.accountRefs,
+      Title: `${studentName} was marked absent`,
+      Message: `${studentName} was marked absent on ${record.AttendanceDate} in the ${record.Mode || 'Daily'} attendance register. Contact the school if this needs correction.`,
+      ActionUrl: 'parent-dashboard.html?section=academics', RecordType: 'studentAttendance', RecordId: record.AttendanceId,
+      BranchId: context.scope?.branchId || record.BranchId, SchoolSection: context.scope?.section || record.SchoolSection,
+      ActorType: 'Staff', ActorId: context.actorUsername || record.MarkedByUsername || 'Academic Management',
+      CreatedBy: context.actorName || record.MarkedBy || 'Academic Management'
+    });
+  }));
+  return results.filter((result) => result.status === 'fulfilled' && result.value?.created).length;
 }
 
 export async function saveAcademicStudentAttendance(env, user = {}, input = {}) {
@@ -2698,10 +2951,14 @@ export async function saveAcademicStudentAttendance(env, user = {}, input = {}) 
   let created = 0;
   let corrected = 0;
   let requested = 0;
+  const absentRecords = [];
   attendanceRows.forEach((row) => {
     const attendanceId = academicId(registerId, row.StudentRef);
     const existing = findById(state.studentAttendance, attendanceId);
-    if (existing && existing.Status === row.Status && Number(existing.MinutesLate || 0) === row.MinutesLate && clean(existing.Note) === row.Note) return;
+    if (existing && existing.Status === row.Status && Number(existing.MinutesLate || 0) === row.MinutesLate && clean(existing.Note) === row.Note) {
+      if (lower(existing.Status) === 'absent') absentRecords.push(existing);
+      return;
+    }
     const record = {
       ...(existing || {}), RecordId: attendanceId, AttendanceId: attendanceId, RegisterId: registerId,
       SessionId: session.SessionId, TermId: term.TermId, AttendanceDate: attendanceDate,
@@ -2737,13 +2994,21 @@ export async function saveAcademicStudentAttendance(env, user = {}, input = {}) 
     }), ...writePrecondition(existing, existing ? input.RevisionTokens?.[attendanceId] || existing.__updateTime : '') });
     writes.push(auditWrite(user, existing ? 'CORRECT' : 'MARK', 'studentAttendance', record,
       existing ? `${existing.Status} -> ${record.Status}: ${correctionReason}` : record.Status));
+    if (lower(record.Status) === 'absent') absentRecords.push(record);
     if (existing) corrected += 1; else created += 1;
   });
   if (writes.length) await commitAcademicBatch(env, writes, 'The attendance register changed while it was being saved. Reload and try again.');
+  let absenceNotifications = 0;
+  if (absentRecords.length) {
+    const people = await loadPeople(env, user, scope).catch(() => ({ students: [] }));
+    absenceNotifications = await notifyAcademicAbsences(env, people.students || [], absentRecords, {
+      scope, actorName: actorName(user), actorUsername: actorUsername(user)
+    }).catch(() => 0);
+  }
   const summary = academicAttendanceSummary(attendanceRows);
   const message = requested
     ? `Attendance saved; ${requested} correction request${requested === 1 ? '' : 's'} sent for approval.`
-    : `Attendance saved: ${summary.Present} present, ${summary.Absent} absent, ${summary.Late} late${corrected ? `; ${corrected} corrected` : ''}.`;
+    : `Attendance saved: ${summary.Present} present, ${summary.Absent} absent, ${summary.Late} late${corrected ? `; ${corrected} corrected` : ''}${absenceNotifications ? `; ${absenceNotifications} new parent absence notification${absenceNotifications === 1 ? '' : 's'}` : ''}.`;
   return academicOperationalResponse(env, user, input, scope, message);
 }
 
@@ -2780,7 +3045,16 @@ export async function decideAcademicAttendanceCorrection(env, user = {}, input =
   }
   writes.push(auditWrite(user, decision === 'Approved' ? 'APPROVE_CORRECTION' : 'REJECT_CORRECTION', 'studentAttendance', decided, reason));
   await commitAcademicBatch(env, writes, 'The attendance correction changed while it was being decided. Reload and try again.');
-  return academicOperationalResponse(env, user, input, scope, `Attendance correction ${decision.toLowerCase()}.`);
+  let absenceNotifications = 0;
+  if (decision === 'Approved' && lower(correction.ProposedStatus) === 'absent') {
+    const people = await loadPeople(env, user, scope).catch(() => ({ students: [] }));
+    absenceNotifications = await notifyAcademicAbsences(env, people.students || [], [{
+      ...existing, Status: 'Absent', MinutesLate: correction.ProposedMinutesLate, Note: correction.ProposedNote,
+      MarkedAt: timestamp, UpdatedAt: timestamp
+    }], { scope, actorName: actorName(user), actorUsername: actorUsername(user) }).catch(() => 0);
+  }
+  return academicOperationalResponse(env, user, input, scope,
+    `Attendance correction ${decision.toLowerCase()}${absenceNotifications ? '; the parent was notified of the approved absence' : ''}.`);
 }
 
 export async function handleAcademicManagementAction(env, user = {}, input = {}) {
@@ -2811,8 +3085,12 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['deleteacademictimetableconstraint', 'deletetimetableconstraint'].includes(action)) return deleteAcademicTimetableConstraint(env, user, input);
   if (['createacademictimetableversion', 'createtimetableversion'].includes(action)) return createAcademicTimetableVersion(env, user, input);
   if (['copyacademictimetableversion', 'copytimetableversion'].includes(action)) return copyAcademicTimetableVersion(env, user, input);
+  if (['previewacademictimetablecopy', 'previewtimetablecopy'].includes(action)) return previewAcademicTimetableCopy(env, user, input);
+  if (['copyacademictimetableselection', 'copytimetableselection'].includes(action)) return copyAcademicTimetableSelection(env, user, input);
   if (['saveacademictimetableentry', 'savetimetableentry'].includes(action)) return saveAcademicTimetableEntry(env, user, input);
   if (['deleteacademictimetableentry', 'deletetimetableentry'].includes(action)) return deleteAcademicTimetableEntry(env, user, input);
+  if (['saveacademictimetablesubstitution', 'savetimetablesubstitution'].includes(action)) return saveAcademicTimetableSubstitution(env, user, input);
+  if (['cancelacademictimetablesubstitution', 'canceltimetablesubstitution'].includes(action)) return cancelAcademicTimetableSubstitution(env, user, input);
   if (['changeacademictimetableversionstatus', 'changetimetableversionstatus'].includes(action)) return changeAcademicTimetableVersionStatus(env, user, input);
   if (['saveacademicstudentattendance', 'saveacademicattendance'].includes(action)) return saveAcademicStudentAttendance(env, user, input);
   if (['decideacademicattendancecorrection', 'decideattendancecorrection'].includes(action)) return decideAcademicAttendanceCorrection(env, user, input);
