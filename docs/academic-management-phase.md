@@ -545,6 +545,23 @@ server remains the authoritative examination record.
 The built-in CBT supports native question authoring and JPEG, PNG and PDF
 uploads.
 
+The standard subject-teacher workflow is deliberately two-step:
+
+1. **Test details:** choose an active Assessment Component as the reusable Test
+   Type, then choose one allocated classroom and subject. The component's
+   configured maximum score is inherited as the Overall Mark. Enter the date,
+   start time, duration, number of questions and answer style (ABC, ABCD,
+   ABCDE, ABCDEF or True/False).
+2. **Paper and answer key:** upload one JPEG, PNG or PDF paper and select one
+   correct answer for every generated question number. Saving validates the
+   complete answer key, securely packages the exact allocated student roster
+   and creates a Scheduled test.
+
+Only Assessment Components whose entry source is **Any** or **Built-in CBT**
+appear as Test Types. A teacher cannot use the wizard for another teacher's
+classroom, subject or students. Scheduled tests remain inaccessible until the
+server-controlled start time and close at the scheduled end time.
+
 Target document modes are:
 
 1. **Document examination:** display the uploaded paper while students answer
@@ -575,8 +592,9 @@ other assets are optimized and progressively loaded for lower-powered tablets.
 
 ### 10.4 Offline examination workflow
 
-1. An examination officer prepares an approved roster, allocations, policy and
-   examination package while online.
+1. A subject teacher creates the test from an allocated classroom and subject;
+   the desktop verifies the active policy, test type and exact roster online
+   before securing the examination package locally.
 2. The package is downloaded to the local server and verified before the
    examination begins.
 3. The local server starts an examination session and displays a local address

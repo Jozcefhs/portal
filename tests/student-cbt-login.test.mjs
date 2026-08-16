@@ -77,6 +77,9 @@ test('student editors and CBT package endpoint expose the new login without leak
   assert.match(staffStudents, /saveStudentLoginPassword/);
   assert.match(backend, /prepareLocalCbtIdentityPackage/);
   assert.match(academics, /encryptLocalCbtIdentityPackage/);
+  assert.match(academics, /canCreateCbt/);
+  assert.match(academics, /academicScoreSheetContext\(env, user, input, 'canCreateCbt'\)/);
+  assert.match(academics, /ACADEMIC_CBT_COMPONENT_REQUIRED/);
+  assert.match(academics, /ACADEMIC_CBT_ROSTER_FORBIDDEN/);
   assert.doesNotMatch(staffStudents, /student\.PasswordHash/);
 });
-

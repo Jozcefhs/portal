@@ -281,6 +281,7 @@ export function academicManagementCapabilities(user = {}) {
     canPublishTimetables: enabled && TIMETABLE_PUBLISHERS.has(role),
     canMarkAttendance: enabled && (TIMETABLE_MANAGERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
     canEnterScores: enabled && (SCORE_REVIEWERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
+    canCreateCbt: enabled && (SCORE_REVIEWERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
     canReviewScores: enabled && SCORE_REVIEWERS.has(role),
     canApproveScores: enabled && SCORE_APPROVERS.has(role),
     canImportScores: enabled && (SCORE_REVIEWERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
@@ -3583,12 +3584,44 @@ export async function rollbackAcademicScoreImport(env, user = {}, input = {}) {
 
 export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {}) {
   requireWritableSubscription(user);
-  requireCapability(user, 'canManageTimetables');
-  const scope = await academicScope(env, user, input, { requireSection: true });
+  const readiness = lower(input.ExamKind) === 'readiness';
+  let context;
+  if (readiness) {
+    const operational = await academicOperationalContext(env, user, input, 'canCreateCbt');
+    const { permissions, scope, state, session, term } = operational;
+    const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
+    const arm = assertReference(findById(state.arms, input.ArmId), 'Choose an active classroom arm.');
+    const subject = assertReference(findById(state.subjects, input.SubjectId), 'Choose an active subject.');
+    if (arm.ClassId !== schoolClass.ClassId) throw failure('The selected arm does not belong to this class.');
+    if (schoolClass.SchoolSection !== scope.section || subject.SchoolSection !== scope.section) {
+      throw failure('The selected CBT roster belongs to another school section.', 403, 'ACADEMIC_SECTION_FORBIDDEN');
+    }
+    const candidate = {
+      SessionId: session.SessionId, TermId: term.TermId, ClassId: schoolClass.ClassId,
+      ArmId: arm.ArmId, SubjectId: subject.SubjectId, TeacherUsername: lower(input.TeacherUsername)
+    };
+    const allocation = assertAcademicScoreSheetAuthority(user, permissions, state, candidate);
+    const roster = academicScoreRoster(state, candidate);
+    if (!roster.length) throw failure('No students in this classroom are allocated to the selected subject.', 409, 'ACADEMIC_SCORE_ROSTER_EMPTY');
+    context = { ...operational, schoolClass, arm, subject, allocation, roster, scheme: { Components: [] } };
+  } else {
+    context = await academicScoreSheetContext(env, user, input, 'canCreateCbt');
+  }
+  const { scope } = context;
+  const componentId = clean(input.AssessmentComponentId);
+  const component = readiness ? null : (context.scheme.Components || []).find((row) => row.Id === componentId);
+  if (!readiness && (!component || !['any', 'built-in-cbt'].includes(lower(component.SourceMode)))) {
+    throw failure('Choose an active test type that accepts built-in CBT scores.', 409, 'ACADEMIC_CBT_COMPONENT_REQUIRED');
+  }
   const requested = Array.isArray(input.StudentRefs) ? input.StudentRefs.map(clean).filter(Boolean) : [];
   const studentRefs = [...new Set(requested.map(lower))];
   if (!studentRefs.length) throw failure('Add at least one student to the local CBT roster.');
   if (studentRefs.length > 1000) throw failure('A local CBT identity package cannot exceed 1,000 students.', 413);
+  const permittedStudents = new Set((context.roster || []).map((row) => lower(row.StudentRef)));
+  const forbidden = studentRefs.filter((reference) => !permittedStudents.has(reference));
+  if (forbidden.length) {
+    throw failure('One or more requested students are not allocated to this teacher, classroom and subject.', 403, 'ACADEMIC_CBT_ROSTER_FORBIDDEN');
+  }
   const wanted = new Set(studentRefs);
   const allStudents = await listSchoolCollection(env, 'students', {
     branchId: scope.branchId,
@@ -3684,6 +3717,9 @@ export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {})
     summary: {
       Requested: studentRefs.length,
       Packaged: identities.length,
+      AssessmentComponentId: component?.Id || '',
+      AssessmentComponentName: component?.Name || '',
+      TeacherUsername: context.allocation.TeacherUsername,
       PasswordReady: identities.filter((identity) => identity.Password).length,
       FaceReady: identities.filter((identity) => identity.Face).length,
       Missing: missing
