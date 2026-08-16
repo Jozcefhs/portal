@@ -135,6 +135,10 @@ let executiveSelectedRecipient = null;
 let studentConductData = null;
 let academicManagementData = null;
 let academicManagementView = 'classrooms';
+let academicManagementTaskViews = {
+  classrooms: 'register', structure: 'classes', bulkSetup: 'classes', departments: 'register',
+  offerings: 'offer', teachers: 'assign', students: 'allocate'
+};
 let academicManagementFilters = { section: '', sessionId: '', termId: '' };
 let academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
 let academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
@@ -9784,6 +9788,116 @@ function academicRecordFields() {
   return '<input type="hidden" name="RecordId"><input type="hidden" name="RevisionToken">';
 }
 
+function academicRegisterCards(root) {
+  root.querySelectorAll('h2').forEach((heading) => {
+    const register = heading.nextElementSibling;
+    if (!register?.classList.contains('admin-table-wrap') || heading.closest('.academic-register-card')) return;
+    const card = document.createElement('section');
+    card.className = 'academic-register-card';
+    card.dataset.academicRegister = clean(heading.textContent);
+    heading.before(card);
+    card.append(heading, register);
+  });
+  return [...root.querySelectorAll('.academic-register-card')];
+}
+
+function academicTaskDefinitions(view, root) {
+  const registerCards = academicRegisterCards(root);
+  const form = (selector) => root.querySelector(selector);
+  const register = (title) => registerCards.find((card) => card.dataset.academicRegister === title);
+  const nodes = (...items) => items.flat().filter(Boolean);
+  const sectionName = academicManagementFilters.section;
+  const sectionLabel = sectionName ? sectionName.charAt(0).toUpperCase() + sectionName.slice(1) : 'School';
+  const definitions = {
+    classrooms: [
+      { key: 'register', label: 'Classroom register', title: 'Choose a classroom', description: 'Open an existing classroom to manage its students and form staff.', nodes: nodes(register('Classrooms')) },
+      { key: 'create', label: 'Create classroom', title: 'Create a classroom', description: 'Combine one reusable class and arm, then add a Senior department where required.', nodes: nodes(form('[data-academic-classroom-editor]')) },
+      { key: 'manage', label: 'Open classroom', title: 'Manage the open classroom', description: 'Assign students, form teacher and assistant without leaving the classroom.', nodes: nodes(form('.academic-classroom-open'), form('.academic-classroom-empty')) }
+    ],
+    structure: [
+      { key: 'classes', label: 'Classes', title: `${sectionLabel} class catalogue`, description: 'Create reusable class levels and maintain their progression sequence.', nodes: nodes(form('[data-academic-form="class"]'), register(`${sectionName} Classes`)) },
+      { key: 'arms', label: 'Arms', title: 'Reusable arms and applied class arms', description: 'Review the arm catalogue and the classrooms where each arm has been applied.', nodes: nodes(form('[data-academic-form="arm"]'), form('[data-academic-catalogue-note="arms"]'), register('Reusable Arm Catalogue'), register('Applied Class Arms')) },
+      { key: 'subjects', label: 'Subjects', title: 'Reusable subject catalogue', description: 'Create each subject once with its stable code, then reuse it throughout Academics.', nodes: nodes(form('[data-academic-form="subject"]'), register('Reusable Subject Catalogue')) },
+      { key: 'sessions', label: 'Sessions', title: 'Academic sessions', description: 'Create and maintain the school-year calendar.', nodes: nodes(form('[data-academic-form="session"]'), register('Academic Sessions')) },
+      { key: 'terms', label: 'Terms', title: 'Academic terms', description: 'Manage term dates inside the selected session.', nodes: nodes(form('[data-academic-form="term"]'), register('Terms')) }
+    ],
+    bulkSetup: [
+      { key: 'classes', label: 'Build classes', title: 'Create classes in bulk', description: 'Paste several reusable class definitions and create them in one operation.', nodes: nodes(form('[data-academic-workflow="bulkCreateAcademicClasses"]')) },
+      { key: 'arms', label: 'Build arms', title: 'Create reusable arms', description: 'Bulk-create arm definitions or correct one existing definition.', nodes: nodes(form('[data-academic-workflow="bulkCreateAcademicArmTemplates"]'), form('[data-academic-form="armTemplate"]'), register('Reusable Arm Catalogue')) },
+      { key: 'applyArms', label: 'Apply arms', title: 'Apply arms to classes', description: 'Select the class and reusable arm combinations that should become classrooms.', nodes: nodes(form('[data-academic-workflow="bulkApplyAcademicArmTemplates"]')) },
+      { key: 'subjects', label: 'Build subjects', title: 'Create subjects in bulk', description: 'Add several reusable subjects and their stable codes at once.', nodes: nodes(form('[data-academic-workflow="bulkCreateAcademicSubjects"]')) },
+      { key: 'applySubjects', label: 'Apply subjects', title: 'Apply subjects to classes', description: 'Create the selected class-subject combinations for the academic period.', nodes: nodes(form('[data-academic-workflow="bulkApplyAcademicSubjects"]')) }
+    ],
+    departments: [
+      { key: 'register', label: 'Department register', title: 'Senior Secondary departments', description: 'Review departments and their core subject sets.', nodes: nodes(register('Senior Secondary Departments')) },
+      { key: 'manage', label: 'Create or edit', title: 'Create or edit a department', description: 'Define a department and select the subjects that are core for its students.', nodes: nodes(form('[data-academic-form="department"]')) }
+    ],
+    offerings: [
+      { key: 'offer', label: 'Offer a subject', title: 'Create a class subject offering', description: 'Choose the exact period, class, arm, subject and curriculum role.', nodes: nodes(form('[data-academic-form="offering"]')) },
+      { key: 'junior', label: 'Junior curriculum', title: 'Junior Secondary subjects', description: 'Apply the compulsory subject set to one or more Junior Secondary classes.', nodes: nodes(form('[data-academic-workflow="bulkApplyAcademicSubjects"]')) },
+      { key: 'register', label: 'Offering register', title: 'Saved subject offerings', description: 'Review, correct or remove class subject offerings.', nodes: nodes(register('Subject Offerings')) }
+    ],
+    teachers: [
+      { key: 'assign', label: 'Assign teacher', title: 'Assign a subject teacher', description: 'Choose one teacher and subject, then check every classroom they teach.', nodes: nodes(form('[data-academic-workflow="bulkAssignAcademicSubjectTeacher"]')) },
+      { key: 'register', label: 'Saved assignments', title: 'Subject-teacher assignments', description: 'Review allocations and open any record for correction or deletion.', nodes: nodes(form('[data-academic-teacher-edit]'), register('Subject Teacher Allocations')) }
+    ],
+    students: [
+      { key: 'allocate', label: 'Allocate students', title: 'Assign students to a classroom', description: 'Select the target classroom and check one or up to 100 unassigned students.', nodes: nodes(form('[data-academic-student-placement="bulk"]')) },
+      { key: 'transfer', label: 'Transfer or reassign', title: 'Move a student safely', description: 'Transfer an active membership or reassign a withdrawn student with an audit reason.', nodes: nodes(form('[data-academic-workflow="moveAcademicStudentMembership"]')) },
+      { key: 'import', label: 'Import students', title: 'Import existing student memberships', description: 'Download the CSV template, complete it, then import the finished file.', nodes: nodes(form('[data-academic-student-membership-import]')) },
+      { key: 'subjects', label: 'Arm subjects', title: 'Trade and Optional subjects', description: 'Open a Senior classroom and complete subject choices for its students.', nodes: nodes(form('[data-academic-arm-subject-register]')) },
+      { key: 'register', label: 'Student register', title: 'Class and subject memberships', description: 'Review current allocations, curriculum status, and student actions.', nodes: nodes(register('Student Class & Subject Memberships')) },
+      { key: 'history', label: 'Movement history', title: 'Student movement history', description: 'Review the permanent audit trail for allocations, transfers and withdrawals.', nodes: nodes(register('Student Movement History')) }
+    ]
+  };
+  return (definitions[view] || []).filter((task) => task.nodes.length);
+}
+
+function showAcademicManagementTask(view, taskKey, options = {}) {
+  const workspace = panelEl.querySelector(`[data-academic-task-workspace="${view}"]`);
+  if (!workspace) return;
+  const buttons = [...workspace.querySelectorAll('[data-academic-task]')];
+  const panels = [...workspace.querySelectorAll('[data-academic-task-panel]')];
+  const selected = buttons.some((button) => button.dataset.academicTask === taskKey)
+    ? taskKey : buttons[0]?.dataset.academicTask;
+  if (!selected) return;
+  academicManagementTaskViews[view] = selected;
+  buttons.forEach((button) => {
+    const active = button.dataset.academicTask === selected;
+    button.classList.toggle('selected', active);
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+    button.tabIndex = active ? 0 : -1;
+  });
+  panels.forEach((panel) => { panel.hidden = panel.dataset.academicTaskPanel !== selected; });
+  if (options.focus) workspace.querySelector(`[data-academic-task-panel="${selected}"] h3`)?.focus();
+}
+
+function organizeAcademicManagementWorkspace(view) {
+  const root = panelEl.querySelector('.academic-management-workspace');
+  if (!root) return;
+  const tasks = academicTaskDefinitions(view, root);
+  if (!tasks.length) return;
+  const shell = document.createElement('section');
+  shell.className = 'academic-task-workspace';
+  shell.dataset.academicTaskWorkspace = view;
+  shell.innerHTML = `<aside class="academic-task-menu"><div><small>Workspace</small><strong>Choose a task</strong><span>Only the selected task is shown.</span></div><nav role="tablist" aria-label="${escapeHtml(view)} tasks">${tasks.map((task, index) => `<button type="button" role="tab" data-academic-task="${escapeHtml(task.key)}"><span>${index + 1}</span><strong>${escapeHtml(task.label)}</strong></button>`).join('')}</nav></aside><div class="academic-task-stage">${tasks.map((task) => `<section class="academic-task-panel" data-academic-task-panel="${escapeHtml(task.key)}" role="tabpanel"><header><small>Focused task</small><h3 tabindex="-1">${escapeHtml(task.title)}</h3><p>${escapeHtml(task.description)}</p></header><div class="academic-task-content"></div></section>`).join('')}</div>`;
+  root.prepend(shell);
+  tasks.forEach((task) => {
+    const content = shell.querySelector(`[data-academic-task-panel="${task.key}"] .academic-task-content`);
+    task.nodes.forEach((node) => content.append(node));
+    if (task.nodes.length === 2 && !task.nodes.some((node) => node.hidden) && task.nodes.some((node) => node.matches?.('form')) && task.nodes.some((node) => node.matches?.('.academic-register-card'))) {
+      content.classList.add('academic-task-content-split');
+    }
+  });
+  root.querySelectorAll('.academic-management-editor-grid, .academic-management-registers').forEach((container) => {
+    if (!container.children.length) container.remove();
+  });
+  [...root.children].filter((node) => node !== shell).forEach((node) => {
+    shell.querySelector('.academic-task-content')?.append(node);
+  });
+  showAcademicManagementTask(view, academicManagementTaskViews[view]);
+}
+
 function academicClassroomStaffForm({ role, existing, staff, sessionId, termId, schoolClass, arm, section }) {
   const roleKey = role.toLowerCase().replace(/\s+/g, '-');
   return `<form class="academic-management-editor academic-classroom-staff-form" data-academic-form="teacherAllocation" data-academic-classroom-staff-role="${escapeHtml(role)}">
@@ -9956,7 +10070,7 @@ function academicStructureWorkspace(data, rows) {
     rows.arms.filter((arm) => arm.ArmTemplateId === template.ArmTemplateId).map((arm) => arm.ClassId)
   ).size;
   const unappliedArmTemplates = activeArmTemplates.filter((template) => armTemplateUsage(template) === 0).length;
-  const armCatalogueStatus = `<div class="academic-view-only-note">
+  const armCatalogueStatus = `<div class="academic-view-only-note" data-academic-catalogue-note="arms">
     <strong>${activeArmTemplates.length} reusable arm definition${activeArmTemplates.length === 1 ? '' : 's'}; ${unappliedArmTemplates} not yet applied</strong>
     <span>Reusable definitions do not become class arms until they are assigned to classes. Use Bulk setup → Apply arms to classes.</span>
     ${canManage ? '<button type="button" class="secondary" data-academic-view="bulkSetup">Open arm assignment</button>' : ''}
@@ -10482,6 +10596,7 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
   else if (academicManagementView === 'students') workspace = academicStudentWorkspace(data, rows);
   else workspace = academicStructureWorkspace(data, rows);
   panelEl.innerHTML = `${academicManagementHeader(data, rows, message)}<section class="academic-management-workspace">${workspace}</section>`;
+  organizeAcademicManagementWorkspace(academicManagementView);
   renderModuleSummary('academics', data);
   bindAcademicManagement();
 }
@@ -10619,13 +10734,18 @@ function populateAcademicForm(type, record) {
 
 function bindAcademicManagement() {
   panelEl.querySelectorAll('[data-academic-checkbox-field]').forEach(bindAcademicCheckboxField);
+  panelEl.querySelectorAll('[data-academic-task]').forEach((button) => button.addEventListener('click', () => {
+    showAcademicManagementTask(academicManagementView, button.dataset.academicTask, { focus: true });
+  }));
   panelEl.querySelectorAll('[data-academic-view]').forEach((button) => button.addEventListener('click', () => {
     academicManagementView = button.dataset.academicView;
+    if (button.closest('[data-academic-catalogue-note="arms"]')) academicManagementTaskViews.bulkSetup = 'applyArms';
     renderAcademicManagement(academicManagementData || {});
   }));
   panelEl.querySelectorAll('[data-academic-apply-arm-template]').forEach((button) => button.addEventListener('click', () => {
     const templateId = button.dataset.academicApplyArmTemplate;
     academicManagementView = 'bulkSetup';
+    academicManagementTaskViews.bulkSetup = 'applyArms';
     renderAcademicManagement(academicManagementData || {});
     const form = panelEl.querySelector('[data-academic-workflow="bulkApplyAcademicArmTemplates"]');
     setAcademicCheckedValues(form, 'ArmTemplateIds', [templateId]);
@@ -10690,6 +10810,7 @@ function bindAcademicManagement() {
       classId: clean(arm.ClassId), armId: clean(arm.ArmId), armTemplateId: clean(arm.ArmTemplateId)
     };
     academicManagementView = 'classrooms';
+    academicManagementTaskViews.classrooms = 'manage';
     renderAcademicManagement(academicManagementData || {});
   }));
   panelEl.querySelectorAll('[data-academic-classroom-student-placement]').forEach((form) => {
@@ -10793,6 +10914,7 @@ function bindAcademicManagement() {
               || clean(row.Name).toLowerCase() === clean(academicFind(data.armTemplates || [], classroomSelection.armTemplateId)?.Name).toLowerCase()));
           academicClassroomDraft = { ...classroomSelection, armId: clean(arm?.ArmId) };
           academicManagementView = 'classrooms';
+          academicManagementTaskViews.classrooms = 'manage';
         }
         renderAcademicManagement(data, data.message || 'Academic record saved.');
       } catch (error) {
@@ -10830,12 +10952,19 @@ function bindAcademicManagement() {
     const record = academicFind(academicRecordRows(type), button.dataset.academicId);
     if (type === 'armTemplate' && !panelEl.querySelector('[data-academic-form="armTemplate"]')) {
       academicManagementView = 'bulkSetup';
+      academicManagementTaskViews.bulkSetup = 'arms';
       renderAcademicManagement(academicManagementData || {});
     }
+    const task = ({
+      session: 'sessions', term: 'terms', class: 'classes', arm: 'arms', subject: 'subjects',
+      department: 'manage', offering: 'offer', teacherAllocation: 'register'
+    })[type];
+    if (task) showAcademicManagementTask(academicManagementView, task);
     populateAcademicForm(type, record);
   }));
   panelEl.querySelectorAll('[data-academic-move]').forEach((button) => button.addEventListener('click', () => {
     const record = academicFind(academicManagementData?.studentMemberships || [], button.dataset.academicMove);
+    showAcademicManagementTask('students', 'transfer');
     populateAcademicMovementForm(movementForm, record);
     movementForm?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }));
