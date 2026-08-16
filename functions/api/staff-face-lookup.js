@@ -42,6 +42,7 @@ const DEFAULT_DIRECT_GALLERY_LIMIT = 250;
 const lookupWindows = new Map();
 const LOOKUP_PURPOSES = Object.freeze({
   'records-desk': Object.freeze({ section: 'recordsDesk', source: 'Web Records Desk' }),
+  'clinic-visit': Object.freeze({ section: 'clinic', source: 'Web Clinic Visit' }),
   'tuck-shop-purchase': Object.freeze({ section: 'tuckShop', source: 'Web Tuck Shop POS' }),
   'bookstore-collection': Object.freeze({ section: 'bookstore', source: 'Web Bookstore Collection' }),
   'uniform-store-collection': Object.freeze({ section: 'uniformStore', source: 'Web Uniform Store Collection' })
@@ -128,7 +129,7 @@ function ensureSchoolFaceAccess(user = {}, purpose = 'records-desk') {
   if (!staffCanUseStudentFaceLookup(user, normalizedPurpose)) {
     throw error(normalizedPurpose === 'records-desk'
       ? 'This staff account cannot use the Records Desk.'
-      : 'This staff account cannot use face lookup in that purchase or collection workspace.', 403);
+      : 'This staff account cannot use face lookup in the requested workspace.', 403);
   }
   return capabilities;
 }

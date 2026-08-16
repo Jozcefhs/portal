@@ -3808,7 +3808,7 @@ function renderDepartmentOperations(section, data) {
         <label>Complaint<textarea name="Complaint" required></textarea></label><label>Treatment<textarea name="Treatment"></textarea></label>
         <label>Disposition<select name="Disposition"><option>Treated and returned</option><option>Resting in clinic</option><option>Sent home</option><option>Referred to hospital</option></select></label>
         <label>Notes<input name="Notes"></label>
-        <div class="config-actionbar"><p class="status" data-department-status></p><button type="submit" data-normal-text="Save visit">Save visit</button></div>
+        <div class="config-actionbar"><p class="status" data-department-status></p><div class="inline-action-group"><button type="button" id="clinicFaceLookup" class="student-face-workflow-action">&#128247; Verify by face</button><button type="submit" data-normal-text="Save visit">Save visit</button></div></div>
       </form>
     </section>` : ''}
     ${section === 'clinic' ? `
@@ -3915,6 +3915,32 @@ function renderDepartmentOperations(section, data) {
     document.getElementById(button.dataset.departmentJump)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }));
   document.getElementById('clinicRecordForm')?.addEventListener('submit', (event) => { event.preventDefault(); submitDepartmentAction(section, 'saveClinicRecord', event.currentTarget); });
+  document.getElementById('clinicFaceLookup')?.addEventListener('click', async () => {
+    const form = document.getElementById('clinicRecordForm');
+    const status = form?.querySelector('[data-department-status]');
+    try {
+      await openStudentFaceLookupDialog({
+        purpose: 'clinic-visit',
+        allowCameraSelection: true,
+        confirmText: 'Use for this clinic visit',
+        onMatch: (match) => {
+          if (!form?.elements?.AdmissionNo) return;
+          form.elements.AdmissionNo.value = match.id;
+          form.dataset.faceVerifiedReference = match.id;
+          setStatus(status, `${match.title} confirmed by face. Complete the clinic visit details.`, 'ok');
+          form.elements.Complaint?.focus();
+        }
+      });
+    } catch (error) {
+      setStatus(status, error.message || String(error), 'bad');
+    }
+  });
+  document.querySelector('#clinicRecordForm [name="AdmissionNo"]')?.addEventListener('input', (event) => {
+    const form = event.currentTarget.form;
+    if (!form?.dataset.faceVerifiedReference) return;
+    delete form.dataset.faceVerifiedReference;
+    setStatus(form.querySelector('[data-department-status]'), 'Admission number changed. Verify the student again or continue with manual identification.');
+  });
   document.getElementById('walletLookupForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = event.currentTarget; const status = form.querySelector('[data-department-status]');

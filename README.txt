@@ -120,8 +120,9 @@ approved preview/custom domains to TURNSTILE_ALLOWED_HOSTNAMES.
 Student face lookup
 -------------------
 
-Student face lookup is a school-only, staff-authorized Records Desk aid. It is
-not authentication, automatic attendance, discipline, payment approval or
+Student face lookup is a school-only, staff-authorized identity aid for Records
+Desk, Clinic visits, Tuck Shop purchases and school-store collections. It is not
+authentication, automatic attendance, discipline, payment approval or
 surveillance. Camera frames stay in the browser; only a mathematical template
 is transmitted. Stored templates are AES-GCM encrypted and bound to the
 workspace, branch, school section, student, model and key version.

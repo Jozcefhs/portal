@@ -257,6 +257,7 @@ test('the face endpoint is staff-authenticated, school-only, purpose delegated a
   assert.match(endpointSource, /requireStaffSession\(env, request\)/);
   assert.match(endpointSource, /ensureSchoolFaceAccess\(user, purpose\)/);
   assert.match(endpointSource, /lower\(user\.edition\) !== 'school'/);
+  assert.match(endpointSource, /'clinic-visit'.*section: 'clinic'/);
   assert.match(endpointSource, /'tuck-shop-purchase'.*section: 'tuckShop'/);
   assert.match(endpointSource, /'bookstore-collection'.*section: 'bookstore'/);
   assert.match(endpointSource, /'uniform-store-collection'.*section: 'uniformStore'/);
@@ -306,10 +307,12 @@ test('Records Desk itself delegates lookup while enrollment management remains e
 test('face lookup purposes follow Records Desk and point-of-service module access', () => {
   const base = { edition: 'school', role: 'Front Desk', allowedSections: [] };
   assert.equal(staffCanUseStudentFaceLookup({ ...base, allowedSections: ['recordsDesk'] }), true);
+  assert.equal(staffCanUseStudentFaceLookup({ ...base, allowedSections: ['clinic'] }, 'clinic-visit'), true);
   assert.equal(staffCanUseStudentFaceLookup({ ...base, allowedSections: ['tuckShop'] }, 'tuck-shop-purchase'), true);
   assert.equal(staffCanUseStudentFaceLookup({ ...base, allowedSections: ['bookstore'] }, 'bookstore-collection'), true);
   assert.equal(staffCanUseStudentFaceLookup({ ...base, allowedSections: ['uniformStore'] }, 'uniform-store-collection'), true);
   assert.equal(staffCanUseStudentFaceLookup(base, 'tuck-shop-purchase'), false);
+  assert.equal(staffCanUseStudentFaceLookup(base, 'clinic-visit'), false);
   assert.equal(staffCanUseStudentFaceLookup({ ...base, edition: 'faith', allowedSections: ['recordsDesk'] }), false);
   assert.equal(normalizeStudentFaceLookupPurpose(''), 'records-desk');
   assert.throws(() => normalizeStudentFaceLookupPurpose('unknown-workflow'), /valid student face-lookup purpose/i);
@@ -362,6 +365,7 @@ test('front and back camera selection covers staff enrollment and every student 
   assert.match(uiSource, /const allowCameraSelection = options\.allowCameraSelection !== false/);
   assert.match(uiSource, /if \(allowCameraSelection\) bindCameraSelector\(dialog, captureButton\)/);
   assert.match(adminSource, /purpose: 'tuck-shop-purchase',[\s\S]*?allowCameraSelection: true/);
+  assert.match(adminSource, /purpose: 'clinic-visit',[\s\S]*?allowCameraSelection: true/);
   assert.match(adminSource, /purpose: section === 'bookstore' \? 'bookstore-collection' : 'uniform-store-collection',[\s\S]*?allowCameraSelection: true/);
 });
 
@@ -451,6 +455,8 @@ test('lookup and enrollment are explicitly initiated without consent fields, and
   );
   assert.match(adminSource, /action\?\.id === 'student-face-enroll'/);
   assert.match(adminSource, /id="tuckShopFaceLookup"/);
+  assert.match(adminSource, /id="clinicFaceLookup"/);
+  assert.match(adminSource, /purpose: 'clinic-visit'/);
   assert.match(adminSource, /purpose: 'tuck-shop-purchase'/);
   assert.match(adminSource, /data-store-face-order/);
   assert.match(adminSource, /'bookstore-collection'/);
