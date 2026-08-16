@@ -2,8 +2,9 @@
 
 Status: approved baseline; implementation in progress.
 
-Implementation status (2026-08-16): Milestones 1 and 2 are in progress, and
-the first secure vertical slice of Milestone 3 is operational. The School
+Implementation status (2026-08-16): Milestones 1 and 2 are in progress, the
+secure parent-access slice of Milestone 3 is operational, and the first
+operational vertical slice of Milestone 4 is available. The School
 edition now has an effective-dated academic-policy schema, immutable
 policy revisions, separate draft and active states, organisation-to-branch
 inheritance, activation validation and administrator controls for result
@@ -32,10 +33,21 @@ visibility and financial-clearance policy on the server, fails closed when the
 policy is missing or incomplete, limits records to the linked child and
 selected branch/section, withholds score details when access is blocked,
 rechecks access before printing and audits view, denial, exemption and print
-decisions without copying ledger details. Result production and publication,
-finance-officer clearance administration, promotion intake, score processing,
-timetables, attendance and CBT remain pending work; configuring a policy or
-academic structure does not itself publish a result.
+decisions without copying ledger details. The web companion and desktop now
+share configurable school days and periods, immutable timetable-version
+snapshots, Draft/Approved/Published/Withdrawn release states, exact
+classroom/subject-teacher lessons, and server-side classroom, teacher and room
+conflict detection. Allocated form, assistant and subject teachers can mark
+Daily, Period or Subject attendance using Present, Absent, Late, Excused and
+Left Early states; changes to saved teacher records become approval requests,
+while authorized academic administrators decide them with an audit reason.
+Parents see only their linked child's published class schedule and scoped
+attendance summary. Timetable copy/preview, availability and maximum-load
+configuration, substitutions, printable schedules, offline attendance drafts,
+absence notifications and term attendance reporting remain within Milestone 4.
+Result production and publication, finance-officer clearance administration,
+promotion intake, score processing and CBT remain pending work; configuring a
+policy or academic structure does not itself publish a result.
 
 This document is the authoritative product and engineering specification for
 the Dynamax Academic Management phase. It covers the School edition of the web

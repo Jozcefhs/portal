@@ -29,7 +29,7 @@ test('AM-001 result view, denial, exemption use and print are audited without fi
 
 test('AM-001 parent Results tab renders only server-approved details and rechecks before printing', () => {
   assert.match(dashboardHtml, /id="academicTermResults"/);
-  assert.match(dashboardHtml, /js\/parent-dashboard\.js\?v=20260816-academic-result-access/);
+  assert.match(dashboardHtml, /js\/parent-dashboard\.js\?v=20260816-academic-schedule-attendance/);
   assert.match(dashboardSource, /function renderAcademicResults\(child\)/);
   assert.match(dashboardSource, /if \(!record\.Access\?\.Allowed\)/);
   assert.match(dashboardSource, /action: 'getAcademicResultForPrint'/);

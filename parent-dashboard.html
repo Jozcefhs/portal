@@ -89,6 +89,7 @@
           <button type="button" data-dashboard-target="payments" aria-selected="false">Payments</button>
           <button type="button" data-dashboard-target="optional" aria-selected="false">Optional Payments</button>
           <button type="button" data-dashboard-target="results" aria-selected="false">Results</button>
+          <button type="button" data-dashboard-target="academics" aria-selected="false">Schedule & Attendance</button>
           <button type="button" data-dashboard-target="documents" aria-selected="false">Documents</button>
           <button type="button" data-dashboard-target="wallet" aria-selected="false">Wallet</button>
           <button type="button" data-dashboard-target="clinic" aria-selected="false">Clinic</button>
@@ -122,6 +123,14 @@
             <div id="academicTermResults" class="activity-list"></div>
             <h2 class="parent-result-section-title">Entrance Result</h2>
             <div id="entranceResults" class="activity-list"></div>
+          </section>
+
+          <section class="panel full-panel dashboard-view-panel" data-dashboard-view="academics" hidden>
+            <h2>Class Schedule</h2>
+            <p class="muted">Only the timetable version published by the school is shown.</p>
+            <div id="parentAcademicSchedule" class="activity-list"></div>
+            <h2 class="parent-result-section-title">Attendance Summary</h2>
+            <div id="parentAcademicAttendance" class="metric-row"></div>
           </section>
 
           <section class="panel full-panel dashboard-view-panel parent-document-upload" data-dashboard-view="documents" hidden>
@@ -254,6 +263,6 @@
   <script src="js/password-toggle.js?v=20260726-biometric"></script>
   <script src="js/financial-values.js?v=20260803-finance-commas"></script>
   <script src="js/payment-methods.js?v=20260809-direct-transfer-sharp-text"></script>
-  <script src="js/parent-dashboard.js?v=20260816-academic-result-access"></script>
+  <script src="js/parent-dashboard.js?v=20260816-academic-schedule-attendance"></script>
 </body>
 </html>

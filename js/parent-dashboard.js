@@ -13,6 +13,8 @@ const paymentRecords = document.getElementById('paymentRecords');
 const entranceResultPanel = document.getElementById('entranceResultPanel');
 const academicTermResults = document.getElementById('academicTermResults');
 const entranceResults = document.getElementById('entranceResults');
+const parentAcademicSchedule = document.getElementById('parentAcademicSchedule');
+const parentAcademicAttendance = document.getElementById('parentAcademicAttendance');
 const clinicRecords = document.getElementById('clinicRecords');
 const schoolStores = document.getElementById('schoolStores');
 const storeSearch = document.getElementById('storeSearch');
@@ -57,7 +59,7 @@ let dashboard = null;
 let selectedChildKey = '';
 let activeDashboardView = 'overview';
 const notificationLinkedView = new URLSearchParams(window.location.search).get('tab') || new URLSearchParams(window.location.search).get('view');
-if (['overview', 'payments', 'optional', 'results', 'documents', 'wallet', 'clinic', 'stores'].includes(notificationLinkedView)) {
+if (['overview', 'payments', 'optional', 'results', 'academics', 'documents', 'wallet', 'clinic', 'stores'].includes(notificationLinkedView)) {
   activeDashboardView = notificationLinkedView;
 }
 const loadedPayables = new Set();
@@ -129,7 +131,9 @@ function normalizeChildResultMaps(data) {
     'dueNotifications',
     'clinicVisits',
     'academicResults',
-    'entranceResults'
+    'entranceResults',
+    'academicSchedules',
+    'academicAttendanceSummaries'
   ];
   fields.forEach((field) => {
     const source = data?.[field] && typeof data[field] === 'object' ? data[field] : {};
@@ -857,6 +861,8 @@ async function loadPayablesForSelected(force = false) {
   dashboard.clinicVisits = dashboard.clinicVisits || {};
   dashboard.academicResults = dashboard.academicResults || {};
   dashboard.entranceResults = dashboard.entranceResults || {};
+  dashboard.academicSchedules = dashboard.academicSchedules || {};
+  dashboard.academicAttendanceSummaries = dashboard.academicAttendanceSummaries || {};
   dashboard.storeCatalogByChild = dashboard.storeCatalogByChild || {};
   dashboard.storeOrdersByChild = dashboard.storeOrdersByChild || {};
   dashboard.resultSettingsByChild = dashboard.resultSettingsByChild || {};
@@ -869,6 +875,8 @@ async function loadPayablesForSelected(force = false) {
   renderClinic(child);
   renderAcademicResults(child);
   renderEntranceResults(child);
+  renderAcademicSchedule(child);
+  renderAcademicAttendance(child);
   try {
     const baseBody = {
       ...authPayload(),
@@ -933,6 +941,8 @@ async function loadPayablesForSelected(force = false) {
       setChildResult(dashboard.clinicVisits, child, activityData.clinicVisits || []);
       setChildResult(dashboard.academicResults, child, activityData.academicResults || []);
       setChildResult(dashboard.entranceResults, child, activityData.entranceResults || []);
+      setChildResult(dashboard.academicSchedules, child, activityData.academicSchedule || []);
+      setChildResult(dashboard.academicAttendanceSummaries, child, activityData.academicAttendanceSummary || {});
       dashboard.storeCatalogByChild[identity] = activityData.storeCatalog || [];
       dashboard.storeOrdersByChild[identity] = activityData.storeOrders || [];
       child.WalletBalance = activityData.walletBalance ?? child.WalletBalance;
@@ -963,6 +973,8 @@ async function loadPayablesForSelected(force = false) {
   renderClinic(child);
   renderAcademicResults(child);
   renderEntranceResults(child);
+  renderAcademicSchedule(child);
+  renderAcademicAttendance(child);
   renderStores(child);
 }
 
@@ -1322,6 +1334,40 @@ function renderAcademicResults(child) {
     item.appendChild(actions);
     academicTermResults.appendChild(item);
   });
+}
+
+function renderAcademicSchedule(child) {
+  if (!parentAcademicSchedule) return;
+  const records = childResult(dashboard.academicSchedules, child, []);
+  parentAcademicSchedule.innerHTML = records.length ? '' : '<p class="muted">No published class timetable is currently available.</p>';
+  const grouped = new Map();
+  records.forEach((row) => {
+    const day = row.DayName || row.DayCode;
+    if (!grouped.has(day)) grouped.set(day, []);
+    grouped.get(day).push(row);
+  });
+  grouped.forEach((lessons, day) => {
+    const card = document.createElement('article');
+    card.className = 'activity-item parent-academic-schedule-day';
+    card.innerHTML = `<strong>${escapeHtml(day)}</strong><div>${lessons.map((lesson) => `<span><b>${escapeHtml(lesson.StartTime || lesson.PeriodCodes?.join(' + '))}${lesson.EndTime ? `–${escapeHtml(lesson.EndTime)}` : ''}</b><em>${escapeHtml(lesson.Subject)}</em><small>${escapeHtml([lesson.Room, lesson.LessonType].filter(Boolean).join(' · '))}</small></span>`).join('')}</div>`;
+    parentAcademicSchedule.appendChild(card);
+  });
+}
+
+function renderAcademicAttendance(child) {
+  if (!parentAcademicAttendance) return;
+  const summary = childResult(dashboard.academicAttendanceSummaries, child, {});
+  const total = Number(summary.Total || 0);
+  parentAcademicAttendance.innerHTML = total ? [
+    ['Attendance', `${summary.AttendancePercentage || 0}%`],
+    ['Present', summary.Present || 0],
+    ['Late', summary.Late || 0],
+    ['Absent', summary.Absent || 0],
+    ['Excused', summary.Excused || 0],
+    ['Left early', summary.LeftEarly || 0],
+    ['Registers', total]
+  ].map(([label, value]) => `<div><strong>${escapeHtml(value)}</strong><small>${escapeHtml(label)}</small></div>`).join('')
+    : '<p class="muted">No student attendance has been recorded for the current academic period.</p>';
 }
 
 function resultDisplayMode(child) {

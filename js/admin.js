@@ -137,12 +137,15 @@ let academicManagementData = null;
 let academicManagementView = 'classrooms';
 let academicManagementTaskViews = {
   classrooms: 'register', structure: 'classes', bulkSetup: 'classes', departments: 'register',
-  offerings: 'seniorChoices', teachers: 'assign', students: 'allocate'
+  offerings: 'seniorChoices', teachers: 'assign', students: 'allocate',
+  timetable: 'builder', attendance: 'mark'
 };
 let academicManagementFilters = { section: '', sessionId: '', termId: '' };
 let academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
 let academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
 let academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
+let academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '' };
+let academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '' };
 const organizationCommerceCarts = {
   organizationStore: new Map(),
   restaurant: new Map()
@@ -1236,6 +1239,8 @@ function clearStaffWorkspaceState() {
   academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
   academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
   academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
+  academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '' };
+  academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '' };
   activeSection = '';
   activeTabs = [];
   recordsDeskHandoffContext = null;
@@ -1366,6 +1371,8 @@ function clearBranchScopedWorkspaceData() {
   academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
   academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
   academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
+  academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '' };
+  academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '' };
   Object.values(organizationCommerceCarts).forEach((cart) => cart.clear());
   organizationCommerceLastSale.organizationStore = null;
   organizationCommerceLastSale.restaurant = null;
@@ -9419,7 +9426,8 @@ async function loadStudentConduct() {
 }
 
 function academicRecordId(row = {}) {
-  return clean(row.RecordId || row.MovementId || row.MembershipId || row.AllocationId || row.OfferingId
+  return clean(row.RecordId || row.CorrectionId || row.AttendanceId || row.EntryId || row.VersionId || row.TimetableSettingId
+    || row.MovementId || row.MembershipId || row.AllocationId || row.OfferingId
     || row.DepartmentId || row.SubjectId || row.ArmId || row.ArmTemplateId || row.ClassId || row.TermId || row.SessionId);
 }
 
@@ -9777,7 +9785,12 @@ function academicCurrentRows(data = academicManagementData || {}) {
     offerings: periodRows(data.offerings || []),
     teacherAllocations: periodRows(data.teacherAllocations || []),
     studentMemberships: periodRows(data.studentMemberships || []),
-    studentMovements: periodRows(data.studentMovements || [])
+    studentMovements: periodRows(data.studentMovements || []),
+    timetableSettings: periodRows(data.timetableSettings || []),
+    timetableVersions: periodRows(data.timetableVersions || []),
+    timetableEntries: periodRows(data.timetableEntries || []),
+    studentAttendance: periodRows(data.studentAttendance || []),
+    attendanceCorrections: periodRows(data.attendanceCorrections || [])
   };
 }
 
@@ -9857,6 +9870,17 @@ function academicTaskDefinitions(view, root) {
       { key: 'subjects', label: 'Arm subjects', title: 'Trade and Optional subjects', description: 'Open a Senior classroom and complete subject choices for its students.', nodes: nodes(form('[data-academic-arm-subject-register]')) },
       { key: 'register', label: 'Student register', title: 'Class and subject memberships', description: 'Review current allocations, curriculum status, and student actions.', nodes: nodes(register('Student Class & Subject Memberships')) },
       { key: 'history', label: 'Movement history', title: 'Student movement history', description: 'Review the permanent audit trail for allocations, transfers and withdrawals.', nodes: nodes(register('Student Movement History')) }
+    ],
+    timetable: [
+      { key: 'builder', label: 'Build timetable', title: 'Schedule lessons', description: 'Add lessons to a draft version with automatic classroom, teacher and room conflict checks.', nodes: nodes(form('[data-academic-timetable-entry]')) },
+      { key: 'schedule', label: 'Lesson register', title: 'Scheduled lessons', description: 'Review the exact lessons in the selected timetable version and correct draft entries.', nodes: nodes(register('Timetable Lessons')) },
+      { key: 'versions', label: 'Versions', title: 'Approve and publish', description: 'Draft timetables remain private until an authorized approver publishes a version.', nodes: nodes(form('[data-academic-timetable-version]'), register('Timetable Versions')) },
+      { key: 'settings', label: 'Days and periods', title: 'Configure the school week', description: 'Define reusable school days, lesson periods, breaks and assemblies for this term.', nodes: nodes(form('[data-academic-timetable-settings]')) }
+    ],
+    attendance: [
+      { key: 'mark', label: 'Mark register', title: 'Mark student attendance', description: 'Start with every student Present, then record only the exceptions before saving.', nodes: nodes(form('[data-academic-attendance-register]')) },
+      { key: 'register', label: 'Attendance history', title: 'Saved attendance', description: 'Review the class, status and marker for every saved student attendance record.', nodes: nodes(register('Student Attendance History')) },
+      { key: 'corrections', label: 'Corrections', title: 'Late correction requests', description: 'Teachers submit corrections for approval; academic administrators approve or reject them with a reason.', nodes: nodes(register('Attendance Correction Requests')) }
     ]
   };
   return (definitions[view] || []).filter((task) => task.nodes.length);
@@ -10603,6 +10627,148 @@ function academicStudentWorkspace(data, rows) {
   ])}`;
 }
 
+function academicTimetableWorkspace(data, rows) {
+  const canManage = data.permissions?.canManageTimetables;
+  const canPublish = data.permissions?.canPublishTimetables;
+  const sessionId = academicManagementFilters.sessionId;
+  const termId = academicManagementFilters.termId;
+  const settings = rows.timetableSettings.find((row) => row.SessionId === sessionId && row.TermId === termId);
+  const versions = rows.timetableVersions.filter((row) => row.SessionId === sessionId && row.TermId === termId);
+  let version = academicFind(versions, academicTimetableDraft.versionId)
+    || versions.find((row) => row.Status === 'Draft') || versions.find((row) => row.Status === 'Published') || versions[0];
+  academicTimetableDraft.versionId = clean(version?.VersionId);
+  const dayOrder = new Map((version?.Days || []).map((row, index) => [row.DayCode, Number(row.SortOrder || index + 1)]));
+  const periodOrder = new Map((version?.Periods || []).map((row, index) => [row.PeriodCode, Number(row.SortOrder || index + 1)]));
+  const entries = rows.timetableEntries.filter((row) => !version || row.VersionId === version.VersionId)
+    .sort((left, right) => (dayOrder.get(left.DayCode) || 999) - (dayOrder.get(right.DayCode) || 999)
+      || (periodOrder.get(left.StartPeriodCode) || 999) - (periodOrder.get(right.StartPeriodCode) || 999));
+  const classrooms = rows.arms.filter(academicIsActive);
+  const selectedArm = academicFind(classrooms, academicTimetableDraft.armId) || classrooms[0];
+  academicTimetableDraft.armId = clean(selectedArm?.ArmId);
+  academicTimetableDraft.classId = clean(selectedArm?.ClassId);
+  const lessonAllocations = rows.teacherAllocations.filter((row) => academicIsActive(row)
+    && row.AllocationRole === 'Subject Teacher'
+    && (!selectedArm || (row.ClassId === selectedArm.ClassId && (!row.ArmId || row.ArmId === selectedArm.ArmId))));
+  const existingEntry = academicFind(entries, academicTimetableDraft.entryId);
+  const dayLines = (settings?.Days || []).map((row) => `${row.DayCode} | ${row.Name} | ${row.SortOrder}`).join('\n');
+  const periodLines = (settings?.Periods || []).map((row) => `${row.PeriodCode} | ${row.Name} | ${row.StartTime} | ${row.EndTime} | ${row.Kind} | ${row.SortOrder}`).join('\n');
+  const classroomLabel = (arm) => `${academicLabel(rows.classes, arm.ClassId)} / ${arm.Name}`;
+  const settingsForm = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="saveAcademicTimetableSettings" data-academic-timetable-settings>
+    <div class="academic-management-editor-heading"><div><small>School week</small><h3>Days and periods</h3><p class="muted">Use one line per item. Published versions keep their own snapshot when these settings later change.</p></div></div>
+    <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}"><input type="hidden" name="RevisionToken" value="${escapeHtml(settings?.RevisionToken || '')}">
+    <label>School days <small>Code | Name | Order</small><textarea name="Days" rows="7" required placeholder="MON | Monday | 1&#10;TUE | Tuesday | 2">${escapeHtml(dayLines)}</textarea></label>
+    <label>Periods, breaks and assemblies <small>Code | Name | Start | End | Lesson/Break/Assembly | Order</small><textarea name="Periods" rows="10" required placeholder="P1 | Period 1 | 08:00 | 08:40 | Lesson | 1&#10;BRK | Break | 10:00 | 10:20 | Break | 4">${escapeHtml(periodLines)}</textarea></label>
+    <button type="submit">Save days and periods</button>
+  </form>` : '';
+  const versionForm = canManage ? `<form class="academic-management-editor" data-academic-workflow="createAcademicTimetableVersion" data-academic-timetable-version>
+    <div class="academic-management-editor-heading"><div><small>Controlled release</small><h3>Create timetable version</h3></div></div>
+    <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}">
+    <label>Version name<input name="Name" required placeholder="For example First draft"></label>
+    <button type="submit" ${settings ? '' : 'disabled'}>Create draft version</button>
+  </form>` : '';
+  const versionActions = (row) => {
+    const open = `<button type="button" class="compact-icon-action compact-edit-action" data-academic-timetable-open-version="${escapeHtml(row.VersionId)}" title="Open this version">&#128065;</button>`;
+    if (!canPublish) return open;
+    const statuses = row.Status === 'Draft' ? ['Approved']
+      : row.Status === 'Approved' ? ['Draft', 'Published']
+        : row.Status === 'Published' ? ['Withdrawn'] : [];
+    const actions = statuses.map((next) => `<button type="button" class="compact-icon-action ${next === 'Withdrawn' ? 'academic-archive-action' : 'compact-edit-action'}" data-academic-timetable-status="${escapeHtml(next)}" data-academic-id="${escapeHtml(row.VersionId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="${next === 'Draft' ? 'Return to Draft' : `Move to ${next}`}">&#10132;</button>`).join('');
+    return `<div class="academic-management-row-actions">${open}${actions}</div>`;
+  };
+  const versionTable = table('Timetable Versions', versions, [
+    { label: 'Version', value: (row) => row.Name }, { label: 'Status', value: (row) => row.Status },
+    { label: 'Created', value: (row) => row.CreatedAt }, { label: 'Published', value: (row) => row.PublishedAt || '-' },
+    { label: 'Action', render: versionActions }
+  ]);
+  const entryForm = canManage && version && version.Status === 'Draft' ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="saveAcademicTimetableEntry" data-academic-timetable-entry>
+    <div class="academic-management-editor-heading"><div><small>Conflict-checked builder</small><h3>${existingEntry ? 'Edit lesson' : 'Schedule a lesson'}</h3><p class="muted">The server rejects overlapping classrooms, teachers or rooms.</p></div><button type="button" class="academic-form-reset" data-academic-timetable-clear>Clear</button></div>
+    <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}"><input type="hidden" name="VersionId" value="${escapeHtml(version.VersionId)}"><input type="hidden" name="EntryId" value="${escapeHtml(existingEntry?.EntryId || '')}"><input type="hidden" name="RevisionToken" value="${escapeHtml(existingEntry?.RevisionToken || '')}">
+    <div class="academic-management-form-grid academic-management-form-grid-3">
+      <label>Timetable version<select data-academic-timetable-version-select>${academicSelectOptions(versions, version.VersionId, (row) => `${row.Name} · ${row.Status}`, 'Choose version')}</select></label>
+      <label>Classroom<select name="ClassroomId" data-academic-timetable-classroom required>${academicSelectOptions(classrooms, selectedArm?.ArmId, classroomLabel, 'Choose classroom')}</select></label>
+      <label>Subject and teacher<select name="AllocationId" required>${academicSelectOptions(lessonAllocations, existingEntry ? lessonAllocations.find((row) => row.TeacherUsername === existingEntry.TeacherUsername && row.SubjectId === existingEntry.SubjectId)?.AllocationId : '', (row) => `${academicLabel(rows.subjects, row.SubjectId)} · ${academicLabel(data.staff, row.TeacherUsername, row.TeacherUsername)}`, 'Choose allocated subject teacher')}</select></label>
+      <label>Day<select name="DayCode" required>${academicSelectOptions((version.Days || []).map((row) => ({ ...row, RecordId: row.DayCode })), existingEntry?.DayCode, (row) => row.Name, 'Choose day')}</select></label>
+      <label>Starting period<select name="StartPeriodCode" required>${academicSelectOptions((version.Periods || []).filter((row) => row.Kind === 'Lesson').map((row) => ({ ...row, RecordId: row.PeriodCode })), existingEntry?.StartPeriodCode, (row) => `${row.Name} · ${row.StartTime}`, 'Choose period')}</select></label>
+      <label>Length<select name="DurationPeriods"><option value="1"${Number(existingEntry?.DurationPeriods || 1) === 1 ? ' selected' : ''}>Single period</option><option value="2"${Number(existingEntry?.DurationPeriods) === 2 ? ' selected' : ''}>Double period</option><option value="3"${Number(existingEntry?.DurationPeriods) === 3 ? ' selected' : ''}>Three-period practical</option></select></label>
+      <label>Lesson type<select name="LessonType"><option>Single</option><option${existingEntry?.LessonType === 'Double' ? ' selected' : ''}>Double</option><option${existingEntry?.LessonType === 'Practical' ? ' selected' : ''}>Practical</option></select></label>
+      <label>Room or location<input name="Room" value="${escapeHtml(existingEntry?.Room || '')}" placeholder="Optional"></label>
+      <label>Notes<input name="Notes" value="${escapeHtml(existingEntry?.Notes || '')}" placeholder="Optional"></label>
+    </div>
+    <button type="submit">${existingEntry ? 'Update lesson' : 'Add lesson'}</button>
+  </form>` : `<section class="academic-management-editor academic-management-editor-wide"><h3>${version ? `${escapeHtml(version.Name)} is ${escapeHtml(version.Status.toLowerCase())}` : 'Create a timetable version'}</h3><p class="muted">${version ? 'Only a Draft version can be edited.' : 'Configure days and periods, then create a Draft version.'}</p></section>`;
+  const entryActions = (row) => version?.Status === 'Draft' && canManage ? `<div class="academic-management-row-actions"><button type="button" class="compact-icon-action compact-edit-action" data-academic-timetable-edit="${escapeHtml(row.EntryId)}" title="Edit lesson">&#9998;</button><button type="button" class="compact-icon-action academic-archive-action" data-academic-timetable-delete="${escapeHtml(row.EntryId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Delete lesson">&#128465;</button></div>` : '<span class="muted">Locked</span>';
+  const entryTable = table('Timetable Lessons', entries, [
+    { label: 'Day', value: (row) => row.DayCode }, { label: 'Period', value: (row) => (row.PeriodCodes || []).join(' + ') },
+    { label: 'Classroom', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
+    { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId) },
+    { label: 'Teacher', value: (row) => academicLabel(data.staff, row.TeacherUsername, row.TeacherUsername) },
+    { label: 'Room', value: (row) => row.Room || '-' }, { label: 'Action', render: entryActions }
+  ]);
+  return `${entryForm}${entryTable}${versionForm}${versionTable}${settingsForm}`;
+}
+
+function academicAttendanceWorkspace(data, rows) {
+  const canMark = data.permissions?.canMarkAttendance;
+  const canDecide = data.permissions?.canManageTimetables;
+  const sessionId = academicManagementFilters.sessionId;
+  const termId = academicManagementFilters.termId;
+  const today = new Date().toISOString().slice(0, 10);
+  const classrooms = rows.arms.filter((arm) => academicIsActive(arm)
+    && rows.studentMemberships.some((membership) => academicIsActive(membership) && membership.ClassId === arm.ClassId && membership.ArmId === arm.ArmId));
+  const selectedArm = academicFind(classrooms, academicAttendanceDraft.armId) || classrooms[0];
+  academicAttendanceDraft.armId = clean(selectedArm?.ArmId);
+  academicAttendanceDraft.classId = clean(selectedArm?.ClassId);
+  academicAttendanceDraft.date = academicAttendanceDraft.date || today;
+  const roster = rows.studentMemberships.filter((row) => academicIsActive(row) && row.ClassId === selectedArm?.ClassId && row.ArmId === selectedArm?.ArmId);
+  const publishedVersions = new Set(rows.timetableVersions.filter((row) => row.Status === 'Published').map((row) => row.VersionId));
+  const lessons = rows.timetableEntries.filter((row) => publishedVersions.has(row.VersionId) && row.ClassId === selectedArm?.ClassId && row.ArmId === selectedArm?.ArmId);
+  const subjectIds = [...new Set(rows.teacherAllocations.filter((row) => academicIsActive(row) && row.ClassId === selectedArm?.ClassId && (!row.ArmId || row.ArmId === selectedArm?.ArmId)).map((row) => row.SubjectId).filter(Boolean))];
+  const mode = academicAttendanceDraft.mode || 'Daily';
+  const sourceId = mode === 'Period' ? academicAttendanceDraft.timetableEntryId : mode === 'Subject' ? academicAttendanceDraft.subjectId : '';
+  const existingRows = rows.studentAttendance.filter((row) => row.AttendanceDate === academicAttendanceDraft.date
+    && row.ClassId === selectedArm?.ClassId && row.ArmId === selectedArm?.ArmId && row.Mode === mode
+    && (mode === 'Daily' || (mode === 'Period' ? row.TimetableEntryId === sourceId : row.SubjectId === sourceId)));
+  const existingByStudent = new Map(existingRows.map((row) => [clean(row.StudentRef).toLowerCase(), row]));
+  const classroomLabel = (arm) => `${academicLabel(rows.classes, arm.ClassId)} / ${arm.Name}`;
+  const lessonLabel = (row) => `${row.DayCode} ${row.PeriodCodes?.join('+')} · ${academicLabel(rows.subjects, row.SubjectId)}`;
+  const rosterRows = roster.map((membership) => {
+    const existing = existingByStudent.get(clean(membership.StudentRef).toLowerCase());
+    const status = existing?.Status || 'Present';
+    return `<tr data-academic-attendance-student data-student-ref="${escapeHtml(membership.StudentRef)}"><td>${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}<small>${escapeHtml(membership.StudentRef)}</small></td><td><select data-academic-attendance-status><option${status === 'Present' ? ' selected' : ''}>Present</option><option${status === 'Absent' ? ' selected' : ''}>Absent</option><option${status === 'Late' ? ' selected' : ''}>Late</option><option${status === 'Excused' ? ' selected' : ''}>Excused</option><option${status === 'Left Early' ? ' selected' : ''}>Left Early</option></select></td><td><input type="number" min="0" max="600" data-academic-attendance-minutes value="${escapeHtml(existing?.MinutesLate || '')}" aria-label="Minutes late for ${escapeHtml(membership.StudentRef)}"></td><td><input data-academic-attendance-note value="${escapeHtml(existing?.Note || '')}" placeholder="Optional note" aria-label="Attendance note for ${escapeHtml(membership.StudentRef)}"></td></tr>`;
+  }).join('');
+  const sourceControl = mode === 'Subject'
+    ? `<label>Subject<select data-academic-attendance-source name="SubjectId" required>${academicSelectOptions(subjectIds.map((id) => ({ RecordId: id, Name: academicLabel(rows.subjects, id) })), academicAttendanceDraft.subjectId, (row) => row.Name, 'Choose subject')}</select></label>`
+    : mode === 'Period' ? `<label>Published lesson<select data-academic-attendance-source name="TimetableEntryId" required>${academicSelectOptions(lessons, academicAttendanceDraft.timetableEntryId, lessonLabel, 'Choose lesson')}</select></label>` : '';
+  const markForm = canMark ? `<form class="academic-management-editor academic-management-editor-wide academic-attendance-register" data-academic-workflow="saveAcademicStudentAttendance" data-academic-attendance-register>
+    <div class="academic-management-editor-heading"><div><small>Student register</small><h3>Mark attendance</h3><p class="muted">All students start as Present. Change only the exceptions; changes to saved records follow the correction workflow.</p></div><strong data-academic-attendance-count>${roster.length} students</strong></div>
+    <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}">
+    <div class="academic-management-form-grid academic-management-form-grid-4">
+      <label>Date<input type="date" name="AttendanceDate" data-academic-attendance-filter value="${escapeHtml(academicAttendanceDraft.date)}" required></label>
+      <label>Classroom<select name="ClassroomId" data-academic-attendance-classroom required>${academicSelectOptions(classrooms, selectedArm?.ArmId, classroomLabel, 'Choose classroom')}</select></label>
+      <label>Register type<select name="Mode" data-academic-attendance-filter><option${mode === 'Daily' ? ' selected' : ''}>Daily</option><option${mode === 'Period' ? ' selected' : ''}>Period</option><option${mode === 'Subject' ? ' selected' : ''}>Subject</option></select></label>
+      ${sourceControl}
+    </div>
+    <div class="academic-attendance-bulk-actions"><button type="button" class="secondary" data-academic-attendance-all="Present">Mark all Present</button><button type="button" class="secondary" data-academic-attendance-all="Absent">Mark all Absent</button><span data-academic-attendance-summary></span></div>
+    <div class="academic-attendance-table"><table><thead><tr><th>Student</th><th>Status</th><th>Minutes late</th><th>Note</th></tr></thead><tbody>${rosterRows || '<tr><td colspan="4">No active students are assigned to this classroom.</td></tr>'}</tbody></table></div>
+    <label>Correction reason <input name="CorrectionReason" placeholder="Required only when changing attendance already saved"></label>
+    <button type="submit" ${roster.length && (mode === 'Daily' || sourceId) ? '' : 'disabled'}>Save attendance register</button>
+  </form>` : '';
+  const history = table('Student Attendance History', rows.studentAttendance, [
+    { label: 'Date', value: (row) => row.AttendanceDate }, { label: 'Student', value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
+    { label: 'Classroom', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
+    { label: 'Register', value: (row) => row.Mode }, { label: 'Status', value: (row) => row.Status },
+    { label: 'Marked by', value: (row) => row.MarkedBy || '-' }
+  ]);
+  const correctionActions = (row) => canDecide && row.Status === 'Pending' ? `<div class="academic-management-row-actions"><button type="button" class="compact-icon-action compact-edit-action" data-academic-attendance-decision="Approved" data-academic-id="${escapeHtml(row.CorrectionId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Approve correction">&#10003;</button><button type="button" class="compact-icon-action academic-archive-action" data-academic-attendance-decision="Rejected" data-academic-id="${escapeHtml(row.CorrectionId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Reject correction">&#10005;</button></div>` : '<span class="muted">View only</span>';
+  const corrections = table('Attendance Correction Requests', rows.attendanceCorrections, [
+    { label: 'Student', value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
+    { label: 'Change', value: (row) => `${row.PreviousStatus} → ${row.ProposedStatus}` }, { label: 'Reason', value: (row) => row.Reason },
+    { label: 'Requested by', value: (row) => row.RequestedBy }, { label: 'Status', value: (row) => row.Status },
+    { label: 'Action', render: correctionActions }
+  ]);
+  return `${markForm}${history}${corrections}`;
+}
+
 function academicManagementHeader(data, rows, message = '') {
   const sessions = (data.sessions || []).filter(academicIsActive);
   const terms = (data.terms || []).filter((row) => !academicManagementFilters.sessionId || row.SessionId === academicManagementFilters.sessionId);
@@ -10611,10 +10777,10 @@ function academicManagementHeader(data, rows, message = '') {
     !['primary', 'secondary'].includes(permittedSection) || section === permittedSection
   ));
   const views = data.permissions?.teacherView
-    ? [['classrooms', 'Classrooms'], ['structure', 'Catalogue'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['teachers', 'My allocations'], ['students', 'My registers']]
-    : [['classrooms', 'Classrooms'], ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', 'Student records']];
+    ? [['classrooms', 'Classrooms'], ['structure', 'Catalogue'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['teachers', 'My allocations'], ['students', 'My registers'], ['timetable', 'Timetable'], ['attendance', 'Attendance']]
+    : [['classrooms', 'Classrooms'], ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', 'Student records'], ['timetable', 'Timetable'], ['attendance', 'Attendance']];
   return `<div class="academic-management-heading">
-    <div><p class="eyebrow">AM-002 / AM-003</p><h2>Academic Management</h2><p class="muted">Branch-isolated structure with Junior all-subject rules and Senior Core, Trade and Optional curricula.</p></div>
+    <div><p class="eyebrow">AM-002 / AM-003 / AM-004</p><h2>Academic Management</h2><p class="muted">Branch-isolated structure, conflict-checked timetables and auditable student attendance.</p></div>
     <button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button>
   </div>
   <div class="academic-management-filterbar">
@@ -10654,6 +10820,8 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
   else if (academicManagementView === 'departments') workspace = academicDepartmentsWorkspace(data, rows);
   else if (academicManagementView === 'teachers') workspace = academicTeacherWorkspace(data, rows);
   else if (academicManagementView === 'students') workspace = academicStudentWorkspace(data, rows);
+  else if (academicManagementView === 'timetable') workspace = academicTimetableWorkspace(data, rows);
+  else if (academicManagementView === 'attendance') workspace = academicAttendanceWorkspace(data, rows);
   else workspace = academicStructureWorkspace(data, rows);
   panelEl.innerHTML = `${academicManagementHeader(data, rows, message)}<section class="academic-management-workspace">${workspace}</section>`;
   organizeAcademicManagementWorkspace(academicManagementView);
@@ -10718,6 +10886,33 @@ function academicFormPayload(form) {
 }
 
 function academicWorkflowPayload(form) {
+  if (form.dataset.academicWorkflow === 'saveAcademicTimetableEntry') {
+    const payload = Object.fromEntries(new FormData(form).entries());
+    const classroom = academicFind(academicManagementData?.arms || [], payload.ClassroomId);
+    const allocation = academicFind(academicManagementData?.teacherAllocations || [], payload.AllocationId);
+    if (!classroom || !allocation) throw new Error('Choose the classroom and allocated subject teacher.');
+    delete payload.ClassroomId;
+    delete payload.AllocationId;
+    return {
+      ...payload, ClassId: classroom.ClassId, ArmId: classroom.ArmId,
+      SubjectId: allocation.SubjectId, TeacherUsername: allocation.TeacherUsername
+    };
+  }
+  if (form.dataset.academicWorkflow === 'saveAcademicStudentAttendance') {
+    const payload = Object.fromEntries(new FormData(form).entries());
+    const classroom = academicFind(academicManagementData?.arms || [], payload.ClassroomId);
+    if (!classroom) throw new Error('Choose a classroom.');
+    delete payload.ClassroomId;
+    return {
+      ...payload, ClassId: classroom.ClassId, ArmId: classroom.ArmId,
+      Entries: [...form.querySelectorAll('[data-academic-attendance-student]')].map((row) => ({
+        StudentRef: row.dataset.studentRef,
+        Status: row.querySelector('[data-academic-attendance-status]').value,
+        MinutesLate: row.querySelector('[data-academic-attendance-minutes]').value,
+        Note: row.querySelector('[data-academic-attendance-note]').value
+      }))
+    };
+  }
   if (form.dataset.academicWorkflow === 'bulkAssignAcademicArmStudentSubjects') {
     const assignments = [...form.querySelectorAll('[data-academic-arm-subject-student]')].map((row) => {
       const tradeSubjectIds = [...row.querySelectorAll('[data-academic-student-subject-role="Trade"]:checked')].map((input) => input.value);
@@ -10825,6 +11020,147 @@ function bindAcademicManagement() {
     if (button.closest('[data-academic-catalogue-note="arms"]')) academicManagementTaskViews.bulkSetup = 'applyArms';
     renderAcademicManagement(academicManagementData || {});
   }));
+  panelEl.querySelector('[data-academic-timetable-version-select]')?.addEventListener('change', (event) => {
+    academicTimetableDraft.versionId = event.target.value;
+    academicTimetableDraft.entryId = '';
+    renderAcademicManagement(academicManagementData || {});
+  });
+  panelEl.querySelectorAll('[data-academic-timetable-open-version]').forEach((button) => button.addEventListener('click', () => {
+    academicTimetableDraft.versionId = button.dataset.academicTimetableOpenVersion;
+    academicTimetableDraft.entryId = '';
+    academicManagementTaskViews.timetable = 'schedule';
+    renderAcademicManagement(academicManagementData || {});
+  }));
+  panelEl.querySelector('[data-academic-timetable-classroom]')?.addEventListener('change', (event) => {
+    const arm = academicFind(academicManagementData?.arms || [], event.target.value);
+    academicTimetableDraft.armId = clean(arm?.ArmId);
+    academicTimetableDraft.classId = clean(arm?.ClassId);
+    renderAcademicManagement(academicManagementData || {});
+  });
+  panelEl.querySelector('[data-academic-timetable-clear]')?.addEventListener('click', () => {
+    academicTimetableDraft.entryId = '';
+    renderAcademicManagement(academicManagementData || {});
+  });
+  panelEl.querySelectorAll('[data-academic-timetable-edit]').forEach((button) => button.addEventListener('click', () => {
+    const entry = academicFind(academicManagementData?.timetableEntries || [], button.dataset.academicTimetableEdit);
+    if (!entry) return;
+    academicTimetableDraft = { versionId: entry.VersionId, entryId: entry.EntryId, classId: entry.ClassId, armId: entry.ArmId };
+    academicManagementTaskViews.timetable = 'builder';
+    renderAcademicManagement(academicManagementData || {});
+  }));
+  panelEl.querySelectorAll('[data-academic-timetable-delete]').forEach((button) => button.addEventListener('click', async () => {
+    const confirmed = await window.DynamaxDialogs.confirm({
+      title: 'Delete timetable lesson',
+      message: 'Delete this lesson from the draft timetable? This cannot be undone.',
+      tone: 'danger',
+      confirmText: 'Delete lesson'
+    });
+    if (!confirmed) return;
+    await runButtonAction(button, 'Deleting...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('deleteAcademicTimetableEntry', {
+          SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId,
+          TermId: academicManagementFilters.termId, EntryId: button.dataset.academicTimetableDelete,
+          RevisionToken: button.dataset.academicRevision
+        });
+        academicTimetableDraft.entryId = '';
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  }));
+  panelEl.querySelectorAll('[data-academic-timetable-status]').forEach((button) => button.addEventListener('click', async () => {
+    const next = button.dataset.academicTimetableStatus;
+    let reason = '';
+    if (next === 'Withdrawn') {
+      reason = clean(await window.DynamaxDialogs.prompt({
+        title: 'Withdraw timetable version',
+        message: 'The published timetable will no longer be available to staff or parents.',
+        label: 'Withdrawal reason',
+        required: true,
+        tone: 'danger',
+        confirmText: 'Withdraw timetable'
+      }));
+      if (!reason) return;
+    } else {
+      const confirmed = await window.DynamaxDialogs.confirm({
+        title: `${next} timetable version`,
+        message: `${next} this timetable version?`,
+        confirmText: next
+      });
+      if (!confirmed) return;
+    }
+    await runButtonAction(button, 'Updating...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('changeAcademicTimetableVersionStatus', {
+          SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId,
+          TermId: academicManagementFilters.termId, VersionId: button.dataset.academicId,
+          RevisionToken: button.dataset.academicRevision, Status: next, Reason: reason
+        });
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  }));
+  const attendanceForm = panelEl.querySelector('[data-academic-attendance-register]');
+  const updateAttendanceSummary = () => {
+    if (!attendanceForm) return;
+    const counts = {};
+    attendanceForm.querySelectorAll('[data-academic-attendance-status]').forEach((control) => { counts[control.value] = (counts[control.value] || 0) + 1; });
+    const summary = attendanceForm.querySelector('[data-academic-attendance-summary]');
+    if (summary) summary.textContent = ['Present', 'Absent', 'Late', 'Excused', 'Left Early'].filter((key) => counts[key]).map((key) => `${counts[key]} ${key.toLowerCase()}`).join(' · ');
+  };
+  attendanceForm?.querySelector('[data-academic-attendance-classroom]')?.addEventListener('change', (event) => {
+    const arm = academicFind(academicManagementData?.arms || [], event.target.value);
+    academicAttendanceDraft.classId = clean(arm?.ClassId);
+    academicAttendanceDraft.armId = clean(arm?.ArmId);
+    academicAttendanceDraft.subjectId = '';
+    academicAttendanceDraft.timetableEntryId = '';
+    renderAcademicManagement(academicManagementData || {});
+  });
+  attendanceForm?.querySelectorAll('[data-academic-attendance-filter]').forEach((control) => control.addEventListener('change', () => {
+    academicAttendanceDraft.date = clean(attendanceForm.elements.AttendanceDate.value);
+    academicAttendanceDraft.mode = clean(attendanceForm.elements.Mode.value);
+    if (academicAttendanceDraft.mode !== 'Subject') academicAttendanceDraft.subjectId = '';
+    if (academicAttendanceDraft.mode !== 'Period') academicAttendanceDraft.timetableEntryId = '';
+    renderAcademicManagement(academicManagementData || {});
+  }));
+  attendanceForm?.querySelector('[data-academic-attendance-source]')?.addEventListener('change', (event) => {
+    if (academicAttendanceDraft.mode === 'Subject') academicAttendanceDraft.subjectId = event.target.value;
+    else academicAttendanceDraft.timetableEntryId = event.target.value;
+    renderAcademicManagement(academicManagementData || {});
+  });
+  attendanceForm?.querySelectorAll('[data-academic-attendance-all]').forEach((button) => button.addEventListener('click', () => {
+    attendanceForm.querySelectorAll('[data-academic-attendance-status]').forEach((control) => { control.value = button.dataset.academicAttendanceAll; });
+    updateAttendanceSummary();
+  }));
+  attendanceForm?.addEventListener('change', (event) => {
+    if (event.target.matches('[data-academic-attendance-status]')) updateAttendanceSummary();
+  });
+  updateAttendanceSummary();
+  panelEl.querySelectorAll('[data-academic-attendance-decision]').forEach((button) => button.addEventListener('click', async () => {
+    const decision = button.dataset.academicAttendanceDecision;
+    const reason = clean(await window.DynamaxDialogs.prompt({
+      title: `${decision} attendance correction`,
+      message: `Review this request before you ${decision.toLowerCase()} it.`,
+      label: 'Decision reason',
+      required: true,
+      tone: decision === 'Rejected' ? 'danger' : 'default',
+      confirmText: decision
+    }));
+    if (!reason) return;
+    await runButtonAction(button, 'Saving...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('decideAcademicAttendanceCorrection', {
+          SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId,
+          TermId: academicManagementFilters.termId, CorrectionId: button.dataset.academicId,
+          RevisionToken: button.dataset.academicRevision, Decision: decision, Reason: reason
+        });
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  }));
   panelEl.querySelectorAll('[data-academic-apply-arm-template]').forEach((button) => button.addEventListener('click', () => {
     const templateId = button.dataset.academicApplyArmTemplate;
     academicManagementView = 'bulkSetup';
@@ -10842,6 +11178,8 @@ function bindAcademicManagement() {
     academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
     academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
     academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
+    academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '' };
+    academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '' };
     void loadAcademicManagement({ section: event.target.value });
   });
   document.getElementById('academicManagementSession')?.addEventListener('change', (event) => {
@@ -10857,6 +11195,8 @@ function bindAcademicManagement() {
     academicArmSubjectDraft = {
       sessionId: academicManagementFilters.sessionId, termId: academicManagementFilters.termId, classId: '', armId: ''
     };
+    academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '' };
+    academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '' };
     renderAcademicManagement(academicManagementData || {});
   });
   document.getElementById('academicManagementTerm')?.addEventListener('change', (event) => {
@@ -10874,6 +11214,8 @@ function bindAcademicManagement() {
       sessionId: academicManagementFilters.sessionId,
       termId: academicManagementFilters.termId
     };
+    academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '' };
+    academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '' };
     renderAcademicManagement(academicManagementData || {});
   });
   const classroomEditor = panelEl.querySelector('[data-academic-classroom-editor]');
@@ -11019,6 +11361,7 @@ function bindAcademicManagement() {
       const status = document.getElementById('academicManagementStatus');
       try {
         const data = await academicManagementRequest(form.dataset.academicWorkflow, academicWorkflowPayload(form));
+        if (form.dataset.academicWorkflow === 'saveAcademicTimetableEntry') academicTimetableDraft.entryId = '';
         renderAcademicManagement(data, data.message || 'Academic workflow completed online.');
       } catch (error) {
         setStatus(status, error.message || String(error), 'bad');

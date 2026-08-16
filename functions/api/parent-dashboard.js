@@ -1712,7 +1712,7 @@ async function getChildActivity(env, body, options = {}) {
   child.BranchId = selectedScope.branchId;
   child.SchoolSection = selectedScope.schoolSection;
   const keys = accountKeys(child);
-  const [ledgerRows, invoiceRows, paymentRows, clinicRows, summaryRows, linkedApplication, storeItems, storeOrderRows, academicResultRows, academicClearanceRows] = await Promise.all([
+  const [ledgerRows, invoiceRows, paymentRows, clinicRows, summaryRows, linkedApplication, storeItems, storeOrderRows, academicResultRows, academicClearanceRows, academicMembershipRows, academicAttendanceRows, timetableVersionRows, timetableEntryRows, academicSubjectRows] = await Promise.all([
     queryRowsForReferences(env, 'ledger', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
     queryRowsForReferences(env, 'invoices', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
     queryRowsForReferences(env, 'payments', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
@@ -1729,7 +1729,12 @@ async function getChildActivity(env, body, options = {}) {
     listCollection(env, 'storeItems').catch(() => []),
     queryRowsForReferences(env, 'storeOrders', ['AccountRef', 'AdmissionNo', 'ApplicationReference'], keys),
     queryRowsForReferences(env, 'academicResults', ['StudentRef', 'AdmissionNo', 'AccountRef'], keys),
-    queryRowsForReferences(env, 'academicResultClearances', ['StudentRef', 'AdmissionNo', 'AccountRef'], keys)
+    queryRowsForReferences(env, 'academicResultClearances', ['StudentRef', 'AdmissionNo', 'AccountRef'], keys),
+    queryRowsForReferences(env, 'academicStudentMemberships', ['StudentRef'], keys),
+    queryRowsForReferences(env, 'academicStudentAttendance', ['StudentRef'], keys),
+    listCollection(env, 'academicTimetableVersions').catch(() => []),
+    listCollection(env, 'academicTimetableEntries').catch(() => []),
+    listCollection(env, 'academicSubjects').catch(() => [])
   ]);
   if (linkedApplication && !findScopedChildApplication(applications, child)) {
     applications.push(linkedApplication);
@@ -1772,6 +1777,53 @@ async function getChildActivity(env, body, options = {}) {
     purpose: options.academicResultPurpose || 'View',
     requestedResultId: options.requestedAcademicResultId
   });
+  const memberships = academicMembershipRows.filter((row) => recordMatchesSelectedChildScope(row, selectedScope)
+    && keys.some((key) => lower(row.StudentRef) === lower(key))
+    && !['withdrawn', 'inactive', 'archived'].includes(lower(row.Status)))
+    .sort((a, b) => clean(b.UpdatedAt || b.CreatedAt).localeCompare(clean(a.UpdatedAt || a.CreatedAt)));
+  const currentMembership = memberships[0] || null;
+  const publishedVersions = timetableVersionRows.filter((row) => recordMatchesSelectedChildScope(row, selectedScope)
+    && lower(row.Status) === 'published'
+    && (!currentMembership || (row.SessionId === currentMembership.SessionId && row.TermId === currentMembership.TermId)))
+    .sort((a, b) => clean(b.PublishedAt).localeCompare(clean(a.PublishedAt)));
+  const publishedVersion = publishedVersions[0] || null;
+  const subjectNames = new Map(academicSubjectRows.filter((row) => recordMatchesSelectedChildScope(row, selectedScope))
+    .map((row) => [clean(row.SubjectId || row.RecordId || row.__id), clean(row.Name || row.Code)]));
+  const dayByCode = new Map((publishedVersion?.Days || []).map((row, index) => [clean(row.DayCode), {
+    Name: clean(row.Name || row.DayCode), SortOrder: Number(row.SortOrder || index + 1)
+  }]));
+  const periodByCode = new Map((publishedVersion?.Periods || []).map((row) => [clean(row.PeriodCode), row]));
+  const academicSchedule = publishedVersion && currentMembership ? timetableEntryRows.filter((row) =>
+    recordMatchesSelectedChildScope(row, selectedScope)
+    && row.VersionId === publishedVersion.VersionId
+    && row.ClassId === currentMembership.ClassId && row.ArmId === currentMembership.ArmId)
+    .map((row) => {
+      const occupied = row.PeriodCodes || [];
+      const first = periodByCode.get(clean(occupied[0])) || {};
+      const last = periodByCode.get(clean(occupied[occupied.length - 1])) || first;
+      return {
+        EntryId: clean(row.EntryId || row.RecordId), DayCode: clean(row.DayCode),
+        DayName: dayByCode.get(clean(row.DayCode))?.Name || clean(row.DayCode),
+        DaySort: dayByCode.get(clean(row.DayCode))?.SortOrder || 999,
+        PeriodCodes: occupied.map(clean), StartTime: clean(first.StartTime), EndTime: clean(last.EndTime),
+        Subject: subjectNames.get(clean(row.SubjectId)) || clean(row.SubjectId), Room: clean(row.Room),
+        LessonType: clean(row.LessonType)
+      };
+    }).sort((a, b) => a.DaySort - b.DaySort || a.StartTime.localeCompare(b.StartTime)) : [];
+  const childAttendance = academicAttendanceRows.filter((row) => recordMatchesSelectedChildScope(row, selectedScope)
+    && keys.some((key) => lower(row.StudentRef) === lower(key))
+    && (!currentMembership || (row.SessionId === currentMembership.SessionId && row.TermId === currentMembership.TermId)));
+  const attendanceCounts = { Present: 0, Absent: 0, Late: 0, Excused: 0, LeftEarly: 0 };
+  childAttendance.forEach((row) => {
+    const key = clean(row.Status).replace(/\s+/g, '');
+    if (Object.hasOwn(attendanceCounts, key)) attendanceCounts[key] += 1;
+  });
+  const attendedCount = attendanceCounts.Present + attendanceCounts.Late + attendanceCounts.LeftEarly;
+  const academicAttendanceSummary = {
+    ...attendanceCounts, Total: childAttendance.length,
+    AttendancePercentage: childAttendance.length ? Number(((attendedCount / childAttendance.length) * 100).toFixed(1)) : 0,
+    SessionId: clean(currentMembership?.SessionId), TermId: clean(currentMembership?.TermId)
+  };
   const notificationData = await parentNotifications(env, email, [child]);
   return {
     ok: true,
@@ -1788,6 +1840,8 @@ async function getChildActivity(env, body, options = {}) {
     showResultsOnline: schoolResultsAreVisible(schoolProfile),
     resultDisplayMode: lower(schoolProfile.ResultDisplayMode) === 'percentage' ? 'percentage' : 'subjects',
     academicResults,
+    academicSchedule,
+    academicAttendanceSummary,
     entranceResults: result ? [result] : [],
     storeCatalog: (storeItems || []).filter((row) => isYes(row.Active === undefined ? 'YES' : row.Active) && asMoneyNumber(row.Quantity) > 0),
     storeOrders: scopedStoreOrderRows.filter((row) =>

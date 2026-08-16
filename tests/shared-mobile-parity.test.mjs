@@ -4,8 +4,8 @@ import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260816-academic-workspace-layout';
-const adminScriptVersion = '20260816-arm-subject-counts';
-const parentScriptVersion = '20260816-academic-result-access';
+const adminScriptVersion = '20260816-academic-timetable-attendance';
+const parentScriptVersion = '20260816-academic-schedule-attendance';
 const notificationVersion = '20260804-read-efficiency';
 const pageNames = [
   'admin.html',
@@ -101,7 +101,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v227-academic-result-access/);
+  assert.match(serviceWorker, /dynamax-v228-academic-timetable-attendance/);
   assert.match(serviceWorker, /'\/css\/school-landing\.css'/);
   assert.match(serviceWorker, /'\/css\/guest-fee-payment\.css'/);
   assert.match(serviceWorker, /'\/js\/app-dialogs\.js'/);
