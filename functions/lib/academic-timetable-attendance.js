@@ -67,11 +67,54 @@ export function normalizeAcademicTimetableDays(value) {
   return uniqueBy(rows, 'DayCode', 'Day code').sort((a, b) => a.SortOrder - b.SortOrder || a.Name.localeCompare(b.Name));
 }
 
-export function normalizeAcademicTimetablePeriods(value) {
+function normalizedPeriodDayCodes(source = {}) {
+  const supplied = source.DayCodes ?? source.DayCode ?? source.Days ?? 'ALL';
+  const values = Array.isArray(supplied) ? supplied : clean(supplied).split(/[\s,]+/);
+  const result = [...new Set(values.map((value) => clean(value).toUpperCase()).filter(Boolean))];
+  return result.length ? result : ['ALL'];
+}
+
+function validatePeriodSequence(periods = [], dayLabel = '') {
+  if (!periods.some((row) => row.Kind === 'Lesson')) {
+    throw failure(`Configure at least one lesson period${dayLabel ? ` for ${dayLabel}` : ''}.`);
+  }
+  periods.forEach((row, index) => {
+    const prior = periods[index - 1];
+    if (prior && row.StartTime < prior.EndTime) {
+      throw failure(`${row.Name} overlaps ${prior.Name}${dayLabel ? ` on ${dayLabel}` : ''}.`);
+    }
+  });
+}
+
+export function academicTimetablePeriodsForDay(settings = {}, dayCode = '') {
+  const target = clean(dayCode).toUpperCase();
+  const defaults = new Map();
+  const overrides = new Map();
+  (settings.Periods || []).forEach((row) => {
+    const dayCodes = normalizedPeriodDayCodes(row);
+    const key = clean(row.PeriodCode).toUpperCase();
+    if (dayCodes.includes('ALL')) defaults.set(key, row);
+    if (target && dayCodes.includes(target)) overrides.set(key, row);
+  });
+  const effective = new Map(defaults);
+  overrides.forEach((row, key) => effective.set(key, row));
+  return [...effective.values()].sort((a, b) => Number(a.SortOrder || 0) - Number(b.SortOrder || 0)
+    || clean(a.StartTime).localeCompare(clean(b.StartTime)) || clean(a.PeriodCode).localeCompare(clean(b.PeriodCode)));
+}
+
+export function normalizeAcademicTimetablePeriods(value, days = []) {
+  const configuredDays = (days || []).map((row) => ({ DayCode: clean(row.DayCode).toUpperCase(), Name: clean(row.Name || row.DayCode) }));
+  const configuredDayCodes = new Set(configuredDays.map((row) => row.DayCode));
   const rows = suppliedRows(value, /\s*\|\s*/).map((row, index) => {
-    const source = Array.isArray(row)
-      ? { PeriodCode: row[0], Name: row[1], StartTime: row[2], EndTime: row[3], Kind: row[4], SortOrder: row[5] }
+    const scopedLine = Array.isArray(row) && row.length >= 7;
+    const source = Array.isArray(row) ? (scopedLine
+      ? { DayCodes: row[0], PeriodCode: row[1], Name: row[2], StartTime: row[3], EndTime: row[4], Kind: row[5], SortOrder: row[6] }
+      : { DayCodes: 'ALL', PeriodCode: row[0], Name: row[1], StartTime: row[2], EndTime: row[3], Kind: row[4], SortOrder: row[5] })
       : row;
+    const dayCodes = normalizedPeriodDayCodes(source);
+    if (dayCodes.includes('ALL') && dayCodes.length > 1) throw failure(`Period ${index + 1} cannot combine ALL with individual days.`);
+    const unknownDay = dayCodes.find((dayCode) => dayCode !== 'ALL' && configuredDayCodes.size && !configuredDayCodes.has(dayCode));
+    if (unknownDay) throw failure(`Period ${index + 1} uses ${unknownDay}, which is not a configured school day.`);
     const periodCode = clean(source.PeriodCode || source.Code).toUpperCase();
     const name = clean(source.Name || source.PeriodName);
     const startTime = timeValue(source.StartTime, `start time for ${name || periodCode || `period ${index + 1}`}`);
@@ -81,22 +124,38 @@ export function normalizeAcademicTimetablePeriods(value) {
     if (!name) throw failure(`Period ${index + 1} needs a display name.`);
     if (endTime <= startTime) throw failure(`${name} must end after it starts.`);
     return {
-      PeriodCode: periodCode, Name: name, StartTime: startTime, EndTime: endTime,
+      DayCodes: dayCodes, PeriodCode: periodCode, Name: name, StartTime: startTime, EndTime: endTime,
       Kind: kind, SortOrder: wholeNumber(source.SortOrder, index + 1, 1, 200)
     };
   });
-  if (!rows.some((row) => row.Kind === 'Lesson')) throw failure('Configure at least one lesson period.');
-  uniqueBy(rows, 'PeriodCode', 'Period code');
-  const sorted = rows.sort((a, b) => a.SortOrder - b.SortOrder || a.StartTime.localeCompare(b.StartTime));
-  sorted.forEach((row, index) => {
-    const prior = sorted[index - 1];
-    if (prior && row.StartTime < prior.EndTime) throw failure(`${row.Name} overlaps ${prior.Name}.`);
+  const occupied = new Set();
+  rows.forEach((row) => {
+    row.DayCodes.forEach((dayCode) => {
+      const key = `${dayCode}:${row.PeriodCode}`;
+      if (occupied.has(key)) throw failure(`Period code ${row.PeriodCode} is repeated for ${dayCode === 'ALL' ? 'the default schedule' : dayCode}.`);
+      occupied.add(key);
+    });
   });
-  return sorted;
+  const validationDays = configuredDays.length ? configuredDays : [{ DayCode: 'ALL', Name: '' }];
+  validationDays.forEach((day) => {
+    const effective = day.DayCode === 'ALL'
+      ? rows.filter((row) => row.DayCodes.includes('ALL')).sort((a, b) => a.SortOrder - b.SortOrder || a.StartTime.localeCompare(b.StartTime))
+      : academicTimetablePeriodsForDay({ Periods: rows }, day.DayCode);
+    validatePeriodSequence(effective, day.Name);
+  });
+  const dayOrder = new Map(configuredDays.map((row, index) => [row.DayCode, index + 1]));
+  return rows.sort((a, b) => {
+    const firstScope = a.DayCodes.includes('ALL') ? 0 : Math.min(...a.DayCodes.map((code) => dayOrder.get(code) || 999));
+    const secondScope = b.DayCodes.includes('ALL') ? 0 : Math.min(...b.DayCodes.map((code) => dayOrder.get(code) || 999));
+    return firstScope - secondScope || a.SortOrder - b.SortOrder || a.StartTime.localeCompare(b.StartTime);
+  });
 }
 
-export function academicTimetablePeriodCodes(settings = {}, startPeriodCode = '', durationPeriods = 1) {
-  const periods = settings.Periods || [];
+export function academicTimetablePeriodCodes(settings = {}, startPeriodCode = '', durationPeriods = 1, dayCode = '') {
+  const effectiveDay = clean(dayCode || settings.Days?.[0]?.DayCode).toUpperCase();
+  const periods = effectiveDay
+    ? academicTimetablePeriodsForDay(settings, effectiveDay)
+    : (settings.Periods || []).filter((row) => normalizedPeriodDayCodes(row).includes('ALL'));
   const start = periods.findIndex((row) => lower(row.PeriodCode) === lower(startPeriodCode));
   const duration = wholeNumber(durationPeriods, 1, 1, 3);
   if (start < 0 || periods[start]?.Kind !== 'Lesson') throw failure('Choose a valid lesson period.');
@@ -112,7 +171,7 @@ export function normalizeAcademicTimetableEntry(input = {}, settings = {}, exist
   if (!(settings.Days || []).some((row) => row.DayCode === dayCode)) throw failure('Choose a configured school day.');
   const startPeriodCode = clean(input.StartPeriodCode ?? existing?.StartPeriodCode).toUpperCase();
   const durationPeriods = wholeNumber(input.DurationPeriods ?? existing?.DurationPeriods, 1, 1, 3);
-  const periodCodes = academicTimetablePeriodCodes(settings, startPeriodCode, durationPeriods);
+  const periodCodes = academicTimetablePeriodCodes(settings, startPeriodCode, durationPeriods, dayCode);
   const classId = clean(input.ClassId ?? existing?.ClassId);
   const armId = clean(input.ArmId ?? existing?.ArmId);
   const subjectId = clean(input.SubjectId ?? existing?.SubjectId);

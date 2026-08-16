@@ -34,7 +34,8 @@ policy is missing or incomplete, limits records to the linked child and
 selected branch/section, withholds score details when access is blocked,
 rechecks access before printing and audits view, denial, exemption and print
 decisions without copying ledger details. The web companion and desktop now
-share configurable school days and periods, immutable timetable-version
+share configurable school days and periods, including a reusable default week
+with validated day-specific time overrides, immutable timetable-version
 snapshots, Draft/Approved/Published/Withdrawn release states, exact
 classroom/subject-teacher lessons, and server-side classroom, teacher and room
 conflict detection. Allocated form, assistant and subject teachers can mark

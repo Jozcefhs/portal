@@ -144,7 +144,7 @@ let academicManagementFilters = { section: '', sessionId: '', termId: '' };
 let academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
 let academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
 let academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
-let academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '' };
+let academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
 let academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '' };
 const organizationCommerceCarts = {
   organizationStore: new Map(),
@@ -1239,7 +1239,7 @@ function clearStaffWorkspaceState() {
   academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
   academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
   academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
-  academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '' };
+  academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
   academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '' };
   activeSection = '';
   activeTabs = [];
@@ -1371,7 +1371,7 @@ function clearBranchScopedWorkspaceData() {
   academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
   academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
   academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
-  academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '' };
+  academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
   academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '' };
   Object.values(organizationCommerceCarts).forEach((cart) => cart.clear());
   organizationCommerceLastSale.organizationStore = null;
@@ -10627,6 +10627,23 @@ function academicStudentWorkspace(data, rows) {
   ])}`;
 }
 
+function academicPeriodsForDay(schedule = {}, dayCode = '') {
+  const wanted = clean(dayCode).toUpperCase();
+  const defaults = new Map();
+  const overrides = new Map();
+  (schedule.Periods || []).forEach((period) => {
+    const dayCodes = Array.isArray(period.DayCodes) && period.DayCodes.length
+      ? period.DayCodes.map((code) => clean(code).toUpperCase())
+      : [clean(period.DayCode || 'ALL').toUpperCase()];
+    const key = clean(period.PeriodCode).toUpperCase();
+    if (dayCodes.includes('ALL')) defaults.set(key, period);
+    if (wanted && dayCodes.includes(wanted)) overrides.set(key, period);
+  });
+  overrides.forEach((period, key) => defaults.set(key, period));
+  return [...defaults.values()].sort((left, right) => Number(left.SortOrder || 0) - Number(right.SortOrder || 0)
+    || clean(left.StartTime).localeCompare(clean(right.StartTime)));
+}
+
 function academicTimetableWorkspace(data, rows) {
   const canManage = data.permissions?.canManageTimetables;
   const canPublish = data.permissions?.canPublishTimetables;
@@ -10650,14 +10667,17 @@ function academicTimetableWorkspace(data, rows) {
     && row.AllocationRole === 'Subject Teacher'
     && (!selectedArm || (row.ClassId === selectedArm.ClassId && (!row.ArmId || row.ArmId === selectedArm.ArmId))));
   const existingEntry = academicFind(entries, academicTimetableDraft.entryId);
+  const selectedDayCode = clean(academicTimetableDraft.dayCode || existingEntry?.DayCode || version?.Days?.[0]?.DayCode);
+  academicTimetableDraft.dayCode = selectedDayCode;
+  const lessonPeriods = academicPeriodsForDay(version || {}, selectedDayCode).filter((row) => row.Kind === 'Lesson');
   const dayLines = (settings?.Days || []).map((row) => `${row.DayCode} | ${row.Name} | ${row.SortOrder}`).join('\n');
-  const periodLines = (settings?.Periods || []).map((row) => `${row.PeriodCode} | ${row.Name} | ${row.StartTime} | ${row.EndTime} | ${row.Kind} | ${row.SortOrder}`).join('\n');
+  const periodLines = (settings?.Periods || []).map((row) => `${Array.isArray(row.DayCodes) ? row.DayCodes.join(',') : clean(row.DayCodes || row.DayCode || 'ALL')} | ${row.PeriodCode} | ${row.Name} | ${row.StartTime} | ${row.EndTime} | ${row.Kind} | ${row.SortOrder}`).join('\n');
   const classroomLabel = (arm) => `${academicLabel(rows.classes, arm.ClassId)} / ${arm.Name}`;
   const settingsForm = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="saveAcademicTimetableSettings" data-academic-timetable-settings>
-    <div class="academic-management-editor-heading"><div><small>School week</small><h3>Days and periods</h3><p class="muted">Use one line per item. Published versions keep their own snapshot when these settings later change.</p></div></div>
+    <div class="academic-management-editor-heading"><div><small>School week</small><h3>Days and periods</h3><p class="muted">Use one line per item. Each new timetable version keeps a snapshot; later setting changes apply to versions created afterwards.</p></div></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}"><input type="hidden" name="RevisionToken" value="${escapeHtml(settings?.RevisionToken || '')}">
     <label>School days <small>Code | Name | Order</small><textarea name="Days" rows="7" required placeholder="MON | Monday | 1&#10;TUE | Tuesday | 2">${escapeHtml(dayLines)}</textarea></label>
-    <label>Periods, breaks and assemblies <small>Code | Name | Start | End | Lesson/Break/Assembly | Order</small><textarea name="Periods" rows="10" required placeholder="P1 | Period 1 | 08:00 | 08:40 | Lesson | 1&#10;BRK | Break | 10:00 | 10:20 | Break | 4">${escapeHtml(periodLines)}</textarea></label>
+    <label>Periods, breaks and assemblies <small>Day(s) | Code | Name | Start | End | Lesson/Break/Assembly | Order</small><textarea name="Periods" rows="10" required placeholder="ALL | P1 | Period 1 | 08:00 | 08:40 | Lesson | 1&#10;MON | P1 | Period 1 | 08:20 | 09:00 | Lesson | 1&#10;ALL | BRK | Break | 10:00 | 10:20 | Break | 4">${escapeHtml(periodLines)}</textarea><small>Use ALL for the normal weekly schedule. Add a day such as MON with the same period code to override only that day; comma-separated days such as TUE,WED may share one override.</small></label>
     <button type="submit">Save days and periods</button>
   </form>` : '';
   const versionForm = canManage ? `<form class="academic-management-editor" data-academic-workflow="createAcademicTimetableVersion" data-academic-timetable-version>
@@ -10687,8 +10707,8 @@ function academicTimetableWorkspace(data, rows) {
       <label>Timetable version<select data-academic-timetable-version-select>${academicSelectOptions(versions, version.VersionId, (row) => `${row.Name} · ${row.Status}`, 'Choose version')}</select></label>
       <label>Classroom<select name="ClassroomId" data-academic-timetable-classroom required>${academicSelectOptions(classrooms, selectedArm?.ArmId, classroomLabel, 'Choose classroom')}</select></label>
       <label>Subject and teacher<select name="AllocationId" required>${academicSelectOptions(lessonAllocations, existingEntry ? lessonAllocations.find((row) => row.TeacherUsername === existingEntry.TeacherUsername && row.SubjectId === existingEntry.SubjectId)?.AllocationId : '', (row) => `${academicLabel(rows.subjects, row.SubjectId)} · ${academicLabel(data.staff, row.TeacherUsername, row.TeacherUsername)}`, 'Choose allocated subject teacher')}</select></label>
-      <label>Day<select name="DayCode" required>${academicSelectOptions((version.Days || []).map((row) => ({ ...row, RecordId: row.DayCode })), existingEntry?.DayCode, (row) => row.Name, 'Choose day')}</select></label>
-      <label>Starting period<select name="StartPeriodCode" required>${academicSelectOptions((version.Periods || []).filter((row) => row.Kind === 'Lesson').map((row) => ({ ...row, RecordId: row.PeriodCode })), existingEntry?.StartPeriodCode, (row) => `${row.Name} · ${row.StartTime}`, 'Choose period')}</select></label>
+      <label>Day<select name="DayCode" data-academic-timetable-day required>${academicSelectOptions((version.Days || []).map((row) => ({ ...row, RecordId: row.DayCode })), selectedDayCode, (row) => row.Name, 'Choose day')}</select></label>
+      <label>Starting period<select name="StartPeriodCode" required>${academicSelectOptions(lessonPeriods.map((row) => ({ ...row, RecordId: row.PeriodCode })), existingEntry?.DayCode === selectedDayCode ? existingEntry?.StartPeriodCode : '', (row) => `${row.Name} · ${row.StartTime}–${row.EndTime}`, 'Choose period')}</select></label>
       <label>Length<select name="DurationPeriods"><option value="1"${Number(existingEntry?.DurationPeriods || 1) === 1 ? ' selected' : ''}>Single period</option><option value="2"${Number(existingEntry?.DurationPeriods) === 2 ? ' selected' : ''}>Double period</option><option value="3"${Number(existingEntry?.DurationPeriods) === 3 ? ' selected' : ''}>Three-period practical</option></select></label>
       <label>Lesson type<select name="LessonType"><option>Single</option><option${existingEntry?.LessonType === 'Double' ? ' selected' : ''}>Double</option><option${existingEntry?.LessonType === 'Practical' ? ' selected' : ''}>Practical</option></select></label>
       <label>Room or location<input name="Room" value="${escapeHtml(existingEntry?.Room || '')}" placeholder="Optional"></label>
@@ -10698,7 +10718,14 @@ function academicTimetableWorkspace(data, rows) {
   </form>` : `<section class="academic-management-editor academic-management-editor-wide"><h3>${version ? `${escapeHtml(version.Name)} is ${escapeHtml(version.Status.toLowerCase())}` : 'Create a timetable version'}</h3><p class="muted">${version ? 'Only a Draft version can be edited.' : 'Configure days and periods, then create a Draft version.'}</p></section>`;
   const entryActions = (row) => version?.Status === 'Draft' && canManage ? `<div class="academic-management-row-actions"><button type="button" class="compact-icon-action compact-edit-action" data-academic-timetable-edit="${escapeHtml(row.EntryId)}" title="Edit lesson">&#9998;</button><button type="button" class="compact-icon-action academic-archive-action" data-academic-timetable-delete="${escapeHtml(row.EntryId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Delete lesson">&#128465;</button></div>` : '<span class="muted">Locked</span>';
   const entryTable = table('Timetable Lessons', entries, [
-    { label: 'Day', value: (row) => row.DayCode }, { label: 'Period', value: (row) => (row.PeriodCodes || []).join(' + ') },
+    { label: 'Day', value: (row) => version?.Days?.find((day) => day.DayCode === row.DayCode)?.Name || row.DayCode },
+    { label: 'Period', value: (row) => {
+      const periods = new Map(academicPeriodsForDay(version || {}, row.DayCode).map((period) => [period.PeriodCode, period]));
+      const occupied = row.PeriodCodes || [];
+      const first = periods.get(occupied[0]);
+      const last = periods.get(occupied[occupied.length - 1]) || first;
+      return `${occupied.join(' + ')}${first ? ` · ${first.StartTime}–${last.EndTime}` : ''}`;
+    } },
     { label: 'Classroom', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
     { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId) },
     { label: 'Teacher', value: (row) => academicLabel(data.staff, row.TeacherUsername, row.TeacherUsername) },
@@ -11023,14 +11050,20 @@ function bindAcademicManagement() {
   panelEl.querySelector('[data-academic-timetable-version-select]')?.addEventListener('change', (event) => {
     academicTimetableDraft.versionId = event.target.value;
     academicTimetableDraft.entryId = '';
+    academicTimetableDraft.dayCode = '';
     renderAcademicManagement(academicManagementData || {});
   });
   panelEl.querySelectorAll('[data-academic-timetable-open-version]').forEach((button) => button.addEventListener('click', () => {
     academicTimetableDraft.versionId = button.dataset.academicTimetableOpenVersion;
     academicTimetableDraft.entryId = '';
+    academicTimetableDraft.dayCode = '';
     academicManagementTaskViews.timetable = 'schedule';
     renderAcademicManagement(academicManagementData || {});
   }));
+  panelEl.querySelector('[data-academic-timetable-day]')?.addEventListener('change', (event) => {
+    academicTimetableDraft.dayCode = event.target.value;
+    renderAcademicManagement(academicManagementData || {});
+  });
   panelEl.querySelector('[data-academic-timetable-classroom]')?.addEventListener('change', (event) => {
     const arm = academicFind(academicManagementData?.arms || [], event.target.value);
     academicTimetableDraft.armId = clean(arm?.ArmId);
@@ -11039,12 +11072,13 @@ function bindAcademicManagement() {
   });
   panelEl.querySelector('[data-academic-timetable-clear]')?.addEventListener('click', () => {
     academicTimetableDraft.entryId = '';
+    academicTimetableDraft.dayCode = '';
     renderAcademicManagement(academicManagementData || {});
   });
   panelEl.querySelectorAll('[data-academic-timetable-edit]').forEach((button) => button.addEventListener('click', () => {
     const entry = academicFind(academicManagementData?.timetableEntries || [], button.dataset.academicTimetableEdit);
     if (!entry) return;
-    academicTimetableDraft = { versionId: entry.VersionId, entryId: entry.EntryId, classId: entry.ClassId, armId: entry.ArmId };
+    academicTimetableDraft = { versionId: entry.VersionId, entryId: entry.EntryId, classId: entry.ClassId, armId: entry.ArmId, dayCode: entry.DayCode };
     academicManagementTaskViews.timetable = 'builder';
     renderAcademicManagement(academicManagementData || {});
   }));
@@ -11178,7 +11212,7 @@ function bindAcademicManagement() {
     academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
     academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
     academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
-    academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '' };
+    academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
     academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '' };
     void loadAcademicManagement({ section: event.target.value });
   });
@@ -11195,7 +11229,7 @@ function bindAcademicManagement() {
     academicArmSubjectDraft = {
       sessionId: academicManagementFilters.sessionId, termId: academicManagementFilters.termId, classId: '', armId: ''
     };
-    academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '' };
+    academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
     academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '' };
     renderAcademicManagement(academicManagementData || {});
   });
@@ -11214,7 +11248,7 @@ function bindAcademicManagement() {
       sessionId: academicManagementFilters.sessionId,
       termId: academicManagementFilters.termId
     };
-    academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '' };
+    academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
     academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '' };
     renderAcademicManagement(academicManagementData || {});
   });

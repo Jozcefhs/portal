@@ -2351,11 +2351,12 @@ export async function saveAcademicTimetableSettings(env, user = {}, input = {}) 
   const timetableSettingId = academicId('timetable-settings', scope.branchId, scope.section, session.SessionId, term.TermId);
   const existing = findById(state.timetableSettings, timetableSettingId);
   const timestamp = nowIso();
+  const days = normalizeAcademicTimetableDays(input.Days);
   const record = {
     ...(existing || {}), RecordId: timetableSettingId, TimetableSettingId: timetableSettingId,
     SessionId: session.SessionId, TermId: term.TermId,
-    Days: normalizeAcademicTimetableDays(input.Days),
-    Periods: normalizeAcademicTimetablePeriods(input.Periods),
+    Days: days,
+    Periods: normalizeAcademicTimetablePeriods(input.Periods, days),
     BranchId: scope.branchId, SchoolSection: scope.section,
     CreatedAt: clean(existing?.CreatedAt) || timestamp, CreatedBy: clean(existing?.CreatedBy) || actorName(user),
     UpdatedAt: timestamp, UpdatedBy: actorName(user)

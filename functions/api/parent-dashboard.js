@@ -44,6 +44,7 @@ import {
   evaluateAcademicResultAccess,
   publicAcademicResult
 } from '../lib/academic-result-access.js';
+import { academicTimetablePeriodsForDay } from '../lib/academic-timetable-attendance.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -1792,12 +1793,13 @@ async function getChildActivity(env, body, options = {}) {
   const dayByCode = new Map((publishedVersion?.Days || []).map((row, index) => [clean(row.DayCode), {
     Name: clean(row.Name || row.DayCode), SortOrder: Number(row.SortOrder || index + 1)
   }]));
-  const periodByCode = new Map((publishedVersion?.Periods || []).map((row) => [clean(row.PeriodCode), row]));
   const academicSchedule = publishedVersion && currentMembership ? timetableEntryRows.filter((row) =>
     recordMatchesSelectedChildScope(row, selectedScope)
     && row.VersionId === publishedVersion.VersionId
     && row.ClassId === currentMembership.ClassId && row.ArmId === currentMembership.ArmId)
     .map((row) => {
+      const periodByCode = new Map(academicTimetablePeriodsForDay(publishedVersion, row.DayCode)
+        .map((period) => [clean(period.PeriodCode), period]));
       const occupied = row.PeriodCodes || [];
       const first = periodByCode.get(clean(occupied[0])) || {};
       const last = periodByCode.get(clean(occupied[occupied.length - 1])) || first;
