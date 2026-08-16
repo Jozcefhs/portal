@@ -5,7 +5,8 @@ Status: approved baseline; implementation in progress.
 Implementation status (2026-08-16): Milestones 1 and 2 are in progress, the
 secure parent-access slice of Milestone 3 is operational, Milestone 4 is
 operational, and the Milestone 5 assessment, scorebook and spreadsheet-import
-slice is operational on the web companion and desktop source. The School
+slice is operational on the web companion and desktop source. The Milestone 6
+local CBT foundation is also operational in the desktop source. The School
 edition now has an effective-dated academic-policy schema, immutable
 policy revisions, separate draft and active states, organisation-to-branch
 inheritance, activation validation and administrator controls for result
@@ -72,8 +73,24 @@ remain visible but locked during manual entry. Partial imports merge their
 supplied components with existing scores instead of clearing scores captured
 through another approved source. The desktop source uses the same protected
 online actions and reads XLSX files without adding a runtime package.
+The desktop source now includes a workspace-scoped SQLite CBT store in WAL mode,
+rotating local backups, transactional examination packages and rosters, hashed
+candidate access codes, short-lived hashed attempt tokens, authoritative server
+timing, idempotent answer checkpoints and audited one-device-per-attempt
+enforcement with reasoned invigilator transfer. Its local LAN server exposes a
+single responsive examination client for Android tablets and Windows lab
+computers, with device-local IndexedDB recovery, reconnection replay, heartbeat,
+focus/connectivity events, final submission and no service-worker candidate
+caching. The authorized desktop console starts and monitors the server, shows
+the school-network address and QR code, opens readiness sessions from current
+academic allocations, manages examination state and candidate access codes,
+and performs controlled device transfers. The packaged client assets are in
+the desktop build definition, but the desktop application will not be compiled
+until the remaining milestones are complete.
 Result production and publication, finance-officer clearance administration,
-promotion intake, transcripts, parent progress and CBT remain pending work;
+promotion intake, transcripts and parent progress remain pending work. CBT
+question authoring and document upload modes, marking, external adapters and
+online score synchronization remain Milestones 7 and 8;
 configuring a policy, academic structure or score sheet does not itself publish
 a result.
 
