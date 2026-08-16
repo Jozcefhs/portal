@@ -2679,6 +2679,7 @@ const studentProfileSections = [
   ['Student identity', ['DisplayName', 'Surname', 'FirstName', 'MiddleName', 'Gender', 'DateOfBirth', 'PreviousSchool']],
   ['Enrollment', ['ClassName', 'ClassArm', 'StudentType', 'BillingCategory', 'EnrollmentCategory', 'AcademicProgress', 'AcademicSession', 'Term']],
   ['Parent and login', ['ParentName', 'ParentPhone', 'ParentEmail', 'ParentLoginCode', 'ResidentialAddress', 'CityArea', 'StateOfResidence']],
+  ['Student own login', ['StudentLoginPassword', 'StudentLoginPasswordConfirm']],
   ['Medical and emergency', ['BloodGroup', 'Genotype', 'MedicalCondition', 'EmergencyContactName', 'EmergencyContactPhone']],
   ['Status and student card', ['ProfileCompletionStatus', 'Status', 'StatusReason', 'StatusEffectiveDate', 'ExpectedReturnDate', 'WalletCardId', 'WalletCardStatus']]
 ];
@@ -2703,8 +2704,12 @@ function studentFieldControl(field, value) {
     const values = options[field].includes(value) ? options[field] : [value, ...options[field]];
     return `<select name="${field}">${values.map((item) => `<option value="${escapeHtml(item)}"${clean(item) === clean(value) ? ' selected' : ''}>${escapeHtml(item || 'Select')}</option>`).join('')}</select>`;
   }
-  const type = field === 'ParentEmail' ? 'email' : ['DateOfBirth', 'StatusEffectiveDate', 'ExpectedReturnDate'].includes(field) ? 'date' : 'text';
-  return `<input name="${field}" type="${type}" value="${safeValue}">`;
+  const type = field === 'ParentEmail' ? 'email'
+    : ['StudentLoginPassword', 'StudentLoginPasswordConfirm'].includes(field) ? 'password'
+      : ['DateOfBirth', 'StatusEffectiveDate', 'ExpectedReturnDate'].includes(field) ? 'date' : 'text';
+  const autocomplete = field === 'StudentLoginPassword' ? ' autocomplete="new-password"'
+    : field === 'StudentLoginPasswordConfirm' ? ' autocomplete="new-password"' : '';
+  return `<input name="${field}" type="${type}" value="${safeValue}"${autocomplete}>`;
 }
 
 function renderStudentEditor(students) {
@@ -2712,7 +2717,7 @@ function renderStudentEditor(students) {
     <div class="workflow-dialog-header"><div><small>Student register</small><h2>Edit Student Profile</h2></div><button type="button" data-close-student-dialog aria-label="Close">&times;</button></div>
     <form id="studentProfileForm" class="workflow-form config-dialog-form">
       <input type="hidden" name="AccountRef">
-      <div class="student-login-guidance"><strong>Parent login</strong><span>Imported parents use Parent Email and Parent Login Code on the Parent Dashboard.</span></div>
+      <div class="student-login-guidance"><strong>Separate family and student access</strong><span>Parents use Parent Email and Parent Login Code. Students use their admission number and personal password for CBT. Leave the student password blank to keep it unchanged.</span></div>
       <div data-student-form-sections></div>
       <div class="config-dialog-actions"><p class="status" data-student-form-status></p><button type="submit">Save student profile</button></div>
     </form>
@@ -2731,6 +2736,7 @@ function openStudentEditor(student) {
         if (field === 'DisplayName') value = value || pick(student, ['ApplicantName', 'StudentName']);
         if (field === 'ClassName') value = value || pick(student, ['ClassAdmitted']);
         if (field === 'ParentLoginCode') value = value || pick(student, ['VerificationCode']);
+        if (field === 'StudentLoginPassword' || field === 'StudentLoginPasswordConfirm') value = '';
         return `<label>${escapeHtml(studentFieldLabel(field))}${studentFieldControl(field, value)}${field === 'ParentLoginCode' ? '<button type="button" class="student-code-generator" data-generate-student-code>Generate secure code</button>' : ''}</label>`;
       }).join('')}
     </div></section>`).join('');
@@ -2755,6 +2761,11 @@ function bindStudentEditor(students) {
     const status = form.querySelector('[data-student-form-status]');
     const button = form.querySelector('button[type="submit"]');
     const payload = Object.fromEntries(new FormData(form).entries());
+    if (payload.StudentLoginPassword !== payload.StudentLoginPasswordConfirm) {
+      setStatus(status, 'The student passwords do not match.', 'bad');
+      return;
+    }
+    delete payload.StudentLoginPasswordConfirm;
     payload.action = 'update';
     payload.VerificationCode = payload.ParentLoginCode || '';
     setButtonLoading(button, true, 'Saving...', 'Save student profile');

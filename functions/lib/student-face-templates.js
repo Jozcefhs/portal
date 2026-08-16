@@ -1,3 +1,5 @@
+import { safeScopeId, schoolSectionFor } from './school-scope.js';
+
 const clean = (value) => String(value ?? '').trim();
 
 export const STUDENT_FACE_MODEL_ID = 'human-faceres-3.3.6';
@@ -8,6 +10,42 @@ export const STUDENT_FACE_DESCRIPTOR_MAX_LENGTH = STUDENT_FACE_DESCRIPTOR_LENGTH
 export const STUDENT_FACE_DEFAULT_THRESHOLD = 0.68;
 export const STUDENT_FACE_DEFAULT_MARGIN = 0.08;
 export const STUDENT_FACE_DEFAULT_RETENTION_DAYS = 365;
+
+export async function studentFaceTemplateDocumentId(value) {
+  const normalized = clean(value).toLowerCase();
+  if (!normalized) throw new Error('The student reference is invalid.');
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
+  return `face-${[...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')}`;
+}
+
+export function studentFaceTemplateMeta(env = {}, row = {}) {
+  return {
+    workspaceId: clean(env.DYNAMAX_WORKSPACE_ID || env.FIREBASE_PROJECT_ID),
+    branchId: safeScopeId(row.BranchId || 'main'),
+    schoolSection: schoolSectionFor(row),
+    studentId: clean(row.StudentRef),
+    modelId: clean(row.ModelId || STUDENT_FACE_MODEL_ID),
+    templateVersion: Number(row.TemplateVersion || STUDENT_FACE_TEMPLATE_VERSION),
+    keyVersion: clean(row.EncryptionKeyVersion || env.FACE_TEMPLATE_KEY_VERSION || 'v1')
+  };
+}
+
+export function studentFaceTemplateEncryptionSecret(env = {}, template = {}) {
+  const currentVersion = clean(env.FACE_TEMPLATE_KEY_VERSION || 'v1');
+  const templateVersion = clean(template.EncryptionKeyVersion || 'v1');
+  if (templateVersion === currentVersion) return clean(env.FACE_TEMPLATE_ENCRYPTION_KEY);
+  let previous = {};
+  try {
+    previous = JSON.parse(clean(env.FACE_TEMPLATE_PREVIOUS_KEYS) || '{}');
+  } catch (_failure) {
+    throw new Error('The configured face-template keyring is invalid.');
+  }
+  const secret = clean(previous?.[templateVersion]);
+  if (secret.length < 24) throw new Error(`The face-template key ${templateVersion} is unavailable.`);
+  return secret;
+}
 
 function base64UrlEncode(bytes) {
   let binary = '';

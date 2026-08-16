@@ -75,8 +75,9 @@ supplied components with existing scores instead of clearing scores captured
 through another approved source. The desktop source uses the same protected
 online actions and reads XLSX files without adding a runtime package.
 The desktop source now includes a workspace-scoped SQLite CBT store in WAL mode,
-rotating local backups, transactional examination packages and rosters, hashed
-candidate access codes, short-lived hashed attempt tokens, authoritative server
+rotating local backups, transactional examination packages and rosters,
+encrypted student password verifiers and face templates, short-lived hashed
+attempt tokens, authoritative server
 timing, idempotent answer checkpoints and audited one-device-per-attempt
 enforcement with reasoned invigilator transfer. Its local LAN server exposes a
 single responsive examination client for Android tablets and Windows lab
@@ -84,7 +85,8 @@ computers, with device-local IndexedDB recovery, reconnection replay, heartbeat,
 focus/connectivity events, final submission and no service-worker candidate
 caching. The authorized desktop console starts and monitors the server, shows
 the school-network address and QR code, opens readiness sessions from current
-academic allocations, manages examination state and candidate access codes,
+academic allocations, securely imports the selected students' login identities,
+manages examination state,
 and performs controlled device transfers. Examination officers can now create
 native single-answer, multiple-answer, true/false, short and extended questions,
 attach validated JPEG/PNG question media, or create Document and Mapped Document
@@ -522,6 +524,7 @@ SQLite is the initial local server database. It stores:
 - examination definitions, versions and schedules;
 - local examination assets;
 - candidate roster and authorized allocations;
+- encrypted student login identities and one-use live-face challenges;
 - questions, options, answer keys and marks;
 - candidate attempts and responses;
 - autosave checkpoints and connection history;
@@ -578,8 +581,12 @@ other assets are optimized and progressively loaded for lower-powered tablets.
    examination begins.
 3. The local server starts an examination session and displays a local address
    and QR joining code.
-4. A candidate signs in with an examination-specific credential and is matched
-   to one authorized attempt.
+4. A candidate enters the examination code and admission number, then signs in
+   with their personal student password or a live check against their enrolled
+   face. The admission number is always matched to exactly one authorized
+   attempt before either proof is accepted. Password login uses a short-lived,
+   single-use challenge and sends only a derived proof; the typed password does
+   not leave the candidate device.
 5. The client loads the examination from the local server and continuously
    saves answers locally.
 6. A brief Wi-Fi interruption buffers recent answers on the device and resumes
@@ -607,6 +614,8 @@ The examination client must provide:
 - progressive loading of large document pages;
 - support for supported Android Chrome-family browsers and supported Windows
   browsers;
+- a clear password fallback when the browser or local origin cannot provide a
+  secure camera context for face verification;
 - client-side recovery buffering using an appropriate browser store such as
   IndexedDB;
 - no public or service-worker caching of another candidate's data; and
@@ -654,7 +663,15 @@ Operational safeguards include:
 
 The built-in controls include:
 
-- examination-specific candidate access codes;
+- admission-number login using a separately scoped student password or enrolled
+  face; parent login codes are never reused for CBT;
+- PBKDF2 password verifiers and face descriptors encrypted at rest in the
+  Windows-account-protected local identity vault;
+- one-use password challenge-response proofs so the personal password is never
+  posted to the local server;
+- a one-use, short-lived random blink or head-movement challenge before each
+  face login, with camera frames processed only on the candidate device and the
+  temporary descriptor hybrid-encrypted to the current local server key;
 - one active attempt per candidate;
 - server-controlled schedules and timing;
 - question and option randomization;
@@ -671,6 +688,13 @@ deterrents, not complete lockdown. School-managed Android tablets may later use
 kiosk/lock-task mode, and Windows ICT-lab machines may use a restricted
 examination profile. Any kiosk client must continue to use the same local
 server APIs and recovery model.
+
+Browsers normally allow camera access only from a secure or explicitly trusted
+origin. Therefore password login remains available on every supported offline
+client, while face login is enabled only on a school-approved browser/origin
+that exposes secure camera and Web Crypto APIs. A later managed Android or
+Windows wrapper may provide that trusted context without changing the server
+identity contract.
 
 ### 10.9 External CBT adapters
 

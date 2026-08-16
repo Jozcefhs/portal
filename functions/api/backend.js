@@ -58,6 +58,7 @@ import { assertOrganizationDepartmentWorkspaceAccess } from '../lib/organization
 import { handleExecutiveOfficeAction } from '../lib/executive-correspondence.js';
 import { handleStudentConductAction } from '../lib/student-conduct.js';
 import { handleAcademicManagementAction } from '../lib/academic-management.js';
+import { saveStudentLoginPassword } from '../lib/student-login-credentials.js';
 import { defaultModulesForRole } from '../lib/role-module-access.js';
 import { getWebBranding, saveWebBranding } from '../lib/web-branding.js';
 import { saveDocumentBranding } from '../lib/document-branding.js';
@@ -415,7 +416,22 @@ async function updateStudentProfile(env, body) {
   updated.UpdatedAt = nowIso();
   updated.UpdatedBy = clean(body.RecordedBy || body.UpdatedBy) || 'Student Register';
   const student = await saveStudent(env, updated);
-  return { ok: true, message: 'Student profile updated.', student };
+  const studentPassword = String(body.StudentLoginPassword || '');
+  let loginStatus = null;
+  if (studentPassword) {
+    loginStatus = await saveStudentLoginPassword(
+      env,
+      student,
+      studentPassword,
+      clean(body.RecordedBy || body.UpdatedBy) || 'Student Register'
+    );
+  }
+  return {
+    ok: true,
+    message: studentPassword ? 'Student profile and personal login password updated.' : 'Student profile updated.',
+    student,
+    loginStatus
+  };
 }
 
 function normalizeApplication(row, profile = {}) {
@@ -7462,6 +7478,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'previewAcademicScoreImport':
     case 'importAcademicScores':
     case 'rollbackAcademicScoreImport':
+    case 'prepareLocalCbtIdentityPackage':
     case 'moveAcademicStudentMembership':
     case 'withdrawAcademicStudentMembership':
     case 'reinstateAcademicStudentMembership':

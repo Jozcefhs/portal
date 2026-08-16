@@ -3,6 +3,7 @@ import { requireStaffSession } from '../lib/staff-auth.js';
 import { listSchoolCollection, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass } from '../lib/class-names.js';
 import { readJsonBody } from '../lib/request-security.js';
+import { saveStudentLoginPassword } from '../lib/student-login-credentials.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -69,9 +70,24 @@ export async function onRequestPost(context) {
     updated.UpdatedBy = user.displayName || user.username;
     const documentId = clean(existing.__id || existing.AdmissionNo || existing.AccountRef);
     const saved = await upsertSchoolDocument(env, 'students', documentId, updated);
+    const studentPassword = String(body.StudentLoginPassword || '');
+    let loginStatus = null;
+    if (studentPassword) {
+      loginStatus = await saveStudentLoginPassword(
+        env,
+        saved,
+        studentPassword,
+        user.displayName || user.username
+      );
+    }
     const student = { ...saved };
     delete student.WalletPinHash;
-    return Response.json({ ok: true, message: 'Student profile updated.', student });
+    return Response.json({
+      ok: true,
+      message: studentPassword ? 'Student profile and personal login password updated.' : 'Student profile updated.',
+      student,
+      loginStatus
+    });
   } catch (err) {
     return Response.json({ ok: false, message: err.message || String(err) }, { status: err.status || 500 });
   }

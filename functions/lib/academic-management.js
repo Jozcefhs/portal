@@ -1,10 +1,19 @@
-import { batchCommitDocuments, listCollection } from './firestore.js';
+import { batchCommitDocuments, getDocument, listCollection } from './firestore.js';
 import { enforceActorBranch } from './branch-scope.js';
 import { normalizeClassKey } from './class-names.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
 import { createNotification } from './notifications.js';
 import { academicPolicyScopeChain } from './academic-policy.js';
 import { loadAcademicPolicyView } from './academic-policy-store.js';
+import { getStudentLoginCredential } from './student-login-credentials.js';
+import {
+  STUDENT_FACE_MODEL_ID,
+  decryptFaceDescriptor,
+  faceTemplateIsUsable,
+  studentFaceTemplateDocumentId,
+  studentFaceTemplateEncryptionSecret,
+  studentFaceTemplateMeta
+} from './student-face-templates.js';
 import {
   getSchoolStructure, listSchoolCollection, safeScopeId, schoolSectionFor, scopedCollectionPath
 } from './school-scope.js';
@@ -34,6 +43,59 @@ import {
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 const nowIso = () => new Date().toISOString();
+const identityEncoder = new TextEncoder();
+
+function identityBase64Url(value) {
+  const bytes = typeof value === 'string' ? identityEncoder.encode(value) : new Uint8Array(value);
+  let binary = '';
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function identityPublicKeyBytes(pem) {
+  const normalized = clean(pem)
+    .replace(/\\n/g, '\n')
+    .replace('-----BEGIN PUBLIC KEY-----', '')
+    .replace('-----END PUBLIC KEY-----', '')
+    .replace(/\s+/g, '');
+  if (!normalized) throw failure('The local CBT encryption key is missing.');
+  try {
+    const binary = atob(normalized);
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch (_error) {
+    throw failure('The local CBT encryption key is invalid.');
+  }
+}
+
+export async function encryptLocalCbtIdentityPackage(publicKeyPem, payload, aad) {
+  let publicKey;
+  try {
+    publicKey = await crypto.subtle.importKey(
+      'spki',
+      identityPublicKeyBytes(publicKeyPem),
+      { name: 'RSA-OAEP', hash: 'SHA-256' },
+      false,
+      ['encrypt']
+    );
+  } catch (_error) {
+    throw failure('The local CBT encryption key is invalid.');
+  }
+  const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt']);
+  const rawKey = await crypto.subtle.exportKey('raw', key);
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await crypto.subtle.encrypt({
+    name: 'AES-GCM', iv: nonce, additionalData: identityEncoder.encode(aad)
+  }, key, identityEncoder.encode(JSON.stringify(payload)));
+  const wrappedKey = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, publicKey, rawKey);
+  return {
+    Version: 'dynamax-local-cbt-identity-v1',
+    Algorithm: 'RSA-OAEP-256+A256GCM',
+    Aad: aad,
+    WrappedKey: identityBase64Url(wrappedKey),
+    Nonce: identityBase64Url(nonce),
+    Ciphertext: identityBase64Url(ciphertext)
+  };
+}
 
 export const ACADEMIC_MANAGEMENT_COLLECTIONS = Object.freeze({
   sessions: 'academicSessions',
@@ -3519,6 +3581,116 @@ export async function rollbackAcademicScoreImport(env, user = {}, input = {}) {
   return academicOperationalResponse(env, user, input, scope, `${currentScores.length} imported student score${currentScores.length === 1 ? '' : 's'} rolled back.`);
 }
 
+export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageTimetables');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const requested = Array.isArray(input.StudentRefs) ? input.StudentRefs.map(clean).filter(Boolean) : [];
+  const studentRefs = [...new Set(requested.map(lower))];
+  if (!studentRefs.length) throw failure('Add at least one student to the local CBT roster.');
+  if (studentRefs.length > 1000) throw failure('A local CBT identity package cannot exceed 1,000 students.', 413);
+  const wanted = new Set(studentRefs);
+  const allStudents = await listSchoolCollection(env, 'students', {
+    branchId: scope.branchId,
+    schoolSectionAccess: scope.section
+  });
+  const studentsByRef = new Map();
+  allStudents.forEach((student) => {
+    if (safeScopeId(student.BranchId || 'main') !== scope.branchId) return;
+    if (schoolSectionFor(student) !== scope.section) return;
+    const reference = studentReference(student);
+    if (!wanted.has(lower(reference)) || studentsByRef.has(lower(reference))) return;
+    studentsByRef.set(lower(reference), student);
+  });
+
+  const identities = [];
+  const missing = [];
+  for (const normalizedReference of studentRefs) {
+    const student = studentsByRef.get(normalizedReference);
+    if (!student) {
+      missing.push({ StudentRef: requested.find((value) => lower(value) === normalizedReference) || normalizedReference, Reason: 'Student not found in this branch and school section.' });
+      continue;
+    }
+    const reference = studentReference(student);
+    const identity = {
+      StudentRef: reference,
+      DisplayName: clean(student.DisplayName || student.ApplicantName || student.StudentName) || reference,
+      Password: null,
+      Face: null
+    };
+    const credential = await getStudentLoginCredential(env, student);
+    if (credential && credential.Active !== false && clean(credential.PasswordHash)) {
+      identity.Password = {
+        Salt: clean(credential.Salt),
+        PasswordHash: clean(credential.PasswordHash),
+        PasswordIterations: Number(credential.PasswordIterations || 120000),
+        PasswordHashVersion: clean(credential.PasswordHashVersion)
+      };
+    }
+    const templatePath = scopedCollectionPath('studentFaceTemplates', scope.branchId, scope.section);
+    const template = await getDocument(
+      env,
+      templatePath,
+      await studentFaceTemplateDocumentId(reference)
+    ).catch(() => null);
+    if (template && faceTemplateIsUsable(template) && clean(template.DescriptorCiphertext)) {
+      try {
+        identity.Face = {
+          Descriptor: await decryptFaceDescriptor(
+            template,
+            studentFaceTemplateEncryptionSecret(env, template),
+            studentFaceTemplateMeta(env, template)
+          ),
+          ModelId: clean(template.ModelId || STUDENT_FACE_MODEL_ID),
+          TemplateVersion: Number(template.TemplateVersion || 1),
+          TemplateExpiresAt: clean(template.TemplateExpiresAt)
+        };
+      } catch (_error) {
+        identity.Face = null;
+      }
+    }
+    if (!identity.Password && !identity.Face) {
+      missing.push({
+        StudentRef: reference,
+        DisplayName: identity.DisplayName,
+        Reason: 'Set a student password or enroll an active face template before using local CBT.'
+      });
+    }
+    identities.push(identity);
+  }
+
+  const aad = [
+    'dynamax-local-cbt-identity-v1',
+    clean(env.DYNAMAX_WORKSPACE_ID || env.FIREBASE_PROJECT_ID),
+    scope.branchId,
+    scope.section
+  ].join('|');
+  const envelope = await encryptLocalCbtIdentityPackage(input.PublicKeyPem, {
+    Version: 1,
+    WorkspaceId: clean(env.DYNAMAX_WORKSPACE_ID || env.FIREBASE_PROJECT_ID),
+    BranchId: scope.branchId,
+    SchoolSection: scope.section,
+    GeneratedAt: nowIso(),
+    FaceModelId: STUDENT_FACE_MODEL_ID,
+    Identities: identities
+  }, aad);
+  const readyCount = identities.filter((identity) => identity.Password || identity.Face).length;
+  return {
+    ok: true,
+    message: missing.length
+      ? `${readyCount} student login${readyCount === 1 ? '' : 's'} ready; ${missing.length} require a password or face enrollment.`
+      : `${identities.length} student login${identities.length === 1 ? '' : 's'} secured for offline CBT.`,
+    envelope,
+    summary: {
+      Requested: studentRefs.length,
+      Packaged: identities.length,
+      PasswordReady: identities.filter((identity) => identity.Password).length,
+      FaceReady: identities.filter((identity) => identity.Face).length,
+      Missing: missing
+    }
+  };
+}
+
 export async function handleAcademicManagementAction(env, user = {}, input = {}) {
   const action = lower(input.action || input.Action).replace(/[^a-z]/g, '');
   if (['bootstrap', 'list', 'getacademicmanagement'].includes(action)) return bootstrapAcademicManagement(env, user, input);
@@ -3562,6 +3734,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['previewacademicscoreimport', 'previewscoresheetimport'].includes(action)) return previewAcademicScoreImport(env, user, input);
   if (['importacademicscores', 'commitscoreimport'].includes(action)) return importAcademicScores(env, user, input);
   if (['rollbackacademicscoreimport', 'rollbackscoreimport'].includes(action)) return rollbackAcademicScoreImport(env, user, input);
+  if (['preparelocalcbtidentitypackage', 'preparecbtidentitypackage'].includes(action)) return prepareLocalCbtIdentityPackage(env, user, input);
   if (['manageacademicstudentmembership', 'moveacademicstudentmembership', 'withdrawacademicstudentmembership', 'reinstateacademicstudentmembership'].includes(action)) {
     const inferredOperation = ({
       withdrawacademicstudentmembership: 'withdraw',
