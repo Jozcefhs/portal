@@ -138,7 +138,7 @@ let academicManagementView = 'classrooms';
 let academicManagementTaskViews = {
   classrooms: 'register', structure: 'classes', bulkSetup: 'classes', departments: 'register',
   offerings: 'seniorChoices', teachers: 'assign', students: 'allocate',
-  timetable: 'builder', attendance: 'mark', scorebook: 'entry'
+  timetable: 'builder', attendance: 'mark', scorebook: 'entry', cbt: 'create'
 };
 let academicManagementFilters = { section: '', sessionId: '', termId: '' };
 let academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
@@ -147,6 +147,11 @@ let academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '
 let academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
 let academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
 let academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
+let academicCbtDraft = {
+  step: 1, testId: '', revisionToken: '', clientRequestId: '', classroomId: '', contextKey: '',
+  componentId: '', startDate: '', startTime: '', durationMinutes: '40', questionCount: '20',
+  optionStyle: 'ABCD', answerKey: [], file: null
+};
 const organizationCommerceCarts = {
   organizationStore: new Map(),
   restaurant: new Map()
@@ -9466,7 +9471,7 @@ async function loadStudentConduct() {
 }
 
 function academicRecordId(row = {}) {
-  return clean(row.RecordId || row.ImportId || row.ScoreId || row.SheetId || row.CorrectionId || row.AttendanceId || row.EntryId || row.VersionId || row.TimetableSettingId
+  return clean(row.RecordId || row.CbtTestId || row.ImportId || row.ScoreId || row.SheetId || row.CorrectionId || row.AttendanceId || row.EntryId || row.VersionId || row.TimetableSettingId
     || row.MovementId || row.MembershipId || row.AllocationId || row.OfferingId
     || row.DepartmentId || row.SubjectId || row.ArmId || row.ArmTemplateId || row.ClassId || row.TermId || row.SessionId);
 }
@@ -9835,7 +9840,8 @@ function academicCurrentRows(data = academicManagementData || {}) {
     attendanceCorrections: periodRows(data.attendanceCorrections || []),
     scoreSheets: periodRows(data.scoreSheets || []),
     studentScores: periodRows(data.studentScores || []),
-    scoreImports: periodRows(data.scoreImports || [])
+    scoreImports: periodRows(data.scoreImports || []),
+    cbtTests: periodRows(data.cbtTests || [])
   };
 }
 
@@ -9937,6 +9943,10 @@ function academicTaskDefinitions(view, root) {
       { key: 'workflow', label: 'Review and approval', title: 'Score-sheet workflow', description: 'Submit complete sheets, review them, approve them and lock final score records without silent edits.', nodes: nodes(register('Score Sheet Workflow')) },
       { key: 'imports', label: 'Spreadsheet imports', title: 'Preview and import scores', description: 'Download a stable template, preview CSV or XLSX rows, choose the commit policy, and roll back unpublished imports.', nodes: nodes(form('[data-academic-score-import]'), register('Score Import History')) },
       { key: 'scheme', label: 'Assessment scheme', title: 'Active components and grading', description: 'Review the activated policy revision used to validate scores, calculate weighted totals and assign grades.', nodes: nodes(form('[data-academic-assessment-scheme]')) }
+    ],
+    cbt: [
+      { key: 'create', label: 'New CBT test', title: 'Create and schedule a CBT test', description: 'Enter the test details, then upload its question paper and mark one correct answer per question.', nodes: nodes(form('[data-academic-cbt-editor]')) },
+      { key: 'register', label: 'Scheduled tests', title: 'Scheduled CBT tests', description: 'Review online tests and correct or delete a package before it reaches a local CBT server.', nodes: nodes(register('Scheduled CBT Tests')) }
     ]
   };
   return (definitions[view] || []).filter((task) => task.nodes.length);
@@ -11188,6 +11198,159 @@ function academicScorebookWorkspace(data, rows) {
   return `${scorebook}${workflow}${importPanel}${imports}${schemePanel}`;
 }
 
+const ACADEMIC_CBT_OPTION_STYLES = Object.freeze({
+  ABC: ['A', 'B', 'C'],
+  ABCD: ['A', 'B', 'C', 'D'],
+  ABCDE: ['A', 'B', 'C', 'D', 'E'],
+  ABCDEF: ['A', 'B', 'C', 'D', 'E', 'F'],
+  TRUE_FALSE: ['True', 'False']
+});
+
+function academicCbtRequestId() {
+  return window.crypto?.randomUUID?.() || `cbt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function academicCbtLocalParts(value = '') {
+  const date = value ? new Date(value) : new Date(Date.now() + 30 * 60 * 1000);
+  if (!Number.isFinite(date.getTime())) return { date: '', time: '' };
+  if (!value) date.setMinutes(Math.ceil(date.getMinutes() / 15) * 15, 0, 0);
+  const pad = (number) => String(number).padStart(2, '0');
+  return {
+    date: `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+    time: `${pad(date.getHours())}:${pad(date.getMinutes())}`
+  };
+}
+
+function resetAcademicCbtDraft() {
+  const schedule = academicCbtLocalParts();
+  academicCbtDraft = {
+    step: 1, testId: '', revisionToken: '', clientRequestId: academicCbtRequestId(),
+    classroomId: '', contextKey: '', componentId: '', startDate: schedule.date,
+    startTime: schedule.time, durationMinutes: '40', questionCount: '20',
+    optionStyle: 'ABCD', answerKey: [], file: null
+  };
+}
+
+function academicCbtContexts(data, rows) {
+  const classrooms = rows.arms.filter((row) => academicIsActive(row)
+    && (row.IsClassroom === true || /^(yes|true|1)$/i.test(clean(row.IsClassroom))));
+  const allocations = rows.teacherAllocations.filter((row) => academicIsActive(row)
+    && row.AllocationRole === 'Subject Teacher' && clean(row.SubjectId));
+  const contexts = [];
+  const seen = new Set();
+  allocations.forEach((allocation) => {
+    classrooms.filter((arm) => arm.ClassId === allocation.ClassId
+      && (!allocation.ArmId || allocation.ArmId === arm.ArmId)).forEach((arm) => {
+      const roster = rows.studentMemberships.filter((membership) => academicIsActive(membership)
+        && membership.ClassId === allocation.ClassId && membership.ArmId === arm.ArmId
+        && (membership.SubjectIds || []).includes(allocation.SubjectId));
+      if (!roster.length) return;
+      const teacherUsername = clean(allocation.TeacherUsername).toLowerCase();
+      const key = `${arm.ArmId}|${allocation.SubjectId}|${teacherUsername}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      contexts.push({
+        key, classId: allocation.ClassId, armId: arm.ArmId, subjectId: allocation.SubjectId,
+        teacherUsername, rosterCount: roster.length,
+        classroomLabel: `${academicLabel(rows.classes, allocation.ClassId)} / ${clean(arm.Name)}`,
+        subjectLabel: academicLabel(rows.subjects, allocation.SubjectId),
+        teacherLabel: academicLabel(data.staff, allocation.TeacherUsername, allocation.TeacherUsername)
+      });
+    });
+  });
+  return contexts.sort((left, right) => left.classroomLabel.localeCompare(right.classroomLabel, undefined, { numeric: true, sensitivity: 'base' })
+    || left.subjectLabel.localeCompare(right.subjectLabel, undefined, { sensitivity: 'base' })
+    || left.teacherLabel.localeCompare(right.teacherLabel, undefined, { sensitivity: 'base' }));
+}
+
+function academicCbtStatus(record = {}) {
+  if (clean(record.LocalDownloadedAt)) return { label: 'Synced locally', className: 'synced' };
+  const now = Date.now();
+  const starts = new Date(record.StartsAt).getTime();
+  const ends = new Date(record.EndsAt).getTime();
+  if (Number.isFinite(ends) && ends <= now) return { label: 'Ended', className: 'ended' };
+  if (Number.isFinite(starts) && starts <= now) return { label: 'Active', className: 'active' };
+  return { label: 'Scheduled', className: 'scheduled' };
+}
+
+function academicCbtWorkspace(data, rows) {
+  if (!academicCbtDraft.clientRequestId) resetAcademicCbtDraft();
+  const contexts = academicCbtContexts(data, rows);
+  const classroomContexts = [...new Map(contexts.map((context) => [context.armId, context])).values()];
+  if (!contexts.some((context) => context.armId === academicCbtDraft.classroomId)) {
+    academicCbtDraft.classroomId = clean(classroomContexts[0]?.armId);
+    academicCbtDraft.contextKey = '';
+  }
+  const subjectContexts = contexts.filter((context) => context.armId === academicCbtDraft.classroomId);
+  if (!subjectContexts.some((context) => context.key === academicCbtDraft.contextKey)) {
+    academicCbtDraft.contextKey = clean(subjectContexts[0]?.key);
+  }
+  const selectedContext = subjectContexts.find((context) => context.key === academicCbtDraft.contextKey) || null;
+  const components = (data.assessmentScheme?.Ready ? data.assessmentScheme.Components : []).filter((component) => (
+    ['any', 'built-in-cbt'].includes(clean(component.SourceMode || 'any').toLowerCase())
+      && Number(component.MaximumScore) > 0
+  ));
+  if (!components.some((component) => component.Id === academicCbtDraft.componentId)) {
+    academicCbtDraft.componentId = clean(components[0]?.Id);
+  }
+  const component = components.find((row) => row.Id === academicCbtDraft.componentId) || null;
+  const options = ACADEMIC_CBT_OPTION_STYLES[academicCbtDraft.optionStyle] || ACADEMIC_CBT_OPTION_STYLES.ABCD;
+  const questionCount = Math.max(1, Math.min(200, Number(academicCbtDraft.questionCount || 20)));
+  const answered = academicCbtDraft.answerKey.filter((answer, index) => index < questionCount && options.includes(answer)).length;
+  const scheduleReady = contexts.length && components.length;
+  const editing = Boolean(academicCbtDraft.testId);
+
+  const stepOne = `<div class="academic-cbt-details" data-academic-cbt-step="1"${academicCbtDraft.step === 1 ? '' : ' hidden'}>
+    <div class="academic-management-editor-heading"><div><small>Step 1 of 2</small><h3>${editing ? 'Correct scheduled test' : 'Test details and schedule'}</h3><p class="muted">Only your allocated classrooms and subjects with an active student roster are available.</p></div>${editing ? '<button type="button" data-academic-cbt-new>Clear</button>' : ''}</div>
+    ${!contexts.length ? '<p class="status bad">No eligible subject-teacher classroom allocation with students was found for this period.</p>' : ''}
+    ${!components.length ? '<p class="status bad">No Test Type currently accepts Built-in CBT scores. Configure an assessment component in Account &amp; settings first.</p>' : ''}
+    <div class="academic-cbt-detail-grid">
+      <label>Test Type<small>Created from the active assessment components.</small><select name="AssessmentComponentId" data-academic-cbt-component required>${academicSelectOptions(components.map((row) => ({ ...row, RecordId: row.Id })), component?.Id || '', (row) => row.Name, 'Choose Test Type')}</select></label>
+      <label>Overall mark<small>The maximum score configured for this Test Type.</small><input data-academic-cbt-maximum value="${escapeHtml(component?.MaximumScore ?? '')}" readonly></label>
+      <label>Classroom<small>Select the exact class and arm taking the test.</small><select name="ClassroomId" data-academic-cbt-classroom required>${academicSelectOptions(classroomContexts.map((row) => ({ RecordId: row.armId, Name: row.classroomLabel })), academicCbtDraft.classroomId, (row) => row.Name, 'Choose classroom')}</select></label>
+      <label>Subject<small>The teacher is taken from the saved allocation.</small><select name="ContextKey" data-academic-cbt-context required>${academicSelectOptions(subjectContexts.map((row) => ({ RecordId: row.key, Name: `${row.subjectLabel}${subjectContexts.filter((item) => item.subjectId === row.subjectId).length > 1 ? ` · ${row.teacherLabel}` : ''}` })), academicCbtDraft.contextKey, (row) => row.Name, 'Choose subject')}</select></label>
+      <label>Subject teacher<small>The account responsible for this test.</small><input value="${escapeHtml(selectedContext?.teacherLabel || '')}" readonly></label>
+      <label>Scheduled date<small>Students cannot open the test before this date.</small><input type="date" name="StartDate" value="${escapeHtml(academicCbtDraft.startDate)}" required></label>
+      <label>Start time<small>The test becomes active at this local school time.</small><input type="time" name="StartTime" value="${escapeHtml(academicCbtDraft.startTime)}" required></label>
+      <label>Duration (minutes)<small>The test closes automatically after this time.</small><input type="number" name="DurationMinutes" min="1" max="480" value="${escapeHtml(academicCbtDraft.durationMinutes)}" required></label>
+      <label>Number of questions<small>Choose between 1 and 200 questions.</small><input type="number" name="NumberOfQuestions" min="1" max="200" value="${escapeHtml(academicCbtDraft.questionCount)}" required></label>
+      <label>Multiple-choice style<small>Controls the answer choices shown to students.</small><select name="OptionStyle" data-academic-cbt-option-style>${Object.keys(ACADEMIC_CBT_OPTION_STYLES).map((key) => `<option value="${key}"${key === academicCbtDraft.optionStyle ? ' selected' : ''}>${key === 'TRUE_FALSE' ? 'True / False' : key}</option>`).join('')}</select></label>
+    </div>
+    <div class="academic-cbt-roster-note"><strong>${selectedContext?.rosterCount || 0} students</strong><span>The online server validates and snapshots this subject roster when the test is saved.</span></div>
+    <button type="submit"${scheduleReady && selectedContext ? '' : ' disabled'}>Next: upload paper and answers</button>
+  </div>`;
+
+  const answerRows = Array.from({ length: questionCount }, (_unused, index) => `<div class="academic-cbt-answer-row"><strong>${index + 1}</strong><div>${options.map((answer) => `<label><input type="radio" name="AcademicCbtAnswer-${index}" value="${escapeHtml(answer)}" data-academic-cbt-answer="${index}"${academicCbtDraft.answerKey[index] === answer ? ' checked' : ''}><span>${escapeHtml(answer)}</span></label>`).join('')}</div></div>`).join('');
+  const stepTwo = `<div class="academic-cbt-paper-step" data-academic-cbt-step="2"${academicCbtDraft.step === 2 ? '' : ' hidden'}>
+    <div class="academic-management-editor-heading"><div><small>Step 2 of 2</small><h3>Question paper and correct answers</h3><p class="muted">Upload one PDF, PNG or JPG paper, then select exactly one answer for every question.</p></div><strong data-academic-cbt-answer-count>${answered} of ${questionCount}</strong></div>
+    <div class="academic-cbt-paper-grid">
+      <section class="academic-cbt-answer-key"><header><div><strong>Correct answer key</strong><span>${escapeHtml(academicCbtDraft.optionStyle === 'TRUE_FALSE' ? 'True / False' : academicCbtDraft.optionStyle)}</span></div><button type="button" class="secondary" data-academic-cbt-reset-answers>Reset answers</button></header><div>${answerRows}</div></section>
+      <section class="academic-cbt-upload-well">
+        <div><small>Question paper</small><h4>${escapeHtml(component?.Name || 'CBT test')}</h4><p>${escapeHtml(selectedContext?.classroomLabel || '')}<br>${escapeHtml(selectedContext?.subjectLabel || '')} · ${questionCount} questions · ${escapeHtml(academicCbtDraft.durationMinutes)} minutes</p></div>
+        <label class="academic-cbt-file-button">Choose PDF, PNG or JPG<input type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" data-academic-cbt-paper></label>
+        <span data-academic-cbt-file-name>${escapeHtml(academicCbtDraft.file?.name || 'No file selected')}</span>
+        <small>Maximum file size: 8 MB. The paper is stored securely in the organisation’s Google Drive.</small>
+      </section>
+    </div>
+    <div class="academic-cbt-form-actions"><button type="button" class="secondary" data-academic-cbt-back>Back</button><button type="submit"${answered === questionCount && academicCbtDraft.file ? '' : ' disabled'} data-academic-cbt-save>${editing ? 'Save corrected test' : 'Create scheduled test'}</button></div>
+  </div>`;
+
+  const editor = `<form class="academic-management-editor academic-management-editor-wide academic-cbt-editor" data-academic-cbt-editor>${stepOne}${stepTwo}</form>`;
+  const register = table('Scheduled CBT Tests', rows.cbtTests, [
+    { label: 'Date and time', value: (row) => new Date(row.StartsAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) },
+    { label: 'Test Type', value: (row) => `${row.AssessmentComponentName} / ${row.MaximumScore}` },
+    { label: 'Classroom', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
+    { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId, row.SubjectName) },
+    { label: 'Questions', value: (row) => row.NumberOfQuestions },
+    { label: 'Students', value: (row) => row.RosterCount },
+    { label: 'Status', render: (row) => { const status = academicCbtStatus(row); return `<span class="academic-cbt-status academic-cbt-status-${status.className}">${escapeHtml(status.label)}</span>`; } },
+    { label: 'Actions', render: (row) => clean(row.LocalDownloadedAt)
+      ? '<span class="muted">Locked after local sync</span>'
+      : `<div class="academic-management-row-actions"><button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-edit="${escapeHtml(row.CbtTestId)}" title="Edit test" aria-label="Edit test"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action academic-archive-action" data-academic-cbt-delete="${escapeHtml(row.CbtTestId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Delete test" aria-label="Delete test"><span aria-hidden="true">&#128465;</span></button></div>` }
+  ], { emptyMessage: 'No online CBT tests have been scheduled for this period.' });
+  return `${editor}${register}`;
+}
+
 function academicManagementHeader(data, rows, message = '') {
   const sessions = (data.sessions || []).filter(academicIsActive);
   const terms = (data.terms || []).filter((row) => !academicManagementFilters.sessionId || row.SessionId === academicManagementFilters.sessionId);
@@ -11195,9 +11358,10 @@ function academicManagementHeader(data, rows, message = '') {
   const sections = (data.sections || ['primary', 'secondary']).filter((section) => (
     !['primary', 'secondary'].includes(permittedSection) || section === permittedSection
   ));
+  const cbtView = data.permissions?.canCreateCbt ? [['cbt', 'CBT']] : [];
   const views = data.permissions?.teacherView
-    ? [['classrooms', 'Classrooms'], ['structure', 'Catalogue'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['teachers', 'My allocations'], ['students', 'My registers'], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook']]
-    : [['classrooms', 'Classrooms'], ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', 'Student records'], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook']];
+    ? [['classrooms', 'Classrooms'], ['structure', 'Catalogue'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['teachers', 'My allocations'], ['students', 'My registers'], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook'], ...cbtView]
+    : [['classrooms', 'Classrooms'], ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', 'Student records'], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook'], ...cbtView];
   return `<div class="academic-management-heading">
     <div><p class="eyebrow">AM-002 to AM-010</p><h2>Academic Management</h2><p class="muted">Branch-isolated structure, timetables, attendance and policy-driven assessment records.</p></div>
     <button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button>
@@ -11242,6 +11406,7 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
   else if (academicManagementView === 'timetable') workspace = academicTimetableWorkspace(data, rows);
   else if (academicManagementView === 'attendance') workspace = academicAttendanceWorkspace(data, rows);
   else if (academicManagementView === 'scorebook') workspace = academicScorebookWorkspace(data, rows);
+  else if (academicManagementView === 'cbt') workspace = academicCbtWorkspace(data, rows);
   else workspace = academicStructureWorkspace(data, rows);
   panelEl.innerHTML = `${academicManagementHeader(data, rows, message)}<section class="academic-management-workspace">${workspace}</section>`;
   organizeAcademicManagementWorkspace(academicManagementView);
@@ -11520,8 +11685,216 @@ async function loadAcademicScorebookContext() {
   } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
 }
 
+function readAcademicCbtStepOne(form) {
+  academicCbtDraft.componentId = clean(form.elements.AssessmentComponentId?.value);
+  academicCbtDraft.classroomId = clean(form.elements.ClassroomId?.value);
+  academicCbtDraft.contextKey = clean(form.elements.ContextKey?.value);
+  academicCbtDraft.startDate = clean(form.elements.StartDate?.value);
+  academicCbtDraft.startTime = clean(form.elements.StartTime?.value);
+  academicCbtDraft.durationMinutes = clean(form.elements.DurationMinutes?.value);
+  academicCbtDraft.questionCount = clean(form.elements.NumberOfQuestions?.value);
+  academicCbtDraft.optionStyle = clean(form.elements.OptionStyle?.value) || 'ABCD';
+}
+
+function academicCbtSelectedContext() {
+  const rows = academicCurrentRows(academicManagementData || {});
+  return academicCbtContexts(academicManagementData || {}, rows)
+    .find((context) => context.key === academicCbtDraft.contextKey) || null;
+}
+
+async function uploadAcademicCbtPaper(payload, idempotencyKey) {
+  const branchId = clean(selectedBranchId || currentUser?.branchId);
+  if (!branchId || branchId === 'all') throw new Error('Select one school branch before scheduling a CBT test.');
+  const response = await staffFetch('/api/staff-cbt-paper', {
+    method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify({ BranchId: branchId, ...payload })
+  });
+  const data = await response.json().catch(() => ({ ok: false, message: 'The CBT upload did not return JSON.' }));
+  if (response.status === 401) showLogin(data.message || 'Your staff session has expired.', 'bad');
+  if (!response.ok || !data.ok) {
+    const error = new Error(data.message || 'The CBT test could not be scheduled.');
+    error.outcomeUncertain = Boolean(data.outcomeUncertain);
+    throw error;
+  }
+  return data;
+}
+
 function bindAcademicManagement() {
   panelEl.querySelectorAll('[data-academic-checkbox-field]').forEach(bindAcademicCheckboxField);
+  const cbtForm = panelEl.querySelector('[data-academic-cbt-editor]');
+  if (cbtForm) {
+    const refreshCbtEditor = () => {
+      readAcademicCbtStepOne(cbtForm);
+      renderAcademicManagement(academicManagementData || {});
+    };
+    cbtForm.querySelector('[data-academic-cbt-component]')?.addEventListener('change', refreshCbtEditor);
+    cbtForm.querySelector('[data-academic-cbt-classroom]')?.addEventListener('change', (event) => {
+      readAcademicCbtStepOne(cbtForm);
+      academicCbtDraft.classroomId = clean(event.target.value);
+      academicCbtDraft.contextKey = '';
+      renderAcademicManagement(academicManagementData || {});
+    });
+    cbtForm.querySelector('[data-academic-cbt-context]')?.addEventListener('change', refreshCbtEditor);
+    cbtForm.querySelector('[data-academic-cbt-paper]')?.addEventListener('change', (event) => {
+      const file = event.target.files?.[0] || null;
+      try {
+        validateFinanceAttachmentFile(file);
+        academicCbtDraft.file = file;
+        const name = cbtForm.querySelector('[data-academic-cbt-file-name]');
+        if (name) name.textContent = file?.name || 'No file selected';
+        const save = cbtForm.querySelector('[data-academic-cbt-save]');
+        if (save) {
+          const questionCount = Number(academicCbtDraft.questionCount || 0);
+          save.disabled = !file || academicCbtDraft.answerKey.slice(0, questionCount).filter(Boolean).length !== questionCount;
+        }
+      } catch (error) {
+        academicCbtDraft.file = null;
+        event.target.value = '';
+        setStatus(document.getElementById('academicManagementStatus'), error.message || String(error), 'bad');
+      }
+    });
+    cbtForm.querySelectorAll('[data-academic-cbt-answer]').forEach((input) => input.addEventListener('change', (event) => {
+      const index = Number(event.target.dataset.academicCbtAnswer);
+      academicCbtDraft.answerKey[index] = event.target.value;
+      const questionCount = Number(academicCbtDraft.questionCount || 0);
+      const options = ACADEMIC_CBT_OPTION_STYLES[academicCbtDraft.optionStyle] || [];
+      const answered = academicCbtDraft.answerKey.slice(0, questionCount).filter((answer) => options.includes(answer)).length;
+      const counter = cbtForm.querySelector('[data-academic-cbt-answer-count]');
+      if (counter) counter.textContent = `${answered} of ${questionCount}`;
+      const save = cbtForm.querySelector('[data-academic-cbt-save]');
+      if (save) save.disabled = answered !== questionCount || !academicCbtDraft.file;
+    }));
+    cbtForm.querySelector('[data-academic-cbt-reset-answers]')?.addEventListener('click', () => {
+      academicCbtDraft.answerKey = [];
+      cbtForm.querySelectorAll('[data-academic-cbt-answer]').forEach((input) => { input.checked = false; });
+      const counter = cbtForm.querySelector('[data-academic-cbt-answer-count]');
+      if (counter) counter.textContent = `0 of ${academicCbtDraft.questionCount}`;
+      const save = cbtForm.querySelector('[data-academic-cbt-save]');
+      if (save) save.disabled = true;
+    });
+    cbtForm.querySelector('[data-academic-cbt-back]')?.addEventListener('click', () => {
+      academicCbtDraft.step = 1;
+      renderAcademicManagement(academicManagementData || {});
+    });
+    cbtForm.querySelector('[data-academic-cbt-new]')?.addEventListener('click', () => {
+      resetAcademicCbtDraft();
+      renderAcademicManagement(academicManagementData || {});
+    });
+    cbtForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const status = document.getElementById('academicManagementStatus');
+      if (academicCbtDraft.step === 1) {
+        readAcademicCbtStepOne(cbtForm);
+        const context = academicCbtSelectedContext();
+        const questionCount = Number(academicCbtDraft.questionCount);
+        const duration = Number(academicCbtDraft.durationMinutes);
+        if (!context) return setStatus(status, 'Choose an allocated classroom and subject.', 'bad');
+        if (!academicCbtDraft.componentId) return setStatus(status, 'Choose a Test Type.', 'bad');
+        if (!Number.isInteger(questionCount) || questionCount < 1 || questionCount > 200) return setStatus(status, 'Number of questions must be between 1 and 200.', 'bad');
+        if (!Number.isInteger(duration) || duration < 1 || duration > 480) return setStatus(status, 'Duration must be between 1 and 480 minutes.', 'bad');
+        const startsAt = new Date(`${academicCbtDraft.startDate}T${academicCbtDraft.startTime}:00`);
+        if (!Number.isFinite(startsAt.getTime())) return setStatus(status, 'Choose a valid scheduled date and start time.', 'bad');
+        if (startsAt.getTime() + duration * 60 * 1000 <= Date.now()) return setStatus(status, 'The test schedule has already ended. Choose a current or future time.', 'bad');
+        const options = ACADEMIC_CBT_OPTION_STYLES[academicCbtDraft.optionStyle] || [];
+        academicCbtDraft.answerKey = Array.from({ length: questionCount }, (_unused, index) => options.includes(academicCbtDraft.answerKey[index]) ? academicCbtDraft.answerKey[index] : '');
+        academicCbtDraft.file = null;
+        academicCbtDraft.step = 2;
+        renderAcademicManagement(academicManagementData || {});
+        return;
+      }
+      const context = academicCbtSelectedContext();
+      const file = academicCbtDraft.file;
+      const questionCount = Number(academicCbtDraft.questionCount);
+      const options = ACADEMIC_CBT_OPTION_STYLES[academicCbtDraft.optionStyle] || [];
+      const answerKey = academicCbtDraft.answerKey.slice(0, questionCount);
+      try {
+        if (!context) throw new Error('The selected subject-teacher allocation is no longer available.');
+        validateFinanceAttachmentFile(file);
+        if (answerKey.length !== questionCount || answerKey.some((answer) => !options.includes(answer))) throw new Error('Select one correct answer for every question.');
+        const submit = cbtForm.querySelector('[data-academic-cbt-save]');
+        await runButtonAction(submit, 'Uploading...', async () => {
+          const fileBase64 = await readFinanceAttachmentBase64(file);
+          const startsAt = new Date(`${academicCbtDraft.startDate}T${academicCbtDraft.startTime}:00`).toISOString();
+          const result = await uploadAcademicCbtPaper({
+            SchoolSection: academicManagementFilters.section,
+            SessionId: academicManagementFilters.sessionId,
+            TermId: academicManagementFilters.termId,
+            ClassId: context.classId,
+            ArmId: context.armId,
+            SubjectId: context.subjectId,
+            TeacherUsername: context.teacherUsername,
+            AssessmentComponentId: academicCbtDraft.componentId,
+            StartsAt: startsAt,
+            DurationMinutes: Number(academicCbtDraft.durationMinutes),
+            NumberOfQuestions: questionCount,
+            OptionStyle: academicCbtDraft.optionStyle,
+            AnswerKey: answerKey,
+            CbtTestId: academicCbtDraft.testId,
+            RevisionToken: academicCbtDraft.revisionToken,
+            ClientRequestId: academicCbtDraft.clientRequestId,
+            FileName: file.name,
+            FileBase64: fileBase64
+          }, academicCbtDraft.clientRequestId);
+          resetAcademicCbtDraft();
+          academicManagementTaskViews.cbt = 'register';
+          await loadAcademicManagement({ message: result.message || 'CBT test scheduled online.' });
+        });
+      } catch (error) {
+        const prefix = error.outcomeUncertain ? 'Upload outcome is uncertain. Refresh the scheduled-test register before retrying. ' : '';
+        setStatus(status, `${prefix}${error.message || String(error)}`, 'bad');
+      }
+    });
+  }
+  panelEl.querySelectorAll('[data-academic-cbt-edit]').forEach((button) => button.addEventListener('click', () => {
+    const record = academicFind(academicManagementData?.cbtTests || [], button.dataset.academicCbtEdit);
+    if (!record || clean(record.LocalDownloadedAt)) return;
+    const schedule = academicCbtLocalParts(record.StartsAt);
+    academicCbtDraft = {
+      step: 1,
+      testId: record.CbtTestId,
+      revisionToken: record.RevisionToken,
+      clientRequestId: academicCbtRequestId(),
+      classroomId: record.ArmId,
+      contextKey: `${record.ArmId}|${record.SubjectId}|${clean(record.TeacherUsername).toLowerCase()}`,
+      componentId: record.AssessmentComponentId,
+      startDate: schedule.date,
+      startTime: schedule.time,
+      durationMinutes: String(record.DurationMinutes || 40),
+      questionCount: String(record.NumberOfQuestions || 20),
+      optionStyle: record.OptionStyle || 'ABCD',
+      answerKey: [...(record.AnswerKey || [])],
+      file: null
+    };
+    academicManagementTaskViews.cbt = 'create';
+    renderAcademicManagement(academicManagementData || {});
+  }));
+  panelEl.querySelectorAll('[data-academic-cbt-delete]').forEach((button) => button.addEventListener('click', async () => {
+    const reason = clean(await window.DynamaxDialogs.prompt({
+      title: 'Delete scheduled CBT test',
+      message: 'Delete this online test and its Google Drive paper? This is allowed only before local CBT synchronization.',
+      label: 'Reason for deletion',
+      placeholder: 'Created in error',
+      required: true,
+      tone: 'danger',
+      confirmText: 'Delete test'
+    }));
+    if (!reason) return;
+    await runButtonAction(button, 'Deleting...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('deleteAcademicCbtTest', {
+          SchoolSection: academicManagementFilters.section,
+          SessionId: academicManagementFilters.sessionId,
+          TermId: academicManagementFilters.termId,
+          CbtTestId: button.dataset.academicCbtDelete,
+          RevisionToken: button.dataset.academicRevision,
+          Reason: reason
+        });
+        renderAcademicManagement(data, data.message || 'The CBT test was deleted.');
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  }));
   const seniorChoiceForm = panelEl.querySelector('[data-academic-senior-choice-subjects]');
   if (seniorChoiceForm) {
     setAcademicCheckedValues(seniorChoiceForm, 'TradeSubjectIds', (academicManagementData?.subjects || [])
@@ -11540,6 +11913,12 @@ function bindAcademicManagement() {
     });
   }
   panelEl.querySelectorAll('[data-academic-task]').forEach((button) => button.addEventListener('click', () => {
+    if (academicManagementView === 'cbt' && button.dataset.academicTask === 'create') {
+      resetAcademicCbtDraft();
+      academicManagementTaskViews.cbt = 'create';
+      renderAcademicManagement(academicManagementData || {});
+      return;
+    }
     showAcademicManagementTask(academicManagementView, button.dataset.academicTask, { focus: true });
   }));
   panelEl.querySelectorAll('[data-academic-view]').forEach((button) => button.addEventListener('click', () => {

@@ -5,6 +5,9 @@ import { staffRecordMatchesEdition } from './records-desk.js';
 import { createNotification } from './notifications.js';
 import { academicPolicyScopeChain } from './academic-policy.js';
 import { loadAcademicPolicyView } from './academic-policy-store.js';
+import { resolveDocumentStorage } from './document-storage.js';
+import { safeStoredDocument } from './document-files.js';
+import { academicCbtPaperDigest } from './academic-cbt-papers.js';
 import { getStudentLoginCredential } from './student-login-credentials.js';
 import {
   STUDENT_FACE_MODEL_ID,
@@ -119,6 +122,7 @@ export const ACADEMIC_MANAGEMENT_COLLECTIONS = Object.freeze({
   scoreSheets: 'academicScoreSheets',
   studentScores: 'academicStudentScores',
   scoreImports: 'academicScoreImports',
+  cbtTests: 'academicCbtTests',
   audit: 'academicManagementAudit'
 });
 
@@ -232,7 +236,7 @@ function actorUsername(user = {}) {
 
 function recordId(row = {}) {
   return clean(
-    row.RecordId || row.recordId || row.ImportId || row.ScoreId || row.SheetId || row.SubstitutionId || row.AttendanceId || row.EntryId || row.VersionId || row.ConstraintId || row.TimetableSettingId
+    row.RecordId || row.recordId || row.CbtTestId || row.ImportId || row.ScoreId || row.SheetId || row.SubstitutionId || row.AttendanceId || row.EntryId || row.VersionId || row.ConstraintId || row.TimetableSettingId
       || row.MovementId || row.MembershipId || row.AllocationId || row.OfferingId
       || row.DepartmentId || row.SubjectId || row.ArmId || row.ArmTemplateId || row.ClassId || row.TermId || row.SessionId || row.__id
   );
@@ -1177,7 +1181,8 @@ function sortAcademicState(state) {
       || clean(a.ArmId).localeCompare(clean(b.ArmId)) || clean(a.SubjectId).localeCompare(clean(b.SubjectId))),
     studentScores: [...state.studentScores].sort((a, b) => clean(a.SheetId).localeCompare(clean(b.SheetId))
       || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
-    scoreImports: [...state.scoreImports].sort((a, b) => clean(b.CommittedAt || b.CreatedAt).localeCompare(clean(a.CommittedAt || a.CreatedAt)))
+    scoreImports: [...state.scoreImports].sort((a, b) => clean(b.CommittedAt || b.CreatedAt).localeCompare(clean(a.CommittedAt || a.CreatedAt))),
+    cbtTests: [...state.cbtTests].sort((a, b) => clean(b.StartsAt || b.CreatedAt).localeCompare(clean(a.StartsAt || a.CreatedAt)))
   };
 }
 
@@ -1230,6 +1235,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     const visibleScoreSheets = new Set(state.scoreSheets.map((row) => row.SheetId));
     state.studentScores = state.studentScores.filter((row) => visibleScoreSheets.has(row.SheetId) && visibleStudents.has(lower(row.StudentRef)));
     state.scoreImports = state.scoreImports.filter((row) => visibleScoreSheets.has(row.SheetId));
+    state.cbtTests = state.cbtTests.filter((row) => lower(row.TeacherUsername) === username);
     students = students.filter((row) => visibleStudents.has(lower(studentReference(row))));
   }
   state = sortAcademicState(state);
@@ -1275,7 +1281,8 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
       AttendanceCorrections: state.attendanceCorrections.length,
       ScoreSheets: state.scoreSheets.length,
       StudentScores: state.studentScores.length,
-      ScoreImports: state.scoreImports.length
+      ScoreImports: state.scoreImports.length,
+      CbtTests: state.cbtTests.length
     }
   };
 }
@@ -3582,6 +3589,244 @@ export async function rollbackAcademicScoreImport(env, user = {}, input = {}) {
   return academicOperationalResponse(env, user, input, scope, `${currentScores.length} imported student score${currentScores.length === 1 ? '' : 's'} rolled back.`);
 }
 
+export const ACADEMIC_CBT_OPTION_STYLES = Object.freeze({
+  ABC: Object.freeze(['A', 'B', 'C']),
+  ABCD: Object.freeze(['A', 'B', 'C', 'D']),
+  ABCDE: Object.freeze(['A', 'B', 'C', 'D', 'E']),
+  ABCDEF: Object.freeze(['A', 'B', 'C', 'D', 'E', 'F']),
+  TRUE_FALSE: Object.freeze(['True', 'False'])
+});
+
+function academicCbtOptionStyle(value) {
+  const normalized = clean(value).toUpperCase().replace(/[\s/-]+/g, '_');
+  if (ACADEMIC_CBT_OPTION_STYLES[normalized]) return normalized;
+  throw failure('Choose ABC, ABCD, ABCDE, ABCDEF or True/False answer style.', 400, 'ACADEMIC_CBT_OPTION_STYLE_INVALID');
+}
+
+function academicCbtAuthority(user, context, record) {
+  if (context.permissions.teacherView && lower(record.TeacherUsername) !== actorUsername(user)) {
+    throw failure('Teachers may manage only their own allocated CBT tests.', 403, 'ACADEMIC_CBT_OWNER_FORBIDDEN');
+  }
+  return record;
+}
+
+async function academicCbtPackageDigest(record = {}) {
+  const material = JSON.stringify({
+    CbtTestId: record.CbtTestId,
+    SessionId: record.SessionId,
+    TermId: record.TermId,
+    ClassId: record.ClassId,
+    ArmId: record.ArmId,
+    SubjectId: record.SubjectId,
+    TeacherUsername: record.TeacherUsername,
+    AssessmentComponentId: record.AssessmentComponentId,
+    MaximumScore: record.MaximumScore,
+    StartsAt: record.StartsAt,
+    EndsAt: record.EndsAt,
+    NumberOfQuestions: record.NumberOfQuestions,
+    OptionStyle: record.OptionStyle,
+    Options: record.Options,
+    AnswerKey: record.AnswerKey,
+    StudentRefs: record.StudentRefs,
+    PaperDigest: record.PaperDigest
+  });
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
+  const context = await academicScoreSheetContext(env, user, input, 'canCreateCbt');
+  const componentId = clean(input.AssessmentComponentId);
+  const component = (context.scheme.Components || []).find((row) => row.Id === componentId);
+  if (!component || !['any', 'built-in-cbt'].includes(lower(component.SourceMode))) {
+    throw failure('Choose an active Test Type that accepts Built-in CBT scores.', 409, 'ACADEMIC_CBT_COMPONENT_REQUIRED');
+  }
+  const questionCount = Number(input.NumberOfQuestions);
+  if (!Number.isInteger(questionCount) || questionCount < 1 || questionCount > 200) {
+    throw failure('Number of questions must be a whole number between 1 and 200.', 400, 'ACADEMIC_CBT_QUESTION_COUNT_INVALID');
+  }
+  const durationMinutes = Number(input.DurationMinutes);
+  if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 480) {
+    throw failure('Duration must be a whole number between 1 and 480 minutes.', 400, 'ACADEMIC_CBT_DURATION_INVALID');
+  }
+  const optionStyle = academicCbtOptionStyle(input.OptionStyle);
+  const options = [...ACADEMIC_CBT_OPTION_STYLES[optionStyle]];
+  const answerKey = Array.isArray(input.AnswerKey) ? input.AnswerKey.map(clean) : [];
+  if (answerKey.length !== questionCount || answerKey.some((answer) => !options.includes(answer))) {
+    throw failure('Select one valid correct answer for every question.', 400, 'ACADEMIC_CBT_ANSWER_KEY_INCOMPLETE');
+  }
+  const startsAt = new Date(clean(input.StartsAt));
+  if (!Number.isFinite(startsAt.getTime())) throw failure('Choose a valid test date and start time.', 400, 'ACADEMIC_CBT_SCHEDULE_INVALID');
+  const endsAt = new Date(startsAt.getTime() + durationMinutes * 60 * 1000);
+  if (endsAt.getTime() <= Date.now()) throw failure('The test schedule has already ended. Choose a current or future start time.', 400, 'ACADEMIC_CBT_SCHEDULE_ENDED');
+  const paperUrl = clean(input.PaperUrl);
+  const paperFileName = clean(input.PaperFileName);
+  const paperMimeType = lower(input.PaperMimeType);
+  const paperDigest = lower(input.PaperDigest);
+  if (input.RequirePaper !== false) {
+    if (!paperUrl || !paperFileName || !['application/pdf', 'image/jpeg', 'image/png'].includes(paperMimeType)) {
+      throw failure('Upload a valid PDF, JPEG or PNG question paper.', 400, 'ACADEMIC_CBT_PAPER_REQUIRED');
+    }
+    if (!/^[a-f0-9]{64}$/.test(paperDigest)) throw failure('The uploaded question paper digest is invalid.', 400, 'ACADEMIC_CBT_PAPER_DIGEST_INVALID');
+  }
+  const requestedId = clean(input.CbtTestId);
+  const existing = requestedId ? findById(context.state.cbtTests, requestedId) : null;
+  if (requestedId && !existing) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
+  if (existing) {
+    academicCbtAuthority(user, context, existing);
+    if (clean(existing.LocalDownloadedAt)) {
+      throw failure('This test has already been downloaded to a local CBT server. Create a corrected test instead of changing its package.', 409, 'ACADEMIC_CBT_ALREADY_DOWNLOADED');
+    }
+  }
+  const timestamp = nowIso();
+  const cbtTestId = existing?.CbtTestId || academicId(
+    'cbt-test', context.scope.branchId, context.scope.section, context.session.SessionId,
+    context.term.TermId, clean(input.ClientRequestId) || crypto.randomUUID()
+  );
+  const studentRefs = context.roster.map((row) => clean(row.StudentRef)).filter(Boolean)
+    .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
+  const maximumScore = Number(component.MaximumScore);
+  const record = {
+    ...(existing || {}),
+    RecordId: cbtTestId,
+    CbtTestId: cbtTestId,
+    Title: `${clean(component.Name)} · ${clean(context.subject.Name)} · ${clean(context.schoolClass.Name)} / ${clean(context.arm.Name)}`,
+    SessionId: context.session.SessionId,
+    TermId: context.term.TermId,
+    ClassId: context.schoolClass.ClassId,
+    ArmId: context.arm.ArmId,
+    SubjectId: context.subject.SubjectId,
+    SubjectName: clean(context.subject.Name),
+    TeacherUsername: lower(context.allocation.TeacherUsername),
+    AssessmentComponentId: component.Id,
+    AssessmentComponentName: clean(component.Name),
+    MaximumScore: maximumScore,
+    StartsAt: startsAt.toISOString(),
+    EndsAt: endsAt.toISOString(),
+    DurationMinutes: durationMinutes,
+    NumberOfQuestions: questionCount,
+    OptionStyle: optionStyle,
+    Options: options,
+    AnswerKey: answerKey,
+    StudentRefs: studentRefs,
+    RosterCount: studentRefs.length,
+    PaperUrl: paperUrl || clean(existing?.PaperUrl),
+    PaperFileName: paperFileName || clean(existing?.PaperFileName),
+    PaperMimeType: paperMimeType || clean(existing?.PaperMimeType),
+    PaperDigest: paperDigest || clean(existing?.PaperDigest),
+    PaperByteLength: Number(input.PaperByteLength || existing?.PaperByteLength || 0),
+    Status: 'Scheduled',
+    PackageRevision: Number(existing?.PackageRevision || 0) + 1,
+    BranchId: context.scope.branchId,
+    SchoolSection: context.scope.section,
+    CreatedAt: clean(existing?.CreatedAt) || timestamp,
+    CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName(user)
+  };
+  record.PackageDigest = await academicCbtPackageDigest(record);
+  return { context, component, existing, record };
+}
+
+export async function saveAcademicCbtTest(env, user = {}, input = {}) {
+  const { context, existing, record } = await validateAcademicCbtTestInput(env, user, { ...input, RequirePaper: true });
+  const writes = [{
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests,
+    documentId: record.CbtTestId,
+    data: withoutMetadata(record),
+    ...writePrecondition(existing, input.RevisionToken)
+  }, auditWrite(user, existing ? 'UPDATE' : 'CREATE', 'cbtTests', record,
+    `${record.AssessmentComponentName}; ${record.NumberOfQuestions} questions; ${record.RosterCount} students; starts ${record.StartsAt}`)];
+  await commitAcademicBatch(env, writes, 'The CBT test changed while it was being saved. Reload and try again.');
+  return academicOperationalResponse(env, user, input, context.scope,
+    `${record.AssessmentComponentName} CBT test scheduled for ${record.RosterCount} student${record.RosterCount === 1 ? '' : 's'}.`);
+}
+
+async function deleteAcademicCbtPaper(env, paperUrl) {
+  const storage = await resolveDocumentStorage(env);
+  if (!storage.configured || !clean(paperUrl)) return false;
+  const response = await fetch(storage.url, {
+    method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ Secret: storage.secret, Action: 'deleteStoredDocument', DocumentUrl: paperUrl })
+  }).catch(() => null);
+  const data = response ? await response.json().catch(() => ({})) : {};
+  return Boolean(response?.ok && data.ok);
+}
+
+export async function deleteAcademicCbtTest(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canCreateCbt');
+  const record = findById(context.state.cbtTests, input.CbtTestId);
+  if (!record) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
+  academicCbtAuthority(user, context, record);
+  if (clean(record.LocalDownloadedAt)) {
+    throw failure('This test has already reached a local CBT server and cannot be deleted online.', 409, 'ACADEMIC_CBT_ALREADY_DOWNLOADED');
+  }
+  const revisionToken = clean(input.RevisionToken);
+  if (!revisionToken) throw failure('Reload this CBT register before deleting the test.', 409);
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests, documentId: record.CbtTestId, operation: 'delete', updateTime: revisionToken },
+    auditWrite(user, 'DELETE', 'cbtTests', record, clean(input.Reason) || 'CBT test created in error.')
+  ], 'The CBT test changed while it was being deleted. Reload and try again.');
+  await deleteAcademicCbtPaper(env, record.PaperUrl).catch(() => false);
+  return academicOperationalResponse(env, user, input, context.scope, 'The unused online CBT test was deleted.');
+}
+
+async function loadAcademicCbtPaper(env, record) {
+  const storage = await resolveDocumentStorage(env);
+  if (!storage.configured) throw failure('Google Drive document storage is not configured.', 503, 'DOCUMENT_STORAGE_NOT_CONFIGURED');
+  const response = await fetch(storage.url, {
+    method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ Secret: storage.secret, Action: 'getStoredDocument', DocumentUrl: record.PaperUrl })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.ok || !clean(data.fileBase64)) {
+    throw failure(data.message || 'The CBT question paper could not be downloaded from Google Drive.', 502, 'ACADEMIC_CBT_PAPER_UNAVAILABLE');
+  }
+  const stored = safeStoredDocument(data.fileName || record.PaperFileName, data.fileBase64);
+  if (!stored.valid || !stored.inlineSafe || !['application/pdf', 'image/jpeg', 'image/png'].includes(stored.mimeType)) {
+    throw failure('The stored CBT paper failed its file validation.', 409, 'ACADEMIC_CBT_PAPER_INVALID');
+  }
+  if (await academicCbtPaperDigest(data.fileBase64) !== lower(record.PaperDigest)) {
+    throw failure('The stored CBT paper no longer matches its scheduled package.', 409, 'ACADEMIC_CBT_PAPER_DIGEST_MISMATCH');
+  }
+  return { FileName: stored.fileName, MimeType: stored.mimeType, FileBase64: clean(data.fileBase64) };
+}
+
+export async function downloadAcademicCbtTestPackage(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canCreateCbt');
+  const record = findById(context.state.cbtTests, input.CbtTestId);
+  if (!record) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
+  academicCbtAuthority(user, context, record);
+  const paper = await loadAcademicCbtPaper(env, record);
+  return {
+    ok: true,
+    message: 'The scheduled CBT package is ready for local import.',
+    cbtPackage: { ...publicRecord(record), Paper: paper }
+  };
+}
+
+export async function acknowledgeAcademicCbtImport(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canCreateCbt');
+  const record = findById(context.state.cbtTests, input.CbtTestId);
+  if (!record) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
+  academicCbtAuthority(user, context, record);
+  if (Number(input.PackageRevision) !== Number(record.PackageRevision)) {
+    throw failure('The online CBT package changed before the local import completed. Download it again.', 409, 'ACADEMIC_CBT_PACKAGE_CHANGED');
+  }
+  const updated = {
+    ...record,
+    LocalDownloadedAt: clean(record.LocalDownloadedAt) || nowIso(),
+    LocalDownloadedBy: clean(record.LocalDownloadedBy) || actorName(user),
+    LocalPackageDigest: clean(input.LocalPackageDigest),
+    UpdatedAt: nowIso(), UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests, documentId: record.CbtTestId, data: withoutMetadata(updated), ...writePrecondition(record, input.RevisionToken) },
+    auditWrite(user, 'DOWNLOAD', 'cbtTests', updated, 'Scheduled test imported into the desktop local CBT server.')
+  ], 'The CBT test changed before its local import could be acknowledged.');
+  return academicOperationalResponse(env, user, input, context.scope, 'The local CBT import was acknowledged online.');
+}
+
 export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {}) {
   requireWritableSubscription(user);
   const readiness = lower(input.ExamKind) === 'readiness';
@@ -3770,6 +4015,9 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['previewacademicscoreimport', 'previewscoresheetimport'].includes(action)) return previewAcademicScoreImport(env, user, input);
   if (['importacademicscores', 'commitscoreimport'].includes(action)) return importAcademicScores(env, user, input);
   if (['rollbackacademicscoreimport', 'rollbackscoreimport'].includes(action)) return rollbackAcademicScoreImport(env, user, input);
+  if (['deleteacademiccbttest', 'deletecbttest'].includes(action)) return deleteAcademicCbtTest(env, user, input);
+  if (['downloadacademiccbttestpackage', 'downloadcbttestpackage'].includes(action)) return downloadAcademicCbtTestPackage(env, user, input);
+  if (['acknowledgeacademiccbtimport', 'acknowledgecbtimport'].includes(action)) return acknowledgeAcademicCbtImport(env, user, input);
   if (['preparelocalcbtidentitypackage', 'preparecbtidentitypackage'].includes(action)) return prepareLocalCbtIdentityPackage(env, user, input);
   if (['manageacademicstudentmembership', 'moveacademicstudentmembership', 'withdrawacademicstudentmembership', 'reinstateacademicstudentmembership'].includes(action)) {
     const inferredOperation = ({
