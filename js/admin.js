@@ -9656,6 +9656,14 @@ function syncAcademicStudentImportPeriod(form) {
   form.elements.TermId.innerHTML = academicSelectOptions(terms, selectedTermId, (row) => row.Name, 'Choose term');
 }
 
+function syncAcademicTeacherEditPeriod(form, preferredTermId = '') {
+  if (!form || !academicManagementData) return;
+  const sessionId = clean(form.elements.SessionId.value);
+  const terms = (academicManagementData.terms || []).filter((row) => academicIsActive(row) && row.SessionId === sessionId);
+  const selectedTermId = clean(academicFind(terms, preferredTermId || form.elements.TermId.value)?.TermId || '');
+  form.elements.TermId.innerHTML = academicSelectOptions(terms, selectedTermId, (row) => row.Name, 'Choose term');
+}
+
 function filterAcademicStudentCandidateOptions(form) {
   const search = form?.querySelector('[data-academic-student-candidate-search]');
   const field = form?.querySelector('[data-academic-checkbox-purpose="student-arm-candidates"]');
@@ -10239,12 +10247,25 @@ function academicTeacherWorkspace(data, rows) {
     })}
     <button type="submit">Save subject-teacher assignments</button>
   </form>` : '<div class="academic-view-only-note"><strong>My teaching allocations</strong><span>Only administrators can change allocations.</span></div>';
-  return `${form}${table('Subject Teacher Allocations', subjectAllocations, [
+  const editForm = canManage ? `<form hidden class="academic-management-editor academic-management-editor-wide" data-academic-form="teacherAllocation" data-academic-action="updateAcademicSubjectTeacherAllocation" data-academic-teacher-edit>
+    ${academicRecordFields()}<input type="hidden" name="AllocationRole" value="Subject Teacher"><input type="hidden" name="ClassId"><input type="hidden" name="ArmId"><input type="hidden" name="Status" value="Active">
+    <div class="academic-management-editor-heading"><div><small>Correct saved allocation</small><h3>Edit subject-teacher allocation</h3><p class="muted">Change the teacher, subject, classroom or academic period, then update the existing allocation.</p></div><button type="button" class="academic-form-reset" data-academic-reset="teacherAllocation">Cancel edit</button></div>
+    <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
+    <div class="academic-management-form-grid academic-management-form-grid-3">
+      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, 'Choose teacher')}</select></label>
+      <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select></label>
+      <label>Classroom<select name="ClassroomId" required>${academicSelectOptions(classrooms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'Choose classroom')}</select></label>
+      <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, '', (row) => row.Name, 'Choose session')}</select></label>
+      <label>Term<select name="TermId" required>${academicSelectOptions(terms, '', (row) => row.Name, 'Choose term')}</select></label>
+    </div>
+    <button type="submit">Update this allocation</button>
+  </form>` : '';
+  return `${form}${editForm}${table('Subject Teacher Allocations', subjectAllocations, [
     { label: 'Teacher', value: (row) => academicLabel(data.staff, row.TeacherUsername, row.TeacherUsername) },
     { label: 'Class / Arm', value: (row) => `${academicLabel(rows.classes, row.ClassId)}${row.ArmId ? ` / ${academicLabel(rows.arms, row.ArmId)}` : ' / All arms'}` },
     { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId, 'Class responsibility') },
     { label: 'Status', value: (row) => row.Status },
-    { label: 'Actions', render: (row) => academicActionButtons('teacherAllocation', row, false, canManage) }
+    { label: 'Actions', render: (row) => academicActionButtons('teacherAllocation', row, canManage, false, canManage) }
   ])}`;
 }
 
@@ -10510,6 +10531,14 @@ function academicFormPayload(form) {
   if (form.dataset.academicForm === 'department') {
     payload.CoreSubjectIds = academicCheckedValues(form, 'CoreSubjectIds');
   }
+  if (form.hasAttribute('data-academic-teacher-edit')) {
+    const classroom = academicFind(academicManagementData?.arms || [], payload.ClassroomId);
+    if (!classroom || !academicIsActive(classroom)) throw new Error('Choose an active classroom.');
+    payload.ClassId = classroom.ClassId;
+    payload.ArmId = classroom.ArmId;
+    payload.AllocationRole = 'Subject Teacher';
+    delete payload.ClassroomId;
+  }
   return { ...payload, RecordType: form.dataset.academicForm };
 }
 
@@ -10578,6 +10607,11 @@ function populateAcademicForm(type, record) {
   form.elements.RevisionToken.value = record.RevisionToken || '';
   if (type === 'offering' && form.elements.SubjectRole) {
     form.elements.SubjectRole.value = academicOfferingSubjectRole(record, academicFind(academicManagementData?.classes || [], record.ClassId)?.SchoolStage);
+  }
+  if (type === 'teacherAllocation' && form.hasAttribute('data-academic-teacher-edit')) {
+    if (form.elements.ClassroomId) form.elements.ClassroomId.value = clean(record.ArmId);
+    syncAcademicTeacherEditPeriod(form, record.TermId);
+    form.hidden = false;
   }
   form.scrollIntoView({ behavior: 'smooth', block: 'start' });
   form.querySelector('input:not([type="hidden"]), select')?.focus();
@@ -10674,6 +10708,8 @@ function bindAcademicManagement() {
   const studentImportForm = panelEl.querySelector('[data-academic-student-membership-import]');
   studentImportForm?.elements.SessionId?.addEventListener('change', () => syncAcademicStudentImportPeriod(studentImportForm));
   syncAcademicStudentImportPeriod(studentImportForm);
+  const teacherEditForm = panelEl.querySelector('[data-academic-teacher-edit]');
+  teacherEditForm?.elements.SessionId?.addEventListener('change', () => syncAcademicTeacherEditPeriod(teacherEditForm));
   const studentImportFile = studentImportForm?.querySelector('[data-academic-student-import-file]');
   const studentImportButton = studentImportForm?.querySelector('[data-academic-import-student-memberships]');
   studentImportForm?.querySelector('[data-academic-download-student-import]')?.addEventListener('click', (event) => {
@@ -10750,7 +10786,7 @@ function bindAcademicManagement() {
     await runButtonAction(button, 'Saving...', async () => {
       const status = document.getElementById('academicManagementStatus');
       try {
-        const data = await academicManagementRequest('save', academicFormPayload(form));
+        const data = await academicManagementRequest(form.dataset.academicAction || 'save', academicFormPayload(form));
         if (classroomSelection) {
           const arm = (data.arms || []).find((row) => row.ClassId === classroomSelection.classId
             && (row.ArmTemplateId === classroomSelection.armTemplateId
@@ -10786,6 +10822,7 @@ function bindAcademicManagement() {
     form?.reset();
     if (form?.elements.RecordId) form.elements.RecordId.value = '';
     if (form?.elements.RevisionToken) form.elements.RevisionToken.value = '';
+    if (form?.hasAttribute('data-academic-teacher-edit')) form.hidden = true;
     if (form?.dataset.academicStudentPlacement) syncAcademicStudentPlacementForm(form);
   }));
   panelEl.querySelectorAll('[data-academic-edit]').forEach((button) => button.addEventListener('click', () => {

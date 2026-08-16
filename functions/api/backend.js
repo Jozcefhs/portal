@@ -694,7 +694,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'getAcademicManagement', 'saveAcademicSession', 'saveAcademicTerm', 'saveAcademicClass',
   'saveAcademicArmTemplate', 'saveAcademicArm', 'saveAcademicSubject', 'saveAcademicDepartment', 'saveAcademicOffering',
   'bulkCreateAcademicClasses', 'bulkCreateAcademicArmTemplates', 'bulkApplyAcademicArmTemplates',
-  'bulkCreateAcademicSubjects', 'bulkApplyAcademicSubjects', 'bulkAssignAcademicSubjectTeacher',
+  'bulkCreateAcademicSubjects', 'bulkApplyAcademicSubjects', 'bulkAssignAcademicSubjectTeacher', 'updateAcademicSubjectTeacherAllocation',
   'saveAcademicTeacherAllocation', 'saveAcademicStudentMembership', 'bulkAllocateAcademicStudents',
   'bulkImportAcademicStudentMemberships',
   'bulkAssignAcademicArmStudentSubjects',
@@ -7437,6 +7437,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'bulkCreateAcademicSubjects':
     case 'bulkApplyAcademicSubjects':
     case 'bulkAssignAcademicSubjectTeacher':
+    case 'updateAcademicSubjectTeacherAllocation':
     case 'bulkAllocateAcademicStudents':
     case 'bulkImportAcademicStudentMemberships':
     case 'bulkAssignAcademicArmStudentSubjects':

@@ -1561,6 +1561,56 @@ export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {
   return response;
 }
 
+export async function updateAcademicSubjectTeacherAllocation(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageAllocations');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const recordIdToReplace = clean(input.RecordId || input.AllocationId);
+  const revisionToken = clean(input.RevisionToken);
+  if (!recordIdToReplace || !revisionToken) throw failure('Reload the saved allocation before editing it.');
+  const [state, people] = await Promise.all([loadAcademicState(env, scope.branchId), loadPeople(env, user, scope)]);
+  const existing = findById(state.teacherAllocations, recordIdToReplace);
+  if (!existing) throw failure('The subject-teacher allocation was not found in the selected branch.', 404);
+  if (existing.AllocationRole !== 'Subject Teacher') throw failure('Form and Assistant Teachers must be changed inside their classroom.');
+  if (lower(existing.SchoolSection) !== scope.section) throw failure('This allocation belongs to another school section.', 403);
+  const precondition = writePrecondition(existing, revisionToken);
+  const classroom = assertReference(findById(state.arms, input.ClassroomId || input.ArmId), 'Choose an active classroom.');
+  if (!activeValue(classroom.IsClassroom, false)) {
+    throw failure(`${classroom.Name} is an arm definition, not an opened classroom.`, 409, 'ACADEMIC_CLASSROOM_REQUIRED');
+  }
+  const schoolClass = assertReference(findById(state.classes, classroom.ClassId), 'The selected classroom class is not active.');
+  if (lower(classroom.SchoolSection) !== scope.section || lower(schoolClass.SchoolSection) !== scope.section) {
+    throw failure('The selected classroom belongs to another school section.', 409, 'ACADEMIC_SECTION_MISMATCH');
+  }
+  const record = normalizeAcademicTeacherAllocation({
+    ...input, RecordId: '', AllocationId: '', ClassId: schoolClass.ClassId, ArmId: classroom.ArmId,
+    AllocationRole: 'Subject Teacher', Status: clean(input.Status) || 'Active'
+  }, scope);
+  const duplicate = state.teacherAllocations.find((row) => recordId(row) !== recordId(existing) && statusActive(row)
+    && row.SessionId === record.SessionId && row.TermId === record.TermId
+    && row.TeacherUsername === record.TeacherUsername && row.ClassId === record.ClassId
+    && row.ArmId === record.ArmId && row.SubjectId === record.SubjectId
+    && row.AllocationRole === 'Subject Teacher');
+  if (duplicate) throw failure('This subject-teacher allocation already exists.', 409, 'ACADEMIC_TEACHER_ALLOCATION_DUPLICATE');
+  validateAcademicRecord(state, 'teacherallocation', record, { ...people, existing });
+  stampAcademicRecord(record, user, existing);
+  const changedIdentity = recordId(record) !== recordId(existing);
+  const writes = changedIdentity
+    ? [
+      { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations, documentId: recordId(existing), operation: 'delete', ...precondition },
+      { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations, documentId: recordId(record), data: withoutMetadata(record), exists: false }
+    ]
+    : [{
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
+      documentId: recordId(existing), data: withoutMetadata(record), ...precondition
+    }];
+  writes.push(auditWrite(user, 'UPDATE', 'teacherallocation', record, `${record.TeacherUsername} · ${record.SubjectId}`));
+  await commitAcademicBatch(env, writes, 'This subject-teacher allocation changed while it was being updated. Reload and try again.');
+  const response = await bootstrapAcademicManagement(env, user, { ...input, BranchId: scope.branchId, SchoolSection: scope.section });
+  response.message = 'Subject-teacher allocation updated online.';
+  return response;
+}
+
 export async function bulkAllocateAcademicStudents(env, user = {}, input = {}) {
   requireWritableSubscription(user);
   requireCapability(user, 'canManageAllocations');
@@ -2065,10 +2115,10 @@ export async function archiveAcademicManagementRecord(env, user = {}, input = {}
 
 export async function deleteAcademicManagementRecord(env, user = {}, input = {}) {
   requireWritableSubscription(user);
-  requireCapability(user, 'canDelete');
   const type = normalizedRecordType(input.RecordType || input.recordType || input.Type);
-  if (!['class', 'armtemplate', 'arm', 'subject', 'department', 'offering'].includes(type)) {
-    throw failure('Only an unused class, reusable arm definition, arm, subject, department or subject offering can be permanently deleted.');
+  requireCapability(user, type === 'teacherallocation' ? 'canManageAllocations' : 'canDelete');
+  if (!['class', 'armtemplate', 'arm', 'subject', 'department', 'offering', 'teacherallocation'].includes(type)) {
+    throw failure('Only an unused structure record, subject offering or teacher allocation can be permanently deleted.');
   }
   const definition = RECORD_TYPES[type];
   const requiresSection = type !== 'armtemplate';
@@ -2087,7 +2137,8 @@ export async function deleteAcademicManagementRecord(env, user = {}, input = {})
   if (!revisionToken || revisionToken !== clean(existing.__updateTime)) {
     throw failure('This academic record changed after it was loaded. Reload before deleting.', 409, 'ACADEMIC_WRITE_CONFLICT');
   }
-  const deletedLabel = type === 'offering' ? 'Subject offering' : clean(existing.Name || existing.Code || 'Academic record');
+  const deletedLabel = type === 'offering' ? 'Subject offering'
+    : (type === 'teacherallocation' ? 'Subject-teacher allocation' : clean(existing.Name || existing.Code || 'Academic record'));
   const writes = [
     { collectionPath: definition.collection, documentId: recordId(existing), operation: 'delete', updateTime: revisionToken },
     auditWrite(user, 'DELETE', type, existing, deletedLabel)
@@ -2129,6 +2180,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['bulkcreateacademicsubjects', 'bulkcreatesubjects'].includes(action)) return bulkCreateAcademicSubjects(env, user, input);
   if (['bulkapplyacademicsubjects', 'bulkapplysubjects'].includes(action)) return bulkApplyAcademicSubjects(env, user, input);
   if (['bulkassignacademicsubjectteacher', 'bulkassignsubjectteacher'].includes(action)) return bulkAssignAcademicSubjectTeacher(env, user, input);
+  if (['updateacademicsubjectteacherallocation', 'updatesubjectteacherallocation'].includes(action)) return updateAcademicSubjectTeacherAllocation(env, user, input);
   if (['bulkallocateacademicstudents', 'bulkallocatestudents'].includes(action)) return bulkAllocateAcademicStudents(env, user, input);
   if (['bulkimportacademicstudentmemberships', 'importacademicstudentmemberships'].includes(action)) return bulkImportAcademicStudentMemberships(env, user, input);
   if (['bulkassignacademicarmstudentsubjects', 'bulkassignarmstudentsubjects'].includes(action)) return bulkAssignAcademicArmStudentSubjects(env, user, input);

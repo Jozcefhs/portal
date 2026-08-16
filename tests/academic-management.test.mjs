@@ -424,7 +424,7 @@ test('Academic writes are audited, optimistic and preserve legacy class/student 
   assert.match(librarySource, /Apply at most 200 class-subject combinations in one batch/);
   assert.doesNotMatch(librarySource, /ACADEMIC_SUBJECT_CATEGORIES/);
   assert.match(librarySource, /ACADEMIC_DELETE_REFERENCED/);
-  assert.match(librarySource, /class, reusable arm definition, arm, subject, department or subject offering can be permanently deleted/);
+  assert.match(librarySource, /unused structure record, subject offering or teacher allocation can be permanently deleted/);
   assert.match(librarySource, /academicArmTemplates/);
   assert.match(librarySource, /ACADEMIC_TEACHER_SECTION_INVALID/);
   assert.match(librarySource, /activeValue\(row\.Active, true\)/);
@@ -448,6 +448,7 @@ test('Web and desktop transports share one protected Academic Management handler
   assert.match(backendSource, /case 'bulkCreateAcademicSubjects'/);
   assert.match(backendSource, /case 'bulkApplyAcademicSubjects'/);
   assert.match(backendSource, /case 'bulkAssignAcademicSubjectTeacher'/);
+  assert.match(backendSource, /case 'updateAcademicSubjectTeacherAllocation'/);
   assert.match(backendSource, /case 'deleteAcademicRecord'/);
   assert.match(backendSource, /case 'saveAcademicStudentMembership'/);
   assert.match(backendSource, /case 'bulkAllocateAcademicStudents'/);
@@ -487,6 +488,20 @@ test('subject teachers are batch-assigned only to the exact selected classrooms'
   assert.match(librarySource, /bulkassignacademicsubjectteacher/);
 });
 
+test('subject-teacher allocations can be corrected atomically or permanently deleted', () => {
+  const updateSource = librarySource.slice(
+    librarySource.indexOf('export async function updateAcademicSubjectTeacherAllocation'),
+    librarySource.indexOf('export async function bulkAllocateAcademicStudents')
+  );
+  assert.match(updateSource, /existing\.AllocationRole !== 'Subject Teacher'/);
+  assert.match(updateSource, /const changedIdentity = recordId\(record\) !== recordId\(existing\)/);
+  assert.match(updateSource, /operation: 'delete'/);
+  assert.match(updateSource, /exists: false/);
+  assert.match(updateSource, /ACADEMIC_TEACHER_ALLOCATION_DUPLICATE/);
+  assert.match(librarySource, /type === 'teacherallocation' \? 'canManageAllocations' : 'canDelete'/);
+  assert.match(librarySource, /'offering', 'teacherallocation'/);
+});
+
 test('staff web workspace exposes responsive academic registers and online-only success', () => {
   assert.match(adminSource, /\['academics', 'Academic Management'\]/);
   assert.match(adminSource, /function renderAcademicManagement/);
@@ -516,8 +531,13 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(teacherWorkspace, /name: 'ClassroomIds', label: 'Classrooms taught for this subject'/);
   assert.match(teacherWorkspace, /Only checked classrooms will be saved/);
   assert.match(teacherWorkspace, /Repeat the process if the teacher handles another subject/);
-  assert.doesNotMatch(teacherWorkspace, /name="AllocationRole"/);
-  assert.doesNotMatch(teacherWorkspace, /data-academic-form="teacherAllocation"/);
+  assert.doesNotMatch(teacherWorkspace, /<select name="AllocationRole"/);
+  assert.match(teacherWorkspace, /data-academic-form="teacherAllocation"/);
+  assert.match(teacherWorkspace, /data-academic-action="updateAcademicSubjectTeacherAllocation"/);
+  assert.match(teacherWorkspace, /data-academic-teacher-edit/);
+  assert.match(teacherWorkspace, /academicActionButtons\('teacherAllocation', row, canManage, false, canManage\)/);
+  assert.match(teacherWorkspace, /Update this allocation/);
+  assert.match(adminSource, /function syncAcademicTeacherEditPeriod/);
   assert.match(teacherWorkspace, /Subject Teacher Allocations/);
   assert.match(teacherWorkspace, /subjectAllocations/);
   assert.match(librarySource, /export async function bulkAssignAcademicSubjectTeacher/);
@@ -613,7 +633,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
   assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-tabs button\{[^}]*font-size:12px/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260816-classroom-subject-teachers/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260816-subject-teacher-corrections/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
