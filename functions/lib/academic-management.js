@@ -547,9 +547,14 @@ export function applyAcademicStudentCurriculum(state = {}, record = {}, options 
   const offerings = (state.offerings || []).filter((row) => statusActive(row)
     && row.SessionId === record.SessionId && row.TermId === record.TermId && row.ClassId === record.ClassId
     && (!row.ArmId || row.ArmId === record.ArmId));
+  // Senior curriculum is intentionally independent of class offerings. Its Core subjects come
+  // only from the assigned department, while Trade and Optional subjects come from the shared
+  // Senior-choice configuration. Ignoring legacy Senior offerings prevents old bulk assignments
+  // from leaking into the simplified curriculum model.
+  const curriculumOfferings = record.SchoolStage === 'senior-secondary' ? [] : offerings;
   const roleBySubject = new Map();
   const rolePriority = { Optional: 1, Trade: 2, Core: 3 };
-  offerings.forEach((offering) => {
+  curriculumOfferings.forEach((offering) => {
     const role = academicOfferingSubjectRole(offering, record.SchoolStage);
     const current = roleBySubject.get(offering.SubjectId) || 'Optional';
     if (rolePriority[role] >= rolePriority[current]) roleBySubject.set(offering.SubjectId, role);
@@ -564,12 +569,12 @@ export function applyAcademicStudentCurriculum(state = {}, record = {}, options 
     const current = roleBySubject.get(subject.SubjectId) || 'Optional';
     if (rolePriority[role] >= rolePriority[current]) roleBySubject.set(subject.SubjectId, role);
   });
-  const available = new Set([...offerings.map((row) => row.SubjectId), ...seniorChoiceSubjects.map((row) => row.SubjectId)]);
-  const offeredCore = offerings.map((row) => row.SubjectId).filter((subjectId) => roleBySubject.get(subjectId) === 'Core');
+  const available = new Set([...curriculumOfferings.map((row) => row.SubjectId), ...seniorChoiceSubjects.map((row) => row.SubjectId)]);
+  const offeredCore = curriculumOfferings.map((row) => row.SubjectId).filter((subjectId) => roleBySubject.get(subjectId) === 'Core');
   let coreSubjectIds = uniqueIds(offeredCore);
   if (record.SchoolStage === 'junior-secondary') {
     record.DepartmentId = '';
-    coreSubjectIds = uniqueIds(offerings.map((row) => row.SubjectId));
+    coreSubjectIds = uniqueIds(curriculumOfferings.map((row) => row.SubjectId));
   } else if (record.SchoolStage === 'senior-secondary') {
     const department = findById(state.departments || [], record.DepartmentId);
     if (!department && options.allowIncompleteCurriculum !== true) {
@@ -841,6 +846,9 @@ function validateAcademicRecord(state, type, record, people = {}) {
     record.SubjectRole = 'Core';
     record.Compulsory = true;
   }
+  if (type === 'offering' && record.SchoolStage === 'senior-secondary') {
+    throw failure('Senior subjects are configured through Senior departments and Senior choices. Legacy Senior class offerings can be removed from the Offering register.', 409, 'ACADEMIC_SENIOR_OFFERING_DEPRECATED');
+  }
   if (type === 'offering' && record.SubjectRole === 'Trade' && record.SchoolStage !== 'senior-secondary') {
     throw failure('Trade subjects can be configured only for Senior Secondary classes.');
   }
@@ -852,15 +860,20 @@ function validateAcademicRecord(state, type, record, people = {}) {
       throw failure('The selected teacher is restricted to another school section.', 409, 'ACADEMIC_TEACHER_SECTION_INVALID');
     }
     if (record.AllocationRole === 'Subject Teacher') {
-      const offering = state.offerings.find((row) => statusActive(row)
+      const offering = record.SchoolStage === 'senior-secondary' ? null : state.offerings.find((row) => statusActive(row)
         && row.SessionId === record.SessionId && row.TermId === record.TermId
         && row.ClassId === record.ClassId && row.SubjectId === record.SubjectId
         && (!row.ArmId || !record.ArmId || row.ArmId === record.ArmId));
       const subject = findById(state.subjects, record.SubjectId);
       const globallyAvailableSeniorChoice = record.SchoolStage === 'senior-secondary'
         && ACADEMIC_SENIOR_CHOICE_ROLES.includes(subject?.SeniorChoiceRole);
-      if (!offering && !globallyAvailableSeniorChoice) {
-        throw failure('Offer this subject to the selected class or configure it as a school-wide Senior Trade or Optional subject before allocating a teacher.');
+      const classroom = findById(state.arms, record.ArmId);
+      const department = findById(state.departments, classroom?.DepartmentId);
+      const availableSeniorCore = record.SchoolStage === 'senior-secondary'
+        && statusActive(department)
+        && (department.CoreSubjectIds || []).includes(record.SubjectId);
+      if (!offering && !globallyAvailableSeniorChoice && !availableSeniorCore) {
+        throw failure('Configure this subject for the selected classroom through its Senior department or Senior choices before allocating a teacher.');
       }
     }
   }

@@ -9563,7 +9563,7 @@ function validateAcademicCheckboxFields(form) {
 function academicStudentSubjectProfile(data, membership) {
   const schoolClass = academicFind(data.classes || [], membership.ClassId);
   const stage = clean(schoolClass?.SchoolStage).toLowerCase();
-  const applicable = (data.offerings || []).filter((offering) => academicIsActive(offering)
+  const applicable = stage === 'senior-secondary' ? [] : (data.offerings || []).filter((offering) => academicIsActive(offering)
     && offering.SessionId === membership.SessionId && offering.TermId === membership.TermId
     && offering.ClassId === membership.ClassId && (!offering.ArmId || offering.ArmId === membership.ArmId));
   const rolePriority = { Optional: 1, Trade: 2, Core: 3 };
@@ -9813,6 +9813,7 @@ function academicTaskDefinitions(view, root) {
   const registerCards = academicRegisterCards(root);
   const form = (selector) => root.querySelector(selector);
   const register = (title) => registerCards.find((card) => card.dataset.academicRegister === title);
+  const legacyOfferingNote = root.querySelector('.academic-legacy-offering-note');
   const nodes = (...items) => items.flat().filter(Boolean);
   const sectionName = academicManagementFilters.section;
   const sectionLabel = sectionName ? sectionName.charAt(0).toUpperCase() + sectionName.slice(1) : 'School';
@@ -9843,7 +9844,7 @@ function academicTaskDefinitions(view, root) {
       { key: 'seniorChoices', label: 'Senior choices', title: 'Senior Trade and Optional subjects', description: 'Select reusable subjects once and make them available for student choice in every Senior classroom.', nodes: nodes(form('[data-academic-senior-choice-subjects]')) },
       { key: 'offer', label: 'Class exception', title: 'Create a class-specific subject offering', description: 'Use this only when a subject applies to one class, arm or academic period.', nodes: nodes(form('[data-academic-form="offering"]')) },
       { key: 'curriculum', label: sectionName === 'secondary' ? 'Junior curriculum' : 'Primary curriculum', title: sectionName === 'secondary' ? 'Junior Secondary subjects' : 'Primary subjects', description: `Apply the compulsory subject set to one or more ${sectionName === 'secondary' ? 'Junior Secondary' : 'Primary'} classes.`, nodes: nodes(form('[data-academic-workflow="bulkApplyAcademicSubjects"]')) },
-      { key: 'register', label: 'Offering register', title: 'Saved subject offerings', description: 'Review, correct or remove class subject offerings.', nodes: nodes(register('Subject Offerings')) }
+      { key: 'register', label: 'Offering register', title: 'Saved subject offerings', description: sectionName === 'secondary' ? 'Review Junior assignments and remove legacy Senior class assignments that no longer affect curriculum.' : 'Review, correct or remove class subject offerings.', nodes: nodes(legacyOfferingNote, register('Subject Offerings')) }
     ],
     teachers: [
       { key: 'assign', label: 'Assign teacher', title: 'Assign a subject teacher', description: 'Choose one teacher and subject, then check every classroom they teach.', nodes: nodes(form('[data-academic-workflow="bulkAssignAcademicSubjectTeacher"]')) },
@@ -10278,6 +10279,7 @@ function academicOfferingsWorkspace(data, rows) {
   const juniorClasses = classes.filter((row) => clean(row.SchoolStage).toLowerCase() === 'junior-secondary');
   const secondary = academicManagementFilters.section === 'secondary';
   const curriculumClasses = secondary ? juniorClasses : classes;
+  const legacySeniorOfferings = rows.offerings.filter((offering) => clean(academicFind(rows.classes, offering.ClassId)?.SchoolStage).toLowerCase() === 'senior-secondary');
   const coreUsage = new Map();
   rows.departments.filter(academicIsActive).forEach((department) => {
     (department.CoreSubjectIds || []).forEach((subjectId) => {
@@ -10332,7 +10334,7 @@ function academicOfferingsWorkspace(data, rows) {
       })}
       <button type="submit">Apply subjects to selected ${secondary ? 'JSS' : 'Primary'} classes</button>
     </form>` : '';
-  const form = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-form="offering">
+  const form = canManage && !secondary ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-form="offering">
     ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Curriculum delivery</small><h3>Offer a subject</h3></div><button type="button" class="academic-form-reset" data-academic-reset="offering">Clear</button></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
     <div class="academic-management-form-grid academic-management-form-grid-3">
@@ -10347,12 +10349,14 @@ function academicOfferingsWorkspace(data, rows) {
     <p class="muted">Junior Secondary offerings become Core automatically. A Senior department's core subjects are also locked for every student assigned to that department.</p>
     <button type="submit">Save subject offering</button>
   </form>` : '';
-  return `${seniorChoiceForm}${compulsoryCurriculumForm}${form}${table('Subject Offerings', rows.offerings, [
+  const legacyNote = secondary && legacySeniorOfferings.length ? `<div class="academic-view-only-note academic-legacy-offering-note"><strong>${legacySeniorOfferings.length} legacy Senior class assignment${legacySeniorOfferings.length === 1 ? '' : 's'} found</strong><span>These records no longer affect Senior Core, Trade or Optional subjects. They may remain as history, or you can archive/delete records that have no active dependants.</span></div>` : '';
+  return `${seniorChoiceForm}${compulsoryCurriculumForm}${form}${legacyNote}${table('Subject Offerings', rows.offerings, [
     { label: 'Class', value: (row) => academicLabel(rows.classes, row.ClassId) },
     { label: 'Division', value: (row) => academicSchoolStageLabel(academicFind(rows.classes, row.ClassId)?.SchoolStage) },
     { label: 'Arm', value: (row) => row.ArmId ? academicLabel(rows.arms, row.ArmId) : 'All arms' },
     { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId) },
     { label: 'Subject role', value: (row) => academicOfferingSubjectRole(row, academicFind(rows.classes, row.ClassId)?.SchoolStage) },
+    { label: 'Curriculum effect', value: (row) => clean(academicFind(rows.classes, row.ClassId)?.SchoolStage).toLowerCase() === 'senior-secondary' ? 'Legacy · ignored' : 'Compulsory' },
     { label: 'Status', value: (row) => row.Status },
     { label: 'Actions', render: (row) => academicActionButtons('offering', row, canManage, data.permissions?.canArchive, data.permissions?.canDelete) }
   ])}`;
@@ -10451,6 +10455,9 @@ function academicArmSubjectRegister(data, rows, canManage) {
     const profile = academicStudentSubjectProfile(data, membership);
     const studentName = academicLabel(data.students, membership.StudentRef, membership.StudentRef);
     const department = membership.DepartmentId ? academicLabel(rows.departments, membership.DepartmentId) : 'No Senior department';
+    const curriculumStatus = !membership.DepartmentId ? 'Pending Department Selection'
+      : !profile.tradeSubjectIds.length ? 'Trade Subjects Not Configured'
+        : profile.selectedTradeSubjectIds.length ? 'Complete' : 'Pending Trade Selection';
     const subjectChecks = (role, subjectIds, selectedIds = [], locked = false) => subjectIds.length
       ? subjectIds.map((subjectId) => {
         const id = `arm-subject-${index}-${role.toLowerCase()}-${clean(subjectId).replace(/[^a-z0-9_-]+/gi, '-')}`;
@@ -10458,7 +10465,7 @@ function academicArmSubjectRegister(data, rows, canManage) {
       }).join('')
       : `<span class="academic-checkbox-empty">No ${escapeHtml(role.toLowerCase())} subjects are configured for this arm.</span>`;
     return `<article class="academic-arm-student-subject-card" data-academic-arm-subject-student data-membership-id="${escapeHtml(academicRecordId(membership))}" data-revision-token="${escapeHtml(membership.RevisionToken || '')}" data-student-name="${escapeHtml(studentName)}">
-      <header><div><strong>${escapeHtml(studentName)}</strong><small>${escapeHtml(membership.StudentRef)} · ${escapeHtml(department)}</small></div><span>${escapeHtml(membership.CurriculumStatus || 'Pending Trade Selection')}</span></header>
+      <header><div><strong>${escapeHtml(studentName)}</strong><small>${escapeHtml(membership.StudentRef)} · ${escapeHtml(department)}</small></div><span>${escapeHtml(curriculumStatus)}</span></header>
       <div class="academic-arm-student-subject-groups">
         <fieldset><legend>Core · locked</legend><div class="academic-checkbox-options">${subjectChecks('Core', profile.coreSubjectIds, profile.coreSubjectIds, true)}</div></fieldset>
         <fieldset><legend>Trade · choose at least one</legend><div class="academic-checkbox-options">${subjectChecks('Trade', profile.tradeSubjectIds, profile.selectedTradeSubjectIds)}</div></fieldset>

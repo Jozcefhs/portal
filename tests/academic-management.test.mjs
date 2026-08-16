@@ -289,26 +289,30 @@ test('AM-002 arm allocation candidates must belong to the selected existing clas
 test('AM-002 Junior takes all offerings while Senior inherits department core subjects', () => {
   const offerings = [
     { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: '', SubjectId: 'english', Compulsory: true, Status: 'Active' },
-    { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: 'arm-a', SubjectId: 'physics', Compulsory: false, Status: 'Active' },
+    { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: 'arm-a', SubjectId: 'french', SubjectRole: 'Trade', Status: 'Active' },
     { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: 'arm-a', SubjectId: 'music', Compulsory: false, Status: 'Active' }
+  ];
+  const subjects = [
+    { SubjectId: 'french', SchoolSection: 'secondary', SeniorChoiceRole: '', Status: 'Active' },
+    { SubjectId: 'music', SchoolSection: 'secondary', SeniorChoiceRole: 'Optional', Status: 'Active' }
   ];
   const departments = [{ DepartmentId: 'science', SchoolStage: 'senior-secondary', CoreSubjectIds: ['physics'], Status: 'Active' }];
   const base = { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: 'arm-a' };
-  const junior = applyAcademicStudentCurriculum({ offerings, departments }, {
+  const junior = applyAcademicStudentCurriculum({ offerings, subjects, departments }, {
     ...base, SchoolStage: 'junior-secondary', DepartmentId: 'science', SubjectIds: []
   });
-  const senior = applyAcademicStudentCurriculum({ offerings, departments }, {
+  const senior = applyAcademicStudentCurriculum({ offerings, subjects, departments }, {
     ...base, SchoolStage: 'senior-secondary', DepartmentId: 'science', SubjectIds: ['music']
   });
 
   assert.equal(junior.DepartmentId, '');
-  assert.deepEqual(junior.SubjectIds, ['english', 'physics', 'music']);
-  assert.deepEqual(senior.SubjectIds, ['music', 'english', 'physics']);
-  const seniorWithoutDuplicatedCoreOffering = applyAcademicStudentCurriculum({ offerings: offerings.filter((row) => row.SubjectId !== 'physics'), departments }, {
-    ...base, SchoolStage: 'senior-secondary', DepartmentId: 'science', SubjectIds: []
-  });
-  assert.deepEqual(seniorWithoutDuplicatedCoreOffering.CoreSubjectIds, ['english', 'physics']);
-  const incompleteSenior = applyAcademicStudentCurriculum({ offerings: [], departments }, {
+  assert.deepEqual(junior.SubjectIds, ['english', 'french', 'music']);
+  assert.deepEqual(senior.CoreSubjectIds, ['physics']);
+  assert.deepEqual(senior.OptionalSubjectIds, ['music']);
+  assert.deepEqual(senior.SubjectIds, ['music', 'physics']);
+  assert.equal(senior.SubjectIds.includes('english'), false);
+  assert.equal(senior.SubjectIds.includes('french'), false);
+  const incompleteSenior = applyAcademicStudentCurriculum({ offerings: [], subjects: [], departments }, {
     ...base, SchoolStage: 'senior-secondary', DepartmentId: 'science', SubjectIds: []
   }, { allowIncompleteCurriculum: true });
   assert.deepEqual(incompleteSenior.SubjectIds, ['physics']);
@@ -318,10 +322,12 @@ test('AM-002 Junior takes all offerings while Senior inherits department core su
 test('AM-002 Senior arm subjects lock core, require Trade and retain optional selections', () => {
   const state = {
     offerings: [
-      { SessionId: 'session-1', TermId: 'term-1', ClassId: 'sss-1', ArmId: '', SubjectId: 'english', SubjectRole: 'Core', Status: 'Active' }
+      { SessionId: 'session-1', TermId: 'term-1', ClassId: 'sss-1', ArmId: '', SubjectId: 'english', SubjectRole: 'Core', Status: 'Active' },
+      { SessionId: 'session-1', TermId: 'term-1', ClassId: 'sss-1', ArmId: '', SubjectId: 'french', SubjectRole: 'Trade', Status: 'Active' }
     ],
     subjects: [
-      { SubjectId: 'physics', SchoolSection: 'secondary', SeniorChoiceRole: 'Optional', Status: 'Active' },
+      { SubjectId: 'physics', SchoolSection: 'secondary', SeniorChoiceRole: '', Status: 'Active' },
+      { SubjectId: 'french', SchoolSection: 'secondary', SeniorChoiceRole: '', Status: 'Active' },
       { SubjectId: 'catering', SchoolSection: 'secondary', SeniorChoiceRole: 'Trade', Status: 'Active' },
       { SubjectId: 'music', SchoolSection: 'secondary', SeniorChoiceRole: 'Optional', Status: 'Active' }
     ],
@@ -332,22 +338,26 @@ test('AM-002 Senior arm subjects lock core, require Trade and retain optional se
     SchoolStage: 'senior-secondary', DepartmentId: 'science', SubjectIds: []
   };
   const pending = applyAcademicStudentCurriculum(state, { ...base });
-  assert.deepEqual(pending.CoreSubjectIds, ['english', 'physics']);
+  assert.deepEqual(pending.CoreSubjectIds, ['physics']);
   assert.deepEqual(pending.TradeSubjectIds, []);
   assert.equal(pending.CurriculumStatus, 'Pending Trade Selection');
+  assert.equal(pending.SubjectIds.includes('french'), false);
   assert.throws(() => applyAcademicStudentCurriculum(state, { ...base }, { requireTradeSelection: true }), /at least one Trade subject/);
   const complete = applyAcademicStudentCurriculum(state, {
     ...base, TradeSubjectIds: ['catering'], OptionalSubjectIds: ['music'], SubjectIds: ['catering', 'music']
   }, { requireTradeSelection: true });
-  assert.deepEqual(complete.CoreSubjectIds, ['english', 'physics']);
+  assert.deepEqual(complete.CoreSubjectIds, ['physics']);
   assert.deepEqual(complete.TradeSubjectIds, ['catering']);
   assert.deepEqual(complete.OptionalSubjectIds, ['music']);
-  assert.deepEqual(complete.SubjectIds, ['catering', 'music', 'english', 'physics']);
+  assert.deepEqual(complete.SubjectIds, ['catering', 'music', 'physics']);
   assert.equal(complete.CurriculumStatus, 'Complete');
+  assert.throws(() => applyAcademicStudentCurriculum(state, {
+    ...base, TradeSubjectIds: ['french'], SubjectIds: ['french']
+  }, { requireTradeSelection: true }), /not available/);
   const pendingDepartment = applyAcademicStudentCurriculum(state, {
     ...base, DepartmentId: '', TradeSubjectIds: [], OptionalSubjectIds: [], SubjectIds: []
   }, { allowIncompleteCurriculum: true });
-  assert.deepEqual(pendingDepartment.CoreSubjectIds, ['english']);
+  assert.deepEqual(pendingDepartment.CoreSubjectIds, []);
   assert.equal(pendingDepartment.CurriculumStatus, 'Pending Department Selection');
   assert.throws(() => applyAcademicStudentCurriculum(state, {
     ...base, DepartmentId: '', TradeSubjectIds: [], OptionalSubjectIds: [], SubjectIds: []
@@ -446,6 +456,8 @@ test('Academic writes are audited, optimistic and preserve legacy class/student 
   assert.match(librarySource, /Subjects already assigned as department Core cannot be selected as Senior Trade or Optional subjects/);
   assert.match(librarySource, /A department Core subject cannot also be a school-wide Senior Trade or Optional subject/);
   assert.match(librarySource, /Every Senior Secondary student must select at least one Trade subject/);
+  assert.match(librarySource, /const curriculumOfferings = record\.SchoolStage === 'senior-secondary' \? \[\] : offerings/);
+  assert.match(librarySource, /ACADEMIC_SENIOR_OFFERING_DEPRECATED/);
   assert.match(librarySource, /ACADEMIC_STUDENT_CLASS_MISMATCH/);
   assert.match(librarySource, /AcademicClassId: academicStudentClassId\(row, classes\)/);
   assert.match(librarySource, /Create at most 50 classes in one batch/);
@@ -638,6 +650,10 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /subject\.SeniorChoiceRole === 'Optional'/);
   assert.match(adminSource, /disabled: departments\.length > 0/);
   assert.match(adminSource, /Department Core subjects are disabled/);
+  assert.match(adminSource, /const applicable = stage === 'senior-secondary' \? \[\]/);
+  assert.match(adminSource, /Legacy · ignored/);
+  assert.match(adminSource, /legacy Senior class assignment/);
+  assert.match(adminSource, /const form = canManage && !secondary/);
   assert.match(adminSource, /option\.disabled \? ' disabled' : ''/);
   assert.match(adminSource, /input\.checked = !input\.disabled && selected\.has/);
   assert.match(adminSource, /Select subjects applicable to \$\{secondary \? 'Junior Secondary' : 'Primary'\}/);
@@ -705,7 +721,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /showAcademicManagementTask\('students', 'transfer'\)/);
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260816-junior-curriculum-only/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260816-senior-curriculum-isolation/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
