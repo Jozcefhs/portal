@@ -56,7 +56,7 @@ test('profile pictures reload from the canonical staff document after a new logi
 });
 
 test('dashboard hydration does not erase the separately loaded profile picture', () => {
-  assert.match(adminHtml, /js\/admin\.js\?v=20260816-arm-subject-assignment-fix/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260816-arm-subject-counts/);
   assert.match(adminJs, /const dashboardUser = data\.user \|\| \{\}/);
   assert.match(
     adminJs,

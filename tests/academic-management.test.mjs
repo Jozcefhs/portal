@@ -627,6 +627,9 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /Trade · choose at least one/);
   assert.match(adminSource, /must have at least one Trade subject/);
   assert.match(adminSource, /Assignments: assignments/);
+  assert.match(adminSource, /function updateAcademicArmStudentSubjectCounts/);
+  assert.match(adminSource, /data-academic-student-subject-count/);
+  assert.match(adminSource, /data-academic-student-subject-total/);
   assert.doesNotMatch(adminSource, /name: 'SubjectIds', label: 'Optional subjects'/);
   assert.match(adminSource, /data-academic-student-placement="bulk"/);
   assert.doesNotMatch(adminSource, /data-academic-form="studentMembership"/);
@@ -710,6 +713,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-student-allocation-layout\{grid-column:1\/-1/);
   assert.match(styleSource, /\.academic-arm-student-subject-list/);
   assert.match(styleSource, /\.academic-subject-locked/);
+  assert.match(styleSource, /\.academic-arm-student-subject-status/);
   assert.match(styleSource, /grid-template-areas:"register controls"/);
   assert.match(styleSource, /grid-template-areas:"controls" "register"/);
   assert.match(styleSource, /\.academic-management-tabs button\{[^}]*font-size:13px/);
@@ -722,7 +726,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /showAcademicManagementTask\('students', 'transfer'\)/);
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260816-arm-subject-assignment-fix/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260816-arm-subject-counts/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

@@ -10432,6 +10432,19 @@ function academicStudentMembershipActions(row, canManage) {
   </div>`;
 }
 
+function updateAcademicArmStudentSubjectCounts(card) {
+  if (!card) return;
+  let total = 0;
+  ['Core', 'Trade', 'Optional'].forEach((role) => {
+    const selected = card.querySelectorAll(`[data-academic-student-subject-role="${role}"]:checked`).length;
+    total += selected;
+    const count = card.querySelector(`[data-academic-student-subject-count="${role}"]`);
+    if (count) count.textContent = `${selected} selected`;
+  });
+  const totalCount = card.querySelector('[data-academic-student-subject-total]');
+  if (totalCount) totalCount.textContent = `${total} subject${total === 1 ? '' : 's'} total`;
+}
+
 function academicArmSubjectRegister(data, rows, canManage) {
   if (academicManagementFilters.section !== 'secondary') return '';
   const sessions = rows.sessions.filter(academicIsActive);
@@ -10458,6 +10471,13 @@ function academicArmSubjectRegister(data, rows, canManage) {
     const curriculumStatus = !membership.DepartmentId ? 'Pending Department Selection'
       : !profile.tradeSubjectIds.length ? 'Trade Subjects Not Configured'
         : profile.selectedTradeSubjectIds.length ? 'Complete' : 'Pending Trade Selection';
+    const selectedCounts = {
+      Core: profile.coreSubjectIds.length,
+      Trade: profile.selectedTradeSubjectIds.length,
+      Optional: profile.selectedOptionalSubjectIds.length
+    };
+    const selectedTotal = selectedCounts.Core + selectedCounts.Trade + selectedCounts.Optional;
+    const countBadge = (role) => `<span class="academic-checkbox-count" data-academic-student-subject-count="${role}">${selectedCounts[role]} selected</span>`;
     const subjectChecks = (role, subjectIds, selectedIds = [], locked = false) => subjectIds.length
       ? subjectIds.map((subjectId) => {
         const id = `arm-subject-${index}-${role.toLowerCase()}-${clean(subjectId).replace(/[^a-z0-9_-]+/gi, '-')}`;
@@ -10465,11 +10485,11 @@ function academicArmSubjectRegister(data, rows, canManage) {
       }).join('')
       : `<span class="academic-checkbox-empty">No ${escapeHtml(role.toLowerCase())} subjects are configured for this arm.</span>`;
     return `<article class="academic-arm-student-subject-card" data-academic-arm-subject-student data-membership-id="${escapeHtml(academicRecordId(membership))}" data-revision-token="${escapeHtml(membership.RevisionToken || '')}" data-student-name="${escapeHtml(studentName)}">
-      <header><div><strong>${escapeHtml(studentName)}</strong><small>${escapeHtml(membership.StudentRef)} · ${escapeHtml(department)}</small></div><span>${escapeHtml(curriculumStatus)}</span></header>
+      <header><div><strong>${escapeHtml(studentName)}</strong><small>${escapeHtml(membership.StudentRef)} · ${escapeHtml(department)}</small></div><div class="academic-arm-student-subject-status"><span>${escapeHtml(curriculumStatus)}</span><strong data-academic-student-subject-total>${selectedTotal} subject${selectedTotal === 1 ? '' : 's'} total</strong></div></header>
       <div class="academic-arm-student-subject-groups">
-        <fieldset><legend>Core · locked</legend><div class="academic-checkbox-options">${subjectChecks('Core', profile.coreSubjectIds, profile.coreSubjectIds, true)}</div></fieldset>
-        <fieldset><legend>Trade · choose at least one</legend><div class="academic-checkbox-options">${subjectChecks('Trade', profile.tradeSubjectIds, profile.selectedTradeSubjectIds)}</div></fieldset>
-        <fieldset><legend>Optional</legend><div class="academic-checkbox-options">${subjectChecks('Optional', profile.optionalSubjectIds, profile.selectedOptionalSubjectIds)}</div></fieldset>
+        <fieldset><legend>Core · locked ${countBadge('Core')}</legend><div class="academic-checkbox-options">${subjectChecks('Core', profile.coreSubjectIds, profile.coreSubjectIds, true)}</div></fieldset>
+        <fieldset><legend>Trade · choose at least one ${countBadge('Trade')}</legend><div class="academic-checkbox-options">${subjectChecks('Trade', profile.tradeSubjectIds, profile.selectedTradeSubjectIds)}</div></fieldset>
+        <fieldset><legend>Optional ${countBadge('Optional')}</legend><div class="academic-checkbox-options">${subjectChecks('Optional', profile.optionalSubjectIds, profile.selectedOptionalSubjectIds)}</div></fieldset>
       </div>
     </article>`;
   }).join('');
@@ -10945,6 +10965,12 @@ function bindAcademicManagement() {
     }
   });
   const armSubjectForm = panelEl.querySelector('[data-academic-arm-subject-register]');
+  armSubjectForm?.querySelectorAll('[data-academic-arm-subject-student]').forEach(updateAcademicArmStudentSubjectCounts);
+  armSubjectForm?.addEventListener('change', (event) => {
+    const subject = event.target.closest('[data-academic-student-subject-role]');
+    if (!subject || !armSubjectForm.contains(subject)) return;
+    updateAcademicArmStudentSubjectCounts(subject.closest('[data-academic-arm-subject-student]'));
+  });
   ['SessionId', 'TermId', 'ClassId', 'ArmId'].forEach((name) => {
     armSubjectForm?.elements.namedItem(name)?.addEventListener('change', (event) => {
       academicArmSubjectDraft = {
