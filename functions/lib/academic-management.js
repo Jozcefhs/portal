@@ -9,9 +9,11 @@ import {
   ACADEMIC_ATTENDANCE_MODES,
   ACADEMIC_ATTENDANCE_STATUSES,
   ACADEMIC_TIMETABLE_VERSION_STATUSES,
+  academicTeacherLoadIssues,
   academicAttendanceSummary,
   academicTimetableConflicts,
   normalizeAcademicAttendanceEntries,
+  normalizeAcademicTeacherUnavailableSlots,
   normalizeAcademicTimetableDays,
   normalizeAcademicTimetableEntry,
   normalizeAcademicTimetablePeriods
@@ -34,6 +36,7 @@ export const ACADEMIC_MANAGEMENT_COLLECTIONS = Object.freeze({
   studentMemberships: 'academicStudentMemberships',
   studentMovements: 'academicStudentMovements',
   timetableSettings: 'academicTimetableSettings',
+  timetableConstraints: 'academicTimetableConstraints',
   timetableVersions: 'academicTimetableVersions',
   timetableEntries: 'academicTimetableEntries',
   studentAttendance: 'academicStudentAttendance',
@@ -149,7 +152,7 @@ function actorUsername(user = {}) {
 
 function recordId(row = {}) {
   return clean(
-    row.RecordId || row.recordId || row.AttendanceId || row.EntryId || row.VersionId || row.TimetableSettingId
+    row.RecordId || row.recordId || row.AttendanceId || row.EntryId || row.VersionId || row.ConstraintId || row.TimetableSettingId
       || row.MovementId || row.MembershipId || row.AllocationId || row.OfferingId
       || row.DepartmentId || row.SubjectId || row.ArmId || row.ArmTemplateId || row.ClassId || row.TermId || row.SessionId || row.__id
   );
@@ -1075,6 +1078,7 @@ function sortAcademicState(state) {
     studentMemberships: [...state.studentMemberships].sort((a, b) => clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
     studentMovements: [...state.studentMovements].sort((a, b) => clean(b.RecordedAt || b.EffectiveDate).localeCompare(clean(a.RecordedAt || a.EffectiveDate))),
     timetableSettings: [...state.timetableSettings].sort((a, b) => clean(b.UpdatedAt).localeCompare(clean(a.UpdatedAt))),
+    timetableConstraints: [...state.timetableConstraints].sort((a, b) => clean(a.TeacherUsername).localeCompare(clean(b.TeacherUsername))),
     timetableVersions: [...state.timetableVersions].sort((a, b) => clean(b.CreatedAt).localeCompare(clean(a.CreatedAt))),
     timetableEntries: [...state.timetableEntries].sort((a, b) => clean(a.DayCode).localeCompare(clean(b.DayCode))
       || clean(a.StartPeriodCode).localeCompare(clean(b.StartPeriodCode))
@@ -1118,6 +1122,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     state.timetableVersions = state.timetableVersions.filter((row) => publishedVersions.has(row.VersionId));
     state.timetableEntries = state.timetableEntries.filter((row) => publishedVersions.has(row.VersionId)
       && (lower(row.TeacherUsername) === username || visibleKeys.has(`${row.ClassId}|${row.ArmId}`) || visibleKeys.has(`${row.ClassId}|*`)));
+    state.timetableConstraints = state.timetableConstraints.filter((row) => lower(row.TeacherUsername) === username);
     state.studentAttendance = state.studentAttendance.filter((row) => visibleStudents.has(lower(row.StudentRef)));
     state.attendanceCorrections = state.attendanceCorrections.filter((row) => lower(row.RequestedByUsername) === username);
     students = students.filter((row) => visibleStudents.has(lower(studentReference(row))));
@@ -1147,6 +1152,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
       StudentMemberships: state.studentMemberships.filter(statusActive).length,
       StudentMovements: state.studentMovements.length,
       TimetableVersions: state.timetableVersions.length,
+      TimetableConstraints: state.timetableConstraints.filter(statusActive).length,
       TimetableEntries: state.timetableEntries.length,
       AttendanceRecords: state.studentAttendance.length,
       AttendanceCorrections: state.attendanceCorrections.length
@@ -2368,6 +2374,75 @@ export async function saveAcademicTimetableSettings(env, user = {}, input = {}) 
   return academicOperationalResponse(env, user, input, scope, 'School days and periods saved online.');
 }
 
+function academicTimetableConstraint(state = {}, candidate = {}) {
+  return (state.timetableConstraints || []).find((row) => statusActive(row)
+    && row.SessionId === candidate.SessionId && row.TermId === candidate.TermId
+    && lower(row.TeacherUsername) === lower(candidate.TeacherUsername));
+}
+
+function assertAcademicTeacherScheduleRules(state, candidate, entries = state.timetableEntries || []) {
+  const constraint = academicTimetableConstraint(state, candidate);
+  const issues = academicTeacherLoadIssues(candidate, entries.filter(statusActive), constraint);
+  if (!issues.length) return;
+  const unavailable = issues.find((row) => row.Type === 'Availability');
+  if (unavailable) {
+    throw failure(`This teacher is unavailable on ${unavailable.DayCode} during ${unavailable.PeriodCode}.`, 409, 'ACADEMIC_TEACHER_UNAVAILABLE');
+  }
+  const daily = issues.find((row) => row.Type === 'DailyLoad');
+  if (daily) {
+    throw failure(`This lesson would give the teacher ${daily.Actual} periods on ${daily.DayCode}; the configured daily maximum is ${daily.Limit}.`, 409, 'ACADEMIC_TEACHER_DAILY_LOAD');
+  }
+  const weekly = issues.find((row) => row.Type === 'WeeklyLoad');
+  throw failure(`This lesson would give the teacher ${weekly.Actual} periods this week; the configured weekly maximum is ${weekly.Limit}.`, 409, 'ACADEMIC_TEACHER_WEEKLY_LOAD');
+}
+
+export async function saveAcademicTimetableConstraint(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const { scope, state, session, term } = context;
+  const settings = state.timetableSettings.find((row) => row.SessionId === session.SessionId && row.TermId === term.TermId);
+  if (!settings) throw failure('Configure the school days and periods before setting teacher availability.');
+  const teacherUsername = lower(input.TeacherUsername);
+  if (!teacherUsername) throw failure('Choose the teacher whose timetable limits you want to configure.');
+  const people = await loadPeople(env, user, scope);
+  const teacher = people.staff.find((row) => lower(row.Username || row.username || row.__id) === teacherUsername);
+  if (!teacher) throw failure('The selected teacher was not found in this branch and school section.');
+  const constraintId = academicId('timetable-constraint', scope.branchId, scope.section, session.SessionId, term.TermId, teacherUsername);
+  const existing = findById(state.timetableConstraints, constraintId);
+  const timestamp = nowIso();
+  const record = {
+    ...(existing || {}), RecordId: constraintId, ConstraintId: constraintId,
+    TeacherUsername: teacherUsername, SessionId: session.SessionId, TermId: term.TermId,
+    UnavailableSlots: normalizeAcademicTeacherUnavailableSlots(input.UnavailableSlots, settings),
+    MaxPeriodsPerDay: wholeNumber(input.MaxPeriodsPerDay, wholeNumber(existing?.MaxPeriodsPerDay, 0), 0, 100),
+    MaxPeriodsPerWeek: wholeNumber(input.MaxPeriodsPerWeek, wholeNumber(existing?.MaxPeriodsPerWeek, 0), 0, 1000),
+    Status: oneOf(input.Status, ACADEMIC_RECORD_STATUSES, existing?.Status || 'Active'),
+    BranchId: scope.branchId, SchoolSection: scope.section,
+    CreatedAt: clean(existing?.CreatedAt) || timestamp, CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+    UpdatedAt: timestamp, UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableConstraints, documentId: constraintId, data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken) },
+    auditWrite(user, existing ? 'UPDATE' : 'CREATE', 'timetableConstraint', record, `${teacherUsername}: ${record.UnavailableSlots.length} unavailable slot(s)`)
+  ], 'These teacher timetable limits changed while they were being saved. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, 'Teacher availability and workload limits saved online.');
+}
+
+export async function deleteAcademicTimetableConstraint(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const { scope, state } = context;
+  const existing = findById(state.timetableConstraints, input.ConstraintId || input.RecordId);
+  if (!existing) throw failure('The teacher timetable limits were not found.', 404);
+  const revisionToken = clean(input.RevisionToken);
+  if (!revisionToken || revisionToken !== clean(existing.__updateTime)) {
+    throw failure('These teacher timetable limits changed after they were loaded. Reload and try again.', 409);
+  }
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableConstraints, documentId: existing.ConstraintId, operation: 'delete', updateTime: revisionToken },
+    auditWrite(user, 'DELETE', 'timetableConstraint', existing, existing.TeacherUsername)
+  ], 'These teacher timetable limits changed while they were being deleted. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, 'Teacher availability and workload limits deleted.');
+}
+
 export async function createAcademicTimetableVersion(env, user = {}, input = {}) {
   const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
   const { scope, state, session, term } = context;
@@ -2390,6 +2465,87 @@ export async function createAcademicTimetableVersion(env, user = {}, input = {})
     auditWrite(user, 'CREATE', 'timetableVersion', record, name)
   ], 'This timetable version already exists. Reload and try again.');
   return academicOperationalResponse(env, user, input, scope, `${name} created as a draft timetable.`);
+}
+
+function assertAcademicTimetableVersionLessons(state, version, entries) {
+  entries.forEach((entry) => {
+    if (!academicSubjectTeacherAllocation(state, entry)) {
+      throw failure(`The ${entry.DayCode} ${entry.StartPeriodCode} lesson cannot be used because its subject-teacher allocation is no longer active.`, 409, 'ACADEMIC_TIMETABLE_ALLOCATION_INVALID');
+    }
+    const conflicts = academicTimetableConflicts(entry, entries);
+    if (conflicts.length) {
+      const types = [...new Set(conflicts.map((row) => row.Type))].join(', ').toLowerCase();
+      throw failure(`Resolve the ${types} conflict in ${version.Name} before continuing.`, 409, 'ACADEMIC_TIMETABLE_CONFLICT');
+    }
+    assertAcademicTeacherScheduleRules(state, entry, entries);
+  });
+}
+
+export async function copyAcademicTimetableVersion(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const { scope, state, session, term } = context;
+  const source = findById(state.timetableVersions, input.SourceVersionId);
+  if (!source || source.SessionId !== session.SessionId || source.TermId !== term.TermId) {
+    throw failure('Choose a timetable version from the selected academic period to copy.');
+  }
+  if (lower(source.Status) === 'copying') throw failure('Wait for the source timetable copy to finish before copying it again.');
+  const sourceEntries = state.timetableEntries.filter((row) => row.VersionId === source.VersionId && statusActive(row));
+  if (!sourceEntries.length) throw failure('Add at least one lesson to the source timetable before copying it.');
+  assertAcademicTimetableVersionLessons(state, source, sourceEntries);
+  const name = clean(input.Name);
+  if (!name) throw failure('Enter a name for the new draft timetable.');
+  const versionId = academicId('timetable-version', scope.branchId, scope.section, session.SessionId, term.TermId, name);
+  let target = findById(state.timetableVersions, versionId)
+    || state.timetableVersions.find((row) => row.SessionId === session.SessionId && row.TermId === term.TermId && lower(row.Name) === lower(name));
+  if (target && !(lower(target.Status) === 'copying' && target.CopySourceVersionId === source.VersionId)) {
+    throw failure('A timetable version with this name already exists.');
+  }
+  const timestamp = nowIso();
+  if (!target) {
+    target = {
+      RecordId: versionId, VersionId: versionId, Name: name, Status: 'Copying',
+      CopySourceVersionId: source.VersionId, SessionId: session.SessionId, TermId: term.TermId,
+      BranchId: scope.branchId, SchoolSection: scope.section, Days: source.Days, Periods: source.Periods,
+      CreatedAt: timestamp, CreatedBy: actorName(user), UpdatedAt: timestamp, UpdatedBy: actorName(user)
+    };
+    await commitAcademicBatch(env, [{
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions,
+      documentId: versionId, data: withoutMetadata(target), exists: false
+    }], 'A timetable version with this name was created by someone else. Reload and try again.');
+  }
+  const existingCopySources = new Set(state.timetableEntries.filter((row) => row.VersionId === target.VersionId)
+    .map((row) => clean(row.CopySourceEntryId)).filter(Boolean));
+  const pendingWrites = sourceEntries.filter((entry) => !existingCopySources.has(entry.EntryId)).map((entry) => {
+    const entryId = academicId('timetable-entry-copy', target.VersionId, entry.EntryId);
+    const copied = {
+      ...entry, RecordId: entryId, EntryId: entryId, VersionId: target.VersionId,
+      CopySourceEntryId: entry.EntryId, CreatedAt: timestamp, CreatedBy: actorName(user),
+      UpdatedAt: timestamp, UpdatedBy: actorName(user), Status: 'Active'
+    };
+    delete copied.__id;
+    delete copied.__name;
+    delete copied.__createTime;
+    delete copied.__updateTime;
+    delete copied.__scopePath;
+    return { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableEntries, documentId: entryId, data: copied, exists: false };
+  });
+  for (let offset = 0; offset < pendingWrites.length; offset += 450) {
+    await commitAcademicBatch(env, pendingWrites.slice(offset, offset + 450), 'This timetable copy was interrupted by another update. Run the same copy again to resume it safely.');
+  }
+  const freshVersions = await listCollection(env, ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions);
+  const freshTarget = findById(freshVersions, target.VersionId);
+  if (!freshTarget) throw failure('The copied timetable version could not be finalized. Run the same copy again to resume it.', 409);
+  const completedAt = nowIso();
+  const completed = {
+    ...freshTarget, Status: 'Draft', CopiedEntryCount: sourceEntries.length,
+    CopyCompletedAt: completedAt, UpdatedAt: completedAt, UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions, documentId: freshTarget.VersionId,
+      data: withoutMetadata(completed), updateTime: freshTarget.__updateTime },
+    auditWrite(user, 'COPY', 'timetableVersion', completed, `${source.Name} -> ${name}; ${sourceEntries.length} lesson(s)`)
+  ], 'The copied timetable changed while it was being finalized. Run the same copy again to resume it.');
+  return academicOperationalResponse(env, user, input, scope, `${sourceEntries.length} lesson${sourceEntries.length === 1 ? '' : 's'} copied into ${name} as a new draft.`);
 }
 
 function academicSubjectTeacherAllocation(state, candidate) {
@@ -2429,6 +2585,7 @@ export async function saveAcademicTimetableEntry(env, user = {}, input = {}) {
     const types = [...new Set(conflicts.map((row) => row.Type))].join(', ');
     throw failure(`Resolve the ${types.toLowerCase()} timetable conflict before saving.`, 409, 'ACADEMIC_TIMETABLE_CONFLICT');
   }
+  assertAcademicTeacherScheduleRules(state, record);
   const timestamp = nowIso();
   record.Status = 'Active';
   record.CreatedAt = clean(existing?.CreatedAt) || timestamp;
@@ -2468,6 +2625,7 @@ export async function changeAcademicTimetableVersionStatus(env, user = {}, input
   if (!(transitions[lower(version.Status)] || []).includes(requested)) throw failure(`A ${version.Status} timetable cannot move to ${requested || 'that status'}.`, 409);
   const entries = state.timetableEntries.filter((row) => row.VersionId === version.VersionId && statusActive(row));
   if (['Approved', 'Published'].includes(requested) && !entries.length) throw failure('Add at least one lesson before approving or publishing this timetable.');
+  if (['Approved', 'Published'].includes(requested)) assertAcademicTimetableVersionLessons(state, version, entries);
   const reason = clean(input.Reason).slice(0, 500);
   if (requested === 'Withdrawn' && !reason) throw failure('Enter the reason for withdrawing this timetable.');
   const timestamp = nowIso();
@@ -2649,7 +2807,10 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['bulkimportacademicstudentmemberships', 'importacademicstudentmemberships'].includes(action)) return bulkImportAcademicStudentMemberships(env, user, input);
   if (['bulkassignacademicarmstudentsubjects', 'bulkassignarmstudentsubjects'].includes(action)) return bulkAssignAcademicArmStudentSubjects(env, user, input);
   if (['saveacademictimetablesettings', 'savetimetablesettings'].includes(action)) return saveAcademicTimetableSettings(env, user, input);
+  if (['saveacademictimetableconstraint', 'savetimetableconstraint'].includes(action)) return saveAcademicTimetableConstraint(env, user, input);
+  if (['deleteacademictimetableconstraint', 'deletetimetableconstraint'].includes(action)) return deleteAcademicTimetableConstraint(env, user, input);
   if (['createacademictimetableversion', 'createtimetableversion'].includes(action)) return createAcademicTimetableVersion(env, user, input);
+  if (['copyacademictimetableversion', 'copytimetableversion'].includes(action)) return copyAcademicTimetableVersion(env, user, input);
   if (['saveacademictimetableentry', 'savetimetableentry'].includes(action)) return saveAcademicTimetableEntry(env, user, input);
   if (['deleteacademictimetableentry', 'deletetimetableentry'].includes(action)) return deleteAcademicTimetableEntry(env, user, input);
   if (['changeacademictimetableversionstatus', 'changetimetableversionstatus'].includes(action)) return changeAcademicTimetableVersionStatus(env, user, input);

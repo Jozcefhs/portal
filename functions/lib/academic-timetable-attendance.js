@@ -213,6 +213,69 @@ export function academicTimetableConflicts(candidate = {}, entries = []) {
   });
 }
 
+export function normalizeAcademicTeacherUnavailableSlots(value, settings = {}) {
+  let supplied = value;
+  if (typeof supplied === 'string') {
+    const text = clean(supplied);
+    if (!text) return [];
+    try { supplied = JSON.parse(text); } catch (_error) {
+      supplied = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).flatMap((line) => {
+        const [dayCode, periodList = ''] = line.split(/\s*\|\s*/, 2);
+        return periodList.split(/[\s,]+/).filter(Boolean).map((periodCode) => ({ DayCode: dayCode, PeriodCode: periodCode }));
+      });
+    }
+  }
+  if (!Array.isArray(supplied)) supplied = [];
+  const days = new Set((settings.Days || []).map((row) => clean(row.DayCode).toUpperCase()));
+  const seen = new Set();
+  const slots = [];
+  supplied.forEach((item, index) => {
+    const raw = typeof item === 'string' ? item.split(':', 2) : [];
+    const dayCode = clean(typeof item === 'string' ? raw[0] : item?.DayCode).toUpperCase();
+    const periodCode = clean(typeof item === 'string' ? raw[1] : item?.PeriodCode).toUpperCase();
+    if (!days.has(dayCode)) throw failure(`Unavailable slot ${index + 1} uses an unconfigured school day.`);
+    const period = academicTimetablePeriodsForDay(settings, dayCode)
+      .find((row) => clean(row.PeriodCode).toUpperCase() === periodCode && row.Kind === 'Lesson');
+    if (!period) throw failure(`Unavailable slot ${index + 1} must use a configured lesson period.`);
+    const key = `${dayCode}:${periodCode}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      slots.push(key);
+    }
+  });
+  const dayOrder = new Map((settings.Days || []).map((row, index) => [clean(row.DayCode).toUpperCase(), Number(row.SortOrder || index + 1)]));
+  return slots.sort((left, right) => {
+    const [leftDay, leftPeriod] = left.split(':');
+    const [rightDay, rightPeriod] = right.split(':');
+    const leftPeriods = academicTimetablePeriodsForDay(settings, leftDay);
+    const rightPeriods = academicTimetablePeriodsForDay(settings, rightDay);
+    return (dayOrder.get(leftDay) || 999) - (dayOrder.get(rightDay) || 999)
+      || leftPeriods.findIndex((row) => row.PeriodCode === leftPeriod) - rightPeriods.findIndex((row) => row.PeriodCode === rightPeriod);
+  });
+}
+
+export function academicTeacherLoadIssues(candidate = {}, entries = [], constraint = {}) {
+  if (!candidate || !clean(candidate.TeacherUsername) || !constraint || lower(constraint.Status) === 'inactive') return [];
+  const teacher = lower(candidate.TeacherUsername);
+  const versionId = lower(candidate.VersionId);
+  const candidateId = lower(candidate.EntryId || candidate.RecordId);
+  const related = (entries || []).filter((row) => lower(row.VersionId) === versionId
+    && lower(row.TeacherUsername) === teacher
+    && lower(row.EntryId || row.RecordId) !== candidateId);
+  const unavailable = new Set((constraint.UnavailableSlots || []).map((slot) => clean(slot).toUpperCase()));
+  const issues = (candidate.PeriodCodes || []).filter((periodCode) => unavailable.has(`${clean(candidate.DayCode).toUpperCase()}:${clean(periodCode).toUpperCase()}`))
+    .map((periodCode) => ({ Type: 'Availability', DayCode: clean(candidate.DayCode).toUpperCase(), PeriodCode: clean(periodCode).toUpperCase() }));
+  const candidateLoad = Math.max(1, (candidate.PeriodCodes || []).length);
+  const dailyLoad = candidateLoad + related.filter((row) => lower(row.DayCode) === lower(candidate.DayCode))
+    .reduce((total, row) => total + Math.max(1, (row.PeriodCodes || []).length), 0);
+  const weeklyLoad = candidateLoad + related.reduce((total, row) => total + Math.max(1, (row.PeriodCodes || []).length), 0);
+  const dailyLimit = wholeNumber(constraint.MaxPeriodsPerDay, 0, 0, 100);
+  const weeklyLimit = wholeNumber(constraint.MaxPeriodsPerWeek, 0, 0, 1000);
+  if (dailyLimit && dailyLoad > dailyLimit) issues.push({ Type: 'DailyLoad', Limit: dailyLimit, Actual: dailyLoad, DayCode: clean(candidate.DayCode).toUpperCase() });
+  if (weeklyLimit && weeklyLoad > weeklyLimit) issues.push({ Type: 'WeeklyLoad', Limit: weeklyLimit, Actual: weeklyLoad });
+  return issues;
+}
+
 export function normalizeAcademicAttendanceEntries(value, eligibleStudentRefs = []) {
   let supplied = value;
   if (typeof supplied === 'string') {

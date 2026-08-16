@@ -4,10 +4,12 @@ import { readFile } from 'node:fs/promises';
 
 import {
   academicAttendanceSummary,
+  academicTeacherLoadIssues,
   academicTimetableConflicts,
   academicTimetablePeriodCodes,
   academicTimetablePeriodsForDay,
   normalizeAcademicAttendanceEntries,
+  normalizeAcademicTeacherUnavailableSlots,
   normalizeAcademicTimetableDays,
   normalizeAcademicTimetableEntry,
   normalizeAcademicTimetablePeriods
@@ -82,6 +84,27 @@ test('timetable entries occupy exact periods and detect classroom, teacher and r
   assert.deepEqual(conflicts.map((row) => row.Type).sort(), ['Classroom', 'Room', 'Teacher']);
 });
 
+test('teacher availability and workload limits use exact lesson periods', () => {
+  const constraint = {
+    Status: 'Active', MaxPeriodsPerDay: 2, MaxPeriodsPerWeek: 4,
+    UnavailableSlots: normalizeAcademicTeacherUnavailableSlots('MON | P1\nTUE | P2', settings)
+  };
+  assert.deepEqual(constraint.UnavailableSlots, ['MON:P1', 'TUE:P2']);
+  const candidate = {
+    ...normalizeAcademicTimetableEntry({
+      DayCode: 'MON', StartPeriodCode: 'P1', DurationPeriods: 1,
+      ClassId: 'class-10', ArmId: 'arm-a', SubjectId: 'math', TeacherUsername: 'teacher-a'
+    }, settings), EntryId: 'candidate', VersionId: 'version-1'
+  };
+  assert.equal(academicTeacherLoadIssues(candidate, [], constraint)[0].Type, 'Availability');
+  const availableCandidate = { ...candidate, DayCode: 'TUE', StartPeriodCode: 'P1', PeriodCodes: ['P1'] };
+  const loadIssues = academicTeacherLoadIssues(availableCandidate, [
+    { EntryId: 'one', VersionId: 'version-1', DayCode: 'TUE', PeriodCodes: ['P3', 'P4'], TeacherUsername: 'teacher-a' }
+  ], constraint);
+  assert.equal(loadIssues.find((row) => row.Type === 'DailyLoad')?.Actual, 3);
+  assert.throws(() => normalizeAcademicTeacherUnavailableSlots('FRI | P1', settings), /unconfigured school day/i);
+});
+
 test('attendance entries remain classroom-scoped and provide status totals', () => {
   const rows = normalizeAcademicAttendanceEntries([
     { StudentRef: 'S-1', Status: 'Present' },
@@ -108,9 +131,13 @@ test('academic roles separate timetable publishing from allocated attendance mar
 test('timetable publication and attendance corrections use protected audited workflows', () => {
   for (const action of [
     'saveAcademicTimetableSettings', 'createAcademicTimetableVersion', 'saveAcademicTimetableEntry',
-    'changeAcademicTimetableVersionStatus', 'saveAcademicStudentAttendance', 'decideAcademicAttendanceCorrection'
+    'saveAcademicTimetableConstraint', 'copyAcademicTimetableVersion', 'changeAcademicTimetableVersionStatus',
+    'saveAcademicStudentAttendance', 'decideAcademicAttendanceCorrection'
   ]) assert.match(source, new RegExp(`export async function ${action}`));
   assert.match(source, /ACADEMIC_TIMETABLE_CONFLICT/);
+  assert.match(source, /ACADEMIC_TEACHER_UNAVAILABLE/);
+  assert.match(source, /status: 'Copying'/i);
+  assert.match(source, /offset \+= 450/);
   assert.match(source, /Only an allocated form, assistant or subject teacher may mark this register/);
   assert.match(source, /REQUEST_CORRECTION/);
   assert.match(source, /APPROVE_CORRECTION/);
@@ -126,13 +153,17 @@ test('staff workspace exposes focused timetable and attendance interfaces', () =
   assert.match(adminSource, /data-academic-timetable-day/);
   assert.match(adminSource, /data-academic-timetable-entry/);
   assert.match(adminSource, /data-academic-timetable-status/);
+  assert.match(adminSource, /data-academic-timetable-constraint/);
+  assert.match(adminSource, /data-academic-timetable-copy/);
+  assert.match(adminSource, /data-academic-timetable-print="class"/);
+  assert.match(adminSource, /Print-ready schedules/);
   assert.match(adminSource, /data-academic-timetable-open-version/);
   assert.match(adminSource, /The server rejects overlapping classrooms, teachers or rooms/);
   assert.match(adminSource, /data-academic-attendance-register/);
   assert.match(adminSource, /data-academic-attendance-all="Present"/);
   assert.match(adminSource, /data-academic-attendance-decision/);
   assert.match(adminSource, /All students start as Present/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260816-day-specific-timetable/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260816-timetable-operations/);
   assert.match(portalCss, /\.academic-attendance-table\{max-height:480px;overflow:auto/);
 });
 

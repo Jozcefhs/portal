@@ -43,9 +43,15 @@ Daily, Period or Subject attendance using Present, Absent, Late, Excused and
 Left Early states; changes to saved teacher records become approval requests,
 while authorized academic administrators decide them with an audit reason.
 Parents see only their linked child's published class schedule and scoped
-attendance summary. Timetable copy/preview, availability and maximum-load
-configuration, substitutions, printable schedules, offline attendance drafts,
-absence notifications and term attendance reporting remain within Milestone 4.
+attendance summary. Timetable managers can now configure exact unavailable
+lesson slots and optional daily/weekly period limits per teacher; those rules
+are enforced when lessons are saved and again before approval or publication.
+An existing timetable version can be copied safely into a revalidated Draft
+using resumable database batches, and web and desktop provide print-ready class
+and teacher schedules using the version's saved day-specific times. Targeted
+copying between selected arms/classes/terms, substitutions, offline attendance
+drafts, absence notifications and term attendance reporting remain within
+Milestone 4.
 Result production and publication, finance-officer clearance administration,
 promotion intake, score processing and CBT remain pending work; configuring a
 policy or academic structure does not itself publish a result.
