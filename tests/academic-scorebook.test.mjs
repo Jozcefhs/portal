@@ -1,11 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { webcrypto } from 'node:crypto';
+import {
+  academicCbtScoreBatchDigest,
+  verifyAcademicCbtScoreSignature
+} from '../functions/lib/academic-management.js';
 import {
   academicAssessmentScheme,
   academicScoreSourceIssues,
   calculateAcademicStudentScore,
   normalizeAcademicScoreImportRows,
+  validateAcademicCbtScoreBatch,
   validateAcademicScoreImport
 } from '../functions/lib/academic-scorebook.js';
 
@@ -131,4 +137,70 @@ test('Milestone 5 server and web contracts expose controlled score sheets, impor
   assert.match(adminSource, /parseAcademicScoreSpreadsheet/);
   assert.match(adminSource, /changeAcademicScoreSheetStatus/);
   assert.match(adminSource, /Download score template/);
+});
+
+test('Milestone 8 CBT batches require the configured source, exact roster and valid numeric or absent scores', () => {
+  const cbtPolicy = structuredClone(policy);
+  cbtPolicy.Assessment.Components[0].SourceMode = 'built-in-cbt';
+  const scheme = academicAssessmentScheme(cbtPolicy);
+  const valid = validateAcademicCbtScoreBatch({
+    SourceType: 'BuiltInCBT', AssessmentComponentId: 'ca', MaximumScore: 40,
+    Scores: [
+      { StudentRef: 'DCA/001', State: 'Numeric', RawScore: 34 },
+      { StudentRef: 'DCA/002', State: 'Absent' }
+    ]
+  }, {
+    scheme, sourceMode: 'built-in-cbt',
+    roster: [{ StudentRef: 'DCA/001' }, { StudentRef: 'DCA/002' }]
+  });
+  assert.equal(valid.Ready, true);
+  assert.equal(valid.NumericCount, 1);
+  assert.equal(valid.AbsentCount, 1);
+
+  const missing = validateAcademicCbtScoreBatch({
+    SourceType: 'BuiltInCBT', AssessmentComponentId: 'ca', MaximumScore: 40,
+    Scores: [{ StudentRef: 'DCA/001', State: 'Numeric', RawScore: 41 }]
+  }, {
+    scheme, sourceMode: 'built-in-cbt',
+    roster: [{ StudentRef: 'DCA/001' }, { StudentRef: 'DCA/002' }]
+  });
+  assert.equal(missing.Ready, false);
+  assert.ok(missing.Issues.some((issue) => issue.includes('between 0 and 40')));
+  assert.ok(missing.Issues.some((issue) => issue.includes('missing from the CBT batch')));
+});
+
+test('Milestone 8 server contract exposes idempotent approved CBT score synchronization', () => {
+  assert.match(academicManagementSource, /academicScoreSyncBatches/);
+  assert.match(academicManagementSource, /syncAcademicCbtScores/);
+  assert.match(academicManagementSource, /ACADEMIC_CBT_SCORE_DIGEST_INVALID/);
+  assert.match(academicManagementSource, /verifyAcademicCbtScoreSignature/);
+  assert.match(academicManagementSource, /RSASSA-PKCS1-v1_5-SHA256/);
+  assert.match(academicManagementSource, /ACADEMIC_CBT_SYNC_KEY_REUSED/);
+  assert.match(academicManagementSource, /ApprovalStatus/);
+  assert.match(adminSource, /data-academic-external-cbt/);
+  assert.match(adminSource, /external-cbt-adapter-template\.csv/);
+});
+
+test('Milestone 8 verifies a signed local CBT batch identity', async () => {
+  const keys = await webcrypto.subtle.generateKey(
+    { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+    true, ['sign', 'verify']
+  );
+  const publicDer = new Uint8Array(await webcrypto.subtle.exportKey('spki', keys.publicKey));
+  const publicText = Buffer.from(publicDer).toString('base64').match(/.{1,64}/g).join('\n');
+  const payload = {
+    Version: 'dynamax-cbt-score-batch-v1', BatchId: 'cbt-sync-test-batch',
+    SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: 'arm-1', SubjectId: 'math',
+    AssessmentComponentId: 'ca', MaximumScore: 40, SourceType: 'BuiltInCBT', MarkingRevision: 2,
+    ApprovalStatus: 'Approved', Scores: [{ StudentRef: 'DCA/001', State: 'Numeric', RawScore: 32 }]
+  };
+  payload.BatchDigest = await academicCbtScoreBatchDigest(payload);
+  const keyDigest = new Uint8Array(await webcrypto.subtle.digest('SHA-256', publicDer));
+  payload.SigningKeyId = Buffer.from(keyDigest).toString('hex').slice(0, 32);
+  payload.SigningPublicKey = `-----BEGIN PUBLIC KEY-----\n${publicText}\n-----END PUBLIC KEY-----\n`;
+  payload.SignatureAlgorithm = 'RSASSA-PKCS1-v1_5-SHA256';
+  payload.Signature = Buffer.from(await webcrypto.subtle.sign(
+    'RSASSA-PKCS1-v1_5', keys.privateKey, new TextEncoder().encode(payload.BatchDigest)
+  )).toString('base64url');
+  assert.equal(await verifyAcademicCbtScoreSignature(payload), payload.SigningKeyId);
 });

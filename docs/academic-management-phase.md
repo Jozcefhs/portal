@@ -2,12 +2,13 @@
 
 Status: approved baseline; implementation in progress.
 
-Implementation status (2026-08-16): Milestones 1 and 2 are in progress, the
+Implementation status (2026-08-17): Milestones 1 and 2 are in progress, the
 secure parent-access slice of Milestone 3 is operational, Milestone 4 is
 operational, and the Milestone 5 assessment, scorebook and spreadsheet-import
 slice is operational on the web companion and desktop source. The Milestone 6
-local CBT foundation and Milestone 7 examination-authoring/document-delivery
-slice are also operational in the desktop source. The School
+local CBT foundation, Milestone 7 examination-authoring/document-delivery
+slice and Milestone 8 marking/recovery/synchronization baseline are also
+operational in source. The School
 edition now has an effective-dated academic-policy schema, immutable
 policy revisions, separate draft and active states, organisation-to-branch
 inheritance, activation validation and administrator controls for result
@@ -97,12 +98,26 @@ loaded inside the same responsive Android/Windows examination screen, with
 mapped source-page and region navigation. Active PDF content, damaged files,
 oversized files and unsupported signatures are rejected. Unused trial
 examinations can be deleted, while attempt history blocks destructive deletion.
+Local marking now automatically scores objective responses, clearly holds
+answered subjective items for manual marking, records absent candidates and
+uses a reasoned Draft -> Reviewed -> Approved -> Synchronized lifecycle.
+Approved local batches use stable replay-safe identifiers, payload digests and
+a Windows-vault-protected signing key. The online receiver verifies the
+signature, pins the branch/section signing identity, revalidates the exact
+current roster, assessment component and maximum mark, and writes only to a
+Draft score sheet. Failed synchronizations remain retryable without duplicating
+scores, while corrected synchronized batches must be reopened with an audit
+reason and receive a new revision. The desktop creates encrypted, integrity-
+checked backups before the local server starts and exposes controlled backup
+and restore actions that create a pre-restore safeguard. The web scorebook also
+has a provider-neutral external-CBT CSV/XLSX adapter with exact-roster,
+component, maximum-mark, digest and idempotency checks. Provider-specific signed
+API or webhook adapters remain dependent on the existing CBT platform contract.
 The packaged client assets are in
 the desktop build definition, but the desktop application will not be compiled
 until the remaining milestones are complete.
 Result production and publication, finance-officer clearance administration,
-promotion intake, transcripts and parent progress remain pending work. CBT
-marking, external adapters and online score synchronization remain Milestone 8;
+promotion intake, transcripts and parent progress remain pending work.
 OCR-assisted question suggestions remain a separate review-gated authoring
 slice and are not yet operational;
 configuring a policy, academic structure or score sheet does not itself publish
@@ -726,6 +741,15 @@ specific session, term, class, arm, subject and assessment component.
 External scores use the same preview, validation, idempotency, draft and
 approval workflow as built-in CBT scores. Manual spreadsheet import remains a
 fallback. No external provider writes directly to published results.
+
+The provider-neutral export adapter accepts CSV or XLSX rows with `StudentRef`,
+`State` and `RawScore`. `State` is `Numeric` or `Absent`; absent rows leave
+`RawScore` blank. The file must contain every current student in the selected
+classroom-subject roster exactly once. An authorized reviewer explicitly maps
+the provider, period, classroom, subject and assessment component before the
+digest-checked batch can update a Draft score sheet. Provider API and webhook
+adapters reuse this contract after their authentication and signing details are
+supplied.
 
 ## 11. Term results and publication
 

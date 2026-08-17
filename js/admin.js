@@ -9942,6 +9942,7 @@ function academicTaskDefinitions(view, root) {
       { key: 'entry', label: 'Enter scores', title: 'Class subject scorebook', description: 'Choose one allocated classroom and subject, then enter every configured assessment component for its students.', nodes: nodes(form('[data-academic-scorebook]')) },
       { key: 'workflow', label: 'Review and approval', title: 'Score-sheet workflow', description: 'Submit complete sheets, review them, approve them and lock final score records without silent edits.', nodes: nodes(register('Score Sheet Workflow')) },
       { key: 'imports', label: 'Spreadsheet imports', title: 'Preview and import scores', description: 'Download a stable template, preview CSV or XLSX rows, choose the commit policy, and roll back unpublished imports.', nodes: nodes(form('[data-academic-score-import]'), register('Score Import History')) },
+      { key: 'cbtSync', label: 'CBT synchronization', title: 'Built-in and external CBT scores', description: 'Synchronize approved local CBT batches or import a provider export into the Draft scorebook with roster, component and digest validation.', nodes: nodes(form('[data-academic-external-cbt]'), register('CBT Score Synchronization History')) },
       { key: 'scheme', label: 'Assessment scheme', title: 'Active components and grading', description: 'Review the activated policy revision used to validate scores, calculate weighted totals and assign grades.', nodes: nodes(form('[data-academic-assessment-scheme]')) }
     ],
     cbt: [
@@ -11190,12 +11191,62 @@ function academicScorebookWorkspace(data, rows) {
     { label: 'Committed', value: (row) => row.CommittedAt || '-' },
     { label: 'Actions', render: (row) => row.Status === 'Committed' && data.permissions?.canImportScores ? `<button type="button" class="compact-icon-action academic-archive-action" data-academic-score-import-rollback="${escapeHtml(row.ImportId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Roll back unpublished import" aria-label="Roll back unpublished import">&#8634;</button>` : '<span class="muted">View only</span>' }
   ]);
+  const externalComponents = (scheme.Components || []).filter((component) => ['any', 'external-cbt'].includes(clean(component.SourceMode || 'any').toLowerCase()));
+  const externalCbtPanel = data.permissions?.canReviewScores ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-external-cbt>
+    <div class="academic-management-editor-heading"><div><small>Milestone 8 external adapter</small><h3>Import approved external CBT results</h3><p class="muted">Use a provider export with StudentRef, State and RawScore columns. The complete current subject roster must be present; use State = Absent when a candidate did not sit the test.</p></div></div>
+    <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}"><input type="hidden" name="ClassId" value="${escapeHtml(selectedArm?.ClassId || '')}"><input type="hidden" name="ArmId" value="${escapeHtml(selectedArm?.ArmId || '')}"><input type="hidden" name="SubjectId" value="${escapeHtml(selectedAllocation?.SubjectId || '')}"><input type="hidden" name="TeacherUsername" value="${escapeHtml(selectedAllocation?.TeacherUsername || '')}"><input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" data-academic-external-cbt-file hidden>
+    <div class="academic-management-form-grid academic-management-form-grid-3">
+      <label>CBT provider<input name="ProviderId" placeholder="For example School CBT or Vendor name" required></label>
+      <label>Assessment component<select name="AssessmentComponentId" required><option value="">Choose component</option>${externalComponents.map((component) => `<option value="${escapeHtml(component.Id)}">${escapeHtml(component.Name)} · ${component.MaximumScore} marks</option>`).join('')}</select></label>
+      <label>Approved results file<button type="button" class="secondary" data-academic-external-cbt-choose ${scheme.Ready && roster.length && externalComponents.length && (!sheet || sheet.Status === 'Draft') ? '' : 'disabled'}>Choose CSV or XLSX</button></label>
+    </div>
+    <div class="academic-score-import-toolbar"><button type="button" class="secondary" data-academic-external-cbt-template ${roster.length ? '' : 'disabled'}>Download adapter template</button></div>
+    ${!externalComponents.length ? '<p class="muted">This assessment scheme has no component that accepts External CBT scores.</p>' : '<p class="muted">The file is checked against this classroom, subject, component maximum and full roster before any Draft score is written.</p>'}
+  </form>` : '';
+  const scoreSyncHistory = table('CBT Score Synchronization History', rows.scoreSyncBatches || [], [
+    { label: 'Source', value: (row) => row.SourceType === 'ExternalCBT' ? (row.ProviderId || 'External CBT') : 'Built-in CBT' },
+    { label: 'Classroom', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
+    { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId) },
+    { label: 'Component', value: (row) => (scheme.Components || []).find((component) => component.Id === row.AssessmentComponentId)?.Name || row.AssessmentComponentId },
+    { label: 'Scores', value: (row) => `${row.ImportedRows || 0} (${row.AbsentCount || 0} absent)` },
+    { label: 'Status', value: (row) => row.Status },
+    { label: 'Synchronized', value: (row) => row.SynchronizedAt || '-' }
+  ]);
   const schemePanel = `<section class="academic-management-editor academic-management-editor-wide academic-assessment-scheme" data-academic-assessment-scheme>
     <div class="academic-management-editor-heading"><div><small>Active policy snapshot</small><h3>Assessment components and grading bands</h3><p class="muted">Configure and activate these choices in Account &amp; settings. Each created score sheet permanently captures the revision shown here.</p></div><strong>${scheme.Ready ? 'Ready' : 'Not ready'}</strong></div>
     ${blocking}
     <div class="academic-assessment-scheme-grid"><section><h4>Assessment components</h4>${(scheme.Components || []).map((row) => `<div><strong>${escapeHtml(row.Name)}</strong><span>${row.MaximumScore} marks · ${row.WeightPercentage}% · ${escapeHtml(row.SourceMode || 'any source')}</span></div>`).join('') || '<p>No components configured.</p>'}</section><section><h4>Grading bands</h4>${(scheme.GradeBands || []).map((row) => `<div><strong>${escapeHtml(row.Grade)}</strong><span>${row.MinimumPercentage}–${row.MaximumPercentage}% · ${row.GradePoint} points · ${escapeHtml(row.Remark || row.Classification)}</span></div>`).join('') || '<p>No grading bands configured.</p>'}</section></div>
   </section>`;
-  return `${scorebook}${workflow}${importPanel}${imports}${schemePanel}`;
+  return `${scorebook}${workflow}${importPanel}${imports}${externalCbtPanel}${scoreSyncHistory}${schemePanel}`;
+}
+
+function canonicalAcademicCbtScoreValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalAcademicCbtScoreValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().filter((key) => value[key] !== undefined)
+      .map((key) => [key, canonicalAcademicCbtScoreValue(value[key])]));
+  }
+  return value;
+}
+
+function academicCbtScoreDigestMaterial(payload = {}) {
+  const keys = [
+    'Version', 'BatchId', 'ExamId', 'SourceTestId', 'SourcePackageDigest',
+    'SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId',
+    'AssessmentComponentId', 'MaximumScore', 'SourceType', 'MarkingRevision',
+    'ApprovalStatus', 'ApprovedBy', 'ApprovedAt', 'ProviderId', 'SourceFileName', 'Scores'
+  ];
+  return Object.fromEntries(keys.filter((key) => payload[key] !== undefined).map((key) => [key, payload[key]]));
+}
+
+async function sha256Hex(value) {
+  const bytes = value instanceof ArrayBuffer ? value : new TextEncoder().encode(String(value));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function academicCbtScorePayloadDigest(payload = {}) {
+  return sha256Hex(JSON.stringify(canonicalAcademicCbtScoreValue(academicCbtScoreDigestMaterial(payload))));
 }
 
 const ACADEMIC_CBT_OPTION_STYLES = Object.freeze({
@@ -12349,6 +12400,107 @@ function bindAcademicManagement() {
         renderAcademicManagement(data, data.message || 'Scores imported as Draft.');
       } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
     });
+  });
+  const externalCbtForm = panelEl.querySelector('[data-academic-external-cbt]');
+  const externalCbtFile = externalCbtForm?.querySelector('[data-academic-external-cbt-file]');
+  const externalCbtChoose = externalCbtForm?.querySelector('[data-academic-external-cbt-choose]');
+  externalCbtForm?.querySelector('[data-academic-external-cbt-template]')?.addEventListener('click', () => {
+    const data = academicManagementData || {};
+    const roster = (data.studentMemberships || []).filter((row) => academicIsActive(row)
+      && row.SessionId === academicManagementFilters.sessionId && row.TermId === academicManagementFilters.termId
+      && row.ClassId === academicScorebookDraft.classId && row.ArmId === academicScorebookDraft.armId
+      && (row.SubjectIds || []).includes(academicScorebookDraft.subjectId));
+    const lines = [['StudentRef', 'State', 'RawScore'], ...roster.map((row) => [row.StudentRef, 'Numeric', ''])]
+      .map((row) => row.map(csvCell).join(',')).join('\r\n');
+    downloadCsvFile('external-cbt-adapter-template.csv', lines);
+  });
+  externalCbtChoose?.addEventListener('click', () => {
+    if (!clean(externalCbtForm.elements.ProviderId.value)) {
+      externalCbtForm.elements.ProviderId.focus();
+      setStatus(document.getElementById('academicManagementStatus'), 'Enter the external CBT provider name first.', 'bad');
+      return;
+    }
+    if (!clean(externalCbtForm.elements.AssessmentComponentId.value)) {
+      externalCbtForm.elements.AssessmentComponentId.focus();
+      setStatus(document.getElementById('academicManagementStatus'), 'Choose the assessment component for these results.', 'bad');
+      return;
+    }
+    externalCbtFile?.click();
+  });
+  externalCbtFile?.addEventListener('change', async () => {
+    const file = externalCbtFile.files?.[0];
+    if (!file) return;
+    const status = document.getElementById('academicManagementStatus');
+    try {
+      const parsed = await parseAcademicScoreSpreadsheet(file);
+      if (!parsed.length) throw new Error('The external CBT file has no result rows.');
+      if (parsed.length > 200) throw new Error('Synchronize at most 200 external CBT results at a time.');
+      const data = academicManagementData || {};
+      const componentId = clean(externalCbtForm.elements.AssessmentComponentId.value);
+      const component = (data.assessmentScheme?.Components || []).find((row) => clean(row.Id).toLowerCase() === componentId.toLowerCase());
+      if (!component) throw new Error('The selected assessment component is no longer available.');
+      const roster = (data.studentMemberships || []).filter((row) => academicIsActive(row)
+        && row.SessionId === academicManagementFilters.sessionId && row.TermId === academicManagementFilters.termId
+        && row.ClassId === academicScorebookDraft.classId && row.ArmId === academicScorebookDraft.armId
+        && (row.SubjectIds || []).includes(academicScorebookDraft.subjectId));
+      const rosterRefs = new Set(roster.map((row) => clean(row.StudentRef).toLowerCase()));
+      const seen = new Set();
+      const scores = parsed.map((row, index) => {
+        const StudentRef = clean(row.StudentRef || row.AdmissionNo || row.AccountRef);
+        const key = StudentRef.toLowerCase();
+        if (!StudentRef || !rosterRefs.has(key)) throw new Error(`${StudentRef || `Row ${index + 2}`} is not in this subject roster.`);
+        if (seen.has(key)) throw new Error(`${StudentRef} appears more than once in the external CBT file.`);
+        seen.add(key);
+        const stateText = clean(row.State || row.Status || (row.RawScore === '' || row.Score === '' ? '' : 'Numeric')).toLowerCase();
+        const State = stateText === 'absent' || stateText === 'abs' ? 'Absent' : stateText === 'numeric' || stateText === 'score' ? 'Numeric' : '';
+        if (!State) throw new Error(`${StudentRef} must use State Numeric or Absent.`);
+        const raw = row.RawScore ?? row.Score ?? row.Value;
+        const RawScore = State === 'Absent' ? null : Number(raw);
+        if (State === 'Numeric' && (!Number.isFinite(RawScore) || RawScore < 0 || RawScore > Number(component.MaximumScore))) {
+          throw new Error(`${StudentRef} must have a numeric score between 0 and ${component.MaximumScore}.`);
+        }
+        return { StudentRef, State, RawScore };
+      });
+      const missingCount = [...rosterRefs].filter((reference) => !seen.has(reference)).length;
+      if (missingCount) throw new Error(`${missingCount} roster student${missingCount === 1 ? ' is' : 's are'} missing from the external CBT file.`);
+      const provider = clean(externalCbtForm.elements.ProviderId.value);
+      const absentCount = scores.filter((row) => row.State === 'Absent').length;
+      if (!await window.DynamaxDialogs.confirm({
+        title: 'Synchronize external CBT results',
+        message: `${provider} supplied ${scores.length} results for ${component.Name}: ${scores.length - absentCount} numeric and ${absentCount} absent. Synchronize them into the Draft scorebook?`,
+        confirmText: 'Synchronize results'
+      })) return;
+      const fileDigest = await sha256Hex(await file.arrayBuffer());
+      const formPayload = Object.fromEntries(new FormData(externalCbtForm).entries());
+      const batchKeyDigest = await sha256Hex([
+        fileDigest, provider, file.name, component.Id, formPayload.SessionId, formPayload.TermId,
+        formPayload.ClassId, formPayload.ArmId, formPayload.SubjectId
+      ].join('|'));
+      const payload = {
+        Version: 'dynamax-cbt-score-batch-v1',
+        BatchId: `external-cbt-${batchKeyDigest.slice(0, 32)}`,
+        SessionId: formPayload.SessionId, TermId: formPayload.TermId,
+        ClassId: formPayload.ClassId, ArmId: formPayload.ArmId, SubjectId: formPayload.SubjectId,
+        TeacherUsername: formPayload.TeacherUsername,
+        AssessmentComponentId: component.Id, MaximumScore: Number(component.MaximumScore),
+        SourceType: 'ExternalCBT', MarkingRevision: 1, ApprovalStatus: 'Approved',
+        ProviderId: provider, SourceFileName: file.name, Scores: scores,
+        SchoolSection: formPayload.SchoolSection
+      };
+      payload.BatchDigest = await academicCbtScorePayloadDigest(payload);
+      externalCbtChoose.disabled = true;
+      externalCbtChoose.textContent = 'Synchronizing...';
+      const response = await academicManagementRequest('syncAcademicCbtScores', payload);
+      renderAcademicManagement(response, response.message || 'External CBT results synchronized as Draft scores.');
+    } catch (error) {
+      setStatus(status, error.message || String(error), 'bad');
+    } finally {
+      if (externalCbtFile) externalCbtFile.value = '';
+      if (externalCbtChoose?.isConnected) {
+        externalCbtChoose.disabled = false;
+        externalCbtChoose.textContent = 'Choose CSV or XLSX';
+      }
+    }
   });
   panelEl.querySelectorAll('[data-academic-score-import-rollback]').forEach((button) => button.addEventListener('click', async () => {
     const reason = clean(await window.DynamaxDialogs.prompt({

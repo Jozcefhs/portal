@@ -40,6 +40,7 @@ import {
   academicScoreSourceIssues,
   calculateAcademicStudentScore,
   normalizeAcademicComponentScores,
+  validateAcademicCbtScoreBatch,
   validateAcademicScoreImport
 } from './academic-scorebook.js';
 
@@ -53,6 +54,16 @@ function identityBase64Url(value) {
   let binary = '';
   bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function identityBase64UrlBytes(value) {
+  const text = clean(value).replace(/-/g, '+').replace(/_/g, '/');
+  try {
+    const binary = atob(text + '='.repeat((4 - text.length % 4) % 4));
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch (_error) {
+    throw failure('The local CBT score signature is invalid.', 409, 'ACADEMIC_CBT_SIGNATURE_INVALID');
+  }
 }
 
 function identityPublicKeyBytes(pem) {
@@ -122,6 +133,7 @@ export const ACADEMIC_MANAGEMENT_COLLECTIONS = Object.freeze({
   scoreSheets: 'academicScoreSheets',
   studentScores: 'academicStudentScores',
   scoreImports: 'academicScoreImports',
+  scoreSyncBatches: 'academicScoreSyncBatches',
   cbtTests: 'academicCbtTests',
   audit: 'academicManagementAudit'
 });
@@ -1182,6 +1194,7 @@ function sortAcademicState(state) {
     studentScores: [...state.studentScores].sort((a, b) => clean(a.SheetId).localeCompare(clean(b.SheetId))
       || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
     scoreImports: [...state.scoreImports].sort((a, b) => clean(b.CommittedAt || b.CreatedAt).localeCompare(clean(a.CommittedAt || a.CreatedAt))),
+    scoreSyncBatches: [...state.scoreSyncBatches].sort((a, b) => clean(b.SynchronizedAt || b.CreatedAt).localeCompare(clean(a.SynchronizedAt || a.CreatedAt))),
     cbtTests: [...state.cbtTests].sort((a, b) => clean(b.StartsAt || b.CreatedAt).localeCompare(clean(a.StartsAt || a.CreatedAt)))
   };
 }
@@ -1235,6 +1248,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     const visibleScoreSheets = new Set(state.scoreSheets.map((row) => row.SheetId));
     state.studentScores = state.studentScores.filter((row) => visibleScoreSheets.has(row.SheetId) && visibleStudents.has(lower(row.StudentRef)));
     state.scoreImports = state.scoreImports.filter((row) => visibleScoreSheets.has(row.SheetId));
+    state.scoreSyncBatches = state.scoreSyncBatches.filter((row) => visibleScoreSheets.has(row.SheetId));
     state.cbtTests = state.cbtTests.filter((row) => lower(row.TeacherUsername) === username);
     students = students.filter((row) => visibleStudents.has(lower(studentReference(row))));
   }
@@ -1282,6 +1296,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
       ScoreSheets: state.scoreSheets.length,
       StudentScores: state.studentScores.length,
       ScoreImports: state.scoreImports.length,
+      ScoreSyncBatches: state.scoreSyncBatches.length,
       CbtTests: state.cbtTests.length
     }
   };
@@ -3589,6 +3604,182 @@ export async function rollbackAcademicScoreImport(env, user = {}, input = {}) {
   return academicOperationalResponse(env, user, input, scope, `${currentScores.length} imported student score${currentScores.length === 1 ? '' : 's'} rolled back.`);
 }
 
+function canonicalAcademicCbtValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalAcademicCbtValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().filter((key) => value[key] !== undefined)
+      .map((key) => [key, canonicalAcademicCbtValue(value[key])]));
+  }
+  return value;
+}
+
+function academicCbtScoreBatchMaterial(input = {}) {
+  const keys = [
+    'Version', 'BatchId', 'ExamId', 'SourceTestId', 'SourcePackageDigest',
+    'SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId',
+    'AssessmentComponentId', 'MaximumScore', 'SourceType', 'MarkingRevision',
+    'ApprovalStatus', 'ApprovedBy', 'ApprovedAt', 'ProviderId', 'SourceFileName', 'Scores'
+  ];
+  return Object.fromEntries(keys.filter((key) => input[key] !== undefined).map((key) => [key, input[key]]));
+}
+
+export async function academicCbtScoreBatchDigest(input = {}) {
+  const material = JSON.stringify(canonicalAcademicCbtValue(academicCbtScoreBatchMaterial(input)));
+  const digest = await crypto.subtle.digest('SHA-256', identityEncoder.encode(material));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export async function verifyAcademicCbtScoreSignature(input = {}) {
+  if (clean(input.SignatureAlgorithm) !== 'RSASSA-PKCS1-v1_5-SHA256') {
+    throw failure('The local CBT score batch uses an unsupported signature algorithm.', 409, 'ACADEMIC_CBT_SIGNATURE_INVALID');
+  }
+  let publicBytes;
+  let publicKey;
+  try {
+    publicBytes = identityPublicKeyBytes(input.SigningPublicKey);
+    publicKey = await crypto.subtle.importKey(
+      'spki', publicBytes, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']
+    );
+  } catch (_error) {
+    throw failure('The local CBT score-signing public key is invalid.', 409, 'ACADEMIC_CBT_SIGNATURE_INVALID');
+  }
+  const keyDigest = await crypto.subtle.digest('SHA-256', publicBytes);
+  const calculatedKeyId = [...new Uint8Array(keyDigest)].map((byte) => byte.toString(16).padStart(2, '0')).join('').slice(0, 32);
+  if (lower(input.SigningKeyId) !== calculatedKeyId) {
+    throw failure('The local CBT signing-key identifier does not match its public key.', 409, 'ACADEMIC_CBT_SIGNATURE_INVALID');
+  }
+  const verified = await crypto.subtle.verify(
+    'RSASSA-PKCS1-v1_5', publicKey, identityBase64UrlBytes(input.Signature),
+    identityEncoder.encode(clean(input.BatchDigest).toLowerCase())
+  );
+  if (!verified) throw failure('The local CBT score batch signature could not be verified.', 409, 'ACADEMIC_CBT_SIGNATURE_INVALID');
+  return calculatedKeyId;
+}
+
+export async function syncAcademicCbtScores(env, user = {}, input = {}) {
+  const context = await academicScoreSheetContext(env, user, input, 'canImportScores');
+  const { permissions, scope, state, SheetId, existing, scheme } = context;
+  if (!permissions.canReviewScores) {
+    throw failure('Only an academic or examination reviewer may synchronize an approved CBT score batch.', 403, 'ACADEMIC_CBT_SYNC_REVIEWER_REQUIRED');
+  }
+  if (existing && lower(existing.Status) !== 'draft') {
+    throw failure('CBT scores can synchronize only while the online score sheet is Draft.', 409, 'ACADEMIC_SCORE_SHEET_LOCKED');
+  }
+  if (lower(input.ApprovalStatus) !== 'approved') {
+    throw failure('Review and approve the complete CBT marking batch before synchronization.', 409, 'ACADEMIC_CBT_MARKING_NOT_APPROVED');
+  }
+  const sourceType = oneOf(input.SourceType, ['BuiltInCBT', 'ExternalCBT'], '');
+  if (!sourceType) throw failure('Choose BuiltInCBT or ExternalCBT as the score source.');
+  const sourceMode = sourceType === 'BuiltInCBT' ? 'built-in-cbt' : 'external-cbt';
+  const preview = validateAcademicCbtScoreBatch(input, {
+    scheme, roster: context.roster, sourceMode
+  });
+  if (!preview.Ready) {
+    const error = failure(preview.Issues[0] || 'The CBT score batch did not pass online validation.', 409, 'ACADEMIC_CBT_SCORE_BATCH_INVALID');
+    error.preview = preview;
+    throw error;
+  }
+  const expectedDigest = clean(input.BatchDigest).toLowerCase();
+  const calculatedDigest = await academicCbtScoreBatchDigest(input);
+  if (!/^[a-f0-9]{64}$/.test(expectedDigest) || expectedDigest !== calculatedDigest) {
+    throw failure('The CBT score batch digest does not match its score payload.', 409, 'ACADEMIC_CBT_SCORE_DIGEST_INVALID');
+  }
+  let signingKeyId = '';
+  if (sourceType === 'BuiltInCBT') {
+    signingKeyId = await verifyAcademicCbtScoreSignature(input);
+    const pinned = state.scoreSyncBatches.find((row) => row.SourceType === 'BuiltInCBT' && clean(row.SigningKeyId));
+    if (pinned && lower(pinned.SigningKeyId) !== lower(signingKeyId)) {
+      throw failure('This branch is already linked to another local CBT score-signing key. Use the controlled recovery process before replacing it.', 409, 'ACADEMIC_CBT_SIGNING_KEY_CHANGED');
+    }
+  }
+  const batchKey = normalizedImportKey(input.BatchId);
+  const SyncId = academicId('score-sync', SheetId, batchKey);
+  const previousBatch = findById(state.scoreSyncBatches, SyncId);
+  if (previousBatch) {
+    if (lower(previousBatch.BatchDigest) !== expectedDigest) {
+      throw failure('This CBT synchronization key was already used for a different score payload.', 409, 'ACADEMIC_CBT_SYNC_KEY_REUSED');
+    }
+    const response = await academicOperationalResponse(env, user, input, scope,
+      'This approved CBT batch was already synchronized; no score was duplicated.');
+    response.scoreSyncReceipt = publicRecord(previousBatch);
+    return response;
+  }
+  const timestamp = nowIso();
+  const component = preview.Component;
+  const updatedScores = preview.Rows.map((row) => {
+    const ScoreId = academicStudentScoreId(SheetId, row.StudentRef);
+    const previous = findById(state.studentScores, ScoreId);
+    const componentScores = normalizeAcademicComponentScores([{
+      ComponentId: component.Id,
+      State: row.State,
+      RawScore: row.RawScore,
+      Note: `${sourceType === 'BuiltInCBT' ? 'Built-in' : 'External'} CBT batch ${batchKey}`
+    }], scheme, { existing: previous?.ComponentScores || [], partial: true });
+    return {
+      previous,
+      record: {
+        ...(previous || {}), RecordId: ScoreId, ScoreId, SheetId, StudentRef: row.StudentRef,
+        SessionId: context.session.SessionId, TermId: context.term.TermId,
+        ClassId: context.schoolClass.ClassId, ArmId: context.arm.ArmId, SubjectId: context.subject.SubjectId,
+        AssessmentRevisionId: scheme.RevisionId,
+        ...calculateAcademicStudentScore(scheme, componentScores),
+        SourceType: sourceType, SourceId: SyncId, SourceBatchId: batchKey,
+        BranchId: scope.branchId, SchoolSection: scope.section,
+        CreatedAt: clean(previous?.CreatedAt) || timestamp,
+        CreatedBy: clean(previous?.CreatedBy) || actorName(user),
+        UpdatedAt: timestamp, UpdatedBy: actorName(user), UpdatedByUsername: actorUsername(user)
+      }
+    };
+  });
+  const projectedScores = [
+    ...state.studentScores.filter((row) => row.SheetId === SheetId
+      && !updatedScores.some((item) => item.record.ScoreId === row.ScoreId)),
+    ...updatedScores.map((item) => item.record)
+  ];
+  const sheet = academicScoreSheetRecord(context, existing, user, timestamp, {
+    ...academicScoreSheetCounts(projectedScores), LastSavedAt: timestamp,
+    LastSavedBy: actorName(user), LastScoreSyncId: SyncId
+  });
+  const syncRecord = {
+    RecordId: SyncId, SyncId, BatchId: batchKey, BatchDigest: expectedDigest,
+    SheetId, Status: 'Committed', SourceType,
+    SourceTestId: clean(input.SourceTestId || input.ExamId),
+    ProviderId: clean(input.ProviderId).slice(0, 120),
+    SourceFileName: clean(input.SourceFileName).slice(0, 240),
+    SigningKeyId: signingKeyId,
+    AssessmentComponentId: component.Id, MaximumScore: component.MaximumScore,
+    NumericCount: preview.NumericCount, AbsentCount: preview.AbsentCount,
+    ImportedRows: updatedScores.length, RosterCount: preview.RosterCount,
+    AffectedScoreIds: updatedScores.map((row) => row.record.ScoreId),
+    SessionId: context.session.SessionId, TermId: context.term.TermId,
+    ClassId: context.schoolClass.ClassId, ArmId: context.arm.ArmId, SubjectId: context.subject.SubjectId,
+    BranchId: scope.branchId, SchoolSection: scope.section,
+    SynchronizedAt: timestamp, SynchronizedBy: actorName(user), SynchronizedByUsername: actorUsername(user)
+  };
+  const writes = updatedScores.map(({ previous, record }) => ({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores,
+    documentId: record.ScoreId, data: withoutMetadata(record),
+    ...(previous ? { updateTime: previous.__updateTime } : { exists: false })
+  }));
+  writes.push({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,
+    documentId: SheetId, data: withoutMetadata(sheet),
+    ...(existing ? { updateTime: existing.__updateTime } : { exists: false })
+  });
+  writes.push({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSyncBatches,
+    documentId: SyncId, data: withoutMetadata(syncRecord), exists: false
+  });
+  writes.push(auditWrite(user, 'SYNC_CBT_SCORES', 'scoreSyncBatch', syncRecord,
+    `${sourceType}; ${updatedScores.length} students; ${preview.AbsentCount} absent`));
+  await commitAcademicBatch(env, writes,
+    'The score sheet changed while CBT scores were synchronizing. Reload and retry the same approved batch.');
+  const response = await academicOperationalResponse(env, user, input, scope,
+    `${updatedScores.length} approved CBT score${updatedScores.length === 1 ? '' : 's'} synchronized into the Draft scorebook.`);
+  response.scoreSyncReceipt = publicRecord(syncRecord);
+  return response;
+}
+
 export const ACADEMIC_CBT_OPTION_STYLES = Object.freeze({
   ABC: Object.freeze(['A', 'B', 'C']),
   ABCD: Object.freeze(['A', 'B', 'C', 'D']),
@@ -4015,6 +4206,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['previewacademicscoreimport', 'previewscoresheetimport'].includes(action)) return previewAcademicScoreImport(env, user, input);
   if (['importacademicscores', 'commitscoreimport'].includes(action)) return importAcademicScores(env, user, input);
   if (['rollbackacademicscoreimport', 'rollbackscoreimport'].includes(action)) return rollbackAcademicScoreImport(env, user, input);
+  if (['syncacademiccbtscores', 'synccbtresults'].includes(action)) return syncAcademicCbtScores(env, user, input);
   if (['deleteacademiccbttest', 'deletecbttest'].includes(action)) return deleteAcademicCbtTest(env, user, input);
   if (['downloadacademiccbttestpackage', 'downloadcbttestpackage'].includes(action)) return downloadAcademicCbtTestPackage(env, user, input);
   if (['acknowledgeacademiccbtimport', 'acknowledgecbtimport'].includes(action)) return acknowledgeAcademicCbtImport(env, user, input);

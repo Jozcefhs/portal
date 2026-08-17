@@ -203,6 +203,72 @@ export function academicScoreSourceIssues(schemeValue = {}, componentScores = []
   });
 }
 
+export function validateAcademicCbtScoreBatch(value = {}, options = {}) {
+  let payload = value;
+  if (typeof payload === 'string') {
+    try { payload = JSON.parse(payload); } catch (_error) { payload = {}; }
+  }
+  const scheme = options.scheme?.Components ? options.scheme : academicAssessmentScheme(options.policy || {}, options);
+  const requestedSource = lower(options.sourceMode || payload.SourceType).replace(/[^a-z]/g, '');
+  const sourceMode = requestedSource === 'builtincbt' ? 'built-in-cbt' : requestedSource === 'externalcbt' ? 'external-cbt' : '';
+  const componentIdValue = clean(payload.AssessmentComponentId);
+  const component = scheme.Components.find((row) => lower(row.Id) === lower(componentIdValue));
+  const roster = new Map((options.roster || []).map((row) => [lower(row.StudentRef || row.AdmissionNo), row]));
+  const supplied = Array.isArray(payload.Scores) ? payload.Scores : [];
+  const Issues = [];
+  const seen = new Set();
+  if (!scheme.Ready) Issues.push(scheme.Issues[0] || 'Configure an active assessment scheme first.');
+  if (!sourceMode) Issues.push('Choose BuiltInCBT or ExternalCBT as the score source.');
+  if (!component) Issues.push('The CBT batch assessment component is not configured for this scorebook.');
+  if (component && Math.abs(Number(payload.MaximumScore) - Number(component.MaximumScore)) > 0.0001) {
+    Issues.push(`${component.Name} is marked over ${component.MaximumScore}; the CBT batch uses ${payload.MaximumScore}.`);
+  }
+  if (component && sourceMode) {
+    const sourceIssues = academicScoreSourceIssues(scheme, [{
+      ComponentId: component.Id, State: 'Numeric', RawScore: 0
+    }], sourceMode);
+    Issues.push(...sourceIssues);
+  }
+  if (!supplied.length) Issues.push('The CBT score batch has no student scores.');
+  if (supplied.length > 200) Issues.push('Synchronize at most 200 student scores in one CBT batch.');
+  const Rows = supplied.map((row = {}, index) => {
+    const RowIssues = [];
+    const StudentRef = clean(row.StudentRef || row.AdmissionNo);
+    const key = lower(StudentRef);
+    const State = oneOf(row.State, ['Numeric', 'Absent'], '');
+    let RawScore = null;
+    if (!StudentRef) RowIssues.push('StudentRef is required.');
+    else if (!roster.has(key)) RowIssues.push(`${StudentRef} is not in the selected subject roster.`);
+    else if (seen.has(key)) RowIssues.push(`${StudentRef} appears more than once in this CBT batch.`);
+    seen.add(key);
+    if (!State) RowIssues.push(`${StudentRef || `Row ${index + 1}`} must be Numeric or Absent.`);
+    if (State === 'Numeric') {
+      RawScore = finiteNumber(row.RawScore);
+      if (RawScore === null) RowIssues.push(`${StudentRef || `Row ${index + 1}`} needs a numeric CBT score.`);
+      else if (component && (RawScore < 0 || RawScore > component.MaximumScore)) {
+        RowIssues.push(`${StudentRef} must be between 0 and ${component.MaximumScore}.`);
+      } else RawScore = rounded(RawScore, 4);
+    }
+    return {
+      RowNumber: index + 1, StudentRef, State, RawScore,
+      AttemptId: clean(row.AttemptId), AttemptStatus: clean(row.AttemptStatus),
+      SubmittedAt: clean(row.SubmittedAt), Valid: RowIssues.length === 0, Issues: RowIssues
+    };
+  });
+  const missing = [...roster.entries()].filter(([key]) => !seen.has(key)).map(([, row]) => clean(row.StudentRef || row.AdmissionNo));
+  if (missing.length) Issues.push(`${missing.length} student${missing.length === 1 ? ' is' : 's are'} missing from the CBT batch.`);
+  Rows.filter((row) => !row.Valid).forEach((row) => Issues.push(...row.Issues));
+  return {
+    Ready: Issues.length === 0,
+    Issues: [...new Set(Issues)],
+    Rows,
+    Component: component || null,
+    RosterCount: roster.size,
+    NumericCount: Rows.filter((row) => row.State === 'Numeric').length,
+    AbsentCount: Rows.filter((row) => row.State === 'Absent').length
+  };
+}
+
 function importComponentEntry(row = {}, component = {}) {
   if (row.ComponentScores) {
     const map = suppliedComponentMap(row.ComponentScores);
