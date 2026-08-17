@@ -4402,7 +4402,7 @@ export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {})
       identity.Password = {
         Salt: clean(credential.Salt),
         PasswordHash: clean(credential.PasswordHash),
-        PasswordIterations: Number(credential.PasswordIterations || 120000),
+        PasswordIterations: Number(credential.PasswordIterations || 10000),
         PasswordHashVersion: clean(credential.PasswordHashVersion)
       };
     }

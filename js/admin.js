@@ -2717,7 +2717,9 @@ function studentFieldControl(field, value) {
       : ['DateOfBirth', 'StatusEffectiveDate', 'ExpectedReturnDate'].includes(field) ? 'date' : 'text';
   const autocomplete = field === 'StudentLoginPassword' ? ' autocomplete="new-password"'
     : field === 'StudentLoginPasswordConfirm' ? ' autocomplete="new-password"' : '';
-  return `<input name="${field}" type="${type}" value="${safeValue}"${autocomplete}>`;
+  const passwordPolicy = ['StudentLoginPassword', 'StudentLoginPasswordConfirm'].includes(field)
+    ? ' minlength="6" maxlength="128"' : '';
+  return `<input name="${field}" type="${type}" value="${safeValue}"${autocomplete}${passwordPolicy}>`;
 }
 
 function renderStudentEditor(students) {
@@ -2725,7 +2727,7 @@ function renderStudentEditor(students) {
     <div class="workflow-dialog-header"><div><small>Student register</small><h2>Edit Student Profile</h2></div><button type="button" data-close-student-dialog aria-label="Close">&times;</button></div>
     <form id="studentProfileForm" class="workflow-form config-dialog-form">
       <input type="hidden" name="AccountRef">
-      <div class="student-login-guidance"><strong>Separate family and student access</strong><span>Parents use Parent Email and Parent Login Code. Students use their admission number and personal password for CBT. Leave the student password blank to keep it unchanged.</span></div>
+      <div class="student-login-guidance"><strong>Separate family and student access</strong><span>Parents use Parent Email and Parent Login Code. Students use their admission number and personal password of at least 6 characters for CBT. Leave the student password blank to keep it unchanged.</span></div>
       <div data-student-form-sections></div>
       <div class="config-dialog-actions"><p class="status" data-student-form-status></p><button type="submit">Save student profile</button></div>
     </form>
@@ -2771,6 +2773,10 @@ function bindStudentEditor(students) {
     const payload = Object.fromEntries(new FormData(form).entries());
     if (payload.StudentLoginPassword !== payload.StudentLoginPasswordConfirm) {
       setStatus(status, 'The student passwords do not match.', 'bad');
+      return;
+    }
+    if (payload.StudentLoginPassword && payload.StudentLoginPassword.length < 6) {
+      setStatus(status, 'The student password must be at least 6 characters.', 'bad');
       return;
     }
     delete payload.StudentLoginPasswordConfirm;

@@ -715,9 +715,13 @@ Operational safeguards include:
 The built-in controls include:
 
 - admission-number login using a separately scoped student password or enrolled
-  face; parent login codes are never reused for CBT;
+  face; parent login codes are never reused for CBT. Student passwords accept
+  6 to 128 characters and cannot begin or end with a space;
 - PBKDF2 password verifiers and face descriptors encrypted at rest in the
-  Windows-account-protected local identity vault;
+  Windows-account-protected local identity vault. New student verifiers use
+  the deployed web runtime's supported 10,000-iteration PBKDF2 format, while
+  the local client continues to honor the iteration count stored with older
+  valid credentials;
 - one-use password challenge-response proofs so the personal password is never
   posted to the local server;
 - a one-use, short-lived random blink or head-movement challenge before each

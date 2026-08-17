@@ -3,7 +3,10 @@ import { safeScopeId, schoolSectionFor, scopedCollectionPath } from './school-sc
 
 const encoder = new TextEncoder();
 const CREDENTIAL_COLLECTION = 'studentLoginCredentials';
-const PASSWORD_ITERATIONS = 120000;
+// The deployed Web Crypto runtime rejects PBKDF2 iteration counts above 10,000.
+// Keep this explicit so credentials created in the web companion and verified
+// by the offline CBT clients always use the same supported value.
+const PASSWORD_ITERATIONS = 10000;
 const PASSWORD_HASH_VERSION = 'pbkdf2-sha256-v1';
 
 const clean = (value) => String(value ?? '').trim();
@@ -40,7 +43,7 @@ export async function studentLoginCredentialId(reference) {
 export async function hashStudentPassword(password, iterations = PASSWORD_ITERATIONS) {
   const value = String(password || '');
   if (value !== value.trim()) throw new Error('Student password cannot begin or end with a space.');
-  if (value.length < 8) throw new Error('Student password must be at least 8 characters.');
+  if (value.length < 6) throw new Error('Student password must be at least 6 characters.');
   if (value.length > 128) throw new Error('Student password must not exceed 128 characters.');
   const salt = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
   const material = await crypto.subtle.importKey('raw', encoder.encode(value), 'PBKDF2', false, ['deriveBits']);
@@ -111,4 +114,3 @@ export function publicStudentLoginStatus(credential = null) {
     PasswordChangedAt: clean(credential?.PasswordChangedAt)
   };
 }
-

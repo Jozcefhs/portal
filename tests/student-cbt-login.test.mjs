@@ -16,7 +16,7 @@ const portalRoot = new URL('../', import.meta.url);
 test('student passwords use scoped PBKDF2 verifiers and never share the parent credential collection', async () => {
   const credential = await hashStudentPassword('StudentPass1!');
   assert.equal(credential.PasswordHashVersion, 'pbkdf2-sha256-v1');
-  assert.equal(credential.PasswordIterations, 120000);
+  assert.equal(credential.PasswordIterations, 10000);
   assert.equal(credential.PasswordHash.length, 64);
   assert.equal(await verifyStudentPasswordHash(credential, 'StudentPass1!'), true);
   assert.equal(await verifyStudentPasswordHash(credential, 'wrong-password'), false);
@@ -32,7 +32,9 @@ test('student passwords use scoped PBKDF2 verifiers and never share the parent c
 });
 
 test('student password policy rejects unsafe values', async () => {
-  await assert.rejects(() => hashStudentPassword('short'), /at least 8/);
+  const minimum = await hashStudentPassword('123456');
+  assert.equal(await verifyStudentPasswordHash(minimum, '123456'), true);
+  await assert.rejects(() => hashStudentPassword('12345'), /at least 6/);
   await assert.rejects(() => hashStudentPassword(' StudentPass1!'), /begin or end/);
 });
 
@@ -74,6 +76,8 @@ test('student editors and CBT package endpoint expose the new login without leak
   ]);
   assert.match(admin, /Student own login/);
   assert.match(admin, /StudentLoginPasswordConfirm/);
+  assert.match(admin, /minlength="6" maxlength="128"/);
+  assert.match(admin, /password of at least 6 characters for CBT/);
   assert.match(staffStudents, /saveStudentLoginPassword/);
   assert.match(backend, /prepareLocalCbtIdentityPackage/);
   assert.match(academics, /encryptLocalCbtIdentityPackage/);
