@@ -3,7 +3,7 @@ import { enforceActorBranch } from './branch-scope.js';
 import { normalizeClassKey } from './class-names.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
 import { createNotification } from './notifications.js';
-import { academicPolicyScopeChain } from './academic-policy.js';
+import { academicPolicyIssues, academicPolicyScopeChain, normalizeAcademicPolicy } from './academic-policy.js';
 import { loadAcademicPolicyView } from './academic-policy-store.js';
 import { resolveDocumentStorage } from './document-storage.js';
 import { safeStoredDocument } from './document-files.js';
@@ -43,6 +43,11 @@ import {
   validateAcademicCbtScoreBatch,
   validateAcademicScoreImport
 } from './academic-scorebook.js';
+import {
+  ACADEMIC_TERM_RESULT_STATUSES,
+  academicTermResultTransition,
+  calculateAcademicTermResultDrafts
+} from './academic-term-results.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -135,6 +140,8 @@ export const ACADEMIC_MANAGEMENT_COLLECTIONS = Object.freeze({
   scoreImports: 'academicScoreImports',
   scoreSyncBatches: 'academicScoreSyncBatches',
   cbtTests: 'academicCbtTests',
+  termResults: 'academicResults',
+  resultEvents: 'academicResultEvents',
   audit: 'academicManagementAudit'
 });
 
@@ -248,7 +255,7 @@ function actorUsername(user = {}) {
 
 function recordId(row = {}) {
   return clean(
-    row.RecordId || row.recordId || row.CbtTestId || row.ImportId || row.ScoreId || row.SheetId || row.SubstitutionId || row.AttendanceId || row.EntryId || row.VersionId || row.ConstraintId || row.TimetableSettingId
+    row.RecordId || row.recordId || row.ResultEventId || row.ResultId || row.CbtTestId || row.ImportId || row.ScoreId || row.SheetId || row.SubstitutionId || row.AttendanceId || row.EntryId || row.VersionId || row.ConstraintId || row.TimetableSettingId
       || row.MovementId || row.MembershipId || row.AllocationId || row.OfferingId
       || row.DepartmentId || row.SubjectId || row.ArmId || row.ArmTemplateId || row.ClassId || row.TermId || row.SessionId || row.__id
   );
@@ -300,6 +307,9 @@ export function academicManagementCapabilities(user = {}) {
     canCreateCbt: enabled && (SCORE_REVIEWERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
     canReviewScores: enabled && SCORE_REVIEWERS.has(role),
     canApproveScores: enabled && SCORE_APPROVERS.has(role),
+    canCalculateResults: enabled && SCORE_REVIEWERS.has(role),
+    canReviewResults: enabled && SCORE_REVIEWERS.has(role),
+    canPublishResults: enabled && SCORE_APPROVERS.has(role),
     canImportScores: enabled && (SCORE_REVIEWERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
     canArchive: enabled && STRUCTURE_MANAGERS.has(role),
     canDelete: enabled && STRUCTURE_MANAGERS.has(role),
@@ -1195,7 +1205,10 @@ function sortAcademicState(state) {
       || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
     scoreImports: [...state.scoreImports].sort((a, b) => clean(b.CommittedAt || b.CreatedAt).localeCompare(clean(a.CommittedAt || a.CreatedAt))),
     scoreSyncBatches: [...state.scoreSyncBatches].sort((a, b) => clean(b.SynchronizedAt || b.CreatedAt).localeCompare(clean(a.SynchronizedAt || a.CreatedAt))),
-    cbtTests: [...state.cbtTests].sort((a, b) => clean(b.StartsAt || b.CreatedAt).localeCompare(clean(a.StartsAt || a.CreatedAt)))
+    cbtTests: [...state.cbtTests].sort((a, b) => clean(b.StartsAt || b.CreatedAt).localeCompare(clean(a.StartsAt || a.CreatedAt))),
+    termResults: [...state.termResults].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId))
+      || clean(a.ArmId).localeCompare(clean(b.ArmId)) || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
+    resultEvents: [...state.resultEvents].sort((a, b) => clean(b.CreatedAt).localeCompare(clean(a.CreatedAt)))
   };
 }
 
@@ -1250,6 +1263,9 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     state.scoreImports = state.scoreImports.filter((row) => visibleScoreSheets.has(row.SheetId));
     state.scoreSyncBatches = state.scoreSyncBatches.filter((row) => visibleScoreSheets.has(row.SheetId));
     state.cbtTests = state.cbtTests.filter((row) => lower(row.TeacherUsername) === username);
+    state.termResults = state.termResults.filter((row) => visibleStudents.has(lower(row.StudentRef)));
+    const visibleResults = new Set(state.termResults.map((row) => row.ResultId));
+    state.resultEvents = state.resultEvents.filter((row) => visibleResults.has(row.ResultId));
     students = students.filter((row) => visibleStudents.has(lower(studentReference(row))));
   }
   state = sortAcademicState(state);
@@ -1297,7 +1313,9 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
       StudentScores: state.studentScores.length,
       ScoreImports: state.scoreImports.length,
       ScoreSyncBatches: state.scoreSyncBatches.length,
-      CbtTests: state.cbtTests.length
+      CbtTests: state.cbtTests.length,
+      TermResults: state.termResults.length,
+      ResultEvents: state.resultEvents.length
     }
   };
 }
@@ -3192,6 +3210,17 @@ async function academicAssessmentFingerprint(scheme = {}) {
   return `assessment-${[...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('').slice(0, 32)}`;
 }
 
+async function academicResultPolicyFingerprint(policy = {}) {
+  const material = JSON.stringify(normalizeAcademicPolicy(policy));
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
+  return `result-policy-${[...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('').slice(0, 32)}`;
+}
+
+async function academicResultReference(resultId) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(clean(resultId)));
+  return `TR-${[...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('').slice(0, 16).toUpperCase()}`;
+}
+
 async function academicAssessmentForPeriod(env, scope, session, term, { required = true, classId = '', subjectId = '' } = {}) {
   const scopeChain = academicPolicyScopeChain({
     BranchId: scope.branchId, SectionId: scope.section, ClassId: classId, SubjectId: subjectId
@@ -3451,6 +3480,287 @@ export async function changeAcademicScoreSheetStatus(env, user = {}, input = {})
   ], 'The score sheet changed while its status was being updated. Reload and try again.');
   return academicOperationalResponse(env, user, input, scope,
     reopening ? `Score sheet reopened as Draft: ${reason}` : `Score sheet moved from ${current} to ${target}.`);
+}
+
+async function academicTermResultContext(env, user, input, capability = 'canCalculateResults') {
+  const context = await academicOperationalContext(env, user, input, capability);
+  const { scope, state, session, term } = context;
+  const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
+  const arm = assertReference(findById(state.arms, input.ArmId), 'Choose an active classroom arm.');
+  if (arm.ClassId !== schoolClass.ClassId) throw failure('The selected arm does not belong to this class.');
+  const scopeChain = academicPolicyScopeChain({
+    BranchId: scope.branchId, SectionId: scope.section, ClassId: schoolClass.ClassId
+  });
+  const policyView = await loadAcademicPolicyView(env, {
+    scope: scopeChain.at(-1), scopeChain, period: { Session: session.Name, Term: term.Name }
+  });
+  const policyRevisionIds = (policyView.Sources || []).map((row) => clean(row.RevisionId)).filter(Boolean);
+  if (!policyRevisionIds.length) {
+    throw failure('Activate the academic policy for this class and term before calculating results.', 409, 'ACADEMIC_RESULT_POLICY_REQUIRED');
+  }
+  const policy = normalizeAcademicPolicy(policyView.ActivePolicy || {});
+  const policyIssues = academicPolicyIssues(policy, { forActivation: true });
+  if (policyIssues.length) {
+    throw failure(`Complete the active academic policy before calculating results: ${policyIssues[0].message}`, 409, 'ACADEMIC_RESULT_POLICY_INCOMPLETE');
+  }
+  return {
+    ...context, schoolClass, arm, policy, policyRevisionIds,
+    policyFingerprint: await academicResultPolicyFingerprint(policy)
+  };
+}
+
+function academicTermResultId(scope, sessionId, termId, classId, armId, studentRef) {
+  return academicId('term-result', scope.branchId, scope.section, sessionId, termId, classId, armId, studentRef);
+}
+
+function resultRevisionToken(input = {}, resultId = '') {
+  let supplied = input.RevisionTokens || {};
+  if (typeof supplied === 'string') {
+    try { supplied = JSON.parse(supplied); } catch (_error) { supplied = {}; }
+  }
+  return clean(supplied?.[resultId] || (clean(input.ResultId) === clean(resultId) ? input.RevisionToken : ''));
+}
+
+function academicResultEventWrite(user, result, eventType, details = '') {
+  const eventId = `RESULT-EVENT-${Date.now()}-${globalThis.crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  return {
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.resultEvents,
+    documentId: eventId,
+    exists: false,
+    data: {
+      RecordId: eventId, ResultEventId: eventId, ResultId: result.ResultId,
+      StudentRef: result.StudentRef, SessionId: result.SessionId, TermId: result.TermId,
+      ClassId: result.ClassId, ArmId: result.ArmId,
+      EventType: clean(eventType), Status: clean(result.Status),
+      Details: clean(details).slice(0, 1000),
+      BranchId: result.BranchId, SchoolSection: result.SchoolSection,
+      CreatedAt: nowIso(), CreatedBy: actorName(user), CreatedByUsername: actorUsername(user)
+    }
+  };
+}
+
+async function notifyAcademicResultLifecycle(env, user, scope, results, target) {
+  if (!['Published', 'Withdrawn'].includes(target)) return;
+  const people = await loadPeople(env, user, scope).catch(() => ({ students: [] }));
+  const byStudent = new Map((people.students || []).map((row) => [lower(studentReference(row)), row]));
+  await Promise.allSettled(results.map((result) => {
+    const student = byStudent.get(lower(result.StudentRef)) || {};
+    const contacts = academicParentContacts(student);
+    const name = clean(student.DisplayName || student.ApplicantName || student.StudentName || result.StudentRef);
+    const published = target === 'Published';
+    return createNotification(env, {
+      EventKey: `academic-result:${result.ResultId}:${target}:${clean(result.UpdatedAt)}`,
+      Type: published ? 'Term result published' : 'Term result withdrawn',
+      Category: 'Academics', Audience: 'Parent', Channels: ['InApp', 'Push'],
+      TargetEmails: contacts.emails, TargetAccountRefs: contacts.accountRefs,
+      Title: published ? `${name}'s term result is published` : `${name}'s term result is temporarily unavailable`,
+      Message: published
+        ? `The ${result.Term || 'current term'} result is published. Sign in to the parent dashboard; access remains subject to the school's active result policy.`
+        : `The ${result.Term || 'term'} result was withdrawn for controlled correction and is no longer available to parents. The school will republish it after review.`,
+      ActionUrl: 'parent-dashboard.html?section=results', RecordType: 'academicResult', RecordId: result.ResultId,
+      BranchId: scope.branchId, SchoolSection: scope.section,
+      ActorType: 'Staff', ActorId: actorUsername(user), CreatedBy: actorName(user)
+    });
+  }));
+}
+
+export async function calculateAcademicTermResults(env, user = {}, input = {}) {
+  const context = await academicTermResultContext(env, user, input, 'canCalculateResults');
+  const { scope, state, session, term, schoolClass, arm, policy, policyRevisionIds, policyFingerprint } = context;
+  const memberships = state.studentMemberships.filter((row) => statusActive(row)
+    && row.SessionId === session.SessionId && row.TermId === term.TermId
+    && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId);
+  if (memberships.length > 200) throw failure('Calculate at most 200 student results in one classroom batch.');
+  const existingResults = state.termResults.filter((row) => row.SessionId === session.SessionId && row.TermId === term.TermId
+    && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId);
+  const immutable = existingResults.find((row) => lower(row.Status) !== 'calculated draft');
+  if (immutable) {
+    throw failure(`${immutable.StudentRef} already has a ${immutable.Status} result. Reopen or withdraw the affected result through the controlled workflow first.`, 409, 'ACADEMIC_RESULT_IMMUTABLE');
+  }
+  const ids = new Map();
+  const references = new Map();
+  for (const membership of memberships) {
+    const id = academicTermResultId(scope, session.SessionId, term.TermId, schoolClass.ClassId, arm.ArmId, membership.StudentRef);
+    ids.set(lower(membership.StudentRef), id);
+    references.set(lower(membership.StudentRef), clean(findById(existingResults, id)?.ResultReference) || await academicResultReference(id));
+  }
+  const calculation = calculateAcademicTermResultDrafts({
+    SessionId: session.SessionId, AcademicSession: session.Name,
+    TermId: term.TermId, Term: term.Name,
+    ClassId: schoolClass.ClassId, ClassName: schoolClass.Name,
+    ArmId: arm.ArmId, ArmName: arm.Name,
+    Memberships: memberships,
+    ScoreSheets: state.scoreSheets,
+    StudentScores: state.studentScores,
+    Subjects: state.subjects,
+    Attendance: state.studentAttendance,
+    AttendanceMode: oneOf(input.AttendanceMode, ACADEMIC_ATTENDANCE_MODES, 'Daily'),
+    ExistingResults: existingResults,
+    Policy: policy,
+    PolicyRevisionIds: policyRevisionIds,
+    PolicyFingerprint: policyFingerprint,
+    ResultIdFor: (membership) => ids.get(lower(membership.StudentRef)),
+    ResultReferenceFor: (membership) => references.get(lower(membership.StudentRef))
+  });
+  if (!calculation.Ready) {
+    const summary = calculation.Issues.slice(0, 5).join(' ');
+    const remaining = calculation.Issues.length > 5 ? ` ${calculation.Issues.length - 5} more issue(s) require attention.` : '';
+    throw failure(`${summary}${remaining}`, 409, 'ACADEMIC_RESULT_CALCULATION_BLOCKED');
+  }
+  const timestamp = nowIso();
+  const writes = [];
+  calculation.Results.forEach((draft) => {
+    const existing = findById(existingResults, draft.ResultId);
+    const result = {
+      ...(existing || {}), ...draft,
+      RecordId: draft.ResultId,
+      BranchId: scope.branchId, SchoolSection: scope.section,
+      CalculationRevision: Number(existing?.CalculationRevision || 0) + 1,
+      CalculatedAt: timestamp, CalculatedBy: actorName(user), CalculatedByUsername: actorUsername(user),
+      CreatedAt: clean(existing?.CreatedAt) || timestamp,
+      CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+      UpdatedAt: timestamp, UpdatedBy: actorName(user)
+    };
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.termResults,
+      documentId: result.ResultId,
+      data: withoutMetadata(result),
+      ...writePrecondition(existing, resultRevisionToken(input, result.ResultId))
+    });
+    writes.push(academicResultEventWrite(user, result, existing ? 'RECALCULATED' : 'CALCULATED',
+      `${result.SubjectCount} subject(s); ${result.Attendance.RegisterType} attendance; policy ${result.PolicyFingerprint}`));
+  });
+  writes.push(auditWrite(user, existingResults.length ? 'RECALCULATE' : 'CALCULATE', 'termResult', {
+    RecordId: `classroom-results-${schoolClass.ClassId}-${arm.ArmId}`,
+    SessionId: session.SessionId, TermId: term.TermId,
+    BranchId: scope.branchId, SchoolSection: scope.section
+  }, `${calculation.Results.length} Calculated Draft result(s); policy ${policyFingerprint}`));
+  await commitAcademicBatch(env, writes, 'One or more term results changed while the classroom was being calculated. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope,
+    `${calculation.Results.length} term result${calculation.Results.length === 1 ? '' : 's'} calculated as Draft from approved scores.`);
+}
+
+function academicTermResultIds(value) {
+  let ids = value;
+  if (typeof ids === 'string') {
+    try { ids = JSON.parse(ids); } catch (_error) { ids = ids.split(','); }
+  }
+  return uniqueIds(Array.isArray(ids) ? ids : []);
+}
+
+export async function previewAcademicTermResultWithdrawal(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canPublishResults');
+  const ids = academicTermResultIds(input.ResultIds || [input.ResultId]);
+  const results = ids.map((id) => findById(context.state.termResults, id)).filter(Boolean);
+  if (!results.length || results.length !== ids.length) throw failure('One or more selected term results were not found.', 404);
+  const eligible = results.filter((row) => ['published', 'locked'].includes(lower(row.Status)));
+  if (eligible.length !== results.length) throw failure('Only Published or Locked results can be withdrawn.', 409);
+  return {
+    ok: true,
+    message: `${eligible.length} published result${eligible.length === 1 ? '' : 's'} will become unavailable to parents immediately. The saved result snapshot and audit history will be retained.`,
+    resultWithdrawalPreview: {
+      ResultCount: eligible.length,
+      StudentRefs: eligible.map((row) => row.StudentRef),
+      ParentAccessRemoved: true,
+      SnapshotRetained: true,
+      RequiresReason: true,
+      RequiresReapprovalBeforeRepublishing: true
+    }
+  };
+}
+
+export async function changeAcademicTermResultStatus(env, user = {}, input = {}) {
+  const target = ACADEMIC_TERM_RESULT_STATUSES.find((value) => lower(value) === lower(input.Status || input.TargetStatus));
+  if (!target) throw failure('Choose a valid term-result status.');
+  const capability = ['Published', 'Locked', 'Withdrawn'].includes(target) ? 'canPublishResults' : 'canReviewResults';
+  const context = await academicOperationalContext(env, user, input, capability);
+  const { scope, state } = context;
+  const ids = academicTermResultIds(input.ResultIds || [input.ResultId]);
+  if (!ids.length || ids.length > 200) throw failure('Choose between 1 and 200 term results.');
+  const results = ids.map((id) => findById(state.termResults, id));
+  if (results.some((row) => !row)) throw failure('One or more selected term results were not found.', 404);
+  if (target === 'Published') {
+    const invalid = results.find((result) => academicPolicyIssues(result.PolicySnapshot || {}, { forActivation: true }).length);
+    if (invalid) throw failure(`${invalid.StudentRef} has an incomplete policy snapshot and cannot be published. Recalculate it after activating the complete policy.`, 409, 'ACADEMIC_RESULT_POLICY_SNAPSHOT_INVALID');
+  }
+  const reason = clean(input.Reason).slice(0, 500);
+  const transitions = results.map((result) => academicTermResultTransition(result.Status, target));
+  if (transitions.some((transition) => !transition.Allowed)) {
+    throw failure(`The selected results cannot move directly to ${target}.`, 409, 'ACADEMIC_RESULT_STATUS_INVALID');
+  }
+  if (transitions.some((transition) => transition.RequiresReason) && !reason) {
+    throw failure('Enter the approved reason for this result withdrawal or reopening.');
+  }
+  if (target === 'Withdrawn' && input.ImpactAcknowledged !== true) {
+    throw failure('Preview and acknowledge the parent-access impact before withdrawing published results.', 409, 'ACADEMIC_RESULT_IMPACT_ACKNOWLEDGEMENT_REQUIRED');
+  }
+  const timestamp = nowIso();
+  const writes = [];
+  results.forEach((existing) => {
+    const event = target === 'Calculated Draft' ? 'Reopened' : target;
+    const result = {
+      ...existing,
+      Status: target,
+      PublicationStatus: target,
+      UpdatedAt: timestamp, UpdatedBy: actorName(user),
+      [`${event.replace(/\s+/g, '')}At`]: timestamp,
+      [`${event.replace(/\s+/g, '')}By`]: actorName(user),
+      [`${event.replace(/\s+/g, '')}ByUsername`]: actorUsername(user),
+      ...(reason ? { [`${event.replace(/\s+/g, '')}Reason`]: reason } : {}),
+      ...(target === 'Withdrawn' ? { WithdrawnFromStatus: existing.Status } : {})
+    };
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.termResults,
+      documentId: result.ResultId,
+      data: withoutMetadata(result),
+      ...writePrecondition(existing, resultRevisionToken(input, result.ResultId))
+    });
+    writes.push(academicResultEventWrite(user, result, event.toUpperCase(), reason || `${existing.Status} -> ${target}`));
+  });
+  writes.push(auditWrite(user, target.toUpperCase(), 'termResult', {
+    RecordId: results[0].ResultId,
+    SessionId: results[0].SessionId, TermId: results[0].TermId,
+    BranchId: scope.branchId, SchoolSection: scope.section
+  }, `${results.length} result(s): ${reason || `${results[0].Status} -> ${target}`}`));
+  await commitAcademicBatch(env, writes, 'One or more selected term results changed while their status was being updated. Reload and try again.');
+  await notifyAcademicResultLifecycle(env, user, scope, results.map((existing) => ({
+    ...existing, Status: target, UpdatedAt: timestamp
+  })), target);
+  return academicOperationalResponse(env, user, input, scope,
+    `${results.length} term result${results.length === 1 ? '' : 's'} moved to ${target}.`);
+}
+
+export async function saveAcademicTermResultRemarks(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canEnterScores');
+  const { permissions, scope, state } = context;
+  const existing = findById(state.termResults, input.ResultId);
+  if (!existing) throw failure('Choose a calculated term result.', 404);
+  if (lower(existing.Status) !== 'calculated draft') {
+    throw failure('Remarks can change only while the result is a Calculated Draft.', 409, 'ACADEMIC_RESULT_REMARKS_LOCKED');
+  }
+  if (permissions.teacherView) {
+    const assigned = state.teacherAllocations.some((row) => statusActive(row)
+      && row.SessionId === existing.SessionId && row.TermId === existing.TermId
+      && row.ClassId === existing.ClassId && row.ArmId === existing.ArmId
+      && ['form teacher', 'assistant teacher'].includes(lower(row.AllocationRole))
+      && lower(row.TeacherUsername) === actorUsername(user));
+    if (!assigned) throw failure('Only this classroom’s Form Teacher or Assistant may enter the teacher remark.', 403);
+  }
+  const timestamp = nowIso();
+  const result = {
+    ...existing,
+    TeacherRemark: clean(input.TeacherRemark).slice(0, 1000),
+    Recommendation: clean(input.Recommendation).slice(0, 1000),
+    ...(permissions.canPublishResults ? { PrincipalRemark: clean(input.PrincipalRemark).slice(0, 1000) } : {}),
+    UpdatedAt: timestamp, UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.termResults, documentId: result.ResultId,
+      data: withoutMetadata(result), ...writePrecondition(existing, input.RevisionToken) },
+    academicResultEventWrite(user, result, 'REMARKS_UPDATED', 'Draft result comments updated.'),
+    auditWrite(user, 'UPDATE_REMARKS', 'termResult', result, 'Draft result comments updated.')
+  ], 'This result changed while its remarks were being saved. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, `${result.StudentRef} result remarks saved.`);
 }
 
 export async function previewAcademicScoreImport(env, user = {}, input = {}) {
@@ -4207,6 +4517,10 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['importacademicscores', 'commitscoreimport'].includes(action)) return importAcademicScores(env, user, input);
   if (['rollbackacademicscoreimport', 'rollbackscoreimport'].includes(action)) return rollbackAcademicScoreImport(env, user, input);
   if (['syncacademiccbtscores', 'synccbtresults'].includes(action)) return syncAcademicCbtScores(env, user, input);
+  if (['calculateacademictermresults', 'calculatetermresults'].includes(action)) return calculateAcademicTermResults(env, user, input);
+  if (['previewacademictermresultwithdrawal', 'previewtermresultwithdrawal'].includes(action)) return previewAcademicTermResultWithdrawal(env, user, input);
+  if (['changeacademictermresultstatus', 'changetermresultstatus'].includes(action)) return changeAcademicTermResultStatus(env, user, input);
+  if (['saveacademictermresultremarks', 'savetermresultremarks'].includes(action)) return saveAcademicTermResultRemarks(env, user, input);
   if (['deleteacademiccbttest', 'deletecbttest'].includes(action)) return deleteAcademicCbtTest(env, user, input);
   if (['downloadacademiccbttestpackage', 'downloadcbttestpackage'].includes(action)) return downloadAcademicCbtTestPackage(env, user, input);
   if (['acknowledgeacademiccbtimport', 'acknowledgecbtimport'].includes(action)) return acknowledgeAcademicCbtImport(env, user, input);

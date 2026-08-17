@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Verify Academic Result</title>
+  <link rel="stylesheet" href="css/style.css?v=20260817-academic-results">
+</head>
+<body class="academic-result-verification-page">
+  <main class="academic-result-verification-card">
+    <p class="eyebrow">Academic result verification</p>
+    <h1>Verify a term result</h1>
+    <p>Enter the immutable reference printed on the result. Verification confirms publication without exposing a student’s private scores or identity.</p>
+    <form id="verifyAcademicResultForm">
+      <label>Result reference<input id="academicResultReference" name="reference" placeholder="TR-0000000000000000" autocomplete="off" required></label>
+      <button type="submit">Verify reference</button>
+    </form>
+    <section id="academicResultVerificationStatus" class="academic-result-verification-status" aria-live="polite"></section>
+  </main>
+  <script src="js/verify-result.js?v=20260817-academic-results" defer></script>
+</body>
+</html>

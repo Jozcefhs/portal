@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
-const sharedVersion = '20260816-web-cbt-authoring';
-const adminScriptVersion = '20260816-web-cbt-authoring';
-const parentScriptVersion = '20260816-academic-schedule-attendance';
+const sharedVersion = '20260817-academic-results';
+const adminScriptVersion = '20260817-academic-results';
+const parentScriptVersion = '20260817-academic-results';
 const notificationVersion = '20260804-read-efficiency';
 const pageNames = [
   'admin.html',
@@ -101,7 +101,9 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v237-web-cbt-authoring/);
+  assert.match(serviceWorker, /dynamax-v238-academic-results/);
+  assert.match(serviceWorker, /'\/verify-result\.html'/);
+  assert.match(serviceWorker, /'\/js\/verify-result\.js'/);
   assert.match(serviceWorker, /'\/css\/school-landing\.css'/);
   assert.match(serviceWorker, /'\/css\/guest-fee-payment\.css'/);
   assert.match(serviceWorker, /'\/js\/app-dialogs\.js'/);

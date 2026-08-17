@@ -1246,12 +1246,12 @@ function academicResultPrintMarkup(child, record) {
     record.AssessedStudentCount !== '' && record.AssessedStudentCount !== undefined ? `Assessed students: ${record.AssessedStudentCount}` : ''
   ].filter(Boolean).join(' · ');
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(record.Term || 'Academic Result')}</title><style>
-    body{font:14px Arial,sans-serif;color:#17324d;margin:32px}header{border-bottom:2px solid #08735f;padding-bottom:12px;margin-bottom:18px}h1,h2{margin:0 0 6px}p{margin:5px 0}.meta{color:#526b80}.summary{margin:16px 0;padding:10px;background:#edf8f5;font-weight:700}table{width:100%;border-collapse:collapse;margin-top:14px}th,td{border:1px solid #cad8e3;padding:7px;text-align:left}th{background:#eef4f8}.remarks{margin-top:18px}.reference{margin-top:22px;font-size:11px;color:#647b90}@media print{body{margin:15mm}}
+    body{font:14px Arial,sans-serif;color:#17324d;margin:32px}header{border-bottom:2px solid #08735f;padding-bottom:12px;margin-bottom:18px}h1,h2{margin:0 0 6px}p{margin:5px 0}.meta{color:#526b80}.summary{margin:16px 0;padding:10px;background:#edf8f5;font-weight:700}table{width:100%;border-collapse:collapse;margin-top:14px}th,td{border:1px solid #cad8e3;padding:7px;text-align:left}th{background:#eef4f8}.remarks{margin-top:18px}.verification{display:flex;align-items:center;gap:12px;margin-top:20px;padding-top:12px;border-top:1px solid #cad8e3}.verification img{width:92px;height:92px}.reference{font-size:11px;color:#647b90}@media print{body{margin:15mm}}
   </style></head><body><header><h1>${escapeHtml(schoolName)}</h1><h2>Academic Result</h2><p><strong>${escapeHtml(child.DisplayName || child.AccountRef || 'Student')}</strong></p><p class="meta">${escapeHtml([record.ClassName, record.AcademicSession, record.Term].filter(Boolean).join(' · '))}</p></header>
   ${summary ? `<div class="summary">${escapeHtml(summary)}</div>` : ''}
   <table><thead><tr><th>Subject</th><th>Total</th><th>Grade</th><th>Point</th><th>Position / assessed</th><th>Remark</th></tr></thead><tbody>${academicResultSubjectRows(record)}</tbody></table>
-  <div class="remarks"><p><strong>Teacher:</strong> ${escapeHtml(record.TeacherRemark || '-')}</p><p><strong>Principal:</strong> ${escapeHtml(record.PrincipalRemark || '-')}</p></div>
-  <p class="reference">Result reference: ${escapeHtml(record.ResultReference || record.ResultId)}</p></body></html>`;
+  <div class="remarks"><p><strong>Attendance:</strong> ${escapeHtml(record.Attendance?.AttendancePercentage ?? 0)}%</p><p><strong>Teacher:</strong> ${escapeHtml(record.TeacherRemark || '-')}</p><p><strong>Principal:</strong> ${escapeHtml(record.PrincipalRemark || '-')}</p><p><strong>Recommendation:</strong> ${escapeHtml(record.Recommendation || '-')}</p></div>
+  <div class="verification"><img src="${escapeHtml(`${location.origin}/api/academic-result-qr?reference=${encodeURIComponent(record.ResultReference || record.ResultId)}`)}" alt="Result verification QR code"><p class="reference">Result reference: ${escapeHtml(record.ResultReference || record.ResultId)}<br>Verification: ${escapeHtml(`${location.origin}/verify-result.html?reference=${encodeURIComponent(record.ResultReference || record.ResultId)}`)}</p></div></body></html>`;
 }
 
 async function printAcademicResult(child, record, button) {
@@ -1294,6 +1294,20 @@ function renderAcademicResults(child) {
   if (!academicTermResults) return;
   const records = childResult(dashboard.academicResults, child, []);
   academicTermResults.innerHTML = records.length ? '' : '<p class="muted">No published academic result is currently available.</p>';
+  const permitted = records.filter((record) => record.Access?.Allowed === true);
+  if (permitted.length) {
+    const current = permitted[0];
+    const previous = permitted[1];
+    const change = previous && Number.isFinite(Number(current.OverallAverage)) && Number.isFinite(Number(previous.OverallAverage))
+      ? Math.round((Number(current.OverallAverage) - Number(previous.OverallAverage)) * 10) / 10 : null;
+    const focusSubjects = [...(current.Subjects || [])]
+      .filter((subject) => Number.isFinite(Number(subject.Total)))
+      .sort((left, right) => Number(left.Total) - Number(right.Total)).slice(0, 3);
+    const overview = document.createElement('section');
+    overview.className = 'academic-progress-overview';
+    overview.innerHTML = `<header><div><small>Current approved progress</small><strong>${escapeHtml([current.Term, current.AcademicSession].filter(Boolean).join(' · '))}</strong></div><span>${escapeHtml(current.ClassName || '')}</span></header><div class="academic-progress-metrics"><div><small>Current average</small><strong>${escapeHtml(current.OverallAverage ?? '—')}%</strong></div><div><small>Previous permitted term</small><strong>${previous ? `${escapeHtml(previous.OverallAverage ?? '—')}%` : 'Not available'}</strong></div><div><small>Change</small><strong>${change === null ? '—' : `${change > 0 ? '+' : ''}${escapeHtml(change)} points`}</strong></div><div><small>Attendance</small><strong>${escapeHtml(current.Attendance?.AttendancePercentage ?? 0)}%</strong></div></div>${focusSubjects.length ? `<p><strong>Subjects to watch:</strong> ${focusSubjects.map((subject) => `${escapeHtml(subject.SubjectName || subject.SubjectId)} (${escapeHtml(subject.Total)}%)`).join(' · ')}</p>` : ''}${current.Recommendation ? `<p><strong>Approved recommendation:</strong> ${escapeHtml(current.Recommendation)}</p>` : ''}`;
+    academicTermResults.appendChild(overview);
+  }
   records.forEach((record) => {
     const item = document.createElement('article');
     item.className = `activity-item academic-result-card${record.Access?.Allowed ? '' : ' academic-result-restricted'}`;

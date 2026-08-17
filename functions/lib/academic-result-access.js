@@ -152,6 +152,19 @@ function publicSubjectResult(subject = {}, positionMode = 'none') {
   return output;
 }
 
+function publicAttendanceSummary(attendance = {}) {
+  return {
+    RegisterType: clean(attendance.RegisterType || attendance.Mode || 'Daily'),
+    Present: Number(attendance.Present || 0),
+    Absent: Number(attendance.Absent || 0),
+    Late: Number(attendance.Late || 0),
+    Excused: Number(attendance.Excused || 0),
+    LeftEarly: Number(attendance.LeftEarly || 0),
+    Total: Number(attendance.Total || 0),
+    AttendancePercentage: Number(attendance.AttendancePercentage || 0)
+  };
+}
+
 export function publicAcademicResult(result = {}, access = {}, policyValue = {}) {
   const policy = normalizeAcademicPolicy(policyValue);
   const output = {
@@ -160,6 +173,7 @@ export function publicAcademicResult(result = {}, access = {}, policyValue = {})
     AcademicSession: clean(result.AcademicSession || result.SessionName || result.SessionId),
     Term: clean(result.Term || result.TermName || result.TermId),
     ClassName: clean(result.ClassName || result.ClassId),
+    ArmName: clean(result.ArmName || result.ArmId),
     PublicationStatus: clean(result.PublicationStatus || result.Status),
     PublishedAt: clean(result.PublishedAt),
     Access: accessDecision(Boolean(access.Allowed), clean(access.Code), clean(access.Message), {
@@ -173,6 +187,9 @@ export function publicAcademicResult(result = {}, access = {}, policyValue = {})
   output.TotalScore = result.TotalScore ?? result.Total ?? '';
   output.TeacherRemark = clean(result.TeacherRemark || result.FormTeacherRemark);
   output.PrincipalRemark = clean(result.PrincipalRemark || result.HeadTeacherRemark);
+  output.OverallRemark = clean(result.OverallRemark);
+  output.Recommendation = clean(result.Recommendation);
+  output.Attendance = publicAttendanceSummary(result.Attendance || result.AttendanceSummary || {});
   if (policy.Position.Mode === 'exact-overall') output.OverallPosition = result.OverallPosition ?? result.Position ?? '';
   if (policy.Position.Mode === 'percentile-band') output.PerformanceBand = clean(result.PerformanceBand || result.PercentileBand);
   if (policy.Position.Mode === 'assessed-count') output.AssessedStudentCount = result.AssessedStudentCount ?? '';

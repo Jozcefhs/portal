@@ -29,10 +29,20 @@ test('AM-001 result view, denial, exemption use and print are audited without fi
 
 test('AM-001 parent Results tab renders only server-approved details and rechecks before printing', () => {
   assert.match(dashboardHtml, /id="academicTermResults"/);
-  assert.match(dashboardHtml, /js\/parent-dashboard\.js\?v=20260816-academic-schedule-attendance/);
+  assert.match(dashboardHtml, /js\/parent-dashboard\.js\?v=20260817-academic-results/);
   assert.match(dashboardSource, /function renderAcademicResults\(child\)/);
   assert.match(dashboardSource, /if \(!record\.Access\?\.Allowed\)/);
   assert.match(dashboardSource, /action: 'getAcademicResultForPrint'/);
   assert.match(dashboardSource, /Rechecking result access/);
   assert.match(styleSource, /\.academic-result-restricted/);
+});
+
+test('Milestone 9 parent progress and printing use only permitted result fields and public verification references', () => {
+  assert.match(dashboardSource, /className = 'academic-progress-overview'/);
+  assert.match(dashboardSource, /Subjects to watch:/);
+  assert.match(dashboardSource, /Approved recommendation:/);
+  assert.match(dashboardSource, /current\.Attendance\?\.AttendancePercentage/);
+  assert.match(dashboardSource, /api\/academic-result-qr\?reference=/);
+  assert.match(dashboardSource, /verify-result\.html\?reference=/);
+  assert.match(styleSource, /\.academic-progress-overview/);
 });

@@ -8,7 +8,9 @@ operational, and the Milestone 5 assessment, scorebook and spreadsheet-import
 slice is operational on the web companion and desktop source. The Milestone 6
 local CBT foundation, Milestone 7 examination-authoring/document-delivery
 slice and Milestone 8 marking/recovery/synchronization baseline are also
-operational in source. The School
+operational in source. The Milestone 9 term-result calculation, controlled
+publication and parent-progress baseline is operational on the web companion
+and desktop source. The School
 edition now has an effective-dated academic-policy schema, immutable
 policy revisions, separate draft and active states, organisation-to-branch
 inheritance, activation validation and administrator controls for result
@@ -113,11 +115,25 @@ and restore actions that create a pre-restore safeguard. The web scorebook also
 has a provider-neutral external-CBT CSV/XLSX adapter with exact-roster,
 component, maximum-mark, digest and idempotency checks. Provider-specific signed
 API or webhook adapters remain dependent on the existing CBT platform contract.
+Term results are now calculated only when every required student-subject score
+comes from an Approved or Locked score sheet. Each Calculated Draft stores the
+subject component snapshots, assessment and policy revisions, attendance,
+grade, point, remark and configured position context needed to reproduce it.
+The calculator explicitly selects Daily, Period or Subject attendance so
+different register types are never combined into a duplicated attendance total.
+Authorized staff move results through Calculated Draft, Reviewed, Approved,
+Published and Locked; publication and withdrawal create lifecycle history and
+parent notifications, while withdrawal requires an impact preview,
+acknowledgement and reason. Published print views carry an immutable reference
+and privacy-minimized public verification QR code. The parent dashboard derives
+its progress comparison, subjects to watch, attendance and recommendation only
+from results already released by the existing linked-child, publication,
+visibility and financial-clearance gate.
 The packaged client assets are in
 the desktop build definition, but the desktop application will not be compiled
 until the remaining milestones are complete.
-Result production and publication, finance-officer clearance administration,
-promotion intake, transcripts and parent progress remain pending work.
+Finance-officer clearance administration, cumulative results, promotion,
+transcripts, migration hardening and production rollout remain pending work.
 OCR-assisted question suggestions remain a separate review-gated authoring
 slice and are not yet operational;
 configuring a policy, academic structure or score sheet does not itself publish
