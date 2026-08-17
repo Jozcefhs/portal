@@ -850,6 +850,7 @@ activateAcademicPolicyButton?.addEventListener('click', async (event) => {
   if (!window.DynamaxActionFeedback.begin(button, 'Activating...')) return;
   try {
     await requestAcademicPolicy('activate');
+    announceSettingsChange();
     setStatus('Academic policy activated successfully.', 'ok');
   } catch (error) {
     renderAcademicPolicyIssues(error.issues || [], Boolean(loadedAcademicPolicyView?.DraftRevisionId));
@@ -871,6 +872,7 @@ inheritAcademicPolicyButton?.addEventListener('click', async (event) => {
   if (!window.DynamaxActionFeedback.begin(button, 'Resetting policy...')) return;
   try {
     await requestAcademicPolicy('inherit');
+    announceSettingsChange();
     setStatus(`${branchName} now inherits the organisation academic policy for this period.`, 'ok');
   } catch (error) {
     setStatus(error.message, 'bad');

@@ -282,7 +282,9 @@ test('School settings expose configurable result, grading and promotion policy c
   assert.match(setupJsSource, /activateAcademicPolicyButton\?\.addEventListener\('click', async \(event\) => \{\s*const button = event\.currentTarget;\s*if \(!await window\.DynamaxDialogs\.confirm/);
   assert.match(setupJsSource, /inheritAcademicPolicyButton\?\.addEventListener\('click', async \(event\) => \{\s*const button = event\.currentTarget;/);
   assert.doesNotMatch(setupJsSource, /DynamaxDialogs\.confirm\([\s\S]{0,500}\)\) return;\s*const button = event\.currentTarget;/);
-  assert.match(setupHtmlSource, /js\/setup\.js\?v=20260817-policy-activation/);
+  assert.match(setupJsSource, /requestAcademicPolicy\('activate'\);\s*announceSettingsChange\(\);/);
+  assert.match(setupJsSource, /requestAcademicPolicy\('inherit'\);\s*announceSettingsChange\(\);/);
+  assert.match(setupHtmlSource, /js\/setup\.js\?v=20260817-policy-live-sync/);
   assert.match(styleSource, /\.academic-component-grid/);
   assert.match(styleSource, /\.academic-grade-grid/);
   assert.match(styleSource, /\.academic-cumulative-grid/);

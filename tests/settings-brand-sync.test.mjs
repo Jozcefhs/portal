@@ -29,5 +29,7 @@ test('saving settings invalidates this tab and refreshes an open companion tab',
   assert.match(setup, /startsWith\('dynamax-public-api:settings'\)/);
   assert.match(setup, /localStorage\.setItem\('dynamax:settings-revision'/);
   assert.match(admin, /event\.key !== 'dynamax:settings-revision'/);
-  assert.match(admin, /void refreshStaffSiteProfile\(\)/);
+  assert.match(admin, /await refreshStaffSiteProfile\(\)/);
+  assert.match(admin, /activeSection === 'academics'/);
+  assert.match(admin, /await loadAcademicManagement\(\{ message: 'Academic policy and records refreshed\.' \}\)/);
 });

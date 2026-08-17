@@ -16337,7 +16337,13 @@ sidebarThemeToggleButton.addEventListener('click', toggleStaffTheme);
 branchSelector.addEventListener('change', () => switchStaffBranch(branchSelector.value));
 window.addEventListener('storage', (event) => {
   if (event.key !== 'dynamax:settings-revision' || !currentUser || dashboardEl.hidden) return;
-  void refreshStaffSiteProfile();
+  void (async () => {
+    await refreshStaffSiteProfile();
+    if (activeSection === 'academics') {
+      academicManagementData = null;
+      await loadAcademicManagement({ message: 'Academic policy and records refreshed.' });
+    }
+  })();
 });
 paymentSettingsButton.addEventListener('click', () => {
   window.location.assign(paymentSettingsUrl());
