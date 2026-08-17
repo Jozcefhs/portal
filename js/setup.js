@@ -255,6 +255,24 @@ function createAcademicGradeRow(band = {}, index = 0) {
   return row;
 }
 
+function createAcademicCumulativeTermRow(term = {}, index = 0) {
+  const row = document.createElement('div');
+  row.className = 'academic-policy-row academic-cumulative-grid';
+  row.dataset.policyId = term.Id || '';
+  const name = createPolicyInput('text', term.TermName, 'Academic term name', { placeholder: 'First Term' });
+  const weight = createPolicyInput('number', term.WeightPercentage, 'Cumulative weight percentage', { min: '0', max: '100', step: '0.01' });
+  const required = createPolicyInput('checkbox', '', 'Required for cumulative result');
+  required.checked = term.Required !== false;
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'academic-remove-row';
+  remove.setAttribute('aria-label', `Remove cumulative term ${index + 1}`);
+  remove.textContent = '×';
+  remove.addEventListener('click', () => row.remove());
+  row.append(name, weight, required, remove);
+  return row;
+}
+
 function renderAcademicComponents(components = []) {
   const container = policyField('academicComponents');
   container.replaceChildren(...components.map(createAcademicComponentRow));
@@ -263,6 +281,11 @@ function renderAcademicComponents(components = []) {
 function renderAcademicGradeBands(bands = []) {
   const container = policyField('academicGradeBands');
   container.replaceChildren(...bands.map(createAcademicGradeRow));
+}
+
+function renderAcademicCumulativeTerms(terms = []) {
+  const container = policyField('academicCumulativeTerms');
+  container.replaceChildren(...terms.map(createAcademicCumulativeTermRow));
 }
 
 function updateAcademicPolicyConditionalFields() {
@@ -290,6 +313,7 @@ function renderAcademicPolicy(policy = {}) {
   const clearance = result.FinancialClearance || {};
   const position = policy.Position || {};
   const assessment = policy.Assessment || {};
+  const cumulative = policy.Cumulative || {};
   const promotion = policy.Promotion || {};
   setField('academicResultVisibility', result.VisibilityMode || 'unconfigured');
   setField('academicFeeClearanceMode', clearance.Mode || 'unconfigured');
@@ -304,6 +328,10 @@ function renderAcademicPolicy(policy = {}) {
   setField('academicMinimumAssessedSubjects', position.MinimumAssessedSubjects || 1);
   renderAcademicComponents(assessment.Components || []);
   renderAcademicGradeBands(assessment.GradeBands || []);
+  renderAcademicCumulativeTerms(cumulative.Terms || []);
+  setField('academicMissingTermMode', cumulative.MissingTermMode || 'block');
+  setField('academicMissingSubjectMode', cumulative.MissingSubjectMode || 'block');
+  policyField('academicIncludeTransferredResults').checked = cumulative.IncludeTransferredResults !== false;
   setField('academicPromotionMode', promotion.Mode || 'unconfigured');
   setField('academicMinimumOverallAverage', promotion.MinimumOverallAverage ?? '');
   setField('academicRequiredCoreSubjects', (promotion.RequiredCoreSubjectIds || []).join(', '));
@@ -341,6 +369,16 @@ function academicPolicyFromForm() {
       Order: index + 1
     };
   });
+  const cumulativeTerms = [...policyField('academicCumulativeTerms').children].map((row, index) => {
+    const [name, weight, required] = row.children;
+    return {
+      Id: row.dataset.policyId,
+      TermName: name.value,
+      WeightPercentage: Number(weight.value || 0),
+      Required: required.checked,
+      Order: index + 1
+    };
+  });
   return {
     ResultAccess: {
       VisibilityMode: policyField('academicResultVisibility').value,
@@ -360,6 +398,12 @@ function academicPolicyFromForm() {
       MinimumAssessedSubjects: policyNumber('academicMinimumAssessedSubjects', 1)
     },
     Assessment: { Components: components, GradeBands: gradeBands },
+    Cumulative: {
+      Terms: cumulativeTerms,
+      MissingTermMode: policyField('academicMissingTermMode').value,
+      MissingSubjectMode: policyField('academicMissingSubjectMode').value,
+      IncludeTransferredResults: policyField('academicIncludeTransferredResults').checked
+    },
     Promotion: {
       Mode: policyField('academicPromotionMode').value,
       MinimumOverallAverage: policyNumber('academicMinimumOverallAverage'),
@@ -734,6 +778,10 @@ policyField('addAcademicComponent')?.addEventListener('click', () => {
 
 policyField('addAcademicGradeBand')?.addEventListener('click', () => {
   policyField('academicGradeBands').appendChild(createAcademicGradeRow({}, policyField('academicGradeBands').children.length));
+});
+
+policyField('addAcademicCumulativeTerm')?.addEventListener('click', () => {
+  policyField('academicCumulativeTerms').appendChild(createAcademicCumulativeTermRow({}, policyField('academicCumulativeTerms').children.length));
 });
 
 policyField('academicFeeClearanceMode')?.addEventListener('change', updateAcademicPolicyConditionalFields);

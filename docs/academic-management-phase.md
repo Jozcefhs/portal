@@ -899,6 +899,26 @@ The implementation may deliver smaller vertical slices, but dependencies must
 not be bypassed. In particular, a CBT score cannot synchronize safely until
 academic allocation, assessment-component and scorebook contracts exist.
 
+### Milestone 10 implementation status
+
+The web companion and desktop source now use the same online contracts for:
+
+- policy-weighted cumulative session calculations sourced only from Locked term
+  results;
+- Calculated Draft, Reviewed, Approved and Locked cumulative-result states;
+- promotion recommendations, authorized overrides and Draft, Reviewed,
+  Approved and Committed decisions;
+- idempotent next-session allocation for Promoted and Repeated outcomes without
+  replacing completed-session membership history;
+- versioned Draft, Reviewed, Approved and Issued transcripts assembled from
+  Locked cumulative and term snapshots; and
+- public QR/reference verification that confirms only issue metadata and does
+  not disclose the student's identity or academic scores.
+
+All calculation and workflow operations preserve policy revision references,
+create immutable outcome events and write the protected security audit trail.
+Desktop packaging remains deferred until the remaining milestones are complete.
+
 ## 18. Cross-cutting acceptance criteria
 
 No milestone is complete unless applicable checks prove that:

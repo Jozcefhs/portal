@@ -46,6 +46,7 @@ export const ASSESSMENT_SOURCE_MODES = Object.freeze([
   'external-cbt'
 ]);
 export const PROMOTION_MODES = Object.freeze(['unconfigured', 'manual-review', 'criteria']);
+export const CUMULATIVE_MISSING_MODES = Object.freeze(['block', 'exclude', 'zero', 'manual-review']);
 
 function oneOf(value, choices, fallback) {
   const candidate = lower(value);
@@ -117,6 +118,18 @@ function normalizeGradeBand(row = {}, index = 0) {
   };
 }
 
+function normalizeCumulativeTerm(row = {}, index = 0) {
+  const name = clean(row.TermName || row.termName || row.Name || row.name);
+  return {
+    Id: policyId(row.Id || row.id, name || `term-${index + 1}`),
+    TermId: clean(row.TermId || row.termId),
+    TermName: name,
+    WeightPercentage: boundedNumber(row.WeightPercentage ?? row.weightPercentage ?? row.Weight, 0, 0, 100),
+    Required: yesNoBoolean(row.Required ?? row.required, true),
+    Order: Math.max(1, Math.floor(boundedNumber(row.Order ?? row.order, index + 1, 1, 1000)))
+  };
+}
+
 export function defaultAcademicPolicy() {
   return {
     SchemaVersion: ACADEMIC_POLICY_SCHEMA_VERSION,
@@ -141,6 +154,12 @@ export function defaultAcademicPolicy() {
       Components: [],
       GradeBands: []
     },
+    Cumulative: {
+      Terms: [],
+      MissingTermMode: 'block',
+      MissingSubjectMode: 'block',
+      IncludeTransferredResults: true
+    },
     Promotion: {
       Mode: 'unconfigured',
       MinimumOverallAverage: null,
@@ -160,12 +179,16 @@ export function normalizeAcademicPolicy(value = {}) {
   const financial = result.FinancialClearance || result.financialClearance || {};
   const position = value.Position || value.position || {};
   const assessment = value.Assessment || value.assessment || {};
+  const cumulative = value.Cumulative || value.cumulative || {};
   const promotion = value.Promotion || value.promotion || {};
   const components = Array.isArray(assessment.Components || assessment.components)
     ? (assessment.Components || assessment.components)
     : [];
   const gradeBands = Array.isArray(assessment.GradeBands || assessment.gradeBands)
     ? (assessment.GradeBands || assessment.gradeBands)
+    : [];
+  const cumulativeTerms = Array.isArray(cumulative.Terms || cumulative.terms)
+    ? (cumulative.Terms || cumulative.terms)
     : [];
   return {
     SchemaVersion: ACADEMIC_POLICY_SCHEMA_VERSION,
@@ -221,6 +244,23 @@ export function normalizeAcademicPolicy(value = {}) {
     Assessment: {
       Components: components.map(normalizeComponent).sort((a, b) => a.Order - b.Order || a.Name.localeCompare(b.Name)),
       GradeBands: gradeBands.map(normalizeGradeBand).sort((a, b) => b.MinimumPercentage - a.MinimumPercentage || a.Order - b.Order)
+    },
+    Cumulative: {
+      Terms: cumulativeTerms.map(normalizeCumulativeTerm).sort((a, b) => a.Order - b.Order || a.TermName.localeCompare(b.TermName)),
+      MissingTermMode: oneOf(
+        cumulative.MissingTermMode ?? cumulative.missingTermMode,
+        CUMULATIVE_MISSING_MODES,
+        defaults.Cumulative.MissingTermMode
+      ),
+      MissingSubjectMode: oneOf(
+        cumulative.MissingSubjectMode ?? cumulative.missingSubjectMode,
+        CUMULATIVE_MISSING_MODES,
+        defaults.Cumulative.MissingSubjectMode
+      ),
+      IncludeTransferredResults: yesNoBoolean(
+        cumulative.IncludeTransferredResults ?? cumulative.includeTransferredResults,
+        defaults.Cumulative.IncludeTransferredResults
+      )
     },
     Promotion: {
       Mode: oneOf(promotion.Mode ?? promotion.mode, PROMOTION_MODES, defaults.Promotion.Mode),
@@ -457,6 +497,35 @@ export function academicPolicyIssues(value = {}, options = {}) {
     && promotion.ManualReviewMinimum > promotion.ManualReviewMaximum
   ) {
     add('PROMOTION_REVIEW_RANGE_INVALID', 'The manual-review minimum cannot exceed its maximum.', 'Promotion');
+  }
+  return issues;
+}
+
+export function academicCumulativePolicyIssues(value = {}) {
+  const policy = normalizeAcademicPolicy(value);
+  const terms = policy.Cumulative.Terms || [];
+  const issues = [];
+  const add = (code, message, path) => issues.push({ code, message, path });
+  if (!terms.length) {
+    add('CUMULATIVE_TERMS_REQUIRED', 'Add the session terms and their cumulative weights.', 'Cumulative.Terms');
+    return issues;
+  }
+  duplicateIds(terms).forEach((id) => add(
+    'CUMULATIVE_TERM_DUPLICATE',
+    `Cumulative term id ${id} is duplicated.`,
+    'Cumulative.Terms'
+  ));
+  terms.forEach((term, index) => {
+    if (!term.TermName && !term.TermId) {
+      add('CUMULATIVE_TERM_NAME_REQUIRED', `Cumulative term ${index + 1} needs a term name or term id.`, `Cumulative.Terms.${index}`);
+    }
+    if (term.WeightPercentage <= 0) {
+      add('CUMULATIVE_TERM_WEIGHT_INVALID', `${term.TermName || `Term ${index + 1}`} needs a weight greater than zero.`, `Cumulative.Terms.${index}.WeightPercentage`);
+    }
+  });
+  const totalWeight = terms.reduce((sum, term) => sum + term.WeightPercentage, 0);
+  if (Math.abs(totalWeight - 100) > 0.001) {
+    add('CUMULATIVE_WEIGHT_TOTAL_INVALID', `Cumulative term weights total ${totalWeight}; they must total 100.`, 'Cumulative.Terms');
   }
   return issues;
 }

@@ -3,7 +3,7 @@ import { enforceActorBranch } from './branch-scope.js';
 import { normalizeClassKey } from './class-names.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
 import { createNotification } from './notifications.js';
-import { academicPolicyIssues, academicPolicyScopeChain, normalizeAcademicPolicy } from './academic-policy.js';
+import { academicCumulativePolicyIssues, academicPolicyIssues, academicPolicyScopeChain, normalizeAcademicPolicy } from './academic-policy.js';
 import { loadAcademicPolicyView } from './academic-policy-store.js';
 import { resolveDocumentStorage } from './document-storage.js';
 import { safeStoredDocument } from './document-files.js';
@@ -48,6 +48,18 @@ import {
   academicTermResultTransition,
   calculateAcademicTermResultDrafts
 } from './academic-term-results.js';
+import {
+  ACADEMIC_CUMULATIVE_STATUSES,
+  ACADEMIC_PROMOTION_OUTCOMES,
+  ACADEMIC_PROMOTION_STATUSES,
+  ACADEMIC_TRANSCRIPT_STATUSES,
+  academicCumulativeTransition,
+  academicPromotionTransition,
+  academicTranscriptTransition,
+  buildAcademicTranscriptDraft,
+  calculateAcademicCumulativeDrafts,
+  evaluateAcademicPromotionDecision
+} from './academic-session-outcomes.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -142,6 +154,12 @@ export const ACADEMIC_MANAGEMENT_COLLECTIONS = Object.freeze({
   cbtTests: 'academicCbtTests',
   termResults: 'academicResults',
   resultEvents: 'academicResultEvents',
+  cumulativeResults: 'academicCumulativeResults',
+  cumulativeEvents: 'academicCumulativeEvents',
+  promotionDecisions: 'academicPromotionDecisions',
+  promotionEvents: 'academicPromotionEvents',
+  transcripts: 'academicTranscripts',
+  transcriptEvents: 'academicTranscriptEvents',
   audit: 'academicManagementAudit'
 });
 
@@ -255,7 +273,7 @@ function actorUsername(user = {}) {
 
 function recordId(row = {}) {
   return clean(
-    row.RecordId || row.recordId || row.ResultEventId || row.ResultId || row.CbtTestId || row.ImportId || row.ScoreId || row.SheetId || row.SubstitutionId || row.AttendanceId || row.EntryId || row.VersionId || row.ConstraintId || row.TimetableSettingId
+    row.RecordId || row.recordId || row.TranscriptEventId || row.TranscriptId || row.PromotionEventId || row.PromotionDecisionId || row.CumulativeEventId || row.CumulativeResultId || row.ResultEventId || row.ResultId || row.CbtTestId || row.ImportId || row.ScoreId || row.SheetId || row.SubstitutionId || row.AttendanceId || row.EntryId || row.VersionId || row.ConstraintId || row.TimetableSettingId
       || row.MovementId || row.MembershipId || row.AllocationId || row.OfferingId
       || row.DepartmentId || row.SubjectId || row.ArmId || row.ArmTemplateId || row.ClassId || row.TermId || row.SessionId || row.__id
   );
@@ -310,6 +328,9 @@ export function academicManagementCapabilities(user = {}) {
     canCalculateResults: enabled && SCORE_REVIEWERS.has(role),
     canReviewResults: enabled && SCORE_REVIEWERS.has(role),
     canPublishResults: enabled && SCORE_APPROVERS.has(role),
+    canCalculateCumulativeResults: enabled && SCORE_REVIEWERS.has(role),
+    canManagePromotions: enabled && SCORE_APPROVERS.has(role),
+    canIssueTranscripts: enabled && SCORE_APPROVERS.has(role),
     canImportScores: enabled && (SCORE_REVIEWERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
     canArchive: enabled && STRUCTURE_MANAGERS.has(role),
     canDelete: enabled && STRUCTURE_MANAGERS.has(role),
@@ -1208,7 +1229,15 @@ function sortAcademicState(state) {
     cbtTests: [...state.cbtTests].sort((a, b) => clean(b.StartsAt || b.CreatedAt).localeCompare(clean(a.StartsAt || a.CreatedAt))),
     termResults: [...state.termResults].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId))
       || clean(a.ArmId).localeCompare(clean(b.ArmId)) || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
-    resultEvents: [...state.resultEvents].sort((a, b) => clean(b.CreatedAt).localeCompare(clean(a.CreatedAt)))
+    resultEvents: [...state.resultEvents].sort((a, b) => clean(b.CreatedAt).localeCompare(clean(a.CreatedAt))),
+    cumulativeResults: [...state.cumulativeResults].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId))
+      || clean(a.ArmId).localeCompare(clean(b.ArmId)) || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
+    cumulativeEvents: [...state.cumulativeEvents].sort((a, b) => clean(b.CreatedAt).localeCompare(clean(a.CreatedAt))),
+    promotionDecisions: [...state.promotionDecisions].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId))
+      || clean(a.ArmId).localeCompare(clean(b.ArmId)) || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
+    promotionEvents: [...state.promotionEvents].sort((a, b) => clean(b.CreatedAt).localeCompare(clean(a.CreatedAt))),
+    transcripts: [...state.transcripts].sort((a, b) => clean(a.StudentName || a.StudentRef).localeCompare(clean(b.StudentName || b.StudentRef))),
+    transcriptEvents: [...state.transcriptEvents].sort((a, b) => clean(b.CreatedAt).localeCompare(clean(a.CreatedAt)))
   };
 }
 
@@ -1266,6 +1295,15 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     state.termResults = state.termResults.filter((row) => visibleStudents.has(lower(row.StudentRef)));
     const visibleResults = new Set(state.termResults.map((row) => row.ResultId));
     state.resultEvents = state.resultEvents.filter((row) => visibleResults.has(row.ResultId));
+    state.cumulativeResults = state.cumulativeResults.filter((row) => visibleStudents.has(lower(row.StudentRef)));
+    const visibleCumulative = new Set(state.cumulativeResults.map((row) => row.CumulativeResultId));
+    state.cumulativeEvents = state.cumulativeEvents.filter((row) => visibleCumulative.has(row.CumulativeResultId));
+    state.promotionDecisions = state.promotionDecisions.filter((row) => visibleStudents.has(lower(row.StudentRef)));
+    const visiblePromotions = new Set(state.promotionDecisions.map((row) => row.PromotionDecisionId));
+    state.promotionEvents = state.promotionEvents.filter((row) => visiblePromotions.has(row.PromotionDecisionId));
+    state.transcripts = state.transcripts.filter((row) => visibleStudents.has(lower(row.StudentRef)));
+    const visibleTranscripts = new Set(state.transcripts.map((row) => row.TranscriptId));
+    state.transcriptEvents = state.transcriptEvents.filter((row) => visibleTranscripts.has(row.TranscriptId));
     students = students.filter((row) => visibleStudents.has(lower(studentReference(row))));
   }
   state = sortAcademicState(state);
@@ -1315,7 +1353,10 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
       ScoreSyncBatches: state.scoreSyncBatches.length,
       CbtTests: state.cbtTests.length,
       TermResults: state.termResults.length,
-      ResultEvents: state.resultEvents.length
+      ResultEvents: state.resultEvents.length,
+      CumulativeResults: state.cumulativeResults.length,
+      PromotionDecisions: state.promotionDecisions.length,
+      Transcripts: state.transcripts.length
     }
   };
 }
@@ -3763,6 +3804,474 @@ export async function saveAcademicTermResultRemarks(env, user = {}, input = {}) 
   return academicOperationalResponse(env, user, input, scope, `${result.StudentRef} result remarks saved.`);
 }
 
+function academicOutcomeEventWrite(user, collectionPath, prefix, record, eventType, details = '') {
+  const eventId = `${prefix}-EVENT-${Date.now()}-${globalThis.crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  const identity = prefix === 'CUMULATIVE'
+    ? { CumulativeEventId: eventId, CumulativeResultId: record.CumulativeResultId }
+    : prefix === 'PROMOTION'
+      ? { PromotionEventId: eventId, PromotionDecisionId: record.PromotionDecisionId }
+      : { TranscriptEventId: eventId, TranscriptId: record.TranscriptId };
+  return {
+    collectionPath,
+    documentId: eventId,
+    exists: false,
+    data: {
+      RecordId: eventId,
+      ...identity,
+      StudentRef: record.StudentRef,
+      SessionId: clean(record.SessionId),
+      TermId: clean(record.FinalTermId || record.TermId),
+      ClassId: clean(record.ClassId),
+      ArmId: clean(record.ArmId),
+      EventType: clean(eventType),
+      Status: clean(record.Status),
+      Details: clean(details).slice(0, 1000),
+      BranchId: record.BranchId,
+      SchoolSection: record.SchoolSection,
+      CreatedAt: nowIso(),
+      CreatedBy: actorName(user),
+      CreatedByUsername: actorUsername(user)
+    }
+  };
+}
+
+async function academicOutcomeReference(recordIdValue, prefix) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(clean(recordIdValue)));
+  return `${prefix}-${[...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('').slice(0, 16).toUpperCase()}`;
+}
+
+function academicCumulativeResultId(scope, sessionId, classId, armId, studentRef) {
+  return academicId('cumulative-result', scope.branchId, scope.section, sessionId, classId, armId, studentRef);
+}
+
+export async function calculateAcademicCumulativeResults(env, user = {}, input = {}) {
+  const context = await academicTermResultContext(env, user, input, 'canCalculateCumulativeResults');
+  const { scope, state, session, term, schoolClass, arm, policy, policyRevisionIds, policyFingerprint } = context;
+  const cumulativeIssues = academicCumulativePolicyIssues(policy);
+  if (cumulativeIssues.length) {
+    throw failure(`Complete the cumulative-result policy before calculating: ${cumulativeIssues[0].message}`, 409, 'ACADEMIC_CUMULATIVE_POLICY_INCOMPLETE');
+  }
+  const memberships = state.studentMemberships.filter((row) => statusActive(row)
+    && row.SessionId === session.SessionId && row.TermId === term.TermId
+    && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId);
+  if (memberships.length > 200) throw failure('Calculate at most 200 cumulative results in one classroom batch.');
+  const existingResults = state.cumulativeResults.filter((row) => row.SessionId === session.SessionId
+    && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId);
+  const immutable = existingResults.find((row) => lower(row.Status) !== 'calculated draft');
+  if (immutable) {
+    throw failure(`${immutable.StudentRef} already has a ${immutable.Status} cumulative result. Reopen the affected result before recalculating.`, 409, 'ACADEMIC_CUMULATIVE_IMMUTABLE');
+  }
+  const ids = new Map();
+  const references = new Map();
+  for (const membership of memberships) {
+    const id = academicCumulativeResultId(scope, session.SessionId, schoolClass.ClassId, arm.ArmId, membership.StudentRef);
+    ids.set(lower(membership.StudentRef), id);
+    references.set(lower(membership.StudentRef), clean(findById(existingResults, id)?.CumulativeReference)
+      || await academicOutcomeReference(id, 'CR'));
+  }
+  const calculation = calculateAcademicCumulativeDrafts({
+    SessionId: session.SessionId,
+    AcademicSession: session.Name,
+    FinalTermId: term.TermId,
+    ClassId: schoolClass.ClassId,
+    ClassName: schoolClass.Name,
+    ArmId: arm.ArmId,
+    ArmName: arm.Name,
+    Memberships: memberships,
+    TermResults: state.termResults,
+    ExistingResults: existingResults,
+    Policy: policy,
+    PolicyRevisionIds: policyRevisionIds,
+    PolicyFingerprint: policyFingerprint,
+    ResultIdFor: (membership) => ids.get(lower(membership.StudentRef)),
+    ResultReferenceFor: (membership) => references.get(lower(membership.StudentRef))
+  });
+  if (!calculation.Ready) {
+    const summary = calculation.Issues.slice(0, 5).join(' ');
+    const remaining = calculation.Issues.length > 5 ? ` ${calculation.Issues.length - 5} more issue(s) require attention.` : '';
+    throw failure(`${summary}${remaining}`, 409, 'ACADEMIC_CUMULATIVE_CALCULATION_BLOCKED');
+  }
+  const timestamp = nowIso();
+  const writes = [];
+  calculation.Results.forEach((draft) => {
+    const existing = findById(existingResults, draft.CumulativeResultId);
+    const result = {
+      ...(existing || {}),
+      ...draft,
+      RecordId: draft.CumulativeResultId,
+      BranchId: scope.branchId,
+      SchoolSection: scope.section,
+      CalculationRevision: Number(existing?.CalculationRevision || 0) + 1,
+      CalculatedAt: timestamp,
+      CalculatedBy: actorName(user),
+      CalculatedByUsername: actorUsername(user),
+      CreatedAt: clean(existing?.CreatedAt) || timestamp,
+      CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+      UpdatedAt: timestamp,
+      UpdatedBy: actorName(user)
+    };
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cumulativeResults,
+      documentId: result.CumulativeResultId,
+      data: withoutMetadata(result),
+      ...writePrecondition(existing, resultRevisionToken(input, result.CumulativeResultId))
+    });
+    writes.push(academicOutcomeEventWrite(
+      user,
+      ACADEMIC_MANAGEMENT_COLLECTIONS.cumulativeEvents,
+      'CUMULATIVE',
+      result,
+      existing ? 'RECALCULATED' : 'CALCULATED',
+      `${result.SubjectCount} subject(s); ${result.ContributingResultIds.length} locked term result(s); policy ${policyFingerprint}`
+    ));
+  });
+  writes.push(auditWrite(user, existingResults.length ? 'RECALCULATE' : 'CALCULATE', 'cumulativeResult', {
+    RecordId: `cumulative-${schoolClass.ClassId}-${arm.ArmId}`,
+    SessionId: session.SessionId,
+    TermId: term.TermId,
+    BranchId: scope.branchId,
+    SchoolSection: scope.section
+  }, `${calculation.Results.length} Calculated Draft cumulative result(s); policy ${policyFingerprint}`));
+  await commitAcademicBatch(env, writes, 'One or more cumulative results changed while the classroom was being calculated. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope,
+    `${calculation.Results.length} cumulative result${calculation.Results.length === 1 ? '' : 's'} calculated as Draft from locked term results.`);
+}
+
+export async function changeAcademicCumulativeStatus(env, user = {}, input = {}) {
+  const target = ACADEMIC_CUMULATIVE_STATUSES.find((value) => lower(value) === lower(input.Status || input.TargetStatus));
+  if (!target) throw failure('Choose a valid cumulative-result status.');
+  const context = await academicOperationalContext(env, user, input, 'canCalculateCumulativeResults');
+  const ids = academicTermResultIds(input.CumulativeResultIds || [input.CumulativeResultId]);
+  if (!ids.length || ids.length > 200) throw failure('Choose between 1 and 200 cumulative results.');
+  const results = ids.map((id) => findById(context.state.cumulativeResults, id));
+  if (results.some((row) => !row)) throw failure('One or more selected cumulative results were not found.', 404);
+  const transitions = results.map((result) => academicCumulativeTransition(result.Status, target));
+  if (transitions.some((transition) => !transition.Allowed)) {
+    throw failure(`The selected cumulative results cannot move directly to ${target}.`, 409, 'ACADEMIC_CUMULATIVE_STATUS_INVALID');
+  }
+  const reason = clean(input.Reason).slice(0, 500);
+  if (transitions.some((transition) => transition.RequiresReason) && !reason) throw failure('Enter the approved reason for reopening these results.');
+  const timestamp = nowIso();
+  const writes = [];
+  results.forEach((existing) => {
+    const result = {
+      ...existing,
+      Status: target,
+      UpdatedAt: timestamp,
+      UpdatedBy: actorName(user),
+      [`${target.replace(/\s+/g, '')}At`]: timestamp,
+      [`${target.replace(/\s+/g, '')}By`]: actorName(user),
+      ...(reason ? { ReopenReason: reason } : {})
+    };
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cumulativeResults,
+      documentId: result.CumulativeResultId,
+      data: withoutMetadata(result),
+      ...writePrecondition(existing, resultRevisionToken(input, result.CumulativeResultId))
+    });
+    writes.push(academicOutcomeEventWrite(user, ACADEMIC_MANAGEMENT_COLLECTIONS.cumulativeEvents,
+      'CUMULATIVE', result, target.toUpperCase(), reason || `${existing.Status} -> ${target}`));
+  });
+  writes.push(auditWrite(user, target.toUpperCase(), 'cumulativeResult', {
+    RecordId: ids.join(',').slice(0, 250),
+    SessionId: context.session.SessionId,
+    TermId: context.term.TermId,
+    BranchId: context.scope.branchId,
+    SchoolSection: context.scope.section
+  }, reason || `${results.length} cumulative result(s) moved to ${target}.`));
+  await commitAcademicBatch(env, writes, 'One or more cumulative results changed while their status was being updated. Reload and try again.');
+  return academicOperationalResponse(env, user, input, context.scope,
+    `${results.length} cumulative result${results.length === 1 ? '' : 's'} moved to ${target}.`);
+}
+
+function academicPromotionDecisionId(scope, sessionId, classId, armId, studentRef) {
+  return academicId('promotion-decision', scope.branchId, scope.section, sessionId, classId, armId, studentRef);
+}
+
+export async function calculateAcademicPromotionDecisions(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManagePromotions');
+  const { scope, state, session } = context;
+  const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose a class.');
+  const arm = assertReference(findById(state.arms, input.ArmId), 'Choose a classroom arm.');
+  if (arm.ClassId !== schoolClass.ClassId) throw failure('The selected arm does not belong to this class.');
+  const cumulative = state.cumulativeResults.filter((row) => lower(row.Status) === 'locked'
+    && row.SessionId === session.SessionId && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId);
+  if (!cumulative.length) throw failure('Lock the classroom cumulative results before calculating promotion decisions.', 409, 'ACADEMIC_CUMULATIVE_LOCK_REQUIRED');
+  const existingDecisions = state.promotionDecisions.filter((row) => row.SessionId === session.SessionId
+    && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId);
+  const immutable = existingDecisions.find((row) => lower(row.Status) !== 'draft');
+  if (immutable) throw failure(`${immutable.StudentRef} already has a ${immutable.Status} promotion decision. Reopen it before recalculating.`, 409, 'ACADEMIC_PROMOTION_IMMUTABLE');
+  const timestamp = nowIso();
+  const writes = [];
+  cumulative.forEach((result) => {
+    const id = academicPromotionDecisionId(scope, session.SessionId, schoolClass.ClassId, arm.ArmId, result.StudentRef);
+    const existing = findById(existingDecisions, id);
+    const recommendation = evaluateAcademicPromotionDecision(result, result.PolicySnapshot || {});
+    const decision = {
+      ...(existing || {}),
+      RecordId: id,
+      PromotionDecisionId: id,
+      CumulativeResultId: result.CumulativeResultId,
+      CumulativeReference: result.CumulativeReference,
+      StudentRef: result.StudentRef,
+      SessionId: session.SessionId,
+      AcademicSession: session.Name,
+      FinalTermId: result.FinalTermId,
+      ClassId: schoolClass.ClassId,
+      ClassName: schoolClass.Name,
+      ArmId: arm.ArmId,
+      ArmName: arm.Name,
+      DepartmentId: result.DepartmentId,
+      OverallAverage: result.OverallAverage,
+      AttendancePercentage: result.Attendance?.AttendancePercentage || 0,
+      ...recommendation,
+      FinalOutcome: recommendation.RecommendedOutcome,
+      OverrideReason: '',
+      Status: 'Draft',
+      PolicyRevisionIds: result.PolicyRevisionIds || [],
+      PolicyFingerprint: result.PolicyFingerprint,
+      PolicySnapshot: result.PolicySnapshot,
+      BranchId: scope.branchId,
+      SchoolSection: scope.section,
+      CalculatedAt: timestamp,
+      CalculatedBy: actorName(user),
+      CreatedAt: clean(existing?.CreatedAt) || timestamp,
+      CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+      UpdatedAt: timestamp,
+      UpdatedBy: actorName(user)
+    };
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.promotionDecisions,
+      documentId: id,
+      data: withoutMetadata(decision),
+      ...writePrecondition(existing, resultRevisionToken(input, id))
+    });
+    writes.push(academicOutcomeEventWrite(user, ACADEMIC_MANAGEMENT_COLLECTIONS.promotionEvents,
+      'PROMOTION', decision, existing ? 'RECALCULATED' : 'CALCULATED', `${recommendation.RecommendationType}: ${recommendation.RecommendedOutcome}`));
+  });
+  writes.push(auditWrite(user, existingDecisions.length ? 'RECALCULATE' : 'CALCULATE', 'promotionDecision', {
+    RecordId: `promotion-${schoolClass.ClassId}-${arm.ArmId}`,
+    SessionId: session.SessionId,
+    TermId: context.term.TermId,
+    BranchId: scope.branchId,
+    SchoolSection: scope.section
+  }, `${cumulative.length} Draft promotion recommendation(s) calculated from Locked cumulative results.`));
+  await commitAcademicBatch(env, writes, 'One or more promotion decisions changed while recommendations were being calculated. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope,
+    `${cumulative.length} promotion recommendation${cumulative.length === 1 ? '' : 's'} calculated as Draft.`);
+}
+
+export async function saveAcademicPromotionOutcome(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManagePromotions');
+  const existing = findById(context.state.promotionDecisions, input.PromotionDecisionId);
+  if (!existing) throw failure('Choose a promotion decision.', 404);
+  if (lower(existing.Status) !== 'draft') throw failure('The final outcome can change only while the decision is Draft.', 409);
+  const outcome = ACADEMIC_PROMOTION_OUTCOMES.find((value) => lower(value) === lower(input.FinalOutcome));
+  if (!outcome) throw failure('Choose a valid promotion outcome.');
+  const reason = clean(input.OverrideReason || input.Reason).slice(0, 500);
+  if (outcome !== existing.RecommendedOutcome && !reason) throw failure('Enter the reason for overriding the calculated recommendation.');
+  const decision = {
+    ...existing,
+    FinalOutcome: outcome,
+    OverrideReason: outcome === existing.RecommendedOutcome ? '' : reason,
+    UpdatedAt: nowIso(),
+    UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.promotionDecisions, documentId: decision.PromotionDecisionId,
+      data: withoutMetadata(decision), ...writePrecondition(existing, input.RevisionToken) },
+    academicOutcomeEventWrite(user, ACADEMIC_MANAGEMENT_COLLECTIONS.promotionEvents,
+      'PROMOTION', decision, 'OUTCOME_UPDATED', reason || `Final outcome set to ${outcome}.`),
+    auditWrite(user, 'UPDATE_OUTCOME', 'promotionDecision', decision,
+      reason || `${existing.RecommendedOutcome} -> ${outcome}`)
+  ], 'This promotion decision changed while its outcome was being saved. Reload and try again.');
+  return academicOperationalResponse(env, user, input, context.scope, `${decision.StudentRef} final outcome saved as ${outcome}.`);
+}
+
+export async function changeAcademicPromotionStatus(env, user = {}, input = {}) {
+  const target = ACADEMIC_PROMOTION_STATUSES.find((value) => lower(value) === lower(input.Status || input.TargetStatus));
+  if (!target) throw failure('Choose a valid promotion-decision status.');
+  const context = await academicOperationalContext(env, user, input, 'canManagePromotions');
+  const existing = findById(context.state.promotionDecisions, input.PromotionDecisionId);
+  if (!existing) throw failure('Choose a promotion decision.', 404);
+  const transition = academicPromotionTransition(existing.Status, target);
+  if (!transition.Allowed) throw failure(`This promotion decision cannot move directly to ${target}.`, 409);
+  const reason = clean(input.Reason).slice(0, 500);
+  if (transition.RequiresReason && !reason) throw failure('Enter the approved reason for reopening this promotion decision.');
+  if (target === 'Approved' && existing.FinalOutcome === 'Pending') {
+    throw failure('Choose a final promotion outcome before approving this decision.', 409, 'ACADEMIC_PROMOTION_OUTCOME_REQUIRED');
+  }
+  const timestamp = nowIso();
+  let destination = null;
+  const writes = [];
+  if (target === 'Committed' && ['Promoted', 'Repeated'].includes(existing.FinalOutcome)) {
+    const destinationSession = assertReference(findById(context.state.sessions, input.DestinationSessionId), 'Choose the destination academic session.');
+    const destinationTerm = assertReference(findById(context.state.terms, input.DestinationTermId), 'Choose the destination term.');
+    const destinationClass = assertReference(findById(context.state.classes, input.DestinationClassId), 'Choose the destination class.');
+    const destinationArm = assertReference(findById(context.state.arms, input.DestinationArmId), 'Choose the destination classroom arm.');
+    if (destinationTerm.SessionId !== destinationSession.SessionId || destinationArm.ClassId !== destinationClass.ClassId) {
+      throw failure('The selected promotion destination is inconsistent.');
+    }
+    destination = normalizeAcademicStudentMembership({
+      SessionId: destinationSession.SessionId,
+      TermId: destinationTerm.TermId,
+      StudentRef: existing.StudentRef,
+      ClassId: destinationClass.ClassId,
+      ArmId: destinationArm.ArmId,
+      DepartmentId: destinationArm.DepartmentId,
+      SubjectIds: [], CoreSubjectIds: [], TradeSubjectIds: [], OptionalSubjectIds: [],
+      CurriculumStatus: 'Pending subject allocation', Status: 'Active'
+    }, context.scope);
+    const currentDestination = findById(context.state.studentMemberships, destination.MembershipId);
+    if (currentDestination && (currentDestination.ClassId !== destination.ClassId || currentDestination.ArmId !== destination.ArmId)) {
+      throw failure('This student already has a different membership in the destination period.', 409, 'ACADEMIC_PROMOTION_DESTINATION_CONFLICT');
+    }
+    if (!currentDestination) {
+      assertAcademicMembershipCapacity(context.state, destination);
+      destination.CreatedAt = timestamp;
+      destination.CreatedBy = actorName(user);
+      destination.UpdatedAt = timestamp;
+      destination.UpdatedBy = actorName(user);
+      writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+        documentId: destination.MembershipId, data: withoutMetadata(destination), exists: false });
+      writes.push(movementWrite(user, academicMovementForState(context.state, {
+        SessionId: destination.SessionId,
+        TermId: destination.TermId,
+        StudentRef: destination.StudentRef,
+        MovementType: 'Allocation',
+        Reason: `${existing.FinalOutcome} from ${existing.AcademicSession}.`
+      }, context.scope, null, destination)));
+    }
+  }
+  const decision = {
+    ...existing,
+    Status: target,
+    ...(destination ? {
+      DestinationSessionId: destination.SessionId,
+      DestinationTermId: destination.TermId,
+      DestinationClassId: destination.ClassId,
+      DestinationArmId: destination.ArmId,
+      DestinationMembershipId: destination.MembershipId
+    } : {}),
+    ...(target === 'Committed' ? { CommittedAt: timestamp, CommittedBy: actorName(user) } : {}),
+    ...(reason ? { ReopenReason: reason } : {}),
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName(user)
+  };
+  writes.unshift({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.promotionDecisions,
+    documentId: decision.PromotionDecisionId, data: withoutMetadata(decision), ...writePrecondition(existing, input.RevisionToken) });
+  writes.push(academicOutcomeEventWrite(user, ACADEMIC_MANAGEMENT_COLLECTIONS.promotionEvents,
+    'PROMOTION', decision, target.toUpperCase(), reason || `${existing.Status} -> ${target}`));
+  writes.push(auditWrite(user, target.toUpperCase(), 'promotionDecision', decision,
+    reason || `${existing.Status} -> ${target}${destination ? '; destination membership created' : ''}`));
+  await commitAcademicBatch(env, writes, 'This promotion decision changed while its status was being updated. Reload and try again.');
+  return academicOperationalResponse(env, user, input, context.scope,
+    `${decision.StudentRef} promotion decision moved to ${target}${destination ? ' and the next-session membership was created' : ''}.`);
+}
+
+function academicTranscriptId(scope, studentRef) {
+  return academicId('transcript', scope.branchId, scope.section, studentRef);
+}
+
+function transcriptPriorVersion(record = {}) {
+  return {
+    Version: record.Version,
+    Status: record.Status,
+    IssuedAt: record.IssuedAt,
+    IssuedBy: record.IssuedBy,
+    Sessions: record.Sessions || [],
+    Terms: record.Terms || [],
+    Outcomes: record.Outcomes || [],
+    ReplacedAt: nowIso()
+  };
+}
+
+export async function createAcademicTranscriptDraft(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canIssueTranscripts');
+  const studentRef = clean(input.StudentRef);
+  if (!studentRef) throw failure('Choose a student for this transcript.');
+  const cumulative = context.state.cumulativeResults.filter((row) => lower(row.StudentRef) === lower(studentRef));
+  const lockedCumulative = cumulative.filter((row) => lower(row.Status) === 'locked');
+  if (!lockedCumulative.length) throw failure('At least one locked cumulative session result is required before creating a transcript.', 409, 'ACADEMIC_TRANSCRIPT_CUMULATIVE_REQUIRED');
+  const transcriptId = academicTranscriptId(context.scope, studentRef);
+  const existing = findById(context.state.transcripts, transcriptId);
+  const reissuing = lower(existing?.Status) === 'issued';
+  const reason = clean(input.Reason || input.ReissueReason).slice(0, 500);
+  if (reissuing && !reason) throw failure('Enter the reason for creating a corrected transcript version.');
+  if (existing && !['draft', 'issued'].includes(lower(existing.Status))) {
+    throw failure(`This transcript is ${existing.Status}. Reopen it before rebuilding the draft.`, 409, 'ACADEMIC_TRANSCRIPT_IMMUTABLE');
+  }
+  const people = await loadPeople(env, user, context.scope);
+  const student = people.students.find((row) => lower(studentReference(row)) === lower(studentRef)) || {};
+  const transcriptNumber = clean(existing?.TranscriptNumber) || await academicOutcomeReference(transcriptId, 'TRN');
+  const previous = reissuing
+    ? [...(existing.PreviousIssuedVersions || []), transcriptPriorVersion(existing)].slice(-20)
+    : (existing?.PreviousIssuedVersions || []);
+  const timestamp = nowIso();
+  const draft = buildAcademicTranscriptDraft({
+    TranscriptId: transcriptId,
+    TranscriptNumber: transcriptNumber,
+    StudentRef: studentRef,
+    StudentName: clean(student.DisplayName || student.ApplicantName || student.StudentName || studentRef),
+    CumulativeResults: lockedCumulative,
+    TermResults: context.state.termResults.filter((row) => lower(row.StudentRef) === lower(studentRef)),
+    PromotionDecisions: context.state.promotionDecisions.filter((row) => lower(row.StudentRef) === lower(studentRef)),
+    Version: Number(existing?.Version || 0) + (reissuing ? 1 : (existing ? 0 : 1)),
+    PreviousIssuedVersions: previous
+  });
+  const record = {
+    ...(existing || {}),
+    ...draft,
+    RecordId: transcriptId,
+    BranchId: context.scope.branchId,
+    SchoolSection: context.scope.section,
+    ReissueReason: reissuing ? reason : '',
+    CreatedAt: clean(existing?.CreatedAt) || timestamp,
+    CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.transcripts, documentId: transcriptId,
+      data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken) },
+    academicOutcomeEventWrite(user, ACADEMIC_MANAGEMENT_COLLECTIONS.transcriptEvents,
+      'TRANSCRIPT', record, reissuing ? 'REISSUE_DRAFTED' : (existing ? 'REBUILT' : 'CREATED'), reason || `${record.Sessions.length} locked session(s)`),
+    auditWrite(user, reissuing ? 'REISSUE_DRAFT' : (existing ? 'REBUILD_DRAFT' : 'CREATE_DRAFT'),
+      'transcript', record, reason || `${record.Sessions.length} locked session(s)`)
+  ], 'This transcript changed while its draft was being created. Reload and try again.');
+  return academicOperationalResponse(env, user, input, context.scope,
+    `${record.TranscriptNumber} version ${record.Version} saved as Draft from locked academic records.`);
+}
+
+export async function changeAcademicTranscriptStatus(env, user = {}, input = {}) {
+  const target = ACADEMIC_TRANSCRIPT_STATUSES.find((value) => lower(value) === lower(input.Status || input.TargetStatus));
+  if (!target) throw failure('Choose a valid transcript status.');
+  const context = await academicOperationalContext(env, user, input, 'canIssueTranscripts');
+  const existing = findById(context.state.transcripts, input.TranscriptId);
+  if (!existing) throw failure('Choose a transcript.', 404);
+  const transition = academicTranscriptTransition(existing.Status, target);
+  if (!transition.Allowed) throw failure(`This transcript cannot move directly to ${target}.`, 409);
+  const reason = clean(input.Reason).slice(0, 500);
+  if (transition.RequiresReason && !reason) throw failure('Enter the approved reason for reopening this transcript.');
+  const timestamp = nowIso();
+  const record = {
+    ...existing,
+    Status: target,
+    ...(target === 'Issued' ? { IssuedAt: timestamp, IssuedBy: actorName(user), IssuedByUsername: actorUsername(user) } : {}),
+    ...(reason ? { ReopenReason: reason } : {}),
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.transcripts, documentId: record.TranscriptId,
+      data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken) },
+    academicOutcomeEventWrite(user, ACADEMIC_MANAGEMENT_COLLECTIONS.transcriptEvents,
+      'TRANSCRIPT', record, target.toUpperCase(), reason || `${existing.Status} -> ${target}`),
+    auditWrite(user, target.toUpperCase(), 'transcript', record, reason || `${existing.Status} -> ${target}`)
+  ], 'This transcript changed while its status was being updated. Reload and try again.');
+  return academicOperationalResponse(env, user, input, context.scope, `${record.TranscriptNumber} moved to ${target}.`);
+}
+
 export async function previewAcademicScoreImport(env, user = {}, input = {}) {
   const context = await academicScoreSheetContext(env, user, input, 'canImportScores');
   if (context.existing && lower(context.existing.Status) !== 'draft') throw failure('Spreadsheet imports are allowed only while the score sheet is Draft.', 409);
@@ -4521,6 +5030,13 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['previewacademictermresultwithdrawal', 'previewtermresultwithdrawal'].includes(action)) return previewAcademicTermResultWithdrawal(env, user, input);
   if (['changeacademictermresultstatus', 'changetermresultstatus'].includes(action)) return changeAcademicTermResultStatus(env, user, input);
   if (['saveacademictermresultremarks', 'savetermresultremarks'].includes(action)) return saveAcademicTermResultRemarks(env, user, input);
+  if (['calculateacademiccumulativeresults', 'calculatecumulativeresults'].includes(action)) return calculateAcademicCumulativeResults(env, user, input);
+  if (['changeacademiccumulativestatus', 'changecumulativeresultstatus'].includes(action)) return changeAcademicCumulativeStatus(env, user, input);
+  if (['calculateacademicpromotiondecisions', 'calculatepromotions'].includes(action)) return calculateAcademicPromotionDecisions(env, user, input);
+  if (['saveacademicpromotionoutcome', 'savepromotionoutcome'].includes(action)) return saveAcademicPromotionOutcome(env, user, input);
+  if (['changeacademicpromotionstatus', 'changepromotionstatus'].includes(action)) return changeAcademicPromotionStatus(env, user, input);
+  if (['createacademictranscriptdraft', 'createtranscript'].includes(action)) return createAcademicTranscriptDraft(env, user, input);
+  if (['changeacademictranscriptstatus', 'changetranscriptstatus'].includes(action)) return changeAcademicTranscriptStatus(env, user, input);
   if (['deleteacademiccbttest', 'deletecbttest'].includes(action)) return deleteAcademicCbtTest(env, user, input);
   if (['downloadacademiccbttestpackage', 'downloadcbttestpackage'].includes(action)) return downloadAcademicCbtTestPackage(env, user, input);
   if (['acknowledgeacademiccbtimport', 'acknowledgecbtimport'].includes(action)) return acknowledgeAcademicCbtImport(env, user, input);

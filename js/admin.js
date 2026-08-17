@@ -138,7 +138,7 @@ let academicManagementView = 'classrooms';
 let academicManagementTaskViews = {
   classrooms: 'register', structure: 'classes', bulkSetup: 'classes', departments: 'register',
   offerings: 'seniorChoices', teachers: 'assign', students: 'allocate',
-  timetable: 'builder', attendance: 'mark', scorebook: 'entry', cbt: 'create'
+  timetable: 'builder', attendance: 'mark', scorebook: 'entry', cbt: 'create', outcomes: 'cumulative'
 };
 let academicManagementFilters = { section: '', sessionId: '', termId: '' };
 let academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
@@ -148,6 +148,7 @@ let academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '
 let academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
 let academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
 let academicResultDraft = { armId: '' };
+let academicOutcomeDraft = { armId: '', promotionDecisionId: '', transcriptStudentRef: '' };
 let academicCbtDraft = {
   step: 1, testId: '', revisionToken: '', clientRequestId: '', classroomId: '', contextKey: '',
   componentId: '', startDate: '', startTime: '', durationMinutes: '40', questionCount: '20',
@@ -1250,6 +1251,7 @@ function clearStaffWorkspaceState() {
   academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
   academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
   academicResultDraft = { armId: '' };
+  academicOutcomeDraft = { armId: '', promotionDecisionId: '', transcriptStudentRef: '' };
   activeSection = '';
   activeTabs = [];
   recordsDeskHandoffContext = null;
@@ -1384,6 +1386,7 @@ function clearBranchScopedWorkspaceData() {
   academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
   academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
   academicResultDraft = { armId: '' };
+  academicOutcomeDraft = { armId: '', promotionDecisionId: '', transcriptStudentRef: '' };
   Object.values(organizationCommerceCarts).forEach((cart) => cart.clear());
   organizationCommerceLastSale.organizationStore = null;
   organizationCommerceLastSale.restaurant = null;
@@ -9480,7 +9483,7 @@ async function loadStudentConduct() {
 }
 
 function academicRecordId(row = {}) {
-  return clean(row.RecordId || row.ResultEventId || row.ResultId || row.CbtTestId || row.ImportId || row.ScoreId || row.SheetId || row.CorrectionId || row.AttendanceId || row.EntryId || row.VersionId || row.TimetableSettingId
+  return clean(row.RecordId || row.TranscriptEventId || row.TranscriptId || row.PromotionEventId || row.PromotionDecisionId || row.CumulativeEventId || row.CumulativeResultId || row.ResultEventId || row.ResultId || row.CbtTestId || row.ImportId || row.ScoreId || row.SheetId || row.CorrectionId || row.AttendanceId || row.EntryId || row.VersionId || row.TimetableSettingId
     || row.MovementId || row.MembershipId || row.AllocationId || row.OfferingId
     || row.DepartmentId || row.SubjectId || row.ArmId || row.ArmTemplateId || row.ClassId || row.TermId || row.SessionId);
 }
@@ -9828,6 +9831,7 @@ function academicCurrentRows(data = academicManagementData || {}) {
   const periodRows = (rows = []) => sectionRows(rows).filter((row) => (
     (!sessionId || row.SessionId === sessionId) && (!termId || row.TermId === termId)
   ));
+  const sessionRows = (rows = []) => sectionRows(rows).filter((row) => !sessionId || row.SessionId === sessionId);
   return {
     sessions: data.sessions || [],
     terms: (data.terms || []).filter((row) => !sessionId || row.SessionId === sessionId),
@@ -9853,7 +9857,13 @@ function academicCurrentRows(data = academicManagementData || {}) {
     scoreSyncBatches: periodRows(data.scoreSyncBatches || []),
     cbtTests: periodRows(data.cbtTests || []),
     termResults: periodRows(data.termResults || []),
-    resultEvents: periodRows(data.resultEvents || [])
+    resultEvents: periodRows(data.resultEvents || []),
+    cumulativeResults: sessionRows(data.cumulativeResults || []),
+    cumulativeEvents: sessionRows(data.cumulativeEvents || []),
+    promotionDecisions: sessionRows(data.promotionDecisions || []),
+    promotionEvents: sessionRows(data.promotionEvents || []),
+    transcripts: sectionRows(data.transcripts || []),
+    transcriptEvents: sectionRows(data.transcriptEvents || [])
   };
 }
 
@@ -9961,6 +9971,12 @@ function academicTaskDefinitions(view, root) {
       { key: 'calculate', label: 'Calculate results', title: 'Term-result calculation', description: 'Calculate one classroom only from complete Approved or Locked score sheets and the activated policy snapshot.', nodes: nodes(form('[data-academic-result-calculator]')) },
       { key: 'workflow', label: 'Review and publish', title: 'Result review and publication', description: 'Review, approve, publish, lock, withdraw or reopen results through the controlled lifecycle.', nodes: nodes(register('Term Result Workflow')) },
       { key: 'history', label: 'Lifecycle history', title: 'Result audit history', description: 'Review every calculation, status change, withdrawal and draft-comment update.', nodes: nodes(register('Result Lifecycle History')) }
+    ],
+    outcomes: [
+      { key: 'cumulative', label: 'Cumulative results', title: 'Session cumulative results', description: 'Combine locked term results with the configured term weights, then review and lock the annual snapshots.', nodes: nodes(form('[data-academic-cumulative-calculator]'), register('Cumulative Result Workflow')) },
+      { key: 'promotions', label: 'Promotions', title: 'Promotion decisions', description: 'Calculate policy-based recommendations, approve final outcomes, and create next-session placements without rewriting history.', nodes: nodes(form('[data-academic-promotion-calculator]'), form('[data-academic-promotion-editor]'), register('Promotion Decisions')) },
+      { key: 'transcripts', label: 'Transcripts', title: 'Official transcripts', description: 'Create versioned transcript snapshots from locked session results, then review, approve, issue and print them.', nodes: nodes(form('[data-academic-transcript-builder]'), register('Official Transcripts')) },
+      { key: 'history', label: 'History', title: 'Session-outcome audit history', description: 'Review cumulative, promotion and transcript lifecycle events.', nodes: nodes(register('Session Outcome History')) }
     ],
     cbt: [
       { key: 'create', label: 'New CBT test', title: 'Create and schedule a CBT test', description: 'Enter the test details, then upload its question paper and mark one correct answer per question.', nodes: nodes(form('[data-academic-cbt-editor]')) },
@@ -11292,6 +11308,149 @@ function academicTermResultsWorkspace(data, rows) {
   return `${calculator}${summary}${register}${events}`;
 }
 
+function academicCumulativeActions(row, permissions = {}) {
+  const actions = [];
+  const status = clean(row.Status || 'Calculated Draft');
+  if (status === 'Calculated Draft' && permissions.canCalculateCumulativeResults) actions.push(['Reviewed', 'Mark reviewed', '&#10003;']);
+  if (status === 'Reviewed' && permissions.canCalculateCumulativeResults) actions.push(['Approved', 'Approve cumulative result', '&#10004;']);
+  if (status === 'Approved' && permissions.canCalculateCumulativeResults) actions.push(['Locked', 'Lock cumulative result', '&#128274;']);
+  if (['Reviewed', 'Approved'].includes(status) && permissions.canCalculateCumulativeResults) actions.push(['Calculated Draft', 'Reopen for correction', '&#8634;']);
+  return actions.length ? `<div class="academic-management-row-actions">${actions.map(([target, title, icon]) => `<button type="button" class="compact-icon-action ${target === 'Calculated Draft' ? 'academic-archive-action' : 'compact-edit-action'}" data-academic-cumulative-status="${escapeHtml(target)}" data-academic-cumulative-id="${escapeHtml(row.CumulativeResultId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${icon}</button>`).join('')}</div>` : '<span class="muted">View only</span>';
+}
+
+function academicPromotionActions(row, permissions = {}) {
+  if (!permissions.canManagePromotions) return '<span class="muted">View only</span>';
+  const actions = [];
+  const status = clean(row.Status || 'Draft');
+  if (status === 'Draft') actions.push(['Reviewed', 'Mark decision reviewed', '&#10003;']);
+  if (status === 'Reviewed') actions.push(['Approved', 'Approve final decision', '&#10004;']);
+  if (['Reviewed', 'Approved'].includes(status)) actions.push(['Draft', 'Reopen decision', '&#8634;']);
+  const edit = status === 'Draft' ? `<button type="button" class="compact-icon-action compact-edit-action" data-academic-promotion-edit="${escapeHtml(row.PromotionDecisionId)}" title="Choose final outcome" aria-label="Choose final outcome">&#9998;</button>` : '';
+  const workflow = actions.map(([target, title, icon]) => `<button type="button" class="compact-icon-action ${target === 'Draft' ? 'academic-archive-action' : 'compact-edit-action'}" data-academic-promotion-status="${escapeHtml(target)}" data-academic-promotion-id="${escapeHtml(row.PromotionDecisionId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${icon}</button>`).join('');
+  const commit = status === 'Approved' ? `<button type="button" class="compact-icon-action compact-edit-action" data-academic-promotion-edit="${escapeHtml(row.PromotionDecisionId)}" title="Commit decision and placement" aria-label="Commit decision and placement">&#10148;</button>` : '';
+  return `<div class="academic-management-row-actions">${edit}${workflow}${commit}</div>`;
+}
+
+function academicTranscriptActions(row, permissions = {}) {
+  const status = clean(row.Status || 'Draft');
+  const actions = [];
+  if (permissions.canIssueTranscripts && status === 'Draft') actions.push(['Reviewed', 'Mark transcript reviewed', '&#10003;']);
+  if (permissions.canIssueTranscripts && status === 'Reviewed') actions.push(['Approved', 'Approve transcript', '&#10004;']);
+  if (permissions.canIssueTranscripts && status === 'Approved') actions.push(['Issued', 'Issue official transcript', '&#10148;']);
+  if (permissions.canIssueTranscripts && ['Reviewed', 'Approved'].includes(status)) actions.push(['Draft', 'Reopen transcript', '&#8634;']);
+  const print = `<button type="button" class="compact-icon-action compact-edit-action" data-academic-transcript-print="${escapeHtml(row.TranscriptId)}" title="Print transcript" aria-label="Print transcript">&#128424;</button>`;
+  const rebuild = permissions.canIssueTranscripts && ['Draft', 'Issued'].includes(status)
+    ? `<button type="button" class="compact-icon-action compact-edit-action" data-academic-transcript-rebuild="${escapeHtml(row.TranscriptId)}" title="${status === 'Issued' ? 'Create corrected version' : 'Rebuild draft'}" aria-label="${status === 'Issued' ? 'Create corrected version' : 'Rebuild draft'}">&#9998;</button>` : '';
+  return `<div class="academic-management-row-actions">${print}${rebuild}${actions.map(([target, title, icon]) => `<button type="button" class="compact-icon-action ${target === 'Draft' ? 'academic-archive-action' : 'compact-edit-action'}" data-academic-transcript-status="${escapeHtml(target)}" data-academic-transcript-id="${escapeHtml(row.TranscriptId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${icon}</button>`).join('')}</div>`;
+}
+
+function academicSessionOutcomesWorkspace(data, rows) {
+  const classrooms = rows.arms.filter(academicIsActive).filter((arm) => rows.studentMemberships.some((membership) => (
+    academicIsActive(membership) && membership.ClassId === arm.ClassId && membership.ArmId === arm.ArmId
+  )));
+  if (!classrooms.some((arm) => arm.ArmId === academicOutcomeDraft.armId)) academicOutcomeDraft.armId = clean(classrooms[0]?.ArmId);
+  const selectedArm = academicFind(classrooms, academicOutcomeDraft.armId);
+  const cumulativeRows = rows.cumulativeResults.filter((row) => !selectedArm || (row.ClassId === selectedArm.ClassId && row.ArmId === selectedArm.ArmId));
+  const promotionRows = rows.promotionDecisions.filter((row) => !selectedArm || (row.ClassId === selectedArm.ClassId && row.ArmId === selectedArm.ArmId));
+  let selectedDecision = academicFind(promotionRows, academicOutcomeDraft.promotionDecisionId);
+  if (!selectedDecision) academicOutcomeDraft.promotionDecisionId = '';
+  selectedDecision = academicFind(promotionRows, academicOutcomeDraft.promotionDecisionId);
+  const sessions = rows.sessions.filter(academicIsActive);
+  const destinationSessionId = clean(sessions.find((session) => session.SessionId !== academicManagementFilters.sessionId)?.SessionId || sessions[0]?.SessionId);
+  const destinationTerms = (data.terms || []).filter((term) => term.SessionId === destinationSessionId && academicIsActive(term));
+  const studentsWithRecords = [...new Map([
+    ...rows.cumulativeResults.map((row) => [lower(row.StudentRef), { StudentRef: row.StudentRef, Name: academicLabel(data.students, row.StudentRef, row.StudentRef) }]),
+    ...rows.termResults.map((row) => [lower(row.StudentRef), { StudentRef: row.StudentRef, Name: academicLabel(data.students, row.StudentRef, row.StudentRef) }])
+  ]).values()].sort((left, right) => left.Name.localeCompare(right.Name));
+
+  const cumulativeCalculator = data.permissions?.canCalculateCumulativeResults ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-cumulative-calculator>
+    <div class="academic-management-editor-heading"><div><small>Session result engine</small><h3>Calculate cumulative results</h3><p class="muted">Uses only Locked term results and the active policy's configured term weights. Existing reviewed or locked snapshots cannot be silently replaced.</p></div><strong>${cumulativeRows.length} results</strong></div>
+    <input type="hidden" name="SessionId" value="${escapeHtml(academicManagementFilters.sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(academicManagementFilters.termId)}">
+    <label>Final classroom<select name="ArmId" data-academic-outcome-classroom required>${academicSelectOptions(classrooms, selectedArm?.ArmId, classroomLabel, 'Choose classroom')}</select></label>
+    <button type="submit"${selectedArm ? '' : ' disabled'}>${cumulativeRows.length ? 'Recalculate Draft cumulative results' : 'Calculate cumulative results'}</button>
+  </form>` : '';
+  const cumulativeRegister = table('Cumulative Result Workflow', cumulativeRows, [
+    { label: 'Student', render: (row) => `<strong class="academic-result-student-name">${escapeHtml(academicLabel(data.students, row.StudentRef, row.StudentRef))}</strong><small>${escapeHtml(row.StudentRef)}</small>` },
+    { label: 'Subjects', value: (row) => row.SubjectCount || (row.Subjects || []).length },
+    { label: 'Annual average', render: (row) => `<strong>${escapeHtml(row.OverallAverage)}%</strong>` },
+    { label: 'Grade', value: (row) => row.OverallGrade || '—' },
+    { label: 'Attendance', value: (row) => `${row.Attendance?.AttendancePercentage ?? 0}%` },
+    { label: 'Terms', value: (row) => `${(row.ContributingResultIds || []).length} contributing` },
+    { label: 'Status', render: (row) => `<span class="academic-result-status">${escapeHtml(row.Status)}</span><small>${escapeHtml(row.CumulativeReference)}</small>` },
+    { label: 'Actions', render: (row) => academicCumulativeActions(row, data.permissions || {}) }
+  ], { emptyMessage: selectedArm ? 'No cumulative results have been calculated for this classroom.' : 'Choose a classroom.' });
+
+  const promotionCalculator = data.permissions?.canManagePromotions ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-promotion-calculator>
+    <div class="academic-management-editor-heading"><div><small>Promotion preview</small><h3>Calculate recommendations</h3><p class="muted">Recommendations come from Locked cumulative results and the captured promotion policy. Authorized staff still review and approve every final outcome.</p></div><strong>${promotionRows.length} decisions</strong></div>
+    <input type="hidden" name="SessionId" value="${escapeHtml(academicManagementFilters.sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(academicManagementFilters.termId)}"><input type="hidden" name="ArmId" value="${escapeHtml(selectedArm?.ArmId || '')}">
+    <button type="submit"${selectedArm && cumulativeRows.some((row) => row.Status === 'Locked') ? '' : ' disabled'}>${promotionRows.length ? 'Recalculate Draft recommendations' : 'Calculate promotion recommendations'}</button>
+  </form>` : '';
+  const promotionEditor = selectedDecision ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-promotion-editor>
+    <div class="academic-management-editor-heading"><div><small>Final decision</small><h3>${escapeHtml(academicLabel(data.students, selectedDecision.StudentRef, selectedDecision.StudentRef))}</h3><p class="muted">Recommendation: ${escapeHtml(selectedDecision.RecommendedOutcome)} · ${escapeHtml((selectedDecision.Reasons || []).join(' ') || 'All configured criteria passed.')}</p></div><button type="button" class="secondary" data-academic-promotion-clear>Close</button></div>
+    <input type="hidden" name="PromotionDecisionId" value="${escapeHtml(selectedDecision.PromotionDecisionId)}"><input type="hidden" name="RevisionToken" value="${escapeHtml(selectedDecision.RevisionToken)}">
+    <div class="academic-management-form-grid academic-management-form-grid-3">
+      <label>Final outcome<select name="FinalOutcome">${['Pending', 'Promoted', 'Repeated', 'Graduated', 'Transferred'].map((value) => `<option value="${value}"${value === selectedDecision.FinalOutcome ? ' selected' : ''}>${value}</option>`).join('')}</select></label>
+      <label>Override / correction reason<input name="OverrideReason" value="${escapeHtml(selectedDecision.OverrideReason || '')}" placeholder="Required when overriding recommendation"></label>
+      <label>Destination session<select name="DestinationSessionId">${academicSelectOptions(sessions, destinationSessionId, (row) => row.Name, 'Choose session')}</select></label>
+      <label>Destination term<select name="DestinationTermId">${academicSelectOptions(destinationTerms, destinationTerms[0]?.TermId, (row) => row.Name, 'Choose term')}</select></label>
+      <label>Destination classroom<select name="DestinationArmId">${academicSelectOptions(rows.arms.filter(academicIsActive), '', classroomLabel, 'Choose classroom')}</select></label>
+    </div>
+    <div class="academic-management-form-actions"><button type="submit" data-academic-promotion-save-outcome${selectedDecision.Status === 'Draft' ? '' : ' disabled'}>Save final outcome</button>${selectedDecision.Status === 'Approved' ? '<button type="button" data-academic-promotion-commit>Commit decision and placement</button>' : ''}</div>
+  </form>` : '<div class="academic-view-only-note" data-academic-promotion-editor><strong>Choose a Draft or Approved decision from the register.</strong><span>Draft decisions can be corrected; Approved decisions can be committed to the permanent record.</span></div>';
+  const promotionRegister = table('Promotion Decisions', promotionRows, [
+    { label: 'Student', render: (row) => `<strong class="academic-result-student-name">${escapeHtml(academicLabel(data.students, row.StudentRef, row.StudentRef))}</strong><small>${escapeHtml(row.StudentRef)}</small>` },
+    { label: 'Average', value: (row) => `${row.OverallAverage}%` },
+    { label: 'Recommendation', render: (row) => `<strong>${escapeHtml(row.RecommendedOutcome)}</strong><small>${escapeHtml(row.RecommendationType)}</small>` },
+    { label: 'Final outcome', value: (row) => row.FinalOutcome },
+    { label: 'Status', value: (row) => row.Status },
+    { label: 'Actions', render: (row) => academicPromotionActions(row, data.permissions || {}) }
+  ], { emptyMessage: 'No promotion recommendations have been calculated for this classroom.' });
+
+  const transcriptBuilder = data.permissions?.canIssueTranscripts ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-transcript-builder>
+    <div class="academic-management-editor-heading"><div><small>Official academic record</small><h3>Create transcript draft</h3><p class="muted">The draft snapshots every available Locked cumulative and term result. Issued records are preserved when a corrected version is created.</p></div><strong>${rows.transcripts.length} transcripts</strong></div>
+    <label>Student<select name="StudentRef" required>${academicSelectOptions(studentsWithRecords.map((row) => ({ RecordId: row.StudentRef, Name: `${row.Name} (${row.StudentRef})` })), academicOutcomeDraft.transcriptStudentRef, (row) => row.Name, 'Choose student')}</select></label>
+    <button type="submit"${studentsWithRecords.length ? '' : ' disabled'}>Create transcript draft</button>
+  </form>` : '';
+  const transcriptRegister = table('Official Transcripts', rows.transcripts, [
+    { label: 'Student', render: (row) => `<strong class="academic-result-student-name">${escapeHtml(row.StudentName || academicLabel(data.students, row.StudentRef, row.StudentRef))}</strong><small>${escapeHtml(row.StudentRef)}</small>` },
+    { label: 'Number', value: (row) => row.TranscriptNumber },
+    { label: 'Version', value: (row) => row.Version },
+    { label: 'Sessions', value: (row) => (row.Sessions || []).length },
+    { label: 'Status', value: (row) => row.Status },
+    { label: 'Issued', value: (row) => row.IssuedAt ? new Date(row.IssuedAt).toLocaleDateString() : '—' },
+    { label: 'Actions', render: (row) => academicTranscriptActions(row, data.permissions || {}) }
+  ], { emptyMessage: 'No official transcript has been created.' });
+  const allEvents = [
+    ...rows.cumulativeEvents.map((row) => ({ ...row, RecordType: 'Cumulative result' })),
+    ...rows.promotionEvents.map((row) => ({ ...row, RecordType: 'Promotion' })),
+    ...rows.transcriptEvents.map((row) => ({ ...row, RecordType: 'Transcript' }))
+  ].sort((left, right) => clean(right.CreatedAt).localeCompare(clean(left.CreatedAt)));
+  const history = table('Session Outcome History', allEvents, [
+    { label: 'Date', value: (row) => row.CreatedAt ? new Date(row.CreatedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—' },
+    { label: 'Record', value: (row) => row.RecordType },
+    { label: 'Student', value: (row) => academicLabel(data.students, row.StudentRef, row.StudentRef) },
+    { label: 'Event', value: (row) => row.EventType },
+    { label: 'Status', value: (row) => row.Status },
+    { label: 'By', value: (row) => row.CreatedBy },
+    { label: 'Details', value: (row) => row.Details }
+  ], { emptyMessage: 'No session-outcome lifecycle event has been recorded.' });
+  return `${cumulativeCalculator}${cumulativeRegister}${promotionCalculator}${promotionEditor}${promotionRegister}${transcriptBuilder}${transcriptRegister}${history}`;
+}
+
+function printAcademicTranscript(transcript) {
+  const sessions = (transcript.Sessions || []).map((session) => `<section><h2>${escapeHtml(session.AcademicSession)} · ${escapeHtml(session.ClassName || '')}</h2><table><thead><tr><th>Subject</th><th>Annual total</th><th>Grade</th><th>Point</th></tr></thead><tbody>${(session.Subjects || []).map((subject) => `<tr><td>${escapeHtml(subject.SubjectName)}</td><td>${escapeHtml(subject.AnnualTotal)}</td><td>${escapeHtml(subject.Grade)}</td><td>${escapeHtml(subject.GradePoint ?? '')}</td></tr>`).join('')}</tbody></table><p><strong>Overall average:</strong> ${escapeHtml(session.OverallAverage)}% · <strong>Grade:</strong> ${escapeHtml(session.OverallGrade || '—')}</p></section>`).join('');
+  const outcomes = (transcript.Outcomes || []).map((row) => `<li>${escapeHtml(row.AcademicSession)}: ${escapeHtml(row.Outcome)}</li>`).join('');
+  const qrSource = `${window.location.origin}/api/academic-transcript-qr?number=${encodeURIComponent(transcript.TranscriptNumber)}`;
+  const qr = transcript.Status === 'Issued' ? `<img class="qr" src="${escapeHtml(qrSource)}" alt="Transcript verification QR code">` : '';
+  const popup = window.open('', '_blank');
+  if (!popup) {
+    setStatus(document.getElementById('academicManagementStatus'), 'Allow pop-ups to open the print-ready transcript.', 'bad');
+    return;
+  }
+  popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(transcript.TranscriptNumber)}</title><style>body{margin:0;padding:36px;color:#102a43;font:14px Arial,sans-serif}header{display:flex;justify-content:space-between;gap:24px;border-bottom:3px solid #0b7f69;padding-bottom:18px}h1{margin:0 0 6px;font-size:25px}h2{margin:26px 0 10px;font-size:17px}p{line-height:1.5}.meta{text-align:right}.badge{display:inline-block;padding:5px 9px;border-radius:12px;background:#e8f6f2;color:#086f5e;font-weight:700}table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid #d8e2ec;text-align:left}th{white-space:nowrap;background:#edf3f8;font-size:11px;text-transform:uppercase}.qr{width:108px;height:108px;margin-top:18px}footer{display:flex;justify-content:space-between;align-items:end;margin-top:35px;border-top:1px solid #b8c7d6;padding-top:18px}.draft{color:#b42318;font-weight:800}@media print{body{padding:0}.no-print{display:none}}</style></head><body><header><div><h1>${escapeHtml(currentUser?.organizationName || currentUser?.OrganisationName || 'Official Academic Transcript')}</h1><p><strong>${escapeHtml(transcript.StudentName)}</strong><br>${escapeHtml(transcript.StudentRef)}</p></div><div class="meta"><span class="badge">${escapeHtml(transcript.Status)}</span><p>${escapeHtml(transcript.TranscriptNumber)}<br>Version ${escapeHtml(transcript.Version)}</p></div></header>${transcript.Status !== 'Issued' ? '<p class="draft">DRAFT · NOT AN ISSUED OFFICIAL RECORD</p>' : ''}${sessions}<section><h2>Promotion and completion outcomes</h2><ul>${outcomes || '<li>No committed outcome recorded.</li>'}</ul></section><footer><div><strong>Authorized school record</strong><p>${transcript.IssuedAt ? `Issued ${escapeHtml(new Date(transcript.IssuedAt).toLocaleDateString())}` : 'Pending issue approval'}</p></div>${qr}</footer><button class="no-print" onclick="window.print()">Print transcript</button></body></html>`);
+  popup.document.close();
+}
+
 function canonicalAcademicCbtScoreValue(value) {
   if (Array.isArray(value)) return value.map(canonicalAcademicCbtScoreValue);
   if (value && typeof value === 'object') {
@@ -11484,7 +11643,7 @@ function academicManagementHeader(data, rows, message = '') {
   const cbtView = data.permissions?.canCreateCbt ? [['cbt', 'CBT']] : [];
   const views = data.permissions?.teacherView
     ? [['classrooms', 'Classrooms'], ['structure', 'Catalogue'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['teachers', 'My allocations'], ['students', 'My registers'], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ...cbtView]
-    : [['classrooms', 'Classrooms'], ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', 'Student records'], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ...cbtView];
+    : [['classrooms', 'Classrooms'], ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', 'Student records'], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ['outcomes', 'Session outcomes'], ...cbtView];
   return `<div class="academic-management-heading">
     <div><p class="eyebrow">AM-002 to AM-011</p><h2>Academic Management</h2><p class="muted">Branch-isolated structure, timetables, attendance, assessment and controlled term-result publication.</p></div>
     <button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button>
@@ -11530,6 +11689,7 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
   else if (academicManagementView === 'attendance') workspace = academicAttendanceWorkspace(data, rows);
   else if (academicManagementView === 'scorebook') workspace = academicScorebookWorkspace(data, rows);
   else if (academicManagementView === 'results') workspace = academicTermResultsWorkspace(data, rows);
+  else if (academicManagementView === 'outcomes') workspace = academicSessionOutcomesWorkspace(data, rows);
   else if (academicManagementView === 'cbt') workspace = academicCbtWorkspace(data, rows);
   else workspace = academicStructureWorkspace(data, rows);
   panelEl.innerHTML = `${academicManagementHeader(data, rows, message)}<section class="academic-management-workspace">${workspace}</section>`;
@@ -12696,6 +12856,241 @@ function bindAcademicManagement() {
       } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
     });
   }));
+  const cumulativeCalculator = panelEl.querySelector('[data-academic-cumulative-calculator]');
+  cumulativeCalculator?.querySelector('[data-academic-outcome-classroom]')?.addEventListener('change', (event) => {
+    academicOutcomeDraft.armId = clean(event.target.value);
+    academicOutcomeDraft.promotionDecisionId = '';
+    renderAcademicManagement(academicManagementData || {});
+  });
+  cumulativeCalculator?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = cumulativeCalculator.querySelector('button[type="submit"]');
+    const arm = academicFind(academicManagementData?.arms || [], cumulativeCalculator.elements.ArmId.value);
+    if (!arm) return;
+    const existing = (academicManagementData?.cumulativeResults || []).filter((row) => row.SessionId === academicManagementFilters.sessionId
+      && row.ClassId === arm.ClassId && row.ArmId === arm.ArmId);
+    if (existing.length && !await window.DynamaxDialogs.confirm({
+      title: 'Recalculate Draft cumulative results',
+      message: 'Replace the current Calculated Draft snapshots using the latest Locked term results and active cumulative policy?',
+      confirmText: 'Recalculate Drafts'
+    })) return;
+    await runButtonAction(button, 'Calculating...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('calculateAcademicCumulativeResults', {
+          SchoolSection: academicManagementFilters.section,
+          SessionId: academicManagementFilters.sessionId,
+          TermId: academicManagementFilters.termId,
+          ClassId: arm.ClassId,
+          ArmId: arm.ArmId,
+          RevisionTokens: Object.fromEntries(existing.map((row) => [row.CumulativeResultId, row.RevisionToken]))
+        });
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  });
+  panelEl.querySelectorAll('[data-academic-cumulative-status]').forEach((button) => button.addEventListener('click', async () => {
+    const result = academicFind(academicManagementData?.cumulativeResults || [], button.dataset.academicCumulativeId);
+    if (!result) return;
+    const target = button.dataset.academicCumulativeStatus;
+    let reason = '';
+    if (target === 'Calculated Draft') {
+      reason = clean(await window.DynamaxDialogs.prompt({
+        title: 'Reopen cumulative result', message: 'The locked contributing term results and lifecycle history remain unchanged.',
+        label: 'Approved correction reason', required: true, tone: 'danger', confirmText: 'Reopen as Draft'
+      }));
+      if (!reason) return;
+    } else if (!await window.DynamaxDialogs.confirm({
+      title: `${target} cumulative result`, message: `Move this cumulative result to ${target}?`, confirmText: target
+    })) return;
+    await runButtonAction(button, 'Updating...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('changeAcademicCumulativeStatus', {
+          SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId,
+          TermId: academicManagementFilters.termId, CumulativeResultIds: [result.CumulativeResultId],
+          RevisionTokens: { [result.CumulativeResultId]: result.RevisionToken }, Status: target, Reason: reason
+        });
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  }));
+  const promotionCalculator = panelEl.querySelector('[data-academic-promotion-calculator]');
+  promotionCalculator?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = promotionCalculator.querySelector('button[type="submit"]');
+    const arm = academicFind(academicManagementData?.arms || [], promotionCalculator.elements.ArmId.value);
+    if (!arm) return;
+    const existing = (academicManagementData?.promotionDecisions || []).filter((row) => row.SessionId === academicManagementFilters.sessionId
+      && row.ClassId === arm.ClassId && row.ArmId === arm.ArmId);
+    if (existing.length && !await window.DynamaxDialogs.confirm({
+      title: 'Recalculate Draft recommendations', message: 'Refresh every Draft recommendation from the Locked cumulative-result policy snapshots?', confirmText: 'Recalculate Drafts'
+    })) return;
+    await runButtonAction(button, 'Calculating...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('calculateAcademicPromotionDecisions', {
+          SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId,
+          TermId: academicManagementFilters.termId, ClassId: arm.ClassId, ArmId: arm.ArmId,
+          RevisionTokens: Object.fromEntries(existing.map((row) => [row.PromotionDecisionId, row.RevisionToken]))
+        });
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  });
+  panelEl.querySelectorAll('[data-academic-promotion-edit]').forEach((button) => button.addEventListener('click', () => {
+    academicOutcomeDraft.promotionDecisionId = button.dataset.academicPromotionEdit;
+    academicManagementTaskViews.outcomes = 'promotions';
+    renderAcademicManagement(academicManagementData || {});
+  }));
+  panelEl.querySelector('[data-academic-promotion-clear]')?.addEventListener('click', () => {
+    academicOutcomeDraft.promotionDecisionId = '';
+    renderAcademicManagement(academicManagementData || {});
+  });
+  const promotionEditor = panelEl.querySelector('form[data-academic-promotion-editor]');
+  promotionEditor?.elements.DestinationSessionId?.addEventListener('change', (event) => {
+    const terms = (academicManagementData?.terms || []).filter((row) => row.SessionId === event.target.value && academicIsActive(row));
+    promotionEditor.elements.DestinationTermId.innerHTML = academicSelectOptions(terms, terms[0]?.TermId, (row) => row.Name, 'Choose term');
+  });
+  promotionEditor?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = promotionEditor.querySelector('[data-academic-promotion-save-outcome]');
+    const decision = academicFind(academicManagementData?.promotionDecisions || [], promotionEditor.elements.PromotionDecisionId.value);
+    if (!decision) return;
+    await runButtonAction(button, 'Saving...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('saveAcademicPromotionOutcome', {
+          SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId,
+          TermId: academicManagementFilters.termId, PromotionDecisionId: decision.PromotionDecisionId,
+          RevisionToken: decision.RevisionToken, FinalOutcome: promotionEditor.elements.FinalOutcome.value,
+          OverrideReason: promotionEditor.elements.OverrideReason.value
+        });
+        academicOutcomeDraft.promotionDecisionId = decision.PromotionDecisionId;
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  });
+  panelEl.querySelectorAll('[data-academic-promotion-status]').forEach((button) => button.addEventListener('click', async () => {
+    const decision = academicFind(academicManagementData?.promotionDecisions || [], button.dataset.academicPromotionId);
+    if (!decision) return;
+    const target = button.dataset.academicPromotionStatus;
+    let reason = '';
+    if (target === 'Draft') {
+      reason = clean(await window.DynamaxDialogs.prompt({
+        title: 'Reopen promotion decision', message: 'Enter the authorized reason for correcting this decision.',
+        label: 'Correction reason', required: true, tone: 'danger', confirmText: 'Reopen decision'
+      }));
+      if (!reason) return;
+    } else if (!await window.DynamaxDialogs.confirm({
+      title: `${target} promotion decision`, message: `Move ${decision.StudentRef} to ${target}?`, confirmText: target
+    })) return;
+    await runButtonAction(button, 'Updating...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('changeAcademicPromotionStatus', {
+          SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId,
+          TermId: academicManagementFilters.termId, PromotionDecisionId: decision.PromotionDecisionId,
+          RevisionToken: decision.RevisionToken, Status: target, Reason: reason
+        });
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  }));
+  promotionEditor?.querySelector('[data-academic-promotion-commit]')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const decision = academicFind(academicManagementData?.promotionDecisions || [], promotionEditor.elements.PromotionDecisionId.value);
+    if (!decision) return;
+    const needsDestination = ['Promoted', 'Repeated'].includes(decision.FinalOutcome);
+    const destinationArm = academicFind(academicManagementData?.arms || [], promotionEditor.elements.DestinationArmId.value);
+    if (needsDestination && !destinationArm) {
+      setStatus(document.getElementById('academicManagementStatus'), 'Choose the destination classroom before committing this decision.', 'bad');
+      return;
+    }
+    if (!await window.DynamaxDialogs.confirm({
+      title: 'Commit promotion decision',
+      message: needsDestination ? 'Commit this permanent decision and create the selected next-session classroom placement?' : `Commit ${decision.FinalOutcome} as the permanent session outcome?`,
+      confirmText: 'Commit decision'
+    })) return;
+    await runButtonAction(button, 'Committing...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('changeAcademicPromotionStatus', {
+          SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId,
+          TermId: academicManagementFilters.termId, PromotionDecisionId: decision.PromotionDecisionId,
+          RevisionToken: decision.RevisionToken, Status: 'Committed',
+          DestinationSessionId: promotionEditor.elements.DestinationSessionId.value,
+          DestinationTermId: promotionEditor.elements.DestinationTermId.value,
+          DestinationClassId: destinationArm?.ClassId || '', DestinationArmId: destinationArm?.ArmId || ''
+        });
+        academicOutcomeDraft.promotionDecisionId = '';
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  });
+  const transcriptBuilder = panelEl.querySelector('[data-academic-transcript-builder]');
+  transcriptBuilder?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = transcriptBuilder.querySelector('button[type="submit"]');
+    const studentRef = clean(transcriptBuilder.elements.StudentRef.value);
+    academicOutcomeDraft.transcriptStudentRef = studentRef;
+    const existing = (academicManagementData?.transcripts || []).find((row) => lower(row.StudentRef) === lower(studentRef));
+    let reason = '';
+    if (existing?.Status === 'Issued') {
+      reason = clean(await window.DynamaxDialogs.prompt({
+        title: 'Create corrected transcript version', message: 'The currently issued version will remain in the audit history.',
+        label: 'Correction or reissue reason', required: true, confirmText: 'Create new Draft'
+      }));
+      if (!reason) return;
+    }
+    await runButtonAction(button, 'Creating...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('createAcademicTranscriptDraft', {
+          SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId,
+          TermId: academicManagementFilters.termId, StudentRef: studentRef,
+          RevisionToken: existing?.RevisionToken || '', Reason: reason
+        });
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  });
+  panelEl.querySelectorAll('[data-academic-transcript-rebuild]').forEach((button) => button.addEventListener('click', () => {
+    const transcript = academicFind(academicManagementData?.transcripts || [], button.dataset.academicTranscriptRebuild);
+    if (!transcript || !transcriptBuilder) return;
+    transcriptBuilder.elements.StudentRef.value = transcript.StudentRef;
+    transcriptBuilder.requestSubmit();
+  }));
+  panelEl.querySelectorAll('[data-academic-transcript-status]').forEach((button) => button.addEventListener('click', async () => {
+    const transcript = academicFind(academicManagementData?.transcripts || [], button.dataset.academicTranscriptId);
+    if (!transcript) return;
+    const target = button.dataset.academicTranscriptStatus;
+    let reason = '';
+    if (target === 'Draft') {
+      reason = clean(await window.DynamaxDialogs.prompt({
+        title: 'Reopen transcript', message: 'Enter the authorized correction reason.', label: 'Correction reason', required: true,
+        tone: 'danger', confirmText: 'Reopen transcript'
+      }));
+      if (!reason) return;
+    } else if (!await window.DynamaxDialogs.confirm({
+      title: `${target} transcript`, message: `Move ${transcript.TranscriptNumber} to ${target}?`, confirmText: target
+    })) return;
+    await runButtonAction(button, 'Updating...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('changeAcademicTranscriptStatus', {
+          SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId,
+          TermId: academicManagementFilters.termId, TranscriptId: transcript.TranscriptId,
+          RevisionToken: transcript.RevisionToken, Status: target, Reason: reason
+        });
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  }));
+  panelEl.querySelectorAll('[data-academic-transcript-print]').forEach((button) => button.addEventListener('click', () => {
+    const transcript = academicFind(academicManagementData?.transcripts || [], button.dataset.academicTranscriptPrint);
+    if (transcript) printAcademicTranscript(transcript);
+  }));
   panelEl.querySelectorAll('[data-academic-apply-arm-template]').forEach((button) => button.addEventListener('click', () => {
     const templateId = button.dataset.academicApplyArmTemplate;
     academicManagementView = 'bulkSetup';
@@ -12717,6 +13112,7 @@ function bindAcademicManagement() {
     academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
     academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
     academicResultDraft = { armId: '' };
+    academicOutcomeDraft = { armId: '', promotionDecisionId: '', transcriptStudentRef: '' };
     void loadAcademicManagement({ section: event.target.value });
   });
   document.getElementById('academicManagementSession')?.addEventListener('change', (event) => {
@@ -12737,6 +13133,7 @@ function bindAcademicManagement() {
     academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
     academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
     academicResultDraft = { armId: '' };
+    academicOutcomeDraft = { armId: '', promotionDecisionId: '', transcriptStudentRef: '' };
     renderAcademicManagement(academicManagementData || {});
   });
   document.getElementById('academicManagementTerm')?.addEventListener('change', (event) => {
@@ -12757,6 +13154,7 @@ function bindAcademicManagement() {
     academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
     academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
     academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
+    academicOutcomeDraft = { armId: '', promotionDecisionId: '', transcriptStudentRef: '' };
     renderAcademicManagement(academicManagementData || {});
   });
   const classroomEditor = panelEl.querySelector('[data-academic-classroom-editor]');

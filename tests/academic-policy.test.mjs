@@ -52,6 +52,16 @@ function completePolicy() {
         { Grade: 'F', MinimumPercentage: 0, MaximumPercentage: 39.99, GradePoint: 0, Remark: 'Needs improvement', Classification: 'fail' }
       ]
     },
+    Cumulative: {
+      Terms: [
+        { Id: 'first', TermName: 'First Term', WeightPercentage: 30, Required: true, Order: 1 },
+        { Id: 'second', TermName: 'Second Term', WeightPercentage: 30, Required: true, Order: 2 },
+        { Id: 'third', TermName: 'Third Term', WeightPercentage: 40, Required: true, Order: 3 }
+      ],
+      MissingTermMode: 'block',
+      MissingSubjectMode: 'manual-review',
+      IncludeTransferredResults: true
+    },
     Promotion: {
       Mode: 'criteria',
       MinimumOverallAverage: 50,
@@ -83,6 +93,8 @@ test('normalization supports configurable result, finance, grading and promotion
   assert.equal(policy.ResultAccess.FinancialClearance.MinimumPaidPercentage, 75);
   assert.equal(policy.Position.Mode, 'internal-only');
   assert.equal(policy.Assessment.Components.reduce((sum, row) => sum + row.WeightPercentage, 0), 100);
+  assert.equal(policy.Cumulative.Terms.reduce((sum, row) => sum + row.WeightPercentage, 0), 100);
+  assert.equal(policy.Cumulative.MissingSubjectMode, 'manual-review');
   assert.deepEqual(policy.Promotion.RequiredCoreSubjectIds, ['english', 'mathematics']);
   assert.equal(policy.Promotion.MinimumAttendancePercentage, 75);
 });
@@ -220,15 +232,21 @@ test('School settings expose configurable result, grading and promotion policy c
   assert.match(setupHtmlSource, /id="academicPositionMode"/);
   assert.match(setupHtmlSource, /id="academicComponents"/);
   assert.match(setupHtmlSource, /id="academicGradeBands"/);
+  assert.match(setupHtmlSource, /id="academicCumulativeTerms"/);
+  assert.match(setupHtmlSource, /id="academicMissingTermMode"/);
+  assert.match(setupHtmlSource, /id="academicMissingSubjectMode"/);
+  assert.match(setupHtmlSource, /id="academicIncludeTransferredResults"/);
   assert.match(setupHtmlSource, /id="academicPromotionMode"/);
   assert.match(setupHtmlSource, /id="saveAcademicPolicyButton"/);
   assert.match(setupHtmlSource, /id="activateAcademicPolicyButton"/);
   assert.match(setupHtmlSource, /protected result module will enforce the active policy when it is introduced/);
   assert.match(setupJsSource, /fetch\('\/api\/academic-policy'/);
   assert.match(setupJsSource, /function academicPolicyFromForm\(\)/);
+  assert.match(setupJsSource, /function renderAcademicCumulativeTerms\(/);
   assert.match(setupJsSource, /function renderAcademicPolicyView\(view = \{\}, message = ''\)/);
   assert.match(setupJsSource, /DynamaxDialogs\.confirm\(\{/);
   assert.match(styleSource, /\.academic-component-grid/);
   assert.match(styleSource, /\.academic-grade-grid/);
+  assert.match(styleSource, /\.academic-cumulative-grid/);
   assert.match(styleSource, /html\[data-theme="dark"\] \.academic-policy-state/);
 });

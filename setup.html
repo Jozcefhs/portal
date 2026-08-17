@@ -291,6 +291,18 @@
           </div>
 
           <div class="settings-subsection">
+            <div class="settings-subsection-title"><strong>Cumulative session results</strong><span>Choose the terms and weights used for annual results; weights must total 100%.</span></div>
+            <div class="academic-policy-grid-head academic-cumulative-grid"><span>Term name</span><span>Weight %</span><span>Required</span><span></span></div>
+            <div id="academicCumulativeTerms" class="academic-policy-rows"></div>
+            <button id="addAcademicCumulativeTerm" type="button" class="settings-text-button academic-add-row">Add term weight</button>
+            <div class="settings-fields two-column academic-cumulative-options">
+              <div class="settings-field"><label for="academicMissingTermMode">Missing term handling</label><select id="academicMissingTermMode"><option value="block">Block calculation</option><option value="exclude">Exclude and reweight completed terms</option><option value="zero">Count the missing term as zero</option><option value="manual-review">Calculate and require manual review</option></select></div>
+              <div class="settings-field"><label for="academicMissingSubjectMode">Missing subject handling</label><select id="academicMissingSubjectMode"><option value="block">Block calculation</option><option value="exclude">Exclude and reweight available subjects</option><option value="zero">Count the missing subject as zero</option><option value="manual-review">Calculate and require manual review</option></select></div>
+            </div>
+            <div class="academic-policy-checks"><label><input id="academicIncludeTransferredResults" type="checkbox" checked> Include locked results earned before a student transferred class or arm during the session</label></div>
+          </div>
+
+          <div class="settings-subsection">
             <div class="settings-subsection-title"><strong>Promotion</strong><span>Criteria produce recommendations; authorized staff approve final decisions.</span></div>
             <div class="settings-fields two-column">
               <div class="settings-field"><label for="academicPromotionMode">Promotion method</label><select id="academicPromotionMode"><option value="unconfigured">Choose a policy</option><option value="manual-review">Manual review</option><option value="criteria">Configured criteria</option></select></div>

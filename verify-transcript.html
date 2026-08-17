@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Verify Academic Transcript</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="academic-result-verification-page">
+  <main class="academic-result-verification-card">
+    <section>
+      <p class="eyebrow">Official school record</p>
+      <h1>Verify academic transcript</h1>
+      <p>Enter the transcript number printed beside the verification QR code.</p>
+      <form id="verifyAcademicTranscriptForm">
+        <label>Transcript number<input id="academicTranscriptNumber" name="number" placeholder="TRN-0000000000000000" autocomplete="off" required></label>
+        <button type="submit">Verify transcript</button>
+      </form>
+      <div id="academicTranscriptVerificationStatus" class="academic-result-verification-status" role="status"></div>
+      <dl id="academicTranscriptVerificationDetails" hidden></dl>
+    </section>
+  </main>
+  <script src="js/verify-transcript.js" defer></script>
+</body>
+</html>
