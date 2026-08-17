@@ -11712,6 +11712,17 @@ async function academicManagementRequest(action, payload = {}) {
   const data = await response.json().catch(() => ({ ok: false, message: 'Academic Management did not return JSON.' }));
   if (response.status === 401) { showLogin(data.message || 'Your staff session has expired.', 'bad'); throw new Error(data.message || 'Your session expired.'); }
   if (!response.ok || !data.ok) throw new Error(data.message || 'Academic Management could not complete this request.');
+  if (data.refreshAcademicManagement === true && clean(action).toLowerCase() !== 'bootstrap') {
+    const refreshed = await academicManagementRequest('bootstrap', {
+      SchoolSection: payload.SchoolSection || academicManagementFilters.section,
+      SessionId: payload.SessionId || academicManagementFilters.sessionId,
+      TermId: payload.TermId || academicManagementFilters.termId
+    });
+    return { ...refreshed, ...data, refreshAcademicManagement: false };
+  }
+  if (data.partialAcademicManagement === true && academicManagementData) {
+    return { ...academicManagementData, ...data };
+  }
   return data;
 }
 

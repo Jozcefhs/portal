@@ -163,6 +163,11 @@ export const ACADEMIC_MANAGEMENT_COLLECTIONS = Object.freeze({
   audit: 'academicManagementAudit'
 });
 
+export const ACADEMIC_SCOREBOOK_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'arms', 'subjects', 'teacherAllocations',
+  'studentMemberships', 'scoreSheets', 'studentScores', 'scoreImports', 'scoreSyncBatches'
+]);
+
 export const ACADEMIC_SESSION_STATUSES = Object.freeze(['Planned', 'Active', 'Closed', 'Archived']);
 export const ACADEMIC_TERM_STATUSES = Object.freeze(['Planned', 'Active', 'Closed', 'Archived']);
 export const ACADEMIC_RECORD_STATUSES = Object.freeze(['Active', 'Inactive', 'Archived']);
@@ -616,8 +621,10 @@ function normalizedRecordType(value) {
   return lower(value).replace(/[^a-z]/g, '');
 }
 
-async function loadAcademicState(env, branchId) {
-  const collections = Object.entries(ACADEMIC_MANAGEMENT_COLLECTIONS).filter(([key]) => key !== 'audit');
+async function loadAcademicState(env, branchId, requestedKeys = null) {
+  const requested = Array.isArray(requestedKeys) && requestedKeys.length ? new Set(requestedKeys) : null;
+  const collections = Object.entries(ACADEMIC_MANAGEMENT_COLLECTIONS)
+    .filter(([key]) => key !== 'audit' && (!requested || requested.has(key)));
   const groups = await Promise.all(collections.map(([, collection]) => listCollection(env, collection).catch(() => [])));
   return Object.fromEntries(collections.map(([key], index) => [
     key,
@@ -2534,11 +2541,11 @@ export async function deleteAcademicManagementRecord(env, user = {}, input = {})
   return response;
 }
 
-async function academicOperationalContext(env, user, input, capability) {
+async function academicOperationalContext(env, user, input, capability, options = {}) {
   requireWritableSubscription(user);
   const permissions = requireCapability(user, capability);
   const scope = await academicScope(env, user, input, { requireSection: true });
-  const state = await loadAcademicState(env, scope.branchId);
+  const state = await loadAcademicState(env, scope.branchId, options.stateKeys);
   const scopedState = Object.fromEntries(Object.entries(state).map(([key, rows]) => [key, scopedRows(rows, scope)]));
   const session = assertReference(findById(scopedState.sessions, input.SessionId), 'Choose an active academic session.');
   const term = assertReference(findById(scopedState.terms, input.TermId), 'Choose an active academic term.');
@@ -3323,7 +3330,9 @@ function assertAcademicScoreSheetAuthority(user, permissions, state, candidate, 
 }
 
 async function academicScoreSheetContext(env, user, input, capability = 'canEnterScores') {
-  const context = await academicOperationalContext(env, user, input, capability);
+  const context = await academicOperationalContext(env, user, input, capability, {
+    stateKeys: ACADEMIC_SCOREBOOK_STATE_KEYS
+  });
   const { permissions, scope, state, session, term } = context;
   const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
   const arm = assertReference(findById(state.arms, input.ArmId), 'Choose an active classroom arm.');
@@ -3391,17 +3400,20 @@ function academicScoreRowsInput(value) {
 
 export async function getAcademicScorebookContext(env, user = {}, input = {}) {
   const context = await academicScoreSheetContext(env, user, input, 'canEnterScores');
-  const response = await academicOperationalResponse(env, user, input, context.scope, 'Scorebook context loaded.');
-  response.assessmentScheme = context.scheme;
-  response.scorebookContext = {
-    SheetId: context.SheetId,
-    ClassId: context.schoolClass.ClassId,
-    ArmId: context.arm.ArmId,
-    SubjectId: context.subject.SubjectId,
-    TeacherUsername: context.allocation.TeacherUsername,
-    RosterCount: context.roster.length
+  return {
+    ok: true,
+    partialAcademicManagement: true,
+    message: 'Scorebook context loaded.',
+    assessmentScheme: context.scheme,
+    scorebookContext: {
+      SheetId: context.SheetId,
+      ClassId: context.schoolClass.ClassId,
+      ArmId: context.arm.ArmId,
+      SubjectId: context.subject.SubjectId,
+      TeacherUsername: context.allocation.TeacherUsername,
+      RosterCount: context.roster.length
+    }
   };
-  return response;
 }
 
 function academicScoreSheetCounts(scores = []) {
@@ -3476,7 +3488,11 @@ export async function saveAcademicScoreDraft(env, user = {}, input = {}) {
   });
   writes.push(auditWrite(user, 'SAVE_DRAFT', 'scoreSheet', sheet, `${updatedScores.length} student score${updatedScores.length === 1 ? '' : 's'}`));
   await commitAcademicBatch(env, writes, 'The score sheet changed while it was being saved. Reload before entering scores again.');
-  return academicOperationalResponse(env, user, input, scope, `${updatedScores.length} student score${updatedScores.length === 1 ? '' : 's'} saved as a draft.`);
+  return {
+    ok: true,
+    refreshAcademicManagement: true,
+    message: `${updatedScores.length} student score${updatedScores.length === 1 ? '' : 's'} saved as a draft.`
+  };
 }
 
 function assertAcademicScoreSheetComplete(state, sheet, roster) {
@@ -3519,8 +3535,11 @@ export async function changeAcademicScoreSheetStatus(env, user = {}, input = {})
       data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken || input.SheetRevisionToken) },
     auditWrite(user, eventName.toUpperCase(), 'scoreSheet', record, reason || `${current} -> ${target}`)
   ], 'The score sheet changed while its status was being updated. Reload and try again.');
-  return academicOperationalResponse(env, user, input, scope,
-    reopening ? `Score sheet reopened as Draft: ${reason}` : `Score sheet moved from ${current} to ${target}.`);
+  return {
+    ok: true,
+    refreshAcademicManagement: true,
+    message: reopening ? `Score sheet reopened as Draft: ${reason}` : `Score sheet moved from ${current} to ${target}.`
+  };
 }
 
 async function academicTermResultContext(env, user, input, capability = 'canCalculateResults') {
@@ -4283,10 +4302,13 @@ export async function previewAcademicScoreImport(env, user = {}, input = {}) {
     sourceMode: 'spreadsheet',
     existingScores: context.state.studentScores.filter((row) => row.SheetId === context.SheetId)
   });
-  const response = await academicOperationalResponse(env, user, input, context.scope,
-    `${preview.ValidRows} of ${preview.TotalRows} spreadsheet row${preview.TotalRows === 1 ? '' : 's'} passed validation.`);
-  response.scoreImportPreview = preview;
-  return response;
+  return {
+    ok: true,
+    partialAcademicManagement: true,
+    message: `${preview.ValidRows} of ${preview.TotalRows} spreadsheet row${preview.TotalRows === 1 ? '' : 's'} passed validation.`,
+    assessmentScheme: context.scheme,
+    scoreImportPreview: preview
+  };
 }
 
 function normalizedImportKey(value) {
@@ -4304,9 +4326,12 @@ export async function importAcademicScores(env, user = {}, input = {}) {
   const ImportId = academicId('score-import', SheetId, importKey);
   const previousImport = findById(state.scoreImports, ImportId);
   if (previousImport) {
-    const response = await academicOperationalResponse(env, user, input, scope, 'This spreadsheet import was already processed; no score was duplicated.');
-    response.scoreImport = publicRecord(previousImport);
-    return response;
+    return {
+      ok: true,
+      refreshAcademicManagement: true,
+      message: 'This spreadsheet import was already processed; no score was duplicated.',
+      scoreImport: publicRecord(previousImport)
+    };
   }
   const preview = validateAcademicScoreImport(input.Rows, {
     scheme,
@@ -4375,14 +4400,18 @@ export async function importAcademicScores(env, user = {}, input = {}) {
     data: withoutMetadata(importRecord), exists: false });
   writes.push(auditWrite(user, 'IMPORT', 'scoreSheet', sheet, `${valid.length} imported; ${preview.InvalidRows} rejected; ${mode}`));
   await commitAcademicBatch(env, writes, 'The score sheet changed while the spreadsheet was being imported. Preview the file again.');
-  const response = await academicOperationalResponse(env, user, input, scope,
-    `${valid.length} spreadsheet score${valid.length === 1 ? '' : 's'} imported as Draft${preview.InvalidRows ? `; ${preview.InvalidRows} invalid row${preview.InvalidRows === 1 ? '' : 's'} skipped` : ''}.`);
-  response.scoreImport = publicRecord(importRecord);
-  return response;
+  return {
+    ok: true,
+    refreshAcademicManagement: true,
+    message: `${valid.length} spreadsheet score${valid.length === 1 ? '' : 's'} imported as Draft${preview.InvalidRows ? `; ${preview.InvalidRows} invalid row${preview.InvalidRows === 1 ? '' : 's'} skipped` : ''}.`,
+    scoreImport: publicRecord(importRecord)
+  };
 }
 
 export async function rollbackAcademicScoreImport(env, user = {}, input = {}) {
-  const context = await academicOperationalContext(env, user, input, 'canImportScores');
+  const context = await academicOperationalContext(env, user, input, 'canImportScores', {
+    stateKeys: ACADEMIC_SCOREBOOK_STATE_KEYS
+  });
   const { permissions, scope, state } = context;
   const importRecord = findById(state.scoreImports, input.ImportId || input.RecordId);
   if (!importRecord || lower(importRecord.Status) !== 'committed') throw failure('The committed score import was not found.', 404);
@@ -4422,7 +4451,11 @@ export async function rollbackAcademicScoreImport(env, user = {}, input = {}) {
     data: withoutMetadata(rolledBack), ...writePrecondition(importRecord, input.RevisionToken) });
   writes.push(auditWrite(user, 'ROLLBACK_IMPORT', 'scoreSheet', sheet, reason));
   await commitAcademicBatch(env, writes, 'The score import changed while it was being rolled back. Reload and try again.');
-  return academicOperationalResponse(env, user, input, scope, `${currentScores.length} imported student score${currentScores.length === 1 ? '' : 's'} rolled back.`);
+  return {
+    ok: true,
+    refreshAcademicManagement: true,
+    message: `${currentScores.length} imported student score${currentScores.length === 1 ? '' : 's'} rolled back.`
+  };
 }
 
 function canonicalAcademicCbtValue(value) {
@@ -4520,10 +4553,12 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
     if (lower(previousBatch.BatchDigest) !== expectedDigest) {
       throw failure('This CBT synchronization key was already used for a different score payload.', 409, 'ACADEMIC_CBT_SYNC_KEY_REUSED');
     }
-    const response = await academicOperationalResponse(env, user, input, scope,
-      'This approved CBT batch was already synchronized; no score was duplicated.');
-    response.scoreSyncReceipt = publicRecord(previousBatch);
-    return response;
+    return {
+      ok: true,
+      refreshAcademicManagement: true,
+      message: 'This approved CBT batch was already synchronized; no score was duplicated.',
+      scoreSyncReceipt: publicRecord(previousBatch)
+    };
   }
   const timestamp = nowIso();
   const component = preview.Component;
@@ -4595,10 +4630,12 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
     `${sourceType}; ${updatedScores.length} students; ${preview.AbsentCount} absent`));
   await commitAcademicBatch(env, writes,
     'The score sheet changed while CBT scores were synchronizing. Reload and retry the same approved batch.');
-  const response = await academicOperationalResponse(env, user, input, scope,
-    `${updatedScores.length} approved CBT score${updatedScores.length === 1 ? '' : 's'} synchronized into the Draft scorebook.`);
-  response.scoreSyncReceipt = publicRecord(syncRecord);
-  return response;
+  return {
+    ok: true,
+    refreshAcademicManagement: true,
+    message: `${updatedScores.length} approved CBT score${updatedScores.length === 1 ? '' : 's'} synchronized into the Draft scorebook.`,
+    scoreSyncReceipt: publicRecord(syncRecord)
+  };
 }
 
 export const ACADEMIC_CBT_OPTION_STYLES = Object.freeze({

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 import {
+  ACADEMIC_SCOREBOOK_STATE_KEYS,
   academicCbtScoreBatchDigest,
   verifyAcademicCbtScoreSignature
 } from '../functions/lib/academic-management.js';
@@ -137,6 +138,23 @@ test('Milestone 5 server and web contracts expose controlled score sheets, impor
   assert.match(adminSource, /parseAcademicScoreSpreadsheet/);
   assert.match(adminSource, /changeAcademicScoreSheetStatus/);
   assert.match(adminSource, /Download score template/);
+});
+
+test('scorebook requests stay below the Worker subrequest ceiling', () => {
+  assert.deepEqual(ACADEMIC_SCOREBOOK_STATE_KEYS, [
+    'sessions', 'terms', 'classes', 'arms', 'subjects', 'teacherAllocations',
+    'studentMemberships', 'scoreSheets', 'studentScores', 'scoreImports', 'scoreSyncBatches'
+  ]);
+  assert.match(academicManagementSource, /ACADEMIC_SCOREBOOK_STATE_KEYS = Object\.freeze\(\[/);
+  assert.match(academicManagementSource, /stateKeys: ACADEMIC_SCOREBOOK_STATE_KEYS/);
+  assert.match(academicManagementSource, /partialAcademicManagement: true/);
+  assert.match(academicManagementSource, /refreshAcademicManagement: true/);
+  assert.doesNotMatch(
+    academicManagementSource.match(/export async function getAcademicScorebookContext[\s\S]*?\n}/)?.[0] || '',
+    /academicOperationalResponse/
+  );
+  assert.match(adminSource, /data\.refreshAcademicManagement === true/);
+  assert.match(adminSource, /data\.partialAcademicManagement === true/);
 });
 
 test('Milestone 8 CBT batches require the configured source, exact roster and valid numeric or absent scores', () => {
