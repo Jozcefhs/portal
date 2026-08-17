@@ -36,9 +36,11 @@ No passwords, API tokens, private keys or student secrets belong in this file.
 - Branch: `main`
 - Production: `https://destinychristianacademy.pages.dev`
 - Deployment: pushing `main` deploys the Cloudflare Pages application.
-- The current accepted revision must be read from `git rev-parse HEAD`; the
-  Milestone 11 production-readiness change follows the earlier
-  `b68a8b2981831ca712832a22579bb28ee393d61a` Scorebook subrequest fix.
+- Milestone 11 is committed locally as `dd65342f`
+  (`Complete academic production readiness milestone`). Its GitHub push and
+  resulting Cloudflare deployment were blocked only by the exhausted Codex
+  account usage allowance. Push the current local `main` from the next account,
+  then perform the production smoke checks in the Milestone 11 runbook.
 
 ### Desktop and local CBT
 
