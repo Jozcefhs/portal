@@ -3875,6 +3875,7 @@ export async function calculateAcademicCumulativeResults(env, user = {}, input =
     FinalTermId: term.TermId,
     ClassId: schoolClass.ClassId,
     ClassName: schoolClass.Name,
+    SchoolStage: schoolClass.SchoolStage,
     ArmId: arm.ArmId,
     ArmName: arm.Name,
     Memberships: memberships,
@@ -4019,6 +4020,7 @@ export async function calculateAcademicPromotionDecisions(env, user = {}, input 
       FinalTermId: result.FinalTermId,
       ClassId: schoolClass.ClassId,
       ClassName: schoolClass.Name,
+      SchoolStage: clean(result.SchoolStage || schoolClass.SchoolStage),
       ArmId: arm.ArmId,
       ArmName: arm.Name,
       DepartmentId: result.DepartmentId,
@@ -4104,7 +4106,7 @@ export async function changeAcademicPromotionStatus(env, user = {}, input = {}) 
   const timestamp = nowIso();
   let destination = null;
   const writes = [];
-  if (target === 'Committed' && ['Promoted', 'Repeated'].includes(existing.FinalOutcome)) {
+  if (target === 'Committed' && ['Promoted', 'Probation', 'Repeated'].includes(existing.FinalOutcome)) {
     const destinationSession = assertReference(findById(context.state.sessions, input.DestinationSessionId), 'Choose the destination academic session.');
     const destinationTerm = assertReference(findById(context.state.terms, input.DestinationTermId), 'Choose the destination term.');
     const destinationClass = assertReference(findById(context.state.classes, input.DestinationClassId), 'Choose the destination class.');

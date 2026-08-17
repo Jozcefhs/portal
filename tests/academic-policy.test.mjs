@@ -99,6 +99,35 @@ test('normalization supports configurable result, finance, grading and promotion
   assert.equal(policy.Promotion.MinimumAttendancePercentage, 75);
 });
 
+test('separate Junior and Senior promotion rules are normalized and validated without hardcoded thresholds', () => {
+  const policy = completePolicy();
+  policy.Promotion = {
+    Mode: 'division-rules',
+    RequireAllTerms: true,
+    MinimumAttendancePercentage: null,
+    JuniorSecondary: { PromotedMinimumAverage: 54.5, ProbationMinimumAverage: 49.5 },
+    SeniorSecondary: {
+      CreditMinimumPercentage: 50,
+      ExpectedCoreSubjectCount: 5,
+      PromotedMinimumCredits: 3,
+      PromotedRequiredSubjectIds: ['mathematics', 'english'],
+      PromotedRequiredSubjectMode: 'all',
+      ProbationCreditCount: 2,
+      ProbationCreditCountMode: 'exactly',
+      ProbationRequiredSubjectIds: ['mathematics', 'english'],
+      ProbationRequiredSubjectMode: 'any'
+    }
+  };
+  const normalized = normalizeAcademicPolicy(policy);
+  assert.equal(normalized.Promotion.JuniorSecondary.PromotedMinimumAverage, 54.5);
+  assert.equal(normalized.Promotion.SeniorSecondary.ExpectedCoreSubjectCount, 5);
+  assert.deepEqual(normalized.Promotion.SeniorSecondary.PromotedRequiredSubjectIds, ['mathematics', 'english']);
+  assert.equal(academicPolicyIssues(normalized, { forActivation: true }).filter((issue) => issue.path.startsWith('Promotion')).length, 0);
+
+  normalized.Promotion.JuniorSecondary.ProbationMinimumAverage = 60;
+  assert.ok(academicPolicyIssues(normalized).some((issue) => issue.code === 'JUNIOR_PROMOTION_THRESHOLDS_INVALID'));
+});
+
 test('activation fails closed while required policy choices are incomplete', () => {
   const issues = academicPolicyIssues(defaultAcademicPolicy(), { forActivation: true });
 
@@ -237,6 +266,11 @@ test('School settings expose configurable result, grading and promotion policy c
   assert.match(setupHtmlSource, /id="academicMissingSubjectMode"/);
   assert.match(setupHtmlSource, /id="academicIncludeTransferredResults"/);
   assert.match(setupHtmlSource, /id="academicPromotionMode"/);
+  assert.match(setupHtmlSource, /id="academicJuniorPromotedMinimum"/);
+  assert.match(setupHtmlSource, /id="academicJuniorProbationMinimum"/);
+  assert.match(setupHtmlSource, /id="academicSeniorCreditMinimum"/);
+  assert.match(setupHtmlSource, /id="academicSeniorPromotedRequiredSubjects"/);
+  assert.match(setupHtmlSource, /id="academicSeniorProbationRequiredSubjects"/);
   assert.match(setupHtmlSource, /id="saveAcademicPolicyButton"/);
   assert.match(setupHtmlSource, /id="activateAcademicPolicyButton"/);
   assert.match(setupHtmlSource, /protected result module will enforce the active policy when it is introduced/);

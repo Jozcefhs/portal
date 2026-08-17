@@ -11269,6 +11269,7 @@ function academicTermResultActions(row, permissions = {}) {
 }
 
 function academicTermResultsWorkspace(data, rows) {
+  const classroomLabel = (arm) => `${academicLabel(rows.classes, arm.ClassId)} / ${arm.Name}`;
   const classrooms = rows.arms.filter(academicIsActive).filter((arm) => rows.studentMemberships.some((membership) => (
     academicIsActive(membership) && membership.ClassId === arm.ClassId && membership.ArmId === arm.ArmId
   )));
@@ -11345,6 +11346,7 @@ function academicTranscriptActions(row, permissions = {}) {
 }
 
 function academicSessionOutcomesWorkspace(data, rows) {
+  const classroomLabel = (arm) => `${academicLabel(rows.classes, arm.ClassId)} / ${arm.Name}`;
   const classrooms = rows.arms.filter(academicIsActive).filter((arm) => rows.studentMemberships.some((membership) => (
     academicIsActive(membership) && membership.ClassId === arm.ClassId && membership.ArmId === arm.ArmId
   )));
@@ -11389,7 +11391,7 @@ function academicSessionOutcomesWorkspace(data, rows) {
     <div class="academic-management-editor-heading"><div><small>Final decision</small><h3>${escapeHtml(academicLabel(data.students, selectedDecision.StudentRef, selectedDecision.StudentRef))}</h3><p class="muted">Recommendation: ${escapeHtml(selectedDecision.RecommendedOutcome)} · ${escapeHtml((selectedDecision.Reasons || []).join(' ') || 'All configured criteria passed.')}</p></div><button type="button" class="secondary" data-academic-promotion-clear>Close</button></div>
     <input type="hidden" name="PromotionDecisionId" value="${escapeHtml(selectedDecision.PromotionDecisionId)}"><input type="hidden" name="RevisionToken" value="${escapeHtml(selectedDecision.RevisionToken)}">
     <div class="academic-management-form-grid academic-management-form-grid-3">
-      <label>Final outcome<select name="FinalOutcome">${['Pending', 'Promoted', 'Repeated', 'Graduated', 'Transferred'].map((value) => `<option value="${value}"${value === selectedDecision.FinalOutcome ? ' selected' : ''}>${value}</option>`).join('')}</select></label>
+      <label>Final outcome<select name="FinalOutcome">${['Pending', 'Promoted', 'Probation', 'Repeated', 'Graduated', 'Transferred'].map((value) => `<option value="${value}"${value === selectedDecision.FinalOutcome ? ' selected' : ''}>${value === 'Repeated' ? 'Not promoted / repeat' : value}</option>`).join('')}</select></label>
       <label>Override / correction reason<input name="OverrideReason" value="${escapeHtml(selectedDecision.OverrideReason || '')}" placeholder="Required when overriding recommendation"></label>
       <label>Destination session<select name="DestinationSessionId">${academicSelectOptions(sessions, destinationSessionId, (row) => row.Name, 'Choose session')}</select></label>
       <label>Destination term<select name="DestinationTermId">${academicSelectOptions(destinationTerms, destinationTerms[0]?.TermId, (row) => row.Name, 'Choose term')}</select></label>
@@ -11400,6 +11402,7 @@ function academicSessionOutcomesWorkspace(data, rows) {
   const promotionRegister = table('Promotion Decisions', promotionRows, [
     { label: 'Student', render: (row) => `<strong class="academic-result-student-name">${escapeHtml(academicLabel(data.students, row.StudentRef, row.StudentRef))}</strong><small>${escapeHtml(row.StudentRef)}</small>` },
     { label: 'Average', value: (row) => `${row.OverallAverage}%` },
+    { label: 'Rule', render: (row) => `<strong>${escapeHtml(row.PolicyDivision === 'junior-secondary' ? 'Junior average' : row.PolicyDivision === 'senior-secondary' ? 'Senior Core credits' : 'General')}</strong>${row.CoreCreditCount === null || row.CoreCreditCount === undefined ? '' : `<small>${escapeHtml(row.CoreCreditCount)} of ${escapeHtml(row.CoreSubjectCount)} Core credits</small>`}` },
     { label: 'Recommendation', render: (row) => `<strong>${escapeHtml(row.RecommendedOutcome)}</strong><small>${escapeHtml(row.RecommendationType)}</small>` },
     { label: 'Final outcome', value: (row) => row.FinalOutcome },
     { label: 'Status', value: (row) => row.Status },
@@ -13001,7 +13004,7 @@ function bindAcademicManagement() {
     const button = event.currentTarget;
     const decision = academicFind(academicManagementData?.promotionDecisions || [], promotionEditor.elements.PromotionDecisionId.value);
     if (!decision) return;
-    const needsDestination = ['Promoted', 'Repeated'].includes(decision.FinalOutcome);
+    const needsDestination = ['Promoted', 'Probation', 'Repeated'].includes(decision.FinalOutcome);
     const destinationArm = academicFind(academicManagementData?.arms || [], promotionEditor.elements.DestinationArmId.value);
     if (needsDestination && !destinationArm) {
       setStatus(document.getElementById('academicManagementStatus'), 'Choose the destination classroom before committing this decision.', 'bad');

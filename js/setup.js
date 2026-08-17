@@ -293,18 +293,16 @@ function updateAcademicPolicyConditionalFields() {
   document.querySelectorAll('[data-fee-policy-field]').forEach((field) => {
     field.hidden = field.dataset.feePolicyField !== feeMode;
   });
-  const criteria = policyField('academicPromotionMode')?.value === 'criteria';
-  [
-    'academicMinimumOverallAverage',
-    'academicRequiredCoreSubjects',
-    'academicMaximumFailedSubjects',
-    'academicMinimumAttendance',
-    'academicRequireAllTerms',
-    'academicManualReviewMinimum',
-    'academicManualReviewMaximum'
-  ].forEach((id) => {
-    const field = policyField(id);
-    if (field) field.disabled = !criteria;
+  const promotionMode = policyField('academicPromotionMode')?.value || 'unconfigured';
+  document.querySelectorAll('[data-promotion-policy-field]').forEach((group) => {
+    const active = group.dataset.promotionPolicyField === promotionMode;
+    group.hidden = !active;
+    group.querySelectorAll('input, select, textarea, button').forEach((field) => { field.disabled = !active; });
+  });
+  document.querySelectorAll('[data-promotion-shared-fields]').forEach((group) => {
+    const active = ['criteria', 'division-rules'].includes(promotionMode);
+    group.hidden = !active;
+    group.querySelectorAll('input, select, textarea').forEach((field) => { field.disabled = !active; });
   });
 }
 
@@ -315,6 +313,8 @@ function renderAcademicPolicy(policy = {}) {
   const assessment = policy.Assessment || {};
   const cumulative = policy.Cumulative || {};
   const promotion = policy.Promotion || {};
+  const juniorPromotion = promotion.JuniorSecondary || {};
+  const seniorPromotion = promotion.SeniorSecondary || {};
   setField('academicResultVisibility', result.VisibilityMode || 'unconfigured');
   setField('academicFeeClearanceMode', clearance.Mode || 'unconfigured');
   setField('academicMinimumPaidPercentage', clearance.MinimumPaidPercentage ?? 100);
@@ -340,6 +340,17 @@ function renderAcademicPolicy(policy = {}) {
   setField('academicRequireAllTerms', promotion.RequireAllTerms === false ? 'NO' : 'YES');
   setField('academicManualReviewMinimum', promotion.ManualReviewMinimum ?? '');
   setField('academicManualReviewMaximum', promotion.ManualReviewMaximum ?? '');
+  setField('academicJuniorPromotedMinimum', juniorPromotion.PromotedMinimumAverage ?? '');
+  setField('academicJuniorProbationMinimum', juniorPromotion.ProbationMinimumAverage ?? '');
+  setField('academicSeniorCreditMinimum', seniorPromotion.CreditMinimumPercentage ?? '');
+  setField('academicSeniorCoreSubjectCount', seniorPromotion.ExpectedCoreSubjectCount ?? '');
+  setField('academicSeniorPromotedCredits', seniorPromotion.PromotedMinimumCredits ?? '');
+  setField('academicSeniorPromotedRequiredSubjects', (seniorPromotion.PromotedRequiredSubjectIds || []).join(', '));
+  setField('academicSeniorPromotedRequiredMode', seniorPromotion.PromotedRequiredSubjectMode || 'all');
+  setField('academicSeniorProbationCredits', seniorPromotion.ProbationCreditCount ?? '');
+  setField('academicSeniorProbationCreditMode', seniorPromotion.ProbationCreditCountMode || 'exactly');
+  setField('academicSeniorProbationRequiredSubjects', (seniorPromotion.ProbationRequiredSubjectIds || []).join(', '));
+  setField('academicSeniorProbationRequiredMode', seniorPromotion.ProbationRequiredSubjectMode || 'any');
   updateAcademicPolicyConditionalFields();
 }
 
@@ -412,7 +423,22 @@ function academicPolicyFromForm() {
       MinimumAttendancePercentage: policyNumber('academicMinimumAttendance'),
       RequireAllTerms: policyField('academicRequireAllTerms').value === 'YES',
       ManualReviewMinimum: policyNumber('academicManualReviewMinimum'),
-      ManualReviewMaximum: policyNumber('academicManualReviewMaximum')
+      ManualReviewMaximum: policyNumber('academicManualReviewMaximum'),
+      JuniorSecondary: {
+        PromotedMinimumAverage: policyNumber('academicJuniorPromotedMinimum'),
+        ProbationMinimumAverage: policyNumber('academicJuniorProbationMinimum')
+      },
+      SeniorSecondary: {
+        CreditMinimumPercentage: policyNumber('academicSeniorCreditMinimum'),
+        ExpectedCoreSubjectCount: policyNumber('academicSeniorCoreSubjectCount'),
+        PromotedMinimumCredits: policyNumber('academicSeniorPromotedCredits'),
+        PromotedRequiredSubjectIds: policyList('academicSeniorPromotedRequiredSubjects'),
+        PromotedRequiredSubjectMode: policyField('academicSeniorPromotedRequiredMode').value,
+        ProbationCreditCount: policyNumber('academicSeniorProbationCredits'),
+        ProbationCreditCountMode: policyField('academicSeniorProbationCreditMode').value,
+        ProbationRequiredSubjectIds: policyList('academicSeniorProbationRequiredSubjects'),
+        ProbationRequiredSubjectMode: policyField('academicSeniorProbationRequiredMode').value
+      }
     }
   };
 }

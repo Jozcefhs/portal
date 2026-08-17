@@ -5,7 +5,7 @@ const lower = (value) => clean(value).toLowerCase();
 
 export const ACADEMIC_CUMULATIVE_STATUSES = Object.freeze(['Calculated Draft', 'Reviewed', 'Approved', 'Locked']);
 export const ACADEMIC_PROMOTION_STATUSES = Object.freeze(['Draft', 'Reviewed', 'Approved', 'Committed']);
-export const ACADEMIC_PROMOTION_OUTCOMES = Object.freeze(['Pending', 'Promoted', 'Repeated', 'Graduated', 'Transferred']);
+export const ACADEMIC_PROMOTION_OUTCOMES = Object.freeze(['Pending', 'Promoted', 'Probation', 'Repeated', 'Graduated', 'Transferred']);
 export const ACADEMIC_TRANSCRIPT_STATUSES = Object.freeze(['Draft', 'Reviewed', 'Approved', 'Issued']);
 
 function rounded(value, places = 2) {
@@ -76,6 +76,46 @@ function percentileBand(position, assessed) {
   return 'Fourth quartile';
 }
 
+function promotionDivision(result = {}) {
+  const description = lower([
+    result.SchoolStage,
+    result.Division,
+    result.ClassCode,
+    result.ClassName
+  ].filter(Boolean).join(' '));
+  if (description.includes('junior') || /\bjss\s*[1-3]?\b/.test(description) || /\bgrade\s*(7|8|9)\b/.test(description)) {
+    return 'junior-secondary';
+  }
+  if (description.includes('senior') || /\bsss?\s*[1-3]?\b/.test(description) || /\bgrade\s*(10|11|12)\b/.test(description)) {
+    return 'senior-secondary';
+  }
+  return '';
+}
+
+function subjectMatchesIdentifier(subject = {}, identifier = '') {
+  const normalized = lower(identifier);
+  const compact = normalized.replace(/[^a-z0-9]+/g, '');
+  return [subject.SubjectId, subject.SubjectCode, subject.Code, subject.SubjectName].some((value) => {
+    const candidate = lower(value);
+    const candidateCompact = candidate.replace(/[^a-z0-9]+/g, '');
+    return candidate === normalized || (compact && candidateCompact === compact)
+      || (compact.length >= 3 && candidateCompact.startsWith(compact));
+  });
+}
+
+function requiredCreditRule(subjects = [], identifiers = [], mode = 'all', creditMinimum = 0) {
+  if (mode === 'none') return { Passed: true, Credited: [], Missing: [] };
+  const checks = identifiers.map((identifier) => {
+    const subject = subjects.find((row) => subjectMatchesIdentifier(row, identifier));
+    return { Identifier: identifier, Subject: subject, Credited: Boolean(subject && Number(subject.AnnualTotal || 0) >= creditMinimum) };
+  });
+  return {
+    Passed: mode === 'any' ? checks.some((row) => row.Credited) : checks.every((row) => row.Credited),
+    Credited: checks.filter((row) => row.Credited).map((row) => row.Subject?.SubjectName || row.Identifier),
+    Missing: checks.filter((row) => !row.Credited).map((row) => row.Subject?.SubjectName || row.Identifier)
+  };
+}
+
 export function academicCumulativeTransition(currentValue, targetValue) {
   const current = ACADEMIC_CUMULATIVE_STATUSES.find((value) => lower(value) === lower(currentValue));
   const target = ACADEMIC_CUMULATIVE_STATUSES.find((value) => lower(value) === lower(targetValue));
@@ -142,11 +182,13 @@ export function calculateAcademicCumulativeDrafts(input = {}) {
     const Subjects = subjectIds.map((subjectId) => {
       const termRows = [];
       let subjectName = subjectId;
+      let subjectCode = '';
       configuredTerms.forEach((term) => {
         const pair = byTerm.find((row) => row.term.Id === term.Id);
         const termResult = pair?.result;
         const subject = (termResult?.Subjects || []).find((row) => lower(row.SubjectId) === lower(subjectId));
         if (subject?.SubjectName) subjectName = subject.SubjectName;
+        if (subject?.SubjectCode || subject?.Code) subjectCode = clean(subject.SubjectCode || subject.Code);
         if (!termResult) {
           if (policy.Cumulative.MissingTermMode === 'zero') termRows.push({ term, Total: 0, Missing: true, MissingKind: 'Term' });
           return;
@@ -170,6 +212,7 @@ export function calculateAcademicCumulativeDrafts(input = {}) {
       const band = gradeForPercentage(policy, annualTotal);
       return {
         SubjectId: subjectId,
+        SubjectCode: subjectCode,
         SubjectName: subjectName,
         IsCore: (membership.CoreSubjectIds || []).some((id) => lower(id) === lower(subjectId)),
         Terms: termRows.map((row) => ({
@@ -200,6 +243,7 @@ export function calculateAcademicCumulativeDrafts(input = {}) {
       FinalTermId: clean(input.FinalTermId),
       ClassId: clean(input.ClassId),
       ClassName: clean(input.ClassName),
+      SchoolStage: clean(input.SchoolStage),
       ArmId: clean(input.ArmId),
       ArmName: clean(input.ArmName),
       DepartmentId: clean(membership.DepartmentId),
@@ -252,53 +296,133 @@ export function evaluateAcademicPromotionDecision(cumulativeResult = {}, policyV
   const reasons = [];
   const failedSubjects = (cumulativeResult.Subjects || []).filter((subject) => lower(subject.Classification) === 'fail');
   const bySubject = new Map((cumulativeResult.Subjects || []).map((subject) => [lower(subject.SubjectId), subject]));
-  const add = (name, passed, actual, expected) => {
-    criteria.push({ Name: name, Passed: passed, Actual: actual, Expected: expected });
+  const add = (name, passed, actual, expected, appliesTo = 'All') => {
+    criteria.push({ Name: name, Passed: passed, Actual: actual, Expected: expected, AppliesTo: appliesTo });
     if (!passed) reasons.push(`${name}: ${actual}; required ${expected}.`);
   };
+  const missingTerms = cumulativeResult.MissingRequiredTerms || [];
+  const requiredTermsComplete = !promotion.RequireAllTerms || !missingTerms.length;
   if (promotion.RequireAllTerms) {
-    add('Completed required terms', !(cumulativeResult.MissingRequiredTerms || []).length,
-      (cumulativeResult.MissingRequiredTerms || []).length ? `missing ${(cumulativeResult.MissingRequiredTerms || []).join(', ')}` : 'complete', 'all configured terms');
+    add('Completed required terms', requiredTermsComplete,
+      missingTerms.length ? `missing ${missingTerms.join(', ')}` : 'complete', 'all configured terms');
   }
-  if (promotion.MinimumOverallAverage !== null) {
-    add('Overall average', Number(cumulativeResult.OverallAverage) >= promotion.MinimumOverallAverage,
-      Number(cumulativeResult.OverallAverage || 0), `at least ${promotion.MinimumOverallAverage}`);
-  }
-  if (promotion.MaximumFailedSubjects !== null) {
-    add('Failed subjects', failedSubjects.length <= promotion.MaximumFailedSubjects,
-      failedSubjects.length, `no more than ${promotion.MaximumFailedSubjects}`);
-  }
+  const attendance = Number(cumulativeResult.Attendance?.AttendancePercentage || 0);
+  const attendancePassed = promotion.MinimumAttendancePercentage === null || attendance >= promotion.MinimumAttendancePercentage;
   if (promotion.MinimumAttendancePercentage !== null) {
-    add('Attendance', Number(cumulativeResult.Attendance?.AttendancePercentage || 0) >= promotion.MinimumAttendancePercentage,
-      Number(cumulativeResult.Attendance?.AttendancePercentage || 0), `at least ${promotion.MinimumAttendancePercentage}%`);
+    add('Attendance', attendancePassed, attendance, `at least ${promotion.MinimumAttendancePercentage}%`);
   }
-  promotion.RequiredCoreSubjectIds.forEach((subjectId) => {
-    const subject = bySubject.get(lower(subjectId));
-    add(`Required core subject ${subject?.SubjectName || subjectId}`, Boolean(subject && lower(subject.Classification) !== 'fail'),
-      subject ? `${subject.Grade || subject.AnnualTotal}` : 'missing', 'pass');
-  });
   let recommendedOutcome = 'Promoted';
   let recommendationType = 'Automatic';
+  let division = promotionDivision(cumulativeResult);
+  let coreCreditCount = null;
+  let coreSubjectCount = null;
   if (promotion.Mode === 'manual-review' || cumulativeResult.ManualReviewRequired) {
     recommendedOutcome = 'Pending';
     recommendationType = 'Manual Review';
     reasons.push(...(cumulativeResult.ManualReviewReasons || []));
+  } else if (!requiredTermsComplete) {
+    recommendedOutcome = 'Pending';
+    recommendationType = 'Incomplete Evidence';
+  } else if (promotion.Mode === 'division-rules') {
+    if (!division) {
+      recommendedOutcome = 'Pending';
+      recommendationType = 'Division Required';
+      reasons.push('The class is not identified as Junior Secondary or Senior Secondary.');
+    } else if (!attendancePassed) {
+      recommendedOutcome = 'Repeated';
+    } else if (division === 'junior-secondary') {
+      const junior = promotion.JuniorSecondary;
+      const average = Number(cumulativeResult.OverallAverage || 0);
+      if (junior.PromotedMinimumAverage === null || junior.ProbationMinimumAverage === null) {
+        recommendedOutcome = 'Pending';
+        recommendationType = 'Policy Required';
+        reasons.push('Complete the Junior Secondary promotion thresholds.');
+      } else if (average >= junior.PromotedMinimumAverage) {
+        add('Junior promoted average', true, average, `at least ${junior.PromotedMinimumAverage}%`, 'Promoted');
+        recommendedOutcome = 'Promoted';
+      } else if (average >= junior.ProbationMinimumAverage) {
+        add('Junior promoted average', false, average, `at least ${junior.PromotedMinimumAverage}%`, 'Promoted');
+        add('Junior probation average', true, average,
+          `${junior.ProbationMinimumAverage}% up to ${junior.PromotedMinimumAverage}%`, 'Probation');
+        recommendedOutcome = 'Probation';
+      } else {
+        add('Junior probation average', false, average, `at least ${junior.ProbationMinimumAverage}%`, 'Probation');
+        recommendedOutcome = 'Repeated';
+      }
+    } else {
+      const senior = promotion.SeniorSecondary;
+      const coreSubjects = (cumulativeResult.Subjects || []).filter((subject) => subject.IsCore === true);
+      coreSubjectCount = coreSubjects.length;
+      coreCreditCount = senior.CreditMinimumPercentage === null ? 0 : coreSubjects.filter(
+        (subject) => Number(subject.AnnualTotal || 0) >= senior.CreditMinimumPercentage
+      ).length;
+      const coreCountReady = senior.ExpectedCoreSubjectCount !== null && coreSubjectCount === senior.ExpectedCoreSubjectCount;
+      add('Department Core subjects', coreCountReady, coreSubjectCount, `exactly ${senior.ExpectedCoreSubjectCount ?? 'the configured count'}`, 'All');
+      if (!coreCountReady || senior.CreditMinimumPercentage === null || senior.PromotedMinimumCredits === null || senior.ProbationCreditCount === null) {
+        recommendedOutcome = 'Pending';
+        recommendationType = 'Curriculum Review';
+      } else {
+        const promotedSubjects = requiredCreditRule(coreSubjects, senior.PromotedRequiredSubjectIds,
+          senior.PromotedRequiredSubjectMode, senior.CreditMinimumPercentage);
+        const promotedCreditsPassed = coreCreditCount >= senior.PromotedMinimumCredits;
+        add('Core credits for promotion', promotedCreditsPassed, coreCreditCount,
+          `at least ${senior.PromotedMinimumCredits}`, 'Promoted');
+        add('Named Core subjects for promotion', promotedSubjects.Passed,
+          promotedSubjects.Credited.length ? promotedSubjects.Credited.join(', ') : 'none credited',
+          senior.PromotedRequiredSubjectMode === 'none' ? 'no named-subject requirement' : `${senior.PromotedRequiredSubjectMode} of ${senior.PromotedRequiredSubjectIds.join(', ')}`,
+          'Promoted');
+        if (promotedCreditsPassed && promotedSubjects.Passed) {
+          recommendedOutcome = 'Promoted';
+        } else {
+          const probationSubjects = requiredCreditRule(coreSubjects, senior.ProbationRequiredSubjectIds,
+            senior.ProbationRequiredSubjectMode, senior.CreditMinimumPercentage);
+          const probationCreditsPassed = senior.ProbationCreditCountMode === 'at-least'
+            ? coreCreditCount >= senior.ProbationCreditCount
+            : coreCreditCount === senior.ProbationCreditCount;
+          add('Core credits for probation', probationCreditsPassed, coreCreditCount,
+            `${senior.ProbationCreditCountMode === 'at-least' ? 'at least' : 'exactly'} ${senior.ProbationCreditCount}`, 'Probation');
+          add('Named Core subjects for probation', probationSubjects.Passed,
+            probationSubjects.Credited.length ? probationSubjects.Credited.join(', ') : 'none credited',
+            senior.ProbationRequiredSubjectMode === 'none' ? 'no named-subject requirement' : `${senior.ProbationRequiredSubjectMode} of ${senior.ProbationRequiredSubjectIds.join(', ')}`,
+            'Probation');
+          recommendedOutcome = probationCreditsPassed && probationSubjects.Passed ? 'Probation' : 'Repeated';
+        }
+      }
+    }
   } else if (promotion.Mode !== 'criteria') {
     recommendedOutcome = 'Pending';
     recommendationType = 'Policy Required';
     reasons.push('Configure a promotion method before calculating decisions.');
-  } else if (criteria.some((criterion) => !criterion.Passed)) {
-    const average = Number(cumulativeResult.OverallAverage || 0);
-    const inReviewRange = promotion.ManualReviewMinimum !== null && promotion.ManualReviewMaximum !== null
-      && average >= promotion.ManualReviewMinimum && average <= promotion.ManualReviewMaximum;
-    recommendedOutcome = inReviewRange ? 'Pending' : 'Repeated';
-    recommendationType = inReviewRange ? 'Manual Review' : 'Automatic';
+  } else {
+    if (promotion.MinimumOverallAverage !== null) {
+      add('Overall average', Number(cumulativeResult.OverallAverage) >= promotion.MinimumOverallAverage,
+        Number(cumulativeResult.OverallAverage || 0), `at least ${promotion.MinimumOverallAverage}`);
+    }
+    if (promotion.MaximumFailedSubjects !== null) {
+      add('Failed subjects', failedSubjects.length <= promotion.MaximumFailedSubjects,
+        failedSubjects.length, `no more than ${promotion.MaximumFailedSubjects}`);
+    }
+    promotion.RequiredCoreSubjectIds.forEach((subjectId) => {
+      const subject = bySubject.get(lower(subjectId));
+      add(`Required core subject ${subject?.SubjectName || subjectId}`, Boolean(subject && lower(subject.Classification) !== 'fail'),
+        subject ? `${subject.Grade || subject.AnnualTotal}` : 'missing', 'pass');
+    });
+    if (criteria.some((criterion) => !criterion.Passed)) {
+      const average = Number(cumulativeResult.OverallAverage || 0);
+      const inReviewRange = promotion.ManualReviewMinimum !== null && promotion.ManualReviewMaximum !== null
+        && average >= promotion.ManualReviewMinimum && average <= promotion.ManualReviewMaximum;
+      recommendedOutcome = inReviewRange ? 'Pending' : 'Repeated';
+      recommendationType = inReviewRange ? 'Manual Review' : 'Automatic';
+    }
   }
   return {
     RecommendedOutcome: recommendedOutcome,
     RecommendationType: recommendationType,
     Criteria: criteria,
     Reasons: unique(reasons),
+    PolicyDivision: division,
+    CoreSubjectCount: coreSubjectCount,
+    CoreCreditCount: coreCreditCount,
     FailedSubjectCount: failedSubjects.length,
     FailedSubjectIds: failedSubjects.map((subject) => subject.SubjectId)
   };

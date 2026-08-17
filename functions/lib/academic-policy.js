@@ -4,7 +4,7 @@ const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value || {}, key);
 
-export const ACADEMIC_POLICY_SCHEMA_VERSION = 1;
+export const ACADEMIC_POLICY_SCHEMA_VERSION = 2;
 export const ACADEMIC_POLICY_SCOPE_TYPES = Object.freeze([
   'organisation',
   'branch',
@@ -45,7 +45,9 @@ export const ASSESSMENT_SOURCE_MODES = Object.freeze([
   'built-in-cbt',
   'external-cbt'
 ]);
-export const PROMOTION_MODES = Object.freeze(['unconfigured', 'manual-review', 'criteria']);
+export const PROMOTION_MODES = Object.freeze(['unconfigured', 'manual-review', 'criteria', 'division-rules']);
+export const PROMOTION_REQUIRED_SUBJECT_MODES = Object.freeze(['all', 'any', 'none']);
+export const PROMOTION_CREDIT_COUNT_MODES = Object.freeze(['exactly', 'at-least']);
 export const CUMULATIVE_MISSING_MODES = Object.freeze(['block', 'exclude', 'zero', 'manual-review']);
 
 function oneOf(value, choices, fallback) {
@@ -65,6 +67,11 @@ function optionalBoundedNumber(value, minimum, maximum) {
   const number = Number(value);
   if (!Number.isFinite(number)) return null;
   return Math.min(maximum, Math.max(minimum, number));
+}
+
+function optionalBoundedInteger(value, minimum, maximum) {
+  const number = optionalBoundedNumber(value, minimum, maximum);
+  return number === null ? null : Math.floor(number);
 }
 
 function yesNoBoolean(value, fallback = false) {
@@ -168,7 +175,22 @@ export function defaultAcademicPolicy() {
       MinimumAttendancePercentage: null,
       RequireAllTerms: true,
       ManualReviewMinimum: null,
-      ManualReviewMaximum: null
+      ManualReviewMaximum: null,
+      JuniorSecondary: {
+        PromotedMinimumAverage: null,
+        ProbationMinimumAverage: null
+      },
+      SeniorSecondary: {
+        CreditMinimumPercentage: null,
+        ExpectedCoreSubjectCount: null,
+        PromotedMinimumCredits: null,
+        PromotedRequiredSubjectIds: [],
+        PromotedRequiredSubjectMode: 'all',
+        ProbationCreditCount: null,
+        ProbationCreditCountMode: 'exactly',
+        ProbationRequiredSubjectIds: [],
+        ProbationRequiredSubjectMode: 'any'
+      }
     }
   };
 }
@@ -181,6 +203,8 @@ export function normalizeAcademicPolicy(value = {}) {
   const assessment = value.Assessment || value.assessment || {};
   const cumulative = value.Cumulative || value.cumulative || {};
   const promotion = value.Promotion || value.promotion || {};
+  const juniorPromotion = promotion.JuniorSecondary || promotion.juniorSecondary || {};
+  const seniorPromotion = promotion.SeniorSecondary || promotion.seniorSecondary || {};
   const components = Array.isArray(assessment.Components || assessment.components)
     ? (assessment.Components || assessment.components)
     : [];
@@ -295,7 +319,62 @@ export function normalizeAcademicPolicy(value = {}) {
         promotion.ManualReviewMaximum ?? promotion.manualReviewMaximum,
         0,
         100
-      )
+      ),
+      JuniorSecondary: {
+        PromotedMinimumAverage: optionalBoundedNumber(
+          juniorPromotion.PromotedMinimumAverage ?? juniorPromotion.promotedMinimumAverage,
+          0,
+          100
+        ),
+        ProbationMinimumAverage: optionalBoundedNumber(
+          juniorPromotion.ProbationMinimumAverage ?? juniorPromotion.probationMinimumAverage,
+          0,
+          100
+        )
+      },
+      SeniorSecondary: {
+        CreditMinimumPercentage: optionalBoundedNumber(
+          seniorPromotion.CreditMinimumPercentage ?? seniorPromotion.creditMinimumPercentage,
+          0,
+          100
+        ),
+        ExpectedCoreSubjectCount: optionalBoundedInteger(
+          seniorPromotion.ExpectedCoreSubjectCount ?? seniorPromotion.expectedCoreSubjectCount,
+          1,
+          100
+        ),
+        PromotedMinimumCredits: optionalBoundedInteger(
+          seniorPromotion.PromotedMinimumCredits ?? seniorPromotion.promotedMinimumCredits,
+          1,
+          100
+        ),
+        PromotedRequiredSubjectIds: uniqueTextList(
+          seniorPromotion.PromotedRequiredSubjectIds ?? seniorPromotion.promotedRequiredSubjectIds ?? []
+        ),
+        PromotedRequiredSubjectMode: oneOf(
+          seniorPromotion.PromotedRequiredSubjectMode ?? seniorPromotion.promotedRequiredSubjectMode,
+          PROMOTION_REQUIRED_SUBJECT_MODES,
+          defaults.Promotion.SeniorSecondary.PromotedRequiredSubjectMode
+        ),
+        ProbationCreditCount: optionalBoundedInteger(
+          seniorPromotion.ProbationCreditCount ?? seniorPromotion.probationCreditCount,
+          1,
+          100
+        ),
+        ProbationCreditCountMode: oneOf(
+          seniorPromotion.ProbationCreditCountMode ?? seniorPromotion.probationCreditCountMode,
+          PROMOTION_CREDIT_COUNT_MODES,
+          defaults.Promotion.SeniorSecondary.ProbationCreditCountMode
+        ),
+        ProbationRequiredSubjectIds: uniqueTextList(
+          seniorPromotion.ProbationRequiredSubjectIds ?? seniorPromotion.probationRequiredSubjectIds ?? []
+        ),
+        ProbationRequiredSubjectMode: oneOf(
+          seniorPromotion.ProbationRequiredSubjectMode ?? seniorPromotion.probationRequiredSubjectMode,
+          PROMOTION_REQUIRED_SUBJECT_MODES,
+          defaults.Promotion.SeniorSecondary.ProbationRequiredSubjectMode
+        )
+      }
     }
   };
 }
@@ -490,6 +569,39 @@ export function academicPolicyIssues(value = {}, options = {}) {
       || promotion.MaximumFailedSubjects !== null
       || promotion.MinimumAttendancePercentage !== null;
     if (!hasCriterion) add('PROMOTION_CRITERIA_REQUIRED', 'Configure at least one promotion criterion.', 'Promotion');
+  }
+  if (promotion.Mode === 'division-rules') {
+    const junior = promotion.JuniorSecondary;
+    const senior = promotion.SeniorSecondary;
+    if (junior.PromotedMinimumAverage === null || junior.ProbationMinimumAverage === null) {
+      add('JUNIOR_PROMOTION_THRESHOLDS_REQUIRED', 'Enter both Junior Secondary promoted and probation minimum averages.', 'Promotion.JuniorSecondary');
+    } else if (junior.ProbationMinimumAverage >= junior.PromotedMinimumAverage) {
+      add('JUNIOR_PROMOTION_THRESHOLDS_INVALID', 'The Junior probation minimum must be lower than the promoted minimum.', 'Promotion.JuniorSecondary');
+    }
+    if (senior.CreditMinimumPercentage === null) {
+      add('SENIOR_CREDIT_THRESHOLD_REQUIRED', 'Enter the minimum percentage that counts as a Senior Secondary credit.', 'Promotion.SeniorSecondary.CreditMinimumPercentage');
+    }
+    if (senior.ExpectedCoreSubjectCount === null) {
+      add('SENIOR_CORE_COUNT_REQUIRED', 'Enter the number of department Core subjects used for Senior promotion.', 'Promotion.SeniorSecondary.ExpectedCoreSubjectCount');
+    }
+    if (senior.PromotedMinimumCredits === null) {
+      add('SENIOR_PROMOTED_CREDITS_REQUIRED', 'Enter the minimum Core credits required for promotion.', 'Promotion.SeniorSecondary.PromotedMinimumCredits');
+    }
+    if (senior.ProbationCreditCount === null) {
+      add('SENIOR_PROBATION_CREDITS_REQUIRED', 'Enter the Core-credit count used for probation.', 'Promotion.SeniorSecondary.ProbationCreditCount');
+    }
+    if (senior.ExpectedCoreSubjectCount !== null && senior.PromotedMinimumCredits > senior.ExpectedCoreSubjectCount) {
+      add('SENIOR_PROMOTED_CREDITS_INVALID', 'Promoted Core credits cannot exceed the configured Core-subject count.', 'Promotion.SeniorSecondary.PromotedMinimumCredits');
+    }
+    if (senior.ExpectedCoreSubjectCount !== null && senior.ProbationCreditCount > senior.ExpectedCoreSubjectCount) {
+      add('SENIOR_PROBATION_CREDITS_INVALID', 'Probation Core credits cannot exceed the configured Core-subject count.', 'Promotion.SeniorSecondary.ProbationCreditCount');
+    }
+    if (senior.PromotedRequiredSubjectMode !== 'none' && !senior.PromotedRequiredSubjectIds.length) {
+      add('SENIOR_PROMOTED_SUBJECTS_REQUIRED', 'Choose the required Senior subjects for the promoted rule, or select no subject requirement.', 'Promotion.SeniorSecondary.PromotedRequiredSubjectIds');
+    }
+    if (senior.ProbationRequiredSubjectMode !== 'none' && !senior.ProbationRequiredSubjectIds.length) {
+      add('SENIOR_PROBATION_SUBJECTS_REQUIRED', 'Choose the required Senior subjects for the probation rule, or select no subject requirement.', 'Promotion.SeniorSecondary.ProbationRequiredSubjectIds');
+    }
   }
   if (
     promotion.ManualReviewMinimum !== null

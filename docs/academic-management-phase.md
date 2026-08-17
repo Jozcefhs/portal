@@ -132,8 +132,8 @@ visibility and financial-clearance gate.
 The packaged client assets are in
 the desktop build definition, but the desktop application will not be compiled
 until the remaining milestones are complete.
-Finance-officer clearance administration, cumulative results, promotion,
-transcripts, migration hardening and production rollout remain pending work.
+Finance-officer clearance administration, migration hardening and production
+rollout remain pending work.
 OCR-assisted question suggestions remain a separate review-gated authoring
 slice and are not yet operational;
 configuring a policy, academic structure or score sheet does not itself publish
@@ -839,12 +839,20 @@ The promotion process:
 3. separates automatic, manual-review and ineligible cases;
 4. allows authorized, reasoned overrides;
 5. presents a complete preview before commitment;
-6. records Promoted, Repeated, Graduated, Transferred or Pending status; and
+6. records Promoted, Probation, Repeated, Graduated, Transferred or Pending
+   status; and
 7. creates next-session class allocations without overwriting the completed
    session's history.
 
 Committing promotions is idempotent and recoverable. A later correction is a
 new audited decision, not silent mutation of the original decision.
+
+When the separate Secondary-division policy is selected, Junior Secondary uses
+configurable promoted and probation average thresholds. Senior Secondary counts
+credits only from the student's department Core subjects, validates the expected
+Core-subject count, and applies configurable credit thresholds, credit counts and
+named-subject requirements independently for Promoted and Probation outcomes.
+Repeated is the stored workflow outcome for a student who is Not promoted.
 
 ## 15. Transcripts
 
@@ -908,7 +916,9 @@ The web companion and desktop source now use the same online contracts for:
 - Calculated Draft, Reviewed, Approved and Locked cumulative-result states;
 - promotion recommendations, authorized overrides and Draft, Reviewed,
   Approved and Committed decisions;
-- idempotent next-session allocation for Promoted and Repeated outcomes without
+- separate configurable Junior average bands and Senior department-Core credit
+  rules, including a distinct Probation outcome;
+- idempotent next-session allocation for Promoted, Probation and Repeated outcomes without
   replacing completed-session membership history;
 - versioned Draft, Reviewed, Approved and Issued transcripts assembled from
   Locked cumulative and term snapshots; and

@@ -42,6 +42,49 @@ function policy() {
   return value;
 }
 
+function divisionPolicy() {
+  const value = policy();
+  value.Promotion = {
+    Mode: 'division-rules',
+    MinimumAttendancePercentage: null,
+    RequireAllTerms: true,
+    JuniorSecondary: {
+      PromotedMinimumAverage: 54.5,
+      ProbationMinimumAverage: 49.5
+    },
+    SeniorSecondary: {
+      CreditMinimumPercentage: 50,
+      ExpectedCoreSubjectCount: 5,
+      PromotedMinimumCredits: 3,
+      PromotedRequiredSubjectIds: ['mathematics', 'english'],
+      PromotedRequiredSubjectMode: 'all',
+      ProbationCreditCount: 2,
+      ProbationCreditCountMode: 'exactly',
+      ProbationRequiredSubjectIds: ['mathematics', 'english'],
+      ProbationRequiredSubjectMode: 'any'
+    }
+  };
+  return value;
+}
+
+function seniorCumulative(scores = {}) {
+  const rows = [
+    ['math', 'Mathematics'],
+    ['eng', 'English'],
+    ['phy', 'Physics'],
+    ['chem', 'Chemistry'],
+    ['bio', 'Biology']
+  ].map(([SubjectId, SubjectName]) => ({
+    SubjectId, SubjectName, IsCore: true, AnnualTotal: scores[SubjectId] ?? 0,
+    Classification: (scores[SubjectId] ?? 0) >= 50 ? 'pass' : 'fail'
+  }));
+  rows.push({ SubjectId: 'trade', SubjectName: 'Trade subject', IsCore: false, AnnualTotal: 100, Classification: 'pass' });
+  return {
+    SchoolStage: 'senior-secondary', ClassName: 'Grade 10', OverallAverage: 55,
+    Subjects: rows, MissingRequiredTerms: [], Attendance: { AttendancePercentage: 90 }
+  };
+}
+
 function termResult(studentRef, term, math, english, attendance = { Present: 8, Late: 1, Total: 10, Attended: 9 }) {
   return {
     ResultId: `${studentRef}-${term}`, ResultReference: `TR-${studentRef}-${term}`,
@@ -120,6 +163,43 @@ test('promotion criteria create automatic, repeat and manual-review recommendati
   assert.equal(evaluateAcademicPromotionDecision(calculate().Results[0], manual).RecommendedOutcome, 'Pending');
 });
 
+test('Junior Secondary promotion uses configurable promoted, probation and not-promoted boundaries', () => {
+  const configured = divisionPolicy();
+  const result = {
+    SchoolStage: 'junior-secondary', ClassName: 'Grade 8', Subjects: [], MissingRequiredTerms: [],
+    Attendance: { AttendancePercentage: 90 }
+  };
+  assert.equal(evaluateAcademicPromotionDecision({ ...result, OverallAverage: 54.5 }, configured).RecommendedOutcome, 'Promoted');
+  assert.equal(evaluateAcademicPromotionDecision({ ...result, OverallAverage: 54.4 }, configured).RecommendedOutcome, 'Probation');
+  assert.equal(evaluateAcademicPromotionDecision({ ...result, OverallAverage: 49.5 }, configured).RecommendedOutcome, 'Probation');
+  assert.equal(evaluateAcademicPromotionDecision({ ...result, OverallAverage: 49.4 }, configured).RecommendedOutcome, 'Repeated');
+});
+
+test('Senior Secondary promotion counts only department Core credits and enforces named-subject rules', () => {
+  const configured = divisionPolicy();
+  const promoted = evaluateAcademicPromotionDecision(seniorCumulative({ math: 70, eng: 60, phy: 55, chem: 40, bio: 30 }), configured);
+  assert.equal(promoted.RecommendedOutcome, 'Promoted');
+  assert.equal(promoted.CoreCreditCount, 3);
+  assert.equal(promoted.CoreSubjectCount, 5);
+  assert.equal(promoted.PolicyDivision, 'senior-secondary');
+
+  const probation = evaluateAcademicPromotionDecision(seniorCumulative({ math: 70, eng: 40, phy: 55, chem: 40, bio: 30 }), configured);
+  assert.equal(probation.RecommendedOutcome, 'Probation');
+  assert.equal(probation.CoreCreditCount, 2);
+
+  const notPromoted = evaluateAcademicPromotionDecision(seniorCumulative({ math: 40, eng: 40, phy: 55, chem: 60, bio: 30 }), configured);
+  assert.equal(notPromoted.RecommendedOutcome, 'Repeated');
+});
+
+test('Senior promotion pauses for review when the configured five-Core-subject curriculum is incomplete', () => {
+  const configured = divisionPolicy();
+  const result = seniorCumulative({ math: 70, eng: 60, phy: 55, chem: 50, bio: 50 });
+  result.Subjects = result.Subjects.filter((subject) => subject.SubjectId !== 'bio');
+  const decision = evaluateAcademicPromotionDecision(result, configured);
+  assert.equal(decision.RecommendedOutcome, 'Pending');
+  assert.equal(decision.RecommendationType, 'Curriculum Review');
+});
+
 test('cumulative, promotion and transcript lifecycles require review before immutable states', () => {
   assert.equal(academicCumulativeTransition('Calculated Draft', 'Reviewed').Allowed, true);
   assert.equal(academicCumulativeTransition('Calculated Draft', 'Locked').Allowed, false);
@@ -159,11 +239,19 @@ test('web and desktop companions expose the same session-outcome workflow withou
   assert.match(adminSource, /Cumulative results/);
   assert.match(adminSource, /Promotion decisions/);
   assert.match(adminSource, /Official Transcripts/);
+  assert.match(adminSource, /'Pending', 'Promoted', 'Probation', 'Repeated'/);
   assert.match(adminSource, /academic-transcript-qr/);
   assert.match(desktopSource, /\("Session Outcomes",/);
+  assert.match(desktopSource, /"Pending", "Promoted", "Probation", "Repeated"/);
   assert.match(desktopSource, /Create Transcript Online/);
   assert.match(desktopSource, /calculateAcademicPromotionDecisions/);
   assert.match(desktopSource, /build_transcript_print_html/);
+});
+
+test('Results and Session Outcomes workspaces define their classroom labels before rendering selectors', () => {
+  assert.match(adminSource, /function academicTermResultsWorkspace\(data, rows\) \{\s+const classroomLabel =/);
+  assert.match(adminSource, /function academicSessionOutcomesWorkspace\(data, rows\) \{\s+const classroomLabel =/);
+  assert.match(adminSource, /data-academic-view="\$\{key\}"/);
 });
 
 test('public transcript verification discloses validation metadata only', () => {
