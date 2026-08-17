@@ -841,12 +841,12 @@ policyField('saveAcademicPolicyButton')?.addEventListener('click', async (event)
 });
 
 activateAcademicPolicyButton?.addEventListener('click', async (event) => {
+  const button = event.currentTarget;
   if (!await window.DynamaxDialogs.confirm({
     title: 'Activate academic policy',
     message: 'Activate this policy for the selected scope, session and term? New academic records will use this effective policy.',
     confirmText: 'Activate policy'
   })) return;
-  const button = event.currentTarget;
   if (!window.DynamaxActionFeedback.begin(button, 'Activating...')) return;
   try {
     await requestAcademicPolicy('activate');
@@ -860,6 +860,7 @@ activateAcademicPolicyButton?.addEventListener('click', async (event) => {
 });
 
 inheritAcademicPolicyButton?.addEventListener('click', async (event) => {
+  const button = event.currentTarget;
   const branchName = settingsBranchField.selectedOptions[0]?.textContent || 'this branch';
   if (!await window.DynamaxDialogs.confirm({
     title: 'Use organisation academic policy',
@@ -867,7 +868,6 @@ inheritAcademicPolicyButton?.addEventListener('click', async (event) => {
     tone: 'danger',
     confirmText: 'Use organisation policy'
   })) return;
-  const button = event.currentTarget;
   if (!window.DynamaxActionFeedback.begin(button, 'Resetting policy...')) return;
   try {
     await requestAcademicPolicy('inherit');
