@@ -959,10 +959,7 @@ function academicClearanceForResult(clearances = [], result = {}) {
 }
 
 function academicResultAuditId() {
-  const suffix = typeof globalThis.crypto?.randomUUID === 'function'
-    ? globalThis.crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  return `academic-result-access-${suffix}`;
+  return `academic-result-access-${globalThis.crypto.randomUUID()}`;
 }
 
 async function auditParentAcademicResultAccess(env, {

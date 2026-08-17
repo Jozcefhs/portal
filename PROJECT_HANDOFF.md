@@ -36,21 +36,22 @@ No passwords, API tokens, private keys or student secrets belong in this file.
 - Branch: `main`
 - Production: `https://destinychristianacademy.pages.dev`
 - Deployment: pushing `main` deploys the Cloudflare Pages application.
-- Current handoff base before this documentation commit:
-  `b68a8b2981831ca712832a22579bb28ee393d61a`
-  (`Reduce scorebook Worker subrequests`).
-- The portal tree was clean when this handoff was prepared.
+- The current accepted revision must be read from `git rev-parse HEAD`; the
+  Milestone 11 production-readiness change follows the earlier
+  `b68a8b2981831ca712832a22579bb28ee393d61a` Scorebook subrequest fix.
 
 ### Desktop and local CBT
 
 - Local path: `C:\Users\DYNAMAX\Documents\New project\suite`
 - Repository: `https://github.com/Jozcefhs/Dynamax-Desktop.git`
 - Branch: `main`
-- Current committed base: `467232c` (`Simplify local CBT candidate login`).
+- Current local committed revision: `c5561a5`
+  (`Complete academic outcomes and local CBT readiness`). Its GitHub push was
+  blocked only by the exhausted Codex account usage allowance; push this exact
+  commit from the next account before adding new desktop changes.
 - Do not build an installer until all remaining milestones are complete.
 
-The desktop tree currently contains important uncommitted work. Preserve and
-review these files as one connected academic/CBT change:
+The connected academic/CBT source change in `c5561a5` contains:
 
 - `README.md`
 - `modules/academic_management.py`
@@ -59,10 +60,11 @@ review these files as one connected academic/CBT change:
 - `modules/students.py`
 - `tests/test_academic_management.py`
 - `tests/test_local_cbt.py`
+- `tools/run_local_cbt_readiness.py`
 
-At handoff the diff was approximately 1,843 insertions and 14 deletions. A new
-account must inspect `git diff` and run the desktop tests before deciding how
-to divide or commit this work. Do not overwrite it with the remote branch.
+The local desktop tree was clean after that commit. Do not reset it to the
+older remote branch; push `c5561a5` first, then rerun the desktop tests in one
+Python environment with `requirements.txt` installed.
 
 ## 3. Product editions and scope
 
@@ -330,13 +332,16 @@ The authoritative 11-milestone plan is in
 | 8 | CBT marking, recovery, adapters and synchronization | Operational baseline in source |
 | 9 | Term results, publication and parent progress | Operational baseline |
 | 10 | Cumulative results, promotion and transcripts | Operational baseline in web and desktop source |
-| 11 | Migration, security/load/recovery hardening and production rollout | Pending |
+| 11 | Migration, security/load/recovery hardening and production rollout | Operational baseline; site-specific physical drill required per school |
 
 Remaining work is not only a number: finish the incomplete hardening and UX
-edges in Milestones 1 and 2, finance-officer clearance administration,
-migration hardening, security review, realistic load tests, recovery drills,
-production rollout and any outstanding acceptance tests. OCR-assisted question
-suggestions are also pending and must remain review-gated.
+edges in Milestones 1 and 2 and any outstanding acceptance tests. Milestone 11
+now supplies Accounts/Finance Officer clearance administration, migration readiness,
+security and release gates, a 220-candidate load/restart/encrypted-restore drill
+and staged production/rollback instructions. Each school still must complete
+the site-specific Android, Windows, router, power and device-transfer checklist
+before its first live CBT. OCR-assisted question suggestions are also pending
+and must remain review-gated.
 
 ## 11. Latest production incident and fix
 
@@ -352,8 +357,8 @@ Production was verified after deployment: the Scorebook loaded the active
 assessment components without the subrequest error. Current cache identifiers
 are:
 
-- admin script: `20260817-scorebook-subrequests`
-- service worker: `dynamax-v243-scorebook-subrequests`
+- admin script: `20260817-academic-milestone-11`
+- service worker: `dynamax-v244-academic-milestone-11`
 
 If the error returns, first verify that the browser has these current assets,
 then inspect the specific API response. Do not “fix” it by raising a Worker
@@ -372,8 +377,8 @@ git diff --check
 git status --short
 ```
 
-The last full portal run before this handoff passed all 939 tests. A later
-documentation-only commit does not change that result.
+The Milestone 11 focused release gate passed all 108 tests and the final full
+portal regression run passed all 945 tests on 2026-08-17.
 
 ### Desktop source
 
@@ -389,6 +394,22 @@ For a narrower CBT/academic check:
 ```powershell
 python -m unittest tests.test_local_cbt tests.test_academic_management
 ```
+
+The application-level local CBT readiness drill passed 220 simulated candidates
+(200 target plus 20 safety margin), with 220 attempts and responses surviving a
+restart and encrypted restore. Run it again with:
+
+```powershell
+python tools\run_local_cbt_readiness.py --candidates 200 --safety-margin 20 --workers 24
+```
+
+During the final handoff verification, desktop discovery reached 248 tests: 245
+passed and three modules could not import because the available verification
+runtimes split the pinned dependencies (`cryptography` in one runtime and
+`requests` in the other). The attempt to download the missing pinned test
+dependency was blocked by the Codex account usage limit. Install
+`suite\requirements.txt` into one Python environment, then rerun the full
+desktop command; do not treat those import errors as executed test failures.
 
 Do not run `tools\build_release.ps1` and do not compile an installer yet.
 

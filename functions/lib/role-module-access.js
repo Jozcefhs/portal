@@ -76,7 +76,7 @@ const LEGACY_ROLE_DEFAULTS = Object.freeze({
   Principal: ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct'],
   Teacher: ['academics'],
   'Admissions Officer': ['recordsDesk', 'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'financeRequests', 'payroll'],
-  'Accounts Officer': ['recordsDesk', 'students', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
+  'Accounts Officer': ['recordsDesk', 'students', 'academics', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
   Management: ['recordsDesk', 'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
   'Student Welfare Officer': ['recordsDesk', 'students', 'studentConduct'],
   'Tuck Shop User': ['recordsDesk', 'tuckShop', 'financeRequests', 'payroll'],

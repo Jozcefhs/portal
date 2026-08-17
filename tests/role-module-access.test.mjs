@@ -155,6 +155,13 @@ test('role access settings expose only edition-appropriate roles and modules', (
   );
 });
 
+test('School Accounts Officers receive only the academic clearance entry by default', () => {
+  const modules = defaultModulesForRole('Accounts Officer', {
+    edition: 'school', featureFlags: featureFlagsForEdition('school')
+  });
+  assert.equal(modules.includes('academics'), true);
+});
+
 test('generic organisation interface has a neutral terminology layer', () => {
   assert.match(adminJs, /Departments & Personnel/);
   assert.match(adminJs, /Budgets & Account Mappings/);

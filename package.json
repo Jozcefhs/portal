@@ -8,6 +8,7 @@
     "test:accounting": "node --test tests/accounting-calculations.test.mjs",
     "generate:pricing-book-sample": "node scripts/generate-pricing-book-sample.mjs",
     "test:payroll": "node --test tests/payroll/backend-security.test.mjs tests/payroll/formula-engine.test.mjs tests/payroll/paye-engine.test.mjs tests/payroll/payroll-calculation.test.mjs tests/payroll/payroll-ledger.test.mjs tests/payroll/payroll-migration.test.mjs tests/payroll/payroll-run-guards.test.mjs",
+    "test:academic-release": "node scripts/academic-release-readiness.mjs && node --test tests/academic-management.test.mjs tests/academic-milestone-11.test.mjs tests/academic-policy.test.mjs tests/academic-result-access.test.mjs tests/academic-cbt-authoring.test.mjs tests/academic-timetable-attendance.test.mjs tests/academic-scorebook.test.mjs tests/academic-term-results.test.mjs tests/academic-session-outcomes.test.mjs tests/parent-academic-result-access.test.mjs tests/student-cbt-login.test.mjs tests/data-backup-restore.test.mjs tests/edition-aware-settings.test.mjs",
     "migrate:notification-reminders": "node scripts/backfill-notification-reminders.mjs",
     "migrate:dynamax-platform": "node scripts/migrate-dynamax-platform-firestore.mjs"
   },

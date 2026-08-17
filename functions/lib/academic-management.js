@@ -153,6 +153,7 @@ export const ACADEMIC_MANAGEMENT_COLLECTIONS = Object.freeze({
   scoreSyncBatches: 'academicScoreSyncBatches',
   cbtTests: 'academicCbtTests',
   termResults: 'academicResults',
+  resultClearances: 'academicResultClearances',
   resultEvents: 'academicResultEvents',
   cumulativeResults: 'academicCumulativeResults',
   cumulativeEvents: 'academicCumulativeEvents',
@@ -190,6 +191,7 @@ const TIMETABLE_MANAGERS = new Set([...STRUCTURE_MANAGERS, 'Examination Officer'
 const TIMETABLE_PUBLISHERS = new Set(['Super Admin', 'Principal', 'Management']);
 const SCORE_REVIEWERS = new Set([...STRUCTURE_MANAGERS, 'Examination Officer']);
 const SCORE_APPROVERS = new Set([...STRUCTURE_MANAGERS, 'Examination Officer']);
+const FINANCE_CLEARANCE_MANAGERS = new Set([...STRUCTURE_MANAGERS, 'Accounts Officer', 'Finance Officer']);
 
 function failure(message, status = 400, code = '') {
   const error = new Error(message);
@@ -278,7 +280,7 @@ function actorUsername(user = {}) {
 
 function recordId(row = {}) {
   return clean(
-    row.RecordId || row.recordId || row.TranscriptEventId || row.TranscriptId || row.PromotionEventId || row.PromotionDecisionId || row.CumulativeEventId || row.CumulativeResultId || row.ResultEventId || row.ResultId || row.CbtTestId || row.ImportId || row.ScoreId || row.SheetId || row.SubstitutionId || row.AttendanceId || row.EntryId || row.VersionId || row.ConstraintId || row.TimetableSettingId
+    row.RecordId || row.recordId || row.ClearanceId || row.TranscriptEventId || row.TranscriptId || row.PromotionEventId || row.PromotionDecisionId || row.CumulativeEventId || row.CumulativeResultId || row.ResultEventId || row.ResultId || row.CbtTestId || row.ImportId || row.ScoreId || row.SheetId || row.SubstitutionId || row.AttendanceId || row.EntryId || row.VersionId || row.ConstraintId || row.TimetableSettingId
       || row.MovementId || row.MembershipId || row.AllocationId || row.OfferingId
       || row.DepartmentId || row.SubjectId || row.ArmId || row.ArmTemplateId || row.ClassId || row.TermId || row.SessionId || row.__id
   );
@@ -336,10 +338,12 @@ export function academicManagementCapabilities(user = {}) {
     canCalculateCumulativeResults: enabled && SCORE_REVIEWERS.has(role),
     canManagePromotions: enabled && SCORE_APPROVERS.has(role),
     canIssueTranscripts: enabled && SCORE_APPROVERS.has(role),
+    canManageFinancialClearance: enabled && FINANCE_CLEARANCE_MANAGERS.has(role),
     canImportScores: enabled && (SCORE_REVIEWERS.has(role) || role === 'Teacher' || academicsDepartmentUser),
     canArchive: enabled && STRUCTURE_MANAGERS.has(role),
     canDelete: enabled && STRUCTURE_MANAGERS.has(role),
-    teacherView: enabled && (role === 'Teacher' || academicsDepartmentUser)
+    teacherView: enabled && (role === 'Teacher' || academicsDepartmentUser),
+    financeView: enabled && ['Accounts Officer', 'Finance Officer'].includes(role)
   };
 }
 
@@ -604,6 +608,29 @@ export function normalizeAcademicStudentMembership(input = {}, context = {}, exi
   };
 }
 
+export function normalizeAcademicResultClearance(input = {}, context = {}, existing = null) {
+  const branchId = safeScopeId(context.branchId);
+  const section = scopedSection({ SchoolSection: context.section });
+  const sessionId = clean(input.SessionId ?? existing?.SessionId);
+  const termId = clean(input.TermId ?? existing?.TermId);
+  const studentRef = clean(input.StudentRef ?? existing?.StudentRef);
+  const clearanceId = clean(existing?.ClearanceId || input.ClearanceId || input.RecordId)
+    || academicId('clearance', branchId, section, sessionId, termId, studentRef);
+  const expiryDate = dateValue(input.ExpiryDate ?? existing?.ExpiryDate, 'clearance expiry date', false);
+  return {
+    ...(existing || {}), RecordId: clearanceId, ClearanceId: clearanceId,
+    StudentRef: studentRef, ResultId: clean(input.ResultId ?? existing?.ResultId),
+    SessionId: sessionId, TermId: termId,
+    AcademicSession: clean(input.AcademicSession ?? existing?.AcademicSession),
+    Term: clean(input.Term ?? existing?.Term),
+    Reason: clean(input.Reason ?? existing?.Reason).slice(0, 1000),
+    ExpiryDate: expiryDate,
+    ExpiresAt: expiryDate ? `${expiryDate}T23:59:59.999Z` : '',
+    Status: oneOf(input.Status, ['Approved', 'Revoked'], existing?.Status || 'Approved'),
+    BranchId: branchId, SchoolSection: section
+  };
+}
+
 const RECORD_TYPES = Object.freeze({
   session: { collection: ACADEMIC_MANAGEMENT_COLLECTIONS.sessions, normalize: normalizeAcademicSession, capability: 'canManageStructure' },
   term: { collection: ACADEMIC_MANAGEMENT_COLLECTIONS.terms, normalize: normalizeAcademicTerm, capability: 'canManageStructure' },
@@ -623,13 +650,13 @@ function normalizedRecordType(value) {
 
 async function loadAcademicState(env, branchId, requestedKeys = null) {
   const requested = Array.isArray(requestedKeys) && requestedKeys.length ? new Set(requestedKeys) : null;
-  const collections = Object.entries(ACADEMIC_MANAGEMENT_COLLECTIONS)
-    .filter(([key]) => key !== 'audit' && (!requested || requested.has(key)));
+  const allCollections = Object.entries(ACADEMIC_MANAGEMENT_COLLECTIONS).filter(([key]) => key !== 'audit');
+  const collections = allCollections.filter(([key]) => !requested || requested.has(key));
   const groups = await Promise.all(collections.map(([, collection]) => listCollection(env, collection).catch(() => [])));
-  return Object.fromEntries(collections.map(([key], index) => [
-    key,
-    groups[index].filter((row) => lower(row.BranchId || 'main') === lower(branchId))
+  const loaded = new Map(collections.map(([key], index) => [
+    key, groups[index].filter((row) => lower(row.BranchId || 'main') === lower(branchId))
   ]));
+  return Object.fromEntries(allCollections.map(([key]) => [key, loaded.get(key) || []]));
 }
 
 function findById(rows = [], id = '') {
@@ -638,6 +665,85 @@ function findById(rows = [], id = '') {
 
 function studentReference(row = {}) {
   return clean(row.AdmissionNo || row.AccountRef || row.ApplicationReference || row.__id);
+}
+
+export function academicMigrationReadiness(state = {}, students = []) {
+  const issues = [];
+  const add = (severity, code, message, recordType = '', recordIdValue = '') => issues.push({
+    Severity: severity, Code: code, Message: message,
+    RecordType: recordType, RecordId: clean(recordIdValue)
+  });
+  const sessions = new Set((state.sessions || []).map(recordId));
+  const terms = new Set((state.terms || []).map(recordId));
+  const classes = new Map((state.classes || []).map((row) => [recordId(row), row]));
+  const arms = new Map((state.arms || []).map((row) => [recordId(row), row]));
+  const subjects = new Set((state.subjects || []).map(recordId));
+  const departments = new Map((state.departments || []).map((row) => [recordId(row), row]));
+  const studentRefs = new Set((students || []).map((row) => lower(studentReference(row))).filter(Boolean));
+
+  (state.arms || []).forEach((row) => {
+    if (!classes.has(row.ClassId)) add('Error', 'ORPHAN_ARM_CLASS', 'This classroom references a class that no longer exists.', 'arm', recordId(row));
+  });
+  (state.departments || []).forEach((row) => (row.CoreSubjectIds || []).forEach((subjectId) => {
+    if (!subjects.has(subjectId)) add('Error', 'ORPHAN_DEPARTMENT_SUBJECT', 'This department references a Core subject that no longer exists.', 'department', recordId(row));
+  }));
+  (state.offerings || []).forEach((row) => {
+    const schoolClass = classes.get(row.ClassId);
+    if (!sessions.has(row.SessionId) || !terms.has(row.TermId) || !schoolClass || !subjects.has(row.SubjectId) || (row.ArmId && !arms.has(row.ArmId))) {
+      add('Error', 'ORPHAN_SUBJECT_OFFERING', 'This subject offering contains a missing session, term, class, arm or subject reference.', 'offering', recordId(row));
+    } else if (schoolStageValue(schoolClass.SchoolStage, schoolClass.SchoolSection, schoolClass.Name) === 'senior-secondary') {
+      add('Warning', 'LEGACY_SENIOR_OFFERING', 'This legacy Senior class offering no longer controls Core, Trade or Optional curriculum and should be reviewed.', 'offering', recordId(row));
+    }
+  });
+
+  const currentMemberships = new Map();
+  (state.studentMemberships || []).forEach((row) => {
+    const id = recordId(row);
+    const schoolClass = classes.get(row.ClassId);
+    const arm = arms.get(row.ArmId);
+    if (!sessions.has(row.SessionId) || !terms.has(row.TermId) || !schoolClass || !arm || arm.ClassId !== row.ClassId) {
+      add('Error', 'ORPHAN_STUDENT_MEMBERSHIP', 'This membership contains a missing or mismatched session, term, class or arm reference.', 'student membership', id);
+    }
+    if (!studentRefs.has(lower(row.StudentRef))) {
+      add('Error', 'MISSING_STUDENT_PROFILE', 'This academic membership has no matching branch and section student profile.', 'student membership', id);
+    }
+    const stage = schoolStageValue(row.SchoolStage || schoolClass?.SchoolStage, row.SchoolSection, schoolClass?.Name);
+    if (stage === 'senior-secondary' && !departments.has(row.DepartmentId)) {
+      add('Warning', 'PENDING_SENIOR_DEPARTMENT', 'Choose a valid Senior department before this curriculum is considered ready.', 'student membership', id);
+    }
+    if (stage === 'senior-secondary' && !(row.TradeSubjectIds || []).length) {
+      add('Warning', 'PENDING_TRADE_SUBJECT', 'This Senior student must choose at least one Trade subject.', 'student membership', id);
+    }
+    if (/pending/i.test(clean(row.CurriculumStatus))) {
+      add('Warning', 'PENDING_CURRICULUM', 'This student curriculum is still marked for completion.', 'student membership', id);
+    }
+    if (lower(row.Status) === 'active') {
+      const key = [lower(row.BranchId), lower(row.SchoolSection), row.SessionId, row.TermId, lower(row.StudentRef)].join('|');
+      if (currentMemberships.has(key)) {
+        add('Error', 'DUPLICATE_CURRENT_MEMBERSHIP', 'The student has more than one active membership in the same academic period.', 'student membership', id);
+      } else currentMemberships.set(key, id);
+    }
+  });
+
+  const errors = issues.filter((issue) => issue.Severity === 'Error').length;
+  const warnings = issues.filter((issue) => issue.Severity === 'Warning').length;
+  return {
+    Status: errors ? 'Blocked' : warnings ? 'Review required' : 'Ready',
+    Errors: errors,
+    Warnings: warnings,
+    Issues: issues,
+    Counts: {
+      Sessions: (state.sessions || []).length,
+      Terms: (state.terms || []).length,
+      Classes: (state.classes || []).length,
+      Arms: (state.arms || []).length,
+      Subjects: (state.subjects || []).length,
+      Departments: (state.departments || []).length,
+      Offerings: (state.offerings || []).length,
+      Memberships: (state.studentMemberships || []).length,
+      StudentProfiles: studentRefs.size
+    }
+  };
 }
 
 function academicStudentDocumentId(reference) {
@@ -852,9 +958,7 @@ export function normalizeAcademicStudentMovement(input = {}, context = {}, befor
   const effectiveDate = dateValue(input.EffectiveDate || nowIso().slice(0, 10), 'movement effective date');
   const reason = clean(input.Reason || input.MovementReason);
   if (type !== 'Allocation' && !reason) throw failure('Enter the reason for this student movement.');
-  const token = typeof globalThis.crypto?.randomUUID === 'function'
-    ? globalThis.crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const token = globalThis.crypto.randomUUID();
   const movementId = clean(input.MovementId) || academicId('movement', branchId, section, sessionId, termId, studentRef, token);
   return {
     RecordId: movementId, MovementId: movementId, MovementType: type,
@@ -1236,6 +1340,8 @@ function sortAcademicState(state) {
     cbtTests: [...state.cbtTests].sort((a, b) => clean(b.StartsAt || b.CreatedAt).localeCompare(clean(a.StartsAt || a.CreatedAt))),
     termResults: [...state.termResults].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId))
       || clean(a.ArmId).localeCompare(clean(b.ArmId)) || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
+    resultClearances: [...state.resultClearances].sort((a, b) => clean(a.StudentRef).localeCompare(clean(b.StudentRef))
+      || clean(b.ApprovedAt || b.UpdatedAt).localeCompare(clean(a.ApprovedAt || a.UpdatedAt))),
     resultEvents: [...state.resultEvents].sort((a, b) => clean(b.CreatedAt).localeCompare(clean(a.CreatedAt))),
     cumulativeResults: [...state.cumulativeResults].sort((a, b) => clean(a.ClassId).localeCompare(clean(b.ClassId))
       || clean(a.ArmId).localeCompare(clean(b.ArmId)) || clean(a.StudentRef).localeCompare(clean(b.StudentRef))),
@@ -1259,8 +1365,11 @@ function currentSelection(state, input = {}) {
 export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
   const permissions = requireCapability(user, 'enabled');
   const scope = await academicScope(env, user, input, { requireSection: false });
+  const requestedStateKeys = permissions.financeView
+    ? ['sessions', 'terms', 'classes', 'arms', 'studentMemberships', 'resultClearances']
+    : null;
   const [rawState, people, audit] = await Promise.all([
-    loadAcademicState(env, scope.branchId),
+    loadAcademicState(env, scope.branchId, requestedStateKeys),
     loadPeople(env, user, scope),
     permissions.canManageStructure
       ? listCollection(env, ACADEMIC_MANAGEMENT_COLLECTIONS.audit).catch(() => [])
@@ -1268,7 +1377,10 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
   ]);
   let state = Object.fromEntries(Object.entries(rawState).map(([key, rows]) => [key, scopedRows(rows, scope)]));
   let students = people.students;
-  if (permissions.teacherView) {
+  if (permissions.financeView) {
+    const visibleStudents = new Set(state.studentMemberships.map((row) => lower(row.StudentRef)));
+    students = students.filter((row) => visibleStudents.has(lower(studentReference(row))));
+  } else if (permissions.teacherView) {
     const username = actorUsername(user);
     const substituteEntryIds = new Set(state.timetableSubstitutions.filter((row) => lower(row.Status) === 'scheduled'
       && lower(row.SubstituteTeacherUsername) === username).map((row) => row.TimetableEntryId));
@@ -1314,6 +1426,9 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     students = students.filter((row) => visibleStudents.has(lower(studentReference(row))));
   }
   state = sortAcademicState(state);
+  const migrationReadiness = permissions.canManageStructure
+    ? academicMigrationReadiness(state, students)
+    : null;
   const selection = currentSelection(state, input);
   const selectedSession = findById(state.sessions, selection.SessionId);
   const selectedTerm = findById(state.terms, selection.TermId);
@@ -1333,6 +1448,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     sections: scope.structure.Sections,
     selection,
     assessmentScheme,
+    ...(migrationReadiness ? { migrationReadiness } : {}),
     ...Object.fromEntries(Object.entries(state).map(([key, rows]) => [key, rows.map(publicRecord)])),
     staff: displayStaff(permissions.teacherView ? people.staff.filter((row) => lower(row.Username || row.__id) === actorUsername(user)) : people.staff),
     students: displayStudents(students, state.classes),
@@ -1360,6 +1476,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
       ScoreSyncBatches: state.scoreSyncBatches.length,
       CbtTests: state.cbtTests.length,
       TermResults: state.termResults.length,
+      ResultClearances: state.resultClearances.length,
       ResultEvents: state.resultEvents.length,
       CumulativeResults: state.cumulativeResults.length,
       PromotionDecisions: state.promotionDecisions.length,
@@ -5021,6 +5138,95 @@ export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {})
   };
 }
 
+export async function grantAcademicResultClearance(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageFinancialClearance');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const state = await loadAcademicState(env, scope.branchId, [
+    'sessions', 'terms', 'classes', 'studentMemberships', 'resultClearances'
+  ]);
+  const scopedState = Object.fromEntries(Object.entries(state).map(([key, rows]) => [key, scopedRows(rows, scope)]));
+  const session = assertReference(findById(scopedState.sessions, input.SessionId), 'Choose a valid academic session.');
+  const term = assertReference(findById(scopedState.terms, input.TermId), 'Choose a valid academic term.');
+  if (term.SessionId !== session.SessionId) throw failure('The selected term does not belong to this academic session.');
+  const studentRef = clean(input.StudentRef);
+  const membership = scopedState.studentMemberships.find((row) => lower(row.StudentRef) === lower(studentRef)
+    && row.SessionId === session.SessionId && row.TermId === term.TermId);
+  if (!membership) throw failure('The selected student has no membership in this academic period.', 404, 'ACADEMIC_CLEARANCE_STUDENT_NOT_FOUND');
+  const policyView = await loadAcademicPolicyView(env, {
+    scope: academicPolicyScopeChain({ BranchId: scope.branchId, SectionId: scope.section, ClassId: membership.ClassId }).at(-1),
+    scopeChain: academicPolicyScopeChain({ BranchId: scope.branchId, SectionId: scope.section, ClassId: membership.ClassId }),
+    period: { SessionId: session.SessionId, TermId: term.TermId, Session: session.Name, Term: term.Name }
+  });
+  const financial = normalizeAcademicPolicy(policyView.ActivePolicy || {}).ResultAccess.FinancialClearance;
+  if (financial.Mode !== 'manual-clearance' && financial.AllowManualExemptions !== true) {
+    throw failure('The active financial policy does not permit manual result clearance for this class and period.', 409, 'ACADEMIC_CLEARANCE_POLICY_FORBIDDEN');
+  }
+  const reason = clean(input.Reason);
+  if (reason.length < 5) throw failure('Enter a clear finance reason of at least 5 characters.');
+  const requestedId = clean(input.ClearanceId || input.RecordId)
+    || academicId('clearance', scope.branchId, scope.section, session.SessionId, term.TermId, studentRef);
+  const existing = findById(scopedState.resultClearances, requestedId);
+  const record = normalizeAcademicResultClearance({
+    ...input, ClearanceId: requestedId, StudentRef: membership.StudentRef,
+    SessionId: session.SessionId, TermId: term.TermId,
+    AcademicSession: session.Name, Term: term.Name, Reason: reason, Status: 'Approved'
+  }, scope, existing);
+  if (record.ExpiryDate && record.ExpiryDate < nowIso().slice(0, 10)) {
+    throw failure('The clearance expiry date cannot be in the past.');
+  }
+  const timestamp = nowIso();
+  Object.assign(record, {
+    CreatedAt: clean(existing?.CreatedAt) || timestamp,
+    CreatedBy: clean(existing?.CreatedBy) || actorName(user),
+    ApprovedAt: timestamp,
+    ApprovedBy: actorName(user),
+    ApprovedByUsername: actorUsername(user),
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName(user),
+    RevokedAt: '', RevokedBy: '', RevokedByUsername: '', RevocationReason: ''
+  });
+  await batchCommitDocuments(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.resultClearances, documentId: record.ClearanceId,
+      data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken) },
+    auditWrite(user, existing ? 'REAPPROVE' : 'GRANT', 'result clearance', record,
+      `${record.StudentRef}; expires ${record.ExpiryDate || 'when revoked'}`)
+  ]);
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section,
+    SessionId: session.SessionId, TermId: term.TermId
+  });
+  return { ...response, message: `Result clearance approved for ${record.StudentRef}.` };
+}
+
+export async function revokeAcademicResultClearance(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageFinancialClearance');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const state = await loadAcademicState(env, scope.branchId, ['resultClearances']);
+  const existing = scopedRows(state.resultClearances, scope).find((row) => recordId(row) === clean(input.ClearanceId));
+  if (!existing) throw failure('The selected result clearance was not found.', 404, 'ACADEMIC_CLEARANCE_NOT_FOUND');
+  if (lower(existing.Status) !== 'approved') throw failure('This result clearance is not currently active.', 409, 'ACADEMIC_CLEARANCE_NOT_ACTIVE');
+  const reason = clean(input.Reason);
+  if (reason.length < 5) throw failure('Enter a revocation reason of at least 5 characters.');
+  const timestamp = nowIso();
+  const record = {
+    ...existing, Status: 'Revoked', RevokedAt: timestamp,
+    RevokedBy: actorName(user), RevokedByUsername: actorUsername(user),
+    RevocationReason: reason.slice(0, 1000), UpdatedAt: timestamp, UpdatedBy: actorName(user)
+  };
+  await batchCommitDocuments(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.resultClearances, documentId: record.ClearanceId,
+      data: withoutMetadata(record), ...writePrecondition(existing, input.RevisionToken) },
+    auditWrite(user, 'REVOKE', 'result clearance', record, `${record.StudentRef}; ${reason}`)
+  ]);
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section,
+    SessionId: existing.SessionId, TermId: existing.TermId
+  });
+  return { ...response, message: `Result clearance revoked for ${record.StudentRef}.` };
+}
+
 export async function handleAcademicManagementAction(env, user = {}, input = {}) {
   const action = lower(input.action || input.Action).replace(/[^a-z]/g, '');
   if (['bootstrap', 'list', 'getacademicmanagement'].includes(action)) return bootstrapAcademicManagement(env, user, input);
@@ -5080,6 +5286,8 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['downloadacademiccbttestpackage', 'downloadcbttestpackage'].includes(action)) return downloadAcademicCbtTestPackage(env, user, input);
   if (['acknowledgeacademiccbtimport', 'acknowledgecbtimport'].includes(action)) return acknowledgeAcademicCbtImport(env, user, input);
   if (['preparelocalcbtidentitypackage', 'preparecbtidentitypackage'].includes(action)) return prepareLocalCbtIdentityPackage(env, user, input);
+  if (['grantacademicresultclearance', 'grantresultclearance'].includes(action)) return grantAcademicResultClearance(env, user, input);
+  if (['revokeacademicresultclearance', 'revokeresultclearance'].includes(action)) return revokeAcademicResultClearance(env, user, input);
   if (['manageacademicstudentmembership', 'moveacademicstudentmembership', 'withdrawacademicstudentmembership', 'reinstateacademicstudentmembership'].includes(action)) {
     const inferredOperation = ({
       withdrawacademicstudentmembership: 'withdraw',

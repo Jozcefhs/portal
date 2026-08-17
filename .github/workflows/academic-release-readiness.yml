@@ -1,0 +1,53 @@
+name: Academic release readiness
+
+on:
+  pull_request:
+    paths:
+      - "functions/**"
+      - "js/admin.js"
+      - "admin.html"
+      - "sw.js"
+      - "_headers"
+      - "tests/academic-*.test.mjs"
+      - "tests/parent-academic-result-access.test.mjs"
+      - "tests/student-cbt-login.test.mjs"
+      - "tests/data-backup-restore.test.mjs"
+      - "tests/edition-aware-settings.test.mjs"
+      - "docs/academic-*.md"
+      - "scripts/academic-release-readiness.mjs"
+      - "package.json"
+      - "package-lock.json"
+  push:
+    branches: [main]
+    paths:
+      - "functions/**"
+      - "js/admin.js"
+      - "admin.html"
+      - "sw.js"
+      - "_headers"
+      - "tests/academic-*.test.mjs"
+      - "tests/parent-academic-result-access.test.mjs"
+      - "tests/student-cbt-login.test.mjs"
+      - "tests/data-backup-restore.test.mjs"
+      - "tests/edition-aware-settings.test.mjs"
+      - "docs/academic-*.md"
+      - "scripts/academic-release-readiness.mjs"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:academic-release

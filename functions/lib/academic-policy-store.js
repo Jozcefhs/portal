@@ -96,9 +96,7 @@ export async function loadAcademicPolicyView(env, {
 }
 
 function revisionId(assignmentId) {
-  const suffix = typeof globalThis.crypto?.randomUUID === 'function'
-    ? globalThis.crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const suffix = globalThis.crypto.randomUUID();
   return `${assignmentId}__revision__${suffix}`;
 }
 

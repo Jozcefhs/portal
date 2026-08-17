@@ -10,7 +10,11 @@ local CBT foundation, Milestone 7 examination-authoring/document-delivery
 slice and Milestone 8 marking/recovery/synchronization baseline are also
 operational in source. The Milestone 9 term-result calculation, controlled
 publication and parent-progress baseline is operational on the web companion
-and desktop source. The School
+and desktop source. Milestone 11 now has an operational production-readiness
+baseline: read-only migration diagnostics, least-privilege Finance Officer
+clearance administration, cryptographic identifiers, hardened web responses,
+an automated release gate, a reproducible 220-candidate local CBT load/restart/
+encrypted-restore drill, a staged rollout runbook and rollback procedures. The School
 edition now has an effective-dated academic-policy schema, immutable
 policy revisions, separate draft and active states, organisation-to-branch
 inheritance, activation validation and administrator controls for result
@@ -928,6 +932,38 @@ The web companion and desktop source now use the same online contracts for:
 All calculation and workflow operations preserve policy revision references,
 create immutable outcome events and write the protected security audit trail.
 Desktop packaging remains deferred until the remaining milestones are complete.
+
+### Milestone 11 implementation status
+
+Operational baseline completed on 2026-08-17. The web companion now provides:
+
+- a read-only Release readiness workspace that blocks migration on orphan or
+  duplicate academic records and flags unresolved Senior curriculum decisions;
+- period-scoped Accounts/Finance Officer result-clearance approval, reapproval and
+  revocation with active-policy enforcement, optimistic concurrency and audit;
+- least-privilege Finance Officer bootstrap reads that do not expose scorebook,
+  results-publication or unrelated academic collections;
+- cryptographically generated security-sensitive identifiers and consistent
+  clickjacking, MIME-sniffing, referrer and browser-permission headers;
+- a focused academic release test command and GitHub release-readiness gate;
+  and
+- versioned browser assets, deployment smoke checks, observability guidance and
+  an explicit code/data rollback procedure.
+
+The desktop source now includes a disposable readiness drill that provisions
+the planned simultaneous-candidate target plus a safety margin, authenticates
+with admission number and personal-password challenge proof, saves concurrently,
+reopens SQLite, checks integrity, and proves encrypted backup restoration. The
+baseline run exercised 220 candidates and retained 220 attempts and responses
+without data loss.
+
+The exact site hardware and network remain deployment inputs, not hardcoded
+product policy. Each school must execute the physical Android/Windows,
+router-loss, power/restart and device-transfer checklist before its own first
+live CBT. A failed site-specific drill blocks that school's rollout but does
+not invalidate the completed application-level baseline. The operational
+procedure and retained evidence are defined in
+`docs/academic-milestone-11-runbook.md`.
 
 ## 18. Cross-cutting acceptance criteria
 

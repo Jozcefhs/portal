@@ -9483,7 +9483,7 @@ async function loadStudentConduct() {
 }
 
 function academicRecordId(row = {}) {
-  return clean(row.RecordId || row.TranscriptEventId || row.TranscriptId || row.PromotionEventId || row.PromotionDecisionId || row.CumulativeEventId || row.CumulativeResultId || row.ResultEventId || row.ResultId || row.CbtTestId || row.ImportId || row.ScoreId || row.SheetId || row.CorrectionId || row.AttendanceId || row.EntryId || row.VersionId || row.TimetableSettingId
+  return clean(row.RecordId || row.ClearanceId || row.TranscriptEventId || row.TranscriptId || row.PromotionEventId || row.PromotionDecisionId || row.CumulativeEventId || row.CumulativeResultId || row.ResultEventId || row.ResultId || row.CbtTestId || row.ImportId || row.ScoreId || row.SheetId || row.CorrectionId || row.AttendanceId || row.EntryId || row.VersionId || row.TimetableSettingId
     || row.MovementId || row.MembershipId || row.AllocationId || row.OfferingId
     || row.DepartmentId || row.SubjectId || row.ArmId || row.ArmTemplateId || row.ClassId || row.TermId || row.SessionId);
 }
@@ -9857,6 +9857,7 @@ function academicCurrentRows(data = academicManagementData || {}) {
     scoreSyncBatches: periodRows(data.scoreSyncBatches || []),
     cbtTests: periodRows(data.cbtTests || []),
     termResults: periodRows(data.termResults || []),
+    resultClearances: periodRows(data.resultClearances || []),
     resultEvents: periodRows(data.resultEvents || []),
     cumulativeResults: sessionRows(data.cumulativeResults || []),
     cumulativeEvents: sessionRows(data.cumulativeEvents || []),
@@ -9981,6 +9982,13 @@ function academicTaskDefinitions(view, root) {
     cbt: [
       { key: 'create', label: 'New CBT test', title: 'Create and schedule a CBT test', description: 'Enter the test details, then upload its question paper and mark one correct answer per question.', nodes: nodes(form('[data-academic-cbt-editor]')) },
       { key: 'register', label: 'Scheduled tests', title: 'Scheduled CBT tests', description: 'Review online tests and correct or delete a package before it reaches a local CBT server.', nodes: nodes(register('Scheduled CBT Tests')) }
+    ],
+    clearances: [
+      { key: 'grant', label: 'Grant clearance', title: 'Approve result access', description: 'Grant or correct a reasoned, expiring financial clearance for one student and academic period.', nodes: nodes(form('[data-academic-finance-clearance]')) },
+      { key: 'register', label: 'Clearance register', title: 'Result clearance history', description: 'Review approved, expired and revoked clearances and correct a trial or mistaken entry safely.', nodes: nodes(register('Result Clearance Register')) }
+    ],
+    readiness: [
+      { key: 'migration', label: 'Migration integrity', title: 'Academic migration readiness', description: 'Resolve missing references, duplicate memberships and curriculum warnings before production rollout.', nodes: nodes(form('.academic-management-editor'), register('Academic Migration Readiness')) }
     ]
   };
   return (definitions[view] || []).filter((task) => task.nodes.length);
@@ -11636,6 +11644,60 @@ function academicCbtWorkspace(data, rows) {
   return `${editor}${register}`;
 }
 
+function academicFinanceClearanceWorkspace(data, rows) {
+  const canManage = data.permissions?.canManageFinancialClearance === true;
+  const memberships = rows.studentMemberships || [];
+  const studentOptions = memberships.map((membership) => ({
+    ...membership,
+    RecordId: membership.StudentRef,
+    Name: `${academicLabel(data.students, membership.StudentRef, membership.StudentRef)} (${membership.StudentRef})`
+  })).sort((a, b) => a.Name.localeCompare(b.Name, undefined, { sensitivity: 'base' }));
+  const form = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-finance-clearance>
+    <input type="hidden" name="ClearanceId"><input type="hidden" name="RevisionToken">
+    <div class="academic-management-editor-heading"><div><small>Finance-controlled access</small><h3>Grant result clearance</h3><p class="muted">Approve one student for the selected session and term. The active academic policy decides whether this clearance is used as a manual requirement or exemption.</p></div><button type="button" class="secondary" data-academic-clearance-clear>Clear</button></div>
+    <div class="academic-management-form-grid academic-management-form-grid-3">
+      <label>Student<select name="StudentRef" required>${academicSelectOptions(studentOptions, '', (row) => row.Name, 'Choose student')}</select></label>
+      <label>Expiry date<input name="ExpiryDate" type="date"><small>Optional. Leave blank for access until revoked.</small></label>
+      <label class="config-grid-span">Finance reason<input name="Reason" maxlength="1000" required placeholder="Reason for approving result access"><small>Required and permanently audited.</small></label>
+    </div>
+    <div class="academic-management-form-actions"><button type="submit">Approve result clearance</button></div>
+  </form>` : '<div class="academic-view-only-note"><strong>Result clearance register</strong><span>Your role can review clearances but cannot grant or revoke them.</span></div>';
+  const register = table('Result Clearance Register', rows.resultClearances || [], [
+    { label: 'Student', render: (row) => `${escapeHtml(academicLabel(data.students, row.StudentRef, row.StudentRef))}<small>${escapeHtml(row.StudentRef)}</small>` },
+    { label: 'Status', render: (row) => {
+      const expired = clean(row.Status).toLowerCase() === 'approved' && row.ExpiresAt && Date.parse(row.ExpiresAt) < Date.now();
+      return escapeHtml(expired ? 'Expired' : row.Status);
+    } },
+    { label: 'Expires', value: (row) => row.ExpiryDate || 'When revoked' },
+    { label: 'Reason', value: (row) => row.Reason },
+    { label: 'Approved by', value: (row) => row.ApprovedBy },
+    { label: 'Actions', render: (row) => {
+      if (!canManage) return '<span class="muted">View only</span>';
+      const active = clean(row.Status).toLowerCase() === 'approved' && (!row.ExpiresAt || Date.parse(row.ExpiresAt) >= Date.now());
+      return `<div class="academic-management-row-actions"><button type="button" class="compact-icon-action compact-edit-action" data-academic-clearance-edit="${escapeHtml(row.ClearanceId)}" title="${active ? 'Edit clearance' : 'Reapprove clearance'}" aria-label="${active ? 'Edit clearance' : 'Reapprove clearance'}">&#9998;</button>${active ? `<button type="button" class="compact-icon-action academic-archive-action" data-academic-clearance-revoke="${escapeHtml(row.ClearanceId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Revoke clearance" aria-label="Revoke clearance">&#128465;</button>` : ''}</div>`;
+    } }
+  ], { emptyMessage: 'No manual result clearances have been granted for this academic period.' });
+  return `${form}${register}`;
+}
+
+function academicMigrationReadinessWorkspace(data) {
+  const report = data.migrationReadiness || { Status: 'Unavailable', Errors: 0, Warnings: 0, Issues: [], Counts: {} };
+  const counts = report.Counts || {};
+  const summary = `<section class="academic-management-editor academic-management-editor-wide">
+    <div class="academic-management-editor-heading"><div><small>Milestone 11 migration gate</small><h3>${escapeHtml(report.Status)}</h3><p class="muted">This read-only audit finds orphaned references, duplicate current memberships, legacy Senior offerings and incomplete Senior curricula before rollout.</p></div><strong>${Number(report.Errors || 0)} errors · ${Number(report.Warnings || 0)} warnings</strong></div>
+    <div class="academic-summary-grid"><div><small>Student profiles</small><strong>${Number(counts.StudentProfiles || 0)}</strong></div><div><small>Memberships</small><strong>${Number(counts.Memberships || 0)}</strong></div><div><small>Classrooms</small><strong>${Number(counts.Arms || 0)}</strong></div><div><small>Subjects</small><strong>${Number(counts.Subjects || 0)}</strong></div></div>
+    <p class="muted">Errors must be resolved before rollout. Warnings require an administrator decision; no record is silently changed or deleted by this audit.</p>
+  </section>`;
+  const register = table('Academic Migration Readiness', report.Issues || [], [
+    { label: 'Severity', value: (row) => row.Severity },
+    { label: 'Issue', value: (row) => row.Code },
+    { label: 'Record type', value: (row) => row.RecordType },
+    { label: 'Record', value: (row) => row.RecordId },
+    { label: 'Required action', value: (row) => row.Message }
+  ], { emptyMessage: 'No migration integrity issues were found.' });
+  return `${summary}${register}`;
+}
+
 function academicManagementHeader(data, rows, message = '') {
   const sessions = (data.sessions || []).filter(academicIsActive);
   const terms = (data.terms || []).filter((row) => !academicManagementFilters.sessionId || row.SessionId === academicManagementFilters.sessionId);
@@ -11644,9 +11706,12 @@ function academicManagementHeader(data, rows, message = '') {
     !['primary', 'secondary'].includes(permittedSection) || section === permittedSection
   ));
   const cbtView = data.permissions?.canCreateCbt ? [['cbt', 'CBT']] : [];
-  const views = data.permissions?.teacherView
+  const adminViews = [['classrooms', 'Classrooms'], ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', 'Student records'], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ['outcomes', 'Session outcomes'], ...(data.permissions?.canManageFinancialClearance ? [['clearances', 'Result clearances']] : []), ...(data.permissions?.canManageStructure ? [['readiness', 'Release readiness']] : []), ...cbtView];
+  const views = data.permissions?.financeView
+    ? [['clearances', 'Result clearances']]
+    : data.permissions?.teacherView
     ? [['classrooms', 'Classrooms'], ['structure', 'Catalogue'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['teachers', 'My allocations'], ['students', 'My registers'], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ...cbtView]
-    : [['classrooms', 'Classrooms'], ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', 'Student records'], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ['outcomes', 'Session outcomes'], ...cbtView];
+    : adminViews;
   return `<div class="academic-management-heading">
     <div><p class="eyebrow">AM-002 to AM-011</p><h2>Academic Management</h2><p class="muted">Branch-isolated structure, timetables, attendance, assessment and controlled term-result publication.</p></div>
     <button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button>
@@ -11663,6 +11728,7 @@ function academicManagementHeader(data, rows, message = '') {
 
 function renderAcademicManagement(data = academicManagementData || {}, message = '') {
   academicManagementData = data;
+  if (data.permissions?.financeView) academicManagementView = 'clearances';
   const permittedSection = clean(currentUser?.schoolSectionAccess).toLowerCase();
   const responseSection = clean(data.scope?.SchoolSection).toLowerCase();
   if (!academicManagementFilters.section) {
@@ -11693,6 +11759,8 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
   else if (academicManagementView === 'scorebook') workspace = academicScorebookWorkspace(data, rows);
   else if (academicManagementView === 'results') workspace = academicTermResultsWorkspace(data, rows);
   else if (academicManagementView === 'outcomes') workspace = academicSessionOutcomesWorkspace(data, rows);
+  else if (academicManagementView === 'clearances') workspace = academicFinanceClearanceWorkspace(data, rows);
+  else if (academicManagementView === 'readiness') workspace = academicMigrationReadinessWorkspace(data);
   else if (academicManagementView === 'cbt') workspace = academicCbtWorkspace(data, rows);
   else workspace = academicStructureWorkspace(data, rows);
   panelEl.innerHTML = `${academicManagementHeader(data, rows, message)}<section class="academic-management-workspace">${workspace}</section>`;
@@ -12020,6 +12088,62 @@ async function uploadAcademicCbtPaper(payload, idempotencyKey) {
 
 function bindAcademicManagement() {
   panelEl.querySelectorAll('[data-academic-checkbox-field]').forEach(bindAcademicCheckboxField);
+  const clearanceForm = panelEl.querySelector('[data-academic-finance-clearance]');
+  const clearClearanceForm = () => {
+    clearanceForm?.reset();
+    if (clearanceForm?.elements.ClearanceId) clearanceForm.elements.ClearanceId.value = '';
+    if (clearanceForm?.elements.RevisionToken) clearanceForm.elements.RevisionToken.value = '';
+    const button = clearanceForm?.querySelector('button[type="submit"]');
+    if (button) button.textContent = 'Approve result clearance';
+  };
+  clearanceForm?.querySelector('[data-academic-clearance-clear]')?.addEventListener('click', clearClearanceForm);
+  clearanceForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = clearanceForm.querySelector('button[type="submit"]');
+    await runButtonAction(button, 'Approving...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const payload = Object.fromEntries(new FormData(clearanceForm).entries());
+        const data = await academicManagementRequest('grantAcademicResultClearance', {
+          ...payload, SchoolSection: academicManagementFilters.section,
+          SessionId: academicManagementFilters.sessionId, TermId: academicManagementFilters.termId
+        });
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  });
+  panelEl.querySelectorAll('[data-academic-clearance-edit]').forEach((button) => button.addEventListener('click', () => {
+    const row = academicFind(academicManagementData?.resultClearances || [], button.dataset.academicClearanceEdit);
+    const form = panelEl.querySelector('[data-academic-finance-clearance]');
+    if (!row || !form) return;
+    showAcademicManagementTask('clearances', 'grant', { focus: true });
+    ['ClearanceId', 'RevisionToken', 'StudentRef', 'ExpiryDate', 'Reason'].forEach((key) => {
+      if (form.elements[key]) form.elements[key].value = row[key] || '';
+    });
+    const submit = form.querySelector('button[type="submit"]');
+    if (submit) submit.textContent = clean(row.Status).toLowerCase() === 'approved' ? 'Save corrected clearance' : 'Reapprove result clearance';
+    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
+  panelEl.querySelectorAll('[data-academic-clearance-revoke]').forEach((button) => button.addEventListener('click', async () => {
+    const reason = clean(await window.DynamaxDialogs.prompt({
+      title: 'Revoke result clearance',
+      message: 'The parent will no longer receive access through this manual finance clearance.',
+      label: 'Revocation reason', required: true, tone: 'danger', confirmText: 'Revoke clearance'
+    }));
+    if (!reason) return;
+    await runButtonAction(button, 'Revoking...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('revokeAcademicResultClearance', {
+          SchoolSection: academicManagementFilters.section,
+          SessionId: academicManagementFilters.sessionId, TermId: academicManagementFilters.termId,
+          ClearanceId: button.dataset.academicClearanceRevoke,
+          RevisionToken: button.dataset.academicRevision, Reason: reason
+        });
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  }));
   const cbtForm = panelEl.querySelector('[data-academic-cbt-editor]');
   if (cbtForm) {
     const refreshCbtEditor = () => {

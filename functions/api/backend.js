@@ -4098,7 +4098,7 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
 }
 
 function ledgerDocumentId(prefix = 'LED') {
-  return `${prefix}-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+  return `${prefix}-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}-${globalThis.crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 }
 
 function sameDayIso(value, today = new Date()) {
