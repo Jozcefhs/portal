@@ -5,6 +5,7 @@ import { webcrypto } from 'node:crypto';
 import {
   ACADEMIC_SCOREBOOK_STATE_KEYS,
   academicCbtScoreBatchDigest,
+  academicScoreTeacherAllocations,
   verifyAcademicCbtScoreSignature
 } from '../functions/lib/academic-management.js';
 import {
@@ -197,6 +198,29 @@ test('Milestone 8 server contract exposes idempotent approved CBT score synchron
   assert.match(academicManagementSource, /ApprovalStatus/);
   assert.match(adminSource, /data-academic-external-cbt/);
   assert.match(adminSource, /external-cbt-adapter-template\.csv/);
+});
+
+test('class-wide CBT synchronization uses subject-teacher authority without requiring an arm form teacher', () => {
+  const candidate = {
+    SessionId: 'session-1', TermId: 'term-1', ClassId: 'grade-10',
+    ArmId: 'brilliance', SubjectId: 'math'
+  };
+  const state = { teacherAllocations: [
+    {
+      SessionId: 'session-1', TermId: 'term-1', ClassId: 'grade-10', ArmId: 'brilliance',
+      SubjectId: '', TeacherUsername: 'form.brilliance', AllocationRole: 'Form Teacher', Status: 'Active'
+    },
+    {
+      SessionId: 'session-1', TermId: 'term-1', ClassId: 'grade-10', ArmId: 'excellence',
+      SubjectId: 'math', TeacherUsername: 'math.teacher', AllocationRole: 'Subject Teacher', Status: 'Active'
+    }
+  ] };
+  assert.deepEqual(academicScoreTeacherAllocations(state, candidate), []);
+  assert.deepEqual(
+    academicScoreTeacherAllocations(state, candidate, { classWideSubjectAuthority: true }).map((row) => row.TeacherUsername),
+    ['math.teacher']
+  );
+  assert.match(academicManagementSource, /syncAcademicCbtScores[\s\S]{0,500}classWideSubjectAuthority: true/);
 });
 
 test('Milestone 8 verifies a signed local CBT batch identity', async () => {

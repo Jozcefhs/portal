@@ -11558,7 +11558,7 @@ function canonicalAcademicCbtScoreValue(value) {
 function academicCbtScoreDigestMaterial(payload = {}) {
   const keys = [
     'Version', 'BatchId', 'ExamId', 'SourceTestId', 'SourcePackageDigest',
-    'SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId',
+    'SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId', 'TeacherUsername',
     'AssessmentComponentId', 'MaximumScore', 'SourceType', 'MarkingRevision',
     'ApprovalStatus', 'ApprovedBy', 'ApprovedAt', 'ProviderId', 'SourceFileName', 'Scores'
   ];

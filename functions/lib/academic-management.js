@@ -3655,17 +3655,22 @@ function academicScoreRoster(state, candidate) {
     && (row.SubjectIds || []).includes(candidate.SubjectId));
 }
 
-function academicScoreTeacherAllocations(state, candidate) {
+export function academicScoreTeacherAllocations(state, candidate, options = {}) {
+  const classWideSubjectAuthority = options.classWideSubjectAuthority === true;
   return state.teacherAllocations.filter((row) => statusActive(row)
     && row.SessionId === candidate.SessionId && row.TermId === candidate.TermId
     && lower(row.AllocationRole) === 'subject teacher'
-    && row.ClassId === candidate.ClassId && (!row.ArmId || row.ArmId === candidate.ArmId)
+    && row.ClassId === candidate.ClassId
+    && (classWideSubjectAuthority || !row.ArmId || row.ArmId === candidate.ArmId)
     && row.SubjectId === candidate.SubjectId);
 }
 
-function assertAcademicScoreSheetAuthority(user, permissions, state, candidate, existing = null) {
-  const allocations = academicScoreTeacherAllocations(state, candidate);
-  if (!allocations.length) throw failure('Assign a subject teacher to this classroom and subject before opening its scorebook.', 409, 'ACADEMIC_SCORE_TEACHER_REQUIRED');
+function assertAcademicScoreSheetAuthority(user, permissions, state, candidate, existing = null, options = {}) {
+  const allocations = academicScoreTeacherAllocations(state, candidate, options);
+  if (!allocations.length) {
+    const target = options.classWideSubjectAuthority ? 'class and subject' : 'classroom and subject';
+    throw failure(`Assign a subject teacher to this ${target} before opening its scorebook.`, 409, 'ACADEMIC_SCORE_TEACHER_REQUIRED');
+  }
   const username = actorUsername(user);
   const requestedTeacher = lower(existing?.TeacherUsername || candidate.TeacherUsername || (permissions.teacherView ? username : ''));
   const allocation = allocations.find((row) => !requestedTeacher || lower(row.TeacherUsername) === requestedTeacher);
@@ -3676,7 +3681,7 @@ function assertAcademicScoreSheetAuthority(user, permissions, state, candidate, 
   return allocation;
 }
 
-async function academicScoreSheetContext(env, user, input, capability = 'canEnterScores', stateKeys = ACADEMIC_SCOREBOOK_STATE_KEYS) {
+async function academicScoreSheetContext(env, user, input, capability = 'canEnterScores', stateKeys = ACADEMIC_SCOREBOOK_STATE_KEYS, options = {}) {
   const context = await academicOperationalContext(env, user, input, capability, {
     stateKeys
   });
@@ -3696,7 +3701,7 @@ async function academicScoreSheetContext(env, user, input, capability = 'canEnte
   const existing = findById(state.scoreSheets, input.SheetId || SheetId);
   if (input.SheetId && !existing) throw failure('The selected score sheet was not found.', 404);
   if (existing && existing.SheetId !== SheetId) throw failure('The selected score sheet belongs to another classroom, subject or period.', 403);
-  const allocation = assertAcademicScoreSheetAuthority(user, permissions, state, candidate, existing);
+  const allocation = assertAcademicScoreSheetAuthority(user, permissions, state, candidate, existing, options);
   const roster = academicScoreRoster(state, candidate);
   if (!roster.length) throw failure('No students in this classroom are allocated to the selected subject.', 409, 'ACADEMIC_SCORE_ROSTER_EMPTY');
   let scheme;
@@ -4819,7 +4824,7 @@ function canonicalAcademicCbtValue(value) {
 function academicCbtScoreBatchMaterial(input = {}) {
   const keys = [
     'Version', 'BatchId', 'ExamId', 'SourceTestId', 'SourcePackageDigest',
-    'SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId',
+    'SessionId', 'TermId', 'ClassId', 'ArmId', 'SubjectId', 'TeacherUsername',
     'AssessmentComponentId', 'MaximumScore', 'SourceType', 'MarkingRevision',
     'ApprovalStatus', 'ApprovedBy', 'ApprovedAt', 'ProviderId', 'SourceFileName', 'Scores'
   ];
@@ -4860,7 +4865,10 @@ export async function verifyAcademicCbtScoreSignature(input = {}) {
 }
 
 export async function syncAcademicCbtScores(env, user = {}, input = {}) {
-  const context = await academicScoreSheetContext(env, user, input, 'canImportScores');
+  const context = await academicScoreSheetContext(
+    env, user, input, 'canImportScores', ACADEMIC_SCOREBOOK_STATE_KEYS,
+    { classWideSubjectAuthority: true }
+  );
   const { permissions, scope, state, SheetId, existing, scheme } = context;
   if (!permissions.canReviewScores) {
     throw failure('Only an academic or examination reviewer may synchronize an approved CBT score batch.', 403, 'ACADEMIC_CBT_SYNC_REVIEWER_REQUIRED');
