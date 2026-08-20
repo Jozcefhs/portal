@@ -8,6 +8,11 @@ import {
 import { requiredDeploymentIdentity } from './deployment-identity.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath } from './church-foundation.js';
 import { getSchoolStructure, schoolCollectionPaths } from './school-scope.js';
+import {
+  STAFF_ATTENDANCE_COLLECTIONS,
+  canonicalStaffAttendanceCollectionPath,
+  legacyStaffAttendanceCollectionPath
+} from './staff-attendance-storage.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -94,13 +99,20 @@ export async function organizationBackupDescriptors(env) {
     .filter((collection) => !EXCLUDED_ROOT_COLLECTIONS.has(collection))
     .map((path) => ({ key: path, path, type: 'root' }));
   descriptors.push(...EXTRA_NESTED_COLLECTIONS.map((path) => ({ key: path, path, type: 'nested' })));
+  const branches = structure.Branches?.length ? structure.Branches : [{ Id: 'main' }];
+  branches.forEach((branch) => Object.keys(STAFF_ATTENDANCE_COLLECTIONS).forEach((key) => {
+    const branchId = branch.Id || branch.id || 'main';
+    const canonicalPath = canonicalStaffAttendanceCollectionPath(identity.edition, key, branchId);
+    const legacyPath = legacyStaffAttendanceCollectionPath(key, branchId);
+    descriptors.push({ key: canonicalPath, path: canonicalPath, type: 'staff-attendance' });
+    descriptors.push({ key: legacyPath, path: legacyPath, type: 'staff-attendance-legacy' });
+  }));
   if (identity.edition === 'school') {
     const schoolPaths = (await Promise.all(
       SCHOOL_SCOPED_COLLECTIONS.map((collection) => schoolCollectionPaths(env, collection))
     )).flat();
     descriptors.push(...schoolPaths.map((path) => ({ key: path, path, type: 'school' })));
   } else {
-    const branches = structure.Branches?.length ? structure.Branches : [{ Id: 'main' }];
     branches.forEach((branch) => Object.values(CHURCH_COLLECTIONS).forEach((collection) => {
       const path = churchCollectionPath(collection, branch.Id || branch.id || 'main');
       descriptors.push({ key: path, path, type: 'organisation' });
@@ -191,6 +203,18 @@ function restoreCollectionPathAllowed(path, discoveredPaths, edition) {
   // can genuinely recover data that no longer exists in the live database.
   if (parts.length === 1) return /^[A-Za-z0-9._-]{1,128}$/.test(parts[0]);
   if (EXTRA_NESTED_COLLECTIONS.includes(path)) return true;
+  const canonicalAttendanceCollections = new Set(Object.values(STAFF_ATTENDANCE_COLLECTIONS));
+  const legacyAttendanceCollections = new Set(
+    Object.keys(STAFF_ATTENDANCE_COLLECTIONS).map((key) => legacyStaffAttendanceCollectionPath(key, 'main').split('/')[2])
+  );
+  const isAttendancePath = parts.length === 3
+    && /^[a-z0-9._-]+$/i.test(parts[1])
+    && (
+      (parts[0] === (edition === 'school' ? 'schoolBranches' : 'organisationBranches')
+        && canonicalAttendanceCollections.has(parts[2]))
+      || (parts[0] === 'organisationBranches' && legacyAttendanceCollections.has(parts[2]))
+    );
+  if (isAttendancePath) return true;
   if (edition === 'school') {
     return /^schoolBranches\/[a-z0-9._-]+\/sections\/(?:primary|secondary)\/(?:applications|students|studentConductCases|studentConductAudit)$/i.test(path);
   }

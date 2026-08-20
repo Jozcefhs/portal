@@ -169,6 +169,11 @@ export const ACADEMIC_SCOREBOOK_STATE_KEYS = Object.freeze([
   'studentMemberships', 'scoreSheets', 'studentScores', 'scoreImports', 'scoreSyncBatches'
 ]);
 
+export const ACADEMIC_CBT_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'arms', 'subjects', 'teacherAllocations',
+  'studentMemberships', 'cbtTests'
+]);
+
 export const ACADEMIC_SESSION_STATUSES = Object.freeze(['Planned', 'Active', 'Closed', 'Archived']);
 export const ACADEMIC_TERM_STATUSES = Object.freeze(['Planned', 'Active', 'Closed', 'Archived']);
 export const ACADEMIC_RECORD_STATUSES = Object.freeze(['Active', 'Inactive', 'Archived']);
@@ -1365,13 +1370,15 @@ function currentSelection(state, input = {}) {
 export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
   const permissions = requireCapability(user, 'enabled');
   const scope = await academicScope(env, user, input, { requireSection: false });
+  const focusedView = lower(input.View || input.Workspace);
+  const focusedCbt = focusedView === 'cbt';
   const requestedStateKeys = permissions.financeView
     ? ['sessions', 'terms', 'classes', 'arms', 'studentMemberships', 'resultClearances']
-    : null;
+    : focusedCbt ? ACADEMIC_CBT_STATE_KEYS : null;
   const [rawState, people, audit] = await Promise.all([
     loadAcademicState(env, scope.branchId, requestedStateKeys),
     loadPeople(env, user, scope),
-    permissions.canManageStructure
+    permissions.canManageStructure && !focusedCbt
       ? listCollection(env, ACADEMIC_MANAGEMENT_COLLECTIONS.audit).catch(() => [])
       : Promise.resolve([])
   ]);
@@ -1426,7 +1433,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     students = students.filter((row) => visibleStudents.has(lower(studentReference(row))));
   }
   state = sortAcademicState(state);
-  const migrationReadiness = permissions.canManageStructure
+  const migrationReadiness = permissions.canManageStructure && !focusedCbt
     ? academicMigrationReadiness(state, students)
     : null;
   const selection = currentSelection(state, input);
@@ -1442,6 +1449,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
   }
   return {
     ok: true,
+    ...(focusedCbt ? { partialAcademicManagement: true, loadedAcademicView: 'cbt' } : {}),
     message: 'Academic structure and allocations loaded.',
     permissions,
     scope: { BranchId: scope.branchId, SchoolSection: scope.section || 'all' },
@@ -1449,12 +1457,14 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     selection,
     assessmentScheme,
     ...(migrationReadiness ? { migrationReadiness } : {}),
-    ...Object.fromEntries(Object.entries(state).map(([key, rows]) => [key, rows.map(publicRecord)])),
+    ...Object.fromEntries(Object.entries(state)
+      .filter(([key]) => !focusedCbt || ACADEMIC_CBT_STATE_KEYS.includes(key))
+      .map(([key, rows]) => [key, rows.map(publicRecord)])),
     staff: displayStaff(permissions.teacherView ? people.staff.filter((row) => lower(row.Username || row.__id) === actorUsername(user)) : people.staff),
     students: displayStudents(students, state.classes),
-    audit: audit.filter((row) => lower(row.BranchId || 'main') === lower(scope.branchId))
-      .sort((a, b) => clean(b.Timestamp).localeCompare(clean(a.Timestamp))).slice(0, 100).map(publicRecord),
-    summary: {
+    ...(!focusedCbt ? { audit: audit.filter((row) => lower(row.BranchId || 'main') === lower(scope.branchId))
+      .sort((a, b) => clean(b.Timestamp).localeCompare(clean(a.Timestamp))).slice(0, 100).map(publicRecord) } : {}),
+    ...(!focusedCbt ? { summary: {
       Sessions: state.sessions.filter(statusActive).length,
       Classes: state.classes.filter(statusActive).length,
       ArmTemplates: state.armTemplates.filter(statusActive).length,
@@ -1481,7 +1491,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
       CumulativeResults: state.cumulativeResults.length,
       PromotionDecisions: state.promotionDecisions.length,
       Transcripts: state.transcripts.length
-    }
+    } } : {})
   };
 }
 
@@ -1644,9 +1654,9 @@ function sameSetupRecord(existing, record, keys) {
 }
 
 async function commitAcademicBatch(env, writes, conflictMessage) {
-  if (!writes.length) return;
+  if (!writes.length) return { writeResults: [] };
   try {
-    await batchCommitDocuments(env, writes);
+    return await batchCommitDocuments(env, writes);
   } catch (error) {
     if ([409, 412].includes(Number(error?.status))) {
       throw failure(conflictMessage, 409, 'ACADEMIC_WRITE_CONFLICT');
@@ -3446,9 +3456,9 @@ function assertAcademicScoreSheetAuthority(user, permissions, state, candidate, 
   return allocation;
 }
 
-async function academicScoreSheetContext(env, user, input, capability = 'canEnterScores') {
+async function academicScoreSheetContext(env, user, input, capability = 'canEnterScores', stateKeys = ACADEMIC_SCOREBOOK_STATE_KEYS) {
   const context = await academicOperationalContext(env, user, input, capability, {
-    stateKeys: ACADEMIC_SCOREBOOK_STATE_KEYS
+    stateKeys
   });
   const { permissions, scope, state, session, term } = context;
   const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
@@ -4801,7 +4811,7 @@ async function academicCbtPackageDigest(record = {}) {
 }
 
 export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
-  const context = await academicScoreSheetContext(env, user, input, 'canCreateCbt');
+  const context = await academicScoreSheetContext(env, user, input, 'canCreateCbt', ACADEMIC_CBT_STATE_KEYS);
   const componentId = clean(input.AssessmentComponentId);
   const component = (context.scheme.Components || []).find((row) => row.Id === componentId);
   if (!component || !['any', 'built-in-cbt'].includes(lower(component.SourceMode))) {
@@ -4894,8 +4904,34 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
   return { context, component, existing, record };
 }
 
-export async function saveAcademicCbtTest(env, user = {}, input = {}) {
-  const { context, existing, record } = await validateAcademicCbtTestInput(env, user, { ...input, RequirePaper: true });
+async function finalizeAcademicCbtPaper(validation, input = {}) {
+  const paperUrl = clean(input.PaperUrl);
+  const paperFileName = clean(input.PaperFileName);
+  const paperMimeType = lower(input.PaperMimeType);
+  const paperDigest = lower(input.PaperDigest);
+  if (!paperUrl || !paperFileName || !['application/pdf', 'image/jpeg', 'image/png'].includes(paperMimeType)) {
+    throw failure('Upload a valid PDF, JPEG or PNG question paper.', 400, 'ACADEMIC_CBT_PAPER_REQUIRED');
+  }
+  if (!/^[a-f0-9]{64}$/.test(paperDigest)) {
+    throw failure('The uploaded question paper digest is invalid.', 400, 'ACADEMIC_CBT_PAPER_DIGEST_INVALID');
+  }
+  const record = {
+    ...validation.record,
+    PaperUrl: paperUrl,
+    PaperFileName: paperFileName,
+    PaperMimeType: paperMimeType,
+    PaperDigest: paperDigest,
+    PaperByteLength: Number(input.PaperByteLength || 0)
+  };
+  record.PackageDigest = await academicCbtPackageDigest(record);
+  return { ...validation, record };
+}
+
+export async function saveAcademicCbtTest(env, user = {}, input = {}, options = {}) {
+  const validation = options.validation
+    ? await finalizeAcademicCbtPaper(options.validation, input)
+    : await validateAcademicCbtTestInput(env, user, { ...input, RequirePaper: true });
+  const { existing, record } = validation;
   const writes = [{
     collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests,
     documentId: record.CbtTestId,
@@ -4903,9 +4939,14 @@ export async function saveAcademicCbtTest(env, user = {}, input = {}) {
     ...writePrecondition(existing, input.RevisionToken)
   }, auditWrite(user, existing ? 'UPDATE' : 'CREATE', 'cbtTests', record,
     `${record.AssessmentComponentName}; ${record.NumberOfQuestions} questions; ${record.RosterCount} students; starts ${record.StartsAt}`)];
-  await commitAcademicBatch(env, writes, 'The CBT test changed while it was being saved. Reload and try again.');
-  return academicOperationalResponse(env, user, input, context.scope,
-    `${record.AssessmentComponentName} CBT test scheduled for ${record.RosterCount} student${record.RosterCount === 1 ? '' : 's'}.`);
+  const commit = await commitAcademicBatch(env, writes, 'The CBT test changed while it was being saved. Reload and try again.');
+  const savedRecord = publicRecord({ ...record, __updateTime: clean(commit?.writeResults?.[0]?.updateTime) });
+  return {
+    ok: true,
+    partialAcademicManagement: true,
+    message: `${record.AssessmentComponentName} CBT test scheduled for ${record.RosterCount} student${record.RosterCount === 1 ? '' : 's'}.`,
+    cbtTest: savedRecord
+  };
 }
 
 async function deleteAcademicCbtPaper(env, paperUrl) {
@@ -4920,7 +4961,9 @@ async function deleteAcademicCbtPaper(env, paperUrl) {
 }
 
 export async function deleteAcademicCbtTest(env, user = {}, input = {}) {
-  const context = await academicOperationalContext(env, user, input, 'canCreateCbt');
+  const context = await academicOperationalContext(env, user, input, 'canCreateCbt', {
+    stateKeys: ['sessions', 'terms', 'cbtTests']
+  });
   const record = findById(context.state.cbtTests, input.CbtTestId);
   if (!record) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
   academicCbtAuthority(user, context, record);
@@ -4934,7 +4977,12 @@ export async function deleteAcademicCbtTest(env, user = {}, input = {}) {
     auditWrite(user, 'DELETE', 'cbtTests', record, clean(input.Reason) || 'CBT test created in error.')
   ], 'The CBT test changed while it was being deleted. Reload and try again.');
   await deleteAcademicCbtPaper(env, record.PaperUrl).catch(() => false);
-  return academicOperationalResponse(env, user, input, context.scope, 'The unused online CBT test was deleted.');
+  return {
+    ok: true,
+    partialAcademicManagement: true,
+    message: 'The unused online CBT test was deleted.',
+    deletedCbtTestId: record.CbtTestId
+  };
 }
 
 async function loadAcademicCbtPaper(env, record) {

@@ -108,17 +108,18 @@ export async function onRequestPost(context) {
       PaperDigest: digest,
       PaperByteLength: paper.byteLength,
       RequirePaper: true
-    });
+    }, { validation: preview });
     testSaved = true;
     if (clean(preview.existing?.PaperUrl) && clean(preview.existing.PaperUrl) !== uploadedUrl) {
       await deleteUploadedPaper(storage, preview.existing.PaperUrl);
     }
-    const created = (saved.cbtTests || []).find((row) => row.CbtTestId === preview.record.CbtTestId);
+    const created = saved.cbtTest || {};
     const data = {
       ok: true,
       message: saved.message || 'CBT test scheduled online.',
       CbtTestId: preview.record.CbtTestId,
-      RevisionToken: clean(created?.RevisionToken)
+      RevisionToken: clean(created.RevisionToken),
+      CbtTest: created
     };
     await completeIdempotentRequest(env, idempotency, data, 200);
     return Response.json(data, { headers: { 'Cache-Control': 'no-store' } });

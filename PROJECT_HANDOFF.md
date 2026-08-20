@@ -347,11 +347,16 @@ and must remain review-gated.
 
 ## 11. Latest production incident and fix
 
-The Scorebook previously showed Cloudflare's “Too many subrequests by single
-Worker invocation” error because one bootstrap loaded the entire academic
-state. The fix in `b68a8b29`:
+The Scorebook and Built-in CBT authoring flow previously showed Cloudflare's
+“Too many subrequests by single Worker invocation” error because a bootstrap
+loaded the entire academic state and CBT paper submission validated the same
+schedule twice before doing another full refresh. The fixes now:
 
 - restricts Scorebook reads to the 11 relevant academic collections;
+- restricts CBT reads to the 8 collections needed for scheduling and its roster;
+- reuses the pre-upload CBT validation when the saved Drive paper is committed;
+- returns the saved/deleted CBT record as partial state instead of reloading all
+  academic collections inside the upload Worker;
 - returns partial scorebook state and merges it client-side; and
 - performs post-mutation refresh as a separate Worker invocation.
 
@@ -359,8 +364,8 @@ Production was verified after deployment: the Scorebook loaded the active
 assessment components without the subrequest error. Current cache identifiers
 are:
 
-- admin script: `20260817-academic-milestone-11`
-- service worker: `dynamax-v244-academic-milestone-11`
+- admin script: `20260820-academic-cbt-low-read`
+- service worker: `dynamax-v246-academic-cbt-low-read`
 
 If the error returns, first verify that the browser has these current assets,
 then inspect the specific API response. Do not “fix” it by raising a Worker
@@ -381,6 +386,13 @@ git status --short
 
 The Milestone 11 focused release gate passed all 108 tests and the final full
 portal regression run passed all 945 tests on 2026-08-17.
+After the edition-aware staff-attendance storage correction, the full portal
+regression run passed all 1,013 tests on 2026-08-20. School attendance now
+writes under `schoolBranches`; Faith and Organization attendance writes under
+`organisationBranches` with generic collection names. Staff Attendance → Data
+storage provides the Super-Administrator-only copy, verification and cleanup
+workflow for the former `churchStaffAttendance...` paths. Finalization writes a
+marker that disables legacy fallback reads for that branch.
 
 ### Desktop source
 

@@ -1,7 +1,14 @@
-import { getDocument, patchDocumentFields, queryCollection } from './firestore.js';
-import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from './church-foundation.js';
+import { getDocument, patchDocumentFields, queryCollection, upsertDocument } from './firestore.js';
 import { createNotification } from './notifications.js';
 import { getSchoolStructure } from './school-scope.js';
+import {
+  canonicalStaffAttendanceCollectionPath,
+  getStaffAttendanceDocument,
+  queryStaffAttendanceCollection,
+  safeStaffAttendanceDocumentId,
+  staffAttendanceCollectionPath,
+  staffAttendanceDocumentData
+} from './staff-attendance-storage.js';
 import { normalizeAttendancePolicy } from './staff-time-attendance.js';
 
 const clean = (value) => String(value ?? '').trim();
@@ -62,6 +69,10 @@ export async function processAttendancePresenceNotifications(env, options = {}) 
   const query = options.queryCollection || queryCollection;
   const notify = options.createNotification || createNotification;
   const patch = options.patchDocumentFields || patchDocumentFields;
+  const collectionPath = options.staffAttendanceCollectionPath
+    || ((runtimeEnv, key, branchId) => options.getDocument || options.queryCollection || options.patchDocumentFields
+      ? canonicalStaffAttendanceCollectionPath('school', key, branchId)
+      : staffAttendanceCollectionPath(runtimeEnv, key, branchId));
   const structure = options.structure || await getStructure(env);
   let inspected = 0;
   let eligible = 0;
@@ -72,18 +83,22 @@ export async function processAttendancePresenceNotifications(env, options = {}) 
 
   for (const branchId of branchIds(structure)) {
     if (eligible >= limit) break;
-    const policyPath = churchCollectionPath(CHURCH_COLLECTIONS.staffAttendancePolicy, branchId);
-    const statePath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeState, branchId);
-    const storedPolicy = await get(env, policyPath, 'default').catch(() => null);
+    const statePath = collectionPath(env, 'state', branchId);
+    const storedPolicy = options.getDocument
+      ? await get(env, collectionPath(env, 'policy', branchId), 'default').catch(() => null)
+      : await getStaffAttendanceDocument(env, 'policy', branchId, 'default');
     if (!storedPolicy) continue;
     const policy = normalizeAttendancePolicy(storedPolicy);
     if (clean(policy.PresenceCheckMode).toUpperCase() !== 'RANDOM'
       || clean(policy.PresenceCheckPushEnabled).toUpperCase() === 'NO') continue;
-    const states = await query(env, statePath, {
+    const stateQuery = {
       filters: [{ field: 'NextPresenceNotificationAt', op: '<=', value: nowIso }],
       orderBy: [{ field: 'NextPresenceNotificationAt', direction: 'ASCENDING' }],
       limit: Math.max(1, limit - eligible)
-    }).catch(() => []);
+    };
+    const states = options.queryCollection
+      ? await query(env, statePath, stateQuery).catch(() => [])
+      : await queryStaffAttendanceCollection(env, 'state', branchId, stateQuery);
     inspected += states.length;
     for (const state of states) {
       if (eligible >= limit) break;
@@ -116,12 +131,17 @@ export async function processAttendancePresenceNotifications(env, options = {}) 
       else duplicates += 1;
       delivered += (result.pushDeliveries || []).filter((row) => row.status === 'Delivered').length;
       failed += (result.pushDeliveries || []).filter((row) => ['Failed', 'Invalid subscription'].includes(row.status)).length;
-      await patch(env, statePath, safeChurchDocumentId(username), {
+      const stateId = safeStaffAttendanceDocumentId(username);
+      const fields = {
         NextPresenceNotificationAt: '',
         PresenceNotificationSentForDueAt: candidate.dueAt,
         PresenceNotificationSentAt: nowIso,
         PresenceNotificationTrackingVersion: 1
-      }, state.__updateTime ? { updateTime: state.__updateTime } : {}).catch((error) => {
+      };
+      const update = state.__legacyStorage && !options.patchDocumentFields
+        ? upsertDocument(env, statePath, stateId, { ...staffAttendanceDocumentData(state), ...fields })
+        : patch(env, statePath, stateId, fields, state.__updateTime ? { updateTime: state.__updateTime } : {});
+      await update.catch((error) => {
         if (![409, 412].includes(Number(error?.status))) throw error;
       });
     }

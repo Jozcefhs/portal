@@ -33,9 +33,9 @@ export async function onRequestPost(context) {
         ].filter(Boolean))
       ];
     }
-    if (!['list', 'quick'].includes(action)) {
+    if (!['list', 'quick', 'storagestatus'].includes(action)) {
       idempotency = await beginIdempotentRequest(context.env, context.request, body, {
-        scope: `church-staff-attendance-${action}`,
+        scope: `staff-attendance-${action}`,
         actor: user.username,
         ttlMinutes: 30 * 24 * 60
       });

@@ -55,8 +55,8 @@ const adminVersion = adminHtml.match(/js\/admin\.js\?v=([A-Za-z0-9._-]+)/)?.[1];
 const cacheVersion = serviceWorker.match(/const CACHE = '([^']+)'/)?.[1];
 assert.ok(adminVersion, 'admin.html must use a versioned admin script.');
 assert.ok(cacheVersion, 'sw.js must use an explicit cache identifier.');
-assert.match(adminVersion, /academic-milestone-11/);
-assert.match(cacheVersion, /academic-milestone-11/);
+assert.match(adminVersion, /academic-cbt-low-read/);
+assert.match(cacheVersion, /academic-cbt-low-read/);
 
 assert.match(specification, /Milestone 11 implementation status/);
 assert.match(specification, /Milestone 11 implementation status[\s\S]*Operational baseline/);

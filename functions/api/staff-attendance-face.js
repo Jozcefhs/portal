@@ -1,6 +1,11 @@
-import { batchCommitDocuments, getDocument, requireFirestoreEnv } from '../lib/firestore.js';
-import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from '../lib/church-foundation.js';
-import { resolveMembershipBranch } from '../lib/church-membership.js';
+import { batchCommitDocuments, requireFirestoreEnv } from '../lib/firestore.js';
+import {
+  getStaffAttendanceDocument,
+  resolveStaffAttendanceBranch,
+  safeStaffAttendanceDocumentId,
+  staffAttendanceCollectionPath,
+  staffAttendanceReadPaths
+} from '../lib/staff-attendance-storage.js';
 import {
   createStaffAttendanceLivenessChallenge,
   createStaffAttendanceProof,
@@ -45,19 +50,19 @@ function workspaceId(env = {}) {
 }
 
 function branchFor(user, body = {}) {
-  return resolveMembershipBranch(user, body.BranchId || body.branchId || 'main');
+  return resolveStaffAttendanceBranch(user, body.BranchId || body.branchId || 'main');
 }
 
 function usernameFor(user = {}) {
   return lower(user.username || user.Username || user.email || user.Email);
 }
 
-function templatePath(branchId) {
-  return churchCollectionPath(CHURCH_COLLECTIONS.staffAttendanceFaceTemplates, branchId);
+function templatePath(env, branchId) {
+  return staffAttendanceCollectionPath(env, 'faceTemplates', branchId);
 }
 
 function templateId(username) {
-  return safeChurchDocumentId(`STAFF-FACE-${lower(username)}`);
+  return safeStaffAttendanceDocumentId(`STAFF-FACE-${lower(username)}`);
 }
 
 function configured(env = {}) {
@@ -109,9 +114,9 @@ function ensureConfigured(env = {}) {
 }
 
 function auditWrite(env, user, branchId, action, result, details = {}) {
-  const id = safeChurchDocumentId(`STAFF-FACE-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`);
+  const id = safeStaffAttendanceDocumentId(`STAFF-FACE-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`);
   return {
-    collectionPath: churchCollectionPath(CHURCH_COLLECTIONS.staffTimeAudit, branchId),
+    collectionPath: staffAttendanceCollectionPath(env, 'audit', branchId),
     documentId: id,
     data: {
       AuditId: id,
@@ -189,7 +194,7 @@ function validateLivenessEvidence(action, evidence = {}) {
 async function status(env, user, body) {
   const branchId = branchFor(user, body);
   const username = usernameFor(user);
-  const saved = await getDocument(env, templatePath(branchId), templateId(username)).catch(() => null);
+  const saved = await getStaffAttendanceDocument(env, 'faceTemplates', branchId, templateId(username));
   return {
     ok: true,
     enabled: configured(env),
@@ -223,9 +228,9 @@ async function enroll(env, user, body) {
   if (!Number.isInteger(sampleCount) || sampleCount < 2 || sampleCount > 8) failure('Capture between two and eight live face samples.');
   const branchId = branchFor(user, body);
   const username = usernameFor(user);
-  const path = templatePath(branchId);
+  const path = templatePath(env, branchId);
   const id = templateId(username);
-  const existing = await getDocument(env, path, id).catch(() => null);
+  const existing = await getStaffAttendanceDocument(env, 'faceTemplates', branchId, id);
   const timestamp = new Date().toISOString();
   const meta = templateMeta(env, branchId, username);
   const encrypted = await encryptFaceDescriptor(descriptor, env.FACE_TEMPLATE_ENCRYPTION_KEY, meta);
@@ -255,7 +260,11 @@ async function revoke(env, user, body) {
   const branchId = branchFor(user, body);
   const username = usernameFor(user);
   await batchCommitDocuments(env, [
-    { collectionPath: templatePath(branchId), documentId: templateId(username), operation: 'delete' },
+    ...staffAttendanceReadPaths(env, 'faceTemplates', branchId).map((collectionPath) => ({
+      collectionPath,
+      documentId: templateId(username),
+      operation: 'delete'
+    })),
     auditWrite(env, user, branchId, 'REVOKE ATTENDANCE FACE', 'deleted')
   ]);
   return { ok: true, enrolled: false, message: 'Attendance face enrollment removed.' };
@@ -277,7 +286,7 @@ async function verify(env, user, body) {
   const query = validateFaceDescriptor(body.descriptor);
   const branchId = branchFor(user, body);
   const username = usernameFor(user);
-  const saved = await getDocument(env, templatePath(branchId), templateId(username)).catch(() => null);
+  const saved = await getStaffAttendanceDocument(env, 'faceTemplates', branchId, templateId(username));
   if (!saved || !faceTemplateIsUsable(saved)) failure('No active attendance face enrollment was found for this staff account.', 404);
   const stored = await decryptFaceDescriptor(
     saved,

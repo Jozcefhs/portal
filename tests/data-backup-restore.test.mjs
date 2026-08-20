@@ -20,6 +20,10 @@ test('backup discovery covers dynamic root collections and scoped organisation r
   assert.match(firestore, /documents:listCollectionIds/);
   assert.match(backupLib, /SCHOOL_SCOPED_COLLECTIONS[\s\S]*studentConductCases[\s\S]*studentConductAudit/);
   assert.match(backupLib, /Object\.values\(CHURCH_COLLECTIONS\)/);
+  assert.match(backupLib, /canonicalStaffAttendanceCollectionPath\(identity\.edition/);
+  assert.match(backupLib, /legacyStaffAttendanceCollectionPath\(key/);
+  assert.match(backupLib, /canonicalAttendanceCollections/);
+  assert.match(backupLib, /legacyAttendanceCollections/);
   assert.match(backupLib, /settings\/academics\/classes/);
   assert.match(backupLib, /EXCLUDED_ROOT_COLLECTIONS[\s\S]*requestIdempotency[\s\S]*staffPasskeyChallenges/);
 });

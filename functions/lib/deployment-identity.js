@@ -7,6 +7,7 @@ const ALLOWED_DEPLOYMENT_EDITIONS = new Set(['school', 'faith', 'organization'])
 const EDITION_ALIASES = new Map([
   ['church', 'faith']
 ]);
+const DEPLOYMENT_IDENTITY_CACHE_MS = 60 * 1000;
 
 let cachedIdentity = null;
 
@@ -239,7 +240,7 @@ export async function loadDeploymentIdentity(env = {}, options = {}) {
   cachedIdentity = {
     key,
     value,
-    expiresAt: now + 15000
+    expiresAt: now + DEPLOYMENT_IDENTITY_CACHE_MS
   };
   return value;
 }

@@ -1,4 +1,5 @@
-import { batchUpsertDocuments, deleteDocument, getDocument, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { batchUpsertDocuments, deleteDocument, findOneByField, getDocument, listCollection, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { getAccountingChartRows } from '../lib/accounting-reference-cache.js';
 import {
   clearStaffApprovalProofCookie,
   readStaffApprovalProof,
@@ -496,8 +497,7 @@ async function resubmitRequisition(env, user, body) {
     throw err;
   }
   const direct = await getDocument(env, 'accountingExpenses', safeId(id));
-  const existing = direct || (await listCollection(env, 'accountingExpenses'))
-    .find((row) => same(row.ExpenseNo, id) || same(row.__id, safeId(id)));
+  const existing = direct || await findOneByField(env, 'accountingExpenses', 'ExpenseNo', id);
   if (!existing || !scopedRows([existing], user, capabilities(user)).length) {
     const err = new Error('The selected requisition was not found.');
     err.status = 404;
@@ -806,8 +806,7 @@ async function findImprest(env, user, body) {
     throw err;
   }
   const direct = await getDocument(env, 'accountingImprests', safeId(id));
-  const existing = direct || (await listCollection(env, 'accountingImprests'))
-    .find((row) => same(row.ImprestNo, id) || same(row.__id, safeId(id)));
+  const existing = direct || await findOneByField(env, 'accountingImprests', 'ImprestNo', id);
   if (!existing || !scopedRows([existing], user, capabilities(user)).length) {
     const err = new Error('The selected imprest record was not found in this branch.');
     err.status = 404;
@@ -863,7 +862,7 @@ async function validateImprestPosting(env, journal) {
     err.status = 409;
     throw err;
   }
-  const chart = await listCollection(env, 'chartOfAccounts');
+  const chart = await getAccountingChartRows(env);
   const activeCodes = new Set(chart.filter((row) => !['no', 'false', 'inactive'].includes(lower(row.Active || 'YES')))
     .map((row) => clean(row.Code || row.__id)));
   const invalid = journal.Lines.find((line) => !activeCodes.has(clean(line.AccountCode)));
@@ -899,9 +898,14 @@ async function submitImprest(env, user, body) {
   }
   const username = clean(user.username);
   const branchId = clean(user.branchId) || 'main';
-  const existingOpen = (await listCollection(env, 'accountingImprests').catch(() => []))
-    .find((row) => same(row.CustodianUsername || row.RequestedByUsername, username) &&
-      same(row.BranchId || 'main', branchId) && isOpenImprestStatus(row.Status));
+  const claimId = imprestOpenClaimId({ BranchId: branchId, CustodianUsername: username });
+  const openClaim = await getDocument(env, 'accountingImprestOpenClaims', claimId);
+  const legacyOpenRows = openClaim ? [] : await queryCollection(env, 'accountingImprests', {
+    filters: [{ field: 'CustodianUsername', op: '==', value: username }],
+    limit: 20
+  }).catch(() => []);
+  const existingOpen = openClaim || legacyOpenRows.find((row) =>
+    same(row.BranchId || 'main', branchId) && isOpenImprestStatus(row.Status));
   if (existingOpen) {
     const err = new Error(`Retire or close ${existingOpen.ImprestNo || 'the current imprest'} before requesting another imprest.`);
     err.status = 409;

@@ -7,7 +7,10 @@ import {
   academicCbtPaperStoragePayload,
   validateAcademicCbtPaper
 } from '../functions/lib/academic-cbt-papers.js';
-import { ACADEMIC_CBT_OPTION_STYLES } from '../functions/lib/academic-management.js';
+import {
+  ACADEMIC_CBT_OPTION_STYLES,
+  ACADEMIC_CBT_STATE_KEYS
+} from '../functions/lib/academic-management.js';
 
 const portalRoot = new URL('../', import.meta.url);
 const onePixelPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
@@ -36,6 +39,10 @@ test('CBT Drive uploads use storage-only compatibility and an isolated CBT refer
 test('CBT option styles and the two-step web authoring contract stay aligned', async () => {
   assert.deepEqual(ACADEMIC_CBT_OPTION_STYLES.ABCD, ['A', 'B', 'C', 'D']);
   assert.deepEqual(ACADEMIC_CBT_OPTION_STYLES.TRUE_FALSE, ['True', 'False']);
+  assert.deepEqual(ACADEMIC_CBT_STATE_KEYS, [
+    'sessions', 'terms', 'classes', 'arms', 'subjects', 'teacherAllocations',
+    'studentMemberships', 'cbtTests'
+  ]);
   const [admin, styles, backend, endpoint] = await Promise.all([
     readFile(new URL('js/admin.js', portalRoot), 'utf8'),
     readFile(new URL('css/style.css', portalRoot), 'utf8'),
@@ -49,13 +56,19 @@ test('CBT option styles and the two-step web authoring contract stay aligned', a
   assert.match(admin, /data-academic-cbt-answer/);
   assert.match(admin, /data-academic-cbt-edit/);
   assert.match(admin, /data-academic-cbt-delete/);
+  assert.match(admin, /mergeAcademicCbtTest\(result\)/);
+  assert.doesNotMatch(admin, /mergeAcademicCbtTest\(result\)[\s\S]{0,250}loadAcademicManagement/);
   assert.match(admin, /academic-cbt-form-actions"><button type="submit"[^>]*>Next: upload paper and answers/);
   assert.match(styles, /\.academic-cbt-form-actions button\{[^}]*width:max-content/);
-  assert.match(backend, /academicScoreSheetContext\(env, user, input, 'canCreateCbt'\)/);
+  assert.match(backend, /academicScoreSheetContext\(env, user, input, 'canCreateCbt', ACADEMIC_CBT_STATE_KEYS\)/);
+  assert.match(backend, /partialAcademicManagement: true,[\s\S]*cbtTest: savedRecord/);
+  assert.match(backend, /stateKeys: \['sessions', 'terms', 'cbtTests'\]/);
   assert.match(backend, /LocalDownloadedAt/);
   assert.doesNotMatch(backend, /\['saveacademiccbttest', 'savecbttest'\]/);
   assert.match(endpoint, /requireStaffSession/);
   assert.match(endpoint, /validateAcademicCbtTestInput/);
   assert.match(endpoint, /saveAcademicCbtTest/);
+  assert.match(endpoint, /\{ validation: preview \}/);
+  assert.match(endpoint, /CbtTest: created/);
   assert.match(endpoint, /Idempotency key is required/i);
 });

@@ -1,6 +1,17 @@
-import { batchCommitDocuments, deleteDocument, getDocument, listCollection, patchDocumentFields, queryCollection, upsertDocument } from './firestore.js';
-import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from './church-foundation.js';
-import { resolveMembershipBranch } from './church-membership.js';
+import { batchCommitDocuments, listCollection, patchDocumentFields, upsertDocument } from './firestore.js';
+import {
+  cleanupLegacyStaffAttendanceStorage,
+  getStaffAttendanceDocument,
+  listStaffAttendanceCollection,
+  migrateLegacyStaffAttendanceStorage,
+  queryStaffAttendanceCollection,
+  resolveStaffAttendanceBranch,
+  safeStaffAttendanceDocumentId,
+  staffAttendanceCollectionPath,
+  staffAttendanceDocumentData,
+  staffAttendanceReadPaths,
+  staffAttendanceStorageMigrationStatus
+} from './staff-attendance-storage.js';
 import { staffRecordMatchesEdition } from './records-desk.js';
 import { hrCapabilitiesFor } from './human-resources.js';
 
@@ -49,11 +60,11 @@ function actorId(user = {}) {
 }
 
 function actorName(user = {}) {
-  return clean(user.displayName || user.DisplayName || user.username || user.Username || 'Church staff');
+  return clean(user.displayName || user.DisplayName || user.username || user.Username || 'Staff member');
 }
 
 function branchFor(user, body = {}) {
-  return resolveMembershipBranch(user, body.BranchId || body.branchId || 'main');
+  return resolveStaffAttendanceBranch(user, body.BranchId || body.branchId || 'main');
 }
 
 function number(value) {
@@ -414,16 +425,21 @@ async function ipFingerprint(value) {
   return [...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, '0')).join('').slice(0, 20);
 }
 
-function attendancePolicyPath(branchId) {
-  return churchCollectionPath(CHURCH_COLLECTIONS.staffAttendancePolicy, branchId);
+function attendancePolicyPath(env, branchId) {
+  return staffAttendanceCollectionPath(env, 'policy', branchId);
 }
 
-function dailyAttendancePath(branchId) {
-  return churchCollectionPath(CHURCH_COLLECTIONS.staffDailyAttendance, branchId);
+function dailyAttendancePath(env, branchId) {
+  return staffAttendanceCollectionPath(env, 'daily', branchId);
 }
 
 function dailyAttendanceId(date, username) {
-  return safeChurchDocumentId(`DAY-${date}-${lower(username)}`);
+  return safeStaffAttendanceDocumentId(`DAY-${date}-${lower(username)}`);
+}
+
+function canonicalWritePrecondition(record) {
+  if (!record || record.__legacyStorage) return { exists: false };
+  return record.__updateTime ? { updateTime: record.__updateTime } : {};
 }
 
 function randomWholeNumber(minimum, maximum) {
@@ -574,7 +590,7 @@ async function synchronizeAutomaticAbsences(env, branchId, policy, now, director
     const chunk = created.slice(index, index + 400);
     try {
       await batchCommitDocuments(env, chunk.map((row) => ({
-        collectionPath: dailyAttendancePath(branchId),
+        collectionPath: dailyAttendancePath(env, branchId),
         documentId: row.DailyId,
         data: row,
         exists: false
@@ -585,7 +601,7 @@ async function synchronizeAutomaticAbsences(env, branchId, policy, now, director
     }
   }
   if (!conflict) return [...created, ...dailyRows];
-  const refreshed = await queryCollection(env, dailyAttendancePath(branchId), {
+  const refreshed = await queryStaffAttendanceCollection(env, 'daily', branchId, {
     filters: [{ field: 'Date', op: '==', value: local.date }],
     limit: 500
   }).catch(() => current);
@@ -597,10 +613,14 @@ async function ensurePresenceNotificationSchedule(env, statePath, username, poli
   const pushEnabled = clean(policy.PresenceCheckPushEnabled).toUpperCase() !== 'NO';
   if (!pushEnabled || !presenceCheck.enabled || !dueAt) return;
   if (clean(state.PresenceNotificationSentForDueAt) === dueAt || clean(state.NextPresenceNotificationAt) === dueAt) return;
-  await patchDocumentFields(env, statePath, safeChurchDocumentId(username), {
+  const fields = {
     NextPresenceNotificationAt: dueAt,
     PresenceNotificationTrackingVersion: 1
-  }, state.__updateTime ? { updateTime: state.__updateTime } : {}).catch((error) => {
+  };
+  const write = state.__legacyStorage
+    ? upsertDocument(env, statePath, safeStaffAttendanceDocumentId(username), { ...staffAttendanceDocumentData(state), ...fields })
+    : patchDocumentFields(env, statePath, safeStaffAttendanceDocumentId(username), fields, state.__updateTime ? { updateTime: state.__updateTime } : {});
+  await write.catch((error) => {
     if (![409, 412].includes(Number(error?.status))) throw error;
   });
 }
@@ -609,14 +629,14 @@ export async function getStaffAttendanceQuickState(env, user, body = {}) {
   const branchId = branchFor(user, body);
   const username = actorId(user);
   if (!username) fail('The signed-in staff account has no username.', 401);
-  const policyDocumentPromise = getDocument(env, attendancePolicyPath(branchId), 'default').catch(() => null);
-  const sitesPromise = listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.staffAttendanceSites, branchId)).catch(() => []);
+  const policyDocumentPromise = getStaffAttendanceDocument(env, 'policy', branchId, 'default');
+  const sitesPromise = listStaffAttendanceCollection(env, 'sites', branchId);
   const storedPolicy = await policyDocumentPromise;
   const policy = normalizeAttendancePolicy(storedPolicy || { Active: 'NO' });
   const today = localAttendanceParts(new Date(), policy.TimeZone);
-  const statePath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeState, branchId);
-  const todayDailyPromise = getDocument(env, dailyAttendancePath(branchId), dailyAttendanceId(today.date, username)).catch(() => null);
-  const storedStatePromise = getDocument(env, statePath, safeChurchDocumentId(username)).catch(() => null);
+  const statePath = staffAttendanceCollectionPath(env, 'state', branchId);
+  const todayDailyPromise = getStaffAttendanceDocument(env, 'daily', branchId, dailyAttendanceId(today.date, username));
+  const storedStatePromise = getStaffAttendanceDocument(env, 'state', branchId, safeStaffAttendanceDocumentId(username));
   const [sites, todayDaily, storedState] = await Promise.all([sitesPromise, todayDailyPromise, storedStatePromise]);
   const state = clean(todayDaily?.FirstClockIn)
     ? clean(todayDaily?.LastClockOut) ? 'COMPLETED' : 'CLOCKED_IN'
@@ -650,21 +670,17 @@ export async function listStaffAttendance(env, user, body = {}) {
   const canReport = canReportStaffAttendance(user);
   const reportPeriod = canReport ? normalizeAttendanceReportPeriod(body) : { FromDate: '', ToDate: '' };
   const [sites, events, storedState, storedPolicy, dailySource, staffUsers, employees, leaveRows] = await Promise.all([
-    listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.staffAttendanceSites, branchId)).catch(() => []),
-    queryCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.staffTimeEvents, branchId), {
+    listStaffAttendanceCollection(env, 'sites', branchId),
+    queryStaffAttendanceCollection(env, 'events', branchId, {
       orderBy: [{ field: 'Timestamp', direction: 'DESCENDING' }],
       limit: 500
-    }).catch(() => []),
-    getDocument(
-      env,
-      churchCollectionPath(CHURCH_COLLECTIONS.staffTimeState, branchId),
-      safeChurchDocumentId(username)
-    ).catch(() => null),
-    getDocument(env, attendancePolicyPath(branchId), 'default').catch(() => null),
-    queryCollection(env, dailyAttendancePath(branchId), {
+    }),
+    getStaffAttendanceDocument(env, 'state', branchId, safeStaffAttendanceDocumentId(username)),
+    getStaffAttendanceDocument(env, 'policy', branchId, 'default'),
+    queryStaffAttendanceCollection(env, 'daily', branchId, {
       orderBy: [{ field: 'Date', direction: 'DESCENDING' }],
       limit: 500
-    }).catch(() => []),
+    }),
     listCollection(env, 'staffUsers').catch(() => []),
     listCollection(env, 'hrEmployees').catch(() => []),
     listCollection(env, 'hrLeaveRequests').catch(() => [])
@@ -686,7 +702,7 @@ export async function listStaffAttendance(env, user, body = {}) {
   const sortedDaily = dailyRows.sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)) || clean(a.DisplayName).localeCompare(clean(b.DisplayName)));
   let reportDailyRows = sortedDaily;
   if (canReport && reportPeriod.FromDate) {
-    reportDailyRows = await queryCollection(env, dailyAttendancePath(branchId), {
+    reportDailyRows = await queryStaffAttendanceCollection(env, 'daily', branchId, {
       filters: [
         { field: 'Date', op: '>=', value: reportPeriod.FromDate },
         { field: 'Date', op: '<=', value: reportPeriod.ToDate }
@@ -710,7 +726,7 @@ export async function listStaffAttendance(env, user, body = {}) {
   const presenceCheck = presenceCheckView(policy, todayStoredState, todayState === 'CLOCKED_IN');
   await ensurePresenceNotificationSchedule(
     env,
-    churchCollectionPath(CHURCH_COLLECTIONS.staffTimeState, branchId),
+    staffAttendanceCollectionPath(env, 'state', branchId),
     username,
     policy,
     todayStoredState,
@@ -737,16 +753,20 @@ export async function listStaffAttendance(env, user, body = {}) {
     nextDirection: todayState === 'CLOCKED_IN' ? 'OUT' : todayState === 'CLOCKED_OUT' ? 'IN' : '',
     stateVersion: clean(storedState?.__updateTime),
     presenceCheck,
-    capabilities: { canManage, canReport }
+    capabilities: {
+      canManage,
+      canReport,
+      canMigrateStorage: clean(user.role || user.Role) === 'Super Admin'
+    }
   };
 }
 
 export async function saveAttendanceSite(env, user, body = {}) {
   if (!canManageStaffAttendance(user)) fail('Only organisation or HR attendance administrators can manage attendance locations.', 403);
   const branchId = branchFor(user, body);
-  const id = safeChurchDocumentId(clean(body.SiteId) || `SITE-${crypto.randomUUID().slice(0, 8)}`);
-  const collectionPath = churchCollectionPath(CHURCH_COLLECTIONS.staffAttendanceSites, branchId);
-  const existing = await getDocument(env, collectionPath, id).catch(() => null);
+  const id = safeStaffAttendanceDocumentId(clean(body.SiteId) || `SITE-${crypto.randomUUID().slice(0, 8)}`);
+  const collectionPath = staffAttendanceCollectionPath(env, 'sites', branchId);
+  const existing = await getStaffAttendanceDocument(env, 'sites', branchId, id);
   const site = {
     SiteId: id,
     ...normalizeAttendanceSite(body, existing || {}),
@@ -761,12 +781,15 @@ export async function saveAttendanceSite(env, user, body = {}) {
 export async function deleteAttendanceSite(env, user, body = {}) {
   if (!canManageStaffAttendance(user)) fail('Only organisation or HR attendance administrators can delete attendance locations.', 403);
   const branchId = branchFor(user, body);
-  const id = safeChurchDocumentId(body.SiteId);
+  const id = safeStaffAttendanceDocumentId(body.SiteId);
   if (!id) fail('Choose the attendance location to delete.');
-  const collectionPath = churchCollectionPath(CHURCH_COLLECTIONS.staffAttendanceSites, branchId);
-  const existing = await getDocument(env, collectionPath, id);
+  const existing = await getStaffAttendanceDocument(env, 'sites', branchId, id);
   if (!existing) fail('The attendance location no longer exists.', 404);
-  await deleteDocument(env, collectionPath, id);
+  await batchCommitDocuments(env, staffAttendanceReadPaths(env, 'sites', branchId).map((collectionPath) => ({
+    collectionPath,
+    documentId: id,
+    operation: 'delete'
+  })));
   return {
     ok: true,
     siteId: id,
@@ -777,7 +800,7 @@ export async function deleteAttendanceSite(env, user, body = {}) {
 export async function saveAttendancePolicy(env, user, body = {}) {
   if (!canManageStaffAttendance(user)) fail('Only organisation or HR attendance administrators can manage daily work hours.', 403);
   const branchId = branchFor(user, body);
-  const existing = await getDocument(env, attendancePolicyPath(branchId), 'default').catch(() => null);
+  const existing = await getStaffAttendanceDocument(env, 'policy', branchId, 'default');
   const normalized = normalizeAttendancePolicy(body, existing || {});
   const policy = {
     PolicyId: 'default',
@@ -786,21 +809,21 @@ export async function saveAttendancePolicy(env, user, body = {}) {
     UpdatedAt: nowIso(),
     UpdatedBy: actorName(user)
   };
-  await upsertDocument(env, attendancePolicyPath(branchId), 'default', policy);
+  await upsertDocument(env, attendancePolicyPath(env, branchId), 'default', policy);
   return { ok: true, policy, message: 'Daily work hours saved. Lateness, absence and overtime will now be calculated automatically.' };
 }
 
 async function getStaffAttendanceActionState(env, branchId, username, siteId) {
-  const storedPolicy = await getDocument(env, attendancePolicyPath(branchId), 'default');
+  const storedPolicy = await getStaffAttendanceDocument(env, 'policy', branchId, 'default');
   const policy = normalizeAttendancePolicy(storedPolicy || { Active: 'NO' });
   const today = localAttendanceParts(new Date(), policy.TimeZone);
-  const statePath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeState, branchId);
-  const dailyPath = dailyAttendancePath(branchId);
+  const statePath = staffAttendanceCollectionPath(env, 'state', branchId);
+  const dailyPath = dailyAttendancePath(env, branchId);
   const dailyId = dailyAttendanceId(today.date, username);
   const [site, storedState, existingDaily] = await Promise.all([
-    getDocument(env, churchCollectionPath(CHURCH_COLLECTIONS.staffAttendanceSites, branchId), siteId),
-    getDocument(env, statePath, safeChurchDocumentId(username)),
-    getDocument(env, dailyPath, dailyId)
+    getStaffAttendanceDocument(env, 'sites', branchId, siteId),
+    getStaffAttendanceDocument(env, 'state', branchId, safeStaffAttendanceDocumentId(username)),
+    getStaffAttendanceDocument(env, 'daily', branchId, dailyId)
   ]);
   if (!site || !activeValue(site.Active, true)) fail('The selected attendance location is inactive or unavailable.', 404);
   const state = clean(existingDaily?.FirstClockIn)
@@ -826,7 +849,7 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
   const branchId = branchFor(user, body);
   const username = actorId(user);
   if (!username) fail('The signed-in staff account has no username.', 401);
-  const siteId = safeChurchDocumentId(body.SiteId);
+  const siteId = safeStaffAttendanceDocumentId(body.SiteId);
   if (!siteId) fail('Choose the attendance location.');
   const workspace = await getStaffAttendanceActionState(env, branchId, username, siteId);
   const expected = workspace.nextDirection;
@@ -839,8 +862,8 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
     const opening = attendanceClockInWindow(workspace.policy, timestamp);
     if (!opening.allowed) {
       const attemptKey = clean(body.idempotencyKey) || crypto.randomUUID();
-      const auditId = safeChurchDocumentId(`EARLY-IN-${opening.date}-${username}-${attemptKey}`);
-      await upsertDocument(env, churchCollectionPath(CHURCH_COLLECTIONS.staffTimeAudit, branchId), auditId, {
+      const auditId = safeStaffAttendanceDocumentId(`EARLY-IN-${opening.date}-${username}-${attemptKey}`);
+      await upsertDocument(env, staffAttendanceCollectionPath(env, 'audit', branchId), auditId, {
         AuditId: auditId,
         Action: 'EARLY_CLOCK_IN_REJECTED',
         BranchId: branchId,
@@ -880,7 +903,7 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
   if (direction === 'OUT' && !clean(existingDaily?.FirstClockIn)) {
     fail('Clock in successfully before attempting to clock out.', 409);
   }
-  const eventId = safeChurchDocumentId(`TIME-${timestamp}-${username}-${crypto.randomUUID().slice(0, 8)}`);
+  const eventId = safeStaffAttendanceDocumentId(`TIME-${timestamp}-${username}-${crypto.randomUUID().slice(0, 8)}`);
   const event = {
     EventId: eventId,
     BranchId: branchId,
@@ -911,7 +934,7 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
     EarlyDepartureMinutes: daily.EarlyDepartureMinutes,
     WorkMinutes: daily.WorkMinutes
   });
-  const eventPath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeEvents, branchId);
+  const eventPath = staffAttendanceCollectionPath(env, 'events', branchId);
   const nextPresenceDueAt = direction === 'IN' ? nextPresenceCheckAt(workspace.policy, timestamp) : '';
   const presencePushEnabled = clean(workspace.policy.PresenceCheckPushEnabled).toUpperCase() !== 'NO';
   const stateDocument = {
@@ -935,15 +958,15 @@ export async function clockStaffAttendance(env, user, body = {}, requestContext 
     { collectionPath: eventPath, documentId: eventId, data: event, exists: false },
     {
       collectionPath: workspace.statePath,
-      documentId: safeChurchDocumentId(username),
+      documentId: safeStaffAttendanceDocumentId(username),
       data: stateDocument,
-      ...(workspace.storedState?.__updateTime ? { updateTime: workspace.storedState.__updateTime } : { exists: false })
+      ...canonicalWritePrecondition(workspace.storedState)
     },
     {
       collectionPath: workspace.dailyPath,
       documentId: daily.DailyId,
       data: daily,
-      ...(existingDaily ? existingDaily.__updateTime ? { updateTime: existingDaily.__updateTime } : {} : { exists: false })
+      ...canonicalWritePrecondition(existingDaily)
     }
   ]);
   const timing = direction === 'IN' && daily.LateMinutes
@@ -966,7 +989,7 @@ export async function recordPresenceCheck(env, user, body = {}, requestContext =
   const branchId = branchFor(user, body);
   const username = actorId(user);
   if (!username) fail('The signed-in staff account has no username.', 401);
-  const siteId = safeChurchDocumentId(body.SiteId);
+  const siteId = safeStaffAttendanceDocumentId(body.SiteId);
   if (!siteId) fail('Choose the attendance location.');
   const workspace = await getStaffAttendanceActionState(env, branchId, username, siteId);
   if (workspace.state !== 'CLOCKED_IN') fail('Clock in before confirming your continued presence.', 409);
@@ -992,7 +1015,7 @@ export async function recordPresenceCheck(env, user, body = {}, requestContext =
     UpdatedAt: timestamp,
     UpdatedBy: actorName(user)
   };
-  const eventId = safeChurchDocumentId(`PRESENCE-${timestamp}-${username}-${crypto.randomUUID().slice(0, 8)}`);
+  const eventId = safeStaffAttendanceDocumentId(`PRESENCE-${timestamp}-${username}-${crypto.randomUUID().slice(0, 8)}`);
   const event = {
     EventId: eventId,
     BranchId: branchId,
@@ -1032,22 +1055,22 @@ export async function recordPresenceCheck(env, user, body = {}, requestContext =
   };
   await batchCommitDocuments(env, [
     {
-      collectionPath: churchCollectionPath(CHURCH_COLLECTIONS.staffTimeEvents, branchId),
+      collectionPath: staffAttendanceCollectionPath(env, 'events', branchId),
       documentId: eventId,
       data: event,
       exists: false
     },
     {
       collectionPath: workspace.statePath,
-      documentId: safeChurchDocumentId(username),
+      documentId: safeStaffAttendanceDocumentId(username),
       data: state,
-      ...(storedState?.__updateTime ? { updateTime: storedState.__updateTime } : { exists: false })
+      ...canonicalWritePrecondition(storedState)
     },
     {
       collectionPath: workspace.dailyPath,
       documentId: workspace.dailyId,
       data: daily,
-      ...(existingDaily.__updateTime ? { updateTime: existingDaily.__updateTime } : { exists: false })
+      ...canonicalWritePrecondition(existingDaily)
     }
   ]);
   return {
@@ -1074,7 +1097,7 @@ export async function recordManualAttendance(env, user, body = {}) {
   const parsedTimestamp = new Date(requestedTimestamp);
   if (Number.isNaN(parsedTimestamp.getTime())) fail('Enter a valid correction date and time.');
   const timestamp = parsedTimestamp.toISOString();
-  const eventId = safeChurchDocumentId(`MANUAL-${timestamp}-${username}-${crypto.randomUUID().slice(0, 8)}`);
+  const eventId = safeStaffAttendanceDocumentId(`MANUAL-${timestamp}-${username}-${crypto.randomUUID().slice(0, 8)}`);
   const event = {
     EventId: eventId,
     BranchId: branchId,
@@ -1090,16 +1113,16 @@ export async function recordManualAttendance(env, user, body = {}) {
     RecordedBy: actorName(user),
     CreatedAt: nowIso()
   };
-  const eventPath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeEvents, branchId);
-  const auditPath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeAudit, branchId);
-  const statePath = churchCollectionPath(CHURCH_COLLECTIONS.staffTimeState, branchId);
-  const stateId = safeChurchDocumentId(username);
-  const policy = normalizeAttendancePolicy(await getDocument(env, attendancePolicyPath(branchId), 'default').catch(() => ({ Active: 'NO' })));
+  const eventPath = staffAttendanceCollectionPath(env, 'events', branchId);
+  const auditPath = staffAttendanceCollectionPath(env, 'audit', branchId);
+  const statePath = staffAttendanceCollectionPath(env, 'state', branchId);
+  const stateId = safeStaffAttendanceDocumentId(username);
+  const policy = normalizeAttendancePolicy(await getStaffAttendanceDocument(env, 'policy', branchId, 'default') || { Active: 'NO' });
   const attendanceDate = calculateAttendanceMetrics(policy, { Direction: direction, Timestamp: timestamp }).Date;
   const dailyId = dailyAttendanceId(attendanceDate, username);
   const [currentState, existingDaily] = await Promise.all([
-    getDocument(env, statePath, stateId).catch(() => null),
-    getDocument(env, dailyAttendancePath(branchId), dailyId).catch(() => null)
+    getStaffAttendanceDocument(env, 'state', branchId, stateId),
+    getStaffAttendanceDocument(env, 'daily', branchId, dailyId)
   ]);
   const daily = buildDailyAttendanceFromEvent(policy, event, existingDaily || {});
   Object.assign(event, {
@@ -1114,10 +1137,10 @@ export async function recordManualAttendance(env, user, body = {}) {
     { collectionPath: eventPath, documentId: eventId, data: event, exists: false },
     { collectionPath: auditPath, documentId: eventId, data: { ...event, Action: 'MANUAL_ATTENDANCE_CORRECTION' }, exists: false },
     {
-      collectionPath: dailyAttendancePath(branchId),
+      collectionPath: dailyAttendancePath(env, branchId),
       documentId: daily.DailyId,
       data: daily,
-      ...(existingDaily?.__updateTime ? { updateTime: existingDaily.__updateTime } : { exists: false })
+      ...canonicalWritePrecondition(existingDaily)
     },
     ...(!currentState?.LastTimestamp || timestamp >= currentState.LastTimestamp ? [{
       collectionPath: statePath,
@@ -1133,11 +1156,55 @@ export async function recordManualAttendance(env, user, body = {}) {
         UpdatedAt: nowIso(),
         UpdatedBy: actorName(user)
       },
-      ...(currentState?.__updateTime ? { updateTime: currentState.__updateTime } : { exists: false })
+      ...canonicalWritePrecondition(currentState)
     }] : [])
   ];
   await batchCommitDocuments(env, writes);
   return { ok: true, event, daily, message: 'Attendance correction recorded with an audit trail and recalculated daily totals.' };
+}
+
+function requireStorageMigrationAdministrator(user = {}) {
+  if (clean(user.role || user.Role) !== 'Super Admin') {
+    fail('Only a Super Administrator can migrate staff-attendance storage.', 403);
+  }
+}
+
+export async function getStaffAttendanceStorageMigration(env, user, body = {}) {
+  requireStorageMigrationAdministrator(user);
+  const status = await staffAttendanceStorageMigrationStatus(env, branchFor(user, body));
+  return {
+    ok: true,
+    ...status,
+    message: status.legacyRecords
+      ? status.verified
+        ? `${status.legacyRecords} legacy record(s) have verified canonical copies and may be cleaned up.`
+        : `${status.missingCanonicalRecords} of ${status.legacyRecords} legacy record(s) still require migration.`
+      : 'No legacy staff-attendance records remain in this branch.'
+  };
+}
+
+export async function migrateStaffAttendanceStorage(env, user, body = {}) {
+  requireStorageMigrationAdministrator(user);
+  const result = await migrateLegacyStaffAttendanceStorage(env, branchFor(user, body));
+  return {
+    ok: true,
+    ...result,
+    message: `${result.copied} legacy staff-attendance record(s) copied. ${result.missingCanonicalRecords} remain unverified.`
+  };
+}
+
+export async function cleanupStaffAttendanceStorage(env, user, body = {}) {
+  requireStorageMigrationAdministrator(user);
+  const result = await cleanupLegacyStaffAttendanceStorage(
+    env,
+    branchFor(user, body),
+    body.Confirmation || body.confirmation
+  );
+  return {
+    ok: true,
+    ...result,
+    message: `${result.deleted} verified legacy staff-attendance record(s) deleted. Canonical records were retained.`
+  };
 }
 
 export async function handleStaffAttendanceAction(env, user, body = {}, requestContext = {}) {
@@ -1150,5 +1217,8 @@ export async function handleStaffAttendanceAction(env, user, body = {}, requestC
   if (action === 'clock') return clockStaffAttendance(env, user, body, requestContext);
   if (action === 'presence') return recordPresenceCheck(env, user, body, requestContext);
   if (action === 'manual') return recordManualAttendance(env, user, body);
+  if (action === 'storagestatus') return getStaffAttendanceStorageMigration(env, user, body);
+  if (action === 'migratestorage') return migrateStaffAttendanceStorage(env, user, body);
+  if (action === 'cleanupstorage') return cleanupStaffAttendanceStorage(env, user, body);
   fail('Choose a valid staff attendance action.');
 }

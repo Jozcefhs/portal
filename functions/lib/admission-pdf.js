@@ -88,7 +88,7 @@ function resultRemark(value) {
   const status = clean(value).toLowerCase();
   if (['passed', 'admitted'].includes(status)) return 'Congratulations. You have been offered admission.';
   if (status === 'pending') return 'Your result is still under review. Please await further communication.';
-  return 'Thank you for participating. You were not admitted at this time.';
+  return 'Thank you for participating. At this time, we are unable to offer you admission.';
 }
 
 function renderTemplate(template, context) {

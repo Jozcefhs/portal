@@ -6,6 +6,7 @@ function clean(value) { return String(value ?? '').trim(); }
 let cachedStructure = null;
 let cachedStructureUntil = 0;
 let cachedStructureKey = '';
+const SCHOOL_STRUCTURE_CACHE_MS = 60 * 1000;
 
 export function safeScopeId(value, fallback = 'main') {
   return clean(value || fallback).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || fallback;
@@ -40,7 +41,7 @@ export async function getSchoolStructure(env) {
     ActiveBranchId: safeScopeId(saved?.ActiveBranchId || branches[0]?.Id || 'main')
   };
   cachedStructureKey = environmentKey;
-  cachedStructureUntil = Date.now() + 15000;
+  cachedStructureUntil = Date.now() + SCHOOL_STRUCTURE_CACHE_MS;
   return cachedStructure;
 }
 

@@ -6268,6 +6268,34 @@ async function staffAttendanceRequest(action, payload = {}) {
   return data;
 }
 
+function renderStaffAttendanceStorageStatus(result = {}) {
+  const container = document.getElementById('staffAttendanceStorageSummary');
+  const status = document.getElementById('staffAttendanceStorageStatus');
+  const finalizeButton = document.getElementById('finalizeAttendanceStorage');
+  if (!container || !status) return;
+  const collections = Array.isArray(result.collections) ? result.collections : [];
+  container.innerHTML = collections.length ? table('Attendance storage check', collections, [
+    { label: 'Data', value: (row) => clean(row.key).replace(/([A-Z])/g, ' $1').replace(/^./, (letter) => letter.toUpperCase()) },
+    { label: 'Canonical', value: (row) => Number(row.canonicalRecords || 0) },
+    { label: 'Legacy', value: (row) => Number(row.legacyRecords || 0) },
+    { label: 'Still to copy', value: (row) => Number(row.missingCanonicalRecords || 0) }
+  ]) : '';
+  const fallbackDisabled = result.legacyReadsDisabled === true;
+  const missing = Number(result.missingCanonicalRecords || 0);
+  const legacy = Number(result.legacyRecords || 0);
+  const message = missing
+      ? `${missing} legacy record(s) still need canonical copies.`
+      : fallbackDisabled && legacy
+        ? `${legacy} new legacy record(s) were found but are not being read. Their canonical copies are verified; finalize again to remove them.`
+        : fallbackDisabled
+          ? 'Migration complete. Staff attendance now uses canonical edition storage only; legacy fallback reads are disabled.'
+      : legacy
+        ? `${legacy} legacy record(s) have verified canonical copies. You may now finalize the migration.`
+        : 'No legacy attendance records were found. Finalize once to disable future legacy fallback reads.';
+  setStatus(status, message, missing ? 'bad' : 'ok');
+  if (finalizeButton) finalizeButton.disabled = missing > 0 || (fallbackDisabled && legacy === 0);
+}
+
 function attendanceMinutesLabel(value) {
   const minutes = Math.max(0, Number(value || 0) || 0);
   if (!minutes) return '—';
@@ -6520,7 +6548,7 @@ async function loadStaffAttendance() {
     const reportSummary = attendanceReportSummary(attendanceReportRows);
     panelEl.innerHTML = `
       <div class="workflow-intro">
-        <div><p class="eyebrow">People & ministry</p><h2>Staff attendance</h2><p class="muted">Verified clock-in/out with automatic lateness, absence, early-departure and overtime calculations.</p></div>
+        <div><p class="eyebrow">People & attendance</p><h2>Staff attendance</h2><p class="muted">Verified clock-in/out with automatic lateness, absence, early-departure and overtime calculations.</p></div>
         <button type="button" id="refreshStaffAttendance">Refresh</button>
       </div>
       <div class="workflow-kpis">
@@ -6608,7 +6636,7 @@ async function loadStaffAttendance() {
         <form id="staffAttendanceSiteForm" class="workflow-form config-form">
           <input name="SiteId" type="hidden">
           <div class="config-grid">
-            <label>Location name <input name="Name" required placeholder="Main church premises"></label>
+            <label>Location name <input name="Name" required placeholder="Main premises"></label>
             <label>Latitude <input name="Latitude" type="number" step="any" required></label>
             <label>Longitude <input name="Longitude" type="number" step="any" required></label>
             <label>Allowed radius (metres) <input name="RadiusMetres" type="number" min="20" max="5000" value="150" required></label>
@@ -6639,6 +6667,16 @@ async function loadStaffAttendance() {
           <button type="submit">Record correction</button>
         </form>
         <p class="status" id="staffAttendanceManualStatus"></p>
+      </section>` : ''}
+      ${capabilities.canMigrateStorage ? `<section class="config-group attendance-storage-workspace">
+        <header><strong>Attendance data storage</strong><small>Move records created under the former church-named path into the canonical storage for this edition. Copying never overwrites an existing canonical record.</small></header>
+        <div class="config-dialog-actions">
+          <p class="status" id="staffAttendanceStorageStatus">No storage check has been run. Checking is manual to avoid unnecessary database reads.</p>
+          <button type="button" id="checkAttendanceStorage">Check storage</button>
+          <button type="button" id="migrateAttendanceStorage">Copy legacy records</button>
+          <button type="button" class="danger" id="finalizeAttendanceStorage" disabled>Finalize migration</button>
+        </div>
+        <div id="staffAttendanceStorageSummary"></div>
       </section>` : ''}
       ${capabilities.canReport ? `<section class="config-group attendance-report-workspace">
         <header><strong>HR attendance report</strong><small>Choose a period, isolate lateness or absence records, sort the list, then print or save it as PDF.</small></header>
@@ -6684,9 +6722,54 @@ async function loadStaffAttendance() {
       { key: 'policy', label: 'Work hours', icon: '\u23F0', nodes: attendanceGroups.find((node) => /daily work hours/i.test(node.textContent)) },
       { key: 'locations', label: 'Locations', icon: '\u2316', count: configuredSites.length, nodes: attendanceGroups.find((node) => /attendance locations/i.test(node.textContent)) },
       { key: 'corrections', label: 'Corrections', icon: '\u270E', nodes: attendanceGroups.find((node) => /manual correction/i.test(node.textContent)) },
+      { key: 'storage', label: 'Data storage', icon: '\u{1F5C4}', nodes: attendanceGroups.find((node) => /attendance data storage/i.test(node.textContent)) },
       { key: 'reports', label: 'Reports', icon: '\u03A3', count: attendanceReportRows.length, nodes: [attendanceGroups.find((node) => /HR attendance report/i.test(node.textContent)), ...workspaceTableNodes('Recent staff attendance')] }
     ]);
     document.getElementById('refreshStaffAttendance')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', loadStaffAttendance));
+    document.getElementById('checkAttendanceStorage')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      setButtonLoading(button, true, 'Checking...', 'Check storage');
+      try {
+        renderStaffAttendanceStorageStatus(await staffAttendanceRequest('storagestatus'));
+      } catch (error) {
+        setStatus(document.getElementById('staffAttendanceStorageStatus'), error.message || String(error), 'bad');
+      } finally {
+        if (button.isConnected) setButtonLoading(button, false, 'Checking...', 'Check storage');
+      }
+    });
+    document.getElementById('migrateAttendanceStorage')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      setButtonLoading(button, true, 'Copying...', 'Copy legacy records');
+      try {
+        const result = await staffAttendanceRequest('migratestorage');
+        renderStaffAttendanceStorageStatus(result);
+        setStatus(document.getElementById('staffAttendanceStorageStatus'), result.message, result.missingCanonicalRecords ? 'bad' : 'ok');
+      } catch (error) {
+        setStatus(document.getElementById('staffAttendanceStorageStatus'), error.message || String(error), 'bad');
+      } finally {
+        if (button.isConnected) setButtonLoading(button, false, 'Copying...', 'Copy legacy records');
+      }
+    });
+    document.getElementById('finalizeAttendanceStorage')?.addEventListener('click', async (event) => {
+      const confirmed = await window.DynamaxDialogs.confirm({
+        title: 'Finalize attendance storage migration',
+        message: 'Delete only legacy attendance records that already have verified canonical copies, then permanently stop legacy fallback reads for this branch? Canonical records will remain unchanged.',
+        tone: 'danger',
+        confirmText: 'Finalize migration'
+      });
+      if (!confirmed) return;
+      const button = event.currentTarget;
+      setButtonLoading(button, true, 'Finalizing...', 'Finalize migration');
+      try {
+        const result = await staffAttendanceRequest('cleanupstorage', { Confirmation: 'DELETE LEGACY STAFF ATTENDANCE' });
+        renderStaffAttendanceStorageStatus(result);
+        setStatus(document.getElementById('staffAttendanceStorageStatus'), result.message, 'ok');
+      } catch (error) {
+        setStatus(document.getElementById('staffAttendanceStorageStatus'), error.message || String(error), 'bad');
+      } finally {
+        if (button.isConnected) setButtonLoading(button, false, 'Finalizing...', 'Finalize migration');
+      }
+    });
     const attendanceReportForm = document.getElementById('staffAttendanceReportForm');
     attendanceReportForm?.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -11775,7 +11858,7 @@ async function academicManagementRequest(action, payload = {}) {
   if (!branchId || branchId === 'all') throw new Error('Select one school branch before using Academic Management.');
   const response = await staffFetch('/api/staff-academics', {
     method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, BranchId: branchId, ...payload })
+    body: JSON.stringify({ action, BranchId: branchId, View: academicManagementView, ...payload })
   });
   const data = await response.json().catch(() => ({ ok: false, message: 'Academic Management did not return JSON.' }));
   if (response.status === 401) { showLogin(data.message || 'Your staff session has expired.', 'bad'); throw new Error(data.message || 'Your session expired.'); }
@@ -11784,7 +11867,8 @@ async function academicManagementRequest(action, payload = {}) {
     const refreshed = await academicManagementRequest('bootstrap', {
       SchoolSection: payload.SchoolSection || academicManagementFilters.section,
       SessionId: payload.SessionId || academicManagementFilters.sessionId,
-      TermId: payload.TermId || academicManagementFilters.termId
+      TermId: payload.TermId || academicManagementFilters.termId,
+      View: payload.View || academicManagementView
     });
     return { ...refreshed, ...data, refreshAcademicManagement: false };
   }
@@ -11801,7 +11885,8 @@ async function loadAcademicManagement(options = {}) {
     const data = await academicManagementRequest('bootstrap', {
       SchoolSection: section,
       SessionId: academicManagementFilters.sessionId,
-      TermId: academicManagementFilters.termId
+      TermId: academicManagementFilters.termId,
+      View: academicManagementView
     });
     if (activeSection !== 'academics') return;
     academicManagementFilters.section = section || academicManagementFilters.section;
@@ -12074,7 +12159,7 @@ async function uploadAcademicCbtPaper(payload, idempotencyKey) {
   const response = await staffFetch('/api/staff-cbt-paper', {
     method: 'POST', credentials: 'same-origin', cache: 'no-store',
     headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
-    body: JSON.stringify({ BranchId: branchId, ...payload })
+    body: JSON.stringify({ BranchId: branchId, View: 'cbt', ...payload })
   });
   const data = await response.json().catch(() => ({ ok: false, message: 'The CBT upload did not return JSON.' }));
   if (response.status === 401) showLogin(data.message || 'Your staff session has expired.', 'bad');
@@ -12084,6 +12169,17 @@ async function uploadAcademicCbtPaper(payload, idempotencyKey) {
     throw error;
   }
   return data;
+}
+
+function mergeAcademicCbtTest(result = {}) {
+  const saved = result.CbtTest;
+  if (!saved?.CbtTestId) return;
+  const current = academicManagementData?.cbtTests || [];
+  academicManagementData = {
+    ...(academicManagementData || {}),
+    cbtTests: [...current.filter((row) => row.CbtTestId !== saved.CbtTestId), saved]
+      .sort((left, right) => clean(right.StartsAt || right.CreatedAt).localeCompare(clean(left.StartsAt || left.CreatedAt)))
+  };
 }
 
 function bindAcademicManagement() {
@@ -12258,9 +12354,10 @@ function bindAcademicManagement() {
             FileName: file.name,
             FileBase64: fileBase64
           }, academicCbtDraft.clientRequestId);
+          mergeAcademicCbtTest(result);
           resetAcademicCbtDraft();
           academicManagementTaskViews.cbt = 'register';
-          await loadAcademicManagement({ message: result.message || 'CBT test scheduled online.' });
+          renderAcademicManagement(academicManagementData || {}, result.message || 'CBT test scheduled online.');
         });
       } catch (error) {
         const prefix = error.outcomeUncertain ? 'Upload outcome is uncertain. Refresh the scheduled-test register before retrying. ' : '';
@@ -12313,6 +12410,9 @@ function bindAcademicManagement() {
           RevisionToken: button.dataset.academicRevision,
           Reason: reason
         });
+        if (data.deletedCbtTestId) {
+          data.cbtTests = (data.cbtTests || []).filter((row) => row.CbtTestId !== data.deletedCbtTestId);
+        }
         renderAcademicManagement(data, data.message || 'The CBT test was deleted.');
       } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
     });
@@ -12346,6 +12446,10 @@ function bindAcademicManagement() {
   panelEl.querySelectorAll('[data-academic-view]').forEach((button) => button.addEventListener('click', () => {
     academicManagementView = button.dataset.academicView;
     if (button.closest('[data-academic-catalogue-note="arms"]')) academicManagementTaskViews.bulkSetup = 'applyArms';
+    if (academicManagementView === 'cbt') {
+      void loadAcademicManagement();
+      return;
+    }
     renderAcademicManagement(academicManagementData || {});
     if (academicManagementView === 'scorebook') void loadAcademicScorebookContext();
   }));

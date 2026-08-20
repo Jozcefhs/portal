@@ -13,6 +13,11 @@ import {
   normalizeAttendanceReportPeriod,
   normalizeAttendanceSite
 } from '../functions/lib/staff-time-attendance.js';
+import {
+  canonicalStaffAttendanceCollectionPath,
+  legacyStaffAttendanceCollectionPath,
+  staffAttendanceDocumentData
+} from '../functions/lib/staff-attendance-storage.js';
 
 const adminJs = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
 const adminHtml = await readFile(new URL('../admin.html', import.meta.url), 'utf8');
@@ -20,6 +25,7 @@ const portalCss = await readFile(new URL('../css/style.css', import.meta.url), '
 const attendanceSource = await readFile(new URL('../functions/lib/staff-time-attendance.js', import.meta.url), 'utf8');
 const attendanceApiSource = await readFile(new URL('../functions/api/staff-attendance.js', import.meta.url), 'utf8');
 const attendanceFaceApiSource = await readFile(new URL('../functions/api/staff-attendance-face.js', import.meta.url), 'utf8');
+const attendanceStorageSource = await readFile(new URL('../functions/lib/staff-attendance-storage.js', import.meta.url), 'utf8');
 const passkeyApiSource = await readFile(new URL('../functions/api/staff-passkey.js', import.meta.url), 'utf8');
 const attendanceActionStateSource = attendanceSource.slice(
   attendanceSource.indexOf('async function getStaffAttendanceActionState'),
@@ -78,7 +84,8 @@ test('attendance location capture retries precisely and saved locations can be d
   assert.match(adminJs, /data-delete-attendance-site/);
   assert.match(adminJs, /staffAttendanceRequest\('deletesite'/);
   assert.match(attendanceSource, /export async function deleteAttendanceSite/);
-  assert.match(attendanceSource, /deleteDocument\(env, collectionPath, id\)/);
+  assert.match(attendanceSource, /staffAttendanceReadPaths\(env, 'sites', branchId\)/);
+  assert.match(attendanceSource, /operation: 'delete'/);
   assert.match(attendanceSource, /action === 'deletesite'/);
 });
 
@@ -291,10 +298,10 @@ test('continued-presence confirmation uses focused reads and updates the UI with
   assert.doesNotMatch(presenceHandlerSource, /listStaffAttendance|listCollection|queryCollection/);
   assert.match(presenceHandlerSource, /getStaffAttendanceActionState/);
   assert.doesNotMatch(attendanceActionStateSource, /listStaffAttendance|listCollection|queryCollection/);
-  assert.equal((attendanceActionStateSource.match(/getDocument\(/g) || []).length, 4);
-  assert.match(attendanceActionStateSource, /getDocument\(env, attendancePolicyPath\(branchId\), 'default'\)/);
+  assert.equal((attendanceActionStateSource.match(/getStaffAttendanceDocument\(/g) || []).length, 4);
+  assert.match(attendanceActionStateSource, /getStaffAttendanceDocument\(env, 'policy', branchId, 'default'\)/);
   assert.match(attendanceActionStateSource, /const \[site, storedState, existingDaily\] = await Promise\.all/);
-  assert.match(attendanceActionStateSource, /getDocument\(env, dailyPath, dailyId\)/);
+  assert.match(attendanceActionStateSource, /getStaffAttendanceDocument\(env, 'daily', branchId, dailyId\)/);
   assert.match(presenceHandlerSource, /batchCommitDocuments/);
   assert.doesNotMatch(presenceButtonSource, /loadStaffAttendance\(/);
   assert.match(presenceButtonSource, /updateAttendancePresenceCard/);
@@ -349,7 +356,7 @@ test('dashboard provides a live clock and protected attendance quick action', ()
   assert.doesNotMatch(dashboardPresenceButtonSource, /sections\.includes\('staffAttendance'\)/);
   assert.match(attendanceSource, /export async function getStaffAttendanceQuickState/);
   assert.match(attendanceSource, /todayDaily: todayDaily \|\| null/);
-  assert.match(attendanceApiSource, /!\['list', 'quick'\]\.includes\(action\)/);
+  assert.match(attendanceApiSource, /!\['list', 'quick', 'storagestatus'\]\.includes\(action\)/);
   assert.match(portalCss, /\.dashboard-time-attendance\{display:grid/);
   assert.match(portalCss, /\.dashboard-digital-clock strong\{/);
   assert.match(portalCss, /\.attendance-clock-controls\{display:grid;grid-template-columns:minmax\(190px,260px\) minmax\(140px,1fr\) max-content/);
@@ -386,4 +393,35 @@ test('mobile attendance sequences location and configured identity checks withou
   assert.doesNotMatch(clockHandlerSource, /listStaffAttendance|listCollection|queryCollection/);
   assert.match(passkeyApiSource, /getDocument\(env, 'staffPasskeys', await documentIdForCredential\(credentialId\)\)/);
   assert.match(passkeyApiSource, /method: 'Device unlock'/);
+});
+
+test('staff attendance storage is edition-aware and migration removes only verified legacy copies', () => {
+  assert.equal(
+    canonicalStaffAttendanceCollectionPath('school', 'faceTemplates', 'main'),
+    'schoolBranches/main/staffAttendanceFaceTemplates'
+  );
+  assert.equal(
+    canonicalStaffAttendanceCollectionPath('faith', 'faceTemplates', 'main'),
+    'organisationBranches/main/staffAttendanceFaceTemplates'
+  );
+  assert.equal(
+    canonicalStaffAttendanceCollectionPath('organization', 'daily', 'north'),
+    'organisationBranches/north/staffDailyAttendance'
+  );
+  assert.equal(
+    legacyStaffAttendanceCollectionPath('faceTemplates', 'main'),
+    'organisationBranches/main/churchStaffAttendanceFaceTemplates'
+  );
+  assert.deepEqual(staffAttendanceDocumentData({ Username: 'staff.one', __id: 'one', __legacyStorage: true }), {
+    Username: 'staff.one'
+  });
+  assert.doesNotMatch(attendanceSource, /churchCollectionPath|safeChurchDocumentId|resolveMembershipBranch/);
+  assert.doesNotMatch(attendanceFaceApiSource, /churchCollectionPath|safeChurchDocumentId|resolveMembershipBranch/);
+  assert.match(attendanceStorageSource, /StorageVersion: 2/);
+  assert.match(attendanceStorageSource, /DELETE LEGACY STAFF ATTENDANCE/);
+  assert.match(attendanceStorageSource, /LegacyReadsDisabled: 'YES'/);
+  assert.match(attendanceStorageSource, /missingCanonicalRecords/);
+  assert.match(adminJs, /Attendance data storage/);
+  assert.match(adminJs, /staffAttendanceRequest\('migratestorage'\)/);
+  assert.match(adminJs, /staffAttendanceRequest\('cleanupstorage'/);
 });

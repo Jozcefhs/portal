@@ -30,7 +30,7 @@ import {
   publicPortalContent
 } from '../lib/public-portal-content.js';
 
-const PROFILE_CACHE_MS = 15000;
+const PROFILE_CACHE_MS = 60 * 1000;
 let profileCache = null;
 
 function clean(value) {

@@ -1,4 +1,5 @@
 import { batchCommitDocuments, batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, listCollectionPage, patchDocumentFields, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { getAccountingChartRows, invalidateAccountingChartRows, primeAccountingChartRows } from '../lib/accounting-reference-cache.js';
 import { deleteSchoolDocument, getSchoolDocumentById, getSchoolStructure, invalidateSchoolStructureCache, listSchoolCollection, querySchoolCollection, safeScopeId, schoolCollectionPaths, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass, classNamesMatch } from '../lib/class-names.js';
 import { categoryApplies, deleteStoreCategory, ensureStoreCategories, resolveStoreCategory, saveStoreCategory } from '../lib/store-categories.js';
@@ -234,6 +235,21 @@ function safeDocumentId(value) {
     .slice(0, 140);
 }
 
+async function getDocumentByIdOrField(env, collectionPath, businessId, fieldName) {
+  const value = clean(businessId);
+  if (!value) return null;
+  const candidateIds = [...new Set([
+    safeDocumentId(value),
+    safeDocumentId(value.toUpperCase())
+  ].filter(Boolean))];
+  for (const documentId of candidateIds) {
+    const direct = await getDocument(env, collectionPath, documentId);
+    if (direct) return direct;
+  }
+  if (!fieldName) return null;
+  return findOneByField(env, collectionPath, fieldName, value);
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -242,10 +258,27 @@ function sameText(a, b) {
   return clean(a).toLowerCase() === clean(b).toLowerCase();
 }
 
+let configuredClassCache = null;
+
+function invalidateConfiguredClassCache() {
+  configuredClassCache = null;
+}
+
 async function configuredClassNames(env) {
+  const cacheKey = [
+    clean(env.FIREBASE_PROJECT_ID),
+    clean(env.DYNAMAX_WORKSPACE_ID),
+    clean(env.ORGANISATION_EDITION || env.ORGANIZATION_EDITION)
+  ].join('|');
+  const now = Date.now();
+  if (configuredClassCache?.key === cacheKey && configuredClassCache.expiresAt > now) {
+    return configuredClassCache.classes;
+  }
   try {
     const result = await getSchoolClasses(env);
-    return result.classes || [];
+    const classes = result.classes || [];
+    configuredClassCache = { key: cacheKey, classes, expiresAt: now + (60 * 1000) };
+    return classes;
   } catch (_err) {
     return [];
   }
@@ -2310,7 +2343,14 @@ async function saveStoreItem(env, body) {
   if (!['Bookstore', 'Uniform Store'].includes(storeType) || !itemCode || !itemName) {
     const err = new Error('Store type, item code and item name are required.'); err.status = 400; throw err;
   }
-  const existing = (await listCollection(env, 'storeItems')).find((row) => sameText(row.StoreType, storeType) && sameText(row.ItemCode, itemCode)) || {};
+  const directStoreItem = await getDocument(env, 'storeItems', safeDocumentId(`${storeType}-${itemCode}`));
+  const legacyStoreItems = directStoreItem ? [] : await queryCollection(env, 'storeItems', {
+    filters: [{ field: 'ItemCode', op: '==', value: itemCode }],
+    limit: 20
+  }).catch(() => []);
+  const existing = directStoreItem
+    || legacyStoreItems.find((row) => sameText(row.StoreType, storeType))
+    || {};
   const category = await resolveStoreCategory(env, body, storeType);
   const className = canonicalConfiguredClass(clean(body.ClassName) || 'All', await configuredClassNames(env));
   const payload = {
@@ -2336,8 +2376,7 @@ async function deleteStoreCategoryAction(env, body) {
 
 async function updateStoreOrderStatus(env, body) {
   const orderNo = clean(body.OrderNo || body.orderNo);
-  const orders = await listCollection(env, 'storeOrders');
-  const existing = orders.find((row) => sameText(row.OrderNo, orderNo) || sameText(row.__id, safeDocumentId(orderNo)));
+  const existing = await getDocumentByIdOrField(env, 'storeOrders', orderNo, 'OrderNo');
   if (!existing) { const err = new Error('Store order was not found.'); err.status = 404; throw err; }
   const status = clean(body.Status || body.status) || 'Ready for Collection';
   let verifiedReference = '';
@@ -3335,6 +3374,7 @@ async function saveSchoolClasses(env, body) {
   const updatedBy = clean(body.UpdatedBy || body.updatedBy) || 'School Office';
   let saved = 0;
   const keepIds = new Set();
+  const savedRows = new Map();
   for (const item of classes) {
     const className = clean(item.ClassName || item.className || item);
     if (!className) continue;
@@ -3349,6 +3389,7 @@ async function saveSchoolClasses(env, body) {
     };
     keepIds.add(documentId);
     await upsertDocument(env, 'settings/academics/classes', documentId, payload);
+    savedRows.set(documentId, normalizeSchoolClass({ ...payload, __id: documentId }));
     saved += 1;
   }
   for (const existing of await listCollection(env, 'settings/academics/classes')) {
@@ -3357,11 +3398,15 @@ async function saveSchoolClasses(env, body) {
       await deleteDocument(env, 'settings/academics/classes', existingId);
     }
   }
+  invalidateConfiguredClassCache();
+  const normalizedClasses = [...savedRows.values()]
+    .sort((a, b) => asMoneyNumber(a.SortOrder) - asMoneyNumber(b.SortOrder));
   return {
     ok: true,
     message: `School classes saved to the database (${saved}).`,
     saved,
-    ...(await getSchoolClasses(env))
+    backend: 'firestore',
+    classes: normalizedClasses
   };
 }
 
@@ -3455,8 +3500,12 @@ async function saveFeeItem(env, body) {
     err.status = 409;
     throw err;
   }
-  const existing = (await listCollection(env, 'feeItems')).find((row) => sameText(row.FeeCode, feeCode) || sameText(row.__id, safeDocumentId(feeCode))) || {};
-  const className = canonicalConfiguredClass(clean(body.ClassName || body.className) || 'All', await configuredClassNames(env));
+  const [existingRecord, classNames] = await Promise.all([
+    getDocumentByIdOrField(env, 'feeItems', feeCode, 'FeeCode'),
+    configuredClassNames(env)
+  ]);
+  const existing = existingRecord || {};
+  const className = canonicalConfiguredClass(clean(body.ClassName || body.className) || 'All', classNames);
   const payload = {
     ...existing,
     FeeCode: feeCode,
@@ -3487,6 +3536,85 @@ async function saveFeeItem(env, body) {
   };
   await upsertDocument(env, 'feeItems', safeDocumentId(feeCode), payload);
   return { ok: true, message: 'Fee item saved to the database.', fee: normalizeFeeItem(payload) };
+}
+
+async function saveFeeItems(env, body) {
+  const items = Array.isArray(body.Items || body.items) ? (body.Items || body.items) : [];
+  if (!items.length) {
+    const err = new Error('At least one fee item is required.');
+    err.status = 400;
+    throw err;
+  }
+  if (items.length > 100) {
+    const err = new Error('A maximum of 100 fee items can be saved at once.');
+    err.status = 413;
+    throw err;
+  }
+  const classNames = await configuredClassNames(env);
+  const seenFeeCodes = new Set();
+  const prepared = items.map((item) => {
+    const feeCode = clean(item.FeeCode || item.feeCode);
+    if (!feeCode) {
+      const err = new Error('Every fee item requires a FeeCode.');
+      err.status = 400;
+      throw err;
+    }
+    const originalFeeCode = clean(item.OriginalFeeCode || item.originalFeeCode);
+    if (!feeCodeRenameAllowed(originalFeeCode, feeCode)) {
+      const err = new Error('FeeCode is a permanent accounting identifier and cannot be renamed. Create a new fee code instead.');
+      err.status = 409;
+      throw err;
+    }
+    const normalizedCode = feeCode.toLowerCase();
+    if (seenFeeCodes.has(normalizedCode)) {
+      const err = new Error(`FeeCode ${feeCode} occurs more than once in this batch.`);
+      err.status = 400;
+      throw err;
+    }
+    seenFeeCodes.add(normalizedCode);
+    return { item, feeCode };
+  });
+  const updatedAt = nowIso();
+  const fees = prepared.map(({ item, feeCode }) => {
+    return normalizeFeeItem({
+      FeeCode: feeCode,
+      FeeName: clean(item.FeeName || item.feeName),
+      FeeCategory: clean(item.FeeCategory || item.feeCategory) || 'School Fee',
+      ClassName: canonicalConfiguredClass(clean(item.ClassName || item.className) || 'All', classNames),
+      StudentType: clean(item.StudentType || item.studentType) || 'All',
+      BillingCategory: clean(item.BillingCategory || item.billingCategory) || 'All',
+      Gender: clean(item.Gender || item.gender) || 'All',
+      EnrollmentCategory: clean(item.EnrollmentCategory || item.enrollmentCategory || item.IntakeCategory) || 'All',
+      AcademicProgress: clean(item.AcademicProgress || item.academicProgress || item.ProgressCategory) || 'All',
+      AcademicSession: clean(item.AcademicSession || item.academicSession) || 'All',
+      Term: clean(item.Term || item.term) || 'All',
+      Amount: asMoneyNumber(item.Amount || item.amount),
+      Currency: clean(item.Currency || item.currency) || 'NGN',
+      PayableOnline: yesNo(item.PayableOnline ?? item.payableOnline ?? 'YES') || 'YES',
+      AllowInstallment: yesNo(item.AllowInstallment ?? item.allowInstallment ?? 'NO') || 'NO',
+      PartPaymentMode: clean(item.PartPaymentMode || item.partPaymentMode) || 'Item',
+      MinAmount: asMoneyNumber(item.MinAmount || item.minAmount),
+      MaxAmount: asMoneyNumber(item.MaxAmount || item.maxAmount),
+      DueDate: clean(item.DueDate || item.dueDate || item.PaymentDueDate || item.paymentDueDate),
+      RequiredForEnrollment: yesNo(item.RequiredForEnrollment ?? item.requiredForEnrollment ?? 'NO') || 'NO',
+      Active: yesNo(item.Active ?? item.active ?? 'YES') || 'YES',
+      SortOrder: asMoneyNumber(item.SortOrder || item.sortOrder || 100),
+      Notes: clean(item.Notes || item.notes),
+      CreatedAt: clean(item.CreatedAt || item.createdAt) || updatedAt,
+      UpdatedAt: updatedAt
+    });
+  });
+  await batchUpsertDocuments(env, fees.map((fee) => ({
+    collectionPath: 'feeItems',
+    documentId: safeDocumentId(fee.FeeCode),
+    data: fee
+  })));
+  return {
+    ok: true,
+    message: `${fees.length} fee item(s) saved to the database.`,
+    saved: fees.length,
+    fees
+  };
 }
 
 async function deleteFeeItem(env, body) {
@@ -5054,18 +5182,25 @@ export async function postChurchDonationToAccounting(env, donation = {}, settlem
 }
 
 async function seedAccountingChart(env) {
-  const existing = await listCollection(env, 'chartOfAccounts');
+  const existing = await getAccountingChartRows(env);
   const codes = new Set(existing.map((row) => clean(row.Code || row.code || row.__id)));
-  let added = 0;
+  const additions = [];
   for (const [Code, Name, Type, Group, NormalBalance] of DEFAULT_CHART_OF_ACCOUNTS) {
     if (codes.has(Code)) continue;
-    await upsertDocument(env, 'chartOfAccounts', Code, {
+    additions.push({
       Code, Name, Type, Group, NormalBalance, Active: 'YES', System: 'YES',
       CreatedAt: nowIso(), UpdatedAt: nowIso()
     });
-    added += 1;
   }
-  return added;
+  if (additions.length) {
+    await batchUpsertDocuments(env, additions.map((row) => ({
+      collectionPath: 'chartOfAccounts',
+      documentId: row.Code,
+      data: row
+    })));
+    primeAccountingChartRows(env, [...existing, ...additions]);
+  }
+  return additions.length;
 }
 
 async function accountingPeriodIsClosed(env, dateText) {
@@ -5110,8 +5245,7 @@ async function writeAccountingAudit(env, action, entityType, entityId, body, det
 export async function saveAccountingJournal(env, body, system = false) {
   const existingId = clean(body.JournalNo || body.journalNo);
   const journalNo = existingId || ledgerDocumentId(system ? 'SYS' : 'JRN');
-  const existingRows = await listCollection(env, 'accountingJournals');
-  const existing = existingRows.find((row) => sameText(row.JournalNo, journalNo) || sameText(row.__id, safeDocumentId(journalNo))) || {};
+  const existing = await getDocumentByIdOrField(env, 'accountingJournals', journalNo, 'JournalNo') || {};
   const branchId = accountingWriteBranch(body, existing);
   if (lower(existing.Status) === 'posted' && !system) {
     const err = new Error('Posted journals are immutable. Create a reversal journal instead.');
@@ -5178,10 +5312,10 @@ export async function saveAccountingJournal(env, body, system = false) {
     err.status = 400;
     throw err;
   }
-  let chartRows = await listCollection(env, 'chartOfAccounts');
+  let chartRows = await getAccountingChartRows(env);
   if (!chartRows.length) {
     await seedAccountingChart(env);
-    chartRows = await listCollection(env, 'chartOfAccounts');
+    chartRows = await getAccountingChartRows(env);
   }
   const edition = accountingEditionForRequest(env, body);
   const activeCodes = new Set(accountingChartForEdition(chartRows, edition)
@@ -5428,7 +5562,7 @@ async function saveChartAccount(env, body) {
     err.status = 400;
     throw err;
   }
-  const existing = (await listCollection(env, 'chartOfAccounts')).find((row) => sameText(row.Code, code) || sameText(row.__id, code)) || {};
+  const existing = await getDocumentByIdOrField(env, 'chartOfAccounts', code, 'Code') || {};
   const payload = {
     ...existing, Code: code, Name: clean(body.Name || body.name), Type: clean(body.Type || body.type),
     Group: clean(body.Group || body.group), NormalBalance: clean(body.NormalBalance || body.normalBalance) || 'Debit',
@@ -5436,6 +5570,7 @@ async function saveChartAccount(env, body) {
     CreatedAt: existing.CreatedAt || nowIso(), UpdatedAt: nowIso()
   };
   await upsertDocument(env, 'chartOfAccounts', safeDocumentId(code), payload);
+  invalidateAccountingChartRows();
   await writeAccountingAudit(env, existing.Code ? 'UPDATE' : 'CREATE', 'Chart Account', code, body, payload.Name);
   return { ok: true, message: 'Chart of account saved.', account: payload };
 }
@@ -5443,7 +5578,7 @@ async function saveChartAccount(env, body) {
 async function saveAccountingExpense(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer', 'Management', ...DEPARTMENT_ACCOUNTING_ROLES]);
   const expenseNo = clean(body.ExpenseNo || body.expenseNo) || ledgerDocumentId('EXP');
-  const existing = (await listCollection(env, 'accountingExpenses')).find((row) => sameText(row.ExpenseNo, expenseNo) || sameText(row.__id, safeDocumentId(expenseNo))) || {};
+  const existing = await getDocumentByIdOrField(env, 'accountingExpenses', expenseNo, 'ExpenseNo') || {};
   const branchId = accountingWriteBranch(body, existing);
   if (lower(existing.Status) === 'posted') {
     const err = new Error('Posted expenses cannot be edited. Use a reversal.'); err.status = 409; throw err;
@@ -5513,8 +5648,8 @@ function validImprestDate(value, label) {
 async function accountingImprestRecord(env, body) {
   const id = clean(body.ImprestNo || body.imprestNo || body.RecordId || body.recordId);
   const branch = accountingRequestBranch(body);
-  const record = accountingRowsForBranch(await listCollection(env, 'accountingImprests'), branch)
-    .find((row) => sameText(row.ImprestNo, id) || sameText(row.__id, safeDocumentId(id)));
+  const direct = await getDocumentByIdOrField(env, 'accountingImprests', id, 'ImprestNo');
+  const record = accountingRowsForBranch(direct ? [direct] : [], branch)[0];
   if (!record) {
     const err = new Error('The selected imprest was not found in this branch.');
     err.status = 404;
@@ -5529,8 +5664,7 @@ function accountingImprestOpenClaimId(record = {}) {
 
 async function requireDesktopImprestApproval(env, body, value) {
   if (clean(body.UserRole) === 'Super Admin') return;
-  const users = await listCollection(env, 'staffUsers');
-  const user = users.find((row) => sameText(row.Username || row.__id, body.UserUsername));
+  const user = await getDocumentByIdOrField(env, 'staffUsers', body.UserUsername, 'Username');
   if (!user || yesNo(user.ApprovalEnabled ?? 'NO') !== 'YES' ||
     asMoneyNumber(user.ApprovalMaxAmount) <= 0 || asMoneyNumber(value) > asMoneyNumber(user.ApprovalMaxAmount)) {
     const err = new Error('This user does not have administrator-granted approval rights for this imprest amount.');
@@ -5563,10 +5697,14 @@ async function submitAccountingImprest(env, body) {
   }
   const branchId = accountingWriteBranch(body);
   const username = clean(body.UserUsername);
-  const open = (await listCollection(env, 'accountingImprests')).find((row) =>
-    sameText(row.BranchId || 'main', branchId) &&
-    sameText(row.CustodianUsername || row.RequestedByUsername, username) &&
-    isOpenImprestStatus(row.Status));
+  const claimId = accountingImprestOpenClaimId({ BranchId: branchId, CustodianUsername: username });
+  const openClaim = await getDocument(env, 'accountingImprestOpenClaims', claimId);
+  const legacyOpenRows = openClaim ? [] : await queryCollection(env, 'accountingImprests', {
+    filters: [{ field: 'CustodianUsername', op: '==', value: username }],
+    limit: 20
+  }).catch(() => []);
+  const open = openClaim || legacyOpenRows.find((row) =>
+    sameText(row.BranchId || 'main', branchId) && isOpenImprestStatus(row.Status));
   if (open) {
     const err = new Error(`Retire or close ${open.ImprestNo || 'the current imprest'} before requesting another imprest.`);
     err.status = 409;
@@ -5819,7 +5957,9 @@ async function verifyAccountingImprestRetirement(env, body) {
 async function saveAccountingBudget(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer', 'Management']);
   const requestedId = clean(body.BudgetId || body.budgetId);
-  const existing = requestedId ? (await listCollection(env, 'accountingBudgets')).find((row) => sameText(row.BudgetId, requestedId) || sameText(row.__id, safeDocumentId(requestedId))) || {} : {};
+  const existing = requestedId
+    ? await getDocumentByIdOrField(env, 'accountingBudgets', requestedId, 'BudgetId') || {}
+    : {};
   const branchId = accountingWriteBranch(body, existing);
   const id = requestedId || [branchId, body.FinancialYear, body.Department, body.AccountCode].map(safeDocumentId).join('-');
   const payload = {
@@ -5843,7 +5983,7 @@ async function saveAccountingBank(env, body) {
   const requestedBranch = accountingWriteBranch(body);
   const accountCode = clean(body.AccountCode || body.accountCode);
   const id = requestedId || (accountCode ? `${requestedBranch === 'main' ? '' : `${safeDocumentId(requestedBranch)}-`}${accountCode}` : ledgerDocumentId('BNK'));
-  const existing = (await listCollection(env, 'accountingBanks')).find((row) => sameText(row.BankId, id) || sameText(row.__id, safeDocumentId(id))) || {};
+  const existing = await getDocumentByIdOrField(env, 'accountingBanks', id, 'BankId') || {};
   const branchId = accountingWriteBranch(body, existing);
   const payload = {
     ...existing, BankId: id, BranchId: branchId, Name: clean(body.Name || body.name), BankName: clean(body.BankName || body.bankName),
@@ -5860,7 +6000,7 @@ async function saveAccountingBank(env, body) {
 async function saveAccountingReconciliation(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
   const id = clean(body.ReconciliationNo || body.reconciliationNo) || ledgerDocumentId('REC');
-  const existing = (await listCollection(env, 'accountingReconciliations')).find((row) => sameText(row.ReconciliationNo, id) || sameText(row.__id, safeDocumentId(id))) || {};
+  const existing = await getDocumentByIdOrField(env, 'accountingReconciliations', id, 'ReconciliationNo') || {};
   const branchId = accountingWriteBranch(body, existing);
   const statement = asMoneyNumber(body.StatementBalance || body.statementBalance);
   const book = asMoneyNumber(body.BookBalance || body.bookBalance);
@@ -5994,7 +6134,7 @@ async function saveAccountingCloseChecklist(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer', 'Management']);
   const id = clean(body.ChecklistId || body.checklistId);
   if (!id) { const err = new Error('Checklist item is required.'); err.status = 400; throw err; }
-  const existing = (await listCollection(env, 'accountingCloseChecklist')).find((row) => sameText(row.ChecklistId, id) || sameText(row.__id, safeDocumentId(id)));
+  const existing = await getDocumentByIdOrField(env, 'accountingCloseChecklist', id, 'ChecklistId');
   if (!existing) { const err = new Error('Checklist item was not found.'); err.status = 404; throw err; }
   const status = clean(body.Status || body.status || 'Pending');
   const payload = { ...existing, Status: status, Notes: clean(body.Notes || body.notes),
@@ -6019,7 +6159,7 @@ async function saveAccountingVendor(env, body) {
   const vendorId = clean(body.VendorId || body.vendorId) || ledgerDocumentId('VND');
   const name = clean(body.Name || body.name || body.Vendor);
   if (!name) { const err = new Error('Supplier name is required.'); err.status = 400; throw err; }
-  const existing = (await listCollection(env, 'accountingVendors')).find((row) => sameText(row.VendorId, vendorId) || sameText(row.__id, safeDocumentId(vendorId))) || {};
+  const existing = await getDocumentByIdOrField(env, 'accountingVendors', vendorId, 'VendorId') || {};
   const branchId = accountingWriteBranch(body, existing);
   const payload = { ...existing, VendorId: vendorId, BranchId: branchId, Name: name, ContactPerson: clean(body.ContactPerson), Phone: clean(body.Phone),
     Email: clean(body.Email), Address: clean(body.Address), BankName: clean(body.BankName), AccountNumber: clean(body.AccountNumber),
@@ -6033,8 +6173,7 @@ async function saveAccountingVendor(env, body) {
 async function saveAccountingSupplierBill(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer', 'Management', ...DEPARTMENT_ACCOUNTING_ROLES]);
   const billNo = clean(body.BillNo || body.billNo) || ledgerDocumentId('BILL');
-  const billRows = await listCollection(env, 'accountingSupplierBills');
-  const existing = billRows.find((row) => sameText(row.BillNo, billNo) || sameText(row.__id, safeDocumentId(billNo))) || {};
+  const existing = await getDocumentByIdOrField(env, 'accountingSupplierBills', billNo, 'BillNo') || {};
   const branchId = accountingWriteBranch(body, existing);
   if (['posted', 'part paid', 'paid'].includes(lower(existing.Status))) { const err = new Error('Posted supplier bills are immutable.'); err.status = 409; throw err; }
   const amount = asMoneyNumber(body.Amount || body.amount);
@@ -6042,8 +6181,17 @@ async function saveAccountingSupplierBill(env, body) {
   const forcedDepartment = enforceDepartmentSubmission(body, existing, status);
   if (amount <= 0 || !clean(body.Description)) { const err = new Error('Bill description and amount are required.'); err.status = 400; throw err; }
   const invoiceReference = clean(body.InvoiceReference || body.Reference);
-  if (invoiceReference && billRows.some((row) => !sameText(row.BillNo, billNo) && sameText(row.VendorId, body.VendorId) && sameText(row.InvoiceReference, invoiceReference))) {
-    const err = new Error('This supplier invoice reference has already been recorded for the selected supplier.'); err.status = 409; throw err;
+  if (invoiceReference) {
+    const duplicateInvoice = (await queryCollection(env, 'accountingSupplierBills', {
+      filters: [
+        { field: 'VendorId', op: '==', value: clean(body.VendorId) },
+        { field: 'InvoiceReference', op: '==', value: invoiceReference }
+      ],
+      limit: 2
+    })).find((row) => !sameText(row.BillNo, billNo));
+    if (duplicateInvoice) {
+      const err = new Error('This supplier invoice reference has already been recorded for the selected supplier.'); err.status = 409; throw err;
+    }
   }
   if (['approved', 'posted', 'rejected'].includes(lower(status))) await requireAccountingApprovalLimit(env, body, 'Supplier Bill', amount);
   const payload = { ...existing, BillNo: billNo, BranchId: branchId, VendorId: clean(body.VendorId), VendorName: clean(body.VendorName || body.Vendor),
@@ -6071,7 +6219,7 @@ async function saveAccountingSupplierBill(env, body) {
 async function payAccountingSupplierBill(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
   const billNo = clean(body.BillNo || body.billNo);
-  const bill = (await listCollection(env, 'accountingSupplierBills')).find((row) => sameText(row.BillNo, billNo) || sameText(row.__id, safeDocumentId(billNo)));
+  const bill = await getDocumentByIdOrField(env, 'accountingSupplierBills', billNo, 'BillNo');
   if (!bill || !['posted', 'part paid'].includes(lower(bill.Status))) { const err = new Error('Select a posted unpaid supplier bill.'); err.status = 400; throw err; }
   const branchId = accountingWriteBranch(body, bill);
   const outstanding = Math.max(0, asMoneyNumber(bill.Amount) - asMoneyNumber(bill.PaidAmount));
@@ -6100,7 +6248,7 @@ async function payAccountingSupplierBill(env, body) {
 async function saveAccountingAsset(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
   const assetId = clean(body.AssetId || body.assetId) || ledgerDocumentId('AST');
-  const existing = (await listCollection(env, 'accountingAssets')).find((row) => sameText(row.AssetId, assetId) || sameText(row.__id, safeDocumentId(assetId))) || {};
+  const existing = await getDocumentByIdOrField(env, 'accountingAssets', assetId, 'AssetId') || {};
   const branchId = accountingWriteBranch(body, existing);
   const cost = asMoneyNumber(body.Cost || body.cost);
   const residual = asMoneyNumber(body.ResidualValue || body.residualValue);
@@ -6130,7 +6278,7 @@ async function saveAccountingAsset(env, body) {
 async function postAccountingDepreciation(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
   const assetId = clean(body.AssetId || body.assetId);
-  const asset = (await listCollection(env, 'accountingAssets')).find((row) => sameText(row.AssetId, assetId) || sameText(row.__id, safeDocumentId(assetId)));
+  const asset = await getDocumentByIdOrField(env, 'accountingAssets', assetId, 'AssetId');
   if (!asset || lower(asset.Status) !== 'active') { const err = new Error('Select an active fixed asset.'); err.status = 400; throw err; }
   const branchId = accountingWriteBranch(body, asset);
   const date = clean(body.Date) || nowIso().slice(0, 10);
@@ -6139,7 +6287,7 @@ async function postAccountingDepreciation(env, body) {
   const amount = Math.min(remaining, asMoneyNumber(body.Amount) || asMoneyNumber(asset.MonthlyDepreciation));
   if (amount <= 0) { const err = new Error('This asset is fully depreciated.'); err.status = 409; throw err; }
   const journalNo = `SYS-DEP-${safeDocumentId(assetId)}-${period}`;
-  if ((await listCollection(env, 'accountingJournals')).some((row) => sameText(row.JournalNo, journalNo))) { const err = new Error('Depreciation was already posted for this asset and month.'); err.status = 409; throw err; }
+  if (await getDocumentByIdOrField(env, 'accountingJournals', journalNo, 'JournalNo')) { const err = new Error('Depreciation was already posted for this asset and month.'); err.status = 409; throw err; }
   const journal = await saveAccountingJournal(env, { JournalNo: journalNo, Date: date, Status: 'Posted', Description: `Depreciation: ${asset.Name}`,
     Reference: assetId, Source: 'Depreciation', SourceId: assetId, BranchId: branchId, RecordedBy: clean(body.RecordedBy), Lines: [
       { AccountCode: clean(asset.DepreciationExpenseAccount) || '6070', Debit: amount, Credit: 0, Description: asset.Name },
@@ -6156,7 +6304,7 @@ async function postAccountingDepreciation(env, body) {
 async function saveAccountingAdjustment(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer', 'Management']);
   const adjustmentNo = clean(body.AdjustmentNo) || ledgerDocumentId('ADJ');
-  const existing = (await listCollection(env, 'accountingAdjustments')).find((row) => sameText(row.AdjustmentNo, adjustmentNo) || sameText(row.__id, safeDocumentId(adjustmentNo))) || {};
+  const existing = await getDocumentByIdOrField(env, 'accountingAdjustments', adjustmentNo, 'AdjustmentNo') || {};
   const branchId = accountingWriteBranch(body, existing);
   if (lower(existing.Status) === 'posted') { const err = new Error('Posted adjustments are immutable.'); err.status = 409; throw err; }
   const amount = asMoneyNumber(body.Amount);
@@ -6278,10 +6426,11 @@ async function matchAccountingBankStatement(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
   const itemId = clean(body.StatementItemId);
   const journalNo = clean(body.JournalNo);
-  const item = (await listCollection(env, 'accountingBankStatementItems')).find((row) => sameText(row.StatementItemId, itemId) || sameText(row.__id, safeDocumentId(itemId)));
+  const item = await getDocumentByIdOrField(env, 'accountingBankStatementItems', itemId, 'StatementItemId');
   if (!item) { const err = new Error('Statement item was not found.'); err.status = 404; throw err; }
   const branchId = accountingWriteBranch(body, item);
-  const journal = accountingRowsForBranch(await listCollection(env, 'accountingJournals'), branchId).find((row) => sameText(row.JournalNo, journalNo));
+  const journalRecord = await getDocumentByIdOrField(env, 'accountingJournals', journalNo, 'JournalNo');
+  const journal = accountingRowsForBranch(journalRecord ? [journalRecord] : [], branchId)[0];
   if (!journal) { const err = new Error('Statement item or journal was not found.'); err.status = 404; throw err; }
   const cashMovement = accountingLines(journal.Lines).filter((line) => sameText(line.AccountCode, item.AccountCode))
     .reduce((sum, line) => sum + asMoneyNumber(line.Debit) - asMoneyNumber(line.Credit), 0);
@@ -7652,6 +7801,8 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       return saveSchoolClasses(env, body);
     case 'saveFeeItem':
       return saveFeeItem(env, body);
+    case 'saveFeeItems':
+      return saveFeeItems(env, body);
     case 'saveBillingCategory':
       return saveBillingCategory(env, body);
     case 'deleteBillingCategory':
