@@ -7627,6 +7627,10 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'previewAcademicScoreImport':
     case 'importAcademicScores':
     case 'rollbackAcademicScoreImport':
+    case 'syncAcademicCbtScores':
+    case 'syncLocalCbtStudentPasswords':
+    case 'downloadAcademicCbtTestPackage':
+    case 'acknowledgeAcademicCbtImport':
     case 'prepareLocalCbtIdentityPackage':
     case 'moveAcademicStudentMembership':
     case 'withdrawAcademicStudentMembership':

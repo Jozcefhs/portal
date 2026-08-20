@@ -8,12 +8,11 @@ import { loadAcademicPolicyView } from './academic-policy-store.js';
 import { resolveDocumentStorage } from './document-storage.js';
 import { safeStoredDocument } from './document-files.js';
 import { academicCbtPaperDigest } from './academic-cbt-papers.js';
-import { getStudentLoginCredential } from './student-login-credentials.js';
+import { studentLoginCredentialCollection, studentLoginCredentialId } from './student-login-credentials.js';
 import {
   STUDENT_FACE_MODEL_ID,
   decryptFaceDescriptor,
   faceTemplateIsUsable,
-  studentFaceTemplateDocumentId,
   studentFaceTemplateEncryptionSecret,
   studentFaceTemplateMeta
 } from './student-face-templates.js';
@@ -1390,22 +1389,9 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
   const scope = await academicScope(env, user, input, { requireSection: false });
   const focusedView = lower(input.View || input.Workspace);
   const focusedCbt = focusedView === 'cbt';
-  if (focusedCbt) {
-    return {
-      ok: true,
-      partialAcademicManagement: true,
-      loadedAcademicView: 'cbt',
-      message: 'Local CBT guidance loaded. No online examination records were read.',
-      permissions,
-      scope: { BranchId: scope.branchId, SchoolSection: scope.section || 'all' },
-      sections: scope.structure.Sections,
-      selection: { SessionId: '', TermId: '' },
-      assessmentScheme: academicAssessmentScheme({}),
-      staff: [],
-      students: []
-    };
-  }
-  const requestedStateKeys = permissions.financeView
+  const requestedStateKeys = focusedCbt
+    ? ACADEMIC_CBT_STATE_KEYS
+    : permissions.financeView
     ? ['sessions', 'terms', 'classes', 'arms', 'studentMemberships', 'resultClearances']
     : null;
   const [rawState, people, audit] = await Promise.all([
@@ -1481,7 +1467,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
   return {
     ok: true,
     ...(focusedCbt ? { partialAcademicManagement: true, loadedAcademicView: 'cbt' } : {}),
-    message: 'Academic structure and allocations loaded.',
+    message: focusedCbt ? 'Online CBT schedule and class-wide rosters loaded.' : 'Academic structure and allocations loaded.',
     permissions,
     scope: { BranchId: scope.branchId, SchoolSection: scope.section || 'all' },
     sections: scope.structure.Sections,
@@ -4817,6 +4803,43 @@ function academicCbtAuthority(user, context, record) {
   return record;
 }
 
+async function academicCbtClassContext(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canCreateCbt', {
+    stateKeys: ACADEMIC_CBT_STATE_KEYS
+  });
+  const { permissions, scope, state, session, term } = context;
+  const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
+  const subject = assertReference(findById(state.subjects, input.SubjectId), 'Choose an active subject.');
+  if (schoolClass.SchoolSection !== scope.section || subject.SchoolSection !== scope.section) {
+    throw failure('The selected CBT class or subject belongs to another school section.', 403, 'ACADEMIC_SECTION_FORBIDDEN');
+  }
+  const allocations = (state.teacherAllocations || []).filter((row) => statusActive(row)
+    && row.SessionId === session.SessionId && row.TermId === term.TermId
+    && lower(row.AllocationRole) === 'subject teacher'
+    && row.ClassId === schoolClass.ClassId && row.SubjectId === subject.SubjectId);
+  if (!allocations.length) {
+    throw failure('Assign a subject teacher to this class and subject before creating its CBT test.', 409, 'ACADEMIC_CBT_TEACHER_REQUIRED');
+  }
+  const requestedTeacher = lower(input.TeacherUsername || (permissions.teacherView ? actorUsername(user) : ''));
+  const allocation = allocations.find((row) => !requestedTeacher || lower(row.TeacherUsername) === requestedTeacher);
+  if (!allocation || (permissions.teacherView && lower(allocation.TeacherUsername) !== actorUsername(user))) {
+    throw failure('The selected teacher is not allocated to this class and subject.', 403, 'ACADEMIC_CBT_ALLOCATION_FORBIDDEN');
+  }
+  const roster = (state.studentMemberships || []).filter((row) => statusActive(row)
+    && row.SessionId === session.SessionId && row.TermId === term.TermId
+    && row.ClassId === schoolClass.ClassId && (row.SubjectIds || []).includes(subject.SubjectId));
+  if (!roster.length) {
+    throw failure('No students in this class offer the selected subject.', 409, 'ACADEMIC_CBT_ROSTER_EMPTY');
+  }
+  const scheme = await academicAssessmentForPeriod(env, scope, session, term, {
+    classId: schoolClass.ClassId, subjectId: subject.SubjectId
+  });
+  return {
+    ...context, schoolClass, subject, allocation, roster, scheme,
+    arm: { ArmId: '', Name: 'All arms' }
+  };
+}
+
 async function academicCbtPackageDigest(record = {}) {
   const material = JSON.stringify({
     CbtTestId: record.CbtTestId,
@@ -4842,7 +4865,7 @@ async function academicCbtPackageDigest(record = {}) {
 }
 
 export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
-  const context = await academicScoreSheetContext(env, user, input, 'canCreateCbt', ACADEMIC_CBT_STATE_KEYS);
+  const context = await academicCbtClassContext(env, user, input);
   const componentId = clean(input.AssessmentComponentId);
   const component = (context.scheme.Components || []).find((row) => row.Id === componentId);
   if (!component || !['any', 'built-in-cbt'].includes(lower(component.SourceMode))) {
@@ -4890,18 +4913,19 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
     'cbt-test', context.scope.branchId, context.scope.section, context.session.SessionId,
     context.term.TermId, clean(input.ClientRequestId) || crypto.randomUUID()
   );
-  const studentRefs = context.roster.map((row) => clean(row.StudentRef)).filter(Boolean)
+  const studentRefs = [...new Map(context.roster.map((row) => clean(row.StudentRef)).filter(Boolean)
+    .map((reference) => [lower(reference), reference])).values()]
     .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
   const maximumScore = Number(component.MaximumScore);
   const record = {
     ...(existing || {}),
     RecordId: cbtTestId,
     CbtTestId: cbtTestId,
-    Title: `${clean(component.Name)} · ${clean(context.subject.Name)} · ${clean(context.schoolClass.Name)} / ${clean(context.arm.Name)}`,
+    Title: `${clean(component.Name)} · ${clean(context.subject.Name)} · ${clean(context.schoolClass.Name)}`,
     SessionId: context.session.SessionId,
     TermId: context.term.TermId,
     ClassId: context.schoolClass.ClassId,
-    ArmId: context.arm.ArmId,
+    ArmId: '',
     SubjectId: context.subject.SubjectId,
     SubjectName: clean(context.subject.Name),
     TeacherUsername: lower(context.allocation.TeacherUsername),
@@ -4959,11 +4983,6 @@ async function finalizeAcademicCbtPaper(validation, input = {}) {
 }
 
 export async function saveAcademicCbtTest(env, user = {}, input = {}, options = {}) {
-  throw failure(
-    'CBT tests are created, conducted and marked only on the Dynamax Desktop local school network. The Web Companion accepts only approved score batches after the examination.',
-    409,
-    'ACADEMIC_CBT_LOCAL_ONLY'
-  );
   const validation = options.validation
     ? await finalizeAcademicCbtPaper(options.validation, input)
     : await validateAcademicCbtTestInput(env, user, { ...input, RequirePaper: true });
@@ -5043,7 +5062,9 @@ async function loadAcademicCbtPaper(env, record) {
 }
 
 export async function downloadAcademicCbtTestPackage(env, user = {}, input = {}) {
-  const context = await academicOperationalContext(env, user, input, 'canCreateCbt');
+  const context = await academicOperationalContext(env, user, input, 'canCreateCbt', {
+    stateKeys: ['sessions', 'terms', 'cbtTests']
+  });
   const record = findById(context.state.cbtTests, input.CbtTestId);
   if (!record) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
   academicCbtAuthority(user, context, record);
@@ -5056,7 +5077,9 @@ export async function downloadAcademicCbtTestPackage(env, user = {}, input = {})
 }
 
 export async function acknowledgeAcademicCbtImport(env, user = {}, input = {}) {
-  const context = await academicOperationalContext(env, user, input, 'canCreateCbt');
+  const context = await academicOperationalContext(env, user, input, 'canCreateCbt', {
+    stateKeys: ['sessions', 'terms', 'cbtTests']
+  });
   const record = findById(context.state.cbtTests, input.CbtTestId);
   if (!record) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
   academicCbtAuthority(user, context, record);
@@ -5070,11 +5093,16 @@ export async function acknowledgeAcademicCbtImport(env, user = {}, input = {}) {
     LocalPackageDigest: clean(input.LocalPackageDigest),
     UpdatedAt: nowIso(), UpdatedBy: actorName(user)
   };
-  await commitAcademicBatch(env, [
+  const commit = await commitAcademicBatch(env, [
     { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests, documentId: record.CbtTestId, data: withoutMetadata(updated), ...writePrecondition(record, input.RevisionToken) },
     auditWrite(user, 'DOWNLOAD', 'cbtTests', updated, 'Scheduled test imported into the desktop local CBT server.')
   ], 'The CBT test changed before its local import could be acknowledged.');
-  return academicOperationalResponse(env, user, input, context.scope, 'The local CBT import was acknowledged online.');
+  return {
+    ok: true,
+    partialAcademicManagement: true,
+    message: 'The local CBT import was acknowledged online.',
+    cbtTest: publicRecord({ ...updated, __updateTime: clean(commit?.writeResults?.[0]?.updateTime) })
+  };
 }
 
 export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {}) {
@@ -5100,7 +5128,7 @@ export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {})
     if (!roster.length) throw failure('No students in this classroom are allocated to the selected subject.', 409, 'ACADEMIC_SCORE_ROSTER_EMPTY');
     context = { ...operational, schoolClass, arm, subject, allocation, roster, scheme: { Components: [] } };
   } else {
-    context = await academicScoreSheetContext(env, user, input, 'canCreateCbt');
+    context = await academicCbtClassContext(env, user, input);
   }
   const { scope } = context;
   const componentId = clean(input.AssessmentComponentId);
@@ -5118,10 +5146,16 @@ export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {})
     throw failure('One or more requested students are not allocated to this teacher, classroom and subject.', 403, 'ACADEMIC_CBT_ROSTER_FORBIDDEN');
   }
   const wanted = new Set(studentRefs);
-  const allStudents = await listSchoolCollection(env, 'students', {
-    branchId: scope.branchId,
-    schoolSectionAccess: scope.section
-  });
+  const credentialPath = studentLoginCredentialCollection({ BranchId: scope.branchId, SchoolSection: scope.section });
+  const templatePath = scopedCollectionPath('studentFaceTemplates', scope.branchId, scope.section);
+  const [allStudents, allCredentials, allTemplates] = await Promise.all([
+    listSchoolCollection(env, 'students', {
+      branchId: scope.branchId,
+      schoolSectionAccess: scope.section
+    }),
+    listCollection(env, credentialPath).catch(() => []),
+    listCollection(env, templatePath).catch(() => [])
+  ]);
   const studentsByRef = new Map();
   allStudents.forEach((student) => {
     if (safeScopeId(student.BranchId || 'main') !== scope.branchId) return;
@@ -5130,6 +5164,8 @@ export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {})
     if (!wanted.has(lower(reference)) || studentsByRef.has(lower(reference))) return;
     studentsByRef.set(lower(reference), student);
   });
+  const credentialsByRef = new Map(allCredentials.map((row) => [lower(row.StudentRef), row]));
+  const templatesByRef = new Map(allTemplates.map((row) => [lower(row.StudentRef), row]));
 
   const identities = [];
   const missing = [];
@@ -5146,7 +5182,7 @@ export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {})
       Password: null,
       Face: null
     };
-    const credential = await getStudentLoginCredential(env, student);
+    const credential = credentialsByRef.get(lower(reference));
     if (credential && credential.Active !== false && clean(credential.PasswordHash)) {
       identity.Password = {
         Salt: clean(credential.Salt),
@@ -5155,12 +5191,7 @@ export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {})
         PasswordHashVersion: clean(credential.PasswordHashVersion)
       };
     }
-    const templatePath = scopedCollectionPath('studentFaceTemplates', scope.branchId, scope.section);
-    const template = await getDocument(
-      env,
-      templatePath,
-      await studentFaceTemplateDocumentId(reference)
-    ).catch(() => null);
+    const template = templatesByRef.get(lower(reference));
     if (template && faceTemplateIsUsable(template) && clean(template.DescriptorCiphertext)) {
       try {
         identity.Face = {
@@ -5219,6 +5250,76 @@ export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {})
       FaceReady: identities.filter((identity) => identity.Face).length,
       Missing: missing
     }
+  };
+}
+
+export async function syncLocalCbtStudentPasswords(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canImportScores', {
+    stateKeys: ['sessions', 'terms', 'studentMemberships']
+  });
+  if (!context.permissions.canReviewScores) {
+    throw failure('Only an academic or examination reviewer may synchronize student password changes.', 403, 'ACADEMIC_CBT_PASSWORD_SYNC_REVIEWER_REQUIRED');
+  }
+  const updates = Array.isArray(input.PasswordUpdates) ? input.PasswordUpdates : [];
+  if (!updates.length) return { ok: true, message: 'No student password changes were waiting to synchronize.', synchronizedStudentRefs: [] };
+  if (updates.length > 400) throw failure('Synchronize at most 400 student password changes in one batch.', 413);
+  const allowed = new Set((context.state.studentMemberships || []).filter((row) => statusActive(row)
+    && row.SessionId === context.session.SessionId && row.TermId === context.term.TermId)
+    .map((row) => lower(row.StudentRef)));
+  const timestamp = nowIso();
+  const seen = new Set();
+  const normalized = updates.map((row) => {
+    const studentRef = clean(row.StudentRef);
+    const key = lower(studentRef);
+    const password = row.Password || {};
+    if (!studentRef || seen.has(key) || !allowed.has(key)) {
+      throw failure('A queued password change does not belong to a current student in this academic period.', 403, 'ACADEMIC_CBT_PASSWORD_STUDENT_FORBIDDEN');
+    }
+    seen.add(key);
+    if (lower(password.PasswordHashVersion) !== 'pbkdf2-sha256-v1'
+      || !/^[a-f0-9]{32}$/i.test(clean(password.Salt))
+      || !/^[a-f0-9]{64}$/i.test(clean(password.PasswordHash))
+      || Number(password.PasswordIterations) !== 10000) {
+      throw failure(`The queued password change for ${studentRef} has an invalid secure verifier.`, 400, 'ACADEMIC_CBT_PASSWORD_VERIFIER_INVALID');
+    }
+    return {
+      studentRef,
+      changedAt: clean(row.PasswordChangedAt) || timestamp,
+      password: {
+        Salt: lower(password.Salt), PasswordHash: lower(password.PasswordHash),
+        PasswordIterations: 10000, PasswordHashVersion: 'pbkdf2-sha256-v1'
+      }
+    };
+  });
+  const collectionPath = studentLoginCredentialCollection({
+    BranchId: context.scope.branchId, SchoolSection: context.scope.section
+  });
+  const documentIds = await Promise.all(normalized.map((row) => studentLoginCredentialId(row.studentRef)));
+  const writes = normalized.map((row, index) => ({
+    collectionPath,
+    documentId: documentIds[index],
+    data: {
+      StudentRef: row.studentRef,
+      BranchId: context.scope.branchId,
+      SchoolSection: context.scope.section,
+      ...row.password,
+      Active: true,
+      PasswordChangedAt: row.changedAt,
+      UpdatedAt: timestamp,
+      UpdatedBy: actorName(user),
+      CreatedAt: row.changedAt,
+      CreatedBy: actorName(user)
+    }
+  }));
+  writes.push(auditWrite(user, 'SYNC_LOCAL_CBT_PASSWORDS', 'studentCredentials', {
+    BranchId: context.scope.branchId, SchoolSection: context.scope.section,
+    SessionId: context.session.SessionId, TermId: context.term.TermId
+  }, `${normalized.length} student password verifier${normalized.length === 1 ? '' : 's'}`));
+  await commitAcademicBatch(env, writes, 'Student password changes could not be synchronized. Retry the same results push.');
+  return {
+    ok: true,
+    message: `${normalized.length} student password change${normalized.length === 1 ? '' : 's'} synchronized securely.`,
+    synchronizedStudentRefs: normalized.map((row) => row.studentRef)
   };
 }
 
@@ -5313,17 +5414,6 @@ export async function revokeAcademicResultClearance(env, user = {}, input = {}) 
 
 export async function handleAcademicManagementAction(env, user = {}, input = {}) {
   const action = lower(input.action || input.Action).replace(/[^a-z]/g, '');
-  if ([
-    'downloadacademiccbttestpackage', 'downloadcbttestpackage',
-    'acknowledgeacademiccbtimport', 'acknowledgecbtimport',
-    'preparelocalcbtidentitypackage', 'preparecbtidentitypackage'
-  ].includes(action)) {
-    throw failure(
-      'CBT preparation and candidate logins remain on the Dynamax Desktop local school network. Only approved score batches are accepted online after the examination.',
-      409,
-      'ACADEMIC_CBT_LOCAL_ONLY'
-    );
-  }
   if (['bootstrap', 'list', 'getacademicmanagement'].includes(action)) return bootstrapAcademicManagement(env, user, input);
   if (['save', 'saverecord', 'saveacademicsession', 'saveacademicterm', 'saveacademicclass', 'saveacademicarmtemplate', 'saveacademicarm', 'saveacademicsubject', 'saveacademicdepartment', 'saveacademicoffering', 'saveacademicteacherallocation', 'saveacademicstudentmembership'].includes(action)) {
     const inferredType = ({
@@ -5366,6 +5456,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['importacademicscores', 'commitscoreimport'].includes(action)) return importAcademicScores(env, user, input);
   if (['rollbackacademicscoreimport', 'rollbackscoreimport'].includes(action)) return rollbackAcademicScoreImport(env, user, input);
   if (['syncacademiccbtscores', 'synccbtresults'].includes(action)) return syncAcademicCbtScores(env, user, input);
+  if (['synclocalcbtstudentpasswords', 'synccbtstudentpasswords'].includes(action)) return syncLocalCbtStudentPasswords(env, user, input);
   if (['calculateacademictermresults', 'calculatetermresults'].includes(action)) return calculateAcademicTermResults(env, user, input);
   if (['previewacademictermresultwithdrawal', 'previewtermresultwithdrawal'].includes(action)) return previewAcademicTermResultWithdrawal(env, user, input);
   if (['changeacademictermresultstatus', 'changetermresultstatus'].includes(action)) return changeAcademicTermResultStatus(env, user, input);

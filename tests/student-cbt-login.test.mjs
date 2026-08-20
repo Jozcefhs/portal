@@ -36,7 +36,7 @@ test('student password policy rejects unsafe values', async () => {
   await assert.rejects(() => hashStudentPassword(' StudentPass1!'), /begin or end/);
 });
 
-test('desktop CBT uses a reusable encrypted local login registry with no online preparation call', async () => {
+test('desktop CBT pulls encrypted online logins into the reusable local registry', async () => {
   const [localCbt, academics, students] = await Promise.all([
     readFile(new URL('../suite/modules/local_cbt.py', portalRoot), 'utf8'),
     readFile(new URL('../suite/modules/academic_management.py', portalRoot), 'utf8'),
@@ -46,11 +46,14 @@ test('desktop CBT uses a reusable encrypted local login registry with no online 
   assert.match(localCbt, /save_local_student_password/);
   assert.match(localCbt, /examination delivery, answer submission and marking never depend on[\s\S]*an Internet service/);
   assert.doesNotMatch(localCbt, /Sync Web Tests/);
-  assert.doesNotMatch(academics, /prepareLocalCbtIdentityPackage/);
+  assert.match(localCbt, /prepareLocalCbtIdentityPackage/);
+  assert.match(localCbt, /downloadAcademicCbtTestPackage/);
+  assert.match(localCbt, /LocalCBTIdentityExchange/);
+  assert.match(localCbt, /password_sync_pending/);
   assert.match(students, /save_local_student_password/);
 });
 
-test('student editors save passwords securely while the CBT portal remains local-only', async () => {
+test('student editors and the offline portal save only secure password verifiers', async () => {
   const [admin, staffStudents, backend, academics] = await Promise.all([
     readFile(new URL('js/admin.js', portalRoot), 'utf8'),
     readFile(new URL('functions/api/staff-students.js', portalRoot), 'utf8'),
@@ -62,9 +65,10 @@ test('student editors save passwords securely while the CBT portal remains local
   assert.match(admin, /minlength="6" maxlength="128"/);
   assert.match(admin, /password of at least 6 characters for CBT/);
   assert.match(staffStudents, /saveStudentLoginPassword/);
-  assert.match(admin, /data-academic-local-cbt-only/);
-  assert.match(academics, /ACADEMIC_CBT_LOCAL_ONLY/);
-  assert.match(academics, /No online examination records were read/);
+  assert.match(admin, /data-academic-cbt-editor/);
+  assert.match(academics, /syncLocalCbtStudentPasswords/);
+  assert.match(academics, /studentLoginCredentialCollection/);
+  assert.doesNotMatch(academics, /ACADEMIC_CBT_LOCAL_ONLY/);
   assert.match(academics, /syncAcademicCbtScores/);
   assert.doesNotMatch(staffStudents, /student\.PasswordHash/);
 });

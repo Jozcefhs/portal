@@ -138,7 +138,7 @@ let academicManagementView = 'classrooms';
 let academicManagementTaskViews = {
   classrooms: 'register', structure: 'classes', bulkSetup: 'classes', departments: 'register',
   offerings: 'seniorChoices', teachers: 'assign', students: 'allocate',
-  timetable: 'builder', attendance: 'mark', scorebook: 'entry', cbt: 'local', outcomes: 'cumulative'
+  timetable: 'builder', attendance: 'mark', scorebook: 'entry', cbt: 'create', outcomes: 'cumulative'
 };
 let academicManagementFilters = { section: '', sessionId: '', termId: '' };
 let academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
@@ -10063,7 +10063,8 @@ function academicTaskDefinitions(view, root) {
       { key: 'history', label: 'History', title: 'Session-outcome audit history', description: 'Review cumulative, promotion and transcript lifecycle events.', nodes: nodes(register('Session Outcome History')) }
     ],
     cbt: [
-      { key: 'local', label: 'Local CBT only', title: 'Run CBT on the school network', description: 'Create, conduct and mark tests in Dynamax Desktop. Push only an approved score batch online after the examination.', nodes: nodes(form('[data-academic-local-cbt-only]')) }
+      { key: 'create', label: 'New online test', title: 'Create and schedule a CBT test', description: 'Upload the paper and answer key online, then pull the complete package onto the desktop offline CBT server.', nodes: nodes(form('[data-academic-cbt-editor]')) },
+      { key: 'register', label: 'Scheduled tests', title: 'Online CBT test register', description: 'Review online tests and correct or delete any package that has not yet been pulled offline.', nodes: nodes(register('Scheduled CBT Tests')) }
     ],
     clearances: [
       { key: 'grant', label: 'Grant clearance', title: 'Approve result access', description: 'Grant or correct a reasoned, expiring financial clearance for one student and academic period.', nodes: nodes(form('[data-academic-finance-clearance]')) },
@@ -11607,30 +11608,25 @@ function resetAcademicCbtDraft() {
 }
 
 function academicCbtContexts(data, rows) {
-  const classrooms = rows.arms.filter((row) => academicIsActive(row)
-    && (row.IsClassroom === true || /^(yes|true|1)$/i.test(clean(row.IsClassroom))));
   const allocations = rows.teacherAllocations.filter((row) => academicIsActive(row)
     && row.AllocationRole === 'Subject Teacher' && clean(row.SubjectId));
   const contexts = [];
   const seen = new Set();
   allocations.forEach((allocation) => {
-    classrooms.filter((arm) => arm.ClassId === allocation.ClassId
-      && (!allocation.ArmId || allocation.ArmId === arm.ArmId)).forEach((arm) => {
-      const roster = rows.studentMemberships.filter((membership) => academicIsActive(membership)
-        && membership.ClassId === allocation.ClassId && membership.ArmId === arm.ArmId
-        && (membership.SubjectIds || []).includes(allocation.SubjectId));
-      if (!roster.length) return;
-      const teacherUsername = clean(allocation.TeacherUsername).toLowerCase();
-      const key = `${arm.ArmId}|${allocation.SubjectId}|${teacherUsername}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      contexts.push({
-        key, classId: allocation.ClassId, armId: arm.ArmId, subjectId: allocation.SubjectId,
-        teacherUsername, rosterCount: roster.length,
-        classroomLabel: `${academicLabel(rows.classes, allocation.ClassId)} / ${clean(arm.Name)}`,
-        subjectLabel: academicLabel(rows.subjects, allocation.SubjectId),
-        teacherLabel: academicLabel(data.staff, allocation.TeacherUsername, allocation.TeacherUsername)
-      });
+    const roster = rows.studentMemberships.filter((membership) => academicIsActive(membership)
+      && membership.ClassId === allocation.ClassId
+      && (membership.SubjectIds || []).includes(allocation.SubjectId));
+    if (!roster.length) return;
+    const teacherUsername = clean(allocation.TeacherUsername).toLowerCase();
+    const key = `${allocation.ClassId}|${allocation.SubjectId}|${teacherUsername}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    contexts.push({
+      key, classId: allocation.ClassId, armId: '', subjectId: allocation.SubjectId,
+      teacherUsername, rosterCount: roster.length,
+      classroomLabel: academicLabel(rows.classes, allocation.ClassId),
+      subjectLabel: academicLabel(rows.subjects, allocation.SubjectId),
+      teacherLabel: academicLabel(data.staff, allocation.TeacherUsername, allocation.TeacherUsername)
     });
   });
   return contexts.sort((left, right) => left.classroomLabel.localeCompare(right.classroomLabel, undefined, { numeric: true, sensitivity: 'base' })
@@ -11648,31 +11644,15 @@ function academicCbtStatus(record = {}) {
   return { label: 'Scheduled', className: 'scheduled' };
 }
 
-function academicCbtWorkspace() {
-  return `<section class="academic-management-editor academic-management-editor-wide academic-cbt-offline-only" data-academic-local-cbt-only>
-    <div class="academic-management-editor-heading">
-      <div><small>Offline-only examination boundary</small><h3>CBT runs on Dynamax Desktop</h3><p class="muted">The Web Companion does not create, store, schedule, host or deliver CBT examinations.</p></div>
-      <span class="academic-cbt-status academic-cbt-status-synced">School LAN only</span>
-    </div>
-    <ol class="academic-cbt-offline-steps">
-      <li><strong>Create and schedule locally.</strong><span>Use Academic Management &gt; Local CBT Server in the desktop app and keep the paper, answer key and encrypted student logins on that Windows workspace.</span></li>
-      <li><strong>Conduct on the school network.</strong><span>Android tablets and ICT-lab computers connect to the desktop server over the local Wi-Fi/LAN. Candidate devices do not need Internet access.</span></li>
-      <li><strong>Mark and approve locally.</strong><span>Answers, timing, objective marking, manual marking and approval remain in the local CBT database.</span></li>
-      <li><strong>Push approved scores afterwards.</strong><span>Stop the local server, then let an authorized staff member explicitly push the approved score batch to the online scorebook.</span></li>
-    </ol>
-    <div class="academic-view-only-note"><strong>No live online CBT traffic</strong><span>Public cloud services are not used for question papers, candidate login, examination delivery, answers or marking. The only online CBT action is the post-examination approved-score push.</span></div>
-  </section>`;
-}
-
-function academicLegacyCbtWorkspace(data, rows) {
+function academicCbtWorkspace(data, rows) {
   if (!academicCbtDraft.clientRequestId) resetAcademicCbtDraft();
   const contexts = academicCbtContexts(data, rows);
-  const classroomContexts = [...new Map(contexts.map((context) => [context.armId, context])).values()];
-  if (!contexts.some((context) => context.armId === academicCbtDraft.classroomId)) {
-    academicCbtDraft.classroomId = clean(classroomContexts[0]?.armId);
+  const classroomContexts = [...new Map(contexts.map((context) => [context.classId, context])).values()];
+  if (!contexts.some((context) => context.classId === academicCbtDraft.classroomId)) {
+    academicCbtDraft.classroomId = clean(classroomContexts[0]?.classId);
     academicCbtDraft.contextKey = '';
   }
-  const subjectContexts = contexts.filter((context) => context.armId === academicCbtDraft.classroomId);
+  const subjectContexts = contexts.filter((context) => context.classId === academicCbtDraft.classroomId);
   if (!subjectContexts.some((context) => context.key === academicCbtDraft.contextKey)) {
     academicCbtDraft.contextKey = clean(subjectContexts[0]?.key);
   }
@@ -11692,13 +11672,13 @@ function academicLegacyCbtWorkspace(data, rows) {
   const editing = Boolean(academicCbtDraft.testId);
 
   const stepOne = `<div class="academic-cbt-details" data-academic-cbt-step="1"${academicCbtDraft.step === 1 ? '' : ' hidden'}>
-    <div class="academic-management-editor-heading"><div><small>Step 1 of 2</small><h3>${editing ? 'Correct scheduled test' : 'Test details and schedule'}</h3><p class="muted">Only your allocated classrooms and subjects with an active student roster are available.</p></div>${editing ? '<button type="button" data-academic-cbt-new>Clear</button>' : ''}</div>
-    ${!contexts.length ? '<p class="status bad">No eligible subject-teacher classroom allocation with students was found for this period.</p>' : ''}
+    <div class="academic-management-editor-heading"><div><small>Step 1 of 2</small><h3>${editing ? 'Correct scheduled test' : 'Test details and schedule'}</h3><p class="muted">Choose the class and subject. Every student in that class who offers the subject is included across all arms.</p></div>${editing ? '<button type="button" data-academic-cbt-new>Clear</button>' : ''}</div>
+    ${!contexts.length ? '<p class="status bad">No eligible subject-teacher class allocation with students was found for this period.</p>' : ''}
     ${!components.length ? '<p class="status bad">No Test Type currently accepts Built-in CBT scores. Configure an assessment component in Account &amp; settings first.</p>' : ''}
     <div class="academic-cbt-detail-grid">
       <label>Test Type<small>Created from the active assessment components.</small><select name="AssessmentComponentId" data-academic-cbt-component required>${academicSelectOptions(components.map((row) => ({ ...row, RecordId: row.Id })), component?.Id || '', (row) => row.Name, 'Choose Test Type')}</select></label>
       <label>Overall mark<small>The maximum score configured for this Test Type.</small><input data-academic-cbt-maximum value="${escapeHtml(component?.MaximumScore ?? '')}" readonly></label>
-      <label>Classroom<small>Select the exact class and arm taking the test.</small><select name="ClassroomId" data-academic-cbt-classroom required>${academicSelectOptions(classroomContexts.map((row) => ({ RecordId: row.armId, Name: row.classroomLabel })), academicCbtDraft.classroomId, (row) => row.Name, 'Choose classroom')}</select></label>
+      <label>Class<small>The test applies to eligible students in every arm of this class.</small><select name="ClassroomId" data-academic-cbt-classroom required>${academicSelectOptions(classroomContexts.map((row) => ({ RecordId: row.classId, Name: row.classroomLabel })), academicCbtDraft.classroomId, (row) => row.Name, 'Choose class')}</select></label>
       <label>Subject<small>The teacher is taken from the saved allocation.</small><select name="ContextKey" data-academic-cbt-context required>${academicSelectOptions(subjectContexts.map((row) => ({ RecordId: row.key, Name: `${row.subjectLabel}${subjectContexts.filter((item) => item.subjectId === row.subjectId).length > 1 ? ` · ${row.teacherLabel}` : ''}` })), academicCbtDraft.contextKey, (row) => row.Name, 'Choose subject')}</select></label>
       <label>Subject teacher<small>The account responsible for this test.</small><input value="${escapeHtml(selectedContext?.teacherLabel || '')}" readonly></label>
       <label>Scheduled date<small>Students cannot open the test before this date.</small><input type="date" name="StartDate" value="${escapeHtml(academicCbtDraft.startDate)}" required></label>
@@ -11730,7 +11710,7 @@ function academicLegacyCbtWorkspace(data, rows) {
   const register = table('Scheduled CBT Tests', rows.cbtTests, [
     { label: 'Date and time', value: (row) => new Date(row.StartsAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) },
     { label: 'Test Type', value: (row) => `${row.AssessmentComponentName} / ${row.MaximumScore}` },
-    { label: 'Classroom', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
+    { label: 'Class', value: (row) => academicLabel(rows.classes, row.ClassId) },
     { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId, row.SubjectName) },
     { label: 'Questions', value: (row) => row.NumberOfQuestions },
     { label: 'Students', value: (row) => row.RosterCount },
@@ -12389,8 +12369,8 @@ function bindAcademicManagement() {
       testId: record.CbtTestId,
       revisionToken: record.RevisionToken,
       clientRequestId: academicCbtRequestId(),
-      classroomId: record.ArmId,
-      contextKey: `${record.ArmId}|${record.SubjectId}|${clean(record.TeacherUsername).toLowerCase()}`,
+      classroomId: record.ClassId,
+      contextKey: `${record.ClassId}|${record.SubjectId}|${clean(record.TeacherUsername).toLowerCase()}`,
       componentId: record.AssessmentComponentId,
       startDate: schedule.date,
       startTime: schedule.time,
