@@ -11,6 +11,7 @@ import {
   academicOfferingSubjectRole,
   academicSeniorCoreSubjectIds,
   academicStudentMatchesClass,
+  academicTeacherVisibleMemberships,
   importedAcademicStudentProfile,
   normalizeAcademicArm,
   normalizeAcademicArmTemplate,
@@ -423,6 +424,23 @@ test('Academic Management is a School-only role module with a constrained Teache
   assert.equal(academicManagementCapabilities({ edition: 'faith', role: 'Teacher', allowedSections: ['academics'] }).enabled, false);
 });
 
+test('a subject teacher can load every student in the class who offers that subject across arms', () => {
+  const visible = academicTeacherVisibleMemberships({
+    teacherAllocations: [
+      { TeacherUsername: 'math.teacher', AllocationRole: 'Subject Teacher', ClassId: 'grade-1', ArmId: 'distinction', SubjectId: 'math', Status: 'Active' },
+      { TeacherUsername: 'other.teacher', AllocationRole: 'Subject Teacher', ClassId: 'grade-1', ArmId: 'excellence', SubjectId: 'english', Status: 'Active' }
+    ],
+    studentMemberships: [
+      { StudentRef: 'G1-D-1', ClassId: 'grade-1', ArmId: 'distinction', SubjectIds: ['math'] },
+      { StudentRef: 'G1-E-1', ClassId: 'grade-1', ArmId: 'excellence', SubjectIds: ['math', 'english'] },
+      { StudentRef: 'G1-E-2', ClassId: 'grade-1', ArmId: 'excellence', SubjectIds: ['english'] },
+      { StudentRef: 'G2-D-1', ClassId: 'grade-2', ArmId: 'distinction', SubjectIds: ['math'] }
+    ]
+  }, 'math.teacher');
+
+  assert.deepEqual(visible.map((row) => row.StudentRef), ['G1-D-1', 'G1-E-1']);
+});
+
 test('Academic writes are audited, optimistic and preserve legacy class/student compatibility', () => {
   assert.match(librarySource, /batchCommitDocuments/);
   assert.match(librarySource, /ACADEMIC_WRITE_CONFLICT/);
@@ -726,7 +744,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /showAcademicManagementTask\('students', 'transfer'\)/);
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260820-academic-cbt-low-read/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260820-local-offline-cbt/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

@@ -2182,6 +2182,66 @@ html[data-theme="dark"] .department-member-onboarding strong { color: #75dfbf; }
   .launcher-public-actions { margin-top: .45rem; }
 }
 
+/*
+ * Laptop displays commonly expose only 600-760 CSS pixels after Windows scaling
+ * and browser chrome. Keep every launcher action reachable instead of clipping
+ * the bottom of both columns behind a fixed 100vh canvas.
+ */
+@media (min-width: 901px) and (max-height: 800px) {
+  .suite-launcher-page {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .suite-launcher {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+    align-items: stretch;
+  }
+  .launcher-showcase {
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding: 18px clamp(28px, 4vw, 50px);
+  }
+  .launcher-showcase-top { gap: 10px; font-size: 16px; }
+  .launcher-logo { width: 42px; height: 42px; }
+  .launcher-art { top: 10%; opacity: .78; }
+  .launcher-message { padding-top: 0; padding-bottom: 10px; }
+  .launcher-message p { margin-bottom: 5px; font-size: 9px; }
+  .launcher-message h1 { font-size: clamp(34px, 4.1vw, 50px); }
+  .launcher-message > span { margin-top: 9px; font-size: 12px; line-height: 1.35; }
+  .launcher-directory {
+    min-height: 100vh;
+    min-height: 100dvh;
+    justify-content: flex-start;
+    padding: 16px clamp(28px, 4vw, 52px) 22px;
+  }
+  .launcher-heading { margin-bottom: 10px; }
+  .launcher-kicker { margin-bottom: 5px; font-size: 9px; }
+  .launcher-heading h2 { margin-bottom: 5px; font-size: clamp(29px, 3.2vw, 40px); }
+  .launcher-heading > p:last-child { font-size: 12px; }
+  .launcher-channels { gap: 6px; }
+  .launcher-channel {
+    grid-template-columns: 42px minmax(0, 1fr) 20px;
+    gap: 10px;
+    min-height: 56px;
+    padding: 6px 11px;
+    border-radius: 13px;
+  }
+  .channel-mark { width: 42px; height: 42px; border-radius: 11px; font-size: 13px; }
+  .channel-copy strong { font-size: 15px; }
+  .channel-copy small { margin-top: 1px; font-size: 9px; line-height: 1.2; }
+  .channel-arrow { font-size: 18px; }
+  .launcher-help { margin-top: 8px; font-size: 10px; }
+  .launcher-public-actions { gap: .4rem; margin-top: .3rem; }
+  .launcher-public-actions a,
+  .launcher-public-actions button { min-height: 32px; padding: .35rem .6rem; font-size: 10px; }
+  .launcher-settings-button { right: 15px; bottom: 15px; width: 48px; height: 48px; font-size: 20px; }
+}
+
 .auth-page { min-height: 100vh; min-height: 100dvh; overflow-x: hidden; }
 .auth-page .auth-shell { width: 100%; min-width: 0; min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 1rem; box-sizing: border-box; }
 .organisation-registration-card { max-width: 1180px; min-width: 0; width: min(1180px, calc(100vw - 2rem)); padding: 1.25rem; box-sizing: border-box; overflow: hidden; background: #fff; color: #172033; border: 1px solid #d8e1ec; border-radius: 18px; box-shadow: 0 16px 42px rgba(17,46,82,.12); }
@@ -3449,3 +3509,13 @@ html[data-theme="dark"] .academic-score-scheme-banner.is-ready{border-color:#1e9
 #academicTranscriptVerificationDetails dt{color:#476579;font-size:9px;font-weight:800;text-transform:uppercase}
 #academicTranscriptVerificationDetails dd{color:#143c34;font-size:12px;font-weight:700}
 @media(max-width:560px){#academicTranscriptVerificationDetails{grid-template-columns:1fr}#academicTranscriptVerificationDetails dt{padding-bottom:1px;border-bottom:0}#academicTranscriptVerificationDetails dd{padding-top:2px}}
+
+/* Offline-only CBT boundary shown in the Web Companion. */
+.academic-cbt-offline-only{border-left:5px solid #087f6d}
+.academic-cbt-offline-steps{display:grid;gap:9px;margin:0;padding:0;list-style:none;counter-reset:cbt-offline}
+.academic-cbt-offline-steps li{display:grid;grid-template-columns:minmax(170px,.35fr) minmax(0,1fr);gap:12px;padding:12px;border:1px solid #d8e4ee;border-radius:9px;background:#f8fbfd;counter-increment:cbt-offline}
+.academic-cbt-offline-steps li strong:before{content:counter(cbt-offline) '. ';color:#087f6d}
+.academic-cbt-offline-steps li span{color:#5f7589;line-height:1.5}
+html[data-theme="dark"] .academic-cbt-offline-steps li{border-color:#42566d;background:#0c1827}
+html[data-theme="dark"] .academic-cbt-offline-steps li span{color:#b5c5d7}
+@media(max-width:560px){.academic-cbt-offline-steps li{grid-template-columns:1fr;gap:4px}}

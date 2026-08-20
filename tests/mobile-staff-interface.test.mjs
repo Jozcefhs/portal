@@ -162,6 +162,13 @@ test('mobile launcher uses a compact first-screen layout', () => {
   assert.doesNotMatch(indexHtml, /id="installDynamaxApp"/);
 });
 
+test('short laptop launcher keeps every action reachable at Windows scaling', () => {
+  assert.match(portalCss, /@media \(min-width: 901px\) and \(max-height: 800px\) \{[\s\S]*?\.suite-launcher-page \{[\s\S]*?overflow-y: auto;/);
+  assert.match(portalCss, /@media \(min-width: 901px\) and \(max-height: 800px\) \{[\s\S]*?\.launcher-message \{ padding-top: 0;/);
+  assert.match(portalCss, /@media \(min-width: 901px\) and \(max-height: 800px\) \{[\s\S]*?\.launcher-directory \{[\s\S]*?justify-content: flex-start;/);
+  assert.match(portalCss, /@media \(min-width: 901px\) and \(max-height: 800px\) \{[\s\S]*?\.launcher-channel \{[\s\S]*?min-height: 56px;/);
+});
+
 test('preference toggles have clearly distinct on and off states', () => {
   assert.match(portalCss, /\.preference-switch-row:has\(\.preference-switch input:checked\)\{background:#edf9f4;box-shadow:inset 4px 0 0 #087a55\}/);
   assert.match(portalCss, /\.preference-switch span::before\{content:"OFF"/);

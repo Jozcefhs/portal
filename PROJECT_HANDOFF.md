@@ -282,7 +282,8 @@ Step 1 collects:
 
 Step 2 uploads a JPEG, PNG or PDF paper and lets the teacher select the correct
 answer for every objective question. Native questions and mapped-document
-questions remain supported. The original PDF and answer key stay server-side.
+questions remain supported. The original PDF and answer key stay only on the
+workspace-local CBT server.
 
 ### Candidate login and clients
 
@@ -290,12 +291,16 @@ questions remain supported. The original PDF and answer key stay server-side.
 - A student signs in with admission number plus personal password, or admission
   number plus approved face verification.
 - A student personal password has a minimum length of 6 characters.
-- Current password derivation uses PBKDF2 with 10,000 iterations because the
-  deployed runtime rejected the previous 120,000 request. Never store or sync
-  the plaintext password.
-- Student identity must synchronize from the web profile to the local CBT
-  package so “No personal password is configured” cannot appear after a
-  successful profile save and identity refresh.
+- New local CBT password verifiers use PBKDF2 with 120,000 iterations and are
+  encrypted with the Windows-account-protected workspace vault. Never store or
+  sync the plaintext password.
+- A successful student-profile password save in Dynamax Desktop also updates
+  the reusable encrypted local CBT login registry. Test creation and the
+  **Apply Local Logins** action read that registry only; they never request a
+  student identity package from the web.
+- **Local Login Vault** in the desktop CBT console can set or reset the local
+  password directly when the workstation is disconnected; it stores only the
+  encrypted verifier and makes no online request.
 - The same responsive local candidate client supports Android tablets and
   Windows ICT-lab computers.
 - Device failure can be recovered through an authorized transfer from tablet
@@ -305,14 +310,17 @@ questions remain supported. The original PDF and answer key stay server-side.
 
 - The school can run CBT over its local network using the desktop host and a
   workspace-scoped SQLite database in WAL mode.
-- Android tablets and lab computers connect to the local LAN server; no public
-  Internet connection is required during the examination.
+- Android tablets and lab computers connect to the local LAN server. CBT test
+  creation, candidate login, question papers, timing, answers and marking do
+  not use public Internet, Cloudflare, Firestore or Google Drive.
 - Answers checkpoint locally and replay idempotently after a brief connection
   interruption.
 - Objective answers are marked automatically; subjective answers wait for
   manual marking.
-- Approved batches follow Draft -> Reviewed -> Approved -> Synchronized and
-  push replay-safe signed scores into an online Draft score sheet.
+- Approved batches follow Draft -> Reviewed -> Approved -> Synchronized. An
+  authorized staff member must first stop the local server and then explicitly
+  confirm **Push Approved Scores Online**; this is the only online built-in CBT
+  operation.
 - External CBT CSV/XLSX imports use exact roster, component, maximum mark,
   digest and idempotency validation. A provider-specific API/webhook adapter
   still requires the existing CBT platform's contract.
@@ -347,16 +355,18 @@ and must remain review-gated.
 
 ## 11. Latest production incident and fix
 
-The Scorebook and Built-in CBT authoring flow previously showed Cloudflare's
+The Scorebook and former Web Companion CBT authoring flow previously showed Cloudflare's
 “Too many subrequests by single Worker invocation” error because a bootstrap
 loaded the entire academic state and CBT paper submission validated the same
 schedule twice before doing another full refresh. The fixes now:
 
 - restricts Scorebook reads to the 11 relevant academic collections;
-- restricts CBT reads to the 8 collections needed for scheduling and its roster;
-- reuses the pre-upload CBT validation when the saved Drive paper is committed;
-- returns the saved/deleted CBT record as partial state instead of reloading all
-  academic collections inside the upload Worker;
+- replaces Web Companion CBT authoring with a local-only operating guide and
+  performs no academic collection or candidate reads when that CBT view opens;
+- rejects legacy online CBT creation and Drive-upload requests with
+  `ACADEMIC_CBT_LOCAL_ONLY` before any paper upload or Firestore write;
+- keeps question papers and candidate examination traffic on the local school
+  network, with only the approved-score receiver remaining online;
 - returns partial scorebook state and merges it client-side; and
 - performs post-mutation refresh as a separate Worker invocation.
 
@@ -364,8 +374,8 @@ Production was verified after deployment: the Scorebook loaded the active
 assessment components without the subrequest error. Current cache identifiers
 are:
 
-- admin script: `20260820-academic-cbt-low-read`
-- service worker: `dynamax-v246-academic-cbt-low-read`
+- admin script: `20260820-local-offline-cbt`
+- service worker: `dynamax-v248-local-offline-cbt`
 
 If the error returns, first verify that the browser has these current assets,
 then inspect the specific API response. Do not “fix” it by raising a Worker

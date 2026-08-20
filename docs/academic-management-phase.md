@@ -533,18 +533,20 @@ Imports never create a class, student, subject or allocation implicitly.
 Dynamax Desktop on a designated school Windows computer acts as the local CBT
 server and administrator console. Android tablets and Windows ICT-lab computers
 connect through the school's local Wi-Fi or LAN. Internet connectivity is not
-required during an examination.
+used for CBT preparation, candidate login, paper delivery, answer submission,
+timing or marking. The only online CBT operation is an explicit staff action
+that pushes an approved score batch after the local examination server stops.
 
 ```mermaid
 flowchart TD
-    A["Online academic database"] -->|"Prepare and download roster, allocations and exam package"| B["Dynamax local CBT server"]
+    A["Desktop academic cache and encrypted local login vault"] -->|"Create test and provision local roster"| B["Dynamax local CBT server"]
     B --> C["School Wi-Fi or LAN"]
     C --> D["Android tablets"]
     C --> E["Windows ICT-lab computers"]
     D -->|"Autosaved responses"| B
     E -->|"Autosaved responses"| B
     B --> F["Local review and approval"]
-    F -->|"Internet restored; signed idempotent sync"| G["Online scorebook drafts"]
+    F -->|"Server stopped; staff explicitly pushes signed score batch"| G["Online scorebook drafts"]
     G --> H["Academic approval and results"]
 ```
 
@@ -627,11 +629,16 @@ other assets are optimized and progressively loaded for lower-powered tablets.
 
 ### 10.4 Offline examination workflow
 
-1. A subject teacher creates the test from an allocated classroom and subject;
-   the desktop verifies the active policy, test type and exact roster online
-   before securing the examination package locally.
-2. The package is downloaded to the local server and verified before the
-   examination begins.
+1. Well before the examination, the normal desktop academic synchronization
+   leaves the required policy, allocations and roster in the workspace cache.
+   Saving a student's personal password in the desktop profile also saves only
+   its verifier in the Windows-account-protected local CBT vault. On a fully
+   disconnected workstation, authorized staff can instead use **Local Login
+   Vault** in the CBT console to set or reset the local password without an
+   online profile request.
+2. A subject teacher creates the test from the locally cached allocated
+   classroom and subject. The paper, answer key, roster and login snapshots are
+   secured locally; the CBT console performs no online lookup or package download.
 3. The local server starts examination sessions and displays one school-network
    address and QR joining code.
 4. A candidate enters only their admission number, then signs in with their
@@ -650,8 +657,9 @@ other assets are optimized and progressively loaded for lower-powered tablets.
 8. Objective answers are marked locally; authorized teachers mark subjective
    answers.
 9. An officer reviews and approves the completed examination batch.
-10. When internet returns, the local server securely uploads the approved batch
-    into the matching online scorebook component as draft scores.
+10. The officer stops the local CBT server. Only then, after a separate explicit
+    confirmation, the desktop securely pushes the approved batch into the
+    matching online scorebook component as draft scores.
 11. The online server revalidates workspace, branch, allocation, candidate,
     component, maximum score, duplicate and policy information.
 12. Academic approval, not synchronization alone, makes the scores final.
@@ -722,10 +730,9 @@ The built-in controls include:
   face; parent login codes are never reused for CBT. Student passwords accept
   6 to 128 characters and cannot begin or end with a space;
 - PBKDF2 password verifiers and face descriptors encrypted at rest in the
-  Windows-account-protected local identity vault. New student verifiers use
-  the deployed web runtime's supported 10,000-iteration PBKDF2 format, while
-  the local client continues to honor the iteration count stored with older
-  valid credentials;
+  Windows-account-protected local identity vault. New desktop-saved local
+  verifiers use 120,000 PBKDF2 iterations, while the local client continues to
+  honor the safe iteration count stored with older valid encrypted snapshots;
 - one-use password challenge-response proofs so the personal password is never
   posted to the local server;
 - a one-use, short-lived random blink or head-movement challenge before each

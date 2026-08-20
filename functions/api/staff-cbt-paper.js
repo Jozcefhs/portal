@@ -57,6 +57,20 @@ async function deleteUploadedPaper(storage, documentUrl) {
 }
 
 export async function onRequestPost(context) {
+  const deployment = requiredDeploymentIdentity(context.env);
+  if (deployment.edition !== 'school') {
+    return Response.json({ ok: false, message: 'CBT is available only in the School edition.' }, {
+      status: 404, headers: { 'Cache-Control': 'no-store' }
+    });
+  }
+  return Response.json({
+    ok: false,
+    code: 'ACADEMIC_CBT_LOCAL_ONLY',
+    message: 'CBT tests are created, conducted and marked only on the Dynamax Desktop local school network. Push approved scores online after the examination.'
+  }, { status: 409, headers: { 'Cache-Control': 'no-store' } });
+}
+
+async function onLegacyRequestPost(context) {
   let idempotency = null;
   let uploadedUrl = '';
   let storage = null;

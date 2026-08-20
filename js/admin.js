@@ -138,7 +138,7 @@ let academicManagementView = 'classrooms';
 let academicManagementTaskViews = {
   classrooms: 'register', structure: 'classes', bulkSetup: 'classes', departments: 'register',
   offerings: 'seniorChoices', teachers: 'assign', students: 'allocate',
-  timetable: 'builder', attendance: 'mark', scorebook: 'entry', cbt: 'create', outcomes: 'cumulative'
+  timetable: 'builder', attendance: 'mark', scorebook: 'entry', cbt: 'local', outcomes: 'cumulative'
 };
 let academicManagementFilters = { section: '', sessionId: '', termId: '' };
 let academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
@@ -10063,8 +10063,7 @@ function academicTaskDefinitions(view, root) {
       { key: 'history', label: 'History', title: 'Session-outcome audit history', description: 'Review cumulative, promotion and transcript lifecycle events.', nodes: nodes(register('Session Outcome History')) }
     ],
     cbt: [
-      { key: 'create', label: 'New CBT test', title: 'Create and schedule a CBT test', description: 'Enter the test details, then upload its question paper and mark one correct answer per question.', nodes: nodes(form('[data-academic-cbt-editor]')) },
-      { key: 'register', label: 'Scheduled tests', title: 'Scheduled CBT tests', description: 'Review online tests and correct or delete a package before it reaches a local CBT server.', nodes: nodes(register('Scheduled CBT Tests')) }
+      { key: 'local', label: 'Local CBT only', title: 'Run CBT on the school network', description: 'Create, conduct and mark tests in Dynamax Desktop. Push only an approved score batch online after the examination.', nodes: nodes(form('[data-academic-local-cbt-only]')) }
     ],
     clearances: [
       { key: 'grant', label: 'Grant clearance', title: 'Approve result access', description: 'Grant or correct a reasoned, expiring financial clearance for one student and academic period.', nodes: nodes(form('[data-academic-finance-clearance]')) },
@@ -11649,7 +11648,23 @@ function academicCbtStatus(record = {}) {
   return { label: 'Scheduled', className: 'scheduled' };
 }
 
-function academicCbtWorkspace(data, rows) {
+function academicCbtWorkspace() {
+  return `<section class="academic-management-editor academic-management-editor-wide academic-cbt-offline-only" data-academic-local-cbt-only>
+    <div class="academic-management-editor-heading">
+      <div><small>Offline-only examination boundary</small><h3>CBT runs on Dynamax Desktop</h3><p class="muted">The Web Companion does not create, store, schedule, host or deliver CBT examinations.</p></div>
+      <span class="academic-cbt-status academic-cbt-status-synced">School LAN only</span>
+    </div>
+    <ol class="academic-cbt-offline-steps">
+      <li><strong>Create and schedule locally.</strong><span>Use Academic Management &gt; Local CBT Server in the desktop app and keep the paper, answer key and encrypted student logins on that Windows workspace.</span></li>
+      <li><strong>Conduct on the school network.</strong><span>Android tablets and ICT-lab computers connect to the desktop server over the local Wi-Fi/LAN. Candidate devices do not need Internet access.</span></li>
+      <li><strong>Mark and approve locally.</strong><span>Answers, timing, objective marking, manual marking and approval remain in the local CBT database.</span></li>
+      <li><strong>Push approved scores afterwards.</strong><span>Stop the local server, then let an authorized staff member explicitly push the approved score batch to the online scorebook.</span></li>
+    </ol>
+    <div class="academic-view-only-note"><strong>No live online CBT traffic</strong><span>Public cloud services are not used for question papers, candidate login, examination delivery, answers or marking. The only online CBT action is the post-examination approved-score push.</span></div>
+  </section>`;
+}
+
+function academicLegacyCbtWorkspace(data, rows) {
   if (!academicCbtDraft.clientRequestId) resetAcademicCbtDraft();
   const contexts = academicCbtContexts(data, rows);
   const classroomContexts = [...new Map(contexts.map((context) => [context.armId, context])).values()];

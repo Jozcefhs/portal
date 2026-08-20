@@ -1367,14 +1367,47 @@ function currentSelection(state, input = {}) {
   return { SessionId: clean(session?.SessionId), TermId: clean(term?.TermId) };
 }
 
+export function academicTeacherVisibleMemberships(state = {}, username = '', substituteClassrooms = []) {
+  const teacherUsername = lower(username);
+  const allocations = (state.teacherAllocations || []).filter((row) => statusActive(row)
+    && lower(row.TeacherUsername) === teacherUsername);
+  const homeroomKeys = new Set(allocations
+    .filter((row) => lower(row.AllocationRole) !== 'subject teacher')
+    .map((row) => `${row.ClassId}|${row.ArmId || '*'}`));
+  (substituteClassrooms || []).forEach((row) => homeroomKeys.add(`${row.ClassId}|${row.ArmId}`));
+  const subjectKeys = new Set(allocations
+    .filter((row) => lower(row.AllocationRole) === 'subject teacher' && clean(row.SubjectId))
+    .map((row) => `${row.ClassId}|${row.SubjectId}`));
+  return (state.studentMemberships || []).filter((row) => (
+    homeroomKeys.has(`${row.ClassId}|${row.ArmId}`)
+    || homeroomKeys.has(`${row.ClassId}|*`)
+    || (row.SubjectIds || []).some((subjectId) => subjectKeys.has(`${row.ClassId}|${subjectId}`))
+  ));
+}
+
 export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
   const permissions = requireCapability(user, 'enabled');
   const scope = await academicScope(env, user, input, { requireSection: false });
   const focusedView = lower(input.View || input.Workspace);
   const focusedCbt = focusedView === 'cbt';
+  if (focusedCbt) {
+    return {
+      ok: true,
+      partialAcademicManagement: true,
+      loadedAcademicView: 'cbt',
+      message: 'Local CBT guidance loaded. No online examination records were read.',
+      permissions,
+      scope: { BranchId: scope.branchId, SchoolSection: scope.section || 'all' },
+      sections: scope.structure.Sections,
+      selection: { SessionId: '', TermId: '' },
+      assessmentScheme: academicAssessmentScheme({}),
+      staff: [],
+      students: []
+    };
+  }
   const requestedStateKeys = permissions.financeView
     ? ['sessions', 'terms', 'classes', 'arms', 'studentMemberships', 'resultClearances']
-    : focusedCbt ? ACADEMIC_CBT_STATE_KEYS : null;
+    : null;
   const [rawState, people, audit] = await Promise.all([
     loadAcademicState(env, scope.branchId, requestedStateKeys),
     loadPeople(env, user, scope),
@@ -1395,9 +1428,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     state.teacherAllocations = state.teacherAllocations.filter((row) => lower(row.TeacherUsername) === username);
     const visibleKeys = new Set(state.teacherAllocations.map((row) => `${row.ClassId}|${row.ArmId || '*'}`));
     substituteClassrooms.forEach((row) => visibleKeys.add(`${row.ClassId}|${row.ArmId}`));
-    state.studentMemberships = state.studentMemberships.filter((row) => (
-      visibleKeys.has(`${row.ClassId}|${row.ArmId}`) || visibleKeys.has(`${row.ClassId}|*`)
-    ));
+    state.studentMemberships = academicTeacherVisibleMemberships(state, username, substituteClassrooms);
     const visibleStudents = new Set(state.studentMemberships.map((row) => lower(row.StudentRef)));
     state.studentMovements = state.studentMovements.filter((row) => visibleStudents.has(lower(row.StudentRef)));
     const publishedVersions = new Set(state.timetableVersions.filter((row) => lower(row.Status) === 'published').map((row) => row.VersionId));
@@ -4928,6 +4959,11 @@ async function finalizeAcademicCbtPaper(validation, input = {}) {
 }
 
 export async function saveAcademicCbtTest(env, user = {}, input = {}, options = {}) {
+  throw failure(
+    'CBT tests are created, conducted and marked only on the Dynamax Desktop local school network. The Web Companion accepts only approved score batches after the examination.',
+    409,
+    'ACADEMIC_CBT_LOCAL_ONLY'
+  );
   const validation = options.validation
     ? await finalizeAcademicCbtPaper(options.validation, input)
     : await validateAcademicCbtTestInput(env, user, { ...input, RequirePaper: true });
@@ -5277,6 +5313,17 @@ export async function revokeAcademicResultClearance(env, user = {}, input = {}) 
 
 export async function handleAcademicManagementAction(env, user = {}, input = {}) {
   const action = lower(input.action || input.Action).replace(/[^a-z]/g, '');
+  if ([
+    'downloadacademiccbttestpackage', 'downloadcbttestpackage',
+    'acknowledgeacademiccbtimport', 'acknowledgecbtimport',
+    'preparelocalcbtidentitypackage', 'preparecbtidentitypackage'
+  ].includes(action)) {
+    throw failure(
+      'CBT preparation and candidate logins remain on the Dynamax Desktop local school network. Only approved score batches are accepted online after the examination.',
+      409,
+      'ACADEMIC_CBT_LOCAL_ONLY'
+    );
+  }
   if (['bootstrap', 'list', 'getacademicmanagement'].includes(action)) return bootstrapAcademicManagement(env, user, input);
   if (['save', 'saverecord', 'saveacademicsession', 'saveacademicterm', 'saveacademicclass', 'saveacademicarmtemplate', 'saveacademicarm', 'saveacademicsubject', 'saveacademicdepartment', 'saveacademicoffering', 'saveacademicteacherallocation', 'saveacademicstudentmembership'].includes(action)) {
     const inferredType = ({
