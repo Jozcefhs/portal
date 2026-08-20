@@ -1,7 +1,7 @@
 {
-  "version": "3.0.7",
+  "version": "3.1.0",
   "channel": "stable",
   "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup.exe",
-  "sha256": "bd5b3d940a78741b0128ebcb0a0f698e5de56bb516812c64635aef963cfba957",
-  "notes": "Dynamax Desktop v3.0.7 adds the School-edition Academic Management workspace for sessions, terms, classes, arms, subjects, offerings, teacher allocations and student memberships. It shares protected online records with the web companion and enforces branch, school-section and role boundaries; Church and Other Organisation workspaces remain isolated from School academic features."
+  "sha256": "099589a6356a2256e8749b181e56381e38a2001dc734b45187ebd168422b4afc",
+  "notes": "Dynamax Desktop v3.1.0 delivers the expanded School academic-management and local-CBT workflow, including curricula, timetables, attendance, scorebook, results, promotions, transcripts, supervised offline CBT for Android and Windows, personal student login, student fee lookup and reduced finance backend requests. Edition, workspace, branch and school-section boundaries remain enforced."
 }
