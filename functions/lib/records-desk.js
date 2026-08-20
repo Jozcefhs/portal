@@ -57,6 +57,9 @@ export function recordsDeskCapabilities(user = {}) {
   const schoolExecutive = executive && role === 'Principal' && schoolEdition;
   const ministryExecutive = executive && ['Senior Pastor', 'Head Minister'].includes(role) && organisationEdition;
   const donorAccess = enabled && organisationEdition && allowed.has('donations');
+  const studentFaceManagementEnabled = enabledValue(
+    user.biometricLookupEnabled ?? user.BiometricLookupEnabled
+  );
   return {
     enabled,
     edition,
@@ -78,8 +81,7 @@ export function recordsDeskCapabilities(user = {}) {
     canViewStudentWallet: allowed.has('tuckShop') || allowed.has('accounts'),
     canViewStudentConduct: schoolEdition && allowed.has('studentConduct'),
     canUseStudentFaceLookup: enabled && schoolEdition,
-    canManageStudentFaceTemplates: enabled && schoolEdition && enabledValue(user.biometricLookupEnabled) &&
-      ['Super Admin', 'Principal', 'Admissions Officer'].includes(role),
+    canManageStudentFaceTemplates: enabled && schoolEdition && studentFaceManagementEnabled,
     canViewStaffSecurity: allowed.has('staffUsers') && clean(user.role) === 'Super Admin',
     canViewMemberContact: ministryExecutive || allowed.has('members'),
     canViewPastoralNotes: PASTORAL_ROLES.has(clean(user.role)),

@@ -28,15 +28,17 @@ import {
   normalizeStudentFaceLookupPurpose,
   staffCanUseStudentFaceLookup
 } from '../functions/api/staff-face-lookup.js';
+import { staffUserForAccess } from '../functions/lib/staff-auth.js';
 
 const portalRoot = new URL('../', import.meta.url);
-const [templateSource, endpointSource, uiSource, adminSource, staffSessionSource, staffUsersSource, cssSource, adminHtmlSource] = await Promise.all([
+const [templateSource, endpointSource, uiSource, adminSource, staffSessionSource, staffUsersSource, staffRecordsSource, cssSource, adminHtmlSource] = await Promise.all([
   readFile(new URL('functions/lib/student-face-templates.js', portalRoot), 'utf8'),
   readFile(new URL('functions/api/staff-face-lookup.js', portalRoot), 'utf8'),
   readFile(new URL('js/student-face-lookup.js', portalRoot), 'utf8'),
   readFile(new URL('js/admin.js', portalRoot), 'utf8'),
   readFile(new URL('functions/api/staff-session.js', portalRoot), 'utf8'),
   readFile(new URL('functions/api/staff-users.js', portalRoot), 'utf8'),
+  readFile(new URL('functions/api/staff-records.js', portalRoot), 'utf8'),
   readFile(new URL('css/style.css', portalRoot), 'utf8'),
   readFile(new URL('admin.html', portalRoot), 'utf8')
 ]);
@@ -293,6 +295,16 @@ test('Records Desk itself delegates lookup while enrollment management remains e
   assert.equal(recordsDeskCapabilities({ ...base, biometricLookupEnabled: 'true' }).canManageStudentFaceTemplates, true);
   assert.equal(recordsDeskCapabilities({
     ...base,
+    role: 'Front Desk',
+    biometricLookupEnabled: true
+  }).canManageStudentFaceTemplates, true);
+  assert.equal(recordsDeskCapabilities({
+    ...base,
+    role: 'Teacher',
+    biometricLookupEnabled: true
+  }).canManageStudentFaceTemplates, true);
+  assert.equal(recordsDeskCapabilities({
+    ...base,
     edition: 'faith',
     biometricLookupEnabled: true
   }).canUseStudentFaceLookup, false);
@@ -302,6 +314,50 @@ test('Records Desk itself delegates lookup while enrollment management remains e
   const revokeSource = endpointSource.slice(revokeStart, revokeEnd);
   assert.match(revokeSource, /canEraseTemplates\(user\)/);
   assert.doesNotMatch(revokeSource, /ensureConfigured\(env\)/);
+});
+
+test('the individual enrollment grant supplies its required Records Desk entry point', () => {
+  const granted = staffUserForAccess({
+    role: 'Teacher',
+    biometricLookupEnabled: true,
+    tabAccess: ['academics']
+  }, {
+    edition: 'school',
+    allowedSections: ['academics'],
+    featureFlags: {}
+  });
+  assert.equal(granted.biometricLookupEnabled, true);
+  assert.deepEqual(granted.allowedSections, ['academics', 'recordsDesk']);
+
+  const denied = staffUserForAccess({
+    role: 'Teacher',
+    biometricLookupEnabled: false,
+    tabAccess: ['academics']
+  }, {
+    edition: 'school',
+    allowedSections: ['academics'],
+    featureFlags: {}
+  });
+  assert.deepEqual(denied.allowedSections, ['academics']);
+
+  const nonSchool = staffUserForAccess({
+    role: 'Records Officer',
+    biometricLookupEnabled: true,
+    tabAccess: ['recordsDesk']
+  }, {
+    edition: 'faith',
+    allowedSections: [],
+    featureFlags: {}
+  });
+  assert.equal(nonSchool.biometricLookupEnabled, false);
+  assert.deepEqual(nonSchool.allowedSections, []);
+
+  const manageStart = endpointSource.indexOf('function canManageTemplates');
+  const manageEnd = endpointSource.indexOf('function canEraseTemplates', manageStart);
+  const manageSource = endpointSource.slice(manageStart, manageEnd);
+  assert.match(manageSource, /recordsDeskCapabilities\(user\)\.canManageStudentFaceTemplates/);
+  assert.doesNotMatch(manageSource, /MANAGER_ROLES/);
+  assert.match(staffRecordsSource, /recordsDeskCapabilities\(user\)\.canManageStudentFaceTemplates/);
 });
 
 test('face lookup purposes follow Records Desk and point-of-service module access', () => {

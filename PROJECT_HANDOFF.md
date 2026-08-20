@@ -371,6 +371,12 @@ If the error returns, first verify that the browser has these current assets,
 then inspect the specific API response. Do not “fix” it by raising a Worker
 limit or returning the full academic database again.
 
+The School staff-account option `Allow student face-enrollment management` is
+an explicit per-user grant, not a role whitelist. It now authorizes enrollment
+for any School staff role and adds the Records Desk entry point required to
+select the student. The face API still enforces the saved grant, School edition,
+workspace, branch and school-section scope, encrypted templates and audit logs.
+
 ## 12. Verification commands
 
 ### Portal

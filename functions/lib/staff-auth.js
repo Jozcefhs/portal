@@ -431,13 +431,21 @@ export function staffUserForAccess(user = {}, access = {}) {
   const list = (value) => Array.isArray(value)
     ? value.map(clean).filter(Boolean)
     : clean(value).split(',').map(clean).filter(Boolean);
+  const biometricLookupEnabled = edition === 'school' && !['no', 'false', '0', ''].includes(
+    lower(user.biometricLookupEnabled ?? user.BiometricLookupEnabled ?? false)
+  );
+  const allowedSections = list(access.allowedSections);
+  if (biometricLookupEnabled && !allowedSections.includes('recordsDesk')) {
+    allowedSections.push('recordsDesk');
+  }
   return {
     ...user,
     ...access,
+    allowedSections,
     schoolSectionAccess: edition === 'school' ? clean(user.schoolSectionAccess) || 'All' : '',
     approvalAccounts: list(user.approvalAccounts)
       .filter((code) => accountingCodeAllowedForEdition(code, edition)),
-    biometricLookupEnabled: edition === 'school' && Boolean(user.biometricLookupEnabled),
+    biometricLookupEnabled,
     tabAccess: filterSectionsForFeatures(list(user.tabAccess), access.featureFlags)
   };
 }

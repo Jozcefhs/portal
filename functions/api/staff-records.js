@@ -405,10 +405,7 @@ function activity(title, rows) {
 function studentActions(user, student) {
   const allowed = new Set(user.allowedSections || []);
   const id = clean(student.AdmissionNo || student.AccountRef || student.__id);
-  const faceLookupEnabled = user.biometricLookupEnabled === true ||
-    ['yes', 'true', '1', 'enabled'].includes(lower(user.biometricLookupEnabled));
-  const canManageFaceTemplate = faceLookupEnabled &&
-    ['Super Admin', 'Principal', 'Admissions Officer'].includes(clean(user.role));
+  const canManageFaceTemplate = recordsDeskCapabilities(user).canManageStudentFaceTemplates;
   return [
     allowed.has('students') && { id: 'student-profile', label: 'Edit profile', targetSection: 'students', context: { AccountRef: id } },
     allowed.has('accounts') && { id: 'student-finance', label: 'Open Finance', targetSection: 'accounts', context: { AccountRef: id } },

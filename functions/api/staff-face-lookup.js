@@ -99,8 +99,9 @@ function studentReference(row = {}) {
 }
 
 function explicitLookupPermission(user = {}) {
-  return user.biometricLookupEnabled === true ||
-    ['yes', 'true', '1', 'enabled'].includes(lower(user.BiometricLookupEnabled));
+  return ['yes', 'true', '1', 'enabled'].includes(lower(
+    user.biometricLookupEnabled ?? user.BiometricLookupEnabled
+  ));
 }
 
 export function normalizeStudentFaceLookupPurpose(value) {
@@ -135,12 +136,14 @@ function ensureSchoolFaceAccess(user = {}, purpose = 'records-desk') {
 }
 
 function canManageTemplates(user = {}) {
-  return staffCanUseStudentFaceLookup(user, 'records-desk') &&
-    explicitLookupPermission(user) && MANAGER_ROLES.has(clean(user.role));
+  return explicitLookupPermission(user) &&
+    recordsDeskCapabilities(user).canManageStudentFaceTemplates;
 }
 
 function canEraseTemplates(user = {}) {
-  return staffCanUseStudentFaceLookup(user, 'records-desk') && MANAGER_ROLES.has(clean(user.role));
+  return canManageTemplates(user) || (
+    staffCanUseStudentFaceLookup(user, 'records-desk') && MANAGER_ROLES.has(clean(user.role))
+  );
 }
 
 function ensureConfigured(env = {}) {
