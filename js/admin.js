@@ -12441,7 +12441,7 @@ function bindAcademicManagement() {
   panelEl.querySelectorAll('[data-academic-view]').forEach((button) => button.addEventListener('click', () => {
     academicManagementView = button.dataset.academicView;
     if (button.closest('[data-academic-catalogue-note="arms"]')) academicManagementTaskViews.bulkSetup = 'applyArms';
-    if (academicManagementView === 'cbt') {
+    if (['cbt', 'teachers'].includes(academicManagementView)) {
       void loadAcademicManagement();
       return;
     }

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
+  ACADEMIC_SUBJECT_TEACHER_STATE_KEYS,
   ACADEMIC_STUDENT_IMPORT_COLUMNS,
   applyAcademicStudentCurriculum,
   assertAcademicMembershipCapacity,
@@ -45,6 +46,23 @@ const [librarySource, apiSource, backendSource, staffStudentsSource, backupSourc
 ]);
 
 const scope = { branchId: 'north-campus', section: 'secondary' };
+
+test('subject-teacher reads stay focused below the Worker subrequest ceiling', () => {
+  assert.deepEqual(ACADEMIC_SUBJECT_TEACHER_STATE_KEYS, [
+    'sessions', 'terms', 'classes', 'arms', 'subjects', 'departments',
+    'offerings', 'teacherAllocations'
+  ]);
+  assert.ok(ACADEMIC_SUBJECT_TEACHER_STATE_KEYS.length < 50);
+  const saveSource = librarySource.slice(
+    librarySource.indexOf('export async function bulkAssignAcademicSubjectTeacher'),
+    librarySource.indexOf('export async function bulkAllocateAcademicStudents')
+  );
+  assert.match(saveSource, /loadAcademicState\(env, scope\.branchId, ACADEMIC_SUBJECT_TEACHER_STATE_KEYS\)/);
+  assert.match(saveSource, /loadPeople\(env, user, scope, \{ students: false \}\)/);
+  assert.match(saveSource, /View: 'teachers'/);
+  assert.match(librarySource, /focusedSubjectTeachers[\s\S]{0,500}ACADEMIC_SUBJECT_TEACHER_STATE_KEYS/);
+  assert.match(adminSource, /\['cbt', 'teachers'\]\.includes\(academicManagementView\)/);
+});
 
 test('AM-003 sessions and terms are effective-dated and date validated', () => {
   const session = normalizeAcademicSession({

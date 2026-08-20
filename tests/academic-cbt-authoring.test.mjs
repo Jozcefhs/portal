@@ -48,7 +48,8 @@ test('teachers may author online packages that are pulled onto the local desktop
   assert.match(admin, /New online test/);
   assert.match(admin, /Every student in that class who offers the subject is included across all arms/);
   assert.match(styles, /\.academic-cbt-editor/);
-  assert.match(backend, /requestedStateKeys = focusedCbt[\s\S]{0,120}ACADEMIC_CBT_STATE_KEYS/);
+  assert.match(backend, /const focusedStateKeys = focusedCbt[\s\S]{0,120}ACADEMIC_CBT_STATE_KEYS/);
+  assert.match(backend, /const requestedStateKeys = focusedStateKeys/);
   assert.match(backend, /downloadAcademicCbtTestPackage/);
   assert.match(backend, /prepareLocalCbtIdentityPackage/);
   assert.match(backend, /syncLocalCbtStudentPasswords/);
