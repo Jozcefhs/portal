@@ -42,14 +42,14 @@ test('teachers may author online packages that are pulled onto the local desktop
     readFile(new URL('functions/lib/academic-management.js', portalRoot), 'utf8'),
     readFile(new URL('functions/api/staff-cbt-paper.js', portalRoot), 'utf8')
   ]);
-  assert.match(admin, /\['cbt', 'CBT'\]/);
+  assert.match(admin, /\['cbt', 'Online CBT'\]/);
   assert.match(admin, /cbt: 'create'/);
   assert.match(admin, /data-academic-cbt-editor/);
   assert.match(admin, /New online test/);
   assert.match(admin, /Every student in that class who offers the subject is included across all arms/);
   assert.match(styles, /\.academic-cbt-editor/);
-  assert.match(backend, /const focusedStateKeys = focusedCbt[\s\S]{0,120}ACADEMIC_CBT_STATE_KEYS/);
-  assert.match(backend, /const requestedStateKeys = focusedStateKeys/);
+  assert.match(backend, /cbt: ACADEMIC_CBT_STATE_KEYS/);
+  assert.match(backend, /const focusedStateKeys = academicManagementViewStateKeys/);
   assert.match(backend, /downloadAcademicCbtTestPackage/);
   assert.match(backend, /prepareLocalCbtIdentityPackage/);
   assert.match(backend, /syncLocalCbtStudentPasswords/);

@@ -3,12 +3,15 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
+  ACADEMIC_MANAGEMENT_COLLECTIONS,
   ACADEMIC_SUBJECT_TEACHER_STATE_KEYS,
   ACADEMIC_STUDENT_IMPORT_COLUMNS,
+  ACADEMIC_VIEW_STATE_KEYS,
   applyAcademicStudentCurriculum,
   assertAcademicMembershipCapacity,
   academicPermanentDeleteDependants,
   academicManagementCapabilities,
+  academicManagementViewStateKeys,
   academicOfferingSubjectRole,
   academicSeniorCoreSubjectIds,
   academicStudentMatchesClass,
@@ -47,12 +50,25 @@ const [librarySource, apiSource, backendSource, staffStudentsSource, backupSourc
 
 const scope = { branchId: 'north-campus', section: 'secondary' };
 
-test('subject-teacher reads stay focused below the Worker subrequest ceiling', () => {
+test('every academic workspace stays focused below the Worker subrequest ceiling', () => {
   assert.deepEqual(ACADEMIC_SUBJECT_TEACHER_STATE_KEYS, [
     'sessions', 'terms', 'classes', 'arms', 'subjects', 'departments',
     'offerings', 'teacherAllocations'
   ]);
-  assert.ok(ACADEMIC_SUBJECT_TEACHER_STATE_KEYS.length < 50);
+  assert.deepEqual(Object.keys(ACADEMIC_VIEW_STATE_KEYS), [
+    'classrooms', 'structure', 'bulksetup', 'departments', 'offerings', 'teachers',
+    'students', 'timetable', 'attendance', 'scorebook', 'results', 'outcomes',
+    'clearances', 'readiness', 'cbt'
+  ]);
+  const validKeys = new Set(Object.keys(ACADEMIC_MANAGEMENT_COLLECTIONS));
+  Object.entries(ACADEMIC_VIEW_STATE_KEYS).forEach(([view, keys]) => {
+    assert.ok(keys.length > 0 && keys.length < 50, `${view} must stay below the Worker subrequest ceiling`);
+    assert.equal(new Set(keys).size, keys.length, `${view} must not repeat collections`);
+    keys.forEach((key) => assert.ok(validKeys.has(key) && key !== 'audit', `${view} contains invalid state key ${key}`));
+  });
+  assert.equal(academicManagementViewStateKeys('subject-teachers'), ACADEMIC_SUBJECT_TEACHER_STATE_KEYS);
+  assert.equal(academicManagementViewStateKeys('unknown-view'), ACADEMIC_VIEW_STATE_KEYS.classrooms);
+  assert.equal(academicManagementViewStateKeys('teachers', { financeView: true }), ACADEMIC_VIEW_STATE_KEYS.clearances);
   const saveSource = librarySource.slice(
     librarySource.indexOf('export async function bulkAssignAcademicSubjectTeacher'),
     librarySource.indexOf('export async function bulkAllocateAcademicStudents')
@@ -60,8 +76,12 @@ test('subject-teacher reads stay focused below the Worker subrequest ceiling', (
   assert.match(saveSource, /loadAcademicState\(env, scope\.branchId, ACADEMIC_SUBJECT_TEACHER_STATE_KEYS\)/);
   assert.match(saveSource, /loadPeople\(env, user, scope, \{ students: false \}\)/);
   assert.match(saveSource, /View: 'teachers'/);
-  assert.match(librarySource, /focusedSubjectTeachers[\s\S]{0,500}ACADEMIC_SUBJECT_TEACHER_STATE_KEYS/);
-  assert.match(adminSource, /\['cbt', 'teachers'\]\.includes\(academicManagementView\)/);
+  assert.doesNotMatch(librarySource, /loadAcademicState\(env,\s*scope\.branchId\s*\)/);
+  assert.match(librarySource, /ACADEMIC_STATE_BUNDLE_REQUIRED/);
+  assert.match(librarySource, /focusedStateKeys = academicManagementViewStateKeys/);
+  assert.match(librarySource, /queryCollection\(env, collection, \{\s*filters: \[\{ field: 'BranchId', op: '==', value: branchId \}\]/);
+  assert.doesNotMatch(librarySource, /collections\.map\(\(\[, collection\]\) => listCollection\(env, collection\)/);
+  assert.match(adminSource, /academicManagementView = button\.dataset\.academicView;[\s\S]{0,800}void loadAcademicManagement\(\);/);
 });
 
 test('AM-003 sessions and terms are effective-dated and date validated', () => {

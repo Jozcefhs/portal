@@ -135,6 +135,7 @@ let executiveSelectedRecipient = null;
 let studentConductData = null;
 let academicManagementData = null;
 let academicManagementView = 'classrooms';
+let academicManagementLoadRequest = 0;
 let academicManagementTaskViews = {
   classrooms: 'register', structure: 'classes', bulkSetup: 'classes', departments: 'register',
   offerings: 'seniorChoices', teachers: 'assign', students: 'allocate',
@@ -11783,7 +11784,7 @@ function academicManagementHeader(data, rows, message = '') {
   const sections = (data.sections || ['primary', 'secondary']).filter((section) => (
     !['primary', 'secondary'].includes(permittedSection) || section === permittedSection
   ));
-  const cbtView = data.permissions?.canCreateCbt ? [['cbt', 'CBT']] : [];
+  const cbtView = data.permissions?.canCreateCbt ? [['cbt', 'Online CBT']] : [];
   const adminViews = [['classrooms', 'Classrooms'], ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', 'Student records'], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ['outcomes', 'Session outcomes'], ...(data.permissions?.canManageFinancialClearance ? [['clearances', 'Result clearances']] : []), ...(data.permissions?.canManageStructure ? [['readiness', 'Release readiness']] : []), ...cbtView];
   const views = data.permissions?.financeView
     ? [['clearances', 'Result clearances']]
@@ -11876,14 +11877,16 @@ async function academicManagementRequest(action, payload = {}) {
 async function loadAcademicManagement(options = {}) {
   if (activeSection !== 'academics') return;
   const section = clean(options.section ?? academicManagementFilters.section);
+  const requestedView = academicManagementView;
+  const requestId = ++academicManagementLoadRequest;
   try {
     const data = await academicManagementRequest('bootstrap', {
       SchoolSection: section,
       SessionId: academicManagementFilters.sessionId,
       TermId: academicManagementFilters.termId,
-      View: academicManagementView
+      View: requestedView
     });
-    if (activeSection !== 'academics') return;
+    if (activeSection !== 'academics' || requestId !== academicManagementLoadRequest || requestedView !== academicManagementView) return;
     academicManagementFilters.section = section || academicManagementFilters.section;
     renderAcademicManagement(data, options.message || 'Academic records loaded.');
   } catch (error) {
@@ -12441,12 +12444,11 @@ function bindAcademicManagement() {
   panelEl.querySelectorAll('[data-academic-view]').forEach((button) => button.addEventListener('click', () => {
     academicManagementView = button.dataset.academicView;
     if (button.closest('[data-academic-catalogue-note="arms"]')) academicManagementTaskViews.bulkSetup = 'applyArms';
-    if (['cbt', 'teachers'].includes(academicManagementView)) {
-      void loadAcademicManagement();
-      return;
-    }
-    renderAcademicManagement(academicManagementData || {});
-    if (academicManagementView === 'scorebook') void loadAcademicScorebookContext();
+    button.closest('[data-academic-view]')?.parentElement?.querySelectorAll('[data-academic-view]').forEach((item) => {
+      item.classList.toggle('selected', item === button);
+    });
+    setStatus(document.getElementById('academicManagementStatus'), `Loading ${button.textContent.trim()}...`);
+    void loadAcademicManagement();
   }));
   panelEl.querySelectorAll('[data-academic-timetable-version-select]').forEach((select) => select.addEventListener('change', (event) => {
     academicTimetableDraft.versionId = event.target.value;
