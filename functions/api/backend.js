@@ -300,6 +300,13 @@ function generateParentLoginCode(existingCodes = new Set()) {
   return `P${Date.now().toString(36).toUpperCase().slice(-7)}`;
 }
 
+function generateParentOnboardingToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  let binary = '';
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 function applicationIdFrom(data) {
   return clean(data.ApplicationID || data.ApplicationReference || data.id || data.applicationReference);
 }
@@ -2790,7 +2797,6 @@ async function importStudents(env, body) {
     throw err;
   }
   const existingStudents = await listSchoolCollection(env, 'students');
-  const schoolCode = await getSchoolCode(env);
   const classNames = await configuredClassNames(env);
   const importedBy = clean(body.ImportedBy || body.importedBy) || 'Admissions Office';
   let imported = 0;
@@ -2798,14 +2804,13 @@ async function importStudents(env, body) {
   const failures = [];
   const savedStudents = [];
   const credentials = [];
-  const loginCodes = new Set(existingStudents.flatMap((row) => studentLoginCodes(row)));
   for (let index = 0; index < rows.length; index += 1) {
     const input = rows[index] || {};
     const rowNo = index + 1;
     const applicantName = pick(input, ['ApplicantName', 'StudentName', 'Name']);
     const classAdmitted = canonicalConfiguredClass(pick(input, ['ClassAdmitted', 'ClassName', 'Class']), classNames);
-    let admissionNo = pick(input, ['AdmissionNo', 'AdmissionNumber']);
-    let appRef = pick(input, ['ApplicationReference']);
+    const admissionNo = pick(input, ['AdmissionNo', 'AdmissionNumber']);
+    const gender = pick(input, ['Gender', 'Sex']);
     if (!applicantName) {
       skipped += 1;
       failures.push(`Row ${rowNo}: missing student name.`);
@@ -2816,14 +2821,15 @@ async function importStudents(env, body) {
       failures.push(`Row ${rowNo}: missing class.`);
       continue;
     }
-    if (!admissionNo) admissionNo = nextStudentAdmissionNo([...existingStudents, ...savedStudents], input.AcademicSession || input.Session || '', schoolCode);
-    const applicationReferenceOwner = appRef && [...existingStudents, ...savedStudents].find((row) =>
-      sameText(row.ApplicationReference || row.applicationReference, appRef) &&
-      !sameReferenceIdentity(row.AdmissionNo || row.admissionNo || row.__id, admissionNo)
-    );
-    if (applicationReferenceOwner) {
-      failures.push(`Row ${rowNo} (${admissionNo}): duplicate application reference ${appRef} was removed; admission number remains the account identity.`);
-      appRef = '';
+    if (!admissionNo) {
+      skipped += 1;
+      failures.push(`Row ${rowNo}: missing admission number.`);
+      continue;
+    }
+    if (!gender) {
+      skipped += 1;
+      failures.push(`Row ${rowNo} (${admissionNo}): missing gender.`);
+      continue;
     }
     const duplicate = [...existingStudents, ...savedStudents].find((row) =>
       sameReferenceIdentity(row.AdmissionNo || row.admissionNo || row.__id, admissionNo)
@@ -2833,31 +2839,27 @@ async function importStudents(env, body) {
       failures.push(`Row ${rowNo} (${admissionNo}): already exists.`);
       continue;
     }
-    let parentLoginCode = clean(input.ParentLoginCode || input.VerificationCode || input.LoginCode).toUpperCase();
-    if (!parentLoginCode) parentLoginCode = generateParentLoginCode(loginCodes);
-    loginCodes.add(parentLoginCode);
+    const onboardingToken = generateParentOnboardingToken();
+    const onboardingTokenHash = await sha256Hex(onboardingToken);
     const student = {
-      ...input,
-      EnrolledAt: input.EnrolledAt || nowIso(),
-      ApplicationReference: appRef,
+      EnrolledAt: nowIso(),
+      ApplicationReference: '',
       AdmissionNo: admissionNo,
       ApplicantName: applicantName,
       DisplayName: applicantName,
       ClassAdmitted: classAdmitted,
       ClassName: classAdmitted,
-      AcademicSession: input.AcademicSession || input.Session || '',
-      Term: input.Term || '',
-      StudentType: input.StudentType || 'Day Student',
-      BillingCategory: input.BillingCategory || input['Billing Category'] || 'Regular',
-      Gender: input.Gender || input.Sex || '',
-      ParentLoginCode: parentLoginCode,
-      VerificationCode: parentLoginCode,
-      EnrollmentCategory: input.EnrollmentCategory || input.IntakeCategory || 'Returning',
-      AcademicProgress: input.AcademicProgress || input.ProgressCategory || input.RepeaterStatus || 'Promoted',
-      Status: input.Status || 'Active',
+      Gender: gender,
+      ParentEmail: '',
+      ParentLoginCode: '',
+      VerificationCode: '',
+      ParentOnboardingTokenHash: onboardingTokenHash,
+      ParentOnboardingStatus: 'PendingProfile',
+      ProfileCompletionStatus: 'Needs completion',
+      Status: 'Active',
       ImportedAt: nowIso(),
       ImportedBy: importedBy,
-      EnrolledBy: input.EnrolledBy || importedBy,
+      EnrolledBy: importedBy,
       UpdatedAt: nowIso()
     };
     const saved = await saveStudent(env, student);
@@ -2865,9 +2867,9 @@ async function importStudents(env, body) {
     credentials.push({
       AdmissionNo: admissionNo,
       DisplayName: applicantName,
-      ParentEmail: lower(input.ParentEmail || input.VerificationEmail || input.Email),
-      ParentLoginCode: parentLoginCode,
-      LoginReady: Boolean(clean(input.ParentEmail || input.VerificationEmail || input.Email))
+      TemporaryPassword: '12345678',
+      ParentOnboardingToken: onboardingToken,
+      OnboardingStatus: 'Pending profile completion'
     });
     imported += 1;
   }

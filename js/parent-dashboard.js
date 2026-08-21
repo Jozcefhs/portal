@@ -34,6 +34,14 @@ const changeParentPasswordBtn = document.getElementById('changeParentPasswordBtn
 const changeParentPasswordDialog = document.getElementById('changeParentPasswordDialog');
 const changeParentPasswordForm = document.getElementById('changeParentPasswordForm');
 const changeParentPasswordStatus = document.getElementById('changeParentPasswordStatus');
+const requiredParentPasswordDialog = document.getElementById('requiredParentPasswordDialog');
+const requiredParentPasswordForm = document.getElementById('requiredParentPasswordForm');
+const requiredParentPasswordStatus = document.getElementById('requiredParentPasswordStatus');
+const parentOnboardingPanel = document.getElementById('parentOnboardingPanel');
+const parentOnboardingAccessForm = document.getElementById('parentOnboardingAccessForm');
+const parentOnboardingProfileForm = document.getElementById('parentOnboardingProfileForm');
+const parentOnboardingAccessStatus = document.getElementById('parentOnboardingAccessStatus');
+const parentOnboardingProfileStatus = document.getElementById('parentOnboardingProfileStatus');
 const dashboardNav = document.getElementById('dashboardNav');
 const dashboardViewPanels = Array.from(document.querySelectorAll('[data-dashboard-view]'));
 const parentDocumentUploadForm = document.getElementById('parentDocumentUploadForm');
@@ -71,6 +79,11 @@ let dashboardLoadController = null;
 let parentNotifications = [];
 let parentNotificationMeta = {};
 let parentNotificationHistoryRows = [];
+const onboardingHash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+let parentOnboardingToken = onboardingHash.get('onboard') || '';
+const parentOnboardingAdmission = onboardingHash.get('admission') || '';
+let parentPasswordSetupToken = '';
+if (window.location.hash) window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}`);
 const PARENT_DOCUMENT_MAX_FILE_SIZE = 8 * 1024 * 1024;
 
 function newIdempotencyKey() {
@@ -251,6 +264,208 @@ function setActionLoading(button, loading, loadingText = 'Working...', normalTex
   button.textContent = loading ? loadingText : restingText;
   if (!loading) delete button.dataset.normalText;
 }
+
+function setInlineStatus(element, message, type = '') {
+  if (!element) return;
+  element.textContent = message || '';
+  element.className = `status ${type}`;
+}
+
+function openParentOnboarding() {
+  dashboardContent.hidden = true;
+  loginForm.hidden = true;
+  parentOnboardingPanel.hidden = false;
+  parentOnboardingAccessForm.hidden = false;
+  parentOnboardingProfileForm.hidden = true;
+  const admissionInput = document.getElementById('onboardingAdmissionNo');
+  if (admissionInput && parentOnboardingAdmission) admissionInput.value = parentOnboardingAdmission;
+  setInlineStatus(
+    parentOnboardingAccessStatus,
+    parentOnboardingToken ? '' : 'Open the private student-completion link sent by the school to continue.',
+    parentOnboardingToken ? '' : 'bad'
+  );
+}
+
+function closeParentOnboarding() {
+  parentOnboardingAccessForm?.reset();
+  parentOnboardingProfileForm?.reset();
+  parentOnboardingPanel.hidden = true;
+  loginForm.hidden = false;
+  setInlineStatus(parentOnboardingAccessStatus, '');
+  setInlineStatus(parentOnboardingProfileStatus, '');
+}
+
+function populateParentOnboardingProfile(student = {}) {
+  document.getElementById('onboardingStudentName').textContent = student.studentName || 'Student';
+  document.getElementById('onboardingStudentAdmission').textContent = student.admissionNo || '';
+  document.getElementById('onboardingStudentGender').textContent = student.gender || '';
+  document.getElementById('onboardingStudentClass').textContent = student.className || '';
+  const values = {
+    onboardingDateOfBirth: student.dateOfBirth,
+    onboardingStudentType: student.studentType,
+    onboardingPreviousSchool: student.previousSchool,
+    onboardingParentName: student.parentName,
+    onboardingParentEmail: student.parentEmail,
+    onboardingConfirmParentEmail: student.parentEmail,
+    onboardingParentPhone: student.parentPhone,
+    onboardingResidentialAddress: student.residentialAddress,
+    onboardingCityArea: student.cityArea,
+    onboardingState: student.stateOfResidence,
+    onboardingEmergencyName: student.emergencyContactName,
+    onboardingEmergencyPhone: student.emergencyContactPhone,
+    onboardingBloodGroup: student.bloodGroup,
+    onboardingGenotype: student.genotype,
+    onboardingMedicalCondition: student.medicalCondition
+  };
+  Object.entries(values).forEach(([id, value]) => {
+    const input = document.getElementById(id);
+    if (input) input.value = value || '';
+  });
+  parentOnboardingAccessForm.hidden = true;
+  parentOnboardingProfileForm.hidden = false;
+  setInlineStatus(parentOnboardingProfileStatus, '');
+}
+
+function openRequiredParentPassword(data) {
+  parentPasswordSetupToken = data.passwordSetupToken || '';
+  document.getElementById('requiredParentEmail').value = data.parentEmail || '';
+  requiredParentPasswordForm?.reset();
+  document.getElementById('requiredParentEmail').value = data.parentEmail || '';
+  setInlineStatus(requiredParentPasswordStatus, data.message || 'Create a private password to continue.');
+  if (requiredParentPasswordDialog && !requiredParentPasswordDialog.open) requiredParentPasswordDialog.showModal();
+}
+
+document.getElementById('openParentOnboardingBtn')?.addEventListener('click', openParentOnboarding);
+document.getElementById('closeParentOnboardingBtn')?.addEventListener('click', closeParentOnboarding);
+
+parentOnboardingAccessForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = event.submitter || document.getElementById('verifyParentOnboardingBtn');
+  if (!parentOnboardingToken) {
+    setInlineStatus(parentOnboardingAccessStatus, 'Use the private completion link sent by the school.', 'bad');
+    return;
+  }
+  const normalText = button?.textContent || 'Continue';
+  setActionLoading(button, true, 'Checking...', normalText);
+  setInlineStatus(parentOnboardingAccessStatus, 'Confirming the student record...');
+  try {
+    const response = await fetch('/api/parent-dashboard', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: freshBody({
+        action: 'beginParentOnboarding',
+        admissionNo: document.getElementById('onboardingAdmissionNo').value.trim(),
+        temporaryPassword: document.getElementById('onboardingTemporaryPassword').value,
+        onboardingToken: parentOnboardingToken
+      })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Could not confirm the student record.');
+    populateParentOnboardingProfile(data.student);
+  } catch (error) {
+    setInlineStatus(parentOnboardingAccessStatus, error.message, 'bad');
+  } finally {
+    setActionLoading(button, false, '', normalText);
+  }
+});
+
+parentOnboardingProfileForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = event.submitter || document.getElementById('submitParentOnboardingBtn');
+  const normalText = button?.textContent || 'Submit completed profile';
+  setActionLoading(button, true, 'Submitting...', normalText);
+  setInlineStatus(parentOnboardingProfileStatus, 'Saving the completed student profile...');
+  try {
+    const response = await fetch('/api/parent-dashboard', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: freshBody({
+        action: 'completeParentOnboardingProfile',
+        admissionNo: document.getElementById('onboardingAdmissionNo').value.trim(),
+        temporaryPassword: document.getElementById('onboardingTemporaryPassword').value,
+        onboardingToken: parentOnboardingToken,
+        profile: {
+          dateOfBirth: document.getElementById('onboardingDateOfBirth').value,
+          studentType: document.getElementById('onboardingStudentType').value,
+          previousSchool: document.getElementById('onboardingPreviousSchool').value,
+          parentName: document.getElementById('onboardingParentName').value,
+          parentEmail: document.getElementById('onboardingParentEmail').value,
+          confirmParentEmail: document.getElementById('onboardingConfirmParentEmail').value,
+          parentPhone: document.getElementById('onboardingParentPhone').value,
+          residentialAddress: document.getElementById('onboardingResidentialAddress').value,
+          cityArea: document.getElementById('onboardingCityArea').value,
+          stateOfResidence: document.getElementById('onboardingState').value,
+          emergencyContactName: document.getElementById('onboardingEmergencyName').value,
+          emergencyContactPhone: document.getElementById('onboardingEmergencyPhone').value,
+          bloodGroup: document.getElementById('onboardingBloodGroup').value,
+          genotype: document.getElementById('onboardingGenotype').value,
+          medicalCondition: document.getElementById('onboardingMedicalCondition').value
+        }
+      })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Could not complete the student profile.');
+    parentOnboardingToken = '';
+    parentOnboardingProfileForm.reset();
+    parentOnboardingAccessForm.reset();
+    parentOnboardingPanel.hidden = true;
+    loginForm.hidden = false;
+    document.getElementById('parentEmail').value = data.parentEmail || '';
+    document.getElementById('verificationCode').value = '';
+    setStatus(data.message, 'ok');
+    document.getElementById('verificationCode').focus();
+  } catch (error) {
+    setInlineStatus(parentOnboardingProfileStatus, error.message, 'bad');
+  } finally {
+    setActionLoading(button, false, '', normalText);
+  }
+});
+
+document.getElementById('cancelRequiredParentPassword')?.addEventListener('click', () => {
+  parentPasswordSetupToken = '';
+  requiredParentPasswordForm?.reset();
+  requiredParentPasswordDialog?.close();
+  setStatus('Sign in again when you are ready to create your private password.', '');
+});
+
+requiredParentPasswordForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = event.submitter || document.getElementById('completeParentPasswordBtn');
+  const newPassword = document.getElementById('requiredNewParentPassword').value;
+  const confirmPassword = document.getElementById('requiredConfirmParentPassword').value;
+  if (newPassword !== confirmPassword) {
+    setInlineStatus(requiredParentPasswordStatus, 'The new password and confirmation do not match.', 'bad');
+    return;
+  }
+  const normalText = button?.textContent || 'Save and open dashboard';
+  setActionLoading(button, true, 'Saving...', normalText);
+  setInlineStatus(requiredParentPasswordStatus, 'Saving your private password...');
+  try {
+    const response = await fetch('/api/parent-dashboard', {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: freshBody({
+        action: 'completeParentPasswordSetup',
+        passwordSetupToken: parentPasswordSetupToken,
+        newPassword,
+        confirmPassword
+      })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.message || 'Could not save the private password.');
+    parentPasswordSetupToken = '';
+    requiredParentPasswordDialog.close();
+    document.getElementById('verificationCode').value = '';
+    await loadDashboard({ sessionOnly: true });
+  } catch (error) {
+    setInlineStatus(requiredParentPasswordStatus, error.message, 'bad');
+  } finally {
+    setActionLoading(button, false, '', normalText);
+  }
+});
 
 function money(value) {
   const amount = Number(String(value || '0').replace(/,/g, ''));
@@ -2005,6 +2220,14 @@ async function loadDashboard({ sessionOnly = false, silent = false } = {}) {
       throw new Error(data.message || 'Could not load parent dashboard.');
     }
     if (controller.signal.aborted) return;
+    if (data.passwordChangeRequired) {
+      dashboardContent.hidden = true;
+      loginForm.hidden = false;
+      document.getElementById('verificationCode').value = '';
+      openRequiredParentPassword(data);
+      setStatus(data.message, '');
+      return false;
+    }
     dashboard = data;
     if (data.parentEmail) document.getElementById('parentEmail').value = data.parentEmail;
     document.getElementById('verificationCode').value = '';
@@ -2266,6 +2489,10 @@ if (dashboardNav) {
 loadParentDocumentSettings();
 
 (async function restoreParentSession() {
+  if (parentOnboardingToken) {
+    openParentOnboarding();
+    return;
+  }
   setLoginLoading(true);
   try {
     await loadDashboard({ sessionOnly: true, silent: true });

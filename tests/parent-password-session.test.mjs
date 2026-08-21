@@ -4,9 +4,11 @@ import { readFile } from 'node:fs/promises';
 import { onRequestPost as parentDashboardPost } from '../functions/api/parent-dashboard.js';
 import {
   clearParentSessionCookie,
+  createParentPasswordSetupToken,
   createParentSession,
   hashParentPassword,
   parentSessionCookie,
+  readParentPasswordSetupToken,
   readParentSession,
   verifyParentPasswordHash
 } from '../functions/lib/parent-auth.js';
@@ -45,6 +47,18 @@ test('parent session survives a new request without exposing a password', async 
   assert.equal(await readParentSession(env, tamperedRequest), null);
 });
 
+test('first-time parent password setup uses a short-lived signed token without exposing the temporary password', async () => {
+  const token = await createParentPasswordSetupToken(env, 'Parent@Example.com', 'DCA/26/0001');
+  assert.deepEqual(await readParentPasswordSetupToken(env, token), {
+    email: 'parent@example.com',
+    admissionNo: 'DCA/26/0001'
+  });
+  assert.doesNotMatch(token, /12345678|password/i);
+  const [payload, signature] = token.split('.');
+  const tampered = `${payload}.${signature[0] === 'a' ? 'b' : 'a'}${signature.slice(1)}`;
+  assert.equal(await readParentPasswordSetupToken(env, tampered), null);
+});
+
 test('parent sign out expires the persistent session cookie', async () => {
   const response = await parentDashboardPost({
     env: {},
@@ -71,13 +85,20 @@ test('parent portal uses browser password manager fields and never stores raw pa
   assert.match(html, /id="parentEmail"[^>]*autocomplete="username"/);
   assert.match(html, /id="verificationCode"[^>]*type="password"[^>]*autocomplete="current-password"/);
   assert.match(html, /id="changeParentPasswordDialog"/);
+  assert.match(html, /id="parentOnboardingPanel"/);
+  assert.match(html, /id="requiredParentPasswordDialog"/);
   assert.match(html, /id="newParentPassword"[^>]*autocomplete="new-password"/);
   assert.match(script, /loadDashboard\(\{ sessionOnly: true, silent: true \}\)/);
   assert.match(script, /action: 'changeParentPassword'/);
+  assert.match(script, /action: 'beginParentOnboarding'/);
+  assert.match(script, /action: 'completeParentOnboardingProfile'/);
+  assert.match(script, /action: 'completeParentPasswordSetup'/);
   assert.match(script, /action: 'signOut'/);
   assert.doesNotMatch(script, /(?:localStorage|sessionStorage)\.setItem\([^\n]*(?:password|verificationCode)/i);
   assert.match(api, /parentSessionCookie/);
   assert.match(api, /saveParentPassword/);
+  assert.match(api, /PARENT_ONBOARDING_TEMPORARY_PASSWORD = '12345678'/);
+  assert.match(api, /passwordChangeRequired: true/);
   assert.match(upload, /readParentSession/);
   assert.match(passport, /readParentSession/);
   assert.match(payment, /readParentSession/);

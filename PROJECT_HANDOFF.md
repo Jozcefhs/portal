@@ -379,7 +379,8 @@ assessment components without the subrequest error. Current cache identifiers
 are:
 
 - admin script: `20260820-local-offline-cbt`
-- service worker: `dynamax-v248-local-offline-cbt`
+- parent script: `20260821-parent-onboarding`
+- service worker: `dynamax-v250-parent-onboarding`
 
 If the error returns, first verify that the browser has these current assets,
 then inspect the specific API response. Do not “fix” it by raising a Worker
@@ -390,6 +391,34 @@ an explicit per-user grant, not a role whitelist. It now authorizes enrollment
 for any School staff role and adds the Records Desk entry point required to
 select the student. The face API still enforces the saved grant, School edition,
 workspace, branch and school-section scope, encrypted templates and audit logs.
+
+### Minimal student import and parent profile completion
+
+Existing-student onboarding now begins with a four-column desktop CSV only:
+`StudentName`, `AdmissionNo`, `Gender` and `Class`. Admission number is required
+and remains the student identity. The import does not accept or persist parent
+contact, medical, billing or academic-allocation fields.
+
+Each imported student receives a unique one-time parent-completion token. Only
+its SHA-256 hash is stored; the desktop returns the raw token once inside a
+private `parent-dashboard.html` fragment link and can save the distribution
+CSV. The shared bootstrap password is `12345678`, but it is never stored as a
+student login code or credential and cannot open the dashboard.
+
+The parent flow is deliberately staged:
+
+1. open the private link and confirm the admission number plus `12345678`;
+2. complete the remaining student, guardian, address, emergency and medical
+   fields while imported name, admission number, gender and class stay locked;
+3. sign in again with the submitted parent email and `12345678`;
+4. create an eight-character-or-longer private password before a parent session
+   or dashboard data is issued.
+
+The private password remains PBKDF2-hashed in `parentCredentials`. A signed,
+15-minute password-setup token connects the last two steps without exposing a
+password. Existing parent credentials and legacy parent login codes remain
+compatible, and an existing family email continues to use its existing private
+password.
 
 ## 12. Verification commands
 
@@ -444,6 +473,10 @@ runtimes split the pinned dependencies (`cryptography` in one runtime and
 dependency was blocked by the Codex account usage limit. Install
 `suite\requirements.txt` into one Python environment, then rerun the full
 desktop command; do not treat those import errors as executed test failures.
+
+After the minimal student import and parent completion flow, the full portal
+run passed all 955 tests and the full desktop source run passed all 308 tests on
+2026-08-21. No desktop application or installer was compiled.
 
 Do not run `tools\build_release.ps1` and do not compile an installer yet.
 

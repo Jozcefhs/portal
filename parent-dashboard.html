@@ -28,6 +28,22 @@
       </form>
     </div>
   </dialog>
+  <dialog id="requiredParentPasswordDialog" class="notification-history-dialog parent-password-dialog">
+    <div class="notification-history-shell">
+      <header><div><small>FIRST SIGN-IN SECURITY</small><h2>Create your private password</h2></div></header>
+      <form id="requiredParentPasswordForm" autocomplete="on">
+        <label for="requiredParentEmail">Parent email</label>
+        <input id="requiredParentEmail" name="username" type="email" autocomplete="username" readonly>
+        <label for="requiredNewParentPassword">New private password</label>
+        <input id="requiredNewParentPassword" name="new-password" type="password" autocomplete="new-password" minlength="8" required>
+        <label for="requiredConfirmParentPassword">Confirm private password</label>
+        <input id="requiredConfirmParentPassword" name="new-password-confirmation" type="password" autocomplete="new-password" minlength="8" required>
+        <p class="muted">Use at least 8 characters and do not reuse the one-time password.</p>
+        <p id="requiredParentPasswordStatus" class="status" role="status" aria-live="polite"></p>
+        <div class="dialog-form-actions"><button type="button" id="cancelRequiredParentPassword" class="secondary">Back to sign in</button><button type="submit" id="completeParentPasswordBtn">Save and open dashboard</button></div>
+      </form>
+    </div>
+  </dialog>
   <main class="page-wrap">
     <section class="card dashboard-card">
       <div class="form-header">
@@ -51,8 +67,73 @@
           </div>
         </div>
         <button type="submit" id="loadDashboardBtn">Open Dashboard</button>
+        <button type="button" id="openParentOnboardingBtn" class="secondary">Complete an imported student profile</button>
         <p id="parentStatus" class="status"></p>
       </form>
+
+      <section id="parentOnboardingPanel" class="parent-onboarding-panel" hidden>
+        <div class="parent-onboarding-heading">
+          <div>
+            <small>NEW STUDENT PROFILE</small>
+            <h2>Complete your child's information</h2>
+            <p class="muted">Use the student's admission number, the one-time password supplied by the school, and the private completion link sent to you.</p>
+          </div>
+          <button type="button" id="closeParentOnboardingBtn" class="secondary">Back to sign in</button>
+        </div>
+
+        <form id="parentOnboardingAccessForm" class="parent-onboarding-form" autocomplete="off">
+          <div class="grid two">
+            <div>
+              <label for="onboardingAdmissionNo">Student admission number <span class="required">*</span></label>
+              <input id="onboardingAdmissionNo" autocomplete="off" required>
+            </div>
+            <div>
+              <label for="onboardingTemporaryPassword">One-time password <span class="required">*</span></label>
+              <input id="onboardingTemporaryPassword" type="password" autocomplete="one-time-code" required>
+            </div>
+          </div>
+          <button type="submit" id="verifyParentOnboardingBtn">Continue</button>
+          <p id="parentOnboardingAccessStatus" class="status" role="status" aria-live="polite"></p>
+        </form>
+
+        <form id="parentOnboardingProfileForm" class="parent-onboarding-form" autocomplete="on" hidden>
+          <div class="parent-onboarding-locked grid two">
+            <div><span>Student</span><strong id="onboardingStudentName"></strong></div>
+            <div><span>Admission number</span><strong id="onboardingStudentAdmission"></strong></div>
+            <div><span>Gender</span><strong id="onboardingStudentGender"></strong></div>
+            <div><span>Class</span><strong id="onboardingStudentClass"></strong></div>
+          </div>
+          <h3>Student details</h3>
+          <div class="grid two">
+            <div><label for="onboardingDateOfBirth">Date of birth <span class="required">*</span></label><input id="onboardingDateOfBirth" type="date" required></div>
+            <div><label for="onboardingStudentType">Student type <span class="required">*</span></label><select id="onboardingStudentType" required><option value="">Select</option><option>Day Student</option><option>Boarding Student</option></select></div>
+            <div><label for="onboardingPreviousSchool">Previous school</label><input id="onboardingPreviousSchool"></div>
+          </div>
+          <h3>Parent or guardian</h3>
+          <div class="grid two">
+            <div><label for="onboardingParentName">Full name <span class="required">*</span></label><input id="onboardingParentName" autocomplete="name" required></div>
+            <div><label for="onboardingParentEmail">Email address <span class="required">*</span></label><input id="onboardingParentEmail" name="username" type="email" autocomplete="email" required></div>
+            <div><label for="onboardingConfirmParentEmail">Confirm email address <span class="required">*</span></label><input id="onboardingConfirmParentEmail" type="email" autocomplete="email" required></div>
+            <div><label for="onboardingParentPhone">Phone number <span class="required">*</span></label><input id="onboardingParentPhone" type="tel" autocomplete="tel" required></div>
+          </div>
+          <h3>Home and emergency information</h3>
+          <div class="grid two">
+            <div class="grid-span-two"><label for="onboardingResidentialAddress">Residential address <span class="required">*</span></label><textarea id="onboardingResidentialAddress" rows="3" autocomplete="street-address" required></textarea></div>
+            <div><label for="onboardingCityArea">City or area</label><input id="onboardingCityArea" autocomplete="address-level2"></div>
+            <div><label for="onboardingState">State of residence</label><input id="onboardingState" autocomplete="address-level1"></div>
+            <div><label for="onboardingEmergencyName">Emergency contact name <span class="required">*</span></label><input id="onboardingEmergencyName" required></div>
+            <div><label for="onboardingEmergencyPhone">Emergency contact phone <span class="required">*</span></label><input id="onboardingEmergencyPhone" type="tel" required></div>
+          </div>
+          <h3>Medical information</h3>
+          <div class="grid two">
+            <div><label for="onboardingBloodGroup">Blood group</label><input id="onboardingBloodGroup"></div>
+            <div><label for="onboardingGenotype">Genotype</label><input id="onboardingGenotype"></div>
+            <div class="grid-span-two"><label for="onboardingMedicalCondition">Medical condition, allergy or important note</label><textarea id="onboardingMedicalCondition" rows="3"></textarea></div>
+          </div>
+          <button type="submit" id="submitParentOnboardingBtn">Submit completed profile</button>
+          <p id="parentOnboardingProfileStatus" class="status" role="status" aria-live="polite"></p>
+        </form>
+      </section>
 
       <section id="dashboardContent" hidden>
         <div class="dashboard-actions">
@@ -263,6 +344,6 @@
   <script src="js/password-toggle.js?v=20260726-biometric"></script>
   <script src="js/financial-values.js?v=20260803-finance-commas"></script>
   <script src="js/payment-methods.js?v=20260809-direct-transfer-sharp-text"></script>
-  <script src="js/parent-dashboard.js?v=20260817-academic-results"></script>
+  <script src="js/parent-dashboard.js?v=20260821-parent-onboarding"></script>
 </body>
 </html>

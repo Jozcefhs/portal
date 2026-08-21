@@ -3,6 +3,7 @@ import { getDocument, upsertDocument } from './firestore.js';
 const encoder = new TextEncoder();
 const SESSION_COOKIE = '__Host-digc_parent_session';
 const SESSION_SECONDS = 7 * 24 * 60 * 60;
+const PASSWORD_SETUP_SECONDS = 15 * 60;
 const PASSWORD_ITERATIONS = 10000;
 const PASSWORD_HASH_VERSION = 'pbkdf2-sha256-v1';
 const CREDENTIAL_COLLECTION = 'parentCredentials';
@@ -202,6 +203,33 @@ export async function createParentSession(env, email) {
   };
   const encoded = base64Url(JSON.stringify(payload));
   return `${encoded}.${await signPayload(env, encoded)}`;
+}
+
+export async function createParentPasswordSetupToken(env, email, admissionNo) {
+  const normalizedEmail = lower(email);
+  const normalizedAdmissionNo = clean(admissionNo);
+  if (!normalizedEmail || !normalizedAdmissionNo) {
+    throw new Error('Parent email and student admission number are required for password setup.');
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const payload = {
+    email: normalizedEmail,
+    admissionNo: normalizedAdmissionNo,
+    purpose: 'parent-password-setup',
+    iat: now,
+    exp: now + PASSWORD_SETUP_SECONDS
+  };
+  const encoded = base64Url(JSON.stringify(payload));
+  return `${encoded}.${await signPayload(env, encoded)}`;
+}
+
+export async function readParentPasswordSetupToken(env, token) {
+  const payload = await verifiedSignedPayload(env, token);
+  if (!payload || payload.purpose !== 'parent-password-setup') return null;
+  if (!payload.exp || Number(payload.exp) <= Math.floor(Date.now() / 1000)) return null;
+  const email = lower(payload.email);
+  const admissionNo = clean(payload.admissionNo);
+  return email && admissionNo ? { email, admissionNo } : null;
 }
 
 export async function readParentSession(env, request) {
