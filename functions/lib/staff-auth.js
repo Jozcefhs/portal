@@ -141,7 +141,7 @@ function secureEqual(left, right) {
 }
 
 function sessionSecret(env) {
-  const secret = clean(env.STAFF_SESSION_SECRET || env.BACKEND_SHARED_SECRET || env.GOOGLE_APPS_SCRIPT_SECRET);
+  const secret = clean(env.STAFF_SESSION_SECRET || env.BACKEND_SHARED_SECRET);
   if (!secret) {
     const err = new Error('Staff sessions are not configured. Add STAFF_SESSION_SECRET in Cloudflare.');
     err.status = 503;

@@ -3,12 +3,15 @@
 import { deleteDocument, getDocument, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { getSchoolDocumentById, querySchoolCollection, upsertSchoolDocument } from '../lib/school-scope.js';
-import { resolveDocumentStorage } from '../lib/document-storage.js';
+import {
+  deleteStoredDocument,
+  getStoredDocument,
+  storedDocumentResponse
+} from '../lib/document-storage.js';
 import { readJsonBody } from '../lib/request-security.js';
 import {
   admissionApplicationScopePath,
-  admissionThumbnailDocumentId,
-  safeStoredDocument
+  admissionThumbnailDocumentId
 } from '../lib/document-files.js';
 
 const DOCUMENTS = [
@@ -91,17 +94,6 @@ function legacyThumbnailBelongsToApplication(thumbnail, application) {
   return Boolean(thumbnailOperationId && applicationOperationId && thumbnailOperationId === applicationOperationId);
 }
 
-function decodeBase64(value) {
-  const binary = atob(clean(value));
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  return bytes;
-}
-
-function safeFileName(value, fallback) {
-  return clean(value || fallback).replace(/[^\x20-\x7e]|[\r\n"\\/:*?<>|]+/g, '_').slice(0, 160) || fallback;
-}
-
 function safeDocumentId(value) {
   return clean(value)
     .replace(/[\/\\?#\[\]]/g, '-')
@@ -120,43 +112,6 @@ function uniqueApplications(rows = []) {
     seen.add(key);
     return true;
   });
-}
-
-async function loadDriveFile(env, url) {
-  const storage = await resolveDocumentStorage(env);
-  if (!storage.url || !storage.secret) {
-    const error = new Error('Private document storage is not configured.');
-    error.status = 500;
-    throw error;
-  }
-  const response = await fetch(storage.url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({
-      Secret: storage.secret,
-      Action: 'getStoredDocument',
-      DocumentUrl: url
-    })
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || !data.ok || !data.fileBase64) {
-    const error = new Error(data.message || 'The uploaded document could not be loaded.');
-    error.status = response.status >= 400 ? response.status : 502;
-    throw error;
-  }
-  return data;
-}
-
-async function deleteDriveFile(env, url) {
-  const storage = await resolveDocumentStorage(env);
-  if (!storage.url || !storage.secret) throw Object.assign(new Error('Private document storage is not configured.'), { status: 500 });
-  const response = await fetch(storage.url, {
-    method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ Secret: storage.secret, Action: 'deleteStoredDocument', DocumentUrl: url })
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || !data.ok) throw Object.assign(new Error(data.message || 'The stored document could not be deleted.'), { status: response.status >= 400 ? response.status : 502 });
-  return data;
 }
 
 async function recalculateDocuments(env, application) {
@@ -236,7 +191,7 @@ async function handleRequest(context, body = null) {
       if (!['Super Admin', 'Admissions Officer'].includes(role)) {
         return Response.json({ ok: false, message: 'Only Super Admin or Admissions Officer can delete admission documents.' }, { status: 403 });
       }
-      await deleteDriveFile(env, storedUrl);
+      await deleteStoredDocument(env, storedUrl);
       const documents = application.documents && typeof application.documents === 'object' ? { ...application.documents } : {};
       delete documents[key];
       const updated = { ...application, documents, [`Doc${key}`]: 'NO', [`Doc${key}Url`]: '', UpdatedAt: new Date().toISOString(), IntelligenceUpdatedBy: user?.displayName || clean(body?.RecordedBy) || 'Admissions Office' };
@@ -258,25 +213,13 @@ async function handleRequest(context, body = null) {
           await deleteDocument(env, 'applicationPassportThumbnails', legacyThumbnailId).catch(() => {});
         }
       }
-      return Response.json({ ok: true, message: `${definition[1]} deleted. The Drive file was moved to trash.` }, { headers: { 'Cache-Control': 'no-store' } });
+      return Response.json({ ok: true, message: `${definition[1]} deleted from secure document storage.` }, { headers: { 'Cache-Control': 'no-store' } });
     }
-    const file = await loadDriveFile(env, storedUrl);
-    const stored = safeStoredDocument(
-      file.fileName || metadata.fileName || `${key}.bin`,
-      file.fileBase64
-    );
-    const fileName = safeFileName(stored.fileName, `${key}.bin`);
-    const mimeType = stored.mimeType;
-    const disposition = stored.valid && stored.inlineSafe ? mode : 'attachment';
-    return new Response(decodeBase64(file.fileBase64), {
-      status: 200,
-      headers: {
-        'Content-Type': mimeType,
-        'Content-Disposition': `${disposition}; filename="${fileName}"`,
-        'Cache-Control': 'private, no-store',
-        'Content-Security-Policy': "sandbox; default-src 'none'; object-src 'none'; script-src 'none'",
-        'X-Content-Type-Options': 'nosniff'
-      }
+    const stored = await getStoredDocument(env, storedUrl);
+    if (!clean(stored.fileName) && clean(metadata.fileName)) stored.fileName = clean(metadata.fileName);
+    return storedDocumentResponse(stored, {
+      fallbackFileName: `${key}.bin`,
+      mode: mode === 'attachment' ? 'download' : 'inline'
     });
   } catch (error) {
     return Response.json({ ok: false, message: clean(error && error.message ? error.message : error) }, { status: error.status || 500 });

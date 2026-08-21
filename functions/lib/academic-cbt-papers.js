@@ -2,13 +2,6 @@ import { validateAdmissionDocumentFile } from './document-files.js';
 
 const clean = (value) => String(value ?? '').trim();
 
-function safeReference(value, fallback = 'pending') {
-  return clean(value)
-    .replace(/[^a-z0-9._-]+/gi, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 120) || fallback;
-}
-
 export function validateAcademicCbtPaper(input = {}) {
   let validated;
   try {
@@ -31,30 +24,6 @@ export function validateAcademicCbtPaper(input = {}) {
   return validated;
 }
 
-export function academicCbtPaperStoragePayload(input = {}) {
-  const testId = safeReference(input.CbtTestId || input.ClientRequestId, 'test');
-  const branchId = safeReference(input.BranchId, 'main');
-  const operationId = clean(input.OperationId);
-  return {
-    Secret: clean(input.Secret),
-    Action: 'uploadParentDocument',
-    StorageOnly: 'YES',
-    OperationId: operationId,
-    UploadOperationId: operationId,
-    StorageOperationId: operationId,
-    UploadAttemptId: clean(input.UploadAttemptId),
-    ApplicationReference: `CBT-${branchId}-${testId}-${safeReference(operationId, 'upload')}`.slice(0, 220),
-    // StorageOnly prevents admission data from changing. This legacy slot keeps
-    // deployed Apps Script storage versions compatible while the CBT identity
-    // remains explicit in the folder and file names.
-    DocumentType: 'AcceptanceForm',
-    FileName: `CBT-${testId}-${clean(input.FileName)}`.slice(0, 240),
-    MimeType: clean(input.MimeType),
-    FileBase64: clean(input.FileBase64),
-    ReplaceExisting: 'NO',
-    ExistingUrl: ''
-  };
-}
 
 export async function academicCbtPaperDigest(fileBase64) {
   const encoded = clean(fileBase64);

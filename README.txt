@@ -12,8 +12,9 @@ Architecture
   Cloudflare Pages assets.
 - Only /api and /api/* invoke Pages Functions. See _routes.json.
 - Firestore is the primary application database.
-- Paystack, Brevo and Google document services are called only from backend
-  Functions; private credentials must never be put in browser JavaScript.
+- Paystack and Brevo are called only from backend Functions. Private file bytes
+  are stored in a workspace-isolated Cloudflare R2 bucket; credentials and R2
+  bindings must never be put in browser JavaScript.
 - The Windows desktop suite uses /api/backend as an authenticated bridge.
 - docs/academic-management-phase.md is the authoritative specification for the
   planned School-edition academic management and local/offline CBT phase.
@@ -63,8 +64,6 @@ Feature-specific:
 - BREVO_API_KEY
 - BREVO_SENDER_EMAIL
 - BREVO_SENDER_NAME
-- GOOGLE_APPS_SCRIPT_URL or GOOGLE_DOCUMENTS_URL
-- GOOGLE_APPS_SCRIPT_SECRET
 - TURNSTILE_SITE_KEY
 - TURNSTILE_SECRET_KEY
 - TURNSTILE_ALLOWED_HOSTNAMES
@@ -85,7 +84,10 @@ Feature-specific:
 - STUDENT_FACE_TEMPLATE_RETENTION_DAYS (optional; defaults to 365, minimum 30, maximum 730)
 - STAFF_ATTENDANCE_FACE_MATCH_THRESHOLD (optional; defaults to 0.72; calibrate before production use)
 - STAFF_ATTENDANCE_FACE_RETENTION_DAYS (optional; defaults to 365, minimum 30, maximum 730)
-- DATA_BACKEND_MODE (only for an intentional legacy Google backend)
+
+Required Cloudflare binding:
+
+- DYNAMAX_DOCUMENTS (R2 bucket binding; provisioned by the deployment workflow)
 
 Set production and preview values separately. Encrypt all private values. Do
 not commit .dev.vars, .env files, Firebase service-account JSON, private keys,

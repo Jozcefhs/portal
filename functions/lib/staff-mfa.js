@@ -102,8 +102,7 @@ function mfaSecretMaterial(env) {
   const secret = clean(
     env.MFA_ENCRYPTION_SECRET ||
     env.STAFF_SESSION_SECRET ||
-    env.BACKEND_SHARED_SECRET ||
-    env.GOOGLE_APPS_SCRIPT_SECRET
+    env.BACKEND_SHARED_SECRET
   );
   if (!secret) {
     const error = new Error('Two-factor authentication is not configured. Add STAFF_SESSION_SECRET in Cloudflare.');

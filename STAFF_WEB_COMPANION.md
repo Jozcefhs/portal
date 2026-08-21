@@ -118,4 +118,4 @@ New applications and student records use isolated Firestore paths under `schoolB
 
 Super Admin can upload staff accounts from **Staff & Permissions** using the downloadable CSV template. Imported rows support role, department, branch, school-section access, temporary password, active status, and forced password change.
 
-The desktop Settings tab controls which admission documents parents are asked to upload. Disabled rows disappear from the parent upload page and are excluded from completion calculations. Super Admin and Admissions Officer can delete an uploaded document; its Google Drive file is moved to trash and the Firestore application metadata is recalculated.
+The desktop Settings tab controls which admission documents parents are asked to upload. Disabled rows disappear from the parent upload page and are excluded from completion calculations. Super Admin and Admissions Officer can delete an uploaded document; its private Cloudflare R2 object is deleted and the Firestore application metadata is recalculated.

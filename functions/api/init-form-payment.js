@@ -5,7 +5,6 @@ import { getAdmissionClasses, getSchoolCode } from './backend.js';
 import { createDocumentIfAbsent, requireFirestoreEnv } from '../lib/firestore.js';
 import { normalizeClassKey } from '../lib/class-names.js';
 import { createDirectTransferRequest, normalizePublicPaymentMethod, publicPaymentMethods } from '../lib/direct-bank-transfer.js';
-import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
 import {
   beginIdempotentRequest,
   completeIdempotentRequest,
@@ -34,41 +33,8 @@ function normalizeClassName(value) {
 
 async function getAdmissionClassSetup(env, className) {
   if (!className) return { open: false, amount: 0 };
-  try {
-    requireFirestoreEnv(env);
-    const data = await getAdmissionClasses(env);
-    const wanted = normalizeClassName(className);
-    const matched = (data.classes || []).find((item) => {
-      return normalizeClassName(item.ClassName || item.className || item) === wanted &&
-        String(item.Active || 'YES').toUpperCase() === 'YES';
-    });
-    if (matched) {
-      return {
-        open: true,
-        amount: toAmount(matched.FormAmount || matched.formAmount || data.formAmount || env.ADMISSION_FORM_AMOUNT)
-      };
-    }
-    return { open: false, amount: 0 };
-  } catch (firestoreErr) {
-    if (!legacyGoogleDataEnabled(env)) throw firestoreErr;
-  }
-
-  if (!legacyGoogleDataEnabled(env) || !env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) {
-    return { open: true, amount: toAmount(env.ADMISSION_FORM_AMOUNT) };
-  }
-
-  const url = new URL(env.GOOGLE_APPS_SCRIPT_URL);
-  url.searchParams.set('action', 'getAdmissionClasses');
-  url.searchParams.set('secret', env.GOOGLE_APPS_SCRIPT_SECRET);
-  const response = await fetch(url.toString());
-  const text = await response.text();
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch (_err) {
-    throw new Error('Could not confirm available classes because the server returned a non-JSON response.');
-  }
-  if (!data.ok) throw new Error(data.message || 'Could not confirm available classes.');
+  requireFirestoreEnv(env);
+  const data = await getAdmissionClasses(env);
   const wanted = normalizeClassName(className);
   const matched = (data.classes || []).find((item) => {
     return normalizeClassName(item.ClassName || item.className || item) === wanted &&

@@ -2,89 +2,90 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  normalizeAppsScriptWebAppUrl,
-  requireAppsScriptWebAppUrl,
-  resolveDocumentStorage,
-  selectDocumentStorageUrl
+  deleteStoredDocument,
+  documentStorageConfigured,
+  getStoredDocument,
+  parseStoredDocumentReference,
+  putStoredDocument,
+  resolveDocumentStorage
 } from '../functions/lib/document-storage.js';
 
-const SCHOOL_SCRIPT = 'https://script.google.com/macros/s/SCHOOL-DEPLOYMENT/exec';
-const PROFILE_SCRIPT = 'https://script.google.com/macros/s/PROFILE-DEPLOYMENT/exec';
+function mockBucket() {
+  const objects = new Map();
+  return {
+    objects,
+    async put(key, bytes, options) {
+      const saved = Uint8Array.from(bytes);
+      objects.set(key, { bytes: saved, options });
+      return { etag: `etag-${saved.byteLength}` };
+    },
+    async get(key) {
+      const saved = objects.get(key);
+      if (!saved) return null;
+      return {
+        body: new Blob([saved.bytes]).stream(),
+        async arrayBuffer() { return saved.bytes.buffer.slice(0); },
+        httpMetadata: saved.options.httpMetadata,
+        customMetadata: saved.options.customMetadata,
+        httpEtag: '"etag"'
+      };
+    },
+    async delete(key) { objects.delete(key); }
+  };
+}
 
-test('document storage accepts only a deployed Apps Script /exec URL', () => {
-  assert.equal(normalizeAppsScriptWebAppUrl(`${SCHOOL_SCRIPT}/?ignored=yes`), SCHOOL_SCRIPT);
-  assert.equal(normalizeAppsScriptWebAppUrl('https://drive.google.com/drive/folders/example'), '');
-  assert.equal(normalizeAppsScriptWebAppUrl('https://example.com/macros/s/id/exec'), '');
-  assert.throws(
-    () => requireAppsScriptWebAppUrl('https://drive.google.com/drive/folders/example'),
-    /Drive folder link/
+const identity = {
+  DYNAMAX_WORKSPACE_ID: 'school',
+  ORGANISATION_EDITION: 'school'
+};
+
+test('R2 storage is configured only when the deployment binding is usable', async () => {
+  assert.equal(documentStorageConfigured({}), false);
+  const bucket = mockBucket();
+  assert.equal(documentStorageConfigured({ DYNAMAX_DOCUMENTS: bucket }), true);
+  assert.deepEqual(await resolveDocumentStorage({ DYNAMAX_DOCUMENTS: bucket }), {
+    binding: 'DYNAMAX_DOCUMENTS',
+    provider: 'Cloudflare R2',
+    configured: true
+  });
+});
+
+test('R2 writes are deterministic and workspace isolated', async () => {
+  const bucket = mockBucket();
+  const env = { ...identity, DYNAMAX_DOCUMENTS: bucket };
+  const input = {
+    category: 'admissions',
+    branchId: 'Main Branch',
+    schoolSection: 'Secondary',
+    ownerId: 'DCA/26/001',
+    documentType: 'BirthCertificate',
+    operationId: 'upload-operation-1',
+    fileName: 'birth.pdf',
+    mimeType: 'application/pdf',
+    fileBase64: Buffer.from('%PDF-1.7\ntest').toString('base64')
+  };
+  const first = await putStoredDocument(env, input);
+  const second = await putStoredDocument(env, input);
+  assert.equal(first.documentUrl, second.documentUrl);
+  assert.match(first.documentUrl, /^r2:\/\/dynamax-documents\/v1\/school\/school\/admissions\/main-branch\/secondary\//);
+  assert.equal(bucket.objects.size, 1);
+
+  const stored = await getStoredDocument(env, first.documentUrl);
+  assert.equal(stored.fileName, 'birth.pdf');
+  assert.equal(stored.mimeType, 'application/pdf');
+  assert.equal(Buffer.from(await stored.object.arrayBuffer()).toString(), '%PDF-1.7\ntest');
+
+  await assert.rejects(
+    () => getStoredDocument({ ...env, DYNAMAX_WORKSPACE_ID: 'another-school' }, first.documentUrl),
+    (error) => error.code === 'DOCUMENT_WORKSPACE_MISMATCH'
   );
+  await deleteStoredDocument(env, first.documentUrl);
+  assert.equal(bucket.objects.size, 0);
 });
 
-test('school profile Apps Script endpoint takes priority over server fallbacks', () => {
-  assert.deepEqual(selectDocumentStorageUrl({
-    environmentUrl: SCHOOL_SCRIPT,
-    organizationUrl: PROFILE_SCRIPT,
-    schoolUrl: PROFILE_SCRIPT,
-    edition: 'school'
-  }), {
-    url: PROFILE_SCRIPT,
-    source: 'school profile'
-  });
-});
-
-test('faith workspaces prefer their organisation profile endpoint', () => {
-  assert.deepEqual(selectDocumentStorageUrl({
-    environmentUrl: SCHOOL_SCRIPT,
-    organizationUrl: PROFILE_SCRIPT,
-    schoolUrl: SCHOOL_SCRIPT,
-    edition: 'faith'
-  }), {
-    url: PROFILE_SCRIPT,
-    source: 'organisation profile'
-  });
-});
-
-test('invalid saved Drive URL is ignored in favour of the valid server endpoint', async () => {
-  const records = {
-    organisationProfile: { GoogleDocumentsUrl: 'https://drive.google.com/drive/folders/example' },
-    schoolProfile: { GoogleDocumentsUrl: 'not a web app URL' }
-  };
-  const storage = await resolveDocumentStorage({
-    GOOGLE_APPS_SCRIPT_URL: SCHOOL_SCRIPT,
-    GOOGLE_APPS_SCRIPT_SECRET: 'secret',
-    ORGANISATION_EDITION: 'school'
-  }, {
-    getDocument: async (_env, _collection, id) => records[id]
-  });
-  assert.equal(storage.url, SCHOOL_SCRIPT);
-  assert.equal(storage.source, 'server environment');
-  assert.equal(storage.configured, true);
-});
-
-test('invalid saved Apps Script values do not shadow the server fallback', () => {
-  assert.deepEqual(selectDocumentStorageUrl({
-    environmentUrl: SCHOOL_SCRIPT,
-    organizationUrl: 'https://drive.google.com/drive/folders/example',
-    schoolUrl: 'not a web app URL',
-    edition: 'school'
-  }), {
-    url: SCHOOL_SCRIPT,
-    source: 'server environment'
-  });
-});
-
-test('a valid profile endpoint remains a fallback when no server URL is configured', async () => {
-  const records = {
-    organisationProfile: { GoogleDocumentsUrl: '' },
-    schoolProfile: { GoogleDocumentsUrl: PROFILE_SCRIPT }
-  };
-  const storage = await resolveDocumentStorage({
-    GOOGLE_APPS_SCRIPT_SECRET: 'secret',
-    ORGANISATION_EDITION: 'school'
-  }, {
-    getDocument: async (_env, _collection, id) => records[id]
-  });
-  assert.equal(storage.url, PROFILE_SCRIPT);
-  assert.equal(storage.source, 'school profile');
+test('retired Drive URLs fail with an explicit migration error', () => {
+  assert.throws(
+    () => parseStoredDocumentReference(identity, 'https://drive.google.com/file/d/example/view'),
+    (error) => error.code === 'LEGACY_DOCUMENT_NOT_MIGRATED'
+  );
 });

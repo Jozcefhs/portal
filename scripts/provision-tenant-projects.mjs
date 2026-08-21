@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
+import { ensureCloudflareR2Storage } from './cloudflare-r2.mjs';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -251,20 +252,24 @@ async function configureCloudflareProject(projectId, variables) {
       headers,
       body: JSON.stringify({ deployment_configs: { preview: deploymentConfig, production: deploymentConfig } })
     });
-    return;
-  }
-  if (existingResponse.status !== 404) {
+  } else if (existingResponse.status !== 404) {
     const data = await existingResponse.json().catch(() => ({}));
     throw new Error(data?.errors?.[0]?.message || `Cloudflare could not inspect ${projectId} (${existingResponse.status}).`);
+  } else {
+    await jsonRequest(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        name: projectId,
+        production_branch: 'main',
+        deployment_configs: { preview: deploymentConfig, production: deploymentConfig }
+      })
+    });
   }
-  await jsonRequest(endpoint, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      name: projectId,
-      production_branch: 'main',
-      deployment_configs: { preview: deploymentConfig, production: deploymentConfig }
-    })
+  await ensureCloudflareR2Storage({
+    accountId: cloudflareAccountId,
+    token: cloudflareToken,
+    projectName: projectId
   });
 }
 

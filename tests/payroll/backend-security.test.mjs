@@ -18,7 +18,7 @@ test('shared-secret comparison accepts only an exact value', () => {
 
 test('desktop backend authentication fails closed when its secret is missing or invalid', () => {
   assert.equal(configuredDesktopSecret({ BACKEND_SHARED_SECRET: 'primary-secret' }), 'primary-secret');
-  assert.equal(configuredDesktopSecret({ GOOGLE_APPS_SCRIPT_SECRET: 'legacy-secret' }), 'legacy-secret');
+  assert.equal(configuredDesktopSecret({ GOOGLE_APPS_SCRIPT_SECRET: 'retired-secret' }), '');
   assert.throws(
     () => requireConfiguredDesktopSecret({}),
     (error) => error?.status === 503 && error?.code === 'BACKEND_SECRET_NOT_CONFIGURED'

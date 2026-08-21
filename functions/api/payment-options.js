@@ -3,7 +3,6 @@
 
 import { getPayableFees } from './backend.js';
 import { requireFirestoreEnv } from '../lib/firestore.js';
-import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
 import { readJsonBody, verifyTurnstile } from '../lib/request-security.js';
 import { requireGuestFeePaymentToken } from '../lib/guest-fee-payment.js';
 
@@ -21,9 +20,8 @@ export async function onRequestPost(context) {
     }
     await verifyTurnstile(env, request, body, 'payment_lookup');
 
-    try {
-      requireFirestoreEnv(env);
-      const firestoreData = await getPayableFees(env, guestAccess ? {
+    requireFirestoreEnv(env);
+    const firestoreData = await getPayableFees(env, guestAccess ? {
         Email: email,
         AuthenticatedParentEmail: email,
         AccountRef: guestAccess.accountRef,
@@ -41,47 +39,8 @@ export async function onRequestPost(context) {
           return code !== 'WALLET_TOPUP' && category !== 'wallet' && category !== 'store';
         })
       } : firestoreData;
-      return Response.json(responseData, {
-        status: 200,
-        headers: { 'Cache-Control': 'no-store' }
-      });
-    } catch (firestoreErr) {
-      if (guestAccess) {
-        return Response.json({ ok: false, message: firestoreErr.message || String(firestoreErr) }, { status: firestoreErr.status || 500 });
-      }
-      if (!legacyGoogleDataEnabled(env) || !env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) {
-        return Response.json({ ok: false, message: firestoreErr.message || String(firestoreErr) }, { status: firestoreErr.status || 500 });
-      }
-    }
-
-    if (!legacyGoogleDataEnabled(env) || !env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) {
-      return Response.json({ ok: false, message: 'Server payment lookup is not configured yet.' }, { status: 500 });
-    }
-
-    const res = await fetch(env.GOOGLE_APPS_SCRIPT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        Secret: env.GOOGLE_APPS_SCRIPT_SECRET,
-        Action: 'getPayableFees',
-        Email: email,
-        VerificationCode: code
-      })
-    });
-
-    const text = await res.text();
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (_err) {
-      return Response.json({
-        ok: false,
-        message: 'Payment lookup could not read the Apps Script response. Confirm the Web App URL ends with /exec and the latest Apps Script deployment is active.'
-      }, { status: 502 });
-    }
-
-    return Response.json(data, {
-      status: data.ok ? 200 : 400,
+    return Response.json(responseData, {
+      status: 200,
       headers: { 'Cache-Control': 'no-store' }
     });
   } catch (err) {

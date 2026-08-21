@@ -9,7 +9,7 @@ import {
   schoolSectionFor,
   upsertSchoolDocument
 } from '../lib/school-scope.js';
-import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
+import { getStoredDocument } from '../lib/document-storage.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { getWebBranding } from '../lib/web-branding.js';
 import {
@@ -329,34 +329,6 @@ function studentLoginCode(student) {
   ])).toUpperCase();
 }
 
-async function appsScriptAction(env, action, payload = {}) {
-  if (!legacyGoogleDataEnabled(env)) return null;
-  if (!env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) return null;
-  try {
-    if (action === 'getApplications') {
-      const url = new URL(env.GOOGLE_APPS_SCRIPT_URL);
-      url.searchParams.set('secret', env.GOOGLE_APPS_SCRIPT_SECRET);
-      url.searchParams.set('action', action);
-      const response = await fetch(url.toString());
-      const text = await response.text();
-      return JSON.parse(text);
-    }
-    const response = await fetch(env.GOOGLE_APPS_SCRIPT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        Secret: env.GOOGLE_APPS_SCRIPT_SECRET,
-        Action: action,
-        ...payload
-      })
-    });
-    const text = await response.text();
-    return JSON.parse(text);
-  } catch (_err) {
-    return null;
-  }
-}
-
 function uniqueRows(rows = []) {
   const unique = new Map();
   rows.filter(Boolean).forEach((row) => unique.set(clean(row.__name || row.__id) || JSON.stringify(row), row));
@@ -540,25 +512,17 @@ async function loadParentSources(env, scope = 'full', identity = {}) {
     full ? queryRowsForReferences(env, 'storeOrders', ['AccountRef', 'AdmissionNo'], references) : Promise.resolve([]),
     full ? Promise.all(summaryReferences.map((ref) => getDocument(env, 'accountSummaries', safeDocumentId(ref)).catch(() => null))) : Promise.resolve([])
   ]);
-  const [sheetSales, sheetApplications, sheetStudents, sheetFinance, sheetClinic] = await Promise.all([
-    appsScriptAction(env, 'getFormSales'),
-    appsScriptAction(env, 'getApplications'),
-    appsScriptAction(env, 'getStudents'),
-    full ? appsScriptAction(env, 'getAccountsOverview') : Promise.resolve(null),
-    full ? appsScriptAction(env, 'getClinicRecords') : Promise.resolve(null)
-  ]);
-  const preferFirestore = (firestoreRows, sheetRows) => firestoreRows.length ? firestoreRows : (sheetRows || []);
   return {
     accounts: (accountSummaries || []).filter(Boolean).length
       ? uniqueRows(accountSummaries.filter(Boolean))
-      : ((sheetFinance && sheetFinance.ok && sheetFinance.accounts) || []),
-    sales: preferFirestore(firestoreSales, (sheetSales && sheetSales.ok && sheetSales.sales) || []),
-    applications: preferFirestore(firestoreApplications, (sheetApplications && sheetApplications.ok && sheetApplications.applications) || []),
-    students: preferFirestore(firestoreStudents, (sheetStudents && sheetStudents.ok && sheetStudents.students) || []),
-    ledger: preferFirestore(firestoreLedger, (sheetFinance && sheetFinance.ok && sheetFinance.ledger) || []),
-    invoices: preferFirestore(firestoreInvoices, (sheetFinance && sheetFinance.ok && sheetFinance.invoices) || []),
-    payments: preferFirestore(firestorePayments, (sheetFinance && sheetFinance.ok && sheetFinance.payments) || []),
-    clinic: preferFirestore(firestoreClinic, (sheetClinic && sheetClinic.ok && sheetClinic.records) || []),
+      : [],
+    sales: firestoreSales,
+    applications: firestoreApplications,
+    students: firestoreStudents,
+    ledger: firestoreLedger,
+    invoices: firestoreInvoices,
+    payments: firestorePayments,
+    clinic: firestoreClinic,
     storeItems: firestoreStoreItems,
     storeOrders: firestoreStoreOrders
   };
@@ -1139,35 +1103,8 @@ function buildEntranceResult(application, profile = {}) {
   };
 }
 
-function decodeBase64Bytes(value) {
-  const binary = atob(clean(value));
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  return bytes;
-}
-
 async function loadStoredAdmissionDocument(env, url) {
-  if (!env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) {
-    const err = new Error('Google Drive document storage is not configured.');
-    err.status = 500;
-    throw err;
-  }
-  const response = await fetch(env.GOOGLE_APPS_SCRIPT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({
-      Secret: env.GOOGLE_APPS_SCRIPT_SECRET,
-      Action: 'getStoredDocument',
-      DocumentUrl: url
-    })
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || !data.ok || !clean(data.fileBase64)) {
-    const err = new Error(data.message || 'The customized admission document could not be loaded.');
-    err.status = response.status >= 400 ? response.status : 502;
-    throw err;
-  }
-  return data;
+  return getStoredDocument(env, url);
 }
 
 async function resolveParentAdmissionApplication(env, body, email, code, accountRef) {
@@ -1260,7 +1197,7 @@ async function getParentAdmissionDocument(env, body) {
   return {
     ok: true,
     message: `${title} downloaded and marked as sent.`,
-    pdfBytes: decodeBase64Bytes(storedFile.fileBase64),
+    pdfBytes: new Uint8Array(await storedFile.object.arrayBuffer()),
     fileName: clean(application[fileField] || storedFile.fileName) || `${safeDocumentId(applicantName || accountRef)}-${safeDocumentId(title)}.pdf`,
     flag
   };
@@ -1463,25 +1400,6 @@ export function paymentHistoryForChild(child, payments, ledger) {
     return paymentHistoryRows(appPayments, appLedger);
   }
   return paymentHistoryFor(child, payments, ledger);
-}
-
-async function getAppsScriptAccountsOverview(env) {
-  if (!legacyGoogleDataEnabled(env)) return null;
-  if (!env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) return null;
-  try {
-    const response = await fetch(env.GOOGLE_APPS_SCRIPT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        Secret: env.GOOGLE_APPS_SCRIPT_SECRET,
-        Action: 'getAccountsOverview'
-      })
-    });
-    const text = await response.text();
-    return JSON.parse(text);
-  } catch (_err) {
-    return null;
-  }
 }
 
 function dueStatus(dueDate) {

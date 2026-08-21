@@ -74,7 +74,7 @@ test('super admin remains authorized while the shared request handler guards vie
   );
   const guardIndex = source.indexOf('!staffCanAccessApplicationDocument(user, application)');
   const deleteIndex = source.indexOf("if (action === 'delete')");
-  const loadIndex = source.indexOf('const file = await loadDriveFile');
+  const loadIndex = source.indexOf('const stored = await getStoredDocument');
   assert.ok(guardIndex > 0, 'the shared handler must enforce application scope');
   assert.ok(deleteIndex > guardIndex, 'delete must run only after the shared scope guard');
   assert.ok(loadIndex > guardIndex, 'view/download must run only after the shared scope guard');

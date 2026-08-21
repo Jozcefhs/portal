@@ -3,7 +3,6 @@
 
 import { getSchoolCode, recordSale as recordSaleInFirestore } from './backend.js';
 import { createDocumentIfAbsent, getDocument, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
-import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
 import { paymentIntentReference, paymentIntentType } from '../lib/payment-intent.js';
 import {
   beginIdempotentRequest,
@@ -174,20 +173,6 @@ ${office}`;
   return { ok: response.ok, status: response.status, message: detail };
 }
 
-async function recordSaleInAppsScript(env, payload) {
-  const response = await fetch(env.GOOGLE_APPS_SCRIPT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      Secret: env.GOOGLE_APPS_SCRIPT_SECRET,
-      Action: 'recordSale',
-      ...payload
-    })
-  });
-  const data = await response.json();
-  return { response, data };
-}
-
 async function recordSale(env, payload) {
   try {
     requireFirestoreEnv(env);
@@ -198,13 +183,10 @@ async function recordSale(env, payload) {
     });
     return { response: { ok: true, status: 200 }, data };
   } catch (firestoreErr) {
-    if (!legacyGoogleDataEnabled(env) || !env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) {
-      return {
-        response: { ok: false, status: firestoreErr.status || 500 },
-        data: { ok: false, message: firestoreErr.message || String(firestoreErr) }
-      };
-    }
-    return recordSaleInAppsScript(env, payload);
+    return {
+      response: { ok: false, status: firestoreErr.status || 500 },
+      data: { ok: false, message: firestoreErr.message || String(firestoreErr) }
+    };
   }
 }
 

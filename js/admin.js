@@ -11743,7 +11743,7 @@ function academicCbtWorkspace(data, rows) {
         <div><small>Question paper</small><h4>${escapeHtml(component?.Name || 'CBT test')}</h4><p>${escapeHtml(selectedContext?.classroomLabel || '')}<br>${escapeHtml(selectedContext?.subjectLabel || '')} · ${questionCount} questions · ${escapeHtml(academicCbtDraft.durationMinutes)} minutes</p></div>
         <label class="academic-cbt-file-button">Choose PDF, PNG or JPG<input type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" data-academic-cbt-paper></label>
         <span data-academic-cbt-file-name>${escapeHtml(academicCbtDraft.file?.name || 'No file selected')}</span>
-        <small>Maximum file size: 8 MB. The paper is stored securely in the organisation’s Google Drive.</small>
+        <small>Maximum file size: 8 MB. The paper is stored securely in the organisation’s private Cloudflare R2 bucket.</small>
       </section>
     </div>
     <div class="academic-cbt-form-actions"><button type="button" class="secondary" data-academic-cbt-back>Back</button><button type="submit"${answered === questionCount && academicCbtDraft.file ? '' : ' disabled'} data-academic-cbt-save>${editing ? 'Save corrected test' : 'Create scheduled test'}</button></div>
@@ -12439,7 +12439,7 @@ function bindAcademicManagement() {
   panelEl.querySelectorAll('[data-academic-cbt-delete]').forEach((button) => button.addEventListener('click', async () => {
     const reason = clean(await window.DynamaxDialogs.prompt({
       title: 'Delete scheduled CBT test',
-      message: 'Delete this online test and its Google Drive paper? This is allowed only before local CBT synchronization.',
+      message: 'Delete this online test and its stored paper? This is allowed only before local CBT synchronization.',
       label: 'Reason for deletion',
       placeholder: 'Created in error',
       required: true,
@@ -13927,7 +13927,7 @@ function bindDocumentDeleteEvents() {
     const applicationReference = button.dataset.applicationReference;
     const scopePath = button.dataset.applicationScope || '';
     const documentType = button.dataset.deleteDocument;
-    if (!await window.DynamaxDialogs.confirm({ title: 'Delete uploaded document', message: 'The file will be moved to Google Drive trash.', tone: 'danger', confirmText: 'Delete document' })) return;
+    if (!await window.DynamaxDialogs.confirm({ title: 'Delete uploaded document', message: 'The file will be permanently removed from private document storage.', tone: 'danger', confirmText: 'Delete document' })) return;
     const normalMarkup = button.innerHTML;
     setButtonLoading(button, true, '', '');
     try {
@@ -14030,7 +14030,7 @@ function financeAttachmentField(kind, label = 'Supporting document') {
       <a class="finance-attachment-link" data-finance-attachment-link href="#" target="_blank" rel="noopener noreferrer" hidden>View current document</a>
     </div>
     <input name="attachmentUrl" type="hidden" data-finance-attachment-url>
-    <small>PDF, PNG or JPG, maximum 8 MB. The file is stored in the organisation's Google Drive.</small>
+    <small>PDF, PNG or JPG, maximum 8 MB. The file is stored in the organisation's private Cloudflare R2 bucket.</small>
   </div>`;
 }
 
@@ -14133,7 +14133,7 @@ async function uploadFinanceAttachmentInput(input, options = {}) {
 async function uploadFinanceFormAttachment(form, status) {
   const input = form?.querySelector('[data-finance-attachment-file]');
   if (!input?.files?.[0]) return clean(form?.elements?.attachmentUrl?.value);
-  setStatus(status, 'Uploading the supporting document to Google Drive...');
+  setStatus(status, 'Uploading the supporting document to private storage...');
   return uploadFinanceAttachmentInput(input, {
     kind: input.dataset.financeAttachmentKind,
     recordId: form.elements.recordId?.value || 'pending'
@@ -14626,7 +14626,7 @@ function renderFinanceWorkflow() {
       <form id="imprestRetirementForm" class="workflow-form">
         <input name="recordId" type="hidden">
         <div class="imprest-retirement-summary"><span>Issued <strong data-imprest-issued-total>${money(0)}</strong></span><span>Expenses <strong data-imprest-expense-total>${money(0)}</strong></span><span>Return <strong data-imprest-return-total>${money(0)}</strong></span></div>
-        <p class="muted">Upload one receipt for every expense line. Receipts are stored in the organisation's Google Drive and the unused balance is calculated automatically.</p>
+        <p class="muted">Upload one receipt for every expense line. Receipts are stored in the organisation's private Cloudflare R2 bucket and the unused balance is calculated automatically.</p>
         <div class="admin-table-wrap material-entry-wrap"><table class="admin-table material-entry-table imprest-retirement-table"><thead><tr><th>#</th><th>Date</th><th>Description</th><th>Expense account</th><th>Amount</th><th>Receipt</th><th></th></tr></thead><tbody data-imprest-retirement-items>${imprestRetirementEntryRow(1)}</tbody></table></div>
         <div class="material-entry-actions"><button type="button" data-add-imprest-retirement>+ Add Expense</button></div>
         <label>Unused cash / bank return reference<input name="returnReference" placeholder="Required when a balance is returned"></label>
@@ -14946,7 +14946,7 @@ function bindImprestWorkflowForms() {
       const rows = [...body.querySelectorAll('[data-imprest-retirement-row]')];
       for (let index = 0; index < rows.length; index += 1) {
         const input = rows[index].querySelector('[data-finance-attachment-file]');
-        setStatus(status, `Uploading receipt ${index + 1} of ${rows.length} to Google Drive...`);
+        setStatus(status, `Uploading receipt ${index + 1} of ${rows.length} to private storage...`);
         await uploadFinanceAttachmentInput(input, { kind: 'imprest-receipt', recordId });
       }
       setStatus(status, 'Saving the imprest retirement...');
@@ -15284,7 +15284,7 @@ function renderDataBackup() {
         <div><p class="eyebrow">Data protection</p><h2>Backup &amp; Restore</h2><p class="muted">Download an encrypted copy of the organisation database or return operational records to a previous backup.</p></div>
         <span class="data-backup-admin-badge">Super Administrator only</span>
       </div>
-      <div class="data-backup-warning"><strong>Keep backup files and passwords secure.</strong><span>They contain personal and financial records. Uploaded Google Drive documents remain in Drive; their database records and links are backed up.</span></div>
+      <div class="data-backup-warning"><strong>Keep backup files and passwords secure.</strong><span>They contain personal and financial records. Uploaded R2 documents remain in private storage; their database records and object references are backed up.</span></div>
       <div class="data-backup-grid">
         <article class="data-backup-card">
           <span class="data-backup-card-icon" aria-hidden="true">&#8681;</span>

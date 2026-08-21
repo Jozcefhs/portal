@@ -281,7 +281,7 @@ test('an invalid selected sibling never falls back to the first authenticated ap
   );
 });
 
-test('post-Drive metadata lookup remains pinned to the selected application', async () => {
+test('post-storage metadata lookup remains pinned to the selected application', async () => {
   const source = await readFile(new URL('../functions/api/upload-document.js', import.meta.url), 'utf8');
   assert.match(
     source,
@@ -289,11 +289,11 @@ test('post-Drive metadata lookup remains pinned to the selected application', as
   );
 });
 
-test('a metadata conflict resumes only when its saved Drive URL can be attached safely', () => {
+test('a metadata conflict resumes only when its saved R2 reference can be attached safely', () => {
   const operation = {
     Status: 'MetadataConflict',
     OperationId: 'upload-operation-1',
-    DocumentUrl: 'https://drive.google.com/file/d/saved-file/view'
+    DocumentUrl: 'r2://dynamax-documents/v1/school/school/admissions/main/all/app/report/upload-1.pdf'
   };
   assert.equal(
     canResumeSavedUploadOperation(operation, {}, 'PreviousSchoolReport'),
@@ -314,7 +314,7 @@ test('a metadata conflict resumes only when its saved Drive URL can be attached 
     canResumeSavedUploadOperation(operation, {
       documents: {
         PreviousSchoolReport: {
-          url: 'https://drive.google.com/file/d/newer-file/view',
+          url: 'r2://dynamax-documents/v1/school/school/admissions/main/all/app/report/upload-2.pdf',
           uploadOperationId: 'newer-operation'
         }
       }

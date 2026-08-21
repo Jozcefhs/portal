@@ -5,7 +5,7 @@ import { staffRecordMatchesEdition } from './records-desk.js';
 import { createNotification } from './notifications.js';
 import { academicCumulativePolicyIssues, academicPolicyIssues, academicPolicyScopeChain, normalizeAcademicPolicy } from './academic-policy.js';
 import { loadAcademicPolicyView } from './academic-policy-store.js';
-import { resolveDocumentStorage } from './document-storage.js';
+import { deleteStoredDocument, getStoredDocument } from './document-storage.js';
 import { safeStoredDocument } from './document-files.js';
 import { academicCbtPaperDigest } from './academic-cbt-papers.js';
 import { studentLoginCredentialCollection, studentLoginCredentialId } from './student-login-credentials.js';
@@ -5218,14 +5218,9 @@ export async function saveAcademicCbtTest(env, user = {}, input = {}, options = 
 }
 
 async function deleteAcademicCbtPaper(env, paperUrl) {
-  const storage = await resolveDocumentStorage(env);
-  if (!storage.configured || !clean(paperUrl)) return false;
-  const response = await fetch(storage.url, {
-    method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ Secret: storage.secret, Action: 'deleteStoredDocument', DocumentUrl: paperUrl })
-  }).catch(() => null);
-  const data = response ? await response.json().catch(() => ({})) : {};
-  return Boolean(response?.ok && data.ok);
+  if (!clean(paperUrl)) return false;
+  await deleteStoredDocument(env, paperUrl);
+  return true;
 }
 
 export async function deleteAcademicCbtTest(env, user = {}, input = {}) {
@@ -5254,24 +5249,21 @@ export async function deleteAcademicCbtTest(env, user = {}, input = {}) {
 }
 
 async function loadAcademicCbtPaper(env, record) {
-  const storage = await resolveDocumentStorage(env);
-  if (!storage.configured) throw failure('Google Drive document storage is not configured.', 503, 'DOCUMENT_STORAGE_NOT_CONFIGURED');
-  const response = await fetch(storage.url, {
-    method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ Secret: storage.secret, Action: 'getStoredDocument', DocumentUrl: record.PaperUrl })
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || !data.ok || !clean(data.fileBase64)) {
-    throw failure(data.message || 'The CBT question paper could not be downloaded from Google Drive.', 502, 'ACADEMIC_CBT_PAPER_UNAVAILABLE');
+  const file = await getStoredDocument(env, record.PaperUrl);
+  const bytes = new Uint8Array(await file.object.arrayBuffer());
+  let binary = '';
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
   }
-  const stored = safeStoredDocument(data.fileName || record.PaperFileName, data.fileBase64);
+  const fileBase64 = btoa(binary);
+  const stored = safeStoredDocument(file.fileName || record.PaperFileName, fileBase64);
   if (!stored.valid || !stored.inlineSafe || !['application/pdf', 'image/jpeg', 'image/png'].includes(stored.mimeType)) {
     throw failure('The stored CBT paper failed its file validation.', 409, 'ACADEMIC_CBT_PAPER_INVALID');
   }
-  if (await academicCbtPaperDigest(data.fileBase64) !== lower(record.PaperDigest)) {
+  if (await academicCbtPaperDigest(fileBase64) !== lower(record.PaperDigest)) {
     throw failure('The stored CBT paper no longer matches its scheduled package.', 409, 'ACADEMIC_CBT_PAPER_DIGEST_MISMATCH');
   }
-  return { FileName: stored.fileName, MimeType: stored.mimeType, FileBase64: clean(data.fileBase64) };
+  return { FileName: stored.fileName, MimeType: stored.mimeType, FileBase64: fileBase64 };
 }
 
 export async function downloadAcademicCbtTestPackage(env, user = {}, input = {}) {

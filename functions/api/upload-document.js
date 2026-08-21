@@ -19,7 +19,11 @@ import {
   validateAdmissionDocumentFile,
   validateAdmissionThumbnail
 } from '../lib/document-files.js';
-import { resolveDocumentStorage } from '../lib/document-storage.js';
+import {
+  deleteStoredDocument,
+  putStoredDocument,
+  resolveDocumentStorage
+} from '../lib/document-storage.js';
 import { readParentSession, verifyStoredParentPassword } from '../lib/parent-auth.js';
 import {
   beginIdempotentRequest,
@@ -250,7 +254,7 @@ async function loadUploadOperation(env, operationId, expected = {}) {
     MimeType: clean(expected.MimeType),
     ReplaceExisting: Boolean(expected.ReplaceExisting),
     Status: 'Prepared',
-    DriveState: 'NotStarted',
+    StorageState: 'NotStarted',
     MetadataState: 'Pending',
     Attempt: 0,
     CreatedAt: now,
@@ -525,7 +529,7 @@ async function saveFirestoreDocumentMetadata(env, app, definition, file, url, re
     previousUrl,
     uploadedAt: now,
     uploadedBy: 'Parent',
-    storage: 'Google Drive',
+    storage: 'Cloudflare R2',
     uploadOperationId: clean(operationId)
   };
   const next = {
@@ -551,31 +555,10 @@ async function saveFirestoreDocumentMetadata(env, app, definition, file, url, re
   return { application: next, previousUrl };
 }
 
-async function uploadViaAppsScript(storageUrl, payload) {
-  const res = await fetch(storageUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify(payload)
-  });
-  const text = await res.text().catch(() => '');
-  let data = {};
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = {};
-  }
-  return {
-    ...(data && typeof data === 'object' ? data : {}),
-    httpOk: res.ok,
-    httpStatus: res.status,
-    rawMessage: clean(data?.message || text).slice(0, 1000)
-  };
-}
-
 export async function onRequestPost(context) {
   let idempotency = null;
-  let driveAttemptStarted = false;
-  let driveOutcomeRecorded = false;
+  let storageAttemptStarted = false;
+  let storageOutcomeRecorded = false;
   try {
     const { request, env } = context;
     const body = await readJsonBody(request, { maxBytes: 12 * 1024 * 1024 });
@@ -778,8 +761,8 @@ export async function onRequestPost(context) {
     }
     if (canResumeSavedUploadOperation(operation, firestoreApp, definition.key)) {
       operation = await updateUploadOperation(env, operationId, {
-        Status: 'DriveSaved',
-        DriveState: 'Saved',
+        Status: 'StorageSaved',
+        StorageState: 'Saved',
         MetadataState: 'Pending',
         ManualReconciliationRequired: false,
         MetadataConflictReason: '',
@@ -787,18 +770,27 @@ export async function onRequestPost(context) {
       });
       operationState = uploadOperationState(operation);
     }
+    if (operationState === 'uploading' && clean(operation.StorageState)) {
+      operation = await updateUploadOperation(env, operationId, {
+        Status: 'Prepared',
+        StorageState: 'Retryable',
+        OutcomeUncertain: false,
+        RecoveredAt: new Date().toISOString()
+      });
+      operationState = uploadOperationState(operation);
+    }
     if (['uploading', 'uploaduncertain', 'uncertain', 'metadataconflict'].includes(operationState)) {
       throw uploadError(
-        'The Google Drive upload may already have been accepted. Automatic re-upload is suppressed to avoid a duplicate; Admissions must reconcile this operation.',
+        'A retired document-storage operation is incomplete and requires Admissions reconciliation before it can continue.',
         503,
-        'DRIVE_UPLOAD_OUTCOME_UNCERTAIN',
+        'DOCUMENT_UPLOAD_OUTCOME_UNCERTAIN',
         {
           outcomeUncertain: true,
           uncertaintyReason: clean(operation.UncertaintyReason || operation.MetadataConflictReason)
         }
       );
     }
-    if (!['prepared', 'drivesaved'].includes(operationState)) {
+    if (!['prepared', 'storagesaved', 'drivesaved'].includes(operationState)) {
       throw uploadError(
         `The durable upload operation is in the unresolved "${clean(operation.Status) || 'unknown'}" state. Automatic re-upload is suppressed.`,
         503,
@@ -812,17 +804,17 @@ export async function onRequestPost(context) {
 
     let savedDocumentUrl = '';
     const existingUrl = documentUrl(firestoreApp, definition.key);
-    if (operationState === 'drivesaved') {
+    if (['storagesaved', 'drivesaved'].includes(operationState)) {
       savedDocumentUrl = clean(operation.DocumentUrl);
       if (!savedDocumentUrl) {
         throw uploadError(
-          'Google Drive is marked as saved, but no durable file URL is available. Admissions must reconcile this operation.',
+          'Document storage is marked as saved, but no durable R2 reference is available. Admissions must reconcile this operation.',
           503,
-          'DRIVE_UPLOAD_RECONCILIATION_REQUIRED',
+          'DOCUMENT_UPLOAD_RECONCILIATION_REQUIRED',
           { outcomeUncertain: true }
         );
       }
-      driveOutcomeRecorded = true;
+      storageOutcomeRecorded = true;
     } else {
       if ((existingUrl || documentUploaded(firestoreApp, definition.key)) && !replaceExisting) {
         throw uploadError(
@@ -832,9 +824,9 @@ export async function onRequestPost(context) {
         );
       }
       const storage = await resolveDocumentStorage(env);
-      if (!storage.url || !storage.secret) {
+      if (!storage.configured) {
         throw uploadError(
-          'Database student/application lookup succeeded, but Google Drive file storage is not configured.',
+          'Database student/application lookup succeeded, but Cloudflare R2 document storage is not connected.',
           503,
           'DOCUMENT_STORAGE_NOT_CONFIGURED'
         );
@@ -843,7 +835,7 @@ export async function onRequestPost(context) {
       const attempt = Math.max(0, Number(operation.Attempt || 0)) + 1;
       operation = await updateUploadOperation(env, operationId, {
         Status: 'Uploading',
-        DriveState: 'RequestStarted',
+        StorageState: 'RequestStarted',
         Attempt: attempt,
         AttemptId: attemptId,
         UploadStartedAt: new Date().toISOString(),
@@ -851,113 +843,47 @@ export async function onRequestPost(context) {
       });
       operationState = uploadOperationState(operation);
 
-      const payload = {
-        Secret: storage.secret,
-        Action: 'uploadParentDocument',
-        StorageOnly: 'YES',
-        OperationId: operationId,
-        UploadOperationId: operationId,
-        StorageOperationId: operationId,
-        UploadAttemptId: attemptId,
-        RequestFingerprint: idempotency.fingerprint,
-        ApplicationReference: applicationReference,
-        Email: email,
-        VerificationCode: code,
-        DocumentType: definition.key,
-        FileName: fileName,
-        MimeType: mimeType,
-        FileBase64: fileBase64,
-        ReplaceExisting: replaceExisting ? 'YES' : 'NO',
-        ExistingUrl: existingUrl
-      };
-
-      let data;
-      driveAttemptStarted = true;
+      storageAttemptStarted = true;
       try {
-        data = await uploadViaAppsScript(storage.url, payload);
-      } catch (error) {
-        const uncertaintyReason = `No authoritative response was received from document storage: ${clean(error?.message || error)}`.slice(0, 500);
-        await updateUploadOperation(env, operationId, {
-          Status: 'UploadUncertain',
-          DriveState: 'OutcomeUncertain',
-          OutcomeUncertain: true,
-          UncertaintyReason: uncertaintyReason,
-          UncertainAt: new Date().toISOString()
-        }).catch(() => null);
-        throw uploadError(
-          'Google Drive may have accepted the file, but no authoritative response was received. Automatic re-upload is suppressed.',
-          503,
-          'DRIVE_UPLOAD_OUTCOME_UNCERTAIN',
-          { outcomeUncertain: true, uncertaintyReason }
-        );
-      }
-
-      savedDocumentUrl = clean(data.documentUrl);
-      const storageStatus = Number(data.httpStatus || 0);
-      const authoritativeRejection = data.ok === false
-        || (storageStatus >= 400 && storageStatus < 500);
-      if (authoritativeRejection) {
-        const storageCode = clean(data.code) || 'DOCUMENT_STORAGE_REJECTED';
-        const storageMessage = clean(data.rawMessage || data.message)
-          || 'Google Drive document storage rejected the upload.';
-        driveOutcomeRecorded = true;
-        await updateUploadOperation(env, operationId, {
-          Status: 'Prepared',
-          DriveState: 'Rejected',
-          StorageHttpStatus: storageStatus,
-          LastStorageErrorCode: storageCode,
-          LastStorageError: storageMessage.slice(0, 500),
-          LastRejectedAt: new Date().toISOString(),
-          OutcomeUncertain: false
-        }).catch(() => null);
-        throw uploadError(
-          storageMessage,
-          424,
-          storageCode,
-          { outcomeUncertain: false }
-        );
-      }
-      if (data.ok !== true || data.httpOk !== true || !savedDocumentUrl) {
-        const uncertaintyReason = clean(data.rawMessage || data.message || `Storage returned HTTP ${data.httpStatus || 'unknown'}`)
-          .slice(0, 500);
-        await updateUploadOperation(env, operationId, {
-          Status: 'UploadUncertain',
-          DriveState: 'OutcomeUncertain',
-          StorageHttpStatus: Number(data.httpStatus || 0),
-          OutcomeUncertain: true,
-          UncertaintyReason: uncertaintyReason,
-          UncertainAt: new Date().toISOString()
-        }).catch(() => null);
-        throw uploadError(
-          'Google Drive did not return an authoritative saved-file result. Automatic re-upload is suppressed to avoid a duplicate.',
-          503,
-          'DRIVE_UPLOAD_OUTCOME_UNCERTAIN',
-          { outcomeUncertain: true, uncertaintyReason }
-        );
-      }
-
-      try {
+        const scopeMatch = /^schoolBranches\/([^/]+)\/sections\/(primary|secondary)\//i.exec(applicationScopePath);
+        const stored = await putStoredDocument(env, {
+          category: 'admissions',
+          branchId: scopeMatch?.[1] || firestoreApp.BranchId || 'main',
+          schoolSection: scopeMatch?.[2] || firestoreApp.SchoolSection || 'all',
+          ownerId: applicationReference,
+          documentType: definition.key,
+          fileName,
+          mimeType,
+          fileBase64,
+          operationId,
+          customMetadata: {
+            requestFingerprint: idempotency.fingerprint,
+            uploadedBy: 'parent'
+          }
+        });
+        savedDocumentUrl = stored.documentUrl;
         operation = await updateUploadOperation(env, operationId, {
-          Status: 'DriveSaved',
-          DriveState: 'Saved',
+          Status: 'StorageSaved',
+          StorageState: 'Saved',
           DocumentUrl: savedDocumentUrl,
-          StorageHttpStatus: Number(data.httpStatus || 200),
-          StorageMessage: clean(data.rawMessage || data.message).slice(0, 500),
-          DriveSavedAt: new Date().toISOString(),
+          StorageEtag: stored.etag,
+          StorageSize: stored.size,
+          StorageSavedAt: stored.uploadedAt,
           OutcomeUncertain: false
         });
         operationState = uploadOperationState(operation);
-        driveOutcomeRecorded = true;
+        storageOutcomeRecorded = true;
       } catch (error) {
-        throw uploadError(
-          'Google Drive accepted the file, but its result could not be saved durably. Automatic re-upload is suppressed.',
-          503,
-          'DRIVE_RESULT_PERSISTENCE_FAILED',
-          {
-            outcomeUncertain: true,
-            uncertaintyReason: clean(error?.message || error)
-          }
-        );
+        const storageMessage = clean(error?.message || error).slice(0, 500);
+        await updateUploadOperation(env, operationId, {
+          Status: 'Prepared',
+          StorageState: 'Retryable',
+          OutcomeUncertain: false,
+          LastStorageError: storageMessage,
+          LastRejectedAt: new Date().toISOString()
+        }).catch(() => null);
+        storageOutcomeRecorded = true;
+        throw error;
       }
     }
 
@@ -968,7 +894,7 @@ export async function onRequestPost(context) {
     });
     if (!latestApplication) {
       throw uploadError(
-        'The student or application record disappeared after Google Drive saved the file. Admissions must reconcile the saved file.',
+        'The student or application record disappeared after R2 saved the file. Admissions must reconcile the saved file.',
         503,
         'UPLOAD_METADATA_TARGET_MISSING'
       );
@@ -978,17 +904,17 @@ export async function onRequestPost(context) {
     const metadataAlreadySaved = clean(latestEntry.uploadOperationId) === operationId
       && clean(latestEntry.url) === savedDocumentUrl;
     if (!metadataAlreadySaved && !replaceExisting && latestUrl && latestUrl !== savedDocumentUrl) {
-      const conflictReason = `${definition.label} was updated by another upload before this Drive result could be attached.`;
+      const conflictReason = `${definition.label} was updated by another upload before this R2 result could be attached.`;
       await updateUploadOperation(env, operationId, {
         Status: 'MetadataConflict',
-        DriveState: 'Saved',
+        StorageState: 'Saved',
         MetadataState: 'Conflict',
         DocumentUrl: savedDocumentUrl,
         ManualReconciliationRequired: true,
         MetadataConflictReason: conflictReason
       }).catch(() => null);
       throw uploadError(
-        `${conflictReason} Automatic overwrite is suppressed; Admissions must reconcile the saved Drive file.`,
+        `${conflictReason} Automatic overwrite is suppressed; Admissions must reconcile the saved R2 object.`,
         503,
         'UPLOAD_METADATA_CONFLICT'
       );
@@ -1003,6 +929,9 @@ export async function onRequestPost(context) {
       replaceExisting,
       operationId
     );
+    if (replaceExisting && saved.previousUrl && saved.previousUrl !== savedDocumentUrl) {
+      await deleteStoredDocument(env, saved.previousUrl).catch(() => null);
+    }
     if (definition.key === 'PassportPhotograph' && thumbnailBase64 && thumbnailBase64.length <= 400000) {
       const thumbnailDocumentId = await admissionThumbnailDocumentId(
         applicationReference,
@@ -1031,7 +960,7 @@ export async function onRequestPost(context) {
     };
     await updateUploadOperation(env, operationId, {
       Status: 'MetadataSaved',
-      DriveState: 'Saved',
+      StorageState: 'Saved',
       MetadataState: 'Saved',
       DocumentUrl: savedDocumentUrl,
       PreviousDocumentUrl: clean(saved.previousUrl),
@@ -1056,7 +985,7 @@ export async function onRequestPost(context) {
   } catch (caught) {
     const err = caught instanceof Error ? caught : uploadError(clean(caught) || 'The document upload failed.');
     if (idempotency?.owner) {
-      if (err?.outcomeUncertain === true || (driveAttemptStarted && !driveOutcomeRecorded)) {
+      if (err?.outcomeUncertain === true || (storageAttemptStarted && !storageOutcomeRecorded)) {
         err.outcomeUncertain = true;
         await failIdempotentRequest(context.env, idempotency, err);
       } else {

@@ -1,9 +1,12 @@
 import { requiredDeploymentIdentity } from '../lib/deployment-identity.js';
 import { requireFirestoreEnv } from '../lib/firestore.js';
-import { resolveDocumentStorage } from '../lib/document-storage.js';
+import {
+  deleteStoredDocument,
+  putStoredDocument,
+  resolveDocumentStorage
+} from '../lib/document-storage.js';
 import {
   academicCbtPaperDigest,
-  academicCbtPaperStoragePayload,
   validateAcademicCbtPaper
 } from '../lib/academic-cbt-papers.js';
 import {
@@ -27,40 +30,11 @@ function failure(message, status = 400, code = '') {
   return error;
 }
 
-async function storageRequest(url, payload) {
-  let response;
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(payload)
-    });
-  } catch (cause) {
-    const error = failure('Google Drive could not confirm whether the CBT paper upload completed.', 503, 'DRIVE_UPLOAD_OUTCOME_UNCERTAIN');
-    error.outcomeUncertain = true;
-    error.cause = cause;
-    throw error;
-  }
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || !data.ok || !clean(data.documentUrl)) {
-    throw failure(data.message || 'The CBT question paper could not be stored in Google Drive.', response.ok ? 502 : response.status, clean(data.code));
-  }
-  return clean(data.documentUrl);
-}
-
-async function deleteUploadedPaper(storage, documentUrl) {
-  if (!documentUrl) return;
-  await fetch(storage.url, {
-    method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ Secret: storage.secret, Action: 'deleteStoredDocument', DocumentUrl: documentUrl })
-  }).catch(() => null);
-}
-
 export async function onRequestPost(context) {
-  return onLegacyRequestPost(context);
+  return handleRequest(context);
 }
 
-async function onLegacyRequestPost(context) {
+async function handleRequest(context) {
   let idempotency = null;
   let uploadedUrl = '';
   let storage = null;
@@ -85,23 +59,22 @@ async function onLegacyRequestPost(context) {
       });
     }
     storage = await resolveDocumentStorage(env);
-    if (!storage.configured) {
-      throw failure('Google Drive document storage is not configured. Add the Apps Script Web App URL in Settings > Storage.', 503, 'DOCUMENT_STORAGE_NOT_CONFIGURED');
-    }
+    if (!storage.configured) throw failure('Cloudflare R2 document storage is not connected.', 503, 'DOCUMENT_STORAGE_NOT_CONFIGURED');
     const fileBase64 = clean(body.FileBase64);
     const digest = await academicCbtPaperDigest(fileBase64);
-    const storagePayload = academicCbtPaperStoragePayload({
-      Secret: storage.secret,
-      OperationId: idempotency.documentId,
-      UploadAttemptId: crypto.randomUUID(),
-      BranchId: preview.context.scope.branchId,
-      CbtTestId: preview.record.CbtTestId,
-      ClientRequestId: body.ClientRequestId,
-      FileName: paper.fileName,
-      MimeType: paper.mimeType,
-      FileBase64: fileBase64
+    const stored = await putStoredDocument(env, {
+      category: 'academic-cbt',
+      branchId: preview.context.scope.branchId,
+      schoolSection: preview.context.scope.schoolSection,
+      ownerId: preview.record.CbtTestId,
+      documentType: 'question-paper',
+      operationId: idempotency.documentId,
+      fileName: paper.fileName,
+      mimeType: paper.mimeType,
+      fileBase64,
+      customMetadata: { uploadedBy: clean(user.username) }
     });
-    uploadedUrl = await storageRequest(storage.url, storagePayload);
+    uploadedUrl = stored.documentUrl;
     const saved = await saveAcademicCbtTest(env, user, {
       ...body,
       FileBase64: undefined,
@@ -115,7 +88,7 @@ async function onLegacyRequestPost(context) {
     }, { validation: preview });
     testSaved = true;
     if (clean(preview.existing?.PaperUrl) && clean(preview.existing.PaperUrl) !== uploadedUrl) {
-      await deleteUploadedPaper(storage, preview.existing.PaperUrl);
+      await deleteStoredDocument(env, preview.existing.PaperUrl).catch(() => null);
     }
     const created = saved.cbtTest || {};
     const data = {
@@ -128,7 +101,7 @@ async function onLegacyRequestPost(context) {
     await completeIdempotentRequest(env, idempotency, data, 200);
     return Response.json(data, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
-    if (uploadedUrl && storage && !testSaved) await deleteUploadedPaper(storage, uploadedUrl);
+    if (uploadedUrl && storage && !testSaved) await deleteStoredDocument(context.env, uploadedUrl).catch(() => null);
     if (idempotency?.owner) await failIdempotentRequest(context.env, idempotency, error);
     return Response.json({
       ok: false,

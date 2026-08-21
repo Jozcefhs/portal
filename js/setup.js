@@ -572,7 +572,6 @@ function profileFromForm() {
     ShowResultsOnline: data.get('ShowResultsOnline'),
     ProductKeyMode: data.get('ProductKeyMode'),
     OrganisationEdition: document.getElementById('organisationEdition').value,
-    GoogleDocumentsUrl: data.get('GoogleDocumentsUrl'),
     SubscriptionPlan: data.get('SubscriptionPlan'),
     UserLimit: data.get('UserLimit'),
     OnlinePaymentEnabled: data.get('OnlinePaymentEnabled'),
@@ -632,7 +631,12 @@ function applyProfile(profile = {}) {
   setField('resultDisplayMode', profile.ResultDisplayMode || 'subjects');
   setField('showResultsOnline', profile.ShowResultsOnline || 'NO');
   setField('productKeyMode', profile.ProductKeyMode || 'off');
-  setField('googleDocumentsUrl', profile.GoogleDocumentsUrl);
+  const storageStatus = document.getElementById('r2StorageStatus');
+  if (storageStatus) {
+    storageStatus.textContent = profile.DocumentStorageConfigured
+      ? 'Connected — Cloudflare R2 is ready.'
+      : 'Not connected — bind the deployment bucket as DYNAMAX_DOCUMENTS.';
+  }
   setField('subscriptionPlan', profile.SubscriptionPlan || 'Starter');
   setField('userLimit', profile.UserLimit || 5);
   setField('onlinePaymentEnabled', profile.OnlinePaymentEnabled || 'YES');

@@ -1,8 +1,5 @@
 import { getDocument, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
-import {
-  requireAppsScriptWebAppUrl,
-  selectDocumentStorageUrl
-} from '../lib/document-storage.js';
+import { documentStorageConfigured } from '../lib/document-storage.js';
 import { organizationProfileDocument, resolveOrganizationConfig } from '../lib/organization-config.js';
 import {
   assertDeploymentEditionSelection,
@@ -46,11 +43,6 @@ function defaultProfile(env) {
   const organization = resolveOrganizationConfig({
     env: { ...env, ORGANISATION_EDITION: deployment.edition, ORGANIZATION_EDITION: '' }
   });
-  const documentStorage = selectDocumentStorageUrl({
-    environmentUrl: env.GOOGLE_APPS_SCRIPT_URL,
-    alternateEnvironmentUrl: env.GOOGLE_DOCUMENTS_URL,
-    edition: deployment.edition
-  });
   return {
     WorkspaceId: deployment.workspaceId,
     OrganisationEdition: organization.Edition,
@@ -83,7 +75,8 @@ function defaultProfile(env) {
     CurrentTerm: clean(env.CURRENT_TERM) || 'First Term',
     DeclarationStatement: clean(env.DECLARATION_STATEMENT) || 'I declare that the information supplied in this application is complete and correct.',
     ProductKeyMode: clean(env.PRODUCT_KEY_MODE) || 'off',
-    GoogleDocumentsUrl: documentStorage.url,
+    DocumentStorageProvider: 'Cloudflare R2',
+    DocumentStorageConfigured: documentStorageConfigured(env),
     SubscriptionPlan: clean(env.SUBSCRIPTION_PLAN) || 'Starter',
     SubscriptionStatus: clean(env.SUBSCRIPTION_STATUS),
     TrialStartedAt: clean(env.TRIAL_STARTED_AT),
@@ -209,13 +202,10 @@ async function loadProfile(env, options = {}) {
   }
   if (!profile.SettingsScope) profile = await effectiveBranchProfile(env, profile);
   profile.TurnstileSiteKey = clean(env.TURNSTILE_SITE_KEY);
-  profile.GoogleDocumentsUrl = selectDocumentStorageUrl({
-    environmentUrl: env.GOOGLE_APPS_SCRIPT_URL,
-    alternateEnvironmentUrl: env.GOOGLE_DOCUMENTS_URL,
-    organizationUrl: savedOrganization?.GoogleDocumentsUrl,
-    schoolUrl: profile.GoogleDocumentsUrl,
-    edition: deployment.edition
-  }).url;
+  delete profile.GoogleDocumentsUrl;
+  delete profile.googleDocumentsUrl;
+  profile.DocumentStorageProvider = 'Cloudflare R2';
+  profile.DocumentStorageConfigured = documentStorageConfigured(env);
   delete profile.__name;
   delete profile.__id;
   delete profile.__createTime;
@@ -383,7 +373,6 @@ export async function onRequestPost(context) {
       CurrentTerm: clean(incoming.CurrentTerm) || 'First Term',
       DeclarationStatement: clean(incoming.DeclarationStatement) || 'I declare that the information supplied in this application is complete and correct.',
       ProductKeyMode: ['off', 'required'].includes(clean(incoming.ProductKeyMode)) ? clean(incoming.ProductKeyMode) : 'off',
-      GoogleDocumentsUrl: requireAppsScriptWebAppUrl(incoming.GoogleDocumentsUrl),
       SubscriptionPlan: organization.Plan,
       SubscriptionStatus: organization.SubscriptionStatus,
       SubscriptionActive: organization.SubscriptionActive,
@@ -423,7 +412,6 @@ export async function onRequestPost(context) {
     await upsertDocument(env, 'settings', 'organisationProfile', organizationProfileDocument({
       ...organization,
       WorkspaceId: deployment.workspaceId,
-      GoogleDocumentsUrl: profile.GoogleDocumentsUrl,
       Plan: profile.SubscriptionPlan,
       PlanEntitlements: existing.PlanEntitlements,
       PlanCatalogRevision: existing.PlanCatalogRevision,

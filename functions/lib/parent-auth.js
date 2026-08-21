@@ -49,7 +49,6 @@ function sessionSecret(env) {
     env.PARENT_SESSION_SECRET
     || env.STAFF_SESSION_SECRET
     || env.BACKEND_SHARED_SECRET
-    || env.GOOGLE_APPS_SCRIPT_SECRET
   );
   if (!secret) {
     const error = new Error('Parent sessions are not configured. Add PARENT_SESSION_SECRET in Cloudflare.');

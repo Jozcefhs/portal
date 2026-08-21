@@ -4,7 +4,6 @@ import { readFile } from 'node:fs/promises';
 
 import {
   academicCbtPaperDigest,
-  academicCbtPaperStoragePayload,
   validateAcademicCbtPaper
 } from '../functions/lib/academic-cbt-papers.js';
 import { ACADEMIC_CBT_OPTION_STYLES } from '../functions/lib/academic-management.js';
@@ -18,19 +17,6 @@ test('CBT papers accept only safe PDF/JPEG/PNG content and retain an upload dige
   assert.ok(paper.byteLength > 0);
   assert.match(await academicCbtPaperDigest(onePixelPng), /^[a-f0-9]{64}$/);
   assert.throws(() => validateAcademicCbtPaper({ FileName: 'questions.docx', FileBase64: 'UEsDBA==' }), /PDF, JPG or PNG/);
-});
-
-test('CBT Drive uploads use storage-only compatibility and an isolated CBT reference', () => {
-  const payload = academicCbtPaperStoragePayload({
-    Secret: 'secret', OperationId: 'operation-1', UploadAttemptId: 'attempt-1',
-    BranchId: 'Main Branch', CbtTestId: 'test-1', FileName: 'paper.pdf',
-    MimeType: 'application/pdf', FileBase64: 'JVBERi0xLjQK'
-  });
-  assert.equal(payload.Action, 'uploadParentDocument');
-  assert.equal(payload.StorageOnly, 'YES');
-  assert.equal(payload.ReplaceExisting, 'NO');
-  assert.match(payload.ApplicationReference, /^CBT-main-branch-test-1-/i);
-  assert.match(payload.FileName, /^CBT-test-1-/);
 });
 
 test('teachers may author online packages that are pulled onto the local desktop network', async () => {
@@ -55,6 +41,8 @@ test('teachers may author online packages that are pulled onto the local desktop
   assert.match(backend, /syncLocalCbtStudentPasswords/);
   assert.match(backend, /ArmId: ''/);
   assert.doesNotMatch(backend, /ACADEMIC_CBT_LOCAL_ONLY/);
-  assert.match(endpoint, /return onLegacyRequestPost\(context\)/);
+  assert.match(endpoint, /putStoredDocument\(env/);
+  assert.match(endpoint, /category: 'academic-cbt'/);
+  assert.doesNotMatch(endpoint, /GOOGLE_APPS_SCRIPT/);
   assert.doesNotMatch(endpoint, /ACADEMIC_CBT_LOCAL_ONLY/);
 });

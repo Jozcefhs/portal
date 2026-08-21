@@ -1,9 +1,6 @@
 import { getDocument, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
-import { resolveDocumentStorage } from '../lib/document-storage.js';
-import {
-  financeAttachmentStoragePayload,
-  validateFinanceAttachment
-} from '../lib/finance-attachments.js';
+import { putStoredDocument, resolveDocumentStorage } from '../lib/document-storage.js';
+import { validateFinanceAttachment } from '../lib/finance-attachments.js';
 import {
   beginIdempotentRequest,
   completeIdempotentRequest,
@@ -71,35 +68,6 @@ async function assertFinanceUploadAccess(env, user, input) {
   }
 }
 
-async function uploadViaAppsScript(url, payload) {
-  let response;
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(payload)
-    });
-  } catch (cause) {
-    const error = errorWithStatus('Google Drive storage could not confirm whether the upload completed. Try again after checking the storage service.', 503, 'DRIVE_UPLOAD_OUTCOME_UNCERTAIN');
-    error.outcomeUncertain = true;
-    error.cause = cause;
-    throw error;
-  }
-  const text = await response.text().catch(() => '');
-  let data = {};
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    const error = errorWithStatus('Google Drive storage returned an unreadable response, so the upload outcome cannot be confirmed.', 502, 'DRIVE_UPLOAD_OUTCOME_UNCERTAIN');
-    error.outcomeUncertain = true;
-    throw error;
-  }
-  if (!response.ok || data.ok === false || !clean(data.documentUrl)) {
-    throw errorWithStatus(data.message || 'The finance document could not be stored in Google Drive.', response.ok ? 502 : response.status);
-  }
-  return clean(data.documentUrl);
-}
-
 async function writeUploadAudit(env, user, input, validated, documentUrl) {
   const timestamp = new Date().toISOString();
   const id = `WEB-AUDIT-${timestamp.replace(/[^0-9]/g, '')}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
@@ -109,7 +77,7 @@ async function writeUploadAudit(env, user, input, validated, documentUrl) {
     Action: 'UPLOAD',
     RecordType: validated.definition.label,
     RecordId: clean(input.recordId) || 'Pending requisition',
-    Details: `${validated.fileName} stored in Google Drive.`,
+    Details: `${validated.fileName} stored in Cloudflare R2.`,
     DocumentUrl: documentUrl,
     User: actor(user),
     UserRole: clean(user.role),
@@ -145,27 +113,31 @@ export async function onRequestPost(context) {
       });
     }
     const storage = await resolveDocumentStorage(env);
-    if (!storage.configured) {
-      throw errorWithStatus(
-        'Google Drive document storage is not configured. Add the Apps Script Web App URL in Settings > Storage.',
-        503,
-        'DOCUMENT_STORAGE_NOT_CONFIGURED'
-      );
-    }
-    const storagePayload = financeAttachmentStoragePayload({
-      ...input,
-      secret: storage.secret,
+    if (!storage.configured) throw errorWithStatus(
+      'Cloudflare R2 document storage is not connected to this deployment.',
+      503,
+      'DOCUMENT_STORAGE_NOT_CONFIGURED'
+    );
+    const stored = await putStoredDocument(env, {
+      category: 'finance',
+      branchId: clean(user.branchId) || 'main',
+      schoolSection: clean(user.schoolSectionAccess) || 'all',
+      ownerId: clean(input.recordId) || idempotency.documentId,
+      documentType: validated.kind,
       fileName: validated.fileName,
       mimeType: validated.mimeType,
+      fileBase64: clean(input.fileBase64),
       operationId: idempotency.documentId,
-      uploadAttemptId: crypto.randomUUID(),
-      branchId: clean(user.branchId) || 'main'
+      customMetadata: {
+        uploadedBy: clean(user.username),
+        department: userDepartment(user)
+      }
     });
-    const documentUrl = await uploadViaAppsScript(storage.url, storagePayload);
+    const documentUrl = stored.documentUrl;
     await writeUploadAudit(env, user, input, validated, documentUrl);
     const data = {
       ok: true,
-      message: `${validated.definition.label} uploaded to Google Drive.`,
+      message: `${validated.definition.label} uploaded securely.`,
       documentUrl,
       fileName: validated.fileName
     };

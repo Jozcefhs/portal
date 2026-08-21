@@ -425,16 +425,16 @@
           <div class="settings-section-heading">
             <div><span class="settings-section-icon">S</span></div>
             <div>
-              <p class="settings-eyebrow">External storage</p>
-              <h2>Google document storage</h2>
-              <p>Configure the deployed Apps Script Web App that securely stores uploaded files in the organisation's Google Drive.</p>
+              <p class="settings-eyebrow">Private document storage</p>
+              <h2>Cloudflare R2</h2>
+              <p>Uploaded documents are stored in the workspace-isolated R2 bucket connected during deployment. There is no storage URL to configure here.</p>
             </div>
           </div>
           <div class="settings-fields">
             <div class="settings-field">
-              <label for="googleDocumentsUrl">Google Apps Script Web App URL</label>
-              <input id="googleDocumentsUrl" name="GoogleDocumentsUrl" type="url" placeholder="https://script.google.com/macros/s/.../exec">
-              <small class="settings-help">Use the deployed Web App URL ending in /exec. A Drive folder link will not work. Leave blank to use the server environment configuration.</small>
+              <label>Deployment storage status</label>
+              <div id="r2StorageStatus" class="settings-help" role="status">Checking the R2 binding…</div>
+              <small class="settings-help">Storage is configured in Cloudflare and applies to every edition. Branch, section and workspace isolation is enforced in each object key.</small>
             </div>
           </div>
         </section>

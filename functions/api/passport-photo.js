@@ -1,9 +1,9 @@
 // Authenticated, lazy passport-photo proxy for Firestore applications.
-// Firestore remains authoritative; Google Drive only stores the private bytes.
+// Firestore remains authoritative; Cloudflare R2 stores the private bytes.
 
 import { getDocument, requireFirestoreEnv } from '../lib/firestore.js';
 import { getSchoolDocumentById, querySchoolCollection } from '../lib/school-scope.js';
-import { resolveDocumentStorage } from '../lib/document-storage.js';
+import { getStoredDocument } from '../lib/document-storage.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { readParentSession, verifyStoredParentPassword } from '../lib/parent-auth.js';
 import {
@@ -140,31 +140,6 @@ function legacyThumbnailBelongsToApplication(thumbnail, application, scopePath) 
   return Boolean(thumbnailOperationId && applicationOperationId && thumbnailOperationId === applicationOperationId);
 }
 
-async function loadDriveFile(env, documentUrl) {
-  const storage = await resolveDocumentStorage(env);
-  if (!storage.url || !storage.secret) {
-    const error = new Error('Private document storage is not configured.');
-    error.status = 500;
-    throw error;
-  }
-  const response = await fetch(storage.url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({
-      Secret: storage.secret,
-      Action: 'getStoredDocument',
-      DocumentUrl: documentUrl
-    })
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || !data.ok || !data.fileBase64) {
-    const error = new Error(data.message || 'Passport photograph could not be loaded.');
-    error.status = response.status >= 400 ? response.status : 502;
-    throw error;
-  }
-  return data;
-}
-
 export async function onRequestPost(context) {
   try {
     const { request, env } = context;
@@ -276,12 +251,12 @@ export async function onRequestPost(context) {
         });
       }
     }
-    const file = await loadDriveFile(env, url);
+    const file = await getStoredDocument(env, url);
     const mimeType = clean(file.mimeType) || 'application/octet-stream';
     if (!mimeType.toLowerCase().startsWith('image/')) {
       return Response.json({ ok: false, message: 'The uploaded passport document is not a previewable image.' }, { status: 415 });
     }
-    return new Response(decodeBase64(file.fileBase64), {
+    return new Response(file.object.body, {
       status: 200,
       headers: {
         'Content-Type': mimeType,

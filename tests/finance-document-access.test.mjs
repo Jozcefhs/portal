@@ -11,9 +11,10 @@ import {
 } from '../functions/lib/finance-document-access.js';
 
 const portalRoot = new URL('../', import.meta.url);
-const [adminJs, endpoint] = await Promise.all([
+const [adminJs, endpoint, storage] = await Promise.all([
   readFile(new URL('js/admin.js', portalRoot), 'utf8'),
-  readFile(new URL('functions/api/finance-document.js', portalRoot), 'utf8')
+  readFile(new URL('functions/api/finance-document.js', portalRoot), 'utf8'),
+  readFile(new URL('functions/lib/document-storage.js', portalRoot), 'utf8')
 ]);
 
 test('finance document definitions resolve only authoritative record locations', () => {
@@ -77,11 +78,11 @@ test('finance document endpoint requires a staff session and returns hardened pr
   assert.match(endpoint, /requireStaffSession\(env, request\)/);
   assert.match(endpoint, /getDocument\(env, definition\.collection, safeFinanceDocumentId\(recordId\)\)/);
   assert.match(endpoint, /staffCanAccessFinanceDocument\(user, record\)/);
-  assert.match(endpoint, /Action: 'getStoredDocument'/);
-  assert.match(endpoint, /safeStoredDocument/);
-  assert.match(endpoint, /'Cache-Control': 'private, no-store'/);
-  assert.match(endpoint, /'Cross-Origin-Resource-Policy': 'same-origin'/);
-  assert.match(endpoint, /'X-Content-Type-Options': 'nosniff'/);
+  assert.match(endpoint, /getStoredDocument\(env, storedUrl\)/);
+  assert.match(endpoint, /storedDocumentResponse/);
+  assert.match(storage, /'Cache-Control', 'private, no-store'/);
+  assert.match(storage, /'Cross-Origin-Resource-Policy', 'same-origin'/);
+  assert.match(storage, /'X-Content-Type-Options', 'nosniff'/);
   assert.doesNotMatch(endpoint, /searchParams\.get\(['"](?:url|documentUrl)['"]\)/);
 });
 

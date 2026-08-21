@@ -13,7 +13,6 @@ import {
   schoolSectionFor,
   scopedCollectionPath
 } from '../lib/school-scope.js';
-import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
 import {
   beginIdempotentRequest,
   completeIdempotentRequest,
@@ -331,59 +330,15 @@ export async function onRequestPost(context) {
       });
     }
 
-    try {
-      const firestoreResult = await submitToFirestore(env, email, code, verification.receiptNo || '', application);
-      if (firestoreResult) {
-        if (firestoreResult.ok) await completeIdempotentRequest(env, idempotency, firestoreResult, 200);
-        else await failIdempotentRequest(env, idempotency, Object.assign(new Error(firestoreResult.message), { status: 400 }));
-        return Response.json(firestoreResult, { status: firestoreResult.ok ? 200 : 400 });
-      }
-      if (!legacyGoogleDataEnabled(env)) {
-        const error = new Error('No database form purchase matches that email and verification code.');
-        error.status = 404;
-        throw error;
-      }
-    } catch (firestoreErr) {
-      if (!legacyGoogleDataEnabled(env)) {
-        throw firestoreErr;
-      }
-    }
-
-    if (!legacyGoogleDataEnabled(env) || !env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) {
-      const error = new Error('Server submission is not configured yet.');
-      error.status = 503;
+    const data = await submitToFirestore(env, email, code, verification.receiptNo || '', application);
+    if (!data) {
+      const error = new Error('No database form purchase matches that email and verification code.');
+      error.status = 404;
       throw error;
     }
-
-    const payload = {
-      Secret: env.GOOGLE_APPS_SCRIPT_SECRET,
-      Action: 'submitApplication',
-      VerificationEmail: email,
-      VerificationCode: code,
-      ReceiptNo: verification.receiptNo || '',
-      Application: application
-    };
-
-    const res = await fetch(env.GOOGLE_APPS_SCRIPT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(payload)
-    });
-
-    const data = await res.json();
-    if (data.ok) {
-      await completeIdempotentRequest(env, idempotency, data, 200);
-      return Response.json(data, { status: 200 });
-    }
-
-    const recovered = await findSubmittedApplication(env, email, code);
-    if (recovered.ok) {
-      await completeIdempotentRequest(env, idempotency, recovered, 200);
-      return Response.json(recovered, { status: 200 });
-    }
-
-    await failIdempotentRequest(env, idempotency, Object.assign(new Error(data.message || 'Application submission failed.'), { status: 400 }));
-    return Response.json(data, { status: 400 });
+    if (data.ok) await completeIdempotentRequest(env, idempotency, data, 200);
+    else await failIdempotentRequest(env, idempotency, Object.assign(new Error(data.message), { status: 400 }));
+    return Response.json(data, { status: data.ok ? 200 : 400 });
 
   } catch (err) {
     if (idempotency?.owner) await failIdempotentRequest(context.env, idempotency, err);
@@ -391,36 +346,5 @@ export async function onRequestPost(context) {
       status: err.status || 500,
       headers: { 'Cache-Control': 'no-store' }
     });
-  }
-}
-
-async function findSubmittedApplication(env, email, code) {
-  try {
-    const url = new URL(env.GOOGLE_APPS_SCRIPT_URL);
-    url.searchParams.set('action', 'getApplications');
-    url.searchParams.set('secret', env.GOOGLE_APPS_SCRIPT_SECRET);
-
-    const res = await fetch(url.toString(), { method: 'GET' });
-    if (!res.ok) return { ok: false };
-
-    const data = await res.json();
-    const rows = Array.isArray(data) ? data : (data.applications || data.rows || []);
-    const match = rows.find((row) => {
-      const rowEmail = String(row.VerificationEmail || row.Email || '').trim().toLowerCase();
-      const rowCode = String(row.VerificationCode || '').trim().toUpperCase();
-      return rowEmail === email && rowCode === code;
-    });
-
-    if (!match) return { ok: false };
-    const reference = String(match.ApplicationReference || match.ApplicationID || '').trim();
-    return {
-      ok: true,
-      message: 'Application submitted successfully.',
-      recovered: true,
-      applicationReference: reference,
-      reference
-    };
-  } catch (_) {
-    return { ok: false };
   }
 }

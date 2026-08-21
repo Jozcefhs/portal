@@ -253,8 +253,6 @@ by any subscriber organisation:
 ### Enable only the features in use
 
 - `PAYSTACK_SECRET_KEY`
-- `GOOGLE_APPS_SCRIPT_URL` or `GOOGLE_DOCUMENTS_URL`
-- `GOOGLE_APPS_SCRIPT_SECRET`
 - `BREVO_API_KEY`
 - `BREVO_SENDER_EMAIL`
 - `BREVO_SENDER_NAME`
@@ -267,7 +265,10 @@ by any subscriber organisation:
 - `WEBAUTHN_RP_ID`
 - `WEBAUTHN_ORIGIN`
 - `WEBAUTHN_RP_NAME`
-- `DATA_BACKEND_MODE` — set only when explicitly enabling the legacy Google backend
+
+Every deployment also requires the `DYNAMAX_DOCUMENTS` R2 bucket binding. It is
+a binding rather than an environment variable and is created by the deployment
+workflow for each Pages project.
 
 Cloudflare Pages currently limits configured variables per environment. The source recognizes compatibility aliases, but the dashboard should contain only the canonical names above and the enabled feature set.
 
@@ -326,7 +327,7 @@ Cloudflare Pages currently limits configured variables per environment. The sour
 7. Stateless bearer tokens cannot be centrally revoked before expiry. Disabling the account blocks subsequent live checks, but a server-side session registry would enable immediate token revocation everywhere.
 8. Distributed authentication attacks from many addresses still require Cloudflare WAF/rate limiting; application limits alone are not a substitute.
 9. Never opt a test environment into a production `CANONICAL_PORTAL_URL` when testing mutations.
-10. Google Apps Script calls support a shared-secret-only trust mode. Several legacy calls send that bearer secret in the JSON body and some GET compatibility paths place it in the query string; there is no Cloudflare-side request signature, timestamp or nonce that independently prevents replay. A leaked script URL and secret can therefore impersonate the portal to the script unless the Apps Script deployment adds its own restrictions. Keep the secret isolated and rotated, avoid legacy Google data mode when it is not required, and prefer request-bound signatures if that integration is retained.
+10. Existing Google Drive document references are migration-only records. The live runtime does not fetch them; migrate their bytes into the correct deployment's R2 bucket before removing the old Drive deployment.
 11. The authoritative desktop-actor check is an explicit action allowlist, not a universal mutation gate. Some intentionally lower-risk, nonfinancial desktop mutations remain protected by the desktop shared secret and their local endpoint checks without reloading the staff actor. They must not be described as having authoritative role enforcement; any such action that begins making privilege-bearing, financial or security-sensitive changes should first be added to the authoritative gate and its role policy.
 12. DPAPI prevents new plaintext credential saves, but it cannot guarantee removal of credentials written by older builds. If one-time DPAPI migration fails, the desktop intentionally leaves the legacy plaintext settings fields in place to avoid losing backend access. Operators must treat that file as sensitive, correct DPAPI access, rerun migration, confirm the legacy keys were removed, and rotate any credential that may have been exposed.
 13. Source review and local tests cannot prove the production deployment matches this report. They do not establish the active Pages branch/artifact, `_routes.json`, encrypted-variable values, WAF/rate-limit rules, Firestore TTL policies, provider-side configuration, real quota use or live retry behavior. Those controls require an approved deployment, production-dashboard inspection and non-destructive log/trace evidence.

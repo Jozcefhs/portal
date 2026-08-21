@@ -5,7 +5,6 @@ import { getPayableFees, getSchoolCode, SCHOOL_FEES_TOTAL_CODE } from './backend
 import { readParentSession, verifyStoredParentPassword } from '../lib/parent-auth.js';
 import { createDocumentIfAbsent, findOneByField, getDocument, requireFirestoreEnv } from '../lib/firestore.js';
 import { normalizeClassKey } from '../lib/class-names.js';
-import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
 import {
   beginIdempotentRequest,
   completeIdempotentRequest,
@@ -177,28 +176,7 @@ export async function onRequestPost(context) {
         ScopePath: scopePath
       });
     } catch (firestoreErr) {
-      if (authenticatedParentEmail) {
-        return Response.json({ ok: false, message: firestoreErr.message || String(firestoreErr) }, { status: firestoreErr.status || 500 });
-      }
-      if (!legacyGoogleDataEnabled(env) || !env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) {
-        return Response.json({ ok: false, message: firestoreErr.message || String(firestoreErr) }, { status: firestoreErr.status || 500 });
-      }
-    }
-    if (!feeData && legacyGoogleDataEnabled(env) && env.GOOGLE_APPS_SCRIPT_URL && env.GOOGLE_APPS_SCRIPT_SECRET) {
-      const feeRes = await fetch(env.GOOGLE_APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          Secret: env.GOOGLE_APPS_SCRIPT_SECRET,
-          Action: 'getPayableFees',
-          Email: email,
-          VerificationCode: code,
-          AccountRef: accountRef,
-          SourceType: sourceType,
-          ScopePath: scopePath
-        })
-      });
-      feeData = await feeRes.json();
+      return Response.json({ ok: false, message: firestoreErr.message || String(firestoreErr) }, { status: firestoreErr.status || 500 });
     }
     if (!feeData.ok) {
       return Response.json(feeData, { status: 400 });

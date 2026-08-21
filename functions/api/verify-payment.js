@@ -3,7 +3,6 @@
 
 import { postChurchDonationToAccounting, recordManualPayment } from './backend.js';
 import { batchUpsertDocuments, createDocumentIfAbsent, getDocument, upsertDocument } from '../lib/firestore.js';
-import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
 import { markDonationPaidByReference, sendChurchDonationReceipt } from '../lib/church-payments.js';
 import { registerDonorFromPaidDonation } from '../lib/church-donation-management.js';
 import { finalizeOnlineOrganizationCommerceSale } from '../lib/organization-commerce.js';
@@ -138,15 +137,6 @@ function extractMetadata(data) {
   return metadata;
 }
 
-async function recordInAppsScript(env, payload) {
-  const recordRes = await fetch(env.GOOGLE_APPS_SCRIPT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  return recordRes.json();
-}
-
 export async function onRequestPost(context) {
   let idempotency = null;
   try {
@@ -159,9 +149,7 @@ export async function onRequestPost(context) {
     }
 
     const firestoreConfigured = env.FIREBASE_PROJECT_ID && env.FIREBASE_CLIENT_EMAIL && env.FIREBASE_PRIVATE_KEY;
-    const appsScriptConfigured = legacyGoogleDataEnabled(env) && env.GOOGLE_APPS_SCRIPT_URL && env.GOOGLE_APPS_SCRIPT_SECRET;
-
-    if (!env.PAYSTACK_SECRET_KEY || (!firestoreConfigured && !appsScriptConfigured)) {
+    if (!env.PAYSTACK_SECRET_KEY || !firestoreConfigured) {
       return Response.json({ ok: false, message: 'Online payment verification is not configured yet.' }, { status: 500 });
     }
 
@@ -250,8 +238,6 @@ export async function onRequestPost(context) {
     }
 
     const paymentPayload = {
-      Secret: env.GOOGLE_APPS_SCRIPT_SECRET,
-      Action: 'recordOnlinePayment',
       AccountRef: meta.accountRef || meta.applicationReference,
       ApplicationReference: meta.applicationReference || '',
       AdmissionNo: meta.admissionNo || '',
@@ -325,19 +311,6 @@ export async function onRequestPost(context) {
         recordErrors.push(`Database: ${err && err.message ? err.message : String(err)}`);
       }
     }
-    if (!isOrganizationCommerce && appsScriptConfigured && (!firestoreConfigured || !isChurchDonation)) {
-      try {
-        const sheetData = await recordInAppsScript(env, paymentPayload);
-        if (sheetData && sheetData.ok) {
-          recordData = recordData || sheetData;
-        } else {
-          recordErrors.push(`Google Sheets: ${(sheetData && sheetData.message) || 'record failed'}`);
-        }
-      } catch (err) {
-        recordErrors.push(`Google Sheets: ${err && err.message ? err.message : String(err)}`);
-      }
-    }
-
     let donation = null;
     let donationReceipt = null;
     let donationJournal = null;

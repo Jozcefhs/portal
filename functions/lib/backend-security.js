@@ -15,7 +15,7 @@ export function secureTextEqual(left, right) {
 }
 
 export function configuredDesktopSecret(env = {}) {
-  return clean(env.BACKEND_SHARED_SECRET || env.GOOGLE_APPS_SCRIPT_SECRET);
+  return clean(env.BACKEND_SHARED_SECRET);
 }
 
 export function requireConfiguredDesktopSecret(env = {}, label = 'desktop backend') {

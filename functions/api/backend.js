@@ -18,10 +18,10 @@ import {
   resolveAuthoritativeDesktopActorForEnv,
   verifyDesktopSecret
 } from '../lib/backend-security.js';
-import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
 import {
-  requireAppsScriptWebAppUrl,
-  selectDocumentStorageUrl
+  deleteStoredDocument,
+  documentStorageConfigured,
+  putStoredDocument
 } from '../lib/document-storage.js';
 import { organizationProfileDocument, resolveOrganizationConfig } from '../lib/organization-config.js';
 import { mergedProfileText } from '../lib/profile-settings-update.js';
@@ -1223,32 +1223,6 @@ async function findStudentForApplication(env, app) {
   return found || null;
 }
 
-async function getAppsScriptPayableFees(env, body = {}) {
-  if (!legacyGoogleDataEnabled(env)) return null;
-  if (!env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) return null;
-  const response = await fetch(env.GOOGLE_APPS_SCRIPT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      Secret: env.GOOGLE_APPS_SCRIPT_SECRET,
-      Action: 'getPayableFees',
-      Email: body.Email || body.email,
-      VerificationCode: body.VerificationCode || body.code,
-      AccountRef: body.AccountRef || body.accountRef || body.AdmissionNo || body.admissionNo
-    })
-  });
-  const text = await response.text();
-  try {
-    const data = JSON.parse(text);
-    return data && data.ok ? { ...data, backend: 'apps-script' } : data;
-  } catch (_err) {
-    return {
-      ok: false,
-      message: 'Google Sheets fee lookup did not return JSON. Confirm the Apps Script deployment is current.'
-    };
-  }
-}
-
 const GENERATED_ADMISSION_DOCUMENTS = {
   EntranceResult: {
     label: 'Entrance Result',
@@ -1281,8 +1255,8 @@ async function storeGeneratedAdmissionDocument(env, body) {
     err.status = 400;
     throw err;
   }
-  if (!env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) {
-    const err = new Error('Google Drive document storage is not configured.');
+  if (!documentStorageConfigured(env)) {
+    const err = new Error('Cloudflare R2 document storage is not connected.');
     err.status = 500;
     throw err;
   }
@@ -1294,31 +1268,20 @@ async function storeGeneratedAdmissionDocument(env, body) {
   }
   const applicationReference = pick(application, ['ApplicationReference', 'ApplicationID', '__id']);
   const existingUrl = clean(application[definition.urlField]);
-  const storageResponse = await fetch(env.GOOGLE_APPS_SCRIPT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({
-      Secret: env.GOOGLE_APPS_SCRIPT_SECRET,
-      Action: 'uploadParentDocument',
-      StorageOnly: 'YES',
-      ApplicationReference: applicationReference,
-      // StorageOnly uses the existing Drive uploader without changing any
-      // admission-document flags. The actual generated-document type is kept
-      // in Firestore below.
-      DocumentType: 'AcceptanceForm',
-      FileName: fileName,
-      MimeType: 'application/pdf',
-      FileBase64: fileBase64,
-      ReplaceExisting: existingUrl ? 'YES' : 'NO',
-      ExistingUrl: existingUrl
-    })
+  const scopeMatch = /^schoolBranches\/([^/]+)\/sections\/(primary|secondary)\//i.exec(clean(application.__scopePath));
+  const operationId = `generated-${await sha256Hex(`${applicationReference}|${body.DocumentType}|${fileBase64}`)}`;
+  const stored = await putStoredDocument(env, {
+    category: 'generated-admissions',
+    branchId: scopeMatch?.[1] || application.BranchId || 'main',
+    schoolSection: scopeMatch?.[2] || application.SchoolSection || 'all',
+    ownerId: applicationReference,
+    documentType: clean(body.DocumentType),
+    fileName,
+    mimeType: 'application/pdf',
+    fileBase64,
+    operationId,
+    customMetadata: { generatedBy: clean(body.UserRole || body.UpdatedBy || 'desktop') }
   });
-  const stored = await storageResponse.json().catch(() => ({}));
-  if (!storageResponse.ok || !stored.ok || !clean(stored.documentUrl)) {
-    const err = new Error(stored.message || 'The customized PDF could not be stored in Google Drive.');
-    err.status = storageResponse.status >= 400 ? storageResponse.status : 502;
-    throw err;
-  }
   const now = nowIso();
   const updated = {
     ...application,
@@ -1330,6 +1293,9 @@ async function storeGeneratedAdmissionDocument(env, body) {
   delete updated.__id;
   delete updated.__name;
   const saved = await saveApplication(env, updated);
+  if (existingUrl && existingUrl !== stored.documentUrl) {
+    await deleteStoredDocument(env, existingUrl).catch(() => null);
+  }
   return {
     ok: true,
     message: `${definition.label} customized PDF stored for parent download.`,
@@ -1337,82 +1303,6 @@ async function storeGeneratedAdmissionDocument(env, body) {
     documentUrl: clean(stored.documentUrl),
     application: saved
   };
-}
-
-async function getAppsScriptAccountsOverview(env) {
-  if (!legacyGoogleDataEnabled(env)) return null;
-  if (!env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) return null;
-  const response = await fetch(env.GOOGLE_APPS_SCRIPT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      Secret: env.GOOGLE_APPS_SCRIPT_SECRET,
-      Action: 'getAccountsOverview'
-    })
-  });
-  const text = await response.text();
-  try {
-    const data = JSON.parse(text);
-    return data && data.ok ? data : null;
-  } catch (_err) {
-    return null;
-  }
-}
-
-async function getAppsScriptApplications(env) {
-  if (!legacyGoogleDataEnabled(env)) return [];
-  if (!env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) return [];
-  const url = new URL(env.GOOGLE_APPS_SCRIPT_URL);
-  url.searchParams.set('secret', env.GOOGLE_APPS_SCRIPT_SECRET);
-  url.searchParams.set('action', 'getApplications');
-  try {
-    const response = await fetch(url.toString());
-    const text = await response.text();
-    const data = JSON.parse(text);
-    return data && data.ok && Array.isArray(data.applications) ? data.applications : [];
-  } catch (_err) {
-    return [];
-  }
-}
-
-async function getAppsScriptStudents(env) {
-  if (!legacyGoogleDataEnabled(env)) return [];
-  if (!env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) return [];
-  try {
-    const response = await fetch(env.GOOGLE_APPS_SCRIPT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        Secret: env.GOOGLE_APPS_SCRIPT_SECRET,
-        Action: 'getStudents'
-      })
-    });
-    const text = await response.text();
-    const data = JSON.parse(text);
-    return data && data.ok && Array.isArray(data.students) ? data.students : [];
-  } catch (_err) {
-    return [];
-  }
-}
-
-async function getAppsScriptFormSales(env) {
-  if (!legacyGoogleDataEnabled(env)) return [];
-  if (!env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) return [];
-  try {
-    const response = await fetch(env.GOOGLE_APPS_SCRIPT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        Secret: env.GOOGLE_APPS_SCRIPT_SECRET,
-        Action: 'getFormSales'
-      })
-    });
-    const text = await response.text();
-    const data = JSON.parse(text);
-    return data && data.ok && Array.isArray(data.sales) ? data.sales : [];
-  } catch (_err) {
-    return [];
-  }
 }
 
 function uniqueFirestoreRows(rows = []) {
@@ -1557,28 +1447,22 @@ export async function getPayableFees(env, body = {}) {
     : directIdentity &&
       identityUsesParentEmail(directIdentity, email) &&
       (authenticatedParent || studentLoginCodes(directIdentity).includes(code));
-  const [firestoreApplications, sheetApplications, firestoreStudents, sheetStudents, firestoreSales, sheetSales] = directIdentityValid
+  const [firestoreApplications, firestoreStudents, firestoreSales] = directIdentityValid
     ? [
       directCollection === 'applications' ? [directIdentity] : [],
-      [],
       directCollection === 'students' ? [directIdentity] : [],
-      [],
-      [],
       []
     ]
     : await Promise.all([
       queryParentIdentityRows(env, 'applications', email, code, ['VerificationCode']),
-      getAppsScriptApplications(env),
       queryParentIdentityRows(env, 'students', email, code, ['ParentLoginCode', 'VerificationCode', 'LoginCode']),
-      getAppsScriptStudents(env),
       queryCollection(env, 'formSales', {
         filters: [{ field: 'VerificationCode', op: '==', value: code }]
-      }).catch(() => []),
-      getAppsScriptFormSales(env)
+      }).catch(() => [])
     ]);
-  const applications = [...firestoreApplications, ...sheetApplications].map(normalizeApplication);
-  const students = [...firestoreStudents, ...sheetStudents].map(normalizeStudent);
-  const sales = [...firestoreSales, ...sheetSales];
+  const applications = firestoreApplications.map(normalizeApplication);
+  const students = firestoreStudents.map(normalizeStudent);
+  const sales = firestoreSales;
   const loginApp = applications.find((row) => identityUsesParentEmail(row, email) &&
     (authenticatedParent || clean(row.VerificationCode).toUpperCase() === code));
   const loginStudent = students.find((row) => identityUsesParentEmail(row, email) &&
@@ -1739,27 +1623,6 @@ export async function getPayableFees(env, body = {}) {
     queryAccountRows(env, 'invoices', accountRef),
     queryAccountRows(env, 'ledger', accountRef)
   ]);
-  if (!feeRows.length) {
-    const sheetFinance = await getAppsScriptAccountsOverview(env);
-    if (sheetFinance) {
-      feeRows = sheetFinance.feeItems || [];
-      paymentRows = [
-        ...(paymentRows || []),
-        ...(sheetFinance.payments || [])
-      ];
-      invoiceRows = [
-        ...(invoiceRows || []),
-        ...(sheetFinance.invoices || [])
-      ];
-      ledgerRows = [
-        ...(ledgerRows || []),
-        ...(sheetFinance.ledger || [])
-      ];
-    } else {
-      const sheetData = await getAppsScriptPayableFees(env, body);
-      if (sheetData) return sheetData;
-    }
-  }
   const allFees = feeRows.map(normalizeFeeItem)
     .filter((row) => yesNo(row.Active) === 'YES')
     .sort((a, b) => asMoneyNumber(a.SortOrder) - asMoneyNumber(b.SortOrder));
@@ -2562,7 +2425,6 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
     ShowResultsOnline: yesNo(mergedProfileText(existingProfile, body, 'ShowResultsOnline', 'showResultsOnline', 'NO')) || 'NO',
     OfferDocumentBodyTemplate: mergedProfileText(existingProfile, body, 'OfferDocumentBodyTemplate', 'offerDocumentBodyTemplate'),
     AdmissionDocumentBodyTemplate: mergedProfileText(existingProfile, body, 'AdmissionDocumentBodyTemplate', 'admissionDocumentBodyTemplate'),
-    GoogleDocumentsUrl: requireAppsScriptWebAppUrl(mergedProfileText(existingProfile, body, 'GoogleDocumentsUrl', 'googleDocumentsUrl')),
     SubscriptionPlan: clean(existingOrganization?.Plan || body.SubscriptionPlan || body.subscriptionPlan) || 'Starter',
     SubscriptionStatus: clean(existingOrganization?.SubscriptionStatus || body.SubscriptionStatus || body.subscriptionStatus),
     TrialStartedAt: clean(existingOrganization?.TrialStartedAt || body.TrialStartedAt || body.trialStartedAt),
@@ -2575,6 +2437,8 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
     UpdatedAt: nowIso(),
     UpdatedBy: clean(body.UserRole || body.UpdatedBy || body.updatedBy) || 'Super Admin'
   };
+  delete profile.GoogleDocumentsUrl;
+  delete profile.googleDocumentsUrl;
   const organization = resolveOrganizationConfig({
     env,
     organizationProfile: {
@@ -2628,7 +2492,6 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
   await upsertDocument(env, 'settings', 'organisationProfile', organizationProfileDocument({
     ...organization,
     WorkspaceId: deploymentIdentity?.workspaceId,
-    GoogleDocumentsUrl: profile.GoogleDocumentsUrl,
     Plan: profile.SubscriptionPlan,
     PlanEntitlements: existingOrganization?.PlanEntitlements,
     PlanCatalogRevision: existingOrganization?.PlanCatalogRevision,
@@ -2733,13 +2596,8 @@ async function getSchoolProfile(env, options = {}) {
       FeatureFlags: organization.FeatureFlags,
       PlanEntitlements: organization.PlanEntitlements,
       PlanCatalogRevision: clean(organizationProfile?.PlanCatalogRevision),
-      GoogleDocumentsUrl: selectDocumentStorageUrl({
-        environmentUrl: env.GOOGLE_APPS_SCRIPT_URL,
-        alternateEnvironmentUrl: env.GOOGLE_DOCUMENTS_URL,
-        organizationUrl: organizationProfile?.GoogleDocumentsUrl,
-        schoolUrl: profile?.GoogleDocumentsUrl,
-        edition: organization.Edition
-      }).url,
+      DocumentStorageProvider: 'Cloudflare R2',
+      DocumentStorageConfigured: documentStorageConfigured(env),
       SubscriptionPlan: clean(organizationProfile?.Plan || profile?.SubscriptionPlan) || 'Starter',
       SubscriptionStatus: organization.SubscriptionStatus,
       SubscriptionActive: organization.SubscriptionActive,
@@ -4333,7 +4191,7 @@ async function saveWalletCard(env, body) {
   };
   const pin = clean(body.WalletPin || body.Pin);
   if (pin) {
-    updates.WalletPinHash = await sha256Hex(`${clean(env.BACKEND_SHARED_SECRET || env.GOOGLE_APPS_SCRIPT_SECRET)}:${pin}`);
+    updates.WalletPinHash = await sha256Hex(`${requireConfiguredDesktopSecret(env, 'wallet PIN')}:${pin}`);
     updates.WalletPinSetAt = nowIso();
   }
   const saved = await saveStudent(env, updates);
@@ -4382,7 +4240,7 @@ export async function recordWalletPurchase(env, body) {
   const savedPinHash = clean(student.WalletPinHash);
   if (savedPinHash && pinThreshold > 0 && amount >= pinThreshold) {
     const suppliedPin = clean(body.WalletPin || body.Pin);
-    const suppliedHash = await sha256Hex(`${clean(env.BACKEND_SHARED_SECRET || env.GOOGLE_APPS_SCRIPT_SECRET)}:${suppliedPin}`);
+    const suppliedHash = await sha256Hex(`${requireConfiguredDesktopSecret(env, 'wallet PIN')}:${suppliedPin}`);
     if (!suppliedPin || suppliedHash !== savedPinHash) {
       const err = new Error('Invalid wallet PIN.');
       err.status = 400;

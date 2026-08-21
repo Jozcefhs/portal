@@ -14,20 +14,17 @@ test('branch profiles store only differences from organisation defaults', () => 
     SchoolName: 'Dynamax Academy',
     SchoolEmail: 'office@example.org',
     SchoolPhone: '08000000000',
-    SubscriptionPlan: 'Professional',
-    GoogleDocumentsUrl: 'https://script.google.com/macros/s/default/exec'
+    SubscriptionPlan: 'Professional'
   };
   const values = deriveBranchProfileOverrides(defaults, {
     SchoolName: 'Dynamax Academy',
     SchoolEmail: 'branch@example.org',
     SchoolPhone: '08000000000',
-    SubscriptionPlan: 'Free',
-    GoogleDocumentsUrl: 'https://malicious.example/upload'
+    SubscriptionPlan: 'Free'
   });
 
   assert.deepEqual(values, { SchoolEmail: 'branch@example.org' });
   assert.equal(BRANCH_PROFILE_OVERRIDE_FIELDS.includes('SubscriptionPlan'), false);
-  assert.equal(BRANCH_PROFILE_OVERRIDE_FIELDS.includes('GoogleDocumentsUrl'), false);
 });
 
 test('effective branch settings preserve explicit blank overrides and inheritance metadata', () => {

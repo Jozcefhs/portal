@@ -1,8 +1,7 @@
-// Authenticated proxy for private finance attachments stored in Google Drive.
+// Authenticated proxy for private finance attachments stored in Cloudflare R2.
 
 import { getDocument, requireFirestoreEnv } from '../lib/firestore.js';
-import { resolveDocumentStorage } from '../lib/document-storage.js';
-import { safeStoredDocument } from '../lib/document-files.js';
+import { getStoredDocument, storedDocumentResponse } from '../lib/document-storage.js';
 import {
   financeDocumentDefinition,
   financeDocumentReferenceMatches,
@@ -13,43 +12,6 @@ import {
 import { requireStaffSession } from '../lib/staff-auth.js';
 
 const clean = (value) => String(value ?? '').trim();
-const lower = (value) => clean(value).toLowerCase();
-
-function decodeBase64(value) {
-  const binary = atob(clean(value));
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  return bytes;
-}
-
-function safeFileName(value, fallback) {
-  return clean(value || fallback).replace(/[^\x20-\x7e]|[\r\n"\\/:*?<>|]+/g, '_').slice(0, 160) || fallback;
-}
-
-async function loadDriveFile(env, documentUrl) {
-  const storage = await resolveDocumentStorage(env);
-  if (!storage.url || !storage.secret) {
-    const error = new Error('Private document storage is not configured.');
-    error.status = 500;
-    throw error;
-  }
-  const response = await fetch(storage.url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({
-      Secret: storage.secret,
-      Action: 'getStoredDocument',
-      DocumentUrl: documentUrl
-    })
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || !data.ok || !data.fileBase64) {
-    const error = new Error(data.message || 'The finance document could not be loaded.');
-    error.status = response.status >= 400 ? response.status : 502;
-    throw error;
-  }
-  return data;
-}
 
 export async function onRequestGet(context) {
   try {
@@ -89,24 +51,10 @@ export async function onRequestGet(context) {
       });
     }
 
-    const file = await loadDriveFile(env, storedUrl);
-    const stored = safeStoredDocument(file.fileName || 'finance-document.bin', file.fileBase64);
-    const fileName = safeFileName(stored.fileName, 'finance-document.bin');
-    const requestedMode = lower(url.searchParams.get('mode'));
-    const disposition = stored.valid && stored.inlineSafe && requestedMode !== 'download'
-      ? 'inline'
-      : 'attachment';
-    return new Response(decodeBase64(file.fileBase64), {
-      status: 200,
-      headers: {
-        'Content-Type': stored.mimeType,
-        'Content-Disposition': `${disposition}; filename="${fileName}"`,
-        'Cache-Control': 'private, no-store',
-        'Content-Security-Policy': "sandbox; default-src 'none'; object-src 'none'; script-src 'none'",
-        'Cross-Origin-Resource-Policy': 'same-origin',
-        'Referrer-Policy': 'no-referrer',
-        'X-Content-Type-Options': 'nosniff'
-      }
+    const stored = await getStoredDocument(env, storedUrl);
+    return storedDocumentResponse(stored, {
+      fallbackFileName: 'finance-document.bin',
+      mode: url.searchParams.get('mode')
     });
   } catch (error) {
     return Response.json({ ok: false, message: clean(error?.message || error) }, {

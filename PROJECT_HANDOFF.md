@@ -89,12 +89,16 @@ Relevant cross-edition decisions already made:
 - While branch mode is selected, organisation-wide controls must be visibly
   locked so a user cannot mistake a local change for a global one.
 - Show success only after online synchronization has actually succeeded.
-- A newly saved Google Apps Script Web App URL must replace the previous
-  organisation or branch value in every companion that inherits that scope.
-- Drive-uploaded files intended for permitted portal viewers must be shared by
-  the Apps Script with an appropriate view permission so users do not reach a
-  Google Drive “Request access” screen. Never grant edit permission merely to
-  make viewing work.
+- Firestore is the only operational database and Cloudflare R2 is the only
+  online binary-document store. Google Apps Script and Google Drive are retired
+  from the live portal and desktop transport.
+- Each Pages project receives a dedicated `DYNAMAX_DOCUMENTS` R2 binding. R2
+  keys are additionally namespaced by deployment edition/workspace, branch,
+  school section, record owner and document type. Files remain private and are
+  served only through authenticated application endpoints.
+- Existing `drive.google.com` document references are legacy records, not an
+  online fallback. They must be migrated to R2 before they can be opened; the
+  runtime fails closed instead of silently contacting the retired service.
 - Read-aloud audio is limited to random-presence confirmation notifications
   and should use the device/browser speech engine without a paid service. This
   applies to all three editions where random-presence confirmation exists.

@@ -90,9 +90,11 @@ test('passport thumbnail identities are isolated by validated application scope'
 
 test('staff document responses canonicalize stored types and force unsafe formats to attachment', async () => {
   const source = await readFile(new URL('../functions/api/staff-document.js', import.meta.url), 'utf8');
-  assert.match(source, /safeStoredDocument/);
-  assert.match(source, /stored\.valid && stored\.inlineSafe \? mode : 'attachment'/);
-  assert.match(source, /Content-Security-Policy/);
+  const storageSource = await readFile(new URL('../functions/lib/document-storage.js', import.meta.url), 'utf8');
+  assert.match(source, /getStoredDocument/);
+  assert.match(source, /storedDocumentResponse/);
+  assert.match(storageSource, /inlineSafe/);
+  assert.match(storageSource, /Content-Security-Policy/);
   assert.match(source, /applicationScopePath/);
   assert.match(source, /admissionThumbnailDocumentId/);
 });

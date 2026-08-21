@@ -1,5 +1,4 @@
-import { listCollection, queryCollection, requireFirestoreEnv } from '../lib/firestore.js';
-import { legacyGoogleDataEnabled } from '../lib/backend-mode.js';
+import { queryCollection, requireFirestoreEnv } from '../lib/firestore.js';
 import { readJsonBody, verifyTurnstile } from '../lib/request-security.js';
 
 function clean(value) {
@@ -26,11 +25,7 @@ async function verifyFromFirestore(env, email, code) {
     filters: [{ field: 'VerificationCode', op: '==', value: code }],
     limit: 10
   }).catch(() => []);
-  let sale = targeted.find((row) => lower(row.Email) === email && clean(row.VerificationCode).toUpperCase() === code);
-  if (!sale) {
-    const sales = await listCollection(env, 'formSales');
-    sale = sales.find((row) => lower(row.Email) === email && clean(row.VerificationCode).toUpperCase() === code);
-  }
+  const sale = targeted.find((row) => lower(row.Email) === email && clean(row.VerificationCode).toUpperCase() === code);
   if (!sale) return null;
   if (isExpired(sale.ExpiryDate)) {
     return { ok: false, message: 'This verification code has expired. Please contact the Admissions Office.' };
@@ -51,19 +46,6 @@ async function verifyFromFirestore(env, email, code) {
   };
 }
 
-async function verifyFromAppsScript(env, email, code) {
-  if (!legacyGoogleDataEnabled(env) || !env.GOOGLE_APPS_SCRIPT_URL || !env.GOOGLE_APPS_SCRIPT_SECRET) {
-    return { ok: false, message: 'Server verification is not configured yet.' };
-  }
-  const url = new URL(env.GOOGLE_APPS_SCRIPT_URL);
-  url.searchParams.set('action', 'verify');
-  url.searchParams.set('email', email);
-  url.searchParams.set('code', code);
-  url.searchParams.set('secret', env.GOOGLE_APPS_SCRIPT_SECRET);
-  const res = await fetch(url.toString());
-  return res.json();
-}
-
 export async function onRequestPost(context) {
   try {
     const { request, env } = context;
@@ -76,25 +58,8 @@ export async function onRequestPost(context) {
     }
     await verifyTurnstile(env, request, body, 'verify_admission');
 
-    try {
-      const firestoreResult = await verifyFromFirestore(env, email, code);
-      if (firestoreResult) {
-        return Response.json(firestoreResult, {
-          status: firestoreResult.ok ? 200 : 400,
-          headers: { 'Cache-Control': 'no-store' }
-        });
-      }
-      if (!legacyGoogleDataEnabled(env)) {
-        return Response.json({ ok: false, message: 'No database form purchase matches that email and verification code.' }, { status: 404 });
-      }
-    } catch (firestoreErr) {
-      if (!legacyGoogleDataEnabled(env)) {
-        return Response.json({ ok: false, message: firestoreErr.message || String(firestoreErr) }, { status: firestoreErr.status || 500 });
-      }
-    }
-
-    const data = await verifyFromAppsScript(env, email, code);
-
+    const data = await verifyFromFirestore(env, email, code);
+    if (!data) return Response.json({ ok: false, message: 'No database form purchase matches that email and verification code.' }, { status: 404 });
     return Response.json(data, {
       status: data.ok ? 200 : 400,
       headers: { 'Cache-Control': 'no-store' }

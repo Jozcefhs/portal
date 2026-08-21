@@ -290,7 +290,6 @@ export function organizationProfileDocument(config, audit = {}) {
     FeatureFlags: resolved.FeatureFlags,
     UpdatedAt: clean(audit.UpdatedAt),
     UpdatedBy: clean(audit.UpdatedBy),
-    GoogleDocumentsUrl: clean(config.GoogleDocumentsUrl || config.googleDocumentsUrl),
     Plan: normalizeSubscriptionPlan(config.Plan || config.plan || resolved.Plan || 'Starter'),
     UserLimit: Math.max(1, Number(config.UserLimit || config.userLimit || resolved.UserLimit || 5) || 5),
     SubscriptionStatus: clean(config.SubscriptionStatus || config.subscriptionStatus || resolved.SubscriptionStatus),

@@ -47,7 +47,6 @@ function guestFeeSecret(env = {}) {
       || env.PARENT_SESSION_SECRET
       || env.STAFF_SESSION_SECRET
       || env.BACKEND_SHARED_SECRET
-      || env.GOOGLE_APPS_SCRIPT_SECRET
   );
   if (!secret) {
     const error = new Error('Guest fee-payment authorization is not configured. Add PARENT_SESSION_SECRET in Cloudflare.');
