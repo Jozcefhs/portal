@@ -36,22 +36,6 @@ async function cloudflareJson(url, token, options = {}, fetchImpl = fetch) {
   return data.result ?? data;
 }
 
-function acceptedDeploymentConfig(config = {}) {
-  const accepted = {};
-  for (const key of [
-    'ai_bindings', 'always_use_latest_compatibility_date',
-    'analytics_engine_datasets', 'browsers', 'build_image_major_version',
-    'compatibility_date', 'compatibility_flags', 'd1_databases',
-    'durable_object_namespaces', 'env_vars', 'fail_open', 'hyperdrive_bindings',
-    'kv_namespaces', 'limits', 'mtls_certificates', 'placement',
-    'queue_producers', 'r2_buckets', 'services', 'usage_model',
-    'vectorize_bindings'
-  ]) {
-    if (config[key] !== undefined && config[key] !== null) accepted[key] = config[key];
-  }
-  return accepted;
-}
-
 export async function ensureCloudflareR2Storage({
   accountId,
   token,
@@ -85,8 +69,11 @@ export async function ensureCloudflareR2Storage({
   const projectUrl = `${accountBase}/pages/projects/${encodeURIComponent(project)}`;
   const pagesProject = await cloudflareJson(projectUrl, apiToken, {}, fetchImpl);
   const current = pagesProject.deployment_configs || {};
+  // Pages project GET responses do not provide reusable encrypted secret values.
+  // Resubmitting the full deployment configuration can therefore replace an
+  // existing secret_text value with its masked/empty representation. PATCH only
+  // the binding map; Cloudflare preserves every omitted setting and secret.
   const withBinding = (configuration = {}) => ({
-    ...acceptedDeploymentConfig(configuration),
     r2_buckets: {
       ...(configuration.r2_buckets || {}),
       [binding]: { name: bucket }

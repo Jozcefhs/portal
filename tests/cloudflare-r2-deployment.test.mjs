@@ -15,7 +15,7 @@ test('tenant R2 bucket names are deterministic and within Cloudflare limits', ()
   assert.equal(long, r2BucketNameForProject('a'.repeat(80)));
 });
 
-test('deployment automation creates a missing bucket and preserves Pages configuration', async () => {
+test('deployment automation creates a missing bucket without resubmitting Pages secrets', async () => {
   const calls = [];
   const fetchImpl = async (url, options = {}) => {
     calls.push({ url, options });
@@ -31,10 +31,18 @@ test('deployment automation creates a missing bucket and preserves Pages configu
         result: {
           deployment_configs: {
             preview: {
-              env_vars: { EXISTING: { type: 'plain_text', value: 'yes' } },
-              ai_bindings: { AI: { project_id: 'existing-ai' } }
+              env_vars: {
+                EXISTING: { type: 'plain_text', value: 'yes' },
+                FIREBASE_PRIVATE_KEY: { type: 'secret_text', value: '' }
+              },
+              ai_bindings: { AI: { project_id: 'existing-ai' } },
+              r2_buckets: { EXISTING_FILES: { name: 'existing-files' } }
             },
-            production: { compatibility_date: '2026-08-01', limits: { cpu_ms: 50 } }
+            production: {
+              compatibility_date: '2026-08-01',
+              limits: { cpu_ms: 50 },
+              r2_buckets: { REPORTS: { name: 'academy-reports' } }
+            }
           }
         }
       });
@@ -51,9 +59,13 @@ test('deployment automation creates a missing bucket and preserves Pages configu
   assert.equal(result.bucketName, 'academy-documents');
   const patchCall = calls.find((call) => call.options.method === 'PATCH');
   const body = JSON.parse(patchCall.options.body);
-  assert.equal(body.deployment_configs.preview.env_vars.EXISTING.value, 'yes');
-  assert.equal(body.deployment_configs.preview.ai_bindings.AI.project_id, 'existing-ai');
-  assert.equal(body.deployment_configs.production.limits.cpu_ms, 50);
+  assert.deepEqual(Object.keys(body.deployment_configs.preview), ['r2_buckets']);
+  assert.deepEqual(Object.keys(body.deployment_configs.production), ['r2_buckets']);
+  assert.equal(body.deployment_configs.preview.env_vars, undefined);
+  assert.equal(body.deployment_configs.preview.ai_bindings, undefined);
+  assert.equal(body.deployment_configs.production.limits, undefined);
+  assert.deepEqual(body.deployment_configs.preview.r2_buckets.EXISTING_FILES, { name: 'existing-files' });
+  assert.deepEqual(body.deployment_configs.production.r2_buckets.REPORTS, { name: 'academy-reports' });
   assert.deepEqual(body.deployment_configs.preview.r2_buckets.DYNAMAX_DOCUMENTS, { name: 'academy-documents' });
   assert.deepEqual(body.deployment_configs.production.r2_buckets.DYNAMAX_DOCUMENTS, { name: 'academy-documents' });
 });
