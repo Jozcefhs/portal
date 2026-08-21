@@ -56,7 +56,7 @@ const cacheVersion = serviceWorker.match(/const CACHE = '([^']+)'/)?.[1];
 assert.ok(adminVersion, 'admin.html must use a versioned admin script.');
 assert.ok(cacheVersion, 'sw.js must use an explicit cache identifier.');
 assert.match(adminVersion, /local-offline-cbt/);
-assert.match(cacheVersion, /local-offline-cbt/);
+assert.match(cacheVersion, /transient-api-resilience/);
 
 assert.match(specification, /Milestone 11 implementation status/);
 assert.match(specification, /Milestone 11 implementation status[\s\S]*Operational baseline/);
