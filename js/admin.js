@@ -462,8 +462,17 @@ function warmPasskeyCredentialManager() {
   }
 }
 
-function staffFetch(input, init = {}) {
+const TRANSIENT_API_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+function transientApiResponse(response) {
+  const contentType = clean(response?.headers?.get('Content-Type')).toLowerCase();
+  return TRANSIENT_API_STATUS_CODES.has(Number(response?.status)) || !contentType.includes('json');
+}
+
+async function staffFetch(input, init = {}) {
   const options = { ...init };
+  const retrySafe = options.dynamaxRetrySafe === true;
+  delete options.dynamaxRetrySafe;
   if (!options.signal) options.signal = staffSessionAbortController.signal;
   const requestUrl = new URL(typeof input === 'string' ? input : input.url, window.location.href);
   if (requestUrl.origin === window.location.origin && requestUrl.pathname.startsWith('/api/')) {
@@ -472,7 +481,20 @@ function staffFetch(input, init = {}) {
     if (staffBearerToken) headers.set('Authorization', `Bearer ${staffBearerToken}`);
     options.headers = headers;
   }
-  return window.fetch(input, options);
+  const attempts = retrySafe ? 2 : 1;
+  let lastError = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await window.fetch(input, options);
+      if (attempt === attempts - 1 || !transientApiResponse(response)) return response;
+      await response.arrayBuffer().catch(() => null);
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts - 1) throw error;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 400));
+  }
+  throw lastError || new Error('The online service could not complete this request.');
 }
 
 async function refreshStaffSiteProfile() {
@@ -1715,6 +1737,7 @@ async function loadDashboard(options = {}) {
       method: 'POST',
       credentials: 'same-origin',
       cache: 'no-store',
+      dynamaxRetrySafe: true,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode, ...(section ? { section } : {}) })
     });
@@ -1784,6 +1807,25 @@ async function loadDashboard(options = {}) {
       : `${staffTabLabel(section, section) || 'Module'} updated.`, currentUser.subscriptionActive === false ? 'bad' : currentUser.subscriptionReadOnly === true ? 'warn' : 'ok');
     return true;
   } catch (error) {
+    if (mode === 'shell' && Array.isArray(currentUser?.allowedSections)) {
+      const allowed = currentUser.allowedSections;
+      dashboardData = mergeDashboardResponse(dashboardData, {
+        ok: true,
+        user: currentUser,
+        allowedSections: allowed,
+        summary: {}, charts: {}, departments: {}, summaryDeferred: true
+      });
+      activeSection = 'overview';
+      renderTabs(allowed);
+      renderWorkspace(activeSection);
+      renderSection(activeSection);
+      setStatus(
+        dashboardStatus,
+        'Workspace opened from your verified sign-in. The live overview is temporarily unavailable; open a module or use Refresh dashboard to try again.',
+        'warn'
+      );
+      return true;
+    }
     setStatus(dashboardStatus, error.message || String(error), 'bad');
     if (section && activeSection === section) {
       panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
@@ -11852,11 +11894,19 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
 async function academicManagementRequest(action, payload = {}) {
   const branchId = clean(selectedBranchId || currentUser?.branchId);
   if (!branchId || branchId === 'all') throw new Error('Select one school branch before using Academic Management.');
+  const normalizedAction = clean(action).toLowerCase();
+  const retrySafe = normalizedAction === 'bootstrap'
+    || normalizedAction.startsWith('get')
+    || normalizedAction.startsWith('preview');
   const response = await staffFetch('/api/staff-academics', {
     method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+    dynamaxRetrySafe: retrySafe,
     body: JSON.stringify({ action, BranchId: branchId, View: academicManagementView, ...payload })
   });
-  const data = await response.json().catch(() => ({ ok: false, message: 'Academic Management did not return JSON.' }));
+  const data = await response.json().catch(() => ({
+    ok: false,
+    message: `Academic Management received a temporary non-JSON response (HTTP ${response.status}). Refresh this workspace to try again.`
+  }));
   if (response.status === 401) { showLogin(data.message || 'Your staff session has expired.', 'bad'); throw new Error(data.message || 'Your session expired.'); }
   if (!response.ok || !data.ok) throw new Error(data.message || 'Academic Management could not complete this request.');
   if (data.refreshAcademicManagement === true && clean(action).toLowerCase() !== 'bootstrap') {
