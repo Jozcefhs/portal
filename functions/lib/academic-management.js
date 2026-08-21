@@ -4985,8 +4985,20 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
   });
   writes.push(auditWrite(user, 'SYNC_CBT_SCORES', 'scoreSyncBatch', syncRecord,
     `${sourceType}; ${updatedScores.length} students; ${preview.AbsentCount} absent`));
-  await commitAcademicBatch(env, writes,
-    'The score sheet changed while CBT scores were synchronizing. Reload and retry the same approved batch.');
+  try {
+    await commitAcademicBatch(env, writes,
+      'The score sheet changed while CBT scores were synchronizing. Reload and retry the same approved batch.');
+  } catch (error) {
+    const status = Number(error?.status || 500);
+    if ([408, 425, 429, 500, 502, 503, 504].includes(status)) {
+      throw failure(
+        'The online scorebook temporarily could not confirm this approved CBT batch. Retry Push Results Online; the same secured batch will not duplicate scores.',
+        status === 429 ? 429 : 503,
+        'ACADEMIC_CBT_SYNC_TEMPORARY'
+      );
+    }
+    throw error;
+  }
   return {
     ok: true,
     refreshAcademicManagement: true,
