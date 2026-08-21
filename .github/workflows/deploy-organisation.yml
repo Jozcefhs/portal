@@ -52,9 +52,9 @@ jobs:
     timeout-minutes: 20
     environment:
       name: ${{ inputs.github_environment }}
-      url: https://${{ inputs.cloudflare_project }}.pages.dev
+      url: https://r2-c978edce-cli.${{ inputs.cloudflare_project }}.pages.dev
     concurrency:
-      group: deploy-${{ inputs.organisation_id }}-production
+      group: deploy-${{ inputs.organisation_id }}-preview-r2-c978edce
       cancel-in-progress: true
     env:
       FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
@@ -85,38 +85,15 @@ jobs:
           fi
           node -e "const fs=require('node:fs'); const config=JSON.parse(fs.readFileSync(process.env.FIREBASE_CONFIG,'utf8')); const firestore=Array.isArray(config.firestore)?config.firestore[0]:config.firestore; if(!firestore?.indexes) throw new Error('Firebase configuration has no Firestore index file.'); JSON.parse(fs.readFileSync(firestore.indexes,'utf8'));"
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v3
-        with:
-          project_id: ${{ env.FIREBASE_PROJECT_ID }}
-          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
-          service_account: ${{ env.GCP_INDEX_SERVICE_ACCOUNT }}
-
       - name: Use Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Apply required Firestore indexes
-        shell: bash
-        run: >-
-          npx --yes firebase-tools@15.24.0 deploy
-          --only firestore:indexes
-          --project "${FIREBASE_PROJECT_ID}"
-          --config "${FIREBASE_CONFIG}"
-          --force
-          --non-interactive
-
       - name: Install function dependencies
         run: npm ci --ignore-scripts
 
-      - name: Ensure workspace-isolated Cloudflare R2 storage
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_PROJECT: ${{ inputs.cloudflare_project }}
-        run: node scripts/ensure-r2-storage.mjs --project "${CLOUDFLARE_PROJECT}"
-
-      - name: Prepare production files
+      - name: Prepare preview files
         shell: bash
         run: |
           set -euo pipefail
@@ -127,18 +104,18 @@ jobs:
           cp ./*.html .pages-deploy/
           cp app-icon.svg manifest.webmanifest sw.js version.json .pages-deploy/
 
-      - name: Deploy Cloudflare Pages production
+      - name: Deploy Cloudflare Pages preview
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy .pages-deploy --project-name=${{ inputs.cloudflare_project }} --branch=main --commit-hash=${{ github.sha }} --commit-dirty=false
+          command: pages deploy .pages-deploy --project-name=${{ inputs.cloudflare_project }} --branch=r2-c978edce-cli --commit-hash=${{ github.sha }} --commit-dirty=false
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify deployed organisation identity
         run: >-
           node scripts/verify-organisation-deployment.mjs
-          --url "https://${{ inputs.cloudflare_project }}.pages.dev"
+          --url "https://r2-c978edce-cli.${{ inputs.cloudflare_project }}.pages.dev"
           --workspace "${EXPECTED_WORKSPACE_ID}"
           --edition "${EXPECTED_EDITION}"
 
@@ -152,7 +129,7 @@ jobs:
             echo '- Organisation: `${{ inputs.organisation_id }}`'
             echo '- Edition: `${{ inputs.edition }}`'
             echo '- Firebase: `${{ env.FIREBASE_PROJECT_ID }}`'
-            echo '- Cloudflare Pages: `${{ inputs.cloudflare_project }}`'
+            echo '- Cloudflare Pages preview: `r2-c978edce-cli.${{ inputs.cloudflare_project }}.pages.dev`'
             echo '- Document storage: dedicated R2 bucket bound as `DYNAMAX_DOCUMENTS`'
             echo '- GitHub environment: `${{ inputs.github_environment }}`'
           } >> "${GITHUB_STEP_SUMMARY}"

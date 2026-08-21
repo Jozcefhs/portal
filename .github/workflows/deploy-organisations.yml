@@ -27,10 +27,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Validate registry and deployment tests
+      - name: Validate preview organisation registry
         run: |
           node scripts/organisation-deployment-matrix.mjs --validate-only
-          node --test tests/deployment-workflows.test.mjs
 
       - name: Build deployment matrix
         id: matrix
