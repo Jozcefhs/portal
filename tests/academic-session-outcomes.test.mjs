@@ -18,7 +18,10 @@ const [managementSource, adminSource, verifierSource, qrSource, serviceWorkerSou
   readFile(new URL('../functions/api/verify-academic-transcript.js', import.meta.url), 'utf8'),
   readFile(new URL('../functions/api/academic-transcript-qr.js', import.meta.url), 'utf8'),
   readFile(new URL('../sw.js', import.meta.url), 'utf8'),
-  readFile(new URL('../../suite/modules/academic_management.py', import.meta.url), 'utf8')
+  readFile(new URL('../../suite/modules/academic_management.py', import.meta.url), 'utf8').catch((error) => {
+    if (error?.code === 'ENOENT') return '';
+    throw error;
+  })
 ]);
 
 function policy() {
@@ -234,7 +237,9 @@ test('Milestone 10 live actions persist outcomes, promotion destinations and imm
   assert.match(managementSource, /auditWrite\(user, target\.toUpperCase\(\), 'transcript'/);
 });
 
-test('web and desktop companions expose the same session-outcome workflow without desktop packaging', () => {
+test('web and desktop companions expose the same session-outcome workflow without desktop packaging', {
+  skip: desktopSource ? false : 'Desktop companion repository is not present in this checkout.'
+}, () => {
   assert.match(adminSource, /Session outcomes/);
   assert.match(adminSource, /Cumulative results/);
   assert.match(adminSource, /Promotion decisions/);

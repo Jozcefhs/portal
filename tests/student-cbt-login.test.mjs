@@ -36,12 +36,22 @@ test('student password policy rejects unsafe values', async () => {
   await assert.rejects(() => hashStudentPassword(' StudentPass1!'), /begin or end/);
 });
 
-test('desktop CBT pulls encrypted online logins into the reusable local registry', async () => {
-  const [localCbt, academics, students] = await Promise.all([
-    readFile(new URL('../suite/modules/local_cbt.py', portalRoot), 'utf8'),
-    readFile(new URL('../suite/modules/academic_management.py', portalRoot), 'utf8'),
-    readFile(new URL('../suite/modules/students.py', portalRoot), 'utf8')
-  ]);
+test('desktop CBT pulls encrypted online logins into the reusable local registry', async (context) => {
+  let sources;
+  try {
+    sources = await Promise.all([
+      readFile(new URL('../suite/modules/local_cbt.py', portalRoot), 'utf8'),
+      readFile(new URL('../suite/modules/academic_management.py', portalRoot), 'utf8'),
+      readFile(new URL('../suite/modules/students.py', portalRoot), 'utf8')
+    ]);
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      context.skip('Desktop companion repository is not present in this checkout.');
+      return;
+    }
+    throw error;
+  }
+  const [localCbt, academics, students] = sources;
   assert.match(localCbt, /cbt_student_identity_registry/);
   assert.match(localCbt, /save_local_student_password/);
   assert.match(localCbt, /examination delivery, answer submission and marking never depend on[\s\S]*an Internet service/);
