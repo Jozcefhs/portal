@@ -82,6 +82,125 @@ function identityBase64UrlBytes(value) {
   }
 }
 
+function identityBase64UrlText(value, message = 'The CBT score synchronization preparation is invalid.') {
+  try {
+    return new TextDecoder().decode(identityBase64UrlBytes(value));
+  } catch (_error) {
+    throw failure(message, 409, 'ACADEMIC_CBT_SYNC_PREPARATION_INVALID');
+  }
+}
+
+async function academicCbtSyncPreparationKey(env = {}) {
+  const privateMaterial = String(env.FIREBASE_PRIVATE_KEY || '');
+  if (!privateMaterial.trim()) {
+    throw failure(
+      'The online score synchronization signer is not configured.',
+      503,
+      'ACADEMIC_CBT_SYNC_SIGNER_REQUIRED'
+    );
+  }
+  const material = identityEncoder.encode([
+    'dynamax-academic-cbt-sync-preparation-v1',
+    clean(env.FIREBASE_PROJECT_ID),
+    clean(env.DYNAMAX_WORKSPACE_ID),
+    privateMaterial
+  ].join('|'));
+  const derived = await crypto.subtle.digest('SHA-256', material);
+  return crypto.subtle.importKey(
+    'raw', derived, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']
+  );
+}
+
+export async function createAcademicCbtSyncPreparation(env, user, details = {}) {
+  const prepared = {
+    Version: 'dynamax-academic-cbt-sync-preparation-v1',
+    ExpiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    WorkspaceId: clean(env.DYNAMAX_WORKSPACE_ID),
+    ActorUsername: actorUsername(user),
+    BranchId: clean(details.BranchId),
+    SchoolSection: clean(details.SchoolSection),
+    BatchDigest: clean(details.BatchDigest).toLowerCase(),
+    SyncId: clean(details.SyncId),
+    Message: clean(details.Message),
+    Writes: Array.isArray(details.Writes) ? details.Writes : [],
+    Receipt: details.Receipt || {}
+  };
+  const payload = identityBase64Url(JSON.stringify(prepared));
+  const signature = await crypto.subtle.sign(
+    'HMAC', await academicCbtSyncPreparationKey(env), identityEncoder.encode(payload)
+  );
+  return { Payload: payload, Signature: identityBase64Url(signature) };
+}
+
+export async function verifyAcademicCbtSyncPreparation(env, user, input = {}) {
+  const token = input.ScoreSyncPreparation;
+  const payload = clean(token?.Payload);
+  const signature = clean(token?.Signature);
+  if (!payload || !signature) {
+    throw failure(
+      'The CBT score synchronization preparation is missing.',
+      409,
+      'ACADEMIC_CBT_SYNC_PREPARATION_REQUIRED'
+    );
+  }
+  let verified = false;
+  try {
+    verified = await crypto.subtle.verify(
+      'HMAC', await academicCbtSyncPreparationKey(env),
+      identityBase64UrlBytes(signature), identityEncoder.encode(payload)
+    );
+  } catch (_error) {
+    verified = false;
+  }
+  if (!verified) {
+    throw failure(
+      'The CBT score synchronization preparation could not be verified.',
+      409,
+      'ACADEMIC_CBT_SYNC_PREPARATION_INVALID'
+    );
+  }
+  let prepared;
+  try {
+    prepared = JSON.parse(identityBase64UrlText(payload));
+  } catch (_error) {
+    throw failure(
+      'The CBT score synchronization preparation is invalid.',
+      409,
+      'ACADEMIC_CBT_SYNC_PREPARATION_INVALID'
+    );
+  }
+  if (clean(prepared.Version) !== 'dynamax-academic-cbt-sync-preparation-v1') {
+    throw failure('The CBT score synchronization preparation uses an unsupported version.', 409, 'ACADEMIC_CBT_SYNC_PREPARATION_INVALID');
+  }
+  const expiresAt = Date.parse(clean(prepared.ExpiresAt));
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    throw failure('The CBT score synchronization preparation expired. Retry Push Results Online.', 409, 'ACADEMIC_CBT_SYNC_PREPARATION_EXPIRED');
+  }
+  if (lower(prepared.WorkspaceId) !== lower(env.DYNAMAX_WORKSPACE_ID)
+      || lower(prepared.ActorUsername) !== actorUsername(user)
+      || lower(prepared.BranchId) !== lower(input.BranchId)
+      || lower(prepared.SchoolSection) !== lower(input.SchoolSection)
+      || lower(prepared.BatchDigest) !== lower(input.BatchDigest)) {
+    throw failure('The CBT score synchronization preparation does not match this workspace or approved batch.', 409, 'ACADEMIC_CBT_SYNC_PREPARATION_MISMATCH');
+  }
+  const allowedCollections = new Set([
+    ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores,
+    ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,
+    ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSyncBatches,
+    ACADEMIC_MANAGEMENT_COLLECTIONS.audit
+  ]);
+  const writes = Array.isArray(prepared.Writes) ? prepared.Writes : [];
+  if (writes.length < 4 || writes.length > 500
+      || writes.some((write) => !allowedCollections.has(clean(write?.collectionPath)))) {
+    throw failure('The CBT score synchronization preparation contains invalid database writes.', 409, 'ACADEMIC_CBT_SYNC_PREPARATION_INVALID');
+  }
+  if (!writes.some((write) => clean(write.collectionPath) === ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSyncBatches
+      && clean(write.documentId) === clean(prepared.SyncId))) {
+    throw failure('The CBT score synchronization preparation is incomplete.', 409, 'ACADEMIC_CBT_SYNC_PREPARATION_INVALID');
+  }
+  return prepared;
+}
+
 function identityPublicKeyBytes(pem) {
   const normalized = clean(pem)
     .replace(/\\n/g, '\n')
@@ -4865,6 +4984,53 @@ export async function verifyAcademicCbtScoreSignature(input = {}) {
 }
 
 export async function syncAcademicCbtScores(env, user = {}, input = {}) {
+  if (input.ScoreSyncPreparation) {
+    requireWritableSubscription(user);
+    const permissions = requireCapability(user, 'canImportScores');
+    if (!permissions.canReviewScores) {
+      throw failure('Only an academic or examination reviewer may synchronize an approved CBT score batch.', 403, 'ACADEMIC_CBT_SYNC_REVIEWER_REQUIRED');
+    }
+    const assignedBranch = clean(user.branchId || user.BranchId);
+    if (assignedBranch && lower(assignedBranch) !== 'all'
+        && safeScopeId(assignedBranch) !== safeScopeId(input.BranchId)) {
+      throw failure('This staff account is restricted to another branch.', 403, 'ACADEMIC_BRANCH_FORBIDDEN');
+    }
+    assertUserSection(user, scopedSection(input));
+    const prepared = await verifyAcademicCbtSyncPreparation(env, user, input);
+    try {
+      await commitAcademicBatch(env, prepared.Writes,
+        'The score sheet changed while CBT scores were synchronizing. Reload and retry the same approved batch.');
+    } catch (error) {
+      if (Number(error?.status) === 409) {
+        const previousBatch = await getDocument(
+          env, ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSyncBatches, prepared.SyncId
+        ).catch(() => null);
+        if (previousBatch && lower(previousBatch.BatchDigest) === lower(prepared.BatchDigest)) {
+          return {
+            ok: true,
+            refreshAcademicManagement: true,
+            message: 'This approved CBT batch was already synchronized; no score was duplicated.',
+            scoreSyncReceipt: publicRecord(previousBatch)
+          };
+        }
+      }
+      const status = Number(error?.status || 500);
+      if ([408, 425, 429, 500, 502, 503, 504].includes(status)) {
+        throw failure(
+          'The online scorebook temporarily could not confirm this approved CBT batch. Retry Push Results Online; the same secured batch will not duplicate scores.',
+          status === 429 ? 429 : 503,
+          'ACADEMIC_CBT_SYNC_TEMPORARY'
+        );
+      }
+      throw error;
+    }
+    return {
+      ok: true,
+      refreshAcademicManagement: true,
+      message: prepared.Message,
+      scoreSyncReceipt: prepared.Receipt
+    };
+  }
   const context = await academicScoreSheetContext(
     env, user, input, 'canImportScores', ACADEMIC_SCOREBOOK_STATE_KEYS,
     { classWideSubjectAuthority: true }
@@ -4985,25 +5151,21 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
   });
   writes.push(auditWrite(user, 'SYNC_CBT_SCORES', 'scoreSyncBatch', syncRecord,
     `${sourceType}; ${updatedScores.length} students; ${preview.AbsentCount} absent`));
-  try {
-    await commitAcademicBatch(env, writes,
-      'The score sheet changed while CBT scores were synchronizing. Reload and retry the same approved batch.');
-  } catch (error) {
-    const status = Number(error?.status || 500);
-    if ([408, 425, 429, 500, 502, 503, 504].includes(status)) {
-      throw failure(
-        'The online scorebook temporarily could not confirm this approved CBT batch. Retry Push Results Online; the same secured batch will not duplicate scores.',
-        status === 429 ? 429 : 503,
-        'ACADEMIC_CBT_SYNC_TEMPORARY'
-      );
-    }
-    throw error;
-  }
+  const message = `${updatedScores.length} approved CBT score${updatedScores.length === 1 ? '' : 's'} synchronized into the Draft scorebook.`;
+  const scoreSyncPreparation = await createAcademicCbtSyncPreparation(env, user, {
+    BranchId: scope.branchId,
+    SchoolSection: scope.section,
+    BatchDigest: expectedDigest,
+    SyncId,
+    Message: message,
+    Writes: writes,
+    Receipt: publicRecord(syncRecord)
+  });
   return {
     ok: true,
-    refreshAcademicManagement: true,
-    message: `${updatedScores.length} approved CBT score${updatedScores.length === 1 ? '' : 's'} synchronized into the Draft scorebook.`,
-    scoreSyncReceipt: publicRecord(syncRecord)
+    commitRequired: true,
+    message: 'The approved CBT batch passed online validation and is ready to commit.',
+    scoreSyncPreparation
   };
 }
 

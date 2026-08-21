@@ -13012,7 +13012,16 @@ function bindAcademicManagement() {
       payload.BatchDigest = await academicCbtScorePayloadDigest(payload);
       externalCbtChoose.disabled = true;
       externalCbtChoose.textContent = 'Synchronizing...';
-      const response = await academicManagementRequest('syncAcademicCbtScores', payload);
+      let response = await academicManagementRequest('syncAcademicCbtScores', payload);
+      if (response.commitRequired === true) {
+        if (!response.scoreSyncPreparation?.Payload || !response.scoreSyncPreparation?.Signature) {
+          throw new Error('The backend did not return the verified CBT score synchronization preparation.');
+        }
+        response = await academicManagementRequest('syncAcademicCbtScores', {
+          ...payload,
+          ScoreSyncPreparation: response.scoreSyncPreparation
+        });
+      }
       renderAcademicManagement(response, response.message || 'External CBT results synchronized as Draft scores.');
     } catch (error) {
       setStatus(status, error.message || String(error), 'bad');

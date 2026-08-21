@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 import {
+  ACADEMIC_MANAGEMENT_COLLECTIONS,
   ACADEMIC_SCOREBOOK_STATE_KEYS,
   academicCbtScoreBatchDigest,
   academicScoreTeacherAllocations,
+  createAcademicCbtSyncPreparation,
+  verifyAcademicCbtSyncPreparation,
   verifyAcademicCbtScoreSignature
 } from '../functions/lib/academic-management.js';
 import {
@@ -20,6 +23,7 @@ import {
 const portalRoot = new URL('../', import.meta.url);
 const academicManagementSource = await readFile(new URL('functions/lib/academic-management.js', portalRoot), 'utf8');
 const adminSource = await readFile(new URL('js/admin.js', portalRoot), 'utf8');
+const backendSource = await readFile(new URL('functions/api/backend.js', portalRoot), 'utf8');
 
 const policy = {
   Assessment: {
@@ -197,6 +201,11 @@ test('Milestone 8 server contract exposes idempotent approved CBT score synchron
   assert.match(academicManagementSource, /ACADEMIC_CBT_SYNC_KEY_REUSED/);
   assert.match(academicManagementSource, /ACADEMIC_CBT_SYNC_TEMPORARY/);
   assert.match(academicManagementSource, /same secured batch will not duplicate scores/);
+  assert.match(academicManagementSource, /dynamax-academic-cbt-sync-preparation-v1/);
+  assert.match(academicManagementSource, /commitRequired: true/);
+  assert.match(adminSource, /ScoreSyncPreparation: response\.scoreSyncPreparation/);
+  assert.match(backendSource, /action === 'syncAcademicCbtScores' && status >= 500/);
+  assert.match(backendSource, /'syncAcademicCbtScores', 'syncLocalCbtStudentPasswords'/);
   assert.match(academicManagementSource, /ApprovalStatus/);
   assert.match(adminSource, /data-academic-external-cbt/);
   assert.match(adminSource, /external-cbt-adapter-template\.csv/);
@@ -222,7 +231,42 @@ test('class-wide CBT synchronization uses subject-teacher authority without requ
     academicScoreTeacherAllocations(state, candidate, { classWideSubjectAuthority: true }).map((row) => row.TeacherUsername),
     ['math.teacher']
   );
-  assert.match(academicManagementSource, /syncAcademicCbtScores[\s\S]{0,500}classWideSubjectAuthority: true/);
+  assert.match(academicManagementSource, /classWideSubjectAuthority: true/);
+});
+
+test('CBT score commits use a short-lived signed preparation bound to the workspace and approved batch', async () => {
+  const env = {
+    FIREBASE_PRIVATE_KEY: 'test-only-private-material',
+    FIREBASE_PROJECT_ID: 'school-project',
+    DYNAMAX_WORKSPACE_ID: 'school'
+  };
+  const user = { username: 'academic.reviewer' };
+  const digest = 'a'.repeat(64);
+  const syncId = 'score-sync-test';
+  const writes = [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores, documentId: 'score-1', data: {} },
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets, documentId: 'sheet-1', data: {} },
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSyncBatches, documentId: syncId, data: {} },
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.audit, documentId: 'audit-1', data: {} }
+  ];
+  const token = await createAcademicCbtSyncPreparation(env, user, {
+    BranchId: 'main', SchoolSection: 'secondary', BatchDigest: digest,
+    SyncId: syncId, Message: 'Scores synchronized.', Writes: writes,
+    Receipt: { SyncId: syncId }
+  });
+  const prepared = await verifyAcademicCbtSyncPreparation(env, user, {
+    BranchId: 'main', SchoolSection: 'secondary', BatchDigest: digest,
+    ScoreSyncPreparation: token
+  });
+  assert.equal(prepared.SyncId, syncId);
+  assert.equal(prepared.Writes.length, 4);
+  await assert.rejects(
+    verifyAcademicCbtSyncPreparation(env, user, {
+      BranchId: 'main', SchoolSection: 'secondary', BatchDigest: 'b'.repeat(64),
+      ScoreSyncPreparation: token
+    }),
+    (error) => error?.code === 'ACADEMIC_CBT_SYNC_PREPARATION_MISMATCH'
+  );
 });
 
 test('Milestone 8 verifies a signed local CBT batch identity', async () => {

@@ -1,6 +1,6 @@
 # Dynamax Project Handoff
 
-Last updated: 2026-08-17
+Last updated: 2026-08-21
 
 This is the starting point for continuing the project from another Codex
 account, computer or task. Read this file together with
@@ -378,13 +378,26 @@ Production was verified after deployment: the Scorebook loaded the active
 assessment components without the subrequest error. Current cache identifiers
 are:
 
-- admin script: `20260820-local-offline-cbt`
+- admin script: `20260821-cbt-score-commit`
 - parent script: `20260821-parent-onboarding`
-- service worker: `dynamax-v250-parent-onboarding`
+- service worker: `dynamax-v251-cbt-score-commit`
 
 If the error returns, first verify that the browser has these current assets,
 then inspect the specific API response. Do not “fix” it by raising a Worker
 limit or returning the full academic database again.
+
+Approved CBT score synchronization now separates its read-heavy validation
+from the atomic Firestore commit. The first request returns a ten-minute HMAC-
+signed preparation bound to the deployment workspace, current staff username,
+branch, school section and approved batch digest. Desktop and web clients
+automatically send that preparation in a second request, which rechecks the
+authoritative staff permission and scope before committing. This resets the
+Worker subrequest budget before the write, preserves optimistic preconditions
+and batch idempotency, and does not add another button or confirmation step.
+The desktop also displays the backend error reference, and the backend returns
+`ACADEMIC_CBT_SYNC_TEMPORARY` instead of hiding this action behind a generic
+500 message. The local failed batch remains safe to retry; no score was marked
+synchronized before the commit receipt was received.
 
 The School staff-account option `Allow student face-enrollment management` is
 an explicit per-user grant, not a role whitelist. It now authorizes enrollment
@@ -474,8 +487,8 @@ dependency was blocked by the Codex account usage limit. Install
 `suite\requirements.txt` into one Python environment, then rerun the full
 desktop command; do not treat those import errors as executed test failures.
 
-After the minimal student import and parent completion flow, the full portal
-run passed all 955 tests and the full desktop source run passed all 308 tests on
+After the two-request CBT score commit correction, the full portal run passed
+all 956 tests and the full desktop source run passed all 308 tests on
 2026-08-21. No desktop application or installer was compiled.
 
 Do not run `tools\build_release.ps1` and do not compile an installer yet.

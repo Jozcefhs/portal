@@ -111,7 +111,12 @@ Approved local batches use stable replay-safe identifiers, payload digests and
 a Windows-vault-protected signing key. The online receiver verifies the
 signature, pins the branch/section signing identity, revalidates the exact
 current roster, assessment component and maximum mark, and writes only to a
-Draft score sheet. Failed synchronizations remain retryable without duplicating
+Draft score sheet. Online validation returns a short-lived, workspace-, actor-,
+branch-, section- and batch-bound signed preparation; the desktop and web
+clients automatically submit that preparation in a second request whose only
+database work is the atomic score commit. This keeps validation and the write
+inside separate Worker request budgets without trusting the client or adding a
+second user action. Failed synchronizations remain retryable without duplicating
 scores, while corrected synchronized batches must be reopened with an audit
 reason and receive a new revision. The desktop creates encrypted, integrity-
 checked backups before the local server starts and exposes controlled backup

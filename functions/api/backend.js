@@ -756,6 +756,8 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'bulkAssignAcademicArmStudentSubjects',
   'moveAcademicStudentMembership', 'withdrawAcademicStudentMembership', 'reinstateAcademicStudentMembership',
   'archiveAcademicRecord', 'deleteAcademicRecord',
+  'syncAcademicCbtScores', 'syncLocalCbtStudentPasswords',
+  'downloadAcademicCbtTestPackage', 'acknowledgeAcademicCbtImport',
   'getAccountingRequisitionDocument', 'syncAccountingRevenue', 'saveChartAccount',
   'saveAccountingJournal', 'saveAccountingExpense', 'saveAccountingBudget',
   'submitAccountingImprest', 'reviewAccountingImprest', 'issueAccountingImprest',
@@ -7957,10 +7959,16 @@ export async function onRequestPost(context) {
       || String(err?.code || '').startsWith('DEPLOYMENT_')
       ? String(err.message || 'The desktop backend is not configured.')
       : '';
+    const cbtSyncFailure = action === 'syncAcademicCbtScores' && status >= 500
+      ? 'The online scorebook temporarily could not confirm this approved CBT batch. Retry Push Results Online; the same secured batch will not duplicate scores.'
+      : '';
+    const responseCode = err?.code || (cbtSyncFailure ? 'ACADEMIC_CBT_SYNC_TEMPORARY' : '');
     return Response.json({
       ok: false,
-      message: configurationMessage || (status >= 500 ? 'The backend could not complete this operation.' : String(err && err.message ? err.message : err)),
-      ...(err && err.code ? { code: err.code } : {})
+      message: configurationMessage || cbtSyncFailure
+        || (status >= 500 ? 'The backend could not complete this operation.' : String(err && err.message ? err.message : err)),
+      ...(responseCode ? { code: responseCode } : {}),
+      ...(responseCode === 'ACADEMIC_CBT_SYNC_TEMPORARY' ? { retryable: true } : {})
     }, { status, headers: { 'Cache-Control': 'no-store' } });
   }
 }

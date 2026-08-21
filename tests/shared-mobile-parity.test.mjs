@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260820-local-offline-cbt';
-const adminScriptVersion = '20260820-local-offline-cbt';
+const adminScriptVersion = '20260821-cbt-score-commit';
 const parentScriptVersion = '20260821-parent-onboarding';
 const notificationVersion = '20260804-read-efficiency';
 const pageNames = [
@@ -101,7 +101,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v250-parent-onboarding/);
+  assert.match(serviceWorker, /dynamax-v251-cbt-score-commit/);
   assert.match(serviceWorker, /'\/verify-result\.html'/);
   assert.match(serviceWorker, /'\/js\/verify-result\.js'/);
   assert.match(serviceWorker, /'\/css\/school-landing\.css'/);
