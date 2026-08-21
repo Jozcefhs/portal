@@ -15,6 +15,7 @@ on:
       - "tests/edition-aware-settings.test.mjs"
       - "docs/academic-*.md"
       - "scripts/academic-release-readiness.mjs"
+      - ".github/workflows/academic-release-readiness.yml"
       - "package.json"
       - "package-lock.json"
   push:
@@ -32,6 +33,7 @@ on:
       - "tests/edition-aware-settings.test.mjs"
       - "docs/academic-*.md"
       - "scripts/academic-release-readiness.mjs"
+      - ".github/workflows/academic-release-readiness.yml"
       - "package.json"
       - "package-lock.json"
   workflow_dispatch:
@@ -44,10 +46,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - name: Check out portal
+        uses: actions/checkout@v6
+        with:
+          path: portal
+      - name: Check out desktop companion
+        uses: actions/checkout@v6
+        with:
+          repository: Jozcefhs/Dynamax-Desktop
+          path: suite
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: portal/package-lock.json
       - run: npm ci
+        working-directory: portal
       - run: npm run test:academic-release
+        working-directory: portal
