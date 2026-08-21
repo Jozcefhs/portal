@@ -394,6 +394,9 @@ automatically send that preparation in a second request, which rechecks the
 authoritative staff permission and scope before committing. This resets the
 Worker subrequest budget before the write, preserves optimistic preconditions
 and batch idempotency, and does not add another button or confirmation step.
+Clients explicitly advertise this two-request capability; an older desktop or
+cached web client is rejected with `ACADEMIC_CBT_SYNC_CLIENT_UPDATE_REQUIRED`
+instead of mistaking validation for a completed score write.
 The desktop also displays the backend error reference, and the backend returns
 `ACADEMIC_CBT_SYNC_TEMPORARY` instead of hiding this action behind a generic
 500 message. The local failed batch remains safe to retry; no score was marked

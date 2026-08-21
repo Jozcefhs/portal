@@ -4984,6 +4984,13 @@ export async function verifyAcademicCbtScoreSignature(input = {}) {
 }
 
 export async function syncAcademicCbtScores(env, user = {}, input = {}) {
+  if (input.SupportsPreparedScoreCommit !== true && !input.ScoreSyncPreparation) {
+    throw failure(
+      'This Dynamax client must be updated or restarted before it can push CBT scores safely.',
+      409,
+      'ACADEMIC_CBT_SYNC_CLIENT_UPDATE_REQUIRED'
+    );
+  }
   if (input.ScoreSyncPreparation) {
     requireWritableSubscription(user);
     const permissions = requireCapability(user, 'canImportScores');

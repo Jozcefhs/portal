@@ -13006,6 +13006,7 @@ function bindAcademicManagement() {
         TeacherUsername: formPayload.TeacherUsername,
         AssessmentComponentId: component.Id, MaximumScore: Number(component.MaximumScore),
         SourceType: 'ExternalCBT', MarkingRevision: 1, ApprovalStatus: 'Approved',
+        SupportsPreparedScoreCommit: true,
         ProviderId: provider, SourceFileName: file.name, Scores: scores,
         SchoolSection: formPayload.SchoolSection
       };
