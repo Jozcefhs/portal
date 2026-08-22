@@ -14525,14 +14525,44 @@ function updateImprestRetirementTotals(form) {
   form.querySelector('[data-imprest-return-total]').textContent = money(Math.max(0, issued - expenses));
 }
 
-function printImprestReport(records, selected = null) {
-  const rows = selected ? [selected] : records;
-  const printable = window.open('', '_blank', 'width=1100,height=760');
-  if (!printable) return setStatus(document.getElementById('financeWorkflowStatus'), 'Allow pop-ups to print the imprest report.', 'bad');
+function imprestReportSections(records) {
   const retirementLines = (record) => Array.isArray(record.RetirementLines) && record.RetirementLines.length
     ? `<table><thead><tr><th>Date</th><th>Description</th><th>Account</th><th>Amount</th><th>Receipt</th></tr></thead><tbody>${record.RetirementLines.map((line, index) => `<tr><td>${escapeHtml(line.Date)}</td><td>${escapeHtml(line.Description)}</td><td>${escapeHtml(line.ExpenseAccount)}</td><td>${escapeHtml(money(line.Amount))}</td><td>${line.ReceiptUrl ? `<a href="${escapeHtml(protectedFinanceDocumentUrl({ recordType: 'imprest-receipt', recordId: record.ImprestNo || record.__id, line: index }))}" target="_blank" rel="noopener noreferrer">View</a>` : '-'}</td></tr>`).join('')}</tbody></table>` : '';
-  printable.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Imprest report</title><style>body{font:12px Arial;color:#102a43;margin:28px}h1{font-size:22px}section{margin:0 0 24px;break-inside:avoid}table{width:100%;border-collapse:collapse;margin:8px 0}th,td{border:1px solid #ccd8e5;padding:7px;text-align:left}th{background:#edf3f8}.money{text-align:right}.print{padding:8px 14px;background:#123f67;color:white;border:0;border-radius:6px}@media print{.print{display:none}body{margin:10mm}}</style></head><body><button class="print" onclick="window.print()">Print</button><h1>Imprest &amp; Petty Cash Report</h1>${rows.map((record) => `<section><h2>${escapeHtml(record.ImprestNo)} &middot; ${escapeHtml(record.Status)}</h2><table><tbody><tr><th>Custodian</th><td>${escapeHtml(record.CustodianName)}</td><th>Department</th><td>${escapeHtml(record.Department)}</td></tr><tr><th>Purpose</th><td colspan="3">${escapeHtml(record.Purpose)}</td></tr><tr><th>Requested</th><td>${escapeHtml(money(record.AmountRequested))}</td><th>Issued</th><td>${escapeHtml(money(record.AmountIssued || record.AmountApproved))}</td></tr><tr><th>Expenses</th><td>${escapeHtml(money(record.ExpenseTotal))}</td><th>Cash returned</th><td>${escapeHtml(money(record.ReturnedAmount))}</td></tr><tr><th>Due date</th><td>${escapeHtml(record.DueDate || '-')}</td><th>Return reference</th><td>${escapeHtml(record.ReturnReference || '-')}</td></tr></tbody></table>${retirementLines(record)}</section>`).join('')}</body></html>`);
-  printable.document.close();
+  return records.map((record) => `<section class="imprest-report-record"><h2>${escapeHtml(record.ImprestNo)} &middot; ${escapeHtml(record.Status)}</h2><div class="admin-table-wrap"><table class="admin-table imprest-report-summary"><tbody><tr><th>Custodian</th><td>${escapeHtml(record.CustodianName)}</td><th>Department</th><td>${escapeHtml(record.Department)}</td></tr><tr><th>Purpose</th><td colspan="3">${escapeHtml(record.Purpose)}</td></tr><tr><th>Requested</th><td>${escapeHtml(money(record.AmountRequested))}</td><th>Issued</th><td>${escapeHtml(money(record.AmountIssued || record.AmountApproved))}</td></tr><tr><th>Expenses</th><td>${escapeHtml(money(record.ExpenseTotal))}</td><th>Cash returned</th><td>${escapeHtml(money(record.ReturnedAmount))}</td></tr><tr><th>Due date</th><td>${escapeHtml(record.DueDate || '-')}</td><th>Return reference</th><td>${escapeHtml(record.ReturnReference || '-')}</td></tr></tbody></table></div>${retirementLines(record)}</section>`).join('');
+}
+
+function openImprestReportPreview(records, selected = null) {
+  const rows = selected ? [selected] : records;
+  const status = document.getElementById('financeWorkflowStatus');
+  if (!rows.length) return setStatus(status, 'There are no imprest records to display.', 'bad');
+  const dialog = document.getElementById('imprestReportDialog');
+  const content = dialog?.querySelector('[data-imprest-report-content]');
+  if (!dialog || !content) return setStatus(status, 'The imprest report preview is unavailable. Refresh the page and try again.', 'bad');
+  content.innerHTML = imprestReportSections(rows);
+  const count = dialog.querySelector('[data-imprest-report-count]');
+  if (count) count.textContent = selected ? clean(selected.ImprestNo || selected.__id) : `${rows.length} record${rows.length === 1 ? '' : 's'}`;
+  if (!dialog.open) dialog.showModal();
+}
+
+function printImprestReportPreview() {
+  const content = document.querySelector('#imprestReportDialog [data-imprest-report-content]');
+  if (!content?.innerHTML.trim()) return;
+  const frame = document.createElement('iframe');
+  frame.title = 'Imprest report print preview';
+  frame.setAttribute('aria-hidden', 'true');
+  frame.style.cssText = 'position:fixed;right:100%;bottom:0;width:1px;height:1px;border:0;opacity:0;pointer-events:none';
+  document.body.appendChild(frame);
+  const printable = frame.contentDocument;
+  printable.open();
+  printable.write(`<!doctype html><html><head><meta charset="utf-8"><title>Imprest report</title><style>body{font:12px Arial;color:#102a43;margin:10mm}h1{font-size:22px}section{margin:0 0 24px;break-inside:avoid}table{width:100%;border-collapse:collapse;margin:8px 0}th,td{border:1px solid #ccd8e5;padding:7px;text-align:left}th{background:#edf3f8}</style></head><body><h1>Imprest &amp; Petty Cash Report</h1>${content.innerHTML}</body></html>`);
+  printable.close();
+  const cleanup = () => frame.remove();
+  frame.contentWindow.addEventListener('afterprint', cleanup, { once: true });
+  window.setTimeout(() => {
+    frame.contentWindow.focus();
+    frame.contentWindow.print();
+  }, 100);
+  window.setTimeout(cleanup, 60000);
 }
 
 function renderFinanceWorkflow() {
@@ -14644,6 +14674,12 @@ function renderFinanceWorkflow() {
         <button type="submit">Submit Retirement</button><p class="status" data-form-status></p>
       </form>
     </dialog>`;
+  const imprestReportDialog = `
+    <dialog id="imprestReportDialog" class="workflow-dialog imprest-report-dialog">
+      <div class="workflow-dialog-header"><div><small>Imprest &amp; petty cash</small><h2>Report preview <span data-imprest-report-count></span></h2></div><button type="button" data-close-dialog aria-label="Close">&times;</button></div>
+      <div class="imprest-report-toolbar"><p class="muted">Review the report below, then print when ready.</p><button type="button" data-print-imprest-preview>Print</button></div>
+      <div class="imprest-report-content" data-imprest-report-content></div>
+    </dialog>`;
 
   panelEl.innerHTML = `
     <div class="workflow-intro">
@@ -14673,6 +14709,7 @@ function renderFinanceWorkflow() {
     ${imprestRecordsSection(imprests, capabilities)}
     ${submissionDialogs}
     ${imprestRetirementDialog}
+    ${imprestReportDialog}
   `;
   const financeLists = [...panelEl.querySelectorAll(':scope > .workflow-list-section')];
   mountWorkspaceTabs('financeRequests', [
@@ -15015,9 +15052,10 @@ function bindFinanceWorkflowEvents() {
   bindImprestWorkflowForms();
   panelEl.querySelectorAll('[data-print-imprest]').forEach((button) => button.addEventListener('click', () => {
     const record = (financeData?.imprests || []).find((row) => clean(row.ImprestNo || row.__id) === clean(button.dataset.printImprest));
-    if (record) printImprestReport(financeData.imprests || [], record);
+    if (record) openImprestReportPreview(financeData.imprests || [], record);
   }));
-  panelEl.querySelector('[data-print-imprest-report]')?.addEventListener('click', () => printImprestReport(financeData?.imprests || []));
+  panelEl.querySelector('[data-print-imprest-report]')?.addEventListener('click', () => openImprestReportPreview(financeData?.imprests || []));
+  panelEl.querySelector('[data-print-imprest-preview]')?.addEventListener('click', printImprestReportPreview);
   panelEl.querySelectorAll('[data-print-finance-record]').forEach((button) => {
     button.addEventListener('click', async () => {
       const type = button.dataset.recordType;
