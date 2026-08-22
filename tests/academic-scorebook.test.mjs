@@ -24,6 +24,7 @@ const portalRoot = new URL('../', import.meta.url);
 const academicManagementSource = await readFile(new URL('functions/lib/academic-management.js', portalRoot), 'utf8');
 const adminSource = await readFile(new URL('js/admin.js', portalRoot), 'utf8');
 const backendSource = await readFile(new URL('functions/api/backend.js', portalRoot), 'utf8');
+const styleSource = await readFile(new URL('css/style.css', portalRoot), 'utf8');
 
 const policy = {
   Assessment: {
@@ -225,6 +226,10 @@ test('Milestone 8 server contract exposes idempotent approved CBT score synchron
   assert.match(academicManagementSource, /ApprovalStatus/);
   assert.match(adminSource, /data-academic-external-cbt/);
   assert.match(adminSource, /external-cbt-adapter-template\.csv/);
+});
+
+test('score-entry student names use the compact register type size', () => {
+  assert.match(styleSource, /\.academic-scorebook-table td:first-child strong\{display:block;font-size:12px;line-height:1\.25\}/);
 });
 
 test('focused Academic Management reads establish one Firestore token before parallel collection loading', () => {
