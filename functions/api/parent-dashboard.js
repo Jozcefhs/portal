@@ -822,6 +822,46 @@ export function parentPassportPhotoSource(row = {}, fallbackReference = '') {
   };
 }
 
+function linkedApplicationReferences(child = {}) {
+  return [...new Set([
+    pick(child, ['ApplicationReference', 'applicationReference']),
+    pick(child, ['ApplicationID', 'applicationId']),
+    pick(child, ['AdmissionNo', 'admissionNo']),
+    pick(child, ['AccountRef', 'accountRef']),
+    pick(child, ['__id', '__name'])
+  ].map(clean).filter(Boolean))];
+}
+
+export async function enrichChildrenWithLinkedPassportPhotos(env, children = [], applications = [], options = {}) {
+  const readDocument = options.getDocument || getDocument;
+  await Promise.all((children || []).map(async (child) => {
+    if (!child || child.PassportPhotoAvailable) return;
+    const loadedApplication = findScopedChildApplication(applications, child);
+    if (loadedApplication && passportPhotoUrl(loadedApplication)) {
+      Object.assign(child, parentPassportPhotoSource(loadedApplication));
+      return;
+    }
+
+    // Legacy/imported student records may use a normalized parent email while
+    // their admission application retains the original email casing. Firestore
+    // string queries are case-sensitive, so the normal family query can miss
+    // that linked application. Read only the exact application documents that
+    // can belong to this already-authorized child, within the child's branch
+    // and school-section scope.
+    const applicationScopePath = identityScopePathForCollection(child, 'applications');
+    if (!applicationScopePath) return;
+    for (const reference of linkedApplicationReferences(child)) {
+      const row = await readDocument(env, applicationScopePath, safeDocumentId(reference)).catch(() => null);
+      if (!row) continue;
+      const candidate = { ...row, __scopePath: applicationScopePath };
+      if (!applicationMatchesChild(candidate, child) || !passportPhotoUrl(candidate)) continue;
+      Object.assign(child, parentPassportPhotoSource(candidate));
+      return;
+    }
+  }));
+  return children;
+}
+
 function normalizeStudent(row, profile = {}) {
   const displayName = formatPersonName(row, profile, pick(row, ['DisplayName', 'displayName', 'ApplicantName', 'applicantName']));
   const passportPhoto = parentPassportPhotoSource(row);
@@ -1750,12 +1790,7 @@ async function getDashboard(env, body, options = {}) {
     .forEach((child) => {
       children.push(child);
     });
-  children.forEach((child) => {
-    const linkedApplication = findScopedChildApplication(parentApplications, child);
-    if (linkedApplication && passportPhotoUrl(linkedApplication)) {
-      Object.assign(child, parentPassportPhotoSource(linkedApplication));
-    }
-  });
+  await enrichChildrenWithLinkedPassportPhotos(env, children, parentApplications);
   const ledger = (sources.ledger || []).map(normalizeLedger);
   const invoices = (sources.invoices || []).map(normalizeInvoice);
   const payments = (sources.payments || []).map(normalizePayment);

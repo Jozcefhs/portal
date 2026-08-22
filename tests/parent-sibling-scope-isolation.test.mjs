@@ -179,7 +179,15 @@ test('student admission-number application fallback is explicitly bound to the s
   assert.doesNotMatch(parentDashboardSource, /const linkedApplication = parentApplications\.find/);
   assert.match(
     parentDashboardSource,
-    /const linkedApplication = findScopedChildApplication\(parentApplications, child\)/
+    /await enrichChildrenWithLinkedPassportPhotos\(env, children, parentApplications\)/
+  );
+  assert.match(
+    parentDashboardSource,
+    /const applicationScopePath = identityScopePathForCollection\(child, 'applications'\)/
+  );
+  assert.match(
+    parentDashboardSource,
+    /if \(!applicationMatchesChild\(candidate, child\) \|\| !passportPhotoUrl\(candidate\)\) continue;/
   );
   assert.match(
     parentDashboardSource,
