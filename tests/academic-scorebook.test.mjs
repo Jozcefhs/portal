@@ -217,7 +217,10 @@ test('Milestone 8 server contract exposes idempotent approved CBT score synchron
   assert.match(academicManagementSource, /ACADEMIC_CBT_SYNC_CLIENT_UPDATE_REQUIRED/);
   assert.match(adminSource, /SupportsPreparedScoreCommit: true/);
   assert.match(adminSource, /ScoreSyncPreparation: response\.scoreSyncPreparation/);
-  assert.match(backendSource, /action === 'syncAcademicCbtScores' && status >= 500/);
+  assert.match(academicManagementSource, /SheetId, Status: 'Committed', SourceType: sourceType/);
+  assert.doesNotMatch(academicManagementSource, /SheetId, Status: 'Committed', SourceType,/);
+  assert.match(backendSource, /startsWith\('ACADEMIC_CBT_SYNC_'\)/);
+  assert.doesNotMatch(backendSource, /responseCode = err\?\.code \|\| \(cbtSyncFailure/);
   assert.match(backendSource, /'syncAcademicCbtScores', 'syncLocalCbtStudentPasswords'/);
   assert.match(academicManagementSource, /ApprovalStatus/);
   assert.match(adminSource, /data-academic-external-cbt/);

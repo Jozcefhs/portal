@@ -7959,10 +7959,11 @@ export async function onRequestPost(context) {
       || String(err?.code || '').startsWith('DEPLOYMENT_')
       ? String(err.message || 'The desktop backend is not configured.')
       : '';
-    const cbtSyncFailure = action === 'syncAcademicCbtScores' && status >= 500
+    const cbtSyncFailure = action === 'syncAcademicCbtScores'
+      && String(err?.code || '').startsWith('ACADEMIC_CBT_SYNC_')
       ? String(err?.message || 'The online scorebook is temporarily unavailable. Dynamax kept the approved batch safely queued and will not duplicate scores when it is retried.')
       : '';
-    const responseCode = err?.code || (cbtSyncFailure ? 'ACADEMIC_CBT_SYNC_TEMPORARY' : '');
+    const responseCode = err?.code || '';
     return Response.json({
       ok: false,
       message: configurationMessage || cbtSyncFailure

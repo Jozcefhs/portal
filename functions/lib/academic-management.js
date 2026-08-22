@@ -5154,7 +5154,7 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
   });
   const syncRecord = {
     RecordId: SyncId, SyncId, BatchId: batchKey, BatchDigest: expectedDigest,
-    SheetId, Status: 'Committed', SourceType,
+    SheetId, Status: 'Committed', SourceType: sourceType,
     SourceTestId: clean(input.SourceTestId || input.ExamId),
     ProviderId: clean(input.ProviderId).slice(0, 120),
     SourceFileName: clean(input.SourceFileName).slice(0, 240),
