@@ -929,9 +929,17 @@ async function loadAcademicState(env, branchId, requestedKeys = null) {
   const requested = new Set(requestedKeys);
   const allCollections = Object.entries(ACADEMIC_MANAGEMENT_COLLECTIONS).filter(([key]) => key !== 'audit');
   const collections = allCollections.filter(([key]) => requested.has(key));
-  const groups = await Promise.all(collections.map(([, collection]) => queryCollection(env, collection, {
+  const loadCollection = ([, collection]) => queryCollection(env, collection, {
     filters: [{ field: 'BranchId', op: '==', value: branchId }]
-  }).catch(() => [])));
+  });
+  // Establish the shared Firestore access token before parallel focused reads. On a
+  // cold Worker instance, starting every query together otherwise creates one OAuth
+  // request per collection and can exceed the invocation subrequest allowance.
+  const groups = [];
+  if (collections.length) {
+    groups.push(await loadCollection(collections[0]));
+    groups.push(...await Promise.all(collections.slice(1).map(loadCollection)));
+  }
   const loaded = new Map(collections.map(([key], index) => [
     key, groups[index].filter((row) => lower(row.BranchId || 'main') === lower(branchId))
   ]));
@@ -5024,11 +5032,27 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
           };
         }
       }
-      if ([408, 425, 429, 500, 502, 503, 504].includes(status)) {
+      if ([408, 425, 429, 502, 503, 504].includes(status)) {
         throw failure(
           'The online scorebook is temporarily unavailable. Dynamax kept the approved batch safely queued and will not duplicate scores when it is retried.',
           status === 429 ? 429 : 503,
           'ACADEMIC_CBT_SYNC_TEMPORARY'
+        );
+      }
+      if (status >= 500) {
+        const upstreamCode = clean(error?.upstreamCode || error?.code || 'FIRESTORE_COMMIT_FAILED');
+        const detail = clean(error?.message || 'The database rejected the CBT score batch.').slice(0, 260);
+        console.error(JSON.stringify({
+          event: 'academic_cbt_score_commit_failed',
+          status,
+          upstreamCode,
+          syncId: prepared.SyncId,
+          writeCount: Array.isArray(prepared.Writes) ? prepared.Writes.length : 0
+        }));
+        throw failure(
+          `The online scorebook could not save this submitted-score batch. ${detail}`,
+          500,
+          'ACADEMIC_CBT_SYNC_COMMIT_FAILED'
         );
       }
       throw error;
@@ -5052,7 +5076,7 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
     throw failure('CBT scores can synchronize only while the online score sheet is Draft.', 409, 'ACADEMIC_SCORE_SHEET_LOCKED');
   }
   if (lower(input.ApprovalStatus) !== 'approved') {
-    throw failure('Review and approve the complete CBT marking batch before synchronization.', 409, 'ACADEMIC_CBT_MARKING_NOT_APPROVED');
+    throw failure('Review and approve the submitted CBT results before synchronization.', 409, 'ACADEMIC_CBT_MARKING_NOT_APPROVED');
   }
   const sourceType = oneOf(input.SourceType, ['BuiltInCBT', 'ExternalCBT'], '');
   if (!sourceType) throw failure('Choose BuiltInCBT or ExternalCBT as the score source.');

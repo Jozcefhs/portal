@@ -255,8 +255,6 @@ export function validateAcademicCbtScoreBatch(value = {}, options = {}) {
       SubmittedAt: clean(row.SubmittedAt), Valid: RowIssues.length === 0, Issues: RowIssues
     };
   });
-  const missing = [...roster.entries()].filter(([key]) => !seen.has(key)).map(([, row]) => clean(row.StudentRef || row.AdmissionNo));
-  if (missing.length) Issues.push(`${missing.length} student${missing.length === 1 ? ' is' : 's are'} missing from the CBT batch.`);
   Rows.filter((row) => !row.Valid).forEach((row) => Issues.push(...row.Issues));
   return {
     Ready: Issues.length === 0,
@@ -264,6 +262,8 @@ export function validateAcademicCbtScoreBatch(value = {}, options = {}) {
     Rows,
     Component: component || null,
     RosterCount: roster.size,
+    SubmittedCount: Rows.length,
+    UntouchedRosterCount: Math.max(0, roster.size - seen.size),
     NumericCount: Rows.filter((row) => row.State === 'Numeric').length,
     AbsentCount: Rows.filter((row) => row.State === 'Absent').length
   };

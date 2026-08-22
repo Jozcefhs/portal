@@ -162,7 +162,7 @@ test('scorebook requests stay below the Worker subrequest ceiling', () => {
   assert.match(adminSource, /data\.partialAcademicManagement === true/);
 });
 
-test('Milestone 8 CBT batches require the configured source, exact roster and valid numeric or absent scores', () => {
+test('Milestone 8 CBT batches accept finalized submissions without changing untouched roster students', () => {
   const cbtPolicy = structuredClone(policy);
   cbtPolicy.Assessment.Components[0].SourceMode = 'built-in-cbt';
   const scheme = academicAssessmentScheme(cbtPolicy);
@@ -180,16 +180,26 @@ test('Milestone 8 CBT batches require the configured source, exact roster and va
   assert.equal(valid.NumericCount, 1);
   assert.equal(valid.AbsentCount, 1);
 
-  const missing = validateAcademicCbtScoreBatch({
+  const partial = validateAcademicCbtScoreBatch({
+    SourceType: 'BuiltInCBT', AssessmentComponentId: 'ca', MaximumScore: 40,
+    Scores: [{ StudentRef: 'DCA/001', State: 'Numeric', RawScore: 34 }]
+  }, {
+    scheme, sourceMode: 'built-in-cbt',
+    roster: [{ StudentRef: 'DCA/001' }, { StudentRef: 'DCA/002' }]
+  });
+  assert.equal(partial.Ready, true);
+  assert.equal(partial.SubmittedCount, 1);
+  assert.equal(partial.UntouchedRosterCount, 1);
+
+  const invalid = validateAcademicCbtScoreBatch({
     SourceType: 'BuiltInCBT', AssessmentComponentId: 'ca', MaximumScore: 40,
     Scores: [{ StudentRef: 'DCA/001', State: 'Numeric', RawScore: 41 }]
   }, {
     scheme, sourceMode: 'built-in-cbt',
     roster: [{ StudentRef: 'DCA/001' }, { StudentRef: 'DCA/002' }]
   });
-  assert.equal(missing.Ready, false);
-  assert.ok(missing.Issues.some((issue) => issue.includes('between 0 and 40')));
-  assert.ok(missing.Issues.some((issue) => issue.includes('missing from the CBT batch')));
+  assert.equal(invalid.Ready, false);
+  assert.ok(invalid.Issues.some((issue) => issue.includes('between 0 and 40')));
 });
 
 test('Milestone 8 server contract exposes idempotent approved CBT score synchronization', () => {
@@ -212,6 +222,13 @@ test('Milestone 8 server contract exposes idempotent approved CBT score synchron
   assert.match(academicManagementSource, /ApprovalStatus/);
   assert.match(adminSource, /data-academic-external-cbt/);
   assert.match(adminSource, /external-cbt-adapter-template\.csv/);
+});
+
+test('focused Academic Management reads establish one Firestore token before parallel collection loading', () => {
+  const loader = academicManagementSource.match(/async function loadAcademicState[\s\S]*?\n}/)?.[0] || '';
+  assert.match(loader, /groups\.push\(await loadCollection\(collections\[0\]\)\)/);
+  assert.match(loader, /collections\.slice\(1\)\.map\(loadCollection\)/);
+  assert.doesNotMatch(loader, /catch\(\(\) => \[\]\)/);
 });
 
 test('class-wide CBT synchronization uses subject-teacher authority without requiring an arm form teacher', () => {
