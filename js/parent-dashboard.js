@@ -211,7 +211,7 @@ async function loadPassportPhoto(child, image) {
       body: freshBody({
         ...authPayload(),
         applicationReference: reference,
-        scopePath: child.__scopePath || ''
+        scopePath: child.PassportPhotoScopePath || child.__scopePath || ''
       })
     });
     if (!response.ok) return;
@@ -1964,6 +1964,7 @@ parentDocumentUploadForm?.addEventListener('submit', async (event) => {
         passportPhotoCache.delete(cacheKey);
         child.PassportPhotoAvailable = true;
         child.PassportPhotoApplicationReference = applicationReference;
+        child.PassportPhotoScopePath = data.targetScopePath || child.PassportPhotoScopePath || child.__scopePath || '';
       }
     } catch (error) {
       failed += 1;

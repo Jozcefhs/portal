@@ -706,9 +706,12 @@ async function querySchoolIdentity(env, collection, email, code) {
   // the family data filter because siblings legitimately have different
   // application codes.
   if (email) {
-    const emailField = collection === 'applications' ? 'VerificationEmail' : 'ParentEmail';
+    const emailFields = collection === 'applications'
+      ? ['VerificationEmail', 'ParentEmail', 'Email', 'FatherEmail', 'MotherEmail', 'GuardianEmail']
+      : ['ParentEmail', 'VerificationEmail', 'Email', 'FatherEmail', 'MotherEmail', 'GuardianEmail'];
     const familyRows = await querySchoolCollection(env, collection, {
-      filters: [{ field: emailField, op: '==', value: email }]
+      filters: emailFields.map((field) => ({ field, op: '==', value: email })),
+      filterJoin: 'OR'
     }).catch(() => []);
     if (familyRows.length) return uniqueRows(familyRows);
   }
@@ -805,8 +808,23 @@ function passportPhotoUrl(row) {
   return clean(passport.url || row.DocPassportPhotographUrl || row.PassportPhotographUrl || row.PassportPhotographLink);
 }
 
+export function parentPassportPhotoSource(row = {}, fallbackReference = '') {
+  const reference = pick(row, [
+    'ApplicationReference', 'applicationReference',
+    'ApplicationID', 'applicationId',
+    'AdmissionNo', 'admissionNo',
+    'AccountRef', 'accountRef', '__id'
+  ], fallbackReference);
+  return {
+    PassportPhotoAvailable: Boolean(passportPhotoUrl(row)),
+    PassportPhotoApplicationReference: clean(reference),
+    PassportPhotoScopePath: clean(row.__scopePath)
+  };
+}
+
 function normalizeStudent(row, profile = {}) {
   const displayName = formatPersonName(row, profile, pick(row, ['DisplayName', 'displayName', 'ApplicantName', 'applicantName']));
+  const passportPhoto = parentPassportPhotoSource(row);
   return {
     ...row,
     AccountRef: pick(row, ['AccountRef', 'AdmissionNo', 'admissionNo', '__id']),
@@ -828,8 +846,7 @@ function normalizeStudent(row, profile = {}) {
     WalletPinThreshold: asMoneyNumber(pick(row, ['WalletPinThreshold', 'walletPinThreshold'])),
     Status: pick(row, ['Status', 'status'], 'Active'),
     StatusReason: pick(row, ['StatusReason', 'statusReason', 'WithdrawalReason', 'LeaveReason']),
-    PassportPhotoAvailable: Boolean(passportPhotoUrl(row)),
-    PassportPhotoApplicationReference: pick(row, ['ApplicationReference', 'applicationReference'])
+    ...passportPhoto
   };
 }
 
@@ -840,6 +857,7 @@ function normalizeApplicationChild(row, profile = {}) {
     pick(row, ['ApplicantName', 'applicantName', 'DisplayName', 'displayName', 'Name', 'name'])
   );
   const applicationRef = pick(row, ['ApplicationReference', 'applicationReference', 'ApplicationID', 'applicationId', '__id']);
+  const passportPhoto = parentPassportPhotoSource(row, applicationRef);
   return {
     ...row,
     AccountRef: applicationRef,
@@ -859,8 +877,7 @@ function normalizeApplicationChild(row, profile = {}) {
     WalletPinThreshold: 0,
     Status: pick(row, ['ResultStatus', 'resultStatus', 'Status', 'status'], 'Application'),
     StatusReason: '',
-    PassportPhotoAvailable: Boolean(passportPhotoUrl(row)),
-    PassportPhotoApplicationReference: applicationRef,
+    ...passportPhoto,
     EnglishScore: pick(row, ['EnglishScore', 'englishScore', 'English', 'english']),
     MathematicsScore: pick(row, ['MathematicsScore', 'mathematicsScore', 'MathScore', 'mathScore', 'Mathematics', 'mathematics']),
     InterviewScore: pick(row, ['InterviewScore', 'interviewScore', 'GeneralPaperScore', 'generalPaperScore']),
@@ -1736,8 +1753,7 @@ async function getDashboard(env, body, options = {}) {
   children.forEach((child) => {
     const linkedApplication = findScopedChildApplication(parentApplications, child);
     if (linkedApplication && passportPhotoUrl(linkedApplication)) {
-      child.PassportPhotoAvailable = true;
-      child.PassportPhotoApplicationReference = pick(linkedApplication, ['ApplicationReference', 'applicationReference', 'ApplicationID', 'applicationId', '__id']);
+      Object.assign(child, parentPassportPhotoSource(linkedApplication));
     }
   });
   const ledger = (sources.ledger || []).map(normalizeLedger);

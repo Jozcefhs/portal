@@ -956,6 +956,7 @@ export async function onRequestPost(context) {
       previousDocumentUrl: saved.previousUrl,
       applicationReference,
       targetCollection,
+      targetScopePath: applicationScopePath,
       backend: 'firestore'
     };
     await updateUploadOperation(env, operationId, {

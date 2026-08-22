@@ -16,7 +16,8 @@ test('parent dashboard exposes admission document upload for the selected child'
   assert.equal((html.match(/data-parent-document-type=/g) || []).length, 6);
   assert.match(script, /function parentDocumentApplicationReference\(child\)/);
   assert.match(script, /function passportPhotoCacheKey\(child, reference\)/);
-  assert.match(script, /scopePath: child\.__scopePath \|\| ''/);
+  assert.match(script, /scopePath: child\.PassportPhotoScopePath \|\| child\.__scopePath \|\| ''/);
+  assert.match(script, /child\.PassportPhotoScopePath = data\.targetScopePath/);
   assert.match(script, /Uploading for: \$\{child\.DisplayName/);
 });
 
