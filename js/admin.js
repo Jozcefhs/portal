@@ -92,6 +92,7 @@ let approvalAssetState = { signature: '', stamp: '' };
 let pendingFinanceDecision = null;
 let financeDecisionBiometricVerified = false;
 let financeDecisionApprovalProof = '';
+let protectedFilePreviewObjectUrl = '';
 let profilePhotoState = '';
 let staffBearerToken = '';
 let subscriptionData = null;
@@ -2893,19 +2894,79 @@ function protectedFileName(response, fallback = 'document') {
   return clean(fileName).replace(/[\\/:*?"<>|]+/g, '_') || 'document';
 }
 
+function clearProtectedFilePreview() {
+  const dialog = document.getElementById('protectedFilePreviewDialog');
+  const frame = dialog?.querySelector('[data-protected-file-preview-frame]');
+  if (frame) {
+    frame.hidden = true;
+    frame.removeAttribute('src');
+  }
+  if (protectedFilePreviewObjectUrl) {
+    URL.revokeObjectURL(protectedFilePreviewObjectUrl);
+    protectedFilePreviewObjectUrl = '';
+  }
+}
+
+function ensureProtectedFilePreviewDialog() {
+  let dialog = document.getElementById('protectedFilePreviewDialog');
+  if (dialog) return dialog;
+  dialog = document.createElement('dialog');
+  dialog.id = 'protectedFilePreviewDialog';
+  dialog.className = 'workflow-dialog protected-file-preview-dialog';
+  dialog.innerHTML = `
+    <div class="workflow-dialog-header"><div><small>Secure document</small><h2 data-protected-file-preview-title>Document preview</h2></div><button type="button" data-close-protected-file-preview aria-label="Close document preview">&times;</button></div>
+    <div class="protected-file-preview-body">
+      <p class="status" data-protected-file-preview-status>Opening document...</p>
+      <iframe data-protected-file-preview-frame title="Secure document preview" hidden></iframe>
+    </div>`;
+  document.body.appendChild(dialog);
+  dialog.querySelector('[data-close-protected-file-preview]')?.addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', clearProtectedFilePreview);
+  return dialog;
+}
+
+function prepareProtectedFilePreview(fileName = 'Document') {
+  const dialog = ensureProtectedFilePreviewDialog();
+  clearProtectedFilePreview();
+  const title = dialog.querySelector('[data-protected-file-preview-title]');
+  const status = dialog.querySelector('[data-protected-file-preview-status]');
+  if (title) title.textContent = fileName;
+  if (status) {
+    status.hidden = false;
+    status.className = 'status';
+    status.textContent = 'Opening document...';
+  }
+  if (!dialog.open) dialog.showModal();
+  return dialog;
+}
+
+function showProtectedFilePreview(dialog, blob, fileName) {
+  const frame = dialog?.querySelector('[data-protected-file-preview-frame]');
+  const title = dialog?.querySelector('[data-protected-file-preview-title]');
+  const status = dialog?.querySelector('[data-protected-file-preview-status]');
+  if (!frame || !dialog) return;
+  protectedFilePreviewObjectUrl = URL.createObjectURL(blob);
+  if (title) title.textContent = fileName || 'Document preview';
+  if (status) status.hidden = true;
+  frame.title = fileName ? `Preview of ${fileName}` : 'Secure document preview';
+  frame.src = protectedFilePreviewObjectUrl;
+  frame.hidden = false;
+}
+
+function showProtectedFilePreviewError(dialog, message) {
+  const status = dialog?.querySelector('[data-protected-file-preview-status]');
+  if (!status) return;
+  status.hidden = false;
+  status.className = 'status bad';
+  status.textContent = message || 'The requested file could not be opened.';
+}
+
 async function openProtectedFile(button) {
   const resourceUrl = clean(button.dataset.protectedFile);
   const mode = clean(button.dataset.fileMode) || 'download';
   if (!resourceUrl) return;
-  let viewer = null;
-  if (mode === 'view') {
-    viewer = window.open('about:blank', '_blank');
-    if (!viewer) {
-      setStatus(dashboardStatus, 'Allow pop-ups for this site to view the document.', 'bad');
-      return;
-    }
-    viewer.opener = null;
-  }
+  const requestedName = clean(button.dataset.fileName) || 'Document preview';
+  const viewer = mode === 'view' ? prepareProtectedFilePreview(requestedName) : null;
   const normalMarkup = button.innerHTML;
   setButtonLoading(button, true, mode === 'view' ? 'Opening...' : 'Downloading...', normalMarkup);
   try {
@@ -2915,7 +2976,7 @@ async function openProtectedFile(button) {
     });
     if (response.status === 401) {
       const data = await response.json().catch(() => ({}));
-      if (viewer) viewer.close();
+      if (viewer?.open) viewer.close();
       showLogin(data.message || 'Your staff session has expired. Please sign in again.', 'bad');
       return;
     }
@@ -2923,13 +2984,12 @@ async function openProtectedFile(button) {
       const data = await response.json().catch(() => ({}));
       throw new Error(data.message || 'The requested file could not be opened.');
     }
-    const fileName = protectedFileName(response, clean(button.dataset.fileName) || 'document');
-    const objectUrl = URL.createObjectURL(await response.blob());
+    const fileName = protectedFileName(response, requestedName);
+    const blob = await response.blob();
     if (mode === 'view') {
-      viewer.location.replace(objectUrl);
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 5 * 60 * 1000);
-      viewer = null;
+      showProtectedFilePreview(viewer, blob, fileName);
     } else {
+      const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = objectUrl;
       link.download = fileName;
@@ -2939,7 +2999,7 @@ async function openProtectedFile(button) {
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
     }
   } catch (error) {
-    if (viewer) viewer.close();
+    if (viewer) showProtectedFilePreviewError(viewer, error.message || String(error));
     setStatus(dashboardStatus, error.message || String(error), 'bad');
   } finally {
     setButtonLoading(button, false, '', normalMarkup);
@@ -14527,7 +14587,7 @@ function updateImprestRetirementTotals(form) {
 
 function imprestReportSections(records) {
   const retirementLines = (record) => Array.isArray(record.RetirementLines) && record.RetirementLines.length
-    ? `<table><thead><tr><th>Date</th><th>Description</th><th>Account</th><th>Amount</th><th>Receipt</th></tr></thead><tbody>${record.RetirementLines.map((line, index) => `<tr><td>${escapeHtml(line.Date)}</td><td>${escapeHtml(line.Description)}</td><td>${escapeHtml(line.ExpenseAccount)}</td><td>${escapeHtml(money(line.Amount))}</td><td>${line.ReceiptUrl ? `<a href="${escapeHtml(protectedFinanceDocumentUrl({ recordType: 'imprest-receipt', recordId: record.ImprestNo || record.__id, line: index }))}" target="_blank" rel="noopener noreferrer">View</a>` : '-'}</td></tr>`).join('')}</tbody></table>` : '';
+    ? `<table><thead><tr><th>Date</th><th>Description</th><th>Account</th><th>Amount</th><th>Receipt</th></tr></thead><tbody>${record.RetirementLines.map((line, index) => `<tr><td>${escapeHtml(line.Date)}</td><td>${escapeHtml(line.Description)}</td><td>${escapeHtml(line.ExpenseAccount)}</td><td>${escapeHtml(money(line.Amount))}</td><td>${line.ReceiptUrl ? `<button type="button" class="imprest-receipt-view" data-protected-file="${escapeHtml(protectedFinanceDocumentUrl({ recordType: 'imprest-receipt', recordId: record.ImprestNo || record.__id, line: index }))}" data-file-mode="view" data-file-name="${escapeHtml(`Receipt ${index + 1} - ${record.ImprestNo || record.__id}`)}">View</button>` : '-'}</td></tr>`).join('')}</tbody></table>` : '';
   return records.map((record) => `<section class="imprest-report-record"><h2>${escapeHtml(record.ImprestNo)} &middot; ${escapeHtml(record.Status)}</h2><div class="admin-table-wrap"><table class="admin-table imprest-report-summary"><tbody><tr><th>Custodian</th><td>${escapeHtml(record.CustodianName)}</td><th>Department</th><td>${escapeHtml(record.Department)}</td></tr><tr><th>Purpose</th><td colspan="3">${escapeHtml(record.Purpose)}</td></tr><tr><th>Requested</th><td>${escapeHtml(money(record.AmountRequested))}</td><th>Issued</th><td>${escapeHtml(money(record.AmountIssued || record.AmountApproved))}</td></tr><tr><th>Expenses</th><td>${escapeHtml(money(record.ExpenseTotal))}</td><th>Cash returned</th><td>${escapeHtml(money(record.ReturnedAmount))}</td></tr><tr><th>Due date</th><td>${escapeHtml(record.DueDate || '-')}</td><th>Return reference</th><td>${escapeHtml(record.ReturnReference || '-')}</td></tr></tbody></table></div>${retirementLines(record)}</section>`).join('');
 }
 
@@ -14539,6 +14599,7 @@ function openImprestReportPreview(records, selected = null) {
   const content = dialog?.querySelector('[data-imprest-report-content]');
   if (!dialog || !content) return setStatus(status, 'The imprest report preview is unavailable. Refresh the page and try again.', 'bad');
   content.innerHTML = imprestReportSections(rows);
+  bindProtectedFileEvents(content);
   const count = dialog.querySelector('[data-imprest-report-count]');
   if (count) count.textContent = selected ? clean(selected.ImprestNo || selected.__id) : `${rows.length} record${rows.length === 1 ? '' : 's'}`;
   if (!dialog.open) dialog.showModal();

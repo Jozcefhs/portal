@@ -98,6 +98,12 @@ test('web and desktop expose the same controlled imprest lifecycle', () => {
   assert.match(adminJs, /openImprestReportPreview\(financeData\.imprests \|\| \[\], record\)/);
   assert.match(adminJs, /data-print-imprest-preview/);
   assert.match(adminJs, /frame\.contentWindow\.print\(\)/);
+  assert.match(adminJs, /class="imprest-receipt-view" data-protected-file=/);
+  assert.match(adminJs, /bindProtectedFileEvents\(content\)/);
+  assert.match(adminJs, /id = 'protectedFilePreviewDialog'/);
+  assert.match(adminJs, /showProtectedFilePreview\(viewer, blob, fileName\)/);
+  assert.match(portalCss, /\.protected-file-preview-dialog/);
+  assert.doesNotMatch(adminJs, /viewer = window\.open\('about:blank', '_blank'\)/);
   const reportPreviewStart = adminJs.indexOf('function openImprestReportPreview');
   const reportPrintStart = adminJs.indexOf('function printImprestReportPreview');
   assert.ok(reportPreviewStart >= 0 && reportPrintStart > reportPreviewStart);
