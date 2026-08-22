@@ -5008,7 +5008,10 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
       await commitAcademicBatch(env, prepared.Writes,
         'The score sheet changed while CBT scores were synchronizing. Reload and retry the same approved batch.');
     } catch (error) {
-      if (Number(error?.status) === 409) {
+      const status = Number(error?.status || 500);
+      const commitOutcomeMayBeUncertain = status === 409
+        || [408, 425, 429, 500, 502, 503, 504].includes(status);
+      if (commitOutcomeMayBeUncertain) {
         const previousBatch = await getDocument(
           env, ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSyncBatches, prepared.SyncId
         ).catch(() => null);
@@ -5021,10 +5024,9 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
           };
         }
       }
-      const status = Number(error?.status || 500);
       if ([408, 425, 429, 500, 502, 503, 504].includes(status)) {
         throw failure(
-          'The online scorebook temporarily could not confirm this approved CBT batch. Retry Push Results Online; the same secured batch will not duplicate scores.',
+          'The online scorebook is temporarily unavailable. Dynamax kept the approved batch safely queued and will not duplicate scores when it is retried.',
           status === 429 ? 429 : 503,
           'ACADEMIC_CBT_SYNC_TEMPORARY'
         );

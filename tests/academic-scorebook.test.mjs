@@ -200,7 +200,8 @@ test('Milestone 8 server contract exposes idempotent approved CBT score synchron
   assert.match(academicManagementSource, /RSASSA-PKCS1-v1_5-SHA256/);
   assert.match(academicManagementSource, /ACADEMIC_CBT_SYNC_KEY_REUSED/);
   assert.match(academicManagementSource, /ACADEMIC_CBT_SYNC_TEMPORARY/);
-  assert.match(academicManagementSource, /same secured batch will not duplicate scores/);
+  assert.match(academicManagementSource, /commitOutcomeMayBeUncertain/);
+  assert.match(academicManagementSource, /kept the approved batch safely queued/);
   assert.match(academicManagementSource, /dynamax-academic-cbt-sync-preparation-v1/);
   assert.match(academicManagementSource, /commitRequired: true/);
   assert.match(academicManagementSource, /ACADEMIC_CBT_SYNC_CLIENT_UPDATE_REQUIRED/);

@@ -7960,7 +7960,7 @@ export async function onRequestPost(context) {
       ? String(err.message || 'The desktop backend is not configured.')
       : '';
     const cbtSyncFailure = action === 'syncAcademicCbtScores' && status >= 500
-      ? 'The online scorebook temporarily could not confirm this approved CBT batch. Retry Push Results Online; the same secured batch will not duplicate scores.'
+      ? String(err?.message || 'The online scorebook is temporarily unavailable. Dynamax kept the approved batch safely queued and will not duplicate scores when it is retried.')
       : '';
     const responseCode = err?.code || (cbtSyncFailure ? 'ACADEMIC_CBT_SYNC_TEMPORARY' : '');
     return Response.json({
