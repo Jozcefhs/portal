@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
-const sharedVersion = '20260823-pos-product-grid';
+const sharedVersion = '20260823-nested-scroll-handoff';
 const adminScriptVersion = '20260823-church-service-lifecycle';
 const parentScriptVersion = '20260821-parent-onboarding';
 const notificationVersion = '20260804-read-efficiency';
@@ -89,6 +89,15 @@ test('multi-function workspaces use focused URL-aware tabs', () => {
   assert.match(portalCss, /\.module-workspace-panel\[hidden\]\{display:none!important\}/);
 });
 
+test('bounded content sections hand vertical scrolling back to the main page at their edges', () => {
+  assert.match(portalCss, /\.admin-table-wrap\{[^}]*overscroll-behavior-x:contain;overscroll-behavior-y:auto/);
+  assert.match(portalCss, /\.workflow-record-list,\.staff-user-list\{[^}]*overscroll-behavior-x:contain;overscroll-behavior-y:auto/);
+  assert.match(portalCss, /\.commerce-product-list\{[^}]*overscroll-behavior-x:contain;overscroll-behavior-y:auto/);
+  assert.match(portalCss, /\.department-batch-people\s*\{[\s\S]*?overscroll-behavior-x:\s*contain;[\s\S]*?overscroll-behavior-y:\s*auto;/);
+  assert.match(portalCss, /\.records-desk-results\{[^}]*overscroll-behavior-x:contain;overscroll-behavior-y:auto/);
+  assert.match(portalCss, /\.records-desk-detail-pane\{[^}]*overscroll-behavior-x:contain;overscroll-behavior-y:auto/);
+});
+
 test('all portal pages reference the current shared stylesheet version', () => {
   pages.forEach((html, index) => {
     assert.match(html, new RegExp(`css/style\\.css\\?v=${sharedVersion}`), `${pageNames[index]} should use the shared stylesheet version`);
@@ -101,7 +110,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v255-church-service-lifecycle/);
+  assert.match(serviceWorker, /dynamax-v256-nested-scroll-handoff/);
   assert.match(serviceWorker, /'\/verify-result\.html'/);
   assert.match(serviceWorker, /'\/js\/verify-result\.js'/);
   assert.match(serviceWorker, /'\/css\/school-landing\.css'/);
