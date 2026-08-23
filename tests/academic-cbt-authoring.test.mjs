@@ -34,6 +34,9 @@ test('teachers may author online packages that are pulled onto the local desktop
   assert.match(admin, /New online test/);
   assert.match(admin, /Every student in that class who offers the subject is included across all arms/);
   assert.match(styles, /\.academic-cbt-editor/);
+  assert.match(styles, /\.academic-cbt-answer-row label:has\(input:checked\)/);
+  assert.match(styles, /flex:0 0 34px/);
+  assert.match(styles, /\.academic-cbt-answer-row input\{position:absolute/);
   assert.match(backend, /cbt: ACADEMIC_CBT_STATE_KEYS/);
   assert.match(backend, /const focusedStateKeys = academicManagementViewStateKeys/);
   assert.match(backend, /downloadAcademicCbtTestPackage/);
