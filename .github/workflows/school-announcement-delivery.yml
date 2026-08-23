@@ -1,30 +1,72 @@
-name: School announcement delivery
+name: Scheduled announcement delivery
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
-concurrency:
-  group: school-announcement-delivery
-  cancel-in-progress: false
-
 jobs:
-  process:
+  prepare:
+    name: Load organisation scheduler targets
     runs-on: ubuntu-latest
+    outputs:
+      organisations: ${{ steps.matrix.outputs.organisations }}
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build enabled organisation matrix
+        id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          organisations="$(node scripts/organisation-deployment-matrix.mjs --target all)"
+          echo "organisations=${organisations}" >> "${GITHUB_OUTPUT}"
+
+  process:
+    name: ${{ matrix.organisation.name }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: ${{ matrix.organisation.githubEnvironment }}
+      url: https://${{ matrix.organisation.cloudflareProject }}.pages.dev
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        organisation: ${{ fromJSON(needs.prepare.outputs.organisations) }}
+    concurrency:
+      group: scheduled-announcement-delivery-${{ matrix.organisation.id }}
+      cancel-in-progress: false
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
       - name: Deliver scheduled announcements and queued push batches
+        shell: bash
         env:
-          ENDPOINT: ${{ secrets.NOTIFICATION_SCHEDULER_URL }}
+          ENDPOINT: https://${{ matrix.organisation.cloudflareProject }}.pages.dev/api/notification-scheduler
+          EXPECTED_WORKSPACE_ID: ${{ matrix.organisation.workspaceId }}
+          EXPECTED_EDITION: ${{ matrix.organisation.edition }}
           SCHEDULER_SECRET: ${{ secrets.NOTIFICATION_SCHEDULER_SECRET }}
         run: |
-          test -n "$ENDPOINT"
+          set -euo pipefail
           test -n "$SCHEDULER_SECRET"
+          payload="$(jq -nc \
+            --arg workspace "$EXPECTED_WORKSPACE_ID" \
+            --arg edition "$EXPECTED_EDITION" \
+            '{announcementsOnly:true,pushJobLimit:1,expectedWorkspaceId:$workspace,expectedEdition:$edition}')"
           for attempt in $(seq 1 15); do
-            curl --fail-with-body --silent --show-error \
+            response="$(curl --fail-with-body --silent --show-error \
               --retry 2 --retry-all-errors \
               -X POST "$ENDPOINT" \
               -H "Authorization: Bearer $SCHEDULER_SECRET" \
               -H "Content-Type: application/json" \
-              --data '{"announcementsOnly":true,"pushJobLimit":1}'
+              --data "$payload")"
+            printf '%s\n' "$response"
+            printf '%s' "$response" | jq -e \
+              --arg workspace "${EXPECTED_WORKSPACE_ID,,}" \
+              --arg edition "${EXPECTED_EDITION,,}" \
+              '.ok == true and (.workspaceId | ascii_downcase) == $workspace and (.edition | ascii_downcase) == $edition and ((.announcements.failed // 0) == 0)' >/dev/null
           done

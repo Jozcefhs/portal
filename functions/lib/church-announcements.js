@@ -1,4 +1,4 @@
-import { listCollection, queryCollection, upsertDocument } from './firestore.js';
+import { createDocumentIfAbsent, listCollection, queryCollection, upsertDocument } from './firestore.js';
 import { createNotification, loadNotificationSettings } from './notifications.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath } from './church-foundation.js';
 import { resolveMembershipBranch } from './church-membership.js';
@@ -8,6 +8,8 @@ const ANNOUNCEMENT_ROLES = new Set([
   'super admin', 'pastor', 'senior pastor', 'head minister', 'church administrator'
 ]);
 const MAX_TARGETS_PER_NOTIFICATION = 100;
+const MAX_SCHEDULED_DELIVERY_ATTEMPTS = 5;
+const SCHEDULED_RETRY_DELAY_MS = 5 * 60 * 1000;
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -142,7 +144,7 @@ async function saveAnnouncement(env, record) {
 async function queuePush(env, announcement, notification) {
   const now = new Date().toISOString();
   const pushJobId = `ANN-PUSH-${clean(notification.NotificationId)}`.slice(0, 180);
-  await upsertDocument(env, 'notificationAnnouncementPushJobs', pushJobId, {
+  const record = {
     PushJobId: pushJobId,
     SchoolId: lower(env.DYNAMAX_WORKSPACE_ID),
     Edition: 'church',
@@ -150,7 +152,9 @@ async function queuePush(env, announcement, notification) {
     NotificationId: notification.NotificationId,
     Status: 'Pending', AttemptCount: 0, FailureCount: 0, Offset: 0,
     CreatedAt: now, UpdatedAt: now
-  });
+  };
+  const result = await createDocumentIfAbsent(env, 'notificationAnnouncementPushJobs', pushJobId, record);
+  return result?.document || record;
 }
 
 export async function sendChurchAnnouncement(env, announcement, options = {}) {
@@ -171,6 +175,7 @@ export async function sendChurchAnnouncement(env, announcement, options = {}) {
   }
   const channelNames = Object.entries(announcement.Channels).filter(([, enabled]) => enabled).map(([name]) => name);
   const results = [];
+  const pushJobs = [];
   for (const group of audience.groups) {
     const result = await createNotification(env, {
       EventKey: `church-announcement:${lower(announcement.AnnouncementId)}:${lower(group.audience)}:${group.branchId}:${group.chunk}`,
@@ -187,13 +192,16 @@ export async function sendChurchAnnouncement(env, announcement, options = {}) {
       CreatedBy: announcement.CreatedBy, ActorType: 'Staff', ActorId: announcement.CreatedBy
     }, { retryDelivery: false, deliver: false });
     results.push(result);
-    if (announcement.Channels.Push) await queuePush(env, announcement, result.notification);
+    if (announcement.Channels.Push) pushJobs.push(await queuePush(env, announcement, result.notification));
   }
+  const queuedPushJobs = pushJobs.filter((job) => !lower(job.Status).startsWith('completed'));
   return saveAnnouncement(env, {
     ...announcement, Status: 'Sent', SentAt: clean(options.now) || new Date().toISOString(),
     RecipientSummary: audience.summary, NotificationCount: results.length,
-    PushQueued: announcement.Channels.Push ? results.length : 0,
-    PushDelivered: 0, PushFailed: 0, Error: ''
+    PushQueued: queuedPushJobs.length,
+    PushDelivered: pushJobs.reduce((total, job) => total + Number(job.Delivered || 0), 0),
+    PushFailed: pushJobs.reduce((total, job) => total + Number(job.Failed || 0), 0),
+    Error: ''
   });
 }
 
@@ -245,26 +253,52 @@ export async function processScheduledChurchAnnouncements(env, options = {}) {
   const now = clean(options.now) || new Date().toISOString();
   const limit = Math.min(100, Math.max(1, Number(options.limit || 100)));
   const workspaceId = lower(env.DYNAMAX_WORKSPACE_ID);
-  const scheduled = await queryCollection(env, 'notificationAnnouncements', {
-    filters: [{ field: 'Status', op: '==', value: 'Scheduled' }], limit
-  }).catch(() => []);
+  const scheduledGroups = await Promise.all(['Scheduled', 'Failed'].map((status) => queryCollection(
+    env,
+    'notificationAnnouncements',
+    { filters: [{ field: 'Status', op: '==', value: status }], limit }
+  )));
+  const scheduled = scheduledGroups.flat();
   const due = scheduled.filter((row) => lower(row.Edition) === 'church')
     .filter((row) => !workspaceId || !clean(row.SchoolId) || lower(row.SchoolId) === workspaceId)
-    .filter((row) => clean(row.ScheduledAt) && row.ScheduledAt <= now);
+    .filter((row) => scheduledChurchAnnouncementIsDue(row, now));
   const results = [];
   for (const announcement of due) {
     try {
       results.push(await sendChurchAnnouncement(env, { ...announcement, Status: 'Sending' }, { now }));
     } catch (error) {
+      const attemptCount = Number(announcement.AttemptCount || 0) + 1;
+      const retryable = attemptCount < MAX_SCHEDULED_DELIVERY_ATTEMPTS;
       await saveAnnouncement(env, {
-        ...announcement, Status: 'Failed', Error: clean(error?.message || error), UpdatedAt: now
+        ...announcement,
+        Status: retryable ? 'Scheduled' : 'Failed',
+        AttemptCount: attemptCount,
+        LastAttemptAt: now,
+        NextAttemptAt: retryable ? new Date(new Date(now).getTime() + SCHEDULED_RETRY_DELAY_MS).toISOString() : '',
+        Error: clean(error?.message || error),
+        UpdatedAt: now
       }).catch(() => {});
-      results.push({ AnnouncementId: announcement.AnnouncementId, Status: 'Failed', Error: clean(error?.message || error) });
+      results.push({
+        AnnouncementId: announcement.AnnouncementId,
+        Status: retryable ? 'Scheduled' : 'Failed',
+        AttemptCount: attemptCount,
+        Error: clean(error?.message || error)
+      });
     }
   }
   return {
     processed: results.length,
     sent: results.filter((row) => lower(row.Status).startsWith('sent')).length,
-    failed: results.filter((row) => lower(row.Status) === 'failed').length
+    failed: results.filter((row) => ['failed', 'scheduled'].includes(lower(row.Status))).length
   };
+}
+
+export function scheduledChurchAnnouncementIsDue(row = {}, now = new Date().toISOString()) {
+  const status = lower(row.Status);
+  const attempts = Math.max(0, Number(row.AttemptCount || 0));
+  if (status !== 'scheduled' && !(status === 'failed' && attempts < MAX_SCHEDULED_DELIVERY_ATTEMPTS)) return false;
+  const scheduledAt = clean(row.ScheduledAt);
+  if (!scheduledAt || scheduledAt > clean(now)) return false;
+  const nextAttemptAt = clean(row.NextAttemptAt);
+  return !nextAttemptAt || nextAttemptAt <= clean(now);
 }

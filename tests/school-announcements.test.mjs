@@ -4,7 +4,9 @@ import { readFile } from 'node:fs/promises';
 import {
   buildSchoolAnnouncementAudienceGroups,
   canManageSchoolAnnouncements,
-  normalizeSchoolAnnouncementInput
+  normalizeSchoolAnnouncementInput,
+  scheduledSchoolAnnouncementIsDue,
+  schoolAnnouncementPushJobIsEligible
 } from '../functions/lib/school-announcements.js';
 
 test('only authorised school management can compose announcements', () => {
@@ -37,6 +39,25 @@ test('future announcements are scheduled and immediate announcements are ready t
   assert.equal(scheduled.Status, 'Scheduled');
   assert.equal(immediate.Status, 'Sending');
   assert.deepEqual(scheduled.Channels, { InApp: true, Push: true });
+});
+
+test('failed scheduled announcements retry while interrupted push jobs recover after their lease expires', () => {
+  const now = '2026-08-23T12:00:00.000Z';
+  assert.equal(scheduledSchoolAnnouncementIsDue({
+    Status: 'Failed', ScheduledAt: '2026-08-23T11:00:00.000Z', AttemptCount: 1
+  }, now), true);
+  assert.equal(scheduledSchoolAnnouncementIsDue({
+    Status: 'Failed', ScheduledAt: '2026-08-23T11:00:00.000Z', AttemptCount: 5
+  }, now), false);
+  assert.equal(scheduledSchoolAnnouncementIsDue({
+    Status: 'Scheduled', ScheduledAt: '2026-08-23T11:00:00.000Z', NextAttemptAt: '2026-08-23T12:05:00.000Z'
+  }, now), false);
+  assert.equal(schoolAnnouncementPushJobIsEligible({
+    Status: 'Processing', UpdatedAt: '2026-08-23T11:40:00.000Z', SchoolId: 'school'
+  }, { schoolId: 'school', edition: 'school', staleBefore: '2026-08-23T11:50:00.000Z' }), true);
+  assert.equal(schoolAnnouncementPushJobIsEligible({
+    Status: 'Processing', UpdatedAt: '2026-08-23T11:55:00.000Z', SchoolId: 'school'
+  }, { schoolId: 'school', edition: 'school', staleBefore: '2026-08-23T11:50:00.000Z' }), false);
 });
 
 test('day and boarding audiences route to linked parents while staff stay separate', () => {
@@ -85,9 +106,14 @@ test('composer, protected endpoint and scheduler are wired together', async () =
   assert.match(library, /TargetAccountRefs: group\.targetAccountRefs/);
   assert.match(library, /TargetUsernames: group\.targetUsernames/);
   assert.match(library, /notificationAnnouncementPushJobs/);
-  assert.match(workflow, /\*\/15 \* \* \* \*/);
-  assert.match(workflow, /"announcementsOnly":true/);
-  assert.match(workflow, /secrets\.NOTIFICATION_SCHEDULER_URL/);
+  assert.match(workflow, /\*\/5 \* \* \* \*/);
+  assert.match(workflow, /announcementsOnly:true/);
+  assert.match(workflow, /organisation-deployment-matrix\.mjs --target all/);
+  assert.match(workflow, /matrix\.organisation\.cloudflareProject/);
+  assert.match(workflow, /matrix\.organisation\.githubEnvironment/);
+  assert.match(workflow, /expectedWorkspaceId:\$workspace/);
+  assert.match(workflow, /\.announcements\.failed/);
   assert.match(workflow, /secrets\.NOTIFICATION_SCHEDULER_SECRET/);
+  assert.doesNotMatch(workflow, /secrets\.NOTIFICATION_SCHEDULER_URL/);
   assert.doesNotMatch(workflow, /SCHOOL_NOTIFICATION_SCHEDULER/);
 });

@@ -4,7 +4,8 @@ import { readFile } from 'node:fs/promises';
 import {
   buildChurchAnnouncementAudienceGroups,
   canManageChurchAnnouncements,
-  normalizeChurchAnnouncementInput
+  normalizeChurchAnnouncementInput,
+  scheduledChurchAnnouncementIsDue
 } from '../functions/lib/church-announcements.js';
 import { normalizeNotification, notificationTargetsRecipient } from '../functions/lib/notifications.js';
 
@@ -28,6 +29,16 @@ test('church announcement input uses church recipients and preserves scheduling'
   assert.equal(result.Edition, 'church');
   assert.equal(result.Status, 'Scheduled');
   assert.deepEqual(result.Recipients, { Members: true, Staff: true });
+});
+
+test('failed church announcements are retried only while their retry allowance remains', () => {
+  const now = '2026-08-23T12:00:00.000Z';
+  assert.equal(scheduledChurchAnnouncementIsDue({
+    Status: 'Failed', ScheduledAt: '2026-08-23T11:00:00.000Z', AttemptCount: 2
+  }, now), true);
+  assert.equal(scheduledChurchAnnouncementIsDue({
+    Status: 'Failed', ScheduledAt: '2026-08-23T11:00:00.000Z', AttemptCount: 5
+  }, now), false);
 });
 
 test('church recipients come only from active members and church-edition staff', () => {

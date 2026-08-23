@@ -1,4 +1,4 @@
-import { getDocument, listCollection, queryCollection, upsertDocument } from './firestore.js';
+import { createDocumentIfAbsent, getDocument, listCollection, queryCollection, upsertDocument } from './firestore.js';
 import { createNotification, dispatchNotificationPush, loadNotificationSettings } from './notifications.js';
 import { listSchoolCollection, safeScopeId } from './school-scope.js';
 
@@ -6,6 +6,8 @@ const ANNOUNCEMENT_ROLES = new Set(['super admin', 'management']);
 const RECIPIENT_KEYS = ['DayStudents', 'BoardingStudents', 'Staff'];
 const MAX_TARGETS_PER_NOTIFICATION = 100;
 const MAX_PUSH_RECIPIENTS_PER_INVOCATION = 8;
+const MAX_SCHEDULED_DELIVERY_ATTEMPTS = 5;
+const SCHEDULED_RETRY_DELAY_MS = 5 * 60 * 1000;
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -228,8 +230,8 @@ async function queueAnnouncementPush(env, announcement, notification) {
     CreatedAt: now,
     UpdatedAt: now
   };
-  await upsertDocument(env, 'notificationAnnouncementPushJobs', record.PushJobId, record);
-  return record;
+  const result = await createDocumentIfAbsent(env, 'notificationAnnouncementPushJobs', record.PushJobId, record);
+  return result?.document || record;
 }
 
 export async function sendSchoolAnnouncement(env, announcement, options = {}) {
@@ -247,6 +249,7 @@ export async function sendSchoolAnnouncement(env, announcement, options = {}) {
   }
   const channelNames = Object.entries(announcement.Channels).filter(([, enabled]) => enabled).map(([name]) => name);
   const results = [];
+  const pushJobs = [];
   for (const group of audience.groups) {
     const result = await createNotification(env, {
       EventKey: `school-announcement:${lower(announcement.AnnouncementId)}:${lower(group.audience)}:${group.branchId}:${group.chunk}`,
@@ -272,17 +275,18 @@ export async function sendSchoolAnnouncement(env, announcement, options = {}) {
       ActorId: announcement.CreatedBy
     }, { retryDelivery: false, deliver: false });
     results.push(result);
-    if (announcement.Channels.Push) await queueAnnouncementPush(env, announcement, result.notification);
+    if (announcement.Channels.Push) pushJobs.push(await queueAnnouncementPush(env, announcement, result.notification));
   }
+  const queuedPushJobs = pushJobs.filter((job) => !lower(job.Status).startsWith('completed'));
   return saveAnnouncement(env, {
     ...announcement,
     Status: 'Sent',
     SentAt: clean(options.now) || new Date().toISOString(),
     RecipientSummary: audience.summary,
     NotificationCount: results.length,
-    PushQueued: announcement.Channels.Push ? results.length : 0,
-    PushDelivered: 0,
-    PushFailed: 0,
+    PushQueued: queuedPushJobs.length,
+    PushDelivered: pushJobs.reduce((total, job) => total + Number(job.Delivered || 0), 0),
+    PushFailed: pushJobs.reduce((total, job) => total + Number(job.Failed || 0), 0),
     Error: ''
   });
 }
@@ -341,33 +345,70 @@ export async function listSchoolAnnouncements(env, options = {}) {
 export async function processScheduledSchoolAnnouncements(env, options = {}) {
   const now = clean(options.now) || new Date().toISOString();
   const limit = Math.min(100, Math.max(1, Number(options.limit || 100)));
-  const scheduled = await queryCollection(env, 'notificationAnnouncements', {
-    filters: [{ field: 'Status', op: '==', value: 'Scheduled' }], limit
-  }).catch(() => []);
+  const scheduledGroups = await Promise.all(['Scheduled', 'Failed'].map((status) => queryCollection(
+    env,
+    'notificationAnnouncements',
+    { filters: [{ field: 'Status', op: '==', value: status }], limit }
+  )));
+  const scheduled = scheduledGroups.flat();
   const schoolId = lower(env.DYNAMAX_WORKSPACE_ID);
   const due = scheduled
     .filter((row) => lower(row.Edition) !== 'church')
     .filter((row) => !schoolId || !clean(row.SchoolId) || lower(row.SchoolId) === schoolId)
-    .filter((row) => lower(row.Status) === 'scheduled' && clean(row.ScheduledAt) && row.ScheduledAt <= now);
+    .filter((row) => scheduledSchoolAnnouncementIsDue(row, now));
   const results = [];
   for (const announcement of due) {
     try {
       results.push(await sendSchoolAnnouncement(env, { ...announcement, Status: 'Sending' }, { now }));
     } catch (error) {
+      const attemptCount = Number(announcement.AttemptCount || 0) + 1;
+      const retryable = attemptCount < MAX_SCHEDULED_DELIVERY_ATTEMPTS;
       await saveAnnouncement(env, {
         ...announcement,
-        Status: 'Failed',
+        Status: retryable ? 'Scheduled' : 'Failed',
+        AttemptCount: attemptCount,
+        LastAttemptAt: now,
+        NextAttemptAt: retryable ? new Date(new Date(now).getTime() + SCHEDULED_RETRY_DELAY_MS).toISOString() : '',
         Error: clean(error?.message || error),
         UpdatedAt: now
       }).catch(() => {});
-      results.push({ AnnouncementId: announcement.AnnouncementId, Status: 'Failed', Error: clean(error?.message || error) });
+      results.push({
+        AnnouncementId: announcement.AnnouncementId,
+        Status: retryable ? 'Scheduled' : 'Failed',
+        AttemptCount: attemptCount,
+        Error: clean(error?.message || error)
+      });
     }
   }
   return {
     processed: results.length,
     sent: results.filter((row) => lower(row.Status).startsWith('sent')).length,
-    failed: results.filter((row) => lower(row.Status) === 'failed').length
+    failed: results.filter((row) => ['failed', 'scheduled'].includes(lower(row.Status))).length
   };
+}
+
+export function scheduledSchoolAnnouncementIsDue(row = {}, now = new Date().toISOString()) {
+  const status = lower(row.Status);
+  const attempts = Math.max(0, Number(row.AttemptCount || 0));
+  if (status !== 'scheduled' && !(status === 'failed' && attempts < MAX_SCHEDULED_DELIVERY_ATTEMPTS)) return false;
+  const scheduledAt = clean(row.ScheduledAt);
+  if (!scheduledAt || scheduledAt > clean(now)) return false;
+  const nextAttemptAt = clean(row.NextAttemptAt);
+  return !nextAttemptAt || nextAttemptAt <= clean(now);
+}
+
+export function schoolAnnouncementPushJobIsEligible(row = {}, options = {}) {
+  const schoolId = lower(options.schoolId);
+  const requestedEdition = lower(options.edition) === 'faith' ? 'church' : lower(options.edition);
+  const staleBefore = clean(options.staleBefore);
+  const status = lower(row.Status);
+  if (schoolId && clean(row.SchoolId) && lower(row.SchoolId) !== schoolId) return false;
+  if (requestedEdition && (requestedEdition === 'church'
+    ? lower(row.Edition) !== 'church'
+    : lower(row.Edition) === 'church')) return false;
+  if (Number(row.FailureCount || 0) >= 5) return false;
+  if (status === 'processing') return Boolean(staleBefore && clean(row.UpdatedAt) < staleBefore);
+  return ['pending', 'failed'].includes(status);
 }
 
 export async function processSchoolAnnouncementPushQueue(env, options = {}) {
@@ -378,21 +419,21 @@ export async function processSchoolAnnouncementPushQueue(env, options = {}) {
   const [pendingJobs, failedJobs, processingJobs] = await Promise.all([
     queryCollection(env, 'notificationAnnouncementPushJobs', {
       filters: [{ field: 'Status', op: '==', value: 'Pending' }], limit: 100
-    }).catch(() => []),
+    }),
     queryCollection(env, 'notificationAnnouncementPushJobs', {
       filters: [{ field: 'Status', op: '==', value: 'Failed' }], limit: 100
-    }).catch(() => []),
+    }),
     queryCollection(env, 'notificationAnnouncementPushJobs', {
       filters: [{ field: 'Status', op: '==', value: 'Processing' }], limit: 100
-    }).catch(() => [])
+    })
   ]);
   const staleBefore = new Date(new Date(now).getTime() - 10 * 60 * 1000).toISOString();
-  const eligible = [...pendingJobs, ...failedJobs, ...processingJobs.filter((row) => clean(row.UpdatedAt) < staleBefore)]
-    .filter((row) => !schoolId || !clean(row.SchoolId) || lower(row.SchoolId) === schoolId)
-    .filter((row) => !requestedEdition || (requestedEdition === 'church'
-      ? lower(row.Edition) === 'church'
-      : lower(row.Edition) !== 'church'))
-    .filter((row) => ['pending', 'failed'].includes(lower(row.Status)) && Number(row.FailureCount || 0) < 5)
+  const eligible = [...pendingJobs, ...failedJobs, ...processingJobs]
+    .filter((row) => schoolAnnouncementPushJobIsEligible(row, {
+      schoolId,
+      edition: requestedEdition,
+      staleBefore
+    }))
     .sort((left, right) => clean(left.CreatedAt).localeCompare(clean(right.CreatedAt)));
   const jobs = eligible.slice(0, limit);
   let delivered = 0;
