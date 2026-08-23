@@ -53,7 +53,7 @@ const EDITION_STAFF_ROLE_SETS = Object.freeze({
 });
 
 const NON_SCHOOL_DISABLED_FEATURES = new Set([
-  'admissions', 'students', 'studentConduct', 'parentPortal',
+  'admissions', 'students', 'academics', 'studentConduct', 'parentPortal',
   'stores', 'clinic', 'kitchen'
 ]);
 
@@ -69,6 +69,7 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     payroll: true,
     admissions: true,
     students: true,
+    academics: true,
     studentConduct: true,
     parentPortal: true,
     stores: true,
@@ -90,6 +91,7 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     payroll: true,
     admissions: false,
     students: false,
+    academics: false,
     studentConduct: false,
     parentPortal: false,
     stores: false,
@@ -116,6 +118,7 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     payroll: true,
     admissions: false,
     students: false,
+    academics: false,
     studentConduct: false,
     parentPortal: false,
     stores: false,
@@ -311,7 +314,7 @@ const SECTION_FEATURES = Object.freeze({
   admissions: 'admissions',
   formPurchases: 'admissions',
   students: 'students',
-  academics: 'students',
+  academics: Object.freeze(['students', 'academics']),
   studentConduct: 'studentConduct',
   accounts: Object.freeze(['students', 'accounting']),
   incomeAnalytics: 'accounting',

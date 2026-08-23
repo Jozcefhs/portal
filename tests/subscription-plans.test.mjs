@@ -76,6 +76,15 @@ test('saved plan-module selections replace defaults and enforce dependencies', (
     ['humanResources', 'staffAttendance', 'accounting', 'payroll']
   );
   assert.ok(subscriptionModulesForEdition('school').every((module) => !/church|offering/i.test(module.Label)));
+  assert.deepEqual(
+    subscriptionModulesForEdition('school').find((module) => module.Key === 'academics'),
+    {
+      Key: 'academics',
+      Label: 'Academic management, scorebook & CBT',
+      Description: 'Classes, subjects, timetables, attendance, score recording, CBT, results and academic outcomes.',
+      Requires: ['students']
+    }
+  );
   assert.ok(subscriptionModulesForEdition('faith').some((module) => module.Key === 'staffAttendance' && module.Label === 'Staff attendance & clocking'));
   assert.ok(subscriptionModulesForEdition('faith').some((module) => module.Key === 'humanResources' && module.Label === 'Human Resources'));
 
@@ -84,6 +93,12 @@ test('saved plan-module selections replace defaults and enforce dependencies', (
     Plans: { Starter: { EntitlementsByEdition: { faith: ['humanResources'] } } }
   });
   assert.deepEqual(explicitlySeparated.Plans.Starter.EntitlementsByEdition.faith, ['humanResources']);
+
+  const existingSchoolCatalog = normalizeSubscriptionPlanCatalog({
+    ModuleCatalogVersion: 2,
+    Plans: { Starter: { EntitlementsByEdition: { school: ['students'] } } }
+  });
+  assert.deepEqual(existingSchoolCatalog.Plans.Starter.EntitlementsByEdition.school, ['students', 'academics']);
 });
 
 test('free access expires at the stored server-issued boundary and cannot become permanent', () => {
