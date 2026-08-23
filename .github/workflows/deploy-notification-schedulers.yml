@@ -1,0 +1,119 @@
+name: Deploy notification schedulers
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - workers/notification-scheduler/**
+      - scripts/generate-notification-worker-config.mjs
+      - scripts/organisation-deployment-matrix.mjs
+      - deploy/organisations.json
+      - .github/workflows/deploy-notification-schedulers.yml
+      - package.json
+      - package-lock.json
+  workflow_dispatch:
+    inputs:
+      organisation:
+        description: Organisation id from deploy/organisations.json, or all
+        required: true
+        default: all
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Load scheduler targets
+    runs-on: ubuntu-latest
+    outputs:
+      organisations: ${{ steps.matrix.outputs.organisations }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build enabled organisation matrix
+        id: matrix
+        shell: bash
+        env:
+          TARGET_ORGANISATION: ${{ inputs.organisation || 'all' }}
+        run: |
+          set -euo pipefail
+          organisations="$(node scripts/organisation-deployment-matrix.mjs --target "${TARGET_ORGANISATION}")"
+          echo "organisations=${organisations}" >> "${GITHUB_OUTPUT}"
+
+  deploy:
+    name: ${{ matrix.organisation.name }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: ${{ matrix.organisation.githubEnvironment }}
+      url: https://${{ matrix.organisation.cloudflareProject }}.pages.dev
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        organisation: ${{ fromJSON(needs.prepare.outputs.organisations) }}
+    concurrency:
+      group: deploy-notification-scheduler-${{ matrix.organisation.id }}
+      cancel-in-progress: true
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ matrix.organisation.cloudflareAccountId }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      SCHEDULER_SECRET: ${{ secrets.NOTIFICATION_SCHEDULER_SECRET }}
+      WRANGLER_CONFIG: .notification-scheduler.wrangler.json
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install deployment tools
+        run: npm ci
+
+      - name: Validate environment-scoped scheduler credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_ACCOUNT_ID}"
+          test -n "${CLOUDFLARE_API_TOKEN}"
+          test -n "${SCHEDULER_SECRET}"
+
+      - name: Generate tenant-bound Worker configuration
+        run: >-
+          node scripts/generate-notification-worker-config.mjs
+          --organisation "${{ matrix.organisation.id }}"
+          --output "${WRANGLER_CONFIG}"
+
+      - name: Validate Worker bundle
+        run: npx wrangler deploy --dry-run --config "${WRANGLER_CONFIG}"
+
+      - name: Deploy Worker and five-minute Cron Trigger
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          secret_file="$(mktemp)"
+          cleanup() { rm -f "${secret_file}"; }
+          trap cleanup EXIT
+          SECRET_FILE="${secret_file}" node -e 'const fs = require("node:fs"); fs.writeFileSync(process.env.SECRET_FILE, JSON.stringify({ SCHEDULER_SECRET: process.env.SCHEDULER_SECRET }), { mode: 0o600 });'
+          npx wrangler deploy --config "${WRANGLER_CONFIG}" --keep-vars --secrets-file "${secret_file}"
+
+      - name: Write scheduler deployment summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '### ${{ matrix.organisation.name }} notification scheduler'
+            echo ''
+            echo '- Workspace: `${{ matrix.organisation.workspaceId }}`'
+            echo '- Edition: `${{ matrix.organisation.edition }}`'
+            echo '- Trigger: every five minutes on Cloudflare Workers'
+            echo '- Pages endpoint: `${{ matrix.organisation.cloudflareProject }}.pages.dev/api/notification-scheduler`'
+          } >> "${GITHUB_STEP_SUMMARY}"

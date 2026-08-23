@@ -69,4 +69,9 @@ jobs:
               --arg workspace "${EXPECTED_WORKSPACE_ID,,}" \
               --arg edition "${EXPECTED_EDITION,,}" \
               '.ok == true and (.workspaceId | ascii_downcase) == $workspace and (.edition | ascii_downcase) == $edition and ((.announcements.failed // 0) == 0)' >/dev/null
+            remaining="$(printf '%s' "$response" | jq -r '.announcementPush.remaining // 0')"
+            processed="$(printf '%s' "$response" | jq -r '.announcements.processed // 0')"
+            if [[ "$remaining" -le 0 && "$processed" -le 0 ]]; then
+              break
+            fi
           done

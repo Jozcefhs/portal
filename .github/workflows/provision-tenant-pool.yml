@@ -142,7 +142,7 @@ jobs:
 
       - name: Install function dependencies
         if: ${{ steps.claim.outputs.has_request == 'true' && env.APPLY_CHANGES == 'true' }}
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --omit=dev
 
       - name: Provision isolated Firebase and Cloudflare projects
         id: provision

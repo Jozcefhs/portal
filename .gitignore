@@ -1,4 +1,7 @@
 .wrangler/
+.wrangler-config-local/
+.notification-scheduler.wrangler.json
+node_modules/
 .npm-cache/
 node_modules/.mf/
 .mf/

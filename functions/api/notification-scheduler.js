@@ -76,7 +76,7 @@ async function run(context) {
       now: clean(body.now),
       limit: Number(body.attendanceLimit || 2)
     });
-    const pushRetries = announcementsOnly || attendanceOnly ? { skipped: true } : await retryFailedPushDeliveries(context.env, { limit: 50 });
+    const pushRetries = announcementsOnly ? { skipped: true } : await retryFailedPushDeliveries(context.env, { limit: 50 });
     return Response.json({
       ok: true,
       workspaceId: identity.workspaceId,
