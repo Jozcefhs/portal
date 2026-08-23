@@ -3584,3 +3584,28 @@ html[data-theme="dark"] .academic-cbt-offline-steps li span{color:#b5c5d7}
 .academic-cbt-answer-row label span{font-size:12px;font-weight:800;pointer-events:none}
 html[data-theme="dark"] .academic-cbt-answer-row label{border-color:#42566d;background:#0c1827;color:#dceafa}
 html[data-theme="dark"] .academic-cbt-answer-row label:has(input:checked){border-color:#34c9a7;background:#123a34;color:#baf3e4}
+
+/* Let the answer key follow its actual option labels and use the upload pane as a live paper preview. */
+.academic-cbt-paper-grid{grid-template-columns:max-content minmax(0,1fr)}
+.academic-cbt-answer-key{width:max-content;min-width:0;max-width:100%}
+.academic-cbt-answer-row>div{flex-wrap:nowrap}
+.academic-cbt-answer-row label{flex:0 0 auto;width:max-content;min-width:34px;padding:0 10px}
+.academic-cbt-upload-well{place-items:stretch;align-content:stretch;grid-template-rows:auto minmax(0,1fr);min-width:0;padding:12px;text-align:left}
+.academic-cbt-upload-summary{display:flex!important;align-items:center;gap:9px!important;flex-wrap:wrap;padding:2px 3px 9px;border-bottom:1px solid #d8e4ee}
+.academic-cbt-upload-summary>div{display:grid;flex:1 1 220px;gap:2px}
+.academic-cbt-upload-summary h4{font-size:16px}
+.academic-cbt-upload-summary>span{max-width:180px;overflow-wrap:anywhere;color:#71869a;font-size:10px;font-weight:800}
+.academic-cbt-upload-summary>small{flex:1 0 100%;color:#71869a;font-size:10px}
+.academic-cbt-paper-preview{display:grid!important;align-content:start;gap:12px!important;min-height:310px;max-height:500px;overflow:auto;padding:10px 3px 3px;scrollbar-gutter:stable}
+.academic-cbt-paper-preview:empty{place-items:center;align-content:center}
+.academic-cbt-paper-preview:empty:before{content:'The selected question paper will preview here.';color:#71869a;font-size:12px;text-align:center}
+.academic-cbt-paper-preview-page{display:grid;gap:6px;margin:0;padding:8px;border:1px solid #d8e4ee;border-radius:9px;background:#fff}
+.academic-cbt-paper-preview-page figcaption{display:flex;align-items:center;justify-content:space-between;gap:10px;color:#40566d;font-size:10px}
+.academic-cbt-paper-preview-page figcaption span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.academic-cbt-paper-preview-page img{display:block;width:100%;height:auto;max-height:620px;object-fit:contain;background:#fff}
+.academic-cbt-paper-preview-page object{display:block;width:100%;height:440px;border:0;background:#fff}
+html[data-theme="dark"] .academic-cbt-upload-summary{border-color:#42566d}
+html[data-theme="dark"] .academic-cbt-paper-preview-page{border-color:#42566d;background:#0c1827}
+html[data-theme="dark"] .academic-cbt-paper-preview-page figcaption{color:#dceafa}
+@media(max-width:900px){.academic-cbt-paper-grid{grid-template-columns:minmax(0,1fr)}.academic-cbt-answer-key{width:100%}.academic-cbt-paper-preview{max-height:560px}}
+@media(max-width:560px){.academic-cbt-upload-summary{align-items:flex-start;flex-direction:column}.academic-cbt-upload-summary>span{max-width:100%}.academic-cbt-paper-preview-page object{height:360px}}

@@ -36,7 +36,7 @@ export async function onRequestPost(context) {
 
 async function handleRequest(context) {
   let idempotency = null;
-  let uploadedUrl = '';
+  const uploadedUrls = [];
   let storage = null;
   let testSaved = false;
   try {
@@ -45,8 +45,20 @@ async function handleRequest(context) {
     if (deployment.edition !== 'school') throw failure('CBT is available only in the School edition.', 404);
     requireFirestoreEnv(env);
     const user = await requireStaffSession(env, request);
-    const body = await readJsonBody(request, { maxBytes: 12 * 1024 * 1024 });
-    const paper = validateAcademicCbtPaper(body);
+    const body = await readJsonBody(request, { maxBytes: 48 * 1024 * 1024 });
+    const inputs = Array.isArray(body.Files) && body.Files.length
+      ? body.Files
+      : [{ FileName: body.FileName, FileBase64: body.FileBase64, PageNumber: 1 }];
+    if (!inputs.length || inputs.length > 12) {
+      throw failure('Choose one PDF or between 1 and 12 PNG/JPG question-paper pages.', 400, 'ACADEMIC_CBT_PAPER_REQUIRED');
+    }
+    const papers = inputs.map((file) => validateAcademicCbtPaper(file));
+    if (papers.some((paper) => paper.mimeType === 'application/pdf') && papers.length !== 1) {
+      throw failure('Choose one PDF by itself, or choose several PNG/JPG pages.', 400, 'ACADEMIC_CBT_PAPER_MIXED_FORMAT');
+    }
+    if (papers.reduce((sum, paper) => sum + paper.byteLength, 0) > 32 * 1024 * 1024) {
+      throw failure('The complete question paper exceeds the 32 MB multi-page upload limit.', 413, 'ACADEMIC_CBT_PAPER_TOO_LARGE');
+    }
     const preview = await validateAcademicCbtTestInput(env, user, { ...body, RequirePaper: false });
     idempotency = await beginIdempotentRequest(env, request, body, {
       scope: 'academic-cbt-paper', actor: clean(user.username), ttlMinutes: 30 * 24 * 60
@@ -60,36 +72,53 @@ async function handleRequest(context) {
     }
     storage = await resolveDocumentStorage(env);
     if (!storage.configured) throw failure('Cloudflare R2 document storage is not connected.', 503, 'DOCUMENT_STORAGE_NOT_CONFIGURED');
-    const fileBase64 = clean(body.FileBase64);
-    const digest = await academicCbtPaperDigest(fileBase64);
-    const stored = await putStoredDocument(env, {
-      category: 'academic-cbt',
-      branchId: preview.context.scope.branchId,
-      schoolSection: preview.context.scope.schoolSection,
-      ownerId: preview.record.CbtTestId,
-      documentType: 'question-paper',
-      operationId: idempotency.documentId,
-      fileName: paper.fileName,
-      mimeType: paper.mimeType,
-      fileBase64,
-      customMetadata: { uploadedBy: clean(user.username) }
-    });
-    uploadedUrl = stored.documentUrl;
+    const paperFiles = [];
+    for (let index = 0; index < papers.length; index += 1) {
+      const paper = papers[index];
+      const fileBase64 = clean(inputs[index]?.FileBase64);
+      const digest = await academicCbtPaperDigest(fileBase64);
+      const stored = await putStoredDocument(env, {
+        category: 'academic-cbt',
+        branchId: preview.context.scope.branchId,
+        schoolSection: preview.context.scope.schoolSection,
+        ownerId: preview.record.CbtTestId,
+        documentType: papers.length === 1 ? 'question-paper' : `question-paper-page-${String(index + 1).padStart(3, '0')}`,
+        operationId: idempotency.documentId,
+        fileName: paper.fileName,
+        mimeType: paper.mimeType,
+        fileBase64,
+        customMetadata: { uploadedBy: clean(user.username), pageNumber: index + 1 }
+      });
+      uploadedUrls.push(stored.documentUrl);
+      paperFiles.push({
+        Url: stored.documentUrl,
+        FileName: paper.fileName,
+        MimeType: paper.mimeType,
+        Digest: digest,
+        ByteLength: paper.byteLength,
+        PageNumber: index + 1
+      });
+    }
+    const firstPaper = paperFiles[0];
     const saved = await saveAcademicCbtTest(env, user, {
       ...body,
+      Files: undefined,
       FileBase64: undefined,
       CbtTestId: preview.existing?.CbtTestId || '',
-      PaperUrl: uploadedUrl,
-      PaperFileName: paper.fileName,
-      PaperMimeType: paper.mimeType,
-      PaperDigest: digest,
-      PaperByteLength: paper.byteLength,
+      PaperFiles: paperFiles,
+      PaperUrl: firstPaper.Url,
+      PaperFileName: firstPaper.FileName,
+      PaperMimeType: firstPaper.MimeType,
+      PaperDigest: firstPaper.Digest,
+      PaperByteLength: firstPaper.ByteLength,
       RequirePaper: true
     }, { validation: preview });
     testSaved = true;
-    if (clean(preview.existing?.PaperUrl) && clean(preview.existing.PaperUrl) !== uploadedUrl) {
-      await deleteStoredDocument(env, preview.existing.PaperUrl).catch(() => null);
-    }
+    const previousUrls = Array.isArray(preview.existing?.PaperFiles) && preview.existing.PaperFiles.length
+      ? preview.existing.PaperFiles.map((file) => clean(file?.Url || file?.PaperUrl)).filter(Boolean)
+      : [clean(preview.existing?.PaperUrl)].filter(Boolean);
+    await Promise.all(previousUrls.filter((url) => !uploadedUrls.includes(url))
+      .map((url) => deleteStoredDocument(env, url).catch(() => null)));
     const created = saved.cbtTest || {};
     const data = {
       ok: true,
@@ -101,7 +130,9 @@ async function handleRequest(context) {
     await completeIdempotentRequest(env, idempotency, data, 200);
     return Response.json(data, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
-    if (uploadedUrl && storage && !testSaved) await deleteStoredDocument(context.env, uploadedUrl).catch(() => null);
+    if (uploadedUrls.length && storage && !testSaved) {
+      await Promise.all(uploadedUrls.map((url) => deleteStoredDocument(context.env, url).catch(() => null)));
+    }
     if (idempotency?.owner) await failIdempotentRequest(context.env, idempotency, error);
     return Response.json({
       ok: false,

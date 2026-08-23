@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
-const sharedVersion = '20260823-cbt-answer-buttons';
+const sharedVersion = '20260823-cbt-multipage-preview';
 const adminScriptVersion = '20260823-parent-onboarding-actions';
 const parentScriptVersion = '20260823-student-nin-onboarding';
 const notificationVersion = '20260804-read-efficiency';

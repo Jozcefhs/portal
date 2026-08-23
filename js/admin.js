@@ -158,7 +158,7 @@ let academicOutcomeDraft = { armId: '', promotionDecisionId: '', transcriptStude
 let academicCbtDraft = {
   step: 1, testId: '', revisionToken: '', clientRequestId: '', classroomId: '', contextKey: '',
   componentId: '', startDate: '', startTime: '', durationMinutes: '40', questionCount: '20',
-  optionStyle: 'ABCD', answerKey: [], file: null
+  optionStyle: 'ABCD', answerKey: [], files: [], previewUrls: []
 };
 const organizationCommerceCarts = {
   organizationStore: new Map(),
@@ -11799,6 +11799,8 @@ const ACADEMIC_CBT_OPTION_STYLES = Object.freeze({
   ABCDEF: ['A', 'B', 'C', 'D', 'E', 'F'],
   TRUE_FALSE: ['True', 'False']
 });
+const ACADEMIC_CBT_MAX_PAPER_FILES = 12;
+const ACADEMIC_CBT_MAX_TOTAL_BYTES = 32 * 1024 * 1024;
 
 function academicCbtRequestId() {
   return window.crypto?.randomUUID?.() || `cbt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -11816,13 +11818,52 @@ function academicCbtLocalParts(value = '') {
 }
 
 function resetAcademicCbtDraft() {
+  clearAcademicCbtPreviewUrls();
   const schedule = academicCbtLocalParts();
   academicCbtDraft = {
     step: 1, testId: '', revisionToken: '', clientRequestId: academicCbtRequestId(),
     classroomId: '', contextKey: '', componentId: '', startDate: schedule.date,
     startTime: schedule.time, durationMinutes: '40', questionCount: '20',
-    optionStyle: 'ABCD', answerKey: [], file: null
+    optionStyle: 'ABCD', answerKey: [], files: [], previewUrls: []
   };
+}
+
+function clearAcademicCbtPreviewUrls() {
+  (academicCbtDraft.previewUrls || []).forEach((url) => URL.revokeObjectURL(url));
+  academicCbtDraft.previewUrls = [];
+}
+
+function validateAcademicCbtPaperFiles(files = []) {
+  const selected = Array.from(files || []);
+  if (!selected.length) throw new Error('Choose one PDF or one or more PNG/JPG question-paper pages.');
+  if (selected.length > ACADEMIC_CBT_MAX_PAPER_FILES) {
+    throw new Error(`Choose no more than ${ACADEMIC_CBT_MAX_PAPER_FILES} image pages.`);
+  }
+  selected.forEach(validateFinanceAttachmentFile);
+  const pdfFiles = selected.filter((file) => clean(file.type).toLowerCase() === 'application/pdf' || /\.pdf$/i.test(file.name || ''));
+  if (pdfFiles.length && selected.length !== 1) {
+    throw new Error('Choose one PDF by itself, or choose several PNG/JPG image pages.');
+  }
+  const totalBytes = selected.reduce((sum, file) => sum + Number(file.size || 0), 0);
+  if (totalBytes > ACADEMIC_CBT_MAX_TOTAL_BYTES) {
+    throw new Error('The complete question paper exceeds the 32 MB multi-page upload limit.');
+  }
+  return selected;
+}
+
+function academicCbtPaperPreviewMarkup(files = []) {
+  clearAcademicCbtPreviewUrls();
+  if (!files.length) return '';
+  return files.map((file, index) => {
+    const url = URL.createObjectURL(file);
+    academicCbtDraft.previewUrls.push(url);
+    const label = files.length > 1 ? `Page ${index + 1}` : 'Question paper';
+    const name = escapeHtml(file.name || label);
+    const isPdf = clean(file.type).toLowerCase() === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+    return `<figure class="academic-cbt-paper-preview-page"><figcaption><strong>${label}</strong><span>${name}</span></figcaption>${isPdf
+      ? `<object data="${escapeHtml(url)}" type="application/pdf" aria-label="Preview of ${name}"><a href="${escapeHtml(url)}" target="_blank" rel="noopener">Open PDF preview</a></object>`
+      : `<img src="${escapeHtml(url)}" alt="${label}: ${name}">`}</figure>`;
+  }).join('');
 }
 
 function academicCbtContexts(data, rows) {
@@ -11911,17 +11952,19 @@ function academicCbtWorkspace(data, rows) {
 
   const answerRows = Array.from({ length: questionCount }, (_unused, index) => `<div class="academic-cbt-answer-row"><strong>${index + 1}</strong><div>${options.map((answer) => `<label><input type="radio" name="AcademicCbtAnswer-${index}" value="${escapeHtml(answer)}" data-academic-cbt-answer="${index}"${academicCbtDraft.answerKey[index] === answer ? ' checked' : ''}><span>${escapeHtml(answer)}</span></label>`).join('')}</div></div>`).join('');
   const stepTwo = `<div class="academic-cbt-paper-step" data-academic-cbt-step="2"${academicCbtDraft.step === 2 ? '' : ' hidden'}>
-    <div class="academic-management-editor-heading"><div><small>Step 2 of 2</small><h3>Question paper and correct answers</h3><p class="muted">Upload one PDF, PNG or JPG paper, then select exactly one answer for every question.</p></div><strong data-academic-cbt-answer-count>${answered} of ${questionCount}</strong></div>
+    <div class="academic-management-editor-heading"><div><small>Step 2 of 2</small><h3>Question paper and correct answers</h3><p class="muted">Upload one PDF, or several PNG/JPG pages in their reading order, then select exactly one answer for every question.</p></div><strong data-academic-cbt-answer-count>${answered} of ${questionCount}</strong></div>
     <div class="academic-cbt-paper-grid">
       <section class="academic-cbt-answer-key"><header><div><strong>Correct answer key</strong><span>${escapeHtml(academicCbtDraft.optionStyle === 'TRUE_FALSE' ? 'True / False' : academicCbtDraft.optionStyle)}</span></div><button type="button" class="secondary" data-academic-cbt-reset-answers>Reset answers</button></header><div>${answerRows}</div></section>
-      <section class="academic-cbt-upload-well">
-        <div><small>Question paper</small><h4>${escapeHtml(component?.Name || 'CBT test')}</h4><p>${escapeHtml(selectedContext?.classroomLabel || '')}<br>${escapeHtml(selectedContext?.subjectLabel || '')} · ${questionCount} questions · ${escapeHtml(academicCbtDraft.durationMinutes)} minutes</p></div>
-        <label class="academic-cbt-file-button">Choose PDF, PNG or JPG<input type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" data-academic-cbt-paper></label>
-        <span data-academic-cbt-file-name>${escapeHtml(academicCbtDraft.file?.name || 'No file selected')}</span>
-        <small>Maximum file size: 8 MB. The paper is stored securely in the organisation’s private Cloudflare R2 bucket.</small>
+      <section class="academic-cbt-upload-well${academicCbtDraft.files.length ? ' has-preview' : ''}">
+        <div class="academic-cbt-upload-summary"><div><small>Question paper</small><h4>${escapeHtml(component?.Name || 'CBT test')}</h4><p>${escapeHtml(selectedContext?.classroomLabel || '')}<br>${escapeHtml(selectedContext?.subjectLabel || '')} · ${questionCount} questions · ${escapeHtml(academicCbtDraft.durationMinutes)} minutes</p></div>
+          <label class="academic-cbt-file-button">Choose PDF or image page(s)<input type="file" multiple accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" data-academic-cbt-paper></label>
+          <span data-academic-cbt-file-name>${academicCbtDraft.files.length ? escapeHtml(`${academicCbtDraft.files.length} file${academicCbtDraft.files.length === 1 ? '' : 's'} selected`) : 'No file selected'}</span>
+          <small>One PDF, or up to ${ACADEMIC_CBT_MAX_PAPER_FILES} PNG/JPG pages. Each file may be 8 MB; the complete paper may be 32 MB. Image pages retain the selected order.</small>
+        </div>
+        <div class="academic-cbt-paper-preview" data-academic-cbt-paper-preview>${academicCbtPaperPreviewMarkup(academicCbtDraft.files)}</div>
       </section>
     </div>
-    <div class="academic-cbt-form-actions"><button type="button" class="secondary" data-academic-cbt-back>Back</button><button type="submit"${answered === questionCount && academicCbtDraft.file ? '' : ' disabled'} data-academic-cbt-save>${editing ? 'Save corrected test' : 'Create scheduled test'}</button></div>
+    <div class="academic-cbt-form-actions"><button type="button" class="secondary" data-academic-cbt-back>Back</button><button type="submit"${answered === questionCount && academicCbtDraft.files.length ? '' : ' disabled'} data-academic-cbt-save>${editing ? 'Save corrected test' : 'Create scheduled test'}</button></div>
   </div>`;
 
   const editor = `<form class="academic-management-editor academic-management-editor-wide academic-cbt-editor" data-academic-cbt-editor>${stepOne}${stepTwo}</form>`;
@@ -12478,19 +12521,14 @@ function bindAcademicManagement() {
     });
     cbtForm.querySelector('[data-academic-cbt-context]')?.addEventListener('change', refreshCbtEditor);
     cbtForm.querySelector('[data-academic-cbt-paper]')?.addEventListener('change', (event) => {
-      const file = event.target.files?.[0] || null;
       try {
-        validateFinanceAttachmentFile(file);
-        academicCbtDraft.file = file;
-        const name = cbtForm.querySelector('[data-academic-cbt-file-name]');
-        if (name) name.textContent = file?.name || 'No file selected';
-        const save = cbtForm.querySelector('[data-academic-cbt-save]');
-        if (save) {
-          const questionCount = Number(academicCbtDraft.questionCount || 0);
-          save.disabled = !file || academicCbtDraft.answerKey.slice(0, questionCount).filter(Boolean).length !== questionCount;
-        }
+        const files = validateAcademicCbtPaperFiles(event.target.files);
+        clearAcademicCbtPreviewUrls();
+        academicCbtDraft.files = files;
+        renderAcademicManagement(academicManagementData || {});
       } catch (error) {
-        academicCbtDraft.file = null;
+        clearAcademicCbtPreviewUrls();
+        academicCbtDraft.files = [];
         event.target.value = '';
         setStatus(document.getElementById('academicManagementStatus'), error.message || String(error), 'bad');
       }
@@ -12504,7 +12542,7 @@ function bindAcademicManagement() {
       const counter = cbtForm.querySelector('[data-academic-cbt-answer-count]');
       if (counter) counter.textContent = `${answered} of ${questionCount}`;
       const save = cbtForm.querySelector('[data-academic-cbt-save]');
-      if (save) save.disabled = answered !== questionCount || !academicCbtDraft.file;
+      if (save) save.disabled = answered !== questionCount || !academicCbtDraft.files.length;
     }));
     cbtForm.querySelector('[data-academic-cbt-reset-answers]')?.addEventListener('click', () => {
       academicCbtDraft.answerKey = [];
@@ -12539,23 +12577,28 @@ function bindAcademicManagement() {
         if (startsAt.getTime() + duration * 60 * 1000 <= Date.now()) return setStatus(status, 'The test schedule has already ended. Choose a current or future time.', 'bad');
         const options = ACADEMIC_CBT_OPTION_STYLES[academicCbtDraft.optionStyle] || [];
         academicCbtDraft.answerKey = Array.from({ length: questionCount }, (_unused, index) => options.includes(academicCbtDraft.answerKey[index]) ? academicCbtDraft.answerKey[index] : '');
-        academicCbtDraft.file = null;
+        clearAcademicCbtPreviewUrls();
+        academicCbtDraft.files = [];
         academicCbtDraft.step = 2;
         renderAcademicManagement(academicManagementData || {});
         return;
       }
       const context = academicCbtSelectedContext();
-      const file = academicCbtDraft.file;
+      const files = academicCbtDraft.files;
       const questionCount = Number(academicCbtDraft.questionCount);
       const options = ACADEMIC_CBT_OPTION_STYLES[academicCbtDraft.optionStyle] || [];
       const answerKey = academicCbtDraft.answerKey.slice(0, questionCount);
       try {
         if (!context) throw new Error('The selected subject-teacher allocation is no longer available.');
-        validateFinanceAttachmentFile(file);
+        validateAcademicCbtPaperFiles(files);
         if (answerKey.length !== questionCount || answerKey.some((answer) => !options.includes(answer))) throw new Error('Select one correct answer for every question.');
         const submit = cbtForm.querySelector('[data-academic-cbt-save]');
         await runButtonAction(submit, 'Uploading...', async () => {
-          const fileBase64 = await readFinanceAttachmentBase64(file);
+          const paperFiles = await Promise.all(files.map(async (file, index) => ({
+            FileName: file.name,
+            FileBase64: await readFinanceAttachmentBase64(file),
+            PageNumber: index + 1
+          })));
           const startsAt = new Date(`${academicCbtDraft.startDate}T${academicCbtDraft.startTime}:00`).toISOString();
           const result = await uploadAcademicCbtPaper({
             SchoolSection: academicManagementFilters.section,
@@ -12574,8 +12617,7 @@ function bindAcademicManagement() {
             CbtTestId: academicCbtDraft.testId,
             RevisionToken: academicCbtDraft.revisionToken,
             ClientRequestId: academicCbtDraft.clientRequestId,
-            FileName: file.name,
-            FileBase64: fileBase64
+            Files: paperFiles
           }, academicCbtDraft.clientRequestId);
           mergeAcademicCbtTest(result);
           resetAcademicCbtDraft();
@@ -12606,7 +12648,8 @@ function bindAcademicManagement() {
       questionCount: String(record.NumberOfQuestions || 20),
       optionStyle: record.OptionStyle || 'ABCD',
       answerKey: [...(record.AnswerKey || [])],
-      file: null
+      files: [],
+      previewUrls: []
     };
     academicManagementTaskViews.cbt = 'create';
     renderAcademicManagement(academicManagementData || {});

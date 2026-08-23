@@ -5261,6 +5261,7 @@ async function academicCbtClassContext(env, user = {}, input = {}) {
 }
 
 async function academicCbtPackageDigest(record = {}) {
+  const paperFiles = academicCbtPaperFiles(record);
   const material = JSON.stringify({
     CbtTestId: record.CbtTestId,
     SessionId: record.SessionId,
@@ -5278,10 +5279,58 @@ async function academicCbtPackageDigest(record = {}) {
     Options: record.Options,
     AnswerKey: record.AnswerKey,
     StudentRefs: record.StudentRefs,
-    PaperDigest: record.PaperDigest
+    PaperDigest: record.PaperDigest,
+    PaperFiles: paperFiles.map((file) => ({
+      FileName: file.FileName,
+      MimeType: file.MimeType,
+      Digest: file.Digest,
+      ByteLength: file.ByteLength,
+      PageNumber: file.PageNumber
+    }))
   });
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
   return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+function academicCbtPaperFiles(input = {}) {
+  const supplied = Array.isArray(input.PaperFiles) ? input.PaperFiles : [];
+  const legacy = clean(input.PaperUrl) ? [{
+    Url: input.PaperUrl,
+    FileName: input.PaperFileName,
+    MimeType: input.PaperMimeType,
+    Digest: input.PaperDigest,
+    ByteLength: input.PaperByteLength,
+    PageNumber: 1
+  }] : [];
+  return (supplied.length ? supplied : legacy).map((file, index) => ({
+    Url: clean(file?.Url || file?.PaperUrl),
+    FileName: clean(file?.FileName || file?.PaperFileName),
+    MimeType: lower(file?.MimeType || file?.PaperMimeType),
+    Digest: lower(file?.Digest || file?.PaperDigest),
+    ByteLength: Number(file?.ByteLength || file?.PaperByteLength || 0),
+    PageNumber: index + 1
+  }));
+}
+
+function validateAcademicCbtPaperFiles(files = []) {
+  if (!files.length || files.length > 12) {
+    throw failure('Upload one PDF or between 1 and 12 PNG/JPG question-paper pages.', 400, 'ACADEMIC_CBT_PAPER_REQUIRED');
+  }
+  files.forEach((file) => {
+    if (!file.Url || !file.FileName || !['application/pdf', 'image/jpeg', 'image/png'].includes(file.MimeType)) {
+      throw failure('Upload a valid PDF, JPEG or PNG question paper.', 400, 'ACADEMIC_CBT_PAPER_REQUIRED');
+    }
+    if (!/^[a-f0-9]{64}$/.test(file.Digest)) {
+      throw failure('An uploaded question-paper page has an invalid digest.', 400, 'ACADEMIC_CBT_PAPER_DIGEST_INVALID');
+    }
+  });
+  if (files.some((file) => file.MimeType === 'application/pdf') && files.length !== 1) {
+    throw failure('Upload one PDF by itself, or upload several PNG/JPG pages.', 400, 'ACADEMIC_CBT_PAPER_MIXED_FORMAT');
+  }
+  if (files.reduce((sum, file) => sum + Math.max(0, file.ByteLength), 0) > 32 * 1024 * 1024) {
+    throw failure('The complete question paper exceeds the 32 MB multi-page limit.', 413, 'ACADEMIC_CBT_PAPER_TOO_LARGE');
+  }
+  return files;
 }
 
 export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
@@ -5309,15 +5358,9 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
   if (!Number.isFinite(startsAt.getTime())) throw failure('Choose a valid test date and start time.', 400, 'ACADEMIC_CBT_SCHEDULE_INVALID');
   const endsAt = new Date(startsAt.getTime() + durationMinutes * 60 * 1000);
   if (endsAt.getTime() <= Date.now()) throw failure('The test schedule has already ended. Choose a current or future start time.', 400, 'ACADEMIC_CBT_SCHEDULE_ENDED');
-  const paperUrl = clean(input.PaperUrl);
-  const paperFileName = clean(input.PaperFileName);
-  const paperMimeType = lower(input.PaperMimeType);
-  const paperDigest = lower(input.PaperDigest);
+  const suppliedPaperFiles = academicCbtPaperFiles(input);
   if (input.RequirePaper !== false) {
-    if (!paperUrl || !paperFileName || !['application/pdf', 'image/jpeg', 'image/png'].includes(paperMimeType)) {
-      throw failure('Upload a valid PDF, JPEG or PNG question paper.', 400, 'ACADEMIC_CBT_PAPER_REQUIRED');
-    }
-    if (!/^[a-f0-9]{64}$/.test(paperDigest)) throw failure('The uploaded question paper digest is invalid.', 400, 'ACADEMIC_CBT_PAPER_DIGEST_INVALID');
+    validateAcademicCbtPaperFiles(suppliedPaperFiles);
   }
   const requestedId = clean(input.CbtTestId);
   const existing = requestedId ? findById(context.state.cbtTests, requestedId) : null;
@@ -5337,6 +5380,8 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
     .map((reference) => [lower(reference), reference])).values()]
     .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
   const maximumScore = Number(component.MaximumScore);
+  const paperFiles = suppliedPaperFiles.length ? suppliedPaperFiles : academicCbtPaperFiles(existing || {});
+  const firstPaper = paperFiles[0] || {};
   const record = {
     ...(existing || {}),
     RecordId: cbtTestId,
@@ -5361,11 +5406,12 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
     AnswerKey: answerKey,
     StudentRefs: studentRefs,
     RosterCount: studentRefs.length,
-    PaperUrl: paperUrl || clean(existing?.PaperUrl),
-    PaperFileName: paperFileName || clean(existing?.PaperFileName),
-    PaperMimeType: paperMimeType || clean(existing?.PaperMimeType),
-    PaperDigest: paperDigest || clean(existing?.PaperDigest),
-    PaperByteLength: Number(input.PaperByteLength || existing?.PaperByteLength || 0),
+    PaperFiles: paperFiles,
+    PaperUrl: firstPaper.Url || clean(existing?.PaperUrl),
+    PaperFileName: firstPaper.FileName || clean(existing?.PaperFileName),
+    PaperMimeType: firstPaper.MimeType || clean(existing?.PaperMimeType),
+    PaperDigest: firstPaper.Digest || clean(existing?.PaperDigest),
+    PaperByteLength: Number(firstPaper.ByteLength || existing?.PaperByteLength || 0),
     Status: 'Scheduled',
     PackageRevision: Number(existing?.PackageRevision || 0) + 1,
     BranchId: context.scope.branchId,
@@ -5380,23 +5426,16 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
 }
 
 async function finalizeAcademicCbtPaper(validation, input = {}) {
-  const paperUrl = clean(input.PaperUrl);
-  const paperFileName = clean(input.PaperFileName);
-  const paperMimeType = lower(input.PaperMimeType);
-  const paperDigest = lower(input.PaperDigest);
-  if (!paperUrl || !paperFileName || !['application/pdf', 'image/jpeg', 'image/png'].includes(paperMimeType)) {
-    throw failure('Upload a valid PDF, JPEG or PNG question paper.', 400, 'ACADEMIC_CBT_PAPER_REQUIRED');
-  }
-  if (!/^[a-f0-9]{64}$/.test(paperDigest)) {
-    throw failure('The uploaded question paper digest is invalid.', 400, 'ACADEMIC_CBT_PAPER_DIGEST_INVALID');
-  }
+  const paperFiles = validateAcademicCbtPaperFiles(academicCbtPaperFiles(input));
+  const firstPaper = paperFiles[0];
   const record = {
     ...validation.record,
-    PaperUrl: paperUrl,
-    PaperFileName: paperFileName,
-    PaperMimeType: paperMimeType,
-    PaperDigest: paperDigest,
-    PaperByteLength: Number(input.PaperByteLength || 0)
+    PaperFiles: paperFiles,
+    PaperUrl: firstPaper.Url,
+    PaperFileName: firstPaper.FileName,
+    PaperMimeType: firstPaper.MimeType,
+    PaperDigest: firstPaper.Digest,
+    PaperByteLength: firstPaper.ByteLength
   };
   record.PackageDigest = await academicCbtPackageDigest(record);
   return { ...validation, record };
@@ -5424,10 +5463,10 @@ export async function saveAcademicCbtTest(env, user = {}, input = {}, options = 
   };
 }
 
-async function deleteAcademicCbtPaper(env, paperUrl) {
-  if (!clean(paperUrl)) return false;
-  await deleteStoredDocument(env, paperUrl);
-  return true;
+async function deleteAcademicCbtPapers(env, record = {}) {
+  const urls = [...new Set(academicCbtPaperFiles(record).map((file) => file.Url).filter(Boolean))];
+  await Promise.all(urls.map((url) => deleteStoredDocument(env, url).catch(() => false)));
+  return urls.length;
 }
 
 export async function deleteAcademicCbtTest(env, user = {}, input = {}) {
@@ -5446,7 +5485,7 @@ export async function deleteAcademicCbtTest(env, user = {}, input = {}) {
     { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests, documentId: record.CbtTestId, operation: 'delete', updateTime: revisionToken },
     auditWrite(user, 'DELETE', 'cbtTests', record, clean(input.Reason) || 'CBT test created in error.')
   ], 'The CBT test changed while it was being deleted. Reload and try again.');
-  await deleteAcademicCbtPaper(env, record.PaperUrl).catch(() => false);
+  await deleteAcademicCbtPapers(env, record).catch(() => false);
   return {
     ok: true,
     partialAcademicManagement: true,
@@ -5455,22 +5494,27 @@ export async function deleteAcademicCbtTest(env, user = {}, input = {}) {
   };
 }
 
-async function loadAcademicCbtPaper(env, record) {
-  const file = await getStoredDocument(env, record.PaperUrl);
+async function loadAcademicCbtPaperFile(env, metadata) {
+  const file = await getStoredDocument(env, metadata.Url);
   const bytes = new Uint8Array(await file.object.arrayBuffer());
   let binary = '';
   for (let index = 0; index < bytes.length; index += 0x8000) {
     binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
   }
   const fileBase64 = btoa(binary);
-  const stored = safeStoredDocument(file.fileName || record.PaperFileName, fileBase64);
+  const stored = safeStoredDocument(file.fileName || metadata.FileName, fileBase64);
   if (!stored.valid || !stored.inlineSafe || !['application/pdf', 'image/jpeg', 'image/png'].includes(stored.mimeType)) {
     throw failure('The stored CBT paper failed its file validation.', 409, 'ACADEMIC_CBT_PAPER_INVALID');
   }
-  if (await academicCbtPaperDigest(fileBase64) !== lower(record.PaperDigest)) {
+  if (await academicCbtPaperDigest(fileBase64) !== lower(metadata.Digest)) {
     throw failure('The stored CBT paper no longer matches its scheduled package.', 409, 'ACADEMIC_CBT_PAPER_DIGEST_MISMATCH');
   }
-  return { FileName: stored.fileName, MimeType: stored.mimeType, FileBase64: fileBase64 };
+  return { FileName: stored.fileName, MimeType: stored.mimeType, FileBase64: fileBase64, PageNumber: metadata.PageNumber };
+}
+
+async function loadAcademicCbtPapers(env, record) {
+  const files = validateAcademicCbtPaperFiles(academicCbtPaperFiles(record));
+  return Promise.all(files.map((file) => loadAcademicCbtPaperFile(env, file)));
 }
 
 export async function downloadAcademicCbtTestPackage(env, user = {}, input = {}) {
@@ -5480,11 +5524,11 @@ export async function downloadAcademicCbtTestPackage(env, user = {}, input = {})
   const record = findById(context.state.cbtTests, input.CbtTestId);
   if (!record) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
   academicCbtAuthority(user, context, record);
-  const paper = await loadAcademicCbtPaper(env, record);
+  const papers = await loadAcademicCbtPapers(env, record);
   return {
     ok: true,
     message: 'The scheduled CBT package is ready for local import.',
-    cbtPackage: { ...publicRecord(record), Paper: paper }
+    cbtPackage: { ...publicRecord(record), Paper: papers[0], Papers: papers }
   };
 }
 
