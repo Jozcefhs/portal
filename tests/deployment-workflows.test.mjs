@@ -68,6 +68,7 @@ test('the reusable workflow deploys indexes and Pages with short-lived, environm
   assert.match(reusable, /--only firestore:indexes/);
   assert.match(reusable, /--config "\$\{FIREBASE_CONFIG\}"/);
   assert.match(reusable, /cloudflare\/wrangler-action@v3/);
+  assert.match(reusable, /wranglerVersion: "4\.125\.0"/);
   assert.match(reusable, /pages secret bulk/);
   assert.match(reusable, /NOTIFICATION_SCHEDULER_SECRET/);
   assert.match(reusable, /notification scheduler secret/);

@@ -148,6 +148,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.125.0"
           command: pages deploy .pages-deploy --project-name=${{ inputs.cloudflare_project }} --branch=main --commit-hash=${{ github.sha }} --commit-dirty=false
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
