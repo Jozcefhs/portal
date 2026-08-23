@@ -64,6 +64,7 @@ jobs:
       FIREBASE_CONFIG: ${{ inputs.firebase_config }}
       EXPECTED_EDITION: ${{ inputs.edition }}
       EXPECTED_WORKSPACE_ID: ${{ inputs.workspace_id }}
+      NOTIFICATION_SCHEDULER_SECRET: ${{ secrets.NOTIFICATION_SCHEDULER_SECRET }}
 
     steps:
       - name: Check out repository
@@ -78,6 +79,7 @@ jobs:
           [[ -n "${GCP_WIF_PROVIDER}" ]] || missing+=("Workload Identity provider")
           [[ -n "${GCP_INDEX_SERVICE_ACCOUNT}" ]] || missing+=("index service account")
           [[ -n "${CLOUDFLARE_ACCOUNT_ID}" ]] || missing+=("Cloudflare account ID")
+          [[ -n "${NOTIFICATION_SCHEDULER_SECRET}" ]] || missing+=("notification scheduler secret")
           if (( ${#missing[@]} )); then
             printf '::error::GitHub environment %s is missing: %s\n' \
               '${{ inputs.github_environment }}' "$(IFS=', '; echo "${missing[*]}")"
@@ -109,6 +111,20 @@ jobs:
 
       - name: Install function dependencies
         run: npm ci --ignore-scripts --omit=dev
+
+      - name: Synchronize the environment scheduler secret to Pages
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_PROJECT: ${{ inputs.cloudflare_project }}
+        run: |
+          set -euo pipefail
+          umask 077
+          secret_file="$(mktemp)"
+          cleanup() { rm -f "${secret_file}"; }
+          trap cleanup EXIT
+          SECRET_FILE="${secret_file}" node -e 'const fs = require("node:fs"); fs.writeFileSync(process.env.SECRET_FILE, JSON.stringify({ NOTIFICATION_SCHEDULER_SECRET: process.env.NOTIFICATION_SCHEDULER_SECRET }), { mode: 0o600 });'
+          npx --yes wrangler@4.125.0 pages secret bulk "${secret_file}" --project-name "${CLOUDFLARE_PROJECT}"
 
       - name: Ensure workspace-isolated Cloudflare R2 storage
         env:

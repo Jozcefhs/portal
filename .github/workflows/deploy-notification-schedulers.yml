@@ -103,7 +103,10 @@ jobs:
           cleanup() { rm -f "${secret_file}"; }
           trap cleanup EXIT
           SECRET_FILE="${secret_file}" node -e 'const fs = require("node:fs"); fs.writeFileSync(process.env.SECRET_FILE, JSON.stringify({ SCHEDULER_SECRET: process.env.SCHEDULER_SECRET }), { mode: 0o600 });'
-          npx wrangler deploy --config "${WRANGLER_CONFIG}" --keep-vars --secrets-file "${secret_file}"
+          if ! npx wrangler deploy --config "${WRANGLER_CONFIG}" --keep-vars --secrets-file "${secret_file}"; then
+            echo '::error title=Cloudflare Worker deployment rejected::The CLOUDFLARE_API_TOKEN for this GitHub environment must include Account / Workers Scripts / Edit in addition to the existing Pages and R2 permissions.'
+            exit 1
+          fi
 
       - name: Write scheduler deployment summary
         if: always()

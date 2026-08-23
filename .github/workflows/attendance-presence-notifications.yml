@@ -56,13 +56,27 @@ jobs:
             --arg edition "$EXPECTED_EDITION" \
             '{attendanceOnly:true,attendanceLimit:10,expectedWorkspaceId:$workspace,expectedEdition:$edition}')"
           for attempt in $(seq 1 5); do
-            response="$(curl --fail-with-body --silent --show-error \
+            response_file="$(mktemp)"
+            if ! http_status="$(curl --silent --show-error \
               --retry 3 --retry-all-errors \
+              --output "$response_file" \
+              --write-out '%{http_code}' \
               -X POST "$ENDPOINT" \
               -H "Authorization: Bearer $SCHEDULER_SECRET" \
               -H "Content-Type: application/json" \
-              --data "$payload")"
+              --data "$payload")"; then
+              rm -f "$response_file"
+              echo '::error title=Attendance scheduler unreachable::The tenant notification endpoint could not be reached after automatic retries.'
+              exit 1
+            fi
+            response="$(cat "$response_file")"
+            rm -f "$response_file"
             printf '%s\n' "$response"
+            if [[ "$http_status" -lt 200 || "$http_status" -ge 300 ]]; then
+              message="$(printf '%s' "$response" | jq -r '.message // "The tenant notification endpoint rejected the scheduler request."' 2>/dev/null || printf '%s' 'The tenant notification endpoint rejected the scheduler request.')"
+              echo "::error title=Attendance scheduler HTTP ${http_status}::${message}"
+              exit 1
+            fi
             printf '%s' "$response" | jq -e \
               --arg workspace "${EXPECTED_WORKSPACE_ID,,}" \
               --arg edition "${EXPECTED_EDITION,,}" \
