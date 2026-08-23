@@ -47,7 +47,7 @@ assert.match(admin, /Result clearances/);
 
 assert.match(headers, /X-Frame-Options: DENY/);
 assert.match(headers, /X-Content-Type-Options: nosniff/);
-assert.match(headers, /Permissions-Policy: camera=\(self\), microphone=\(\), geolocation=\(\)/);
+assert.match(headers, /Permissions-Policy: camera=\(self\), microphone=\(\), geolocation=\(self\)/);
 assert.match(middleware, /responseHeaders\.set\('X-Frame-Options', 'DENY'\)/);
 assert.match(middleware, /responseHeaders\.set\('Referrer-Policy', 'no-referrer'\)/);
 

@@ -247,7 +247,7 @@ async function handleRequest(context, identityLoader) {
     responseHeaders.set('X-Content-Type-Options', 'nosniff');
     responseHeaders.set('X-Frame-Options', 'DENY');
     responseHeaders.set('Referrer-Policy', 'no-referrer');
-    responseHeaders.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    responseHeaders.set('Permissions-Policy', 'camera=(self), microphone=(), geolocation=(self)');
     responseHeaders.set('X-Permitted-Cross-Domain-Policies', 'none');
     responseHeaders.append('Server-Timing', `app;dur=${Date.now() - started}`);
     return new Response(response.body, {

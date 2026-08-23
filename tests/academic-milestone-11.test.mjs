@@ -80,7 +80,8 @@ test('Milestone 11 removes insecure random identifiers and applies response hard
   });
   assert.match(headers, /X-Frame-Options: DENY/);
   assert.match(headers, /X-Content-Type-Options: nosniff/);
-  assert.match(headers, /Permissions-Policy: camera=\(self\), microphone=\(\), geolocation=\(\)/);
+  assert.match(headers, /Permissions-Policy: camera=\(self\), microphone=\(\), geolocation=\(self\)/);
+  assert.match(middlewareSource, /Permissions-Policy', 'camera=\(self\), microphone=\(\), geolocation=\(self\)'/);
   assert.match(middlewareSource, /responseHeaders\.set\('X-Frame-Options', 'DENY'\)/);
   assert.match(middlewareSource, /responseHeaders\.set\('Referrer-Policy', 'no-referrer'\)/);
 });
