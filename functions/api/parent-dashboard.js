@@ -114,7 +114,7 @@ function publicOnboardingStudent(student = {}) {
     medicalCondition: clean(student.MedicalCondition),
     emergencyContactName: clean(student.EmergencyContactName),
     emergencyContactPhone: clean(student.EmergencyContactPhone),
-    previousSchool: clean(student.PreviousSchool)
+    studentNin: clean(student.NIN)
   };
 }
 
@@ -160,7 +160,7 @@ async function completeParentOnboardingProfile(env, body, request) {
     MedicalCondition: clean(profile.medicalCondition || profile.MedicalCondition),
     EmergencyContactName: clean(profile.emergencyContactName || profile.EmergencyContactName),
     EmergencyContactPhone: clean(profile.emergencyContactPhone || profile.EmergencyContactPhone),
-    PreviousSchool: clean(profile.previousSchool || profile.PreviousSchool)
+    NIN: clean(profile.studentNin || profile.NIN)
   };
   const required = [
     ['Date of birth', values.DateOfBirth],
@@ -195,6 +195,11 @@ async function completeParentOnboardingProfile(env, body, request) {
   }
   if (!['Day Student', 'Boarding Student'].includes(values.StudentType)) {
     const error = new Error('Select a valid student type.');
+    error.status = 400;
+    throw error;
+  }
+  if (values.NIN && !/^\d{11}$/.test(values.NIN)) {
+    const error = new Error("Enter the student's 11-digit NIN.");
     error.status = 400;
     throw error;
   }

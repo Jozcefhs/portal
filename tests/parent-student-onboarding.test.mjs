@@ -45,8 +45,17 @@ test('generic parent completion link is single-use and dashboard access waits fo
   assert.match(html, /Complete an imported student profile/);
   assert.match(html, /id="onboardingAdmissionNo"/);
   assert.match(html, /id="onboardingParentEmail"/);
+  assert.match(html, /for="onboardingStudentNin">Student's NIN/);
+  assert.match(html, /id="onboardingStudentNin"[^>]+pattern="\[0-9\]\{11\}"/);
+  assert.doesNotMatch(html, /id="onboardingPreviousSchool"/);
   assert.match(html, /id="requiredNewParentPassword"/);
   assert.match(script, /onboardingHash\.has\('onboarding'\)/);
+  assert.match(script, /onboardingStudentNin: student\.studentNin/);
+  assert.match(script, /studentNin: document\.getElementById\('onboardingStudentNin'\)\.value/);
+  assert.match(api, /studentNin: clean\(student\.NIN\)/);
+  assert.match(api, /NIN: clean\(profile\.studentNin \|\| profile\.NIN\)/);
+  assert.match(api, /values\.NIN && !\/\^\\d\{11\}\$\//);
+  assert.doesNotMatch(api.slice(api.indexOf('function publicOnboardingStudent'), api.indexOf('async function assertParentOnboardingAllowance')), /previousSchool|PreviousSchool/);
   assert.match(script, /window\.history\.replaceState/);
   assert.doesNotMatch(script, /(?:localStorage|sessionStorage)\.setItem\([^\n]*(?:onboard|passwordSetupToken|temporaryPassword)/i);
 });

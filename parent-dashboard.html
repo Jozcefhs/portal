@@ -107,7 +107,7 @@
           <div class="grid two">
             <div><label for="onboardingDateOfBirth">Date of birth <span class="required">*</span></label><input id="onboardingDateOfBirth" type="date" required></div>
             <div><label for="onboardingStudentType">Student type <span class="required">*</span></label><select id="onboardingStudentType" required><option value="">Select</option><option>Day Student</option><option>Boarding Student</option></select></div>
-            <div><label for="onboardingPreviousSchool">Previous school</label><input id="onboardingPreviousSchool"></div>
+            <div><label for="onboardingStudentNin">Student's NIN</label><input id="onboardingStudentNin" inputmode="numeric" minlength="11" maxlength="11" pattern="[0-9]{11}" placeholder="11-digit NIN"></div>
           </div>
           <h3>Parent or guardian</h3>
           <div class="grid two">
@@ -344,6 +344,6 @@
   <script src="js/password-toggle.js?v=20260726-biometric"></script>
   <script src="js/financial-values.js?v=20260803-finance-commas"></script>
   <script src="js/payment-methods.js?v=20260809-direct-transfer-sharp-text"></script>
-  <script src="js/parent-dashboard.js?v=20260823-generic-parent-onboarding"></script>
+  <script src="js/parent-dashboard.js?v=20260823-student-nin-onboarding"></script>
 </body>
 </html>

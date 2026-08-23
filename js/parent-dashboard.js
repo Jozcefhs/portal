@@ -303,7 +303,7 @@ function populateParentOnboardingProfile(student = {}) {
   const values = {
     onboardingDateOfBirth: student.dateOfBirth,
     onboardingStudentType: student.studentType,
-    onboardingPreviousSchool: student.previousSchool,
+    onboardingStudentNin: student.studentNin,
     onboardingParentName: student.parentName,
     onboardingParentEmail: student.parentEmail,
     onboardingConfirmParentEmail: student.parentEmail,
@@ -383,7 +383,7 @@ parentOnboardingProfileForm?.addEventListener('submit', async (event) => {
         profile: {
           dateOfBirth: document.getElementById('onboardingDateOfBirth').value,
           studentType: document.getElementById('onboardingStudentType').value,
-          previousSchool: document.getElementById('onboardingPreviousSchool').value,
+          studentNin: document.getElementById('onboardingStudentNin').value,
           parentName: document.getElementById('onboardingParentName').value,
           parentEmail: document.getElementById('onboardingParentEmail').value,
           confirmParentEmail: document.getElementById('onboardingConfirmParentEmail').value,
