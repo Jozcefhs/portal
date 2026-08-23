@@ -18,6 +18,12 @@ const inputError = (message) => {
 
 const VIEW_ROLES = new Set(['Super Admin', 'Pastor', 'Church Administrator', 'Membership Officer']);
 const MANAGE_ROLES = new Set(['Super Admin', 'Pastor', 'Church Administrator']);
+const SERVICE_OCCURRENCE_STATUSES = new Map([
+  ['scheduled', 'Scheduled'],
+  ['in progress', 'In Progress'],
+  ['completed', 'Completed'],
+  ['cancelled', 'Cancelled']
+]);
 
 export function serviceCapabilities(user = {}) {
   const role = clean(user.role || user.Role);
@@ -51,6 +57,16 @@ export function normalizeChurchService(input = {}, branchId = 'main') {
   };
 }
 
+export function normalizeServiceOccurrenceStatus(value = 'Scheduled') {
+  const status = SERVICE_OCCURRENCE_STATUSES.get(lower(value || 'Scheduled'));
+  if (!status) throw inputError('Service status must be Scheduled, In Progress, Completed or Cancelled.');
+  return status;
+}
+
+export function canCompleteServiceOccurrence(value) {
+  return ['scheduled', 'in progress'].includes(lower(value));
+}
+
 export function normalizeServiceOccurrence(input = {}, branchId = 'main') {
   const occurrenceId = clean(input.OccurrenceId || input.occurrenceId);
   const serviceId = clean(input.ServiceId || input.serviceId);
@@ -71,7 +87,7 @@ export function normalizeServiceOccurrence(input = {}, branchId = 'main') {
     Location: clean(input.Location || input.location),
     Theme: clean(input.Theme || input.theme),
     Minister: clean(input.Minister || input.minister),
-    Status: clean(input.Status || input.status) || 'Scheduled',
+    Status: normalizeServiceOccurrenceStatus(input.Status || input.status || 'Scheduled'),
     Notes: clean(input.Notes || input.notes)
   };
 }
@@ -299,6 +315,9 @@ export async function saveServiceOccurrence(env, user, body = {}) {
   const path = churchCollectionPath(CHURCH_COLLECTIONS.serviceOccurrences, branchId);
   const id = safeChurchDocumentId(occurrence.OccurrenceId);
   const existing = await getDocument(env, path, id).catch(() => null);
+  if (lower(existing?.Status) === 'completed') {
+    throw inputError('This service occurrence is completed and locked. It can no longer be edited.');
+  }
   const payload = {
     ...(existing || {}), ...occurrence,
     ServiceName: clean(service.Name),
@@ -310,6 +329,49 @@ export async function saveServiceOccurrence(env, user, body = {}) {
   await upsertDocument(env, path, id, payload);
   await writeServiceAudit(env, branchId, user, existing ? 'UPDATE' : 'CREATE', 'Service Occurrence', occurrence.OccurrenceId, `${service.Name} | ${occurrence.Date}`);
   return { ok: true, message: existing ? 'Service occurrence updated.' : 'Service occurrence created.', occurrence: payload };
+}
+
+export async function completeServiceOccurrence(env, user, body = {}) {
+  await requireServicesEdition(env);
+  requireCapability(user, 'canManageOccurrences');
+  const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
+  const incoming = body.occurrence || body.Occurrence || body;
+  const occurrenceId = clean(incoming.OccurrenceId || incoming.occurrenceId);
+  const id = safeChurchDocumentId(occurrenceId);
+  if (!id) throw inputError('OccurrenceId is required.');
+  const path = churchCollectionPath(CHURCH_COLLECTIONS.serviceOccurrences, branchId);
+  const existing = await getDocument(env, path, id).catch(() => null);
+  if (!existing) throw inputError('The selected service occurrence does not exist in this branch.');
+  if (lower(existing.Status) === 'completed') {
+    return {
+      ok: true,
+      message: 'Service occurrence is already completed and locked.',
+      occurrence: existing
+    };
+  }
+  if (!canCompleteServiceOccurrence(existing.Status)) {
+    throw inputError('Only a Scheduled or In Progress service occurrence can be marked completed.');
+  }
+  const completedAt = nowIso();
+  const payload = {
+    ...existing,
+    Status: 'Completed',
+    CompletedAt: completedAt,
+    CompletedBy: actorName(user),
+    UpdatedAt: completedAt,
+    UpdatedBy: actorName(user)
+  };
+  delete payload.__id; delete payload.__name;
+  await upsertDocument(env, path, id, payload);
+  await writeServiceAudit(
+    env, branchId, user, 'COMPLETE', 'Service Occurrence', occurrenceId,
+    `${clean(existing.ServiceName || existing.ServiceId)} | ${clean(existing.Date)}`
+  );
+  return {
+    ok: true,
+    message: 'Service occurrence marked completed and locked.',
+    occurrence: payload
+  };
 }
 
 export async function recordChurchAttendance(env, user, body = {}) {
@@ -409,6 +471,7 @@ export async function handleChurchServiceAction(env, user, body = {}) {
   if (['list', 'getchurchservices'].includes(action)) return listChurchServices(env, user, body);
   if (['saveservice', 'savechurchservice'].includes(action)) return saveChurchService(env, user, body);
   if (['saveoccurrence', 'savechurchserviceoccurrence'].includes(action)) return saveServiceOccurrence(env, user, body);
+  if (['completeoccurrence', 'completechurchserviceoccurrence'].includes(action)) return completeServiceOccurrence(env, user, body);
   if (['recordattendance', 'recordchurchattendance'].includes(action)) return recordChurchAttendance(env, user, body);
   if (['recordattendancetotal', 'recordchurchattendancetotal'].includes(action)) return recordChurchAttendanceTotal(env, user, body);
   throw inputError('Choose a valid church service or attendance action.');

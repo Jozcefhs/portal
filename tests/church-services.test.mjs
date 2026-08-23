@@ -10,6 +10,8 @@ import {
   normalizeAttendanceCount,
   normalizeChurchService,
   normalizeServiceOccurrence,
+  normalizeServiceOccurrenceStatus,
+  canCompleteServiceOccurrence,
   serviceCapabilities
 } from '../functions/lib/church-services.js';
 
@@ -56,6 +58,11 @@ test('service occurrences require a service, stable ID, and ISO date', () => {
     () => normalizeServiceOccurrence({ OccurrenceId: 'OCC-2', ServiceId: 'SUN-AM', Date: '2026-02-31' }),
     /valid YYYY-MM-DD/
   );
+  assert.equal(normalizeServiceOccurrenceStatus('in progress'), 'In Progress');
+  assert.throws(() => normalizeServiceOccurrenceStatus('Held'), /must be Scheduled/);
+  assert.equal(canCompleteServiceOccurrence('Scheduled'), true);
+  assert.equal(canCompleteServiceOccurrence('In Progress'), true);
+  assert.equal(canCompleteServiceOccurrence('Completed'), false);
 });
 
 test('member attendance IDs are deterministic per occurrence and member', () => {
@@ -149,6 +156,9 @@ test('the web services workspace records occurrences, totals, and individual che
   assert.match(adminJs, /id="churchOccurrenceForm"/);
   assert.match(adminJs, /id="churchOccurrenceForm" class="workflow-card compact-form church-service-entry-form"/);
   assert.match(adminJs, /churchServiceAction\('saveOccurrence', payload\)/);
+  assert.match(adminJs, /data-complete-service-occurrence/);
+  assert.match(adminJs, /churchServiceAction\('completeOccurrence', \{ OccurrenceId: occurrenceId \}\)/);
+  assert.match(adminJs, /Completed · locked/);
   assert.match(adminJs, /id="churchAttendanceTotalForm"/);
   assert.match(adminJs, /name="AttendanceCount" type="number"/);
   assert.match(adminJs, /name="ChildrenCount" type="number"/);
@@ -171,6 +181,9 @@ test('the web services workspace records occurrences, totals, and individual che
   assert.match(adminJs, /id="churchAttendanceForm" class="workflow-card compact-form church-service-entry-form"/);
   assert.match(adminJs, /churchServiceAction\('recordAttendance', payload\)/);
   assert.match(serviceApi, /recordChurchAttendanceTotal/);
+  assert.match(serviceApi, /export async function completeServiceOccurrence/);
+  assert.match(serviceApi, /This service occurrence is completed and locked\. It can no longer be edited\./);
+  assert.match(serviceApi, /\['completeoccurrence', 'completechurchserviceoccurrence'\]/);
   assert.match(serviceApi, /normalizeAttendanceBreakdown\(incoming\)/);
   assert.match(serviceApi, /AttendanceCountRecordedAt/);
   assert.match(portalCss, /\.service-attendance-workspace\s*\{[\s\S]*?grid-template-columns:/);

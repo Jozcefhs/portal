@@ -5209,7 +5209,17 @@ async function loadChurchServices() {
         { label: 'Date', value: (row) => pick(row, ['Date']) },
         { label: 'Service', value: (row) => pick(row, ['ServiceName', 'ServiceId']) },
         { label: 'Time', value: (row) => pick(row, ['StartTime']) },
-        { label: 'Status', value: (row) => pick(row, ['Status']) }
+        { label: 'Status', value: (row) => pick(row, ['Status']) },
+        ...(capabilities.canManageOccurrences ? [{
+          label: 'Action',
+          render: (row) => {
+            const occurrenceId = clean(pick(row, ['OccurrenceId', '__id']));
+            const status = clean(pick(row, ['Status'])).toLowerCase();
+            if (status === 'completed') return '<span class="muted">Completed · locked</span>';
+            if (!['scheduled', 'in progress'].includes(status) || !occurrenceId) return '<span class="muted">No action</span>';
+            return `<button type="button" class="table-action" data-complete-service-occurrence="${escapeHtml(occurrenceId)}">Mark completed</button>`;
+          }
+        }] : [])
       ])}
       ${table('Attendance Summary', data.occurrences || [], [
         { label: 'Date', value: (row) => pick(row, ['Date']) },
@@ -5255,6 +5265,21 @@ async function loadChurchServices() {
         setStatus(status, error.message || String(error), 'bad');
         if (button.isConnected) setButtonLoading(button, false, 'Saving...', 'Save occurrence');
       }
+    });
+    panelEl.querySelectorAll('[data-complete-service-occurrence]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const occurrenceId = clean(button.dataset.completeServiceOccurrence);
+        if (!occurrenceId) return;
+        setButtonLoading(button, true, 'Completing...', 'Mark completed');
+        try {
+          const result = await churchServiceAction('completeOccurrence', { OccurrenceId: occurrenceId });
+          await loadChurchServices();
+          setStatus(dashboardStatus, result.message, 'ok');
+        } catch (error) {
+          setStatus(dashboardStatus, error.message || String(error), 'bad');
+          if (button.isConnected) setButtonLoading(button, false, 'Completing...', 'Mark completed');
+        }
+      });
     });
     const totalForm = document.getElementById('churchAttendanceTotalForm');
     const attendanceReport = document.getElementById('churchAttendanceBreakdownReport');
