@@ -750,7 +750,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'moveAcademicStudentMembership', 'withdrawAcademicStudentMembership', 'reinstateAcademicStudentMembership',
   'archiveAcademicRecord', 'deleteAcademicRecord',
   'syncAcademicCbtScores', 'syncLocalCbtStudentPasswords',
-  'downloadAcademicCbtTestPackage', 'acknowledgeAcademicCbtImport',
+  'rescheduleAcademicCbtTest', 'downloadAcademicCbtTestPackage', 'acknowledgeAcademicCbtImport',
   'getAccountingRequisitionDocument', 'syncAccountingRevenue', 'saveChartAccount',
   'saveAccountingJournal', 'saveAccountingExpense', 'saveAccountingBudget',
   'submitAccountingImprest', 'reviewAccountingImprest', 'issueAccountingImprest',
@@ -7516,6 +7516,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'rollbackAcademicScoreImport':
     case 'syncAcademicCbtScores':
     case 'syncLocalCbtStudentPasswords':
+    case 'rescheduleAcademicCbtTest':
     case 'downloadAcademicCbtTestPackage':
     case 'acknowledgeAcademicCbtImport':
     case 'prepareLocalCbtIdentityPackage':

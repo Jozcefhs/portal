@@ -46,6 +46,9 @@ test('teachers may author online packages that are pulled onto the local desktop
   assert.match(admin, /academicCbtPaperPreviewMarkup/);
   assert.match(admin, /Choose one PDF by itself, or choose several PNG\/JPG image pages/);
   assert.match(admin, /Files: paperFiles/);
+  assert.match(admin, /data-academic-cbt-reschedule/);
+  assert.match(admin, /Only the activation date and time will change/);
+  assert.match(admin, /New schedule to pull/);
   assert.match(backend, /cbt: ACADEMIC_CBT_STATE_KEYS/);
   assert.match(backend, /const focusedStateKeys = academicManagementViewStateKeys/);
   assert.match(backend, /downloadAcademicCbtTestPackage/);
@@ -54,11 +57,16 @@ test('teachers may author online packages that are pulled onto the local desktop
   assert.match(backend, /ArmId: ''/);
   assert.match(backend, /PaperFiles: paperFiles/);
   assert.match(backend, /Papers: papers/);
+  assert.match(backend, /rescheduleAcademicCbtTest/);
+  assert.match(backend, /completed local attempts preserved/);
+  assert.match(backend, /replacementCandidates/);
+  assert.match(backend, /SupersededByCbtTestId/);
   assert.doesNotMatch(backend, /ACADEMIC_CBT_LOCAL_ONLY/);
   assert.match(endpoint, /putStoredDocument\(env/);
   assert.match(endpoint, /category: 'academic-cbt'/);
   assert.match(endpoint, /Array\.isArray\(body\.Files\)/);
   assert.match(endpoint, /question-paper-page-/);
+  assert.match(endpoint, /preview\.replacementCandidates/);
   assert.doesNotMatch(endpoint, /GOOGLE_APPS_SCRIPT/);
   assert.doesNotMatch(endpoint, /ACADEMIC_CBT_LOCAL_ONLY/);
 });

@@ -5371,6 +5371,16 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
       throw failure('This test has already been downloaded to a local CBT server. Create a corrected test instead of changing its package.', 409, 'ACADEMIC_CBT_ALREADY_DOWNLOADED');
     }
   }
+  const replacementCandidates = (context.state.cbtTests || []).filter((row) => (
+    recordId(row) !== recordId(existing || {})
+    && lower(row.Status) !== 'superseded'
+    && clean(row.ClassId) === clean(context.schoolClass.ClassId)
+    && clean(row.SubjectId) === clean(context.subject.SubjectId)
+    && (clean(row.AssessmentComponentId) === clean(component.Id)
+      || lower(row.AssessmentComponentName) === lower(component.Name))
+    && lower(row.SchoolSection || context.scope.section) === lower(context.scope.section)
+    && academicCbtPaperFiles(row).length > 0
+  ));
   const timestamp = nowIso();
   const cbtTestId = existing?.CbtTestId || academicId(
     'cbt-test', context.scope.branchId, context.scope.section, context.session.SessionId,
@@ -5422,7 +5432,7 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
     UpdatedBy: actorName(user)
   };
   record.PackageDigest = await academicCbtPackageDigest(record);
-  return { context, component, existing, record };
+  return { context, component, existing, replacementCandidates, record };
 }
 
 async function finalizeAcademicCbtPaper(validation, input = {}) {
@@ -5445,20 +5455,96 @@ export async function saveAcademicCbtTest(env, user = {}, input = {}, options = 
   const validation = options.validation
     ? await finalizeAcademicCbtPaper(options.validation, input)
     : await validateAcademicCbtTestInput(env, user, { ...input, RequirePaper: true });
-  const { existing, record } = validation;
+  const { existing, replacementCandidates = [], record } = validation;
   const writes = [{
     collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests,
     documentId: record.CbtTestId,
     data: withoutMetadata(record),
     ...writePrecondition(existing, input.RevisionToken)
-  }, auditWrite(user, existing ? 'UPDATE' : 'CREATE', 'cbtTests', record,
-    `${record.AssessmentComponentName}; ${record.NumberOfQuestions} questions; ${record.RosterCount} students; starts ${record.StartsAt}`)];
+  }];
+  replacementCandidates.forEach((previous) => {
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests,
+      documentId: previous.CbtTestId,
+      data: withoutMetadata({
+        ...previous,
+        Status: 'Superseded',
+        PaperFiles: [],
+        PaperUrl: '',
+        PaperFileName: '',
+        PaperMimeType: '',
+        PaperDigest: '',
+        PaperByteLength: 0,
+        SupersededByCbtTestId: record.CbtTestId,
+        SupersededAt: record.UpdatedAt,
+        SupersededBy: record.UpdatedBy,
+        UpdatedAt: record.UpdatedAt,
+        UpdatedBy: record.UpdatedBy
+      }),
+      updateTime: clean(previous.__updateTime)
+    });
+  });
+  writes.push(auditWrite(user, existing ? 'UPDATE' : 'CREATE', 'cbtTests', record,
+    `${record.AssessmentComponentName}; ${record.NumberOfQuestions} questions; ${record.RosterCount} students; starts ${record.StartsAt}; replaced papers ${replacementCandidates.length}`));
   const commit = await commitAcademicBatch(env, writes, 'The CBT test changed while it was being saved. Reload and try again.');
   const savedRecord = publicRecord({ ...record, __updateTime: clean(commit?.writeResults?.[0]?.updateTime) });
   return {
     ok: true,
     partialAcademicManagement: true,
-    message: `${record.AssessmentComponentName} CBT test scheduled for ${record.RosterCount} student${record.RosterCount === 1 ? '' : 's'}.`,
+    message: `${record.AssessmentComponentName} CBT test scheduled for ${record.RosterCount} student${record.RosterCount === 1 ? '' : 's'}${replacementCandidates.length ? '; the older stored paper was replaced' : ''}.`,
+    cbtTest: savedRecord,
+    supersededCbtTestIds: replacementCandidates.map((row) => row.CbtTestId)
+  };
+}
+
+export async function rescheduleAcademicCbtTest(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canCreateCbt', {
+    stateKeys: ['sessions', 'terms', 'cbtTests']
+  });
+  const record = findById(context.state.cbtTests, input.CbtTestId);
+  if (!record || lower(record.Status) === 'superseded') {
+    throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
+  }
+  academicCbtAuthority(user, context, record);
+  const startsAt = new Date(clean(input.StartsAt));
+  if (!Number.isFinite(startsAt.getTime())) {
+    throw failure('Choose a valid new test date and start time.', 400, 'ACADEMIC_CBT_SCHEDULE_INVALID');
+  }
+  const durationMinutes = Number(record.DurationMinutes || 0);
+  const endsAt = new Date(startsAt.getTime() + durationMinutes * 60 * 1000);
+  if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || endsAt.getTime() <= Date.now()) {
+    throw failure('The new test schedule must leave enough time for students to complete the test.', 400, 'ACADEMIC_CBT_SCHEDULE_ENDED');
+  }
+  const timestamp = nowIso();
+  const updated = {
+    ...record,
+    StartsAt: startsAt.toISOString(),
+    EndsAt: endsAt.toISOString(),
+    Status: 'Scheduled',
+    PackageRevision: Number(record.PackageRevision || 0) + 1,
+    ScheduleRevision: Number(record.ScheduleRevision || 0) + 1,
+    ScheduleUpdatedAt: timestamp,
+    ScheduleUpdatedBy: actorName(user),
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName(user)
+  };
+  updated.PackageDigest = await academicCbtPackageDigest(updated);
+  const commit = await commitAcademicBatch(env, [
+    {
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests,
+      documentId: updated.CbtTestId,
+      data: withoutMetadata(updated),
+      ...writePrecondition(record, input.RevisionToken)
+    },
+    auditWrite(user, 'RESCHEDULE', 'cbtTests', updated,
+      `${clean(record.StartsAt)} -> ${updated.StartsAt}; completed local attempts preserved`)
+  ], 'The CBT schedule changed while it was being updated. Reload and try again.');
+  const savedRecord = publicRecord({ ...updated, __updateTime: clean(commit?.writeResults?.[0]?.updateTime) });
+  return {
+    ok: true,
+    partialAcademicManagement: true,
+    message: 'The CBT activation date and time were updated. Pull Online Tests on the desktop to apply the new schedule; submitted attempts will remain unchanged.',
+    CbtTest: savedRecord,
     cbtTest: savedRecord
   };
 }
@@ -5547,6 +5633,8 @@ export async function acknowledgeAcademicCbtImport(env, user = {}, input = {}) {
     LocalDownloadedAt: clean(record.LocalDownloadedAt) || nowIso(),
     LocalDownloadedBy: clean(record.LocalDownloadedBy) || actorName(user),
     LocalPackageDigest: clean(input.LocalPackageDigest),
+    LocalPackageRevision: Number(input.PackageRevision || record.PackageRevision || 0),
+    LocalScheduleSyncedAt: nowIso(),
     UpdatedAt: nowIso(), UpdatedBy: actorName(user)
   };
   const commit = await commitAcademicBatch(env, [
@@ -5924,6 +6012,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['changeacademicpromotionstatus', 'changepromotionstatus'].includes(action)) return changeAcademicPromotionStatus(env, user, input);
   if (['createacademictranscriptdraft', 'createtranscript'].includes(action)) return createAcademicTranscriptDraft(env, user, input);
   if (['changeacademictranscriptstatus', 'changetranscriptstatus'].includes(action)) return changeAcademicTranscriptStatus(env, user, input);
+  if (['rescheduleacademiccbttest', 'reschedulecbttest'].includes(action)) return rescheduleAcademicCbtTest(env, user, input);
   if (['deleteacademiccbttest', 'deletecbttest'].includes(action)) return deleteAcademicCbtTest(env, user, input);
   if (['downloadacademiccbttestpackage', 'downloadcbttestpackage'].includes(action)) return downloadAcademicCbtTestPackage(env, user, input);
   if (['acknowledgeacademiccbtimport', 'acknowledgecbtimport'].includes(action)) return acknowledgeAcademicCbtImport(env, user, input);

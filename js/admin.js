@@ -10156,7 +10156,7 @@ function academicCurrentRows(data = academicManagementData || {}) {
     studentScores: periodRows(data.studentScores || []),
     scoreImports: periodRows(data.scoreImports || []),
     scoreSyncBatches: periodRows(data.scoreSyncBatches || []),
-    cbtTests: periodRows(data.cbtTests || []),
+    cbtTests: periodRows(data.cbtTests || []).filter((row) => clean(row.Status).toLowerCase() !== 'superseded'),
     termResults: periodRows(data.termResults || []),
     resultClearances: periodRows(data.resultClearances || []),
     resultEvents: periodRows(data.resultEvents || []),
@@ -11894,7 +11894,12 @@ function academicCbtContexts(data, rows) {
 }
 
 function academicCbtStatus(record = {}) {
-  if (clean(record.LocalDownloadedAt)) return { label: 'Synced locally', className: 'synced' };
+  if (clean(record.LocalDownloadedAt)) {
+    const changed = Date.parse(record.ScheduleUpdatedAt || '') || 0;
+    const synchronized = Date.parse(record.LocalScheduleSyncedAt || record.LocalDownloadedAt || '') || 0;
+    if (changed > synchronized) return { label: 'New schedule to pull', className: 'scheduled' };
+    return { label: 'Synced locally', className: 'synced' };
+  }
   const now = Date.now();
   const starts = new Date(record.StartsAt).getTime();
   const ends = new Date(record.EndsAt).getTime();
@@ -11976,9 +11981,9 @@ function academicCbtWorkspace(data, rows) {
     { label: 'Questions', value: (row) => row.NumberOfQuestions },
     { label: 'Students', value: (row) => row.RosterCount },
     { label: 'Status', render: (row) => { const status = academicCbtStatus(row); return `<span class="academic-cbt-status academic-cbt-status-${status.className}">${escapeHtml(status.label)}</span>`; } },
-    { label: 'Actions', render: (row) => clean(row.LocalDownloadedAt)
-      ? '<span class="muted">Locked after local sync</span>'
-      : `<div class="academic-management-row-actions"><button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-edit="${escapeHtml(row.CbtTestId)}" title="Edit test" aria-label="Edit test"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action academic-archive-action" data-academic-cbt-delete="${escapeHtml(row.CbtTestId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Delete test" aria-label="Delete test"><span aria-hidden="true">&#128465;</span></button></div>` }
+    { label: 'Actions', render: (row) => `<div class="academic-management-row-actions"><button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-reschedule="${escapeHtml(row.CbtTestId)}" title="Reschedule date and time" aria-label="Reschedule date and time"><span aria-hidden="true">&#128197;</span></button>${clean(row.LocalDownloadedAt)
+      ? ''
+      : `<button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-edit="${escapeHtml(row.CbtTestId)}" title="Edit test package" aria-label="Edit test package"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action academic-archive-action" data-academic-cbt-delete="${escapeHtml(row.CbtTestId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Delete test" aria-label="Delete test"><span aria-hidden="true">&#128465;</span></button>`}</div>` }
   ], { emptyMessage: 'No online CBT tests have been scheduled for this period.' });
   return `${editor}${register}`;
 }
@@ -12438,7 +12443,7 @@ async function uploadAcademicCbtPaper(payload, idempotencyKey) {
 }
 
 function mergeAcademicCbtTest(result = {}) {
-  const saved = result.CbtTest;
+  const saved = result.CbtTest || result.cbtTest;
   if (!saved?.CbtTestId) return;
   const current = academicManagementData?.cbtTests || [];
   academicManagementData = {
@@ -12446,6 +12451,63 @@ function mergeAcademicCbtTest(result = {}) {
     cbtTests: [...current.filter((row) => row.CbtTestId !== saved.CbtTestId), saved]
       .sort((left, right) => clean(right.StartsAt || right.CreatedAt).localeCompare(clean(left.StartsAt || left.CreatedAt)))
   };
+}
+
+function openAcademicCbtRescheduleDialog(record = {}) {
+  let dialog = document.getElementById('academicCbtRescheduleDialog');
+  if (!dialog) {
+    dialog = document.createElement('dialog');
+    dialog.id = 'academicCbtRescheduleDialog';
+    dialog.className = 'workflow-dialog';
+    dialog.innerHTML = `<div class="workflow-dialog-header"><div><small>Online CBT schedule</small><h2 data-academic-cbt-reschedule-title>Reschedule test</h2></div><button type="button" data-academic-cbt-reschedule-close aria-label="Close">&times;</button></div>
+      <form class="workflow-form config-dialog-form" data-academic-cbt-reschedule-form>
+        <p class="muted">Only the activation date and time will change. The paper, answer key and submitted attempts remain unchanged. Candidates who have already submitted cannot take the test again.</p>
+        <div class="config-grid">
+          <label>New test date<input type="date" name="StartDate" required></label>
+          <label>New start time<input type="time" name="StartTime" required></label>
+        </div>
+        <p class="status" data-academic-cbt-reschedule-status></p>
+        <div class="config-dialog-actions"><button type="button" class="secondary" data-academic-cbt-reschedule-cancel>Cancel</button><button type="submit">Save new schedule</button></div>
+      </form>`;
+    document.body.appendChild(dialog);
+  }
+  const form = dialog.querySelector('[data-academic-cbt-reschedule-form]');
+  const close = () => dialog.close();
+  dialog.querySelector('[data-academic-cbt-reschedule-close]').onclick = close;
+  dialog.querySelector('[data-academic-cbt-reschedule-cancel]').onclick = close;
+  const schedule = academicCbtLocalParts(record.StartsAt);
+  form.elements.StartDate.value = schedule.date;
+  form.elements.StartTime.value = schedule.time;
+  dialog.querySelector('[data-academic-cbt-reschedule-title]').textContent = `Reschedule ${clean(record.AssessmentComponentName) || 'CBT test'}`;
+  setStatus(dialog.querySelector('[data-academic-cbt-reschedule-status]'), '', '');
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const submit = form.querySelector('button[type="submit"]');
+    await runButtonAction(submit, 'Saving...', async () => {
+      const status = dialog.querySelector('[data-academic-cbt-reschedule-status]');
+      try {
+        const startsAt = new Date(`${form.elements.StartDate.value}T${form.elements.StartTime.value}:00`);
+        const duration = Number(record.DurationMinutes || 0);
+        if (!Number.isFinite(startsAt.getTime()) || startsAt.getTime() + duration * 60 * 1000 <= Date.now()) {
+          throw new Error('Choose a date and time that leaves the full test duration available.');
+        }
+        const result = await academicManagementRequest('rescheduleAcademicCbtTest', {
+          SchoolSection: record.SchoolSection || academicManagementFilters.section,
+          SessionId: record.SessionId,
+          TermId: record.TermId,
+          CbtTestId: record.CbtTestId,
+          RevisionToken: record.RevisionToken,
+          StartsAt: startsAt.toISOString()
+        });
+        mergeAcademicCbtTest(result);
+        dialog.close();
+        renderAcademicManagement(academicManagementData || {}, result.message || 'The CBT test was rescheduled.');
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+      }
+    });
+  };
+  dialog.showModal();
 }
 
 function bindAcademicManagement() {
@@ -12630,6 +12692,10 @@ function bindAcademicManagement() {
       }
     });
   }
+  panelEl.querySelectorAll('[data-academic-cbt-reschedule]').forEach((button) => button.addEventListener('click', () => {
+    const record = academicFind(academicManagementData?.cbtTests || [], button.dataset.academicCbtReschedule);
+    if (record) openAcademicCbtRescheduleDialog(record);
+  }));
   panelEl.querySelectorAll('[data-academic-cbt-edit]').forEach((button) => button.addEventListener('click', () => {
     const record = academicFind(academicManagementData?.cbtTests || [], button.dataset.academicCbtEdit);
     if (!record || clean(record.LocalDownloadedAt)) return;

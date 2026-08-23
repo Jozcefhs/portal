@@ -114,9 +114,12 @@ async function handleRequest(context) {
       RequirePaper: true
     }, { validation: preview });
     testSaved = true;
-    const previousUrls = Array.isArray(preview.existing?.PaperFiles) && preview.existing.PaperFiles.length
-      ? preview.existing.PaperFiles.map((file) => clean(file?.Url || file?.PaperUrl)).filter(Boolean)
-      : [clean(preview.existing?.PaperUrl)].filter(Boolean);
+    const replacedRecords = [preview.existing, ...(preview.replacementCandidates || [])].filter(Boolean);
+    const previousUrls = [...new Set(replacedRecords.flatMap((record) => (
+      Array.isArray(record?.PaperFiles) && record.PaperFiles.length
+        ? record.PaperFiles.map((file) => clean(file?.Url || file?.PaperUrl)).filter(Boolean)
+        : [clean(record?.PaperUrl)].filter(Boolean)
+    )))];
     await Promise.all(previousUrls.filter((url) => !uploadedUrls.includes(url))
       .map((url) => deleteStoredDocument(env, url).catch(() => null)));
     const created = saved.cbtTest || {};
