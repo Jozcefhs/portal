@@ -15,8 +15,8 @@ jobs:
     steps:
       - name: Deliver scheduled announcements and queued push batches
         env:
-          ENDPOINT: ${{ secrets.SCHOOL_NOTIFICATION_SCHEDULER_URL }}
-          SCHEDULER_SECRET: ${{ secrets.SCHOOL_NOTIFICATION_SCHEDULER_SECRET }}
+          ENDPOINT: ${{ secrets.NOTIFICATION_SCHEDULER_URL }}
+          SCHEDULER_SECRET: ${{ secrets.NOTIFICATION_SCHEDULER_SECRET }}
         run: |
           test -n "$ENDPOINT"
           test -n "$SCHEDULER_SECRET"

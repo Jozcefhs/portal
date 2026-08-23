@@ -341,6 +341,11 @@ test('dashboard provides a live clock and protected attendance quick action', ()
   assert.match(adminJs, /function updateDashboardClockFace\(\)/);
   assert.match(adminJs, /window\.setInterval\(updateDashboardClockFace, 1000\)/);
   assert.match(adminJs, /staffAttendanceRequest\('quick'\)/);
+  assert.match(adminJs, /ATTENDANCE_SYNC_INTERVAL_MS = 60 \* 1000/);
+  assert.match(adminJs, /dashboardAttendanceCache\.loadedAt/);
+  assert.match(adminJs, /refreshVisibleAttendanceData/);
+  assert.match(adminJs, /activeSection === 'staffAttendance' && !staffAttendanceFormDirty/);
+  assert.match(adminJs, /selectedBranchId !== 'all' \? selectedBranchId/);
   assert.match(adminJs, /if \(!currentUser \|\| currentUser\.mustChangePassword\) return false/);
   assert.doesNotMatch(adminJs, /sections\.includes\('staffAttendance'\)/);
   assert.match(adminJs, /id="dashboardAttendanceClockButton"/);

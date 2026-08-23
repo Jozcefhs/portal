@@ -87,4 +87,7 @@ test('composer, protected endpoint and scheduler are wired together', async () =
   assert.match(library, /notificationAnnouncementPushJobs/);
   assert.match(workflow, /\*\/15 \* \* \* \*/);
   assert.match(workflow, /"announcementsOnly":true/);
+  assert.match(workflow, /secrets\.NOTIFICATION_SCHEDULER_URL/);
+  assert.match(workflow, /secrets\.NOTIFICATION_SCHEDULER_SECRET/);
+  assert.doesNotMatch(workflow, /SCHOOL_NOTIFICATION_SCHEDULER/);
 });

@@ -113,8 +113,12 @@ let dashboardAttendanceRequest = 0;
 let dashboardAttendanceCache = null;
 let dashboardClockTimer = 0;
 let dashboardClockTimeZone = '';
+let staffAttendanceLoadedAt = 0;
+let staffAttendanceFormDirty = false;
+let staffAttendanceRefreshPromise = null;
 let latestPresenceCheckForReadAloud = null;
 let lastPresenceReadAloudKey = '';
+const ATTENDANCE_SYNC_INTERVAL_MS = 60 * 1000;
 const dashboardSectionRequests = new Map();
 let incomeAnalyticsData = null;
 let incomeAnalyticsFilter = { period: 'monthly' };
@@ -1257,6 +1261,9 @@ function clearStaffWorkspaceState() {
   dashboardAttendanceRequest += 1;
   dashboardAttendanceCache = null;
   dashboardClockTimeZone = '';
+  staffAttendanceLoadedAt = 0;
+  staffAttendanceFormDirty = false;
+  staffAttendanceRefreshPromise = null;
   stopDashboardClock();
   executiveOfficeData = null;
   executiveOfficeTab = 'overview';
@@ -1904,6 +1911,12 @@ function updateDashboardClockFace() {
         && attendanceDate !== clean(dashboardAttendanceCache.data.todayAttendanceDate)
         && !dashboardAttendanceCache.loading) {
       void loadDashboardAttendanceCard(true);
+    } else if (activeSection === 'overview'
+        && document.visibilityState === 'visible'
+        && dashboardAttendanceCache?.data
+        && Date.now() - Number(dashboardAttendanceCache.loadedAt || 0) >= ATTENDANCE_SYNC_INTERVAL_MS
+        && !dashboardAttendanceCache.loading) {
+      void loadDashboardAttendanceCard(true);
     }
   } catch (_error) {
     timeElement.textContent = now.toLocaleTimeString();
@@ -2051,24 +2064,27 @@ async function loadDashboardAttendanceCard(force = false, message = '', tone = '
   if (!dashboardClockEl || activeSection !== 'overview' || !attendanceDashboardAllowed()) return;
   const branchId = clean(selectedBranchId || currentUser?.branchId || 'main');
   if (!force && dashboardAttendanceCache?.branchId === branchId && dashboardAttendanceCache.loading) return;
-  if (!force && dashboardAttendanceCache?.branchId === branchId && dashboardAttendanceCache.data) {
+  const cacheFresh = Date.now() - Number(dashboardAttendanceCache?.loadedAt || 0) < ATTENDANCE_SYNC_INTERVAL_MS;
+  if (!force && cacheFresh && dashboardAttendanceCache?.branchId === branchId && dashboardAttendanceCache.data) {
     dashboardClockTimeZone = clean(dashboardAttendanceCache.data.policy?.TimeZone);
     renderDashboardTimeAttendance(dashboardAttendanceCache.data, message, tone);
     return;
   }
   const requestId = ++dashboardAttendanceRequest;
-  dashboardAttendanceCache = { branchId, data: dashboardAttendanceCache?.branchId === branchId ? dashboardAttendanceCache.data : null, loading: true };
+  const previousData = dashboardAttendanceCache?.branchId === branchId ? dashboardAttendanceCache.data : null;
+  const previousLoadedAt = dashboardAttendanceCache?.branchId === branchId ? dashboardAttendanceCache.loadedAt : 0;
+  dashboardAttendanceCache = { branchId, data: previousData, loadedAt: previousLoadedAt, loading: true };
   renderDashboardTimeAttendance(dashboardAttendanceCache.data, message || 'Refreshing attendance...', message ? tone : '');
   try {
     const data = await staffAttendanceRequest('quick');
     if (requestId !== dashboardAttendanceRequest || activeSection !== 'overview') return;
-    dashboardAttendanceCache = { branchId, data, loading: false };
+    dashboardAttendanceCache = { branchId, data, loadedAt: Date.now(), loading: false };
     dashboardClockTimeZone = clean(data.policy?.TimeZone);
     renderDashboardTimeAttendance(data, message, tone);
   } catch (error) {
     if (requestId !== dashboardAttendanceRequest || activeSection !== 'overview') return;
-    dashboardAttendanceCache = { branchId, data: null, loading: false };
-    renderDashboardTimeAttendance(null, error.message || String(error), 'bad');
+    dashboardAttendanceCache = { branchId, data: previousData, loadedAt: previousLoadedAt, loading: false };
+    renderDashboardTimeAttendance(previousData, error.message || String(error), previousData ? 'warn' : 'bad');
   }
 }
 
@@ -6384,12 +6400,17 @@ async function loadChurchDonations() {
 
 async function staffAttendanceRequest(action, payload = {}) {
   const idempotencyKey = clean(payload.idempotencyKey) || newIdempotencyKey();
+  const requestedBranchId = clean(payload.BranchId || payload.branchId);
+  const effectiveBranchId = requestedBranchId
+    || (clean(selectedBranchId) && selectedBranchId !== 'all' ? selectedBranchId : '')
+    || clean(currentUser?.activeBranchId || currentUser?.branchId)
+    || 'main';
   const response = await staffFetch('/api/staff-attendance', {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
     headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
-    body: JSON.stringify({ action, BranchId: currentUser?.branchId || 'main', ...payload, idempotencyKey })
+    body: JSON.stringify({ action, ...payload, BranchId: effectiveBranchId, idempotencyKey })
   });
   const data = await response.json().catch(() => ({ ok: false, message: 'Staff attendance service did not return JSON.' }));
   if (!response.ok || !data.ok) throw receivedResponseError(data.message || 'Staff attendance action failed.');
@@ -6481,7 +6502,29 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && latestPresenceCheckForReadAloud) {
     announceRandomPresenceConfirmation(latestPresenceCheckForReadAloud);
   }
+  if (document.visibilityState === 'visible') void refreshVisibleAttendanceData();
 });
+
+window.addEventListener('online', () => {
+  void refreshVisibleAttendanceData(true);
+});
+
+async function refreshVisibleAttendanceData(force = false) {
+  if (!currentUser || document.visibilityState !== 'visible' || staffAttendanceRefreshPromise) return;
+  const dashboardStale = Date.now() - Number(dashboardAttendanceCache?.loadedAt || 0) >= ATTENDANCE_SYNC_INTERVAL_MS;
+  const attendancePageStale = Date.now() - Number(staffAttendanceLoadedAt || 0) >= ATTENDANCE_SYNC_INTERVAL_MS;
+  if (activeSection === 'overview' && attendanceDashboardAllowed() && (force || dashboardStale)) {
+    staffAttendanceRefreshPromise = loadDashboardAttendanceCard(true);
+  } else if (activeSection === 'staffAttendance' && !staffAttendanceFormDirty && (force || attendancePageStale)) {
+    staffAttendanceRefreshPromise = loadStaffAttendance();
+  }
+  if (!staffAttendanceRefreshPromise) return;
+  try {
+    await staffAttendanceRefreshPromise;
+  } finally {
+    staffAttendanceRefreshPromise = null;
+  }
+}
 
 function updateAttendancePresenceCard(card, presenceCheck = {}) {
   if (!card) return;
@@ -6853,6 +6896,12 @@ async function loadStaffAttendance() {
       { key: 'storage', label: 'Data storage', icon: '\u{1F5C4}', nodes: attendanceGroups.find((node) => /attendance data storage/i.test(node.textContent)) },
       { key: 'reports', label: 'Reports', icon: '\u03A3', count: attendanceReportRows.length, nodes: [attendanceGroups.find((node) => /HR attendance report/i.test(node.textContent)), ...workspaceTableNodes('Recent staff attendance')] }
     ]);
+    staffAttendanceLoadedAt = Date.now();
+    staffAttendanceFormDirty = false;
+    panelEl.querySelectorAll('#staffAttendancePolicyForm, #staffAttendanceSiteForm, #staffAttendanceManualForm').forEach((form) => {
+      form.addEventListener('input', () => { staffAttendanceFormDirty = true; });
+      form.addEventListener('change', () => { staffAttendanceFormDirty = true; });
+    });
     document.getElementById('refreshStaffAttendance')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', loadStaffAttendance));
     document.getElementById('checkAttendanceStorage')?.addEventListener('click', async (event) => {
       const button = event.currentTarget;
