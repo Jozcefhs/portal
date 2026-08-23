@@ -6,6 +6,8 @@ import {
   ACADEMIC_MANAGEMENT_COLLECTIONS,
   ACADEMIC_SCOREBOOK_STATE_KEYS,
   academicCbtScoreBatchDigest,
+  academicLockedScoreChanges,
+  academicLockedScoreComponentIds,
   academicScoreTeacherAllocations,
   createAcademicCbtSyncPreparation,
   verifyAcademicCbtSyncPreparation,
@@ -84,6 +86,27 @@ test('AM-009 score calculations preserve states, weights, grades, points and rem
   assert.equal(missing.Grade, '');
 });
 
+test('AM-009 saved score cells lock recorded values and require managed reactivation for changes', () => {
+  const previous = {
+    ComponentScores: [
+      { ComponentId: 'ca', State: 'Numeric', RawScore: 32 },
+      { ComponentId: 'exam', State: 'Missing', RawScore: null }
+    ]
+  };
+  assert.deepEqual(academicLockedScoreComponentIds(previous), ['ca']);
+  assert.deepEqual(academicLockedScoreChanges(previous, [
+    { ComponentId: 'ca', State: 'Numeric', RawScore: 32 },
+    { ComponentId: 'exam', State: 'Numeric', RawScore: 50 }
+  ]), []);
+  assert.deepEqual(academicLockedScoreChanges(previous, [
+    { ComponentId: 'ca', State: 'Numeric', RawScore: 35 },
+    { ComponentId: 'exam', State: 'Missing', RawScore: null }
+  ]), ['ca']);
+  assert.deepEqual(academicLockedScoreChanges(previous, [
+    { ComponentId: 'ca', State: 'Numeric', RawScore: 35 }
+  ], true), []);
+});
+
 test('AM-010 spreadsheet imports normalize component columns and report every invalid row before writes', () => {
   const scheme = academicAssessmentScheme(policy);
   const rows = normalizeAcademicScoreImportRows([
@@ -144,6 +167,12 @@ test('Milestone 5 server and web contracts expose controlled score sheets, impor
   assert.match(adminSource, /parseAcademicScoreSpreadsheet/);
   assert.match(adminSource, /changeAcademicScoreSheetStatus/);
   assert.match(adminSource, /Download score template/);
+  assert.match(academicManagementSource, /reactivateAcademicScoreEditing/);
+  assert.match(academicManagementSource, /ACADEMIC_SCORE_CELL_LOCKED/);
+  assert.match(backendSource, /case 'reactivateAcademicScoreEditing'/);
+  assert.match(adminSource, /data-academic-score-reactivate/);
+  assert.match(adminSource, /Save and lock recorded scores/);
+  assert.match(styleSource, /\.academic-score-component\.is-saved-locked/);
 });
 
 test('scorebook requests stay below the Worker subrequest ceiling', () => {

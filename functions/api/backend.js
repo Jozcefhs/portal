@@ -7510,6 +7510,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'decideAcademicAttendanceCorrection':
     case 'getAcademicScorebookContext':
     case 'saveAcademicScoreDraft':
+    case 'reactivateAcademicScoreEditing':
     case 'changeAcademicScoreSheetStatus':
     case 'previewAcademicScoreImport':
     case 'importAcademicScores':

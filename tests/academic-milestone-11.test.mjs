@@ -31,6 +31,19 @@ test('AM-001 finance officers receive clearance permission without score permiss
   }
 });
 
+test('AM-009 only Admin and Management roles can reactivate locked score cells', () => {
+  for (const role of ['Super Admin', 'Principal', 'Management']) {
+    const permissions = academicManagementCapabilities({ role, edition: 'school', allowedSections: ['academics'] });
+    assert.equal(permissions.canManageScoreCorrections, true);
+  }
+  for (const role of ['Examination Officer', 'Teacher', 'Department User']) {
+    const permissions = academicManagementCapabilities({
+      role, department: role === 'Department User' ? 'Academics' : '', edition: 'school', allowedSections: ['academics']
+    });
+    assert.equal(permissions.canManageScoreCorrections, false);
+  }
+});
+
 test('AM-001 clearance records are period scoped, expiring and auditable', () => {
   const record = normalizeAcademicResultClearance({
     SessionId: 'session-2026', TermId: 'term-1', StudentRef: 'DCA/21/0001',

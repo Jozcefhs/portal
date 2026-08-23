@@ -11429,8 +11429,13 @@ function academicScoreSheetActions(row, permissions = {}) {
   if (status === 'Draft' && permissions.canEnterScores) actions.push(['Submitted', 'Submit complete sheet', '&#10148;']);
   if (status === 'Submitted' && permissions.canReviewScores) actions.push(['Approved', 'Approve submitted sheet', '&#10003;']);
   if (status === 'Approved' && permissions.canApproveScores) actions.push(['Locked', 'Lock approved sheet', '&#128274;']);
-  if (['Submitted', 'Approved', 'Locked'].includes(status) && permissions.canReviewScores) actions.push(['Draft', 'Reopen as Draft', '&#8634;']);
-  return actions.length ? `<div class="academic-management-row-actions">${actions.map(([target, title, icon]) => `<button type="button" class="compact-icon-action ${target === 'Draft' ? 'academic-archive-action' : 'compact-edit-action'}" data-academic-score-status="${target}" data-academic-id="${escapeHtml(row.SheetId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${icon}</button>`).join('')}</div>` : '<span class="muted">View only</span>';
+  const statusActions = actions.map(([target, title, icon]) => `<button type="button" class="compact-icon-action compact-edit-action" data-academic-score-status="${target}" data-academic-id="${escapeHtml(row.SheetId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${icon}</button>`).join('');
+  const correctionAction = permissions.canManageScoreCorrections && row.ScoreEditingReactivated !== true
+    ? `<button type="button" class="compact-icon-action academic-archive-action" data-academic-score-reactivate data-academic-id="${escapeHtml(row.SheetId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Reactivate saved score editing" aria-label="Reactivate saved score editing">&#8634;</button>`
+    : '';
+  return statusActions || correctionAction
+    ? `<div class="academic-management-row-actions">${statusActions}${correctionAction}</div>`
+    : '<span class="muted">View only</span>';
 }
 
 function academicScorebookWorkspace(data, rows) {
@@ -11472,7 +11477,9 @@ function academicScorebookWorkspace(data, rows) {
     && row.ClassId === selectedArm?.ClassId && row.ArmId === selectedArm?.ArmId
     && (row.SubjectIds || []).includes(selectedAllocation?.SubjectId))
     .sort((a, b) => academicLabel(data.students, a.StudentRef, a.StudentRef).localeCompare(academicLabel(data.students, b.StudentRef, b.StudentRef), undefined, { sensitivity: 'base' }));
+  const correctionActive = sheet?.ScoreEditingReactivated === true;
   const canEdit = data.permissions?.canEnterScores === true && (!sheet || sheet.Status === 'Draft') && scheme.Ready;
+  let editableCellCount = 0;
   const classroomLabel = (arm) => `${academicLabel(rows.classes, arm.ClassId)} / ${arm.Name}`;
   const allocationValue = (row) => `${row.SubjectId}::${clean(row.TeacherUsername).toLowerCase()}`;
   const selectedAllocationValue = selectedAllocation ? allocationValue(selectedAllocation) : '';
@@ -11480,21 +11487,36 @@ function academicScorebookWorkspace(data, rows) {
   const scoreRows = roster.map((membership) => {
     const score = scoreByStudent.get(clean(membership.StudentRef).toLowerCase()) || {};
     const byComponent = new Map((score.ComponentScores || []).map((entry) => [entry.ComponentId, entry]));
+    const lockedComponentIds = new Set(Array.isArray(score.LockedComponentIds)
+      ? score.LockedComponentIds.map(clean)
+      : (score.ComponentScores || []).filter((entry) => ['Numeric', 'Absent', 'Exempt'].includes(clean(entry.State))).map((entry) => clean(entry.ComponentId)));
     const componentCells = (scheme.Components || []).map((component) => {
       const entry = byComponent.get(component.Id) || { State: 'Missing', RawScore: '' };
       const numeric = entry.State === 'Numeric';
       const sourceMode = clean(component.SourceMode || 'any').toLowerCase();
       const manualAllowed = ['any', 'manual'].includes(sourceMode);
-      return `<td><div class="academic-score-component${manualAllowed ? '' : ' is-source-locked'}" data-academic-score-component="${escapeHtml(component.Id)}" data-maximum="${component.MaximumScore}" data-weight="${component.WeightPercentage}" data-required="${component.Required === false ? 'false' : 'true'}" data-manual-allowed="${manualAllowed ? 'true' : 'false'}"><input type="number" min="0" max="${component.MaximumScore}" step="0.01" value="${numeric ? escapeHtml(entry.RawScore) : ''}" data-academic-score-value ${numeric && canEdit && manualAllowed ? '' : 'disabled'} aria-label="${escapeHtml(component.Name)} score for ${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}"><select data-academic-score-state ${canEdit && manualAllowed ? '' : 'disabled'} aria-label="${escapeHtml(component.Name)} status">${academicScoreStateOptions(entry.State || 'Missing')}</select></div></td>`;
+      const cellLocked = lockedComponentIds.has(component.Id) && !correctionActive;
+      const cellEditable = canEdit && manualAllowed && !cellLocked;
+      if (cellEditable) editableCellCount += 1;
+      return `<td><div class="academic-score-component${manualAllowed ? '' : ' is-source-locked'}${cellLocked ? ' is-saved-locked' : ''}" data-academic-score-component="${escapeHtml(component.Id)}" data-maximum="${component.MaximumScore}" data-weight="${component.WeightPercentage}" data-required="${component.Required === false ? 'false' : 'true'}" data-manual-allowed="${manualAllowed ? 'true' : 'false'}" data-cell-locked="${cellLocked ? 'true' : 'false'}"${cellLocked ? ' title="Saved score locked. Admin or Management must reactivate this subject and arm before correction."' : ''}><input type="number" min="0" max="${component.MaximumScore}" step="0.01" value="${numeric ? escapeHtml(entry.RawScore) : ''}" data-academic-score-value ${numeric && cellEditable ? '' : 'disabled'} aria-label="${escapeHtml(component.Name)} score for ${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}"><select data-academic-score-state ${cellEditable ? '' : 'disabled'} aria-label="${escapeHtml(component.Name)} status">${academicScoreStateOptions(entry.State || 'Missing')}</select>${cellLocked ? '<small class="academic-score-cell-lock">&#128274; Saved</small>' : ''}</div></td>`;
     }).join('');
     return `<tr data-academic-score-student="${escapeHtml(membership.StudentRef)}" data-score-id="${escapeHtml(score.ScoreId || '')}" data-revision-token="${escapeHtml(score.RevisionToken || '')}"><td><strong>${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}</strong><small>${escapeHtml(membership.StudentRef)}</small></td>${componentCells}<td data-academic-score-total>${score.Percentage === null || score.Percentage === undefined ? '—' : `${score.Percentage}%`}</td><td data-academic-score-grade>${escapeHtml(score.Grade || '—')}</td><td data-academic-score-completion>${escapeHtml(score.CompletionStatus || 'Incomplete')}</td></tr>`;
   }).join('');
   const blocking = scheme.Ready
     ? `<div class="academic-score-scheme-banner is-ready"><strong>Active scheme</strong><span>${scheme.Components.length} components · ${scheme.GradeBands.length} grade bands · revision ${escapeHtml(scheme.RevisionId)}</span></div>`
     : `<div class="academic-score-scheme-banner has-errors"><strong>Score entry is blocked</strong><span>${escapeHtml((scheme.Issues || []).join(' '))}</span></div>`;
+  const lockingNotice = sheet
+    ? correctionActive
+      ? `<div class="academic-score-lock-banner is-reactivated"><strong>Correction access active</strong><span>Admin/Management reactivated this subject and arm. All recorded cells will lock again after the next save.</span></div>`
+      : `<div class="academic-score-lock-banner"><strong>Saved cells are protected</strong><span>Recorded scores are locked. Blank and incomplete cells remain available for entry.</span></div>`
+    : '';
+  const reactivateButton = sheet && data.permissions?.canManageScoreCorrections && !correctionActive
+    ? `<button type="button" class="secondary" data-academic-score-reactivate data-academic-id="${escapeHtml(sheet.SheetId)}" data-academic-revision="${escapeHtml(sheet.RevisionToken)}">Reactivate score editing</button>`
+    : '';
   const scorebook = `<form class="academic-management-editor academic-management-editor-wide academic-scorebook" data-academic-scorebook data-editable="${canEdit ? 'true' : 'false'}">
     <div class="academic-management-editor-heading"><div><small>AM-009 score recording</small><h3>Enter student scores</h3><p class="muted">Scores remain Draft until the complete class-subject sheet is submitted. Missing and Incomplete block submission; Absent counts as zero; Exempt is excluded from the applicable weight.</p></div><strong>${roster.length} students</strong></div>
     ${blocking}
+    ${lockingNotice}
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}"><input type="hidden" name="SheetId" value="${escapeHtml(sheet?.SheetId || '')}"><input type="hidden" name="SheetRevisionToken" value="${escapeHtml(sheet?.RevisionToken || '')}">
     <div class="academic-management-form-grid academic-management-form-grid-3">
       <label>Classroom<select name="ArmId" data-academic-scorebook-classroom required>${academicSelectOptions(permittedClassrooms, selectedArm?.ArmId, classroomLabel, 'Choose allocated classroom')}</select></label>
@@ -11502,7 +11524,7 @@ function academicScorebookWorkspace(data, rows) {
       <label>Workflow status<input value="${escapeHtml(sheet?.Status || 'New Draft')}" readonly></label>
     </div>
     <div class="academic-attendance-table academic-scorebook-table"><table><thead><tr><th>Student</th>${componentHeaders}<th>Total</th><th>Grade</th><th>Completion</th></tr></thead><tbody>${scoreRows || `<tr><td colspan="${(scheme.Components || []).length + 4}">Choose an allocated classroom and subject with active students.</td></tr>`}</tbody></table></div>
-    <div class="academic-scorebook-actions"><button type="submit" ${canEdit && roster.length ? '' : 'disabled'}>Save score draft</button>${sheet?.Status === 'Draft' && data.permissions?.canEnterScores ? `<button type="button" class="secondary" data-academic-score-status="Submitted" data-academic-id="${escapeHtml(sheet.SheetId)}" data-academic-revision="${escapeHtml(sheet.RevisionToken)}">Submit complete sheet</button>` : ''}</div>
+    <div class="academic-scorebook-actions"><button type="submit" ${canEdit && roster.length && editableCellCount ? '' : 'disabled'}>Save and lock recorded scores</button>${sheet?.Status === 'Draft' && data.permissions?.canEnterScores ? `<button type="button" class="secondary" data-academic-score-status="Submitted" data-academic-id="${escapeHtml(sheet.SheetId)}" data-academic-revision="${escapeHtml(sheet.RevisionToken)}">Submit complete sheet</button>` : ''}${reactivateButton}</div>
   </form>`;
   const workflow = table('Score Sheet Workflow', rows.scoreSheets, [
     { label: 'Classroom', value: (row) => `${academicLabel(rows.classes, row.ClassId)} / ${academicLabel(rows.arms, row.ArmId)}` },
@@ -12305,7 +12327,7 @@ function academicScorebookRowPayload(row) {
   return {
     StudentRef: row.dataset.academicScoreStudent,
     RevisionToken: row.dataset.revisionToken || '',
-    ComponentScores: [...row.querySelectorAll('[data-academic-score-component][data-manual-allowed="true"]')].map((component) => ({
+    ComponentScores: [...row.querySelectorAll('[data-academic-score-component][data-manual-allowed="true"][data-cell-locked="false"]')].map((component) => ({
       ComponentId: component.dataset.academicScoreComponent,
       State: component.querySelector('[data-academic-score-state]').value,
       RawScore: component.querySelector('[data-academic-score-value]').value
@@ -12324,7 +12346,8 @@ function updateAcademicScorebookRow(row, scheme = academicManagementData?.assess
     const weight = Number(component.dataset.weight || 0);
     const required = component.dataset.required !== 'false';
     const manualAllowed = component.dataset.manualAllowed === 'true';
-    input.disabled = !manualAllowed || state !== 'Numeric' || row.closest('[data-academic-scorebook]')?.dataset.editable !== 'true';
+    const cellLocked = component.dataset.cellLocked === 'true';
+    input.disabled = cellLocked || !manualAllowed || state !== 'Numeric' || row.closest('[data-academic-scorebook]')?.dataset.editable !== 'true';
     if (state === 'Exempt') return;
     includedWeight += weight;
     if (state === 'Numeric' && input.value !== '' && Number.isFinite(Number(input.value))) {
@@ -13129,7 +13152,8 @@ function bindAcademicManagement() {
           SessionId: academicManagementFilters.sessionId, TermId: academicManagementFilters.termId,
           ClassId: classroom?.ClassId, ArmId: classroom?.ArmId, SubjectId: subjectId, TeacherUsername: teacherUsername,
           SheetId: scorebookForm.elements.SheetId.value, SheetRevisionToken: scorebookForm.elements.SheetRevisionToken.value,
-          Rows: [...scorebookForm.querySelectorAll('[data-academic-score-student]')].map(academicScorebookRowPayload)
+          Rows: [...scorebookForm.querySelectorAll('[data-academic-score-student]')]
+            .map(academicScorebookRowPayload).filter((row) => row.ComponentScores.length)
         });
         renderAcademicManagement(data, data.message || 'Scores saved as Draft.');
       } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
@@ -13155,6 +13179,23 @@ function bindAcademicManagement() {
       const status = document.getElementById('academicManagementStatus');
       try {
         const data = await academicManagementRequest('changeAcademicScoreSheetStatus', academicScoreSheetRequestPayload(sheet, { Status: target, Reason: reason }));
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  }));
+  panelEl.querySelectorAll('[data-academic-score-reactivate]').forEach((button) => button.addEventListener('click', async () => {
+    const sheet = academicFind(academicManagementData?.scoreSheets || [], button.dataset.academicId);
+    if (!sheet) return;
+    const reason = clean(await window.DynamaxDialogs.prompt({
+      title: 'Reactivate score editing',
+      message: `Allow corrections for ${academicLabel(academicManagementData?.classes || [], sheet.ClassId)} / ${academicLabel(academicManagementData?.arms || [], sheet.ArmId)} · ${academicLabel(academicManagementData?.subjects || [], sheet.SubjectId)}. This action is recorded in the audit trail.`,
+      label: 'Correction reason', required: true, tone: 'danger', confirmText: 'Reactivate editing'
+    }));
+    if (!reason) return;
+    await runButtonAction(button, 'Reactivating...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('reactivateAcademicScoreEditing', academicScoreSheetRequestPayload(sheet, { Reason: reason }));
         renderAcademicManagement(data, data.message);
       } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
     });
