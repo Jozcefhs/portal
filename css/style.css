@@ -3307,10 +3307,57 @@ img.nav-logo,
   border-radius: 0;
 }
 
-/* Keep exactly four organisation-store products visible before local scrolling. */
-.commerce-product-list{max-height:269px;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable}
-.commerce-product{height:62px;min-height:62px;box-sizing:border-box}
-@media(max-width:680px){.commerce-product-list{max-height:269px}}
+/* Dense POS catalogue: show several products at once without sacrificing item details. */
+.commerce-product-list{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(128px,1fr));
+  grid-auto-rows:minmax(110px,auto);
+  align-content:start;
+  gap:8px;
+  max-height:358px;
+  padding:1px 4px 1px 1px;
+  overflow-x:hidden;
+  overflow-y:auto;
+  scrollbar-gutter:stable;
+}
+.commerce-product{
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  grid-template-rows:minmax(0,1fr) auto;
+  align-items:stretch;
+  gap:7px;
+  height:auto;
+  min-height:110px;
+  box-sizing:border-box;
+  padding:9px;
+  transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease;
+}
+.commerce-product:hover{border-color:#8fb9da;box-shadow:0 5px 13px rgba(28,73,110,.09);transform:translateY(-1px)}
+.commerce-product:has(.commerce-add-button.is-added){border-color:#75c9ad;background:#f1fbf7}
+.commerce-product>div:first-child{min-height:0}
+.commerce-product strong{
+  display:-webkit-box;
+  min-height:29px;
+  overflow:hidden;
+  white-space:normal;
+  line-height:1.25;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:2;
+}
+.commerce-product span,.commerce-product small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.commerce-product-action{justify-content:space-between;margin-top:auto;padding-top:6px;border-top:1px solid #e4ebf1}
+.commerce-product-action select{width:50px}
+.commerce-empty{grid-column:1/-1}
+html[data-theme="dark"] .commerce-product:has(.commerce-add-button.is-added){border-color:#2d8168;background:#123a34}
+html[data-theme="dark"] .commerce-product-action{border-color:#33465c}
+@media(max-width:680px){
+  .commerce-product-list{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));grid-auto-rows:minmax(104px,auto);max-height:340px;gap:6px}
+  .commerce-product{min-height:104px;padding:8px}
+  .commerce-product strong{min-height:25px;font-size:10px}
+  .commerce-product span,.commerce-product small{font-size:8px}
+  .commerce-product-action select{width:47px;min-height:28px}
+  .commerce-add-button{width:28px!important;height:28px;min-height:28px!important}
+}
 
 /* Clean donor, currency-settlement and staff-attendance workspaces. */
 .workspace-subnav{position:sticky;top:0;z-index:8;display:flex;gap:7px;overflow-x:auto;margin:10px 0;padding:7px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.96);scrollbar-width:thin}
