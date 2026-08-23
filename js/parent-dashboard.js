@@ -80,7 +80,7 @@ let parentNotifications = [];
 let parentNotificationMeta = {};
 let parentNotificationHistoryRows = [];
 const onboardingHash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-let parentOnboardingToken = onboardingHash.get('onboard') || '';
+const parentOnboardingRequested = onboardingHash.has('onboarding') || onboardingHash.has('onboard');
 const parentOnboardingAdmission = onboardingHash.get('admission') || '';
 let parentPasswordSetupToken = '';
 if (window.location.hash) window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}`);
@@ -281,8 +281,8 @@ function openParentOnboarding() {
   if (admissionInput && parentOnboardingAdmission) admissionInput.value = parentOnboardingAdmission;
   setInlineStatus(
     parentOnboardingAccessStatus,
-    parentOnboardingToken ? '' : 'Open the private student-completion link sent by the school to continue.',
-    parentOnboardingToken ? '' : 'bad'
+    '',
+    ''
   );
 }
 
@@ -341,10 +341,6 @@ document.getElementById('closeParentOnboardingBtn')?.addEventListener('click', c
 parentOnboardingAccessForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = event.submitter || document.getElementById('verifyParentOnboardingBtn');
-  if (!parentOnboardingToken) {
-    setInlineStatus(parentOnboardingAccessStatus, 'Use the private completion link sent by the school.', 'bad');
-    return;
-  }
   const normalText = button?.textContent || 'Continue';
   setActionLoading(button, true, 'Checking...', normalText);
   setInlineStatus(parentOnboardingAccessStatus, 'Confirming the student record...');
@@ -356,8 +352,7 @@ parentOnboardingAccessForm?.addEventListener('submit', async (event) => {
       body: freshBody({
         action: 'beginParentOnboarding',
         admissionNo: document.getElementById('onboardingAdmissionNo').value.trim(),
-        temporaryPassword: document.getElementById('onboardingTemporaryPassword').value,
-        onboardingToken: parentOnboardingToken
+        temporaryPassword: document.getElementById('onboardingTemporaryPassword').value
       })
     });
     const data = await response.json();
@@ -385,7 +380,6 @@ parentOnboardingProfileForm?.addEventListener('submit', async (event) => {
         action: 'completeParentOnboardingProfile',
         admissionNo: document.getElementById('onboardingAdmissionNo').value.trim(),
         temporaryPassword: document.getElementById('onboardingTemporaryPassword').value,
-        onboardingToken: parentOnboardingToken,
         profile: {
           dateOfBirth: document.getElementById('onboardingDateOfBirth').value,
           studentType: document.getElementById('onboardingStudentType').value,
@@ -407,7 +401,6 @@ parentOnboardingProfileForm?.addEventListener('submit', async (event) => {
     });
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not complete the student profile.');
-    parentOnboardingToken = '';
     parentOnboardingProfileForm.reset();
     parentOnboardingAccessForm.reset();
     parentOnboardingPanel.hidden = true;
@@ -2490,7 +2483,7 @@ if (dashboardNav) {
 loadParentDocumentSettings();
 
 (async function restoreParentSession() {
-  if (parentOnboardingToken) {
+  if (parentOnboardingRequested) {
     openParentOnboarding();
     return;
   }

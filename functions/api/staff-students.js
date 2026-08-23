@@ -28,7 +28,8 @@ export async function onRequestPost(context) {
       const err = new Error('This staff account is not allowed to manage students.'); err.status = 403; throw err;
     }
     const body = await readJsonBody(request, { maxBytes: 256 * 1024 });
-    if (lower(body.action) !== 'update') {
+    const action = lower(body.action);
+    if (!['update', 'reissueparentonboarding'].includes(action)) {
       const err = new Error('Choose a valid student action.'); err.status = 400; throw err;
     }
     const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo);
@@ -39,6 +40,26 @@ export async function onRequestPost(context) {
     const existing = rows.find((row) => referenceMatches(row, accountRef) && visibleToUser(row, user));
     if (!existing) {
       const err = new Error('Student was not found in your current school section.'); err.status = 404; throw err;
+    }
+    if (action === 'reissueparentonboarding') {
+      const now = new Date().toISOString();
+      const documentId = clean(existing.__id || existing.AdmissionNo || existing.AccountRef);
+      const saved = await upsertSchoolDocument(env, 'students', documentId, {
+        ...existing,
+        ParentOnboardingTokenHash: '',
+        ParentOnboardingStatus: 'PendingProfile',
+        ProfileCompletionStatus: 'Needs completion',
+        ParentOnboardingReissuedAt: now,
+        UpdatedAt: now,
+        UpdatedBy: user.displayName || user.username
+      });
+      return Response.json({
+        ok: true,
+        message: 'Parent onboarding has been reissued. The generic link is ready to copy.',
+        onboardingPath: '/parent-dashboard.html#onboarding=1',
+        admissionNo: clean(saved.AdmissionNo || saved.__id),
+        temporaryPassword: '12345678'
+      });
     }
     const editableFields = [
       'DisplayName', 'ApplicantName', 'Surname', 'FirstName', 'MiddleName', 'Gender',

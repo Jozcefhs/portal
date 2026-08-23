@@ -59,11 +59,6 @@ function lower(value) {
 
 const PARENT_ONBOARDING_TEMPORARY_PASSWORD = '12345678';
 
-async function sha256Hex(value) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value || '')));
-  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
 function onboardingStatus(student = {}) {
   return lower(student.ParentOnboardingStatus || student.parentOnboardingStatus);
 }
@@ -84,19 +79,16 @@ function validIsoDate(value) {
 
 async function requireParentOnboardingStudent(env, body, expectedStatus = 'pendingprofile') {
   const admissionNo = clean(body.admissionNo || body.AdmissionNo);
-  const token = clean(body.onboardingToken || body.ParentOnboardingToken);
   const temporaryPassword = String(body.temporaryPassword || body.password || '');
-  if (!admissionNo || !token || !temporaryPassword) {
-    const error = new Error('Admission number, completion link and one-time password are required.');
+  if (!admissionNo || !temporaryPassword) {
+    const error = new Error('Admission number and one-time password are required.');
     error.status = 400;
     throw error;
   }
   const student = await getSelectedIdentityRow(env, 'students', admissionNo);
-  const suppliedHash = await sha256Hex(token);
-  const tokenMatches = student && await secureSecretEqual(student.ParentOnboardingTokenHash, suppliedHash);
   const passwordMatches = await secureSecretEqual(temporaryPassword, PARENT_ONBOARDING_TEMPORARY_PASSWORD);
-  if (!student || onboardingStatus(student) !== expectedStatus || !tokenMatches || !passwordMatches) {
-    const error = new Error('This student completion link or one-time sign-in is invalid or has already been used.');
+  if (!student || onboardingStatus(student) !== expectedStatus || !passwordMatches) {
+    const error = new Error('This admission number or one-time sign-in is invalid, or onboarding has already been completed.');
     error.status = 401;
     throw error;
   }

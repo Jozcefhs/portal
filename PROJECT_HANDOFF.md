@@ -410,20 +410,24 @@ workspace, branch and school-section scope, encrypted templates and audit logs.
 
 ### Minimal student import and parent profile completion
 
-Existing-student onboarding now begins with a four-column desktop CSV only:
-`StudentName`, `AdmissionNo`, `Gender` and `Class`. Admission number is required
-and remains the student identity. The import does not accept or persist parent
-contact, medical, billing or academic-allocation fields.
+Existing-student onboarding begins with the desktop CSV fields `FirstName`,
+`Surname`, `MiddleName`, `AdmissionNo`, `Gender` and `Class`. Middle name is
+optional. The backend stores the separate names and combines them into
+`DisplayName` using the school's configured `NameFormat`. Legacy CSV files with
+`StudentName` remain importable. Admission number is required and remains the
+student identity. Parent contact, medical, billing and academic-allocation
+fields are not accepted from this import.
 
-Each imported student receives a unique one-time parent-completion token. Only
-its SHA-256 hash is stored; the desktop returns the raw token once inside a
-private `parent-dashboard.html` fragment link and can save the distribution
-CSV. The shared bootstrap password is `12345678`, but it is never stored as a
-student login code or credential and cannot open the dashboard.
+All parents receive the same generic `parent-dashboard.html#onboarding=1` link.
+The student admission number is the only family-specific distribution value.
+The shared bootstrap password is `12345678`, but it is never stored as a student
+login code or credential and cannot open the dashboard. Staff can reissue an
+existing student's onboarding from either Student Directory and copy the same
+generic link; reissuing does not delete saved profile details or parent accounts.
 
 The parent flow is deliberately staged:
 
-1. open the private link and confirm the admission number plus `12345678`;
+1. open the generic link and confirm the admission number plus `12345678`;
 2. complete the remaining student, guardian, address, emergency and medical
    fields while imported name, admission number, gender and class stay locked;
 3. sign in again with the submitted parent email and `12345678`;

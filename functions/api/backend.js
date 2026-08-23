@@ -300,13 +300,6 @@ function generateParentLoginCode(existingCodes = new Set()) {
   return `P${Date.now().toString(36).toUpperCase().slice(-7)}`;
 }
 
-function generateParentOnboardingToken() {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  let binary = '';
-  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
 function applicationIdFrom(data) {
   return clean(data.ApplicationID || data.ApplicationReference || data.id || data.applicationReference);
 }
@@ -768,7 +761,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'saveAccountingAdjustment', 'saveAccountingApprovalLimit', 'saveAccountingCloseChecklist',
   'importAccountingBankStatement', 'matchAccountingBankStatement',
   // Desktop school finance, billing, commercial inventory, and admission mutations.
-  'updateStudentProfile', 'saveAdmissionClasses',
+  'updateStudentProfile', 'reissueParentOnboarding', 'saveAdmissionClasses',
   'saveFeeItem', 'deleteFeeItem', 'seedDefaultFeeItems',
   'saveBillingCategory', 'deleteBillingCategory', 'updateStudentBillingCategory',
   'generateSchoolFeeInvoices', 'recordManualPayment',
@@ -2798,8 +2791,11 @@ async function importStudents(env, body) {
     err.status = 400;
     throw err;
   }
-  const existingStudents = await listSchoolCollection(env, 'students');
-  const classNames = await configuredClassNames(env);
+  const [existingStudents, classNames, schoolProfile] = await Promise.all([
+    listSchoolCollection(env, 'students'),
+    configuredClassNames(env),
+    getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+  ]);
   const importedBy = clean(body.ImportedBy || body.importedBy) || 'Admissions Office';
   let imported = 0;
   let skipped = 0;
@@ -2809,13 +2805,17 @@ async function importStudents(env, body) {
   for (let index = 0; index < rows.length; index += 1) {
     const input = rows[index] || {};
     const rowNo = index + 1;
-    const applicantName = pick(input, ['ApplicantName', 'StudentName', 'Name']);
+    const firstName = pick(input, ['FirstName', 'First Name', 'GivenName']);
+    const surname = pick(input, ['Surname', 'LastName', 'Last Name', 'FamilyName']);
+    const middleName = pick(input, ['MiddleName', 'Middle Name']);
+    const legacyName = pick(input, ['ApplicantName', 'StudentName', 'Name']);
+    const applicantName = formatPersonName({ FirstName: firstName, MiddleName: middleName, Surname: surname }, schoolProfile || {}, legacyName);
     const classAdmitted = canonicalConfiguredClass(pick(input, ['ClassAdmitted', 'ClassName', 'Class']), classNames);
     const admissionNo = pick(input, ['AdmissionNo', 'AdmissionNumber']);
     const gender = pick(input, ['Gender', 'Sex']);
-    if (!applicantName) {
+    if ((!firstName || !surname) && !legacyName) {
       skipped += 1;
-      failures.push(`Row ${rowNo}: missing student name.`);
+      failures.push(`Row ${rowNo}: missing first name or surname.`);
       continue;
     }
     if (!classAdmitted) {
@@ -2841,21 +2841,22 @@ async function importStudents(env, body) {
       failures.push(`Row ${rowNo} (${admissionNo}): already exists.`);
       continue;
     }
-    const onboardingToken = generateParentOnboardingToken();
-    const onboardingTokenHash = await sha256Hex(onboardingToken);
     const student = {
       EnrolledAt: nowIso(),
       ApplicationReference: '',
       AdmissionNo: admissionNo,
       ApplicantName: applicantName,
       DisplayName: applicantName,
+      FirstName: firstName,
+      MiddleName: middleName,
+      Surname: surname,
       ClassAdmitted: classAdmitted,
       ClassName: classAdmitted,
       Gender: gender,
       ParentEmail: '',
       ParentLoginCode: '',
       VerificationCode: '',
-      ParentOnboardingTokenHash: onboardingTokenHash,
+      ParentOnboardingTokenHash: '',
       ParentOnboardingStatus: 'PendingProfile',
       ProfileCompletionStatus: 'Needs completion',
       Status: 'Active',
@@ -2870,12 +2871,36 @@ async function importStudents(env, body) {
       AdmissionNo: admissionNo,
       DisplayName: applicantName,
       TemporaryPassword: '12345678',
-      ParentOnboardingToken: onboardingToken,
+      ParentOnboardingPath: '/parent-dashboard.html#onboarding=1',
       OnboardingStatus: 'Pending profile completion'
     });
     imported += 1;
   }
   return { ok: true, message: 'Student import completed.', imported, skipped, failures, credentials, students: (await listSchoolCollection(env, 'students')).map(normalizeStudent) };
+}
+
+async function reissueParentOnboarding(env, body) {
+  const accountRef = clean(body.AccountRef || body.AdmissionNo || body.accountRef);
+  const existing = await findStudentByAccountRef(env, accountRef);
+  if (!existing) throw applicationNotFound(accountRef);
+  const now = nowIso();
+  const student = await saveStudent(env, {
+    ...existing,
+    ParentOnboardingTokenHash: '',
+    ParentOnboardingStatus: 'PendingProfile',
+    ProfileCompletionStatus: 'Needs completion',
+    ParentOnboardingReissuedAt: now,
+    UpdatedAt: now,
+    UpdatedBy: clean(body.RecordedBy || body.UpdatedBy) || 'Student Register'
+  });
+  return {
+    ok: true,
+    message: 'Parent onboarding has been reissued. The generic link is ready to copy.',
+    onboardingPath: '/parent-dashboard.html#onboarding=1',
+    admissionNo: student.AdmissionNo,
+    temporaryPassword: '12345678',
+    student
+  };
 }
 
 async function promoteStudents(env, body) {
@@ -7657,6 +7682,8 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       }, body);
     case 'updateStudentProfile':
       return updateStudentProfile(env, body);
+    case 'reissueParentOnboarding':
+      return reissueParentOnboarding(env, body);
     case 'getAdmissionClasses':
       return getAdmissionClasses(env);
     case 'saveAdmissionClasses':

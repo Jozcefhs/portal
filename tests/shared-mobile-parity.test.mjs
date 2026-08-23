@@ -4,8 +4,8 @@ import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260823-cbt-answer-buttons';
-const adminScriptVersion = '20260823-attendance-sync';
-const parentScriptVersion = '20260821-parent-onboarding';
+const adminScriptVersion = '20260823-parent-onboarding-actions';
+const parentScriptVersion = '20260823-generic-parent-onboarding';
 const notificationVersion = '20260804-read-efficiency';
 const pageNames = [
   'admin.html',

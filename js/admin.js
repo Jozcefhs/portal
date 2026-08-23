@@ -356,6 +356,25 @@ function escapeHtml(value) {
     .replace(/'/g, '&#039;');
 }
 
+async function copyTextToClipboard(value) {
+  const text = clean(value);
+  if (!text) throw new Error('There is no link to copy.');
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.append(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('The browser could not copy the link.');
+}
+
 function pick(row, keys) {
   for (const key of keys) {
     if (row && row[key] !== undefined && row[key] !== null && clean(row[key]) !== '') return row[key];
@@ -2827,6 +2846,28 @@ function bindStudentEditor(students) {
   panelEl.querySelectorAll('[data-edit-student]').forEach((button) => button.addEventListener('click', () => {
     const student = students.find((row) => clean(pick(row, ['AdmissionNo', 'AccountRef', '__id'])).toLowerCase() === clean(button.dataset.editStudent).toLowerCase());
     openStudentEditor(student);
+  }));
+  panelEl.querySelectorAll('[data-parent-onboarding-student]').forEach((button) => button.addEventListener('click', async () => {
+    const admissionNo = clean(button.dataset.parentOnboardingStudent);
+    setButtonLoading(button, true, '...', '🔗');
+    try {
+      const response = await staffFetch('/api/staff-students', {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reissueParentOnboarding', AccountRef: admissionNo })
+      });
+      const data = await response.json().catch(() => ({ ok: false, message: 'Student service did not return JSON.' }));
+      if (!response.ok || !data.ok) throw new Error(data.message || 'Could not reissue parent onboarding.');
+      const onboardingUrl = new URL(data.onboardingPath || '/parent-dashboard.html#onboarding=1', window.location.origin).href;
+      await copyTextToClipboard(onboardingUrl);
+      await loadDashboard();
+      setStatus(dashboardStatus, `Parent onboarding reissued for ${admissionNo}. The generic link was copied. Send it with admission number ${admissionNo} and one-time password 12345678.`, 'ok');
+    } catch (error) {
+      setStatus(dashboardStatus, error.message || String(error), 'bad');
+      setButtonLoading(button, false, '', '🔗');
+    }
   }));
   document.getElementById('studentProfileForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -13990,10 +14031,10 @@ function renderSection(active) {
       { label: 'Type', value: (row) => pick(row, ['StudentType']) },
       { label: 'Profile data', value: (row) => pick(row, ['ProfileCompletionStatus']) || 'Not marked' },
       { label: 'Status', value: (row) => pick(row, ['Status']) },
-      { label: 'Profile', render: (row) => {
+      { label: 'Actions', render: (row) => {
         const studentRef = escapeHtml(pick(row, ['AdmissionNo', 'AccountRef', '__id']));
         const studentName = escapeHtml(pick(row, ['DisplayName', 'ApplicantName', 'StudentName']) || 'student');
-        return `<button type="button" class="student-edit-icon compact-icon-action compact-edit-action" data-edit-student="${studentRef}" aria-label="Edit profile for ${studentName}" title="Edit student profile"><span aria-hidden="true">&#9998;</span></button>`;
+        return `<span class="compact-row-actions"><button type="button" class="student-edit-icon compact-icon-action compact-edit-action" data-edit-student="${studentRef}" aria-label="Edit profile for ${studentName}" title="Edit student profile"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action" data-parent-onboarding-student="${studentRef}" aria-label="Reissue and copy parent onboarding link for ${studentName}" title="Reissue and copy parent onboarding link"><span aria-hidden="true">&#128279;</span></button></span>`;
       } }
     ]) + renderStudentEditor(students);
     bindStudentEditor(students);
