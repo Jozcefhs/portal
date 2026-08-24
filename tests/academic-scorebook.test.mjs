@@ -109,8 +109,16 @@ test('AM-009 saved score cells lock recorded values and require managed reactiva
 
 test('AM-009 blank score-entry cells default to Score without submitting untouched blanks', () => {
   assert.match(adminSource, /function academicScoreStateOptions\(selected = 'Numeric'\)/);
-  assert.match(adminSource, /byComponent\.get\(component\.Id\) \|\| \{ State: 'Numeric', RawScore: '' \}/);
+  assert.match(adminSource, /automaticMissing = clean\(savedEntry\?\.State\) === 'Missing' && savedEntry\?\.StateExplicit !== true/);
+  assert.match(adminSource, /!savedEntry \|\| automaticMissing \? \{ \.\.\.\(savedEntry \|\| \{\}\), State: 'Numeric', RawScore: '' \}/);
   assert.match(adminSource, /\.filter\(\(score\) => score\.State !== 'Numeric' \|\| clean\(score\.RawScore\)\)/);
+  assert.match(adminSource, /component\.dataset\.stateExplicit = 'true'/);
+  const explicitlyMissing = calculateAcademicStudentScore(policy, [
+    { ComponentId: 'ca', RawScore: 30 },
+    { ComponentId: 'exam', State: 'Missing', StateExplicit: true }
+  ]);
+  assert.equal(explicitlyMissing.ComponentScores[1].State, 'Missing');
+  assert.equal(explicitlyMissing.ComponentScores[1].StateExplicit, true);
 });
 
 test('AM-010 spreadsheet imports normalize component columns and report every invalid row before writes', () => {

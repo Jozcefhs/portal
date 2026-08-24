@@ -148,7 +148,8 @@ export function normalizeAcademicComponentScores(value, schemeValue = {}, option
       RawScore,
       MaximumScore: component.MaximumScore,
       WeightPercentage: component.WeightPercentage,
-      Note: clean(row.Note).slice(0, 300)
+      Note: clean(row.Note).slice(0, 300),
+      ...(row.StateExplicit === true ? { StateExplicit: true } : {})
     };
   });
 }
