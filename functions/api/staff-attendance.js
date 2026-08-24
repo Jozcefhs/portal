@@ -1,5 +1,5 @@
 import { requireFirestoreEnv } from '../lib/firestore.js';
-import { readStaffAttendanceProof, requireStaffSession } from '../lib/staff-auth.js';
+import { readStaffAttendanceProof, readStaffSession, requireStaffSession } from '../lib/staff-auth.js';
 import { handleStaffAttendanceAction } from '../lib/staff-time-attendance.js';
 import {
   beginIdempotentRequest,
@@ -18,10 +18,17 @@ export async function onRequestPost(context) {
   let idempotency = null;
   try {
     requireFirestoreEnv(context.env);
-    const user = await requireStaffSession(context.env, context.request);
     const body = await readJsonBody(context.request, { maxBytes: 128 * 1024 });
     const action = clean(body.action || body.Action || 'list').toLowerCase();
-    const personalClockingActions = new Set(['quick', 'clock', 'presence']);
+    const user = action === 'presencequick'
+      ? await readStaffSession(context.env, context.request)
+      : await requireStaffSession(context.env, context.request);
+    if (!user) {
+      const error = new Error('Your staff session has expired. Please sign in again.');
+      error.status = 401;
+      throw error;
+    }
+    const personalClockingActions = new Set(['quick', 'presencequick', 'clock', 'presence']);
     if (!personalClockingActions.has(action) && !(user.allowedSections || []).includes('staffAttendance')) {
       return Response.json({ ok: false, message: 'Staff attendance administration is not available to this account.' }, { status: 403 });
     }
@@ -33,7 +40,7 @@ export async function onRequestPost(context) {
         ].filter(Boolean))
       ];
     }
-    if (!['list', 'quick', 'storagestatus'].includes(action)) {
+    if (!['list', 'quick', 'presencequick', 'storagestatus'].includes(action)) {
       idempotency = await beginIdempotentRequest(context.env, context.request, body, {
         scope: `staff-attendance-${action}`,
         actor: user.username,

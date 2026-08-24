@@ -1,6 +1,7 @@
 import { batchCommitDocuments, listCollection, patchDocumentFields, upsertDocument } from './firestore.js';
 import {
   cleanupLegacyStaffAttendanceStorage,
+  getCanonicalStaffAttendanceDocument,
   getStaffAttendanceDocument,
   listStaffAttendanceCollection,
   migrateLegacyStaffAttendanceStorage,
@@ -662,6 +663,27 @@ export async function getStaffAttendanceQuickState(env, user, body = {}) {
   };
 }
 
+export async function getStaffAttendancePresenceState(env, user, body = {}) {
+  const branchId = branchFor(user, body);
+  const username = actorId(user);
+  if (!username) fail('The signed-in staff account has no username.', 401);
+  const storedState = await getCanonicalStaffAttendanceDocument(
+    env,
+    'state',
+    branchId,
+    safeStaffAttendanceDocumentId(username)
+  );
+  return {
+    ok: true,
+    branchId,
+    attendanceDate: clean(storedState?.AttendanceDate),
+    state: clean(storedState?.State || 'CLOCKED_OUT').toUpperCase(),
+    nextPresenceCheckDueAt: clean(storedState?.NextPresenceCheckDueAt),
+    lastPresenceCheckAt: clean(storedState?.LastPresenceCheckAt),
+    presenceCheckSequence: Number(storedState?.PresenceCheckSequence || 0)
+  };
+}
+
 export async function listStaffAttendance(env, user, body = {}) {
   const branchId = branchFor(user, body);
   const username = actorId(user);
@@ -1211,6 +1233,7 @@ export async function handleStaffAttendanceAction(env, user, body = {}, requestC
   const action = lower(body.action || body.Action || 'list');
   if (action === 'list') return listStaffAttendance(env, user, body);
   if (action === 'quick') return getStaffAttendanceQuickState(env, user, body);
+  if (action === 'presencequick') return getStaffAttendancePresenceState(env, user, body);
   if (action === 'savesite') return saveAttendanceSite(env, user, body);
   if (action === 'deletesite') return deleteAttendanceSite(env, user, body);
   if (action === 'savepolicy') return saveAttendancePolicy(env, user, body);

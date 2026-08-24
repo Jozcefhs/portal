@@ -341,8 +341,13 @@ test('dashboard provides a live clock and protected attendance quick action', ()
   assert.match(adminJs, /function updateDashboardClockFace\(\)/);
   assert.match(adminJs, /window\.setInterval\(updateDashboardClockFace, 1000\)/);
   assert.match(adminJs, /staffAttendanceRequest\('quick'\)/);
-  assert.match(adminJs, /ATTENDANCE_SYNC_INTERVAL_MS = 60 \* 1000/);
+  assert.match(adminJs, /ATTENDANCE_SYNC_INTERVAL_MS = 5 \* 60 \* 1000/);
+  assert.match(adminJs, /ATTENDANCE_PRESENCE_SYNC_INTERVAL_MS = 60 \* 1000/);
+  assert.match(adminJs, /staffAttendanceRequest\('presencequick'\)/);
+  assert.match(adminJs, /dashboardAttendanceCache\?\.loading && !dashboardAttendanceCache\?\.background/);
+  assert.match(adminJs, /loadDashboardAttendanceCard\(true, '', '', \{ silent: true \}\)/);
   assert.match(adminJs, /dashboardAttendanceCache\.loadedAt/);
+  assert.match(adminJs, /dashboardAttendanceCache\?\.checkedAt \|\| dashboardAttendanceCache\?\.loadedAt/);
   assert.match(adminJs, /refreshVisibleAttendanceData/);
   assert.match(adminJs, /activeSection === 'staffAttendance' && !staffAttendanceFormDirty/);
   assert.match(adminJs, /selectedBranchId !== 'all' \? selectedBranchId/);
@@ -360,8 +365,11 @@ test('dashboard provides a live clock and protected attendance quick action', ()
   assert.match(dashboardPresenceButtonSource, /cached\.presenceCheck = result\.presenceCheck/);
   assert.doesNotMatch(dashboardPresenceButtonSource, /sections\.includes\('staffAttendance'\)/);
   assert.match(attendanceSource, /export async function getStaffAttendanceQuickState/);
+  assert.match(attendanceSource, /export async function getStaffAttendancePresenceState/);
+  assert.match(attendanceSource, /getCanonicalStaffAttendanceDocument/);
   assert.match(attendanceSource, /todayDaily: todayDaily \|\| null/);
-  assert.match(attendanceApiSource, /!\['list', 'quick', 'storagestatus'\]\.includes\(action\)/);
+  assert.match(attendanceApiSource, /!\['list', 'quick', 'presencequick', 'storagestatus'\]\.includes\(action\)/);
+  assert.match(attendanceApiSource, /action === 'presencequick'[\s\S]{0,100}readStaffSession/);
   assert.match(portalCss, /\.dashboard-time-attendance\{display:grid/);
   assert.match(portalCss, /\.dashboard-digital-clock strong\{/);
   assert.match(portalCss, /\.attendance-clock-controls\{display:grid;grid-template-columns:minmax\(190px,260px\) minmax\(140px,1fr\) max-content/);
@@ -376,7 +384,7 @@ test('dashboard provides a live clock and protected attendance quick action', ()
 });
 
 test('every active staff account can use personal clocking while attendance administration remains permission-gated', () => {
-  assert.match(attendanceApiSource, /personalClockingActions = new Set\(\['quick', 'clock', 'presence'\]\)/);
+  assert.match(attendanceApiSource, /personalClockingActions = new Set\(\['quick', 'presencequick', 'clock', 'presence'\]\)/);
   assert.match(attendanceApiSource, /!personalClockingActions\.has\(action\) && !\(user\.allowedSections \|\| \[\]\)\.includes\('staffAttendance'\)/);
   assert.match(attendanceApiSource, /Staff attendance administration is not available to this account/);
   assert.match(attendanceFaceApiSource, /const user = await requireStaffSession\(env, request\)/);

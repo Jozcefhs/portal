@@ -126,6 +126,12 @@ export async function getStaffAttendanceDocument(env, key, branchId, documentId)
   return storedRow(legacy, legacyPath, true);
 }
 
+export async function getCanonicalStaffAttendanceDocument(env, key, branchId, documentId) {
+  const canonicalPath = staffAttendanceCollectionPath(env, key, branchId);
+  const canonical = await getDocument(env, canonicalPath, documentId);
+  return storedRow(canonical, canonicalPath, false);
+}
+
 function mergeStoredRows(canonicalRows, legacyRows, canonicalPath, legacyPath) {
   const merged = new Map();
   (legacyRows || []).forEach((row) => {

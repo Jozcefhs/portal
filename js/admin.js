@@ -111,6 +111,8 @@ let organizationDepartmentWorkspaceTab = 'overview';
 let organizationDashboardChartsRequest = 0;
 let dashboardAttendanceRequest = 0;
 let dashboardAttendanceCache = null;
+let dashboardPresenceLoadedAt = 0;
+let dashboardPresenceRefreshPromise = null;
 let dashboardClockTimer = 0;
 let dashboardClockTimeZone = '';
 let staffAttendanceLoadedAt = 0;
@@ -118,7 +120,8 @@ let staffAttendanceFormDirty = false;
 let staffAttendanceRefreshPromise = null;
 let latestPresenceCheckForReadAloud = null;
 let lastPresenceReadAloudKey = '';
-const ATTENDANCE_SYNC_INTERVAL_MS = 60 * 1000;
+const ATTENDANCE_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const ATTENDANCE_PRESENCE_SYNC_INTERVAL_MS = 60 * 1000;
 const dashboardSectionRequests = new Map();
 let incomeAnalyticsData = null;
 let incomeAnalyticsFilter = { period: 'monthly' };
@@ -1279,6 +1282,8 @@ function clearStaffWorkspaceState() {
   organizationDepartmentWorkspaceTab = 'overview';
   dashboardAttendanceRequest += 1;
   dashboardAttendanceCache = null;
+  dashboardPresenceLoadedAt = 0;
+  dashboardPresenceRefreshPromise = null;
   dashboardClockTimeZone = '';
   staffAttendanceLoadedAt = 0;
   staffAttendanceFormDirty = false;
@@ -1402,6 +1407,8 @@ function clearBranchScopedWorkspaceData() {
   organizationDashboardChartsRequest += 1;
   dashboardAttendanceRequest += 1;
   dashboardAttendanceCache = null;
+  dashboardPresenceLoadedAt = 0;
+  dashboardPresenceRefreshPromise = null;
   dashboardClockTimeZone = '';
   dashboardData = null;
   financeData = null;
@@ -1929,13 +1936,19 @@ function updateDashboardClockFace() {
         && dashboardAttendanceCache?.data?.todayAttendanceDate
         && attendanceDate !== clean(dashboardAttendanceCache.data.todayAttendanceDate)
         && !dashboardAttendanceCache.loading) {
-      void loadDashboardAttendanceCard(true);
+      void loadDashboardAttendanceCard(true, '', '', { silent: true });
     } else if (activeSection === 'overview'
         && document.visibilityState === 'visible'
         && dashboardAttendanceCache?.data
-        && Date.now() - Number(dashboardAttendanceCache.loadedAt || 0) >= ATTENDANCE_SYNC_INTERVAL_MS
+        && Date.now() - Number(dashboardAttendanceCache.checkedAt || dashboardAttendanceCache.loadedAt || 0) >= ATTENDANCE_SYNC_INTERVAL_MS
         && !dashboardAttendanceCache.loading) {
-      void loadDashboardAttendanceCard(true);
+      void loadDashboardAttendanceCard(true, '', '', { silent: true });
+    } else if (activeSection === 'overview'
+        && document.visibilityState === 'visible'
+        && dashboardPresencePollingAllowed()
+        && Date.now() - dashboardPresenceLoadedAt >= ATTENDANCE_PRESENCE_SYNC_INTERVAL_MS
+        && !dashboardAttendanceCache.loading) {
+      void loadDashboardPresenceState();
     }
   } catch (_error) {
     timeElement.textContent = now.toLocaleTimeString();
@@ -1967,7 +1980,7 @@ function dashboardAttendanceTime(value, timeZone = '') {
 function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
   if (!dashboardClockEl || activeSection !== 'overview') return;
   const loading = dashboardAttendanceCache?.loading && !data;
-  const refreshing = Boolean(dashboardAttendanceCache?.loading);
+  const refreshing = Boolean(dashboardAttendanceCache?.loading && !dashboardAttendanceCache?.background);
   const state = clean(data?.state || 'CLOCKED_OUT').toUpperCase();
   const complete = state === 'COMPLETED';
   const direction = clean(data?.nextDirection || (state === 'CLOCKED_IN' ? 'OUT' : 'IN')).toUpperCase();
@@ -2079,11 +2092,72 @@ function renderDashboardTimeAttendance(data = null, message = '', tone = '') {
   });
 }
 
-async function loadDashboardAttendanceCard(force = false, message = '', tone = '') {
+function dashboardPresencePollingAllowed(data = dashboardAttendanceCache?.data) {
+  return clean(data?.state).toUpperCase() === 'CLOCKED_IN'
+    && clean(data?.policy?.PresenceCheckMode).toUpperCase() === 'RANDOM';
+}
+
+function dashboardPresenceCheckView(policy = {}, state = {}) {
+  if (clean(state.state).toUpperCase() !== 'CLOCKED_IN'
+      || clean(policy.PresenceCheckMode).toUpperCase() !== 'RANDOM') {
+    return { enabled: false, status: 'NOT_REQUIRED', dueAt: '', graceEndsAt: '', canConfirm: false };
+  }
+  const dueAt = clean(state.nextPresenceCheckDueAt);
+  if (!dueAt) return { enabled: true, status: 'PENDING_SETUP', dueAt: '', graceEndsAt: '', canConfirm: false };
+  const dueTime = Date.parse(dueAt);
+  const graceEndsAt = new Date(dueTime + (Number(policy.PresenceCheckGraceMinutes || 0) * 60000)).toISOString();
+  const now = Date.now();
+  return {
+    enabled: true,
+    status: now < dueTime ? 'UPCOMING' : now <= Date.parse(graceEndsAt) ? 'DUE' : 'OVERDUE',
+    dueAt,
+    graceEndsAt,
+    canConfirm: now >= dueTime,
+    lastConfirmedAt: clean(state.lastPresenceCheckAt),
+    sequence: Number(state.presenceCheckSequence || 0)
+  };
+}
+
+async function loadDashboardPresenceState() {
+  if (!dashboardClockEl || activeSection !== 'overview' || !attendanceDashboardAllowed()
+      || !dashboardPresencePollingAllowed()) return;
+  if (dashboardPresenceRefreshPromise) return dashboardPresenceRefreshPromise;
+  const branchId = clean(selectedBranchId || currentUser?.branchId || 'main');
+  const request = (async () => {
+    try {
+      const state = await staffAttendanceRequest('presencequick');
+      const cached = dashboardAttendanceCache?.branchId === branchId ? dashboardAttendanceCache.data : null;
+      if (!cached || activeSection !== 'overview') return;
+      const attendanceChanged = clean(state.attendanceDate) !== clean(cached.todayAttendanceDate)
+        || clean(state.state).toUpperCase() !== 'CLOCKED_IN';
+      if (attendanceChanged) {
+        await loadDashboardAttendanceCard(true, '', '', { silent: true });
+        return;
+      }
+      cached.presenceCheck = dashboardPresenceCheckView(cached.policy || {}, state);
+      renderDashboardTimeAttendance(cached);
+    } catch (_error) {
+      // The next full refresh remains the recovery path for an optional background presence check.
+    } finally {
+      dashboardPresenceLoadedAt = Date.now();
+    }
+  })();
+  dashboardPresenceRefreshPromise = request;
+  try {
+    await request;
+  } finally {
+    if (dashboardPresenceRefreshPromise === request) dashboardPresenceRefreshPromise = null;
+  }
+}
+
+async function loadDashboardAttendanceCard(force = false, message = '', tone = '', options = {}) {
   if (!dashboardClockEl || activeSection !== 'overview' || !attendanceDashboardAllowed()) return;
+  const background = options.silent === true;
   const branchId = clean(selectedBranchId || currentUser?.branchId || 'main');
   if (!force && dashboardAttendanceCache?.branchId === branchId && dashboardAttendanceCache.loading) return;
-  const cacheFresh = Date.now() - Number(dashboardAttendanceCache?.loadedAt || 0) < ATTENDANCE_SYNC_INTERVAL_MS;
+  const cacheFresh = Date.now() - Number(
+    dashboardAttendanceCache?.checkedAt || dashboardAttendanceCache?.loadedAt || 0
+  ) < ATTENDANCE_SYNC_INTERVAL_MS;
   if (!force && cacheFresh && dashboardAttendanceCache?.branchId === branchId && dashboardAttendanceCache.data) {
     dashboardClockTimeZone = clean(dashboardAttendanceCache.data.policy?.TimeZone);
     renderDashboardTimeAttendance(dashboardAttendanceCache.data, message, tone);
@@ -2092,18 +2166,28 @@ async function loadDashboardAttendanceCard(force = false, message = '', tone = '
   const requestId = ++dashboardAttendanceRequest;
   const previousData = dashboardAttendanceCache?.branchId === branchId ? dashboardAttendanceCache.data : null;
   const previousLoadedAt = dashboardAttendanceCache?.branchId === branchId ? dashboardAttendanceCache.loadedAt : 0;
-  dashboardAttendanceCache = { branchId, data: previousData, loadedAt: previousLoadedAt, loading: true };
-  renderDashboardTimeAttendance(dashboardAttendanceCache.data, message || 'Refreshing attendance...', message ? tone : '');
+  const checkedAt = Date.now();
+  dashboardAttendanceCache = { branchId, data: previousData, loadedAt: previousLoadedAt, checkedAt, loading: true, background };
+  renderDashboardTimeAttendance(
+    dashboardAttendanceCache.data,
+    background ? message : message || 'Refreshing attendance...',
+    message ? tone : ''
+  );
   try {
     const data = await staffAttendanceRequest('quick');
     if (requestId !== dashboardAttendanceRequest || activeSection !== 'overview') return;
-    dashboardAttendanceCache = { branchId, data, loadedAt: Date.now(), loading: false };
+    dashboardAttendanceCache = { branchId, data, loadedAt: Date.now(), checkedAt, loading: false };
+    dashboardPresenceLoadedAt = Date.now();
     dashboardClockTimeZone = clean(data.policy?.TimeZone);
     renderDashboardTimeAttendance(data, message, tone);
   } catch (error) {
     if (requestId !== dashboardAttendanceRequest || activeSection !== 'overview') return;
-    dashboardAttendanceCache = { branchId, data: previousData, loadedAt: previousLoadedAt, loading: false };
-    renderDashboardTimeAttendance(previousData, error.message || String(error), previousData ? 'warn' : 'bad');
+    dashboardAttendanceCache = { branchId, data: previousData, loadedAt: previousLoadedAt, checkedAt, loading: false };
+    renderDashboardTimeAttendance(
+      previousData,
+      background ? message : error.message || String(error),
+      background ? tone : previousData ? 'warn' : 'bad'
+    );
   }
 }
 
@@ -6552,10 +6636,16 @@ window.addEventListener('online', () => {
 
 async function refreshVisibleAttendanceData(force = false) {
   if (!currentUser || document.visibilityState !== 'visible' || staffAttendanceRefreshPromise) return;
-  const dashboardStale = Date.now() - Number(dashboardAttendanceCache?.loadedAt || 0) >= ATTENDANCE_SYNC_INTERVAL_MS;
+  const dashboardStale = Date.now() - Number(
+    dashboardAttendanceCache?.checkedAt || dashboardAttendanceCache?.loadedAt || 0
+  ) >= ATTENDANCE_SYNC_INTERVAL_MS;
   const attendancePageStale = Date.now() - Number(staffAttendanceLoadedAt || 0) >= ATTENDANCE_SYNC_INTERVAL_MS;
   if (activeSection === 'overview' && attendanceDashboardAllowed() && (force || dashboardStale)) {
-    staffAttendanceRefreshPromise = loadDashboardAttendanceCard(true);
+    staffAttendanceRefreshPromise = loadDashboardAttendanceCard(true, '', '', { silent: true });
+  } else if (activeSection === 'overview' && attendanceDashboardAllowed()
+      && dashboardPresencePollingAllowed()
+      && Date.now() - dashboardPresenceLoadedAt >= ATTENDANCE_PRESENCE_SYNC_INTERVAL_MS) {
+    staffAttendanceRefreshPromise = loadDashboardPresenceState();
   } else if (activeSection === 'staffAttendance' && !staffAttendanceFormDirty && (force || attendancePageStale)) {
     staffAttendanceRefreshPromise = loadStaffAttendance();
   }
