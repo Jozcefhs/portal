@@ -107,6 +107,12 @@ test('AM-009 saved score cells lock recorded values and require managed reactiva
   ], true), []);
 });
 
+test('AM-009 blank score-entry cells default to Score without submitting untouched blanks', () => {
+  assert.match(adminSource, /function academicScoreStateOptions\(selected = 'Numeric'\)/);
+  assert.match(adminSource, /byComponent\.get\(component\.Id\) \|\| \{ State: 'Numeric', RawScore: '' \}/);
+  assert.match(adminSource, /\.filter\(\(score\) => score\.State !== 'Numeric' \|\| clean\(score\.RawScore\)\)/);
+});
+
 test('AM-010 spreadsheet imports normalize component columns and report every invalid row before writes', () => {
   const scheme = academicAssessmentScheme(policy);
   const rows = normalizeAcademicScoreImportRows([

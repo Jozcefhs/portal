@@ -11418,7 +11418,7 @@ function academicAttendanceWorkspace(data, rows) {
   return `${markForm}${history}${reportForm}${corrections}`;
 }
 
-function academicScoreStateOptions(selected = 'Missing') {
+function academicScoreStateOptions(selected = 'Numeric') {
   return ['Numeric', 'Absent', 'Exempt', 'Missing', 'Incomplete']
     .map((state) => `<option value="${state}"${state === selected ? ' selected' : ''}>${state === 'Numeric' ? 'Score' : state}</option>`).join('');
 }
@@ -11491,14 +11491,14 @@ function academicScorebookWorkspace(data, rows) {
       ? score.LockedComponentIds.map(clean)
       : (score.ComponentScores || []).filter((entry) => ['Numeric', 'Absent', 'Exempt'].includes(clean(entry.State))).map((entry) => clean(entry.ComponentId)));
     const componentCells = (scheme.Components || []).map((component) => {
-      const entry = byComponent.get(component.Id) || { State: 'Missing', RawScore: '' };
+      const entry = byComponent.get(component.Id) || { State: 'Numeric', RawScore: '' };
       const numeric = entry.State === 'Numeric';
       const sourceMode = clean(component.SourceMode || 'any').toLowerCase();
       const manualAllowed = ['any', 'manual'].includes(sourceMode);
       const cellLocked = lockedComponentIds.has(component.Id) && !correctionActive;
       const cellEditable = canEdit && manualAllowed && !cellLocked;
       if (cellEditable) editableCellCount += 1;
-      return `<td><div class="academic-score-component${manualAllowed ? '' : ' is-source-locked'}${cellLocked ? ' is-saved-locked' : ''}" data-academic-score-component="${escapeHtml(component.Id)}" data-maximum="${component.MaximumScore}" data-weight="${component.WeightPercentage}" data-required="${component.Required === false ? 'false' : 'true'}" data-manual-allowed="${manualAllowed ? 'true' : 'false'}" data-cell-locked="${cellLocked ? 'true' : 'false'}"${cellLocked ? ' title="Saved score locked. Admin or Management must reactivate this subject and arm before correction."' : ''}><input type="number" min="0" max="${component.MaximumScore}" step="0.01" value="${numeric ? escapeHtml(entry.RawScore) : ''}" data-academic-score-value ${numeric && cellEditable ? '' : 'disabled'} aria-label="${escapeHtml(component.Name)} score for ${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}"><select data-academic-score-state ${cellEditable ? '' : 'disabled'} aria-label="${escapeHtml(component.Name)} status">${academicScoreStateOptions(entry.State || 'Missing')}</select>${cellLocked ? '<small class="academic-score-cell-lock">&#128274; Saved</small>' : ''}</div></td>`;
+      return `<td><div class="academic-score-component${manualAllowed ? '' : ' is-source-locked'}${cellLocked ? ' is-saved-locked' : ''}" data-academic-score-component="${escapeHtml(component.Id)}" data-maximum="${component.MaximumScore}" data-weight="${component.WeightPercentage}" data-required="${component.Required === false ? 'false' : 'true'}" data-manual-allowed="${manualAllowed ? 'true' : 'false'}" data-cell-locked="${cellLocked ? 'true' : 'false'}"${cellLocked ? ' title="Saved score locked. Admin or Management must reactivate this subject and arm before correction."' : ''}><input type="number" min="0" max="${component.MaximumScore}" step="0.01" value="${numeric ? escapeHtml(entry.RawScore) : ''}" data-academic-score-value ${numeric && cellEditable ? '' : 'disabled'} aria-label="${escapeHtml(component.Name)} score for ${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}"><select data-academic-score-state ${cellEditable ? '' : 'disabled'} aria-label="${escapeHtml(component.Name)} status">${academicScoreStateOptions(entry.State || 'Numeric')}</select>${cellLocked ? '<small class="academic-score-cell-lock">&#128274; Saved</small>' : ''}</div></td>`;
     }).join('');
     return `<tr data-academic-score-student="${escapeHtml(membership.StudentRef)}" data-score-id="${escapeHtml(score.ScoreId || '')}" data-revision-token="${escapeHtml(score.RevisionToken || '')}"><td><strong>${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}</strong><small>${escapeHtml(membership.StudentRef)}</small></td>${componentCells}<td data-academic-score-total>${score.Percentage === null || score.Percentage === undefined ? '—' : `${score.Percentage}%`}</td><td data-academic-score-grade>${escapeHtml(score.Grade || '—')}</td><td data-academic-score-completion>${escapeHtml(score.CompletionStatus || 'Incomplete')}</td></tr>`;
   }).join('');
@@ -12327,11 +12327,13 @@ function academicScorebookRowPayload(row) {
   return {
     StudentRef: row.dataset.academicScoreStudent,
     RevisionToken: row.dataset.revisionToken || '',
-    ComponentScores: [...row.querySelectorAll('[data-academic-score-component][data-manual-allowed="true"][data-cell-locked="false"]')].map((component) => ({
-      ComponentId: component.dataset.academicScoreComponent,
-      State: component.querySelector('[data-academic-score-state]').value,
-      RawScore: component.querySelector('[data-academic-score-value]').value
-    }))
+    ComponentScores: [...row.querySelectorAll('[data-academic-score-component][data-manual-allowed="true"][data-cell-locked="false"]')]
+      .map((component) => ({
+        ComponentId: component.dataset.academicScoreComponent,
+        State: component.querySelector('[data-academic-score-state]').value,
+        RawScore: component.querySelector('[data-academic-score-value]').value
+      }))
+      .filter((score) => score.State !== 'Numeric' || clean(score.RawScore))
   };
 }
 
