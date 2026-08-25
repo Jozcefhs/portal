@@ -11,6 +11,10 @@ test('self-service subscription changes allow upgrades and billing-cycle changes
   assert.equal(subscriptionChangeDecision('Standard', 'monthly', 'Starter', 'monthly').allowed, false);
   assert.equal(subscriptionChangeDecision('Starter', 'monthly', 'Starter', 'monthly').allowed, false);
   assert.equal(subscriptionChangeDecision('Starter', 'monthly', 'Free', 'monthly').allowed, false);
+  assert.equal(subscriptionChangeDecision('Standard', 'monthly', 'Flex', 'monthly').kind, 'customize');
+  assert.equal(subscriptionChangeDecision('Flex', 'monthly', 'Standard', 'monthly').kind, 'bundle-change');
+  assert.equal(subscriptionChangeDecision('Flex', 'monthly', 'Flex', 'monthly', { configurationChanged: true }).kind, 'reconfigure');
+  assert.equal(subscriptionChangeDecision('Flex', 'monthly', 'Flex', 'monthly').allowed, false);
 });
 
 test('a successful upgrade disables the previous Paystack recurring subscription', async () => {
@@ -39,6 +43,8 @@ test('staff account exposes a Super Admin subscription upgrade interface', async
   assert.match(html, /Manage subscription \/ Upgrade plan/);
   assert.match(client, /user\.role !== 'Super Admin'/);
   assert.match(client, /\/api\/staff-subscription/);
+  assert.match(client, /data-staff-flex-module/);
+  assert.match(client, /flexModules: flexQuote \? flexQuote\.selectedModules/);
   assert.match(middleware, /'\/api\/subscription-checkout'/);
   assert.match(middleware, /'\/api\/staff-subscription'/);
 });

@@ -60,11 +60,9 @@ async function updateSubscriberEntitlements(platformEnv, catalog) {
       documentId: clean(registration.__id || registration.Reference),
       data: {
         ...withoutFirestoreMetadata(registration),
-        FeatureEntitlements: subscriptionPlanEntitlements(
-          registration.Plan,
-          registration.Edition,
-          catalog
-        ),
+        FeatureEntitlements: clean(registration.Plan) === 'Flex' && Array.isArray(registration.FeatureEntitlements)
+          ? [...registration.FeatureEntitlements]
+          : subscriptionPlanEntitlements(registration.Plan, registration.Edition, catalog),
         PlanCatalogRevision: catalog.PolicyRevision,
         EntitlementsUpdatedAt: catalog.UpdatedAt,
         UpdatedAt: new Date().toISOString()
@@ -173,6 +171,9 @@ export async function onRequestPost({ request, env }) {
     for (const name of SUBSCRIPTION_PLAN_NAMES) {
       const plan = catalog.Plans[name];
       const existingPlan = existing.Plans[name] || {};
+      // Flex prices are resolved from the subscriber's selected modules and
+      // active-user allowance. Exact recurring plans are created at checkout.
+      if (name === 'Flex') continue;
       if (paystackEnabled && paystackPlanNeedsSync(existingPlan, plan, 'monthly', currencyChanged)) {
         plan.PaystackMonthlyPlanCode = await syncPaystackPlan(env, {
           name,

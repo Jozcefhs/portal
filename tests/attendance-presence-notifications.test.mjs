@@ -66,7 +66,7 @@ test('attendance settings and protected scheduler expose configurable push deliv
   assert.match(adminSource, /payload\.PresenceCheckPushEnabled = formData\.has\('PresenceCheckPushEnabled'\) \? 'YES' : 'NO'/);
   assert.match(attendanceSource, /PresenceCheckPushEnabled: 'YES'/);
   assert.match(attendanceSource, /NextPresenceNotificationAt: direction === 'IN' && presencePushEnabled \? nextPresenceDueAt : ''/);
-  assert.match(attendanceSource, /presenceCheck\n  };/);
+  assert.match(attendanceSource, /presenceCheck\r?\n  };/);
   assert.match(schedulerSource, /attendanceOnly = body\.attendanceOnly === true/);
   assert.match(schedulerSource, /processAttendancePresenceNotifications/);
   assert.match(schedulerSource, /announcementsOnly \? \{ skipped: true \} : await retryFailedPushDeliveries/);

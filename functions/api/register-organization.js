@@ -9,6 +9,7 @@ import {
   normalizeSubscriptionPlanCatalog,
   subscriptionPaystackPlanCode,
   subscriptionAccessState,
+  subscriptionFlexQuote,
   subscriptionPlanEntitlements,
   subscriptionPlanPrice
 } from '../lib/subscription-plans.js';
@@ -36,6 +37,7 @@ import {
 
 const clean = (value) => String(value ?? '').trim();
 const PAYSTACK_INITIALIZE_URL = 'https://api.paystack.co/transaction/initialize';
+const PAYSTACK_PLAN_URL = 'https://api.paystack.co/plan';
 
 function normalizeSubscriptionPaymentMethod(value) {
   const method = clean(value || 'paystack').toLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -91,6 +93,78 @@ async function loadPlanCatalog(platformEnv) {
   return normalizeSubscriptionPlanCatalog(saved || {});
 }
 
+function subscriptionSelection(catalog, plan, edition, billingCycle, flexModules = [], flexUserLimit = 0) {
+  if (plan === 'Flex') return subscriptionFlexQuote(catalog, edition, flexModules, flexUserLimit, billingCycle);
+  return {
+    Plan: plan,
+    Edition: clean(edition),
+    BillingCycle: billingCycle,
+    Currency: catalog.Currency,
+    Amount: subscriptionPlanPrice(catalog, plan, billingCycle),
+    UserLimit: catalog.Plans[plan].UserLimit,
+    FeatureEntitlements: subscriptionPlanEntitlements(plan, edition, catalog),
+    PriceSnapshot: {
+      Type: 'Fixed',
+      CatalogRevision: catalog.PolicyRevision,
+      CatalogUpdatedAt: catalog.UpdatedAt,
+      Currency: catalog.Currency,
+      BillingCycle: billingCycle,
+      TotalAmount: subscriptionPlanPrice(catalog, plan, billingCycle)
+    }
+  };
+}
+
+async function sha256(value) {
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(clean(value)));
+  return [...new Uint8Array(bytes)].map((part) => part.toString(16).padStart(2, '0')).join('');
+}
+
+async function flexPaystackPlanCode(env, platformEnv, selection) {
+  if (!clean(env.PAYSTACK_SECRET_KEY)) {
+    const error = new Error('Online subscription payment is not configured yet.');
+    error.status = 503;
+    throw error;
+  }
+  const signature = await sha256(JSON.stringify({
+    currency: selection.Currency,
+    billingCycle: selection.BillingCycle,
+    amount: selection.Amount,
+    userLimit: selection.UserLimit,
+    modules: selection.FeatureEntitlements
+  }));
+  const documentId = `flex-${signature.slice(0, 48)}`;
+  const saved = await getDocument(platformEnv, 'subscriptionFlexPaystackPlans', documentId).catch(() => null);
+  if (clean(saved?.PaystackPlanCode)) return clean(saved.PaystackPlanCode);
+  const yearly = selection.BillingCycle === 'yearly';
+  const response = await fetch(PAYSTACK_PLAN_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${env.PAYSTACK_SECRET_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: `Dynamax Flex ${signature.slice(0, 8).toUpperCase()} - ${yearly ? 'Yearly' : 'Monthly'}`,
+      amount: Math.round(Number(selection.Amount || 0) * 100),
+      interval: yearly ? 'annually' : 'monthly',
+      currency: clean(selection.Currency).toUpperCase() || 'NGN',
+      description: `Flex subscription: ${selection.FeatureEntitlements.length} modules, ${selection.UserLimit} active users`,
+      send_invoices: true,
+      send_sms: false
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  const planCode = clean(data.data?.plan_code);
+  if (!response.ok || data.status === false || !planCode) {
+    const error = new Error(data.message || 'Paystack could not create the selected Flex subscription price.');
+    error.status = 502;
+    throw error;
+  }
+  await upsertDocument(platformEnv, 'subscriptionFlexPaystackPlans', documentId, {
+    Signature: signature,
+    PaystackPlanCode: planCode,
+    PriceSnapshot: selection.PriceSnapshot,
+    CreatedAt: new Date().toISOString()
+  });
+  return planCode;
+}
+
 async function activationResponse(env, platformEnv, registrationReference) {
   const registration = await getDocument(platformEnv, 'tenantRegistrations', clean(registrationReference));
   if (!registration) return {};
@@ -140,7 +214,9 @@ export async function initializeSubscriptionCheckout({
   billingCycle,
   preserveActivePlan = false,
   paymentMethod = 'paystack',
-  paymentEvidence = {}
+  paymentEvidence = {},
+  flexModules = [],
+  flexUserLimit = 0
 }) {
   const planEntry = catalog.Plans[plan];
   if (!planEntry.Active) {
@@ -239,7 +315,11 @@ export async function initializeSubscriptionCheckout({
     error.code = 'TENANT_RETIREMENT_STARTED';
     throw error;
   }
-  const amount = subscriptionPlanPrice(catalog, plan, billingCycle);
+  const selection = subscriptionSelection(catalog, plan, clean(registration.Edition), billingCycle, flexModules, flexUserLimit);
+  const amount = selection.Amount;
+  const selectedUserLimit = selection.UserLimit;
+  const selectedEntitlements = selection.FeatureEntitlements;
+  const priceSnapshot = selection.PriceSnapshot;
   if (!(amount > 0)) {
     await upsertDocument(platformEnv, 'tenantRegistrations', clean(registration.Reference || registration.__id), {
       ...withoutFirestoreMetadata(registration),
@@ -247,8 +327,9 @@ export async function initializeSubscriptionCheckout({
       BillingCycle: billingCycle,
       Price: 0,
       Currency: catalog.Currency,
-      UserLimit: planEntry.UserLimit,
-      FeatureEntitlements: subscriptionPlanEntitlements(plan, clean(registration.Edition), catalog),
+      UserLimit: selectedUserLimit,
+      FeatureEntitlements: selectedEntitlements,
+      PriceSnapshot: priceSnapshot,
       PlanCatalogRevision: catalog.PolicyRevision,
       PaymentStatus: 'Pending Plan Confirmation',
       Status: 'Pending Activation',
@@ -274,6 +355,8 @@ export async function initializeSubscriptionCheckout({
       || (!preserveActivePlan ? clean(registration.DirectTransferReference) : '');
     if (clean(registration.PendingPlan || registration.Plan) === plan
       && clean(registration.PendingBillingCycle || registration.BillingCycle) === billingCycle
+      && Number(registration.PendingPrice || registration.Price) === Number(amount)
+      && JSON.stringify(registration.PendingFeatureEntitlements || registration.FeatureEntitlements || []) === JSON.stringify(selectedEntitlements)
       && reusableReference) {
       const prior = await getDocument(platformEnv, 'subscriptionPayments', reusableReference);
       if (prior && ['awaiting verification', 'approval processing'].includes(clean(prior.Status).toLowerCase())) {
@@ -299,8 +382,9 @@ export async function initializeSubscriptionCheckout({
       BillingCycle: billingCycle,
       Amount: amount,
       Currency: catalog.Currency,
-      UserLimit: planEntry.UserLimit,
-      FeatureEntitlements: subscriptionPlanEntitlements(plan, clean(registration.Edition), catalog),
+      UserLimit: selectedUserLimit,
+      FeatureEntitlements: selectedEntitlements,
+      PriceSnapshot: priceSnapshot,
       PlanCatalogRevision: catalog.PolicyRevision,
       PreviousPaystackSubscriptionCode: clean(registration.PaystackSubscriptionCode),
       PaymentMethod: 'Direct Bank Transfer',
@@ -323,6 +407,9 @@ export async function initializeSubscriptionCheckout({
       PendingPlan: plan,
       PendingBillingCycle: billingCycle,
       PendingPrice: amount,
+      PendingUserLimit: selectedUserLimit,
+      PendingFeatureEntitlements: selectedEntitlements,
+      PendingPriceSnapshot: priceSnapshot,
       PendingPaymentMethod: 'Direct Bank Transfer',
       PendingDirectTransferReference: reference,
       PendingPaystackPlanCode: '',
@@ -335,8 +422,9 @@ export async function initializeSubscriptionCheckout({
       BillingCycle: billingCycle,
       Price: amount,
       Currency: catalog.Currency,
-      UserLimit: planEntry.UserLimit,
-      FeatureEntitlements: subscriptionPlanEntitlements(plan, clean(registration.Edition), catalog),
+      UserLimit: selectedUserLimit,
+      FeatureEntitlements: selectedEntitlements,
+      PriceSnapshot: priceSnapshot,
       PlanCatalogRevision: catalog.PolicyRevision,
       DirectTransferReference: reference,
       PaystackPlanCode: '',
@@ -360,7 +448,9 @@ export async function initializeSubscriptionCheckout({
     error.status = 503;
     throw error;
   }
-  const planCode = subscriptionPaystackPlanCode(catalog, plan, billingCycle);
+  const planCode = plan === 'Flex'
+    ? await flexPaystackPlanCode(env, platformEnv, selection)
+    : subscriptionPaystackPlanCode(catalog, plan, billingCycle);
   if (!planCode) {
     const error = new Error(`${plan} ${billingCycle} pricing has not been synchronized with Paystack yet.`);
     error.status = 503;
@@ -376,6 +466,8 @@ export async function initializeSubscriptionCheckout({
   const reusableReference = clean(registration.PendingPaystackReference || registration.PaystackReference);
   if (clean(preserveActivePlan ? registration.PendingPlan || registration.Plan : registration.Plan) === plan
     && clean(preserveActivePlan ? registration.PendingBillingCycle || registration.BillingCycle : registration.BillingCycle) === billingCycle
+    && Number(preserveActivePlan ? registration.PendingPrice : registration.Price) === Number(amount)
+    && JSON.stringify(preserveActivePlan ? registration.PendingFeatureEntitlements || [] : registration.FeatureEntitlements || []) === JSON.stringify(selectedEntitlements)
     && reusableAuthorizationUrl
     && reusableReference
     && clean(registration.PaymentStatus).toLowerCase() !== 'paid') {
@@ -406,8 +498,9 @@ export async function initializeSubscriptionCheckout({
     Amount: amount,
     Currency: catalog.Currency,
     PaystackPlanCode: planCode,
-    UserLimit: planEntry.UserLimit,
-    FeatureEntitlements: subscriptionPlanEntitlements(plan, clean(registration.Edition), catalog),
+    UserLimit: selectedUserLimit,
+    FeatureEntitlements: selectedEntitlements,
+    PriceSnapshot: priceSnapshot,
     PlanCatalogRevision: catalog.PolicyRevision,
     PreviousPaystackSubscriptionCode: clean(registration.PaystackSubscriptionCode),
     Status: 'Initializing',
@@ -466,8 +559,9 @@ export async function initializeSubscriptionCheckout({
       Amount: amount,
       Currency: catalog.Currency,
       PaystackPlanCode: planCode,
-      UserLimit: planEntry.UserLimit,
-      FeatureEntitlements: subscriptionPlanEntitlements(plan, clean(registration.Edition), catalog),
+      UserLimit: selectedUserLimit,
+      FeatureEntitlements: selectedEntitlements,
+      PriceSnapshot: priceSnapshot,
       PlanCatalogRevision: catalog.PolicyRevision,
       PreviousPaystackSubscriptionCode: clean(registration.PaystackSubscriptionCode),
       PaystackAccessCode: clean(data.data.access_code),
@@ -481,6 +575,9 @@ export async function initializeSubscriptionCheckout({
       PendingPlan: plan,
       PendingBillingCycle: billingCycle,
       PendingPrice: amount,
+      PendingUserLimit: selectedUserLimit,
+      PendingFeatureEntitlements: selectedEntitlements,
+      PendingPriceSnapshot: priceSnapshot,
       PendingPaystackPlanCode: planCode,
       PendingPaystackReference: reference,
       PendingAuthorizationUrl: authorizationUrl,
@@ -493,8 +590,9 @@ export async function initializeSubscriptionCheckout({
       BillingCycle: billingCycle,
       Price: amount,
       Currency: catalog.Currency,
-      UserLimit: planEntry.UserLimit,
-      FeatureEntitlements: subscriptionPlanEntitlements(plan, clean(registration.Edition), catalog),
+      UserLimit: selectedUserLimit,
+      FeatureEntitlements: selectedEntitlements,
+      PriceSnapshot: priceSnapshot,
       PlanCatalogRevision: catalog.PolicyRevision,
       PaystackPlanCode: planCode,
       PaystackReference: reference,
@@ -524,6 +622,16 @@ export async function onRequestPost({ request, env }) {
     const billingCycle = normalizeBillingCycle(body.BillingCycle);
     const catalog = await loadPlanCatalog(platformEnv);
     const edition = normalizeOrganizationEdition(body.Edition);
+    const requestedFlexModules = Array.isArray(body.FlexModules) ? body.FlexModules : [];
+    const requestedFlexUserLimit = Number(body.FlexUserLimit || 0);
+    const requestedSelection = subscriptionSelection(
+      catalog,
+      plan,
+      edition,
+      billingCycle,
+      requestedFlexModules,
+      requestedFlexUserLimit
+    );
     if (!name || !clean(body.ContactName) || !validEmail(email) || !clean(body.Phone) || !clean(body.Country)) {
       const error = new Error('Organisation, contact name, valid email, phone and country are required.');
       error.status = 400; throw error;
@@ -592,7 +700,9 @@ export async function onRequestPost({ request, env }) {
         plan,
         billingCycle,
         paymentMethod: body.PaymentMethod,
-        paymentEvidence: body
+        paymentEvidence: body,
+        flexModules: requestedFlexModules,
+        flexUserLimit: requestedFlexUserLimit
       });
       const result = {
         ok: true,
@@ -624,8 +734,9 @@ export async function onRequestPost({ request, env }) {
       TrialFingerprint: trialFingerprint,
       Plan: plan,
       BillingCycle: billingCycle,
-      UserLimit: catalog.Plans[plan].UserLimit,
-      FeatureEntitlements: subscriptionPlanEntitlements(plan, edition, catalog),
+      UserLimit: requestedSelection.UserLimit,
+      FeatureEntitlements: requestedSelection.FeatureEntitlements,
+      PriceSnapshot: requestedSelection.PriceSnapshot,
       PlanCatalogRevision: catalog.PolicyRevision,
       ...(workspaceBinding || {}),
       PaymentStatus: 'Pending',
@@ -650,7 +761,9 @@ export async function onRequestPost({ request, env }) {
       plan,
       billingCycle,
       paymentMethod: body.PaymentMethod,
-      paymentEvidence: body
+      paymentEvidence: body,
+      flexModules: requestedFlexModules,
+      flexUserLimit: requestedFlexUserLimit
     });
     const result = {
       ok: true,

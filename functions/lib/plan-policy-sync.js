@@ -158,13 +158,23 @@ export async function refreshOrganizationPlanPolicy(env, organizationProfile = {
   const registration = central.registration || {};
   const plan = normalizeSubscriptionPlan(registration.Plan || organizationProfile.Plan || 'Starter');
   const edition = clean(organizationProfile.Edition || registration.Edition) || 'school';
-  const entitlements = subscriptionPlanEntitlements(plan, edition, central.catalog);
+  const entitlements = plan === 'Flex'
+    ? Array.isArray(registration.FeatureEntitlements)
+      ? [...registration.FeatureEntitlements]
+      : Array.isArray(organizationProfile.PlanEntitlements)
+        ? [...organizationProfile.PlanEntitlements]
+        : []
+    : subscriptionPlanEntitlements(plan, edition, central.catalog);
   const revision = clean(central.catalog.PolicyRevision || central.catalog.UpdatedAt);
   const enriched = {
     ...withoutFirestoreMetadata(organizationProfile),
     Plan: plan,
     PlanEntitlements: centrallyRevoked ? [] : entitlements,
     PlanCatalogRevision: revision,
+    BillingCycle: clean(registration.BillingCycle || organizationProfile.BillingCycle),
+    SubscriptionPrice: Number(registration.Price || organizationProfile.SubscriptionPrice || 0),
+    SubscriptionCurrency: clean(registration.Currency || organizationProfile.SubscriptionCurrency || 'NGN'),
+    SubscriptionPriceSnapshot: registration.PriceSnapshot ?? organizationProfile.SubscriptionPriceSnapshot ?? null,
     UserLimit: Math.max(1, Number(registration.UserLimit || organizationProfile.UserLimit || central.catalog.Plans[plan]?.UserLimit || 5) || 5),
     SubscriptionStatus: centrallyRevoked
       ? 'Terminated'
@@ -184,6 +194,10 @@ export async function refreshOrganizationPlanPolicy(env, organizationProfile = {
       : ''
   };
   const changed = clean(organizationProfile.Plan) !== clean(enriched.Plan)
+    || clean(organizationProfile.BillingCycle) !== clean(enriched.BillingCycle)
+    || Number(organizationProfile.SubscriptionPrice || 0) !== Number(enriched.SubscriptionPrice || 0)
+    || clean(organizationProfile.SubscriptionCurrency) !== clean(enriched.SubscriptionCurrency)
+    || JSON.stringify(organizationProfile.SubscriptionPriceSnapshot || null) !== JSON.stringify(enriched.SubscriptionPriceSnapshot || null)
     || clean(organizationProfile.PlanCatalogRevision) !== revision
     || comparableEntitlements(organizationProfile.PlanEntitlements) !== comparableEntitlements(entitlements)
     || Number(organizationProfile.UserLimit || 0) !== Number(enriched.UserLimit || 0)

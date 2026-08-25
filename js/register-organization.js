@@ -2,9 +2,12 @@ const form = document.getElementById('organisationRegistrationForm');
 const statusNode = document.getElementById('organisationRegistrationStatus');
 const planGrid = document.getElementById('planChoiceGrid');
 const planComparisonGrid = document.getElementById('planComparisonGrid');
+const flexPlanBuilder = document.getElementById('flexPlanBuilder');
 const downloadPricingBookButton = document.getElementById('downloadPricingBook');
 let registrationIdempotencyKey = '';
 let planCatalog = null;
+const flexSelections = { school: new Set(), faith: new Set(), organization: new Set() };
+let flexUserLimit = 1;
 const planBookThemes = {
   free: {
     sheet: '#eefcff',
@@ -30,6 +33,12 @@ const planBookThemes = {
     strip: '#edc8f7',
     accent: '#5c1e83'
   },
+  flex: {
+    sheet: '#eefbf8',
+    cover: '#0c9278',
+    strip: '#b9eadf',
+    accent: '#075d4e'
+  },
   enterprise: {
     sheet: '#fff7e8',
     cover: '#f08a2d',
@@ -49,6 +58,7 @@ const fallbackPlans = [
   { Name: 'Starter', Summary: 'Core records for a small team', UserLimit: 5, MonthlyAmount: 0, YearlyAmount: 0, Active: true, FeaturesByEdition: { school: ['Student and admission records', 'Parent portal', 'Records Desk'], faith: ['Member records', 'Services and attendance', 'Departments'], organization: ['Personnel records', 'Departments', 'Records Centre'] } },
   { Name: 'Standard', Summary: 'Finance, people and approval workflows', UserLimit: 20, MonthlyAmount: 0, YearlyAmount: 0, Active: true, FeaturesByEdition: { school: ['Everything in Starter', 'Finance and income analytics', 'Bills, requisitions and approvals', 'Human Resources'], faith: ['Everything in Starter', 'Funds, offerings and donations', 'Finance and income analytics', 'Human Resources'], organization: ['Everything in Starter', 'Finance and revenue analytics', 'Bills, requisitions and approvals', 'Human Resources'] } },
   { Name: 'Professional', Summary: 'Full operations for a growing organisation', UserLimit: 50, MonthlyAmount: 0, YearlyAmount: 0, Active: true, FeaturesByEdition: { school: ['Everything in Standard', 'Payroll', 'Clinic, conduct and school stores', 'All school operation modules'], faith: ['Everything in Standard', 'Payroll', 'Organisation store and restaurant', 'All church operation modules'], organization: ['Everything in Standard', 'Payroll', 'Inventory, sales and catering', 'All organisation operation modules'] } },
+  { Name: 'Flex', Summary: 'Choose modules and active users', UserLimit: 250, IncludedUsers: 1, MonthlyAmount: 0, YearlyAmount: 0, AdditionalUserMonthlyAmount: 0, AdditionalUserYearlyAmount: 0, Active: false, FeaturesByEdition: { school: ['Choose only the school modules you need'], faith: ['Choose only the church modules you need'], organization: ['Choose only the organisation modules you need'] } },
   { Name: 'Enterprise', Summary: 'Custom users, modules and onboarding', UserLimit: 250, MonthlyAmount: 0, YearlyAmount: 0, Active: true, FeaturesByEdition: { school: ['Everything in Professional', 'Custom active-user allowance', 'Custom module policy', 'Priority onboarding'], faith: ['Everything in Professional', 'Custom active-user allowance', 'Custom module policy', 'Priority onboarding'], organization: ['Everything in Professional', 'Custom active-user allowance', 'Custom module policy', 'Priority onboarding'] } }
 ];
 
@@ -98,6 +108,80 @@ function displayedPlanPrice(plan, amount, currency = 'NGN') {
 
 function selectedPlanName() {
   return form.querySelector('[name="Plan"]:checked')?.value || 'Free';
+}
+
+function flexPlan() {
+  return visiblePlans().find((plan) => plan.Name === 'Flex');
+}
+
+function flexModules() {
+  return Array.isArray(planCatalog?.ModuleCatalog?.[edition()]) ? planCatalog.ModuleCatalog[edition()] : [];
+}
+
+function applyFlexModule(moduleKey, checked) {
+  const modules = flexModules();
+  const selected = flexSelections[edition()];
+  const byKey = new Map(modules.map((module) => [module.Key, module]));
+  if (checked) {
+    const visit = (key) => {
+      if (selected.has(key)) return;
+      selected.add(key);
+      (byKey.get(key)?.Requires || []).forEach(visit);
+    };
+    visit(moduleKey);
+  } else {
+    selected.delete(moduleKey);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      modules.forEach((module) => {
+        if (selected.has(module.Key) && (module.Requires || []).some((required) => !selected.has(required))) {
+          selected.delete(module.Key);
+          changed = true;
+        }
+      });
+    }
+  }
+}
+
+function currentFlexQuote() {
+  const plan = flexPlan();
+  if (!plan) return { amount: 0, modules: [], userLimit: 1, additionalUsers: 0 };
+  const modules = flexModules();
+  const selected = flexSelections[edition()];
+  const cycle = billingCycle();
+  const amountKey = cycle === 'yearly' ? 'YearlyAmount' : 'MonthlyAmount';
+  const selectedModules = modules.filter((module) => selected.has(module.Key));
+  const includedUsers = Math.max(1, Number(plan.IncludedUsers || 1));
+  const userLimit = Math.min(Math.max(1, Number(flexUserLimit || includedUsers)), Math.max(1, Number(plan.UserLimit || 250)));
+  const additionalUsers = Math.max(0, userLimit - includedUsers);
+  const additionalUserRate = Number(cycle === 'yearly' ? plan.AdditionalUserYearlyAmount : plan.AdditionalUserMonthlyAmount) || 0;
+  const moduleAmount = selectedModules.reduce((sum, module) => sum + Number(plan.ModulePricesByEdition?.[edition()]?.[module.Key]?.[amountKey] || 0), 0);
+  return {
+    amount: Number(plan[amountKey] || 0) + moduleAmount + (additionalUsers * additionalUserRate),
+    modules: selectedModules,
+    userLimit,
+    additionalUsers
+  };
+}
+
+function renderFlexBuilder() {
+  const plan = flexPlan();
+  const show = selectedPlanName() === 'Flex' && plan?.Active !== false;
+  flexPlanBuilder.hidden = !show;
+  if (!show) return;
+  const quote = currentFlexQuote();
+  const currency = planCatalog?.Currency || 'NGN';
+  const selected = flexSelections[edition()];
+  flexPlanBuilder.innerHTML = `
+    <header><div><p class="eyebrow">Build your subscription</p><h3>Choose modules and users</h3><p>Required modules are selected automatically and included in the total.</p></div><strong>${escapeHtml(formattedPrice(quote.amount, currency))}<small> / ${billingCycle() === 'yearly' ? 'year' : 'month'}</small></strong></header>
+    <label class="flex-user-limit">Active users <input id="flexUserLimit" type="number" min="1" max="${Number(plan.UserLimit || 250)}" step="1" value="${quote.userLimit}"><small>${Number(plan.IncludedUsers || 1)} included in the base fee</small></label>
+    <div class="flex-module-options">${flexModules().map((module) => {
+      const price = plan.ModulePricesByEdition?.[edition()]?.[module.Key]?.[billingCycle() === 'yearly' ? 'YearlyAmount' : 'MonthlyAmount'] || 0;
+      const required = flexModules().some((candidate) => selected.has(candidate.Key) && (candidate.Requires || []).includes(module.Key));
+      return `<label class="flex-module-option ${selected.has(module.Key) ? 'selected' : ''}"><input type="checkbox" data-flex-module="${escapeHtml(module.Key)}" ${selected.has(module.Key) ? 'checked' : ''} ${required ? 'data-required-by-selection="true"' : ''}><span><strong>${escapeHtml(module.Label)}</strong><small>${escapeHtml(module.Description)}</small>${module.Requires?.length ? `<em>Requires ${escapeHtml(module.Requires.map((key) => flexModules().find((entry) => entry.Key === key)?.Label || key).join(', '))}</em>` : ''}</span><b>${escapeHtml(formattedPrice(price, currency))}</b></label>`;
+    }).join('')}</div>
+    <footer><span>${quote.modules.length} module${quote.modules.length === 1 ? '' : 's'} · ${quote.userLimit} active user${quote.userLimit === 1 ? '' : 's'}</span><strong>Total ${escapeHtml(formattedPrice(quote.amount, currency))}</strong></footer>`;
 }
 
 function buildPricingBookPrintMarkup() {
@@ -291,9 +375,12 @@ function renderPlans() {
       <ul>${features.map((feature) => `<li>${escapeHtml(feature)}</li>`).join('')}</ul>
     </article>`;
   }).join('');
+  renderFlexBuilder();
   const submit = form.querySelector('button[type="submit"]');
   const selected = available.find((plan) => plan.Name === selectedPlanName());
-  const amount = cycle === 'yearly' ? selected?.YearlyAmount : selected?.MonthlyAmount;
+  const amount = selected?.Name === 'Flex'
+    ? currentFlexQuote().amount
+    : cycle === 'yearly' ? selected?.YearlyAmount : selected?.MonthlyAmount;
   if (submit) submit.textContent = selected?.Name === 'Free'
     ? 'Start free trial'
     : Number(amount) > 0 ? 'Choose payment method' : 'Submit registration';
@@ -338,9 +425,15 @@ form.addEventListener('submit', async (event) => {
   try {
     const payload = Object.fromEntries(new FormData(form).entries());
     const selectedPlan = visiblePlans().find((plan) => plan.Name === selectedPlanName());
-    const selectedAmount = billingCycle() === 'yearly'
-      ? Number(selectedPlan?.YearlyAmount || 0)
-      : Number(selectedPlan?.MonthlyAmount || 0);
+    const flexQuote = selectedPlan?.Name === 'Flex' ? currentFlexQuote() : null;
+    if (selectedPlan?.Name === 'Flex' && !flexQuote.modules.length) {
+      throw new Error('Choose at least one module for the Flex plan.');
+    }
+    const selectedAmount = flexQuote
+      ? Number(flexQuote.amount || 0)
+      : billingCycle() === 'yearly'
+        ? Number(selectedPlan?.YearlyAmount || 0)
+        : Number(selectedPlan?.MonthlyAmount || 0);
     let paymentChoice = {};
     if (selectedPlan?.Name !== 'Free' && selectedAmount > 0) {
       paymentChoice = await window.DynamaxPaymentMethods.choose({
@@ -374,6 +467,8 @@ form.addEventListener('submit', async (event) => {
         bankReference: paymentChoice.bankReference || '',
         proofDataUrl: paymentChoice.proofDataUrl || '',
         proofFileName: paymentChoice.proofFileName || '',
+        FlexModules: flexQuote ? flexQuote.modules.map((module) => module.Key) : [],
+        FlexUserLimit: flexQuote ? flexQuote.userLimit : '',
         idempotencyKey: registrationIdempotencyKey,
         ...turnstile
       })
@@ -432,6 +527,29 @@ form.addEventListener('input', () => {
 
 form.addEventListener('change', (event) => {
   if (['Edition', 'BillingCycle', 'Plan'].includes(event.target?.name)) renderPlans();
+});
+
+flexPlanBuilder?.addEventListener('change', (event) => {
+  const moduleInput = event.target.closest('[data-flex-module]');
+  if (moduleInput) {
+    applyFlexModule(moduleInput.dataset.flexModule, moduleInput.checked);
+    renderFlexBuilder();
+    registrationIdempotencyKey = '';
+    return;
+  }
+  if (event.target.id === 'flexUserLimit') {
+    flexUserLimit = Math.max(1, Number(event.target.value || 1));
+    renderFlexBuilder();
+    registrationIdempotencyKey = '';
+  }
+});
+
+flexPlanBuilder?.addEventListener('input', (event) => {
+  if (event.target.id !== 'flexUserLimit') return;
+  flexUserLimit = Math.max(1, Number(event.target.value || 1));
+  const quote = currentFlexQuote();
+  flexPlanBuilder.querySelector('header > strong').innerHTML = `${escapeHtml(formattedPrice(quote.amount, planCatalog?.Currency || 'NGN'))}<small> / ${billingCycle() === 'yearly' ? 'year' : 'month'}</small>`;
+  flexPlanBuilder.querySelector('footer').innerHTML = `<span>${quote.modules.length} module${quote.modules.length === 1 ? '' : 's'} · ${quote.userLimit} active user${quote.userLimit === 1 ? '' : 's'}</span><strong>Total ${escapeHtml(formattedPrice(quote.amount, planCatalog?.Currency || 'NGN'))}</strong>`;
 });
 
 downloadPricingBookButton?.addEventListener('click', async () => {

@@ -7,7 +7,7 @@ import {
   failIdempotentRequest,
   readJsonBody
 } from '../lib/request-security.js';
-import { normalizeBillingCycle, normalizeSubscriptionPlan, normalizeSubscriptionPlanCatalog } from '../lib/subscription-plans.js';
+import { normalizeBillingCycle, normalizeSubscriptionPlan, normalizeSubscriptionPlanCatalog, subscriptionFlexQuote } from '../lib/subscription-plans.js';
 import { subscriptionChangeDecision } from '../lib/subscription-upgrade.js';
 import { initializeSubscriptionCheckout } from './register-organization.js';
 
@@ -34,7 +34,9 @@ export async function onRequestPost({ request, env }) {
         plan: clean(body.plan),
         billingCycle: clean(body.billingCycle),
         paymentMethod: clean(body.paymentMethod),
-        bankReference: clean(body.bankReference)
+        bankReference: clean(body.bankReference),
+        flexModules: Array.isArray(body.flexModules) ? body.flexModules : [],
+        flexUserLimit: Number(body.flexUserLimit || 0)
       }
     });
     if (idempotency.replay) {
@@ -52,6 +54,14 @@ export async function onRequestPost({ request, env }) {
     if (!registration) { const error = new Error('No active subscription record was found.'); error.status = 404; throw error; }
     const plan = normalizeSubscriptionPlan(body.plan);
     const billingCycle = normalizeBillingCycle(body.billingCycle);
+    const catalog = normalizeSubscriptionPlanCatalog(await getDocument(platformEnv, 'settings', 'dynamaxPlanCatalog') || {});
+    const flexQuote = plan === 'Flex'
+      ? subscriptionFlexQuote(catalog, registration.Edition, body.flexModules, body.flexUserLimit, billingCycle)
+      : null;
+    const flexConfigurationChanged = Boolean(flexQuote && (
+      Number(registration.UserLimit || 0) !== Number(flexQuote.UserLimit)
+      || JSON.stringify(registration.FeatureEntitlements || []) !== JSON.stringify(flexQuote.FeatureEntitlements)
+    ));
     const renewalRequired = /payment grace|payment failed|past due|suspended|expired/i.test(
       `${clean(registration.SubscriptionStatus)} ${clean(registration.LifecycleStage)}`
     );
@@ -60,10 +70,9 @@ export async function onRequestPost({ request, env }) {
       registration.BillingCycle,
       plan,
       billingCycle,
-      { allowRenewal: renewalRequired }
+      { allowRenewal: renewalRequired, configurationChanged: flexConfigurationChanged }
     );
     if (!decision.allowed) { const error = new Error(decision.reason); error.status = 409; throw error; }
-    const catalog = normalizeSubscriptionPlanCatalog(await getDocument(platformEnv, 'settings', 'dynamaxPlanCatalog') || {});
     const checkout = await initializeSubscriptionCheckout({
       request,
       env,
@@ -74,7 +83,9 @@ export async function onRequestPost({ request, env }) {
       billingCycle,
       preserveActivePlan: true,
       paymentMethod: body.paymentMethod,
-      paymentEvidence: body
+      paymentEvidence: body,
+      flexModules: Array.isArray(body.flexModules) ? body.flexModules : [],
+      flexUserLimit: Number(body.flexUserLimit || 0)
     });
     if (!checkout?.authorizationUrl && !checkout?.directTransfer) {
       const error = new Error('This subscription change does not have an available payment route.');

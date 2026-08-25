@@ -156,17 +156,24 @@ function renderCatalog() {
   const currency = selectedPricingCurrency();
   cards.innerHTML = (catalog?.Plans || []).map((plan) => {
     const isFree = plan.Name === 'Free';
+    const isFlex = plan.Name === 'Flex';
     const counts = ['school', 'faith', 'organization'].map((edition) =>
       (plan.EntitlementsByEdition?.[edition] || []).length);
     return `<article class="plan-pricing-card" data-plan="${escapeHtml(plan.Name)}">
       <header><div><h3>${escapeHtml(plan.Name)}</h3><p>${escapeHtml(plan.Summary)}</p></div><label class="inline-check"><input type="checkbox" data-field="Active" ${plan.Active ? 'checked' : ''}> Available</label></header>
       <div class="plan-pricing-fields">
-        <label><span>Monthly price (<span data-price-currency>${currency}</span>)</span><input data-field="MonthlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.MonthlyAmount || 0)}" ${isFree ? 'readonly' : ''}></label>
-        <label><span>Yearly price (<span data-price-currency>${currency}</span>)</span><input data-field="YearlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.YearlyAmount || 0)}" ${isFree ? 'readonly' : ''}></label>
-        <label>Active-user limit<input data-field="UserLimit" type="number" min="1" step="1" value="${Number(plan.UserLimit || 1)}" ${plan.Name === 'Enterprise' ? '' : 'readonly'}></label>
+        <label><span>${isFlex ? 'Base monthly fee' : 'Monthly price'} (<span data-price-currency>${currency}</span>)</span><input data-field="MonthlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.MonthlyAmount || 0)}" ${isFree ? 'readonly' : ''}></label>
+        <label><span>${isFlex ? 'Base yearly fee' : 'Yearly price'} (<span data-price-currency>${currency}</span>)</span><input data-field="YearlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.YearlyAmount || 0)}" ${isFree ? 'readonly' : ''}></label>
+        <label>${isFlex ? 'Maximum active users' : 'Active-user limit'}<input data-field="UserLimit" type="number" min="1" step="1" value="${Number(plan.UserLimit || 1)}" ${['Enterprise', 'Flex'].includes(plan.Name) ? '' : 'readonly'}></label>
+        ${isFlex ? `
+          <label>Users included in base fee<input data-field="IncludedUsers" type="number" min="1" step="1" value="${Number(plan.IncludedUsers || 1)}"></label>
+          <label><span>Extra user / month (<span data-price-currency>${currency}</span>)</span><input data-field="AdditionalUserMonthlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.AdditionalUserMonthlyAmount || 0)}"></label>
+          <label><span>Extra user / year (<span data-price-currency>${currency}</span>)</span><input data-field="AdditionalUserYearlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.AdditionalUserYearlyAmount || 0)}"></label>
+        ` : ''}
       </div>
       <p class="plan-module-counts"><span>School <b>${counts[0]}</b></span><span>Church <b>${counts[1]}</b></span><span>Other <b>${counts[2]}</b></span></p>
       ${isFree ? '<small class="plan-trial-note">The seven-day duration remains fixed; its enabled modules are now controlled below.</small>' : ''}
+      ${isFlex ? '<small class="plan-trial-note">The base fee, selected module prices and any users above the included allowance form the subscriber total.</small>' : ''}
     </article>`;
   }).join('');
   updatePriceCurrencyLabels();
@@ -311,6 +318,13 @@ function renderEntitlementMatrix() {
     return `<tr>
       <th scope="row"><strong>${escapeHtml(module.Label)}</strong><small>${escapeHtml(module.Description)}</small>${requirementNames.length ? `<em>Requires ${escapeHtml(requirementNames.join(' and '))}</em>` : ''}</th>
       ${plans.map((plan) => {
+        if (plan.Name === 'Flex') {
+          const price = plan.ModulePricesByEdition?.[selectedEntitlementEdition]?.[module.Key] || {};
+          return `<td class="flex-module-price-cell">
+            <label><span>M</span><input type="number" min="0" step="0.01" inputmode="decimal" aria-label="${escapeHtml(`Flex monthly price: ${module.Label}`)}" data-flex-module-price="MonthlyAmount" data-flex-module-key="${escapeHtml(module.Key)}" value="${Number(price.MonthlyAmount || 0)}"></label>
+            <label><span>Y</span><input type="number" min="0" step="0.01" inputmode="decimal" aria-label="${escapeHtml(`Flex yearly price: ${module.Label}`)}" data-flex-module-price="YearlyAmount" data-flex-module-key="${escapeHtml(module.Key)}" value="${Number(price.YearlyAmount || 0)}"></label>
+          </td>`;
+        }
         const checked = (plan.EntitlementsByEdition?.[selectedEntitlementEdition] || []).includes(module.Key);
         const accessibleLabel = escapeHtml(`${plan.Name}: ${module.Label}`);
         return `<td><label title="${accessibleLabel}"><input type="checkbox" aria-label="${accessibleLabel}" data-entitlement-plan="${escapeHtml(plan.Name)}" data-entitlement-module="${escapeHtml(module.Key)}" ${checked ? 'checked' : ''}></label></td>`;
@@ -321,11 +335,11 @@ function renderEntitlementMatrix() {
     <div class="plan-entitlement-tabs" role="tablist" aria-label="Organisation type">${tabs}</div>
     <div class="plan-entitlement-table-wrap" tabindex="0">
       <table class="plan-entitlement-table">
-        <thead><tr><th>Feature or module</th>${plans.map((plan) => `<th>${escapeHtml(plan.Name)}</th>`).join('')}</tr></thead>
+        <thead><tr><th>Feature or module</th>${plans.map((plan) => `<th>${escapeHtml(plan.Name)}${plan.Name === 'Flex' ? '<small>Monthly / yearly price</small>' : ''}</th>`).join('')}</tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <p class="plan-entitlement-help">Overview, secure sign-in, notifications, settings and role permissions remain core platform services. Checked operational modules are enforced in both the web companion and desktop app.</p>
+    <p class="plan-entitlement-help">Overview, secure sign-in, notifications, settings and role permissions remain core platform services. Fixed plans use checkboxes; Flex uses a monthly and yearly price for each selectable module. Dependencies are charged and enabled automatically.</p>
   `;
 }
 
@@ -375,6 +389,15 @@ pricingForm.addEventListener('submit', async (event) => {
         MonthlyAmount: Number(value('MonthlyAmount').value || 0),
         YearlyAmount: Number(value('YearlyAmount').value || 0),
         UserLimit: Number(value('UserLimit').value || 1),
+        IncludedUsers: Number(value('IncludedUsers')?.value || 1),
+        AdditionalUserMonthlyAmount: Number(value('AdditionalUserMonthlyAmount')?.value || 0),
+        AdditionalUserYearlyAmount: Number(value('AdditionalUserYearlyAmount')?.value || 0),
+        ModulePricesByEdition: card.dataset.plan === 'Flex'
+          ? Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
+            edition,
+            { ...(planForName('Flex')?.ModulePricesByEdition?.[edition] || {}) }
+          ]))
+          : {},
         EntitlementsByEdition: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
           edition,
           [...(planForName(card.dataset.plan)?.EntitlementsByEdition?.[edition] || [])]
@@ -507,6 +530,16 @@ entitlementMatrix?.addEventListener('click', (event) => {
 });
 
 entitlementMatrix?.addEventListener('change', (event) => {
+  const priceInput = event.target.closest('[data-flex-module-price][data-flex-module-key]');
+  if (priceInput) {
+    const flex = planForName('Flex');
+    flex.ModulePricesByEdition ||= {};
+    flex.ModulePricesByEdition[selectedEntitlementEdition] ||= {};
+    flex.ModulePricesByEdition[selectedEntitlementEdition][priceInput.dataset.flexModuleKey] ||= {};
+    flex.ModulePricesByEdition[selectedEntitlementEdition][priceInput.dataset.flexModuleKey][priceInput.dataset.flexModulePrice] = Number(priceInput.value || 0);
+    setStatus(pricingStatus, 'You have unsaved Flex module prices.', '');
+    return;
+  }
   const input = event.target.closest('[data-entitlement-plan][data-entitlement-module]');
   if (!input) return;
   applyModuleDependencies(
@@ -518,6 +551,18 @@ entitlementMatrix?.addEventListener('change', (event) => {
   renderEntitlementMatrix();
   updateModuleCounts();
   setStatus(pricingStatus, 'You have unsaved plan-module changes.', '');
+});
+
+entitlementMatrix?.addEventListener('input', (event) => {
+  const priceInput = event.target.closest('[data-flex-module-price][data-flex-module-key]');
+  if (!priceInput) return;
+  const flex = planForName('Flex');
+  if (!flex) return;
+  flex.ModulePricesByEdition ||= {};
+  flex.ModulePricesByEdition[selectedEntitlementEdition] ||= {};
+  flex.ModulePricesByEdition[selectedEntitlementEdition][priceInput.dataset.flexModuleKey] ||= {};
+  flex.ModulePricesByEdition[selectedEntitlementEdition][priceInput.dataset.flexModuleKey][priceInput.dataset.flexModulePrice] = Number(priceInput.value || 0);
+  setStatus(pricingStatus, 'You have unsaved Flex module prices.', '');
 });
 
 document.querySelector('.tenant-pool-tabs')?.addEventListener('click', (event) => {

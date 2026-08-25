@@ -7,12 +7,13 @@ export const SUBSCRIPTION_PLAN_NAMES = Object.freeze([
   'Starter',
   'Standard',
   'Professional',
+  'Flex',
   'Enterprise'
 ]);
 
 const FULL_ACCESS = '*';
 export const FREE_TRIAL_DAYS = 7;
-export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 3;
+export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 4;
 export const SUBSCRIPTION_CURRENCIES = Object.freeze(['NGN', 'USD']);
 
 export const SUBSCRIPTION_MODULE_CATALOG = Object.freeze([
@@ -88,6 +89,10 @@ function normalizeConfiguredEntitlements(edition, value, fallback) {
   return modules.map((module) => module.Key).filter((key) => selected.has(key));
 }
 
+export function normalizeSubscriptionEntitlements(edition, value, fallback = []) {
+  return normalizeConfiguredEntitlements(edition, value, fallback);
+}
+
 export const SUBSCRIPTION_PLAN_DEFINITIONS = Object.freeze({
   Free: Object.freeze({
     UserLimit: 5,
@@ -145,6 +150,16 @@ export const SUBSCRIPTION_PLAN_DEFINITIONS = Object.freeze({
       school: Object.freeze(['Everything in Standard', 'Payroll', 'Student conduct and clinic', 'Kitchen and school stores', 'All school operation modules']),
       faith: Object.freeze(['Everything in Standard', 'Payroll', 'Organisation store and restaurant', 'Programs and all church operation modules']),
       organization: Object.freeze(['Everything in Standard', 'Payroll', 'Inventory, sales and catering', 'All organisation operation modules'])
+    })
+  }),
+  Flex: Object.freeze({
+    UserLimit: 250,
+    Summary: 'Choose modules and active users',
+    Entitlements: Object.freeze({ school: Object.freeze([]), faith: Object.freeze([]), organization: Object.freeze([]) }),
+    Features: Object.freeze({
+      school: Object.freeze(['Choose only the school modules you need', 'Module dependencies are included automatically', 'Set the active-user allowance for your team']),
+      faith: Object.freeze(['Choose only the church modules you need', 'Module dependencies are included automatically', 'Set the active-user allowance for your team']),
+      organization: Object.freeze(['Choose only the organisation modules you need', 'Module dependencies are included automatically', 'Set the active-user allowance for your team'])
     })
   }),
   Enterprise: Object.freeze({
@@ -322,13 +337,23 @@ export function defaultSubscriptionPlanCatalog() {
         UserLimit: definition.UserLimit,
         MonthlyAmount: 0,
         YearlyAmount: 0,
-        Active: true,
+        Active: name !== 'Flex',
         EntitlementsByEdition: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
           edition,
           normalizeConfiguredEntitlements(edition, definition.Entitlements[edition], [])
         ])),
         PaystackMonthlyPlanCode: '',
-        PaystackYearlyPlanCode: ''
+        PaystackYearlyPlanCode: '',
+        IncludedUsers: name === 'Flex' ? 1 : definition.UserLimit,
+        AdditionalUserMonthlyAmount: 0,
+        AdditionalUserYearlyAmount: 0,
+        ModulePricesByEdition: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
+          edition,
+          Object.fromEntries(subscriptionModulesForEdition(edition).map((module) => [
+            module.Key,
+            { MonthlyAmount: 0, YearlyAmount: 0 }
+          ]))
+        ]))
       }];
     })),
     PolicyRevision: '',
@@ -356,13 +381,16 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
         : incoming.ModulesByEdition && typeof incoming.ModulesByEdition === 'object'
           ? incoming.ModulesByEdition
           : {};
+      const configuredModulePrices = incoming.ModulePricesByEdition && typeof incoming.ModulePricesByEdition === 'object'
+        ? incoming.ModulePricesByEdition
+        : {};
       return [name, {
         Name: name,
         Summary: definition.Summary,
-        UserLimit: name === 'Enterprise' ? configuredLimit : definition.UserLimit,
+        UserLimit: ['Enterprise', 'Flex'].includes(name) ? configuredLimit : definition.UserLimit,
         MonthlyAmount: name === 'Free' ? 0 : money(incoming.MonthlyAmount),
         YearlyAmount: name === 'Free' ? 0 : money(incoming.YearlyAmount),
-        Active: enabled(incoming.Active, true),
+        Active: enabled(incoming.Active, defaults.Plans[name].Active),
         EntitlementsByEdition: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => {
           const normalizedEntitlements = normalizeConfiguredEntitlements(
             edition,
@@ -381,7 +409,22 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
           return [edition, migratedEntitlements];
         })),
         PaystackMonthlyPlanCode: name === 'Free' ? '' : clean(incoming.PaystackMonthlyPlanCode),
-        PaystackYearlyPlanCode: name === 'Free' ? '' : clean(incoming.PaystackYearlyPlanCode)
+        PaystackYearlyPlanCode: name === 'Free' ? '' : clean(incoming.PaystackYearlyPlanCode),
+        IncludedUsers: name === 'Flex'
+          ? Math.min(configuredLimit, Math.max(1, Math.floor(Number(incoming.IncludedUsers || 1) || 1)))
+          : configuredLimit,
+        AdditionalUserMonthlyAmount: name === 'Flex' ? money(incoming.AdditionalUserMonthlyAmount) : 0,
+        AdditionalUserYearlyAmount: name === 'Flex' ? money(incoming.AdditionalUserYearlyAmount) : 0,
+        ModulePricesByEdition: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
+          edition,
+          Object.fromEntries(subscriptionModulesForEdition(edition).map((module) => {
+            const price = configuredModulePrices?.[edition]?.[module.Key] || {};
+            return [module.Key, {
+              MonthlyAmount: name === 'Flex' ? money(price.MonthlyAmount) : 0,
+              YearlyAmount: name === 'Flex' ? money(price.YearlyAmount) : 0
+            }];
+          }))
+        ]))
       }];
     })),
     PolicyRevision: clean(source.PolicyRevision),
@@ -407,6 +450,16 @@ export function publicSubscriptionPlanCatalog(value = {}) {
       YearlyAmount: catalog.Plans[name].YearlyAmount,
       Active: catalog.Plans[name].Active,
       TrialDays: Number(SUBSCRIPTION_PLAN_DEFINITIONS[name].TrialDays || 0),
+      IncludedUsers: catalog.Plans[name].IncludedUsers,
+      AdditionalUserMonthlyAmount: catalog.Plans[name].AdditionalUserMonthlyAmount,
+      AdditionalUserYearlyAmount: catalog.Plans[name].AdditionalUserYearlyAmount,
+      ModulePricesByEdition: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
+        edition,
+        Object.fromEntries(Object.entries(catalog.Plans[name].ModulePricesByEdition[edition] || {}).map(([key, price]) => [
+          key,
+          { MonthlyAmount: price.MonthlyAmount, YearlyAmount: price.YearlyAmount }
+        ]))
+      ])),
       EntitlementsByEdition: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
         edition,
         [...catalog.Plans[name].EntitlementsByEdition[edition]]
@@ -434,4 +487,69 @@ export function subscriptionPaystackPlanCode(catalog, plan, billingCycle) {
   return normalizeBillingCycle(billingCycle) === 'yearly'
     ? entry.PaystackYearlyPlanCode
     : entry.PaystackMonthlyPlanCode;
+}
+
+export function subscriptionFlexQuote(catalog, edition, requestedModules, requestedUserLimit, billingCycle = 'monthly') {
+  const normalizedCatalog = normalizeSubscriptionPlanCatalog(catalog);
+  const plan = normalizedCatalog.Plans.Flex;
+  const normalizedEdition = ['faith', 'organization'].includes(clean(edition).toLowerCase())
+    ? clean(edition).toLowerCase()
+    : 'school';
+  if (!plan.Active) {
+    const error = new Error('The Flex plan is not currently available.');
+    error.status = 409;
+    throw error;
+  }
+  const entitlements = normalizeConfiguredEntitlements(normalizedEdition, requestedModules, []);
+  if (!entitlements.length) {
+    const error = new Error('Choose at least one module for the Flex plan.');
+    error.status = 400;
+    throw error;
+  }
+  const userLimit = Math.max(1, Math.floor(Number(requestedUserLimit) || plan.IncludedUsers || 1));
+  if (userLimit > plan.UserLimit) {
+    const error = new Error(`The Flex plan currently supports up to ${plan.UserLimit} active users.`);
+    error.status = 400;
+    throw error;
+  }
+  const cycle = normalizeBillingCycle(billingCycle);
+  const amountKey = cycle === 'yearly' ? 'YearlyAmount' : 'MonthlyAmount';
+  const extraUserAmount = cycle === 'yearly'
+    ? plan.AdditionalUserYearlyAmount
+    : plan.AdditionalUserMonthlyAmount;
+  const moduleLines = entitlements.map((key) => {
+    const module = subscriptionModulesForEdition(normalizedEdition).find((entry) => entry.Key === key);
+    const amount = money(plan.ModulePricesByEdition?.[normalizedEdition]?.[key]?.[amountKey]);
+    return { Key: key, Label: module?.Label || key, Amount: amount };
+  });
+  const baseAmount = money(plan[amountKey]);
+  const additionalUsers = Math.max(0, userLimit - plan.IncludedUsers);
+  const additionalUsersAmount = money(additionalUsers * extraUserAmount);
+  const amount = money(baseAmount + moduleLines.reduce((sum, line) => sum + line.Amount, 0) + additionalUsersAmount);
+  return {
+    Plan: 'Flex',
+    Edition: normalizedEdition,
+    BillingCycle: cycle,
+    Currency: normalizedCatalog.Currency,
+    Amount: amount,
+    UserLimit: userLimit,
+    IncludedUsers: plan.IncludedUsers,
+    AdditionalUsers: additionalUsers,
+    FeatureEntitlements: entitlements,
+    PriceSnapshot: {
+      Type: 'Flex',
+      CatalogRevision: normalizedCatalog.PolicyRevision,
+      CatalogUpdatedAt: normalizedCatalog.UpdatedAt,
+      Currency: normalizedCatalog.Currency,
+      BillingCycle: cycle,
+      BaseAmount: baseAmount,
+      IncludedUsers: plan.IncludedUsers,
+      UserLimit: userLimit,
+      AdditionalUsers: additionalUsers,
+      AdditionalUserRate: money(extraUserAmount),
+      AdditionalUsersAmount: additionalUsersAmount,
+      Modules: moduleLines,
+      TotalAmount: amount
+    }
+  };
 }

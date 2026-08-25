@@ -70,7 +70,9 @@ export async function onRequestPost({ request, env }) {
         paymentMethod: clean(body.paymentMethod),
         bankReference: clean(body.bankReference),
         proofDataUrl: clean(body.proofDataUrl),
-        proofFileName: clean(body.proofFileName)
+        proofFileName: clean(body.proofFileName),
+        flexModules: Array.isArray(body.flexModules) ? body.flexModules : [],
+        flexUserLimit: Number(body.flexUserLimit || 0)
       })
     });
     return Response.json(await centralJson(response), { headers: { 'Cache-Control': 'no-store' } });

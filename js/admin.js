@@ -97,6 +97,8 @@ let profilePhotoState = '';
 let staffBearerToken = '';
 let subscriptionData = null;
 let subscriptionCycle = 'monthly';
+let subscriptionFlexModules = new Set();
+let subscriptionFlexUserLimit = 1;
 let staffSessionAbortController = new AbortController();
 let selectedBranchId = 'all';
 let availableBranches = [];
@@ -1070,11 +1072,61 @@ async function openApprovalSettings() {
 }
 
 function subscriptionPlanRank(name) {
-  return ['Free', 'Starter', 'Standard', 'Professional', 'Enterprise'].indexOf(clean(name));
+  return ['Free', 'Starter', 'Standard', 'Professional', 'Flex', 'Enterprise'].indexOf(clean(name));
 }
 
 function subscriptionMoney(amount, currency) {
   return new Intl.NumberFormat('en-NG', { style: 'currency', currency: clean(currency) || 'NGN', maximumFractionDigits: 0 }).format(Number(amount || 0));
+}
+
+function staffFlexPlan() {
+  return subscriptionData?.catalog?.Plans?.find((plan) => clean(plan.Name) === 'Flex');
+}
+
+function staffFlexModules() {
+  const edition = clean(subscriptionData?.edition || 'school');
+  return subscriptionData?.catalog?.ModuleCatalog?.[edition] || [];
+}
+
+function applyStaffFlexModule(key, checked) {
+  const modules = staffFlexModules();
+  const byKey = new Map(modules.map((module) => [module.Key, module]));
+  if (checked) {
+    const visit = (moduleKey) => {
+      if (subscriptionFlexModules.has(moduleKey)) return;
+      subscriptionFlexModules.add(moduleKey);
+      (byKey.get(moduleKey)?.Requires || []).forEach(visit);
+    };
+    visit(key);
+  } else {
+    subscriptionFlexModules.delete(key);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      modules.forEach((module) => {
+        if (subscriptionFlexModules.has(module.Key) && (module.Requires || []).some((required) => !subscriptionFlexModules.has(required))) {
+          subscriptionFlexModules.delete(module.Key);
+          changed = true;
+        }
+      });
+    }
+  }
+}
+
+function staffFlexQuote() {
+  const plan = staffFlexPlan();
+  const edition = clean(subscriptionData?.edition || 'school');
+  const amountKey = subscriptionCycle === 'yearly' ? 'YearlyAmount' : 'MonthlyAmount';
+  const included = Math.max(1, Number(plan?.IncludedUsers || 1));
+  const userLimit = Math.min(Math.max(1, Number(subscriptionFlexUserLimit || included)), Math.max(1, Number(plan?.UserLimit || 250)));
+  const selectedModules = staffFlexModules().filter((module) => subscriptionFlexModules.has(module.Key));
+  const moduleAmount = selectedModules.reduce((sum, module) => sum + Number(plan?.ModulePricesByEdition?.[edition]?.[module.Key]?.[amountKey] || 0), 0);
+  const extraRate = Number(subscriptionCycle === 'yearly' ? plan?.AdditionalUserYearlyAmount : plan?.AdditionalUserMonthlyAmount) || 0;
+  return {
+    amount: Number(plan?.[amountKey] || 0) + moduleAmount + (Math.max(0, userLimit - included) * extraRate),
+    userLimit,
+    selectedModules
+  };
 }
 
 function renderStaffSubscription() {
@@ -1094,18 +1146,22 @@ function renderStaffSubscription() {
     button.classList.toggle('active', button.dataset.subscriptionCycle === subscriptionCycle);
   });
   document.getElementById('staffSubscriptionPlans').innerHTML = plans.map((plan) => {
-    const amount = subscriptionCycle === 'yearly' ? plan.YearlyAmount : plan.MonthlyAmount;
+    const flex = clean(plan.Name) === 'Flex';
+    const flexQuote = flex ? staffFlexQuote() : null;
+    const amount = flex ? flexQuote.amount : subscriptionCycle === 'yearly' ? plan.YearlyAmount : plan.MonthlyAmount;
     const samePlan = clean(plan.Name) === currentPlan;
-    const lowerPlan = subscriptionPlanRank(plan.Name) < subscriptionPlanRank(currentPlan);
-    const currentChoice = samePlan && subscriptionCycle === currentCycle && !renewalRequired;
-    const unavailable = plan.Active === false || clean(plan.Name) === 'Free' || lowerPlan || currentChoice || !(Number(amount) > 0);
+    const lowerPlan = !flex && currentPlan !== 'Flex' && subscriptionPlanRank(plan.Name) < subscriptionPlanRank(currentPlan);
+    const flexChanged = flex && (Number(policy.UserLimit || 0) !== Number(flexQuote.userLimit)
+      || JSON.stringify(policy.FeatureEntitlements || []) !== JSON.stringify(flexQuote.selectedModules.map((module) => module.Key)));
+    const currentChoice = samePlan && subscriptionCycle === currentCycle && !renewalRequired && (!flex || !flexChanged);
+    const unavailable = plan.Active === false || clean(plan.Name) === 'Free' || lowerPlan || currentChoice || !(Number(amount) > 0) || (flex && !flexQuote.selectedModules.length);
     const features = plan.FeaturesByEdition?.[edition] || [];
-    const label = currentChoice ? 'Current plan' : lowerPlan ? 'Contact support to downgrade' : samePlan && renewalRequired && subscriptionCycle === currentCycle ? `Renew ${plan.Name}` : samePlan ? `Switch to ${subscriptionCycle}` : `Upgrade to ${plan.Name}`;
+    const label = currentChoice ? 'Current plan' : lowerPlan ? 'Contact support to downgrade' : flex && samePlan ? 'Save new Flex selection' : flex ? 'Choose this Flex plan' : samePlan && renewalRequired && subscriptionCycle === currentCycle ? `Renew ${plan.Name}` : samePlan ? `Switch to ${subscriptionCycle}` : `Upgrade to ${plan.Name}`;
     return `<article class="staff-subscription-plan ${currentChoice ? 'current' : ''}">
       <header><div><small>${escapeHtml(plan.Summary || '')}</small><h3>${escapeHtml(plan.Name)}</h3></div>${currentChoice ? '<span>Current</span>' : ''}</header>
       <p class="subscription-price"><strong>${escapeHtml(subscriptionMoney(amount, catalog.Currency))}</strong><span>/${subscriptionCycle === 'yearly' ? 'year' : 'month'}</span></p>
       <p class="subscription-seat-limit">Up to ${escapeHtml(plan.UserLimit)} active users</p>
-      <ul>${features.slice(0, 7).map((feature) => `<li>${escapeHtml(feature)}</li>`).join('')}</ul>
+      ${flex ? `<div class="staff-flex-builder"><label>Active users<input type="number" min="1" max="${escapeHtml(plan.UserLimit)}" step="1" value="${escapeHtml(flexQuote.userLimit)}" data-staff-flex-users></label><div>${staffFlexModules().map((module) => `<label><input type="checkbox" data-staff-flex-module="${escapeHtml(module.Key)}" ${subscriptionFlexModules.has(module.Key) ? 'checked' : ''}><span>${escapeHtml(module.Label)}</span></label>`).join('')}</div></div>` : `<ul>${features.slice(0, 7).map((feature) => `<li>${escapeHtml(feature)}</li>`).join('')}</ul>`}
       ${features.length > 7 ? `<small class="subscription-more">+${features.length - 7} more included features</small>` : ''}
       <button type="button" data-upgrade-plan="${escapeHtml(plan.Name)}" ${unavailable ? 'disabled' : ''}>${escapeHtml(label)}</button>
     </article>`;
@@ -1121,6 +1177,10 @@ async function openStaffSubscription() {
     if (!response.ok || !data.ok) throw new Error(data.message || 'Subscription options could not be loaded.');
     subscriptionData = data;
     subscriptionCycle = clean(data.policy?.BillingCycle || 'monthly').toLowerCase();
+    subscriptionFlexModules = new Set(clean(data.policy?.Plan) === 'Flex' ? (data.policy?.FeatureEntitlements || []) : []);
+    subscriptionFlexUserLimit = clean(data.policy?.Plan) === 'Flex'
+      ? Math.max(1, Number(data.policy?.UserLimit || 1))
+      : Math.max(1, Number(staffFlexPlan()?.IncludedUsers || 1));
     renderStaffSubscription();
     setStatus(document.getElementById('staffSubscriptionStatus'), 'Select a higher plan or a different billing cycle.');
   } catch (error) {
@@ -1133,9 +1193,13 @@ async function startSubscriptionUpgrade(plan, button) {
   let loading = false;
   try {
     const planEntry = subscriptionData?.catalog?.Plans?.find((entry) => clean(entry.Name) === clean(plan));
-    const amount = subscriptionCycle === 'yearly'
-      ? Number(planEntry?.YearlyAmount || 0)
-      : Number(planEntry?.MonthlyAmount || 0);
+    const flexQuote = clean(plan) === 'Flex' ? staffFlexQuote() : null;
+    if (flexQuote && !flexQuote.selectedModules.length) throw new Error('Choose at least one Flex module.');
+    const amount = flexQuote
+      ? Number(flexQuote.amount || 0)
+      : subscriptionCycle === 'yearly'
+        ? Number(planEntry?.YearlyAmount || 0)
+        : Number(planEntry?.MonthlyAmount || 0);
     const paymentChoice = await window.DynamaxPaymentMethods.choose({
       methodsUrl: '/api/platform-payment-methods',
       amount,
@@ -1154,7 +1218,9 @@ async function startSubscriptionUpgrade(plan, button) {
         paymentMethod: paymentChoice.paymentMethod,
         bankReference: paymentChoice.bankReference || '',
         proofDataUrl: paymentChoice.proofDataUrl || '',
-        proofFileName: paymentChoice.proofFileName || ''
+        proofFileName: paymentChoice.proofFileName || '',
+        flexModules: flexQuote ? flexQuote.selectedModules.map((module) => module.Key) : [],
+        flexUserLimit: flexQuote ? flexQuote.userLimit : 0
       })
     });
     const data = await response.json().catch(() => ({}));
@@ -16883,6 +16949,12 @@ document.getElementById('staffProfileSubscriptionOpen').addEventListener('click'
 });
 document.getElementById('staffSubscriptionClose').addEventListener('click', () => subscriptionDialog.close());
 subscriptionDialog.addEventListener('click', (event) => {
+  const flexModule = event.target.closest('[data-staff-flex-module]');
+  if (flexModule) {
+    applyStaffFlexModule(flexModule.dataset.staffFlexModule, flexModule.checked);
+    renderStaffSubscription();
+    return;
+  }
   const cycleButton = event.target.closest('[data-subscription-cycle]');
   if (cycleButton) {
     subscriptionCycle = cycleButton.dataset.subscriptionCycle;
@@ -16891,6 +16963,12 @@ subscriptionDialog.addEventListener('click', (event) => {
   }
   const upgradeButton = event.target.closest('[data-upgrade-plan]');
   if (upgradeButton && !upgradeButton.disabled) startSubscriptionUpgrade(upgradeButton.dataset.upgradePlan, upgradeButton);
+});
+subscriptionDialog.addEventListener('change', (event) => {
+  const users = event.target.closest('[data-staff-flex-users]');
+  if (!users) return;
+  subscriptionFlexUserLimit = Math.max(1, Number(users.value || 1));
+  renderStaffSubscription();
 });
 document.getElementById('staffApprovalSettingsClose').addEventListener('click', () => approvalSettingsDialog.close());
 document.getElementById('removeStaffSignature').addEventListener('click', () => {

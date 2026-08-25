@@ -11,6 +11,7 @@ import {
   publicSubscriptionPlanCatalog,
   subscriptionModulesForEdition,
   subscriptionAccessState,
+  subscriptionFlexQuote,
   subscriptionPaystackPlanCode,
   subscriptionPlanEntitlements,
   subscriptionPlanPrice
@@ -31,6 +32,7 @@ test('plan catalogue normalizes pricing, billing cycles and enterprise custom se
   assert.equal(catalog.Plans.Standard.YearlyAmount, 150000);
   assert.equal(catalog.Plans.Standard.UserLimit, 20);
   assert.equal(catalog.Plans.Enterprise.UserLimit, 700);
+  assert.equal(catalog.Plans.Flex.Active, false);
   assert.equal(normalizeBillingCycle('annual'), 'yearly');
   assert.equal(normalizeSubscriptionPlanCatalog({ Currency: 'usd' }).Currency, 'USD');
   assert.equal(normalizeSubscriptionPlanCatalog({ Currency: 'eur' }).Currency, 'NGN');
@@ -48,6 +50,47 @@ test('public plan catalogue never exposes Paystack plan codes', () => {
   assert.equal(free.TrialDays, 7);
   assert.ok(free.FeaturesByEdition.faith.includes('Payroll'));
   assert.ok(publicCatalog.ModuleCatalog.faith.some((module) => module.Key === 'offerings'));
+  assert.equal(publicCatalog.Plans.find((plan) => plan.Name === 'Flex').Active, false);
+});
+
+test('Flex quotes price selected modules, dependencies and additional users exactly', () => {
+  const catalog = normalizeSubscriptionPlanCatalog({
+    Currency: 'NGN',
+    PolicyRevision: 'revision-flex-1',
+    UpdatedAt: '2026-08-25T10:00:00.000Z',
+    Plans: {
+      Flex: {
+        Active: true,
+        UserLimit: 100,
+        IncludedUsers: 3,
+        MonthlyAmount: 2000,
+        YearlyAmount: 20000,
+        AdditionalUserMonthlyAmount: 500,
+        AdditionalUserYearlyAmount: 5000,
+        ModulePricesByEdition: {
+          school: {
+            humanResources: { MonthlyAmount: 1000, YearlyAmount: 10000 },
+            accounting: { MonthlyAmount: 1500, YearlyAmount: 15000 },
+            payroll: { MonthlyAmount: 3000, YearlyAmount: 30000 }
+          }
+        }
+      }
+    }
+  });
+  const monthly = subscriptionFlexQuote(catalog, 'school', ['payroll'], 5, 'monthly');
+  assert.deepEqual(monthly.FeatureEntitlements, ['humanResources', 'accounting', 'payroll']);
+  assert.equal(monthly.AdditionalUsers, 2);
+  assert.equal(monthly.Amount, 8500);
+  assert.equal(monthly.PriceSnapshot.BaseAmount, 2000);
+  assert.equal(monthly.PriceSnapshot.AdditionalUsersAmount, 1000);
+  assert.equal(monthly.PriceSnapshot.Modules.reduce((sum, line) => sum + line.Amount, 0), 5500);
+  assert.equal(monthly.PriceSnapshot.CatalogRevision, 'revision-flex-1');
+
+  const yearly = subscriptionFlexQuote(catalog, 'school', ['payroll'], 5, 'annual');
+  assert.equal(yearly.BillingCycle, 'yearly');
+  assert.equal(yearly.Amount, 85000);
+  assert.throws(() => subscriptionFlexQuote(catalog, 'school', [], 5), /at least one module/i);
+  assert.throws(() => subscriptionFlexQuote(catalog, 'school', ['payroll'], 101), /up to 100 active users/i);
 });
 
 test('saved plan-module selections replace defaults and enforce dependencies', () => {
@@ -227,19 +270,27 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(pricingHtml, /Monthly and yearly pricing/);
   assert.match(pricingHtml, /id="planEntitlementMatrix"/);
   assert.match(pricingHtml, /<select id="planPricingCurrency"><option value="NGN">NGN<\/option><option value="USD">USD<\/option><\/select>/);
-  assert.match(pricingHtml, /plan-management\.js\?v=20260809-platform-direct-transfer/);
+  assert.match(pricingHtml, /plan-management\.js\?v=20260825-flex-subscriptions/);
   assert.match(pricingHtml, /id="tenantPoolSummary"/);
   assert.match(pricingHtml, /Other organisation/);
   assert.match(pricingHtml, /Save plans &amp; pricing/);
   assert.match(pricingHtml, /Apply changed prices to existing Paystack subscribers/);
   assert.match(pricingJs, /aria-label="\$\{accessibleLabel\}"/);
   assert.match(pricingJs, /data-price-currency/);
-  assert.match(pricingJs, /<span>Monthly price \(<span data-price-currency>\$\{currency\}<\/span>\)<\/span>/);
-  assert.match(pricingJs, /<span>Yearly price \(<span data-price-currency>\$\{currency\}<\/span>\)<\/span>/);
+  assert.match(pricingJs, /isFlex \? 'Base monthly fee' : 'Monthly price'/);
+  assert.match(pricingJs, /isFlex \? 'Base yearly fee' : 'Yearly price'/);
+  assert.match(pricingJs, /data-flex-module-price="MonthlyAmount"/);
+  assert.match(pricingJs, /data-flex-module-price="YearlyAmount"/);
+  assert.match(registrationHtml, /id="flexPlanBuilder"/);
+  assert.match(registrationJs, /FlexModules: flexQuote/);
+  assert.match(registrationJs, /FlexUserLimit: flexQuote/);
+  assert.match(registrationApi, /subscriptionFlexQuote/);
+  assert.match(registrationApi, /subscriptionFlexPaystackPlans/);
   assert.match(pricingJs, /existing subscribers remain on their current Paystack plans/);
   assert.doesNotMatch(pricingJs, /class="sr-only"/);
   assert.doesNotMatch(setupHtml, /href="plan-management\.html"/);
   assert.match(setupHtml, /<option>Free<\/option>/);
+  assert.match(setupHtml, /<option>Flex<\/option>/);
   assert.match(registrationApi, /plan: planCode/);
   assert.match(registrationApi, /PAYSTACK_SECRET_KEY/);
   assert.match(registrationApi, /freeTrialWindow/);
