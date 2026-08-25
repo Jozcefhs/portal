@@ -168,6 +168,7 @@ test('the tenant pool provisioner is opt-in, uses WIF and creates isolated deplo
   assert.match(tenantFleet, /fromJSON\(needs\.inventory\.outputs\.projects\)/);
   assert.match(tenantFleet, /firebase\.organization\.json/);
   assert.match(tenantFleet, /max-parallel: 3/);
+  assert.match(tenantFleet, /wranglerVersion: "4\.125\.0"/);
 });
 
 test('church indexes cover member notifications without carrying school-only composites', () => {
