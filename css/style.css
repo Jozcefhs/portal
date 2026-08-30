@@ -2282,13 +2282,15 @@ html[data-theme="dark"] .department-member-onboarding strong { color: #75dfbf; }
 .flex-user-limit input { min-width: 0; }
 .flex-user-limit small { color: #62778d; font-weight: 500; }
 .flex-module-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .55rem; }
-.flex-module-option { display: grid; grid-template-columns: 20px minmax(0, 1fr) max-content; gap: .55rem; align-items: start; padding: .7rem; border: 1px solid #d5e2ea; border-radius: 11px; background: #fff; cursor: pointer; }
+.flex-module-option { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: .55rem; align-items: start; padding: .7rem; border: 1px solid #d5e2ea; border-radius: 11px; background: #fff; cursor: pointer; }
 .flex-module-option.selected { border-color: #13977f; background: #ecfbf7; }
 .flex-module-option input { width: 17px; height: 17px; min-height: 17px; margin: .1rem 0 0; accent-color: #087f6c; }
-.flex-module-option span { display: grid; gap: .18rem; min-width: 0; }
+.flex-module-option > .flex-module-copy { display: grid; gap: .3rem; min-width: 0; }
+.flex-module-title { display: grid; gap: .12rem; min-width: 0; }
+.flex-module-title strong { min-width: 0; overflow-wrap: anywhere; }
 .flex-module-option small { color: #60768c; font-size: .68rem; line-height: 1.35; }
 .flex-module-option em { color: #087360; font-size: .62rem; font-style: normal; font-weight: 700; }
-.flex-module-option b { color: #173f70; font-size: .72rem; white-space: nowrap; }
+.flex-module-option b { max-width: 100%; color: #173f70; font-size: .72rem; overflow-wrap: anywhere; }
 .flex-plan-builder > footer { display: flex; justify-content: space-between; gap: 1rem; margin-top: .8rem; padding-top: .7rem; border-top: 1px solid #d5ebe6; color: #405a72; }
 .flex-plan-builder > footer strong { color: #087360; }
 .plan-choice-card { --plan-cover: #4f6eff; --plan-strip: #c9d7ff; --plan-sheet: #eef4ff; --plan-accent: #2246b8;

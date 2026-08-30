@@ -273,9 +273,10 @@ test('Paystack webhook signatures are checked with HMAC SHA-512', async () => {
 });
 
 test('registration and pricing interfaces expose feature details and recurring checkout', async () => {
-  const [registrationHtml, registrationJs, pricingHtml, pricingJs, setupHtml, registrationApi, pricingApi, verificationApi, webhookApi] = await Promise.all([
+  const [registrationHtml, registrationJs, styleCss, pricingHtml, pricingJs, setupHtml, registrationApi, pricingApi, verificationApi, webhookApi] = await Promise.all([
     readFile(new URL('../register-organization.html', import.meta.url), 'utf8'),
     readFile(new URL('../js/register-organization.js', import.meta.url), 'utf8'),
+    readFile(new URL('../css/style.css', import.meta.url), 'utf8'),
     readFile(new URL('../plan-management.html', import.meta.url), 'utf8'),
     readFile(new URL('../js/plan-management.js', import.meta.url), 'utf8'),
     readFile(new URL('../setup.html', import.meta.url), 'utf8'),
@@ -313,6 +314,10 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(pricingJs, /UsdToNgnRate/);
   assert.match(registrationJs, /dualFormattedPrice/);
   assert.match(registrationHtml, /id="flexPlanBuilder"/);
+  assert.match(registrationHtml, /20260830-flex-module-layout/);
+  assert.match(registrationJs, /class="flex-module-title"/);
+  assert.match(styleCss, /\.flex-module-option \{ display: grid; grid-template-columns: 20px minmax\(0, 1fr\)/);
+  assert.doesNotMatch(styleCss, /\.flex-module-option \{[^}]*max-content/);
   assert.match(registrationJs, /FlexModules: flexQuote/);
   assert.match(registrationJs, /FlexUserLimit: flexQuote/);
   assert.match(registrationApi, /subscriptionFlexQuote/);
