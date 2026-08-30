@@ -102,8 +102,17 @@ function formattedPrice(amount, currency = 'NGN') {
   }
 }
 
+function dualFormattedPrice(amount, currency = 'NGN') {
+  const primary = formattedPrice(amount, currency);
+  const rate = Number(planCatalog?.UsdToNgnRate || 0);
+  if (!(Number(amount) > 0) || !(rate > 0)) return primary;
+  const secondaryCurrency = currency === 'USD' ? 'NGN' : 'USD';
+  const secondaryAmount = currency === 'USD' ? Number(amount) * rate : Number(amount) / rate;
+  return `${primary} (≈ ${formattedPrice(secondaryAmount, secondaryCurrency)})`;
+}
+
 function displayedPlanPrice(plan, amount, currency = 'NGN') {
-  return plan?.Name === 'Free' ? 'Free for 7 days' : formattedPrice(amount, currency);
+  return plan?.Name === 'Free' ? 'Free for 7 days' : dualFormattedPrice(amount, currency);
 }
 
 function selectedPlanName() {
@@ -174,14 +183,14 @@ function renderFlexBuilder() {
   const currency = planCatalog?.Currency || 'NGN';
   const selected = flexSelections[edition()];
   flexPlanBuilder.innerHTML = `
-    <header><div><p class="eyebrow">Build your subscription</p><h3>Choose modules and users</h3><p>Required modules are selected automatically and included in the total.</p></div><strong>${escapeHtml(formattedPrice(quote.amount, currency))}<small> / ${billingCycle() === 'yearly' ? 'year' : 'month'}</small></strong></header>
+    <header><div><p class="eyebrow">Build your subscription</p><h3>Choose modules and users</h3><p>Required modules are selected automatically and included in the total.</p></div><strong>${escapeHtml(dualFormattedPrice(quote.amount, currency))}<small> / ${billingCycle() === 'yearly' ? 'year' : 'month'}</small></strong></header>
     <label class="flex-user-limit">Active users <input id="flexUserLimit" type="number" min="1" max="${Number(plan.UserLimit || 250)}" step="1" value="${quote.userLimit}"><small>${Number(plan.IncludedUsers || 1)} included in the base fee</small></label>
     <div class="flex-module-options">${flexModules().map((module) => {
       const price = plan.ModulePricesByEdition?.[edition()]?.[module.Key]?.[billingCycle() === 'yearly' ? 'YearlyAmount' : 'MonthlyAmount'] || 0;
       const required = flexModules().some((candidate) => selected.has(candidate.Key) && (candidate.Requires || []).includes(module.Key));
-      return `<label class="flex-module-option ${selected.has(module.Key) ? 'selected' : ''}"><input type="checkbox" data-flex-module="${escapeHtml(module.Key)}" ${selected.has(module.Key) ? 'checked' : ''} ${required ? 'data-required-by-selection="true"' : ''}><span><strong>${escapeHtml(module.Label)}</strong><small>${escapeHtml(module.Description)}</small>${module.Requires?.length ? `<em>Requires ${escapeHtml(module.Requires.map((key) => flexModules().find((entry) => entry.Key === key)?.Label || key).join(', '))}</em>` : ''}</span><b>${escapeHtml(formattedPrice(price, currency))}</b></label>`;
+      return `<label class="flex-module-option ${selected.has(module.Key) ? 'selected' : ''}"><input type="checkbox" data-flex-module="${escapeHtml(module.Key)}" ${selected.has(module.Key) ? 'checked' : ''} ${required ? 'data-required-by-selection="true"' : ''}><span><strong>${escapeHtml(module.Label)}</strong><small>${escapeHtml(module.Description)}</small>${module.Requires?.length ? `<em>Requires ${escapeHtml(module.Requires.map((key) => flexModules().find((entry) => entry.Key === key)?.Label || key).join(', '))}</em>` : ''}</span><b>${escapeHtml(dualFormattedPrice(price, currency))}</b></label>`;
     }).join('')}</div>
-    <footer><span>${quote.modules.length} module${quote.modules.length === 1 ? '' : 's'} · ${quote.userLimit} active user${quote.userLimit === 1 ? '' : 's'}</span><strong>Total ${escapeHtml(formattedPrice(quote.amount, currency))}</strong></footer>`;
+    <footer><span>${quote.modules.length} module${quote.modules.length === 1 ? '' : 's'} · ${quote.userLimit} active user${quote.userLimit === 1 ? '' : 's'}</span><strong>Total ${escapeHtml(dualFormattedPrice(quote.amount, currency))}</strong></footer>`;
 }
 
 function buildPricingBookPrintMarkup() {
@@ -205,7 +214,7 @@ function buildPricingBookPrintMarkup() {
         : `${Number(plan.UserLimit || 0).toLocaleString('en-NG')} users`;
       const priceText = plan.Name === 'Free'
         ? 'Free for 7 days'
-        : Number(amount) > 0 ? `${escapeHtml(formattedPrice(amount, currency))} / ${cycleLabel}` : 'Price to be confirmed';
+        : Number(amount) > 0 ? `${escapeHtml(dualFormattedPrice(amount, currency))} / ${cycleLabel}` : 'Price to be confirmed';
 
       return `<article class="pdf-plan-card ${selected === plan.Name ? 'selected' : ''} ${plan.Active === false ? 'unavailable' : ''}">
   <header><h1>${escapeHtml(plan.Name)}${escapeHtml(recommended)}</h1><span class="muted">${escapeHtml(userText)}</span>${availability}</header>
@@ -226,7 +235,7 @@ function buildPricingBookPrintMarkup() {
         : `${Number(plan.UserLimit || 0).toLocaleString('en-NG')} users`;
       return `<tr>
   <td>${escapeHtml(plan.Name)}</td>
-  <td>${plan.Name === 'Free' ? 'Free for 7 days' : Number(amount) > 0 ? escapeHtml(formattedPrice(amount, currency)) : '—'}</td>
+  <td>${plan.Name === 'Free' ? 'Free for 7 days' : Number(amount) > 0 ? escapeHtml(dualFormattedPrice(amount, currency)) : '—'}</td>
   <td>${escapeHtml(plan.Active === false ? 'Unavailable' : plan.Name === 'Free' ? 'One-time trial' : `${cycleLabel} plan`)}</td>
   <td>${escapeHtml(userText)}</td>
 </tr>`;
@@ -393,7 +402,7 @@ async function loadPlans() {
     if (!response.ok || !data?.ok) throw new Error(data?.message || 'Current plan pricing could not be loaded.');
     planCatalog = data.catalog;
   } catch (error) {
-    planCatalog = { Currency: 'NGN', Plans: fallbackPlans };
+    planCatalog = { Currency: 'NGN', UsdToNgnRate: 1350, Plans: fallbackPlans };
     statusNode.className = 'status bad';
     statusNode.textContent = `${error.message} You may still submit a registration for manual confirmation.`;
   }
@@ -548,8 +557,8 @@ flexPlanBuilder?.addEventListener('input', (event) => {
   if (event.target.id !== 'flexUserLimit') return;
   flexUserLimit = Math.max(1, Number(event.target.value || 1));
   const quote = currentFlexQuote();
-  flexPlanBuilder.querySelector('header > strong').innerHTML = `${escapeHtml(formattedPrice(quote.amount, planCatalog?.Currency || 'NGN'))}<small> / ${billingCycle() === 'yearly' ? 'year' : 'month'}</small>`;
-  flexPlanBuilder.querySelector('footer').innerHTML = `<span>${quote.modules.length} module${quote.modules.length === 1 ? '' : 's'} · ${quote.userLimit} active user${quote.userLimit === 1 ? '' : 's'}</span><strong>Total ${escapeHtml(formattedPrice(quote.amount, planCatalog?.Currency || 'NGN'))}</strong>`;
+  flexPlanBuilder.querySelector('header > strong').innerHTML = `${escapeHtml(dualFormattedPrice(quote.amount, planCatalog?.Currency || 'NGN'))}<small> / ${billingCycle() === 'yearly' ? 'year' : 'month'}</small>`;
+  flexPlanBuilder.querySelector('footer').innerHTML = `<span>${quote.modules.length} module${quote.modules.length === 1 ? '' : 's'} · ${quote.userLimit} active user${quote.userLimit === 1 ? '' : 's'}</span><strong>Total ${escapeHtml(dualFormattedPrice(quote.amount, planCatalog?.Currency || 'NGN'))}</strong>`;
 });
 
 downloadPricingBookButton?.addEventListener('click', async () => {

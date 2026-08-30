@@ -15,6 +15,38 @@ const FULL_ACCESS = '*';
 export const FREE_TRIAL_DAYS = 7;
 export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 4;
 export const SUBSCRIPTION_CURRENCIES = Object.freeze(['NGN', 'USD']);
+export const DEFAULT_USD_TO_NGN_RATE = 1350;
+
+// Commercial starting points for Flex subscriptions. These are deliberately
+// kept separate from saved prices: an administrator must choose to apply them.
+// Yearly estimates use ten months of the monthly price (two months free).
+export const SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD = Object.freeze({
+  branches: 2,
+  branding: 2,
+  approvals: 3,
+  executiveOffice: 2,
+  humanResources: 4,
+  staffAttendance: 3,
+  accounting: 5,
+  payroll: 5,
+  admissions: 4,
+  students: 4,
+  academics: 7,
+  studentConduct: 2,
+  parentPortal: 4,
+  stores: 3,
+  clinic: 2,
+  kitchen: 3,
+  members: 4,
+  services: 4,
+  departments: 3,
+  programs: 3,
+  funds: 3,
+  offerings: 4,
+  donations: 4,
+  retail: 4,
+  restaurant: 5
+});
 
 export const SUBSCRIPTION_MODULE_CATALOG = Object.freeze([
   Object.freeze({ Key: 'branches', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Branches & campuses', faith: 'Branches & assemblies', organization: 'Branches & offices' }), Description: 'Branch switching and branch-isolated records.', Requires: Object.freeze([]) }),
@@ -56,7 +88,9 @@ export function subscriptionModulesForEdition(edition) {
       Key: module.Key,
       Label: clean(module.Labels[normalizedEdition] || module.Labels.school || module.Key),
       Description: module.Description,
-      Requires: module.Requires.filter((key) => MODULE_BY_KEY.get(key)?.Editions.includes(normalizedEdition))
+      Requires: module.Requires.filter((key) => MODULE_BY_KEY.get(key)?.Editions.includes(normalizedEdition)),
+      SuggestedMonthlyAmountUSD: money(SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD[module.Key]),
+      SuggestedYearlyAmountUSD: money(SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD[module.Key] * 10)
     }));
 }
 
@@ -328,6 +362,7 @@ function subscriptionCurrency(value) {
 export function defaultSubscriptionPlanCatalog() {
   return {
     Currency: 'NGN',
+    UsdToNgnRate: DEFAULT_USD_TO_NGN_RATE,
     ModuleCatalogVersion: SUBSCRIPTION_MODULE_CATALOG_VERSION,
     Plans: Object.fromEntries(SUBSCRIPTION_PLAN_NAMES.map((name) => {
       const definition = SUBSCRIPTION_PLAN_DEFINITIONS[name];
@@ -371,6 +406,7 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
   const sourceModuleCatalogVersion = Math.max(0, Math.floor(Number(source.ModuleCatalogVersion) || 0));
   return {
     Currency: subscriptionCurrency(source.Currency || defaults.Currency),
+    UsdToNgnRate: money(source.UsdToNgnRate || source.ExchangeRateUSDNGN || defaults.UsdToNgnRate),
     ModuleCatalogVersion: SUBSCRIPTION_MODULE_CATALOG_VERSION,
     Plans: Object.fromEntries(SUBSCRIPTION_PLAN_NAMES.map((name) => {
       const incoming = sourcePlans[name] && typeof sourcePlans[name] === 'object' ? sourcePlans[name] : {};
@@ -437,6 +473,7 @@ export function publicSubscriptionPlanCatalog(value = {}) {
   const catalog = normalizeSubscriptionPlanCatalog(value);
   return {
     Currency: catalog.Currency,
+    UsdToNgnRate: catalog.UsdToNgnRate,
     ModuleCatalogVersion: catalog.ModuleCatalogVersion,
     ModuleCatalog: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
       edition,

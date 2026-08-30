@@ -147,9 +147,61 @@ function selectedPricingCurrency() {
   return value === 'USD' ? 'USD' : 'NGN';
 }
 
+function usdToNgnRate() {
+  const value = Number(document.getElementById('planUsdToNgnRate')?.value || catalog?.UsdToNgnRate || 0);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function pricingMoney(amount, currency) {
+  try {
+    return new Intl.NumberFormat('en-NG', {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: currency === 'NGN' ? 0 : 2
+    }).format(Number(amount || 0));
+  } catch (_error) {
+    return `${currency} ${Number(amount || 0).toLocaleString('en-NG')}`;
+  }
+}
+
+function convertedPriceText(amount, currency = selectedPricingCurrency()) {
+  const rate = usdToNgnRate();
+  const value = Number(amount || 0);
+  if (!(rate > 0) || !(value >= 0)) return 'Equivalent unavailable until a conversion rate is entered.';
+  return currency === 'USD'
+    ? `≈ ${pricingMoney(value * rate, 'NGN')}`
+    : `≈ ${pricingMoney(value / rate, 'USD')}`;
+}
+
+function suggestedModulePriceText(module) {
+  const monthlyUsd = Number(module.SuggestedMonthlyAmountUSD || 0);
+  const yearlyUsd = Number(module.SuggestedYearlyAmountUSD || monthlyUsd * 10);
+  const rate = usdToNgnRate();
+  const monthlyNgn = rate > 0 ? pricingMoney(monthlyUsd * rate, 'NGN') : 'set NGN rate';
+  const yearlyNgn = rate > 0 ? pricingMoney(yearlyUsd * rate, 'NGN') : 'set NGN rate';
+  return `Suggested ${pricingMoney(monthlyUsd, 'USD')} / ${monthlyNgn} monthly · ${pricingMoney(yearlyUsd, 'USD')} / ${yearlyNgn} yearly`;
+}
+
+function updateConvertedPricePreviews() {
+  cards.querySelectorAll('[data-price-input]').forEach((input) => {
+    const target = input.parentElement?.querySelector('[data-price-equivalent]');
+    if (target) target.textContent = convertedPriceText(input.value);
+  });
+  entitlementMatrix?.querySelectorAll('[data-flex-module-price]').forEach((input) => {
+    const target = input.parentElement?.querySelector('[data-price-equivalent]');
+    if (target) target.textContent = convertedPriceText(input.value);
+  });
+  entitlementMatrix?.querySelectorAll('[data-module-suggestion]').forEach((node) => {
+    const module = modulesForEdition(selectedEntitlementEdition).find((entry) => entry.Key === node.dataset.moduleSuggestion);
+    if (module) node.textContent = suggestedModulePriceText(module);
+  });
+}
+
 function updatePriceCurrencyLabels() {
   const currency = selectedPricingCurrency();
   cards.querySelectorAll('[data-price-currency]').forEach((node) => { node.textContent = currency; });
+  entitlementMatrix?.querySelectorAll('[data-price-currency]').forEach((node) => { node.textContent = currency; });
+  updateConvertedPricePreviews();
 }
 
 function renderCatalog() {
@@ -162,13 +214,13 @@ function renderCatalog() {
     return `<article class="plan-pricing-card" data-plan="${escapeHtml(plan.Name)}">
       <header><div><h3>${escapeHtml(plan.Name)}</h3><p>${escapeHtml(plan.Summary)}</p></div><label class="inline-check"><input type="checkbox" data-field="Active" ${plan.Active ? 'checked' : ''}> Available</label></header>
       <div class="plan-pricing-fields">
-        <label><span>${isFlex ? 'Base monthly fee' : 'Monthly price'} (<span data-price-currency>${currency}</span>)</span><input data-field="MonthlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.MonthlyAmount || 0)}" ${isFree ? 'readonly' : ''}></label>
-        <label><span>${isFlex ? 'Base yearly fee' : 'Yearly price'} (<span data-price-currency>${currency}</span>)</span><input data-field="YearlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.YearlyAmount || 0)}" ${isFree ? 'readonly' : ''}></label>
+        <label><span>${isFlex ? 'Base monthly fee' : 'Monthly price'} (<span data-price-currency>${currency}</span>)</span><input data-field="MonthlyAmount" data-price-input inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.MonthlyAmount || 0)}" ${isFree ? 'readonly' : ''}><small data-price-equivalent>${escapeHtml(convertedPriceText(plan.MonthlyAmount || 0, currency))}</small></label>
+        <label><span>${isFlex ? 'Base yearly fee' : 'Yearly price'} (<span data-price-currency>${currency}</span>)</span><input data-field="YearlyAmount" data-price-input inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.YearlyAmount || 0)}" ${isFree ? 'readonly' : ''}><small data-price-equivalent>${escapeHtml(convertedPriceText(plan.YearlyAmount || 0, currency))}</small></label>
         <label>${isFlex ? 'Maximum active users' : 'Active-user limit'}<input data-field="UserLimit" type="number" min="1" step="1" value="${Number(plan.UserLimit || 1)}" ${['Enterprise', 'Flex'].includes(plan.Name) ? '' : 'readonly'}></label>
         ${isFlex ? `
           <label>Users included in base fee<input data-field="IncludedUsers" type="number" min="1" step="1" value="${Number(plan.IncludedUsers || 1)}"></label>
-          <label><span>Extra user / month (<span data-price-currency>${currency}</span>)</span><input data-field="AdditionalUserMonthlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.AdditionalUserMonthlyAmount || 0)}"></label>
-          <label><span>Extra user / year (<span data-price-currency>${currency}</span>)</span><input data-field="AdditionalUserYearlyAmount" inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.AdditionalUserYearlyAmount || 0)}"></label>
+          <label><span>Extra user / month (<span data-price-currency>${currency}</span>)</span><input data-field="AdditionalUserMonthlyAmount" data-price-input inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.AdditionalUserMonthlyAmount || 0)}"><small data-price-equivalent>${escapeHtml(convertedPriceText(plan.AdditionalUserMonthlyAmount || 0, currency))}</small></label>
+          <label><span>Extra user / year (<span data-price-currency>${currency}</span>)</span><input data-field="AdditionalUserYearlyAmount" data-price-input inputmode="decimal" type="number" min="0" step="0.01" value="${Number(plan.AdditionalUserYearlyAmount || 0)}"><small data-price-equivalent>${escapeHtml(convertedPriceText(plan.AdditionalUserYearlyAmount || 0, currency))}</small></label>
         ` : ''}
       </div>
       <p class="plan-module-counts"><span>School <b>${counts[0]}</b></span><span>Church <b>${counts[1]}</b></span><span>Other <b>${counts[2]}</b></span></p>
@@ -316,13 +368,13 @@ function renderEntitlementMatrix() {
     const requirementNames = (module.Requires || []).map((key) =>
       modules.find((candidate) => candidate.Key === key)?.Label || key);
     return `<tr>
-      <th scope="row"><strong>${escapeHtml(module.Label)}</strong><small>${escapeHtml(module.Description)}</small>${requirementNames.length ? `<em>Requires ${escapeHtml(requirementNames.join(' and '))}</em>` : ''}</th>
+      <th scope="row"><strong>${escapeHtml(module.Label)}</strong><small>${escapeHtml(module.Description)}</small><small class="module-price-suggestion" data-module-suggestion="${escapeHtml(module.Key)}">${escapeHtml(suggestedModulePriceText(module))}</small>${requirementNames.length ? `<em>Requires ${escapeHtml(requirementNames.join(' and '))}</em>` : ''}</th>
       ${plans.map((plan) => {
         if (plan.Name === 'Flex') {
           const price = plan.ModulePricesByEdition?.[selectedEntitlementEdition]?.[module.Key] || {};
           return `<td class="flex-module-price-cell">
-            <label><span>M</span><input type="number" min="0" step="0.01" inputmode="decimal" aria-label="${escapeHtml(`Flex monthly price: ${module.Label}`)}" data-flex-module-price="MonthlyAmount" data-flex-module-key="${escapeHtml(module.Key)}" value="${Number(price.MonthlyAmount || 0)}"></label>
-            <label><span>Y</span><input type="number" min="0" step="0.01" inputmode="decimal" aria-label="${escapeHtml(`Flex yearly price: ${module.Label}`)}" data-flex-module-price="YearlyAmount" data-flex-module-key="${escapeHtml(module.Key)}" value="${Number(price.YearlyAmount || 0)}"></label>
+            <label><span>M</span><input type="number" min="0" step="0.01" inputmode="decimal" aria-label="${escapeHtml(`Flex monthly price: ${module.Label}`)}" data-flex-module-price="MonthlyAmount" data-flex-module-key="${escapeHtml(module.Key)}" value="${Number(price.MonthlyAmount || 0)}"><small data-price-equivalent>${escapeHtml(convertedPriceText(price.MonthlyAmount || 0))}</small></label>
+            <label><span>Y</span><input type="number" min="0" step="0.01" inputmode="decimal" aria-label="${escapeHtml(`Flex yearly price: ${module.Label}`)}" data-flex-module-price="YearlyAmount" data-flex-module-key="${escapeHtml(module.Key)}" value="${Number(price.YearlyAmount || 0)}"><small data-price-equivalent>${escapeHtml(convertedPriceText(price.YearlyAmount || 0))}</small></label>
           </td>`;
         }
         const checked = (plan.EntitlementsByEdition?.[selectedEntitlementEdition] || []).includes(module.Key);
@@ -332,15 +384,16 @@ function renderEntitlementMatrix() {
     </tr>`;
   }).join('');
   entitlementMatrix.innerHTML = `
-    <div class="plan-entitlement-tabs" role="tablist" aria-label="Organisation type">${tabs}</div>
+    <div class="plan-entitlement-tabs" role="tablist" aria-label="Organisation type">${tabs}<button type="button" class="apply-flex-estimates" data-apply-flex-estimates>Apply suggested Flex prices for ${escapeHtml(editionLabel(selectedEntitlementEdition))}</button></div>
     <div class="plan-entitlement-table-wrap" tabindex="0">
       <table class="plan-entitlement-table">
         <thead><tr><th>Feature or module</th>${plans.map((plan) => `<th>${escapeHtml(plan.Name)}${plan.Name === 'Flex' ? '<small>Monthly / yearly price</small>' : ''}</th>`).join('')}</tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <p class="plan-entitlement-help">Overview, secure sign-in, notifications, settings and role permissions remain core platform services. Fixed plans use checkboxes; Flex uses a monthly and yearly price for each selectable module. Dependencies are charged and enabled automatically.</p>
+    <p class="plan-entitlement-help">Overview, secure sign-in, notifications, settings and role permissions remain core platform services. Fixed plans use checkboxes; Flex uses a monthly and yearly price for each selectable module. Suggested module prices are commercial starting points in USD; yearly estimates include two months free. Applying them converts them into the selected billing currency using the rate above. Dependencies are charged and enabled automatically.</p>
   `;
+  updatePriceCurrencyLabels();
 }
 
 async function pricingRequest(payload) {
@@ -363,6 +416,7 @@ loginForm.addEventListener('submit', async (event) => {
     const data = await pricingRequest({ action: 'load', password: unlockedPassword });
     catalog = data.catalog;
     document.getElementById('planPricingCurrency').value = catalog.Currency || 'NGN';
+    document.getElementById('planUsdToNgnRate').value = Number(catalog.UsdToNgnRate || 1350);
     renderCatalog();
     await Promise.all([loadTenantPool(), loadPlatformPayments()]);
     loginForm.hidden = true;
@@ -406,7 +460,11 @@ pricingForm.addEventListener('submit', async (event) => {
     });
     const data = await pricingRequest({
       password: unlockedPassword,
-      catalog: { Currency: document.getElementById('planPricingCurrency').value, Plans: plans },
+      catalog: {
+        Currency: document.getElementById('planPricingCurrency').value,
+        UsdToNgnRate: Number(document.getElementById('planUsdToNgnRate').value || 0),
+        Plans: plans
+      },
       updateExistingSubscriptions: document.getElementById('updateExistingSubscriptions').checked
     });
     catalog = data.catalog;
@@ -421,6 +479,7 @@ pricingForm.addEventListener('submit', async (event) => {
 });
 
 pricingForm.addEventListener('input', (event) => {
+  if (event.target.matches('[data-price-input], [data-flex-module-price], #planUsdToNgnRate')) updateConvertedPricePreviews();
   if (!event.target.closest('.tenant-pool-section, .platform-payment-section')) setStatus(pricingStatus, 'You have unsaved pricing changes.');
 });
 
@@ -526,6 +585,32 @@ entitlementMatrix?.addEventListener('click', (event) => {
   if (editionButton) {
     selectedEntitlementEdition = editionButton.dataset.entitlementEdition;
     renderEntitlementMatrix();
+    return;
+  }
+  const estimateButton = event.target.closest('[data-apply-flex-estimates]');
+  if (estimateButton) {
+    const flex = planForName('Flex');
+    if (!flex) return;
+    const currency = selectedPricingCurrency();
+    const rate = usdToNgnRate();
+    if (currency === 'NGN' && !(rate > 0)) {
+      setStatus(pricingStatus, 'Enter the USD-to-naira conversion rate before applying naira estimates.', 'bad');
+      document.getElementById('planUsdToNgnRate')?.focus();
+      return;
+    }
+    flex.ModulePricesByEdition ||= {};
+    flex.ModulePricesByEdition[selectedEntitlementEdition] = Object.fromEntries(
+      modulesForEdition(selectedEntitlementEdition).map((module) => {
+        const monthlyUsd = Number(module.SuggestedMonthlyAmountUSD || 0);
+        const yearlyUsd = Number(module.SuggestedYearlyAmountUSD || monthlyUsd * 10);
+        return [module.Key, {
+          MonthlyAmount: Math.round((currency === 'USD' ? monthlyUsd : monthlyUsd * rate) * 100) / 100,
+          YearlyAmount: Math.round((currency === 'USD' ? yearlyUsd : yearlyUsd * rate) * 100) / 100
+        }];
+      })
+    );
+    renderEntitlementMatrix();
+    setStatus(pricingStatus, `Suggested Flex prices applied to ${editionLabel(selectedEntitlementEdition)}. Review them, then save to publish.`, 'ok');
   }
 });
 

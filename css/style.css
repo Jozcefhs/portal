@@ -2430,7 +2430,11 @@ html[data-theme="dark"] .onboarding-progress li.is-complete > span { background:
 .plan-management-shell { max-width: 1180px; margin: 0 auto; }
 .plan-pricing-workspace { display: grid; gap: 1rem; }
 .plan-pricing-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 1rem; margin: 0 0 1rem; padding: .8rem; border: 1px solid #d8e1ec; border-radius: 12px; background: #f8fafc; }
-.plan-pricing-toolbar > label:first-child { display: grid; gap: .35rem; width: 110px; font-size: 12px; font-weight: 800; }
+.plan-pricing-toolbar > label:first-child { display: grid; gap: .35rem; width: 130px; font-size: 12px; font-weight: 800; }
+.plan-pricing-toolbar .plan-exchange-rate { display: grid; flex: 1 1 320px; max-width: 500px; gap: .35rem; color: #31465d; font-size: 12px; font-weight: 800; }
+.plan-pricing-toolbar .plan-exchange-rate > span { display: grid; grid-template-columns: auto minmax(120px, 1fr) auto; align-items: center; gap: .45rem; }
+.plan-pricing-toolbar .plan-exchange-rate input { min-width: 0; height: 36px; }
+.plan-pricing-toolbar .plan-exchange-rate small { color: #60748a; font-size: 10px; font-weight: 500; line-height: 1.35; }
 .plan-pricing-webhook-note { display: grid; gap: .35rem; margin: 0 0 1rem; padding: .8rem; border: 1px solid #b8dfd3; border-radius: 12px; background: #eefaf6; color: #244f44; font-size: 12px; }
 .plan-pricing-webhook-note code { width: fit-content; max-width: 100%; overflow-wrap: anywhere; color: #075f4f; font-weight: 800; }
 .plan-pricing-webhook-note p { margin: 0; line-height: 1.45; }
@@ -2446,6 +2450,7 @@ html[data-theme="dark"] .onboarding-progress li.is-complete > span { background:
 .plan-pricing-fields { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: .65rem; margin-top: .8rem; }
 .plan-pricing-fields label { display: grid; gap: .35rem; min-width: 0; color: #31465d; font-size: 11px; font-weight: 800; }
 .plan-pricing-fields input { min-width: 0; }
+.plan-pricing-fields [data-price-equivalent] { color: #0b765f; font-size: 9px; font-weight: 700; }
 .plan-pricing-card details { margin-top: .75rem; color: #40566e; font-size: 12px; }
 .plan-pricing-card summary { width: fit-content; color: #0b57d0; cursor: pointer; font-weight: 800; }
 .plan-pricing-card ul { margin: .65rem 0 0; padding-left: 1.25rem; line-height: 1.55; }
@@ -2478,6 +2483,10 @@ html[data-theme="dark"] .onboarding-progress li.is-complete > span { background:
 .plan-entitlement-table .flex-module-price-cell label { display: grid; grid-template-columns: 18px minmax(70px, 1fr); width: 100%; height: auto; margin: .2rem 0; gap: .35rem; place-items: center stretch; cursor: text; }
 .plan-entitlement-table .flex-module-price-cell label > span { display: block !important; color: #547089; font-size: 9px; font-weight: 900; }
 .plan-entitlement-table .flex-module-price-cell input { width: 100%; height: 31px; min-height: 31px; padding: .25rem .4rem; }
+.plan-entitlement-table .flex-module-price-cell [data-price-equivalent] { grid-column: 2; color: #0b765f; font-size: 8px; font-weight: 700; line-height: 1.2; }
+.plan-entitlement-table .module-price-suggestion { display: block; margin-top: .25rem; color: #0b765f; font-size: 9px; font-weight: 800; line-height: 1.35; }
+.plan-entitlement-tabs .apply-flex-estimates { margin-left: auto; border-color: #0b765f; background: #eefaf6; color: #075f4f; }
+.plan-entitlement-tabs .apply-flex-estimates:hover { background: #dff5ed; }
 .plan-entitlement-help { margin: .75rem 0 0; padding: .7rem .8rem; border-left: 3px solid #159e87; border-radius: 5px; background: #eef8f5; color: #405e58; font-size: 10px; line-height: 1.5; }
 .tenant-pool-section { min-width: 0; }
 .tenant-pool-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .7rem; margin-bottom: .8rem; }
@@ -2572,6 +2581,12 @@ html[data-theme="dark"] .plan-pricing-webhook-note code { color: #85e7d2; }
 html[data-theme="dark"] .plan-pricing-card > header { border-color: #33465c; }
 html[data-theme="dark"] .plan-pricing-card h3,
 html[data-theme="dark"] .plan-pricing-fields label { color: #edf4ff; }
+html[data-theme="dark"] .plan-pricing-toolbar .plan-exchange-rate { color: #edf4ff; }
+html[data-theme="dark"] .plan-pricing-toolbar .plan-exchange-rate small { color: #a8b8cb; }
+html[data-theme="dark"] .plan-pricing-fields [data-price-equivalent],
+html[data-theme="dark"] .plan-entitlement-table .flex-module-price-cell [data-price-equivalent],
+html[data-theme="dark"] .plan-entitlement-table .module-price-suggestion { color: #85e7d2; }
+html[data-theme="dark"] .plan-entitlement-tabs .apply-flex-estimates { border-color: #276458; background: #102d28; color: #85e7d2; }
 html[data-theme="dark"] .plan-pricing-card p,
 html[data-theme="dark"] .plan-pricing-card details { color: #a8b8cb; }
 html[data-theme="dark"] .plan-pricing-card .plan-module-counts span { background: #1b3045; color: #bdcad8; }
@@ -2632,6 +2647,7 @@ html[data-theme="dark"] .platform-transfer-decision-dialog footer .secondary { b
   .plan-pricing-grid { grid-template-columns: 1fr; }
   .plan-pricing-fields { grid-template-columns: 1fr; }
   .plan-pricing-toolbar { align-items: flex-start; flex-direction: column; }
+  .plan-pricing-toolbar .plan-exchange-rate { width: 100%; max-width: none; }
   .plan-entitlement-table { min-width: 680px; }
   .tenant-pool-summary { grid-template-columns: repeat(3, minmax(150px, 1fr)); overflow-x: auto; }
   .tenant-pool-actions-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

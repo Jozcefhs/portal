@@ -6,6 +6,8 @@ import { paystackPlanNeedsSync, paystackPlanPayload } from '../functions/api/pla
 import { validPaystackWebhookSignature } from '../functions/api/paystack-subscription-webhook.js';
 import { syncRegistrationSubscriptionToWorkspace } from '../functions/lib/subscription-workspace-sync.js';
 import {
+  DEFAULT_USD_TO_NGN_RATE,
+  SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD,
   normalizeBillingCycle,
   normalizeSubscriptionPlanCatalog,
   publicSubscriptionPlanCatalog,
@@ -26,6 +28,7 @@ test('plan catalogue normalizes pricing, billing cycles and enterprise custom se
     }
   });
   assert.equal(catalog.Currency, 'NGN');
+  assert.equal(catalog.UsdToNgnRate, DEFAULT_USD_TO_NGN_RATE);
   assert.equal(catalog.Plans.Free.MonthlyAmount, 0);
   assert.equal(catalog.Plans.Free.YearlyAmount, 0);
   assert.equal(catalog.Plans.Standard.MonthlyAmount, 15000);
@@ -35,6 +38,7 @@ test('plan catalogue normalizes pricing, billing cycles and enterprise custom se
   assert.equal(catalog.Plans.Flex.Active, false);
   assert.equal(normalizeBillingCycle('annual'), 'yearly');
   assert.equal(normalizeSubscriptionPlanCatalog({ Currency: 'usd' }).Currency, 'USD');
+  assert.equal(normalizeSubscriptionPlanCatalog({ UsdToNgnRate: '1,425.50' }).UsdToNgnRate, 1425.5);
   assert.equal(normalizeSubscriptionPlanCatalog({ Currency: 'eur' }).Currency, 'NGN');
 });
 
@@ -125,7 +129,9 @@ test('saved plan-module selections replace defaults and enforce dependencies', (
       Key: 'academics',
       Label: 'Academic management, scorebook & CBT',
       Description: 'Classes, subjects, timetables, attendance, score recording, CBT, results and academic outcomes.',
-      Requires: ['students']
+      Requires: ['students'],
+      SuggestedMonthlyAmountUSD: SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD.academics,
+      SuggestedYearlyAmountUSD: SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD.academics * 10
     }
   );
   assert.ok(subscriptionModulesForEdition('faith').some((module) => module.Key === 'staffAttendance' && module.Label === 'Staff attendance & clocking'));
@@ -270,7 +276,8 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(pricingHtml, /Monthly and yearly pricing/);
   assert.match(pricingHtml, /id="planEntitlementMatrix"/);
   assert.match(pricingHtml, /<select id="planPricingCurrency"><option value="NGN">NGN<\/option><option value="USD">USD<\/option><\/select>/);
-  assert.match(pricingHtml, /plan-management\.js\?v=20260825-flex-subscriptions/);
+  assert.match(pricingHtml, /id="planUsdToNgnRate"/);
+  assert.match(pricingHtml, /plan-management\.js\?v=20260830-dual-currency-pricing/);
   assert.match(pricingHtml, /id="tenantPoolSummary"/);
   assert.match(pricingHtml, /Other organisation/);
   assert.match(pricingHtml, /Save plans &amp; pricing/);
@@ -281,6 +288,9 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(pricingJs, /isFlex \? 'Base yearly fee' : 'Yearly price'/);
   assert.match(pricingJs, /data-flex-module-price="MonthlyAmount"/);
   assert.match(pricingJs, /data-flex-module-price="YearlyAmount"/);
+  assert.match(pricingJs, /data-apply-flex-estimates/);
+  assert.match(pricingJs, /UsdToNgnRate/);
+  assert.match(registrationJs, /dualFormattedPrice/);
   assert.match(registrationHtml, /id="flexPlanBuilder"/);
   assert.match(registrationJs, /FlexModules: flexQuote/);
   assert.match(registrationJs, /FlexUserLimit: flexQuote/);

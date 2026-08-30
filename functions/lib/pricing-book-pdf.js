@@ -49,8 +49,18 @@ function formatPrice(value, currency) {
   })}`;
 }
 
-function formatPlanPrice(plan, value, currency) {
-  return plan?.Name === 'Free' ? 'Free for 7 days' : formatPrice(value, currency);
+function formatDualPrice(value, catalog) {
+  const currency = clean(catalog?.Currency || 'NGN').toUpperCase();
+  const primary = formatPrice(value, currency);
+  const rate = Number(catalog?.UsdToNgnRate || 0);
+  if (!(Number(value) > 0) || !(rate > 0)) return primary;
+  const secondaryCurrency = currency === 'USD' ? 'NGN' : 'USD';
+  const secondaryValue = currency === 'USD' ? Number(value) * rate : Number(value) / rate;
+  return `${primary} (about ${formatPrice(secondaryValue, secondaryCurrency)})`;
+}
+
+function formatPlanPrice(plan, value, catalog) {
+  return plan?.Name === 'Free' ? 'Free for 7 days' : formatDualPrice(value, catalog);
 }
 
 function wrapText(text, font, size, maxWidth) {
@@ -143,7 +153,7 @@ function drawOverviewPage(pdf, fonts, catalog, edition, cycle, generatedAt) {
     });
     const amount = cycle === 'yearly' ? plan.YearlyAmount : plan.MonthlyAmount;
     y -= 10;
-    y = drawWrapped(page, formatPlanPrice(plan, amount, catalog.Currency), {
+    y = drawWrapped(page, formatPlanPrice(plan, amount, catalog), {
       x: x + 19, y, width: cardWidth - 35, font: bold, size: 13, color: theme.accent, lineHeight: 15, maxLines: 2
     });
     page.drawText(plan.Name === 'Free' ? 'one-time trial' : cycle === 'yearly' ? 'per year' : 'per month', { x: x + 19, y: y - 2, size: 8, font: regular, color: MUTED });
@@ -183,7 +193,7 @@ function drawComparisonPage(pdf, fonts, catalog, edition, cycle, generatedAt) {
     page.drawRectangle({ x, y: 440, width: columnWidth, height: 53, borderRadius: 12, color: theme.accent });
     page.drawText(clean(plan.Name), { x: x + 13, y: 469, size: 14, font: bold, color: WHITE });
     const amount = cycle === 'yearly' ? plan.YearlyAmount : plan.MonthlyAmount;
-    drawWrapped(page, formatPlanPrice(plan, amount, catalog.Currency), {
+    drawWrapped(page, formatPlanPrice(plan, amount, catalog), {
       x: x + 13, y: 451, width: columnWidth - 26, font: regular, size: 8.5, color: WHITE, lineHeight: 10, maxLines: 1
     });
     page.drawText(userLabel(plan), { x: x + 13, y: 421, size: 8.5, font: bold, color: TEXT });

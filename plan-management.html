@@ -7,7 +7,7 @@
   <title>Plans and pricing — Dynamax</title>
   <link rel="icon" href="images/Logo.png">
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260825-flex-subscriptions">
+  <link rel="stylesheet" href="css/style.css?v=20260830-dual-currency-pricing">
 </head>
 <body class="settings-page">
   <main class="settings-shell plan-management-shell">
@@ -27,7 +27,11 @@
     <form id="planPricingForm" class="plan-pricing-workspace" hidden>
       <section class="settings-section">
         <div class="settings-section-heading"><div><span class="settings-section-icon">P</span></div><div><p class="settings-eyebrow">Subscription catalogue</p><h2>Monthly and yearly pricing</h2><p>Amounts are entered in the selected currency. A value of zero keeps that payment option unavailable until pricing is confirmed.</p></div></div>
-        <div class="plan-pricing-toolbar"><label>Currency <select id="planPricingCurrency"><option value="NGN">NGN</option><option value="USD">USD</option></select></label><label class="inline-check"><input id="updateExistingSubscriptions" type="checkbox"> Apply changed prices to existing Paystack subscribers</label></div>
+        <div class="plan-pricing-toolbar">
+          <label>Billing currency <select id="planPricingCurrency"><option value="NGN">NGN</option><option value="USD">USD</option></select></label>
+          <label class="plan-exchange-rate">Currency conversion rate <span><b>1 USD =</b><input id="planUsdToNgnRate" type="number" min="0.01" step="0.01" inputmode="decimal" aria-describedby="planExchangeRateHelp"><b>NGN</b></span><small id="planExchangeRateHelp">Used only to show the equivalent price. Paystack still charges the billing currency selected here.</small></label>
+          <label class="inline-check"><input id="updateExistingSubscriptions" type="checkbox"> Apply changed prices to existing Paystack subscribers</label>
+        </div>
         <aside class="plan-pricing-webhook-note">
           <strong>Paystack webhook URL</strong>
           <code id="paystackWebhookUrl"></code>
@@ -132,6 +136,6 @@
   </dialog>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
-  <script src="js/plan-management.js?v=20260825-flex-subscriptions"></script>
+  <script src="js/plan-management.js?v=20260830-dual-currency-pricing"></script>
 </body>
 </html>
