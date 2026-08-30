@@ -368,7 +368,7 @@ function renderEntitlementMatrix() {
     const requirementNames = (module.Requires || []).map((key) =>
       modules.find((candidate) => candidate.Key === key)?.Label || key);
     return `<tr>
-      <th scope="row"><strong>${escapeHtml(module.Label)}</strong><small>${escapeHtml(module.Description)}</small><small class="module-price-suggestion" data-module-suggestion="${escapeHtml(module.Key)}">${escapeHtml(suggestedModulePriceText(module))}</small>${requirementNames.length ? `<em>Requires ${escapeHtml(requirementNames.join(' and '))}</em>` : ''}</th>
+      <th scope="row"><strong>${escapeHtml(module.Label)}</strong>${module.Surface ? `<span class="module-surface">${escapeHtml(module.Surface)}</span>` : ''}<small>${escapeHtml(module.Description)}</small><small class="module-price-suggestion" data-module-suggestion="${escapeHtml(module.Key)}">${escapeHtml(suggestedModulePriceText(module))}</small>${requirementNames.length ? `<em>Requires ${escapeHtml(requirementNames.join(' and '))}</em>` : ''}</th>
       ${plans.map((plan) => {
         if (plan.Name === 'Flex') {
           const price = plan.ModulePricesByEdition?.[selectedEntitlementEdition]?.[module.Key] || {};
@@ -391,7 +391,7 @@ function renderEntitlementMatrix() {
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <p class="plan-entitlement-help">Overview, secure sign-in, notifications, settings and role permissions remain core platform services. Fixed plans use checkboxes; Flex uses a monthly and yearly price for each selectable module. Suggested module prices are commercial starting points in USD; yearly estimates include two months free. Applying them converts them into the selected billing currency using the rate above. Dependencies are charged and enabled automatically.</p>
+    <p class="plan-entitlement-help">Overview, Records Desk, secure sign-in, notifications, settings, local activity logs and role permissions remain core platform services. Fixed plans use checkboxes; Flex uses a monthly and yearly price for each selectable module. A surface label identifies modules delivered only in the desktop application. Suggested module prices are commercial starting points in USD; yearly estimates include two months free. Applying them converts them into the selected billing currency using the rate above. Dependencies are charged and enabled automatically.</p>
   `;
   updatePriceCurrencyLabels();
 }

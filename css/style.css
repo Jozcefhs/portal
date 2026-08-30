@@ -2474,6 +2474,7 @@ html[data-theme="dark"] .onboarding-progress li.is-complete > span { background:
 .plan-entitlement-table tbody th small,
 .plan-entitlement-table tbody th em { display: block; }
 .plan-entitlement-table tbody th strong { color: #233f59; font-size: 11px; }
+.plan-entitlement-table .module-surface { display: inline-block; margin-left: .4rem; padding: .12rem .35rem; border-radius: 999px; background: #e8f0ff; color: #1d56a5; font-size: 8px; font-weight: 900; line-height: 1.2; text-transform: uppercase; vertical-align: middle; }
 .plan-entitlement-table tbody th small { margin-top: .2rem; color: #657b90; font-size: 9px; font-weight: 400; line-height: 1.4; }
 .plan-entitlement-table tbody th em { margin-top: .25rem; color: #087360; font-size: 8px; font-style: normal; }
 .plan-entitlement-table td label { display: grid; width: 32px; height: 32px; margin: auto; place-items: center; cursor: pointer; }

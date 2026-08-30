@@ -136,6 +136,18 @@ test('saved plan-module selections replace defaults and enforce dependencies', (
   );
   assert.ok(subscriptionModulesForEdition('faith').some((module) => module.Key === 'staffAttendance' && module.Label === 'Staff attendance & clocking'));
   assert.ok(subscriptionModulesForEdition('faith').some((module) => module.Key === 'humanResources' && module.Label === 'Human Resources'));
+  assert.deepEqual(
+    subscriptionModulesForEdition('school').find((module) => module.Key === 'bulkCommunication'),
+    {
+      Key: 'bulkCommunication',
+      Label: 'Bulk email & communication',
+      Description: 'Desktop bulk email, approved message delivery and generated-document distribution.',
+      Requires: [],
+      Surface: 'Desktop application',
+      SuggestedMonthlyAmountUSD: SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD.bulkCommunication,
+      SuggestedYearlyAmountUSD: SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD.bulkCommunication * 10
+    }
+  );
 
   const explicitlySeparated = normalizeSubscriptionPlanCatalog({
     ModuleCatalogVersion: 2,
@@ -148,6 +160,15 @@ test('saved plan-module selections replace defaults and enforce dependencies', (
     Plans: { Starter: { EntitlementsByEdition: { school: ['students'] } } }
   });
   assert.deepEqual(existingSchoolCatalog.Plans.Starter.EntitlementsByEdition.school, ['students', 'academics']);
+
+  const existingStandardCatalog = normalizeSubscriptionPlanCatalog({
+    ModuleCatalogVersion: 4,
+    Plans: { Standard: { EntitlementsByEdition: { school: ['accounting'] } } }
+  });
+  assert.deepEqual(
+    existingStandardCatalog.Plans.Standard.EntitlementsByEdition.school,
+    ['accounting', 'bulkCommunication']
+  );
 });
 
 test('free access expires at the stored server-issued boundary and cannot become permanent', () => {

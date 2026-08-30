@@ -13,7 +13,7 @@ export const SUBSCRIPTION_PLAN_NAMES = Object.freeze([
 
 const FULL_ACCESS = '*';
 export const FREE_TRIAL_DAYS = 7;
-export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 4;
+export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 5;
 export const SUBSCRIPTION_CURRENCIES = Object.freeze(['NGN', 'USD']);
 export const DEFAULT_USD_TO_NGN_RATE = 1350;
 
@@ -29,6 +29,7 @@ export const SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD = Object.freeze({
   staffAttendance: 3,
   accounting: 5,
   payroll: 5,
+  bulkCommunication: 3,
   admissions: 4,
   students: 4,
   academics: 7,
@@ -57,6 +58,7 @@ export const SUBSCRIPTION_MODULE_CATALOG = Object.freeze([
   Object.freeze({ Key: 'staffAttendance', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Staff attendance & clocking', faith: 'Staff attendance & clocking', organization: 'Staff attendance & clocking' }), Description: 'Clock-in/out, schedules, lateness, absence, overtime and presence checks.', Requires: Object.freeze([]) }),
   Object.freeze({ Key: 'accounting', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Finance, accounting & income analytics', faith: 'Finance, accounting & income analytics', organization: 'Finance, accounting & revenue analytics' }), Description: 'Accounts, journals, expenses, analytics and finance registers.', Requires: Object.freeze([]) }),
   Object.freeze({ Key: 'payroll', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Payroll', faith: 'Payroll', organization: 'Payroll' }), Description: 'Payroll profiles, calculations, approvals and payments.', Requires: Object.freeze(['accounting', 'humanResources']) }),
+  Object.freeze({ Key: 'bulkCommunication', Editions: Object.freeze(['school', 'faith', 'organization']), Labels: Object.freeze({ school: 'Bulk email & communication', faith: 'Bulk email & communication', organization: 'Bulk email & communication' }), Description: 'Desktop bulk email, approved message delivery and generated-document distribution.', Requires: Object.freeze([]), Surface: 'Desktop application' }),
   Object.freeze({ Key: 'admissions', Editions: Object.freeze(['school']), Labels: Object.freeze({ school: 'Admissions & form purchases' }), Description: 'Application intake, form sales and admission processing.', Requires: Object.freeze([]) }),
   Object.freeze({ Key: 'students', Editions: Object.freeze(['school']), Labels: Object.freeze({ school: 'Student records & accounts' }), Description: 'Student directory, accounts and academic identity.', Requires: Object.freeze([]) }),
   Object.freeze({ Key: 'academics', Editions: Object.freeze(['school']), Labels: Object.freeze({ school: 'Academic management, scorebook & CBT' }), Description: 'Classes, subjects, timetables, attendance, score recording, CBT, results and academic outcomes.', Requires: Object.freeze(['students']) }),
@@ -89,6 +91,7 @@ export function subscriptionModulesForEdition(edition) {
       Label: clean(module.Labels[normalizedEdition] || module.Labels.school || module.Key),
       Description: module.Description,
       Requires: module.Requires.filter((key) => MODULE_BY_KEY.get(key)?.Editions.includes(normalizedEdition)),
+      ...(module.Surface ? { Surface: module.Surface } : {}),
       SuggestedMonthlyAmountUSD: money(SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD[module.Key]),
       SuggestedYearlyAmountUSD: money(SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD[module.Key] * 10)
     }));
@@ -159,21 +162,21 @@ export const SUBSCRIPTION_PLAN_DEFINITIONS = Object.freeze({
     Entitlements: Object.freeze({
       school: Object.freeze([
         'branches', 'branding', 'admissions', 'students', 'academics', 'parentPortal',
-        'approvals', 'executiveOffice', 'humanResources', 'staffAttendance', 'accounting'
+        'approvals', 'executiveOffice', 'humanResources', 'staffAttendance', 'accounting', 'bulkCommunication'
       ]),
       faith: Object.freeze([
         'branches', 'branding', 'members', 'services', 'departments', 'programs',
-        'approvals', 'executiveOffice', 'humanResources', 'staffAttendance', 'accounting', 'funds', 'offerings', 'donations'
+        'approvals', 'executiveOffice', 'humanResources', 'staffAttendance', 'accounting', 'bulkCommunication', 'funds', 'offerings', 'donations'
       ]),
       organization: Object.freeze([
         'branches', 'branding', 'members', 'departments', 'programs',
-        'approvals', 'executiveOffice', 'humanResources', 'staffAttendance', 'accounting'
+        'approvals', 'executiveOffice', 'humanResources', 'staffAttendance', 'accounting', 'bulkCommunication'
       ])
     }),
     Features: Object.freeze({
-      school: Object.freeze(['Everything in Starter', 'Finance and income analytics', 'Bills, requisitions and approvals', 'Human Resources', 'Executive Office']),
-      faith: Object.freeze(['Everything in Starter', 'Funds, offerings and donations', 'Finance and income analytics', 'Bills, requisitions and approvals', 'Human Resources and Executive Office']),
-      organization: Object.freeze(['Everything in Starter', 'Finance and revenue analytics', 'Bills, requisitions and approvals', 'Human Resources', 'Programmes and Executive Office'])
+      school: Object.freeze(['Everything in Starter', 'Finance and income analytics', 'Bills, requisitions and approvals', 'Human Resources', 'Executive Office and bulk communication']),
+      faith: Object.freeze(['Everything in Starter', 'Funds, offerings and donations', 'Finance and income analytics', 'Bills, requisitions and approvals', 'Human Resources, Executive Office and bulk communication']),
+      organization: Object.freeze(['Everything in Starter', 'Finance and revenue analytics', 'Bills, requisitions and approvals', 'Human Resources', 'Programmes, Executive Office and bulk communication'])
     })
   }),
   Professional: Object.freeze({
@@ -442,7 +445,11 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
             && attendanceMigratedEntitlements.includes('students')
             ? normalizeConfiguredEntitlements(edition, [...attendanceMigratedEntitlements, 'academics'], [])
             : attendanceMigratedEntitlements;
-          return [edition, migratedEntitlements];
+          const communicationMigratedEntitlements = sourceModuleCatalogVersion < 5
+            && defaults.Plans[name].EntitlementsByEdition[edition].includes('bulkCommunication')
+            ? normalizeConfiguredEntitlements(edition, [...migratedEntitlements, 'bulkCommunication'], [])
+            : migratedEntitlements;
+          return [edition, communicationMigratedEntitlements];
         })),
         PaystackMonthlyPlanCode: name === 'Free' ? '' : clean(incoming.PaystackMonthlyPlanCode),
         PaystackYearlyPlanCode: name === 'Free' ? '' : clean(incoming.PaystackYearlyPlanCode),
