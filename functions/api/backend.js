@@ -731,6 +731,9 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'getChurchServices', 'saveChurchService', 'saveChurchServiceOccurrence', 'recordChurchAttendance',
   'getChurchFunds', 'saveChurchFund', 'saveChurchFundMapping',
   'getChurchOfferings', 'saveChurchOffering', 'reconcileChurchOffering',
+  'approveChurchOffering', 'rejectChurchOffering', 'postChurchOffering',
+  // Backward compatibility for desktop builds that emitted lowercase action names.
+  'approvechurchoffering', 'rejectchurchoffering', 'postchurchoffering',
   'getOrganizationDepartments', 'saveDepartment', 'importOrganizationMembers', 'importDepartments', 'deleteDepartment', 'savePosition',
   'saveDepartmentMember', 'removeDepartmentMember', 'saveDepartmentMeeting', 'recordDepartmentAttendance',
   'saveDepartmentOffering', 'markDepartmentOfferingPaid', 'saveSpecialProgram',
@@ -7675,6 +7678,12 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'getChurchOfferings':
     case 'saveChurchOffering':
     case 'reconcileChurchOffering':
+    case 'approveChurchOffering':
+    case 'rejectChurchOffering':
+    case 'postChurchOffering':
+    case 'approvechurchoffering':
+    case 'rejectchurchoffering':
+    case 'postchurchoffering':
       return handleChurchOfferingAction(env, {
         username: clean(body.UserUsername),
         displayName: clean(body.RecordedBy),

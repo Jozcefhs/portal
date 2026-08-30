@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import {
   normalizeChurchOffering,
@@ -24,6 +25,18 @@ test('offering roles separate capture, reconciliation, and read-only audit acces
   assert.equal(offeringCapabilities({ role: 'Pastor' }).canView, true);
   assert.equal(offeringCapabilities({ role: 'Auditor' }).canCapture, false);
   assert.equal(offeringCapabilities({ role: 'Membership Officer' }).canView, false);
+});
+
+test('desktop backend authenticates and dispatches every offering workflow action', async () => {
+  const backendSource = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
+  for (const action of [
+    'approveChurchOffering', 'rejectChurchOffering', 'postChurchOffering',
+    'approvechurchoffering', 'rejectchurchoffering', 'postchurchoffering'
+  ]) {
+    assert.match(backendSource, new RegExp(`'${action}'`));
+    assert.match(backendSource, new RegExp(`case '${action}':`));
+  }
+  assert.match(backendSource, /return handleChurchOfferingAction\(env,/);
 });
 
 test('denomination input supports value x quantity and rejects ambiguous duplicates', () => {
