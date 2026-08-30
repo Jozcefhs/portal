@@ -97,6 +97,60 @@ test('Flex quotes price selected modules, dependencies and additional users exac
   assert.throws(() => subscriptionFlexQuote(catalog, 'school', ['payroll'], 101), /up to 100 active users/i);
 });
 
+test('unpriced Flex modules migrate for every organisation type and update religious totals', () => {
+  const catalog = normalizeSubscriptionPlanCatalog({
+    Currency: 'NGN',
+    UsdToNgnRate: 1350,
+    ModuleCatalogVersion: 5,
+    Plans: {
+      Flex: {
+        Active: true,
+        MonthlyAmount: 7000,
+        YearlyAmount: 70000,
+        IncludedUsers: 3,
+        UserLimit: 250,
+        ModulePricesByEdition: {
+          school: { branches: { MonthlyAmount: 9000, YearlyAmount: 90000 } },
+          faith: {},
+          organization: {}
+        }
+      }
+    }
+  });
+  assert.deepEqual(catalog.Plans.Flex.ModulePricesByEdition.school.branches, {
+    MonthlyAmount: 9000,
+    YearlyAmount: 90000
+  });
+  assert.deepEqual(catalog.Plans.Flex.ModulePricesByEdition.faith.branches, {
+    MonthlyAmount: 2700,
+    YearlyAmount: 27000
+  });
+  assert.deepEqual(catalog.Plans.Flex.ModulePricesByEdition.organization.branches, {
+    MonthlyAmount: 2700,
+    YearlyAmount: 27000
+  });
+  const religiousQuote = subscriptionFlexQuote(catalog, 'faith', ['branches', 'members'], 3, 'yearly');
+  assert.equal(religiousQuote.Amount, 151000);
+  assert.deepEqual(
+    religiousQuote.PriceSnapshot.Modules.map(({ Key, Amount }) => ({ Key, Amount })),
+    [{ Key: 'branches', Amount: 27000 }, { Key: 'members', Amount: 54000 }]
+  );
+
+  const intentionallyFree = normalizeSubscriptionPlanCatalog({
+    Currency: 'NGN',
+    ModuleCatalogVersion: 6,
+    Plans: {
+      Flex: {
+        ModulePricesByEdition: { faith: { branches: { MonthlyAmount: 0, YearlyAmount: 0 } } }
+      }
+    }
+  });
+  assert.deepEqual(intentionallyFree.Plans.Flex.ModulePricesByEdition.faith.branches, {
+    MonthlyAmount: 0,
+    YearlyAmount: 0
+  });
+});
+
 test('saved plan-module selections replace defaults and enforce dependencies', () => {
   const catalog = normalizeSubscriptionPlanCatalog({
     Plans: {
@@ -315,6 +369,8 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(registrationJs, /dualFormattedPrice/);
   assert.match(registrationHtml, /id="flexPlanBuilder"/);
   assert.match(registrationHtml, /20260830-flex-module-layout/);
+  assert.match(registrationHtml, /20260830-flex-faith-pricing/);
+  assert.match(registrationJs, /\/api\/plan-catalog\?v=6/);
   assert.match(registrationJs, /class="flex-module-title"/);
   assert.match(styleCss, /\.flex-module-option \{ display: grid; grid-template-columns: 20px minmax\(0, 1fr\)/);
   assert.doesNotMatch(styleCss, /\.flex-module-option \{[^}]*max-content/);

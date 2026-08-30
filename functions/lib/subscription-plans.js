@@ -13,13 +13,13 @@ export const SUBSCRIPTION_PLAN_NAMES = Object.freeze([
 
 const FULL_ACCESS = '*';
 export const FREE_TRIAL_DAYS = 7;
-export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 5;
+export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 6;
 export const SUBSCRIPTION_CURRENCIES = Object.freeze(['NGN', 'USD']);
 export const DEFAULT_USD_TO_NGN_RATE = 1350;
 
-// Commercial starting points for Flex subscriptions. These are deliberately
-// kept separate from saved prices: an administrator must choose to apply them.
-// Yearly estimates use ten months of the monthly price (two months free).
+// Commercial starting points for Flex subscriptions. Administrators can
+// override them after the initial catalogue migration. Yearly estimates use
+// ten months of the monthly price (two months free).
 export const SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD = Object.freeze({
   branches: 2,
   branding: 2,
@@ -362,6 +362,12 @@ function subscriptionCurrency(value) {
   return SUBSCRIPTION_CURRENCIES.includes(currency) ? currency : 'NGN';
 }
 
+function suggestedFlexModuleAmount(moduleKey, billingCycle, currency, usdToNgnRate) {
+  const monthlyUsd = money(SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD[moduleKey]);
+  const usdAmount = billingCycle === 'yearly' ? monthlyUsd * 10 : monthlyUsd;
+  return money(currency === 'USD' ? usdAmount : usdAmount * usdToNgnRate);
+}
+
 export function defaultSubscriptionPlanCatalog() {
   return {
     Currency: 'NGN',
@@ -407,9 +413,11 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
     ? source.Plans
     : {};
   const sourceModuleCatalogVersion = Math.max(0, Math.floor(Number(source.ModuleCatalogVersion) || 0));
+  const normalizedCurrency = subscriptionCurrency(source.Currency || defaults.Currency);
+  const normalizedUsdToNgnRate = money(source.UsdToNgnRate || source.ExchangeRateUSDNGN || defaults.UsdToNgnRate);
   return {
-    Currency: subscriptionCurrency(source.Currency || defaults.Currency),
-    UsdToNgnRate: money(source.UsdToNgnRate || source.ExchangeRateUSDNGN || defaults.UsdToNgnRate),
+    Currency: normalizedCurrency,
+    UsdToNgnRate: normalizedUsdToNgnRate,
     ModuleCatalogVersion: SUBSCRIPTION_MODULE_CATALOG_VERSION,
     Plans: Object.fromEntries(SUBSCRIPTION_PLAN_NAMES.map((name) => {
       const incoming = sourcePlans[name] && typeof sourcePlans[name] === 'object' ? sourcePlans[name] : {};
@@ -462,9 +470,18 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
           edition,
           Object.fromEntries(subscriptionModulesForEdition(edition).map((module) => {
             const price = configuredModulePrices?.[edition]?.[module.Key] || {};
+            const migrateUnpricedFlexModule = name === 'Flex' && sourceModuleCatalogVersion < 6;
             return [module.Key, {
-              MonthlyAmount: name === 'Flex' ? money(price.MonthlyAmount) : 0,
-              YearlyAmount: name === 'Flex' ? money(price.YearlyAmount) : 0
+              MonthlyAmount: name === 'Flex'
+                ? money(price.MonthlyAmount) || (migrateUnpricedFlexModule
+                  ? suggestedFlexModuleAmount(module.Key, 'monthly', normalizedCurrency, normalizedUsdToNgnRate)
+                  : 0)
+                : 0,
+              YearlyAmount: name === 'Flex'
+                ? money(price.YearlyAmount) || (migrateUnpricedFlexModule
+                  ? suggestedFlexModuleAmount(module.Key, 'yearly', normalizedCurrency, normalizedUsdToNgnRate)
+                  : 0)
+                : 0
             }];
           }))
         ]))

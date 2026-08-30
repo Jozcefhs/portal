@@ -397,7 +397,7 @@ function renderPlans() {
 
 async function loadPlans() {
   try {
-    const response = await fetch('/api/plan-catalog', { headers: { Accept: 'application/json' } });
+    const response = await fetch('/api/plan-catalog?v=6', { headers: { Accept: 'application/json' } });
     const data = await response.json().catch(() => null);
     if (!response.ok || !data?.ok) throw new Error(data?.message || 'Current plan pricing could not be loaded.');
     planCatalog = data.catalog;
