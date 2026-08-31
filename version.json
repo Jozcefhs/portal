@@ -1,7 +1,7 @@
 {
-  "version": "3.1.0",
+  "version": "3.1.1",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup.exe",
-  "sha256": "099589a6356a2256e8749b181e56381e38a2001dc734b45187ebd168422b4afc",
-  "notes": "Dynamax Desktop v3.1.0 delivers the expanded School academic-management and local-CBT workflow, including curricula, timetables, attendance, scorebook, results, promotions, transcripts, supervised offline CBT for Android and Windows, personal student login, student fee lookup and reduced finance backend requests. Edition, workspace, branch and school-section boundaries remain enforced."
+  "installer_url": "https://github.com/Jozcefhs/Dynamax-Desktop/releases/download/v3.1.1/Dynamax_Setup_v3.1.1.exe",
+  "sha256": "f69403963db1adb3426aa8f782b83729197470055cdaae58bab4e88c7432f1fd",
+  "notes": "Dynamax Desktop v3.1.1 improves the local CBT server for large candidate groups, adds friendly joining names, device monitoring and safer single-session enforcement, and streamlines exam scheduling, answer review, fee setup, parent onboarding and responsive desktop workflows. It also enforces subscription module entitlements, includes Bulk Email for Front Desk defaults and completes the canonical Church offering approval actions."
 }
