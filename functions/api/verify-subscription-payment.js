@@ -11,6 +11,7 @@ import {
 
 const clean = (value) => String(value ?? '').trim();
 const safeId = (value) => clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140);
+const PAYSTACK_SUBSCRIPTION_URL = 'https://api.paystack.co/subscription';
 
 function withoutFirestoreMetadata(document = {}) {
   const value = { ...document };
@@ -62,6 +63,36 @@ export async function disablePaystackSubscription(env, subscriptionCode, fetchIm
   return { disabled: true };
 }
 
+export async function createScheduledPaystackSubscription(env, options = {}, fetchImpl = fetch) {
+  const customer = clean(options.customerCode);
+  const plan = clean(options.planCode);
+  const authorization = clean(options.authorizationCode);
+  const startMilliseconds = Date.parse(clean(options.startDate));
+  if (!clean(env.PAYSTACK_SECRET_KEY) || !customer || !plan || !authorization || !Number.isFinite(startMilliseconds)) {
+    throw new Error('The future Paystack renewal could not be scheduled because its payment authorization or renewal details are incomplete.');
+  }
+  const response = await fetchImpl(PAYSTACK_SUBSCRIPTION_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${env.PAYSTACK_SECRET_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      customer,
+      plan,
+      authorization,
+      start_date: new Date(startMilliseconds).toISOString()
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  const subscriptionCode = clean(data.data?.subscription_code);
+  if (!response.ok || data.status === false || !subscriptionCode) {
+    throw new Error(data.message || 'Paystack could not schedule the new recurring Flex price.');
+  }
+  return {
+    subscriptionCode,
+    emailToken: clean(data.data?.email_token),
+    startDate: new Date(startMilliseconds).toISOString()
+  };
+}
+
 export async function activateSavedSubscriptionPayment(env, options = {}) {
   const platformEnv = options.platformEnv || requirePlatformFirestoreEnv(env);
   const reference = safeId(options.reference);
@@ -99,7 +130,25 @@ export async function activateSavedSubscriptionPayment(env, options = {}) {
   const paystack = provider.toLowerCase() === 'paystack';
   const paidAt = clean(options.paidAt) || new Date().toISOString();
   const updatedAt = new Date().toISOString();
-  const recoveryFields = paidSubscriptionRecoveryFields({
+  const preservedPaidThroughAt = clean(intent.PreservePaidThroughAt);
+  const preservePaidPeriod = intent.PaymentAdjustment?.Type === 'FlexProration'
+    && Number.isFinite(Date.parse(preservedPaidThroughAt));
+  const preservedPeriodExpired = preservePaidPeriod
+    && Date.parse(preservedPaidThroughAt) <= Date.parse(paidAt);
+  const recoveryFields = preservePaidPeriod ? {
+    SubscriptionStatus: preservedPeriodExpired ? 'Payment Grace' : 'Active',
+    PaymentStatus: 'Paid',
+    LifecycleStage: preservedPeriodExpired ? 'Payment Grace' : 'Active',
+    PaidAt: clean(registration.PaidAt || registration.LastSuccessfulPaymentAt),
+    LastSuccessfulPaymentAt: clean(registration.LastSuccessfulPaymentAt || registration.PaidAt),
+    PaidThroughAt: preservedPaidThroughAt,
+    RenewalDueAt: preservedPaidThroughAt,
+    LastUpgradePaymentAt: paidAt,
+    GracePeriodStartedAt: '',
+    GracePeriodEndsAt: '',
+    DataRetentionEndsAt: '',
+    ExpiredPaidThroughAt: ''
+  } : paidSubscriptionRecoveryFields({
     paidAt,
     billingCycle: clean(intent.BillingCycle),
     providerPaidThroughAt: clean(options.providerPaidThroughAt)
@@ -115,7 +164,7 @@ export async function activateSavedSubscriptionPayment(env, options = {}) {
     FeatureEntitlements: intent.FeatureEntitlements || registration.FeatureEntitlements || [],
     PriceSnapshot: intent.PriceSnapshot || registration.PriceSnapshot || null,
     PlanCatalogRevision: clean(intent.PlanCatalogRevision || registration.PlanCatalogRevision),
-    Price: Number(intent.Amount || 0),
+    Price: Number(intent.FullCycleAmount || intent.Amount || 0),
     Currency: clean(intent.Currency || 'NGN'),
     ...recoveryFields,
     Status: 'Payment Confirmed',
@@ -125,6 +174,7 @@ export async function activateSavedSubscriptionPayment(env, options = {}) {
     PendingPlan: '',
     PendingBillingCycle: '',
     PendingPrice: 0,
+    PendingChargeAmount: 0,
     PendingUserLimit: 0,
     PendingFeatureEntitlements: [],
     PendingPriceSnapshot: null,
@@ -133,12 +183,14 @@ export async function activateSavedSubscriptionPayment(env, options = {}) {
     PendingAuthorizationUrl: '',
     PendingPaymentMethod: '',
     PendingDirectTransferReference: '',
-    AutoRenewalEnabled: paystack,
+    AutoRenewalEnabled: paystack && Boolean(clean(providerFields.PaystackSubscriptionCode)),
     ...(paystack ? {
       PaystackReference: reference,
       PaystackPlanCode: clean(intent.PaystackPlanCode),
       PaystackCustomerCode: clean(providerFields.PaystackCustomerCode),
       PaystackSubscriptionCode: clean(providerFields.PaystackSubscriptionCode),
+      PaystackSubscriptionEmailToken: clean(providerFields.PaystackSubscriptionEmailToken),
+      PaystackSubscriptionStartsAt: clean(providerFields.PaystackSubscriptionStartsAt),
       DirectTransferReference: ''
     } : {
       DirectTransferReference: reference,
@@ -239,8 +291,28 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
     throw error;
   }
   const customerCode = clean(transaction.customer?.customer_code);
-  const subscriptionCode = clean(transaction.subscription_code || transaction.subscription?.subscription_code);
+  let subscriptionCode = clean(transaction.subscription_code || transaction.subscription?.subscription_code);
+  let subscriptionEmailToken = '';
+  let subscriptionStartsAt = '';
+  let recurringScheduleWarning = '';
   const paidAt = clean(transaction.paid_at || transaction.paidAt) || new Date().toISOString();
+  if (intent.PaymentAdjustment?.Type === 'FlexProration') {
+    try {
+      const scheduled = await createScheduledPaystackSubscription(env, {
+        customerCode,
+        planCode: intent.PaystackPlanCode,
+        authorizationCode: transaction.authorization?.authorization_code,
+        startDate: intent.PreservePaidThroughAt
+      });
+      subscriptionCode = scheduled.subscriptionCode;
+      subscriptionEmailToken = scheduled.emailToken;
+      subscriptionStartsAt = scheduled.startDate;
+    } catch (error) {
+      subscriptionCode = clean(savedRegistration.PaystackSubscriptionCode);
+      recurringScheduleWarning = 'Your prorated Flex upgrade is active, but the new recurring price could not be scheduled automatically. Dynamax support must update it before your next renewal date.';
+      intent.RecurringPlanScheduleError = clean(error.message || error).slice(0, 500);
+    }
+  }
   const result = await activateSavedSubscriptionPayment(env, {
     platformEnv,
     reference,
@@ -253,7 +325,10 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
     providerFields: {
       PaystackTransactionId: clean(transaction.id),
       PaystackCustomerCode: customerCode,
-      PaystackSubscriptionCode: subscriptionCode
+      PaystackSubscriptionCode: subscriptionCode,
+      PaystackSubscriptionEmailToken: subscriptionEmailToken,
+      PaystackSubscriptionStartsAt: subscriptionStartsAt,
+      RecurringPlanScheduleError: clean(intent.RecurringPlanScheduleError)
     }
   });
   const updatedRegistration = result.updatedRegistration;
@@ -275,7 +350,7 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
   return {
     ...result,
     updatedRegistration: undefined,
-    warning: previousSubscriptionWarning,
+    warning: [recurringScheduleWarning, previousSubscriptionWarning].filter(Boolean).join(' '),
   };
 }
 

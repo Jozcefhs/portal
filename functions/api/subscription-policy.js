@@ -19,6 +19,8 @@ function publicPolicy(row = {}) {
     TrialStartedAt: clean(row.TrialStartedAt),
     TrialEndsAt: clean(row.TrialEndsAt),
     LifecycleStage: clean(row.LifecycleStage),
+    PaidAt: clean(row.PaidAt),
+    LastSuccessfulPaymentAt: clean(row.LastSuccessfulPaymentAt || row.PaidAt),
     PaidThroughAt: clean(row.PaidThroughAt),
     RenewalDueAt: clean(row.RenewalDueAt || row.PaidThroughAt),
     GracePeriodEndsAt: clean(row.GracePeriodEndsAt),

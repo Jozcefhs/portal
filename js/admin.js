@@ -1122,10 +1122,49 @@ function staffFlexQuote() {
   const selectedModules = staffFlexModules().filter((module) => subscriptionFlexModules.has(module.Key));
   const moduleAmount = selectedModules.reduce((sum, module) => sum + Number(plan?.ModulePricesByEdition?.[edition]?.[module.Key]?.[amountKey] || 0), 0);
   const extraRate = Number(subscriptionCycle === 'yearly' ? plan?.AdditionalUserYearlyAmount : plan?.AdditionalUserMonthlyAmount) || 0;
+  const fullAmount = Number(plan?.[amountKey] || 0) + moduleAmount + (Math.max(0, userLimit - included) * extraRate);
+  const policy = subscriptionData?.policy || {};
+  const currentModules = new Set(Array.isArray(policy.FeatureEntitlements) ? policy.FeatureEntitlements : []);
+  const targetModules = new Set(selectedModules.map((module) => module.Key));
+  const addedModules = [...targetModules].filter((key) => !currentModules.has(key));
+  const removedModules = [...currentModules].filter((key) => !targetModules.has(key));
+  const currentUserLimit = Math.max(1, Number(policy.UserLimit || 1));
+  const addedUsers = Math.max(0, userLimit - currentUserLimit);
+  const removedUsers = Math.max(0, currentUserLimit - userLimit);
+  const currentFlex = clean(policy.Plan) === 'Flex';
+  const sameCycle = clean(policy.BillingCycle || 'monthly').toLowerCase() === subscriptionCycle;
+  const renewalRequired = /payment grace|payment failed|past due|suspended|expired/i.test(`${clean(policy.SubscriptionStatus)} ${clean(policy.LifecycleStage)}`);
+  const increaseOnly = currentFlex && (addedModules.length > 0 || addedUsers > 0) && !removedModules.length && !removedUsers;
+  let amount = fullAmount;
+  let prorated = false;
+  let prorationUnavailable = false;
+  if (increaseOnly && sameCycle && !renewalRequired) {
+    const currentAmount = Number(policy.PriceSnapshot?.TotalAmount || policy.Price || 0);
+    const startMs = Date.parse(clean(policy.LastSuccessfulPaymentAt || policy.PaidAt));
+    const endMs = Date.parse(clean(policy.PaidThroughAt || policy.RenewalDueAt));
+    const nowMs = Date.now();
+    if (fullAmount > currentAmount && currentAmount > 0 && Number.isFinite(startMs)
+        && Number.isFinite(endMs) && endMs > startMs && nowMs < endMs) {
+      const remainingFraction = (endMs - Math.max(startMs, nowMs)) / (endMs - startMs);
+      amount = Math.round((fullAmount - currentAmount) * remainingFraction * 100) / 100;
+      prorated = amount > 0;
+      prorationUnavailable = !prorated;
+    } else {
+      prorationUnavailable = true;
+    }
+  }
   return {
-    amount: Number(plan?.[amountKey] || 0) + moduleAmount + (Math.max(0, userLimit - included) * extraRate),
+    amount,
+    fullAmount,
     userLimit,
-    selectedModules
+    selectedModules,
+    addedModules,
+    removedModules,
+    addedUsers,
+    removedUsers,
+    reduced: currentFlex && (removedModules.length > 0 || removedUsers > 0),
+    prorated,
+    prorationUnavailable
   };
 }
 
@@ -1154,12 +1193,21 @@ function renderStaffSubscription() {
     const flexChanged = flex && (Number(policy.UserLimit || 0) !== Number(flexQuote.userLimit)
       || JSON.stringify(policy.FeatureEntitlements || []) !== JSON.stringify(flexQuote.selectedModules.map((module) => module.Key)));
     const currentChoice = samePlan && subscriptionCycle === currentCycle && !renewalRequired && (!flex || !flexChanged);
-    const unavailable = plan.Active === false || clean(plan.Name) === 'Free' || lowerPlan || currentChoice || !(Number(amount) > 0) || (flex && !flexQuote.selectedModules.length);
+    const unavailable = plan.Active === false || clean(plan.Name) === 'Free' || lowerPlan || currentChoice || !(Number(amount) > 0)
+      || (flex && (!flexQuote.selectedModules.length || flexQuote.reduced || flexQuote.prorationUnavailable));
     const features = plan.FeaturesByEdition?.[edition] || [];
-    const label = currentChoice ? 'Current plan' : lowerPlan ? 'Contact support to downgrade' : flex && samePlan ? 'Save new Flex selection' : flex ? 'Choose this Flex plan' : samePlan && renewalRequired && subscriptionCycle === currentCycle ? `Renew ${plan.Name}` : samePlan ? `Switch to ${subscriptionCycle}` : `Upgrade to ${plan.Name}`;
+    const label = currentChoice ? 'Current plan'
+      : lowerPlan ? 'Contact support to downgrade'
+        : flexQuote?.reduced ? 'Contact support to reduce Flex'
+          : flexQuote?.prorationUnavailable ? 'Contact support to calculate upgrade'
+            : flex && samePlan ? 'Save Flex upgrade'
+              : flex ? 'Choose this Flex plan'
+                : samePlan && renewalRequired && subscriptionCycle === currentCycle ? `Renew ${plan.Name}`
+                  : samePlan ? `Switch to ${subscriptionCycle}` : `Upgrade to ${plan.Name}`;
     return `<article class="staff-subscription-plan ${currentChoice ? 'current' : ''}">
       <header><div><small>${escapeHtml(plan.Summary || '')}</small><h3>${escapeHtml(plan.Name)}</h3></div>${currentChoice ? '<span>Current</span>' : ''}</header>
-      <p class="subscription-price"><strong>${escapeHtml(subscriptionMoney(amount, catalog.Currency))}</strong><span>/${subscriptionCycle === 'yearly' ? 'year' : 'month'}</span></p>
+      <p class="subscription-price"><strong>${escapeHtml(subscriptionMoney(amount, catalog.Currency))}</strong><span>${flexQuote?.prorated ? ' prorated due now' : `/${subscriptionCycle === 'yearly' ? 'year' : 'month'}`}</span></p>
+      ${flexQuote?.prorated ? `<small class="subscription-more">Full renewal price: ${escapeHtml(subscriptionMoney(flexQuote.fullAmount, catalog.Currency))}/${subscriptionCycle === 'yearly' ? 'year' : 'month'} on the existing renewal date.</small>` : ''}
       <p class="subscription-seat-limit">Up to ${escapeHtml(plan.UserLimit)} active users</p>
       ${flex ? `<div class="staff-flex-builder"><label>Active users<input type="number" min="1" max="${escapeHtml(plan.UserLimit)}" step="1" value="${escapeHtml(flexQuote.userLimit)}" data-staff-flex-users></label><div>${staffFlexModules().map((module) => `<label><input type="checkbox" data-staff-flex-module="${escapeHtml(module.Key)}" ${subscriptionFlexModules.has(module.Key) ? 'checked' : ''}><span>${escapeHtml(module.Label)}</span></label>`).join('')}</div></div>` : `<ul>${features.slice(0, 7).map((feature) => `<li>${escapeHtml(feature)}</li>`).join('')}</ul>`}
       ${features.length > 7 ? `<small class="subscription-more">+${features.length - 7} more included features</small>` : ''}
@@ -1195,6 +1243,8 @@ async function startSubscriptionUpgrade(plan, button) {
     const planEntry = subscriptionData?.catalog?.Plans?.find((entry) => clean(entry.Name) === clean(plan));
     const flexQuote = clean(plan) === 'Flex' ? staffFlexQuote() : null;
     if (flexQuote && !flexQuote.selectedModules.length) throw new Error('Choose at least one Flex module.');
+    if (flexQuote?.reduced) throw new Error('Reducing Flex users or removing modules requires assistance from Dynamax support.');
+    if (flexQuote?.prorationUnavailable) throw new Error('This Flex upgrade needs support to calculate the remaining-period charge.');
     const amount = flexQuote
       ? Number(flexQuote.amount || 0)
       : subscriptionCycle === 'yearly'
@@ -1203,7 +1253,11 @@ async function startSubscriptionUpgrade(plan, button) {
     const paymentChoice = await window.DynamaxPaymentMethods.choose({
       methodsUrl: '/api/platform-payment-methods',
       amount,
-      currency: subscriptionData?.catalog?.Currency || 'NGN'
+      currency: subscriptionData?.catalog?.Currency || 'NGN',
+      allowDirectTransfer: !flexQuote?.prorated,
+      onlineDescription: flexQuote?.prorated
+        ? 'Card payment for the prorated upgrade. The new recurring price starts on your existing renewal date.'
+        : undefined
     });
     if (!paymentChoice) return;
     const loadingLabel = paymentChoice.paymentMethod === 'direct_bank_transfer' ? 'Submitting transfer...' : 'Opening Paystack...';

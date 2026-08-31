@@ -8,7 +8,11 @@ import {
   readJsonBody
 } from '../lib/request-security.js';
 import { normalizeBillingCycle, normalizeSubscriptionPlan, normalizeSubscriptionPlanCatalog, subscriptionFlexQuote } from '../lib/subscription-plans.js';
-import { subscriptionChangeDecision } from '../lib/subscription-upgrade.js';
+import {
+  flexConfigurationChange,
+  proratedFlexUpgrade,
+  subscriptionChangeDecision
+} from '../lib/subscription-upgrade.js';
 import { initializeSubscriptionCheckout } from './register-organization.js';
 
 const clean = (value) => String(value ?? '').trim();
@@ -58,10 +62,23 @@ export async function onRequestPost({ request, env }) {
     const flexQuote = plan === 'Flex'
       ? subscriptionFlexQuote(catalog, registration.Edition, body.flexModules, body.flexUserLimit, billingCycle)
       : null;
-    const flexConfigurationChanged = Boolean(flexQuote && (
-      Number(registration.UserLimit || 0) !== Number(flexQuote.UserLimit)
-      || JSON.stringify(registration.FeatureEntitlements || []) !== JSON.stringify(flexQuote.FeatureEntitlements)
-    ));
+    const currentPlan = normalizeSubscriptionPlan(registration.Plan);
+    const currentCycle = normalizeBillingCycle(registration.BillingCycle);
+    const flexChange = currentPlan === 'Flex' && flexQuote
+      ? flexConfigurationChange(
+        { modules: registration.FeatureEntitlements, userLimit: registration.UserLimit },
+        { modules: flexQuote.FeatureEntitlements, userLimit: flexQuote.UserLimit }
+      )
+      : null;
+    if (flexChange?.reduced) {
+      const error = new Error('Reducing Flex users or removing modules requires assistance from Dynamax support. Your current access has not been changed.');
+      error.status = 409;
+      throw error;
+    }
+    const flexConfigurationChanged = Boolean(flexQuote && (flexChange
+      ? flexChange.changed
+      : Number(registration.UserLimit || 0) !== Number(flexQuote.UserLimit)
+        || JSON.stringify(registration.FeatureEntitlements || []) !== JSON.stringify(flexQuote.FeatureEntitlements)));
     const renewalRequired = /payment grace|payment failed|past due|suspended|expired/i.test(
       `${clean(registration.SubscriptionStatus)} ${clean(registration.LifecycleStage)}`
     );
@@ -73,6 +90,22 @@ export async function onRequestPost({ request, env }) {
       { allowRenewal: renewalRequired, configurationChanged: flexConfigurationChanged }
     );
     if (!decision.allowed) { const error = new Error(decision.reason); error.status = 409; throw error; }
+    let paymentAdjustment = null;
+    if (currentPlan === 'Flex' && plan === 'Flex' && currentCycle === billingCycle
+        && !renewalRequired && flexChange?.increased) {
+      try {
+        paymentAdjustment = proratedFlexUpgrade({
+          currentAmount: Number(registration.PriceSnapshot?.TotalAmount || registration.Price || 0),
+          targetAmount: flexQuote.Amount,
+          periodStartAt: registration.LastSuccessfulPaymentAt || registration.PaidAt,
+          paidThroughAt: registration.PaidThroughAt || registration.RenewalDueAt
+        });
+      } catch (cause) {
+        const error = new Error(`${cause.message} Contact Dynamax support to complete this Flex upgrade.`);
+        error.status = 409;
+        throw error;
+      }
+    }
     const checkout = await initializeSubscriptionCheckout({
       request,
       env,
@@ -85,7 +118,8 @@ export async function onRequestPost({ request, env }) {
       paymentMethod: body.paymentMethod,
       paymentEvidence: body,
       flexModules: Array.isArray(body.flexModules) ? body.flexModules : [],
-      flexUserLimit: Number(body.flexUserLimit || 0)
+      flexUserLimit: Number(body.flexUserLimit || 0),
+      paymentAdjustment
     });
     if (!checkout?.authorizationUrl && !checkout?.directTransfer) {
       const error = new Error('This subscription change does not have an available payment route.');

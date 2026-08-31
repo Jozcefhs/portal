@@ -216,7 +216,8 @@ export async function initializeSubscriptionCheckout({
   paymentMethod = 'paystack',
   paymentEvidence = {},
   flexModules = [],
-  flexUserLimit = 0
+  flexUserLimit = 0,
+  paymentAdjustment = null
 }) {
   const planEntry = catalog.Plans[plan];
   if (!planEntry.Active) {
@@ -316,10 +317,21 @@ export async function initializeSubscriptionCheckout({
     throw error;
   }
   const selection = subscriptionSelection(catalog, plan, clean(registration.Edition), billingCycle, flexModules, flexUserLimit);
-  const amount = selection.Amount;
+  const fullCycleAmount = Number(selection.Amount || 0);
+  const adjustment = paymentAdjustment?.Type === 'FlexProration' ? { ...paymentAdjustment } : null;
+  if (adjustment && (!preserveActivePlan || plan !== 'Flex'
+      || Math.abs(Number(adjustment.FullCycleAmount || 0) - fullCycleAmount) > 0.01
+      || !(Number(adjustment.ChargeAmount || 0) > 0))) {
+    const error = new Error('The Flex upgrade price adjustment is invalid.');
+    error.status = 409;
+    throw error;
+  }
+  const amount = adjustment ? Number(adjustment.ChargeAmount) : fullCycleAmount;
   const selectedUserLimit = selection.UserLimit;
   const selectedEntitlements = selection.FeatureEntitlements;
-  const priceSnapshot = selection.PriceSnapshot;
+  const priceSnapshot = adjustment
+    ? { ...selection.PriceSnapshot, LastUpgradeCharge: adjustment }
+    : selection.PriceSnapshot;
   if (!(amount > 0)) {
     await upsertDocument(platformEnv, 'tenantRegistrations', clean(registration.Reference || registration.__id), {
       ...withoutFirestoreMetadata(registration),
@@ -338,6 +350,11 @@ export async function initializeSubscriptionCheckout({
     return null;
   }
   const selectedPaymentMethod = normalizeSubscriptionPaymentMethod(paymentMethod);
+  if (adjustment && selectedPaymentMethod === 'direct_bank_transfer') {
+    const error = new Error('Prorated Flex upgrades must be paid online by card so the new recurring price can begin on the existing renewal date.');
+    error.status = 409;
+    throw error;
+  }
   const availableMethods = await publicPlatformPaymentMethods(env);
   if (selectedPaymentMethod === 'direct_bank_transfer') {
     const directTransfer = availableMethods.directTransfer || {};
@@ -466,7 +483,7 @@ export async function initializeSubscriptionCheckout({
   const reusableReference = clean(registration.PendingPaystackReference || registration.PaystackReference);
   if (clean(preserveActivePlan ? registration.PendingPlan || registration.Plan : registration.Plan) === plan
     && clean(preserveActivePlan ? registration.PendingBillingCycle || registration.BillingCycle : registration.BillingCycle) === billingCycle
-    && Number(preserveActivePlan ? registration.PendingPrice : registration.Price) === Number(amount)
+    && Number(preserveActivePlan ? registration.PendingChargeAmount || registration.PendingPrice : registration.Price) === Number(amount)
     && JSON.stringify(preserveActivePlan ? registration.PendingFeatureEntitlements || [] : registration.FeatureEntitlements || []) === JSON.stringify(selectedEntitlements)
     && reusableAuthorizationUrl
     && reusableReference
@@ -487,6 +504,8 @@ export async function initializeSubscriptionCheckout({
     plan,
     billingCycle,
     expectedAmount: amount,
+    fullCycleAmount,
+    changeType: adjustment?.Type || '',
     edition: clean(registration.Edition)
   };
   await upsertDocument(platformEnv, 'subscriptionPayments', reference, {
@@ -496,11 +515,14 @@ export async function initializeSubscriptionCheckout({
     Plan: plan,
     BillingCycle: billingCycle,
     Amount: amount,
+    FullCycleAmount: fullCycleAmount,
     Currency: catalog.Currency,
     PaystackPlanCode: planCode,
     UserLimit: selectedUserLimit,
     FeatureEntitlements: selectedEntitlements,
     PriceSnapshot: priceSnapshot,
+    PaymentAdjustment: adjustment,
+    PreservePaidThroughAt: clean(adjustment?.PaidThroughAt),
     PlanCatalogRevision: catalog.PolicyRevision,
     PreviousPaystackSubscriptionCode: clean(registration.PaystackSubscriptionCode),
     Status: 'Initializing',
@@ -518,7 +540,7 @@ export async function initializeSubscriptionCheckout({
       amount: String(Math.round(amount * 100)),
       currency: catalog.Currency,
       reference,
-      plan: planCode,
+      ...(adjustment ? { channels: ['card'] } : { plan: planCode }),
       callback_url: callbackUrl.href,
       metadata: JSON.stringify(metadata)
     })
@@ -532,6 +554,7 @@ export async function initializeSubscriptionCheckout({
       Plan: plan,
       BillingCycle: billingCycle,
       Amount: amount,
+      FullCycleAmount: fullCycleAmount,
       Currency: catalog.Currency,
       PaystackPlanCode: planCode,
       Status: 'Initialization Failed',
@@ -557,11 +580,14 @@ export async function initializeSubscriptionCheckout({
       Plan: plan,
       BillingCycle: billingCycle,
       Amount: amount,
+      FullCycleAmount: fullCycleAmount,
       Currency: catalog.Currency,
       PaystackPlanCode: planCode,
       UserLimit: selectedUserLimit,
       FeatureEntitlements: selectedEntitlements,
       PriceSnapshot: priceSnapshot,
+      PaymentAdjustment: adjustment,
+      PreservePaidThroughAt: clean(adjustment?.PaidThroughAt),
       PlanCatalogRevision: catalog.PolicyRevision,
       PreviousPaystackSubscriptionCode: clean(registration.PaystackSubscriptionCode),
       PaystackAccessCode: clean(data.data.access_code),
@@ -574,7 +600,8 @@ export async function initializeSubscriptionCheckout({
       ...withoutFirestoreMetadata(registration),
       PendingPlan: plan,
       PendingBillingCycle: billingCycle,
-      PendingPrice: amount,
+      PendingPrice: fullCycleAmount,
+      PendingChargeAmount: amount,
       PendingUserLimit: selectedUserLimit,
       PendingFeatureEntitlements: selectedEntitlements,
       PendingPriceSnapshot: priceSnapshot,

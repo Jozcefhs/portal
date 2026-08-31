@@ -72,7 +72,8 @@
     const methods = await load(branchId, options.methodsUrl);
     const onlineEnabled = Boolean(methods.online?.enabled);
     const transfer = methods.directTransfer || {};
-    const transferEnabled = Boolean(transfer.enabled) && clean(transfer.currency).toUpperCase() === currency;
+    const transferEnabled = options.allowDirectTransfer !== false
+      && Boolean(transfer.enabled) && clean(transfer.currency).toUpperCase() === currency;
     if (!onlineEnabled && !transferEnabled) {
       throw new Error(transfer.enabled
         ? `Direct transfer is configured for ${transfer.currency}, not ${currency}. No automated online route is currently available.`
@@ -83,7 +84,7 @@
     dialog.innerHTML = `<form method="dialog" class="payment-method-form">
       <header><div><small>Choose payment route</small><h2>How would you like to pay?</h2><p>Only verified payments receive a final receipt.</p></div><button type="button" data-close-payment-method aria-label="Close">&times;</button></header>
       <div class="payment-method-options">
-        <label class="payment-method-option" ${onlineEnabled ? '' : 'hidden'}><input type="radio" name="paymentMethod" value="paystack" ${firstMethod === 'paystack' ? 'checked' : ''}><span><strong>Pay online</strong><small>Card, USSD, Pay with Bank or online bank transfer through Paystack.</small></span></label>
+        <label class="payment-method-option" ${onlineEnabled ? '' : 'hidden'}><input type="radio" name="paymentMethod" value="paystack" ${firstMethod === 'paystack' ? 'checked' : ''}><span><strong>Pay online</strong><small>${escapeHtml(options.onlineDescription || 'Card, USSD, Pay with Bank or online bank transfer through Paystack.')}</small></span></label>
         <label class="payment-method-option" ${transferEnabled ? '' : 'hidden'}><input type="radio" name="paymentMethod" value="direct_bank_transfer" ${firstMethod === 'direct_bank_transfer' ? 'checked' : ''}><span><strong>Direct bank transfer</strong><small>Transfer without Paystack, then submit your bank reference for verification.</small></span></label>
       </div>
       <section class="direct-transfer-panel" data-direct-transfer-panel hidden>

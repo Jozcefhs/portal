@@ -84,7 +84,8 @@ async function registrationForSubscription(platformEnv, data = {}) {
     filters: [{ field: 'Email', op: '==', value: email }],
     limit: 10
   }).catch(() => []);
-  return rows.find((row) => !planCode || clean(row.PaystackPlanCode) === planCode) || null;
+  return rows.find((row) => !planCode || [row.PaystackPlanCode, row.PendingPaystackPlanCode]
+    .some((savedCode) => clean(savedCode) === planCode)) || null;
 }
 
 async function updateSubscriptionStatus(env, platformEnv, event, data) {
@@ -102,7 +103,7 @@ async function updateSubscriptionStatus(env, platformEnv, event, data) {
   const normalizedEvent = clean(event).toLowerCase();
   const providerStatus = clean(data.status || data.subscription?.status).toLowerCase();
   const successful = ['active', 'success', 'complete', 'completed'].includes(providerStatus)
-    && ['subscription.create', 'invoice.update'].includes(normalizedEvent);
+    && normalizedEvent === 'invoice.update';
   const eventAt = new Date().toISOString();
   let lifecycleFields = {};
   if (successful) {
@@ -115,6 +116,12 @@ async function updateSubscriptionStatus(env, platformEnv, event, data) {
       }),
       Status: 'Payment Confirmed',
       AutoRenewalEnabled: true
+    };
+  } else if (normalizedEvent === 'subscription.create') {
+    lifecycleFields = {
+      AutoRenewalEnabled: true,
+      SubscriptionStatus: clean(registration.SubscriptionStatus || 'Active'),
+      Status: clean(registration.Status || 'Payment Confirmed')
     };
   } else if (normalizedEvent === 'invoice.payment_failed') {
     const paidThroughAt = clean(registration.PaidThroughAt || registration.RenewalDueAt) || eventAt;
