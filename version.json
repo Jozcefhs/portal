@@ -1,7 +1,7 @@
 {
   "version": "3.1.1",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/Dynamax-Desktop/releases/download/v3.1.1/Dynamax_Setup_v3.1.1.exe",
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup.exe",
   "sha256": "f69403963db1adb3426aa8f782b83729197470055cdaae58bab4e88c7432f1fd",
   "notes": "Dynamax Desktop v3.1.1 improves the local CBT server for large candidate groups, adds friendly joining names, device monitoring and safer single-session enforcement, and streamlines exam scheduling, answer review, fee setup, parent onboarding and responsive desktop workflows. It also enforces subscription module entitlements, includes Bulk Email for Front Desk defaults and completes the canonical Church offering approval actions."
 }
