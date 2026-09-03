@@ -14346,6 +14346,8 @@ async function requestHotelServices(payload = null) {
   return data;
 }
 
+let hotelServicesView = 'reservations';
+
 function hotelReservationOptions(reservations = []) {
   return reservations
     .filter((row) => ['Reserved', 'Checked In'].includes(clean(row.Status)))
@@ -14358,10 +14360,22 @@ function hotelStatusActions(row, capabilities = {}) {
   const id = escapeHtml(pick(row, ['ReservationId', '__id']));
   const status = clean(row.Status);
   if (status === 'Reserved') {
-    return `<span class="compact-row-actions"><button type="button" data-hotel-reservation-status="Checked In" data-reservation-id="${id}">Check in</button><button type="button" class="secondary" data-hotel-reservation-status="Cancelled" data-reservation-id="${id}">Cancel</button><button type="button" class="secondary" data-hotel-reservation-status="No Show" data-reservation-id="${id}">No show</button></span>`;
+    const paymentDue = Number(row.Balance || 0) > 0.005;
+    return `<span class="compact-row-actions"><button type="button" data-hotel-reservation-status="Checked In" data-reservation-id="${id}" ${paymentDue ? 'disabled title="Full payment is required before check-in."' : ''}>${paymentDue ? 'Payment required' : 'Check in'}</button><button type="button" class="secondary" data-hotel-reservation-status="Cancelled" data-reservation-id="${id}">Cancel</button><button type="button" class="secondary" data-hotel-reservation-status="No Show" data-reservation-id="${id}">No show</button></span>`;
   }
   if (status === 'Checked In') return `<button type="button" data-hotel-reservation-status="Checked Out" data-reservation-id="${id}">Check out</button>`;
   return '<span class="muted">Locked</span>';
+}
+
+function showHotelSelfServiceQr(selfService = {}) {
+  const bookingUrl = clean(selfService.bookingUrl || selfService.paymentLink);
+  if (!bookingUrl || !selfService.qrSvg) return;
+  const viewer = window.open('', '_blank', 'width=680,height=820');
+  if (!viewer) throw new Error('Allow pop-ups to open the printable hotel booking QR.');
+  viewer.opener = null;
+  viewer.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Hotel booking QR</title><style>
+    @page{size:A5;margin:12mm}*{box-sizing:border-box}body{margin:0;background:#edf3f8;color:#17314b;font:15px/1.5 Arial,sans-serif}.sheet{max-width:560px;margin:24px auto;padding:30px;border-top:7px solid #07846d;border-radius:16px;background:#fff;box-shadow:0 14px 35px #173b5820;text-align:center}.eyebrow{margin:0;color:#07846d;font-size:12px;font-weight:bold;letter-spacing:1.3px;text-transform:uppercase}h1{margin:5px 0 4px;color:#164a78;font-size:25px}.subtitle{margin:0 0 18px;color:#36536e}.qr{width:min(340px,90%);margin:0 auto;padding:12px;border:1px solid #cbd9e7;border-radius:14px;background:#fff}.qr svg{display:block;width:100%;height:auto}.instruction{margin:18px auto 8px;max-width:420px}.address{overflow-wrap:anywhere;color:#637a90;font-size:12px}.actions{display:flex;justify-content:center;gap:8px;margin-top:20px}.actions button,.actions a{display:inline-flex;align-items:center;min-height:40px;padding:8px 14px;border:0;border-radius:8px;background:#1769e0;color:#fff;font-weight:bold;text-decoration:none;cursor:pointer}.actions a{background:#07846d}@media print{body{background:#fff}.sheet{margin:0;box-shadow:none}.actions{display:none}}</style></head><body><main class="sheet"><p class="eyebrow">Reusable hotel self-service</p><h1>${escapeHtml(selfService.organisationName || 'Hotel Services')}</h1><p class="subtitle">Room booking and secure online payment</p><div class="qr">${selfService.qrSvg}</div><p class="instruction">Scan this reusable code to choose an available room, create a reservation and pay securely online.</p><p class="address">${escapeHtml(bookingUrl)}</p><div class="actions"><button type="button" onclick="window.print()">Print QR</button><a href="${escapeHtml(bookingUrl)}" target="_blank" rel="noopener">Open booking page</a></div></main></body></html>`);
+  viewer.document.close();
 }
 
 function renderHotelServices(data = {}) {
@@ -14382,6 +14396,54 @@ function renderHotelServices(data = {}) {
     .map((row) => `<option value="${escapeHtml(pick(row, ['RoomId', '__id']))}" data-rate="${escapeHtml(row.NightlyRate || 0)}">${escapeHtml([row.RoomNumber, row.RoomType, money(row.NightlyRate || 0)].filter(Boolean).join(' · '))}</option>`)
     .join('');
   const reservationOptions = hotelReservationOptions(reservations);
+  const charges = data.charges || [];
+  const selfService = data.selfService || {};
+  const bookingUrl = clean(selfService.bookingUrl || selfService.paymentLink);
+  const roomForm = capabilities.canManageRooms ? `<form id="hotelRoomForm" class="panel compact-form">
+    <h3>Add or update a room</h3>
+    <input type="hidden" name="RoomId">
+    <label>Room number or name<input name="RoomNumber" required></label>
+    <label>Room type<input name="RoomType" value="Standard" required></label>
+    <label>Guest capacity<input name="Capacity" type="number" min="1" step="1" value="2" required></label>
+    <label>Nightly rate<input name="NightlyRate" type="number" min="0" step="0.01" value="0" required data-finance-input></label>
+    <label>Room status<select name="Status"><option>Available</option><option>Occupied</option><option>Cleaning</option><option>Maintenance</option><option>Out of Service</option></select></label>
+    <label>Housekeeping<select name="HousekeepingStatus"><option>Clean</option><option>Dirty</option><option>Cleaning</option><option>Inspected</option><option>Maintenance</option></select></label>
+    <label>Notes<input name="Notes"></label>
+    <button type="submit">Save room</button>
+  </form>` : '<p class="muted">Your role can view rooms but cannot change room setup.</p>';
+  const reservationForm = capabilities.canManageReservations ? `<form id="hotelReservationForm" class="panel compact-form">
+    <h3>New reservation</h3>
+    <input type="hidden" name="ReservationId">
+    <label>Guest name<input name="GuestName" required></label>
+    <label>Phone<input name="GuestPhone" inputmode="tel"></label>
+    <label>Email<input name="GuestEmail" type="email"></label>
+    <label>Room<select name="RoomId" required><option value="">Select room</option>${roomOptions}</select></label>
+    <label>Arrival date<input name="ArrivalDate" type="date" value="${today}" required></label>
+    <label>Departure date<input name="DepartureDate" type="date" value="${tomorrow}" required></label>
+    <label>Adults<input name="Adults" type="number" min="1" step="1" value="1" required></label>
+    <label>Children<input name="Children" type="number" min="0" step="1" value="0"></label>
+    <label>Nightly rate<input name="NightlyRate" type="number" min="0" step="0.01" value="0" required data-finance-input></label>
+    <label>Booking source<input name="Source" value="Direct"></label>
+    <label>Notes<input name="Notes"></label>
+    <button type="submit">Save reservation</button>
+  </form>` : '<p class="muted">Your role can view reservations but cannot create or update them.</p>';
+  const chargeForm = capabilities.canManageReservations ? `<form id="hotelChargeForm" class="panel compact-form">
+    <h3>Add guest charge</h3>
+    <label>Reservation<select name="ReservationId" required><option value="">Select reservation</option>${reservationOptions}</select></label>
+    <label>Description<input name="Description" placeholder="Meals, laundry, conference room..." required></label>
+    <label>Amount<input name="Amount" type="number" min="0.01" step="0.01" required data-finance-input></label>
+    <label>Charge date<input name="ChargeDate" type="date" value="${today}" required></label>
+    <button type="submit">Record charge</button>
+  </form>` : '<p class="muted">Your role can view charges but cannot record them.</p>';
+  const paymentForm = capabilities.canRecordPayments ? `<form id="hotelPaymentForm" class="panel compact-form">
+    <h3>Record guest payment</h3>
+    <label>Reservation<select name="ReservationId" required><option value="">Select reservation</option>${reservationOptions}</select></label>
+    <label>Amount<input name="Amount" type="number" min="0.01" step="0.01" required data-finance-input></label>
+    <label>Method<select name="Method"><option>Cash</option><option>Bank Transfer</option><option>POS</option><option>Online</option></select></label>
+    <label>Reference<input name="Reference" placeholder="Receipt, transfer or POS reference"></label>
+    <label>Payment date<input name="PaymentDate" type="date" value="${today}" required></label>
+    <button type="submit">Record payment</button>
+  </form>` : '<p class="muted">Your role can view payments but cannot record them.</p>';
   renderModuleSummary('hotel', data);
   panelEl.innerHTML = `
     <div class="workflow-intro"><div><p class="eyebrow">Hospitality operations</p><h2>Hotel Services</h2><p class="muted">Manage rooms, guest reservations, check-in and check-out, housekeeping, charges and payments for this branch.</p></div><button type="button" id="refreshHotelServices" class="secondary">Refresh</button></div>
@@ -14392,89 +14454,75 @@ function renderHotelServices(data = {}) {
       <div><strong>${escapeHtml(openStays.length)}</strong><span>Open reservations</span></div>
       <div><strong>${escapeHtml(money(outstanding))}</strong><span>Outstanding guest balance</span></div>
     </div>
-    <div class="department-form-grid">
-      ${capabilities.canManageRooms ? `<form id="hotelRoomForm" class="panel compact-form">
-        <h3>Add or update a room</h3>
-        <input type="hidden" name="RoomId">
-        <label>Room number or name<input name="RoomNumber" required></label>
-        <label>Room type<input name="RoomType" value="Standard" required></label>
-        <label>Guest capacity<input name="Capacity" type="number" min="1" step="1" value="2" required></label>
-        <label>Nightly rate<input name="NightlyRate" type="number" min="0" step="0.01" value="0" required data-finance-input></label>
-        <label>Room status<select name="Status"><option>Available</option><option>Occupied</option><option>Cleaning</option><option>Maintenance</option><option>Out of Service</option></select></label>
-        <label>Housekeeping<select name="HousekeepingStatus"><option>Clean</option><option>Dirty</option><option>Cleaning</option><option>Inspected</option><option>Maintenance</option></select></label>
-        <label>Notes<input name="Notes"></label>
-        <button type="submit">Save room</button>
-      </form>` : ''}
-      ${capabilities.canManageReservations ? `<form id="hotelReservationForm" class="panel compact-form">
-        <h3>New reservation</h3>
-        <input type="hidden" name="ReservationId">
-        <label>Guest name<input name="GuestName" required></label>
-        <label>Phone<input name="GuestPhone" inputmode="tel"></label>
-        <label>Email<input name="GuestEmail" type="email"></label>
-        <label>Room<select name="RoomId" required><option value="">Select room</option>${roomOptions}</select></label>
-        <label>Arrival date<input name="ArrivalDate" type="date" value="${today}" required></label>
-        <label>Departure date<input name="DepartureDate" type="date" value="${tomorrow}" required></label>
-        <label>Adults<input name="Adults" type="number" min="1" step="1" value="1" required></label>
-        <label>Children<input name="Children" type="number" min="0" step="1" value="0"></label>
-        <label>Nightly rate<input name="NightlyRate" type="number" min="0" step="0.01" value="0" required data-finance-input></label>
-        <label>Booking source<input name="Source" value="Direct"></label>
-        <label>Notes<input name="Notes"></label>
-        <button type="submit">Save reservation</button>
-      </form>` : ''}
-      ${capabilities.canManageReservations ? `<form id="hotelChargeForm" class="panel compact-form">
-        <h3>Add guest charge</h3>
-        <label>Reservation<select name="ReservationId" required><option value="">Select reservation</option>${reservationOptions}</select></label>
-        <label>Description<input name="Description" placeholder="Meals, laundry, conference room..." required></label>
-        <label>Amount<input name="Amount" type="number" min="0.01" step="0.01" required data-finance-input></label>
-        <label>Charge date<input name="ChargeDate" type="date" value="${today}" required></label>
-        <button type="submit">Record charge</button>
-      </form>` : ''}
-      ${capabilities.canRecordPayments ? `<form id="hotelPaymentForm" class="panel compact-form">
-        <h3>Record guest payment</h3>
-        <label>Reservation<select name="ReservationId" required><option value="">Select reservation</option>${reservationOptions}</select></label>
-        <label>Amount<input name="Amount" type="number" min="0.01" step="0.01" required data-finance-input></label>
-        <label>Method<select name="Method"><option>Cash</option><option>Bank Transfer</option><option>POS</option><option>Online</option></select></label>
-        <label>Reference<input name="Reference" placeholder="Receipt, transfer or POS reference"></label>
-        <label>Payment date<input name="PaymentDate" type="date" value="${today}" required></label>
-        <button type="submit">Record payment</button>
-      </form>` : ''}
+    <div class="hotel-task-tabs" role="tablist" aria-label="Hotel Services tasks">
+      ${[['reservations', 'Reservations & check-in'], ['rooms', 'Rooms & housekeeping'], ['charges', 'Charges'], ['payments', 'Payments'], ['self-service', 'Self-service QR']].map(([key, label]) => `<button type="button" role="tab" data-hotel-task="${key}" aria-selected="${hotelServicesView === key ? 'true' : 'false'}">${label}</button>`).join('')}
     </div>
     <p id="hotelWorkspaceStatus" class="status" role="status"></p>
-    ${table('Rooms', rooms, [
-      { label: 'Room', value: (row) => pick(row, ['RoomNumber']) },
-      { label: 'Type', value: (row) => pick(row, ['RoomType']) },
-      { label: 'Capacity', value: (row) => pick(row, ['Capacity']) },
-      { label: 'Rate', value: (row) => money(row.NightlyRate || 0) },
-      { label: 'Status', value: (row) => pick(row, ['Status']) },
-      { label: 'Housekeeping', value: (row) => pick(row, ['HousekeepingStatus']) },
-      { label: 'Update', render: (row) => capabilities.canManageRooms ? `<span class="compact-row-actions"><select data-hotel-housekeeping-room="${escapeHtml(pick(row, ['RoomId', '__id']))}"><option${clean(row.HousekeepingStatus) === 'Clean' ? ' selected' : ''}>Clean</option><option${clean(row.HousekeepingStatus) === 'Dirty' ? ' selected' : ''}>Dirty</option><option${clean(row.HousekeepingStatus) === 'Cleaning' ? ' selected' : ''}>Cleaning</option><option${clean(row.HousekeepingStatus) === 'Inspected' ? ' selected' : ''}>Inspected</option><option${clean(row.HousekeepingStatus) === 'Maintenance' ? ' selected' : ''}>Maintenance</option></select><button type="button" data-save-hotel-housekeeping="${escapeHtml(pick(row, ['RoomId', '__id']))}">Save</button><button type="button" class="secondary" data-edit-hotel-room="${escapeHtml(pick(row, ['RoomId', '__id']))}">Edit</button></span>` : '' }
-    ], { emptyMessage: 'No hotel rooms have been configured for this branch.' })}
-    ${table('Reservations and stays', reservations, [
-      { label: 'Guest', value: (row) => pick(row, ['GuestName']) },
-      { label: 'Room', value: (row) => pick(row, ['RoomNumber', 'RoomId']) },
-      { label: 'Stay', value: (row) => `${pick(row, ['ArrivalDate'])} to ${pick(row, ['DepartureDate'])}` },
-      { label: 'Status', value: (row) => pick(row, ['Status']) },
-      { label: 'Total', value: (row) => money(row.TotalAmount || 0) },
-      { label: 'Paid', value: (row) => money(row.AmountPaid || 0) },
-      { label: 'Balance', render: (row) => `<strong>${escapeHtml(money(row.Balance || 0))}</strong>` },
-      { label: 'Actions', render: (row) => hotelStatusActions(row, capabilities) }
-    ], { emptyMessage: 'No hotel reservations have been recorded.' })}
-    ${table('Recent guest payments', payments.slice(0, 100), [
-      { label: 'Date', value: (row) => pick(row, ['PaymentDate', 'CreatedAt']) },
-      { label: 'Guest', value: (row) => pick(row, ['GuestName']) },
-      { label: 'Method', value: (row) => pick(row, ['Method']) },
-      { label: 'Reference', value: (row) => pick(row, ['Reference']) },
-      { label: 'Amount', value: (row) => money(row.Amount || 0) }
-    ], { emptyMessage: 'No guest payments have been recorded.' })}
-    ${table('Housekeeping activity', housekeeping.slice(0, 100), [
-      { label: 'Room', value: (row) => pick(row, ['RoomNumber', 'RoomId']) },
-      { label: 'Status', value: (row) => pick(row, ['Status']) },
-      { label: 'Recorded', value: (row) => pick(row, ['CreatedAt']) },
-      { label: 'By', value: (row) => pick(row, ['CreatedBy']) },
-      { label: 'Notes', value: (row) => pick(row, ['Notes']) }
-    ], { emptyMessage: 'No housekeeping updates have been recorded.' })}`;
+    <section class="hotel-task-panel" role="tabpanel" data-hotel-task-panel="reservations" ${hotelServicesView === 'reservations' ? '' : 'hidden'}>
+      ${reservationForm}
+      ${table('Reservations and stays', reservations, [
+        { label: 'Guest', value: (row) => pick(row, ['GuestName']) }, { label: 'Room', value: (row) => pick(row, ['RoomNumber', 'RoomId']) },
+        { label: 'Stay', value: (row) => `${pick(row, ['ArrivalDate'])} to ${pick(row, ['DepartureDate'])}` }, { label: 'Status', value: (row) => pick(row, ['Status']) },
+        { label: 'Total', value: (row) => money(row.TotalAmount || 0) }, { label: 'Paid', value: (row) => money(row.AmountPaid || 0) },
+        { label: 'Balance', render: (row) => `<strong>${escapeHtml(money(row.Balance || 0))}</strong>` }, { label: 'Actions', render: (row) => hotelStatusActions(row, capabilities) }
+      ], { emptyMessage: 'No hotel reservations have been recorded.' })}
+    </section>
+    <section class="hotel-task-panel" role="tabpanel" data-hotel-task-panel="rooms" ${hotelServicesView === 'rooms' ? '' : 'hidden'}>
+      ${roomForm}
+      ${table('Rooms', rooms, [
+        { label: 'Room', value: (row) => pick(row, ['RoomNumber']) }, { label: 'Type', value: (row) => pick(row, ['RoomType']) },
+        { label: 'Capacity', value: (row) => pick(row, ['Capacity']) }, { label: 'Rate', value: (row) => money(row.NightlyRate || 0) },
+        { label: 'Status', value: (row) => pick(row, ['Status']) }, { label: 'Housekeeping', value: (row) => pick(row, ['HousekeepingStatus']) },
+        { label: 'Update', render: (row) => capabilities.canManageRooms ? `<span class="compact-row-actions"><select data-hotel-housekeeping-room="${escapeHtml(pick(row, ['RoomId', '__id']))}"><option${clean(row.HousekeepingStatus) === 'Clean' ? ' selected' : ''}>Clean</option><option${clean(row.HousekeepingStatus) === 'Dirty' ? ' selected' : ''}>Dirty</option><option${clean(row.HousekeepingStatus) === 'Cleaning' ? ' selected' : ''}>Cleaning</option><option${clean(row.HousekeepingStatus) === 'Inspected' ? ' selected' : ''}>Inspected</option><option${clean(row.HousekeepingStatus) === 'Maintenance' ? ' selected' : ''}>Maintenance</option></select><button type="button" data-save-hotel-housekeeping="${escapeHtml(pick(row, ['RoomId', '__id']))}">Save</button><button type="button" class="secondary" data-edit-hotel-room="${escapeHtml(pick(row, ['RoomId', '__id']))}">Edit</button></span>` : '' }
+      ], { emptyMessage: 'No hotel rooms have been configured for this branch.' })}
+      ${table('Housekeeping activity', housekeeping.slice(0, 100), [
+        { label: 'Room', value: (row) => pick(row, ['RoomNumber', 'RoomId']) }, { label: 'Status', value: (row) => pick(row, ['Status']) },
+        { label: 'Recorded', value: (row) => pick(row, ['CreatedAt']) }, { label: 'By', value: (row) => pick(row, ['CreatedBy']) }, { label: 'Notes', value: (row) => pick(row, ['Notes']) }
+      ], { emptyMessage: 'No housekeeping updates have been recorded.' })}
+    </section>
+    <section class="hotel-task-panel" role="tabpanel" data-hotel-task-panel="charges" ${hotelServicesView === 'charges' ? '' : 'hidden'}>
+      ${chargeForm}
+      ${table('Recent guest charges', charges.slice(0, 100), [
+        { label: 'Date', value: (row) => pick(row, ['ChargeDate', 'CreatedAt']) }, { label: 'Reservation', value: (row) => pick(row, ['ReservationId']) },
+        { label: 'Description', value: (row) => pick(row, ['Description']) }, { label: 'Amount', value: (row) => money(row.Amount || 0) }, { label: 'By', value: (row) => pick(row, ['CreatedBy']) }
+      ], { emptyMessage: 'No guest charges have been recorded.' })}
+    </section>
+    <section class="hotel-task-panel" role="tabpanel" data-hotel-task-panel="payments" ${hotelServicesView === 'payments' ? '' : 'hidden'}>
+      ${paymentForm}
+      ${table('Recent guest payments', payments.slice(0, 100), [
+        { label: 'Date', value: (row) => pick(row, ['PaymentDate', 'CreatedAt']) }, { label: 'Guest', value: (row) => pick(row, ['GuestName']) },
+        { label: 'Method', value: (row) => pick(row, ['Method']) }, { label: 'Reference', value: (row) => pick(row, ['Reference']) }, { label: 'Amount', value: (row) => money(row.Amount || 0) }
+      ], { emptyMessage: 'No guest payments have been recorded.' })}
+    </section>
+    <section class="hotel-task-panel" role="tabpanel" data-hotel-task-panel="self-service" ${hotelServicesView === 'self-service' ? '' : 'hidden'}>
+      <div class="hotel-self-service-card"><div><p class="eyebrow">One reusable code</p><h3>Customer self-service booking</h3><p class="muted">Customers scan this same QR code to choose available dates and rooms, create their reservation, and pay online. The code does not change between customers.</p>${data.selfServiceError ? `<p class="status bad">${escapeHtml(data.selfServiceError)}</p>` : ''}</div>${selfService.qrSvg ? `<div class="hotel-self-service-qr">${selfService.qrSvg}</div>` : ''}<p class="hotel-self-service-address">${escapeHtml(bookingUrl || 'The booking link is unavailable.')}</p><div class="compact-row-actions"><button type="button" id="printHotelSelfServiceQr" ${bookingUrl ? '' : 'disabled'}>Print QR</button><button type="button" class="secondary" id="copyHotelSelfServiceLink" ${bookingUrl ? '' : 'disabled'}>Copy link</button>${bookingUrl ? `<a class="button secondary" href="${escapeHtml(bookingUrl)}" target="_blank" rel="noopener">Open booking page</a>` : ''}</div></div>
+    </section>`;
 
   const statusEl = document.getElementById('hotelWorkspaceStatus');
+  const selectHotelTask = (view) => {
+    const availableViews = new Set(['reservations', 'rooms', 'charges', 'payments', 'self-service']);
+    hotelServicesView = availableViews.has(view) ? view : 'reservations';
+    panelEl.querySelectorAll('[data-hotel-task]').forEach((button) => {
+      button.setAttribute('aria-selected', button.dataset.hotelTask === hotelServicesView ? 'true' : 'false');
+    });
+    panelEl.querySelectorAll('[data-hotel-task-panel]').forEach((section) => {
+      section.hidden = section.dataset.hotelTaskPanel !== hotelServicesView;
+    });
+  };
+  panelEl.querySelectorAll('[data-hotel-task]').forEach((button) => button.addEventListener('click', () => selectHotelTask(button.dataset.hotelTask)));
+  document.getElementById('printHotelSelfServiceQr')?.addEventListener('click', () => {
+    try { showHotelSelfServiceQr(selfService); }
+    catch (error) { setStatus(statusEl, error.message || String(error), 'bad'); }
+  });
+  document.getElementById('copyHotelSelfServiceLink')?.addEventListener('click', async (event) => {
+    try {
+      await copyTextToClipboard(bookingUrl);
+      setStatus(statusEl, 'Reusable hotel booking link copied.', 'ok');
+      event.currentTarget.textContent = 'Copied';
+    } catch (error) {
+      setStatus(statusEl, error.message || 'The hotel booking link could not be copied.', 'bad');
+    }
+  });
   const submitAction = async (form, action, label) => {
     const button = form.querySelector('button[type="submit"]');
     const normalText = button?.textContent || label;
@@ -14533,6 +14581,7 @@ function renderHotelServices(data = {}) {
     const room = rooms.find((row) => pick(row, ['RoomId', '__id']) === button.dataset.editHotelRoom);
     const form = document.getElementById('hotelRoomForm');
     if (!room || !form) return;
+    selectHotelTask('rooms');
     ['RoomId', 'RoomNumber', 'RoomType', 'Capacity', 'NightlyRate', 'Status', 'HousekeepingStatus', 'Notes'].forEach((name) => {
       if (form.elements[name]) form.elements[name].value = room[name] ?? '';
     });

@@ -6,6 +6,9 @@ import {
   upsertDocument
 } from './firestore.js';
 import { normalizeOrganizationEdition, resolveOrganizationConfig } from './organization-config.js';
+import QRCode from 'qrcode';
+
+const PAYSTACK_INIT_URL = 'https://api.paystack.co/transaction/initialize';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -95,13 +98,28 @@ function requireCapability(user, capability) {
   return capabilities;
 }
 
-async function requireHotelEdition(env, user = {}) {
-  const requested = clean(user.edition || user.OrganisationEdition || user.OrganizationEdition);
-  const edition = normalizeOrganizationEdition(requested || resolveOrganizationConfig({ env }).Edition);
+async function hotelOrganization(env) {
+  const [organizationProfile, legacyProfile] = await Promise.all([
+    getDocument(env, 'settings', 'organisationProfile').catch(() => null),
+    getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+  ]);
+  return resolveOrganizationConfig({ env, organizationProfile, legacyProfile });
+}
+
+async function requireHotelOrganization(env) {
+  const organization = await hotelOrganization(env);
+  const edition = normalizeOrganizationEdition(organization.Edition);
   if (!['faith', 'organization'].includes(edition)) {
     throw inputError('Hotel Services is available only to Religious Organisations and Other Organisations.', 403);
   }
-  return edition;
+  if (organization.FeatureFlags?.hotel !== true) {
+    throw inputError('Hotel Services is not enabled for this organisation.', 403);
+  }
+  return { ...organization, Edition: edition };
+}
+
+async function requireHotelEdition(env) {
+  return (await requireHotelOrganization(env)).Edition;
 }
 
 function normalizeDate(value, label) {
@@ -212,6 +230,10 @@ export function hotelReservationTotals(reservation, charges = [], payments = [])
   };
 }
 
+export function hotelReservationCanCheckIn(reservation = {}) {
+  return clean(reservation.Status) === 'Reserved' && Math.max(0, number(reservation.Balance)) <= 0.005;
+}
+
 export async function listHotelServices(env, user, body = {}) {
   const edition = await requireHotelEdition(env, user);
   const capabilities = requireCapability(user, 'canView');
@@ -310,13 +332,16 @@ export async function changeHotelReservationStatus(env, user, body = {}) {
     'Checked In': new Set(['Checked Out'])
   };
   if (!allowed[current]?.has(status)) throw inputError(`A ${current || 'new'} reservation cannot be changed to ${status}.`);
-  if (status === 'Checked Out') {
+  if (status === 'Checked In' || status === 'Checked Out') {
     const [charges, payments] = await Promise.all([
       branchRows(env, HOTEL_COLLECTIONS.charges, branchId),
       branchRows(env, HOTEL_COLLECTIONS.payments, branchId)
     ]);
-    const balance = hotelReservationTotals(reservation, charges, payments).Balance;
-    if (balance > 0.005) throw inputError(`Record the outstanding guest balance before check-out. Balance: ${balance.toFixed(2)}.`, 409);
+    const totals = hotelReservationTotals(reservation, charges, payments);
+    if (totals.Balance > 0.005) {
+      const action = status === 'Checked In' ? 'check-in' : 'check-out';
+      throw inputError(`Full payment is required before ${action}. Balance: ${totals.Balance.toFixed(2)}.`, 409);
+    }
   }
   const timestamp = nowIso();
   const payload = {
@@ -455,6 +480,330 @@ export async function setHotelHousekeepingStatus(env, user, body = {}) {
   });
   await writeAudit(env, branchId, user, 'HOUSEKEEPING', 'Room', roomId, housekeepingStatus);
   return { ok: true, message: `Room ${room.RoomNumber} marked ${housekeepingStatus}.`, room: updatedRoom };
+}
+
+function hotelQrSvg(value = '') {
+  const qr = QRCode.create(clean(value), { errorCorrectionLevel: 'M' });
+  const margin = 3;
+  const size = qr.modules.size + (margin * 2);
+  const modules = [];
+  for (let row = 0; row < qr.modules.size; row += 1) {
+    for (let column = 0; column < qr.modules.size; column += 1) {
+      if (qr.modules.get(row, column)) modules.push(`M${column + margin} ${row + margin}h1v1h-1z`);
+    }
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" role="img" aria-label="Hotel self-service booking QR code" shape-rendering="crispEdges"><path fill="#fff" d="M0 0h${size}v${size}H0z"/><path fill="#071b2c" d="${modules.join('')}"/></svg>`;
+}
+
+function publicHotelRoom(row = {}) {
+  return {
+    RoomId: clean(row.RoomId || row.__id),
+    RoomNumber: clean(row.RoomNumber),
+    RoomType: clean(row.RoomType),
+    Capacity: Math.max(1, number(row.Capacity)),
+    NightlyRate: Math.max(0, number(row.NightlyRate))
+  };
+}
+
+function randomPaymentReference(code = 'ORG') {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  const suffix = [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('').toUpperCase();
+  return safeId(`HOT-${clean(code).toUpperCase().replace(/[^A-Z0-9]/g, '') || 'ORG'}-${suffix}`);
+}
+
+export async function buildHotelSelfServiceQr(env, user, body = {}, requestOrigin = '') {
+  const organization = await requireHotelOrganization(env);
+  requireCapability(user, 'canManageReservations');
+  const branchId = branchIdFor(user, body);
+  let origin;
+  try {
+    origin = new URL(clean(requestOrigin));
+  } catch {
+    throw inputError('The public hotel booking address is unavailable on this deployment.', 503);
+  }
+  if (origin.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(origin.hostname)) {
+    throw inputError('The public hotel booking address must use HTTPS.', 503);
+  }
+  const bookingUrl = `${origin.origin}/hotel-booking.html?branch=${encodeURIComponent(branchId)}`;
+  return {
+    bookingUrl,
+    paymentLink: bookingUrl,
+    branchId,
+    organisationName: organization.Name,
+    qrSvg: hotelQrSvg(bookingUrl)
+  };
+}
+
+export async function getPublicHotelAvailability(env, body = {}) {
+  const organization = await requireHotelOrganization(env);
+  const branchId = clean(body.BranchId || body.branchId || 'main').toLowerCase() || 'main';
+  const arrivalInput = clean(body.ArrivalDate || body.arrivalDate);
+  const departureInput = clean(body.DepartureDate || body.departureDate);
+  if (Boolean(arrivalInput) !== Boolean(departureInput)) throw inputError('Choose both arrival and departure dates.');
+  const arrivalDate = arrivalInput ? normalizeDate(arrivalInput, 'Arrival date') : '';
+  const departureDate = departureInput ? normalizeDate(departureInput, 'Departure date') : '';
+  if (arrivalDate && nightsBetween(arrivalDate, departureDate) < 1) {
+    throw inputError('Departure date must be after the arrival date.');
+  }
+  const [rooms, reservations] = await Promise.all([
+    branchRows(env, HOTEL_COLLECTIONS.rooms, branchId),
+    arrivalDate ? branchRows(env, HOTEL_COLLECTIONS.reservations, branchId) : Promise.resolve([])
+  ]);
+  const conflictingRoomIds = new Set(reservations.filter((row) => (
+    !['cancelled', 'no show', 'checked out'].includes(lower(row.Status)) &&
+    arrivalDate < clean(row.DepartureDate) &&
+    departureDate > clean(row.ArrivalDate)
+  )).map((row) => clean(row.RoomId)));
+  const availableRooms = rooms
+    .filter((row) => !['maintenance', 'out of service'].includes(lower(row.Status)))
+    .filter((row) => !conflictingRoomIds.has(clean(row.RoomId)))
+    .map(publicHotelRoom)
+    .sort((left, right) => left.RoomNumber.localeCompare(right.RoomNumber, undefined, { numeric: true }));
+  return {
+    ok: true,
+    organisationName: organization.Name,
+    branchId,
+    currency: 'NGN',
+    paymentRequiredBeforeCheckIn: true,
+    arrivalDate,
+    departureDate,
+    rooms: availableRooms
+  };
+}
+
+export async function initPublicHotelReservationPayment(env, body = {}, requestOrigin = '') {
+  const organization = await requireHotelOrganization(env);
+  if (clean(body.CompanyWebsite || body.companyWebsite)) throw inputError('The booking request could not be processed.');
+  if (!clean(env.PAYSTACK_SECRET_KEY)) throw inputError('Online hotel payment is not configured yet.', 503);
+  const branchId = clean(body.BranchId || body.branchId || 'main').toLowerCase() || 'main';
+  const roomId = clean(body.RoomId || body.roomId);
+  const room = await getDocument(env, HOTEL_COLLECTIONS.rooms, safeId(roomId)).catch(() => null);
+  if (!room || clean(room.BranchId).toLowerCase() !== branchId) throw inputError('Choose an available room.');
+  if (['maintenance', 'out of service'].includes(lower(room.Status))) throw inputError('That room is not currently available for booking.', 409);
+
+  const reservationId = safeId(`RSV-WEB-${crypto.randomUUID()}`);
+  const reservation = normalizeHotelReservation({
+    ReservationId: reservationId,
+    GuestName: clean(body.GuestName || body.guestName).slice(0, 160),
+    GuestPhone: clean(body.GuestPhone || body.guestPhone).slice(0, 40),
+    GuestEmail: clean(body.GuestEmail || body.guestEmail).slice(0, 254),
+    RoomId: roomId,
+    ArrivalDate: body.ArrivalDate || body.arrivalDate,
+    DepartureDate: body.DepartureDate || body.departureDate,
+    Adults: body.Adults || body.adults || 1,
+    Children: body.Children || body.children || 0,
+    NightlyRate: room.NightlyRate,
+    Status: 'Reserved',
+    Source: 'Self-service QR',
+    Notes: clean(body.Notes || body.notes).slice(0, 500)
+  }, branchId);
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(reservation.GuestEmail)) throw inputError('Enter a valid guest email address.');
+  if (reservation.Adults + reservation.Children > Math.max(1, number(room.Capacity))) {
+    throw inputError('The guest count exceeds the selected room capacity.');
+  }
+  const reservations = await branchRows(env, HOTEL_COLLECTIONS.reservations, branchId);
+  const conflict = reservations.find((row) => (
+    clean(row.RoomId) === reservation.RoomId &&
+    !['cancelled', 'no show', 'checked out'].includes(lower(row.Status)) &&
+    reservation.ArrivalDate < clean(row.DepartureDate) &&
+    reservation.DepartureDate > clean(row.ArrivalDate)
+  ));
+  if (conflict) throw inputError(`Room ${room.RoomNumber} is no longer available for those dates.`, 409);
+
+  const totals = hotelReservationTotals(reservation);
+  if (totals.TotalAmount <= 0) throw inputError('This room does not have a payable rate. Please contact the hotel.', 409);
+  const reference = randomPaymentReference(organization.Code);
+  let origin;
+  try {
+    origin = new URL(clean(requestOrigin));
+  } catch {
+    throw inputError('The secure hotel payment address is unavailable.', 503);
+  }
+  if (origin.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(origin.hostname)) {
+    throw inputError('The secure hotel payment address is unavailable.', 503);
+  }
+  const callbackUrl = `${origin.origin}/payment-success.html?type=hotel&source=public-hotel&branch=${encodeURIComponent(branchId)}&reference=${encodeURIComponent(reference)}`;
+  const metadata = {
+    paymentType: 'HotelReservation',
+    hotelReservationId: reservationId,
+    branchId,
+    roomId,
+    roomNumber: clean(room.RoomNumber),
+    guestName: reservation.GuestName,
+    guestEmail: reservation.GuestEmail,
+    amount: totals.TotalAmount,
+    currency: 'NGN'
+  };
+  const paystackResponse = await fetch(PAYSTACK_INIT_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.PAYSTACK_SECRET_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      email: reservation.GuestEmail,
+      amount: Math.round(totals.TotalAmount * 100),
+      currency: 'NGN',
+      reference,
+      callback_url: callbackUrl,
+      metadata
+    })
+  });
+  const paystackData = await paystackResponse.json().catch(() => null);
+  if (!paystackResponse.ok || !paystackData?.status) {
+    throw inputError(`Could not start hotel payment. ${paystackData?.message || 'Payment gateway returned an error.'}`);
+  }
+  const authorizationUrl = clean(paystackData.data?.authorization_url);
+  if (!/^https:\/\/[A-Za-z0-9.-]+(?:\/|$)/.test(authorizationUrl)) {
+    throw inputError('The payment gateway did not return a secure payment address.', 502);
+  }
+  const timestamp = nowIso();
+  const storedReservation = {
+    ...reservation,
+    RoomNumber: clean(room.RoomNumber),
+    RoomType: clean(room.RoomType),
+    PaymentStatus: 'Pending',
+    PaymentReference: reference,
+    PaymentLink: authorizationUrl,
+    CreatedAt: timestamp,
+    CreatedBy: 'Public hotel self-service',
+    UpdatedAt: timestamp,
+    UpdatedBy: 'Public hotel self-service'
+  };
+  const intent = {
+    PaymentType: 'HotelReservation',
+    Reference: reference,
+    ReservationId: reservationId,
+    BranchId: branchId,
+    RoomId: roomId,
+    AccountRef: reservationId,
+    Amount: totals.TotalAmount,
+    Currency: 'NGN',
+    Status: 'Pending',
+    CreatedAt: timestamp,
+    Metadata: metadata
+  };
+  try {
+    await batchCommitDocuments(env, [
+      { collectionPath: HOTEL_COLLECTIONS.reservations, documentId: reservationId, data: storedReservation, exists: false },
+      { collectionPath: 'paymentIntents', documentId: safeId(reference), data: intent, exists: false }
+    ]);
+  } catch (error) {
+    error.status = 502;
+    error.retryable = true;
+    throw error;
+  }
+  await writeAudit(env, branchId, {
+    role: 'Public Self-Service', username: 'public-hotel', displayName: 'Public hotel self-service'
+  }, 'ONLINE INIT', 'Reservation', reservationId, `${reservation.GuestName} | ${room.RoomNumber} | ${reference}`).catch(() => null);
+  return {
+    ok: true,
+    message: 'Reservation created. Continue to secure online payment.',
+    authorizationUrl,
+    reference,
+    reservationId,
+    amount: totals.TotalAmount,
+    currency: 'NGN'
+  };
+}
+
+export async function finalizeHotelOnlinePayment(env, intent = {}, settlement = {}) {
+  await requireHotelEdition(env);
+  const reservationId = clean(intent.ReservationId || intent.hotelReservationId);
+  const branchId = clean(intent.BranchId || intent.branchId || 'main').toLowerCase() || 'main';
+  const reference = clean(settlement.Reference || settlement.reference || intent.Reference);
+  const amount = Math.max(0, number(settlement.GrossAmount ?? settlement.Amount ?? intent.Amount));
+  if (!reservationId || !reference || amount <= 0) throw inputError('The verified hotel payment is incomplete.', 409);
+  const reservation = await getDocument(env, HOTEL_COLLECTIONS.reservations, safeId(reservationId)).catch(() => null);
+  if (!reservation || clean(reservation.BranchId).toLowerCase() !== branchId) {
+    throw inputError('The hotel reservation for this payment was not found.', 409);
+  }
+  const paymentId = safeId(`PAYSTACK-${reference}`);
+  const existingPayment = await getDocument(env, HOTEL_COLLECTIONS.payments, paymentId).catch(() => null);
+  if (existingPayment) {
+    if (clean(existingPayment.ReservationId) !== reservationId || Math.abs(number(existingPayment.Amount) - amount) > 0.01) {
+      throw inputError('That online payment reference is already linked to another hotel payment.', 409);
+    }
+    return { ok: true, payment: existingPayment, reservation };
+  }
+  const paidAt = clean(settlement.PaidAt) || nowIso();
+  const suppliedFee = Math.max(0, number(settlement.GatewayFee));
+  const suppliedNet = number(settlement.NetAmount);
+  const netAmount = Math.min(amount, suppliedNet > 0 ? suppliedNet : Math.max(0, amount - suppliedFee));
+  const gatewayFee = Math.max(0, amount - netAmount);
+  const payment = {
+    PaymentId: paymentId,
+    ReservationId: reservationId,
+    BranchId: branchId,
+    GuestName: clean(reservation.GuestName),
+    Amount: amount,
+    GrossAmount: amount,
+    GatewayFee: gatewayFee,
+    NetAmount: netAmount,
+    Currency: clean(settlement.Currency || intent.Currency || 'NGN').toUpperCase(),
+    Method: 'Online',
+    Gateway: 'Paystack',
+    Reference: reference,
+    GatewayReference: reference,
+    PaymentDate: paidAt.slice(0, 10),
+    PaidAt: paidAt,
+    CreatedAt: nowIso(),
+    CreatedBy: 'Paystack Verification'
+  };
+  const journalNo = safeId(`SYS-HOT-PAY-${paymentId}`);
+  const journal = {
+    JournalNo: journalNo,
+    Date: payment.PaymentDate,
+    Status: 'Posted',
+    Description: `Hotel online payment - ${clean(reservation.GuestName)} - room ${clean(reservation.RoomNumber)}`,
+    Reference: reference,
+    Source: 'Hotel Services Payment',
+    SourceId: paymentId,
+    RecordedBy: 'Paystack Verification',
+    Department: 'Hotel Services',
+    BranchId: branchId,
+    Lines: [
+      { AccountCode: '1030', Debit: netAmount, Credit: 0, Description: 'Hotel online payment settlement', Department: 'Hotel Services' },
+      ...(gatewayFee > 0 ? [{ AccountCode: '6060', Debit: gatewayFee, Credit: 0, Description: 'Online payment transaction charge', Department: 'Hotel Services' }] : []),
+      { AccountCode: '4140', Debit: 0, Credit: amount, Description: 'Hotel services revenue', Department: 'Hotel Services' }
+    ],
+    TotalDebit: amount,
+    TotalCredit: amount,
+    CreatedAt: payment.CreatedAt,
+    UpdatedAt: payment.CreatedAt
+  };
+  try {
+    await batchCommitDocuments(env, [
+      { collectionPath: HOTEL_COLLECTIONS.payments, documentId: paymentId, data: payment, exists: false },
+      { collectionPath: 'accountingJournals', documentId: journalNo, data: journal, exists: false }
+    ]);
+  } catch (error) {
+    if (![409, 412].includes(Number(error?.status))) throw error;
+    const recorded = await getDocument(env, HOTEL_COLLECTIONS.payments, paymentId).catch(() => null);
+    if (!recorded) throw error;
+  }
+  const [charges, payments] = await Promise.all([
+    branchRows(env, HOTEL_COLLECTIONS.charges, branchId),
+    branchRows(env, HOTEL_COLLECTIONS.payments, branchId)
+  ]);
+  const totals = hotelReservationTotals(reservation, charges, payments);
+  const updatedReservation = {
+    ...reservation,
+    PaymentStatus: totals.Balance <= 0.005 ? 'Paid' : 'Part Paid',
+    OnlinePaidAt: paidAt,
+    PaymentReference: reference,
+    UpdatedAt: nowIso(),
+    UpdatedBy: 'Paystack Verification'
+  };
+  delete updatedReservation.__id;
+  delete updatedReservation.__name;
+  delete updatedReservation.__updateTime;
+  await upsertDocument(env, HOTEL_COLLECTIONS.reservations, safeId(reservationId), updatedReservation);
+  await writeAudit(env, branchId, {
+    role: 'Payment Gateway', username: 'paystack', displayName: 'Paystack Verification'
+  }, 'PAYMENT', 'Reservation', reservationId, `Online | ${amount} | ${reference}`).catch(() => null);
+  return { ok: true, payment, reservation: { ...totals, ...updatedReservation }, journal };
 }
 
 export async function handleHotelAction(env, user, body = {}) {

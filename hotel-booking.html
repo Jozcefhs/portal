@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Reserve a hotel room and pay securely online.">
+  <title>Hotel Booking</title>
+  <meta name="theme-color" content="#071b38">
+  <link rel="icon" href="images/Logo.png">
+  <script src="js/preferences.js?v=20260726-biometric"></script>
+  <link rel="stylesheet" href="css/style.css?v=20260903-hotel-tabs">
+  <link rel="stylesheet" href="css/hotel-booking.css?v=20260903-hotel-self-service">
+</head>
+<body class="hotel-booking-page">
+  <main class="hotel-booking-shell">
+    <section class="hotel-booking-brand">
+      <a href="index.html" class="hotel-booking-product">
+        <img id="hotelBookingLogo" src="images/Logo.png" alt="">
+        <span><strong id="hotelBookingOrganisation">Dynamax</strong><small>Hotel Services</small></span>
+      </a>
+      <div>
+        <p class="eyebrow">Self-service booking</p>
+        <h1>Choose your stay.<br><strong>Pay securely.</strong></h1>
+        <p>Reserve an available room and complete payment online. Check-in becomes available after the payment is confirmed.</p>
+      </div>
+      <div class="hotel-booking-trust">
+        <span>✓ Live room availability</span>
+        <span>✓ Secure Paystack checkout</span>
+        <span>✓ Payment required before check-in</span>
+      </div>
+    </section>
+
+    <section class="hotel-booking-card" aria-labelledby="hotelBookingTitle">
+      <header>
+        <p class="eyebrow">Book a room</p>
+        <h2 id="hotelBookingTitle">Your reservation</h2>
+        <span>Enter your stay and guest details, then select an available room.</span>
+      </header>
+      <form id="hotelBookingForm" class="hotel-booking-form">
+        <input type="hidden" name="BranchId" id="hotelBookingBranch" value="main">
+        <label class="hotel-booking-honeypot" aria-hidden="true">Website
+          <input name="CompanyWebsite" tabindex="-1" autocomplete="off">
+        </label>
+        <div class="hotel-booking-row">
+          <label>Arrival date<input name="ArrivalDate" id="hotelArrivalDate" type="date" required></label>
+          <label>Departure date<input name="DepartureDate" id="hotelDepartureDate" type="date" required></label>
+        </div>
+        <div>
+          <strong class="hotel-booking-section-title">Available rooms</strong>
+          <div id="hotelRoomChoices" class="hotel-room-choices" role="radiogroup" aria-label="Available rooms">
+            <p class="muted">Checking room availability…</p>
+          </div>
+        </div>
+        <div class="hotel-booking-row">
+          <label>Full name<input name="GuestName" autocomplete="name" maxlength="160" required></label>
+          <label>Email address<input name="GuestEmail" type="email" autocomplete="email" maxlength="254" required></label>
+        </div>
+        <div class="hotel-booking-row hotel-booking-row-three">
+          <label>Phone number<input name="GuestPhone" type="tel" autocomplete="tel" maxlength="40" required></label>
+          <label>Adults<input name="Adults" type="number" min="1" step="1" value="1" required></label>
+          <label>Children<input name="Children" type="number" min="0" step="1" value="0"></label>
+        </div>
+        <label>Optional note<textarea name="Notes" rows="3" maxlength="500" placeholder="Arrival note or special request"></textarea></label>
+        <div id="hotelBookingTotal" class="hotel-booking-total"><span>Total to pay</span><strong>Choose a room</strong></div>
+        <p id="hotelBookingStatus" class="status" role="status" aria-live="polite"></p>
+        <button type="submit" id="hotelBookingButton" disabled>Reserve and pay online</button>
+        <p class="hotel-booking-disclaimer">Your reservation is confirmed for check-in only after the online payment succeeds.</p>
+      </form>
+    </section>
+  </main>
+  <script src="js/site-config.js?v=20260809-branded-app-icon"></script>
+  <script src="js/hotel-booking.js?v=20260903-hotel-self-service"></script>
+</body>
+</html>

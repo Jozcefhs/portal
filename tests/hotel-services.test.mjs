@@ -5,6 +5,7 @@ import test from 'node:test';
 import { featureFlagsForEdition } from '../functions/lib/organization-config.js';
 import {
   hotelCapabilities,
+  hotelReservationCanCheckIn,
   hotelReservationTotals,
   normalizeHotelReservation,
   normalizeHotelRoom
@@ -20,6 +21,10 @@ const adminJs = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8
 const backendJs = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
 const staffApi = await readFile(new URL('../functions/api/staff-hotel.js', import.meta.url), 'utf8');
 const hotelService = await readFile(new URL('../functions/lib/hotel-services.js', import.meta.url), 'utf8');
+const publicHotelApi = await readFile(new URL('../functions/api/public-hotel.js', import.meta.url), 'utf8');
+const publicHotelPage = await readFile(new URL('../hotel-booking.html', import.meta.url), 'utf8');
+const publicHotelJs = await readFile(new URL('../js/hotel-booking.js', import.meta.url), 'utf8');
+const verifyPaymentApi = await readFile(new URL('../functions/api/verify-payment.js', import.meta.url), 'utf8');
 
 test('Hotel Services is a Flex module for religious and other organisations', () => {
   for (const edition of ['faith', 'organization']) {
@@ -100,6 +105,9 @@ test('hotel room, stay and guest-account calculations are validated', () => {
   assert.equal(totals.Nights, 3);
   assert.equal(totals.TotalAmount, 140000);
   assert.equal(totals.Balance, 100000);
+  assert.equal(hotelReservationCanCheckIn({ Status: 'Reserved', Balance: 100000 }), false);
+  assert.equal(hotelReservationCanCheckIn({ Status: 'Reserved', Balance: 0 }), true);
+  assert.equal(hotelReservationCanCheckIn({ Status: 'Checked In', Balance: 0 }), false);
   assert.throws(() => normalizeHotelReservation({
     ReservationId: 'RSV-2', GuestName: 'Invalid Stay', RoomId: 'ROOM-101',
     ArrivalDate: '2026-09-13', DepartureDate: '2026-09-13'
@@ -120,4 +128,32 @@ test('web and desktop backend routes expose the full hotel workflow behind staff
   assert.match(hotelService, /Source: 'Hotel Services Payment'/);
   assert.match(hotelService, /AccountCode: '4140'/);
   assert.match(hotelService, /batchCommitDocuments/);
+});
+
+test('Hotel Services uses task tabs and blocks unpaid check-in in both UI and backend', () => {
+  for (const label of [
+    'Reservations & check-in', 'Rooms & housekeeping', 'Charges', 'Payments', 'Self-service QR'
+  ]) assert.match(adminJs, new RegExp(label.replace(/[&]/g, '\\&')));
+  assert.match(adminJs, /Payment required/);
+  assert.match(hotelService, /Full payment is required before \$\{action\}/);
+  assert.match(hotelService, /totals\.Balance > 0\.005/);
+});
+
+test('public hotel self-service uses a generic branch QR and server-priced Paystack checkout', () => {
+  assert.match(staffApi, /buildHotelSelfServiceQr/);
+  assert.match(hotelService, /hotel-booking\.html\?branch=\$\{encodeURIComponent\(branchId\)\}/);
+  assert.match(hotelService, /NightlyRate: room\.NightlyRate/);
+  assert.match(hotelService, /paymentType: 'HotelReservation'/);
+  assert.match(hotelService, /PAYSTACK_INIT_URL/);
+  assert.match(hotelService, /AccountCode: '6060'/);
+  assert.match(hotelService, /Debit: netAmount/);
+  assert.match(publicHotelApi, /verifyTurnstile/);
+  assert.match(publicHotelApi, /hotel_booking/);
+  assert.match(publicHotelApi, /consumeRequestAllowance/);
+  assert.match(publicHotelPage, /hotelBookingForm/);
+  assert.match(publicHotelPage, /hotelRoomChoices/);
+  assert.match(publicHotelJs, /\/api\/public-hotel/);
+  assert.match(publicHotelJs, /authorizationUrl/);
+  assert.match(verifyPaymentApi, /finalizeHotelOnlinePayment/);
+  assert.match(verifyPaymentApi, /hotelReservation/);
 });

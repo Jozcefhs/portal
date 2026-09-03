@@ -43,7 +43,7 @@ import {
 import { handleChurchMembershipAction } from '../lib/church-membership.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath } from '../lib/church-foundation.js';
 import { handleChurchServiceAction } from '../lib/church-services.js';
-import { handleHotelAction } from '../lib/hotel-services.js';
+import { buildHotelSelfServiceQr, handleHotelAction } from '../lib/hotel-services.js';
 import {
   ensureGivingTypes,
   handleChurchFundAction,
@@ -7756,15 +7756,26 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'changeHotelReservationStatus':
     case 'recordHotelCharge':
     case 'recordHotelPayment':
-    case 'setHotelHousekeepingStatus':
-      return handleHotelAction(env, {
+    case 'setHotelHousekeepingStatus': {
+      const hotelUser = {
         username: clean(body.UserUsername),
         displayName: clean(body.RecordedBy),
         role: clean(body.UserRole),
         department: clean(body.UserDepartment),
         branchId: clean(body.UserBranchId),
         edition: deploymentIdentity?.edition || clean(body.OrganisationEdition || body.OrganizationEdition)
-      }, body);
+      };
+      const result = await handleHotelAction(env, hotelUser, body);
+      if (action !== 'getHotelServices' || !result?.ok) return result;
+      try {
+        return {
+          ...result,
+          selfService: await buildHotelSelfServiceQr(env, hotelUser, body, publicOrigin)
+        };
+      } catch (error) {
+        return { ...result, selfServiceError: error.message || String(error) };
+      }
+    }
     case 'getChurchOfferings':
     case 'saveChurchOffering':
     case 'reconcileChurchOffering':

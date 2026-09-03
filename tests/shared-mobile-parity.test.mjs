@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
-const sharedVersion = '20260825-flex-subscriptions';
-const adminScriptVersion = '20260831-flex-proration';
+const sharedVersion = '20260903-hotel-tabs';
+const adminScriptVersion = '20260903-hotel-tabs';
 const parentScriptVersion = '20260823-student-nin-onboarding';
 const notificationVersion = '20260804-read-efficiency';
 const pageNames = [
@@ -110,7 +110,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v264-hotel-plan-catalog/);
+  assert.match(serviceWorker, /dynamax-v265-hotel-self-service/);
   assert.match(serviceWorker, /'\/verify-result\.html'/);
   assert.match(serviceWorker, /'\/js\/verify-result\.js'/);
   assert.match(serviceWorker, /'\/css\/school-landing\.css'/);

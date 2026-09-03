@@ -70,10 +70,23 @@ async function verifyPayment() {
   const isPublicStore = isCommerce && params.get('source') === 'public-store';
   const isChurchGiving = paymentType.toLowerCase() === 'church';
   const isPublicGiving = isChurchGiving && params.get('source') === 'public-giving';
+  const isHotel = paymentType.toLowerCase() === 'hotel';
+  const isPublicHotel = isHotel && params.get('source') === 'public-hotel';
   const branchId = params.get('branch') || 'main';
   const anotherLink = document.getElementById('anotherPaymentLink');
   const returnLink = document.getElementById('returnPortalLink');
-  if (isCommerce) {
+  if (isHotel) {
+    if (anotherLink) {
+      anotherLink.href = isPublicHotel
+        ? `hotel-booking.html?branch=${encodeURIComponent(branchId)}`
+        : 'admin?workspace=faith';
+      anotherLink.textContent = isPublicHotel ? 'Book another stay' : 'Return to Hotel Services';
+    }
+    if (returnLink) {
+      returnLink.href = isPublicHotel ? 'index.html' : 'admin?workspace=faith';
+      returnLink.textContent = isPublicHotel ? 'Return to organisation portal' : 'Return to organisation operations';
+    }
+  } else if (isCommerce) {
     if (anotherLink) {
       anotherLink.href = isPublicStore
         ? `store.html?branch=${encodeURIComponent(branchId)}`
@@ -122,15 +135,19 @@ async function verifyPayment() {
     idempotency.release();
     setLead(isFormPurchase
       ? 'Your admission form purchase has been confirmed.'
-      : (isCommerce
+      : (isHotel
+          ? 'Your hotel reservation and payment have been confirmed.'
+          : (isCommerce
           ? (isPublicStore ? 'Your store payment and purchase have been confirmed.' : 'The customer payment and sale have been confirmed.')
-          : (isChurchGiving ? 'Your gift has been confirmed.' : 'Your payment has been confirmed.')));
+          : (isChurchGiving ? 'Your gift has been confirmed.' : 'Your payment has been confirmed.'))));
     setStatus(
       isFormPurchase
         ? 'Admission form purchased successfully.'
-        : (isCommerce
+        : (isHotel
+            ? 'Hotel reservation payment verified successfully.'
+            : (isCommerce
             ? (isPublicStore ? 'Store payment verified successfully.' : 'Sale payment verified and posted successfully.')
-            : (isChurchGiving ? 'Gift payment verified successfully.' : 'Payment verified successfully.')),
+            : (isChurchGiving ? 'Gift payment verified successfully.' : 'Payment verified successfully.'))),
       'ok'
     );
     const details = document.createElement('div');
@@ -145,7 +162,16 @@ async function verifyPayment() {
           ['Reference', data.reference || reference],
           ['Code Expiry Date', data.expiryDate || '']
         ]
-      : (isCommerce ? [
+      : (isHotel ? [
+          ['Reservation', data.hotelReservation?.ReservationId || 'Hotel reservation'],
+          ['Guest', data.hotelReservation?.GuestName || ''],
+          ['Room', data.hotelReservation?.RoomNumber || ''],
+          ['Stay', data.hotelReservation?.ArrivalDate && data.hotelReservation?.DepartureDate
+            ? `${data.hotelReservation.ArrivalDate} to ${data.hotelReservation.DepartureDate}`
+            : ''],
+          ['Amount', formatMoney(data.amount, data.currency)],
+          ['Reference', data.reference || reference]
+        ] : (isCommerce ? [
           ['Sale', data.feeName || data.commerceSale?.Department || 'Organisation sale'],
           ['Customer', data.commerceSale?.CustomerName || 'Walk-in customer'],
           ['Items', (data.commerceSale?.Items || []).map((item) => `${item.ItemName} × ${item.Quantity}`).join(', ')],
@@ -155,7 +181,7 @@ async function verifyPayment() {
           [isChurchGiving ? 'Gift' : 'Fee', data.feeName || (isChurchGiving ? 'Donation or offering' : 'Online Payment')],
           ['Amount', formatMoney(data.amount, data.currency)],
           ['Reference', data.reference || reference]
-        ]);
+        ]));
 
     rows.forEach(([label, value]) => {
       if (!value) return;
@@ -169,13 +195,15 @@ async function verifyPayment() {
     note.className = 'muted';
     note.textContent = isFormPurchase
       ? 'Use this email address and verification code to register. A copy has also been sent to your email.'
-      : (isCommerce
+      : (isHotel
+          ? 'Your reservation is paid and ready for hotel check-in on the scheduled arrival date.'
+          : (isCommerce
           ? (isPublicStore
               ? 'Your order has been recorded and a receipt will be sent to your email.'
               : 'The payment, stock movement, and Finance & Accounting entry have been recorded.')
           : (isChurchGiving
               ? 'Your gift has been recorded. An official receipt will be sent to your email.'
-              : 'Your payment has been recorded with the Accounts Office.'));
+              : 'Your payment has been recorded with the Accounts Office.')));
     details.appendChild(note);
     if (isFormPurchase) {
       const link = document.createElement('p');

@@ -4,6 +4,7 @@
 import { postChurchDonationToAccounting, recordManualPayment } from './backend.js';
 import { batchUpsertDocuments, createDocumentIfAbsent, getDocument, upsertDocument } from '../lib/firestore.js';
 import { markDonationPaidByReference, sendChurchDonationReceipt } from '../lib/church-payments.js';
+import { finalizeHotelOnlinePayment } from '../lib/hotel-services.js';
 import { registerDonorFromPaidDonation } from '../lib/church-donation-management.js';
 import { finalizeOnlineOrganizationCommerceSale } from '../lib/organization-commerce.js';
 import { paymentIntentReference, paymentIntentType } from '../lib/payment-intent.js';
@@ -181,6 +182,7 @@ export async function onRequestPost(context) {
     const resolvedPaymentType = paymentType(metadataPaymentType || storedIntentType);
     const isChurchDonation = resolvedPaymentType === 'churchdonation';
     const isOrganizationCommerce = resolvedPaymentType === 'organizationcommerce';
+    const isHotelReservation = resolvedPaymentType === 'hotelreservation';
     if (isChurchDonation) {
       const requestedCurrency = clean(meta.currency || meta.Currency).toUpperCase();
       const settledCurrency = clean(tx.currency || 'NGN').toUpperCase();
@@ -193,10 +195,12 @@ export async function onRequestPost(context) {
         return Response.json({ ok: false, message: 'The verified donation amount does not match the initialized payment.' }, { status: 409 });
       }
     }
-    if (isOrganizationCommerce && !intent) {
+    if ((isOrganizationCommerce || isHotelReservation) && !intent) {
       return Response.json({
         ok: false,
-        message: 'The saved organisation commerce payment intent was not found.'
+        message: isHotelReservation
+          ? 'The saved hotel reservation payment intent was not found.'
+          : 'The saved organisation commerce payment intent was not found.'
       }, { status: 409 });
     }
     if (intent) {
@@ -220,13 +224,21 @@ export async function onRequestPost(context) {
           clean(meta.commerceSection) !== clean(intent.SaleType)) {
         return Response.json({ ok: false, message: 'The verified transaction belongs to a different commerce workspace.' }, { status: 409 });
       }
+      if (isHotelReservation && clean(meta.hotelReservationId) &&
+          clean(meta.hotelReservationId) !== clean(intent.ReservationId)) {
+        return Response.json({ ok: false, message: 'The verified transaction belongs to a different hotel reservation.' }, { status: 409 });
+      }
+      if (isHotelReservation && clean(meta.branchId) &&
+          clean(meta.branchId).toLowerCase() !== clean(intent.BranchId).toLowerCase()) {
+        return Response.json({ ok: false, message: 'The verified transaction belongs to a different hotel branch.' }, { status: 409 });
+      }
     }
     if (!body.idempotencyKey && !body.IdempotencyKey && !request.headers.get('Idempotency-Key')) {
       body.idempotencyKey = `verify:${safeId(reference)}`;
     }
     idempotency = await beginIdempotentRequest(env, request, body, {
       scope: 'verify-payment',
-      actor: clean(meta.accountRef || meta.applicationReference || meta.donationId || meta.commerceSaleId || intent?.SaleId || tx.reference),
+      actor: clean(meta.accountRef || meta.applicationReference || meta.donationId || meta.commerceSaleId || meta.hotelReservationId || intent?.SaleId || intent?.ReservationId || tx.reference),
       ttlMinutes: 30 * 24 * 60,
       fingerprintPayload: { reference: tx.reference || reference }
     });
@@ -276,6 +288,7 @@ export async function onRequestPost(context) {
     let recordData = null;
     const recordErrors = [];
     let commerceResult = null;
+    let hotelResult = null;
     if (firestoreConfigured && isOrganizationCommerce) {
       try {
         commerceResult = await finalizeOnlineOrganizationCommerceSale(env, intent, {
@@ -299,7 +312,23 @@ export async function onRequestPost(context) {
         recordErrors.push(`Organisation commerce: ${err?.message || String(err)}`);
       }
     }
-    if (firestoreConfigured && !isChurchDonation && !isOrganizationCommerce) {
+    if (firestoreConfigured && isHotelReservation) {
+      try {
+        hotelResult = await finalizeHotelOnlinePayment(env, intent, {
+          GrossAmount: amount,
+          GatewayFee: gatewayFee,
+          NetAmount: netAmount,
+          Currency: tx.currency || 'NGN',
+          Reference: tx.reference,
+          PaidAt: tx.paid_at || tx.paidAt || new Date().toISOString()
+        });
+        if (hotelResult?.ok) recordData = { ok: true, payment: hotelResult.payment };
+        else recordErrors.push(`Hotel reservation: ${hotelResult?.message || 'record failed'}`);
+      } catch (err) {
+        recordErrors.push(`Hotel reservation: ${err?.message || String(err)}`);
+      }
+    }
+    if (firestoreConfigured && !isChurchDonation && !isOrganizationCommerce && !isHotelReservation) {
       try {
         const firestoreData = await recordManualPayment(env, paymentPayload);
         if (firestoreData && firestoreData.ok) {
@@ -371,7 +400,8 @@ export async function onRequestPost(context) {
     if (!recordData || !recordData.ok) {
       const churchHandled = isChurchDonation && donation;
       const commerceHandled = isOrganizationCommerce && commerceResult?.ok;
-      if (!churchHandled && !commerceHandled) {
+      const hotelHandled = isHotelReservation && hotelResult?.ok;
+      if (!churchHandled && !commerceHandled && !hotelHandled) {
         const error = new Error(recordErrors.length
           ? `Payment confirmed, but backend recording failed. ${recordErrors.filter(Boolean).join(' | ')}`
           : 'Payment confirmed, but it could not be recorded.');
@@ -391,12 +421,14 @@ export async function onRequestPost(context) {
           Amount: gatewayFee,
           GrossCollection: amount,
           NetSettlement: netAmount,
-          Treatment: isOrganizationCommerce ? 'DeductedBeforeRevenueSettlement' : 'DeductedBeforeStudentCredit',
+          Treatment: (isOrganizationCommerce || isHotelReservation) ? 'DeductedBeforeRevenueSettlement' : 'DeductedBeforeStudentCredit',
           Status: 'Recorded',
           Reference: tx.reference,
           Source: isChurchDonation
             ? 'Church Donation / Paystack'
-            : (isOrganizationCommerce ? 'Organisation Commerce / Paystack' : 'Paystack'),
+            : (isOrganizationCommerce
+                ? 'Organisation Commerce / Paystack'
+                : (isHotelReservation ? 'Hotel Services / Paystack' : 'Paystack')),
           CreatedAt: new Date().toISOString()
         });
       }
@@ -448,8 +480,11 @@ export async function onRequestPost(context) {
       currency: tx.currency || 'NGN',
       feeName: isChurchDonation
         ? 'Church Donation'
-        : (isOrganizationCommerce ? `${commerceResult?.sale?.Department || 'Organisation'} sale` : (meta.feeName || 'Online Payment')),
+        : (isOrganizationCommerce
+            ? `${commerceResult?.sale?.Department || 'Organisation'} sale`
+            : (isHotelReservation ? 'Hotel reservation' : (meta.feeName || 'Online Payment'))),
       commerceSale: commerceResult?.sale || null,
+      hotelReservation: hotelResult?.reservation || null,
       donationJournal: donationJournal || null,
       receipt: donationReceipt || null,
       receiptStatus: donationReceipt ? (donationReceipt.ok ? 'sent' : (donationReceipt.skipped ? 'skipped' : 'failed')) : null
