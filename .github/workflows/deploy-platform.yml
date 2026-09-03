@@ -1,0 +1,54 @@
+name: Deploy Dynamax platform
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: dynamax-platform-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy central plan and subscriber platform
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_ACCOUNT_ID: a5aa57ffa1fd00e4fd98e78ee7d32f01
+      CLOUDFLARE_PROJECT: dynamaxms
+      PLATFORM_URL: https://dynamaxms.pages.dev
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Verify platform deployment contract
+        run: node --test tests/platform-deployment-workflow.test.mjs
+
+      - name: Prepare production files
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .pages-deploy
+          mkdir .pages-deploy
+          cp -R css functions images js vendor .pages-deploy/
+          cp _headers _routes.json .pages-deploy/
+          cp ./*.html .pages-deploy/
+          cp app-icon.svg manifest.webmanifest sw.js version.json .pages-deploy/
+
+      - name: Deploy Cloudflare Pages production
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.125.0"
+          command: pages deploy .pages-deploy --project-name=${{ env.CLOUDFLARE_PROJECT }} --branch=main --commit-hash=${{ github.sha }} --commit-dirty=false
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify live platform catalogue
+        run: node scripts/verify-platform-deployment.mjs --url "${PLATFORM_URL}"
+
