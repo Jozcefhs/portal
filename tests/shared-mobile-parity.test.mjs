@@ -110,7 +110,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v263-flex-proration/);
+  assert.match(serviceWorker, /dynamax-v264-hotel-plan-catalog/);
   assert.match(serviceWorker, /'\/verify-result\.html'/);
   assert.match(serviceWorker, /'\/js\/verify-result\.js'/);
   assert.match(serviceWorker, /'\/css\/school-landing\.css'/);

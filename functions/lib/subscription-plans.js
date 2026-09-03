@@ -13,7 +13,7 @@ export const SUBSCRIPTION_PLAN_NAMES = Object.freeze([
 
 const FULL_ACCESS = '*';
 export const FREE_TRIAL_DAYS = 7;
-export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 7;
+export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 8;
 export const SUBSCRIPTION_CURRENCIES = Object.freeze(['NGN', 'USD']);
 export const DEFAULT_USD_TO_NGN_RATE = 1350;
 
@@ -459,7 +459,12 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
             && defaults.Plans[name].EntitlementsByEdition[edition].includes('bulkCommunication')
             ? normalizeConfiguredEntitlements(edition, [...migratedEntitlements, 'bulkCommunication'], [])
             : migratedEntitlements;
-          return [edition, communicationMigratedEntitlements];
+          const hotelMigratedEntitlements = sourceModuleCatalogVersion < 8
+            && ['faith', 'organization'].includes(edition)
+            && defaults.Plans[name].EntitlementsByEdition[edition].includes('hotel')
+            ? normalizeConfiguredEntitlements(edition, [...communicationMigratedEntitlements, 'hotel'], [])
+            : communicationMigratedEntitlements;
+          return [edition, hotelMigratedEntitlements];
         })),
         PaystackMonthlyPlanCode: name === 'Free' ? '' : clean(incoming.PaystackMonthlyPlanCode),
         PaystackYearlyPlanCode: name === 'Free' ? '' : clean(incoming.PaystackYearlyPlanCode),
@@ -472,7 +477,10 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
           edition,
           Object.fromEntries(subscriptionModulesForEdition(edition).map((module) => {
             const price = configuredModulePrices?.[edition]?.[module.Key] || {};
-            const migrateUnpricedFlexModule = name === 'Flex' && sourceModuleCatalogVersion < 6;
+            const migrateUnpricedFlexModule = name === 'Flex' && (
+              sourceModuleCatalogVersion < 6
+              || (sourceModuleCatalogVersion < 8 && module.Key === 'hotel')
+            );
             return [module.Key, {
               MonthlyAmount: name === 'Flex'
                 ? money(price.MonthlyAmount) || (migrateUnpricedFlexModule

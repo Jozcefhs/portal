@@ -12,6 +12,7 @@ import {
 import { defaultModulesForRole } from '../functions/lib/role-module-access.js';
 import {
   SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD,
+  normalizeSubscriptionPlanCatalog,
   subscriptionModulesForEdition
 } from '../functions/lib/subscription-plans.js';
 
@@ -31,6 +32,35 @@ test('Hotel Services is a Flex module for religious and other organisations', ()
   }
   assert.equal(subscriptionModulesForEdition('school').some((module) => module.Key === 'hotel'), false);
   assert.equal(SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD.hotel, 6);
+});
+
+test('existing plan-management catalogues are migrated to include Hotel Services', () => {
+  const catalog = normalizeSubscriptionPlanCatalog({
+    Currency: 'NGN',
+    UsdToNgnRate: 1350,
+    ModuleCatalogVersion: 7,
+    Plans: {
+      Professional: {
+        EntitlementsByEdition: {
+          faith: ['accounting', 'restaurant'],
+          organization: ['accounting']
+        }
+      },
+      Flex: {
+        ModulePricesByEdition: { faith: {}, organization: {} }
+      }
+    }
+  });
+  assert.ok(catalog.Plans.Professional.EntitlementsByEdition.faith.includes('hotel'));
+  assert.ok(catalog.Plans.Professional.EntitlementsByEdition.organization.includes('hotel'));
+  assert.deepEqual(catalog.Plans.Flex.ModulePricesByEdition.faith.hotel, {
+    MonthlyAmount: 8100,
+    YearlyAmount: 81000
+  });
+  assert.deepEqual(catalog.Plans.Flex.ModulePricesByEdition.organization.hotel, {
+    MonthlyAmount: 8100,
+    YearlyAmount: 81000
+  });
 });
 
 test('Hotel User and organisation administrators receive the hotel workspace by default', () => {
