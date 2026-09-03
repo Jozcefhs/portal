@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260903-hotel-tabs';
-const adminScriptVersion = '20260903-hotel-tabs';
+const adminScriptVersion = '20260903-hotel-room-status';
 const parentScriptVersion = '20260823-student-nin-onboarding';
 const notificationVersion = '20260804-read-efficiency';
 const pageNames = [
