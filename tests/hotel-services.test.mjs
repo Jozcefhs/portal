@@ -7,6 +7,7 @@ import {
   hotelCapabilities,
   hotelReservationCanCheckIn,
   hotelReservationTotals,
+  hotelRoomWithOperationalStatus,
   normalizeHotelReservation,
   normalizeHotelRoom
 } from '../functions/lib/hotel-services.js';
@@ -93,6 +94,10 @@ test('hotel room, stay and guest-account calculations are validated', () => {
   }, 'main');
   assert.equal(room.NightlyRate, 45000);
   assert.equal(room.Status, 'Available');
+  assert.equal(normalizeHotelRoom({
+    RoomId: 'ROOM-102', RoomNumber: '102', Status: 'Cleaning', HousekeepingStatus: 'Dirty'
+  }, 'main').Status, 'Available');
+  assert.equal(hotelRoomWithOperationalStatus({ Status: 'Cleaning', HousekeepingStatus: 'Dirty' }).Status, 'Available');
   const stay = normalizeHotelReservation({
     ReservationId: 'RSV-1', GuestName: 'Ada Guest', RoomId: 'ROOM-101',
     ArrivalDate: '2026-09-10', DepartureDate: '2026-09-13', NightlyRate: 45000
@@ -137,6 +142,8 @@ test('Hotel Services uses task tabs and blocks unpaid check-in in both UI and ba
   assert.match(adminJs, /Payment required/);
   assert.match(hotelService, /Full payment is required before \$\{action\}/);
   assert.match(hotelService, /totals\.Balance > 0\.005/);
+  assert.match(hotelService, /status === 'Checked Out'[\s\S]*?\? 'Available'/);
+  assert.doesNotMatch(adminJs, /<option>Cleaning<\/option><option>Maintenance/);
 });
 
 test('public hotel self-service uses a generic branch QR and server-priced Paystack checkout', () => {

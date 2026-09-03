@@ -172,6 +172,7 @@ export function normalizeHotelRoom(input = {}, branchId = 'main') {
   if (!roomNumber) throw inputError('Room number or name is required.');
   const capacity = Math.max(1, Math.trunc(number(input.Capacity || input.capacity || 1)));
   const nightlyRate = Math.max(0, number(input.NightlyRate ?? input.nightlyRate));
+  const normalizedRoomStatus = normalizedStatus(input.Status || input.status || 'Available', ROOM_STATUSES, 'room status');
   return {
     RoomId: roomId,
     BranchId: branchId,
@@ -179,7 +180,9 @@ export function normalizeHotelRoom(input = {}, branchId = 'main') {
     RoomType: clean(input.RoomType || input.roomType) || 'Standard',
     Capacity: capacity,
     NightlyRate: nightlyRate,
-    Status: normalizedStatus(input.Status || input.status || 'Available', ROOM_STATUSES, 'room status'),
+    // Cleaning is a housekeeping state. Preserve compatibility with older
+    // clients that submit it as the room status, but keep the room bookable.
+    Status: normalizedRoomStatus === 'Cleaning' ? 'Available' : normalizedRoomStatus,
     HousekeepingStatus: normalizedStatus(input.HousekeepingStatus || input.housekeepingStatus || 'Clean', HOUSEKEEPING_STATUSES, 'housekeeping status'),
     Notes: clean(input.Notes || input.notes)
   };
@@ -234,6 +237,10 @@ export function hotelReservationCanCheckIn(reservation = {}) {
   return clean(reservation.Status) === 'Reserved' && Math.max(0, number(reservation.Balance)) <= 0.005;
 }
 
+export function hotelRoomWithOperationalStatus(room = {}) {
+  return lower(room.Status) === 'cleaning' ? { ...room, Status: 'Available' } : room;
+}
+
 export async function listHotelServices(env, user, body = {}) {
   const edition = await requireHotelEdition(env, user);
   const capabilities = requireCapability(user, 'canView');
@@ -247,12 +254,13 @@ export async function listHotelServices(env, user, body = {}) {
     capabilities.canViewAudit ? branchRows(env, HOTEL_COLLECTIONS.audit, branchId) : Promise.resolve([])
   ]);
   const decoratedReservations = reservations.map((row) => hotelReservationTotals(row, charges, payments));
+  const operationalRooms = rooms.map(hotelRoomWithOperationalStatus);
   return {
     ok: true,
     edition,
     branchId,
     capabilities,
-    rooms: rooms.sort((a, b) => clean(a.RoomNumber).localeCompare(clean(b.RoomNumber), undefined, { numeric: true })),
+    rooms: operationalRooms.sort((a, b) => clean(a.RoomNumber).localeCompare(clean(b.RoomNumber), undefined, { numeric: true })),
     reservations: decoratedReservations.sort((a, b) => `${clean(b.ArrivalDate)}|${clean(b.CreatedAt)}`.localeCompare(`${clean(a.ArrivalDate)}|${clean(a.CreatedAt)}`)),
     charges: charges.sort((a, b) => clean(b.ChargeDate || b.CreatedAt).localeCompare(clean(a.ChargeDate || a.CreatedAt))),
     payments: payments.sort((a, b) => clean(b.PaymentDate || b.CreatedAt).localeCompare(clean(a.PaymentDate || a.CreatedAt))),
@@ -361,7 +369,7 @@ export async function changeHotelReservationStatus(env, user, body = {}) {
     const roomStatus = status === 'Checked In'
       ? 'Occupied'
       : status === 'Checked Out'
-        ? 'Cleaning'
+        ? 'Available'
         : lower(room.Status) === 'occupied' ? clean(room.Status) : 'Available';
     const housekeepingStatus = status === 'Checked Out' ? 'Dirty' : clean(room.HousekeepingStatus || 'Clean');
     const updatedRoom = { ...room, Status: roomStatus, HousekeepingStatus: housekeepingStatus, UpdatedAt: timestamp, UpdatedBy: actorName(user) };
@@ -467,9 +475,8 @@ export async function setHotelHousekeepingStatus(env, user, body = {}) {
   const room = await getDocument(env, HOTEL_COLLECTIONS.rooms, safeId(roomId)).catch(() => null);
   if (!room || clean(room.BranchId) !== branchId) throw inputError('Room not found in this branch.', 404);
   const timestamp = nowIso();
-  const roomStatus = housekeepingStatus === 'Clean' || housekeepingStatus === 'Inspected'
-    ? (lower(room.Status) === 'cleaning' ? 'Available' : clean(room.Status))
-    : housekeepingStatus === 'Maintenance' ? 'Maintenance' : clean(room.Status);
+  const currentRoomStatus = lower(room.Status) === 'cleaning' ? 'Available' : clean(room.Status);
+  const roomStatus = housekeepingStatus === 'Maintenance' ? 'Maintenance' : currentRoomStatus;
   const updatedRoom = { ...room, HousekeepingStatus: housekeepingStatus, Status: roomStatus, UpdatedAt: timestamp, UpdatedBy: actorName(user) };
   delete updatedRoom.__id; delete updatedRoom.__name; delete updatedRoom.__updateTime;
   await upsertDocument(env, HOTEL_COLLECTIONS.rooms, safeId(roomId), updatedRoom);

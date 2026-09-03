@@ -14406,7 +14406,7 @@ function renderHotelServices(data = {}) {
     <label>Room type<input name="RoomType" value="Standard" required></label>
     <label>Guest capacity<input name="Capacity" type="number" min="1" step="1" value="2" required></label>
     <label>Nightly rate<input name="NightlyRate" type="number" min="0" step="0.01" value="0" required data-finance-input></label>
-    <label>Room status<select name="Status"><option>Available</option><option>Occupied</option><option>Cleaning</option><option>Maintenance</option><option>Out of Service</option></select></label>
+    <label>Room status<select name="Status"><option>Available</option><option>Occupied</option><option>Maintenance</option><option>Out of Service</option></select></label>
     <label>Housekeeping<select name="HousekeepingStatus"><option>Clean</option><option>Dirty</option><option>Cleaning</option><option>Inspected</option><option>Maintenance</option></select></label>
     <label>Notes<input name="Notes"></label>
     <button type="submit">Save room</button>
