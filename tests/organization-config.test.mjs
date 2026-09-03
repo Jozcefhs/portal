@@ -70,6 +70,7 @@ test('church is canonicalized to faith while retaining shared finance modules', 
   assert.equal(flags.donations, true);
   assert.equal(flags.retail, true);
   assert.equal(flags.restaurant, true);
+  assert.equal(flags.hotel, true);
   assert.equal(flags.admissions, false);
   assert.deepEqual(
     filterSectionsForFeatures(
@@ -80,7 +81,7 @@ test('church is canonicalized to faith while retaining shared finance modules', 
   );
   assert.deepEqual(
     allowedSectionsFor({ role: 'Super Admin' }, flags),
-    ['recordsDesk', 'executiveOffice', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'organizationStore', 'restaurant', 'dataBackup', 'securityAudit', 'staffUsers', 'humanResources', 'staffAttendance']
+    ['recordsDesk', 'executiveOffice', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'organizationStore', 'restaurant', 'hotel', 'dataBackup', 'securityAudit', 'staffUsers', 'humanResources', 'staffAttendance']
   );
 });
 

@@ -42,6 +42,7 @@ import {
 import { handleChurchMembershipAction } from '../lib/church-membership.js';
 import { CHURCH_COLLECTIONS, churchCollectionPath } from '../lib/church-foundation.js';
 import { handleChurchServiceAction } from '../lib/church-services.js';
+import { handleHotelAction } from '../lib/hotel-services.js';
 import {
   ensureGivingTypes,
   handleChurchFundAction,
@@ -729,6 +730,8 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'savePayrollRunStatus', 'payPayrollItem',
   'getChurchMembership', 'saveChurchMember', 'saveChurchHousehold', 'importChurchMembers',
   'getChurchServices', 'saveChurchService', 'saveChurchServiceOccurrence', 'recordChurchAttendance',
+  'getHotelServices', 'saveHotelRoom', 'saveHotelReservation', 'changeHotelReservationStatus',
+  'recordHotelCharge', 'recordHotelPayment', 'setHotelHousekeepingStatus',
   'getChurchFunds', 'saveChurchFund', 'saveChurchFundMapping',
   'getChurchOfferings', 'saveChurchOffering', 'reconcileChurchOffering',
   'approveChurchOffering', 'rejectChurchOffering', 'postChurchOffering',
@@ -4674,6 +4677,7 @@ const DEFAULT_CHART_OF_ACCOUNTS = [
   ['4110', 'Acceptance Fee Revenue', 'Revenue', 'Operating Revenue', 'Credit'],
   ['4120', 'Organisation Store Revenue', 'Revenue', 'Operating Revenue', 'Credit'],
   ['4130', 'Restaurant and Catering Revenue', 'Revenue', 'Operating Revenue', 'Credit'],
+  ['4140', 'Hotel Services Revenue', 'Revenue', 'Operating Revenue', 'Credit'],
   ['5000', 'Academic Direct Costs', 'Expense', 'Direct Cost', 'Debit'],
   ['5010', 'Boarding Direct Costs', 'Expense', 'Direct Cost', 'Debit'],
   ['5020', 'Transport Direct Costs', 'Expense', 'Direct Cost', 'Debit'],
@@ -7674,6 +7678,21 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
         role: clean(body.UserRole),
         department: clean(body.UserDepartment),
         branchId: clean(body.UserBranchId)
+      }, body);
+    case 'getHotelServices':
+    case 'saveHotelRoom':
+    case 'saveHotelReservation':
+    case 'changeHotelReservationStatus':
+    case 'recordHotelCharge':
+    case 'recordHotelPayment':
+    case 'setHotelHousekeepingStatus':
+      return handleHotelAction(env, {
+        username: clean(body.UserUsername),
+        displayName: clean(body.RecordedBy),
+        role: clean(body.UserRole),
+        department: clean(body.UserDepartment),
+        branchId: clean(body.UserBranchId),
+        edition: deploymentIdentity?.edition || clean(body.OrganisationEdition || body.OrganizationEdition)
       }, body);
     case 'getChurchOfferings':
     case 'saveChurchOffering':

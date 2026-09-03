@@ -226,6 +226,7 @@ const tabConfig = [
   ['uniformStore', 'Clothing & Supplies'],
   ['organizationStore', 'Organisation Store'],
   ['restaurant', 'Restaurant'],
+  ['hotel', 'Hotel Services'],
   ['dataBackup', 'Backup & Restore'],
   ['securityAudit', 'Security Audit Log'],
   ['staffUsers', 'Staff & Permissions']
@@ -240,7 +241,7 @@ const staffRoleOptions = [
   'Super Admin', 'Principal', 'Teacher', 'Senior Pastor', 'Head Minister',
   'Admissions Officer', 'Student Welfare Officer', 'Accounts Officer',
   'Management', 'Department User', 'Tuck Shop User', 'Clinic User',
-  'Kitchen User', 'Store User', 'Restaurant User', 'Front Desk', 'Pastor',
+  'Kitchen User', 'Store User', 'Restaurant User', 'Hotel User', 'Front Desk', 'Pastor',
   'Church Administrator', 'Membership Officer', 'Treasurer', 'Auditor',
   'HR Director', 'HR Manager', 'HR Business Partner', 'HR Officer',
   'HR Assistant', 'Recruitment Officer', 'Learning & Development Officer',
@@ -266,6 +267,10 @@ const organizationOnlyStaffRoles = new Set([
   'Procurement Officer', 'Records Officer'
 ]);
 
+const nonSchoolOnlyStaffRoles = new Set([
+  'Store User', 'Restaurant User', 'Hotel User', 'Treasurer', 'Auditor'
+]);
+
 const organizationTabLabels = Object.freeze({
   recordsDesk: 'Records Centre',
   members: 'Departments & Personnel',
@@ -276,6 +281,7 @@ const organizationTabLabels = Object.freeze({
   incomeAnalytics: 'Revenue Analytics',
   organizationStore: 'Inventory & Sales',
   restaurant: 'Catering Operations',
+  hotel: 'Hotel Services',
   dataBackup: 'Backup & Restore',
   securityAudit: 'Security Audit Log',
   staffUsers: 'Users & Permissions'
@@ -289,7 +295,7 @@ function webTabsForEdition(edition = resolveDashboardEdition(currentUser || {}))
 
 function staffRolesForEdition(edition = resolveDashboardEdition(currentUser || {})) {
   if (edition === 'school') {
-    return staffRoleOptions.filter((role) => !faithOnlyStaffRoles.has(role) && !organizationOnlyStaffRoles.has(role));
+    return staffRoleOptions.filter((role) => !faithOnlyStaffRoles.has(role) && !organizationOnlyStaffRoles.has(role) && !nonSchoolOnlyStaffRoles.has(role));
   }
   if (edition === 'organization') {
     return staffRoleOptions.filter((role) => !schoolOnlyStaffRoles.has(role) && !faithOnlyStaffRoles.has(role));
@@ -325,6 +331,7 @@ const tabIcons = {
   uniformStore: '\u{1F455}',
   organizationStore: '\u{1F3EA}',
   restaurant: '\u{1F37D}',
+  hotel: '\u{1F3E8}',
   dataBackup: '\u{1F5C4}',
   securityAudit: '\u{1F6E1}',
   staffUsers: '\u2699'
@@ -2597,6 +2604,15 @@ function renderModuleSummary(active, liveData = null) {
       { icon: '\u{1F4C5}', label: 'Occurrences', value: (liveData.occurrences || []).length },
       { icon: '\u2713', label: 'Check-ins', value: (liveData.attendance || []).length },
       { icon: '\u{1F464}', label: 'Visitors', value: (liveData.attendance || []).filter((row) => /visitor/i.test(clean(row.AttendanceType))).length }
+    ];
+  } else if (active === 'hotel' && liveData) {
+    const rooms = liveData.rooms || [];
+    const reservations = liveData.reservations || [];
+    cards = [
+      { icon, label: 'Rooms', value: rooms.length },
+      { icon: '\u2713', label: 'Available', value: rooms.filter((row) => clean(row.Status) === 'Available').length },
+      { icon: '\u{1F6CF}', label: 'Occupied', value: rooms.filter((row) => clean(row.Status) === 'Occupied').length },
+      { icon: '\u20A6', label: 'Outstanding', value: money(reservations.reduce((sum, row) => sum + Number(row.Balance || 0), 0)) }
     ];
   } else if (active === 'funds' && liveData) {
     cards = [
@@ -14314,6 +14330,222 @@ function renderSchoolInsights() {
   });
 }
 
+async function requestHotelServices(payload = null) {
+  const response = await staffFetch('/api/staff-hotel', payload ? {
+    method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  } : {
+    method: 'GET', credentials: 'same-origin', cache: 'no-store', dynamaxRetrySafe: true
+  });
+  const data = await response.json().catch(() => ({ ok: false, message: 'Hotel Services did not return JSON.' }));
+  if (!response.ok || !data.ok) throw new Error(data.message || 'Hotel Services could not be loaded.');
+  return data;
+}
+
+function hotelReservationOptions(reservations = []) {
+  return reservations
+    .filter((row) => ['Reserved', 'Checked In'].includes(clean(row.Status)))
+    .map((row) => `<option value="${escapeHtml(pick(row, ['ReservationId', '__id']))}">${escapeHtml([pick(row, ['GuestName']), pick(row, ['RoomNumber']), pick(row, ['ArrivalDate'])].filter(Boolean).join(' · '))}</option>`)
+    .join('');
+}
+
+function hotelStatusActions(row, capabilities = {}) {
+  if (!capabilities.canManageReservations) return '';
+  const id = escapeHtml(pick(row, ['ReservationId', '__id']));
+  const status = clean(row.Status);
+  if (status === 'Reserved') {
+    return `<span class="compact-row-actions"><button type="button" data-hotel-reservation-status="Checked In" data-reservation-id="${id}">Check in</button><button type="button" class="secondary" data-hotel-reservation-status="Cancelled" data-reservation-id="${id}">Cancel</button><button type="button" class="secondary" data-hotel-reservation-status="No Show" data-reservation-id="${id}">No show</button></span>`;
+  }
+  if (status === 'Checked In') return `<button type="button" data-hotel-reservation-status="Checked Out" data-reservation-id="${id}">Check out</button>`;
+  return '<span class="muted">Locked</span>';
+}
+
+function renderHotelServices(data = {}) {
+  if (activeSection !== 'hotel') return;
+  const rooms = data.rooms || [];
+  const reservations = data.reservations || [];
+  const payments = data.payments || [];
+  const housekeeping = data.housekeeping || [];
+  const capabilities = data.capabilities || {};
+  const available = rooms.filter((row) => clean(row.Status) === 'Available').length;
+  const occupied = rooms.filter((row) => clean(row.Status) === 'Occupied').length;
+  const openStays = reservations.filter((row) => ['Reserved', 'Checked In'].includes(clean(row.Status)));
+  const outstanding = openStays.reduce((sum, row) => sum + Number(row.Balance || 0), 0);
+  const today = new Date().toISOString().slice(0, 10);
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const roomOptions = rooms
+    .filter((row) => !['Maintenance', 'Out of Service'].includes(clean(row.Status)))
+    .map((row) => `<option value="${escapeHtml(pick(row, ['RoomId', '__id']))}" data-rate="${escapeHtml(row.NightlyRate || 0)}">${escapeHtml([row.RoomNumber, row.RoomType, money(row.NightlyRate || 0)].filter(Boolean).join(' · '))}</option>`)
+    .join('');
+  const reservationOptions = hotelReservationOptions(reservations);
+  renderModuleSummary('hotel', data);
+  panelEl.innerHTML = `
+    <div class="workflow-intro"><div><p class="eyebrow">Hospitality operations</p><h2>Hotel Services</h2><p class="muted">Manage rooms, guest reservations, check-in and check-out, housekeeping, charges and payments for this branch.</p></div><button type="button" id="refreshHotelServices" class="secondary">Refresh</button></div>
+    <div class="metric-row">
+      <div><strong>${escapeHtml(rooms.length)}</strong><span>Total rooms</span></div>
+      <div><strong>${escapeHtml(available)}</strong><span>Available</span></div>
+      <div><strong>${escapeHtml(occupied)}</strong><span>Occupied</span></div>
+      <div><strong>${escapeHtml(openStays.length)}</strong><span>Open reservations</span></div>
+      <div><strong>${escapeHtml(money(outstanding))}</strong><span>Outstanding guest balance</span></div>
+    </div>
+    <div class="department-form-grid">
+      ${capabilities.canManageRooms ? `<form id="hotelRoomForm" class="panel compact-form">
+        <h3>Add or update a room</h3>
+        <input type="hidden" name="RoomId">
+        <label>Room number or name<input name="RoomNumber" required></label>
+        <label>Room type<input name="RoomType" value="Standard" required></label>
+        <label>Guest capacity<input name="Capacity" type="number" min="1" step="1" value="2" required></label>
+        <label>Nightly rate<input name="NightlyRate" type="number" min="0" step="0.01" value="0" required data-finance-input></label>
+        <label>Room status<select name="Status"><option>Available</option><option>Occupied</option><option>Cleaning</option><option>Maintenance</option><option>Out of Service</option></select></label>
+        <label>Housekeeping<select name="HousekeepingStatus"><option>Clean</option><option>Dirty</option><option>Cleaning</option><option>Inspected</option><option>Maintenance</option></select></label>
+        <label>Notes<input name="Notes"></label>
+        <button type="submit">Save room</button>
+      </form>` : ''}
+      ${capabilities.canManageReservations ? `<form id="hotelReservationForm" class="panel compact-form">
+        <h3>New reservation</h3>
+        <input type="hidden" name="ReservationId">
+        <label>Guest name<input name="GuestName" required></label>
+        <label>Phone<input name="GuestPhone" inputmode="tel"></label>
+        <label>Email<input name="GuestEmail" type="email"></label>
+        <label>Room<select name="RoomId" required><option value="">Select room</option>${roomOptions}</select></label>
+        <label>Arrival date<input name="ArrivalDate" type="date" value="${today}" required></label>
+        <label>Departure date<input name="DepartureDate" type="date" value="${tomorrow}" required></label>
+        <label>Adults<input name="Adults" type="number" min="1" step="1" value="1" required></label>
+        <label>Children<input name="Children" type="number" min="0" step="1" value="0"></label>
+        <label>Nightly rate<input name="NightlyRate" type="number" min="0" step="0.01" value="0" required data-finance-input></label>
+        <label>Booking source<input name="Source" value="Direct"></label>
+        <label>Notes<input name="Notes"></label>
+        <button type="submit">Save reservation</button>
+      </form>` : ''}
+      ${capabilities.canManageReservations ? `<form id="hotelChargeForm" class="panel compact-form">
+        <h3>Add guest charge</h3>
+        <label>Reservation<select name="ReservationId" required><option value="">Select reservation</option>${reservationOptions}</select></label>
+        <label>Description<input name="Description" placeholder="Meals, laundry, conference room..." required></label>
+        <label>Amount<input name="Amount" type="number" min="0.01" step="0.01" required data-finance-input></label>
+        <label>Charge date<input name="ChargeDate" type="date" value="${today}" required></label>
+        <button type="submit">Record charge</button>
+      </form>` : ''}
+      ${capabilities.canRecordPayments ? `<form id="hotelPaymentForm" class="panel compact-form">
+        <h3>Record guest payment</h3>
+        <label>Reservation<select name="ReservationId" required><option value="">Select reservation</option>${reservationOptions}</select></label>
+        <label>Amount<input name="Amount" type="number" min="0.01" step="0.01" required data-finance-input></label>
+        <label>Method<select name="Method"><option>Cash</option><option>Bank Transfer</option><option>POS</option><option>Online</option></select></label>
+        <label>Reference<input name="Reference" placeholder="Receipt, transfer or POS reference"></label>
+        <label>Payment date<input name="PaymentDate" type="date" value="${today}" required></label>
+        <button type="submit">Record payment</button>
+      </form>` : ''}
+    </div>
+    <p id="hotelWorkspaceStatus" class="status" role="status"></p>
+    ${table('Rooms', rooms, [
+      { label: 'Room', value: (row) => pick(row, ['RoomNumber']) },
+      { label: 'Type', value: (row) => pick(row, ['RoomType']) },
+      { label: 'Capacity', value: (row) => pick(row, ['Capacity']) },
+      { label: 'Rate', value: (row) => money(row.NightlyRate || 0) },
+      { label: 'Status', value: (row) => pick(row, ['Status']) },
+      { label: 'Housekeeping', value: (row) => pick(row, ['HousekeepingStatus']) },
+      { label: 'Update', render: (row) => capabilities.canManageRooms ? `<span class="compact-row-actions"><select data-hotel-housekeeping-room="${escapeHtml(pick(row, ['RoomId', '__id']))}"><option${clean(row.HousekeepingStatus) === 'Clean' ? ' selected' : ''}>Clean</option><option${clean(row.HousekeepingStatus) === 'Dirty' ? ' selected' : ''}>Dirty</option><option${clean(row.HousekeepingStatus) === 'Cleaning' ? ' selected' : ''}>Cleaning</option><option${clean(row.HousekeepingStatus) === 'Inspected' ? ' selected' : ''}>Inspected</option><option${clean(row.HousekeepingStatus) === 'Maintenance' ? ' selected' : ''}>Maintenance</option></select><button type="button" data-save-hotel-housekeeping="${escapeHtml(pick(row, ['RoomId', '__id']))}">Save</button><button type="button" class="secondary" data-edit-hotel-room="${escapeHtml(pick(row, ['RoomId', '__id']))}">Edit</button></span>` : '' }
+    ], { emptyMessage: 'No hotel rooms have been configured for this branch.' })}
+    ${table('Reservations and stays', reservations, [
+      { label: 'Guest', value: (row) => pick(row, ['GuestName']) },
+      { label: 'Room', value: (row) => pick(row, ['RoomNumber', 'RoomId']) },
+      { label: 'Stay', value: (row) => `${pick(row, ['ArrivalDate'])} to ${pick(row, ['DepartureDate'])}` },
+      { label: 'Status', value: (row) => pick(row, ['Status']) },
+      { label: 'Total', value: (row) => money(row.TotalAmount || 0) },
+      { label: 'Paid', value: (row) => money(row.AmountPaid || 0) },
+      { label: 'Balance', render: (row) => `<strong>${escapeHtml(money(row.Balance || 0))}</strong>` },
+      { label: 'Actions', render: (row) => hotelStatusActions(row, capabilities) }
+    ], { emptyMessage: 'No hotel reservations have been recorded.' })}
+    ${table('Recent guest payments', payments.slice(0, 100), [
+      { label: 'Date', value: (row) => pick(row, ['PaymentDate', 'CreatedAt']) },
+      { label: 'Guest', value: (row) => pick(row, ['GuestName']) },
+      { label: 'Method', value: (row) => pick(row, ['Method']) },
+      { label: 'Reference', value: (row) => pick(row, ['Reference']) },
+      { label: 'Amount', value: (row) => money(row.Amount || 0) }
+    ], { emptyMessage: 'No guest payments have been recorded.' })}
+    ${table('Housekeeping activity', housekeeping.slice(0, 100), [
+      { label: 'Room', value: (row) => pick(row, ['RoomNumber', 'RoomId']) },
+      { label: 'Status', value: (row) => pick(row, ['Status']) },
+      { label: 'Recorded', value: (row) => pick(row, ['CreatedAt']) },
+      { label: 'By', value: (row) => pick(row, ['CreatedBy']) },
+      { label: 'Notes', value: (row) => pick(row, ['Notes']) }
+    ], { emptyMessage: 'No housekeeping updates have been recorded.' })}`;
+
+  const statusEl = document.getElementById('hotelWorkspaceStatus');
+  const submitAction = async (form, action, label) => {
+    const button = form.querySelector('button[type="submit"]');
+    const normalText = button?.textContent || label;
+    setButtonLoading(button, true, 'Saving...', normalText);
+    try {
+      const payload = Object.fromEntries(new FormData(form).entries());
+      payload.action = action;
+      if (action === 'saveRoom' && !clean(payload.RoomId)) payload.RoomId = `ROOM-${newIdempotencyKey()}`;
+      if (action === 'saveReservation' && !clean(payload.ReservationId)) payload.ReservationId = `RSV-${newIdempotencyKey()}`;
+      if (action === 'recordCharge') payload.ChargeId = `CHG-${newIdempotencyKey()}`;
+      if (action === 'recordPayment') payload.PaymentId = `PAY-${newIdempotencyKey()}`;
+      const result = await requestHotelServices(payload);
+      renderHotelServices(result);
+      setStatus(document.getElementById('hotelWorkspaceStatus'), result.message || `${label} saved.`, 'ok');
+    } catch (error) {
+      setStatus(statusEl, error.message || String(error), 'bad');
+      if (button?.isConnected) setButtonLoading(button, false, 'Saving...', normalText);
+    }
+  };
+  document.getElementById('hotelRoomForm')?.addEventListener('submit', (event) => { event.preventDefault(); submitAction(event.currentTarget, 'saveRoom', 'Room'); });
+  document.getElementById('hotelReservationForm')?.addEventListener('submit', (event) => { event.preventDefault(); submitAction(event.currentTarget, 'saveReservation', 'Reservation'); });
+  document.getElementById('hotelChargeForm')?.addEventListener('submit', (event) => { event.preventDefault(); submitAction(event.currentTarget, 'recordCharge', 'Charge'); });
+  document.getElementById('hotelPaymentForm')?.addEventListener('submit', (event) => { event.preventDefault(); submitAction(event.currentTarget, 'recordPayment', 'Payment'); });
+  document.querySelector('#hotelReservationForm select[name="RoomId"]')?.addEventListener('change', (event) => {
+    const rate = event.target.selectedOptions[0]?.dataset.rate;
+    const input = document.querySelector('#hotelReservationForm input[name="NightlyRate"]');
+    if (input && rate !== undefined) input.value = rate;
+  });
+  document.getElementById('refreshHotelServices')?.addEventListener('click', () => loadHotelServices());
+  panelEl.querySelectorAll('[data-hotel-reservation-status]').forEach((button) => button.addEventListener('click', async () => {
+    const normalText = button.textContent;
+    setButtonLoading(button, true, 'Updating...', normalText);
+    try {
+      const result = await requestHotelServices({ action: 'changeReservationStatus', ReservationId: button.dataset.reservationId, Status: button.dataset.hotelReservationStatus });
+      renderHotelServices(result);
+      setStatus(document.getElementById('hotelWorkspaceStatus'), result.message, 'ok');
+    } catch (error) {
+      setStatus(statusEl, error.message || String(error), 'bad');
+      if (button.isConnected) setButtonLoading(button, false, 'Updating...', normalText);
+    }
+  }));
+  panelEl.querySelectorAll('[data-save-hotel-housekeeping]').forEach((button) => button.addEventListener('click', async () => {
+    const roomId = button.dataset.saveHotelHousekeeping;
+    const select = panelEl.querySelector(`[data-hotel-housekeeping-room="${CSS.escape(roomId)}"]`);
+    setButtonLoading(button, true, 'Saving...', 'Save');
+    try {
+      const result = await requestHotelServices({ action: 'setHousekeepingStatus', RoomId: roomId, HousekeepingStatus: select?.value || 'Clean' });
+      renderHotelServices(result);
+      setStatus(document.getElementById('hotelWorkspaceStatus'), result.message, 'ok');
+    } catch (error) {
+      setStatus(statusEl, error.message || String(error), 'bad');
+      if (button.isConnected) setButtonLoading(button, false, 'Saving...', 'Save');
+    }
+  }));
+  panelEl.querySelectorAll('[data-edit-hotel-room]').forEach((button) => button.addEventListener('click', () => {
+    const room = rooms.find((row) => pick(row, ['RoomId', '__id']) === button.dataset.editHotelRoom);
+    const form = document.getElementById('hotelRoomForm');
+    if (!room || !form) return;
+    ['RoomId', 'RoomNumber', 'RoomType', 'Capacity', 'NightlyRate', 'Status', 'HousekeepingStatus', 'Notes'].forEach((name) => {
+      if (form.elements[name]) form.elements[name].value = room[name] ?? '';
+    });
+    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
+}
+
+async function loadHotelServices() {
+  try {
+    const data = await requestHotelServices();
+    renderHotelServices(data);
+  } catch (error) {
+    if (activeSection === 'hotel') panelEl.innerHTML = `<p class="status bad">${escapeHtml(error.message || String(error))}</p>`;
+  }
+}
+
 function renderSection(active) {
   if (!dashboardData) return;
   panelEl.classList.toggle('school-store-panel', active === 'bookstore' || active === 'uniformStore' || active === 'organizationStore');
@@ -14419,6 +14651,9 @@ function renderSection(active) {
   } else if (active === 'services') {
     panelEl.innerHTML = '<p class="muted">Loading church services and attendance...</p>';
     loadChurchServices();
+  } else if (active === 'hotel') {
+    panelEl.innerHTML = '<p class="muted">Loading rooms, reservations and guest accounts...</p>';
+    loadHotelServices();
   } else if (active === 'staffAttendance') {
     panelEl.innerHTML = '<p class="muted">Loading staff attendance...</p>';
     loadStaffAttendance();

@@ -13,7 +13,7 @@ export const SUBSCRIPTION_PLAN_NAMES = Object.freeze([
 
 const FULL_ACCESS = '*';
 export const FREE_TRIAL_DAYS = 7;
-export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 6;
+export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 7;
 export const SUBSCRIPTION_CURRENCIES = Object.freeze(['NGN', 'USD']);
 export const DEFAULT_USD_TO_NGN_RATE = 1350;
 
@@ -46,7 +46,8 @@ export const SUBSCRIPTION_FLEX_PRICE_ESTIMATES_USD = Object.freeze({
   offerings: 4,
   donations: 4,
   retail: 4,
-  restaurant: 5
+  restaurant: 5,
+  hotel: 6
 });
 
 export const SUBSCRIPTION_MODULE_CATALOG = Object.freeze([
@@ -75,7 +76,8 @@ export const SUBSCRIPTION_MODULE_CATALOG = Object.freeze([
   Object.freeze({ Key: 'offerings', Editions: Object.freeze(['faith', 'organization']), Labels: Object.freeze({ faith: 'Offerings', organization: 'Income & receipts' }), Description: 'Batch collection, reconciliation and posting.', Requires: Object.freeze(['accounting']) }),
   Object.freeze({ Key: 'donations', Editions: Object.freeze(['faith', 'organization']), Labels: Object.freeze({ faith: 'Donations & donor management', organization: 'Grants & contributions' }), Description: 'Donor records, currencies, conversion and giving analytics.', Requires: Object.freeze(['accounting']) }),
   Object.freeze({ Key: 'retail', Editions: Object.freeze(['faith']), Labels: Object.freeze({ faith: 'Organisation store' }), Description: 'Inventory, sales, checkout and receipts.', Requires: Object.freeze(['accounting']) }),
-  Object.freeze({ Key: 'restaurant', Editions: Object.freeze(['faith']), Labels: Object.freeze({ faith: 'Restaurant' }), Description: 'Restaurant stock, ordering and sales operations.', Requires: Object.freeze(['accounting']) })
+  Object.freeze({ Key: 'restaurant', Editions: Object.freeze(['faith']), Labels: Object.freeze({ faith: 'Restaurant' }), Description: 'Restaurant stock, ordering and sales operations.', Requires: Object.freeze(['accounting']) }),
+  Object.freeze({ Key: 'hotel', Editions: Object.freeze(['faith', 'organization']), Labels: Object.freeze({ faith: 'Hotel services', organization: 'Hotel services' }), Description: 'Rooms, reservations, guest stays, housekeeping, charges and payments.', Requires: Object.freeze(['accounting']) })
 ]);
 
 const MODULE_BY_KEY = new Map(SUBSCRIPTION_MODULE_CATALOG.map((module) => [module.Key, module]));
@@ -185,8 +187,8 @@ export const SUBSCRIPTION_PLAN_DEFINITIONS = Object.freeze({
     Entitlements: Object.freeze({ school: FULL_ACCESS, faith: FULL_ACCESS, organization: FULL_ACCESS }),
     Features: Object.freeze({
       school: Object.freeze(['Everything in Standard', 'Payroll', 'Student conduct and clinic', 'Kitchen and school stores', 'All school operation modules']),
-      faith: Object.freeze(['Everything in Standard', 'Payroll', 'Organisation store and restaurant', 'Programs and all church operation modules']),
-      organization: Object.freeze(['Everything in Standard', 'Payroll', 'Inventory, sales and catering', 'All organisation operation modules'])
+      faith: Object.freeze(['Everything in Standard', 'Payroll', 'Organisation store, restaurant and hotel services', 'Programs and all church operation modules']),
+      organization: Object.freeze(['Everything in Standard', 'Payroll', 'Inventory, sales and hotel services', 'All organisation operation modules'])
     })
   }),
   Flex: Object.freeze({

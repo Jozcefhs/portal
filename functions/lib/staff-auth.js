@@ -230,7 +230,8 @@ function inferDepartment(user) {
     'Clinic User': 'Clinic',
     'Kitchen User': 'Kitchen',
     'Store User': 'Organisation Store',
-    'Restaurant User': 'Restaurant'
+    'Restaurant User': 'Restaurant',
+    'Hotel User': 'Hotel Services'
   }[clean(user.Role || user.role)] || ''));
 }
 

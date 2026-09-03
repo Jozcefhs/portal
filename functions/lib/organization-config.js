@@ -39,7 +39,7 @@ export const SHARED_STAFF_ROLES = Object.freeze([
 ]);
 
 export const NON_SCHOOL_OPERATION_ROLES = Object.freeze([
-  'Store User', 'Restaurant User', 'Treasurer', 'Auditor'
+  'Store User', 'Restaurant User', 'Hotel User', 'Treasurer', 'Auditor'
 ]);
 
 const EDITION_STAFF_ROLE_SETS = Object.freeze({
@@ -107,7 +107,8 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     departments: true,
     programs: true,
     retail: true,
-    restaurant: true
+    restaurant: true,
+    hotel: true
   }),
   organization: Object.freeze({
     branches: true,
@@ -133,7 +134,8 @@ export const EDITION_FEATURE_DEFAULTS = Object.freeze({
     offerings: true,
     donations: true,
     departments: true,
-    programs: true
+    programs: true,
+    hotel: true
   })
 });
 
@@ -330,6 +332,7 @@ const SECTION_FEATURES = Object.freeze({
   uniformStore: 'stores',
   organizationStore: 'retail',
   restaurant: 'restaurant',
+  hotel: 'hotel',
   members: 'members',
   services: 'services',
   staffAttendance: 'staffAttendance',

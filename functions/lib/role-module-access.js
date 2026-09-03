@@ -33,6 +33,7 @@ export const WEB_SECTION_CATALOG = Object.freeze([
   Object.freeze({ key: 'uniformStore', label: 'Clothing & Supplies' }),
   Object.freeze({ key: 'organizationStore', label: 'Organisation Store' }),
   Object.freeze({ key: 'restaurant', label: 'Restaurant' }),
+  Object.freeze({ key: 'hotel', label: 'Hotel Services' }),
   Object.freeze({ key: 'dataBackup', label: 'Backup & Restore' }),
   Object.freeze({ key: 'securityAudit', label: 'Security Audit Log' }),
   Object.freeze({ key: 'staffUsers', label: 'Staff & Permissions' })
@@ -51,6 +52,7 @@ export const ORGANIZATION_SECTION_LABELS = Object.freeze({
   incomeAnalytics: 'Revenue Analytics',
   organizationStore: 'Inventory & Sales',
   restaurant: 'Catering Operations',
+  hotel: 'Hotel Services',
   dataBackup: 'Backup & Restore',
   securityAudit: 'Security Audit Log',
   staffUsers: 'Users & Permissions'
@@ -60,7 +62,7 @@ export const STAFF_ROLE_OPTIONS = Object.freeze([
   'Super Admin', 'Principal', 'Teacher', 'Senior Pastor', 'Head Minister',
   'Admissions Officer', 'Student Welfare Officer', 'Accounts Officer',
   'Management', 'Department User', 'Tuck Shop User', 'Clinic User',
-  'Kitchen User', 'Store User', 'Restaurant User', 'Front Desk', 'Pastor',
+  'Kitchen User', 'Store User', 'Restaurant User', 'Hotel User', 'Front Desk', 'Pastor',
   'Church Administrator', 'Membership Officer', 'Treasurer', 'Auditor',
   'HR Director', 'HR Manager', 'HR Business Partner', 'HR Officer',
   'HR Assistant', 'Recruitment Officer', 'Learning & Development Officer',
@@ -72,7 +74,7 @@ export const STAFF_ROLE_OPTIONS = Object.freeze([
 ]);
 
 const LEGACY_ROLE_DEFAULTS = Object.freeze({
-  'Super Admin': ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'dataBackup', 'securityAudit', 'staffUsers'],
+  'Super Admin': ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'hotel', 'dataBackup', 'securityAudit', 'staffUsers'],
   Principal: ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct'],
   Teacher: ['academics'],
   'Admissions Officer': ['recordsDesk', 'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'financeRequests', 'payroll'],
@@ -84,11 +86,12 @@ const LEGACY_ROLE_DEFAULTS = Object.freeze({
   'Kitchen User': ['kitchen', 'financeRequests', 'payroll'],
   'Store User': ['organizationStore', 'financeRequests', 'payroll'],
   'Restaurant User': ['restaurant', 'financeRequests', 'payroll'],
-  'Front Desk': ['recordsDesk', 'admissions', 'formPurchases', 'students', 'financeRequests', 'payroll'],
+  'Hotel User': ['hotel', 'financeRequests', 'payroll'],
+  'Front Desk': ['recordsDesk', 'admissions', 'formPurchases', 'students', 'hotel', 'financeRequests', 'payroll'],
   Pastor: ['recordsDesk', 'members', 'services', 'funds', 'offerings', 'donations'],
   'Senior Pastor': ['recordsDesk', 'executiveOffice'],
   'Head Minister': ['recordsDesk', 'executiveOffice'],
-  'Church Administrator': ['recordsDesk', 'members', 'services', 'funds', 'offerings', 'donations', 'organizationStore', 'restaurant', 'financeRequests', 'payroll'],
+  'Church Administrator': ['recordsDesk', 'members', 'services', 'funds', 'offerings', 'donations', 'organizationStore', 'restaurant', 'hotel', 'financeRequests', 'payroll'],
   'Membership Officer': ['recordsDesk', 'members', 'services'],
   Treasurer: ['recordsDesk', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests', 'payroll'],
   Auditor: ['recordsDesk', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests', 'securityAudit'],
@@ -106,8 +109,8 @@ const LEGACY_ROLE_DEFAULTS = Object.freeze({
   'Health & Safety Officer': ['humanResources', 'payroll'],
   'Line Manager': ['humanResources', 'payroll'],
   'Executive Director': ['recordsDesk', 'executiveOffice', 'humanResources', 'members', 'services', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests', 'payroll'],
-  'Organisation Administrator': ['recordsDesk', 'executiveOffice', 'humanResources', 'members', 'services', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests', 'payroll', 'organizationStore', 'restaurant'],
-  'Operations Manager': ['recordsDesk', 'humanResources', 'members', 'services', 'financeRequests', 'organizationStore', 'restaurant', 'payroll'],
+  'Organisation Administrator': ['recordsDesk', 'executiveOffice', 'humanResources', 'members', 'services', 'funds', 'offerings', 'donations', 'incomeAnalytics', 'financeRequests', 'payroll', 'organizationStore', 'restaurant', 'hotel'],
+  'Operations Manager': ['recordsDesk', 'humanResources', 'members', 'services', 'financeRequests', 'organizationStore', 'restaurant', 'hotel', 'payroll'],
   'Procurement Officer': ['recordsDesk', 'financeRequests', 'organizationStore', 'payroll'],
   'Records Officer': ['recordsDesk', 'members', 'services', 'payroll']
 });
@@ -149,6 +152,7 @@ function departmentUserDefaults(department) {
   if (normalized.includes('clinic')) return ['recordsDesk', 'clinic', 'humanResources', 'financeRequests', 'payroll'];
   if (normalized.includes('kitchen')) return ['kitchen', 'humanResources', 'financeRequests', 'payroll'];
   if (normalized.includes('restaurant') || normalized.includes('catering')) return ['restaurant', 'humanResources', 'financeRequests', 'payroll'];
+  if (normalized.includes('hotel') || normalized.includes('hospitality') || normalized.includes('guest house')) return ['hotel', 'humanResources', 'financeRequests', 'payroll'];
   if (normalized.includes('store') || normalized.includes('retail') || normalized.includes('bookshop')) return ['organizationStore', 'humanResources', 'financeRequests', 'payroll'];
   if (normalized.includes('tuck')) return ['recordsDesk', 'tuckShop', 'humanResources', 'financeRequests', 'payroll'];
   if (normalized.includes('account') || normalized.includes('finance')) return ['recordsDesk', 'accounts', 'incomeAnalytics', 'humanResources', 'financeRequests', 'payroll'];

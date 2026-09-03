@@ -3,7 +3,7 @@
   "type": "module",
   "scripts": {
     "validate:organisations": "node scripts/organisation-deployment-matrix.mjs --validate-only && node --test tests/deployment-workflows.test.mjs",
-    "test:organization": "node --test tests/organization-config.test.mjs tests/church-membership.test.mjs tests/church-services.test.mjs tests/church-funds.test.mjs tests/church-offerings.test.mjs tests/church-announcements.test.mjs tests/church-donation-management.test.mjs tests/staff-time-attendance.test.mjs",
+    "test:organization": "node --test tests/organization-config.test.mjs tests/church-membership.test.mjs tests/church-services.test.mjs tests/church-funds.test.mjs tests/church-offerings.test.mjs tests/church-announcements.test.mjs tests/church-donation-management.test.mjs tests/hotel-services.test.mjs tests/staff-time-attendance.test.mjs",
     "test:admission-pdf": "node --test tests/admission-pdf.test.mjs",
     "test:accounting": "node --test tests/accounting-calculations.test.mjs",
     "generate:pricing-book-sample": "node scripts/generate-pricing-book-sample.mjs",
