@@ -1,6 +1,7 @@
 import {
   normalizeSubscriptionPlan,
   subscriptionAccessState,
+  subscriptionModulesForEdition,
   subscriptionPlanEntitlements,
   subscriptionPlanUserLimit
 } from './subscription-plans.js';
@@ -194,6 +195,38 @@ export function featureFlagsForPlan(edition, plan, overrides = {}, configuredEnt
   ]));
 }
 
+export function organizationModulePreferences(edition, planFeatureFlags = {}, disabledModules = []) {
+  const modules = subscriptionModulesForEdition(normalizeOrganizationEdition(edition))
+    .filter((module) => planFeatureFlags[module.Key] === true);
+  const planKeys = new Set(modules.map((module) => module.Key));
+  const disabled = new Set((Array.isArray(disabledModules) ? disabledModules : [])
+    .map(clean)
+    .filter((key) => planKeys.has(key)));
+  const enabled = new Set([...planKeys].filter((key) => !disabled.has(key)));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    modules.forEach((module) => {
+      if (!enabled.has(module.Key)) return;
+      if (module.Requires.some((required) => !enabled.has(required))) {
+        enabled.delete(module.Key);
+        changed = true;
+      }
+    });
+  }
+  const enabledModules = modules.map((module) => module.Key).filter((key) => enabled.has(key));
+  const effectiveDisabledModules = modules.map((module) => module.Key).filter((key) => !enabled.has(key));
+  return {
+    modules: modules.map((module) => ({ ...module, Enabled: enabled.has(module.Key) })),
+    enabledModules,
+    disabledModules: effectiveDisabledModules,
+    featureFlags: Object.fromEntries(Object.entries(planFeatureFlags).map(([feature, allowed]) => [
+      feature,
+      allowed === true && (!planKeys.has(feature) || enabled.has(feature))
+    ]))
+  };
+}
+
 export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, legacyProfile = {} } = {}) {
   const profile = organizationProfile && typeof organizationProfile === 'object' ? organizationProfile : {};
   const legacy = legacyProfile && typeof legacyProfile === 'object' ? legacyProfile : {};
@@ -270,6 +303,12 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
     DataRetentionEndsAt: profile.DataRetentionEndsAt || legacy.DataRetentionEndsAt
   });
   const planFlags = featureFlagsForPlan(edition, plan, overrides, planEntitlements);
+  const modulePreferences = organizationModulePreferences(
+    edition,
+    planFlags,
+    profile.DisabledFeatureEntitlements ?? profile.DisabledModules
+      ?? legacy.DisabledFeatureEntitlements ?? legacy.DisabledModules ?? []
+  );
   return {
     Edition: edition,
     Name: name,
@@ -278,9 +317,13 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
     UserLimit: Math.max(1, Number(profile.UserLimit || legacy.UserLimit || env.USER_LIMIT || defaultLimit) || defaultLimit),
     FeatureOverrides: overrides,
     PlanEntitlements: planEntitlements,
+    EnabledFeatureEntitlements: modulePreferences.enabledModules,
+    DisabledFeatureEntitlements: modulePreferences.disabledModules,
+    PlanFeatureFlags: planFlags,
+    ModulePreferences: modulePreferences.modules,
     FeatureFlags: subscription.SubscriptionActive
-      ? planFlags
-      : Object.fromEntries(Object.keys(planFlags).map((feature) => [feature, false])),
+      ? modulePreferences.featureFlags
+      : Object.fromEntries(Object.keys(modulePreferences.featureFlags).map((feature) => [feature, false])),
     ...subscription
   };
 }
@@ -294,6 +337,8 @@ export function organizationProfileDocument(config, audit = {}) {
     Code: resolved.Code,
     FeatureOverrides: config.FeatureOverrides || config.featureOverrides || resolved.FeatureOverrides || {},
     PlanEntitlements: config.PlanEntitlements ?? config.FeatureEntitlements ?? resolved.PlanEntitlements ?? null,
+    DisabledFeatureEntitlements: config.DisabledFeatureEntitlements
+      ?? config.DisabledModules ?? resolved.DisabledFeatureEntitlements ?? [],
     PlanCatalogRevision: clean(config.PlanCatalogRevision || config.planCatalogRevision),
     FeatureFlags: resolved.FeatureFlags,
     UpdatedAt: clean(audit.UpdatedAt),

@@ -11,6 +11,7 @@ import {
   featureFlagsForPlan,
   filterSectionsForFeatures,
   normalizeOrganizationEdition,
+  organizationModulePreferences,
   organizationProfileDocument,
   resolveOrganizationConfig,
   staffRoleAllowedForEdition
@@ -147,6 +148,41 @@ test('server-issued plan entitlements override bootstrap plan defaults', () => {
 
   const noOperationalModules = featureFlagsForPlan('faith', 'Professional', {}, []);
   assert.equal(Object.values(noOperationalModules).some(Boolean), false);
+});
+
+test('organisation module preferences disable plan access without changing plan entitlements', () => {
+  const planFlags = featureFlagsForPlan('school', 'Standard');
+  const preferences = organizationModulePreferences('school', planFlags, ['students']);
+  assert.equal(preferences.featureFlags.students, false);
+  assert.equal(preferences.featureFlags.academics, false);
+  assert.equal(preferences.featureFlags.parentPortal, false);
+  assert.equal(preferences.featureFlags.accounting, true);
+  assert.ok(preferences.disabledModules.includes('students'));
+  assert.ok(preferences.disabledModules.includes('academics'));
+  assert.ok(preferences.disabledModules.includes('parentPortal'));
+  assert.equal(planFlags.students, true);
+
+  const restored = organizationModulePreferences('school', planFlags, []);
+  assert.equal(restored.featureFlags.students, true);
+  assert.equal(restored.featureFlags.academics, true);
+  assert.equal(restored.featureFlags.parentPortal, true);
+});
+
+test('resolved organisation access keeps plan modules separate from subscriber-disabled modules', () => {
+  const organization = resolveOrganizationConfig({
+    organizationProfile: {
+      Edition: 'faith',
+      Plan: 'Professional',
+      DisabledFeatureEntitlements: ['accounting']
+    }
+  });
+  assert.equal(organization.PlanFeatureFlags.accounting, true);
+  assert.equal(organization.FeatureFlags.accounting, false);
+  assert.equal(organization.FeatureFlags.payroll, false);
+  assert.equal(organization.FeatureFlags.funds, false);
+  assert.ok(organization.PlanEntitlements === null);
+  assert.ok(organization.DisabledFeatureEntitlements.includes('accounting'));
+  assert.ok(organization.DisabledFeatureEntitlements.includes('payroll'));
 });
 
 test('an expired free trial disables every operational feature and greys every assigned module', () => {
@@ -292,7 +328,22 @@ test('organisation document stores canonical edition identity and flags', () => 
   assert.equal(document.Name, 'Grace Assembly');
   assert.equal(document.Code, 'GRACE01');
   assert.equal(document.FeatureFlags.offerings, true);
+  assert.deepEqual(document.DisabledFeatureEntitlements, []);
   assert.equal(document.UpdatedBy, 'Admin');
+});
+
+test('super admin module controls are available on web and protected by the plan boundary', async () => {
+  const [adminSource, staffUsersApi, backendApi] = await Promise.all([
+    readFile(new URL('../js/admin.js', import.meta.url), 'utf8'),
+    readFile(new URL('../functions/api/staff-users.js', import.meta.url), 'utf8'),
+    readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8')
+  ]);
+  assert.match(adminSource, /Enabled subscription modules/);
+  assert.match(adminSource, /save-organization-modules/);
+  assert.match(staffUsersApi, /ensureSuperAdmin\(actor\)/);
+  assert.match(staffUsersApi, /DisabledFeatureEntitlements/);
+  assert.match(backendApi, /saveOrganizationModulePreferences/);
+  assert.doesNotMatch(backendApi, /body\.FeatureFlags \|\| body\.featureFlags \|\| existingOrganization\?\.FeatureOverrides/);
 });
 
 test('church records use branch-aware organisation paths', () => {

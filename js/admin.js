@@ -84,6 +84,7 @@ let dataBackupState = { envelope: null, fileName: '', summary: null, busy: false
 let staffApprovalAccounts = [];
 let staffRoleAccessData = null;
 let staffRoleAccessSelectedRole = '';
+let staffModulePreferencesData = null;
 let humanResourcesData = null;
 let staffAttendanceReportFilters = null;
 let activeTabs = [];
@@ -1392,6 +1393,7 @@ function clearStaffWorkspaceState() {
   staffApprovalAccounts = [];
   staffRoleAccessData = null;
   staffRoleAccessSelectedRole = '';
+  staffModulePreferencesData = null;
   pendingMfaLogin = null;
   pendingMfaCompletedLogin = null;
   staffMfaData = null;
@@ -1495,7 +1497,7 @@ function rememberStaffBranch(user = currentUser || {}) {
 }
 
 function renderStaffBranchSelector(user = currentUser || {}) {
-  const canSwitch = user.canSwitchBranches === true;
+  const canSwitch = user.canSwitchBranches === true && user.featureFlags?.branches !== false;
   branchControl.hidden = !canSwitch;
   if (!canSwitch) {
     branchSelector.replaceChildren();
@@ -1549,6 +1551,7 @@ function clearBranchScopedWorkspaceData() {
   staffApprovalAccounts = [];
   staffRoleAccessData = null;
   staffRoleAccessSelectedRole = '';
+  staffModulePreferencesData = null;
   staffMfaAdminData = null;
   humanResourcesData = null;
   staffAttendanceReportFilters = null;
@@ -16468,6 +16471,10 @@ function renderStaffUsers() {
   const policyModules = Array.isArray(staffRoleAccessData?.modules) && staffRoleAccessData.modules.length
     ? staffRoleAccessData.modules
     : permissionTabs.map(([key, label]) => ({ key, label }));
+  const organizationModules = Array.isArray(staffModulePreferencesData?.modules)
+    ? staffModulePreferencesData.modules
+    : [];
+  const organizationModuleLabels = new Map(organizationModules.map((module) => [module.Key, module.Label]));
   if (!availableRoles.includes(staffRoleAccessSelectedRole)) staffRoleAccessSelectedRole = availableRoles[0] || '';
   const policyScope = clean(staffRoleAccessData?.scope || 'global');
   const mfaPolicy = staffMfaAdminData?.policy || { Mode: 'OPTIONAL', RequiredRoles: [], GraceDays: 7, EnforceFrom: '' };
@@ -16497,7 +16504,19 @@ function renderStaffUsers() {
         </article>
       `).join('') : '<p class="muted">No database staff accounts found. Create the first shared staff account.</p>'}
     </div>
-    <section class="role-access-settings">
+    <section class="role-access-settings organization-module-settings">
+      <div class="role-access-heading"><div><p class="eyebrow">Organisation-wide access</p><h2>Enabled subscription modules</h2><p class="muted">Turn off plan modules the organisation does not currently use. This changes access on web and desktop, but it does not change the subscription price or plan entitlement.</p></div><span class="role-access-scope">${escapeHtml(staffModulePreferencesData?.plan || 'Current plan')}</span></div>
+      <div class="role-access-editor">
+        <div class="config-option-list config-option-grid role-access-modules" id="organizationModuleOptions">
+          ${organizationModules.length ? organizationModules.map((module) => {
+            const requirements = (module.Requires || []).map((key) => organizationModuleLabels.get(key) || key);
+            return `<label class="check-row organization-module-option"><input type="checkbox" name="OrganizationModuleOption" value="${escapeHtml(module.Key)}" data-requires="${escapeHtml((module.Requires || []).join(','))}"${module.Enabled ? ' checked' : ''}> <span><strong>${escapeHtml(module.Label)}</strong><small>${escapeHtml(module.Description || '')}${module.Surface ? ` · ${escapeHtml(module.Surface)}` : ''}${requirements.length ? ` · Requires ${escapeHtml(requirements.join(' and '))}` : ''}</small></span></label>`;
+          }).join('') : '<p class="muted">No active subscription modules are available to configure.</p>'}
+        </div>
+        <div class="role-access-actions"><p class="status" id="organizationModuleStatus"></p><button type="button" id="saveOrganizationModules"${organizationModules.length ? '' : ' disabled'}>Save enabled modules</button></div>
+      </div>
+    </section>
+    <section class="role-access-settings role-module-settings">
       <div class="role-access-heading"><div><p class="eyebrow">Role access</p><h2>Role module access</h2><p class="muted">Choose the tabs each role receives by default. Individual staff overrides remain available in each staff account.</p></div><span class="role-access-scope">${policyScope === 'global' ? 'All branches' : `Branch: ${escapeHtml(policyScope)}`}</span></div>
       <div class="role-access-editor">
         <label class="role-access-role">Staff role<select id="roleAccessRole">${availableRoles.map((role) => `<option value="${escapeHtml(role)}"${role === staffRoleAccessSelectedRole ? ' selected' : ''}>${escapeHtml(role)}</option>`).join('')}</select></label>
@@ -16571,7 +16590,8 @@ function renderStaffUsers() {
   mountWorkspaceTabs('staffUsers', [
     { key: 'overview', label: 'Overview', icon: '\u25A6', nodes: [document.getElementById('staffUsersStatus'), panelEl.querySelector(':scope > .workflow-kpis')] },
     { key: 'accounts', label: 'Staff accounts', icon: '\u{1F465}', count: staffUsersData.length, nodes: panelEl.querySelector(':scope > .staff-user-list') },
-    { key: 'roleAccess', label: 'Role access', icon: '\u{1F511}', nodes: panelEl.querySelector(':scope > .role-access-settings') },
+    { key: 'modules', label: 'Enabled modules', icon: '\u25A6', count: organizationModules.filter((module) => module.Enabled).length, nodes: panelEl.querySelector(':scope > .organization-module-settings') },
+    { key: 'roleAccess', label: 'Role access', icon: '\u{1F511}', nodes: panelEl.querySelector(':scope > .role-module-settings') },
     { key: 'mfaPolicy', label: 'Two-factor policy', icon: '\u{1F6E1}', nodes: panelEl.querySelector(':scope > .staff-mfa-policy-settings') },
     { key: 'security', label: 'Security activity', icon: '\u{1F6E1}', count: staffAuditData.length, nodes: panelEl.querySelector(':scope > .staff-security-activity') }
   ]);
@@ -16647,6 +16667,45 @@ function bindStaffUserEvents() {
   document.getElementById('uploadStaffCsv')?.addEventListener('click', () => document.getElementById('staffCsvFile').click());
   document.getElementById('staffCsvTemplate')?.addEventListener('click', downloadStaffCsvTemplate);
   document.getElementById('staffCsvFile')?.addEventListener('change', importStaffCsv);
+  const organizationModuleInputs = Array.from(document.querySelectorAll('[name="OrganizationModuleOption"]'));
+  const organizationModuleByKey = new Map(organizationModuleInputs.map((input) => [input.value, input]));
+  const updateOrganizationModuleDependencies = (source) => {
+    const visited = new Set();
+    const update = (input, checked) => {
+      if (!input || visited.has(`${input.value}:${checked}`)) return;
+      visited.add(`${input.value}:${checked}`);
+      input.checked = checked;
+      if (checked) {
+        clean(input.dataset.requires).split(',').map(clean).filter(Boolean)
+          .forEach((key) => update(organizationModuleByKey.get(key), true));
+      } else {
+        organizationModuleInputs
+          .filter((candidate) => clean(candidate.dataset.requires).split(',').map(clean).includes(input.value))
+          .forEach((candidate) => update(candidate, false));
+      }
+    };
+    update(source, source.checked);
+  };
+  organizationModuleInputs.forEach((input) => input.addEventListener('change', () => {
+    updateOrganizationModuleDependencies(input);
+    setStatus(document.getElementById('organizationModuleStatus'), 'Save to apply this organisation-wide change.');
+  }));
+  document.getElementById('saveOrganizationModules')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const enabledModules = organizationModuleInputs.filter((input) => input.checked).map((input) => input.value);
+    setButtonLoading(button, true, 'Saving...', 'Save enabled modules');
+    try {
+      const data = await staffUserRequest('save-organization-modules', { EnabledModules: enabledModules });
+      staffModulePreferencesData = data.modulePreferences || null;
+      await loadDashboard({ mode: 'shell' });
+      setStatus(document.getElementById('organizationModuleStatus'), data.message, 'good');
+      setStatus(dashboardStatus, data.message, 'good');
+    } catch (error) {
+      setStatus(document.getElementById('organizationModuleStatus'), error.message || String(error), 'bad');
+    } finally {
+      if (button.isConnected) setButtonLoading(button, false, 'Saving...', 'Save enabled modules');
+    }
+  });
   document.getElementById('roleAccessRole')?.addEventListener('change', (event) => {
     renderRoleAccessEditor(event.currentTarget.value);
     setStatus(document.getElementById('roleAccessStatus'), '');
@@ -16965,6 +17024,7 @@ async function loadStaffUsers() {
     staffAuditData = data.audit || [];
     staffApprovalAccounts = data.approvalAccounts || [];
     staffRoleAccessData = data.roleAccess || null;
+    staffModulePreferencesData = data.modulePreferences || null;
     staffMfaAdminData = mfaAdministration;
     renderModuleSummary('staffUsers', staffUsersData);
     renderStaffUsers();

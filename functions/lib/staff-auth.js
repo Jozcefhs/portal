@@ -310,7 +310,7 @@ export function sectionAccessFor(user = {}, organization = {}, roleAccess = null
   const subscriptionPlan = clean(organization.Plan || organization.plan) || 'Professional';
   const subscriptionActive = organization.SubscriptionActive !== false;
   const featureFlags = organization.FeatureFlags || organization.featureFlags || featureFlagsForEdition(edition);
-  const planFeatureFlags = featureFlagsForPlan(
+  const planFeatureFlags = organization.PlanFeatureFlags || organization.planFeatureFlags || featureFlagsForPlan(
     edition,
     subscriptionPlan,
     {},
@@ -366,6 +366,7 @@ export function sectionAccessFor(user = {}, organization = {}, roleAccess = null
     planSections.push('staffAttendance');
   }
   const planSet = new Set(planSections);
+  const allowedSet = new Set(allowedSections);
   const effectiveAllowedSections = subscriptionActive ? allowedSections : [];
   return {
     edition,
@@ -385,6 +386,9 @@ export function sectionAccessFor(user = {}, organization = {}, roleAccess = null
     subscriptionMessage: clean(organization.SubscriptionMessage || organization.subscriptionMessage),
     allowedSections: effectiveAllowedSections,
     availableSections,
+    disabledSections: subscriptionActive
+      ? planSections.filter((section) => !allowedSet.has(section))
+      : [],
     restrictedSections: subscriptionActive
       ? availableSections.filter((section) => !planSet.has(section))
       : availableSections

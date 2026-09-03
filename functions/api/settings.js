@@ -167,6 +167,9 @@ async function loadProfile(env, options = {}) {
     profile.OrganisationCode = identity.organisationCode;
     profile.FeatureFlags = organization.FeatureFlags;
     profile.PlanEntitlements = organization.PlanEntitlements;
+    profile.EnabledFeatureEntitlements = organization.EnabledFeatureEntitlements;
+    profile.DisabledFeatureEntitlements = organization.DisabledFeatureEntitlements;
+    profile.ModulePreferences = organization.ModulePreferences;
     profile.PlanCatalogRevision = clean(savedOrganization?.PlanCatalogRevision);
     profile.SubscriptionPlan = organization.Plan;
     profile.SubscriptionStatus = organization.SubscriptionStatus;
@@ -335,6 +338,7 @@ export async function onRequestPost(context) {
         GracePeriodEndsAt: existing.GracePeriodEndsAt,
         DataRetentionEndsAt: existing.DataRetentionEndsAt,
         PlanEntitlements: existing.PlanEntitlements,
+        DisabledFeatureEntitlements: existing.DisabledFeatureEntitlements,
         PlanCatalogRevision: existing.PlanCatalogRevision,
         UserLimit: incoming.UserLimit || existing.UserLimit
       },
@@ -349,6 +353,9 @@ export async function onRequestPost(context) {
       OrganisationCode: organization.Code,
       FeatureOverrides: organization.FeatureOverrides,
       FeatureFlags: organization.FeatureFlags,
+      EnabledFeatureEntitlements: organization.EnabledFeatureEntitlements,
+      DisabledFeatureEntitlements: organization.DisabledFeatureEntitlements,
+      ModulePreferences: organization.ModulePreferences,
       SchoolName: clean(incoming.SchoolName) || 'Dynamax',
       SchoolCode: normalizeSchoolCode(incoming.SchoolCode),
       SchoolAddress: clean(incoming.SchoolAddress),
@@ -414,6 +421,7 @@ export async function onRequestPost(context) {
       WorkspaceId: deployment.workspaceId,
       Plan: profile.SubscriptionPlan,
       PlanEntitlements: existing.PlanEntitlements,
+      DisabledFeatureEntitlements: existing.DisabledFeatureEntitlements,
       PlanCatalogRevision: existing.PlanCatalogRevision,
       UserLimit: profile.UserLimit,
       BrandName: 'Dynamax',

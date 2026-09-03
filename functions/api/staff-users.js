@@ -1,4 +1,4 @@
-import { batchUpsertDocuments, deleteDocument, getDocument, listCollection, requireFirestoreEnv, updateDocumentIfCurrent, upsertDocument } from '../lib/firestore.js';
+import { batchUpsertDocuments, deleteDocument, getDocument, listCollection, patchDocumentFields, requireFirestoreEnv, updateDocumentIfCurrent, upsertDocument } from '../lib/firestore.js';
 import { hashStaffPassword, invalidateStaffAccessCache, requireStaffSession } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { staffRecordMatchesEdition } from '../lib/records-desk.js';
@@ -10,6 +10,8 @@ import {
 import {
   filterSectionsForFeatures,
   normalizeOrganizationEdition,
+  organizationModulePreferences,
+  resolveOrganizationConfig,
   staffRoleAllowedForEdition
 } from '../lib/organization-config.js';
 import {
@@ -27,6 +29,7 @@ import {
   loadSubscriptionUserLimit,
   staffAccountsForSubscription
 } from '../lib/subscription-user-limit.js';
+import { refreshOrganizationPlanPolicy } from '../lib/plan-policy-sync.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -297,6 +300,93 @@ async function roleAccessSettings(env, actor) {
   return roleAccessView(document, actor, actor.edition, actor.featureFlags);
 }
 
+function modulePreferencesView(organization = {}) {
+  return {
+    plan: clean(organization.Plan),
+    enabledModules: [...(organization.EnabledFeatureEntitlements || [])],
+    disabledModules: [...(organization.DisabledFeatureEntitlements || [])],
+    modules: (organization.ModulePreferences || []).map((module) => ({
+      Key: clean(module.Key),
+      Label: clean(module.Label || module.Key),
+      Description: clean(module.Description),
+      Requires: Array.isArray(module.Requires) ? module.Requires.map(clean).filter(Boolean) : [],
+      Surface: clean(module.Surface),
+      Enabled: module.Enabled === true
+    }))
+  };
+}
+
+async function organizationModuleSettings(env, options = {}) {
+  let organizationProfile = await getDocument(env, 'settings', 'organisationProfile').catch(() => null);
+  if (!organizationProfile) {
+    if (options.required) {
+      const error = new Error('Complete organisation setup before changing enabled modules.');
+      error.status = 409;
+      throw error;
+    }
+    return { organizationProfile: null, organization: resolveOrganizationConfig({ env }) };
+  }
+  organizationProfile = await refreshOrganizationPlanPolicy(env, organizationProfile);
+  return {
+    organizationProfile,
+    organization: resolveOrganizationConfig({ env, organizationProfile })
+  };
+}
+
+async function saveOrganizationModules(env, actor, body) {
+  if (!Array.isArray(body.EnabledModules || body.enabledModules)) {
+    const error = new Error('Choose the plan modules this organisation should keep enabled.');
+    error.status = 400;
+    throw error;
+  }
+  const { organizationProfile, organization } = await organizationModuleSettings(env, { required: true });
+  if (!organization.SubscriptionActive || organization.SubscriptionReadOnly) {
+    const error = new Error(organization.SubscriptionMessage || 'Renew the subscription before changing enabled modules.');
+    error.status = 409;
+    throw error;
+  }
+  const planKeys = new Set((organization.ModulePreferences || []).map((module) => module.Key));
+  const requested = [...new Set((body.EnabledModules || body.enabledModules).map(clean).filter(Boolean))];
+  const outsidePlan = requested.filter((key) => !planKeys.has(key));
+  if (outsidePlan.length) {
+    const error = new Error('One or more selected modules are not included in this organisation plan.');
+    error.status = 400;
+    throw error;
+  }
+  const preferences = organizationModulePreferences(
+    organization.Edition,
+    organization.PlanFeatureFlags,
+    [...planKeys].filter((key) => !requested.includes(key))
+  );
+  await patchDocumentFields(env, 'settings', 'organisationProfile', {
+    DisabledFeatureEntitlements: preferences.disabledModules,
+    FeatureFlags: preferences.featureFlags,
+    ModulePreferencesUpdatedAt: nowIso(),
+    ModulePreferencesUpdatedBy: actor.displayName || actor.username
+  });
+  invalidateStaffAccessCache();
+  const updated = resolveOrganizationConfig({
+    env,
+    organizationProfile: {
+      ...organizationProfile,
+      DisabledFeatureEntitlements: preferences.disabledModules
+    }
+  });
+  await audit(
+    env,
+    actor,
+    'UPDATE ORGANISATION MODULES',
+    'organisationProfile',
+    `${updated.EnabledFeatureEntitlements.length} enabled; ${updated.DisabledFeatureEntitlements.length} disabled`,
+    actorBranchScope(actor) || 'main'
+  );
+  return {
+    ok: true,
+    message: 'Organisation modules updated. Billing and plan entitlements were not changed.',
+    modulePreferences: modulePreferencesView(updated)
+  };
+}
+
 async function saveRoleAccess(env, actor, body) {
   const role = clean(body.Role || body.role);
   if (!role || !rolesForEdition(actor.edition).includes(role)) {
@@ -382,12 +472,13 @@ export async function onRequestPost(context) {
     const action = lower(body.action || 'list');
     let result;
     if (action === 'list') {
-      const [staffRows, audit, accounts, roleAccess, userLimit] = await Promise.all([
+      const [staffRows, audit, accounts, roleAccess, userLimit, moduleSettings] = await Promise.all([
         listCollection(env, 'staffUsers'),
         listSecurityAudit(env, actor),
         listCollection(env, 'chartOfAccounts'),
         roleAccessSettings(env, actor),
-        loadSubscriptionUserLimit(env)
+        loadSubscriptionUserLimit(env),
+        organizationModuleSettings(env)
       ]);
       const visibleRows = staffRows.filter((row) => staffRecordMatchesEdition(row, actor) && branchRecordVisible(row, actor));
       const subscriptionRows = staffAccountsForSubscription(staffRows, actor.edition, actor.username);
@@ -400,6 +491,7 @@ export async function onRequestPost(context) {
         users,
         audit,
         roleAccess,
+        modulePreferences: modulePreferencesView(moduleSettings.organization),
         seatUsage: {
           active: organisationActive,
           visibleActive,
@@ -414,6 +506,7 @@ export async function onRequestPost(context) {
     else if (action === 'import') result = await importUsers(env, actor, body);
     else if (action === 'save-role-access') result = await saveRoleAccess(env, actor, body);
     else if (action === 'reset-role-access') result = await resetRoleAccess(env, actor, body);
+    else if (action === 'save-organization-modules') result = await saveOrganizationModules(env, actor, body);
     else { const err = new Error('Unknown staff-user action.'); err.status = 400; throw err; }
     return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {

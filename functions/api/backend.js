@@ -23,7 +23,8 @@ import {
   documentStorageConfigured,
   putStoredDocument
 } from '../lib/document-storage.js';
-import { organizationProfileDocument, resolveOrganizationConfig } from '../lib/organization-config.js';
+import { organizationModulePreferences, organizationProfileDocument, resolveOrganizationConfig } from '../lib/organization-config.js';
+import { invalidateStaffAccessCache } from '../lib/staff-auth.js';
 import { mergedProfileText } from '../lib/profile-settings-update.js';
 import {
   applyPublicPortalContent,
@@ -720,6 +721,7 @@ export function requireBackendSecret(env, body) {
 }
 
 const VERIFIED_ACTOR_ACTIONS = new Set([
+  'saveOrganizationModulePreferences',
   'exportBackup', 'prepareRestoreBackup', 'clearRestoreCollection', 'writeRestoreCollection', 'completeRestoreBackup',
   'getAccountingOverview', 'getSystemHealth', 'optimizeFirestoreData', 'getPayrollTaxConfiguration',
   'seedTraditionalPayeConfiguration', 'savePayrollSalaryComponent', 'savePayrollTaxProfile',
@@ -2455,7 +2457,8 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
       Name: body.OrganisationName || body.OrganizationName || body.organisationName || body.organizationName || existingOrganization?.Name || profile.SchoolName,
       Code: body.OrganisationCode || body.OrganizationCode || body.organisationCode || body.organizationCode || existingOrganization?.Code || profile.SchoolCode,
       FeatureOverrides: body.FeatureOverrides || body.featureOverrides
-        || body.FeatureFlags || body.featureFlags || existingOrganization?.FeatureOverrides
+        || existingOrganization?.FeatureOverrides,
+      DisabledFeatureEntitlements: existingOrganization?.DisabledFeatureEntitlements
     },
     legacyProfile: profile
   });
@@ -2502,6 +2505,7 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
     WorkspaceId: deploymentIdentity?.workspaceId,
     Plan: profile.SubscriptionPlan,
     PlanEntitlements: existingOrganization?.PlanEntitlements,
+    DisabledFeatureEntitlements: existingOrganization?.DisabledFeatureEntitlements,
     PlanCatalogRevision: existingOrganization?.PlanCatalogRevision,
     UserLimit: profile.UserLimit,
     BrandName: 'Dynamax',
@@ -2603,6 +2607,9 @@ async function getSchoolProfile(env, options = {}) {
       OrganisationCode: organization.Code,
       FeatureFlags: organization.FeatureFlags,
       PlanEntitlements: organization.PlanEntitlements,
+      EnabledFeatureEntitlements: organization.EnabledFeatureEntitlements,
+      DisabledFeatureEntitlements: organization.DisabledFeatureEntitlements,
+      ModulePreferences: organization.ModulePreferences,
       PlanCatalogRevision: clean(organizationProfile?.PlanCatalogRevision),
       DocumentStorageProvider: 'Cloudflare R2',
       DocumentStorageConfigured: documentStorageConfigured(env),
@@ -2635,6 +2642,70 @@ async function getSchoolProfile(env, options = {}) {
   return {
     ok: true,
     profile: await effectiveBranchProfile(env, baseProfile, options.branchId || options.BranchId)
+  };
+}
+
+async function saveOrganizationModulePreferences(env, body) {
+  requireAccountingRole(body, ['Super Admin']);
+  if (!Array.isArray(body.EnabledModules || body.enabledModules)) {
+    const error = new Error('Choose the plan modules this organisation should keep enabled.');
+    error.status = 400;
+    throw error;
+  }
+  let organizationProfile = await getDocument(env, 'settings', 'organisationProfile').catch(() => null);
+  if (!organizationProfile) {
+    const error = new Error('Complete organisation setup before changing enabled modules.');
+    error.status = 409;
+    throw error;
+  }
+  organizationProfile = await refreshOrganizationPlanPolicy(env, organizationProfile);
+  const organization = resolveOrganizationConfig({ env, organizationProfile });
+  if (!organization.SubscriptionActive || organization.SubscriptionReadOnly) {
+    const error = new Error(organization.SubscriptionMessage || 'Renew the subscription before changing enabled modules.');
+    error.status = 409;
+    throw error;
+  }
+  const planKeys = new Set((organization.ModulePreferences || []).map((module) => module.Key));
+  const enabledModules = [...new Set((body.EnabledModules || body.enabledModules).map(clean).filter(Boolean))];
+  if (enabledModules.some((key) => !planKeys.has(key))) {
+    const error = new Error('One or more selected modules are not included in this organisation plan.');
+    error.status = 400;
+    throw error;
+  }
+  const preferences = organizationModulePreferences(
+    organization.Edition,
+    organization.PlanFeatureFlags,
+    [...planKeys].filter((key) => !enabledModules.includes(key))
+  );
+  const updatedAt = nowIso();
+  await patchDocumentFields(env, 'settings', 'organisationProfile', {
+    DisabledFeatureEntitlements: preferences.disabledModules,
+    FeatureFlags: preferences.featureFlags,
+    ModulePreferencesUpdatedAt: updatedAt,
+    ModulePreferencesUpdatedBy: clean(body.RecordedBy || body.UserUsername) || 'Desktop Super Admin'
+  });
+  invalidateStaffAccessCache();
+  const updated = resolveOrganizationConfig({
+    env,
+    organizationProfile: {
+      ...organizationProfile,
+      DisabledFeatureEntitlements: preferences.disabledModules
+    }
+  });
+  await upsertDocument(env, 'staffSecurityAudit', safeDocumentId(`DESKTOP-MODULES-${Date.now()}-${body.UserUsername}`), {
+    Timestamp: updatedAt,
+    Action: 'UPDATE ORGANISATION MODULES',
+    Username: clean(body.UserUsername),
+    Actor: clean(body.RecordedBy || body.UserUsername) || 'Desktop Super Admin',
+    SourcePlatform: 'Desktop',
+    Details: `${updated.EnabledFeatureEntitlements.length} enabled; ${updated.DisabledFeatureEntitlements.length} disabled`
+  });
+  return {
+    ok: true,
+    message: 'Organisation modules updated. Billing and plan entitlements were not changed.',
+    modulePreferences: updated.ModulePreferences,
+    enabledModules: updated.EnabledFeatureEntitlements,
+    disabledModules: updated.DisabledFeatureEntitlements
   };
 }
 
@@ -7900,6 +7971,8 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       return saveBrevoSettings(env, body, deploymentIdentity);
     case 'saveSchoolProfile':
       return saveSchoolProfile(env, body, deploymentIdentity);
+    case 'saveOrganizationModulePreferences':
+      return saveOrganizationModulePreferences(env, body);
     case 'saveOrganisationStructure':
       return saveOrganisationStructure(env, body);
     case 'getSchoolProfile':
