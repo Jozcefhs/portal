@@ -149,6 +149,17 @@ test('housekeeping completion preserves occupancy and out-of-service restriction
   assert.throws(() => hotelRoomAfterHousekeeping({ Status: 'Maintenance' }, 'Unknown'), /valid housekeeping status/);
 });
 
+test('room edits and legacy records cannot expose housekeeping maintenance as available', () => {
+  for (const Status of ['Available', 'Cleaning', 'Maintenance']) {
+    const room = { RoomNumber: '101', Status, HousekeepingStatus: 'Maintenance' };
+    assert.equal(normalizeHotelRoom(room).Status, 'Maintenance');
+    assert.equal(hotelRoomWithOperationalStatus(room).Status, 'Maintenance');
+  }
+  const closed = { RoomNumber: '101', Status: 'Out of Service', HousekeepingStatus: 'Clean' };
+  assert.equal(hotelRoomAfterHousekeeping(closed, 'Maintenance').Status, 'Out of Service');
+  assert.equal(normalizeHotelRoom({ ...closed, HousekeepingStatus: 'Maintenance' }).Status, 'Out of Service');
+});
+
 test('web and desktop backend routes expose the full hotel workflow behind staff access', () => {
   assert.match(staffApi, /allowedSections[^\n]+includes\('hotel'\)/);
   assert.match(staffApi, /subscriptionReadOnly/);

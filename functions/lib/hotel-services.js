@@ -173,7 +173,7 @@ export function normalizeHotelRoom(input = {}, branchId = 'main') {
   const capacity = Math.max(1, Math.trunc(number(input.Capacity || input.capacity || 1)));
   const nightlyRate = Math.max(0, number(input.NightlyRate ?? input.nightlyRate));
   const normalizedRoomStatus = normalizedStatus(input.Status || input.status || 'Available', ROOM_STATUSES, 'room status');
-  return {
+  return hotelRoomWithOperationalStatus({
     RoomId: roomId,
     BranchId: branchId,
     RoomNumber: roomNumber,
@@ -185,7 +185,7 @@ export function normalizeHotelRoom(input = {}, branchId = 'main') {
     Status: normalizedRoomStatus === 'Cleaning' ? 'Available' : normalizedRoomStatus,
     HousekeepingStatus: normalizedStatus(input.HousekeepingStatus || input.housekeepingStatus || 'Clean', HOUSEKEEPING_STATUSES, 'housekeeping status'),
     Notes: clean(input.Notes || input.notes)
-  };
+  });
 }
 
 export function normalizeHotelReservation(input = {}, branchId = 'main') {
@@ -238,7 +238,15 @@ export function hotelReservationCanCheckIn(reservation = {}) {
 }
 
 export function hotelRoomWithOperationalStatus(room = {}) {
+  // Either maintenance control must make the room unavailable, including
+  // records saved by older clients with Status=Available and housekeeping=Maintenance.
+  if (lower(room.Status) === 'out of service') return room;
+  if (lower(room.HousekeepingStatus) === 'maintenance') return { ...room, Status: 'Maintenance' };
   return lower(room.Status) === 'cleaning' ? { ...room, Status: 'Available' } : room;
+}
+
+function hotelRoomUnavailableForBooking(room) {
+  return ['maintenance', 'out of service'].includes(lower(hotelRoomWithOperationalStatus(room).Status));
 }
 
 export async function listHotelServices(env, user, body = {}) {
@@ -276,6 +284,14 @@ export async function saveHotelRoom(env, user, body = {}) {
   const room = normalizeHotelRoom(body.room || body.Room || body, branchId);
   const existing = await getDocument(env, HOTEL_COLLECTIONS.rooms, safeId(room.RoomId)).catch(() => null);
   if (existing && clean(existing.BranchId) !== branchId) throw inputError('That room belongs to another branch.', 403);
+  // The full room editor must also support completing housekeeping maintenance.
+  // An explicit room-status restriction with unchanged housekeeping is retained.
+  if (existing && lower(existing.HousekeepingStatus) === 'maintenance'
+    && completesHotelMaintenance(existing, room.HousekeepingStatus)
+    && ['Available', 'Maintenance'].includes(room.Status)) {
+    const completed = await resolveHotelHousekeepingRoom(env, existing, room.HousekeepingStatus, branchId);
+    room.Status = completed.Status;
+  }
   const payload = {
     ...(existing || {}), ...room,
     CreatedAt: existing?.CreatedAt || nowIso(),
@@ -296,7 +312,7 @@ export async function saveHotelReservation(env, user, body = {}) {
   const reservation = normalizeHotelReservation(body.reservation || body.Reservation || body, branchId);
   const room = await getDocument(env, HOTEL_COLLECTIONS.rooms, safeId(reservation.RoomId)).catch(() => null);
   if (!room || clean(room.BranchId) !== branchId) throw inputError('The selected room does not exist in this branch.');
-  if (['maintenance', 'out of service'].includes(lower(room.Status))) throw inputError('The selected room is not available for reservations.');
+  if (hotelRoomUnavailableForBooking(room)) throw inputError('The selected room is not available for reservations.');
   if (!number(reservation.NightlyRate)) reservation.NightlyRate = Math.max(0, number(room.NightlyRate));
   if (reservation.Adults + reservation.Children > Math.max(1, number(room.Capacity))) throw inputError('The guest count exceeds the selected room capacity.');
   const existing = await getDocument(env, HOTEL_COLLECTIONS.reservations, safeId(reservation.ReservationId)).catch(() => null);
@@ -340,6 +356,10 @@ export async function changeHotelReservationStatus(env, user, body = {}) {
     'Checked In': new Set(['Checked Out'])
   };
   if (!allowed[current]?.has(status)) throw inputError(`A ${current || 'new'} reservation cannot be changed to ${status}.`);
+  const room = await getDocument(env, HOTEL_COLLECTIONS.rooms, safeId(reservation.RoomId)).catch(() => null);
+  if (status === 'Checked In' && (!room || clean(room.BranchId) !== branchId || hotelRoomUnavailableForBooking(room))) {
+    throw inputError('The room is unavailable. Complete maintenance or choose another room before check-in.', 409);
+  }
   if (status === 'Checked In' || status === 'Checked Out') {
     const [charges, payments] = await Promise.all([
       branchRows(env, HOTEL_COLLECTIONS.charges, branchId),
@@ -364,14 +384,15 @@ export async function changeHotelReservationStatus(env, user, body = {}) {
   };
   delete payload.__id; delete payload.__name; delete payload.__updateTime;
   await upsertDocument(env, HOTEL_COLLECTIONS.reservations, safeId(reservationId), payload);
-  const room = await getDocument(env, HOTEL_COLLECTIONS.rooms, safeId(reservation.RoomId)).catch(() => null);
   if (room && clean(room.BranchId) === branchId) {
-    const roomStatus = status === 'Checked In'
+    const unavailable = hotelRoomUnavailableForBooking(room);
+    const roomStatus = unavailable ? hotelRoomWithOperationalStatus(room).Status : status === 'Checked In'
       ? 'Occupied'
       : status === 'Checked Out'
         ? 'Available'
         : lower(room.Status) === 'occupied' ? clean(room.Status) : 'Available';
-    const housekeepingStatus = status === 'Checked Out' ? 'Dirty' : clean(room.HousekeepingStatus || 'Clean');
+    const housekeepingStatus = status === 'Checked Out' && lower(room.HousekeepingStatus) !== 'maintenance'
+      ? 'Dirty' : clean(room.HousekeepingStatus || 'Clean');
     const updatedRoom = { ...room, Status: roomStatus, HousekeepingStatus: housekeepingStatus, UpdatedAt: timestamp, UpdatedBy: actorName(user) };
     delete updatedRoom.__id; delete updatedRoom.__name; delete updatedRoom.__updateTime;
     await upsertDocument(env, HOTEL_COLLECTIONS.rooms, safeId(reservation.RoomId), updatedRoom);
@@ -467,17 +488,33 @@ export async function recordHotelPayment(env, user, body = {}) {
 }
 
 function completesHotelMaintenance(room, housekeepingStatus) {
-  return lower(room.Status) === 'maintenance' && ['clean', 'inspected'].includes(lower(housekeepingStatus));
+  return lower(hotelRoomWithOperationalStatus(room).Status) === 'maintenance' && ['clean', 'inspected'].includes(lower(housekeepingStatus));
 }
 
 export function hotelRoomAfterHousekeeping(room, housekeepingStatus, hasCheckedInGuest = false) {
   const nextHousekeeping = normalizedStatus(housekeepingStatus, HOUSEKEEPING_STATUSES, 'housekeeping status');
   let roomStatus = hotelRoomWithOperationalStatus(room).Status;
-  if (nextHousekeeping === 'Maintenance') roomStatus = 'Maintenance';
+  if (nextHousekeeping === 'Maintenance' && lower(roomStatus) !== 'out of service') roomStatus = 'Maintenance';
   else if (completesHotelMaintenance(room, nextHousekeeping)) {
     roomStatus = hasCheckedInGuest ? 'Occupied' : 'Available';
   }
   return { ...room, Status: roomStatus, HousekeepingStatus: nextHousekeeping };
+}
+
+async function resolveHotelHousekeepingRoom(env, room, housekeepingStatus, branchId) {
+  // Maintenance temporarily hides occupancy. Check the actual stay before
+  // releasing it, rather than assuming that a clean room must be vacant.
+  const checkedInStays = completesHotelMaintenance(room, housekeepingStatus)
+    ? await queryCollection(env, HOTEL_COLLECTIONS.reservations, {
+      filters: [
+        { field: 'BranchId', op: '==', value: branchId },
+        { field: 'RoomId', op: '==', value: room.RoomId },
+        { field: 'Status', op: '==', value: 'Checked In' }
+      ],
+      limit: 1
+    })
+    : [];
+  return hotelRoomAfterHousekeeping(room, housekeepingStatus, checkedInStays.length > 0);
 }
 
 export async function setHotelHousekeepingStatus(env, user, body = {}) {
@@ -488,21 +525,9 @@ export async function setHotelHousekeepingStatus(env, user, body = {}) {
   const housekeepingStatus = normalizedStatus(body.HousekeepingStatus || body.housekeepingStatus, HOUSEKEEPING_STATUSES, 'housekeeping status');
   const room = await getDocument(env, HOTEL_COLLECTIONS.rooms, safeId(roomId)).catch(() => null);
   if (!room || clean(room.BranchId) !== branchId) throw inputError('Room not found in this branch.', 404);
-  // Maintenance temporarily hides occupancy. Check the actual stay before
-  // releasing it, rather than assuming that a clean room must be vacant.
-  const checkedInStays = completesHotelMaintenance(room, housekeepingStatus)
-    ? await queryCollection(env, HOTEL_COLLECTIONS.reservations, {
-      filters: [
-        { field: 'BranchId', op: '==', value: branchId },
-        { field: 'RoomId', op: '==', value: roomId },
-        { field: 'Status', op: '==', value: 'Checked In' }
-      ],
-      limit: 1
-    })
-    : [];
   const timestamp = nowIso();
   const updatedRoom = {
-    ...hotelRoomAfterHousekeeping(room, housekeepingStatus, checkedInStays.length > 0),
+    ...await resolveHotelHousekeepingRoom(env, { ...room, RoomId: roomId }, housekeepingStatus, branchId),
     UpdatedAt: timestamp, UpdatedBy: actorName(user)
   };
   delete updatedRoom.__id; delete updatedRoom.__name; delete updatedRoom.__updateTime;
@@ -590,7 +615,7 @@ export async function getPublicHotelAvailability(env, body = {}) {
     departureDate > clean(row.ArrivalDate)
   )).map((row) => clean(row.RoomId)));
   const availableRooms = rooms
-    .filter((row) => !['maintenance', 'out of service'].includes(lower(row.Status)))
+    .filter((row) => !hotelRoomUnavailableForBooking(row))
     .filter((row) => !conflictingRoomIds.has(clean(row.RoomId)))
     .map(publicHotelRoom)
     .sort((left, right) => left.RoomNumber.localeCompare(right.RoomNumber, undefined, { numeric: true }));
@@ -614,7 +639,7 @@ export async function initPublicHotelReservationPayment(env, body = {}, requestO
   const roomId = clean(body.RoomId || body.roomId);
   const room = await getDocument(env, HOTEL_COLLECTIONS.rooms, safeId(roomId)).catch(() => null);
   if (!room || clean(room.BranchId).toLowerCase() !== branchId) throw inputError('Choose an available room.');
-  if (['maintenance', 'out of service'].includes(lower(room.Status))) throw inputError('That room is not currently available for booking.', 409);
+  if (hotelRoomUnavailableForBooking(room)) throw inputError('That room is not currently available for booking.', 409);
 
   const reservationId = safeId(`RSV-WEB-${crypto.randomUUID()}`);
   const reservation = normalizeHotelReservation({
