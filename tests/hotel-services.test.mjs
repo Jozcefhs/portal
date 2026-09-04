@@ -7,6 +7,7 @@ import {
   hotelCapabilities,
   hotelReservationCanCheckIn,
   hotelReservationTotals,
+  hotelRoomAfterHousekeeping,
   hotelRoomWithOperationalStatus,
   normalizeHotelReservation,
   normalizeHotelRoom
@@ -117,6 +118,35 @@ test('hotel room, stay and guest-account calculations are validated', () => {
     ReservationId: 'RSV-2', GuestName: 'Invalid Stay', RoomId: 'ROOM-101',
     ArrivalDate: '2026-09-13', DepartureDate: '2026-09-13'
   }), /after the arrival/i);
+});
+
+test('maintenance followed by Clean or Inspected restores all three available rooms', () => {
+  const rooms = ['101', '102', '103'].map((RoomNumber) => normalizeHotelRoom({ RoomNumber }, 'main'));
+  const countAvailable = () => rooms.filter((room) => room.Status === 'Available').length;
+  assert.equal(countAvailable(), 3);
+  for (const completedStatus of ['Clean', 'Inspected']) {
+    rooms[0] = hotelRoomAfterHousekeeping(rooms[0], 'Maintenance');
+    assert.equal(countAvailable(), 2);
+    rooms[0] = hotelRoomAfterHousekeeping(rooms[0], completedStatus);
+    assert.equal(countAvailable(), 3);
+    assert.equal(rooms[0].HousekeepingStatus, completedStatus);
+    rooms[0] = hotelRoomAfterHousekeeping(rooms[0], completedStatus);
+    assert.equal(countAvailable(), 3);
+  }
+  // Re-saving Clean repairs rooms left in this inconsistent state by the old handler.
+  assert.equal(hotelRoomAfterHousekeeping({ Status: 'Maintenance', HousekeepingStatus: 'Clean' }, 'Clean').Status, 'Available');
+});
+
+test('housekeeping completion preserves occupancy and out-of-service restrictions', () => {
+  for (const completedStatus of ['Clean', 'Inspected']) {
+    assert.equal(hotelRoomAfterHousekeeping({ Status: 'Occupied' }, completedStatus).Status, 'Occupied');
+    assert.equal(hotelRoomAfterHousekeeping({ Status: 'Maintenance' }, completedStatus, true).Status, 'Occupied');
+    assert.equal(hotelRoomAfterHousekeeping({ Status: 'Out of Service' }, completedStatus).Status, 'Out of Service');
+  }
+  for (const pendingStatus of ['Dirty', 'Cleaning', 'Maintenance']) {
+    assert.equal(hotelRoomAfterHousekeeping({ Status: 'Maintenance' }, pendingStatus).Status, 'Maintenance');
+  }
+  assert.throws(() => hotelRoomAfterHousekeeping({ Status: 'Maintenance' }, 'Unknown'), /valid housekeeping status/);
 });
 
 test('web and desktop backend routes expose the full hotel workflow behind staff access', () => {

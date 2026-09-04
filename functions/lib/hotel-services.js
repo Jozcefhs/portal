@@ -466,6 +466,20 @@ export async function recordHotelPayment(env, user, body = {}) {
   return { ok: true, message: 'Guest payment recorded and posted to Finance and Accounting.', payment: payload, journal };
 }
 
+function completesHotelMaintenance(room, housekeepingStatus) {
+  return lower(room.Status) === 'maintenance' && ['clean', 'inspected'].includes(lower(housekeepingStatus));
+}
+
+export function hotelRoomAfterHousekeeping(room, housekeepingStatus, hasCheckedInGuest = false) {
+  const nextHousekeeping = normalizedStatus(housekeepingStatus, HOUSEKEEPING_STATUSES, 'housekeeping status');
+  let roomStatus = hotelRoomWithOperationalStatus(room).Status;
+  if (nextHousekeeping === 'Maintenance') roomStatus = 'Maintenance';
+  else if (completesHotelMaintenance(room, nextHousekeeping)) {
+    roomStatus = hasCheckedInGuest ? 'Occupied' : 'Available';
+  }
+  return { ...room, Status: roomStatus, HousekeepingStatus: nextHousekeeping };
+}
+
 export async function setHotelHousekeepingStatus(env, user, body = {}) {
   await requireHotelEdition(env, user);
   requireCapability(user, 'canManageRooms');
@@ -474,10 +488,23 @@ export async function setHotelHousekeepingStatus(env, user, body = {}) {
   const housekeepingStatus = normalizedStatus(body.HousekeepingStatus || body.housekeepingStatus, HOUSEKEEPING_STATUSES, 'housekeeping status');
   const room = await getDocument(env, HOTEL_COLLECTIONS.rooms, safeId(roomId)).catch(() => null);
   if (!room || clean(room.BranchId) !== branchId) throw inputError('Room not found in this branch.', 404);
+  // Maintenance temporarily hides occupancy. Check the actual stay before
+  // releasing it, rather than assuming that a clean room must be vacant.
+  const checkedInStays = completesHotelMaintenance(room, housekeepingStatus)
+    ? await queryCollection(env, HOTEL_COLLECTIONS.reservations, {
+      filters: [
+        { field: 'BranchId', op: '==', value: branchId },
+        { field: 'RoomId', op: '==', value: roomId },
+        { field: 'Status', op: '==', value: 'Checked In' }
+      ],
+      limit: 1
+    })
+    : [];
   const timestamp = nowIso();
-  const currentRoomStatus = lower(room.Status) === 'cleaning' ? 'Available' : clean(room.Status);
-  const roomStatus = housekeepingStatus === 'Maintenance' ? 'Maintenance' : currentRoomStatus;
-  const updatedRoom = { ...room, HousekeepingStatus: housekeepingStatus, Status: roomStatus, UpdatedAt: timestamp, UpdatedBy: actorName(user) };
+  const updatedRoom = {
+    ...hotelRoomAfterHousekeeping(room, housekeepingStatus, checkedInStays.length > 0),
+    UpdatedAt: timestamp, UpdatedBy: actorName(user)
+  };
   delete updatedRoom.__id; delete updatedRoom.__name; delete updatedRoom.__updateTime;
   await upsertDocument(env, HOTEL_COLLECTIONS.rooms, safeId(roomId), updatedRoom);
   const updateId = `HSK-${crypto.randomUUID()}`;
