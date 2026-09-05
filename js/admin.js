@@ -161,6 +161,13 @@ let academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '',
 let academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
 let academicResultDraft = { armId: '' };
 let academicOutcomeDraft = { armId: '', promotionDecisionId: '', transcriptStudentRef: '' };
+let academicAnalysisFilters = {
+  period: 'annual', classId: '', armId: '', departmentId: '', schoolStage: '',
+  studentType: '', subjectId: '', teacherUsername: '', studentRef: '', gender: '',
+  resultStatus: '', promotionOutcome: '', grade: '', classification: '', scoreBand: '',
+  attendanceBand: '', completeness: '', minimumAverage: '', maximumAverage: '', query: ''
+};
+let academicAnalysisSnapshot = null;
 let academicCbtDraft = {
   step: 1, testId: '', revisionToken: '', clientRequestId: '', classroomId: '', contextKey: '',
   componentId: '', startDate: '', startTime: '', durationMinutes: '40', questionCount: '20',
@@ -12002,6 +12009,120 @@ function academicSessionOutcomesWorkspace(data, rows) {
   return `${cumulativeCalculator}${cumulativeRegister}${promotionCalculator}${promotionEditor}${promotionRegister}${transcriptBuilder}${transcriptRegister}${history}`;
 }
 
+function academicAnalysisSelectOptions(items = [], selected = '', allLabel = 'All') {
+  return `<option value="">${escapeHtml(allLabel)}</option>${items.map((item) => `<option value="${escapeHtml(item.value)}"${clean(item.value) === clean(selected) ? ' selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}`;
+}
+
+function academicAnalysisComparison(title, items = [], emptyMessage = 'No matching records') {
+  const visible = items.slice(0, 16);
+  return `<article class="academic-analysis-comparison"><header><h3>${escapeHtml(title)}</h3><span>${items.length} group${items.length === 1 ? '' : 's'}</span></header>${visible.length
+    ? `<div class="academic-analysis-bars">${visible.map((item) => `<div class="academic-analysis-bar"><div><strong>${escapeHtml(item.Label)}</strong><span>${escapeHtml(item.Average)}% average · ${escapeHtml(item.PassRate)}% pass · ${escapeHtml(item.StudentCount || item.Count)} student${Number(item.StudentCount || item.Count) === 1 ? '' : 's'}</span></div><div aria-label="${escapeHtml(item.Label)} average ${escapeHtml(item.Average)} percent"><i style="width:${Math.max(2, Math.min(100, Number(item.Average || 0)))}%"></i></div></div>`).join('')}</div>`
+    : `<p class="muted">${escapeHtml(emptyMessage)}</p>`}${items.length > visible.length ? `<small class="academic-analysis-more">Showing the first ${visible.length} groups. Export includes every filtered student.</small>` : ''}</article>`;
+}
+
+function academicSessionAnalysisCsv(snapshot) {
+  const headings = [
+    'Filtered Rank', 'Official Position', 'Student', 'Admission Number', 'Gender', 'Student Type', 'Class', 'Arm', 'Department',
+    'Reporting Period', 'Score', 'Class/Arm Average', 'Difference', 'Grade', 'Classification',
+    'Attendance Percentage', 'Promotion Outcome', 'Result Status', 'Complete', 'At Risk'
+  ];
+  const rows = snapshot.Rows.map((row) => [
+    row.FilteredRank, row.OverallPosition || '', row.StudentName, row.StudentRef, row.Gender, row.StudentType, row.ClassName,
+    row.ArmName, row.DepartmentName, row.Period, Number(row.Score || 0).toFixed(1),
+    Number(row.CohortAverage || 0).toFixed(1), Number(row.DifferenceFromCohort || 0).toFixed(1),
+    row.Grade, row.Classification, row.HasAttendance ? Number(row.AttendancePercentage || 0).toFixed(1) : '',
+    row.PromotionOutcome, row.Status, row.Complete ? 'Yes' : 'No', row.AtRisk ? 'Yes' : 'No'
+  ]);
+  return [headings, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
+}
+
+function academicSessionAnalysisWorkspace(data) {
+  const engine = window.DynamaxAcademicResultsAnalysis;
+  if (!engine?.buildAcademicSessionAnalysis) {
+    academicAnalysisSnapshot = null;
+    return '<p class="status bad">The results-analysis engine could not be loaded. Refresh the page and try again.</p>';
+  }
+  const analysis = engine.buildAcademicSessionAnalysis({
+    SessionId: academicManagementFilters.sessionId,
+    Students: data.students || [], Classes: data.classes || [], Arms: data.arms || [],
+    Subjects: data.subjects || [], Departments: data.departments || [], Staff: data.staff || [],
+    Terms: data.terms || [], TeacherAllocations: data.teacherAllocations || [],
+    StudentMemberships: data.studentMemberships || [], TermResults: data.termResults || [],
+    CumulativeResults: data.cumulativeResults || [], PromotionDecisions: data.promotionDecisions || []
+  }, academicAnalysisFilters);
+  academicAnalysisSnapshot = analysis;
+  const facets = analysis.Facets;
+  const metrics = analysis.Metrics;
+  const selectedSession = academicFind(data.sessions || [], academicManagementFilters.sessionId);
+  const recordLimit = 250;
+  const displayedRows = analysis.Rows.slice(0, recordLimit);
+  const periodOptions = facets.periods.map((item) => `<option value="${escapeHtml(item.value)}"${item.value === academicAnalysisFilters.period ? ' selected' : ''}>${escapeHtml(item.label)}</option>`).join('');
+  const warnings = analysis.Warnings.length ? `<div class="academic-analysis-warnings">${analysis.Warnings.map((warning) => `<p><strong>Attention:</strong> ${escapeHtml(warning)}</p>`).join('')}${analysis.Annual && !(data.cumulativeResults || []).some((row) => row.SessionId === academicManagementFilters.sessionId) ? '<button type="button" class="secondary" data-academic-analysis-open-outcomes>Open Session outcomes</button>' : ''}</div>` : '';
+  const filters = `<form class="academic-analysis-filter-panel" data-academic-analysis-filters>
+    <div class="academic-analysis-filter-heading"><div><small>Management reporting controls</small><h3>Filter the complete session</h3><p>Filters combine. Subject or teacher selection changes the score basis to the matching subject scores.</p></div><div><button type="button" class="secondary" data-academic-analysis-reset>Reset</button><button type="button" data-academic-analysis-export${analysis.Rows.length ? '' : ' disabled'}>Export CSV</button></div></div>
+    <div class="academic-analysis-filter-grid">
+      <label>Reporting period<select name="period">${periodOptions}</select></label>
+      <label>Class<select name="classId">${academicAnalysisSelectOptions(facets.classes, academicAnalysisFilters.classId, 'All classes')}</select></label>
+      <label>Arm<select name="armId">${academicAnalysisSelectOptions(facets.arms, academicAnalysisFilters.armId, 'All arms')}</select></label>
+      <label>Division<select name="schoolStage">${academicAnalysisSelectOptions(facets.schoolStages, academicAnalysisFilters.schoolStage, 'All divisions')}</select></label>
+      <label>Department<select name="departmentId">${academicAnalysisSelectOptions(facets.departments, academicAnalysisFilters.departmentId, 'All departments')}</select></label>
+      <label>Subject<select name="subjectId">${academicAnalysisSelectOptions(facets.subjects, academicAnalysisFilters.subjectId, 'All subjects')}</select></label>
+      <label>Subject teacher<select name="teacherUsername">${academicAnalysisSelectOptions(facets.teachers, academicAnalysisFilters.teacherUsername, 'All teachers')}</select></label>
+      <label>Student<select name="studentRef">${academicAnalysisSelectOptions(facets.students, academicAnalysisFilters.studentRef, 'All students')}</select></label>
+      <label>Gender<select name="gender">${academicAnalysisSelectOptions(facets.genders, academicAnalysisFilters.gender, 'All genders')}</select></label>
+      <label>Student type<select name="studentType">${academicAnalysisSelectOptions(facets.studentTypes, academicAnalysisFilters.studentType, 'All types')}</select></label>
+      <label>Result status<select name="resultStatus">${academicAnalysisSelectOptions(facets.statuses, academicAnalysisFilters.resultStatus, 'All statuses')}</select></label>
+      <label>Promotion outcome<select name="promotionOutcome">${academicAnalysisSelectOptions(facets.promotionOutcomes, academicAnalysisFilters.promotionOutcome, 'All outcomes')}</select></label>
+      <label>Grade<select name="grade">${academicAnalysisSelectOptions(facets.grades, academicAnalysisFilters.grade, 'All grades')}</select></label>
+      <label>Pass / fail<select name="classification">${academicAnalysisSelectOptions(facets.classifications, academicAnalysisFilters.classification, 'All classifications')}</select></label>
+      <label>Score band<select name="scoreBand">${academicAnalysisSelectOptions(facets.scoreBands, academicAnalysisFilters.scoreBand, 'All score bands')}</select></label>
+      <label>Attendance<select name="attendanceBand">${academicAnalysisSelectOptions(facets.attendanceBands, academicAnalysisFilters.attendanceBand, 'All attendance bands')}</select></label>
+      <label>Result completeness<select name="completeness"><option value="">Complete and incomplete</option><option value="complete"${academicAnalysisFilters.completeness === 'complete' ? ' selected' : ''}>Complete only</option><option value="incomplete"${academicAnalysisFilters.completeness === 'incomplete' ? ' selected' : ''}>Incomplete only</option></select></label>
+      <label>Minimum score<input name="minimumAverage" type="number" min="0" max="100" step="0.1" value="${escapeHtml(academicAnalysisFilters.minimumAverage)}" placeholder="0"></label>
+      <label>Maximum score<input name="maximumAverage" type="number" min="0" max="100" step="0.1" value="${escapeHtml(academicAnalysisFilters.maximumAverage)}" placeholder="100"></label>
+      <label class="academic-analysis-search">Search<input name="query" type="search" value="${escapeHtml(academicAnalysisFilters.query)}" placeholder="Name, admission number, class or outcome"></label>
+    </div>
+    <div class="academic-analysis-filter-actions"><button type="submit">Apply filters</button><span>${analysis.Rows.length.toLocaleString()} matching student${analysis.Rows.length === 1 ? '' : 's'} · ${escapeHtml(analysis.Period)}</span></div>
+  </form>`;
+  const summary = `<section class="academic-analysis-summary">
+    <header><div><small>End-of-session performance</small><h3>${escapeHtml(selectedSession?.Name || 'Selected session')} · ${escapeHtml(analysis.Period)}</h3><p>Class average, achievement, attendance, result coverage and risk indicators respond to the filters above.</p></div><span>${escapeHtml(availableBranches.find((branch) => branch.id === selectedBranchId)?.name || selectedBranchId)}</span></header>
+    <div class="academic-analysis-metrics">
+      <div><small>Students analysed</small><strong>${metrics.StudentCount.toLocaleString()}</strong><span>${metrics.RosterCount.toLocaleString()} on session rosters</span></div>
+      <div><small>Class average</small><strong>${metrics.Average}%</strong><span>filtered cohort mean</span></div>
+      <div><small>Pass rate</small><strong>${metrics.PassRate}%</strong><span>${analysis.Rows.filter((row) => row.Pass).length} passing</span></div>
+      <div><small>Highest / lowest</small><strong>${metrics.Highest}% / ${metrics.Lowest}%</strong><span>current filter range</span></div>
+      <div><small>Average attendance</small><strong>${metrics.AttendanceAverage}%</strong><span>students with attendance</span></div>
+      <div class="${metrics.AtRiskCount ? 'is-risk' : ''}"><small>Students at risk</small><strong>${metrics.AtRiskCount.toLocaleString()}</strong><span>score, attendance or outcome concern</span></div>
+      <div><small>Result coverage</small><strong>${metrics.CoverageRate}%</strong><span>roster with a result</span></div>
+      <div><small>Published / locked</small><strong>${metrics.FinalizedCount.toLocaleString()}</strong><span>finalized matching results</span></div>
+    </div>
+  </section>`;
+  const comparisons = `<section class="academic-analysis-comparisons">
+    ${academicAnalysisComparison('Class comparison', analysis.Comparisons.Classes)}
+    ${academicAnalysisComparison('Arm comparison', analysis.Comparisons.Arms)}
+    ${academicAnalysisComparison('Subject comparison', analysis.Comparisons.Subjects, 'Choose a subject or calculate results to compare subjects.')}
+    ${academicAnalysisComparison('Teacher / subject performance', analysis.Comparisons.Teachers, 'Teacher comparison requires saved subject-teacher allocations and term results.')}
+    ${academicAnalysisComparison('Term trend', analysis.Comparisons.Terms, 'No term-result trend is available for the selected students.')}
+    ${academicAnalysisComparison('Gender comparison', analysis.Comparisons.Genders)}
+    ${academicAnalysisComparison('Score-band distribution', analysis.Comparisons.ScoreBands)}
+    ${academicAnalysisComparison('Promotion outcomes', analysis.Comparisons.PromotionOutcomes)}
+  </section>`;
+  const drillDown = table('Filtered Student Drill-down', displayedRows, [
+    { label: 'Filtered rank', value: (row) => row.FilteredRank },
+    { label: 'Official position', value: (row) => row.OverallPosition ? `${row.OverallPosition}${row.AssessedStudentCount ? ` of ${row.AssessedStudentCount}` : ''}` : 'Not shown' },
+    { label: 'Student', render: (row) => `<strong class="academic-result-student-name">${escapeHtml(row.StudentName)}</strong><small>${escapeHtml(row.StudentRef)} · ${escapeHtml(row.Gender)}</small>` },
+    { label: 'Class / arm', render: (row) => `<strong>${escapeHtml(row.ClassName)} / ${escapeHtml(row.ArmName)}</strong><small>${escapeHtml(row.DepartmentName)}</small>` },
+    { label: 'Score', render: (row) => `<strong>${escapeHtml(row.Score)}%</strong><small>${escapeHtml(row.Grade)} · ${escapeHtml(row.Classification)}</small>` },
+    { label: 'Class average', render: (row) => `<strong>${escapeHtml(row.CohortAverage)}%</strong><small>${row.DifferenceFromCohort > 0 ? '+' : ''}${escapeHtml(row.DifferenceFromCohort)} points</small>` },
+    { label: 'Attendance', value: (row) => row.HasAttendance ? `${row.AttendancePercentage}%` : 'Not recorded' },
+    { label: 'Promotion', render: (row) => `<strong>${escapeHtml(row.PromotionOutcome)}</strong><small>${escapeHtml(row.PromotionStatus)}</small>` },
+    { label: 'Result', render: (row) => `<span class="academic-result-status">${escapeHtml(row.Status)}</span><small>${row.Complete ? 'Complete' : 'Incomplete'}</small>` },
+    { label: 'Risk', render: (row) => row.AtRisk ? '<span class="academic-analysis-risk">Review</span>' : '<span class="academic-analysis-secure">On track</span>' }
+  ], { emptyMessage: 'No student result matches the selected analysis filters.' });
+  const limitNote = analysis.Rows.length > recordLimit ? `<p class="academic-analysis-limit">Showing the first ${recordLimit.toLocaleString()} students on screen. Export CSV includes all ${analysis.Rows.length.toLocaleString()} matching students.</p>` : '';
+  return `${filters}${warnings}${summary}${comparisons}${limitNote}${drillDown}`;
+}
+
 function printAcademicTranscript(transcript) {
   const sessions = (transcript.Sessions || []).map((session) => `<section><h2>${escapeHtml(session.AcademicSession)} · ${escapeHtml(session.ClassName || '')}</h2><table><thead><tr><th>Subject</th><th>Annual total</th><th>Grade</th><th>Point</th></tr></thead><tbody>${(session.Subjects || []).map((subject) => `<tr><td>${escapeHtml(subject.SubjectName)}</td><td>${escapeHtml(subject.AnnualTotal)}</td><td>${escapeHtml(subject.Grade)}</td><td>${escapeHtml(subject.GradePoint ?? '')}</td></tr>`).join('')}</tbody></table><p><strong>Overall average:</strong> ${escapeHtml(session.OverallAverage)}% · <strong>Grade:</strong> ${escapeHtml(session.OverallGrade || '—')}</p></section>`).join('');
   const outcomes = (transcript.Outcomes || []).map((row) => `<li>${escapeHtml(row.AcademicSession)}: ${escapeHtml(row.Outcome)}</li>`).join('');
@@ -12296,14 +12417,16 @@ function academicMigrationReadinessWorkspace(data) {
 }
 
 function academicManagementHeader(data, rows, message = '') {
-  const sessions = (data.sessions || []).filter(academicIsActive);
+  const sessions = academicManagementView === 'analysis'
+    ? (data.sessions || [])
+    : (data.sessions || []).filter(academicIsActive);
   const terms = (data.terms || []).filter((row) => !academicManagementFilters.sessionId || row.SessionId === academicManagementFilters.sessionId);
   const permittedSection = clean(currentUser?.schoolSectionAccess).toLowerCase();
   const sections = (data.sections || ['primary', 'secondary']).filter((section) => (
     !['primary', 'secondary'].includes(permittedSection) || section === permittedSection
   ));
   const cbtView = data.permissions?.canCreateCbt ? [['cbt', 'Online CBT']] : [];
-  const adminViews = [['classrooms', 'Classrooms'], ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', 'Student records'], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ['outcomes', 'Session outcomes'], ...(data.permissions?.canManageFinancialClearance ? [['clearances', 'Result clearances']] : []), ...(data.permissions?.canManageStructure ? [['readiness', 'Release readiness']] : []), ...cbtView];
+  const adminViews = [['classrooms', 'Classrooms'], ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', 'Student records'], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ['outcomes', 'Session outcomes'], ...(data.permissions?.canViewResultsAnalysis ? [['analysis', 'Session analysis']] : []), ...(data.permissions?.canManageFinancialClearance ? [['clearances', 'Result clearances']] : []), ...(data.permissions?.canManageStructure ? [['readiness', 'Release readiness']] : []), ...cbtView];
   const views = data.permissions?.financeView
     ? [['clearances', 'Result clearances']]
     : data.permissions?.teacherView
@@ -12356,6 +12479,7 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
   else if (academicManagementView === 'scorebook') workspace = academicScorebookWorkspace(data, rows);
   else if (academicManagementView === 'results') workspace = academicTermResultsWorkspace(data, rows);
   else if (academicManagementView === 'outcomes') workspace = academicSessionOutcomesWorkspace(data, rows);
+  else if (academicManagementView === 'analysis') workspace = academicSessionAnalysisWorkspace(data);
   else if (academicManagementView === 'clearances') workspace = academicFinanceClearanceWorkspace(data, rows);
   else if (academicManagementView === 'readiness') workspace = academicMigrationReadinessWorkspace(data);
   else if (academicManagementView === 'cbt') workspace = academicCbtWorkspace(data, rows);
@@ -13950,6 +14074,33 @@ function bindAcademicManagement() {
     const transcript = academicFind(academicManagementData?.transcripts || [], button.dataset.academicTranscriptPrint);
     if (transcript) printAcademicTranscript(transcript);
   }));
+  const analysisFilterForm = panelEl.querySelector('[data-academic-analysis-filters]');
+  analysisFilterForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(analysisFilterForm).entries());
+    academicAnalysisFilters = { ...academicAnalysisFilters, ...values };
+    renderAcademicManagement(academicManagementData || {});
+  });
+  panelEl.querySelector('[data-academic-analysis-reset]')?.addEventListener('click', () => {
+    academicAnalysisFilters = {
+      period: 'annual', classId: '', armId: '', departmentId: '', schoolStage: '',
+      studentType: '', subjectId: '', teacherUsername: '', studentRef: '', gender: '',
+      resultStatus: '', promotionOutcome: '', grade: '', classification: '', scoreBand: '',
+      attendanceBand: '', completeness: '', minimumAverage: '', maximumAverage: '', query: ''
+    };
+    renderAcademicManagement(academicManagementData || {});
+  });
+  panelEl.querySelector('[data-academic-analysis-export]')?.addEventListener('click', () => {
+    if (!academicAnalysisSnapshot?.Rows?.length) return;
+    const sessionName = clean(academicFind(academicManagementData?.sessions || [], academicManagementFilters.sessionId)?.Name || 'session');
+    const filePart = `${sessionName}-${academicAnalysisSnapshot.Period}`.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    downloadCsvFile(`academic-results-analysis-${filePart || 'session'}.csv`, academicSessionAnalysisCsv(academicAnalysisSnapshot));
+  });
+  panelEl.querySelector('[data-academic-analysis-open-outcomes]')?.addEventListener('click', () => {
+    academicManagementView = 'outcomes';
+    academicManagementTaskViews.outcomes = 'cumulative';
+    void loadAcademicManagement();
+  });
   panelEl.querySelectorAll('[data-academic-apply-arm-template]').forEach((button) => button.addEventListener('click', () => {
     const templateId = button.dataset.academicApplyArmTemplate;
     academicManagementView = 'bulkSetup';
@@ -13972,6 +14123,7 @@ function bindAcademicManagement() {
     academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
     academicResultDraft = { armId: '' };
     academicOutcomeDraft = { armId: '', promotionDecisionId: '', transcriptStudentRef: '' };
+    academicAnalysisFilters = { ...academicAnalysisFilters, classId: '', armId: '', departmentId: '', subjectId: '', teacherUsername: '', studentRef: '', query: '' };
     void loadAcademicManagement({ section: event.target.value });
   });
   document.getElementById('academicManagementSession')?.addEventListener('change', (event) => {
@@ -13993,6 +14145,7 @@ function bindAcademicManagement() {
     academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
     academicResultDraft = { armId: '' };
     academicOutcomeDraft = { armId: '', promotionDecisionId: '', transcriptStudentRef: '' };
+    academicAnalysisFilters = { ...academicAnalysisFilters, period: 'annual', classId: '', armId: '', departmentId: '', subjectId: '', teacherUsername: '', studentRef: '', query: '' };
     renderAcademicManagement(academicManagementData || {});
   });
   document.getElementById('academicManagementTerm')?.addEventListener('change', (event) => {

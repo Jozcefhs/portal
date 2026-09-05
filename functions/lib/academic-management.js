@@ -346,6 +346,12 @@ export const ACADEMIC_OUTCOMES_STATE_KEYS = Object.freeze([
   'promotionDecisions', 'promotionEvents', 'transcripts', 'transcriptEvents'
 ]);
 
+export const ACADEMIC_ANALYSIS_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'arms', 'subjects', 'departments',
+  'teacherAllocations', 'studentMemberships', 'termResults',
+  'cumulativeResults', 'promotionDecisions'
+]);
+
 export const ACADEMIC_CLEARANCE_STATE_KEYS = Object.freeze([
   'sessions', 'terms', 'classes', 'arms', 'studentMemberships', 'resultClearances'
 ]);
@@ -368,6 +374,7 @@ export const ACADEMIC_VIEW_STATE_KEYS = Object.freeze({
   scorebook: ACADEMIC_SCOREBOOK_STATE_KEYS,
   results: ACADEMIC_RESULTS_STATE_KEYS,
   outcomes: ACADEMIC_OUTCOMES_STATE_KEYS,
+  analysis: ACADEMIC_ANALYSIS_STATE_KEYS,
   clearances: ACADEMIC_CLEARANCE_STATE_KEYS,
   readiness: ACADEMIC_READINESS_STATE_KEYS,
   cbt: ACADEMIC_CBT_STATE_KEYS
@@ -398,6 +405,7 @@ const ACADEMIC_VIEW_PEOPLE = Object.freeze({
   scorebook: { staff: true, students: true },
   results: { staff: false, students: true },
   outcomes: { staff: true, students: true },
+  analysis: { staff: true, students: true },
   clearances: { staff: false, students: true },
   readiness: { staff: false, students: true },
   cbt: { staff: true, students: true }
@@ -571,6 +579,7 @@ export function academicManagementCapabilities(user = {}) {
     canReviewResults: enabled && SCORE_REVIEWERS.has(role),
     canPublishResults: enabled && SCORE_APPROVERS.has(role),
     canCalculateCumulativeResults: enabled && SCORE_REVIEWERS.has(role),
+    canViewResultsAnalysis: enabled && STRUCTURE_MANAGERS.has(role),
     canManagePromotions: enabled && SCORE_APPROVERS.has(role),
     canIssueTranscripts: enabled && SCORE_APPROVERS.has(role),
     canManageFinancialClearance: enabled && FINANCE_CLEARANCE_MANAGERS.has(role),
@@ -1590,7 +1599,8 @@ function displayStudents(rows = [], classes = []) {
     AcademicClassId: academicStudentClassId(row, classes),
     AcademicArmId: clean(row.AcademicArmId), AcademicDepartmentCode: clean(row.AcademicDepartmentCode),
     ClassName: clean(row.ClassName || row.ClassAdmitted), ClassAdmitted: clean(row.ClassAdmitted),
-    ClassArm: clean(row.ClassArm), SchoolSection: clean(row.SchoolSection)
+    ClassArm: clean(row.ClassArm), SchoolSection: clean(row.SchoolSection),
+    Gender: clean(row.Gender || row.gender), StudentType: clean(row.StudentType || row.studentType)
   })).filter((row) => row.StudentRef).sort((a, b) => a.StudentName.localeCompare(b.StudentName));
 }
 
@@ -1674,6 +1684,9 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
   const permissions = requireCapability(user, 'enabled');
   const scope = await academicScope(env, user, input, { requireSection: false });
   const focusedView = permissions.financeView ? 'clearances' : normalizedAcademicView(input.View || input.Workspace);
+  if (focusedView === 'analysis' && !permissions.canViewResultsAnalysis) {
+    throw failure('Only school management may open the end-of-session results analysis.', 403, 'ACADEMIC_ANALYSIS_FORBIDDEN');
+  }
   const focusedStateKeys = academicManagementViewStateKeys(focusedView, permissions);
   const includePeople = input.IncludePeople !== false && lower(input.IncludePeople) !== 'false';
   const peopleOptions = includePeople

@@ -58,7 +58,7 @@ test('every academic workspace stays focused below the Worker subrequest ceiling
   assert.deepEqual(Object.keys(ACADEMIC_VIEW_STATE_KEYS), [
     'classrooms', 'structure', 'bulksetup', 'departments', 'offerings', 'teachers',
     'students', 'timetable', 'attendance', 'scorebook', 'results', 'outcomes',
-    'clearances', 'readiness', 'cbt'
+    'analysis', 'clearances', 'readiness', 'cbt'
   ]);
   const validKeys = new Set(Object.keys(ACADEMIC_MANAGEMENT_COLLECTIONS));
   Object.entries(ACADEMIC_VIEW_STATE_KEYS).forEach(([view, keys]) => {
@@ -782,7 +782,8 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /showAcademicManagementTask\('students', 'transfer'\)/);
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260903-hotel-room-status/);
+  assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260905-session-analysis/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260905-session-analysis/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
