@@ -71,6 +71,7 @@ test('Milestone 9 calculates reproducible term-result drafts only from Approved 
   const first = output.Results[0];
   assert.equal(first.Status, 'Calculated Draft');
   assert.equal(first.OverallAverage, 75);
+  assert.equal(first.ClassAverage, 70);
   assert.equal(first.OverallGrade, 'A');
   assert.equal(first.OverallPosition, 1);
   assert.equal(first.AssessedStudentCount, 2);
@@ -81,6 +82,7 @@ test('Milestone 9 calculates reproducible term-result drafts only from Approved 
   assert.equal(first.Attendance.RegisterType, 'Daily');
   assert.deepEqual(first.AssessmentPolicyRevisionIds, ['policy-r1']);
   assert.equal(first.PolicyFingerprint, 'policy-fingerprint');
+  assert.ok(output.Results.every((row) => row.ClassAverage === 70));
 });
 
 test('Milestone 9 blocks the classroom calculation when any subject sheet or student score is incomplete', () => {

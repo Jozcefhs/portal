@@ -1600,8 +1600,31 @@ function displayStudents(rows = [], classes = []) {
     AcademicArmId: clean(row.AcademicArmId), AcademicDepartmentCode: clean(row.AcademicDepartmentCode),
     ClassName: clean(row.ClassName || row.ClassAdmitted), ClassAdmitted: clean(row.ClassAdmitted),
     ClassArm: clean(row.ClassArm), SchoolSection: clean(row.SchoolSection),
-    Gender: clean(row.Gender || row.gender), StudentType: clean(row.StudentType || row.studentType)
+    Gender: clean(row.Gender || row.gender), StudentType: clean(row.StudentType || row.studentType),
+    PassportPhotoAvailable: Boolean(clean(
+      row.documents?.PassportPhotograph?.url
+      || row.DocPassportPhotographUrl
+      || row.PassportPhotographUrl
+      || row.PassportPhotographLink
+    )),
+    PassportPhotoApplicationReference: clean(
+      row.ApplicationReference || row.AdmissionNo || row.AccountRef || studentReference(row)
+    ),
+    PassportPhotoScopePath: clean(row.__scopePath)
   })).filter((row) => row.StudentRef).sort((a, b) => a.StudentName.localeCompare(b.StudentName));
+}
+
+function publicAcademicReportProfile(profile = {}) {
+  return {
+    SchoolName: clean(profile.SchoolName || profile.OrganisationName || profile.OrganizationName),
+    SchoolAddress: clean(profile.SchoolAddress),
+    SchoolPhone: clean(profile.SchoolPhone),
+    SchoolEmail: clean(profile.SchoolEmail),
+    ResultSignatoryName: clean(profile.ResultSignatoryName || profile.SchoolSignatoryName),
+    ResultSignatoryTitle: clean(profile.ResultSignatoryTitle || profile.SchoolSignatoryTitle),
+    DocumentLogoUrl: '/api/document-logo',
+    DocumentStampUrl: '/api/document-stamp'
+  };
 }
 
 function sortAcademicState(state) {
@@ -1692,9 +1715,13 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
   const peopleOptions = includePeople
     ? (ACADEMIC_VIEW_PEOPLE[focusedView] || ACADEMIC_VIEW_PEOPLE.classrooms)
     : { staff: false, students: false };
-  const [rawState, people] = await Promise.all([
+  const includeReportProfile = ['results', 'outcomes'].includes(focusedView);
+  const [rawState, people, reportProfile] = await Promise.all([
     loadAcademicState(env, scope.branchId, focusedStateKeys),
-    loadPeople(env, user, scope, peopleOptions)
+    loadPeople(env, user, scope, peopleOptions),
+    includeReportProfile
+      ? getDocument(env, 'settings', 'schoolProfile').catch(() => ({}))
+      : Promise.resolve(null)
   ]);
   let state = Object.fromEntries(Object.entries(rawState).map(([key, rows]) => [key, scopedRows(rows, scope)]));
   let students = people.students;
@@ -1774,6 +1801,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     ...(selection ? { selection } : {}),
     ...(includeAssessmentPolicy && ['scorebook', 'cbt'].includes(focusedView) ? { assessmentScheme } : {}),
     ...(migrationReadiness ? { migrationReadiness } : {}),
+    ...(reportProfile ? { reportProfile: publicAcademicReportProfile(reportProfile) } : {}),
     ...Object.fromEntries(Object.entries(state)
       .filter(([key]) => focusedStateKeys.includes(key))
       .map(([key, rows]) => [key, rows.map(publicRecord)])),

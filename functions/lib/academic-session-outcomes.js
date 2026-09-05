@@ -280,6 +280,10 @@ export function calculateAcademicCumulativeDrafts(input = {}) {
 
   if (issues.length) return { Ready: false, Issues: unique(issues), Results: [] };
   const positionMode = lower(policy.Position.Mode);
+  const classAverage = results.length
+    ? rounded(results.reduce((sum, row) => sum + Number(row.OverallAverage || 0), 0) / results.length)
+    : 0;
+  results.forEach((row) => { row.ClassAverage = classAverage; });
   const ranked = rankRows(results, (row) => Number(row.OverallAverage || 0), policy.Position.TieMode);
   ranked.forEach((row) => {
     if (['exact-overall', 'internal-only'].includes(positionMode)) row.OverallPosition = row.__rank;
@@ -457,8 +461,11 @@ export function buildAcademicTranscriptDraft(input = {}) {
         Classification: subject.Classification
       })),
       OverallAverage: result.OverallAverage,
+      ClassAverage: result.ClassAverage,
       OverallGrade: result.OverallGrade,
       Attendance: result.Attendance,
+      GradeBands: result.PolicySnapshot?.Assessment?.GradeBands || [],
+      PromotionPolicy: result.PolicySnapshot?.Promotion || {},
       CumulativeResultId: result.CumulativeResultId,
       CumulativeReference: result.CumulativeReference
     })),

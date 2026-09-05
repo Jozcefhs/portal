@@ -1444,22 +1444,81 @@ function academicResultSubjectRows(record) {
   </tr>`).join('');
 }
 
-function academicResultPrintMarkup(child, record) {
-  const schoolName = window.SCHOOL_PROFILE?.SchoolName || window.SCHOOL_PROFILE?.OrganizationName || 'School';
+function academicResultCriteriaMarkup(record = {}) {
+  const policy = record.PolicySnapshot || {};
+  const gradeBands = policy.Assessment?.GradeBands || [];
+  const promotion = policy.Promotion || {};
+  const gradeRows = gradeBands.map((band) => `<li><strong>${escapeHtml(band.Grade || '')}</strong> ${escapeHtml(band.MinimumPercentage ?? 0)}-${escapeHtml(band.MaximumPercentage ?? 100)}%${band.Remark ? ` - ${escapeHtml(band.Remark)}` : ''}</li>`).join('');
+  const junior = promotion.JuniorSecondary || {};
+  const senior = promotion.SeniorSecondary || {};
+  const general = [];
+  if (promotion.MinimumOverallAverage !== null && promotion.MinimumOverallAverage !== undefined) general.push(`Minimum average: ${promotion.MinimumOverallAverage}%`);
+  if (promotion.MaximumFailedSubjects !== null && promotion.MaximumFailedSubjects !== undefined) general.push(`Maximum failed subjects: ${promotion.MaximumFailedSubjects}`);
+  if (promotion.MinimumAttendancePercentage !== null && promotion.MinimumAttendancePercentage !== undefined) general.push(`Minimum attendance: ${promotion.MinimumAttendancePercentage}%`);
+  const juniorRows = [
+    junior.PromotedMinimumAverage !== null && junior.PromotedMinimumAverage !== undefined ? `Promoted: ${junior.PromotedMinimumAverage}% and above` : '',
+    junior.ProbationMinimumAverage !== null && junior.ProbationMinimumAverage !== undefined ? `Probation review: ${junior.ProbationMinimumAverage}% to below ${junior.PromotedMinimumAverage ?? 'the promoted threshold'}%` : ''
+  ].filter(Boolean);
+  const seniorRows = [
+    senior.PromotedMinimumCredits ? `Promoted: at least ${senior.PromotedMinimumCredits} Core credits at ${senior.CreditMinimumPercentage ?? 50}% or above` : '',
+    senior.ProbationCreditCount ? `Probation review: ${senior.ProbationCreditCountMode === 'at-least' ? 'at least ' : ''}${senior.ProbationCreditCount} Core credits` : ''
+  ].filter(Boolean);
+  if (!gradeRows && !general.length && !juniorRows.length && !seniorRows.length) return '';
+  return `<section class="criteria"><div><h3>Grading scale</h3><ul>${gradeRows || '<li>Uses the approved grading policy for this result.</li>'}</ul></div><div><h3>Promotion criteria</h3><ul>${[...general, ...juniorRows, ...seniorRows].map((line) => `<li>${escapeHtml(line)}</li>`).join('') || '<li>Subject to management review and the captured promotion policy.</li>'}</ul></div></section>`;
+}
+
+function fileAsDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Could not read the passport photograph.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function academicResultPassportDataUrl(child = {}) {
+  if (!child.PassportPhotoAvailable) return '';
+  const reference = child.PassportPhotoApplicationReference || child.ApplicationReference || child.AccountRef;
+  if (!reference) return '';
+  try {
+    const response = await fetch('/api/passport-photo', {
+      method: 'POST', credentials: 'same-origin', cache: 'force-cache', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...authPayload(), applicationReference: reference,
+        scopePath: child.PassportPhotoScopePath || child.__scopePath || ''
+      })
+    });
+    if (!response.ok) return '';
+    return await fileAsDataUrl(await response.blob());
+  } catch (_error) {
+    return '';
+  }
+}
+
+function academicResultPrintMarkup(child, record, options = {}) {
+  const profile = options.profile || window.SCHOOL_PROFILE || {};
+  const schoolName = profile.SchoolName || profile.OrganizationName || 'School';
+  const logoUrl = profile.DocumentLogoUrl || '/api/document-logo';
+  const stampUrl = profile.DocumentStampUrl || '/api/document-stamp';
+  const passport = options.passportDataUrl
+    ? `<img class="passport" src="${escapeHtml(options.passportDataUrl)}" alt="Student passport photograph">`
+    : `<div class="passport passport-empty" aria-label="Passport photograph unavailable">${escapeHtml(childInitials(child))}</div>`;
   const summary = [
     record.OverallAverage !== '' && record.OverallAverage !== undefined ? `Average: ${record.OverallAverage}` : '',
+    record.ClassAverage !== '' && record.ClassAverage !== undefined ? `Class average: ${record.ClassAverage}` : '',
     record.OverallGrade ? `Grade: ${record.OverallGrade}` : '',
     record.OverallPosition !== '' && record.OverallPosition !== undefined ? `Position: ${record.OverallPosition}` : '',
     record.PerformanceBand ? `Band: ${record.PerformanceBand}` : '',
     record.AssessedStudentCount !== '' && record.AssessedStudentCount !== undefined ? `Assessed students: ${record.AssessedStudentCount}` : ''
   ].filter(Boolean).join(' · ');
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(record.Term || 'Academic Result')}</title><style>
-    body{font:14px Arial,sans-serif;color:#17324d;margin:32px}header{border-bottom:2px solid #08735f;padding-bottom:12px;margin-bottom:18px}h1,h2{margin:0 0 6px}p{margin:5px 0}.meta{color:#526b80}.summary{margin:16px 0;padding:10px;background:#edf8f5;font-weight:700}table{width:100%;border-collapse:collapse;margin-top:14px}th,td{border:1px solid #cad8e3;padding:7px;text-align:left}th{background:#eef4f8}.remarks{margin-top:18px}.verification{display:flex;align-items:center;gap:12px;margin-top:20px;padding-top:12px;border-top:1px solid #cad8e3}.verification img{width:92px;height:92px}.reference{font-size:11px;color:#647b90}@media print{body{margin:15mm}}
-  </style></head><body><header><h1>${escapeHtml(schoolName)}</h1><h2>Academic Result</h2><p><strong>${escapeHtml(child.DisplayName || child.AccountRef || 'Student')}</strong></p><p class="meta">${escapeHtml([record.ClassName, record.AcademicSession, record.Term].filter(Boolean).join(' · '))}</p></header>
+    @page{size:A4 portrait;margin:12mm}*{box-sizing:border-box}body{font:12px/1.4 Arial,sans-serif;color:#17324d;margin:22px}.report{border:2px solid #42576b;padding:18px}.letterhead{display:grid;grid-template-columns:82px 1fr 92px;align-items:center;gap:14px;border-bottom:3px solid #08735f;padding-bottom:12px}.logo{width:76px;height:76px;object-fit:contain}.school{text-align:center}.school h1{margin:0;color:#123f6d;font-size:23px}.school p{margin:3px 0;color:#526b80}.passport{width:82px;height:96px;border:2px solid #c5d2dd;border-radius:12px;object-fit:cover}.passport-empty{display:grid;place-items:center;background:#eef3f7;color:#63788c;font-size:22px;font-weight:800}.title{text-align:center;margin:14px 0 10px}.title h2{margin:0;color:#123f6d}.identity{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-bottom:12px;padding:10px;background:#eef6fb}.identity span{display:block;color:#61768a;font-size:9px;text-transform:uppercase}.identity strong{display:block}.summary{margin:12px 0;padding:9px;background:#edf8f5;font-weight:700;text-align:center}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border:1px solid #cad8e3;padding:6px;text-align:left}th{background:#eef4f8}.remarks{display:grid;grid-template-columns:1fr 170px;gap:18px;margin-top:15px}.endorsement{text-align:center}.stamp{display:block;width:105px;height:82px;margin:0 auto 4px;object-fit:contain}.criteria{display:grid;grid-template-columns:1fr 1.35fr;gap:15px;margin-top:16px;padding-top:12px;border-top:1px solid #cad8e3}.criteria h3{margin:0 0 4px;color:#123f6d;font-size:12px}.criteria ul{margin:0;padding-left:17px;font-size:10px}.verification{display:flex;align-items:center;gap:12px;margin-top:14px;padding-top:10px;border-top:1px solid #cad8e3}.verification img{width:74px;height:74px}.reference{font-size:9px;color:#647b90}@media print{body{margin:0}.report{border-color:#42576b}}
+  </style></head><body><main class="report"><header class="letterhead"><img class="logo" src="${escapeHtml(logoUrl)}" alt="${escapeHtml(schoolName)} logo" onerror="this.style.visibility='hidden'"><div class="school"><h1>${escapeHtml(schoolName)}</h1><p>${escapeHtml(profile.SchoolAddress || '')}</p><p>${escapeHtml([profile.SchoolPhone, profile.SchoolEmail].filter(Boolean).join(' · '))}</p></div>${passport}</header><section class="title"><h2>Academic Result</h2><p>${escapeHtml([record.ClassName, record.AcademicSession, record.Term].filter(Boolean).join(' · '))}</p></section><section class="identity"><div><span>Student</span><strong>${escapeHtml(child.DisplayName || child.AccountRef || 'Student')}</strong></div><div><span>Admission number</span><strong>${escapeHtml(child.AccountRef || record.StudentRef || '-')}</strong></div><div><span>Class</span><strong>${escapeHtml(record.ClassName || '-')}</strong></div></section>
   ${summary ? `<div class="summary">${escapeHtml(summary)}</div>` : ''}
   <table><thead><tr><th>Subject</th><th>Total</th><th>Grade</th><th>Point</th><th>Position / assessed</th><th>Remark</th></tr></thead><tbody>${academicResultSubjectRows(record)}</tbody></table>
-  <div class="remarks"><p><strong>Attendance:</strong> ${escapeHtml(record.Attendance?.AttendancePercentage ?? 0)}%</p><p><strong>Teacher:</strong> ${escapeHtml(record.TeacherRemark || '-')}</p><p><strong>Principal:</strong> ${escapeHtml(record.PrincipalRemark || '-')}</p><p><strong>Recommendation:</strong> ${escapeHtml(record.Recommendation || '-')}</p></div>
-  <div class="verification"><img src="${escapeHtml(`${location.origin}/api/academic-result-qr?reference=${encodeURIComponent(record.ResultReference || record.ResultId)}`)}" alt="Result verification QR code"><p class="reference">Result reference: ${escapeHtml(record.ResultReference || record.ResultId)}<br>Verification: ${escapeHtml(`${location.origin}/verify-result.html?reference=${encodeURIComponent(record.ResultReference || record.ResultId)}`)}</p></div></body></html>`;
+  <div class="remarks"><div><p><strong>Attendance:</strong> ${escapeHtml(record.Attendance?.AttendancePercentage ?? 0)}%</p><p><strong>Teacher:</strong> ${escapeHtml(record.TeacherRemark || '-')}</p><p><strong>Principal:</strong> ${escapeHtml(record.PrincipalRemark || '-')}</p><p><strong>Recommendation:</strong> ${escapeHtml(record.Recommendation || '-')}</p></div><div class="endorsement"><img class="stamp" src="${escapeHtml(stampUrl)}" alt="Official stamp" onerror="this.style.visibility='hidden'"><strong>${escapeHtml(profile.ResultSignatoryName || 'Authorized school officer')}</strong><br><small>${escapeHtml(profile.ResultSignatoryTitle || 'Official result signatory')}</small></div></div>
+  ${academicResultCriteriaMarkup(record)}
+  <div class="verification"><img src="${escapeHtml(`${location.origin}/api/academic-result-qr?reference=${encodeURIComponent(record.ResultReference || record.ResultId)}`)}" alt="Result verification QR code"><p class="reference">Result reference: ${escapeHtml(record.ResultReference || record.ResultId)}<br>Verification: ${escapeHtml(`${location.origin}/verify-result.html?reference=${encodeURIComponent(record.ResultReference || record.ResultId)}`)}</p></div></main></body></html>`;
 }
 
 async function printAcademicResult(child, record, button) {
@@ -1486,7 +1545,10 @@ async function printAcademicResult(child, record, button) {
     if (!response.ok || !data.ok || !data.academicResult) throw new Error(data.message || 'Could not prepare this result for printing.');
     if (!printWindow) throw new Error('Allow pop-ups for this site, then try printing again.');
     printWindow.document.open();
-    printWindow.document.write(academicResultPrintMarkup(child, data.academicResult));
+    const passportDataUrl = await academicResultPassportDataUrl(child);
+    printWindow.document.write(academicResultPrintMarkup(child, data.academicResult, {
+      profile: data.reportProfile || {}, passportDataUrl
+    }));
     printWindow.document.close();
     printWindow.focus();
     window.setTimeout(() => printWindow.print(), 250);

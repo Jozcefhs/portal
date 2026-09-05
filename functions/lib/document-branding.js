@@ -31,9 +31,18 @@ export async function getDocumentBranding(env = {}) {
 
 export async function saveDocumentBranding(env = {}, values = {}) {
   const identity = requiredDeploymentIdentity(env);
+  const current = await getDocumentBranding(env).catch(() => ({}));
+  const supplied = (field) => Object.prototype.hasOwnProperty.call(values, field);
   return upsertDocument(env, 'settings', documentBrandingDocumentId(env), {
-    DocumentLogoDataUrl: clean(values.DocumentLogoDataUrl),
-    DocumentSignatureDataUrl: clean(values.DocumentSignatureDataUrl),
+    DocumentLogoDataUrl: supplied('DocumentLogoDataUrl')
+      ? clean(values.DocumentLogoDataUrl)
+      : clean(current.DocumentLogoDataUrl),
+    DocumentSignatureDataUrl: supplied('DocumentSignatureDataUrl')
+      ? clean(values.DocumentSignatureDataUrl)
+      : clean(current.DocumentSignatureDataUrl),
+    DocumentStampDataUrl: supplied('DocumentStampDataUrl')
+      ? clean(values.DocumentStampDataUrl)
+      : clean(current.DocumentStampDataUrl),
     UpdatedAt: clean(values.UpdatedAt) || new Date().toISOString(),
     WorkspaceId: identity.workspaceId,
     OrganisationEdition: identity.edition

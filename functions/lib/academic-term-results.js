@@ -220,6 +220,10 @@ export function calculateAcademicTermResultDrafts(input = {}) {
   });
 
   const eligibleForOverall = results.filter((row) => row.SubjectCount >= policy.Position.MinimumAssessedSubjects);
+  const classAverage = eligibleForOverall.length
+    ? rounded(eligibleForOverall.reduce((sum, row) => sum + Number(row.OverallAverage || 0), 0) / eligibleForOverall.length)
+    : 0;
+  results.forEach((row) => { row.ClassAverage = classAverage; });
   const overallRanks = rankValues(eligibleForOverall, (row) => Number(row.OverallAverage || 0), policy.Position.TieMode);
   overallRanks.forEach((row) => {
     if (['exact-overall', 'internal-only'].includes(positionMode)) row.OverallPosition = row.__rank;

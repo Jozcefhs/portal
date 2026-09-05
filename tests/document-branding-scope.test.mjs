@@ -35,10 +35,11 @@ test('document branding is isolated by deployment and legacy records fail closed
 });
 
 test('Executive correspondence and settings use scoped document branding', async () => {
-  const [executiveSource, backendSource, endpointSource] = await Promise.all([
+  const [executiveSource, backendSource, endpointSource, stampEndpointSource] = await Promise.all([
     readFile(new URL('../functions/lib/executive-correspondence.js', import.meta.url), 'utf8'),
     readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8'),
-    readFile(new URL('../functions/api/document-logo.js', import.meta.url), 'utf8')
+    readFile(new URL('../functions/api/document-logo.js', import.meta.url), 'utf8'),
+    readFile(new URL('../functions/api/document-stamp.js', import.meta.url), 'utf8')
   ]);
 
   assert.match(executiveSource, /getDocumentBranding\(env\)/);
@@ -49,4 +50,6 @@ test('Executive correspondence and settings use scoped document branding', async
   assert.match(backendSource, /saveDocumentBranding\(env,/);
   assert.match(endpointSource, /documentBrandingMatchesDeployment\(context\.env, documentBranding\)/);
   assert.match(endpointSource, /webBrandingMatchesDeployment\(context\.env, webBranding\)/);
+  assert.match(stampEndpointSource, /documentBrandingMatchesDeployment\(context\.env, documentBranding\)/);
+  assert.match(stampEndpointSource, /DocumentStampDataUrl/);
 });

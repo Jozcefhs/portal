@@ -12123,17 +12123,70 @@ function academicSessionAnalysisWorkspace(data) {
   return `${filters}${warnings}${summary}${comparisons}${limitNote}${drillDown}`;
 }
 
-function printAcademicTranscript(transcript) {
-  const sessions = (transcript.Sessions || []).map((session) => `<section><h2>${escapeHtml(session.AcademicSession)} · ${escapeHtml(session.ClassName || '')}</h2><table><thead><tr><th>Subject</th><th>Annual total</th><th>Grade</th><th>Point</th></tr></thead><tbody>${(session.Subjects || []).map((subject) => `<tr><td>${escapeHtml(subject.SubjectName)}</td><td>${escapeHtml(subject.AnnualTotal)}</td><td>${escapeHtml(subject.Grade)}</td><td>${escapeHtml(subject.GradePoint ?? '')}</td></tr>`).join('')}</tbody></table><p><strong>Overall average:</strong> ${escapeHtml(session.OverallAverage)}% · <strong>Grade:</strong> ${escapeHtml(session.OverallGrade || '—')}</p></section>`).join('');
-  const outcomes = (transcript.Outcomes || []).map((row) => `<li>${escapeHtml(row.AcademicSession)}: ${escapeHtml(row.Outcome)}</li>`).join('');
-  const qrSource = `${window.location.origin}/api/academic-transcript-qr?number=${encodeURIComponent(transcript.TranscriptNumber)}`;
-  const qr = transcript.Status === 'Issued' ? `<img class="qr" src="${escapeHtml(qrSource)}" alt="Transcript verification QR code">` : '';
+function academicBlobDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Could not read the passport photograph.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function academicStaffPassportDataUrl(student = {}) {
+  if (!student.PassportPhotoAvailable) return '';
+  const reference = student.PassportPhotoApplicationReference || student.StudentRef;
+  if (!reference) return '';
+  try {
+    const response = await staffFetch('/api/passport-photo', {
+      method: 'POST', credentials: 'same-origin', cache: 'force-cache', headers: { 'Content-Type': 'application/json' },
+      dynamaxRetrySafe: true,
+      body: JSON.stringify({ applicationReference: reference, scopePath: student.PassportPhotoScopePath || '' })
+    });
+    if (!response.ok) return '';
+    return academicBlobDataUrl(await response.blob());
+  } catch (_error) {
+    return '';
+  }
+}
+
+function academicTranscriptCriteria(transcript = {}) {
+  const current = (transcript.Sessions || []).at(-1) || {};
+  const gradeBands = current.GradeBands || [];
+  const promotion = current.PromotionPolicy || {};
+  const rules = [];
+  if (promotion.MinimumOverallAverage !== null && promotion.MinimumOverallAverage !== undefined) rules.push(`Minimum overall average: ${promotion.MinimumOverallAverage}%`);
+  if (promotion.MaximumFailedSubjects !== null && promotion.MaximumFailedSubjects !== undefined) rules.push(`Maximum failed subjects: ${promotion.MaximumFailedSubjects}`);
+  const junior = promotion.JuniorSecondary || {};
+  if (junior.PromotedMinimumAverage !== null && junior.PromotedMinimumAverage !== undefined) rules.push(`Junior promoted: ${junior.PromotedMinimumAverage}% and above`);
+  if (junior.ProbationMinimumAverage !== null && junior.ProbationMinimumAverage !== undefined) rules.push(`Junior probation review begins at ${junior.ProbationMinimumAverage}%`);
+  const senior = promotion.SeniorSecondary || {};
+  if (senior.PromotedMinimumCredits) rules.push(`Senior promoted: at least ${senior.PromotedMinimumCredits} Core credits at ${senior.CreditMinimumPercentage ?? 50}% or above`);
+  if (!gradeBands.length && !rules.length) return '';
+  return `<section class="criteria"><div><h2>Grading scale</h2><ul>${gradeBands.map((band) => `<li><strong>${escapeHtml(band.Grade)}</strong> ${escapeHtml(band.MinimumPercentage)}-${escapeHtml(band.MaximumPercentage)}%${band.Remark ? ` - ${escapeHtml(band.Remark)}` : ''}</li>`).join('') || '<li>Uses the approved grading policy.</li>'}</ul></div><div><h2>Promotion criteria</h2><ul>${rules.map((rule) => `<li>${escapeHtml(rule)}</li>`).join('') || '<li>Subject to the approved captured promotion policy.</li>'}</ul></div></section>`;
+}
+
+async function printAcademicTranscript(transcript) {
   const popup = window.open('', '_blank');
   if (!popup) {
     setStatus(document.getElementById('academicManagementStatus'), 'Allow pop-ups to open the print-ready transcript.', 'bad');
     return;
   }
-  popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(transcript.TranscriptNumber)}</title><style>body{margin:0;padding:36px;color:#102a43;font:14px Arial,sans-serif}header{display:flex;justify-content:space-between;gap:24px;border-bottom:3px solid #0b7f69;padding-bottom:18px}h1{margin:0 0 6px;font-size:25px}h2{margin:26px 0 10px;font-size:17px}p{line-height:1.5}.meta{text-align:right}.badge{display:inline-block;padding:5px 9px;border-radius:12px;background:#e8f6f2;color:#086f5e;font-weight:700}table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid #d8e2ec;text-align:left}th{white-space:nowrap;background:#edf3f8;font-size:11px;text-transform:uppercase}.qr{width:108px;height:108px;margin-top:18px}footer{display:flex;justify-content:space-between;align-items:end;margin-top:35px;border-top:1px solid #b8c7d6;padding-top:18px}.draft{color:#b42318;font-weight:800}@media print{body{padding:0}.no-print{display:none}}</style></head><body><header><div><h1>${escapeHtml(currentUser?.organizationName || currentUser?.OrganisationName || 'Official Academic Transcript')}</h1><p><strong>${escapeHtml(transcript.StudentName)}</strong><br>${escapeHtml(transcript.StudentRef)}</p></div><div class="meta"><span class="badge">${escapeHtml(transcript.Status)}</span><p>${escapeHtml(transcript.TranscriptNumber)}<br>Version ${escapeHtml(transcript.Version)}</p></div></header>${transcript.Status !== 'Issued' ? '<p class="draft">DRAFT · NOT AN ISSUED OFFICIAL RECORD</p>' : ''}${sessions}<section><h2>Promotion and completion outcomes</h2><ul>${outcomes || '<li>No committed outcome recorded.</li>'}</ul></section><footer><div><strong>Authorized school record</strong><p>${transcript.IssuedAt ? `Issued ${escapeHtml(new Date(transcript.IssuedAt).toLocaleDateString())}` : 'Pending issue approval'}</p></div>${qr}</footer><button class="no-print" onclick="window.print()">Print transcript</button></body></html>`);
+  popup.opener = null;
+  popup.document.write('<p style="font:16px Arial;padding:24px">Preparing transcript...</p>');
+  const sessions = (transcript.Sessions || []).map((session) => `<section><h2>${escapeHtml(session.AcademicSession)} · ${escapeHtml(session.ClassName || '')}</h2><table><thead><tr><th>Subject</th><th>Annual total</th><th>Grade</th><th>Point</th></tr></thead><tbody>${(session.Subjects || []).map((subject) => `<tr><td>${escapeHtml(subject.SubjectName)}</td><td>${escapeHtml(subject.AnnualTotal)}</td><td>${escapeHtml(subject.Grade)}</td><td>${escapeHtml(subject.GradePoint ?? '')}</td></tr>`).join('')}</tbody></table><p><strong>Overall average:</strong> ${escapeHtml(session.OverallAverage)}% · <strong>Class average:</strong> ${escapeHtml(session.ClassAverage ?? '—')}% · <strong>Grade:</strong> ${escapeHtml(session.OverallGrade || '—')}</p></section>`).join('');
+  const outcomes = (transcript.Outcomes || []).map((row) => `<li>${escapeHtml(row.AcademicSession)}: ${escapeHtml(row.Outcome)}</li>`).join('');
+  const qrSource = `${window.location.origin}/api/academic-transcript-qr?number=${encodeURIComponent(transcript.TranscriptNumber)}`;
+  const qr = transcript.Status === 'Issued' ? `<img class="qr" src="${escapeHtml(qrSource)}" alt="Transcript verification QR code">` : '';
+  const profile = academicManagementData?.reportProfile || {};
+  const schoolName = profile.SchoolName || currentUser?.organizationName || currentUser?.OrganisationName || 'School';
+  const student = (academicManagementData?.students || []).find((row) => lower(row.StudentRef) === lower(transcript.StudentRef)) || {};
+  const photoDataUrl = await academicStaffPassportDataUrl(student);
+  const initials = clean(transcript.StudentName).split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'ST';
+  const passport = photoDataUrl
+    ? `<img class="passport" src="${escapeHtml(photoDataUrl)}" alt="Student passport photograph">`
+    : `<div class="passport empty">${escapeHtml(initials)}</div>`;
+  popup.document.open();
+  popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(transcript.TranscriptNumber)}</title><style>@page{size:A4 portrait;margin:12mm}*{box-sizing:border-box}body{margin:0;padding:20px;color:#102a43;font:12px/1.45 Arial,sans-serif}.sheet{border:2px solid #42576b;padding:18px}.letterhead{display:grid;grid-template-columns:82px 1fr 92px;align-items:center;gap:15px;border-bottom:3px solid #0b7f69;padding-bottom:13px}.logo{width:76px;height:76px;object-fit:contain}.school{text-align:center}.school h1{margin:0;color:#123f6d;font-size:23px}.school p{margin:3px 0;color:#60758c}.passport{width:82px;height:96px;border:2px solid #cbd7e2;border-radius:12px;object-fit:cover}.passport.empty{display:grid;place-items:center;background:#eef3f7;color:#60758c;font-size:22px;font-weight:800}.document-title{text-align:center;margin:15px 0 10px}.document-title h2{margin:0;color:#123f6d}.identity{display:grid;grid-template-columns:1.5fr 1fr 1fr;gap:8px;padding:10px;background:#eef6fb}.identity span{display:block;color:#60758c;font-size:9px;text-transform:uppercase}.badge{display:inline-block;padding:4px 8px;border-radius:12px;background:#e8f6f2;color:#086f5e;font-weight:700}section>h2{margin:18px 0 7px;color:#164a78;font-size:14px}table{width:100%;border-collapse:collapse}th,td{padding:6px;border:1px solid #d8e2ec;text-align:left}th{white-space:nowrap;background:#edf3f8;font-size:9px;text-transform:uppercase}.criteria{display:grid;grid-template-columns:1fr 1.3fr;gap:16px;margin-top:17px;padding-top:10px;border-top:1px solid #cbd7e2}.criteria h2{margin:0 0 4px}.criteria ul{margin:0;padding-left:17px;font-size:10px}.draft{color:#b42318;font-weight:800;text-align:center}.endorsement{display:flex;justify-content:space-between;align-items:end;margin-top:22px;padding-top:12px;border-top:1px solid #b8c7d6}.stamp{width:110px;height:84px;object-fit:contain}.qr{width:82px;height:82px}.no-print{margin-top:12px;padding:8px 12px;border:0;border-radius:6px;background:#1769e0;color:#fff;font-weight:bold}@media print{body{padding:0}.no-print{display:none}}</style></head><body><main class="sheet"><header class="letterhead"><img class="logo" src="${escapeHtml(profile.DocumentLogoUrl || '/api/document-logo')}" alt="${escapeHtml(schoolName)} logo" onerror="this.style.visibility='hidden'"><div class="school"><h1>${escapeHtml(schoolName)}</h1><p>${escapeHtml(profile.SchoolAddress || '')}</p><p>${escapeHtml([profile.SchoolPhone, profile.SchoolEmail].filter(Boolean).join(' · '))}</p></div>${passport}</header><section class="document-title"><h2>Official Academic Transcript</h2></section><section class="identity"><div><span>Student</span><strong>${escapeHtml(transcript.StudentName)}</strong></div><div><span>Admission number</span><strong>${escapeHtml(transcript.StudentRef)}</strong></div><div><span>Status / version</span><strong><span class="badge">${escapeHtml(transcript.Status)}</span> · ${escapeHtml(transcript.Version)}</strong></div></section>${transcript.Status !== 'Issued' ? '<p class="draft">DRAFT · NOT AN ISSUED OFFICIAL RECORD</p>' : ''}${sessions}<section><h2>Promotion and completion outcomes</h2><ul>${outcomes || '<li>No committed outcome recorded.</li>'}</ul></section>${academicTranscriptCriteria(transcript)}<footer class="endorsement"><div><img class="stamp" src="${escapeHtml(profile.DocumentStampUrl || '/api/document-stamp')}" alt="Official stamp" onerror="this.style.visibility='hidden'"><strong>${escapeHtml(profile.ResultSignatoryName || 'Authorized school officer')}</strong><br><small>${escapeHtml(profile.ResultSignatoryTitle || 'Official result signatory')}</small></div><div><strong>${escapeHtml(transcript.TranscriptNumber)}</strong><p>${transcript.IssuedAt ? `Issued ${escapeHtml(new Date(transcript.IssuedAt).toLocaleDateString())}` : 'Pending issue approval'}</p>${qr}</div></footer><button class="no-print" onclick="window.print()">Print transcript</button></main></body></html>`);
   popup.document.close();
 }
 
@@ -14072,7 +14125,7 @@ function bindAcademicManagement() {
   }));
   panelEl.querySelectorAll('[data-academic-transcript-print]').forEach((button) => button.addEventListener('click', () => {
     const transcript = academicFind(academicManagementData?.transcripts || [], button.dataset.academicTranscriptPrint);
-    if (transcript) printAcademicTranscript(transcript);
+    if (transcript) void printAcademicTranscript(transcript);
   }));
   const analysisFilterForm = panelEl.querySelector('[data-academic-analysis-filters]');
   analysisFilterForm?.addEventListener('submit', (event) => {

@@ -129,6 +129,7 @@ test('Milestone 10 calculates weighted immutable cumulative drafts from Locked t
   assert.equal(first.Subjects[0].AnnualTotal, 71);
   assert.equal(first.Subjects[1].AnnualTotal, 81);
   assert.equal(first.OverallAverage, 76);
+  assert.equal(first.ClassAverage, 64.25);
   assert.equal(first.OverallPosition, 1);
   assert.equal(first.ContributingResultIds.length, 3);
   assert.equal(first.Attendance.AttendancePercentage, 90);
@@ -222,6 +223,9 @@ test('transcript drafts snapshot locked sessions, terms and committed outcomes',
   assert.equal(transcript.Sessions.length, 1);
   assert.equal(transcript.Terms.length, 1);
   assert.equal(transcript.Outcomes[0].Outcome, 'Promoted');
+  assert.equal(transcript.Sessions[0].ClassAverage, 64.25);
+  assert.ok(transcript.Sessions[0].GradeBands.length > 0);
+  assert.ok(transcript.Sessions[0].PromotionPolicy);
 });
 
 test('Milestone 10 live actions persist outcomes, promotion destinations and immutable event history', () => {

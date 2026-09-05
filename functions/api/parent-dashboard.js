@@ -2087,7 +2087,21 @@ async function getAcademicResultForPrint(env, body) {
     error.status = 403;
     throw error;
   }
-  return { ok: true, academicResult: result };
+  const reportProfile = await getSchoolProfile(env, clean(result.BranchId || body.BranchId));
+  return {
+    ok: true,
+    academicResult: result,
+    reportProfile: {
+      SchoolName: clean(reportProfile.SchoolName || reportProfile.OrganisationName || reportProfile.OrganizationName),
+      SchoolAddress: clean(reportProfile.SchoolAddress),
+      SchoolPhone: clean(reportProfile.SchoolPhone),
+      SchoolEmail: clean(reportProfile.SchoolEmail),
+      ResultSignatoryName: clean(reportProfile.ResultSignatoryName || reportProfile.SchoolSignatoryName),
+      ResultSignatoryTitle: clean(reportProfile.ResultSignatoryTitle || reportProfile.SchoolSignatoryTitle),
+      DocumentLogoUrl: '/api/document-logo',
+      DocumentStampUrl: '/api/document-stamp'
+    }
+  };
 }
 
 async function updateWalletRestrictions(env, body) {

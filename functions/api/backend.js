@@ -2476,21 +2476,19 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
     }
     await saveWebBranding(env, { WebLogoDataUrl: webLogo, UpdatedAt: nowIso() });
   }
-  if (body.DocumentLogoDataUrl !== undefined || body.DocumentSignatureDataUrl !== undefined) {
-    const documentLogo = clean(body.DocumentLogoDataUrl);
-    const documentSignature = clean(body.DocumentSignatureDataUrl);
-    for (const [label, value] of [['document logo', documentLogo], ['document signature', documentSignature]]) {
-      if (value && (!/^data:image\/(png|jpeg);base64,/i.test(value) || value.length > 750000)) {
-        const error = new Error(`The ${label} must be a resized PNG or JPG image below the allowed size.`);
+  if (body.DocumentLogoDataUrl !== undefined || body.DocumentSignatureDataUrl !== undefined || body.DocumentStampDataUrl !== undefined) {
+    const documentAssets = {};
+    for (const [field, label] of [['DocumentLogoDataUrl', 'document logo'], ['DocumentSignatureDataUrl', 'document signature'], ['DocumentStampDataUrl', 'document stamp']]) {
+      if (body[field] === undefined) continue;
+      const value = clean(body[field]);
+      if (value && (!/^data:image\/(png|jpeg|webp);base64,/i.test(value) || value.length > 750000)) {
+        const error = new Error(`The ${label} must be a resized PNG, JPG or WebP image below the allowed size.`);
         error.status = 400;
         throw error;
       }
+      documentAssets[field] = value;
     }
-    await saveDocumentBranding(env, {
-      DocumentLogoDataUrl: documentLogo,
-      DocumentSignatureDataUrl: documentSignature,
-      UpdatedAt: nowIso()
-    });
+    await saveDocumentBranding(env, { ...documentAssets, UpdatedAt: nowIso() });
   }
   await upsertDocument(env, 'settings', 'schoolStructure', {
     Branches: branches.length ? branches : [{ Id: 'main', Name: 'Main Branch' }], ActiveBranchId: activeBranchId,
