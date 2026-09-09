@@ -1,4 +1,5 @@
 import { academicCumulativePolicyIssues, normalizeAcademicPolicy } from './academic-policy.js';
+import { academicAutomaticResultComments } from './academic-term-results.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -155,6 +156,7 @@ export function calculateAcademicCumulativeDrafts(input = {}) {
   const terms = policy.Cumulative.Terms || [];
   const configuredTerms = terms.map((term) => ({ ...term, WeightPercentage: Number(term.WeightPercentage || 0) }));
   const lockedResults = (input.TermResults || []).filter((row) => lower(row.Status) === 'locked'
+    && lower(row.ResultType || 'End of Term') !== 'mid-term'
     && (!clean(input.SessionId) || clean(row.SessionId) === clean(input.SessionId)));
   const issues = [];
   const results = memberships.map((membership) => {
@@ -274,7 +276,8 @@ export function calculateAcademicCumulativeDrafts(input = {}) {
       PolicySnapshot: policy,
       Status: 'Calculated Draft',
       TeacherRemark: clean(existing?.TeacherRemark),
-      PrincipalRemark: clean(existing?.PrincipalRemark)
+      PrincipalRemark: clean(existing?.PrincipalRemark),
+      Recommendation: clean(existing?.Recommendation)
     };
   });
 
@@ -289,6 +292,14 @@ export function calculateAcademicCumulativeDrafts(input = {}) {
     if (['exact-overall', 'internal-only'].includes(positionMode)) row.OverallPosition = row.__rank;
     if (positionMode === 'percentile-band') row.PerformanceBand = percentileBand(row.__rank, results.length);
     delete row.__rank;
+  });
+  results.forEach((row) => {
+    const generated = academicAutomaticResultComments({
+      ...row,
+      Subjects: row.Subjects.map((subject) => ({ ...subject, Total: subject.AnnualTotal }))
+    }, policy);
+    if (!row.TeacherRemark) row.TeacherRemark = generated.TeacherRemark;
+    if (!row.PrincipalRemark) row.PrincipalRemark = generated.PrincipalRemark;
   });
   return { Ready: true, Issues: [], Results: results };
 }

@@ -141,6 +141,17 @@ test('legacy church journals infer their giving source from separate revenue acc
   ]);
 });
 
+test('hotel payment journals are classified as Hotel Services rather than offerings', () => {
+  const hotelChart = [...chart, { Code: '4140', Name: 'Offering Income', Type: 'Revenue' }, { Code: '4150', Name: 'Hotel Services Revenue', Type: 'Revenue' }];
+  const hotelJournals = [{
+    JournalNo: 'HOTEL-1', Date: '2026-07-18', Status: 'Posted', Source: 'Hotel Services Payment',
+    Lines: [{ AccountCode: '1010', Debit: 43000 }, { AccountCode: '4150', Credit: 43000 }]
+  }];
+  const report = buildIncomeAnalytics(hotelChart, hotelJournals, { period: 'monthly' }, '2026-07-28');
+  assert.deepEqual(report.sources.map((row) => [row.label, row.value]), [['Hotel Services', 43000]]);
+  assert.equal(report.transactions[0].source, 'Hotel Services');
+});
+
 test('donation settlement routes stay separate for every payment method', () => {
   const methods = ['CASH', 'BANK TRANSFER', 'CHEQUE', 'POS', 'ONLINE', 'CARD', 'MOBILE MONEY'];
   const accountCodes = {

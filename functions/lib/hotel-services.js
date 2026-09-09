@@ -466,7 +466,7 @@ export async function recordHotelPayment(env, user, body = {}) {
     OrganisationEdition: edition,
     Lines: [
       { AccountCode: accountCode, Debit: amount, Credit: 0, Description: 'Hotel guest payment', Department: 'Hotel Services' },
-      { AccountCode: '4140', Debit: 0, Credit: amount, Description: 'Hotel services revenue', Department: 'Hotel Services' }
+      { AccountCode: '4150', Debit: 0, Credit: amount, Description: 'Hotel services revenue', Department: 'Hotel Services' }
     ],
     TotalDebit: amount,
     TotalCredit: amount,
@@ -825,7 +825,7 @@ export async function finalizeHotelOnlinePayment(env, intent = {}, settlement = 
     Lines: [
       { AccountCode: '1030', Debit: netAmount, Credit: 0, Description: 'Hotel online payment settlement', Department: 'Hotel Services' },
       ...(gatewayFee > 0 ? [{ AccountCode: '6060', Debit: gatewayFee, Credit: 0, Description: 'Online payment transaction charge', Department: 'Hotel Services' }] : []),
-      { AccountCode: '4140', Debit: 0, Credit: amount, Description: 'Hotel services revenue', Department: 'Hotel Services' }
+      { AccountCode: '4150', Debit: 0, Credit: amount, Description: 'Hotel services revenue', Department: 'Hotel Services' }
     ],
     TotalDebit: amount,
     TotalCredit: amount,

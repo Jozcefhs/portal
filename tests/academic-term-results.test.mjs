@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
+  academicAutomaticResultComments,
   academicTermResultTransition,
+  calculateAcademicMidTermResultDrafts,
   calculateAcademicTermResultDrafts
 } from '../functions/lib/academic-term-results.js';
 import { defaultAcademicPolicy } from '../functions/lib/academic-policy.js';
@@ -102,6 +104,71 @@ test('Milestone 9 applies the configured position display mode without forcing c
   const subjectPosition = calculation({ Policy: resultPolicy('subject-only') });
   assert.equal(subjectPosition.Results[0].Subjects[0].Position, 1);
   assert.equal('OverallPosition' in subjectPosition.Results[0], false);
+});
+
+test('term results generate useful editable comments and preserve saved wording on recalculation', () => {
+  const policy = resultPolicy();
+  policy.Promotion.Mode = 'criteria';
+  policy.Promotion.MinimumOverallAverage = 70;
+  const output = calculation({ Policy: policy, SchoolStage: 'primary' });
+  const second = output.Results.find((row) => row.StudentRef === 'DCA/002');
+  assert.match(second.TeacherRemark, /Mathematics/);
+  assert.match(second.PrincipalRemark, /promotion benchmark of 70%/);
+  assert.equal(academicAutomaticResultComments(second, policy).TeacherRemark, second.TeacherRemark);
+
+  const preserved = calculation({
+    Policy: policy,
+    SchoolStage: 'primary',
+    ExistingResults: [{ StudentRef: 'DCA/001', TeacherRemark: 'Teacher wording retained.', PrincipalRemark: 'Head teacher wording retained.' }]
+  });
+  assert.equal(preserved.Results[0].TeacherRemark, 'Teacher wording retained.');
+  assert.equal(preserved.Results[0].PrincipalRemark, 'Head teacher wording retained.');
+});
+
+test('senior principal comments use configured Core-credit promotion indicators', () => {
+  const configured = resultPolicy();
+  configured.Promotion = {
+    Mode: 'division-rules',
+    SeniorSecondary: {
+      CreditMinimumPercentage: 50,
+      ExpectedCoreSubjectCount: 2,
+      PromotedMinimumCredits: 2,
+      PromotedRequiredSubjectIds: [],
+      PromotedRequiredSubjectMode: 'all',
+      ProbationCreditCount: 1,
+      ProbationCreditCountMode: 'exactly',
+      ProbationRequiredSubjectIds: [],
+      ProbationRequiredSubjectMode: 'any'
+    }
+  };
+  const output = calculation({
+    SchoolStage: 'senior-secondary',
+    Policy: configured,
+    Memberships: memberships.map((row) => ({ ...row, CoreSubjectIds: ['math', 'eng'] }))
+  });
+  assert.match(output.Results[0].PrincipalRemark, /Core credit/);
+  assert.match(output.Results[0].PrincipalRemark, /configured senior promotion indicator/);
+});
+
+test('mid-term results use only the one or two policy-authorized assessment components', () => {
+  const policy = resultPolicy();
+  policy.MidTerm = { Enabled: true, ComponentIds: ['ca'] };
+  const output = calculateAcademicMidTermResultDrafts({
+    SessionId: 's1', AcademicSession: '2026/2027', TermId: 't1', Term: 'First Term',
+    ClassId: 'c1', ClassName: 'Grade 10', ArmId: 'a1', ArmName: 'Brilliance',
+    Memberships: memberships,
+    ScoreSheets: scoreSheets.map((row) => ({ ...row, Status: 'Draft' })),
+    StudentScores: studentScores,
+    Subjects: [{ SubjectId: 'math', Name: 'Mathematics' }, { SubjectId: 'eng', Name: 'English Language' }],
+    Policy: policy,
+    ResultIdFor: (row) => `midterm-${row.StudentRef}`,
+    ResultReferenceFor: (row) => `MTR-${row.StudentRef}`
+  });
+  assert.equal(output.Ready, true);
+  assert.equal(output.Results[0].ResultType, 'Mid-Term');
+  assert.deepEqual(output.Results[0].IncludedAssessmentComponentIds, ['ca']);
+  assert.equal(output.Results[0].OverallAverage, 75);
+  assert.deepEqual(output.Results[0].Subjects[0].ComponentScores.map((row) => row.ComponentId), ['ca']);
 });
 
 test('Milestone 9 lifecycle requires review, approval and publication, with controlled withdrawal and reopening', () => {

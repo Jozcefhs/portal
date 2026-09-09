@@ -12,7 +12,10 @@ export const RECORD_DESK_TYPES = Object.freeze([
 ]);
 
 const PASTORAL_ROLES = new Set(['Super Admin', 'Pastor', 'Senior Pastor', 'Head Minister']);
-const EXECUTIVE_ROLES = new Set(['Principal', 'Senior Pastor', 'Head Minister']);
+const EXECUTIVE_ROLES = new Set([
+  'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
+  'Senior Pastor', 'Head Minister'
+]);
 const FAITH_EDITIONS = new Set(['church', 'faith']);
 
 export function canonicalRecordEdition(value) {
@@ -54,7 +57,9 @@ export function recordsDeskCapabilities(user = {}) {
   const organisationEdition = ['church', 'faith', 'organization'].includes(edition);
   const role = clean(user.role);
   const executive = allowed.has('executiveOffice') && EXECUTIVE_ROLES.has(role);
-  const schoolExecutive = executive && role === 'Principal' && schoolEdition;
+  const schoolExecutive = executive && [
+    'Principal', 'Vice Principal Academics', 'Vice Principal Administration'
+  ].includes(role) && schoolEdition;
   const ministryExecutive = executive && ['Senior Pastor', 'Head Minister'].includes(role) && organisationEdition;
   const donorAccess = enabled && organisationEdition && allowed.has('donations');
   const studentFaceManagementEnabled = enabledValue(
@@ -170,7 +175,7 @@ function card(type, id, title, subtitle, status, row = {}) {
 
 export function studentSearchCard(row = {}) {
   const id = clean(row.AdmissionNo || row.AccountRef || row.ApplicationReference || row.__id);
-  return card(
+  const result = card(
     'students',
     id,
     row.DisplayName || row.ApplicantName || row.StudentName || row.Name,
@@ -178,6 +183,12 @@ export function studentSearchCard(row = {}) {
     row.Status || row.AcademicProgress,
     row
   );
+  const passport = row.documents?.PassportPhotograph;
+  if (clean(passport?.url || row.DocPassportPhotographUrl || row.PassportPhotographUrl || row.PassportPhotographLink)) {
+    result.passportPhotoAvailable = true;
+    result.passportScopePath = clean(row.__scopePath);
+  }
+  return result;
 }
 
 export function applicantSearchCard(row = {}) {

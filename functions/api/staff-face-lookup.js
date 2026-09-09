@@ -35,7 +35,9 @@ import {
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
-const MANAGER_ROLES = new Set(['Super Admin', 'Principal', 'Admissions Officer']);
+const MANAGER_ROLES = new Set([
+  'Super Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration', 'Admissions Officer'
+]);
 const LOOKUP_WINDOW_MS = 5 * 60 * 1000;
 const LOOKUP_LIMIT = 20;
 const DEFAULT_DIRECT_GALLERY_LIMIT = 250;

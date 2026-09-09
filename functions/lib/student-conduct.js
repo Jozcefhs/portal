@@ -56,7 +56,10 @@ function capabilities(user = {}) {
   const edition = lower(user.edition || user.Edition || user.OrganisationEdition || user.OrganizationEdition) || 'school';
   const allowed = new Set((user.allowedSections || user.TabAccess || []).map(clean).filter(Boolean));
   const role = clean(user.role || user.Role);
-  const permittedRoles = new Set(['Super Admin', 'Principal', 'Management', 'Admissions Officer', 'Student Welfare Officer']);
+  const permittedRoles = new Set([
+    'Super Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
+    'Management', 'Admissions Officer', 'Student Welfare Officer'
+  ]);
   return {
     enabled: edition === 'school' && (allowed.has('studentConduct') || permittedRoles.has(role)),
     canManage: edition === 'school' && permittedRoles.has(role),

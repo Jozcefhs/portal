@@ -36,7 +36,10 @@ export function hrCapabilitiesFor(user = {}) {
   const role = clean(user.role || user.Role);
   const generalist = HR_GENERALISTS.has(role);
   const leader = HR_LEADERS.has(role);
-  const executive = ['Principal', 'Management', 'Senior Pastor', 'Head Minister', 'Church Administrator'].includes(role);
+  const executive = [
+    'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
+    'Management', 'Senior Pastor', 'Head Minister', 'Church Administrator'
+  ].includes(role);
   return {
     canViewDirectory: generalist || executive || ['HR Assistant', 'Line Manager', 'Payroll Officer', 'Compensation & Benefits Officer', 'Learning & Development Officer', 'Employee Relations Officer', 'Performance Management Officer', 'Health & Safety Officer'].includes(role),
     canManagePeople: generalist || role === 'HR Assistant',

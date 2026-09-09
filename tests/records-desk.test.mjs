@@ -128,6 +128,20 @@ test('student projections whitelist fields and keep credentials out of every res
   });
 });
 
+test('student search and detail projections expose only safe passport availability metadata', () => {
+  const row = {
+    AdmissionNo: 'DCA/26/002',
+    DisplayName: 'Grace Ada',
+    DocPassportPhotographUrl: 'r2://private/passport.jpg',
+    __scopePath: 'branches/main/schoolSections/primary/students'
+  };
+  const card = studentSearchCard(row);
+  assert.equal(card.passportPhotoAvailable, true);
+  assert.equal(card.passportScopePath, row.__scopePath);
+  assert.doesNotMatch(JSON.stringify(card), /r2:\/\/private/);
+  assert.equal(studentDetailProjection(row).passportPhotoAvailable, true);
+});
+
 test('medical and pastoral detail appears only for the corresponding privileged roles', () => {
   const clinicDetail = studentDetailProjection({
     AdmissionNo: 'DCA/26/001',

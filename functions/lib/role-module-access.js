@@ -59,7 +59,8 @@ export const ORGANIZATION_SECTION_LABELS = Object.freeze({
 });
 
 export const STAFF_ROLE_OPTIONS = Object.freeze([
-  'Super Admin', 'Principal', 'Teacher', 'Senior Pastor', 'Head Minister',
+  'Super Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
+  'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'Senior Pastor', 'Head Minister',
   'Admissions Officer', 'Student Welfare Officer', 'Accounts Officer',
   'Management', 'Department User', 'Tuck Shop User', 'Clinic User',
   'Kitchen User', 'Store User', 'Restaurant User', 'Hotel User', 'Front Desk', 'Pastor',
@@ -76,6 +77,10 @@ export const STAFF_ROLE_OPTIONS = Object.freeze([
 const LEGACY_ROLE_DEFAULTS = Object.freeze({
   'Super Admin': ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'hotel', 'dataBackup', 'securityAudit', 'staffUsers'],
   Principal: ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct'],
+  'Vice Principal Academics': ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct'],
+  'Vice Principal Administration': ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct'],
+  'Head Teacher': ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct'],
+  'Assistant Head Teacher': ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct'],
   Teacher: ['academics'],
   'Admissions Officer': ['recordsDesk', 'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'financeRequests', 'payroll'],
   'Accounts Officer': ['recordsDesk', 'students', 'academics', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],

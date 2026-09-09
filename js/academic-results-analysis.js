@@ -129,7 +129,10 @@
     const allocations = (input.TeacherAllocations || input.teacherAllocations || []).filter((row) => (
       active(row) && lower(row.AllocationRole) === 'subject teacher' && (!sessionId || same(row.SessionId, sessionId))
     ));
-    const termResults = (input.TermResults || input.termResults || []).filter((row) => !sessionId || same(row.SessionId, sessionId));
+    const termResults = (input.TermResults || input.termResults || []).filter((row) => (
+      (!sessionId || same(row.SessionId, sessionId))
+      && lower(row.ResultType || 'End of Term') !== 'mid-term'
+    ));
     const cumulativeResults = (input.CumulativeResults || input.cumulativeResults || []).filter((row) => !sessionId || same(row.SessionId, sessionId));
     const promotionDecisions = (input.PromotionDecisions || input.promotionDecisions || []).filter((row) => !sessionId || same(row.SessionId, sessionId));
     const sourceResults = annual ? cumulativeResults : termResults.filter((row) => same(row.TermId, termId));

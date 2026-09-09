@@ -54,7 +54,9 @@ export const EXECUTIVE_TEMPLATE_TOKENS = Object.freeze([
 ]);
 
 const TOKEN_SET = new Set(EXECUTIVE_TEMPLATE_TOKENS);
-const EXECUTIVE_ROLES = new Set(['Principal', 'Senior Pastor']);
+const EXECUTIVE_ROLES = new Set([
+  'Principal', 'Vice Principal Academics', 'Vice Principal Administration', 'Senior Pastor'
+]);
 
 const BUILT_IN_TEMPLATES = Object.freeze([
   Object.freeze({
@@ -100,6 +102,8 @@ function inputError(message, status = 400) {
 export function canonicalExecutiveRole(value) {
   const role = lower(value);
   if (role === 'principal') return 'Principal';
+  if (role === 'vice principal academics') return 'Vice Principal Academics';
+  if (role === 'vice principal administration') return 'Vice Principal Administration';
   if (['senior pastor', 'head minister', 'senior minister'].includes(role)) return 'Senior Pastor';
   if (role === 'super admin') return 'Super Admin';
   return clean(value);
@@ -111,7 +115,7 @@ export function executiveOfficeCapabilities(user = {}, editionValue = '') {
   const allowed = new Set((user.allowedSections || user.AllowedSections || []).map(clean).filter(Boolean));
   const sectionAllowed = !allowed.size || allowed.has('executiveOffice');
   const editionAllowed = role === 'Super Admin' ||
-    (role === 'Principal' && edition === 'school') ||
+    (EXECUTIVE_ROLES.has(role) && role !== 'Senior Pastor' && edition === 'school') ||
     (role === 'Senior Pastor' && ['faith', 'church', 'organization'].includes(edition));
   const enabled = sectionAllowed && editionAllowed;
   const school = edition === 'school';

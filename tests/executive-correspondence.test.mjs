@@ -51,6 +51,16 @@ test('principal also receives school conduct oversight while senior-minister def
     allowedSections: ['recordsDesk', 'executiveOffice']
   }).canSearchStudents, true);
   assert.equal(executiveOfficeCapabilities({
+    role: 'Vice Principal Academics',
+    edition: 'school',
+    allowedSections: ['recordsDesk', 'executiveOffice']
+  }).canSearchStudents, true);
+  assert.equal(executiveOfficeCapabilities({
+    role: 'Vice Principal Administration',
+    edition: 'school',
+    allowedSections: ['recordsDesk', 'executiveOffice']
+  }).canSearchStudents, true);
+  assert.equal(executiveOfficeCapabilities({
     role: 'Principal',
     edition: 'faith',
     allowedSections: ['recordsDesk', 'executiveOffice']

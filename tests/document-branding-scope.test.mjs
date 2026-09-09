@@ -50,6 +50,6 @@ test('Executive correspondence and settings use scoped document branding', async
   assert.match(backendSource, /saveDocumentBranding\(env,/);
   assert.match(endpointSource, /documentBrandingMatchesDeployment\(context\.env, documentBranding\)/);
   assert.match(endpointSource, /webBrandingMatchesDeployment\(context\.env, webBranding\)/);
-  assert.match(stampEndpointSource, /documentBrandingMatchesDeployment\(context\.env, documentBranding\)/);
+  assert.match(stampEndpointSource, /documentBrandingMatchesDeployment\(context\.env, branding\)/);
   assert.match(stampEndpointSource, /DocumentStampDataUrl/);
 });

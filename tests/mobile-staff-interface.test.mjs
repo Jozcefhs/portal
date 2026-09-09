@@ -264,7 +264,8 @@ test('selected modules replace overview content with a full-height workspace', (
   assert.match(adminJs, /const tabs = \[[\s\S]*?\['overview', 'Dashboard'\],[\s\S]*?\.\.\.editionTabs\.filter/);
   assert.match(adminJs, /\.\.\.\(insightAllowed \? \[\['schoolInsights', 'School Insights'\]\] : \[\]\)/);
   assert.match(adminJs, /restrictedSet\.has\(key\)/);
-  assert.match(adminJs, /welcomeEl\.hidden = !overview/);
+  assert.match(adminJs, /welcomeEl\.hidden = false/);
+  assert.match(adminJs, /welcomeEl\.classList\.toggle\('branch-context-only', !overview\)/);
   assert.match(adminJs, /dashboardStatus\.hidden = !overview/);
   assert.match(adminJs, /panelEl\.hidden = overview/);
   assert.match(adminJs, /activeSection !== 'overview'[\s\S]*?dashboardChartsEl\.hidden = true/);

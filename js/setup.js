@@ -225,13 +225,15 @@ function createAcademicComponentRow(component = {}, index = 0) {
   ], component.SourceMode || 'any', 'Allowed score source');
   const required = createPolicyInput('checkbox', '', 'Required assessment component');
   required.checked = component.Required !== false;
+  const midTerm = createPolicyInput('checkbox', '', 'Include in mid-term result');
+  midTerm.checked = Boolean(component.MidTermIncluded);
   const remove = document.createElement('button');
   remove.type = 'button';
   remove.className = 'academic-remove-row';
   remove.setAttribute('aria-label', `Remove assessment component ${index + 1}`);
   remove.textContent = '×';
   remove.addEventListener('click', () => row.remove());
-  row.append(name, maximum, weight, source, required, remove);
+  row.append(name, maximum, weight, source, required, midTerm, remove);
   return row;
 }
 
@@ -311,6 +313,7 @@ function renderAcademicPolicy(policy = {}) {
   const clearance = result.FinancialClearance || {};
   const position = policy.Position || {};
   const assessment = policy.Assessment || {};
+  const midTerm = policy.MidTerm || {};
   const cumulative = policy.Cumulative || {};
   const promotion = policy.Promotion || {};
   const juniorPromotion = promotion.JuniorSecondary || {};
@@ -326,7 +329,12 @@ function renderAcademicPolicy(policy = {}) {
   setField('academicPositionMode', position.Mode || 'unconfigured');
   setField('academicTieMode', position.TieMode || 'competition');
   setField('academicMinimumAssessedSubjects', position.MinimumAssessedSubjects || 1);
-  renderAcademicComponents(assessment.Components || []);
+  const midTermIds = new Set(midTerm.ComponentIds || []);
+  renderAcademicComponents((assessment.Components || []).map((component) => ({
+    ...component,
+    MidTermIncluded: midTermIds.has(component.Id)
+  })));
+  policyField('academicMidTermEnabled').checked = midTerm.Enabled === true;
   renderAcademicGradeBands(assessment.GradeBands || []);
   renderAcademicCumulativeTerms(cumulative.Terms || []);
   setField('academicMissingTermMode', cumulative.MissingTermMode || 'block');
@@ -367,6 +375,11 @@ function academicPolicyFromForm() {
       Order: index + 1
     };
   });
+  const midTermComponentIds = [...policyField('academicComponents').children]
+    .filter((row) => row.children[5]?.checked)
+    .map((row, index) => row.dataset.policyId || components[index]?.Id || String(components[index]?.Name || '')
+      .trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80))
+    .filter(Boolean);
   const gradeBands = [...policyField('academicGradeBands').children].map((row, index) => {
     const [grade, minimum, maximum, point, classification, remark] = row.children;
     return {
@@ -409,6 +422,10 @@ function academicPolicyFromForm() {
       MinimumAssessedSubjects: policyNumber('academicMinimumAssessedSubjects', 1)
     },
     Assessment: { Components: components, GradeBands: gradeBands },
+    MidTerm: {
+      Enabled: policyField('academicMidTermEnabled').checked,
+      ComponentIds: midTermComponentIds
+    },
     Cumulative: {
       Terms: cumulativeTerms,
       MissingTermMode: policyField('academicMissingTermMode').value,

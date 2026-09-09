@@ -45,6 +45,7 @@ import {
 import {
   ACADEMIC_TERM_RESULT_STATUSES,
   academicTermResultTransition,
+  calculateAcademicMidTermResultDrafts,
   calculateAcademicTermResultDrafts
 } from './academic-term-results.js';
 import {
@@ -427,10 +428,16 @@ export const ACADEMIC_STUDENT_MOVEMENT_TYPES = Object.freeze([
 export const ACADEMIC_SCHOOL_STAGES = Object.freeze(['primary', 'junior-secondary', 'senior-secondary']);
 export const ACADEMIC_TEACHER_ALLOCATION_ROLES = Object.freeze(['Subject Teacher', 'Form Teacher', 'Assistant Teacher']);
 
-const STRUCTURE_MANAGERS = new Set(['Super Admin', 'Principal', 'Management']);
+const STRUCTURE_MANAGERS = new Set([
+  'Super Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
+  'Head Teacher', 'Assistant Head Teacher', 'Management'
+]);
 const ALLOCATION_MANAGERS = new Set([...STRUCTURE_MANAGERS, 'Admissions Officer']);
 const TIMETABLE_MANAGERS = new Set([...STRUCTURE_MANAGERS, 'Examination Officer']);
-const TIMETABLE_PUBLISHERS = new Set(['Super Admin', 'Principal', 'Management']);
+const TIMETABLE_PUBLISHERS = new Set([
+  'Super Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
+  'Head Teacher', 'Assistant Head Teacher', 'Management'
+]);
 const SCORE_REVIEWERS = new Set([...STRUCTURE_MANAGERS, 'Examination Officer']);
 const SCORE_APPROVERS = new Set([...STRUCTURE_MANAGERS, 'Examination Officer']);
 const FINANCE_CLEARANCE_MANAGERS = new Set([...STRUCTURE_MANAGERS, 'Accounts Officer', 'Finance Officer']);
@@ -4176,8 +4183,9 @@ async function academicTermResultContext(env, user, input, capability = 'canCalc
   };
 }
 
-function academicTermResultId(scope, sessionId, termId, classId, armId, studentRef) {
-  return academicId('term-result', scope.branchId, scope.section, sessionId, termId, classId, armId, studentRef);
+function academicTermResultId(scope, sessionId, termId, classId, armId, studentRef, resultType = 'End of Term') {
+  const prefix = lower(resultType) === 'mid-term' ? 'midterm-result' : 'term-result';
+  return academicId(prefix, scope.branchId, scope.section, sessionId, termId, classId, armId, studentRef);
 }
 
 function resultRevisionToken(input = {}, resultId = '') {
@@ -4220,7 +4228,7 @@ async function notifyAcademicResultLifecycle(env, user, scope, results, target) 
       Type: published ? 'Term result published' : 'Term result withdrawn',
       Category: 'Academics', Audience: 'Parent', Channels: ['InApp', 'Push'],
       TargetEmails: contacts.emails, TargetAccountRefs: contacts.accountRefs,
-      Title: published ? `${name}'s term result is published` : `${name}'s term result is temporarily unavailable`,
+      Title: published ? `${name}'s ${lower(result.ResultType) === 'mid-term' ? 'mid-term' : 'term'} result is published` : `${name}'s result is temporarily unavailable`,
       Message: published
         ? `The ${result.Term || 'current term'} result is published. Sign in to the parent dashboard; access remains subject to the school's active result policy.`
         : `The ${result.Term || 'term'} result was withdrawn for controlled correction and is no longer available to parents. The school will republish it after review.`,
@@ -4231,15 +4239,17 @@ async function notifyAcademicResultLifecycle(env, user, scope, results, target) 
   }));
 }
 
-export async function calculateAcademicTermResults(env, user = {}, input = {}) {
+async function calculateAcademicResultsForType(env, user = {}, input = {}, resultType = 'End of Term') {
   const context = await academicTermResultContext(env, user, input, 'canCalculateResults');
   const { scope, state, session, term, schoolClass, arm, policy, policyRevisionIds, policyFingerprint } = context;
+  const midTerm = lower(resultType) === 'mid-term';
   const memberships = state.studentMemberships.filter((row) => statusActive(row)
     && row.SessionId === session.SessionId && row.TermId === term.TermId
     && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId);
   if (memberships.length > 200) throw failure('Calculate at most 200 student results in one classroom batch.');
   const existingResults = state.termResults.filter((row) => row.SessionId === session.SessionId && row.TermId === term.TermId
-    && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId);
+    && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId
+    && (midTerm ? lower(row.ResultType) === 'mid-term' : lower(row.ResultType || 'End of Term') !== 'mid-term'));
   const immutable = existingResults.find((row) => lower(row.Status) !== 'calculated draft');
   if (immutable) {
     throw failure(`${immutable.StudentRef} already has a ${immutable.Status} result. Reopen or withdraw the affected result through the controlled workflow first.`, 409, 'ACADEMIC_RESULT_IMMUTABLE');
@@ -4247,14 +4257,15 @@ export async function calculateAcademicTermResults(env, user = {}, input = {}) {
   const ids = new Map();
   const references = new Map();
   for (const membership of memberships) {
-    const id = academicTermResultId(scope, session.SessionId, term.TermId, schoolClass.ClassId, arm.ArmId, membership.StudentRef);
+    const id = academicTermResultId(scope, session.SessionId, term.TermId, schoolClass.ClassId, arm.ArmId, membership.StudentRef, resultType);
     ids.set(lower(membership.StudentRef), id);
     references.set(lower(membership.StudentRef), clean(findById(existingResults, id)?.ResultReference) || await academicResultReference(id));
   }
-  const calculation = calculateAcademicTermResultDrafts({
+  const calculation = (midTerm ? calculateAcademicMidTermResultDrafts : calculateAcademicTermResultDrafts)({
     SessionId: session.SessionId, AcademicSession: session.Name,
     TermId: term.TermId, Term: term.Name,
     ClassId: schoolClass.ClassId, ClassName: schoolClass.Name,
+    SchoolStage: schoolClass.SchoolStage,
     ArmId: arm.ArmId, ArmName: arm.Name,
     Memberships: memberships,
     ScoreSheets: state.scoreSheets,
@@ -4295,16 +4306,24 @@ export async function calculateAcademicTermResults(env, user = {}, input = {}) {
       ...writePrecondition(existing, resultRevisionToken(input, result.ResultId))
     });
     writes.push(academicResultEventWrite(user, result, existing ? 'RECALCULATED' : 'CALCULATED',
-      `${result.SubjectCount} subject(s); ${result.Attendance.RegisterType} attendance; policy ${result.PolicyFingerprint}`));
+      `${result.ResultType}; ${result.SubjectCount} subject(s); ${result.Attendance.RegisterType} attendance; policy ${result.PolicyFingerprint}`));
   });
   writes.push(auditWrite(user, existingResults.length ? 'RECALCULATE' : 'CALCULATE', 'termResult', {
     RecordId: `classroom-results-${schoolClass.ClassId}-${arm.ArmId}`,
     SessionId: session.SessionId, TermId: term.TermId,
     BranchId: scope.branchId, SchoolSection: scope.section
-  }, `${calculation.Results.length} Calculated Draft result(s); policy ${policyFingerprint}`));
+  }, `${calculation.Results.length} ${resultType} Calculated Draft result(s); policy ${policyFingerprint}`));
   await commitAcademicBatch(env, writes, 'One or more term results changed while the classroom was being calculated. Reload and try again.');
   return academicOperationalResponse(env, user, input, scope,
-    `${calculation.Results.length} term result${calculation.Results.length === 1 ? '' : 's'} calculated as Draft from approved scores.`);
+    `${calculation.Results.length} ${resultType.toLowerCase()} result${calculation.Results.length === 1 ? '' : 's'} calculated as Draft from recorded scores.`);
+}
+
+export async function calculateAcademicTermResults(env, user = {}, input = {}) {
+  return calculateAcademicResultsForType(env, user, input, 'End of Term');
+}
+
+export async function calculateAcademicMidTermResults(env, user = {}, input = {}) {
+  return calculateAcademicResultsForType(env, user, input, 'Mid-Term');
 }
 
 function academicTermResultIds(value) {
@@ -4611,6 +4630,35 @@ export async function changeAcademicCumulativeStatus(env, user = {}, input = {})
   await commitAcademicBatch(env, writes, 'One or more cumulative results changed while their status was being updated. Reload and try again.');
   return academicOperationalResponse(env, user, input, context.scope,
     `${results.length} cumulative result${results.length === 1 ? '' : 's'} moved to ${target}.`);
+}
+
+export async function saveAcademicCumulativeResultRemarks(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canCalculateCumulativeResults', {
+    stateKeys: ACADEMIC_OUTCOMES_STATE_KEYS, view: 'outcomes'
+  });
+  const { permissions, scope, state } = context;
+  const existing = findById(state.cumulativeResults, input.CumulativeResultId);
+  if (!existing) throw failure('Choose a calculated cumulative result.', 404);
+  if (lower(existing.Status) !== 'calculated draft') {
+    throw failure('Comments can change only while the cumulative result is a Calculated Draft.', 409, 'ACADEMIC_CUMULATIVE_REMARKS_LOCKED');
+  }
+  const timestamp = nowIso();
+  const result = {
+    ...existing,
+    TeacherRemark: clean(input.TeacherRemark).slice(0, 1000),
+    PrincipalRemark: clean(input.PrincipalRemark).slice(0, 1000),
+    Recommendation: clean(input.Recommendation).slice(0, 1000),
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cumulativeResults, documentId: result.CumulativeResultId,
+      data: withoutMetadata(result), ...writePrecondition(existing, input.RevisionToken) },
+    academicOutcomeEventWrite(user, ACADEMIC_MANAGEMENT_COLLECTIONS.cumulativeEvents,
+      'CUMULATIVE', result, 'REMARKS_UPDATED', 'Draft cumulative-result comments updated.'),
+    auditWrite(user, 'UPDATE_REMARKS', 'cumulativeResult', result, 'Draft cumulative-result comments updated.')
+  ], 'This cumulative result changed while its comments were being saved. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, `${result.StudentRef} cumulative-result comments saved.`);
 }
 
 function academicPromotionDecisionId(scope, sessionId, classId, armId, studentRef) {
@@ -6154,11 +6202,13 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['syncacademiccbtscores', 'synccbtresults'].includes(action)) return syncAcademicCbtScores(env, user, input);
   if (['synclocalcbtstudentpasswords', 'synccbtstudentpasswords'].includes(action)) return syncLocalCbtStudentPasswords(env, user, input);
   if (['calculateacademictermresults', 'calculatetermresults'].includes(action)) return calculateAcademicTermResults(env, user, input);
+  if (['calculateacademicmidtermresults', 'calculatemidtermresults'].includes(action)) return calculateAcademicMidTermResults(env, user, input);
   if (['previewacademictermresultwithdrawal', 'previewtermresultwithdrawal'].includes(action)) return previewAcademicTermResultWithdrawal(env, user, input);
   if (['changeacademictermresultstatus', 'changetermresultstatus'].includes(action)) return changeAcademicTermResultStatus(env, user, input);
   if (['saveacademictermresultremarks', 'savetermresultremarks'].includes(action)) return saveAcademicTermResultRemarks(env, user, input);
   if (['calculateacademiccumulativeresults', 'calculatecumulativeresults'].includes(action)) return calculateAcademicCumulativeResults(env, user, input);
   if (['changeacademiccumulativestatus', 'changecumulativeresultstatus'].includes(action)) return changeAcademicCumulativeStatus(env, user, input);
+  if (['saveacademiccumulativeresultremarks', 'savecumulativeresultremarks'].includes(action)) return saveAcademicCumulativeResultRemarks(env, user, input);
   if (['calculateacademicpromotiondecisions', 'calculatepromotions'].includes(action)) return calculateAcademicPromotionDecisions(env, user, input);
   if (['saveacademicpromotionoutcome', 'savepromotionoutcome'].includes(action)) return saveAcademicPromotionOutcome(env, user, input);
   if (['changeacademicpromotionstatus', 'changepromotionstatus'].includes(action)) return changeAcademicPromotionStatus(env, user, input);

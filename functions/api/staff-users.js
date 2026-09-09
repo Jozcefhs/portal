@@ -39,6 +39,18 @@ function activeValue(value) { return !['no', 'false', '0', 'inactive', 'disabled
 function explicitOptIn(value) { return ['yes', 'true', '1', 'enabled', 'on'].includes(lower(value)); }
 
 const WEB_SECTION_KEY_SET = new Set(WEB_SECTION_KEYS);
+const PRIMARY_LEADERSHIP_ROLES = new Set(['Head Teacher', 'Assistant Head Teacher']);
+const SECONDARY_LEADERSHIP_ROLES = new Set(['Vice Principal Academics', 'Vice Principal Administration']);
+
+function schoolSectionAccessForRole(role, value, edition) {
+  if (normalizeOrganizationEdition(edition) !== 'school') return 'All';
+  if (PRIMARY_LEADERSHIP_ROLES.has(clean(role))) return 'Primary';
+  if (SECONDARY_LEADERSHIP_ROLES.has(clean(role))) return 'Secondary';
+  const requested = clean(value).toLowerCase();
+  if (requested === 'primary') return 'Primary';
+  if (requested === 'secondary') return 'Secondary';
+  return 'All';
+}
 
 function listValue(value, separator = ',') {
   return Array.isArray(value)
@@ -72,7 +84,7 @@ function publicUser(row, edition = 'school', featureFlags = null) {
     Department: clean(row.Department || row.department),
     BranchId: clean(row.BranchId || row.branchId),
     SchoolSectionAccess: normalizedEdition === 'school'
-      ? (clean(row.SchoolSectionAccess || row.schoolSectionAccess) || 'All')
+      ? schoolSectionAccessForRole(row.Role || row.role, row.SchoolSectionAccess || row.schoolSectionAccess, normalizedEdition)
       : '',
     OrganisationEdition: clean(
       row.OrganisationEdition || row.organisationEdition
@@ -182,9 +194,9 @@ async function saveUser(env, actor, body) {
     Department: department,
     OrganisationEdition: clean(actor.edition) || 'school',
     BranchId: branchId,
-    SchoolSectionAccess: edition === 'school'
-      ? (clean(body.SchoolSectionAccess || body.schoolSectionAccess) || 'All')
-      : 'All',
+    SchoolSectionAccess: schoolSectionAccessForRole(
+      role, body.SchoolSectionAccess || body.schoolSectionAccess, edition
+    ),
     ApprovalEnabled: role === 'Super Admin' ? true : activeValue(body.ApprovalEnabled ?? false),
     ApprovalMaxAmount: Math.max(0, Number(body.ApprovalMaxAmount || 0) || 0),
     ApprovalAccounts: scopedApprovalAccounts(body.ApprovalAccounts, edition),
@@ -254,9 +266,9 @@ async function importUsers(env, actor, body) {
         Role: role, Department: department,
         OrganisationEdition: clean(actor.edition) || 'school',
         BranchId: branchId,
-        SchoolSectionAccess: edition === 'school'
-          ? (clean(row.SchoolSectionAccess || row.schoolSectionAccess) || 'All')
-          : 'All',
+        SchoolSectionAccess: schoolSectionAccessForRole(
+          role, row.SchoolSectionAccess || row.schoolSectionAccess, edition
+        ),
         ApprovalEnabled: role === 'Super Admin' ? true : activeValue(row.ApprovalEnabled ?? false),
         ApprovalMaxAmount: Math.max(0, Number(row.ApprovalMaxAmount || 0) || 0),
         ApprovalAccounts: scopedApprovalAccounts(row.ApprovalAccounts, edition),

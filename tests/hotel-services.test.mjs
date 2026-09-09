@@ -170,9 +170,10 @@ test('web and desktop backend routes expose the full hotel workflow behind staff
     'changeHotelReservationStatus', 'recordHotelCharge', 'recordHotelPayment',
     'setHotelHousekeepingStatus'
   ]) assert.match(backendJs, new RegExp(`['"]${action}['"]`));
-  assert.match(backendJs, /\['4140', 'Hotel Services Revenue'/);
+  assert.match(backendJs, /\['4140', 'Offering Income'/);
+  assert.match(backendJs, /\['4150', 'Hotel Services Revenue'/);
   assert.match(hotelService, /Source: 'Hotel Services Payment'/);
-  assert.match(hotelService, /AccountCode: '4140'/);
+  assert.match(hotelService, /AccountCode: '4150'/);
   assert.match(hotelService, /batchCommitDocuments/);
 });
 

@@ -10,17 +10,21 @@ test('executive office is an edition-aware staff workspace', () => {
   assert.match(adminJs, /\['executiveOffice', 'Executive Office'\]/);
   assert.match(adminJs, /function executiveOfficeTitle\(\)/);
   assert.match(adminJs, /return "Principal's Office"/);
+  assert.match(adminJs, /"Head Teacher's Office"/);
   assert.match(adminJs, /return "Senior Pastor's Office"/);
   assert.match(adminJs, /executiveOffice: '\\u\{1F4E8\}'/);
   assert.match(adminJs, /active === 'executiveOffice'/);
   assert.match(adminJs, /loadExecutiveOffice\(\)/);
 });
 
-test('principal and ministry executive roles are available and retain user settings', () => {
-  for (const role of ['Principal', 'Senior Pastor', 'Head Minister']) {
+test('school and ministry executive roles are available and retain user settings', () => {
+  for (const role of [
+    'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
+    'Head Teacher', 'Assistant Head Teacher', 'Senior Pastor', 'Head Minister'
+  ]) {
     assert.match(adminJs, new RegExp(`'${role}'`));
   }
-  assert.match(adminJs, /const isExecutiveRole = \['Principal', 'Senior Pastor', 'Head Minister'\]/);
+  assert.match(adminJs, /const isExecutiveRole = \[[\s\S]*?'Vice Principal Academics'[\s\S]*?'Vice Principal Administration'[\s\S]*?'Senior Pastor'[\s\S]*?\]/);
   assert.match(adminJs, /user\.role === 'Accounts Officer' \|\|[\s\S]*?isExecutiveRole \|\|[\s\S]*?user\.approvalEnabled/);
 });
 
@@ -81,5 +85,5 @@ test('executive office remains responsive and readable in dark mode', () => {
   assert.match(portalCss, /html\[data-theme="dark"\] \.executive-empty-chart\{[^}]*background:#112438;[^}]*color:#edf5ff\}/);
   assert.match(portalCss, /html\[data-theme="dark"\] \.executive-empty-chart \.muted\{color:#b8cada!important\}/);
   assert.match(portalCss, /@media\(max-width:680px\)\{[\s\S]*?\.executive-directory-layout\{grid-template-columns:1fr/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260909-branch-context-selector/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260909-academic-report-workflow/);
 });

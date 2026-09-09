@@ -32,7 +32,7 @@ test('AM-001 finance officers receive clearance permission without score permiss
 });
 
 test('AM-009 only Admin and Management roles can reactivate locked score cells', () => {
-  for (const role of ['Super Admin', 'Principal', 'Management']) {
+  for (const role of ['Super Admin', 'Principal', 'Head Teacher', 'Assistant Head Teacher', 'Management']) {
     const permissions = academicManagementCapabilities({ role, edition: 'school', allowedSections: ['academics'] });
     assert.equal(permissions.canManageScoreCorrections, true);
   }

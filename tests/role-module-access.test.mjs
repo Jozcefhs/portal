@@ -117,6 +117,10 @@ test('staff settings API and interface expose persisted role module controls', (
 test('role access settings expose only edition-appropriate roles and modules', () => {
   const schoolRoles = rolesForEdition('school');
   assert.equal(schoolRoles.includes('Principal'), true);
+  assert.equal(schoolRoles.includes('Vice Principal Academics'), true);
+  assert.equal(schoolRoles.includes('Vice Principal Administration'), true);
+  assert.equal(schoolRoles.includes('Head Teacher'), true);
+  assert.equal(schoolRoles.includes('Assistant Head Teacher'), true);
   assert.equal(schoolRoles.includes('Senior Pastor'), false);
   assert.equal(schoolRoles.includes('Church Administrator'), false);
   const schoolModules = modulesForEdition('school', featureFlagsForEdition('school')).map(({ key }) => key);
@@ -153,6 +157,31 @@ test('role access settings expose only edition-appropriate roles and modules', (
     organizationModules.find(({ key }) => key === 'services')?.label,
     'Meetings & Attendance'
   );
+});
+
+test('primary-school leadership roles receive the academic workspace and pupil terminology', () => {
+  const flags = featureFlagsForEdition('school');
+  for (const role of ['Head Teacher', 'Assistant Head Teacher']) {
+    assert.equal(defaultModulesForRole(role, { edition: 'school', featureFlags: flags }).includes('academics'), true);
+  }
+  assert.match(adminJs, /function academicLearnerTerms/);
+  assert.match(adminJs, /singular: 'pupil', plural: 'pupils'/);
+  assert.match(adminJs, /function staffLearnerTerms/);
+  assert.match(adminJs, /key === 'students'\) return 'Pupils'/);
+  assert.match(adminJs, /syncSchoolLeadershipRoleOptions/);
+});
+
+test('secondary vice-principal roles receive leadership modules and enforce the Secondary staff section', () => {
+  const flags = featureFlagsForEdition('school');
+  for (const role of ['Vice Principal Academics', 'Vice Principal Administration']) {
+    const modules = defaultModulesForRole(role, { edition: 'school', featureFlags: flags });
+    assert.equal(modules.includes('executiveOffice'), true);
+    assert.equal(modules.includes('academics'), true);
+    assert.equal(modules.includes('studentConduct'), true);
+  }
+  assert.match(staffUsersApi, /SECONDARY_LEADERSHIP_ROLES/);
+  assert.match(staffUsersApi, /SECONDARY_LEADERSHIP_ROLES\.has\(clean\(role\)\)\) return 'Secondary'/);
+  assert.match(adminJs, /syncSchoolLeadershipSectionForRole/);
 });
 
 test('School Accounts Officers receive only the academic clearance entry by default', () => {

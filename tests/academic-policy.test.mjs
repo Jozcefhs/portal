@@ -161,6 +161,22 @@ test('invalid component totals and grade ranges are reported before activation',
   assert.ok(issues.some((issue) => issue.code === 'GRADE_BAND_OVERLAP'));
 });
 
+test('mid-term release is policy-controlled and limited to one or two configured components', () => {
+  const policy = completePolicy();
+  policy.MidTerm = { Enabled: true, ComponentIds: ['ca'] };
+  const normalized = normalizeAcademicPolicy(policy);
+  assert.equal(normalized.MidTerm.Enabled, true);
+  assert.deepEqual(normalized.MidTerm.ComponentIds, ['ca']);
+  assert.equal(academicPolicyIssues(normalized, { forActivation: true }).filter((issue) => issue.path.startsWith('MidTerm')).length, 0);
+
+  normalized.MidTerm.ComponentIds = [];
+  assert.ok(academicPolicyIssues(normalized).some((issue) => issue.code === 'MIDTERM_COMPONENTS_REQUIRED'));
+  normalized.MidTerm.ComponentIds = ['ca', 'exam', 'invented'];
+  const issues = academicPolicyIssues(normalized);
+  assert.ok(issues.some((issue) => issue.code === 'MIDTERM_COMPONENT_LIMIT'));
+  assert.ok(issues.some((issue) => issue.code === 'MIDTERM_COMPONENT_UNKNOWN'));
+});
+
 test('lower academic scopes store only intentional differences and inherit the rest', () => {
   const organisation = completePolicy();
   const branchSubmission = structuredClone(organisation);
@@ -260,6 +276,7 @@ test('School settings expose configurable result, grading and promotion policy c
   assert.match(setupHtmlSource, /id="academicFeeClearanceMode"/);
   assert.match(setupHtmlSource, /id="academicPositionMode"/);
   assert.match(setupHtmlSource, /id="academicComponents"/);
+  assert.match(setupHtmlSource, /id="academicMidTermEnabled"/);
   assert.match(setupHtmlSource, /id="academicGradeBands"/);
   assert.match(setupHtmlSource, /id="academicCumulativeTerms"/);
   assert.match(setupHtmlSource, /id="academicMissingTermMode"/);
@@ -276,6 +293,7 @@ test('School settings expose configurable result, grading and promotion policy c
   assert.match(setupHtmlSource, /protected result module will enforce the active policy when it is introduced/);
   assert.match(setupJsSource, /fetch\('\/api\/academic-policy'/);
   assert.match(setupJsSource, /function academicPolicyFromForm\(\)/);
+  assert.match(setupJsSource, /MidTermIncluded/);
   assert.match(setupJsSource, /function renderAcademicCumulativeTerms\(/);
   assert.match(setupJsSource, /function renderAcademicPolicyView\(view = \{\}, message = ''\)/);
   assert.match(setupJsSource, /DynamaxDialogs\.confirm\(\{/);
@@ -284,7 +302,7 @@ test('School settings expose configurable result, grading and promotion policy c
   assert.doesNotMatch(setupJsSource, /DynamaxDialogs\.confirm\([\s\S]{0,500}\)\) return;\s*const button = event\.currentTarget;/);
   assert.match(setupJsSource, /requestAcademicPolicy\('activate'\);\s*announceSettingsChange\(\);/);
   assert.match(setupJsSource, /requestAcademicPolicy\('inherit'\);\s*announceSettingsChange\(\);/);
-  assert.match(setupHtmlSource, /js\/setup\.js\?v=20260817-policy-live-sync/);
+  assert.match(setupHtmlSource, /js\/setup\.js\?v=20260909-academic-report-workflow/);
   assert.match(styleSource, /\.academic-component-grid/);
   assert.match(styleSource, /\.academic-grade-grid/);
   assert.match(styleSource, /\.academic-cumulative-grid/);

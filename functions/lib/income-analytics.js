@@ -117,6 +117,7 @@ function sourceLabel(journal, account = {}) {
   }
   if (text.includes('admission form') || text.includes('form sale')) return 'Admission Forms';
   if (text.includes('wallet purchase') || text.includes('tuck')) return 'Wallet Purchases';
+  if (text.includes('hotel')) return 'Hotel Services';
   if (text.includes('restaurant') || text.includes('catering')) return 'Restaurant';
   if (text.includes('store') || text.includes('book') || text.includes('uniform')) return 'Store Sales';
   if (text.includes('program')) return 'Programmes';

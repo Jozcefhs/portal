@@ -4,7 +4,7 @@ const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value || {}, key);
 
-export const ACADEMIC_POLICY_SCHEMA_VERSION = 2;
+export const ACADEMIC_POLICY_SCHEMA_VERSION = 3;
 export const ACADEMIC_POLICY_SCOPE_TYPES = Object.freeze([
   'organisation',
   'branch',
@@ -161,6 +161,10 @@ export function defaultAcademicPolicy() {
       Components: [],
       GradeBands: []
     },
+    MidTerm: {
+      Enabled: false,
+      ComponentIds: []
+    },
     Cumulative: {
       Terms: [],
       MissingTermMode: 'block',
@@ -201,6 +205,7 @@ export function normalizeAcademicPolicy(value = {}) {
   const financial = result.FinancialClearance || result.financialClearance || {};
   const position = value.Position || value.position || {};
   const assessment = value.Assessment || value.assessment || {};
+  const midTerm = value.MidTerm || value.midTerm || {};
   const cumulative = value.Cumulative || value.cumulative || {};
   const promotion = value.Promotion || value.promotion || {};
   const juniorPromotion = promotion.JuniorSecondary || promotion.juniorSecondary || {};
@@ -268,6 +273,10 @@ export function normalizeAcademicPolicy(value = {}) {
     Assessment: {
       Components: components.map(normalizeComponent).sort((a, b) => a.Order - b.Order || a.Name.localeCompare(b.Name)),
       GradeBands: gradeBands.map(normalizeGradeBand).sort((a, b) => b.MinimumPercentage - a.MinimumPercentage || a.Order - b.Order)
+    },
+    MidTerm: {
+      Enabled: yesNoBoolean(midTerm.Enabled ?? midTerm.enabled, defaults.MidTerm.Enabled),
+      ComponentIds: uniqueTextList(midTerm.ComponentIds ?? midTerm.componentIds ?? [])
     },
     Cumulative: {
       Terms: cumulativeTerms.map(normalizeCumulativeTerm).sort((a, b) => a.Order - b.Order || a.TermName.localeCompare(b.TermName)),
@@ -540,6 +549,18 @@ export function academicPolicyIssues(value = {}, options = {}) {
   if (activation && !components.length) {
     add('ASSESSMENT_COMPONENTS_REQUIRED', 'Add at least one assessment component.', 'Assessment.Components');
   }
+  const componentIds = new Set(components.map((component) => lower(component.Id)));
+  if (policy.MidTerm.Enabled && !policy.MidTerm.ComponentIds.length) {
+    add('MIDTERM_COMPONENTS_REQUIRED', 'Choose at least one assessment component for the mid-term result.', 'MidTerm.ComponentIds');
+  }
+  if (policy.MidTerm.ComponentIds.length > 2) {
+    add('MIDTERM_COMPONENT_LIMIT', 'A mid-term result may include at most two assessment components.', 'MidTerm.ComponentIds');
+  }
+  policy.MidTerm.ComponentIds.forEach((componentId) => {
+    if (!componentIds.has(lower(componentId))) {
+      add('MIDTERM_COMPONENT_UNKNOWN', `Mid-term component ${componentId} is not in the assessment scheme.`, 'MidTerm.ComponentIds');
+    }
+  });
 
   const bands = [...policy.Assessment.GradeBands].sort((a, b) => a.MinimumPercentage - b.MinimumPercentage);
   duplicateIds(bands).forEach((id) => add('GRADE_BAND_DUPLICATE', `Grade band id ${id} is duplicated.`, 'Assessment.GradeBands'));

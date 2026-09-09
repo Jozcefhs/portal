@@ -135,6 +135,8 @@ test('Milestone 10 calculates weighted immutable cumulative drafts from Locked t
   assert.equal(first.Attendance.AttendancePercentage, 90);
   assert.equal(first.Status, 'Calculated Draft');
   assert.equal(first.PolicyFingerprint, 'policy-fingerprint');
+  assert.match(first.TeacherRemark, /Mathematics/);
+  assert.match(first.PrincipalRemark, /promotion benchmark/);
 });
 
 test('cumulative missing-term and missing-subject behavior follows policy choices', () => {
@@ -234,6 +236,7 @@ test('Milestone 10 live actions persist outcomes, promotion destinations and imm
   assert.match(managementSource, /academicTranscripts/);
   assert.match(managementSource, /calculateAcademicCumulativeResults/);
   assert.match(managementSource, /changeAcademicCumulativeStatus/);
+  assert.match(managementSource, /saveAcademicCumulativeResultRemarks/);
   assert.match(managementSource, /calculateAcademicPromotionDecisions/);
   assert.match(managementSource, /DestinationMembershipId/);
   assert.match(managementSource, /createAcademicTranscriptDraft/);
@@ -246,6 +249,7 @@ test('web and desktop companions expose the same session-outcome workflow withou
 }, () => {
   assert.match(adminSource, /Session outcomes/);
   assert.match(adminSource, /Cumulative results/);
+  assert.match(adminSource, /data-academic-cumulative-remarks/);
   assert.match(adminSource, /Promotion decisions/);
   assert.match(adminSource, /Official Transcripts/);
   assert.match(adminSource, /'Pending', 'Promoted', 'Probation', 'Repeated'/);
