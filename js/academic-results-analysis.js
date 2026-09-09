@@ -141,6 +141,34 @@
     const departmentIndex = indexRows(departments, (row) => row.DepartmentId);
     const staffIndex = indexRows(staff, (row) => row.Username);
     const termIndex = indexRows(terms, (row) => row.TermId);
+    const rosterFacetRows = memberships.map((membership) => {
+      const student = studentIndex.get(lower(membership.StudentRef)) || {};
+      const schoolClass = classIndex.get(lower(membership.ClassId)) || {};
+      const arm = armIndex.get(lower(membership.ArmId)) || {};
+      const departmentId = clean(membership.DepartmentId || arm.DepartmentId);
+      return {
+        StudentRef: clean(membership.StudentRef),
+        StudentName: clean(student.StudentName || student.DisplayName || membership.StudentName || membership.StudentRef),
+        Gender: clean(student.Gender || membership.Gender || 'Not recorded'),
+        StudentType: clean(student.StudentType || membership.StudentType || 'Not recorded'),
+        ClassId: clean(membership.ClassId),
+        ClassName: clean(membership.ClassName || labelFor(classIndex, membership.ClassId, membership.ClassId)),
+        ArmId: clean(membership.ArmId),
+        ArmName: clean(membership.ArmName || labelFor(armIndex, membership.ArmId, membership.ArmId)),
+        DepartmentId: departmentId,
+        DepartmentName: labelFor(departmentIndex, departmentId, departmentId),
+        SchoolStage: clean(membership.SchoolStage || schoolClass.SchoolStage)
+      };
+    });
+    const assignmentFacetRows = allocations.filter((allocation) => (
+      (!termId || same(allocation.TermId, termId))
+      && (!filters.classId || same(allocation.ClassId, filters.classId))
+      && (!filters.armId || !clean(allocation.ArmId) || same(allocation.ArmId, filters.armId))
+    )).map((allocation) => ({
+      ...allocation,
+      SubjectName: labelFor(subjectIndex, allocation.SubjectId, allocation.SubjectId),
+      TeacherName: labelFor(staffIndex, allocation.TeacherUsername, allocation.TeacherUsername)
+    }));
     const promotionByStudent = new Map();
     promotionDecisions.forEach((row) => {
       const key = lower(row.StudentRef);
@@ -355,21 +383,21 @@
       Metrics: metrics,
       Facets: {
         periods: [{ value: 'annual', label: 'Annual cumulative' }, ...terms.map((row) => ({ value: row.TermId, label: clean(row.Name || row.Term) }))],
-        classes: uniqueFacet(candidateRows, (row) => row.ClassId, (row) => row.ClassName),
-        arms: uniqueFacet(candidateRows.filter((row) => !filters.classId || same(row.ClassId, filters.classId)), (row) => row.ArmId, (row) => `${row.ClassName} / ${row.ArmName}`),
-        departments: uniqueFacet(candidateRows, (row) => row.DepartmentId, (row) => row.DepartmentName),
-        schoolStages: uniqueFacet(candidateRows, (row) => row.SchoolStage, (row) => row.SchoolStage),
-        studentTypes: uniqueFacet(candidateRows, (row) => row.StudentType, (row) => row.StudentType),
-        subjects: uniqueFacet(candidateRows.flatMap((row) => row.Subjects), (row) => row.SubjectId, (row) => row.SubjectName),
-        teachers: uniqueFacet(allocations, (row) => row.TeacherUsername, (row) => labelFor(staffIndex, row.TeacherUsername, row.TeacherUsername)),
-        students: uniqueFacet(candidateRows, (row) => row.StudentRef, (row) => `${row.StudentName} (${row.StudentRef})`),
-        genders: uniqueFacet(candidateRows, (row) => row.Gender, (row) => row.Gender),
+        classes: uniqueFacet(rosterFacetRows, (row) => row.ClassId, (row) => row.ClassName),
+        arms: uniqueFacet(rosterFacetRows.filter((row) => !filters.classId || same(row.ClassId, filters.classId)), (row) => row.ArmId, (row) => `${row.ClassName} / ${row.ArmName}`),
+        departments: uniqueFacet(rosterFacetRows, (row) => row.DepartmentId, (row) => row.DepartmentName),
+        schoolStages: uniqueFacet(rosterFacetRows, (row) => row.SchoolStage, (row) => row.SchoolStage),
+        studentTypes: uniqueFacet(rosterFacetRows, (row) => row.StudentType, (row) => row.StudentType),
+        subjects: uniqueFacet(assignmentFacetRows, (row) => row.SubjectId, (row) => row.SubjectName),
+        teachers: uniqueFacet(assignmentFacetRows, (row) => row.TeacherUsername, (row) => row.TeacherName),
+        students: uniqueFacet(rosterFacetRows, (row) => row.StudentRef, (row) => `${row.StudentName} (${row.StudentRef})`),
+        genders: uniqueFacet(rosterFacetRows, (row) => row.Gender, (row) => row.Gender),
         statuses: uniqueFacet(candidateRows, (row) => row.Status, (row) => row.Status),
         promotionOutcomes: uniqueFacet(candidateRows, (row) => row.PromotionOutcome, (row) => row.PromotionOutcome),
         grades: uniqueFacet(candidateRows, (row) => row.Grade, (row) => row.Grade),
         classifications: uniqueFacet(candidateRows, (row) => row.Classification, (row) => row.Classification),
-        scoreBands: ['70–100', '60–69', '50–59', '40–49', 'Below 40'].map((value) => ({ value, label: value })),
-        attendanceBands: ['90–100%', '75–89%', '50–74%', 'Below 50%', 'No attendance record'].map((value) => ({ value, label: value }))
+        scoreBands: uniqueFacet(candidateRows, (row) => row.ScoreBand, (row) => row.ScoreBand),
+        attendanceBands: uniqueFacet(candidateRows, (row) => row.AttendanceBand, (row) => row.AttendanceBand)
       },
       Comparisons: {
         Classes: comparison(rows, (row) => row.ClassId, (row) => row.ClassName),

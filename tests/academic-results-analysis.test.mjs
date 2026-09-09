@@ -132,6 +132,28 @@ test('term selection changes the source rows while retaining session trend analy
   assert.deepEqual(output.Comparisons.Terms.map((row) => row.Label), ['First Term', 'Second Term']);
 });
 
+test('session structure, roster and assignment facets load before results exist', () => {
+  const input = analysisInput();
+  input.CumulativeResults = [];
+  input.TermResults = [];
+  input.PromotionDecisions = [];
+
+  const output = buildAcademicSessionAnalysis(input, { period: 'annual' });
+
+  assert.deepEqual(output.Facets.classes, [{ value: 'class-10', label: 'Grade 10' }]);
+  assert.deepEqual(output.Facets.arms.map((row) => row.value), ['arm-a', 'arm-b']);
+  assert.deepEqual(output.Facets.departments, [{ value: 'science', label: 'Science' }]);
+  assert.deepEqual(output.Facets.schoolStages, [{ value: 'senior-secondary', label: 'senior-secondary' }]);
+  assert.deepEqual(output.Facets.students.map((row) => row.value), ['DCA/001', 'DCA/002']);
+  assert.deepEqual(output.Facets.subjects.map((row) => row.value), ['eng', 'math']);
+  assert.deepEqual(output.Facets.teachers.map((row) => row.value), ['english.teacher', 'math.teacher']);
+  assert.deepEqual(output.Facets.statuses, []);
+  assert.deepEqual(output.Facets.promotionOutcomes, []);
+  assert.deepEqual(output.Facets.grades, []);
+  assert.deepEqual(output.Facets.classifications, []);
+  assert.deepEqual(output.Facets.scoreBands, []);
+});
+
 test('session analysis is management-only and uses a bounded analysis state projection', () => {
   const management = academicManagementCapabilities({ edition: 'school', role: 'Management', allowedSections: ['academics'] });
   const teacher = academicManagementCapabilities({ edition: 'school', role: 'Teacher', allowedSections: ['academics'] });
