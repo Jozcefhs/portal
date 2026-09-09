@@ -374,6 +374,8 @@ export function defaultSubscriptionPlanCatalog() {
   return {
     Currency: 'NGN',
     UsdToNgnRate: DEFAULT_USD_TO_NGN_RATE,
+    PaystackMode: '',
+    PaystackCredentialFingerprint: '',
     ModuleCatalogVersion: SUBSCRIPTION_MODULE_CATALOG_VERSION,
     Plans: Object.fromEntries(SUBSCRIPTION_PLAN_NAMES.map((name) => {
       const definition = SUBSCRIPTION_PLAN_DEFINITIONS[name];
@@ -420,6 +422,8 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
   return {
     Currency: normalizedCurrency,
     UsdToNgnRate: normalizedUsdToNgnRate,
+    PaystackMode: clean(source.PaystackMode),
+    PaystackCredentialFingerprint: clean(source.PaystackCredentialFingerprint),
     ModuleCatalogVersion: SUBSCRIPTION_MODULE_CATALOG_VERSION,
     Plans: Object.fromEntries(SUBSCRIPTION_PLAN_NAMES.map((name) => {
       const incoming = sourcePlans[name] && typeof sourcePlans[name] === 'object' ? sourcePlans[name] : {};

@@ -3,6 +3,7 @@ import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 import { requirePlatformAdmin } from '../lib/platform-admin.js';
 import { loadPlatformPaymentSettings } from '../lib/platform-direct-bank-transfer.js';
 import { readJsonBody } from '../lib/request-security.js';
+import { paystackEnvironmentIdentity, paystackSecretMode } from '../lib/paystack-environment.js';
 import {
   SUBSCRIPTION_PLAN_NAMES,
   normalizeSubscriptionPlanCatalog,
@@ -155,12 +156,29 @@ export async function onRequestPost({ request, env }) {
     requirePlatformAdmin(env, body.password);
     const existing = await loadCatalog(env);
     if (clean(body.action).toLowerCase() === 'load') {
-      return Response.json({ ok: true, catalog: publicSubscriptionPlanCatalog(existing) }, {
+      return Response.json({
+        ok: true,
+        catalog: publicSubscriptionPlanCatalog(existing),
+        paymentEnvironment: paystackSecretMode(env.PAYSTACK_SECRET_KEY)
+      }, {
         headers: { 'Cache-Control': 'no-store' }
       });
     }
     const catalog = mergeCatalog(existing, body.catalog);
     const currencyChanged = catalog.Currency !== existing.Currency;
+    const paystackIdentity = await paystackEnvironmentIdentity(env);
+    const paystackCredentialsChanged = Boolean(
+      paystackIdentity.fingerprint
+      && paystackIdentity.fingerprint !== clean(existing.PaystackCredentialFingerprint)
+    );
+    if (paystackCredentialsChanged) {
+      SUBSCRIPTION_PLAN_NAMES.forEach((name) => {
+        catalog.Plans[name].PaystackMonthlyPlanCode = '';
+        catalog.Plans[name].PaystackYearlyPlanCode = '';
+      });
+      catalog.PaystackMode = paystackIdentity.mode;
+      catalog.PaystackCredentialFingerprint = paystackIdentity.fingerprint;
+    }
     catalog.PolicyRevision = crypto.randomUUID();
     catalog.UpdatedAt = new Date().toISOString();
     catalog.UpdatedBy = 'Dynamax pricing administration';
@@ -174,7 +192,7 @@ export async function onRequestPost({ request, env }) {
       // Flex prices are resolved from the subscriber's selected modules and
       // active-user allowance. Exact recurring plans are created at checkout.
       if (name === 'Flex') continue;
-      if (paystackEnabled && paystackPlanNeedsSync(existingPlan, plan, 'monthly', currencyChanged)) {
+      if (paystackEnabled && paystackPlanNeedsSync(existingPlan, plan, 'monthly', currencyChanged || paystackCredentialsChanged)) {
         plan.PaystackMonthlyPlanCode = await syncPaystackPlan(env, {
           name,
           cycle: 'monthly',
@@ -192,7 +210,7 @@ export async function onRequestPost({ request, env }) {
           UpdatedBy: 'Dynamax pricing administration'
         });
       }
-      if (paystackEnabled && paystackPlanNeedsSync(existingPlan, plan, 'yearly', currencyChanged)) {
+      if (paystackEnabled && paystackPlanNeedsSync(existingPlan, plan, 'yearly', currencyChanged || paystackCredentialsChanged)) {
         plan.PaystackYearlyPlanCode = await syncPaystackPlan(env, {
           name,
           cycle: 'yearly',
@@ -213,6 +231,7 @@ export async function onRequestPost({ request, env }) {
     const updatedSubscribers = await updateSubscriberEntitlements(platformEnv, catalog);
     return Response.json({
       ok: true,
+      paymentEnvironment: paystackIdentity.mode,
       message: `Plan pricing and module access saved; ${updatedSubscribers} subscriber record${updatedSubscribers === 1 ? '' : 's'} refreshed. ${!paystackEnabled ? 'Online payment synchronization is disabled in Dynamax payment settings.' : synchronizedPaystackPlans ? `${synchronizedPaystackPlans} Paystack price plan${synchronizedPaystackPlans === 1 ? '' : 's'} synchronized.` : 'No Paystack price change was required.'}`,
       catalog: publicSubscriptionPlanCatalog(catalog)
     }, { headers: { 'Cache-Control': 'no-store' } });

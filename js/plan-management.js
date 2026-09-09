@@ -97,6 +97,12 @@ async function platformPaymentRequest(payload) {
 
 function renderPlatformPaymentState() {
   const settings = platformPaymentState?.settings || {};
+  const environment = String(platformPaymentState?.paystackEnvironment || 'not-configured').toLowerCase();
+  const environmentBadge = document.getElementById('platformPaystackEnvironment');
+  if (environmentBadge) {
+    environmentBadge.textContent = ({ live: 'Live', test: 'Test', configured: 'Configured', 'not-configured': 'Not configured' })[environment] || 'Unknown';
+    environmentBadge.className = `tenant-pool-status ${environment === 'live' ? 'ok' : 'bad'}`;
+  }
   document.getElementById('platformOnlinePaymentEnabled').value = settings.OnlinePaymentEnabled || 'YES';
   document.getElementById('platformDirectTransferEnabled').value = settings.DirectBankTransferEnabled || 'NO';
   document.getElementById('platformPaymentBankName').value = settings.PaymentBankName || '';

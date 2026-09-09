@@ -15,6 +15,7 @@ import {
   validatePlatformPaymentSettings
 } from '../lib/platform-direct-bank-transfer.js';
 import { readJsonBody } from '../lib/request-security.js';
+import { paystackSecretMode } from '../lib/paystack-environment.js';
 import {
   activateSavedSubscriptionPayment,
   disablePaystackSubscription
@@ -42,10 +43,11 @@ async function loadTransferQueue(platformEnv) {
     .map(publicPlatformTransferRecord);
 }
 
-async function loadResponse(platformEnv) {
+async function loadResponse(env, platformEnv) {
   const saved = await getDocument(platformEnv, 'settings', PLATFORM_PAYMENT_SETTINGS_DOCUMENT).catch(() => null);
   return {
     settings: normalizePlatformPaymentSettings(saved || {}),
+    paystackEnvironment: paystackSecretMode(env.PAYSTACK_SECRET_KEY),
     transfers: await loadTransferQueue(platformEnv)
   };
 }
@@ -212,7 +214,7 @@ export async function onRequestPost({ request, env }) {
     requirePlatformAdmin(env, body.password);
     const action = clean(body.action || 'load').toLowerCase();
     if (action === 'load') {
-      return Response.json({ ok: true, ...(await loadResponse(platformEnv)) }, { headers: { 'Cache-Control': 'no-store' } });
+      return Response.json({ ok: true, ...(await loadResponse(env, platformEnv)) }, { headers: { 'Cache-Control': 'no-store' } });
     }
     if (action === 'save') {
       const settings = validatePlatformPaymentSettings(body.settings || {});
@@ -224,7 +226,7 @@ export async function onRequestPost({ request, env }) {
       return Response.json({
         ok: true,
         message: 'Dynamax subscription payment methods saved.',
-        ...(await loadResponse(platformEnv))
+        ...(await loadResponse(env, platformEnv))
       }, { headers: { 'Cache-Control': 'no-store' } });
     }
     if (action === 'proof') {
@@ -240,7 +242,7 @@ export async function onRequestPost({ request, env }) {
     }
     if (action === 'decision') {
       const decision = await decideTransfer(env, platformEnv, body);
-      return Response.json({ ok: true, ...decision, ...(await loadResponse(platformEnv)) }, {
+      return Response.json({ ok: true, ...decision, ...(await loadResponse(env, platformEnv)) }, {
         headers: { 'Cache-Control': 'no-store' }
       });
     }

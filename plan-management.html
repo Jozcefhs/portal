@@ -43,6 +43,7 @@
         <div class="settings-section-heading"><div><span class="settings-section-icon">&#8358;</span></div><div><p class="settings-eyebrow">Dynamax subscription collections</p><h2>Payment methods and verification</h2><p>Configure Dynamax's own bank account and approve direct subscription transfers. Subscriber organisation bank accounts remain separate.</p></div></div>
         <div class="settings-fields two-column">
           <div class="settings-field"><label for="platformOnlinePaymentEnabled">Automated online payment</label><select id="platformOnlinePaymentEnabled"><option value="YES">Enabled &mdash; Card, USSD and bank through Paystack</option><option value="NO">Disabled</option></select></div>
+          <div class="settings-field"><label>Paystack environment</label><div><span id="platformPaystackEnvironment" class="tenant-pool-status">Checking</span></div><small>Live must be shown before accepting real payments. The secret value itself is never displayed.</small></div>
           <div class="settings-field"><label for="platformDirectTransferEnabled">Direct bank transfer</label><select id="platformDirectTransferEnabled"><option value="NO">Disabled</option><option value="YES">Enabled &mdash; Dynamax approval required</option></select></div>
           <div class="settings-field"><label for="platformPaymentBankName">Bank name</label><input id="platformPaymentBankName" autocomplete="organization"></div>
           <div class="settings-field"><label for="platformPaymentAccountName">Account name</label><input id="platformPaymentAccountName" autocomplete="organization"></div>
@@ -136,6 +137,6 @@
   </dialog>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
-  <script src="js/plan-management.js?v=20260903-hotel-plan-catalog"></script>
+  <script src="js/plan-management.js?v=20260909-paystack-environment"></script>
 </body>
 </html>

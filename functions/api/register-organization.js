@@ -34,6 +34,10 @@ import {
   platformTransferEvidence,
   publicPlatformPaymentMethods
 } from '../lib/platform-direct-bank-transfer.js';
+import {
+  paystackCredentialMatches,
+  paystackEnvironmentIdentity
+} from '../lib/paystack-environment.js';
 
 const clean = (value) => String(value ?? '').trim();
 const PAYSTACK_INITIALIZE_URL = 'https://api.paystack.co/transaction/initialize';
@@ -119,13 +123,14 @@ async function sha256(value) {
   return [...new Uint8Array(bytes)].map((part) => part.toString(16).padStart(2, '0')).join('');
 }
 
-async function flexPaystackPlanCode(env, platformEnv, selection) {
+async function flexPaystackPlanCode(env, platformEnv, selection, paystackIdentity) {
   if (!clean(env.PAYSTACK_SECRET_KEY)) {
     const error = new Error('Online subscription payment is not configured yet.');
     error.status = 503;
     throw error;
   }
   const signature = await sha256(JSON.stringify({
+    paystackCredentialFingerprint: clean(paystackIdentity?.fingerprint),
     currency: selection.Currency,
     billingCycle: selection.BillingCycle,
     amount: selection.Amount,
@@ -159,9 +164,59 @@ async function flexPaystackPlanCode(env, platformEnv, selection) {
   await upsertDocument(platformEnv, 'subscriptionFlexPaystackPlans', documentId, {
     Signature: signature,
     PaystackPlanCode: planCode,
+    PaystackMode: clean(paystackIdentity?.mode),
+    PaystackCredentialFingerprint: clean(paystackIdentity?.fingerprint),
     PriceSnapshot: selection.PriceSnapshot,
     CreatedAt: new Date().toISOString()
   });
+  return planCode;
+}
+
+async function fixedPaystackPlanCode(env, platformEnv, catalog, plan, billingCycle, paystackIdentity) {
+  if (!clean(paystackIdentity?.fingerprint)) {
+    const error = new Error('Online subscription payment is not configured yet.');
+    error.status = 503;
+    throw error;
+  }
+  const credentialsMatch = clean(catalog.PaystackCredentialFingerprint) === clean(paystackIdentity.fingerprint);
+  const existingCode = credentialsMatch ? subscriptionPaystackPlanCode(catalog, plan, billingCycle) : '';
+  if (existingCode) return existingCode;
+  const yearly = billingCycle === 'yearly';
+  const entry = catalog.Plans[plan];
+  const amount = yearly ? Number(entry.YearlyAmount || 0) : Number(entry.MonthlyAmount || 0);
+  if (!(amount > 0)) return '';
+  const response = await fetch(PAYSTACK_PLAN_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${env.PAYSTACK_SECRET_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: `Dynamax ${plan} - ${yearly ? 'Yearly' : 'Monthly'}`,
+      amount: Math.round(amount * 100),
+      interval: yearly ? 'annually' : 'monthly',
+      currency: clean(catalog.Currency).toUpperCase() || 'NGN',
+      description: `${plan} subscription billed ${yearly ? 'yearly' : 'monthly'}`,
+      send_invoices: true,
+      send_sms: false
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  const planCode = clean(data.data?.plan_code);
+  if (!response.ok || data.status === false || !planCode) {
+    const error = new Error(data.message || `Paystack could not create the ${plan} ${billingCycle} live price plan.`);
+    error.status = 502;
+    throw error;
+  }
+  if (!credentialsMatch) {
+    Object.values(catalog.Plans).forEach((savedPlan) => {
+      savedPlan.PaystackMonthlyPlanCode = '';
+      savedPlan.PaystackYearlyPlanCode = '';
+    });
+  }
+  entry[yearly ? 'PaystackYearlyPlanCode' : 'PaystackMonthlyPlanCode'] = planCode;
+  catalog.PaystackMode = clean(paystackIdentity.mode);
+  catalog.PaystackCredentialFingerprint = clean(paystackIdentity.fingerprint);
+  catalog.UpdatedAt = new Date().toISOString();
+  catalog.UpdatedBy = 'Automatic Paystack environment synchronization';
+  await upsertDocument(platformEnv, 'settings', 'dynamaxPlanCatalog', catalog);
   return planCode;
 }
 
@@ -432,6 +487,8 @@ export async function initializeSubscriptionCheckout({
       PendingPaystackPlanCode: '',
       PendingPaystackReference: '',
       PendingAuthorizationUrl: '',
+      PendingPaystackMode: '',
+      PendingPaystackCredentialFingerprint: '',
       UpdatedAt: now
     } : {
       ...withoutFirestoreMetadata(registration),
@@ -447,6 +504,8 @@ export async function initializeSubscriptionCheckout({
       PaystackPlanCode: '',
       PaystackReference: '',
       AuthorizationUrl: '',
+      PaystackMode: '',
+      PaystackCredentialFingerprint: '',
       PaymentStatus: 'Awaiting Verification',
       Status: 'Awaiting Payment Verification',
       UpdatedAt: now
@@ -465,9 +524,10 @@ export async function initializeSubscriptionCheckout({
     error.status = 503;
     throw error;
   }
+  const paystackIdentity = await paystackEnvironmentIdentity(env);
   const planCode = plan === 'Flex'
-    ? await flexPaystackPlanCode(env, platformEnv, selection)
-    : subscriptionPaystackPlanCode(catalog, plan, billingCycle);
+    ? await flexPaystackPlanCode(env, platformEnv, selection, paystackIdentity)
+    : await fixedPaystackPlanCode(env, platformEnv, catalog, plan, billingCycle, paystackIdentity);
   if (!planCode) {
     const error = new Error(`${plan} ${billingCycle} pricing has not been synchronized with Paystack yet.`);
     error.status = 503;
@@ -478,15 +538,24 @@ export async function initializeSubscriptionCheckout({
     error.status = 503;
     throw error;
   }
-  const reusableAuthorizationUrl = clean(registration.PendingAuthorizationUrl)
-    || (!clean(registration.WorkspaceId) ? clean(registration.AuthorizationUrl) : '');
-  const reusableReference = clean(registration.PendingPaystackReference || registration.PaystackReference);
+  const reusableAuthorizationUrl = preserveActivePlan
+    ? clean(registration.PendingAuthorizationUrl)
+    : (!clean(registration.WorkspaceId) ? clean(registration.AuthorizationUrl) : '');
+  const reusableReference = preserveActivePlan
+    ? clean(registration.PendingPaystackReference)
+    : clean(registration.PaystackReference);
+  const reusableCredential = preserveActivePlan ? {
+    PaystackCredentialFingerprint: registration.PendingPaystackCredentialFingerprint
+  } : {
+    PaystackCredentialFingerprint: registration.PaystackCredentialFingerprint
+  };
   if (clean(preserveActivePlan ? registration.PendingPlan || registration.Plan : registration.Plan) === plan
     && clean(preserveActivePlan ? registration.PendingBillingCycle || registration.BillingCycle : registration.BillingCycle) === billingCycle
     && Number(preserveActivePlan ? registration.PendingChargeAmount || registration.PendingPrice : registration.Price) === Number(amount)
     && JSON.stringify(preserveActivePlan ? registration.PendingFeatureEntitlements || [] : registration.FeatureEntitlements || []) === JSON.stringify(selectedEntitlements)
     && reusableAuthorizationUrl
     && reusableReference
+    && paystackCredentialMatches(reusableCredential, paystackIdentity)
     && clean(registration.PaymentStatus).toLowerCase() !== 'paid') {
     return {
       authorizationUrl: reusableAuthorizationUrl,
@@ -590,6 +659,8 @@ export async function initializeSubscriptionCheckout({
       PreservePaidThroughAt: clean(adjustment?.PaidThroughAt),
       PlanCatalogRevision: catalog.PolicyRevision,
       PreviousPaystackSubscriptionCode: clean(registration.PaystackSubscriptionCode),
+      PaystackMode: paystackIdentity.mode,
+      PaystackCredentialFingerprint: paystackIdentity.fingerprint,
       PaystackAccessCode: clean(data.data.access_code),
       AuthorizationUrl: authorizationUrl,
       Status: 'Awaiting Payment',
@@ -608,6 +679,8 @@ export async function initializeSubscriptionCheckout({
       PendingPaystackPlanCode: planCode,
       PendingPaystackReference: reference,
       PendingAuthorizationUrl: authorizationUrl,
+      PendingPaystackMode: paystackIdentity.mode,
+      PendingPaystackCredentialFingerprint: paystackIdentity.fingerprint,
       PendingPaymentMethod: 'Paystack',
       PendingDirectTransferReference: '',
       UpdatedAt: new Date().toISOString()
@@ -625,6 +698,8 @@ export async function initializeSubscriptionCheckout({
       PaystackReference: reference,
       DirectTransferReference: '',
       AuthorizationUrl: authorizationUrl,
+      PaystackMode: paystackIdentity.mode,
+      PaystackCredentialFingerprint: paystackIdentity.fingerprint,
       PaymentStatus: 'Awaiting Payment',
       Status: 'Awaiting Payment',
       UpdatedAt: new Date().toISOString()

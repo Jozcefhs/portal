@@ -353,7 +353,7 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(pricingHtml, /id="planEntitlementMatrix"/);
   assert.match(pricingHtml, /<select id="planPricingCurrency"><option value="NGN">NGN<\/option><option value="USD">USD<\/option><\/select>/);
   assert.match(pricingHtml, /id="planUsdToNgnRate"/);
-  assert.match(pricingHtml, /plan-management\.js\?v=20260903-hotel-plan-catalog/);
+  assert.match(pricingHtml, /plan-management\.js\?v=20260909-paystack-environment/);
   assert.match(pricingHtml, /id="tenantPoolSummary"/);
   assert.match(pricingHtml, /Other organisation/);
   assert.match(pricingHtml, /Save plans &amp; pricing/);
@@ -378,6 +378,10 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(registrationJs, /FlexUserLimit: flexQuote/);
   assert.match(registrationApi, /subscriptionFlexQuote/);
   assert.match(registrationApi, /subscriptionFlexPaystackPlans/);
+  assert.match(registrationApi, /paystackCredentialMatches\(reusableCredential, paystackIdentity\)/);
+  assert.match(registrationApi, /fixedPaystackPlanCode/);
+  assert.match(pricingHtml, /id="platformPaystackEnvironment"/);
+  assert.match(pricingJs, /paystackEnvironment/);
   assert.match(pricingJs, /existing subscribers remain on their current Paystack plans/);
   assert.doesNotMatch(pricingJs, /class="sr-only"/);
   assert.doesNotMatch(setupHtml, /href="plan-management\.html"/);
