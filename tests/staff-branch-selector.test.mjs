@@ -4,7 +4,8 @@ import test from 'node:test';
 
 import {
   applyStaffBranchContext,
-  configuredStaffBranches
+  configuredStaffBranches,
+  resolveStaffAssignmentBranch
 } from '../functions/lib/staff-branch-context.js';
 
 const adminHtml = fs.readFileSync(new URL('../admin.html', import.meta.url), 'utf8');
@@ -55,6 +56,29 @@ test('an organisation-wide account may select all or one configured branch', () 
   );
 });
 
+test('an organisation-wide Super Admin may assign staff without changing the working branch', () => {
+  const actor = {
+    role: 'Super Admin', assignedBranchId: '', activeBranchId: 'main', branchId: 'main', canSwitchBranches: true
+  };
+  assert.equal(resolveStaffAssignmentBranch(actor, 'north', '', structure), 'north');
+  assert.equal(resolveStaffAssignmentBranch(actor, 'all', '', structure), '');
+  assert.throws(
+    () => resolveStaffAssignmentBranch(actor, 'unknown', '', structure),
+    (error) => error.status === 400 && /configured for this organisation/i.test(error.message)
+  );
+});
+
+test('a branch-assigned administrator cannot assign staff to another branch', () => {
+  const actor = {
+    role: 'Super Admin', assignedBranchId: 'main', activeBranchId: 'main', branchId: 'main', canSwitchBranches: false
+  };
+  assert.equal(resolveStaffAssignmentBranch(actor, '', '', structure), 'main');
+  assert.throws(
+    () => resolveStaffAssignmentBranch(actor, 'north', '', structure),
+    (error) => error.status === 403 && /cannot register staff in another branch/i.test(error.message)
+  );
+});
+
 test('the web companion sends and renders the server-enforced session branch', () => {
   assert.match(adminHtml, /id="staffBranchSelector"/);
   assert.match(adminJs, /headers\.set\('X-Dynamax-Branch', selectedBranchId \|\| 'all'\)/);
@@ -71,4 +95,6 @@ test('the web companion sends and renders the server-enforced session branch', (
   assert.match(portalCss, /\.staff-page \.staff-welcome\.branch-context-only/);
   assert.match(staffAuth, /applyStaffBranchContext\(staffUserForAccess\(user, access\), requestedBranch, structure\)/);
   assert.match(adminApi, /branches,/);
+  assert.match(adminJs, /All branches \(organisation-wide\)/);
+  assert.match(adminJs, /Choose any configured branch without changing your working branch/);
 });

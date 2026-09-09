@@ -2,7 +2,9 @@ import { batchUpsertDocuments, deleteDocument, getDocument, listCollection, patc
 import { hashStaffPassword, invalidateStaffAccessCache, requireStaffSession } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { staffRecordMatchesEdition } from '../lib/records-desk.js';
-import { actorBranchScope, branchRecordVisible, enforceActorBranch } from '../lib/branch-scope.js';
+import { actorBranchScope, branchRecordVisible } from '../lib/branch-scope.js';
+import { getSchoolStructure } from '../lib/school-scope.js';
+import { resolveStaffAssignmentBranch } from '../lib/staff-branch-context.js';
 import {
   accountingChartForEdition,
   accountingCodeAllowedForEdition
@@ -177,11 +179,11 @@ async function saveUser(env, actor, body) {
   const password = String(body.Password || body.password || '');
   if (!existing && !password) { const err = new Error('Password is required for a new staff account.'); err.status = 400; throw err; }
   const passwordFields = password ? await hashStaffPassword(password) : {};
-  const branchId = enforceActorBranch(
+  const branchId = resolveStaffAssignmentBranch(
     actor,
     body.BranchId || body.branchId,
     existing?.BranchId || existing?.branchId,
-    'main'
+    await getSchoolStructure(env)
   );
   const payload = {
     ...(existing || {}),
@@ -226,6 +228,7 @@ async function importUsers(env, actor, body) {
   const subscriptionRows = staffAccountsForSubscription(existingRows, edition, actor.username);
   const plannedRows = subscriptionRows.map((row) => ({ ...row }));
   const existingByName = new Map(existingRows.map((row) => [lower(row.Username || row.__id), row]));
+  const structure = await getSchoolStructure(env);
   const writes = []; const failures = []; const seen = new Set();
   for (let index = 0; index < users.length; index += 1) {
     try {
@@ -251,11 +254,11 @@ async function importUsers(env, actor, body) {
       )) : -1;
       if (plannedIndex >= 0) plannedRows[plannedIndex] = { ...plannedRows[plannedIndex], Active: requestedActive };
       else plannedRows.push({ Username: username, LoginUsername: username, Active: requestedActive });
-      const branchId = enforceActorBranch(
+      const branchId = resolveStaffAssignmentBranch(
         actor,
         row.BranchId || row.branchId,
         existing?.BranchId || existing?.branchId,
-        'main'
+        structure
       );
       const payload = {
         ...(existing || {}), Username: username,

@@ -17034,6 +17034,11 @@ function renderStaffUsers() {
   const mfaPolicyRoles = new Set(mfaPolicy.RequiredRoles || []);
   const resettableStaff = staffUsersData.filter((user) => clean(user.Username).toLowerCase() !== clean(currentUser?.username).toLowerCase());
   const canManageMfaPolicy = clean(currentUser?.role) === 'Super Admin';
+  const canAssignAnyStaffBranch = currentUser?.canSwitchBranches === true && !clean(currentUser?.assignedBranchId);
+  const staffBranchChoices = availableBranches.length
+    ? availableBranches
+    : [{ id: clean(currentUser?.assignedBranchId || currentUser?.branchId || 'main'), name: clean(currentUser?.branchName || 'Main Branch') }];
+  const staffBranchOptions = `${canAssignAnyStaffBranch ? '<option value="all">All branches (organisation-wide)</option>' : ''}${staffBranchChoices.map((branch) => `<option value="${escapeHtml(branch.id)}">${escapeHtml(branch.name || branch.id)}</option>`).join('')}`;
   panelEl.innerHTML = `
     <div class="workflow-intro">
       <div><p class="eyebrow">Identity & access</p><h2>Staff & Permissions</h2><p class="muted">Shared database accounts for desktop and web access</p></div>
@@ -17124,7 +17129,7 @@ function renderStaffUsers() {
           <label>Display name <span class="required">*</span><input name="DisplayName" required></label>
           <label>Role <select name="Role" required>${availableRoles.map((role) => `<option>${role}</option>`).join('')}</select></label>
           <label>Department<input name="Department" placeholder="Required for Department User"></label>
-          <label>Branch ID<input name="BranchId" placeholder="Blank allows all branches"></label>
+          <label>Assigned branch<select name="BranchId"${canAssignAnyStaffBranch ? '' : ' disabled'}>${staffBranchOptions}</select><small>${canAssignAnyStaffBranch ? 'Choose any configured branch without changing your working branch.' : 'Your account may create staff only in its assigned branch.'}</small></label>
           ${schoolEdition ? '<label>School section<select name="SchoolSectionAccess"><option>All</option><option>Primary</option><option>Secondary</option></select></label>' : ''}
         </div></section>
         <section class="config-group"><header><strong>Finance approval</strong><small>Approval is blocked unless explicitly enabled by an administrator.</small></header><div class="config-grid">
@@ -17214,7 +17219,7 @@ function openStaffUserDialog(username = '') {
     form.elements.DisplayName.value = user.DisplayName || user.Username;
     form.elements.Role.value = user.Role;
     form.elements.Department.value = user.Department || '';
-    form.elements.BranchId.value = user.BranchId || '';
+    form.elements.BranchId.value = user.BranchId || 'all';
     if (form.elements.SchoolSectionAccess) {
       form.elements.SchoolSectionAccess.value = user.SchoolSectionAccess || 'All';
     }
@@ -17230,6 +17235,10 @@ function openStaffUserDialog(username = '') {
       form.elements.BiometricLookupEnabled.checked = yes(user.BiometricLookupEnabled);
     }
   } else {
+    const preferredBranch = clean(selectedBranchId) && selectedBranchId !== 'all'
+      ? selectedBranchId
+      : clean(availableBranches[0]?.id || currentUser?.assignedBranchId || currentUser?.branchId || 'main');
+    form.elements.BranchId.value = preferredBranch;
     form.elements.Active.checked = true;
     form.elements.MustChangePassword.checked = true;
     form.elements.ApprovalEnabled.checked = false;
