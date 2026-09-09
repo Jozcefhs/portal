@@ -1667,7 +1667,8 @@ function executiveOfficeTitle() {
   const faithEdition = document.documentElement.dataset.edition === 'church'
     || ['church', 'faith', 'organization'].includes(resolveDashboardEdition(currentUser || {}));
   if (!faithEdition) {
-    if (['Head Teacher', 'Assistant Head Teacher'].includes(role)) return "Head Teacher's Office";
+    const primaryWorkspace = clean(currentUser?.schoolSectionAccess).toLowerCase() === 'primary';
+    if (primaryWorkspace || ['Head Teacher', 'Assistant Head Teacher'].includes(role)) return "Head Teacher's Office";
     if (['Vice Principal Academics', 'Vice Principal Administration'].includes(role)) return `${role}'s Office`;
     return "Principal's Office";
   }
