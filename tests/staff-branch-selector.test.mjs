@@ -5,7 +5,8 @@ import test from 'node:test';
 import {
   applyStaffBranchContext,
   configuredStaffBranches,
-  resolveStaffAssignmentBranch
+  resolveStaffAssignmentBranch,
+  staffAssignmentActor
 } from '../functions/lib/staff-branch-context.js';
 
 const adminHtml = fs.readFileSync(new URL('../admin.html', import.meta.url), 'utf8');
@@ -79,6 +80,19 @@ test('a branch-assigned administrator cannot assign staff to another branch', ()
   );
 });
 
+test('only the configured environment Super Admin may recover organisation-wide staff assignment control', () => {
+  const branchAdmin = {
+    username: 'admin', role: 'Super Admin', assignedBranchId: 'main', branchId: 'main', canSwitchBranches: false
+  };
+  const recovered = staffAssignmentActor(branchAdmin, 'admin');
+  assert.equal(recovered.assignedBranchId, '');
+  assert.equal(recovered.canSwitchBranches, true);
+  assert.equal(resolveStaffAssignmentBranch(recovered, 'north', 'main', structure), 'north');
+  const ordinary = staffAssignmentActor({ ...branchAdmin, username: 'branch.admin' }, 'admin');
+  assert.equal(ordinary.assignedBranchId, 'main');
+  assert.equal(ordinary.canSwitchBranches, false);
+});
+
 test('the web companion sends and renders the server-enforced session branch', () => {
   assert.match(adminHtml, /id="staffBranchSelector"/);
   assert.match(adminJs, /headers\.set\('X-Dynamax-Branch', selectedBranchId \|\| 'all'\)/);
@@ -97,4 +111,5 @@ test('the web companion sends and renders the server-enforced session branch', (
   assert.match(adminApi, /branches,/);
   assert.match(adminJs, /All branches \(organisation-wide\)/);
   assert.match(adminJs, /Choose any configured branch without changing your working branch/);
+  assert.match(adminJs, /canAssignStaffBranches = data\.canAssignStaffBranches === true/);
 });

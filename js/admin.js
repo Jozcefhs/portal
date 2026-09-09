@@ -85,6 +85,7 @@ let staffApprovalAccounts = [];
 let staffRoleAccessData = null;
 let staffRoleAccessSelectedRole = '';
 let staffModulePreferencesData = null;
+let canAssignStaffBranches = false;
 let humanResourcesData = null;
 let staffAttendanceReportFilters = null;
 let activeTabs = [];
@@ -1403,6 +1404,7 @@ function clearStaffWorkspaceState() {
   staffRoleAccessData = null;
   staffRoleAccessSelectedRole = '';
   staffModulePreferencesData = null;
+  canAssignStaffBranches = false;
   pendingMfaLogin = null;
   pendingMfaCompletedLogin = null;
   staffMfaData = null;
@@ -17034,7 +17036,7 @@ function renderStaffUsers() {
   const mfaPolicyRoles = new Set(mfaPolicy.RequiredRoles || []);
   const resettableStaff = staffUsersData.filter((user) => clean(user.Username).toLowerCase() !== clean(currentUser?.username).toLowerCase());
   const canManageMfaPolicy = clean(currentUser?.role) === 'Super Admin';
-  const canAssignAnyStaffBranch = currentUser?.canSwitchBranches === true && !clean(currentUser?.assignedBranchId);
+  const canAssignAnyStaffBranch = canAssignStaffBranches;
   const staffBranchChoices = availableBranches.length
     ? availableBranches
     : [{ id: clean(currentUser?.assignedBranchId || currentUser?.branchId || 'main'), name: clean(currentUser?.branchName || 'Main Branch') }];
@@ -17620,6 +17622,7 @@ async function loadStaffUsers() {
     staffApprovalAccounts = data.approvalAccounts || [];
     staffRoleAccessData = data.roleAccess || null;
     staffModulePreferencesData = data.modulePreferences || null;
+    canAssignStaffBranches = data.canAssignStaffBranches === true;
     staffMfaAdminData = mfaAdministration;
     renderModuleSummary('staffUsers', staffUsersData);
     renderStaffUsers();

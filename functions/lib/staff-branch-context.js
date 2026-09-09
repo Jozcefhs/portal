@@ -16,6 +16,17 @@ export function configuredStaffBranches(structure = {}) {
   return branches.length ? branches : [{ id: 'main', name: 'Main Branch' }];
 }
 
+export function staffAssignmentActor(user = {}, environmentAdminUsername = '') {
+  const isEnvironmentAdmin = clean(user.role || user.Role) === 'Super Admin'
+    && lower(user.username || user.Username) === lower(environmentAdminUsername);
+  if (!isEnvironmentAdmin) return user;
+  return {
+    ...user,
+    assignedBranchId: '',
+    canSwitchBranches: true
+  };
+}
+
 export function applyStaffBranchContext(user = {}, requestedBranch = '', structure = {}) {
   const branches = configuredStaffBranches(structure);
   const assignedBranchId = clean(user.assignedBranchId || user.BranchId || user.branchId);

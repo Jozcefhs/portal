@@ -4,7 +4,7 @@ import { readJsonBody } from '../lib/request-security.js';
 import { staffRecordMatchesEdition } from '../lib/records-desk.js';
 import { actorBranchScope, branchRecordVisible } from '../lib/branch-scope.js';
 import { getSchoolStructure } from '../lib/school-scope.js';
-import { resolveStaffAssignmentBranch } from '../lib/staff-branch-context.js';
+import { resolveStaffAssignmentBranch, staffAssignmentActor } from '../lib/staff-branch-context.js';
 import {
   accountingChartForEdition,
   accountingCodeAllowedForEdition
@@ -129,6 +129,10 @@ function ensureSuperAdmin(actor) {
   throw err;
 }
 
+function assignmentActor(env, actor) {
+  return staffAssignmentActor(actor, clean(env.ADMIN_WEB_USERNAME || 'admin'));
+}
+
 function activeSuperAdmins(rows, excluding = '') {
   return rows.filter((row) => lower(row.Username || row.__id) !== lower(excluding) &&
     clean(row.Role) === 'Super Admin' && (row.Active === undefined || activeValue(row.Active)));
@@ -180,7 +184,7 @@ async function saveUser(env, actor, body) {
   if (!existing && !password) { const err = new Error('Password is required for a new staff account.'); err.status = 400; throw err; }
   const passwordFields = password ? await hashStaffPassword(password) : {};
   const branchId = resolveStaffAssignmentBranch(
-    actor,
+    assignmentActor(env, actor),
     body.BranchId || body.branchId,
     existing?.BranchId || existing?.branchId,
     await getSchoolStructure(env)
@@ -255,7 +259,7 @@ async function importUsers(env, actor, body) {
       if (plannedIndex >= 0) plannedRows[plannedIndex] = { ...plannedRows[plannedIndex], Active: requestedActive };
       else plannedRows.push({ Username: username, LoginUsername: username, Active: requestedActive });
       const branchId = resolveStaffAssignmentBranch(
-        actor,
+        assignmentActor(env, actor),
         row.BranchId || row.branchId,
         existing?.BranchId || existing?.branchId,
         structure
@@ -506,6 +510,7 @@ export async function onRequestPost(context) {
         users,
         audit,
         roleAccess,
+        canAssignStaffBranches: assignmentActor(env, actor).canSwitchBranches === true,
         modulePreferences: modulePreferencesView(moduleSettings.organization),
         seatUsage: {
           active: organisationActive,
