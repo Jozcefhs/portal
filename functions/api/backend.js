@@ -382,15 +382,24 @@ async function findStudentByWalletCard(env, cardId) {
   return rows[0] ? normalizeStudent(rows[0]) : null;
 }
 
-async function findStudentByAccountRef(env, accountRef, requestedScope = null) {
+export const STUDENT_ACCOUNT_REFERENCE_FIELDS = Object.freeze([
+  'AdmissionNo', 'admissionNo', 'AdmissionNumber', 'admissionNumber',
+  'AccountRef', 'accountRef', 'ApplicationReference', 'applicationReference'
+]);
+
+async function findStudentByAccountRef(env, accountRef, requestedScope = null, requestedScopePath = '') {
   const wanted = clean(accountRef);
   if (!wanted) return null;
-  const direct = await getSchoolDocumentById(env, 'students', safeDocumentId(wanted), requestedScope);
-  if (direct) return normalizeStudent(direct);
-  for (const field of ['AdmissionNo', 'AccountRef', 'ApplicationReference']) {
+  const scopePath = validatedIdentityScopePath(requestedScopePath, 'students');
+  if (clean(requestedScopePath) && !scopePath) return null;
+  const direct = scopePath
+    ? await getDocument(env, scopePath, safeDocumentId(wanted)).catch(() => null)
+    : await getSchoolDocumentById(env, 'students', safeDocumentId(wanted), requestedScope);
+  if (direct) return normalizeStudent(scopePath ? { ...direct, __scopePath: scopePath } : direct);
+  for (const field of STUDENT_ACCOUNT_REFERENCE_FIELDS) {
     const rows = await querySchoolCollection(env, 'students', {
       filters: [{ field, op: '==', value: wanted }],
-      scope: requestedScope,
+      ...(scopePath ? { scopePath } : { scope: requestedScope }),
       limit: 1
     });
     if (rows[0]) return normalizeStudent(rows[0]);
@@ -1955,6 +1964,7 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
       Term: clean(existing.Term || normalized.Term || resolvedSchoolProfile.CurrentTerm) || 'First Term',
       BranchId: clean(existing.BranchId || normalized.BranchId),
       SchoolSection: clean(existing.SchoolSection || normalized.SchoolSection),
+      StudentScopePath: clean(existing.StudentScopePath || normalized.StudentScopePath),
       Status: clean(existing.Status || normalized.Status),
       ResultStatus: clean(existing.ResultStatus || normalized.ResultStatus),
       OfferSent: clean(existing.OfferSent || normalized.OfferSent),
@@ -1987,6 +1997,7 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
     Term: student.Term,
     BranchId: student.BranchId,
     SchoolSection: student.SchoolSection,
+    StudentScopePath: student.__scopePath,
     Status: student.Status || 'Active',
     Enrolled: 'YES'
   }));
@@ -4261,6 +4272,9 @@ async function walletAccountPayload(env, student) {
     WalletDailyLimit: normalized.WalletDailyLimit || '',
     WalletTxnLimit: normalized.WalletTxnLimit || '',
     WalletPinThreshold: normalized.WalletPinThreshold || '',
+    BranchId: normalized.BranchId || '',
+    SchoolSection: normalized.SchoolSection || '',
+    StudentScopePath: normalized.__scopePath || '',
     WalletBalance: activity.balance,
     WalletSpentToday: activity.spentToday
   };
@@ -4269,7 +4283,13 @@ async function walletAccountPayload(env, student) {
 export async function getWalletCardAccount(env, body) {
   const cardId = clean(body.WalletCardId || body.CardId || body.cardId).toUpperCase();
   const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo || body.admissionNo);
-  const student = cardId ? await findStudentByWalletCard(env, cardId) : await findStudentByAccountRef(env, accountRef);
+  const requestedScope = {
+    branchId: body.BranchId || body.UserBranchId,
+    schoolSectionAccess: body.SchoolSection || body.UserSchoolSectionAccess
+  };
+  const student = cardId
+    ? await findStudentByWalletCard(env, cardId)
+    : await findStudentByAccountRef(env, accountRef, requestedScope, body.StudentScopePath || body.ScopePath);
   if (!student) {
     const err = new Error('Student wallet card/account not found. Enroll the student first, then assign a wallet card.');
     err.status = 404;
@@ -4291,8 +4311,23 @@ async function saveWalletCard(env, body) {
     err.status = 400;
     throw err;
   }
-  const student = await findStudentByAccountRef(env, accountRef);
-  if (!student) throw applicationNotFound(accountRef);
+  const requestedScopePath = clean(body.StudentScopePath || body.ScopePath || body.__scopePath);
+  const studentScopePath = validatedIdentityScopePath(requestedScopePath, 'students');
+  if (requestedScopePath && !studentScopePath) {
+    const err = new Error('The selected student record scope is invalid. Refresh Accounts and try again.');
+    err.status = 400;
+    throw err;
+  }
+  const requestedScope = {
+    branchId: body.BranchId || body.UserBranchId,
+    schoolSectionAccess: body.SchoolSection || body.UserSchoolSectionAccess
+  };
+  const student = await findStudentByAccountRef(env, accountRef, requestedScope, studentScopePath);
+  if (!student) {
+    const err = new Error(`Student record not found: ${accountRef}. Refresh Accounts and select the enrolled student again.`);
+    err.status = 404;
+    throw err;
+  }
   const duplicate = await findStudentByWalletCard(env, cardId);
   if (duplicate && !sameText(duplicate.AdmissionNo, student.AdmissionNo)) {
     const err = new Error('This wallet card is already assigned to another student.');
