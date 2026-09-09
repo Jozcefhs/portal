@@ -1,6 +1,6 @@
 import { batchCommitDocuments, batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, listCollectionPage, patchDocumentFields, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { getAccountingChartRows, invalidateAccountingChartRows, primeAccountingChartRows } from '../lib/accounting-reference-cache.js';
-import { deleteSchoolDocument, getSchoolDocumentById, getSchoolStructure, invalidateSchoolStructureCache, listSchoolCollection, querySchoolCollection, safeScopeId, schoolCollectionPaths, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
+import { deleteSchoolDocument, getSchoolDocumentById, getSchoolStructure, invalidateSchoolStructureCache, listSchoolCollection, normalizeSchoolStructure, querySchoolCollection, safeScopeId, schoolCollectionPaths, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass, classNamesMatch } from '../lib/class-names.js';
 import { categoryApplies, deleteStoreCategory, ensureStoreCategories, resolveStoreCategory, saveStoreCategory } from '../lib/store-categories.js';
 import {
@@ -2409,17 +2409,17 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
   ]);
   const existingProfile = applyPublicPortalContent(storedProfile || {}, savedPublicContent);
   const branchValues = Array.isArray(body.SchoolBranches) ? body.SchoolBranches : clean(body.SchoolBranches || body.schoolBranches || 'Main Branch').split(',');
-  const requestedActiveBranchId = safeScopeId(body.ActiveBranchId || body.activeBranchId || 'main');
-  const branches = branchValues.map((value) => {
-    const name = clean(typeof value === 'string' ? value : value.Name || value.name || value.Id || value.id);
-    return { Id: safeScopeId(typeof value === 'string' ? name : value.Id || value.id || name), Name: name || 'Main Branch' };
-  }).filter((row, index, rows) => rows.findIndex((candidate) => candidate.Id === row.Id) === index);
-  if (branches.length && !branches.some((row) => row.Id === requestedActiveBranchId)) branches[0].Id = requestedActiveBranchId;
-  const activeBranchId = requestedActiveBranchId || branches[0]?.Id || 'main';
   const sections = [];
   if (yesNo(body.EnablePrimarySection ?? body.enablePrimarySection ?? 'YES') === 'YES') sections.push('primary');
   if (yesNo(body.EnableSecondarySection ?? body.enableSecondarySection ?? 'YES') === 'YES') sections.push('secondary');
   if (!sections.length) sections.push('primary', 'secondary');
+  const structure = normalizeSchoolStructure({
+    Branches: branchValues,
+    ActiveBranchId: body.ActiveBranchId || body.activeBranchId || 'main',
+    Sections: sections
+  });
+  const branches = structure.Branches;
+  const activeBranchId = structure.ActiveBranchId;
   const documentRequirements = {
     BirthCertificate: yesNo(body.EnableBirthCertificate ?? 'YES') === 'YES',
     PreviousSchoolReport: yesNo(body.EnablePreviousSchoolReport ?? 'YES') === 'YES',
@@ -2539,28 +2539,14 @@ function normalizedOrganisationStructure(body = {}, existing = {}) {
   const rawBranches = Array.isArray(body.SchoolBranches)
     ? body.SchoolBranches
     : clean(body.SchoolBranches || body.schoolBranches || 'Main Branch').split(',');
-  const branches = rawBranches.map((value) => {
-    const name = clean(typeof value === 'string' ? value : value.Name || value.name || value.Id || value.id);
-    return {
-      Id: safeScopeId(typeof value === 'string' ? name : value.Id || value.id || name),
-      Name: name || 'Main Branch'
-    };
-  }).filter((row, index, rows) => row.Id && rows.findIndex((candidate) => candidate.Id === row.Id) === index);
-  const normalizedBranches = branches.length ? branches : [{ Id: 'main', Name: 'Main Branch' }];
-  const requestedActiveBranchId = safeScopeId(
-    body.ActiveBranchId || body.activeBranchId || existing.ActiveBranchId || normalizedBranches[0].Id || 'main'
-  );
-  if (!normalizedBranches.some((row) => row.Id === requestedActiveBranchId)) {
-    normalizedBranches[0] = { ...normalizedBranches[0], Id: requestedActiveBranchId };
-  }
   const savedSections = Array.isArray(existing.Sections) && existing.Sections.length
     ? existing.Sections
     : ['primary', 'secondary'];
-  return {
-    Branches: normalizedBranches,
-    ActiveBranchId: requestedActiveBranchId,
+  return normalizeSchoolStructure({
+    Branches: rawBranches,
+    ActiveBranchId: body.ActiveBranchId || body.activeBranchId || existing.ActiveBranchId || 'main',
     Sections: savedSections
-  };
+  });
 }
 
 async function saveOrganisationStructure(env, body) {
@@ -2592,7 +2578,7 @@ async function getSchoolProfile(env, options = {}) {
   ]);
   profile = applyPublicPortalContent(profile || {}, savedPublicContent);
   if (organizationProfile) organizationProfile = await refreshOrganizationPlanPolicy(env, organizationProfile);
-  const structure = storedStructure || await getSchoolStructure(env);
+  const structure = normalizeSchoolStructure(storedStructure || await getSchoolStructure(env));
   const enabledDocuments = documentSettings?.Enabled && typeof documentSettings.Enabled === 'object' ? documentSettings.Enabled : {};
   const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile: profile || {} });
   const baseProfile = { ...(profile || {

@@ -12,6 +12,41 @@ export function safeScopeId(value, fallback = 'main') {
   return clean(value || fallback).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || fallback;
 }
 
+export function canonicalSchoolBranchId(value, fallback = 'main') {
+  const normalized = safeScopeId(value, fallback);
+  // Desktop and legacy school records use "main" as the established branch
+  // identifier.  Do not turn its display label into a parallel, empty
+  // "main-branch" scope when the shared structure is read by the web app.
+  return normalized === 'main-branch' ? 'main' : normalized;
+}
+
+export function normalizeSchoolStructure(saved = {}) {
+  const sourceBranches = Array.isArray(saved?.Branches) && saved.Branches.length
+    ? saved.Branches
+    : [{ Id: 'main', Name: 'Main Branch' }];
+  const branches = sourceBranches.map((row) => {
+    const objectRow = row && typeof row === 'object' && !Array.isArray(row) ? row : null;
+    const name = clean(objectRow ? objectRow.Name || objectRow.name || objectRow.Id || objectRow.id : row);
+    const rawId = clean(objectRow ? objectRow.Id || objectRow.id || name : name);
+    if (!rawId) return null;
+    return { Id: canonicalSchoolBranchId(rawId), Name: name || rawId };
+  }).filter((row, index, rows) => row?.Id && rows.findIndex((candidate) => candidate?.Id === row.Id) === index);
+  if (!branches.length) branches.push({ Id: 'main', Name: 'Main Branch' });
+
+  const activeBranchId = canonicalSchoolBranchId(saved?.ActiveBranchId || branches[0]?.Id || 'main');
+  if (!branches.some((row) => row.Id === activeBranchId)) {
+    branches[0] = { ...branches[0], Id: activeBranchId };
+  }
+  const sections = Array.isArray(saved?.Sections) && saved.Sections.length
+    ? saved.Sections.map((value) => safeScopeId(typeof value === 'string' ? value : value.Id || value.id)).filter((value) => ['primary', 'secondary'].includes(value))
+    : ['primary', 'secondary'];
+  return {
+    Branches: branches,
+    Sections: [...new Set(sections.length ? sections : ['primary', 'secondary'])],
+    ActiveBranchId: activeBranchId
+  };
+}
+
 export function schoolSectionFor(row = {}) {
   const explicit = clean(row.SchoolSection || row.schoolSection).toLowerCase();
   if (['primary', 'nursery', 'early years', 'early-years'].includes(explicit)) return 'primary';
@@ -27,19 +62,7 @@ export async function getSchoolStructure(env) {
   const environmentKey = clean(env.FIREBASE_PROJECT_ID);
   if (cachedStructure && cachedStructureKey === environmentKey && Date.now() < cachedStructureUntil) return cachedStructure;
   const saved = await getDocument(env, 'settings', 'schoolStructure').catch(() => null);
-  const branches = Array.isArray(saved?.Branches) && saved.Branches.length
-    ? saved.Branches.map((row) => typeof row === 'string' ? { Id: safeScopeId(row), Name: clean(row) } : {
-      Id: safeScopeId(row.Id || row.id || row.Name || row.name), Name: clean(row.Name || row.name || row.Id || row.id)
-    }).filter((row) => row.Id)
-    : [{ Id: 'main', Name: 'Main Branch' }];
-  const sections = Array.isArray(saved?.Sections) && saved.Sections.length
-    ? saved.Sections.map((value) => safeScopeId(typeof value === 'string' ? value : value.Id || value.id)).filter((value) => ['primary', 'secondary'].includes(value))
-    : ['primary', 'secondary'];
-  cachedStructure = {
-    Branches: branches,
-    Sections: [...new Set(sections.length ? sections : ['primary', 'secondary'])],
-    ActiveBranchId: safeScopeId(saved?.ActiveBranchId || branches[0]?.Id || 'main')
-  };
+  cachedStructure = normalizeSchoolStructure(saved || {});
   cachedStructureKey = environmentKey;
   cachedStructureUntil = Date.now() + SCHOOL_STRUCTURE_CACHE_MS;
   return cachedStructure;
