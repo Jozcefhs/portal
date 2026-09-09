@@ -369,8 +369,17 @@ async function findStudent(env, admissionNo, applicationReference = '') {
 async function findStudentByWalletCard(env, cardId) {
   const wanted = clean(cardId).toUpperCase();
   if (!wanted) return null;
-  const rows = await listSchoolCollection(env, 'students');
-  return rows.map(normalizeStudent).find((row) => clean(row.WalletCardId).toUpperCase() === wanted) || null;
+  let rows = await querySchoolCollection(env, 'students', {
+    filters: [{ field: 'WalletCardId', op: '==', value: wanted }],
+    limit: 1
+  });
+  if (!rows[0]) {
+    rows = await querySchoolCollection(env, 'students', {
+      filters: [{ field: 'walletCardId', op: '==', value: wanted }],
+      limit: 1
+    });
+  }
+  return rows[0] ? normalizeStudent(rows[0]) : null;
 }
 
 async function findStudentByAccountRef(env, accountRef, requestedScope = null) {
@@ -4199,12 +4208,25 @@ function sameDayIso(value, today = new Date()) {
     date.getDate() === today.getDate();
 }
 
+export function summarizeWalletActivity(rows, accountRef, today = new Date()) {
+  return (rows || []).map(normalizeLedger).reduce((summary, row) => {
+    if (!sameText(row.AccountRef, accountRef) && !referencesMatch(row.AccountRef, accountRef)) return summary;
+    if (normalizeMatchText(row.FeeCategory) === 'wallet' || normalizeMatchText(row.EntryType).startsWith('wallet')) {
+      summary.balance += asMoneyNumber(row.Credit) - asMoneyNumber(row.Debit);
+    }
+    if (normalizeMatchText(row.EntryType) === 'wallet purchase' && sameDayIso(row.Date || row.createdAt, today)) {
+      summary.spentToday += asMoneyNumber(row.Debit);
+    }
+    return summary;
+  }, { balance: 0, spentToday: 0 });
+}
+
+async function walletActivityForAccount(env, accountRef) {
+  return summarizeWalletActivity(await queryAccountRows(env, 'ledger', accountRef), accountRef);
+}
+
 async function walletBalanceForAccount(env, accountRef) {
-  const rows = (await queryAccountRows(env, 'ledger', accountRef)).map(normalizeLedger);
-  return rows.filter((row) => {
-    if (!sameText(row.AccountRef, accountRef) && !referencesMatch(row.AccountRef, accountRef)) return false;
-    return normalizeMatchText(row.FeeCategory) === 'wallet' || normalizeMatchText(row.EntryType).startsWith('wallet');
-  }).reduce((balance, row) => balance + asMoneyNumber(row.Credit) - asMoneyNumber(row.Debit), 0);
+  return (await walletActivityForAccount(env, accountRef)).balance;
 }
 
 async function accountCreditBalanceForAccount(env, accountRef) {
@@ -4218,17 +4240,10 @@ async function accountCreditBalanceForAccount(env, accountRef) {
   );
 }
 
-async function walletSpentTodayForAccount(env, accountRef) {
-  const rows = (await queryAccountRows(env, 'ledger', accountRef)).map(normalizeLedger);
-  return rows.filter((row) => {
-    if (!sameText(row.AccountRef, accountRef) && !referencesMatch(row.AccountRef, accountRef)) return false;
-    return normalizeMatchText(row.EntryType) === 'wallet purchase' && sameDayIso(row.Date || row.createdAt);
-  }).reduce((total, row) => total + asMoneyNumber(row.Debit), 0);
-}
-
 async function walletAccountPayload(env, student) {
   const normalized = normalizeStudent(student || {});
   const accountRef = normalized.AdmissionNo || normalized.ApplicationReference || normalized.AccountRef || '';
+  const activity = await walletActivityForAccount(env, accountRef);
   return {
     AccountRef: accountRef,
     ApplicationReference: normalized.ApplicationReference || '',
@@ -4246,8 +4261,8 @@ async function walletAccountPayload(env, student) {
     WalletDailyLimit: normalized.WalletDailyLimit || '',
     WalletTxnLimit: normalized.WalletTxnLimit || '',
     WalletPinThreshold: normalized.WalletPinThreshold || '',
-    WalletBalance: await walletBalanceForAccount(env, accountRef),
-    WalletSpentToday: await walletSpentTodayForAccount(env, accountRef)
+    WalletBalance: activity.balance,
+    WalletSpentToday: activity.spentToday
   };
 }
 
