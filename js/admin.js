@@ -17622,6 +17622,12 @@ async function loadStaffUsers() {
     staffApprovalAccounts = data.approvalAccounts || [];
     staffRoleAccessData = data.roleAccess || null;
     staffModulePreferencesData = data.modulePreferences || null;
+    if (Array.isArray(data.branches) && data.branches.length) {
+      availableBranches = data.branches.map((branch) => ({
+        id: clean(branch.id || branch.Id),
+        name: clean(branch.name || branch.Name || branch.id || branch.Id)
+      })).filter((branch) => branch.id);
+    }
     canAssignStaffBranches = data.canAssignStaffBranches === true;
     staffMfaAdminData = mfaAdministration;
     renderModuleSummary('staffUsers', staffUsersData);

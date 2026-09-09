@@ -4,7 +4,7 @@ import { readJsonBody } from '../lib/request-security.js';
 import { staffRecordMatchesEdition } from '../lib/records-desk.js';
 import { actorBranchScope, branchRecordVisible } from '../lib/branch-scope.js';
 import { getSchoolStructure } from '../lib/school-scope.js';
-import { resolveStaffAssignmentBranch, staffAssignmentActor } from '../lib/staff-branch-context.js';
+import { configuredStaffBranches, resolveStaffAssignmentBranch, staffAssignmentActor } from '../lib/staff-branch-context.js';
 import {
   accountingChartForEdition,
   accountingCodeAllowedForEdition
@@ -491,13 +491,14 @@ export async function onRequestPost(context) {
     const action = lower(body.action || 'list');
     let result;
     if (action === 'list') {
-      const [staffRows, audit, accounts, roleAccess, userLimit, moduleSettings] = await Promise.all([
+      const [staffRows, audit, accounts, roleAccess, userLimit, moduleSettings, structure] = await Promise.all([
         listCollection(env, 'staffUsers'),
         listSecurityAudit(env, actor),
         listCollection(env, 'chartOfAccounts'),
         roleAccessSettings(env, actor),
         loadSubscriptionUserLimit(env),
-        organizationModuleSettings(env)
+        organizationModuleSettings(env),
+        getSchoolStructure(env)
       ]);
       const visibleRows = staffRows.filter((row) => staffRecordMatchesEdition(row, actor) && branchRecordVisible(row, actor));
       const subscriptionRows = staffAccountsForSubscription(staffRows, actor.edition, actor.username);
@@ -510,6 +511,7 @@ export async function onRequestPost(context) {
         users,
         audit,
         roleAccess,
+        branches: configuredStaffBranches(structure),
         canAssignStaffBranches: assignmentActor(env, actor).canSwitchBranches === true,
         modulePreferences: modulePreferencesView(moduleSettings.organization),
         seatUsage: {

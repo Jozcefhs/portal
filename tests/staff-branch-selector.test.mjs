@@ -12,6 +12,7 @@ import {
 const adminHtml = fs.readFileSync(new URL('../admin.html', import.meta.url), 'utf8');
 const adminJs = fs.readFileSync(new URL('../js/admin.js', import.meta.url), 'utf8');
 const adminApi = fs.readFileSync(new URL('../functions/api/admin.js', import.meta.url), 'utf8');
+const staffUsersApi = fs.readFileSync(new URL('../functions/api/staff-users.js', import.meta.url), 'utf8');
 const staffAuth = fs.readFileSync(new URL('../functions/lib/staff-auth.js', import.meta.url), 'utf8');
 const portalCss = fs.readFileSync(new URL('../css/style.css', import.meta.url), 'utf8');
 
@@ -109,6 +110,9 @@ test('the web companion sends and renders the server-enforced session branch', (
   assert.match(portalCss, /\.staff-page \.staff-welcome\.branch-context-only/);
   assert.match(staffAuth, /applyStaffBranchContext\(staffUserForAccess\(user, access\), requestedBranch, structure\)/);
   assert.match(adminApi, /branches,/);
+  assert.match(staffUsersApi, /branches: configuredStaffBranches\(structure\)/);
+  assert.match(adminJs, /availableBranches = data\.branches\.map\(\(branch\) => \(\{/);
+  assert.match(adminJs, /staffModulePreferencesData = data\.modulePreferences \|\| null;[\s\S]*Array\.isArray\(data\.branches\)/);
   assert.match(adminJs, /All branches \(organisation-wide\)/);
   assert.match(adminJs, /Choose any configured branch without changing your working branch/);
   assert.match(adminJs, /canAssignStaffBranches = data\.canAssignStaffBranches === true/);
