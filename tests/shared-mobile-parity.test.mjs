@@ -10,7 +10,7 @@ const pageStyleVersions = new Map([
   ['plan-management.html', '20260830-dual-currency-pricing'],
   ['register-organization.html', '20260830-flex-module-layout']
 ]);
-const adminScriptVersion = '20260909-primary-head-office';
+const adminScriptVersion = '20260909-branch-settings-scope';
 const parentScriptVersion = '20260909-academic-report-workflow';
 const notificationVersion = '20260804-read-efficiency';
 const pageNames = [
@@ -118,7 +118,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v273-primary-head-office/);
+  assert.match(serviceWorker, /dynamax-v274-branch-settings-scope/);
   assert.match(serviceWorker, /'\/verify-result\.html'/);
   assert.match(serviceWorker, /'\/js\/verify-result\.js'/);
   assert.match(serviceWorker, /'\/css\/school-landing\.css'/);

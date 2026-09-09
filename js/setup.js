@@ -22,6 +22,7 @@ let webLogoDataUrl = '';
 let webLogoChanged = false;
 let activeSettingsEdition = 'school';
 let loadedAcademicPolicyView = null;
+let activeSettingsAccess = { scope: requestedSettingsScope, branchId: requestedSettingsBranch, scopeLocked: false };
 const fixedPlanUserLimits = { Free: 5, Starter: 5, Standard: 20, Professional: 50 };
 const organisationOnlyControlIds = [
   'organisationEdition', 'nameFormat', 'webLogoFile', 'removeWebLogo',
@@ -527,6 +528,7 @@ async function requestAcademicPolicy(action, extra = {}) {
     error.issues = data.issues || [];
     throw error;
   }
+  applySettingsAccess(data.settingsAccess);
   renderAcademicPolicyView(data.view || {}, data.message);
   return data.view || {};
 }
@@ -621,8 +623,29 @@ function populateBranchOptions(profile = {}) {
   }
 }
 
-function applyProfile(profile = {}) {
+function applySettingsAccess(access = null) {
+  if (!access || typeof access !== 'object') return;
+  activeSettingsAccess = {
+    scope: access.scope === 'branch' ? 'branch' : 'organisation',
+    branchId: String(access.branchId || '').trim(),
+    scopeLocked: access.scopeLocked === true
+  };
+  settingsScopeField.value = activeSettingsAccess.scope;
+  if (activeSettingsAccess.branchId) {
+    let option = [...settingsBranchField.options].find((row) => row.value === activeSettingsAccess.branchId);
+    if (!option) {
+      option = document.createElement('option');
+      option.value = activeSettingsAccess.branchId;
+      option.textContent = activeSettingsAccess.branchId;
+      settingsBranchField.appendChild(option);
+    }
+    settingsBranchField.value = activeSettingsAccess.branchId;
+  }
+}
+
+function applyProfile(profile = {}, settingsAccess = null) {
   populateBranchOptions(profile);
+  applySettingsAccess(settingsAccess);
   setField('schoolName', profile.SchoolName);
   setField('schoolCode', profile.SchoolCode || 'DCA');
   setField('schoolAddress', profile.SchoolAddress);
@@ -671,13 +694,21 @@ function applyProfile(profile = {}) {
 }
 
 function updateSettingsScopeUI(profile = {}) {
+  const scopeLocked = activeSettingsAccess.scopeLocked === true;
+  if (scopeLocked) {
+    settingsScopeField.value = 'branch';
+    if (activeSettingsAccess.branchId) settingsBranchField.value = activeSettingsAccess.branchId;
+  }
   const branchMode = settingsScopeField.value === 'branch';
-  settingsBranchField.disabled = !branchMode;
+  settingsScopeField.disabled = scopeLocked;
+  settingsBranchField.disabled = !branchMode || scopeLocked;
   resetBranchSettingsButton.hidden = !branchMode;
   const branchName = settingsBranchField.selectedOptions[0]?.textContent || 'Selected branch';
   const overrideCount = Array.isArray(profile.BranchOverrideFields) ? profile.BranchOverrideFields.length : 0;
   settingsScopeSummary.textContent = branchMode
-    ? `${branchName} currently overrides ${overrideCount} field${overrideCount === 1 ? '' : 's'}; every other value is inherited automatically.`
+    ? scopeLocked
+      ? `Branch administrator access is locked to ${branchName}. You may change its ${overrideCount} current override${overrideCount === 1 ? '' : 's'} and other branch-level fields; organisation settings remain locked.`
+      : `${branchName} currently overrides ${overrideCount} field${overrideCount === 1 ? '' : 's'}; every other value is inherited automatically.`
     : 'Edit the defaults inherited automatically by every branch.';
   settingsSaveScopeLabel.textContent = branchMode ? `${branchName} overrides` : 'Organisation settings';
   organisationOnlyControlIds.forEach((id) => {
@@ -708,7 +739,7 @@ async function loadProfile(password = '', { scope = settingsScopeField.value, br
       : await fetch('/api/settings');
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load setup.');
-    applyProfile(data.profile || {});
+    applyProfile(data.profile || {}, data.settingsAccess);
     if (password && activeSettingsEdition === 'school') await loadAcademicPolicy({ silent: true });
     return data.profile || {};
   } catch (error) {
@@ -802,7 +833,7 @@ setupForm.addEventListener('submit', async (event) => {
     });
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Setup could not be saved.');
-    applyProfile(data.profile || {});
+    applyProfile(data.profile || {}, data.settingsAccess);
     announceSettingsChange();
     setStatus(data.message || 'All changes saved.', 'ok');
   } catch (error) {
@@ -935,7 +966,7 @@ resetBranchSettingsButton?.addEventListener('click', async () => {
     });
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.message || 'Branch overrides could not be reset.');
-    applyProfile(data.profile || {});
+    applyProfile(data.profile || {}, data.settingsAccess);
     announceSettingsChange();
     setStatus(data.message, 'ok');
   } catch (error) {

@@ -19,7 +19,7 @@ import {
 } from '../lib/branch-profile-settings.js';
 import { refreshOrganizationPlanPolicy } from '../lib/plan-policy-sync.js';
 import { readStaffSession } from '../lib/staff-auth.js';
-import { requireSetupAdministrator } from '../lib/setup-auth.js';
+import { requireSetupAdministrator, resolveSetupSettingsAccess } from '../lib/setup-auth.js';
 import { mergedProfileText } from '../lib/profile-settings-update.js';
 import {
   applyPublicPortalContent,
@@ -240,6 +240,17 @@ function publicProfile(profile = {}) {
     .map((key) => [key, profile[key]]));
 }
 
+function profileForSettingsAccess(profile = {}, access = {}) {
+  if (!access.scopeLocked) return profile;
+  const assignedBranch = clean(access.branchId).toLowerCase();
+  return {
+    ...profile,
+    AvailableBranches: (profile.AvailableBranches || []).filter((branch) => (
+      clean(branch.Id).toLowerCase() === assignedBranch
+    ))
+  };
+}
+
 export async function onRequestGet(context) {
   const metric = startRequestMetric(context.request, '/api/settings');
   const url = new URL(context.request.url);
@@ -266,29 +277,38 @@ export async function onRequestPost(context) {
     const { request, env } = context;
     const deployment = requiredDeploymentIdentity(env);
     const body = await readJsonBody(request, { maxBytes: 1024 * 1024 });
-    await requireSetupAdministrator(env, request, body.password);
-    const settingsScope = clean(body.SettingsScope || body.settingsScope).toLowerCase();
-    const branchId = clean(body.BranchId || body.branchId);
+    const actor = await requireSetupAdministrator(env, request, body.password);
+    const settingsAccess = resolveSetupSettingsAccess(
+      actor,
+      body.SettingsScope || body.settingsScope,
+      body.BranchId || body.branchId
+    );
+    const settingsScope = settingsAccess.scope;
+    const branchId = settingsAccess.branchId;
     if (clean(body.action || body.Action) === 'load') {
       action = 'load-private-profile';
-      const profile = await getProfile(env, {
+      const profile = profileForSettingsAccess(await getProfile(env, {
         fresh: true,
         branchId: settingsScope === 'branch' ? branchId : ''
-      });
+      }), settingsAccess);
       finishRequestMetric(metric, { status: 200, action });
-      return Response.json({ ok: true, profile }, { headers: { 'Cache-Control': 'no-store' } });
+      return Response.json({ ok: true, profile, settingsAccess }, { headers: { 'Cache-Control': 'no-store' } });
     }
     if (clean(body.action || body.Action) === 'resetBranchOverrides') {
       action = 'reset-branch-profile-overrides';
       requireFirestoreEnv(env);
       const reset = await resetBranchProfileOverrides(env, branchId);
       invalidateProfileCache();
-      const profile = await getProfile(env, { fresh: true, branchId: reset.branch.id });
+      const profile = profileForSettingsAccess(
+        await getProfile(env, { fresh: true, branchId: reset.branch.id }),
+        settingsAccess
+      );
       finishRequestMetric(metric, { status: 200, action });
       return Response.json({
         ok: true,
         message: `${reset.branch.name} now inherits every organisation setting.`,
-        profile
+        profile,
+        settingsAccess
       }, { headers: { 'Cache-Control': 'no-store' } });
     }
     const incoming = body.profile || {};
@@ -301,17 +321,21 @@ export async function onRequestPost(context) {
         branchId,
         defaultProfile: defaults,
         submittedProfile: incoming,
-        updatedBy: incoming.UpdatedBy || 'Setup'
+        updatedBy: actor.displayName || actor.username || 'Setup'
       });
       invalidateProfileCache();
-      const profile = await getProfile(env, { fresh: true, branchId: saved.branch.id });
+      const profile = profileForSettingsAccess(
+        await getProfile(env, { fresh: true, branchId: saved.branch.id }),
+        settingsAccess
+      );
       finishRequestMetric(metric, { status: 200, action });
       return Response.json({
         ok: true,
         message: saved.fields.length
           ? `${saved.branch.name} overrides saved; all other values continue to inherit organisation defaults.`
           : `${saved.branch.name} now inherits every organisation setting.`,
-        profile
+        profile,
+        settingsAccess
       }, { headers: { 'Cache-Control': 'no-store' } });
     }
     assertDeploymentEditionSelection(
@@ -441,7 +465,7 @@ export async function onRequestPost(context) {
     invalidateDeploymentIdentityCache();
     const savedProfile = await getProfile(env, { fresh: true });
     finishRequestMetric(metric, { status: 200, action });
-    return Response.json({ ok: true, message: 'Organisation setup saved.', profile: savedProfile }, {
+    return Response.json({ ok: true, message: 'Organisation setup saved.', profile: savedProfile, settingsAccess }, {
       headers: { 'Cache-Control': 'no-store' }
     });
   } catch (err) {

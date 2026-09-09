@@ -129,6 +129,17 @@ function ensureSuperAdmin(actor) {
   throw err;
 }
 
+function ensureOrganisationWideSuperAdmin(actor) {
+  ensureSuperAdmin(actor);
+  const assignedBranchId = clean(
+    actor.assignedBranchId || (actor.canSwitchBranches === false ? actor.branchId : '')
+  );
+  if (!assignedBranchId) return;
+  const err = new Error('Only an organisation-wide Super Admin can change organisation modules.');
+  err.status = 403;
+  throw err;
+}
+
 function assignmentActor(env, actor) {
   return staffAssignmentActor(actor, clean(env.ADMIN_WEB_USERNAME || 'admin'));
 }
@@ -353,6 +364,7 @@ async function organizationModuleSettings(env, options = {}) {
 }
 
 async function saveOrganizationModules(env, actor, body) {
+  ensureOrganisationWideSuperAdmin(actor);
   if (!Array.isArray(body.EnabledModules || body.enabledModules)) {
     const error = new Error('Choose the plan modules this organisation should keep enabled.');
     error.status = 400;

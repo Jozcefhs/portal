@@ -20,8 +20,11 @@ function centralOrigin(env) {
 
 async function requireSubscriptionAdmin(env, request) {
   const user = await requireStaffSession(env, request);
-  if (clean(user.role || user.Role) !== 'Super Admin') {
-    const error = new Error('Only the Super Admin can change the organisation subscription.');
+  const assignedBranchId = clean(
+    user.assignedBranchId || (user.canSwitchBranches === false ? user.branchId : '')
+  );
+  if (clean(user.role || user.Role) !== 'Super Admin' || assignedBranchId) {
+    const error = new Error('Only an organisation-wide Super Admin can change the organisation subscription.');
     error.status = 403;
     throw error;
   }

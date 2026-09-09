@@ -14,7 +14,7 @@ import {
 import { assertConfiguredProfileBranch } from '../lib/branch-profile-settings.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
-import { requireSetupAdministrator } from '../lib/setup-auth.js';
+import { requireSetupAdministrator, resolveSetupSettingsAccess } from '../lib/setup-auth.js';
 
 const clean = (value) => String(value ?? '').trim();
 
@@ -72,9 +72,18 @@ export async function onRequestPost(context) {
     schoolOnly(env);
     const body = await readJsonBody(request, { maxBytes: 512 * 1024 });
     const actor = await requireSetupAdministrator(env, request, body.password);
+    const settingsAccess = resolveSetupSettingsAccess(
+      actor,
+      body.SettingsScope || body.settingsScope || body.Scope?.Type,
+      body.BranchId || body.branchId || body.Scope?.Id
+    );
     requireFirestoreEnv(env);
     action = clean(body.action || body.Action || 'load').toLowerCase();
-    const { scope, scopeChain } = await requestScope(env, body);
+    const { scope, scopeChain } = await requestScope(env, {
+      ...body,
+      SettingsScope: settingsAccess.scope,
+      BranchId: settingsAccess.branchId
+    });
     const period = normalizeAcademicPolicyPeriod({
       Session: body.Session || body.AcademicSession,
       Term: body.Term
@@ -106,7 +115,7 @@ export async function onRequestPost(context) {
       throw error;
     }
     finishRequestMetric(metric, { status: 200, action: `academic-policy-${action}` });
-    return Response.json({ ok: true, message, view: responseView(view) }, {
+    return Response.json({ ok: true, message, view: responseView(view), settingsAccess }, {
       headers: { 'Cache-Control': 'no-store' }
     });
   } catch (error) {

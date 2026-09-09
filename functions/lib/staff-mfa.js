@@ -754,8 +754,11 @@ export async function disableStaffTotp(env, request, body = {}) {
 
 export async function saveStaffMfaPolicy(env, request, body = {}) {
   const user = await requireStaffSession(env, request);
-  if (clean(user.role) !== 'Super Admin') {
-    const error = new Error('Only a Super Administrator can change the two-factor policy.');
+  const assignedBranchId = clean(
+    user.assignedBranchId || (user.canSwitchBranches === false ? user.branchId : '')
+  );
+  if (clean(user.role) !== 'Super Admin' || assignedBranchId) {
+    const error = new Error('Only an organisation-wide Super Administrator can change the two-factor policy.');
     error.status = 403;
     throw error;
   }
@@ -793,8 +796,11 @@ export async function saveStaffMfaPolicy(env, request, body = {}) {
 
 export async function staffMfaAdministrationStatus(env, request) {
   const user = await requireStaffSession(env, request);
-  if (clean(user.role) !== 'Super Admin') {
-    const error = new Error('Only a Super Administrator can view organisation-wide two-factor status.');
+  const assignedBranchId = clean(
+    user.assignedBranchId || (user.canSwitchBranches === false ? user.branchId : '')
+  );
+  if (clean(user.role) !== 'Super Admin' || assignedBranchId) {
+    const error = new Error('Only an organisation-wide Super Administrator can view two-factor status.');
     error.status = 403;
     throw error;
   }
@@ -818,8 +824,11 @@ export async function staffMfaAdministrationStatus(env, request) {
 
 export async function adminResetStaffMfa(env, request, body = {}) {
   const user = await requireStaffSession(env, request);
-  if (clean(user.role) !== 'Super Admin') {
-    const error = new Error('Only a Super Administrator can reset staff two-factor authentication.');
+  const assignedBranchId = clean(
+    user.assignedBranchId || (user.canSwitchBranches === false ? user.branchId : '')
+  );
+  if (clean(user.role) !== 'Super Admin' || assignedBranchId) {
+    const error = new Error('Only an organisation-wide Super Administrator can reset staff two-factor authentication.');
     error.status = 403;
     throw error;
   }

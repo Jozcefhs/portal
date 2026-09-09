@@ -356,6 +356,13 @@ function lower(value) {
   return clean(value).toLowerCase();
 }
 
+function canManageOrganisationSettings(user = {}) {
+  const assignedBranchId = clean(
+    user.assignedBranchId || (user.canSwitchBranches === false ? user.branchId : '')
+  );
+  return clean(user.role) === 'Super Admin' && !assignedBranchId;
+}
+
 function newIdempotencyKey() {
   if (window.crypto?.randomUUID) return window.crypto.randomUUID();
   const random = window.crypto?.getRandomValues
@@ -1056,7 +1063,7 @@ function openStaffProfile() {
   document.getElementById('staffProfileDisplayName').value = currentUser.displayName || currentUser.username || '';
   document.getElementById('staffProfileLoginUsername').value = currentUser.loginUsername || currentUser.username || '';
   renderProfilePhoto(profilePhotoState, currentUser.displayName || currentUser.username);
-  const canManageSubscription = currentUser.role === 'Super Admin';
+  const canManageSubscription = canManageOrganisationSettings(currentUser);
   profileSubscriptionSection.hidden = !canManageSubscription;
   if (canManageSubscription) {
     document.getElementById('staffProfileSubscriptionPlan').textContent = `${clean(currentUser.subscriptionPlan || 'Current')} plan`;
@@ -1872,12 +1879,12 @@ function showDashboard(user, options = {}) {
     user.approvalEnabled
   );
   paymentSettingsButton.hidden = user.role !== 'Super Admin';
-  subscriptionButton.hidden = user.role !== 'Super Admin';
+  subscriptionButton.hidden = !canManageOrganisationSettings(user);
   if (subscriptionAccessBanner) {
     const readOnly = user.subscriptionReadOnly === true;
     subscriptionAccessBanner.hidden = !readOnly;
     subscriptionAccessBanner.innerHTML = readOnly
-      ? `<div><strong>Payment grace period &mdash; read-only access</strong><span>${escapeHtml(user.subscriptionMessage || 'Renew the organisation subscription to make operational changes.')}</span></div>${user.role === 'Super Admin' ? '<button type="button" data-open-subscription-renewal>Renew subscription</button>' : ''}`
+      ? `<div><strong>Payment grace period &mdash; read-only access</strong><span>${escapeHtml(user.subscriptionMessage || 'Renew the organisation subscription to make operational changes.')}</span></div>${canManageOrganisationSettings(user) ? '<button type="button" data-open-subscription-renewal>Renew subscription</button>' : ''}`
       : '';
     subscriptionAccessBanner.querySelector('[data-open-subscription-renewal]')?.addEventListener('click', openStaffSubscription);
   }
@@ -17036,7 +17043,8 @@ function renderStaffUsers() {
   const mfaPolicy = staffMfaAdminData?.policy || { Mode: 'OPTIONAL', RequiredRoles: [], GraceDays: 7, EnforceFrom: '' };
   const mfaPolicyRoles = new Set(mfaPolicy.RequiredRoles || []);
   const resettableStaff = staffUsersData.filter((user) => clean(user.Username).toLowerCase() !== clean(currentUser?.username).toLowerCase());
-  const canManageMfaPolicy = clean(currentUser?.role) === 'Super Admin';
+  const canManageOrganisationPolicy = canManageOrganisationSettings(currentUser);
+  const canManageMfaPolicy = canManageOrganisationPolicy;
   const canAssignAnyStaffBranch = canAssignStaffBranches;
   const staffBranchChoices = availableBranches.length
     ? availableBranches
@@ -17066,15 +17074,15 @@ function renderStaffUsers() {
       `).join('') : '<p class="muted">No database staff accounts found. Create the first shared staff account.</p>'}
     </div>
     <section class="role-access-settings organization-module-settings">
-      <div class="role-access-heading"><div><p class="eyebrow">Organisation-wide access</p><h2>Enabled subscription modules</h2><p class="muted">Turn off plan modules the organisation does not currently use. This changes access on web and desktop, but it does not change the subscription price or plan entitlement.</p></div><span class="role-access-scope">${escapeHtml(staffModulePreferencesData?.plan || 'Current plan')}</span></div>
+      <div class="role-access-heading"><div><p class="eyebrow">Organisation-wide access</p><h2>Enabled subscription modules</h2><p class="muted">${canManageOrganisationPolicy ? 'Turn off plan modules the organisation does not currently use. This changes access on web and desktop, but it does not change the subscription price or plan entitlement.' : 'These organisation-wide module settings are locked for branch administrators.'}</p></div><span class="role-access-scope">${escapeHtml(staffModulePreferencesData?.plan || 'Current plan')}</span></div>
       <div class="role-access-editor">
         <div class="config-option-list config-option-grid role-access-modules" id="organizationModuleOptions">
           ${organizationModules.length ? organizationModules.map((module) => {
             const requirements = (module.Requires || []).map((key) => organizationModuleLabels.get(key) || key);
-            return `<label class="check-row organization-module-option"><input type="checkbox" name="OrganizationModuleOption" value="${escapeHtml(module.Key)}" data-requires="${escapeHtml((module.Requires || []).join(','))}"${module.Enabled ? ' checked' : ''}> <span><strong>${escapeHtml(module.Label)}</strong><small>${escapeHtml(module.Description || '')}${module.Surface ? ` · ${escapeHtml(module.Surface)}` : ''}${requirements.length ? ` · Requires ${escapeHtml(requirements.join(' and '))}` : ''}</small></span></label>`;
+            return `<label class="check-row organization-module-option"><input type="checkbox" name="OrganizationModuleOption" value="${escapeHtml(module.Key)}" data-requires="${escapeHtml((module.Requires || []).join(','))}"${module.Enabled ? ' checked' : ''}${canManageOrganisationPolicy ? '' : ' disabled'}> <span><strong>${escapeHtml(module.Label)}</strong><small>${escapeHtml(module.Description || '')}${module.Surface ? ` · ${escapeHtml(module.Surface)}` : ''}${requirements.length ? ` · Requires ${escapeHtml(requirements.join(' and '))}` : ''}</small></span></label>`;
           }).join('') : '<p class="muted">No active subscription modules are available to configure.</p>'}
         </div>
-        <div class="role-access-actions"><p class="status" id="organizationModuleStatus"></p><button type="button" id="saveOrganizationModules"${organizationModules.length ? '' : ' disabled'}>Save enabled modules</button></div>
+        <div class="role-access-actions"><p class="status" id="organizationModuleStatus">${canManageOrganisationPolicy ? '' : 'Select an organisation-wide administrator account to change these modules.'}</p><button type="button" id="saveOrganizationModules"${organizationModules.length && canManageOrganisationPolicy ? '' : ' disabled'}>Save enabled modules</button></div>
       </div>
     </section>
     <section class="role-access-settings role-module-settings">
@@ -17090,7 +17098,7 @@ function renderStaffUsers() {
     </section>
     <section class="staff-mfa-policy-settings">
       <div class="role-access-heading"><div><p class="eyebrow">Sign-in protection</p><h2>Two-factor authentication policy</h2><p class="muted">Control who must complete a second security check after entering a password. Staff may always enrol voluntarily unless protection is disabled.</p></div><span class="role-access-scope">Organisation-wide</span></div>
-      ${!canManageMfaPolicy ? '<p class="status">Only a Super Administrator can change organisation-wide two-factor policy or reset another staff member’s security methods.</p>' : staffMfaAdminData?.error ? `<p class="status bad">${escapeHtml(staffMfaAdminData.error)}</p>` : `
+      ${!canManageMfaPolicy ? '<p class="status">Only an organisation-wide Super Administrator can change the two-factor policy or reset another staff member’s security methods.</p>' : staffMfaAdminData?.error ? `<p class="status bad">${escapeHtml(staffMfaAdminData.error)}</p>` : `
       <div class="staff-mfa-policy-editor">
         <div class="config-grid staff-mfa-policy-controls">
           <label>Enforcement mode<select id="staffMfaPolicyMode">
