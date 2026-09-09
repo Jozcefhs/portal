@@ -4,7 +4,12 @@ import { readFile } from 'node:fs/promises';
 
 const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260903-hotel-tabs';
-const adminScriptVersion = '20260905-branded-academic-reports';
+const pageStyleVersions = new Map([
+  ['admin.html', '20260909-branch-context-selector'],
+  ['plan-management.html', '20260830-dual-currency-pricing'],
+  ['register-organization.html', '20260830-flex-module-layout']
+]);
+const adminScriptVersion = '20260909-branch-context-selector';
 const parentScriptVersion = '20260905-branded-academic-reports';
 const notificationVersion = '20260804-read-efficiency';
 const pageNames = [
@@ -100,7 +105,9 @@ test('bounded content sections hand vertical scrolling back to the main page at 
 
 test('all portal pages reference the current shared stylesheet version', () => {
   pages.forEach((html, index) => {
-    assert.match(html, new RegExp(`css/style\\.css\\?v=${sharedVersion}`), `${pageNames[index]} should use the shared stylesheet version`);
+    const name = pageNames[index];
+    const version = pageStyleVersions.get(name) || sharedVersion;
+    assert.match(html, new RegExp(`css/style\\.css\\?v=${version}`), `${name} should use its current stylesheet version`);
   });
   assert.match(pages[pageNames.indexOf('admin.html')], new RegExp(`js/admin\\.js\\?v=${adminScriptVersion}`));
   assert.match(pages[pageNames.indexOf('admin.html')], new RegExp(`js/notifications\\.js\\?v=${notificationVersion}`));
@@ -110,7 +117,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v265-hotel-self-service/);
+  assert.match(serviceWorker, /dynamax-v266-session-results-analysis/);
   assert.match(serviceWorker, /'\/verify-result\.html'/);
   assert.match(serviceWorker, /'\/js\/verify-result\.js'/);
   assert.match(serviceWorker, /'\/css\/school-landing\.css'/);

@@ -1533,6 +1533,9 @@ html[data-theme="dark"] .staff-page .staff-tabs .child-card.subscription-restric
   }
 }
 .staff-main-content.module-view-active{padding-top:18px}
+.staff-page .staff-welcome.branch-context-only{min-height:0;margin:0 0 9px;padding:0 0 7px;justify-content:flex-end;border:0;border-radius:0;background:transparent;box-shadow:none}
+.staff-page .staff-welcome.branch-context-only>div,.staff-page .staff-welcome.branch-context-only::before,.staff-page .staff-welcome.branch-context-only::after{display:none}
+.staff-page .staff-welcome.branch-context-only .staff-branch-control{margin:0}
 .staff-main-content.module-view-active .staff-summary{margin:0 0 14px}
 .staff-main-content.module-view-active .staff-panel{min-height:calc(100vh - 168px);min-height:calc(100dvh - 168px)}
 .staff-summary .module-summary-card{gap:2px}
@@ -1560,6 +1563,9 @@ html[data-theme="dark"] .staff-summary .module-summary-card:nth-child(4n+4) .mod
 @media (max-width:680px){
   .staff-sidebar-actions{background:#092642}
   .staff-main-content.module-view-active{padding-top:12px}
+  .staff-page .staff-welcome.branch-context-only{min-height:50px;margin:0;padding:4px 12px 8px;background:#eef3f8;overflow:visible}
+  .staff-page .staff-welcome.branch-context-only .staff-branch-control{position:static;width:min(100%,220px);margin-left:auto;color:#486581}
+  .staff-page .staff-welcome.branch-context-only .staff-branch-control select{border-color:#bdccda;background:#fff;color:#102a43}
   .staff-main-content.module-view-active .staff-summary{margin:0 0 8px}
   .staff-main-content.module-view-active .staff-panel{min-height:calc(100vh - 188px);min-height:calc(100dvh - 188px);margin-top:0}
   .staff-summary .module-summary-card{gap:1px}

@@ -11,6 +11,7 @@ const adminHtml = fs.readFileSync(new URL('../admin.html', import.meta.url), 'ut
 const adminJs = fs.readFileSync(new URL('../js/admin.js', import.meta.url), 'utf8');
 const adminApi = fs.readFileSync(new URL('../functions/api/admin.js', import.meta.url), 'utf8');
 const staffAuth = fs.readFileSync(new URL('../functions/lib/staff-auth.js', import.meta.url), 'utf8');
+const portalCss = fs.readFileSync(new URL('../css/style.css', import.meta.url), 'utf8');
 
 const structure = {
   Branches: [
@@ -62,6 +63,12 @@ test('the web companion sends and renders the server-enforced session branch', (
   assert.match(adminJs, /window\.sessionStorage\.setItem\(staffBranchStorageKey\(user\), selectedBranchId\)/);
   assert.match(adminJs, /selectedOption\?\.id \|\| userOption\?\.id \|\| options\[0\]\?\.id \|\| 'all'/);
   assert.match(adminJs, /responseBranchId\.toLowerCase\(\) !== requestedBranchId\.toLowerCase\(\)/);
+  assert.doesNotMatch(adminJs, /canSwitchBranches === true && user\.featureFlags\?\.branches !== false/);
+  assert.match(adminJs, /branchControl\.hidden = !options\.length/);
+  assert.match(adminJs, /branchSelector\.disabled = branchSwitchInProgress \|\| !canSwitch \|\| options\.length < 2/);
+  assert.match(adminJs, /branchControlLabel = canSwitch && options\.length > 1 \? 'Working branch' : 'Current branch'/);
+  assert.match(adminJs, /welcomeEl\.classList\.toggle\('branch-context-only', !overview\)/);
+  assert.match(portalCss, /\.staff-page \.staff-welcome\.branch-context-only/);
   assert.match(staffAuth, /applyStaffBranchContext\(staffUserForAccess\(user, access\), requestedBranch, structure\)/);
   assert.match(adminApi, /branches,/);
 });

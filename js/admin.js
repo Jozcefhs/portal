@@ -1504,14 +1504,21 @@ function rememberStaffBranch(user = currentUser || {}) {
 }
 
 function renderStaffBranchSelector(user = currentUser || {}) {
-  const canSwitch = user.canSwitchBranches === true && user.featureFlags?.branches !== false;
-  branchControl.hidden = !canSwitch;
-  if (!canSwitch) {
+  // Branch context is navigation and record isolation, not an optional module.
+  // Keep it visible even when branch administration is disabled or this staff
+  // account is assigned to a single branch.
+  const canSwitch = user.canSwitchBranches === true;
+  const options = [...availableBranches]
+    .filter((branch, index, rows) => branch.id && rows.findIndex((item) => item.id.toLowerCase() === branch.id.toLowerCase()) === index);
+  const currentBranchId = clean(selectedBranchId || user.activeBranchId || user.assignedBranchId || user.branchId);
+  if (!options.length && currentBranchId && currentBranchId !== 'all') {
+    options.push({ id: currentBranchId, name: clean(user.branchName) || currentBranchId });
+  }
+  branchControl.hidden = !options.length;
+  if (!options.length) {
     branchSelector.replaceChildren();
     return;
   }
-  const options = [...availableBranches]
-    .filter((branch, index, rows) => branch.id && rows.findIndex((item) => item.id.toLowerCase() === branch.id.toLowerCase()) === index);
   branchSelector.innerHTML = options
     .map((branch) => `<option value="${escapeHtml(branch.id)}">${escapeHtml(branch.name)}</option>`)
     .join('');
@@ -1519,7 +1526,14 @@ function renderStaffBranchSelector(user = currentUser || {}) {
   const userOption = options.find((branch) => branch.id.toLowerCase() === clean(user.activeBranchId).toLowerCase());
   selectedBranchId = selectedOption?.id || userOption?.id || options[0]?.id || 'all';
   branchSelector.value = selectedBranchId;
-  branchSelector.disabled = branchSwitchInProgress;
+  branchSelector.disabled = branchSwitchInProgress || !canSwitch || options.length < 2;
+  const label = branchControl.querySelector('span');
+  const branchControlLabel = canSwitch && options.length > 1 ? 'Working branch' : 'Current branch';
+  if (label) label.textContent = branchControlLabel;
+  branchSelector.setAttribute('aria-label', branchControlLabel);
+  branchSelector.title = canSwitch && options.length > 1
+    ? 'Choose the branch whose records you want to work with.'
+    : 'This account currently has access to one branch.';
 }
 
 function paymentSettingsUrl() {
@@ -2747,7 +2761,8 @@ function renderTabs(allowed) {
 
 function renderWorkspace(active) {
   const overview = active === 'overview';
-  welcomeEl.hidden = !overview;
+  welcomeEl.hidden = false;
+  welcomeEl.classList.toggle('branch-context-only', !overview);
   dashboardStatus.hidden = !overview;
   panelEl.hidden = overview;
   staffMainContent.classList.toggle('module-view-active', !overview);
