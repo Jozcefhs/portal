@@ -1920,19 +1920,28 @@ export async function getPayableFees(env, body = {}) {
 
 export async function getAccountsOverview(env, preloaded = {}, requestedScope = null) {
   const provided = (key) => Array.isArray(preloaded?.[key]);
-  const [accounts, payments, invoices, feeItems, storedLedger, applications, students, schoolProfile, billingCategories] = await Promise.all([
+  const branchId = accountingRequestBranch(requestedScope || {});
+  const branchRows = (rows) => accountingRowsForBranch(rows, branchId);
+  const schoolScope = { branchId };
+  const [loadedAccounts, loadedPayments, loadedInvoices, feeItems, loadedLedger, loadedApplications, loadedStudents, schoolProfile, billingCategories] = await Promise.all([
     provided('accounts') ? Promise.resolve(preloaded.accounts) : listCollection(env, 'accounts'),
     provided('payments') ? Promise.resolve(preloaded.payments) : listCollection(env, 'payments'),
     provided('invoices') ? Promise.resolve(preloaded.invoices) : listCollection(env, 'invoices'),
     provided('feeItems') ? Promise.resolve(preloaded.feeItems) : listCollection(env, 'feeItems'),
     provided('ledger') ? Promise.resolve(preloaded.ledger) : listCollection(env, 'ledger'),
-    provided('applications') ? Promise.resolve(preloaded.applications) : listSchoolCollection(env, 'applications', requestedScope),
-    provided('students') ? Promise.resolve(preloaded.students) : listSchoolCollection(env, 'students', requestedScope),
+    provided('applications') ? Promise.resolve(preloaded.applications) : listSchoolCollection(env, 'applications', schoolScope),
+    provided('students') ? Promise.resolve(preloaded.students) : listSchoolCollection(env, 'students', schoolScope),
     preloaded?.schoolProfile
       ? Promise.resolve(preloaded.schoolProfile)
       : getDocument(env, 'settings', 'schoolProfile').catch(() => null),
     provided('billingCategories') ? Promise.resolve(preloaded.billingCategories) : listCollection(env, 'billingCategories')
   ]);
+  const accounts = branchRows(loadedAccounts);
+  const payments = branchRows(loadedPayments);
+  const invoices = branchRows(loadedInvoices);
+  const storedLedger = branchRows(loadedLedger);
+  const applications = provided('applications') ? branchRows(loadedApplications) : loadedApplications;
+  const students = provided('students') ? branchRows(loadedStudents) : loadedStudents;
   const resolvedSchoolProfile = schoolProfile || {};
   const normalizedPayments = payments.map(normalizePayment);
   const normalizedInvoices = invoices.map(normalizeInvoice);
@@ -7890,7 +7899,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'updateStudentStatus':
       return updateStudentStatus(env, body);
     case 'getAccountsOverview':
-      return getAccountsOverview(env);
+      return getAccountsOverview(env, {}, body);
     case 'getAccountingOverview':
       return getAccountingOverview(env, body);
     case 'getAccountingRequisitionDocument':

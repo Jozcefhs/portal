@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
+import { getAccountsOverview } from '../functions/api/backend.js';
+
 import {
   accountingRequestBranch,
   accountingRowsForBranch,
@@ -53,4 +55,41 @@ test('desktop overview scopes every financial register before building reports',
   assert.match(source, /donations: scopedDonations/);
   assert.match(source, /BranchId: branchId, Department: payload\.Department/);
   assert.match(source, /BranchId: branchId, RunId: runId/);
+});
+
+test('student accounts overview excludes records from every other branch', async () => {
+  const overview = await getAccountsOverview({}, {
+    accounts: [
+      { AccountRef: 'MAIN/001', DisplayName: 'Main Pupil', BranchId: 'main' },
+      { AccountRef: 'LORDS/001', DisplayName: 'Lords Pupil', BranchId: 'lords-garden' }
+    ],
+    payments: [
+      { PaymentId: 'PAY-MAIN', AccountRef: 'MAIN/001', BranchId: 'main', Amount: 100 },
+      { PaymentId: 'PAY-LORDS', AccountRef: 'LORDS/001', BranchId: 'lords-garden', Amount: 200 }
+    ],
+    invoices: [
+      { InvoiceId: 'INV-MAIN', AccountRef: 'MAIN/001', BranchId: 'main', Amount: 100 },
+      { InvoiceId: 'INV-LORDS', AccountRef: 'LORDS/001', BranchId: 'lords-garden', Amount: 200 }
+    ],
+    ledger: [
+      { LedgerNo: 'LED-MAIN', AccountRef: 'MAIN/001', BranchId: 'main', Debit: 100 },
+      { LedgerNo: 'LED-LORDS', AccountRef: 'LORDS/001', BranchId: 'lords-garden', Debit: 200 }
+    ],
+    feeItems: [],
+    applications: [],
+    students: [],
+    schoolProfile: {},
+    billingCategories: []
+  }, { UserBranchId: 'lords-garden', BranchId: 'lords-garden' });
+
+  assert.deepEqual(overview.accounts.map((row) => row.AccountRef), ['LORDS/001']);
+  assert.deepEqual(overview.payments.map((row) => row.PaymentId), ['PAY-LORDS']);
+  assert.deepEqual(overview.invoices.map((row) => row.InvoiceId), ['INV-LORDS']);
+  assert.ok(overview.ledger.some((row) => row.LedgerNo === 'LED-LORDS'));
+  assert.ok(overview.ledger.every((row) => row.AccountRef === 'LORDS/001'));
+});
+
+test('the accounts route forwards desktop branch scope to the overview', async () => {
+  const source = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
+  assert.match(source, /case 'getAccountsOverview':\s*return getAccountsOverview\(env, \{\}, body\);/);
 });
