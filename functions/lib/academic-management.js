@@ -442,10 +442,14 @@ const SCORE_REVIEWERS = new Set([...STRUCTURE_MANAGERS, 'Examination Officer']);
 const SCORE_APPROVERS = new Set([...STRUCTURE_MANAGERS, 'Examination Officer']);
 const FINANCE_CLEARANCE_MANAGERS = new Set([...STRUCTURE_MANAGERS, 'Accounts Officer', 'Finance Officer']);
 
-function failure(message, status = 400, code = '') {
+function failure(message, status = 400, code = '', details = {}) {
   const error = new Error(message);
   error.status = status;
   if (code) error.code = code;
+  if (Array.isArray(details.issues)) {
+    error.issues = details.issues.map(clean).filter(Boolean);
+    error.issueCount = Math.max(error.issues.length, Number(details.issueCount || 0));
+  }
   return error;
 }
 
@@ -4283,7 +4287,10 @@ async function calculateAcademicResultsForType(env, user = {}, input = {}, resul
   if (!calculation.Ready) {
     const summary = calculation.Issues.slice(0, 5).join(' ');
     const remaining = calculation.Issues.length > 5 ? ` ${calculation.Issues.length - 5} more issue(s) require attention.` : '';
-    throw failure(`${summary}${remaining}`, 409, 'ACADEMIC_RESULT_CALCULATION_BLOCKED');
+    throw failure(`${summary}${remaining}`, 409, 'ACADEMIC_RESULT_CALCULATION_BLOCKED', {
+      issues: calculation.Issues,
+      issueCount: calculation.Issues.length
+    });
   }
   const timestamp = nowIso();
   const writes = [];
@@ -4537,7 +4544,10 @@ export async function calculateAcademicCumulativeResults(env, user = {}, input =
   if (!calculation.Ready) {
     const summary = calculation.Issues.slice(0, 5).join(' ');
     const remaining = calculation.Issues.length > 5 ? ` ${calculation.Issues.length - 5} more issue(s) require attention.` : '';
-    throw failure(`${summary}${remaining}`, 409, 'ACADEMIC_CUMULATIVE_CALCULATION_BLOCKED');
+    throw failure(`${summary}${remaining}`, 409, 'ACADEMIC_CUMULATIVE_CALCULATION_BLOCKED', {
+      issues: calculation.Issues,
+      issueCount: calculation.Issues.length
+    });
   }
   const timestamp = nowIso();
   const writes = [];

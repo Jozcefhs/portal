@@ -29,11 +29,16 @@ export async function onRequestPost(context) {
     });
   } catch (error) {
     const status = Number(error?.status || 500);
+    const issues = Array.isArray(error?.issues) ? error.issues.map(clean).filter(Boolean).slice(0, 500) : [];
     finishRequestMetric(metric, { status, action: `staff-academics-${action}`, outcome: error?.code || 'error' });
     return Response.json({
       ok: false,
       message: clean(error?.message) || 'Academic Management could not complete this request.',
-      ...(error?.code ? { code: error.code } : {})
+      ...(error?.code ? { code: error.code } : {}),
+      ...(issues.length ? {
+        issues,
+        issueCount: Math.max(issues.length, Number(error?.issueCount || 0))
+      } : {})
     }, {
       status,
       headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0' }

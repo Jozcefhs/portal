@@ -5,16 +5,20 @@
   dialog.className = 'app-decision-dialog';
   dialog.setAttribute('aria-labelledby', 'appDecisionTitle');
   dialog.innerHTML = `<form class="app-decision-form">
-    <header><span class="app-decision-icon" aria-hidden="true">?</span><div><small>Dynamax confirmation</small><h2 id="appDecisionTitle">Confirm action</h2></div><button type="button" data-app-dialog-cancel aria-label="Close dialog">&times;</button></header>
-    <div class="app-decision-body"><p class="app-decision-message"></p><label class="app-decision-field"><span></span><textarea rows="4" maxlength="1000"></textarea></label><p class="app-decision-status status" role="status"></p></div>
+    <header><span class="app-decision-icon" aria-hidden="true">?</span><div><small class="app-decision-eyebrow">Dynamax confirmation</small><h2 id="appDecisionTitle">Confirm action</h2></div><button type="button" data-app-dialog-cancel aria-label="Close dialog">&times;</button></header>
+    <div class="app-decision-body"><p class="app-decision-message"></p><section class="app-decision-details" aria-label="Message details" hidden><strong></strong><ol></ol></section><label class="app-decision-field"><span></span><textarea rows="4" maxlength="1000"></textarea></label><p class="app-decision-status status" role="status"></p></div>
     <footer><button type="button" class="secondary" data-app-dialog-cancel>Cancel</button><button type="submit" class="app-decision-confirm">Confirm</button></footer>
   </form>`;
   document.body.appendChild(dialog);
 
   const form = dialog.querySelector('form');
   const icon = dialog.querySelector('.app-decision-icon');
+  const eyebrow = dialog.querySelector('.app-decision-eyebrow');
   const title = dialog.querySelector('h2');
   const message = dialog.querySelector('.app-decision-message');
+  const details = dialog.querySelector('.app-decision-details');
+  const detailsLabel = details.querySelector('strong');
+  const detailsList = details.querySelector('ol');
   const field = dialog.querySelector('.app-decision-field');
   const fieldLabel = field.querySelector('span');
   const input = field.querySelector('textarea');
@@ -35,10 +39,22 @@
     if (resolver) finish(nextMode === 'prompt' ? null : false);
     mode = nextMode;
     const dangerous = options.tone === 'danger';
+    const items = Array.isArray(options.items)
+      ? options.items.map((item) => String(item ?? '').trim()).filter(Boolean)
+      : [];
     dialog.classList.toggle('is-danger', dangerous);
+    dialog.classList.toggle('has-details', items.length > 0);
     icon.textContent = dangerous ? '!' : (nextMode === 'alert' ? 'i' : '✓');
+    eyebrow.textContent = options.eyebrow || (dangerous ? 'Action required' : (nextMode === 'alert' ? 'Dynamax message' : 'Dynamax confirmation'));
     title.textContent = options.title || (nextMode === 'alert' ? 'Notice' : 'Confirm action');
     message.textContent = options.message || '';
+    details.hidden = items.length === 0;
+    detailsLabel.textContent = options.detailsLabel || `${items.length} detail${items.length === 1 ? '' : 's'}`;
+    detailsList.replaceChildren(...items.map((item) => {
+      const entry = document.createElement('li');
+      entry.textContent = item;
+      return entry;
+    }));
     field.hidden = nextMode !== 'prompt';
     fieldLabel.textContent = options.label || 'Note';
     input.value = String(options.value || '');

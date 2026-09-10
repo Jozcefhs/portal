@@ -2547,6 +2547,7 @@ html[data-theme="dark"] .onboarding-progress li.is-complete > span { background:
 .subscription-confirmation-summary dt { color: #526b82; font-weight: 700; }
 .subscription-confirmation-summary dd { margin: 0; overflow-wrap: anywhere; font-weight: 800; }
 .app-decision-dialog { width: min(500px, calc(100vw - 24px)); max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); padding: 0; border: 0; border-radius: 16px; background: #fff; color: #17324d; box-shadow: 0 28px 80px rgba(4,20,37,.42); overflow: auto; }
+.app-decision-dialog.has-details { width: min(760px, calc(100vw - 24px)); }
 .app-decision-dialog::backdrop { background: rgba(4,20,37,.68); backdrop-filter: blur(4px); }
 .app-decision-form { margin: 0; }
 .app-decision-dialog header { display: grid; grid-template-columns: 38px minmax(0,1fr) 34px; align-items: center; gap: 11px; padding: 17px 19px; border-bottom: 1px solid #d9e4ed; background: #f8fbfd; }
@@ -2557,6 +2558,12 @@ html[data-theme="dark"] .onboarding-progress li.is-complete > span { background:
 .app-decision-dialog header button { display: grid; place-items: center; width: 34px; height: 34px; min-height: 34px; margin: 0; padding: 0; border-radius: 50%; background: #e7eef5; color: #17324d; font-size: 22px; }
 .app-decision-body { padding: 17px 19px 7px; }
 .app-decision-message { margin: 0 0 13px; color: #526b82; font-size: 12px; line-height: 1.55; white-space: pre-line; }
+.app-decision-details { margin: 0 0 13px; padding: 11px 11px 11px 13px; border: 1px solid #efc8cf; border-radius: 10px; background: #fff8f9; }
+.app-decision-details[hidden] { display: none; }
+.app-decision-details > strong { display: block; margin: 0 0 8px; color: #9f1e35; font-size: 10px; letter-spacing: .035em; text-transform: uppercase; }
+.app-decision-details ol { max-height: min(46vh, 420px); margin: 0; padding: 0 7px 0 28px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.app-decision-details li { padding: 7px 4px; color: #354f68; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.app-decision-details li + li { border-top: 1px solid #f0dfe3; }
 .app-decision-field { display: grid; gap: 6px; color: #29445e; font-size: 11px; font-weight: 800; }
 .app-decision-field[hidden] { display: none; }
 .app-decision-field textarea { width: 100%; min-height: 90px; margin: 0; padding: 10px 11px; border: 1px solid #afc1d1; border-radius: 9px; background: #fff; color: #17324d; font: inherit; font-size: 13px; font-weight: 500; line-height: 1.45; resize: vertical; }
@@ -2648,6 +2655,10 @@ html[data-theme="dark"] .app-decision-dialog header { border-color: #2d4155; bac
 html[data-theme="dark"] .app-decision-dialog header h2 { color: #f1f6fb; }
 html[data-theme="dark"] .app-decision-dialog header button { background: #20354a; color: #f1f6fb; }
 html[data-theme="dark"] .app-decision-message { color: #b3c3d2; }
+html[data-theme="dark"] .app-decision-details { border-color: #633646; background: #251925; }
+html[data-theme="dark"] .app-decision-details > strong { color: #ff9aae; }
+html[data-theme="dark"] .app-decision-details li { color: #e8dfe3; }
+html[data-theme="dark"] .app-decision-details li + li { border-color: #4a2d39; }
 html[data-theme="dark"] .app-decision-field { color: #e5eef7; }
 html[data-theme="dark"] .app-decision-field textarea { border-color: #3c566d; background: #0a1724; color: #f1f6fb; }
 html[data-theme="dark"] .app-decision-dialog footer .secondary { border-color: #3c566d; background: #15283b; color: #e5eef7; }
@@ -2673,6 +2684,7 @@ html[data-theme="dark"] .platform-transfer-decision-dialog footer .secondary { b
   .app-decision-dialog header { padding: 14px; }
   .app-decision-dialog header h2 { font-size: 16px; }
   .app-decision-body { padding: 14px 14px 6px; }
+  .app-decision-details ol { max-height: 52vh; }
   .app-decision-dialog footer { padding: 11px 14px 14px; }
   .platform-transfer-decision-dialog header { padding: 14px; }
   .platform-decision-heading h2 { font-size: 16px; }

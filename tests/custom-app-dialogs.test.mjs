@@ -14,6 +14,9 @@ test('shared Dynamax dialogs replace native JavaScript prompts and confirmations
   assert.match(dialogs, /confirm: \(options\) => open\(options, 'confirm'\)/);
   assert.match(dialogs, /prompt: \(options\) => open\(options, 'prompt'\)/);
   assert.match(dialogs, /alert: \(options\) => open\(options, 'alert'\)/);
+  assert.match(dialogs, /class="app-decision-details"/);
+  assert.match(dialogs, /Array\.isArray\(options\.items\)/);
+  assert.match(dialogs, /detailsList\.replaceChildren/);
   for (const code of [admin, notifications, setup, faceLookup, pwa, plan]) assert.doesNotMatch(code, nativeDialogPattern);
 });
 
@@ -43,6 +46,8 @@ test('custom dialogs are responsive and retain dark-mode contrast', async () => 
   const styles = await source('css/style.css');
   assert.match(styles, /\.app-decision-dialog \{[^}]*width: min\(500px, calc\(100vw - 24px\)\)/);
   assert.match(styles, /html\[data-theme="dark"\] \.app-decision-dialog/);
+  assert.match(styles, /\.app-decision-dialog\.has-details \{[^}]*width: min\(760px/);
+  assert.match(styles, /\.app-decision-details ol \{[^}]*max-height: min\(46vh, 420px\)[^}]*overflow-y: auto/);
   assert.match(styles, /\.platform-transfer-decision-dialog::backdrop/);
   assert.match(styles, /@media \(max-width: 430px\) \{ \.platform-decision-summary \{ grid-template-columns: 1fr; \} \}/);
 });

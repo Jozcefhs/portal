@@ -179,13 +179,21 @@ test('Milestone 9 lifecycle requires review, approval and publication, with cont
 });
 
 test('Milestone 9 server contract stores parent-compatible results and controlled lifecycle events', async () => {
-  const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
+  const [source, endpointSource, adminSource] = await Promise.all([
+    readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8'),
+    readFile(new URL('../functions/api/staff-academics.js', import.meta.url), 'utf8'),
+    readFile(new URL('../js/admin.js', import.meta.url), 'utf8')
+  ]);
   ['academicResults', 'academicResultEvents', 'calculateAcademicTermResults', 'previewAcademicTermResultWithdrawal', 'changeAcademicTermResultStatus']
     .forEach((token) => assert.match(source, new RegExp(token)));
   assert.match(source, /ImpactAcknowledged/);
   assert.match(source, /PolicyFingerprint/);
   assert.match(source, /ACADEMIC_RESULT_POLICY_INCOMPLETE/);
   assert.match(source, /ACADEMIC_RESULT_IMMUTABLE/);
+  assert.match(source, /issues: calculation\.Issues/);
+  assert.match(endpointSource, /issueCount: Math\.max\(issues\.length/);
+  assert.match(adminSource, /showAcademicCalculationFailure/);
+  assert.match(adminSource, /items: issues/);
 });
 
 test('Milestone 9 exposes a privacy-minimized public verifier and QR route', async () => {

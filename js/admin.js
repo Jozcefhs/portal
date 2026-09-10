@@ -12875,7 +12875,14 @@ async function academicManagementRequest(action, payload = {}) {
     message: `Academic Management received a temporary non-JSON response (HTTP ${response.status}). Refresh this workspace to try again.`
   }));
   if (response.status === 401) { showLogin(data.message || 'Your staff session has expired.', 'bad'); throw new Error(data.message || 'Your session expired.'); }
-  if (!response.ok || !data.ok) throw new Error(data.message || 'Academic Management could not complete this request.');
+  if (!response.ok || !data.ok) {
+    const error = new Error(data.message || 'Academic Management could not complete this request.');
+    error.status = response.status;
+    error.code = clean(data.code);
+    error.issues = Array.isArray(data.issues) ? data.issues.map(clean).filter(Boolean) : [];
+    error.issueCount = Math.max(error.issues.length, Number(data.issueCount || 0));
+    throw error;
+  }
   if (data.refreshAcademicManagement === true && clean(action).toLowerCase() !== 'bootstrap') {
     const refreshed = await academicManagementRequest('bootstrap', {
       SchoolSection: payload.SchoolSection || academicManagementFilters.section,
@@ -12889,6 +12896,28 @@ async function academicManagementRequest(action, payload = {}) {
     return { ...academicManagementData, ...data };
   }
   return data;
+}
+
+async function showAcademicCalculationFailure(status, error, options = {}) {
+  const issues = Array.isArray(error?.issues) ? error.issues.map(clean).filter(Boolean) : [];
+  if (!issues.length) {
+    setStatus(status, error?.message || String(error), 'bad');
+    return;
+  }
+  const issueCount = Math.max(issues.length, Number(error?.issueCount || 0));
+  const noun = issueCount === 1 ? 'issue' : 'issues';
+  setStatus(status, `${options.shortMessage || 'The calculation cannot continue yet.'} ${issueCount} ${noun} require attention.`, 'bad');
+  await window.DynamaxDialogs.alert({
+    title: options.title || 'Results need attention',
+    eyebrow: 'Calculation blocked',
+    message: options.message || 'No results were changed. Resolve the items below, then calculate again.',
+    tone: 'danger',
+    items: issues,
+    detailsLabel: issueCount > issues.length
+      ? `Showing ${issues.length} of ${issueCount} issues`
+      : `${issueCount} ${noun} to resolve`,
+    confirmText: 'Close'
+  });
 }
 
 async function loadAcademicManagement(options = {}) {
@@ -14136,7 +14165,13 @@ function bindAcademicManagement() {
           RevisionTokens: Object.fromEntries(existing.map((row) => [row.ResultId, row.RevisionToken]))
         });
         renderAcademicManagement(data, data.message);
-      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+      } catch (error) {
+        await showAcademicCalculationFailure(status, error, {
+          title: `${midTerm ? 'Mid-term' : 'End-of-term'} results need attention`,
+          shortMessage: `${midTerm ? 'Mid-term' : 'End-of-term'} results were not calculated.`,
+          message: 'Each required subject needs the appropriate complete score sheet. Resolve the items below, then calculate again.'
+        });
+      }
     });
   });
   panelEl.querySelectorAll('[data-academic-result-status]').forEach((button) => button.addEventListener('click', async () => {
@@ -14239,7 +14274,13 @@ function bindAcademicManagement() {
           RevisionTokens: Object.fromEntries(existing.map((row) => [row.CumulativeResultId, row.RevisionToken]))
         });
         renderAcademicManagement(data, data.message);
-      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+      } catch (error) {
+        await showAcademicCalculationFailure(status, error, {
+          title: 'Cumulative results need attention',
+          shortMessage: 'Cumulative results were not calculated.',
+          message: 'Complete and lock the required term results, then resolve the items below before calculating again.'
+        });
+      }
     });
   });
   panelEl.querySelectorAll('[data-academic-cumulative-status]').forEach((button) => button.addEventListener('click', async () => {
