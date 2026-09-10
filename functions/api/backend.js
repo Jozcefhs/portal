@@ -437,9 +437,21 @@ async function saveStudent(env, student) {
   return normalizeStudent(saved);
 }
 
+function requestedStudentScope(body = {}) {
+  return {
+    branchId: clean(body.UserBranchId || body.BranchId || body.branchId),
+    schoolSectionAccess: clean(
+      body.UserSchoolSectionAccess
+      || body.SchoolSectionAccess
+      || body.SchoolSection
+      || body.schoolSection
+    )
+  };
+}
+
 async function updateStudentProfile(env, body) {
   const accountRef = clean(body.AccountRef || body.AdmissionNo || body.accountRef);
-  const existing = await findStudentByAccountRef(env, accountRef);
+  const existing = await findStudentByAccountRef(env, accountRef, requestedStudentScope(body));
   if (!existing) throw applicationNotFound(accountRef);
   const editableFields = [
     'DisplayName', 'ApplicantName', 'Surname', 'FirstName', 'MiddleName', 'Gender',
@@ -2962,7 +2974,7 @@ async function importStudents(env, body) {
 
 async function reissueParentOnboarding(env, body) {
   const accountRef = clean(body.AccountRef || body.AdmissionNo || body.accountRef);
-  const existing = await findStudentByAccountRef(env, accountRef);
+  const existing = await findStudentByAccountRef(env, accountRef, requestedStudentScope(body));
   if (!existing) throw applicationNotFound(accountRef);
   const now = nowIso();
   const student = await saveStudent(env, {
@@ -7564,7 +7576,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       return {
         ok: true,
         message: 'Students loaded from the database.',
-        students: (await listSchoolCollection(env, 'students')).map(normalizeStudent)
+        students: (await listSchoolCollection(env, 'students', requestedStudentScope(body))).map(normalizeStudent)
       };
     case 'getStudentConductCases':
     case 'saveStudentConductCase':
