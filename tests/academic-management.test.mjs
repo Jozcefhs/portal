@@ -15,6 +15,7 @@ import {
   academicOfferingSubjectRole,
   academicSeniorCoreSubjectIds,
   academicStudentMatchesClass,
+  academicSubjectTeacherCandidates,
   academicTeacherVisibleMemberships,
   importedAcademicStudentProfile,
   normalizeAcademicArm,
@@ -589,6 +590,19 @@ test('subject teachers are batch-assigned only to the exact selected classrooms'
   assert.match(librarySource, /bulkassignacademicsubjectteacher/);
 });
 
+test('subject teacher candidates are active Academics staff in the selected school section', () => {
+  const candidates = academicSubjectTeacherCandidates([
+    { Username: 'academics-all', Department: 'Academics', Active: true, SchoolSectionAccess: 'All' },
+    { Username: 'academic-primary', Department: 'Academic Department', Active: 'YES', SchoolSectionAccess: 'Primary' },
+    { Username: 'accounts', Department: 'Accounts', Active: true, SchoolSectionAccess: 'All' },
+    { Username: 'inactive', Department: 'Academics', Active: false, SchoolSectionAccess: 'All' },
+    { Username: 'secondary', Department: 'Academics', Active: true, SchoolSectionAccess: 'Secondary' }
+  ], 'primary');
+  assert.deepEqual(candidates.map((row) => row.Username), ['academics-all', 'academic-primary']);
+  assert.match(librarySource, /ACADEMIC_TEACHER_DEPARTMENT_INVALID/);
+  assert.match(librarySource, /focusedView === 'teachers'[\s\S]{0,250}academicSubjectTeacherCandidates/);
+});
+
 test('subject-teacher allocations can be corrected atomically or permanently deleted', () => {
   const updateSource = librarySource.slice(
     librarySource.indexOf('export async function updateAcademicSubjectTeacherAllocation'),
@@ -645,8 +659,8 @@ test('staff web workspace exposes responsive academic registers and online-only 
   );
   assert.match(teacherWorkspace, /const classrooms = rows\.arms\.filter/);
   assert.match(teacherWorkspace, /data-academic-workflow="bulkAssignAcademicSubjectTeacher"/);
-  assert.match(teacherWorkspace, /name: 'ClassroomIds', label: 'Classrooms taught for this subject'/);
-  assert.match(teacherWorkspace, /Only checked classrooms will be saved/);
+  assert.match(teacherWorkspace, /academicClassroomCheckboxField\(classes, classrooms\)/);
+  assert.match(teacherWorkspace, /\^academics\?\(\?:\\s\|\$\)/);
   assert.match(teacherWorkspace, /Repeat the process if the teacher handles another subject/);
   assert.doesNotMatch(teacherWorkspace, /<select name="AllocationRole"/);
   assert.match(teacherWorkspace, /data-academic-form="teacherAllocation"/);
@@ -661,6 +675,11 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(librarySource, /Assign at most 200 classrooms/);
   assert.match(librarySource, /ACADEMIC_CLASSROOM_REQUIRED/);
   assert.match(adminSource, /function academicCheckboxField/);
+  assert.match(adminSource, /function academicClassroomCheckboxField/);
+  assert.match(adminSource, /data-academic-checkbox-group-toggle/);
+  assert.match(adminSource, /name="ClassroomIds"/);
+  assert.match(adminSource, /Tick a class to select all of its arms/);
+  assert.match(adminSource, /function updateAcademicCheckboxGroups/);
   assert.match(adminSource, /data-academic-checkbox-count/);
   assert.match(adminSource, /function bindAcademicCheckboxField/);
   assert.match(adminSource, /event\.shiftKey && anchor/);
@@ -761,6 +780,8 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /active === 'academics'/);
   assert.match(styleSource, /\.academic-management-editor-grid/);
   assert.match(styleSource, /\.academic-checkbox-options/);
+  assert.match(styleSource, /\.academic-classroom-checkbox-group/);
+  assert.match(styleSource, /\.academic-classroom-arm-options/);
   assert.match(styleSource, /\.academic-checkbox-count\{/);
   assert.match(styleSource, /\.academic-checkbox-count-limit\{/);
   assert.match(styleSource, /\.academic-classroom-flow-grid\{/);
@@ -787,7 +808,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
   assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260909-roster-facets/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260910-academic-controls-row/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260910-academic-teacher-groups/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

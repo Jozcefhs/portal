@@ -568,6 +568,21 @@ function isAcademicsDepartmentUser(user = {}) {
     && (department === 'academic' || department === 'academics' || department.startsWith('academic ') || department.startsWith('academics '));
 }
 
+function isAcademicsDepartmentStaff(row = {}) {
+  const department = lower(row.Department || row.department);
+  return department === 'academic' || department === 'academics'
+    || department.startsWith('academic ') || department.startsWith('academics ');
+}
+
+export function academicSubjectTeacherCandidates(rows = [], schoolSection = '') {
+  const section = lower(schoolSection);
+  return (rows || []).filter((row) => {
+    if (!activeValue(row.Active, true) || !isAcademicsDepartmentStaff(row)) return false;
+    const assignedSection = lower(row.SchoolSectionAccess || row.schoolSectionAccess || 'all');
+    return !section || !['primary', 'secondary'].includes(assignedSection) || assignedSection === section;
+  });
+}
+
 export function academicManagementCapabilities(user = {}) {
   const role = clean(user.role || user.Role);
   const allowed = new Set((user.allowedSections || user.TabAccess || []).map(clean).filter(Boolean));
@@ -1436,6 +1451,9 @@ function validateAcademicRecord(state, type, record, people = {}) {
       throw failure('The selected teacher is restricted to another school section.', 409, 'ACADEMIC_TEACHER_SECTION_INVALID');
     }
     if (record.AllocationRole === 'Subject Teacher') {
+      if (!isAcademicsDepartmentStaff(teacher)) {
+        throw failure('Subject teachers must be active staff in the Academics department.', 409, 'ACADEMIC_TEACHER_DEPARTMENT_INVALID');
+      }
       const offering = record.SchoolStage === 'senior-secondary' ? null : state.offerings.find((row) => statusActive(row)
         && row.SessionId === record.SessionId && row.TermId === record.TermId
         && row.ClassId === record.ClassId && row.SubjectId === record.SubjectId
@@ -1816,9 +1834,13 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     ...Object.fromEntries(Object.entries(state)
       .filter(([key]) => focusedStateKeys.includes(key))
       .map(([key, rows]) => [key, rows.map(publicRecord)])),
-    ...(peopleOptions.staff ? { staff: displayStaff(permissions.teacherView
-      ? people.staff.filter((row) => lower(row.Username || row.__id) === actorUsername(user))
-      : people.staff) } : {}),
+    ...(peopleOptions.staff ? { staff: displayStaff(focusedView === 'teachers'
+      ? academicSubjectTeacherCandidates(permissions.teacherView
+        ? people.staff.filter((row) => lower(row.Username || row.__id) === actorUsername(user))
+        : people.staff, scope.section)
+      : (permissions.teacherView
+        ? people.staff.filter((row) => lower(row.Username || row.__id) === actorUsername(user))
+        : people.staff)) } : {}),
     ...(peopleOptions.students ? { students: displayStudents(students, state.classes) } : {})
   };
 }

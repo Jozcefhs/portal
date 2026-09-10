@@ -10303,6 +10303,33 @@ function academicCheckboxField({ name, label, options = [], help = '', required 
   </fieldset>`;
 }
 
+function academicClassroomCheckboxField(classes = [], classrooms = []) {
+  let armIndex = 0;
+  const groups = classes.map((schoolClass, classIndex) => {
+    const classArms = classrooms.filter((classroom) => classroom.ClassId === schoolClass.ClassId);
+    if (!classArms.length) return '';
+    const classToggleId = `subject-teacher-class-${classIndex + 1}`;
+    const armChoices = classArms.map((classroom) => {
+      armIndex += 1;
+      const armId = `subject-teacher-arm-${armIndex}`;
+      return `<label class="academic-checkbox-option academic-classroom-arm-option" for="${escapeHtml(armId)}"><input type="checkbox" id="${escapeHtml(armId)}" name="ClassroomIds" value="${escapeHtml(classroom.ArmId)}"><span>${escapeHtml(classroom.Name)}</span></label>`;
+    }).join('');
+    return `<section class="academic-classroom-checkbox-group" data-academic-checkbox-group>
+      <label class="academic-checkbox-option academic-classroom-class-option" for="${escapeHtml(classToggleId)}"><input type="checkbox" id="${escapeHtml(classToggleId)}" data-academic-checkbox-group-toggle><span>${escapeHtml(schoolClass.Name)}</span></label>
+      <div class="academic-classroom-arm-options">${armChoices}</div>
+    </section>`;
+  }).filter(Boolean).join('');
+  const legendId = 'subject-teacher-classrooms-legend';
+  const helpId = 'subject-teacher-classrooms-help';
+  return `<fieldset class="academic-checkbox-field" data-academic-checkbox-field data-academic-checkbox-name="ClassroomIds" data-academic-checkbox-label="classroom arm" data-academic-checkbox-required="true" data-academic-checkbox-purpose="subject-teacher-classrooms">
+    <legend id="${legendId}">Classes and arms taught for this subject <span aria-hidden="true">*</span><span class="academic-checkbox-count" data-academic-checkbox-count aria-live="polite">0 arms selected</span></legend>
+    <div class="academic-checkbox-options academic-classroom-checkbox-options" role="group" aria-labelledby="${legendId}" aria-describedby="${helpId}">
+      ${groups ? `<div class="academic-classroom-checkbox-heading" aria-hidden="true"><span>Class</span><span>Arms</span></div>${groups}` : '<span class="academic-checkbox-empty">No classrooms are currently available.</span>'}
+    </div>
+    <small id="${helpId}" data-academic-checkbox-help>${groups ? 'Tick a class to select all of its arms, or tick only the individual arms taught by this teacher. Only the checked arms will be saved.' : 'Create classrooms before assigning subject teachers.'}</small>
+  </fieldset>`;
+}
+
 function academicCheckedValues(form, name) {
   return [...form.querySelectorAll(`input[type="checkbox"][name="${name}"]:checked`)].map((input) => input.value);
 }
@@ -10312,13 +10339,30 @@ function setAcademicCheckedValues(form, name, values = []) {
   const selected = new Set(values || []);
   form.querySelectorAll(`input[type="checkbox"][name="${name}"]`).forEach((input) => { input.checked = !input.disabled && selected.has(input.value); });
   const field = form.querySelector(`[data-academic-checkbox-name="${name}"]`);
-  if (field) updateAcademicCheckboxCount(field);
+  if (field) {
+    updateAcademicCheckboxGroups(field);
+    updateAcademicCheckboxCount(field);
+  }
 }
 
 function academicCheckboxInputs(field, visibleOnly = false) {
+  const ownerField = field.matches?.('[data-academic-checkbox-field]') ? field : field.closest?.('[data-academic-checkbox-field]');
+  const name = ownerField?.dataset.academicCheckboxName;
   return [...field.querySelectorAll('input[type="checkbox"]')].filter((input) => {
-    if (input.disabled) return false;
+    if (input.disabled || input.name !== name) return false;
     return !visibleOnly || !input.closest('.academic-checkbox-option')?.hidden;
+  });
+}
+
+function updateAcademicCheckboxGroups(field) {
+  if (!field) return;
+  field.querySelectorAll('[data-academic-checkbox-group]').forEach((group) => {
+    const toggle = group.querySelector('[data-academic-checkbox-group-toggle]');
+    const inputs = academicCheckboxInputs(group);
+    if (!toggle) return;
+    const selected = inputs.filter((input) => input.checked).length;
+    toggle.checked = Boolean(inputs.length && selected === inputs.length);
+    toggle.indeterminate = Boolean(selected && selected < inputs.length);
   });
 }
 
@@ -10328,7 +10372,8 @@ function updateAcademicCheckboxCount(field) {
   const maximum = Number(field.dataset.academicCheckboxMax || 0);
   const count = field.querySelector('[data-academic-checkbox-count]');
   if (!count) return;
-  count.textContent = `${selected} selected${maximum ? ` of ${maximum}` : ''}${maximum && selected >= maximum ? ' - maximum' : ''}`;
+  const unit = field.dataset.academicCheckboxPurpose === 'subject-teacher-classrooms' ? ' arm' : '';
+  count.textContent = `${selected}${unit}${selected === 1 || !unit ? '' : 's'} selected${maximum ? ` of ${maximum}` : ''}${maximum && selected >= maximum ? ' - maximum' : ''}`;
   count.classList.toggle('academic-checkbox-count-limit', Boolean(maximum && selected >= maximum));
 }
 
@@ -10339,6 +10384,17 @@ function bindAcademicCheckboxField(field) {
     const target = event.target.closest('input[type="checkbox"]');
     if (!target || !field.contains(target) || target.disabled) return;
     const maximum = Number(field.dataset.academicCheckboxMax || 0);
+    if (target.hasAttribute('data-academic-checkbox-group-toggle')) {
+      const group = target.closest('[data-academic-checkbox-group]');
+      const groupInputs = group ? academicCheckboxInputs(group, true) : [];
+      let selectedOutsideGroup = academicCheckboxInputs(field).filter((input) => input.checked && !groupInputs.includes(input)).length;
+      groupInputs.forEach((input) => {
+        input.checked = target.checked && (!maximum || selectedOutsideGroup++ < maximum);
+      });
+      updateAcademicCheckboxGroups(field);
+      updateAcademicCheckboxCount(field);
+      return;
+    }
     const inputs = academicCheckboxInputs(field, true);
     const anchor = field._academicShiftAnchor;
     if (event.shiftKey && anchor && inputs.includes(anchor) && inputs.includes(target)) {
@@ -10363,9 +10419,14 @@ function bindAcademicCheckboxField(field) {
       target.checked = false;
     }
     field._academicShiftAnchor = target;
+    updateAcademicCheckboxGroups(field);
     updateAcademicCheckboxCount(field);
   });
-  field.addEventListener('change', () => updateAcademicCheckboxCount(field));
+  field.addEventListener('change', () => {
+    updateAcademicCheckboxGroups(field);
+    updateAcademicCheckboxCount(field);
+  });
+  updateAcademicCheckboxGroups(field);
   updateAcademicCheckboxCount(field);
 }
 
@@ -11283,23 +11344,21 @@ function academicTeacherWorkspace(data, rows) {
   const subjects = rows.subjects.filter(academicIsActive);
   const subjectAllocations = rows.teacherAllocations.filter((row) => row.AllocationRole === 'Subject Teacher');
   const staff = (data.staff || []).filter((row) => {
+    const department = clean(row.Department).toLowerCase();
     const assigned = clean(row.SchoolSectionAccess).toLowerCase();
-    return !['primary', 'secondary'].includes(assigned) || assigned === academicManagementFilters.section;
+    return /^academics?(?:\s|$)/.test(department)
+      && (!['primary', 'secondary'].includes(assigned) || assigned === academicManagementFilters.section);
   });
   const form = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="bulkAssignAcademicSubjectTeacher">
     <div class="academic-management-editor-heading"><div><small>Subject teaching</small><h3>Assign a subject teacher</h3><p class="muted">Choose one teacher and one subject, then select the exact classrooms taught for that subject. Repeat the process if the teacher handles another subject.</p></div></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
     <div class="academic-management-form-grid academic-management-form-grid-3">
-      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, 'Choose teacher')}</select></label>
+      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, staff.length ? 'Choose teacher' : 'No active Academics staff')}</select><small>Only active staff assigned to the Academics department are listed.</small></label>
       <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select></label>
       <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
       <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
     </div>
-    ${academicCheckboxField({
-      name: 'ClassroomIds', label: 'Classrooms taught for this subject', required: true, idPrefix: 'subject-teacher-classrooms',
-      options: classrooms.map((row) => ({ value: row.ArmId, label: `${academicLabel(classes, row.ClassId)} / ${row.Name}` })),
-      help: classrooms.length ? 'Choose the exact class-and-arm combinations. Only checked classrooms will be saved.' : 'Create classrooms before assigning subject teachers.'
-    })}
+    ${academicClassroomCheckboxField(classes, classrooms)}
     <button type="submit">Save subject-teacher assignments</button>
   </form>` : '<div class="academic-view-only-note"><strong>My teaching allocations</strong><span>Only administrators can change allocations.</span></div>';
   const editForm = canManage ? `<form hidden class="academic-management-editor academic-management-editor-wide" data-academic-form="teacherAllocation" data-academic-action="updateAcademicSubjectTeacherAllocation" data-academic-teacher-edit>
@@ -11307,7 +11366,7 @@ function academicTeacherWorkspace(data, rows) {
     <div class="academic-management-editor-heading"><div><small>Correct saved allocation</small><h3>Edit subject-teacher allocation</h3><p class="muted">Change the teacher, subject, classroom or academic period, then update the existing allocation.</p></div><button type="button" class="academic-form-reset" data-academic-reset="teacherAllocation">Cancel edit</button></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
     <div class="academic-management-form-grid academic-management-form-grid-3">
-      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, 'Choose teacher')}</select></label>
+      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, staff.length ? 'Choose teacher' : 'No active Academics staff')}</select><small>Only active staff assigned to the Academics department are listed.</small></label>
       <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select></label>
       <label>Classroom<select name="ClassroomId" required>${academicSelectOptions(classrooms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'Choose classroom')}</select></label>
       <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, '', (row) => row.Name, 'Choose session')}</select></label>
