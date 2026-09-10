@@ -11,6 +11,8 @@ test('student register provides a scoped client-side search', () => {
   assert.match(adminSource, /className: 'student-register-table'/);
   assert.match(adminSource, /searchable: true/);
   assert.match(adminSource, /pick\(row, \['AdmissionNo', 'AccountRef', '__id'\]\)/);
+  assert.match(adminSource, /pick\(row, \['WalletCardId', 'walletCardId', 'CardId', 'cardId'\]\)/);
+  assert.match(adminSource, /searchPlaceholder: `Name, admission number, card, class, type or status`/);
 });
 
 test('student register uses the available viewport for its row scrollbar', () => {

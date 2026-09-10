@@ -783,7 +783,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
   assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260909-roster-facets/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260910-student-register-search/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260910-student-card-search/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

@@ -15239,11 +15239,12 @@ function renderSection(active) {
       className: 'student-register-table',
       searchable: true,
       searchLabel: learner.plural,
-      searchPlaceholder: `Name, admission number, class, type or status`,
+      searchPlaceholder: `Name, admission number, card, class, type or status`,
       searchEmptyMessage: `No ${learner.plural} match your search.`,
       searchValue: (row) => [
         pick(row, ['AdmissionNo', 'AccountRef', '__id']),
         pick(row, ['DisplayName', 'ApplicantName', 'StudentName']),
+        pick(row, ['WalletCardId', 'walletCardId', 'CardId', 'cardId']),
         pick(row, ['ClassName']),
         pick(row, ['ClassArm']),
         pick(row, ['StudentType']),
