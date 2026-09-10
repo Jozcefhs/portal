@@ -12812,11 +12812,8 @@ function academicManagementHeader(data, rows, message = '') {
     <label>School section<select id="academicManagementSection">${sections.map((section) => `<option value="${escapeHtml(section)}"${section === academicManagementFilters.section ? ' selected' : ''}>${escapeHtml(section.charAt(0).toUpperCase() + section.slice(1))}</option>`).join('')}</select></label>
     <label>Academic session<select id="academicManagementSession">${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'All sessions')}</select></label>
     <label>Term<select id="academicManagementTerm">${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'All terms')}</select></label>
+    <label class="academic-management-area">Academic area<select id="academicManagementWorkspace" data-academic-view-select>${views.map(([key, label]) => `<option value="${key}"${key === academicManagementView ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select></label>
     <div><small>Branch</small><strong>${escapeHtml(availableBranches.find((branch) => branch.id === selectedBranchId)?.name || selectedBranchId)}</strong></div>
-  </div>
-  <div class="academic-management-view-switcher">
-    <label for="academicManagementWorkspace"><span>Academic area</span><select id="academicManagementWorkspace" data-academic-view-select>${views.map(([key, label]) => `<option value="${key}"${key === academicManagementView ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select></label>
-    <p>Switch between classroom, teaching, assessment and result tools.</p>
   </div>
   <p id="academicManagementStatus" class="status ${message ? 'ok' : ''}" role="status">${escapeHtml(message)}</p>`;
 }

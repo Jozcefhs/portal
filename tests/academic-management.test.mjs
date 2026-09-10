@@ -774,9 +774,10 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-arm-student-subject-status/);
   assert.match(styleSource, /grid-template-areas:"register controls"/);
   assert.match(styleSource, /grid-template-areas:"controls" "register"/);
-  assert.match(styleSource, /\.academic-management-view-switcher select\{[^}]*font-size:13px/);
+  assert.match(styleSource, /\.academic-management-filterbar\{[^}]*grid-template-columns:repeat\(4,minmax\(135px,1fr\)\) minmax\(120px,\.65fr\)/);
   assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
-  assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-view-switcher select\{[^}]*font-size:12px/);
+  assert.match(adminSource, /<div class="academic-management-filterbar">[\s\S]{0,1200}id="academicManagementWorkspace"/);
+  assert.doesNotMatch(adminSource, /class="academic-management-view-switcher"/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
   assert.match(adminSource, /function organizeAcademicManagementWorkspace/);
   assert.match(adminSource, /function academicManagementHeader\(data, rows, message = ''\) \{\s*const learner = academicLearnerTerms\(\);/);
@@ -786,7 +787,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
   assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260909-roster-facets/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260910-academic-learner-fix/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260910-academic-controls-row/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
