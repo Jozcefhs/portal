@@ -218,7 +218,12 @@ async function findScopedStudent(env, user, reference, cardId = '') {
 async function lookupWallet(env, body, user) {
   const student = await findScopedStudent(env, user, body.AccountRef, body.WalletCardId);
   if (!student) { const err = new Error('No student wallet was found for that card or admission number.'); err.status = 404; throw err; }
-  const result = await getWalletCardAccount(env, { AccountRef: studentReference(student) });
+  const result = await getWalletCardAccount(env, {
+    AccountRef: studentReference(student),
+    UserBranchId: user.branchId,
+    UserSchoolSectionAccess: user.schoolSectionAccess,
+    StudentScopePath: student.__scopePath || ''
+  });
   return result.account;
 }
 
@@ -233,6 +238,9 @@ async function postWalletPurchase(env, body, user) {
     Department: 'Tuck Shop',
     Terminal: 'Web Tuck Shop POS',
     RecordedBy: user.displayName || user.username,
+    UserBranchId: user.branchId,
+    UserSchoolSectionAccess: user.schoolSectionAccess,
+    StudentScopePath: student.__scopePath || '',
     Reference: `TUK-${Date.now()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`
   });
 }

@@ -370,16 +370,18 @@ async function findStudent(env, admissionNo, applicationReference = '') {
   return null;
 }
 
-async function findStudentByWalletCard(env, cardId) {
+async function findStudentByWalletCard(env, cardId, requestedScope = null) {
   const wanted = clean(cardId).toUpperCase();
   if (!wanted) return null;
   let rows = await querySchoolCollection(env, 'students', {
     filters: [{ field: 'WalletCardId', op: '==', value: wanted }],
+    ...(requestedScope ? { scope: requestedScope } : {}),
     limit: 1
   });
   if (!rows[0]) {
     rows = await querySchoolCollection(env, 'students', {
       filters: [{ field: 'walletCardId', op: '==', value: wanted }],
+      ...(requestedScope ? { scope: requestedScope } : {}),
       limit: 1
     });
   }
@@ -4402,8 +4404,18 @@ export function summarizeWalletActivity(rows, accountRef, today = new Date()) {
   }, { balance: 0, spentToday: 0 });
 }
 
-async function walletActivityForAccount(env, accountRef) {
-  return summarizeWalletActivity(await queryAccountRows(env, 'ledger', accountRef), accountRef);
+async function walletActivityForAccount(env, accountRef, studentScope = null) {
+  let rows = await queryAccountRows(env, 'ledger', accountRef);
+  if (studentScope) {
+    const branchId = clean(studentScope.BranchId || studentScope.branchId || 'main').toLowerCase() || 'main';
+    const schoolSection = clean(studentScope.SchoolSection || schoolSectionFor(studentScope)).toLowerCase();
+    rows = rows.filter((row) => {
+      const rowBranch = clean(row.BranchId || row.branchId || 'main').toLowerCase() || 'main';
+      const rowSection = clean(row.SchoolSection || schoolSectionFor(row)).toLowerCase();
+      return rowBranch === branchId && (!schoolSection || rowSection === schoolSection);
+    });
+  }
+  return summarizeWalletActivity(rows, accountRef);
 }
 
 async function walletBalanceForAccount(env, accountRef) {
@@ -4424,7 +4436,7 @@ async function accountCreditBalanceForAccount(env, accountRef) {
 async function walletAccountPayload(env, student) {
   const normalized = normalizeStudent(student || {});
   const accountRef = normalized.AdmissionNo || normalized.ApplicationReference || normalized.AccountRef || '';
-  const activity = await walletActivityForAccount(env, accountRef);
+  const activity = await walletActivityForAccount(env, accountRef, normalized);
   return {
     AccountRef: accountRef,
     ApplicationReference: normalized.ApplicationReference || '',
@@ -4442,8 +4454,6 @@ async function walletAccountPayload(env, student) {
     WalletDailyLimit: normalized.WalletDailyLimit || '',
     WalletTxnLimit: normalized.WalletTxnLimit || '',
     WalletPinThreshold: normalized.WalletPinThreshold || '',
-    BranchId: normalized.BranchId || '',
-    SchoolSection: normalized.SchoolSection || '',
     StudentScopePath: normalized.__scopePath || '',
     WalletBalance: activity.balance,
     WalletSpentToday: activity.spentToday
@@ -4458,7 +4468,7 @@ export async function getWalletCardAccount(env, body) {
     schoolSectionAccess: body.SchoolSection || body.UserSchoolSectionAccess
   };
   const student = cardId
-    ? await findStudentByWalletCard(env, cardId)
+    ? await findStudentByWalletCard(env, cardId, requestedScope)
     : await findStudentByAccountRef(env, accountRef, requestedScope, body.StudentScopePath || body.ScopePath);
   if (!student) {
     const err = new Error('Student wallet card/account not found. Enroll the student first, then assign a wallet card.');
@@ -4468,7 +4478,7 @@ export async function getWalletCardAccount(env, body) {
   return { ok: true, message: 'Wallet account loaded.', account: await walletAccountPayload(env, student) };
 }
 
-async function saveWalletCard(env, body) {
+export async function saveWalletCard(env, body) {
   const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo || body.admissionNo);
   const cardId = clean(body.WalletCardId || body.CardId || body.cardId).toUpperCase();
   if (!accountRef) {
@@ -4511,6 +4521,7 @@ async function saveWalletCard(env, body) {
     WalletDailyLimit: body.WalletDailyLimit ?? student.WalletDailyLimit ?? '',
     WalletTxnLimit: body.WalletTxnLimit ?? student.WalletTxnLimit ?? '',
     WalletPinThreshold: body.WalletPinThreshold ?? student.WalletPinThreshold ?? '',
+    WalletUpdatedBy: clean(body.WalletUpdatedBy || body.UpdatedBy || body.RecordedBy),
     WalletUpdatedAt: nowIso()
   };
   const pin = clean(body.WalletPin || body.Pin);
@@ -4531,15 +4542,19 @@ export async function recordWalletPurchase(env, body) {
     err.status = 400;
     throw err;
   }
-  const student = cardId ? await findStudentByWalletCard(env, cardId) : await findStudentByAccountRef(env, accountRef);
+  const requestedScope = requestedStudentScope(body);
+  const student = cardId
+    ? await findStudentByWalletCard(env, cardId, requestedScope)
+    : await findStudentByAccountRef(env, accountRef, requestedScope, body.StudentScopePath || body.ScopePath);
   if (!student) {
     const err = new Error('Student wallet card/account not found.');
     err.status = 404;
     throw err;
   }
   const account = await walletAccountPayload(env, student);
-  if (['blocked', 'inactive'].includes(normalizeMatchText(account.WalletCardStatus || 'Active'))) {
-    const err = new Error('This wallet card is blocked.');
+  const cardStatus = normalizeMatchText(account.WalletCardStatus || 'Active');
+  if (cardStatus !== 'active') {
+    const err = new Error(`This wallet card is ${cardStatus || 'not active'}.`);
     err.status = 400;
     throw err;
   }

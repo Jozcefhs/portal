@@ -169,6 +169,7 @@ let academicAnalysisFilters = {
   attendanceBand: '', completeness: '', minimumAverage: '', maximumAverage: '', query: ''
 };
 let academicAnalysisSnapshot = null;
+let accountWalletSetupState = { account: null, accountRef: '', cardId: '' };
 let academicCbtDraft = {
   step: 1, testId: '', revisionToken: '', clientRequestId: '', classroomId: '', contextKey: '',
   componentId: '', startDate: '', startTime: '', durationMinutes: '40', questionCount: '20',
@@ -1454,6 +1455,7 @@ function clearStaffWorkspaceState() {
   academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
   academicResultDraft = { armId: '' };
   academicOutcomeDraft = { armId: '', promotionDecisionId: '', transcriptStudentRef: '' };
+  accountWalletSetupState = { account: null, accountRef: '', cardId: '' };
   activeSection = '';
   activeTabs = [];
   recordsDeskHandoffContext = null;
@@ -1606,6 +1608,7 @@ function clearBranchScopedWorkspaceData() {
   academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
   academicResultDraft = { armId: '' };
   academicOutcomeDraft = { armId: '', promotionDecisionId: '', transcriptStudentRef: '' };
+  accountWalletSetupState = { account: null, accountRef: '', cardId: '' };
   Object.values(organizationCommerceCarts).forEach((cart) => cart.clear());
   organizationCommerceLastSale.organizationStore = null;
   organizationCommerceLastSale.restaurant = null;
@@ -4340,8 +4343,9 @@ function walletCardIdFromNfc(event) {
   return clean(event?.serialNumber).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 }
 
-async function scanTuckShopNfc(form, button) {
-  const status = form.querySelector('[data-department-status]');
+async function scanWalletNfc(form, button, options = {}) {
+  const status = form.querySelector('[data-wallet-status], [data-department-status]');
+  const submitOnRead = options.submitOnRead !== false;
   if (!('NDEFReader' in window)) {
     setStatus(status, 'Direct NFC scanning is unavailable in this browser. Use Android Chrome, enter the card ID, or tap a USB reader while the card field is focused.', 'bad');
     form.elements.WalletCardId?.focus();
@@ -4365,8 +4369,10 @@ async function scanTuckShopNfc(form, button) {
         return;
       }
       form.elements.WalletCardId.value = cardId;
-      setStatus(status, `Card ${cardId} scanned. Looking up the student wallet...`, 'ok');
-      form.requestSubmit();
+      setStatus(status, submitOnRead
+        ? `Card ${cardId} scanned. Looking up the student wallet...`
+        : `Card ${cardId} scanned. Review the wallet settings, then save.`, 'ok');
+      if (submitOnRead) form.requestSubmit();
     }, { once: true });
     await reader.scan({ signal: controller.signal });
   } catch (error) {
@@ -4376,6 +4382,113 @@ async function scanTuckShopNfc(form, button) {
       ? 'NFC permission was not granted. Allow NFC access or enter the card ID manually.'
       : `NFC scanning could not start: ${error?.message || error}`, 'bad');
   }
+}
+
+function walletAmountValue(value, fallback = '') {
+  return value === undefined || value === null || value === '' ? fallback : value;
+}
+
+function renderAccountWalletSetupWorkspace() {
+  const learner = staffLearnerTerms();
+  const account = accountWalletSetupState.account;
+  const lookupRef = account?.AccountRef || accountWalletSetupState.accountRef;
+  const lookupCard = account?.WalletCardId || accountWalletSetupState.cardId;
+  const statuses = ['Active', 'Blocked', 'Lost', 'Replaced'];
+  const selectedStatus = clean(account?.WalletCardStatus || 'Active');
+  return `<section class="config-card account-wallet-setup" id="accountWalletSetupWorkspace">
+    <header class="config-card-heading wallet-setup-heading"><div><small>${learner.Singular} card and spending controls</small><h3>${learner.Singular} wallet setup</h3><p>Find an enrolled ${learner.singular} in this working branch, enter or read a card, and configure the wallet limits.</p></div><span class="workspace-feature-icon" aria-hidden="true">&#128179;</span></header>
+    <div class="purchase-step-label"><strong>1</strong><span>Find the ${learner.singular}</span></div>
+    <form id="accountWalletLookupForm" class="workflow-form workflow-form-grid config-form">
+      <label>Admission number<input name="AccountRef" value="${escapeHtml(lookupRef)}" autocomplete="off" placeholder="Enter admission or account number"></label>
+      <label>Existing wallet card ID <small>Place the cursor here before tapping a keyboard-mode reader.</small><input name="WalletCardId" value="${escapeHtml(accountWalletSetupState.cardId)}" autocomplete="off" placeholder="Enter or read an assigned card"></label>
+      <div class="config-actionbar"><p class="status" data-wallet-status></p><div></div><button type="submit">&#128269; Find ${learner.Singular}</button></div>
+    </form>
+    ${account ? `<div class="wallet-account-result wallet-setup-summary">
+      <div><small>${learner.Singular}</small><strong>${escapeHtml(account.DisplayName)}</strong><span>${escapeHtml(account.AdmissionNo || account.AccountRef)} &middot; ${escapeHtml(account.ClassName || '')}</span></div>
+      <div><small>Current card</small><strong>${escapeHtml(account.WalletCardId || 'Not assigned')}</strong><span>${escapeHtml(account.WalletCardStatus || 'Active')}</span></div>
+      <div><small>Wallet activity</small><strong>${money(account.WalletBalance)}</strong><span>Spent today ${money(account.WalletSpentToday)}</span></div>
+    </div>
+    <div class="purchase-step-label"><strong>2</strong><span>Assign the card and spending controls</span></div>
+    <form id="accountWalletSetupForm" class="workflow-form workflow-form-grid config-form">
+      <input type="hidden" name="AccountRef" value="${escapeHtml(account.AccountRef)}">
+      <label>Wallet card ID <span class="required">*</span><small>Focus this field, then tap the card; keyboard-mode readers enter the number automatically.</small><input name="WalletCardId" value="${escapeHtml(lookupCard)}" autocomplete="off" required placeholder="Enter or read card ID"></label>
+      <label>Card status<select name="WalletCardStatus">${statuses.map((status) => `<option${status.toLowerCase() === selectedStatus.toLowerCase() ? ' selected' : ''}>${status}</option>`).join('')}</select></label>
+      <label>New PIN <small>Leave blank to keep the current PIN.</small><input name="WalletPin" type="password" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" autocomplete="new-password" placeholder="4 to 8 digits"></label>
+      <label>Confirm new PIN<input name="WalletPinConfirm" type="password" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" autocomplete="new-password" placeholder="Repeat the new PIN"></label>
+      <label>Ask for PIN from this amount<input name="WalletPinThreshold" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(walletAmountValue(account.WalletPinThreshold, '1000'))}" placeholder="0.00"></label>
+      <label>Maximum per purchase <small>Leave blank for no transaction limit.</small><input name="WalletTxnLimit" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(walletAmountValue(account.WalletTxnLimit))}" placeholder="No limit"></label>
+      <label>Maximum per day <small>Leave blank for no daily limit.</small><input name="WalletDailyLimit" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(walletAmountValue(account.WalletDailyLimit))}" placeholder="No limit"></label>
+      <div class="config-actionbar"><p class="status" data-wallet-status></p><div></div><button type="submit">Save wallet setup</button></div>
+    </form>` : `<p class="wallet-setup-empty muted">Load an enrolled ${learner.singular} to assign or update a wallet card.</p>`}
+  </section>`;
+}
+
+async function requestStaffWallet(action, payload = {}) {
+  const response = await staffFetch('/api/staff-wallet', {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...payload })
+  });
+  const data = await response.json().catch(() => ({ ok: false, message: 'Wallet setup did not return JSON.' }));
+  if (!response.ok || !data.ok) throw new Error(data.message || 'Wallet setup could not be completed.');
+  return data;
+}
+
+function refreshAccountWalletSetupWorkspace() {
+  const current = document.getElementById('accountWalletSetupWorkspace');
+  if (!current) return;
+  current.outerHTML = renderAccountWalletSetupWorkspace();
+  bindAccountWalletSetupWorkspace();
+}
+
+function bindAccountWalletSetupWorkspace() {
+  const lookupForm = document.getElementById('accountWalletLookupForm');
+  lookupForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const status = form.querySelector('[data-wallet-status]');
+    const button = event.submitter || form.querySelector('button[type="submit"]');
+    const payload = Object.fromEntries(new FormData(form).entries());
+    accountWalletSetupState.accountRef = clean(payload.AccountRef);
+    accountWalletSetupState.cardId = clean(payload.WalletCardId);
+    try {
+      const data = await runButtonAction(button, 'Finding...', () => requestStaffWallet('lookup', payload));
+      accountWalletSetupState.account = data.account;
+      accountWalletSetupState.accountRef = clean(data.account?.AccountRef);
+      accountWalletSetupState.cardId = '';
+      refreshAccountWalletSetupWorkspace();
+      setStatus(dashboardStatus, data.message || 'Wallet account loaded.', 'ok');
+    } catch (error) {
+      accountWalletSetupState.account = null;
+      setStatus(status, error.message || String(error), 'bad');
+    }
+  });
+  const setupForm = document.getElementById('accountWalletSetupForm');
+  setupForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const status = form.querySelector('[data-wallet-status]');
+    const button = event.submitter || form.querySelector('button[type="submit"]');
+    const payload = Object.fromEntries(new FormData(form).entries());
+    if (clean(payload.WalletPin) !== clean(payload.WalletPinConfirm)) {
+      setStatus(status, 'The new wallet PIN entries do not match.', 'bad');
+      form.elements.WalletPinConfirm?.focus();
+      return;
+    }
+    delete payload.WalletPinConfirm;
+    try {
+      const data = await runButtonAction(button, 'Saving...', () => requestStaffWallet('save', payload));
+      accountWalletSetupState.account = data.account;
+      accountWalletSetupState.accountRef = clean(data.account?.AccountRef);
+      accountWalletSetupState.cardId = '';
+      refreshAccountWalletSetupWorkspace();
+      setStatus(dashboardStatus, data.message || 'Wallet card saved.', 'ok');
+    } catch (error) {
+      setStatus(status, error.message || String(error), 'bad');
+    }
+  });
 }
 
 function renderDepartmentOperations(section, data) {
@@ -4602,7 +4715,7 @@ function renderDepartmentOperations(section, data) {
     nfcButton.title = 'NDEFReader' in window
       ? 'Scan a compatible NFC student card'
       : 'Direct NFC requires Android Chrome; USB readers and manual entry remain available';
-    nfcButton.addEventListener('click', () => scanTuckShopNfc(document.getElementById('walletLookupForm'), nfcButton));
+    nfcButton.addEventListener('click', () => scanWalletNfc(document.getElementById('walletLookupForm'), nfcButton));
   }
   document.getElementById('walletPurchaseForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -15405,6 +15518,7 @@ function renderSection(active) {
     loadStaffStore(active);
   } else if (active === 'accounts') {
     const accounts = departments.accounts || {};
+    const learner = staffLearnerTerms();
     const handoff = takeRecordsDeskHandoff('accounts');
     const reference = recordsDeskHandoffReference(handoff);
     const matchesAccount = (row) => !reference || recordsDeskRowMatches(
@@ -15414,7 +15528,7 @@ function renderSection(active) {
     );
     const payments = (accounts.payments || []).filter(matchesAccount);
     const invoices = (accounts.invoices || []).filter(matchesAccount);
-    panelEl.innerHTML = `<div class="workflow-intro"><div><p class="eyebrow">Student finance</p><h2>Accounts</h2><p class="muted">Payments and invoices from the shared accounting records.</p></div></div>` + recordsDeskHandoffBanner(handoff, reference) + table('Payments', payments, [
+    panelEl.innerHTML = `<div class="workflow-intro"><div><p class="eyebrow">${learner.Singular} finance</p><h2>Accounts</h2><p class="muted">Payments, invoices and wallet cards from the shared accounting records.</p></div></div>` + recordsDeskHandoffBanner(handoff, reference) + renderAccountWalletSetupWorkspace() + table('Payments', payments, [
       { label: 'Date', value: (row) => pick(row, ['PaidAt', 'Date']) },
       { label: 'Account', value: (row) => pick(row, ['AccountRef', 'AdmissionNo']) },
       { label: 'Fee', value: (row) => pick(row, ['FeeName', 'FeeCode']) },
@@ -15430,8 +15544,10 @@ function renderSection(active) {
     mountWorkspaceTabs('accounts', [
       { key: 'payments', label: 'Payments', icon: '\u2713', count: payments.length, nodes: [panelEl.querySelector(':scope > .records-desk-handoff'), workspaceTableNodes('Payments')] },
       { key: 'invoices', label: 'Invoices', icon: '\u{1F9FE}', count: invoices.length, nodes: workspaceTableNodes('Invoices') },
+      { key: 'wallet', label: 'Wallet setup', icon: '\u{1F4B3}', nodes: document.getElementById('accountWalletSetupWorkspace') },
       { key: 'transfers', label: 'Transfer verification', icon: '\u{1F50E}', nodes: document.getElementById('schoolDirectTransferVerification') }
     ]);
+    bindAccountWalletSetupWorkspace();
     loadDirectTransferVerification(['school-payment'], 'schoolDirectTransferVerification');
   } else if (active === 'clinic' || active === 'kitchen' || active === 'restaurant' || active === 'tuckShop') {
     panelEl.innerHTML = '<p class="muted">Loading department operations...</p>';
