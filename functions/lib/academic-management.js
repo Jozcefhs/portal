@@ -668,12 +668,14 @@ export function normalizeAcademicSession(input = {}, context = {}, existing = nu
   const endDate = dateValue(input.EndDate, 'session end date');
   assertDateOrder(startDate, endDate, 'Academic session');
   const branchId = safeScopeId(context.branchId || input.BranchId || existing?.BranchId);
-  const sessionId = clean(existing?.SessionId || input.SessionId || input.RecordId) || academicId('session', branchId, name);
+  const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || existing?.SchoolSection });
+  const sessionId = clean(existing?.SessionId || input.SessionId || input.RecordId)
+    || academicId('session', branchId, section, name);
   return {
     ...(existing || {}), RecordId: sessionId, SessionId: sessionId, Name: name,
     StartDate: startDate, EndDate: endDate,
     Status: oneOf(input.Status, ACADEMIC_SESSION_STATUSES, existing?.Status || 'Planned'),
-    BranchId: branchId, SchoolSection: 'all'
+    BranchId: branchId, SchoolSection: section
   };
 }
 
@@ -686,12 +688,14 @@ export function normalizeAcademicTerm(input = {}, context = {}, existing = null)
   const endDate = dateValue(input.EndDate, 'term end date');
   assertDateOrder(startDate, endDate, 'Academic term');
   const branchId = safeScopeId(context.branchId || input.BranchId || existing?.BranchId);
-  const termId = clean(existing?.TermId || input.TermId || input.RecordId) || academicId(sessionId, 'term', name);
+  const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || existing?.SchoolSection });
+  const termId = clean(existing?.TermId || input.TermId || input.RecordId)
+    || academicId(sessionId, 'term', section, name);
   return {
     ...(existing || {}), RecordId: termId, TermId: termId, SessionId: sessionId, Name: name,
     StartDate: startDate, EndDate: endDate,
     Status: oneOf(input.Status, ACADEMIC_TERM_STATUSES, existing?.Status || 'Planned'),
-    BranchId: branchId, SchoolSection: 'all'
+    BranchId: branchId, SchoolSection: section
   };
 }
 
@@ -763,15 +767,16 @@ export function normalizeAcademicArmTemplate(input = {}, context = {}, existing 
   const code = clean(input.Code || input.ArmCode || existing?.Code).toUpperCase()
     || safeScopeId(name, 'ARM').toUpperCase();
   const branchId = safeScopeId(context.branchId || input.BranchId || existing?.BranchId);
+  const section = scopedSection({ SchoolSection: context.section || input.SchoolSection || existing?.SchoolSection });
   const templateId = clean(existing?.ArmTemplateId || input.ArmTemplateId || input.RecordId)
-    || academicId('arm-template', branchId, code);
+    || academicId('arm-template', branchId, section, code);
   return {
     ...(existing || {}), RecordId: templateId, ArmTemplateId: templateId,
     Name: name, Code: code,
     DefaultCapacity: wholeNumber(input.DefaultCapacity ?? input.Capacity, wholeNumber(existing?.DefaultCapacity, 0), 0, 10000),
     SortOrder: wholeNumber(input.SortOrder, wholeNumber(existing?.SortOrder, 100), 1, 10000),
     Status: oneOf(input.Status, ACADEMIC_RECORD_STATUSES, existing?.Status || 'Active'),
-    BranchId: branchId, SchoolSection: 'all'
+    BranchId: branchId, SchoolSection: section
   };
 }
 
@@ -1607,9 +1612,30 @@ async function loadPeople(env, user, scope, options = {}) {
   };
 }
 
-function scopedRows(rows, scope) {
+function effectiveAcademicSection(row = {}, scope = {}) {
+  const section = lower(row.SchoolSection);
+  if (['primary', 'secondary'].includes(section)) return section;
+  const configuredSections = [...new Set((scope.structure?.Sections || [])
+    .map(lower).filter((value) => ['primary', 'secondary'].includes(value)))];
+  if (configuredSections.length === 1) return configuredSections[0];
+  // Academic periods and reusable arms created before section isolation were
+  // stored as organisation-wide records. The legacy desktop workflow was the
+  // Secondary workflow, so preserve those records there without leaking them
+  // into a newly configured Primary section.
+  return 'secondary';
+}
+
+export function scopedAcademicRows(rows, scope) {
   if (!scope.section) return rows;
-  return rows.filter((row) => !clean(row.SchoolSection) || row.SchoolSection === 'all' || lower(row.SchoolSection) === scope.section);
+  return rows.filter((row) => effectiveAcademicSection(row, scope) === scope.section);
+}
+
+function scopedAcademicState(state, scope) {
+  return Object.fromEntries(Object.entries(state).map(([key, rows]) => [key, scopedAcademicRows(rows, scope)]));
+}
+
+async function loadScopedAcademicState(env, scope, requestedKeys) {
+  return scopedAcademicState(await loadAcademicState(env, scope.branchId, requestedKeys), scope);
 }
 
 function displayStaff(rows = []) {
@@ -1746,13 +1772,13 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     : { staff: false, students: false };
   const includeReportProfile = ['results', 'outcomes'].includes(focusedView);
   const [rawState, people, reportProfile] = await Promise.all([
-    loadAcademicState(env, scope.branchId, focusedStateKeys),
+    loadScopedAcademicState(env, scope, focusedStateKeys),
     loadPeople(env, user, scope, peopleOptions),
     includeReportProfile
       ? getDocument(env, 'settings', 'schoolProfile').catch(() => ({}))
       : Promise.resolve(null)
   ]);
-  let state = Object.fromEntries(Object.entries(rawState).map(([key, rows]) => [key, scopedRows(rows, scope)]));
+  let state = rawState;
   let students = people.students;
   if (permissions.financeView) {
     const visibleStudents = new Set(state.studentMemberships.map((row) => lower(row.StudentRef)));
@@ -1851,21 +1877,20 @@ export async function saveAcademicManagementRecord(env, user = {}, input = {}) {
   const definition = RECORD_TYPES[type];
   if (!definition) throw failure('Choose a valid academic record type.');
   requireCapability(user, definition.capability);
-  const requiresSection = !['session', 'term', 'armtemplate'].includes(type);
-  const scope = await academicScope(env, user, input, { requireSection: requiresSection });
+  const scope = await academicScope(env, user, input, { requireSection: true });
   const peopleOptions = type === 'teacherallocation'
     ? { students: false }
     : type === 'studentmembership'
     ? { staff: false }
     : { staff: false, students: false };
   const [state, people] = await Promise.all([
-    loadAcademicState(env, scope.branchId, ACADEMIC_RECORD_STATE_KEYS[type]),
+    loadScopedAcademicState(env, scope, ACADEMIC_RECORD_STATE_KEYS[type]),
     loadPeople(env, user, scope, peopleOptions)
   ]);
   const requestedId = clean(input.RecordId || input.recordId);
   const existing = requestedId ? findById(state[Object.keys(ACADEMIC_MANAGEMENT_COLLECTIONS).find((key) => ACADEMIC_MANAGEMENT_COLLECTIONS[key] === definition.collection)] || [], requestedId) : null;
   if (requestedId && !existing) throw failure('The academic record was not found in the selected branch.', 404);
-  if (existing && requiresSection && lower(existing.SchoolSection) !== scope.section) throw failure('This academic record belongs to another school section.', 403);
+  if (existing && effectiveAcademicSection(existing, scope) !== scope.section) throw failure('This academic record belongs to another school section.', 403);
   const normalizedInput = type === 'studentmembership' && !existing ? { ...input, Status: 'Active' } : input;
   const record = definition.normalize(normalizedInput, scope, existing);
   validateAcademicRecord(state, type, record, { ...people, existing });
@@ -2033,7 +2058,7 @@ export async function bulkCreateAcademicClasses(env, user = {}, input = {}) {
   const rows = parseAcademicClassBatch(input, scope);
   if (!rows.length) throw failure('Enter at least one class definition.');
   if (rows.length > 50) throw failure('Create at most 50 classes in one batch.');
-  const state = await loadAcademicState(env, scope.branchId, ACADEMIC_RECORD_STATE_KEYS.class);
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_RECORD_STATE_KEYS.class);
   const projected = { ...state, classes: [...state.classes] };
   const writes = [];
   let skipped = 0;
@@ -2075,11 +2100,11 @@ export async function bulkCreateAcademicClasses(env, user = {}, input = {}) {
 export async function bulkCreateAcademicArmTemplates(env, user = {}, input = {}) {
   requireWritableSubscription(user);
   requireCapability(user, 'canManageStructure');
-  const scope = await academicScope(env, user, input, { requireSection: false });
+  const scope = await academicScope(env, user, input, { requireSection: true });
   const rows = parseAcademicArmTemplateBatch(input);
   if (!rows.length) throw failure('Enter at least one reusable arm definition.');
   if (rows.length > 50) throw failure('Create at most 50 reusable arms in one batch.');
-  const state = await loadAcademicState(env, scope.branchId, ACADEMIC_RECORD_STATE_KEYS.armtemplate);
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_RECORD_STATE_KEYS.armtemplate);
   const projected = { ...state, armTemplates: [...state.armTemplates] };
   const writes = [];
   const createdRecords = [];
@@ -2120,7 +2145,7 @@ export async function bulkCreateAcademicSubjects(env, user = {}, input = {}) {
   const rows = parseAcademicSubjectBatch(input);
   if (!rows.length) throw failure('Enter at least one subject definition.');
   if (rows.length > 50) throw failure('Create at most 50 subjects in one batch.');
-  const state = await loadAcademicState(env, scope.branchId, ACADEMIC_RECORD_STATE_KEYS.subject);
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_RECORD_STATE_KEYS.subject);
   const projected = { ...state, subjects: [...state.subjects] };
   const writes = [];
   const createdRecords = [];
@@ -2168,7 +2193,7 @@ export async function configureAcademicSeniorChoiceSubjects(env, user = {}, inpu
   const overlap = optionalSubjectIds.filter((subjectId) => tradeSet.has(subjectId));
   if (overlap.length) throw failure('A subject cannot be both Trade and Optional. Choose only one category for each subject.');
 
-  const state = await loadAcademicState(env, scope.branchId, ACADEMIC_DEPARTMENT_STATE_KEYS);
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_DEPARTMENT_STATE_KEYS);
   const configuredIds = new Set([...tradeSubjectIds, ...optionalSubjectIds]);
   const coreSubjectIds = new Set(academicSeniorCoreSubjectIds(state.departments));
   if ([...configuredIds].some((subjectId) => coreSubjectIds.has(subjectId))) {
@@ -2232,7 +2257,7 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
   const templateIds = uniqueIds(input.ArmTemplateIds || input.ArmTemplateId);
   if (!classIds.length || !templateIds.length) throw failure('Choose at least one class and one reusable arm.');
   if (classIds.length * templateIds.length > 200) throw failure('Apply at most 200 class-arm combinations in one batch.');
-  const state = await loadAcademicState(env, scope.branchId, [
+  const state = await loadScopedAcademicState(env, scope, [
     'classes', 'armTemplates', 'arms', 'departments', 'studentMemberships'
   ]);
   const projected = { ...state, arms: [...state.arms] };
@@ -2294,7 +2319,7 @@ export async function bulkApplyAcademicSubjects(env, user = {}, input = {}) {
   if (!clean(input.SessionId) || !clean(input.TermId)) throw failure('Choose the academic session and term.');
   if (!classIds.length || !subjectIds.length) throw failure('Choose at least one class and one reusable subject.');
   if (classIds.length * subjectIds.length > 200) throw failure('Apply at most 200 class-subject combinations in one batch.');
-  const state = await loadAcademicState(env, scope.branchId, ACADEMIC_OFFERING_STATE_KEYS);
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_OFFERING_STATE_KEYS);
   const projected = { ...state, offerings: [...state.offerings] };
   const classes = classIds.map((id) => assertReference(findById(state.classes, id), 'One selected class is not active.'));
   const subjects = subjectIds.map((id) => assertReference(findById(state.subjects, id), 'One selected subject is not active.'));
@@ -2369,7 +2394,7 @@ export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {
     throw failure('Assign at most 200 classrooms in one batch.');
   }
   const [state, people] = await Promise.all([
-    loadAcademicState(env, scope.branchId, ACADEMIC_SUBJECT_TEACHER_STATE_KEYS),
+    loadScopedAcademicState(env, scope, ACADEMIC_SUBJECT_TEACHER_STATE_KEYS),
     loadPeople(env, user, scope, { students: false })
   ]);
   const projected = { ...state, teacherAllocations: [...state.teacherAllocations] };
@@ -2450,7 +2475,7 @@ export async function updateAcademicSubjectTeacherAllocation(env, user = {}, inp
   const revisionToken = clean(input.RevisionToken);
   if (!recordIdToReplace || !revisionToken) throw failure('Reload the saved allocation before editing it.');
   const [state, people] = await Promise.all([
-    loadAcademicState(env, scope.branchId, ACADEMIC_SUBJECT_TEACHER_STATE_KEYS),
+    loadScopedAcademicState(env, scope, ACADEMIC_SUBJECT_TEACHER_STATE_KEYS),
     loadPeople(env, user, scope, { students: false })
   ]);
   const existing = findById(state.teacherAllocations, recordIdToReplace);
@@ -2505,7 +2530,7 @@ export async function bulkAllocateAcademicStudents(env, user = {}, input = {}) {
   if (!studentRefs.length) throw failure('Choose at least one student for bulk allocation.');
   if (studentRefs.length > 100) throw failure('Allocate at most 100 students in one batch.');
   const [state, people] = await Promise.all([
-    loadAcademicState(env, scope.branchId, ACADEMIC_STUDENT_STATE_KEYS),
+    loadScopedAcademicState(env, scope, ACADEMIC_STUDENT_STATE_KEYS),
     loadPeople(env, user, scope, { staff: false })
   ]);
   const projected = { ...state, studentMemberships: [...state.studentMemberships] };
@@ -2574,7 +2599,7 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
   const termId = clean(input.TermId);
   if (!sessionId || !termId) throw failure('Choose the academic session and term for this import.');
   const [state, people, allStudents] = await Promise.all([
-    loadAcademicState(env, scope.branchId, ACADEMIC_STUDENT_STATE_KEYS),
+    loadScopedAcademicState(env, scope, ACADEMIC_STUDENT_STATE_KEYS),
     loadPeople(env, user, scope, { staff: false }),
     listSchoolCollection(env, 'students')
   ]);
@@ -2746,7 +2771,7 @@ export async function bulkAssignAcademicArmStudentSubjects(env, user = {}, input
   const classId = clean(input.ClassId);
   const armId = clean(input.ArmId);
   if (!sessionId || !termId || !classId || !armId) throw failure('Choose the session, term, Senior Secondary class and arm.');
-  const state = await loadAcademicState(env, scope.branchId, ACADEMIC_STUDENT_STATE_KEYS);
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_STUDENT_STATE_KEYS);
   const session = assertReference(findById(state.sessions, sessionId), 'The selected session is not active.');
   const term = assertReference(findById(state.terms, termId), 'The selected term is not active.');
   if (term.SessionId !== session.SessionId) throw failure('The selected term does not belong to this academic session.');
@@ -2828,7 +2853,7 @@ export async function manageAcademicStudentMembership(env, user = {}, input = {}
   requireCapability(user, 'canManageAllocations');
   const scope = await academicScope(env, user, input, { requireSection: true });
   const [state, people] = await Promise.all([
-    loadAcademicState(env, scope.branchId, ACADEMIC_STUDENT_STATE_KEYS),
+    loadScopedAcademicState(env, scope, ACADEMIC_STUDENT_STATE_KEYS),
     loadPeople(env, user, scope, { staff: false })
   ]);
   const existing = findById(state.studentMemberships, input.RecordId || input.MembershipId);
@@ -2990,19 +3015,19 @@ export async function archiveAcademicManagementRecord(env, user = {}, input = {}
     throw failure('Use the withdrawal workflow for student memberships so the change is preserved in movement history.', 409, 'ACADEMIC_MOVEMENT_REQUIRED');
   }
   requireCapability(user, ['teacherallocation', 'studentmembership'].includes(type) ? 'canManageAllocations' : 'canArchive');
-  const requiresSection = !['session', 'term', 'armtemplate'].includes(type);
-  const scope = await academicScope(env, user, input, { requireSection: requiresSection });
-  const state = await loadAcademicState(env, scope.branchId, ACADEMIC_RECORD_DEPENDENCY_STATE_KEYS[type]);
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_RECORD_DEPENDENCY_STATE_KEYS[type]);
   const stateKey = Object.keys(ACADEMIC_MANAGEMENT_COLLECTIONS).find((key) => ACADEMIC_MANAGEMENT_COLLECTIONS[key] === definition.collection);
   const existing = findById(state[stateKey] || [], input.RecordId);
   if (!existing) throw failure('The academic record was not found in the selected branch.', 404);
-  if (requiresSection && lower(existing.SchoolSection) !== scope.section) throw failure('This academic record belongs to another school section.', 403);
+  if (effectiveAcademicSection(existing, scope) !== scope.section) throw failure('This academic record belongs to another school section.', 403);
   const dependants = activeDependants(state, type, existing);
   if (dependants.length) throw failure(`Archive the ${dependants.length} active dependent record${dependants.length === 1 ? '' : 's'} first.`, 409, 'ACADEMIC_DEPENDANTS_ACTIVE');
   const revisionToken = clean(input.RevisionToken);
   if (!revisionToken || revisionToken !== clean(existing.__updateTime)) throw failure('This academic record changed after it was loaded. Reload before archiving.', 409, 'ACADEMIC_WRITE_CONFLICT');
   const archived = {
     ...withoutMetadata(existing), Status: 'Archived', ArchivedAt: nowIso(), ArchivedBy: actorName(user),
+    BranchId: scope.branchId, SchoolSection: scope.section,
     UpdatedAt: nowIso(), UpdatedBy: actorName(user)
   };
   const writes = [
@@ -3028,13 +3053,12 @@ export async function deleteAcademicManagementRecord(env, user = {}, input = {})
     throw failure('Only an unused structure record, subject offering or teacher allocation can be permanently deleted.');
   }
   const definition = RECORD_TYPES[type];
-  const requiresSection = type !== 'armtemplate';
-  const scope = await academicScope(env, user, input, { requireSection: requiresSection });
-  const state = await loadAcademicState(env, scope.branchId, ACADEMIC_RECORD_DEPENDENCY_STATE_KEYS[type]);
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_RECORD_DEPENDENCY_STATE_KEYS[type]);
   const stateKey = Object.keys(ACADEMIC_MANAGEMENT_COLLECTIONS).find((key) => ACADEMIC_MANAGEMENT_COLLECTIONS[key] === definition.collection);
   const existing = findById(state[stateKey] || [], input.RecordId);
   if (!existing) throw failure('The academic record was not found in the selected branch.', 404);
-  if (requiresSection && lower(existing.SchoolSection) !== scope.section) throw failure('This academic record belongs to another school section.', 403);
+  if (effectiveAcademicSection(existing, scope) !== scope.section) throw failure('This academic record belongs to another school section.', 403);
   const dependants = academicPermanentDeleteDependants(state, type, existing);
   if (dependants.length) {
     const label = type === 'armtemplate' ? 'reusable arm definition' : (type === 'offering' ? 'subject offering' : type);
@@ -3091,8 +3115,7 @@ async function academicOperationalContext(env, user, input, capability, options 
     || academicOperationalViewForCapability(capability) || 'classrooms';
   if (!clean(input.View || input.Workspace)) input.View = normalizedAcademicView(operationalView);
   const stateKeys = options.stateKeys || academicManagementViewStateKeys(operationalView);
-  const state = await loadAcademicState(env, scope.branchId, stateKeys);
-  const scopedState = Object.fromEntries(Object.entries(state).map(([key, rows]) => [key, scopedRows(rows, scope)]));
+  const scopedState = await loadScopedAcademicState(env, scope, stateKeys);
   const session = assertReference(findById(scopedState.sessions, input.SessionId), 'Choose an active academic session.');
   const term = assertReference(findById(scopedState.terms, input.TermId), 'Choose an active academic term.');
   if (term.SessionId !== session.SessionId) throw failure('The selected term does not belong to this academic session.');
@@ -6102,10 +6125,10 @@ export async function grantAcademicResultClearance(env, user = {}, input = {}) {
   requireWritableSubscription(user);
   requireCapability(user, 'canManageFinancialClearance');
   const scope = await academicScope(env, user, input, { requireSection: true });
-  const state = await loadAcademicState(env, scope.branchId, [
+  const state = await loadScopedAcademicState(env, scope, [
     'sessions', 'terms', 'classes', 'studentMemberships', 'resultClearances'
   ]);
-  const scopedState = Object.fromEntries(Object.entries(state).map(([key, rows]) => [key, scopedRows(rows, scope)]));
+  const scopedState = scopedAcademicState(state, scope);
   const session = assertReference(findById(scopedState.sessions, input.SessionId), 'Choose a valid academic session.');
   const term = assertReference(findById(scopedState.terms, input.TermId), 'Choose a valid academic term.');
   if (term.SessionId !== session.SessionId) throw failure('The selected term does not belong to this academic session.');
@@ -6163,8 +6186,8 @@ export async function revokeAcademicResultClearance(env, user = {}, input = {}) 
   requireWritableSubscription(user);
   requireCapability(user, 'canManageFinancialClearance');
   const scope = await academicScope(env, user, input, { requireSection: true });
-  const state = await loadAcademicState(env, scope.branchId, ['resultClearances']);
-  const existing = scopedRows(state.resultClearances, scope).find((row) => recordId(row) === clean(input.ClearanceId));
+  const state = await loadScopedAcademicState(env, scope, ['resultClearances']);
+  const existing = scopedAcademicRows(state.resultClearances, scope).find((row) => recordId(row) === clean(input.ClearanceId));
   if (!existing) throw failure('The selected result clearance was not found.', 404, 'ACADEMIC_CLEARANCE_NOT_FOUND');
   if (lower(existing.Status) !== 'approved') throw failure('This result clearance is not currently active.', 409, 'ACADEMIC_CLEARANCE_NOT_ACTIVE');
   const reason = clean(input.Reason);

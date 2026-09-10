@@ -10112,7 +10112,12 @@ async function studentConductRequest(action = 'list', payload = {}) {
   const response = await staffFetch('/api/staff-conduct', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, ...payload })
+    body: JSON.stringify({
+      action,
+      BranchId: clean(selectedBranchId || currentUser?.branchId),
+      SchoolSectionAccess: clean(currentUser?.schoolSectionAccess || 'All'),
+      ...payload
+    })
   });
   const data = await response.json().catch(() => ({
     ok: false,
@@ -10191,8 +10196,8 @@ function bindStudentConductStudentSearch(data) {
     className: clean(row.ClassName),
     searchText: lower([row.StudentName, row.StudentRef, row.ClassName].filter(Boolean).join(' '))
   })).filter((row) => row.ref);
-  search.disabled = !students.length;
-  searchButton.disabled = !students.length;
+  search.disabled = false;
+  searchButton.disabled = false;
 
   const update = ({ chooseSingle = false } = {}) => {
     const query = lower(search.value);
@@ -10771,14 +10776,22 @@ function academicCurrentRows(data = academicManagementData || {}) {
   const section = academicManagementFilters.section;
   const sessionId = academicManagementFilters.sessionId;
   const termId = academicManagementFilters.termId;
-  const sectionRows = (rows = []) => rows.filter((row) => !section || ['all', section].includes(clean(row.SchoolSection)));
+  const configuredSections = [...new Set((data.sections || [])
+    .map((value) => clean(value).toLowerCase())
+    .filter((value) => ['primary', 'secondary'].includes(value)))];
+  const legacySection = configuredSections.length === 1 ? configuredSections[0] : 'secondary';
+  const sectionRows = (rows = []) => rows.filter((row) => {
+    if (!section) return true;
+    const recordSection = clean(row.SchoolSection).toLowerCase();
+    return (['primary', 'secondary'].includes(recordSection) ? recordSection : legacySection) === section;
+  });
   const periodRows = (rows = []) => sectionRows(rows).filter((row) => (
     (!sessionId || row.SessionId === sessionId) && (!termId || row.TermId === termId)
   ));
   const sessionRows = (rows = []) => sectionRows(rows).filter((row) => !sessionId || row.SessionId === sessionId);
   return {
-    sessions: data.sessions || [],
-    terms: (data.terms || []).filter((row) => !sessionId || row.SessionId === sessionId),
+    sessions: sectionRows(data.sessions || []),
+    terms: sectionRows(data.terms || []).filter((row) => !sessionId || row.SessionId === sessionId),
     classes: sectionRows(data.classes || []),
     armTemplates: sectionRows(data.armTemplates || []),
     arms: sectionRows(data.arms || []),
@@ -11175,6 +11188,7 @@ function academicStructureWorkspace(data, rows) {
     <div class="academic-management-editor-grid">
       <form class="academic-management-editor" data-academic-form="session">
         ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Academic calendar</small><h3>Session</h3></div><button type="button" class="academic-form-reset" data-academic-reset="session">Clear</button></div>
+        <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
         <label>Session name<input name="Name" placeholder="2026/2027" required></label>
         <div class="academic-management-form-grid"><label>Starts<input name="StartDate" type="date" required></label><label>Ends<input name="EndDate" type="date" required></label></div>
         <label>Status<select name="Status"><option>Planned</option><option>Active</option><option>Closed</option></select></label>
@@ -11182,6 +11196,7 @@ function academicStructureWorkspace(data, rows) {
       </form>
       <form class="academic-management-editor" data-academic-form="term">
         ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Academic calendar</small><h3>Term</h3></div><button type="button" class="academic-form-reset" data-academic-reset="term">Clear</button></div>
+        <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
         <label>Session<select name="SessionId" required>${sessionOptions}</select></label>
         <label>Term name<input name="Name" placeholder="First Term" required></label>
         <div class="academic-management-form-grid"><label>Starts<input name="StartDate" type="date" required></label><label>Ends<input name="EndDate" type="date" required></label></div>
@@ -14747,6 +14762,9 @@ function bindAcademicManagement() {
   document.getElementById('refreshAcademicManagement')?.addEventListener('click', (event) => runButtonAction(event.currentTarget, 'Refreshing...', () => loadAcademicManagement()));
   document.getElementById('academicManagementSection')?.addEventListener('change', (event) => {
     academicManagementFilters.section = event.target.value;
+    academicManagementFilters.sessionId = '';
+    academicManagementFilters.termId = '';
+    academicManagementData = null;
     academicManagementTaskViews.offerings = event.target.value === 'secondary' ? 'seniorChoices' : 'curriculum';
     academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: '', armTemplateId: '' };
     academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
@@ -15029,7 +15047,7 @@ function bindAcademicManagement() {
       try {
         const data = await academicManagementRequest('archive', {
           RecordType: type, RecordId: academicRecordId(record), RevisionToken: record.RevisionToken,
-          SchoolSection: record.SchoolSection
+          SchoolSection: academicManagementFilters.section
         });
         renderAcademicManagement(data, data.message || 'Academic record archived.');
       } catch (error) {
@@ -15050,7 +15068,7 @@ function bindAcademicManagement() {
       try {
         const data = await academicManagementRequest('deleteAcademicRecord', {
           RecordType: type, RecordId: academicRecordId(record), RevisionToken: record.RevisionToken,
-          SchoolSection: record.SchoolSection
+          SchoolSection: academicManagementFilters.section
         });
         renderAcademicManagement(data, data.message || 'Academic record deleted permanently.');
       } catch (error) {

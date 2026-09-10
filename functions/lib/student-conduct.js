@@ -1,9 +1,11 @@
 import {
   deleteSchoolDocument,
+  getSchoolStructure,
   listSchoolCollection,
   schoolSectionFor,
   upsertSchoolDocument
 } from './school-scope.js';
+import { enforceActorBranch } from './branch-scope.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -71,6 +73,22 @@ function requireCapability(user, key) {
   const permissions = capabilities(user);
   if (permissions[key]) return permissions;
   throw error('This account is not permitted to manage student conduct cases.', 403);
+}
+
+async function studentConductScope(env, user = {}, body = {}) {
+  const structure = await getSchoolStructure(env);
+  const requestedBranch = clean(body.BranchId || body.branchId || user.branchId || user.BranchId);
+  const branchId = enforceActorBranch(user, requestedBranch, '', structure.ActiveBranchId || 'main');
+  const assignedSection = lower(user.schoolSectionAccess || user.SchoolSectionAccess || 'all');
+  const requestedSection = lower(
+    body.SchoolSectionAccess || body.schoolSectionAccess || body.SchoolSection || body.schoolSection
+  );
+  return {
+    branchId,
+    schoolSectionAccess: ['primary', 'secondary'].includes(assignedSection)
+      ? assignedSection
+      : (['primary', 'secondary'].includes(requestedSection) ? requestedSection : 'all')
+  };
 }
 
 function findStudent(students, reference) {
@@ -167,10 +185,7 @@ async function audit(env, user, action, conductCase) {
 
 async function listCases(env, user, body = {}) {
   requireCapability(user, 'enabled');
-  const scope = {
-    branchId: clean(user.branchId || user.BranchId || body.BranchId),
-    schoolSectionAccess: clean(user.schoolSectionAccess || user.SchoolSectionAccess || body.SchoolSectionAccess)
-  };
+  const scope = await studentConductScope(env, user, body);
   const [cases, students] = await Promise.all([
     listSchoolCollection(env, COLLECTION, scope),
     listSchoolCollection(env, 'students', scope)
@@ -204,10 +219,7 @@ async function listCases(env, user, body = {}) {
 
 async function saveCase(env, user, body = {}) {
   requireCapability(user, 'canManage');
-  const scope = {
-    branchId: clean(user.branchId || user.BranchId || body.BranchId),
-    schoolSectionAccess: clean(user.schoolSectionAccess || user.SchoolSectionAccess || body.SchoolSectionAccess)
-  };
+  const scope = await studentConductScope(env, user, body);
   const [students, cases] = await Promise.all([
     listSchoolCollection(env, 'students', scope),
     listSchoolCollection(env, COLLECTION, scope)
@@ -252,10 +264,7 @@ async function deleteCase(env, user, body = {}) {
   requireCapability(user, 'canDelete');
   const id = clean(body.CaseId || body.caseId);
   if (!id) throw error('Choose a conduct case to delete.');
-  const cases = await listSchoolCollection(env, COLLECTION, {
-    branchId: clean(user.branchId || user.BranchId || body.BranchId),
-    schoolSectionAccess: clean(user.schoolSectionAccess || user.SchoolSectionAccess)
-  });
+  const cases = await listSchoolCollection(env, COLLECTION, await studentConductScope(env, user, body));
   const existing = cases.find((row) => lower(row.CaseId || row.__id) === lower(id));
   if (!existing) throw error('The conduct case was not found in your permitted school scope.', 404);
   await deleteSchoolDocument(env, COLLECTION, existing.__id || id, existing);

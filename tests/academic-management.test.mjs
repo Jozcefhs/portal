@@ -33,6 +33,7 @@ import {
   parseAcademicArmTemplateBatch,
   parseAcademicClassBatch,
   parseAcademicSubjectBatch,
+  scopedAcademicRows,
   scopedSection
 } from '../functions/lib/academic-management.js';
 import { staffRoleAllowedForEdition } from '../functions/lib/organization-config.js';
@@ -74,7 +75,7 @@ test('every academic workspace stays focused below the Worker subrequest ceiling
     librarySource.indexOf('export async function bulkAssignAcademicSubjectTeacher'),
     librarySource.indexOf('export async function bulkAllocateAcademicStudents')
   );
-  assert.match(saveSource, /loadAcademicState\(env, scope\.branchId, ACADEMIC_SUBJECT_TEACHER_STATE_KEYS\)/);
+  assert.match(saveSource, /loadScopedAcademicState\(env, scope, ACADEMIC_SUBJECT_TEACHER_STATE_KEYS\)/);
   assert.match(saveSource, /loadPeople\(env, user, scope, \{ students: false \}\)/);
   assert.match(saveSource, /View: 'teachers'/);
   assert.doesNotMatch(librarySource, /loadAcademicState\(env,\s*scope\.branchId\s*\)/);
@@ -95,9 +96,11 @@ test('AM-003 sessions and terms are effective-dated and date validated', () => {
     SessionId: session.SessionId, Name: 'First Term', StartDate: '2026-09-01', EndDate: '2026-12-18'
   }, scope);
 
-  assert.equal(session.SessionId, 'session__north-campus__2026-2027');
-  assert.equal(term.TermId, `${session.SessionId}__term__first-term`);
+  assert.equal(session.SessionId, 'session__north-campus__secondary__2026-2027');
+  assert.equal(term.TermId, `${session.SessionId}__term__secondary__first-term`);
   assert.equal(session.BranchId, 'north-campus');
+  assert.equal(session.SchoolSection, 'secondary');
+  assert.equal(term.SchoolSection, 'secondary');
   assert.throws(() => normalizeAcademicSession({
     Name: 'Invalid', StartDate: '2027-01-01', EndDate: '2026-01-01'
   }, scope), /end date cannot be before/);
@@ -124,7 +127,7 @@ test('AM-003 classes and arms retain branch and school-section isolation', () =>
   assert.throws(() => normalizeAcademicClass({ Name: 'Year 10', Code: 'Y10' }, scope), /Junior Secondary or Senior Secondary/);
 });
 
-test('AM-003 bulk classes stay section scoped while reusable arm templates are branch wide', () => {
+test('AM-003 classes and reusable arm templates stay school-section scoped', () => {
   const secondaryClasses = parseAcademicClassBatch({
     ClassLines: 'JSS 1 | JSS1 | Junior Secondary | 120\nSS 1 | SS1 | Senior Secondary | 100'
   }, scope);
@@ -139,15 +142,38 @@ test('AM-003 bulk classes stay section scoped while reusable arm templates are b
   assert.deepEqual(secondaryClasses.map((row) => row.SchoolStage), ['Junior Secondary', 'Senior Secondary']);
   assert.equal(secondaryClasses[0].Capacity, '120');
   assert.equal(primaryClasses[0].SchoolStage, 'primary');
-  assert.equal(template.ArmTemplateId, 'arm-template__north-campus__gold');
-  assert.equal(template.SchoolSection, 'all');
+  assert.equal(template.ArmTemplateId, 'arm-template__north-campus__secondary__gold');
+  assert.equal(template.SchoolSection, 'secondary');
   assert.equal(template.DefaultCapacity, 35);
-  assert.equal(scopedSection({ SchoolSection: template.SchoolSection }, false), '');
-  assert.throws(() => scopedSection({ SchoolSection: template.SchoolSection }, true), /Choose Primary or Secondary/);
+  assert.equal(scopedSection({ SchoolSection: template.SchoolSection }, false), 'secondary');
   assert.equal(appliedArm.ArmTemplateId, template.ArmTemplateId);
   assert.equal(appliedArm.Capacity, 35);
   assert.throws(() => parseAcademicArmTemplateBatch({ ArmTemplateLines: 'Brilliance BRI 30' }), /Line 1 is not in the required format/);
   assert.throws(() => parseAcademicClassBatch({ ClassLines: 'Grade 7 JSS1 Junior Secondary 200' }, scope), /Line 1 is not in the required format/);
+});
+
+test('AM-003 legacy shared academic records remain in Secondary and never leak into Primary', () => {
+  const rows = [
+    { RecordId: 'legacy', SchoolSection: 'all' },
+    { RecordId: 'missing-section' },
+    { RecordId: 'primary', SchoolSection: 'Primary' },
+    { RecordId: 'secondary', SchoolSection: 'Secondary' }
+  ];
+
+  assert.deepEqual(
+    scopedAcademicRows(rows, { section: 'primary' }).map((row) => row.RecordId),
+    ['primary']
+  );
+  assert.deepEqual(
+    scopedAcademicRows(rows, { section: 'secondary' }).map((row) => row.RecordId),
+    ['legacy', 'missing-section', 'secondary']
+  );
+  assert.deepEqual(
+    scopedAcademicRows(rows, {
+      section: 'primary', structure: { Sections: ['primary'] }
+    }).map((row) => row.RecordId),
+    ['legacy', 'missing-section', 'primary']
+  );
 });
 
 test('AM-002 subjects are bulk-created once and reused through class offerings', () => {
@@ -683,6 +709,8 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /function updateAcademicCheckboxGroups/);
   assert.match(adminSource, /\.result-signatory strong\{max-width:100%;white-space:nowrap\}/);
   assert.match(adminSource, /data-academic-checkbox-count/);
+  assert.match(adminSource, /const legacySection = configuredSections\.length === 1 \? configuredSections\[0\] : 'secondary'/);
+  assert.match(adminSource, /academicManagementFilters\.sessionId = '';[\s\S]{0,120}academicManagementData = null/);
   assert.match(adminSource, /function bindAcademicCheckboxField/);
   assert.match(adminSource, /event\.shiftKey && anchor/);
   assert.match(adminSource, /academicCheckboxInputs\(field, true\)/);

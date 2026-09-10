@@ -73,6 +73,9 @@ test('conduct APIs require authenticated, scoped school staff and support deskto
   assert.match(backendSource, /getStudentConductCases/);
   assert.match(backendSource, /saveStudentConductCase/);
   assert.match(backendSource, /deleteStudentConductCase/);
+  assert.match(conductSource, /enforceActorBranch\(user, requestedBranch/);
+  assert.match(conductSource, /const scope = await studentConductScope\(env, user, body\)/);
+  assert.match(adminSource, /BranchId: clean\(selectedBranchId \|\| currentUser\?\.branchId\)/);
   assert.match(adminSource, /Student Conduct & Discipline/);
   assert.match(cssSource, /\.student-conduct-layout/);
 });
@@ -85,6 +88,9 @@ test('conduct incident composer can search students by name, admission number, o
   assert.match(adminSource, /No matching student/);
   assert.match(adminSource, /chooseSingle && query && matching\.length === 1/);
   assert.match(adminSource, /searchButton\.addEventListener\('click', runSearch\)/);
+  assert.match(adminSource, /search\.disabled = false/);
+  assert.match(adminSource, /searchButton\.disabled = false/);
+  assert.doesNotMatch(adminSource, /search(?:Button)?\.disabled = !students\.length/);
   assert.match(adminSource, /event\.key === 'Enter'/);
   assert.match(cssSource, /\.student-conduct-student-search/);
   assert.match(cssSource, /\.student-conduct-student-search-controls/);
