@@ -1,7 +1,7 @@
 {
-  "version": "3.1.1",
+  "version": "3.1.2",
   "channel": "stable",
   "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup.exe",
-  "sha256": "f69403963db1adb3426aa8f782b83729197470055cdaae58bab4e88c7432f1fd",
-  "notes": "Dynamax Desktop v3.1.1 improves the local CBT server for large candidate groups, adds friendly joining names, device monitoring and safer single-session enforcement, and streamlines exam scheduling, answer review, fee setup, parent onboarding and responsive desktop workflows. It also enforces subscription module entitlements, includes Bulk Email for Front Desk defaults and completes the canonical Church offering approval actions."
+  "sha256": "0110fad9c670eecd055e5a95aa95f73dcae2947ca6cb6220c570bd1d2e3f15f8",
+  "notes": "Dynamax Desktop v3.1.2 strengthens branch-isolated school operations, including working-branch data reloads, independent branch settings, classes, arms and admission classes, and corrected staff scope. It improves NFC wallet enrolment and card lookup, Primary-school leadership and pupil terminology, official report stamps, desktop responsiveness, Android CBT session safety, and expanded organisation and hospitality workflows."
 }
