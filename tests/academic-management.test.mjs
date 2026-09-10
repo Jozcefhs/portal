@@ -659,6 +659,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   );
   assert.match(teacherWorkspace, /const classrooms = rows\.arms\.filter/);
   assert.match(teacherWorkspace, /data-academic-workflow="bulkAssignAcademicSubjectTeacher"/);
+  assert.match(teacherWorkspace, /academic-management-form-grid academic-management-form-grid-4/);
   assert.match(teacherWorkspace, /academicClassroomCheckboxField\(classes, classrooms\)/);
   assert.match(teacherWorkspace, /\^academics\?\(\?:\\s\|\$\)/);
   assert.match(teacherWorkspace, /Repeat the process if the teacher handles another subject/);
@@ -680,6 +681,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /name="ClassroomIds"/);
   assert.match(adminSource, /Tick a class to select all of its arms/);
   assert.match(adminSource, /function updateAcademicCheckboxGroups/);
+  assert.match(adminSource, /\.result-signatory strong\{max-width:100%;white-space:nowrap\}/);
   assert.match(adminSource, /data-academic-checkbox-count/);
   assert.match(adminSource, /function bindAcademicCheckboxField/);
   assert.match(adminSource, /event\.shiftKey && anchor/);
@@ -808,7 +810,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
   assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260909-roster-facets/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260910-academic-teacher-groups/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260910-academic-form-alignment/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
