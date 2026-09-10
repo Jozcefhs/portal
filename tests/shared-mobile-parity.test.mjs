@@ -10,7 +10,7 @@ const pageStyleVersions = new Map([
   ['plan-management.html', '20260830-dual-currency-pricing'],
   ['register-organization.html', '20260830-flex-module-layout']
 ]);
-const adminScriptVersion = '20260910-academic-workspace-dropdown';
+const adminScriptVersion = '20260910-academic-learner-fix';
 const parentScriptVersion = '20260909-academic-report-workflow';
 const notificationVersion = '20260804-read-efficiency';
 const pageNames = [

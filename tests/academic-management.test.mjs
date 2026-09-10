@@ -779,13 +779,14 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-view-switcher select\{[^}]*font-size:12px/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
   assert.match(adminSource, /function organizeAcademicManagementWorkspace/);
+  assert.match(adminSource, /function academicManagementHeader\(data, rows, message = ''\) \{\s*const learner = academicLearnerTerms\(\);/);
   assert.match(adminSource, /Only the selected task is shown/);
   assert.match(adminSource, /data-academic-task-panel/);
   assert.match(adminSource, /showAcademicManagementTask\('students', 'transfer'\)/);
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
   assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260909-roster-facets/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260910-academic-workspace-dropdown/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260910-academic-learner-fix/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

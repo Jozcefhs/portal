@@ -12794,6 +12794,7 @@ function academicManagementViews(data) {
 }
 
 function academicManagementHeader(data, rows, message = '') {
+  const learner = academicLearnerTerms();
   const sessions = academicManagementView === 'analysis'
     ? (data.sessions || [])
     : (data.sessions || []).filter(academicIsActive);
