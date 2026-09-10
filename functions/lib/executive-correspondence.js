@@ -55,7 +55,8 @@ export const EXECUTIVE_TEMPLATE_TOKENS = Object.freeze([
 
 const TOKEN_SET = new Set(EXECUTIVE_TEMPLATE_TOKENS);
 const EXECUTIVE_ROLES = new Set([
-  'Principal', 'Vice Principal Academics', 'Vice Principal Administration', 'Senior Pastor'
+  'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
+  'Head Teacher', 'Assistant Head Teacher', 'Senior Pastor'
 ]);
 
 const BUILT_IN_TEMPLATES = Object.freeze([
@@ -104,6 +105,8 @@ export function canonicalExecutiveRole(value) {
   if (role === 'principal') return 'Principal';
   if (role === 'vice principal academics') return 'Vice Principal Academics';
   if (role === 'vice principal administration') return 'Vice Principal Administration';
+  if (role === 'head teacher') return 'Head Teacher';
+  if (role === 'assistant head teacher') return 'Assistant Head Teacher';
   if (['senior pastor', 'head minister', 'senior minister'].includes(role)) return 'Senior Pastor';
   if (role === 'super admin') return 'Super Admin';
   return clean(value);

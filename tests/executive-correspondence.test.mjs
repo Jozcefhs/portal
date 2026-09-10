@@ -31,7 +31,7 @@ const [endpoint, backend, backendSecurity, executiveSource, emailSource, backupS
   readFile(new URL('functions/lib/organization-backup.js', portalRoot), 'utf8')
 ]);
 
-test('principal also receives school conduct oversight while senior-minister defaults remain scoped', () => {
+test('school and ministry leaders receive their edition-scoped executive access', () => {
   assert.deepEqual(
     allowedSectionsFor({ role: 'Principal' }, featureFlagsForEdition('school')),
     ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct', 'humanResources', 'staffAttendance']
@@ -45,21 +45,16 @@ test('principal also receives school conduct oversight while senior-minister def
     ['recordsDesk', 'executiveOffice', 'humanResources', 'staffAttendance']
   );
   assert.equal(canonicalExecutiveRole('Head Minister'), 'Senior Pastor');
-  assert.equal(executiveOfficeCapabilities({
-    role: 'Principal',
-    edition: 'school',
-    allowedSections: ['recordsDesk', 'executiveOffice']
-  }).canSearchStudents, true);
-  assert.equal(executiveOfficeCapabilities({
-    role: 'Vice Principal Academics',
-    edition: 'school',
-    allowedSections: ['recordsDesk', 'executiveOffice']
-  }).canSearchStudents, true);
-  assert.equal(executiveOfficeCapabilities({
-    role: 'Vice Principal Administration',
-    edition: 'school',
-    allowedSections: ['recordsDesk', 'executiveOffice']
-  }).canSearchStudents, true);
+  for (const role of [
+    'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
+    'Head Teacher', 'Assistant Head Teacher'
+  ]) {
+    assert.equal(executiveOfficeCapabilities({
+      role,
+      edition: 'school',
+      allowedSections: ['recordsDesk', 'executiveOffice']
+    }).canSearchStudents, true, `${role} should be authorised for the school executive workspace`);
+  }
   assert.equal(executiveOfficeCapabilities({
     role: 'Principal',
     edition: 'faith',
