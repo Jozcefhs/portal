@@ -69,13 +69,14 @@ form.addEventListener('submit', async (event) => {
       code,
       applicantName: data.applicantName || '',
       receiptNo: data.receiptNo || '',
+      branchId: data.branchId || new URLSearchParams(window.location.search).get('branch') || 'main',
       verifiedAt: new Date().toISOString()
     }));
 
     setStatus('Verified. Opening application form...', 'ok');
     verifiedSuccessfully = true;
     verificationIdempotencyKey = '';
-    window.location.href = 'application.html';
+    window.location.href = `application.html?branch=${encodeURIComponent(data.branchId || 'main')}`;
   } catch (error) {
     setStatus(error.message, 'bad');
   } finally {

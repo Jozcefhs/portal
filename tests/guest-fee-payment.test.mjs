@@ -106,5 +106,5 @@ test('guest authorization is accepted only by payment APIs and never by the pare
   assert.match(landingCss, /\.landing-nav \.landing-desktop-actions\s*\{\s*display: none !important;/);
   assert.match(landingCss, /\.landing-mobile-menu-panel\s*\{[\s\S]*?position: absolute;/);
   assert.match(siteConfig, /hasAttribute\('data-fresh-site-profile'\)/);
-  assert.match(siteConfig, /freshInitialSiteProfile\s*\?\s*refreshSiteProfile\(\)/);
+  assert.match(siteConfig, /\(freshInitialSiteProfile \|\| initialPublicBranchId\)\s*\?\s*refreshSiteProfile\(\{ branchId: initialPublicBranchId \}\)/);
 });

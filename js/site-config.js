@@ -248,8 +248,9 @@ function applySiteProfile(profile) {
 }
 
 const freshInitialSiteProfile = Boolean(document.body?.hasAttribute('data-fresh-site-profile'));
-window.siteProfileReady = freshInitialSiteProfile
-  ? refreshSiteProfile()
+const initialPublicBranchId = new URLSearchParams(window.location.search).get('branch') || '';
+window.siteProfileReady = (freshInitialSiteProfile || initialPublicBranchId)
+  ? refreshSiteProfile({ branchId: initialPublicBranchId })
   : loadSiteProfile().then((profile) => {
       applySiteProfile(profile);
       return profile;

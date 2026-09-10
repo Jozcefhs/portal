@@ -568,6 +568,27 @@ function revealRequestedSettingsSection() {
 
 function profileFromForm() {
   const data = new FormData(setupForm);
+  const senderProfile = activeSettingsEdition === 'school'
+    ? {
+        BrevoSenderName: document.getElementById('senderName').value,
+        BrevoSenderEmail: document.getElementById('senderEmail').value,
+        BrevoReplyToName: document.getElementById('replyToName').value,
+        BrevoReplyToEmail: document.getElementById('replyToEmail').value,
+        ExecutiveSenderName: document.getElementById('executiveSenderName').value,
+        ExecutiveSenderEmail: document.getElementById('executiveSenderEmail').value,
+        ExecutiveReplyToName: document.getElementById('executiveReplyToName').value,
+        ExecutiveReplyToEmail: document.getElementById('executiveReplyToEmail').value
+      }
+    : {
+        OrganisationSenderName: document.getElementById('senderName').value,
+        OrganisationSenderEmail: document.getElementById('senderEmail').value,
+        OrganisationReplyToName: document.getElementById('replyToName').value,
+        OrganisationReplyToEmail: document.getElementById('replyToEmail').value,
+        OrganisationExecutiveSenderName: document.getElementById('executiveSenderName').value,
+        OrganisationExecutiveSenderEmail: document.getElementById('executiveSenderEmail').value,
+        OrganisationExecutiveReplyToName: document.getElementById('executiveReplyToName').value,
+        OrganisationExecutiveReplyToEmail: document.getElementById('executiveReplyToEmail').value
+      };
   const profile = {
     SchoolName: data.get('SchoolName'),
     SchoolCode: data.get('SchoolCode'),
@@ -601,7 +622,8 @@ function profileFromForm() {
     PaymentBankCurrency: data.get('PaymentBankCurrency'),
     PaymentTransferInstructions: data.get('PaymentTransferInstructions'),
     CurrentAcademicSession: data.get('CurrentAcademicSession'),
-    CurrentTerm: data.get('CurrentTerm')
+    CurrentTerm: data.get('CurrentTerm'),
+    ...senderProfile
   };
   if (webLogoChanged) profile.WebLogoDataUrl = webLogoDataUrl;
   return profile;
@@ -661,6 +683,15 @@ function applyProfile(profile = {}, settingsAccess = null) {
   setField('admissionSignatoryName', profile.AdmissionSignatoryName);
   setField('admissionSignatoryTitle', profile.AdmissionSignatoryTitle);
   setField('emailGreetingTemplate', profile.EmailGreetingTemplate || 'Dear Parent/Guardian,');
+  const schoolSender = normalizeSettingsEdition(profile.OrganisationEdition) === 'school';
+  setField('senderName', schoolSender ? profile.BrevoSenderName : profile.OrganisationSenderName);
+  setField('senderEmail', schoolSender ? profile.BrevoSenderEmail : profile.OrganisationSenderEmail);
+  setField('replyToName', schoolSender ? profile.BrevoReplyToName : profile.OrganisationReplyToName);
+  setField('replyToEmail', schoolSender ? profile.BrevoReplyToEmail : profile.OrganisationReplyToEmail);
+  setField('executiveSenderName', schoolSender ? profile.ExecutiveSenderName : profile.OrganisationExecutiveSenderName);
+  setField('executiveSenderEmail', schoolSender ? profile.ExecutiveSenderEmail : profile.OrganisationExecutiveSenderEmail);
+  setField('executiveReplyToName', schoolSender ? profile.ExecutiveReplyToName : profile.OrganisationExecutiveReplyToName);
+  setField('executiveReplyToEmail', schoolSender ? profile.ExecutiveReplyToEmail : profile.OrganisationExecutiveReplyToEmail);
   setField('nameFormat', profile.NameFormat || 'Surname, first name, middle name');
   setField('portalHeadline', profile.PortalHeadline);
   setField('portalSubheading', profile.PortalSubheading);

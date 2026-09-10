@@ -41,6 +41,7 @@ async function verifyFromFirestore(env, email, code) {
     receiptNo: clean(sale.ReceiptNo),
     applicantName: clean(sale.ApplicantName),
     classApplyingFor: clean(sale.ClassApplyingFor),
+    branchId: clean(sale.BranchId || 'main'),
     expiryDate: clean(sale.ExpiryDate),
     backend: 'firestore'
   };

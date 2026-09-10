@@ -24,32 +24,32 @@ export function resolveEmailSenderProfile(env = {}, {
   const organisationScoped = organization.Edition !== 'school';
   const sharedSenderEmail = clean(organisationScoped
     ? (
-        brevo?.OrganisationSenderEmail
-        || organizationProfile?.OrganisationSenderEmail
+        organizationProfile?.OrganisationSenderEmail
+        || brevo?.OrganisationSenderEmail
         || env.ORGANISATION_SENDER_EMAIL
         || env.ORGANIZATION_SENDER_EMAIL
         || env.DYNAMAX_SENDER_EMAIL
         || env.CHURCH_EMAIL
       )
     : (
-        brevo?.BrevoSenderEmail
-        || schoolProfile?.BrevoSenderEmail
+        schoolProfile?.BrevoSenderEmail
+        || brevo?.BrevoSenderEmail
         || env.DYNAMAX_SENDER_EMAIL
         || env.BREVO_SENDER_EMAIL
         || env.SCHOOL_EMAIL
       ));
   const sharedSenderName = clean(organisationScoped
     ? (
-        brevo?.OrganisationSenderName
-        || organizationProfile?.OrganisationSenderName
+        organizationProfile?.OrganisationSenderName
+        || brevo?.OrganisationSenderName
         || env.ORGANISATION_SENDER_NAME
         || env.ORGANIZATION_SENDER_NAME
         || env.DYNAMAX_SENDER_NAME
         || organization.Name
       )
     : (
-        brevo?.BrevoSenderName
-        || schoolProfile?.BrevoSenderName
+        schoolProfile?.BrevoSenderName
+        || brevo?.BrevoSenderName
         || env.DYNAMAX_SENDER_NAME
         || env.BREVO_SENDER_NAME
         || schoolProfile?.SchoolName
@@ -59,52 +59,52 @@ export function resolveEmailSenderProfile(env = {}, {
   const useExecutiveProfile = clean(senderProfile).toLowerCase() === 'executive';
   const senderEmail = clean(useExecutiveProfile
     ? (organisationScoped
-        ? (brevo?.OrganisationExecutiveSenderEmail || organizationProfile?.OrganisationExecutiveSenderEmail || sharedSenderEmail)
-        : (brevo?.ExecutiveSenderEmail || schoolProfile?.ExecutiveSenderEmail || sharedSenderEmail))
+        ? (organizationProfile?.OrganisationExecutiveSenderEmail || brevo?.OrganisationExecutiveSenderEmail || sharedSenderEmail)
+        : (schoolProfile?.ExecutiveSenderEmail || brevo?.ExecutiveSenderEmail || sharedSenderEmail))
     : sharedSenderEmail);
   const senderName = clean(useExecutiveProfile
     ? (organisationScoped
-        ? (brevo?.OrganisationExecutiveSenderName || organizationProfile?.OrganisationExecutiveSenderName || sharedSenderName)
-        : (brevo?.ExecutiveSenderName || schoolProfile?.ExecutiveSenderName || sharedSenderName))
+        ? (organizationProfile?.OrganisationExecutiveSenderName || brevo?.OrganisationExecutiveSenderName || sharedSenderName)
+        : (schoolProfile?.ExecutiveSenderName || brevo?.ExecutiveSenderName || sharedSenderName))
     : sharedSenderName);
   const replyToEmail = clean(useExecutiveProfile
     ? (organisationScoped
         ? (
-            brevo?.OrganisationExecutiveReplyToEmail
-            || organizationProfile?.OrganisationExecutiveReplyToEmail
-            || brevo?.OrganisationReplyToEmail
+            organizationProfile?.OrganisationExecutiveReplyToEmail
+            || brevo?.OrganisationExecutiveReplyToEmail
             || organizationProfile?.OrganisationReplyToEmail
+            || brevo?.OrganisationReplyToEmail
           )
         : (
-            brevo?.ExecutiveReplyToEmail
-            || schoolProfile?.ExecutiveReplyToEmail
-            || brevo?.BrevoReplyToEmail
+            schoolProfile?.ExecutiveReplyToEmail
+            || brevo?.ExecutiveReplyToEmail
             || schoolProfile?.BrevoReplyToEmail
+            || brevo?.BrevoReplyToEmail
             || schoolProfile?.SchoolEmail
           ))
     : (organisationScoped
-        ? (brevo?.OrganisationReplyToEmail || organizationProfile?.OrganisationReplyToEmail || organizationProfile?.SchoolEmail)
-        : (brevo?.BrevoReplyToEmail || schoolProfile?.BrevoReplyToEmail || schoolProfile?.SchoolEmail)));
+        ? (organizationProfile?.OrganisationReplyToEmail || brevo?.OrganisationReplyToEmail || organizationProfile?.SchoolEmail)
+        : (schoolProfile?.BrevoReplyToEmail || brevo?.BrevoReplyToEmail || schoolProfile?.SchoolEmail)));
   const replyToName = clean(useExecutiveProfile
     ? (organisationScoped
         ? (
-            brevo?.OrganisationExecutiveReplyToName
-            || organizationProfile?.OrganisationExecutiveReplyToName
-            || brevo?.OrganisationReplyToName
+            organizationProfile?.OrganisationExecutiveReplyToName
+            || brevo?.OrganisationExecutiveReplyToName
             || organizationProfile?.OrganisationReplyToName
+            || brevo?.OrganisationReplyToName
             || senderName
           )
         : (
-            brevo?.ExecutiveReplyToName
-            || schoolProfile?.ExecutiveReplyToName
-            || brevo?.BrevoReplyToName
+            schoolProfile?.ExecutiveReplyToName
+            || brevo?.ExecutiveReplyToName
             || schoolProfile?.BrevoReplyToName
+            || brevo?.BrevoReplyToName
             || schoolProfile?.SchoolName
             || senderName
           ))
     : (organisationScoped
-        ? (brevo?.OrganisationReplyToName || organizationProfile?.OrganisationReplyToName || organizationProfile?.SchoolName || senderName)
-        : (brevo?.BrevoReplyToName || schoolProfile?.BrevoReplyToName || schoolProfile?.SchoolName || senderName)));
+        ? (organizationProfile?.OrganisationReplyToName || brevo?.OrganisationReplyToName || organizationProfile?.SchoolName || senderName)
+        : (schoolProfile?.BrevoReplyToName || brevo?.BrevoReplyToName || schoolProfile?.SchoolName || senderName)));
   return {
     senderEmail,
     senderName,

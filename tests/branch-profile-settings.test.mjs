@@ -67,6 +67,25 @@ test('partial branch updates preserve previously saved web-only content', () => 
   });
 });
 
+test('communication sender identities can be overridden without exposing credentials', () => {
+  const values = deriveBranchProfileOverrides({
+    BrevoSenderEmail: 'organisation@example.org',
+    ExecutiveSenderName: 'Principal',
+    OrganisationSenderEmail: 'office@example.org'
+  }, {
+    BrevoSenderEmail: 'branch@example.org',
+    ExecutiveSenderName: 'Branch Principal',
+    OrganisationSenderEmail: 'branch-office@example.org',
+    BrevoApiKey: 'must-not-be-stored'
+  });
+  assert.deepEqual(values, {
+    BrevoSenderEmail: 'branch@example.org',
+    ExecutiveSenderName: 'Branch Principal',
+    OrganisationSenderEmail: 'branch-office@example.org'
+  });
+  assert.equal(BRANCH_PROFILE_OVERRIDE_FIELDS.includes('BrevoApiKey'), false);
+});
+
 test('organisation editions tolerate a missing legacy school profile', () => {
   const effective = applyBranchProfileOverrides(null, null, 'Main Branch');
 
@@ -78,9 +97,10 @@ test('organisation editions tolerate a missing legacy school profile', () => {
 });
 
 test('web and desktop settings use the same branch-effective profile contract', async () => {
-  const [settingsApi, backendApi, setupScript, desktopSource] = await Promise.all([
+  const [settingsApi, backendApi, setupHtml, setupScript, desktopSource] = await Promise.all([
     readFile(new URL('../functions/api/settings.js', import.meta.url), 'utf8'),
     readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8'),
+    readFile(new URL('../setup.html', import.meta.url), 'utf8'),
     readFile(new URL('../js/setup.js', import.meta.url), 'utf8'),
     readFile(new URL('../../suite/main.py', import.meta.url), 'utf8')
   ]);
@@ -89,6 +109,11 @@ test('web and desktop settings use the same branch-effective profile contract', 
   assert.match(settingsApi, /resetBranchProfileOverrides/);
   assert.match(backendApi, /case 'resetBranchProfileOverrides'/);
   assert.match(setupScript, /SettingsScope: settingsScopeField\.value/);
+  assert.match(setupHtml, /id="senderEmail"/);
+  assert.match(setupHtml, /Brevo API key remains organisation-wide/);
+  assert.match(setupScript, /OrganisationExecutiveReplyToEmail/);
+  assert.match(settingsApi, /patchDocumentFields\(env, 'settings', 'brevo'/);
+  assert.doesNotMatch(setupHtml, /BrevoApiKey/);
   assert.match(desktopSource, /"SettingsScope": "branch" if branch_settings else "organisation"/);
   assert.match(desktopSource, /def reset_selected_branch_settings/);
 });

@@ -28,6 +28,13 @@
         <label for="phone">Parent Phone</label>
         <input id="phone" name="phone" inputmode="tel">
 
+        <div id="admissionBranchField">
+          <label for="admissionBranch">Branch <span class="required">*</span></label>
+          <select id="admissionBranch" name="branchId" required>
+            <option value="">Loading available branches...</option>
+          </select>
+        </div>
+
         <label for="classApplyingFor">Class Applying For <span class="required">*</span></label>
         <select id="classApplyingFor" name="classApplyingFor" required>
           <option value="">Loading available classes...</option>
@@ -38,7 +45,7 @@
       </form>
 
       <p>
-        <a href="verify.html">Already paid? Register</a>
+        <a href="verify.html" id="alreadyPaidLink">Already paid? Register</a>
       </p>
       <p>
         <a href="index.html">Return to admission portal</a> 
@@ -46,9 +53,9 @@
     </section>
   </main>
 
-  <script src="js/site-config.js?v=20260809-branded-app-icon"></script>
+  <script src="js/site-config.js?v=20260910-branch-profile"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/payment-methods.js?v=20260809-direct-transfer-sharp-text"></script>
-  <script src="js/buy-form.js?v=20260809-direct-transfer"></script>
+  <script src="js/buy-form.js?v=20260910-branch-admissions"></script>
 </body>
 </html>

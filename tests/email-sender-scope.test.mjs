@@ -90,6 +90,40 @@ test('school email sender retains the existing school configuration', () => {
   assert.equal(resolved.senderName, 'Principal');
 });
 
+test('branch school sender overrides the organisation sender identity', () => {
+  const resolved = resolveEmailSenderProfile({ ORGANISATION_EDITION: 'school' }, {
+    brevo: {
+      BrevoSenderEmail: 'organisation@example.test',
+      BrevoSenderName: 'Organisation Office'
+    },
+    organizationProfile: { Edition: 'school', Name: 'Example School' },
+    schoolProfile: {
+      SchoolName: 'Independent Branch',
+      BrevoSenderEmail: 'branch@example.test',
+      BrevoSenderName: 'Branch Office'
+    }
+  });
+  assert.equal(resolved.senderEmail, 'branch@example.test');
+  assert.equal(resolved.senderName, 'Branch Office');
+});
+
+test('branch organisation sender overrides the shared organisation sender identity', () => {
+  const resolved = resolveEmailSenderProfile(faithEnv, {
+    brevo: {
+      OrganisationSenderEmail: 'organisation@example.test',
+      OrganisationSenderName: 'Organisation Office'
+    },
+    organizationProfile: {
+      Edition: 'faith',
+      Name: 'Independent Branch',
+      OrganisationSenderEmail: 'branch@example.test',
+      OrganisationSenderName: 'Branch Office'
+    }
+  });
+  assert.equal(resolved.senderEmail, 'branch@example.test');
+  assert.equal(resolved.senderName, 'Branch Office');
+});
+
 test('faith executive sender uses the organisation executive identity', () => {
   const resolved = resolveEmailSenderProfile(faithEnv, {
     brevo: {

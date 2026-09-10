@@ -89,6 +89,7 @@ import {
 } from '../lib/accounting-branch-scope.js';
 import {
   BRANCH_PROFILE_OVERRIDE_FIELDS,
+  assertConfiguredProfileBranch,
   effectiveBranchProfile,
   resetBranchProfileOverrides,
   saveBranchProfileOverrides
@@ -260,26 +261,29 @@ function sameText(a, b) {
   return clean(a).toLowerCase() === clean(b).toLowerCase();
 }
 
-let configuredClassCache = null;
+let configuredClassCache = new Map();
 
 function invalidateConfiguredClassCache() {
-  configuredClassCache = null;
+  configuredClassCache = new Map();
 }
 
-async function configuredClassNames(env) {
+async function configuredClassNames(env, options = {}) {
+  const branchId = clean(options.BranchId || options.branchId);
   const cacheKey = [
     clean(env.FIREBASE_PROJECT_ID),
     clean(env.DYNAMAX_WORKSPACE_ID),
-    clean(env.ORGANISATION_EDITION || env.ORGANIZATION_EDITION)
+    clean(env.ORGANISATION_EDITION || env.ORGANIZATION_EDITION),
+    branchId ? safeScopeId(branchId) : 'organisation'
   ].join('|');
   const now = Date.now();
-  if (configuredClassCache?.key === cacheKey && configuredClassCache.expiresAt > now) {
-    return configuredClassCache.classes;
+  const cached = configuredClassCache.get(cacheKey);
+  if (cached?.expiresAt > now) {
+    return cached.classes;
   }
   try {
-    const result = await getSchoolClasses(env);
+    const result = await getSchoolClasses(env, options);
     const classes = result.classes || [];
-    configuredClassCache = { key: cacheKey, classes, expiresAt: now + (60 * 1000) };
+    configuredClassCache.set(cacheKey, { classes, expiresAt: now + (60 * 1000) });
     return classes;
   } catch (_err) {
     return [];
@@ -799,7 +803,9 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'saveAccountingAdjustment', 'saveAccountingApprovalLimit', 'saveAccountingCloseChecklist',
   'importAccountingBankStatement', 'matchAccountingBankStatement',
   // Desktop school finance, billing, commercial inventory, and admission mutations.
-  'updateStudentProfile', 'reissueParentOnboarding', 'saveAdmissionClasses',
+  'updateStudentProfile', 'reissueParentOnboarding',
+  'saveSchoolClasses', 'resetSchoolClasses',
+  'saveAdmissionClasses', 'resetAdmissionClasses',
   'saveFeeItem', 'deleteFeeItem', 'seedDefaultFeeItems',
   'saveBillingCategory', 'deleteBillingCategory', 'updateStudentBillingCategory',
   'generateSchoolFeeInvoices', 'recordManualPayment',
@@ -2465,6 +2471,22 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
     AdmissionSignatoryName: mergedProfileText(existingProfile, body, 'AdmissionSignatoryName', 'admissionSignatoryName'),
     AdmissionSignatoryTitle: mergedProfileText(existingProfile, body, 'AdmissionSignatoryTitle', 'admissionSignatoryTitle'),
     EmailGreetingTemplate: mergedProfileText(existingProfile, body, 'EmailGreetingTemplate', 'emailGreetingTemplate', 'Dear Parent/Guardian,'),
+    BrevoSenderName: mergedProfileText(existingProfile, body, 'BrevoSenderName', 'brevoSenderName'),
+    BrevoSenderEmail: mergedProfileText(existingProfile, body, 'BrevoSenderEmail', 'brevoSenderEmail'),
+    BrevoReplyToEmail: mergedProfileText(existingProfile, body, 'BrevoReplyToEmail', 'brevoReplyToEmail'),
+    BrevoReplyToName: mergedProfileText(existingProfile, body, 'BrevoReplyToName', 'brevoReplyToName'),
+    ExecutiveSenderName: mergedProfileText(existingProfile, body, 'ExecutiveSenderName', 'executiveSenderName'),
+    ExecutiveSenderEmail: mergedProfileText(existingProfile, body, 'ExecutiveSenderEmail', 'executiveSenderEmail'),
+    ExecutiveReplyToEmail: mergedProfileText(existingProfile, body, 'ExecutiveReplyToEmail', 'executiveReplyToEmail'),
+    ExecutiveReplyToName: mergedProfileText(existingProfile, body, 'ExecutiveReplyToName', 'executiveReplyToName'),
+    OrganisationSenderName: mergedProfileText(existingProfile, body, 'OrganisationSenderName', 'organisationSenderName'),
+    OrganisationSenderEmail: mergedProfileText(existingProfile, body, 'OrganisationSenderEmail', 'organisationSenderEmail'),
+    OrganisationReplyToEmail: mergedProfileText(existingProfile, body, 'OrganisationReplyToEmail', 'organisationReplyToEmail'),
+    OrganisationReplyToName: mergedProfileText(existingProfile, body, 'OrganisationReplyToName', 'organisationReplyToName'),
+    OrganisationExecutiveSenderName: mergedProfileText(existingProfile, body, 'OrganisationExecutiveSenderName', 'organisationExecutiveSenderName'),
+    OrganisationExecutiveSenderEmail: mergedProfileText(existingProfile, body, 'OrganisationExecutiveSenderEmail', 'organisationExecutiveSenderEmail'),
+    OrganisationExecutiveReplyToEmail: mergedProfileText(existingProfile, body, 'OrganisationExecutiveReplyToEmail', 'organisationExecutiveReplyToEmail'),
+    OrganisationExecutiveReplyToName: mergedProfileText(existingProfile, body, 'OrganisationExecutiveReplyToName', 'organisationExecutiveReplyToName'),
     NameFormat: mergedProfileText(existingProfile, body, 'NameFormat', 'nameFormat', 'Surname, first name, middle name'),
     PortalHeadline: mergedProfileText(existingProfile, body, 'PortalHeadline', 'portalHeadline', 'Admissions and parent services in one place'),
     PortalSubheading: mergedProfileText(existingProfile, body, 'PortalSubheading', 'portalSubheading', 'Buy forms, complete applications, upload documents, pay fees, and monitor student activity from a secure school portal.'),
@@ -2589,13 +2611,14 @@ async function saveOrganisationStructure(env, body) {
 }
 
 async function getSchoolProfile(env, options = {}) {
-  let [profile, branding, storedStructure, documentSettings, organizationProfile, savedPublicContent] = await Promise.all([
+  let [profile, branding, storedStructure, documentSettings, organizationProfile, savedPublicContent, brevoSettings] = await Promise.all([
     getDocument(env, 'settings', 'schoolProfile').catch(() => null),
     getWebBranding(env).catch(() => null),
     getDocument(env, 'settings', 'schoolStructure').catch(() => null),
     getDocument(env, 'settings', 'admissionDocuments').catch(() => null),
     getDocument(env, 'settings', 'organisationProfile').catch(() => null),
-    getDocument(env, 'settings', PUBLIC_PORTAL_CONTENT_DOCUMENT).catch(() => null)
+    getDocument(env, 'settings', PUBLIC_PORTAL_CONTENT_DOCUMENT).catch(() => null),
+    getDocument(env, 'settings', 'brevo').catch(() => null)
   ]);
   profile = applyPublicPortalContent(profile || {}, savedPublicContent);
   if (organizationProfile) organizationProfile = await refreshOrganizationPlanPolicy(env, organizationProfile);
@@ -2630,6 +2653,22 @@ async function getSchoolProfile(env, options = {}) {
       OrganisationEdition: organization.Edition,
       OrganisationName: organization.Name,
       OrganisationCode: organization.Code,
+      BrevoSenderName: clean(profile?.BrevoSenderName || brevoSettings?.BrevoSenderName),
+      BrevoSenderEmail: clean(profile?.BrevoSenderEmail || brevoSettings?.BrevoSenderEmail),
+      BrevoReplyToEmail: clean(profile?.BrevoReplyToEmail || brevoSettings?.BrevoReplyToEmail),
+      BrevoReplyToName: clean(profile?.BrevoReplyToName || brevoSettings?.BrevoReplyToName),
+      ExecutiveSenderName: clean(profile?.ExecutiveSenderName || brevoSettings?.ExecutiveSenderName),
+      ExecutiveSenderEmail: clean(profile?.ExecutiveSenderEmail || brevoSettings?.ExecutiveSenderEmail),
+      ExecutiveReplyToEmail: clean(profile?.ExecutiveReplyToEmail || brevoSettings?.ExecutiveReplyToEmail),
+      ExecutiveReplyToName: clean(profile?.ExecutiveReplyToName || brevoSettings?.ExecutiveReplyToName),
+      OrganisationSenderName: clean(profile?.OrganisationSenderName || brevoSettings?.OrganisationSenderName),
+      OrganisationSenderEmail: clean(profile?.OrganisationSenderEmail || brevoSettings?.OrganisationSenderEmail),
+      OrganisationReplyToEmail: clean(profile?.OrganisationReplyToEmail || brevoSettings?.OrganisationReplyToEmail),
+      OrganisationReplyToName: clean(profile?.OrganisationReplyToName || brevoSettings?.OrganisationReplyToName),
+      OrganisationExecutiveSenderName: clean(profile?.OrganisationExecutiveSenderName || brevoSettings?.OrganisationExecutiveSenderName),
+      OrganisationExecutiveSenderEmail: clean(profile?.OrganisationExecutiveSenderEmail || brevoSettings?.OrganisationExecutiveSenderEmail),
+      OrganisationExecutiveReplyToEmail: clean(profile?.OrganisationExecutiveReplyToEmail || brevoSettings?.OrganisationExecutiveReplyToEmail),
+      OrganisationExecutiveReplyToName: clean(profile?.OrganisationExecutiveReplyToName || brevoSettings?.OrganisationExecutiveReplyToName),
       FeatureFlags: organization.FeatureFlags,
       PlanEntitlements: organization.PlanEntitlements,
       EnabledFeatureEntitlements: organization.EnabledFeatureEntitlements,
@@ -3239,7 +3278,10 @@ export async function recordSale(env, body) {
     ApplicantName: clean(body.ApplicantName),
     Email: email,
     Phone: clean(body.Phone),
-    ClassApplyingFor: canonicalConfiguredClass(clean(body.ClassApplyingFor), await configuredClassNames(env)),
+    ClassApplyingFor: canonicalConfiguredClass(
+      clean(body.ClassApplyingFor),
+      await configuredClassNames(env, { BranchId: body.BranchId || body.branchId })
+    ),
     AmountPaid: formatNairaAmount(amounts.RecognizedAmount),
     FormAmount: amounts.FormAmount,
     GrossAmount: amounts.GrossAmount,
@@ -3340,14 +3382,86 @@ function normalizeSchoolClass(row) {
   };
 }
 
-export async function getSchoolClasses(env) {
-  const classes = (await listCollection(env, 'settings/academics/classes'))
+const BRANCH_SCHOOL_SETTINGS_COLLECTION = 'branchSchoolSettings';
+
+function branchSchoolCollection(branchId, collectionName) {
+  return `organisationBranches/${safeScopeId(branchId)}/${collectionName}`;
+}
+
+async function schoolSettingsContext(env, options = {}) {
+  const requestedBranch = clean(options.BranchId || options.branchId);
+  const assignedBranch = clean(options.UserBranchId || options.userBranchId);
+  const settingsScope = clean(options.SettingsScope || options.settingsScope).toLowerCase();
+  if (!requestedBranch && !assignedBranch && settingsScope !== 'branch') {
+    return { scope: 'organisation', branchId: '', branchName: '', metadata: {} };
+  }
+  if (assignedBranch && requestedBranch && safeScopeId(assignedBranch) !== safeScopeId(requestedBranch)) {
+    const error = new Error('This account may configure only its assigned branch.');
+    error.status = 403;
+    throw error;
+  }
+  const branch = await assertConfiguredProfileBranch(env, assignedBranch || requestedBranch);
+  const metadata = await getDocument(env, BRANCH_SCHOOL_SETTINGS_COLLECTION, branch.id).catch(() => null) || {};
+  return { scope: 'branch', branchId: branch.id, branchName: branch.name, metadata };
+}
+
+function independentBranchSetup(context, field) {
+  return context.scope === 'branch' && clean(context.metadata?.[field]).toLowerCase() === 'independent';
+}
+
+async function replaceSettingsCollection(env, collectionPath, rows, normalizeRow, payloadForRow) {
+  const keepIds = new Set();
+  const savedRows = new Map();
+  let saved = 0;
+  for (const item of rows) {
+    const className = clean(item.ClassName || item.className || item);
+    if (!className) continue;
+    const documentId = safeDocumentId(className);
+    const payload = payloadForRow(item, className, saved);
+    keepIds.add(documentId);
+    await upsertDocument(env, collectionPath, documentId, payload);
+    savedRows.set(documentId, normalizeRow({ ...payload, __id: documentId }));
+    saved += 1;
+  }
+  for (const existing of await listCollection(env, collectionPath)) {
+    const existingId = clean(existing.__id || safeDocumentId(existing.ClassName || ''));
+    if (existingId && !keepIds.has(existingId)) await deleteDocument(env, collectionPath, existingId);
+  }
+  return { saved, rows: [...savedRows.values()] };
+}
+
+async function markIndependentBranchSetup(env, context, field, updatedBy) {
+  if (context.scope !== 'branch') return;
+  await upsertDocument(env, BRANCH_SCHOOL_SETTINGS_COLLECTION, context.branchId, {
+    ...context.metadata,
+    BranchId: context.branchId,
+    BranchName: context.branchName,
+    [field]: 'independent',
+    UpdatedAt: nowIso(),
+    UpdatedBy: updatedBy
+  });
+}
+
+export async function getSchoolClasses(env, options = {}) {
+  const context = await schoolSettingsContext(env, options);
+  const independent = independentBranchSetup(context, 'ClassSetupMode');
+  const collectionPath = independent
+    ? branchSchoolCollection(context.branchId, 'schoolClasses')
+    : 'settings/academics/classes';
+  const classes = (await listCollection(env, collectionPath))
     .map(normalizeSchoolClass)
     .sort((a, b) => asMoneyNumber(a.SortOrder) - asMoneyNumber(b.SortOrder));
   return {
     ok: true,
-    message: 'School classes loaded from the database.',
+    message: context.scope === 'branch'
+      ? `${context.branchName} ${independent ? 'independent classes' : 'inherited organisation classes'} loaded.`
+      : 'Organisation class defaults loaded from the database.',
     backend: 'firestore',
+    settingsScope: context.scope,
+    branchId: context.branchId,
+    branchName: context.branchName,
+    inherited: context.scope === 'branch' && !independent,
+    setupMode: independent ? 'independent' : 'inherit',
     classes
   };
 }
@@ -3361,46 +3475,62 @@ async function saveSchoolClasses(env, body) {
   }
   const updatedAt = nowIso();
   const updatedBy = clean(body.UpdatedBy || body.updatedBy) || 'School Office';
-  let saved = 0;
-  const keepIds = new Set();
-  const savedRows = new Map();
-  for (const item of classes) {
-    const className = clean(item.ClassName || item.className || item);
-    if (!className) continue;
-    const documentId = safeDocumentId(className);
-    const payload = {
+  const context = await schoolSettingsContext(env, body);
+  const collectionPath = context.scope === 'branch'
+    ? branchSchoolCollection(context.branchId, 'schoolClasses')
+    : 'settings/academics/classes';
+  const result = await replaceSettingsCollection(env, collectionPath, classes, normalizeSchoolClass, (item, className, saved) => ({
       ClassName: className,
       Arms: clean(item.Arms || item.arms || item.ClassArms),
       Active: yesNo(item.Active ?? item.active ?? 'YES') || 'YES',
       SortOrder: asMoneyNumber(item.SortOrder || item.sortOrder || saved + 1),
+      BranchId: context.branchId,
       UpdatedAt: updatedAt,
       UpdatedBy: updatedBy
-    };
-    keepIds.add(documentId);
-    await upsertDocument(env, 'settings/academics/classes', documentId, payload);
-    savedRows.set(documentId, normalizeSchoolClass({ ...payload, __id: documentId }));
-    saved += 1;
-  }
-  for (const existing of await listCollection(env, 'settings/academics/classes')) {
-    const existingId = clean(existing.__id || safeDocumentId(existing.ClassName || ''));
-    if (existingId && !keepIds.has(existingId)) {
-      await deleteDocument(env, 'settings/academics/classes', existingId);
-    }
-  }
+    }));
+  await markIndependentBranchSetup(env, context, 'ClassSetupMode', updatedBy);
   invalidateConfiguredClassCache();
-  const normalizedClasses = [...savedRows.values()]
+  const normalizedClasses = result.rows
     .sort((a, b) => asMoneyNumber(a.SortOrder) - asMoneyNumber(b.SortOrder));
   return {
     ok: true,
-    message: `School classes saved to the database (${saved}).`,
-    saved,
+    message: `${context.scope === 'branch' ? `${context.branchName} independent` : 'Organisation default'} classes saved (${result.saved}).`,
+    saved: result.saved,
     backend: 'firestore',
+    settingsScope: context.scope,
+    branchId: context.branchId,
+    branchName: context.branchName,
+    inherited: false,
+    setupMode: context.scope === 'branch' ? 'independent' : 'organisation',
     classes: normalizedClasses
   };
 }
 
-export async function getAdmissionClasses(env) {
-  const classes = (await listCollection(env, 'settings/admission/classes'))
+async function resetSchoolClasses(env, body) {
+  const context = await schoolSettingsContext(env, { ...body, SettingsScope: 'branch' });
+  for (const row of await listCollection(env, branchSchoolCollection(context.branchId, 'schoolClasses'))) {
+    const id = clean(row.__id || safeDocumentId(row.ClassName || ''));
+    if (id) await deleteDocument(env, branchSchoolCollection(context.branchId, 'schoolClasses'), id);
+  }
+  await upsertDocument(env, BRANCH_SCHOOL_SETTINGS_COLLECTION, context.branchId, {
+    ...context.metadata,
+    BranchId: context.branchId,
+    BranchName: context.branchName,
+    ClassSetupMode: 'inherit',
+    UpdatedAt: nowIso(),
+    UpdatedBy: clean(body.UpdatedBy || body.updatedBy || body.UserRole) || 'School Office'
+  });
+  invalidateConfiguredClassCache();
+  return getSchoolClasses(env, { BranchId: context.branchId });
+}
+
+export async function getAdmissionClasses(env, options = {}) {
+  const context = await schoolSettingsContext(env, options);
+  const independent = independentBranchSetup(context, 'AdmissionSetupMode');
+  const collectionPath = independent
+    ? branchSchoolCollection(context.branchId, 'admissionClasses')
+    : 'settings/admission/classes';
+  const classes = (await listCollection(env, collectionPath))
     .map(normalizeAdmissionClass)
     .sort((a, b) => asMoneyNumber(a.SortOrder) - asMoneyNumber(b.SortOrder));
   const openClasses = classes
@@ -3412,8 +3542,15 @@ export async function getAdmissionClasses(env) {
     {};
   return {
     ok: true,
-    message: 'Admission classes loaded from the database.',
+    message: context.scope === 'branch'
+      ? `${context.branchName} ${independent ? 'independent admission setup' : 'inherited organisation admission setup'} loaded.`
+      : 'Organisation admission defaults loaded from the database.',
     backend: 'firestore',
+    settingsScope: context.scope,
+    branchId: context.branchId,
+    branchName: context.branchName,
+    inherited: context.scope === 'branch' && !independent,
+    setupMode: independent ? 'independent' : 'inherit',
     openClasses,
     openClassOptions: openClasses,
     classes,
@@ -3431,11 +3568,27 @@ async function saveAdmissionClasses(env, body) {
   }
   const updatedAt = nowIso();
   const updatedBy = clean(body.RecordedBy || body.UpdatedBy || body.updatedBy) || 'Admissions Office';
-  let saved = 0;
-  const keepIds = new Set();
-  for (const item of classes) {
-    const className = clean(item.ClassName || item.className || item);
-    if (!className) continue;
+  const context = await schoolSettingsContext(env, body);
+  const schoolClassSetup = await getSchoolClasses(
+    env,
+    context.scope === 'branch' ? { BranchId: context.branchId } : {}
+  );
+  const configuredClassKeys = new Set((schoolClassSetup.classes || [])
+    .map((item) => clean(item.ClassName || item.className).toLowerCase())
+    .filter(Boolean));
+  const unknownClasses = configuredClassKeys.size
+    ? classes.map((item) => clean(item.ClassName || item.className || item))
+      .filter((className) => className && !configuredClassKeys.has(className.toLowerCase()))
+    : [];
+  if (unknownClasses.length) {
+    const error = new Error(`Admission classes must come from this ${context.scope === 'branch' ? 'branch' : 'organisation'} class setup: ${unknownClasses.join(', ')}.`);
+    error.status = 400;
+    throw error;
+  }
+  const collectionPath = context.scope === 'branch'
+    ? branchSchoolCollection(context.branchId, 'admissionClasses')
+    : 'settings/admission/classes';
+  const result = await replaceSettingsCollection(env, collectionPath, classes, normalizeAdmissionClass, (item, className, saved) => {
     const rawMinimumAge = item.MinimumAge ?? item.minimumAge
       ?? item.MinimumAdmissionAge ?? item.minimumAdmissionAge ?? '';
     const minimumAge = normalizeMinimumAdmissionAge(rawMinimumAge);
@@ -3444,32 +3597,42 @@ async function saveAdmissionClasses(env, body) {
       err.status = 400;
       throw err;
     }
-    const documentId = safeDocumentId(className);
-    const payload = {
+    return {
       ClassName: className,
       FormAmount: asMoneyNumber(item.FormAmount || item.formAmount || formAmount),
       Active: yesNo(item.Active ?? item.active ?? 'NO') || 'NO',
       SortOrder: asMoneyNumber(item.SortOrder || item.sortOrder || saved + 1),
       MinimumAge: minimumAge === null ? '' : minimumAge,
+      BranchId: context.branchId,
       UpdatedAt: updatedAt,
       UpdatedBy: updatedBy
     };
-    keepIds.add(documentId);
-    await upsertDocument(env, 'settings/admission/classes', documentId, payload);
-    saved += 1;
-  }
-  for (const existing of await listCollection(env, 'settings/admission/classes')) {
-    const existingId = clean(existing.__id || safeDocumentId(existing.ClassName || ''));
-    if (existingId && !keepIds.has(existingId)) {
-      await deleteDocument(env, 'settings/admission/classes', existingId);
-    }
-  }
+  });
+  await markIndependentBranchSetup(env, context, 'AdmissionSetupMode', updatedBy);
+  const loaded = await getAdmissionClasses(env, context.scope === 'branch' ? { BranchId: context.branchId } : {});
   return {
-    ok: true,
-    message: `Admission classes saved to the database (${saved}).`,
-    saved,
-    ...(await getAdmissionClasses(env))
+    ...loaded,
+    message: `${context.scope === 'branch' ? `${context.branchName} independent` : 'Organisation default'} admission setup saved (${result.saved}).`,
+    saved: result.saved
   };
+}
+
+async function resetAdmissionClasses(env, body) {
+  const context = await schoolSettingsContext(env, { ...body, SettingsScope: 'branch' });
+  const collectionPath = branchSchoolCollection(context.branchId, 'admissionClasses');
+  for (const row of await listCollection(env, collectionPath)) {
+    const id = clean(row.__id || safeDocumentId(row.ClassName || ''));
+    if (id) await deleteDocument(env, collectionPath, id);
+  }
+  await upsertDocument(env, BRANCH_SCHOOL_SETTINGS_COLLECTION, context.branchId, {
+    ...context.metadata,
+    BranchId: context.branchId,
+    BranchName: context.branchName,
+    AdmissionSetupMode: 'inherit',
+    UpdatedAt: nowIso(),
+    UpdatedBy: clean(body.UpdatedBy || body.updatedBy || body.UserRole) || 'Admissions Office'
+  });
+  return getAdmissionClasses(env, { BranchId: context.branchId });
 }
 
 export function feeCodeRenameAllowed(originalFeeCode, feeCode) {
@@ -7853,13 +8016,17 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'reissueParentOnboarding':
       return reissueParentOnboarding(env, body);
     case 'getAdmissionClasses':
-      return getAdmissionClasses(env);
+      return getAdmissionClasses(env, body);
     case 'saveAdmissionClasses':
       return saveAdmissionClasses(env, body);
+    case 'resetAdmissionClasses':
+      return resetAdmissionClasses(env, body);
     case 'getSchoolClasses':
-      return getSchoolClasses(env);
+      return getSchoolClasses(env, body);
     case 'saveSchoolClasses':
       return saveSchoolClasses(env, body);
+    case 'resetSchoolClasses':
+      return resetSchoolClasses(env, body);
     case 'saveFeeItem':
       return saveFeeItem(env, body);
     case 'saveFeeItems':

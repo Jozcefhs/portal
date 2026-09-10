@@ -3,7 +3,10 @@
 
 import { getSchoolCode, recordSale as recordSaleInFirestore } from './backend.js';
 import { createDocumentIfAbsent, getDocument, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { effectiveBranchProfile } from '../lib/branch-profile-settings.js';
+import { sendConfiguredEmail } from '../lib/email-service.js';
 import { paymentIntentReference, paymentIntentType } from '../lib/payment-intent.js';
+import { safeScopeId } from '../lib/school-scope.js';
 import {
   beginIdempotentRequest,
   completeIdempotentRequest,
@@ -102,15 +105,9 @@ function renderGreeting(template, applicantName, schoolName) {
 }
 
 export async function sendSchoolFormPurchaseEmail(env, sale) {
-  const profile = await getSettingsDocument(env, 'schoolProfile');
-  const brevo = await getSettingsDocument(env, 'brevo');
-  const apiKey = String(env.BREVO_API_KEY || '').trim();
-  const senderEmail = String(brevo.BrevoSenderEmail || env.BREVO_SENDER_EMAIL || env.SCHOOL_EMAIL || '').trim();
+  const defaultProfile = await getSettingsDocument(env, 'schoolProfile');
+  const profile = await effectiveBranchProfile(env, defaultProfile, sale.BranchId || sale.branchId);
   const schoolName = String(profile.SchoolName || env.SCHOOL_NAME || 'Integrated School Management Suite').trim();
-  const senderName = String(brevo.BrevoSenderName || env.BREVO_SENDER_NAME || schoolName).trim();
-  if (!apiKey || !senderEmail || !sale.Email) {
-    return { ok: false, skipped: true, message: 'Brevo API key, sender email, or recipient email is missing.' };
-  }
 
   const schoolAddress = String(profile.SchoolAddress || env.SCHOOL_ADDRESS || '').trim();
   const office = 'School Office';
@@ -154,23 +151,14 @@ ${office}`;
       </div>
     </div>`;
 
-  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
-    method: 'POST',
-    headers: {
-      accept: 'application/json',
-      'api-key': apiKey,
-      'content-type': 'application/json'
-    },
-    body: JSON.stringify({
-      sender: { name: senderName, email: senderEmail },
-      to: [{ email: sale.Email, name: sale.ApplicantName || sale.Email }],
-      subject: `Admission Application Form Link - ${schoolName}`,
-      textContent,
-      htmlContent
-    })
+  return sendConfiguredEmail(env, {
+    toEmail: sale.Email,
+    toName: sale.ApplicantName || sale.Email,
+    subject: `Admission Application Form Link - ${schoolName}`,
+    textContent,
+    htmlContent,
+    branchId: sale.BranchId || sale.branchId
   });
-  const detail = await response.text().catch(() => '');
-  return { ok: response.ok, status: response.status, message: detail };
 }
 
 async function recordSale(env, payload) {
@@ -221,6 +209,7 @@ export async function onRequestPost(context) {
     const formAmount = Number(meta.formAmount || tx.requested_amount || grossAmount);
     const amountPaid = formatNairaAmount(netAmount);
     const intent = await getDocument(env, 'paymentIntents', String(tx.reference || reference).replace(/[\/\\?#\[\]]/g, '-')).catch(() => null);
+    const branchId = safeScopeId(intent?.BranchId || meta.branchId || meta.BranchId || 'main');
     const metadataPaymentType = clean(meta.paymentType || meta.PaymentType);
     const storedIntentType = paymentIntentType(intent);
     if (metadataPaymentType && storedIntentType && paymentType(metadataPaymentType) !== paymentType(storedIntentType)) {
@@ -242,6 +231,10 @@ export async function onRequestPost(context) {
           String(intent.ParentEmail).trim().toLowerCase() !== String((tx.customer && tx.customer.email) || '').trim().toLowerCase()) {
         return Response.json({ ok: false, message: 'The verified form purchase belongs to a different parent email.' }, { status: 409 });
       }
+      if (clean(intent.BranchId) && clean(meta.branchId || meta.BranchId)
+          && safeScopeId(intent.BranchId) !== safeScopeId(meta.branchId || meta.BranchId)) {
+        return Response.json({ ok: false, message: 'The transaction branch does not match its saved form-purchase intent.' }, { status: 409 });
+      }
     }
     if (!body.idempotencyKey && !body.IdempotencyKey && !request.headers.get('Idempotency-Key')) {
       body.idempotencyKey = `verify-form:${String(reference).replace(/[^A-Za-z0-9._:-]/g, '-').slice(0, 140)}`;
@@ -262,10 +255,11 @@ export async function onRequestPost(context) {
     const receiptNo = makeReceiptNo(tx.reference || reference, await getSchoolCode(env));
     const basePayload = {
       ReceiptNo: receiptNo,
-      ApplicantName: meta.applicantName || '',
+      ApplicantName: meta.applicantName || intent?.ApplicantName || '',
       Email: (tx.customer && tx.customer.email) || meta.email || '',
-      Phone: meta.phone || '',
-      ClassApplyingFor: meta.classApplyingFor || '',
+      Phone: meta.phone || intent?.Phone || '',
+      ClassApplyingFor: meta.classApplyingFor || intent?.ClassApplyingFor || '',
+      BranchId: branchId,
       AmountPaid: amountPaid,
       FormAmount: Number.isFinite(formAmount) && formAmount > 0 ? formAmount : grossAmount,
       GrossAmount: grossAmount,
@@ -273,7 +267,7 @@ export async function onRequestPost(context) {
       NetAmount: netAmount,
       Gateway: 'Paystack',
       PaymentMethod: 'Online',
-      FormLink: `${origin}/verify.html`,
+      FormLink: `${origin}/verify.html?branch=${encodeURIComponent(branchId)}`,
       PaymentDate: tx.paid_at || tx.paidAt || new Date().toISOString(),
       PaymentReference: tx.reference || reference,
       ExpiryDate: formatDateOnly(addDays(new Date(), Number.isFinite(expiryDays) && expiryDays > 0 ? expiryDays : 30)),
@@ -320,6 +314,7 @@ export async function onRequestPost(context) {
       Type: 'AdmissionFormPurchase',
       Reference: tx.reference || reference,
       Recipient: basePayload.Email,
+      BranchId: branchId,
       Status: 'Processing',
       CreatedAt: new Date().toISOString(),
       UpdatedAt: new Date().toISOString()
@@ -335,6 +330,7 @@ export async function onRequestPost(context) {
         Type: 'AdmissionFormPurchase',
         Reference: tx.reference || reference,
         Recipient: basePayload.Email,
+        BranchId: branchId,
         Status: emailResult.ok ? 'Sent' : (emailResult.skipped ? 'Skipped' : 'Failed'),
         ProviderStatus: Number(emailResult.status || 0),
         ProviderMessage: String(emailResult.message || '').slice(0, 500),
@@ -359,6 +355,7 @@ export async function onRequestPost(context) {
       netAmount,
       currency: tx.currency || 'NGN',
       reference: tx.reference || reference,
+      branchId,
       formLink: basePayload.FormLink,
       expiryDate: recordData.expiryDate || basePayload.ExpiryDate,
       schoolEmailSent: Boolean(emailResult && emailResult.ok),

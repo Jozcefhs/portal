@@ -43,6 +43,11 @@ const SCHOOL_SCOPED_COLLECTIONS = Object.freeze([
   'studentConductAudit'
 ]);
 
+const SCHOOL_BRANCH_SETTING_COLLECTIONS = Object.freeze([
+  'schoolClasses',
+  'admissionClasses'
+]);
+
 const EXTRA_NESTED_COLLECTIONS = Object.freeze([
   'settings/academics/classes',
   'settings/admission/classes'
@@ -112,6 +117,11 @@ export async function organizationBackupDescriptors(env) {
       SCHOOL_SCOPED_COLLECTIONS.map((collection) => schoolCollectionPaths(env, collection))
     )).flat();
     descriptors.push(...schoolPaths.map((path) => ({ key: path, path, type: 'school' })));
+    branches.forEach((branch) => SCHOOL_BRANCH_SETTING_COLLECTIONS.forEach((collection) => {
+      const branchId = clean(branch.Id || branch.id || 'main').toLowerCase() || 'main';
+      const path = `organisationBranches/${branchId}/${collection}`;
+      descriptors.push({ key: path, path, type: 'branch-school-setting' });
+    }));
   } else {
     branches.forEach((branch) => Object.values(CHURCH_COLLECTIONS).forEach((collection) => {
       const path = churchCollectionPath(collection, branch.Id || branch.id || 'main');
@@ -216,7 +226,8 @@ function restoreCollectionPathAllowed(path, discoveredPaths, edition) {
     );
   if (isAttendancePath) return true;
   if (edition === 'school') {
-    return /^schoolBranches\/[a-z0-9._-]+\/sections\/(?:primary|secondary)\/(?:applications|students|studentConductCases|studentConductAudit)$/i.test(path);
+    return /^schoolBranches\/[a-z0-9._-]+\/sections\/(?:primary|secondary)\/(?:applications|students|studentConductCases|studentConductAudit)$/i.test(path)
+      || /^organisationBranches\/[a-z0-9._-]+\/(?:schoolClasses|admissionClasses)$/i.test(path);
   }
   const churchCollections = new Set(Object.values(CHURCH_COLLECTIONS));
   return parts.length === 3

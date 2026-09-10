@@ -2,9 +2,12 @@ const form = document.getElementById('formPurchaseForm');
 const button = document.getElementById('purchaseBtn');
 const statusEl = document.getElementById('purchaseStatus');
 const classSelect = document.getElementById('classApplyingFor');
+const branchSelect = document.getElementById('admissionBranch');
+const alreadyPaidLink = document.getElementById('alreadyPaidLink');
 let purchaseIdempotencyKey = '';
 let defaultFormAmount = 0;
 let classFormAmounts = new Map();
+let admissionLoadSerial = 0;
 
 function newIdempotencyKey() {
   if (window.crypto?.randomUUID) return window.crypto.randomUUID();
@@ -46,27 +49,59 @@ function setClassOptions(classes) {
   button.disabled = classes.length === 0;
 }
 
-async function loadAdmissionClasses() {
+function setBranchOptions(branches, selectedBranchId) {
+  branchSelect.innerHTML = '';
+  (Array.isArray(branches) ? branches : []).forEach((branch) => {
+    const option = document.createElement('option');
+    option.value = String(branch.id || '').trim();
+    option.textContent = String(branch.name || branch.id || '').trim();
+    branchSelect.appendChild(option);
+  });
+  branchSelect.value = selectedBranchId || branchSelect.options[0]?.value || '';
+  branchSelect.disabled = branchSelect.options.length < 2;
+}
+
+function updateBranchLinks(branchId) {
+  const url = new URL(window.location.href);
+  if (branchId) url.searchParams.set('branch', branchId);
+  else url.searchParams.delete('branch');
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  if (alreadyPaidLink) {
+    alreadyPaidLink.href = branchId ? `verify.html?branch=${encodeURIComponent(branchId)}` : 'verify.html';
+  }
+}
+
+async function loadAdmissionClasses(requestedBranchId = '') {
+  const loadSerial = ++admissionLoadSerial;
   try {
+    const branchQuery = requestedBranchId ? `?branchId=${encodeURIComponent(requestedBranchId)}` : '';
     const data = window.DynamaxPublicApi?.getJson
-      ? await window.DynamaxPublicApi.getJson('/api/admission-classes', {
-          cacheKey: 'admission-classes',
+      ? await window.DynamaxPublicApi.getJson(`/api/admission-classes${branchQuery}`, {
+          cacheKey: `admission-classes:${requestedBranchId || 'active'}`,
           cache: false,
           force: true,
           invalidMessage: 'Could not load available classes because the server returned an error page. Please try again.',
           errorMessage: 'Could not load available classes.'
         })
-      : await fetch('/api/admission-classes', { cache: 'no-cache' }).then((response) => response.json());
+      : await fetch(`/api/admission-classes${branchQuery}`, { cache: 'no-cache' }).then((response) => response.json());
     if (!data.ok) {
       throw new Error(data.message || 'Could not load available classes.');
     }
+    if (loadSerial !== admissionLoadSerial) return;
     defaultFormAmount = Number(data.formAmount || 0);
     classFormAmounts = new Map((data.allClasses || []).map((row) => [
       String(row.ClassName || '').trim().toLowerCase(),
       Number(row.FormAmount || 0)
     ]));
+    setBranchOptions(data.availableBranches, data.branchId);
+    updateBranchLinks(data.branchId);
     setClassOptions(Array.isArray(data.classes) ? data.classes : []);
+    setStatus('', '');
+    if (window.DynamaxPublicApi?.refreshSiteProfile && data.branchId) {
+      window.DynamaxPublicApi.refreshSiteProfile({ branchId: data.branchId }).catch(() => null);
+    }
   } catch (error) {
+    if (loadSerial !== admissionLoadSerial) return;
     setClassOptions([]);
     setStatus(error.message, 'bad');
   }
@@ -78,11 +113,12 @@ form.addEventListener('submit', async (event) => {
     applicantName: document.getElementById('applicantName').value.trim(),
     email: document.getElementById('email').value.trim().toLowerCase(),
     phone: document.getElementById('phone').value.trim(),
-    classApplyingFor: document.getElementById('classApplyingFor').value.trim()
+    classApplyingFor: document.getElementById('classApplyingFor').value.trim(),
+    branchId: branchSelect.value.trim()
   };
 
   try {
-    const branchId = new URLSearchParams(window.location.search).get('branch') || 'main';
+    const branchId = payload.branchId;
     const amount = classFormAmounts.get(payload.classApplyingFor.toLowerCase()) || defaultFormAmount;
     const paymentChoice = await window.DynamaxPaymentMethods.choose({ branchId, currency: 'NGN', amount });
     if (!paymentChoice) return;
@@ -128,4 +164,11 @@ form.addEventListener('input', () => {
   if (!button.disabled) purchaseIdempotencyKey = '';
 });
 
-loadAdmissionClasses();
+branchSelect.addEventListener('change', () => {
+  purchaseIdempotencyKey = '';
+  setClassOptions([]);
+  setStatus('Loading this branch\'s admission setup...', '');
+  loadAdmissionClasses(branchSelect.value);
+});
+
+loadAdmissionClasses(new URLSearchParams(window.location.search).get('branch') || '');

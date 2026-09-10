@@ -228,15 +228,17 @@ function parseConfiguredClasses(values) {
 
 async function loadAdmissionClasses() {
   try {
+    const branchId = String(verified?.branchId || new URLSearchParams(window.location.search).get('branch') || 'main').trim();
+    const endpoint = `/api/admission-classes?branchId=${encodeURIComponent(branchId)}`;
     const data = window.DynamaxPublicApi?.getJson
-      ? await window.DynamaxPublicApi.getJson('/api/admission-classes', {
-          cacheKey: 'admission-classes',
+      ? await window.DynamaxPublicApi.getJson(endpoint, {
+          cacheKey: `admission-classes:${branchId}`,
           cache: false,
           force: true,
           invalidMessage: 'Could not load available classes because the server returned an error page. Please try again.',
           errorMessage: 'Could not load available classes.'
         })
-      : await fetch('/api/admission-classes', { cache: 'no-cache' }).then((response) => response.json());
+      : await fetch(endpoint, { cache: 'no-cache' }).then((response) => response.json());
     if (!data.ok) {
       throw new Error(data.message || 'Could not load available classes.');
     }
@@ -274,7 +276,8 @@ try {
 verified = verified || getDevVerification();
 
 if (!verified || !verified.email || !verified.code) {
-  window.location.href = 'verify.html';
+  const branchId = new URLSearchParams(window.location.search).get('branch') || '';
+  window.location.href = branchId ? `verify.html?branch=${encodeURIComponent(branchId)}` : 'verify.html';
 } else {
   verifiedBox.textContent = `Verified purchase: ${verified.email}${verified.receiptNo ? ' | Receipt: ' + verified.receiptNo : ''}`;
   const parentEmailInput = document.getElementById('parentEmail');
@@ -359,6 +362,7 @@ form.addEventListener('submit', async (event) => {
     const params = new URLSearchParams();
     if (reference) params.set('ref', reference);
     if (applicantName) params.set('name', applicantName);
+    if (verified.branchId) params.set('branch', verified.branchId);
 
     window.location.href = `success.html?${params.toString()}`;
 

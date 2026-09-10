@@ -1,4 +1,4 @@
-import { getDocument, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { getDocument, patchDocumentFields, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { documentStorageConfigured } from '../lib/document-storage.js';
 import { organizationProfileDocument, resolveOrganizationConfig } from '../lib/organization-config.js';
 import {
@@ -30,6 +30,25 @@ import {
 const PROFILE_CACHE_MS = 60 * 1000;
 let profileCache = null;
 
+const SENDER_PROFILE_FIELDS = Object.freeze([
+  'BrevoSenderName',
+  'BrevoSenderEmail',
+  'BrevoReplyToEmail',
+  'BrevoReplyToName',
+  'ExecutiveSenderName',
+  'ExecutiveSenderEmail',
+  'ExecutiveReplyToEmail',
+  'ExecutiveReplyToName',
+  'OrganisationSenderName',
+  'OrganisationSenderEmail',
+  'OrganisationReplyToEmail',
+  'OrganisationReplyToName',
+  'OrganisationExecutiveSenderName',
+  'OrganisationExecutiveSenderEmail',
+  'OrganisationExecutiveReplyToEmail',
+  'OrganisationExecutiveReplyToName'
+]);
+
 function clean(value) {
   return String(value ?? '').trim();
 }
@@ -56,6 +75,22 @@ function defaultProfile(env) {
     SchoolEmail: clean(env.SCHOOL_EMAIL) || '',
     SchoolSignatoryName: clean(env.SCHOOL_SIGNATORY_NAME) || '',
     SchoolSignatoryTitle: clean(env.SCHOOL_SIGNATORY_TITLE) || '',
+    BrevoSenderName: clean(env.DYNAMAX_SENDER_NAME || env.BREVO_SENDER_NAME),
+    BrevoSenderEmail: clean(env.DYNAMAX_SENDER_EMAIL || env.BREVO_SENDER_EMAIL),
+    BrevoReplyToEmail: clean(env.BREVO_REPLY_TO_EMAIL),
+    BrevoReplyToName: clean(env.BREVO_REPLY_TO_NAME),
+    ExecutiveSenderName: clean(env.EXECUTIVE_SENDER_NAME),
+    ExecutiveSenderEmail: clean(env.EXECUTIVE_SENDER_EMAIL),
+    ExecutiveReplyToEmail: clean(env.EXECUTIVE_REPLY_TO_EMAIL),
+    ExecutiveReplyToName: clean(env.EXECUTIVE_REPLY_TO_NAME),
+    OrganisationSenderName: clean(env.ORGANISATION_SENDER_NAME || env.ORGANIZATION_SENDER_NAME),
+    OrganisationSenderEmail: clean(env.ORGANISATION_SENDER_EMAIL || env.ORGANIZATION_SENDER_EMAIL),
+    OrganisationReplyToEmail: clean(env.ORGANISATION_REPLY_TO_EMAIL || env.ORGANIZATION_REPLY_TO_EMAIL),
+    OrganisationReplyToName: clean(env.ORGANISATION_REPLY_TO_NAME || env.ORGANIZATION_REPLY_TO_NAME),
+    OrganisationExecutiveSenderName: clean(env.ORGANISATION_EXECUTIVE_SENDER_NAME || env.ORGANIZATION_EXECUTIVE_SENDER_NAME),
+    OrganisationExecutiveSenderEmail: clean(env.ORGANISATION_EXECUTIVE_SENDER_EMAIL || env.ORGANIZATION_EXECUTIVE_SENDER_EMAIL),
+    OrganisationExecutiveReplyToEmail: clean(env.ORGANISATION_EXECUTIVE_REPLY_TO_EMAIL || env.ORGANIZATION_EXECUTIVE_REPLY_TO_EMAIL),
+    OrganisationExecutiveReplyToName: clean(env.ORGANISATION_EXECUTIVE_REPLY_TO_NAME || env.ORGANIZATION_EXECUTIVE_REPLY_TO_NAME),
     ResultSignatoryName: clean(env.RESULT_SIGNATORY_NAME) || '',
     ResultSignatoryTitle: clean(env.RESULT_SIGNATORY_TITLE) || '',
     OfferSignatoryName: clean(env.OFFER_SIGNATORY_NAME) || '',
@@ -135,12 +170,13 @@ async function loadProfile(env, options = {}) {
   let savedOrganization = null;
   try {
     requireFirestoreEnv(env);
-    const [saved, storedOrganization, branding, structure, savedPublicContent] = await Promise.all([
+    const [saved, storedOrganization, branding, structure, savedPublicContent, savedBrevo] = await Promise.all([
       getDocument(env, 'settings', 'schoolProfile'),
       getDocument(env, 'settings', 'organisationProfile'),
       getWebBranding(env),
       getSchoolStructure(env),
-      getDocument(env, 'settings', PUBLIC_PORTAL_CONTENT_DOCUMENT).catch(() => null)
+      getDocument(env, 'settings', PUBLIC_PORTAL_CONTENT_DOCUMENT).catch(() => null),
+      getDocument(env, 'settings', 'brevo').catch(() => null)
     ]);
     savedOrganization = storedOrganization
       ? await refreshOrganizationPlanPolicy(env, storedOrganization)
@@ -150,6 +186,9 @@ async function loadProfile(env, options = {}) {
         if (saved[key] !== undefined) profile[key] = saved[key];
       });
     }
+    SENDER_PROFILE_FIELDS.forEach((field) => {
+      profile[field] = clean(profile[field] || savedBrevo?.[field]);
+    });
     profile = applyPublicPortalContent(profile, savedPublicContent);
     const identity = deploymentIdentityDetails({
       env,
@@ -387,6 +426,22 @@ export async function onRequestPost(context) {
       SchoolEmail: clean(incoming.SchoolEmail),
       SchoolSignatoryName: clean(incoming.SchoolSignatoryName),
       SchoolSignatoryTitle: clean(incoming.SchoolSignatoryTitle),
+      BrevoSenderName: mergedProfileText(existing, incoming, 'BrevoSenderName'),
+      BrevoSenderEmail: mergedProfileText(existing, incoming, 'BrevoSenderEmail'),
+      BrevoReplyToEmail: mergedProfileText(existing, incoming, 'BrevoReplyToEmail'),
+      BrevoReplyToName: mergedProfileText(existing, incoming, 'BrevoReplyToName'),
+      ExecutiveSenderName: mergedProfileText(existing, incoming, 'ExecutiveSenderName'),
+      ExecutiveSenderEmail: mergedProfileText(existing, incoming, 'ExecutiveSenderEmail'),
+      ExecutiveReplyToEmail: mergedProfileText(existing, incoming, 'ExecutiveReplyToEmail'),
+      ExecutiveReplyToName: mergedProfileText(existing, incoming, 'ExecutiveReplyToName'),
+      OrganisationSenderName: mergedProfileText(existing, incoming, 'OrganisationSenderName'),
+      OrganisationSenderEmail: mergedProfileText(existing, incoming, 'OrganisationSenderEmail'),
+      OrganisationReplyToEmail: mergedProfileText(existing, incoming, 'OrganisationReplyToEmail'),
+      OrganisationReplyToName: mergedProfileText(existing, incoming, 'OrganisationReplyToName'),
+      OrganisationExecutiveSenderName: mergedProfileText(existing, incoming, 'OrganisationExecutiveSenderName'),
+      OrganisationExecutiveSenderEmail: mergedProfileText(existing, incoming, 'OrganisationExecutiveSenderEmail'),
+      OrganisationExecutiveReplyToEmail: mergedProfileText(existing, incoming, 'OrganisationExecutiveReplyToEmail'),
+      OrganisationExecutiveReplyToName: mergedProfileText(existing, incoming, 'OrganisationExecutiveReplyToName'),
       ResultSignatoryName: clean(incoming.ResultSignatoryName),
       ResultSignatoryTitle: clean(incoming.ResultSignatoryTitle),
       OfferSignatoryName: clean(incoming.OfferSignatoryName),
@@ -455,6 +510,11 @@ export async function onRequestPost(context) {
     }));
     await Promise.all([
       upsertDocument(env, 'settings', 'schoolProfile', profile),
+      patchDocumentFields(env, 'settings', 'brevo', {
+        ...Object.fromEntries(SENDER_PROFILE_FIELDS.map((field) => [field, profile[field]])),
+        UpdatedAt: profile.UpdatedAt,
+        UpdatedBy: 'Setup'
+      }),
       upsertDocument(env, 'settings', PUBLIC_PORTAL_CONTENT_DOCUMENT, {
         ...publicPortalContent(profile),
         UpdatedAt: profile.UpdatedAt,

@@ -168,6 +168,31 @@
               </div>
             </div>
           </div>
+          <div class="settings-subsection">
+            <div class="settings-subsection-title">
+              <strong>Transactional email sender</strong>
+              <span>The name and verified address recipients see on routine messages.</span>
+            </div>
+            <div class="settings-fields two-column">
+              <div class="settings-field"><label for="senderName">Sender name</label><input id="senderName" autocomplete="organization"></div>
+              <div class="settings-field"><label for="senderEmail">Verified sender email</label><input id="senderEmail" type="email" autocomplete="email"></div>
+              <div class="settings-field"><label for="replyToName">Reply-to name</label><input id="replyToName"></div>
+              <div class="settings-field"><label for="replyToEmail">Reply-to email</label><input id="replyToEmail" type="email"></div>
+            </div>
+          </div>
+          <div class="settings-subsection">
+            <div class="settings-subsection-title">
+              <strong>Executive office email (optional)</strong>
+              <span>Leave blank to use the transactional sender above.</span>
+            </div>
+            <div class="settings-fields two-column">
+              <div class="settings-field"><label for="executiveSenderName">Sender name</label><input id="executiveSenderName"></div>
+              <div class="settings-field"><label for="executiveSenderEmail">Verified sender email</label><input id="executiveSenderEmail" type="email"></div>
+              <div class="settings-field"><label for="executiveReplyToName">Reply-to name</label><input id="executiveReplyToName"></div>
+              <div class="settings-field"><label for="executiveReplyToEmail">Reply-to email</label><input id="executiveReplyToEmail" type="email"></div>
+            </div>
+          </div>
+          <p class="settings-help">Branches inherit these sender identities until an administrator saves different values for that branch. The encrypted Brevo API key remains organisation-wide and is never exposed here.</p>
         </section>
 
         <section id="parent-settings" class="settings-section" data-school-settings-only>
@@ -478,6 +503,6 @@
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
-  <script src="js/setup.js?v=20260909-branch-settings-scope"></script>
+  <script src="js/setup.js?v=20260910-branch-communication"></script>
 </body>
 </html>

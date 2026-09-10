@@ -5,6 +5,7 @@ import { getAdmissionClasses, getSchoolCode } from './backend.js';
 import { createDocumentIfAbsent, requireFirestoreEnv } from '../lib/firestore.js';
 import { normalizeClassKey } from '../lib/class-names.js';
 import { createDirectTransferRequest, normalizePublicPaymentMethod, publicPaymentMethods } from '../lib/direct-bank-transfer.js';
+import { getSchoolStructure, safeScopeId } from '../lib/school-scope.js';
 import {
   beginIdempotentRequest,
   completeIdempotentRequest,
@@ -31,10 +32,10 @@ function normalizeClassName(value) {
   return normalizeClassKey(value);
 }
 
-async function getAdmissionClassSetup(env, className) {
+async function getAdmissionClassSetup(env, className, branchId) {
   if (!className) return { open: false, amount: 0 };
   requireFirestoreEnv(env);
-  const data = await getAdmissionClasses(env);
+  const data = await getAdmissionClasses(env, { BranchId: branchId });
   const wanted = normalizeClassName(className);
   const matched = (data.classes || []).find((item) => {
     return normalizeClassName(item.ClassName || item.className || item) === wanted &&
@@ -57,12 +58,14 @@ export async function onRequestPost(context) {
     const phone = String(body.phone || '').trim();
     const classApplyingFor = String(body.classApplyingFor || '').trim();
     const paymentMethod = normalizePublicPaymentMethod(body.paymentMethod || body.PaymentMethod);
+    const structure = await getSchoolStructure(env);
+    const branchId = safeScopeId(body.branchId || body.BranchId || structure.ActiveBranchId || 'main');
 
     if (!applicantName || !email || !classApplyingFor) {
       return Response.json({ ok: false, message: 'Applicant name, parent email, and class are required.' }, { status: 400 });
     }
     await verifyTurnstile(env, request, body, 'init_form_payment');
-    const classSetup = await getAdmissionClassSetup(env, classApplyingFor);
+    const classSetup = await getAdmissionClassSetup(env, classApplyingFor, branchId);
     if (!classSetup.open) {
       return Response.json({ ok: false, message: `Admission is not currently open for ${classApplyingFor}.` }, { status: 400 });
     }
@@ -91,13 +94,15 @@ export async function onRequestPost(context) {
 
     const origin = new URL(request.url).origin;
     const reference = cleanReference(`${await getSchoolCode(env)}-FORM-${Date.now()}`);
-    const callbackUrl = `${origin}/payment-success.html?type=form&reference=${encodeURIComponent(reference)}`;
+    const callbackUrl = `${origin}/payment-success.html?type=form&reference=${encodeURIComponent(reference)}&branch=${encodeURIComponent(branchId)}`;
     await createDocumentIfAbsent(env, 'paymentIntents', reference, {
       Reference: reference,
       PaymentType: 'AdmissionForm',
       ApplicantName: applicantName,
       ParentEmail: email,
+      Phone: phone,
       ClassApplyingFor: classApplyingFor,
+      BranchId: branchId,
       Amount: amount,
       Currency: 'NGN',
       PaymentMethod: paymentMethod === 'direct_bank_transfer' ? 'Direct Bank Transfer' : 'Paystack',
@@ -109,7 +114,7 @@ export async function onRequestPost(context) {
       const result = await createDirectTransferRequest(env, {
         reference,
         context: 'admission-form',
-        branchId: body.branchId || body.BranchId || 'main',
+        branchId,
         amount,
         currency: 'NGN',
         payerName: applicantName,
@@ -121,14 +126,15 @@ export async function onRequestPost(context) {
           Email: email,
           Phone: phone,
           ClassApplyingFor: classApplyingFor,
+          BranchId: branchId,
           FormAmount: amount,
-          FormLink: `${new URL(request.url).origin}/verify.html`
+          FormLink: `${new URL(request.url).origin}/verify.html?branch=${encodeURIComponent(branchId)}`
         }
       });
       await completeIdempotentRequest(env, idempotency, result, 200);
       return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
     }
-    const publicMethods = await publicPaymentMethods(env, body.branchId || body.BranchId || 'main');
+    const publicMethods = await publicPaymentMethods(env, branchId);
     if (!publicMethods.online.enabled) {
       const error = new Error('Automated online payment is disabled for this branch.');
       error.status = 503;
@@ -157,6 +163,7 @@ export async function onRequestPost(context) {
           applicantName,
           phone,
           classApplyingFor,
+          branchId,
           formAmount: amount
         }
       })

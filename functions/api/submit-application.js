@@ -8,11 +8,12 @@ import {
 } from '../lib/firestore.js';
 import { getAdmissionClasses, getSchoolCode } from './backend.js';
 import {
-  getSchoolStructure,
   listSchoolCollection,
+  safeScopeId,
   schoolSectionFor,
   scopedCollectionPath
 } from '../lib/school-scope.js';
+import { effectiveBranchProfile } from '../lib/branch-profile-settings.js';
 import {
   beginIdempotentRequest,
   completeIdempotentRequest,
@@ -68,10 +69,11 @@ function formattedApplicantName(application, profile = {}) {
   return name || applicantName(application);
 }
 
-async function getSchoolProfile(env) {
+async function getSchoolProfile(env, branchId = '') {
   try {
     requireFirestoreEnv(env);
-    return await getDocument(env, 'settings', 'schoolProfile') || {};
+    const defaults = await getDocument(env, 'settings', 'schoolProfile') || {};
+    return effectiveBranchProfile(env, defaults, branchId);
   } catch (_err) {
     return {};
   }
@@ -122,14 +124,14 @@ async function reserveApplicationReference(env, initialReference, email) {
   throw error;
 }
 
-async function assertAdmissionAgeRequirement(env, application) {
+async function assertAdmissionAgeRequirement(env, application, branchId = '') {
   const className = clean(application.ClassApplyingFor || application.classApplyingFor);
   if (!className) {
     const error = new Error('Select a class currently open for admission.');
     error.status = 400;
     throw error;
   }
-  const settings = await getAdmissionClasses(env);
+  const settings = await getAdmissionClasses(env, { BranchId: branchId });
   const classConfig = (settings.classes || []).find((item) => (
     lower(item.ClassName || item.className) === lower(className)
   ));
@@ -155,11 +157,12 @@ async function submitToFirestore(env, email, code, receiptNo, application) {
   const sales = await listCollection(env, 'formSales');
   const sale = sales.find((row) => lower(row.Email) === email && clean(row.VerificationCode).toUpperCase() === code);
   if (!sale) return null;
+  const branchId = safeScopeId(sale.BranchId || 'main');
 
   await assertAdmissionAgeRequirement(env, {
     ...application,
     ClassApplyingFor: clean(application.ClassApplyingFor || sale.ClassApplyingFor)
-  });
+  }, branchId);
 
   const applications = await listSchoolCollection(env, 'applications');
   const alreadySubmitted = applications.find((row) => (
@@ -185,6 +188,7 @@ async function submitToFirestore(env, email, code, receiptNo, application) {
     VerificationEmail: email,
     VerificationCode: code,
     ReceiptNo: clean(sale.ReceiptNo || receiptNo),
+    BranchId: branchId,
     Status: 'Processing',
     CreatedAt: new Date().toISOString(),
     UpdatedAt: new Date().toISOString()
@@ -207,8 +211,7 @@ async function submitToFirestore(env, email, code, receiptNo, application) {
   }
 
   try {
-    const profile = await getSchoolProfile(env);
-    const structure = await getSchoolStructure(env);
+    const profile = await getSchoolProfile(env, branchId);
     const reference = await reserveApplicationReference(
       env,
       nextApplicationReference(applications, await getSchoolCode(env)),
@@ -239,7 +242,7 @@ async function submitToFirestore(env, email, code, receiptNo, application) {
       ParentEmail: parentEmail,
       ReceiptNo: receiptNo || clean(sale.ReceiptNo),
       ClassApplyingFor: clean(application.ClassApplyingFor || sale.ClassApplyingFor),
-      BranchId: clean(application.BranchId || structure.ActiveBranchId),
+      BranchId: branchId,
       Status: 'Submitted',
       DuplicateWarning: duplicateRefs.length ? 'Possible duplicate' : '',
       DuplicateMatches: duplicateRefs.length ? `First name + surname + parent email match ${duplicateRefs.join(', ')}` : '',
@@ -271,6 +274,7 @@ async function submitToFirestore(env, email, code, receiptNo, application) {
           VerificationEmail: email,
           VerificationCode: code,
           ReceiptNo: clean(sale.ReceiptNo || receiptNo),
+          BranchId: branchId,
           Status: 'Completed',
           ApplicationReference: reference,
           CreatedAt: clean(claimed.document?.CreatedAt) || now,
