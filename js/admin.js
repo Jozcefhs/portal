@@ -12782,6 +12782,17 @@ function academicMigrationReadinessWorkspace(data) {
   return `${summary}${register}`;
 }
 
+function academicManagementViews(data) {
+  const cbtView = data.permissions?.canCreateCbt ? [['cbt', 'Online CBT']] : [];
+  const learner = academicLearnerTerms();
+  const adminViews = [['classrooms', 'Classrooms'], ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', `${learner.Singular} records`], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ['outcomes', 'Session outcomes'], ...(data.permissions?.canViewResultsAnalysis ? [['analysis', 'Session analysis']] : []), ...(data.permissions?.canManageFinancialClearance ? [['clearances', 'Result clearances']] : []), ...(data.permissions?.canManageStructure ? [['readiness', 'Release readiness']] : []), ...cbtView];
+  return data.permissions?.financeView
+    ? [['clearances', 'Result clearances']]
+    : data.permissions?.teacherView
+    ? [['classrooms', 'Classrooms'], ['structure', 'Catalogue'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['teachers', 'My allocations'], ['students', 'My registers'], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ...cbtView]
+    : adminViews;
+}
+
 function academicManagementHeader(data, rows, message = '') {
   const sessions = academicManagementView === 'analysis'
     ? (data.sessions || [])
@@ -12791,14 +12802,7 @@ function academicManagementHeader(data, rows, message = '') {
   const sections = (data.sections || ['primary', 'secondary']).filter((section) => (
     !['primary', 'secondary'].includes(permittedSection) || section === permittedSection
   ));
-  const cbtView = data.permissions?.canCreateCbt ? [['cbt', 'Online CBT']] : [];
-  const learner = academicLearnerTerms();
-  const adminViews = [['classrooms', 'Classrooms'], ['structure', 'Catalogues'], ...(data.permissions?.canManageStructure ? [['bulkSetup', 'Bulk setup']] : []), ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['offerings', 'Class subjects'], ['teachers', 'Subject teachers'], ['students', `${learner.Singular} records`], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ['outcomes', 'Session outcomes'], ...(data.permissions?.canViewResultsAnalysis ? [['analysis', 'Session analysis']] : []), ...(data.permissions?.canManageFinancialClearance ? [['clearances', 'Result clearances']] : []), ...(data.permissions?.canManageStructure ? [['readiness', 'Release readiness']] : []), ...cbtView];
-  const views = data.permissions?.financeView
-    ? [['clearances', 'Result clearances']]
-    : data.permissions?.teacherView
-    ? [['classrooms', 'Classrooms'], ['structure', 'Catalogue'], ...(academicManagementFilters.section === 'secondary' ? [['departments', 'Senior departments']] : []), ['teachers', 'My allocations'], ['students', 'My registers'], ['timetable', 'Timetable'], ['attendance', 'Attendance'], ['scorebook', 'Scorebook'], ['results', 'Results'], ...cbtView]
-    : adminViews;
+  const views = academicManagementViews(data);
   return `<div class="academic-management-heading">
     <div><p class="eyebrow">AM-002 to AM-011</p><h2>Academic Management</h2><p class="muted">Branch-isolated structure, ${learner.singular} timetables, attendance, assessment and controlled term-result publication.</p></div>
     <button type="button" id="refreshAcademicManagement" class="secondary">Refresh</button>
@@ -12809,7 +12813,10 @@ function academicManagementHeader(data, rows, message = '') {
     <label>Term<select id="academicManagementTerm">${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'All terms')}</select></label>
     <div><small>Branch</small><strong>${escapeHtml(availableBranches.find((branch) => branch.id === selectedBranchId)?.name || selectedBranchId)}</strong></div>
   </div>
-  <nav class="workspace-subtabs academic-management-tabs" aria-label="Academic Management workspaces">${views.map(([key, label]) => `<button type="button" data-academic-view="${key}" class="${key === academicManagementView ? 'selected' : ''}">${escapeHtml(label)}</button>`).join('')}</nav>
+  <div class="academic-management-view-switcher">
+    <label for="academicManagementWorkspace"><span>Academic area</span><select id="academicManagementWorkspace" data-academic-view-select>${views.map(([key, label]) => `<option value="${key}"${key === academicManagementView ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select></label>
+    <p>Switch between classroom, teaching, assessment and result tools.</p>
+  </div>
   <p id="academicManagementStatus" class="status ${message ? 'ok' : ''}" role="status">${escapeHtml(message)}</p>`;
 }
 
@@ -12824,6 +12831,10 @@ function renderAcademicManagement(data = academicManagementData || {}, message =
       : ['primary', 'secondary'].includes(permittedSection)
         ? permittedSection
         : clean(data.sections?.[0] || 'primary');
+  }
+  const availableViews = academicManagementViews(data);
+  if (!availableViews.some(([key]) => key === academicManagementView)) {
+    academicManagementView = availableViews[0]?.[0] || 'classrooms';
   }
   const sessions = data.sessions || [];
   if (!academicFind(sessions, academicManagementFilters.sessionId)) {
@@ -13552,6 +13563,13 @@ function bindAcademicManagement() {
     }
     showAcademicManagementTask(academicManagementView, button.dataset.academicTask, { focus: true });
   }));
+  panelEl.querySelector('[data-academic-view-select]')?.addEventListener('change', (event) => {
+    const select = event.currentTarget;
+    academicManagementView = select.value;
+    const label = select.selectedOptions[0]?.textContent.trim() || 'academic area';
+    setStatus(document.getElementById('academicManagementStatus'), `Loading ${label}...`);
+    void loadAcademicManagement();
+  });
   panelEl.querySelectorAll('[data-academic-view]').forEach((button) => button.addEventListener('click', () => {
     academicManagementView = button.dataset.academicView;
     if (button.closest('[data-academic-catalogue-note="arms"]')) academicManagementTaskViews.bulkSetup = 'applyArms';

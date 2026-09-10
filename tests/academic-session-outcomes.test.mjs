@@ -264,7 +264,8 @@ test('web and desktop companions expose the same session-outcome workflow withou
 test('Results and Session Outcomes workspaces define their classroom labels before rendering selectors', () => {
   assert.match(adminSource, /function academicTermResultsWorkspace\(data, rows\) \{\s+const classroomLabel =/);
   assert.match(adminSource, /function academicSessionOutcomesWorkspace\(data, rows\) \{\s+const classroomLabel =/);
-  assert.match(adminSource, /data-academic-view="\$\{key\}"/);
+  assert.match(adminSource, /data-academic-view-select/);
+  assert.match(adminSource, /<option value="\$\{key\}"\$\{key === academicManagementView/);
 });
 
 test('public transcript verification discloses validation metadata only', () => {

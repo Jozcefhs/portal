@@ -81,7 +81,9 @@ test('every academic workspace stays focused below the Worker subrequest ceiling
   assert.match(librarySource, /focusedStateKeys = academicManagementViewStateKeys/);
   assert.match(librarySource, /queryCollection\(env, collection, \{\s*filters: \[\{ field: 'BranchId', op: '==', value: branchId \}\]/);
   assert.doesNotMatch(librarySource, /collections\.map\(\(\[, collection\]\) => listCollection\(env, collection\)/);
-  assert.match(adminSource, /academicManagementView = button\.dataset\.academicView;[\s\S]{0,800}void loadAcademicManagement\(\);/);
+  assert.match(adminSource, /data-academic-view-select/);
+  assert.match(adminSource, /academicManagementView = select\.value;[\s\S]{0,400}void loadAcademicManagement\(\);/);
+  assert.match(adminSource, /availableViews\.some\(\(\[key\]\) => key === academicManagementView\)/);
 });
 
 test('AM-003 sessions and terms are effective-dated and date validated', () => {
@@ -772,9 +774,9 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-arm-student-subject-status/);
   assert.match(styleSource, /grid-template-areas:"register controls"/);
   assert.match(styleSource, /grid-template-areas:"controls" "register"/);
-  assert.match(styleSource, /\.academic-management-tabs button\{[^}]*font-size:13px/);
+  assert.match(styleSource, /\.academic-management-view-switcher select\{[^}]*font-size:13px/);
   assert.match(styleSource, /\.academic-management-editor-heading small\{[^}]*font-size:11px/);
-  assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-tabs button\{[^}]*font-size:12px/);
+  assert.match(styleSource, /@media\(max-width:560px\)\{[\s\S]*?\.academic-management-view-switcher select\{[^}]*font-size:12px/);
   assert.match(styleSource, /@media\(max-width:560px\)[\s\S]*\.academic-management-filterbar/);
   assert.match(adminSource, /function organizeAcademicManagementWorkspace/);
   assert.match(adminSource, /Only the selected task is shown/);
@@ -783,7 +785,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
   assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260909-roster-facets/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260910-academic-message-dialog/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260910-academic-workspace-dropdown/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
