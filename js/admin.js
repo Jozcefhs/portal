@@ -2898,9 +2898,33 @@ function applyAdminListSort(select) {
   try { window.localStorage.setItem(select.dataset.listStorageKey, select.value); } catch (_error) { /* optional */ }
 }
 
+function applyAdminListSearch(input) {
+  const wrap = input.closest('.admin-table-wrap');
+  const rows = [...(wrap?.querySelectorAll(':scope > table.admin-table > tbody > tr[data-list-row]') || [])];
+  const terms = clean(input.value).toLowerCase().split(/\s+/).filter(Boolean);
+  let visible = 0;
+  rows.forEach((row) => {
+    const haystack = clean(row.dataset.listSearch || row.textContent).toLowerCase();
+    const matches = terms.every((term) => haystack.includes(term));
+    row.hidden = !matches;
+    if (matches) visible += 1;
+  });
+  const empty = wrap?.querySelector('[data-list-search-empty]');
+  if (empty) empty.hidden = !terms.length || visible > 0;
+  const count = wrap?.querySelector('[data-admin-list-search-count]');
+  if (count) count.textContent = terms.length
+    ? `${visible} of ${rows.length} shown`
+    : `${rows.length} ${count.dataset.listSearchLabel || 'records'}`;
+}
+
 document.addEventListener('change', (event) => {
   const select = event.target.closest?.('[data-admin-list-sort]');
   if (select) applyAdminListSort(select);
+});
+
+document.addEventListener('input', (event) => {
+  const input = event.target.closest?.('[data-admin-list-search]');
+  if (input) applyAdminListSearch(input);
 });
 
 function table(title, rows, columns, options = {}) {
@@ -2914,14 +2938,26 @@ function table(title, rows, columns, options = {}) {
     modified: adminListTimestamp(row, ADMIN_LIST_MODIFIED_FIELDS)
   }));
   const sortedEntries = sortAdminListEntries(entries, mode);
+  const searchable = options.searchable === true;
   const body = sortedEntries.length
-    ? sortedEntries.map((entry) => `<tr data-list-row data-list-index="${entry.index}" data-list-name="${escapeHtml(entry.name)}" data-list-created="${entry.created}" data-list-modified="${entry.modified}">${columns.map((column) => `<td>${column.render ? column.render(entry.row) : escapeHtml(column.value(entry.row))}</td>`).join('')}</tr>`).join('')
+    ? sortedEntries.map((entry) => {
+      const searchValue = searchable
+        ? clean(typeof options.searchValue === 'function' ? options.searchValue(entry.row) : entry.name)
+        : '';
+      return `<tr data-list-row data-list-index="${entry.index}" data-list-name="${escapeHtml(entry.name)}" data-list-created="${entry.created}" data-list-modified="${entry.modified}"${searchable ? ` data-list-search="${escapeHtml(searchValue)}"` : ''}>${columns.map((column) => `<td>${column.render ? column.render(entry.row) : escapeHtml(column.value(entry.row))}</td>`).join('')}</tr>`;
+    }).join('')
     : `<tr><td colspan="${columns.length}">${escapeHtml(options.emptyMessage || 'No records found.')}</td></tr>`;
   const storageKey = adminListStorageKey(title);
+  const wrapClass = ['admin-table-wrap', clean(options.className)].filter(Boolean).join(' ');
+  const searchLabel = clean(options.searchLabel || title.toLowerCase());
   return `
     <h2>${escapeHtml(title)}</h2>
-    <div class="admin-table-wrap">
-      <div class="admin-list-sort-toolbar">
+    <div class="${escapeHtml(wrapClass)}">
+      <div class="admin-list-sort-toolbar${searchable ? ' admin-list-toolbar-search' : ''}">
+        ${searchable ? `<label class="admin-list-search">Search ${escapeHtml(title)}
+          <input type="search" data-admin-list-search placeholder="${escapeHtml(options.searchPlaceholder || `Name, ID, class, type or status`)}" autocomplete="off" aria-label="Search ${escapeHtml(title)}">
+          <small data-admin-list-search-count data-list-search-label="${escapeHtml(searchLabel)}" aria-live="polite">${sourceRows.length} ${escapeHtml(searchLabel)}</small>
+        </label>` : ''}
         <label>Sort list
           <select data-admin-list-sort data-list-storage-key="${escapeHtml(storageKey)}" aria-label="Sort ${escapeHtml(title)}">
             ${ADMIN_LIST_SORT_MODES.map(([value, label]) => `<option value="${value}"${mode === value ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}
@@ -2930,7 +2966,7 @@ function table(title, rows, columns, options = {}) {
       </div>
       <table class="admin-table">
         <thead><tr>${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join('')}</tr></thead>
-        <tbody>${body}</tbody>
+        <tbody>${body}${searchable && sortedEntries.length ? `<tr data-list-search-empty hidden><td colspan="${columns.length}">${escapeHtml(options.searchEmptyMessage || `No ${searchLabel} match your search.`)}</td></tr>` : ''}</tbody>
       </table>
     </div>
   `;
@@ -15199,7 +15235,22 @@ function renderSection(active) {
         const studentName = escapeHtml(pick(row, ['DisplayName', 'ApplicantName', 'StudentName']) || 'student');
         return `<span class="compact-row-actions"><button type="button" class="student-edit-icon compact-icon-action compact-edit-action" data-edit-student="${studentRef}" aria-label="Edit profile for ${studentName}" title="Edit student profile"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action" data-parent-onboarding-student="${studentRef}" aria-label="Reissue and copy parent onboarding link for ${studentName}" title="Reissue and copy parent onboarding link"><span aria-hidden="true">&#128279;</span></button></span>`;
       } }
-    ]) + renderStudentEditor(students);
+    ], {
+      className: 'student-register-table',
+      searchable: true,
+      searchLabel: learner.plural,
+      searchPlaceholder: `Name, admission number, class, type or status`,
+      searchEmptyMessage: `No ${learner.plural} match your search.`,
+      searchValue: (row) => [
+        pick(row, ['AdmissionNo', 'AccountRef', '__id']),
+        pick(row, ['DisplayName', 'ApplicantName', 'StudentName']),
+        pick(row, ['ClassName']),
+        pick(row, ['ClassArm']),
+        pick(row, ['StudentType']),
+        pick(row, ['ProfileCompletionStatus']),
+        pick(row, ['Status'])
+      ].filter(Boolean).join(' ')
+    }) + renderStudentEditor(students);
     bindStudentEditor(students);
     hydrateStudentPassportThumbnails(panelEl);
     if (reference) {
