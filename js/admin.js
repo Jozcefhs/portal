@@ -527,7 +527,9 @@ function transientApiResponse(response) {
 async function staffFetch(input, init = {}) {
   const options = { ...init };
   const retrySafe = options.dynamaxRetrySafe === true;
+  const requestedAttempts = Number(options.dynamaxRetryAttempts || 0);
   delete options.dynamaxRetrySafe;
+  delete options.dynamaxRetryAttempts;
   if (!options.signal) options.signal = staffSessionAbortController.signal;
   const requestUrl = new URL(typeof input === 'string' ? input : input.url, window.location.href);
   if (requestUrl.origin === window.location.origin && requestUrl.pathname.startsWith('/api/')) {
@@ -536,7 +538,7 @@ async function staffFetch(input, init = {}) {
     if (staffBearerToken) headers.set('Authorization', `Bearer ${staffBearerToken}`);
     options.headers = headers;
   }
-  const attempts = retrySafe ? 2 : 1;
+  const attempts = retrySafe ? Math.min(3, Math.max(2, requestedAttempts || 2)) : 1;
   let lastError = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
@@ -547,7 +549,7 @@ async function staffFetch(input, init = {}) {
       lastError = error;
       if (attempt === attempts - 1) throw error;
     }
-    await new Promise((resolve) => window.setTimeout(resolve, 400));
+    await new Promise((resolve) => window.setTimeout(resolve, 400 * (attempt + 1)));
   }
   throw lastError || new Error('The online service could not complete this request.');
 }
@@ -1906,14 +1908,21 @@ async function continueAfterAuthentication(user) {
 }
 
 async function sessionRequest(method = 'GET', body = null) {
+  const normalizedMethod = clean(method || 'GET').toUpperCase();
+  const retrySafe = normalizedMethod === 'GET' || clean(body?.action).toLowerCase() === 'login';
   const response = await staffFetch('/api/staff-session', {
-    method,
+    method: normalizedMethod,
     credentials: 'same-origin',
     cache: 'no-store',
+    dynamaxRetrySafe: retrySafe,
+    dynamaxRetryAttempts: retrySafe ? 3 : 1,
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined
   });
-  const data = await response.json().catch(() => ({ ok: false, message: 'Staff authentication did not return JSON.' }));
+  const data = await response.json().catch(() => ({
+    ok: false,
+    message: 'Cloudflare temporarily returned a web page while checking staff access. Your account and saved records were not changed. Please try again.'
+  }));
   return { response, data };
 }
 
