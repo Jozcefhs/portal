@@ -1,7 +1,7 @@
 {
-  "version": "3.1.2",
+  "version": "3.1.3",
   "channel": "stable",
   "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup.exe",
-  "sha256": "0110fad9c670eecd055e5a95aa95f73dcae2947ca6cb6220c570bd1d2e3f15f8",
-  "notes": "Dynamax Desktop v3.1.2 strengthens branch-isolated school operations, including working-branch data reloads, independent branch settings, classes, arms and admission classes, and corrected staff scope. It improves NFC wallet enrolment and card lookup, Primary-school leadership and pupil terminology, official report stamps, desktop responsiveness, Android CBT session safety, and expanded organisation and hospitality workflows."
+  "sha256": "829cd8e878ebd5c65c79a8b4b60279895e939c838d645a16d02cd4a8e3f8d48d",
+  "notes": "Dynamax Desktop v3.1.3 isolates academic sessions, terms and reusable arms by school section, safely handles legacy shared academic setup, and resets desktop academic data when switching between Primary and Secondary. The web companion uses the same section-aware backend rules."
 }
