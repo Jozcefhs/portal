@@ -13,7 +13,7 @@ export const SUBSCRIPTION_PLAN_NAMES = Object.freeze([
 
 const FULL_ACCESS = '*';
 export const FREE_TRIAL_DAYS = 7;
-export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 8;
+export const SUBSCRIPTION_MODULE_CATALOG_VERSION = 9;
 export const SUBSCRIPTION_CURRENCIES = Object.freeze(['NGN', 'USD']);
 export const DEFAULT_USD_TO_NGN_RATE = 1350;
 
@@ -463,11 +463,21 @@ export function normalizeSubscriptionPlanCatalog(value = {}) {
             && defaults.Plans[name].EntitlementsByEdition[edition].includes('bulkCommunication')
             ? normalizeConfiguredEntitlements(edition, [...migratedEntitlements, 'bulkCommunication'], [])
             : migratedEntitlements;
+          const expectedEntitlements = defaults.Plans[name].EntitlementsByEdition[edition];
+          const expectedWithoutCommunication = expectedEntitlements.filter((key) => key !== 'bulkCommunication');
+          const omittedOnlyBulkCommunication = sourceModuleCatalogVersion < 9
+            && expectedEntitlements.includes('bulkCommunication')
+            && !communicationMigratedEntitlements.includes('bulkCommunication')
+            && communicationMigratedEntitlements.length === expectedWithoutCommunication.length
+            && expectedWithoutCommunication.every((key) => communicationMigratedEntitlements.includes(key));
+          const restoredCommunicationEntitlements = omittedOnlyBulkCommunication
+            ? normalizeConfiguredEntitlements(edition, [...communicationMigratedEntitlements, 'bulkCommunication'], [])
+            : communicationMigratedEntitlements;
           const hotelMigratedEntitlements = sourceModuleCatalogVersion < 8
             && ['faith', 'organization'].includes(edition)
             && defaults.Plans[name].EntitlementsByEdition[edition].includes('hotel')
-            ? normalizeConfiguredEntitlements(edition, [...communicationMigratedEntitlements, 'hotel'], [])
-            : communicationMigratedEntitlements;
+            ? normalizeConfiguredEntitlements(edition, [...restoredCommunicationEntitlements, 'hotel'], [])
+            : restoredCommunicationEntitlements;
           return [edition, hotelMigratedEntitlements];
         })),
         PaystackMonthlyPlanCode: name === 'Free' ? '' : clean(incoming.PaystackMonthlyPlanCode),

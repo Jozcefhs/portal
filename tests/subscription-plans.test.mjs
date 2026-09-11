@@ -223,6 +223,32 @@ test('saved plan-module selections replace defaults and enforce dependencies', (
     existingStandardCatalog.Plans.Standard.EntitlementsByEdition.school,
     ['accounting', 'bulkCommunication']
   );
+
+  const fullPlanWithoutBulkCommunication = Object.fromEntries(
+    ['school', 'faith', 'organization'].map((edition) => [
+      edition,
+      subscriptionModulesForEdition(edition)
+        .map((module) => module.Key)
+        .filter((key) => key !== 'bulkCommunication')
+    ])
+  );
+  const restoredEnterpriseCatalog = normalizeSubscriptionPlanCatalog({
+    ModuleCatalogVersion: 8,
+    Plans: {
+      Enterprise: { EntitlementsByEdition: fullPlanWithoutBulkCommunication },
+      Standard: { EntitlementsByEdition: { school: ['accounting'] } }
+    }
+  });
+  for (const edition of ['school', 'faith', 'organization']) {
+    assert.ok(
+      restoredEnterpriseCatalog.Plans.Enterprise.EntitlementsByEdition[edition]
+        .includes('bulkCommunication')
+    );
+  }
+  assert.deepEqual(
+    restoredEnterpriseCatalog.Plans.Standard.EntitlementsByEdition.school,
+    ['accounting']
+  );
 });
 
 test('free access expires at the stored server-issued boundary and cannot become permanent', () => {
