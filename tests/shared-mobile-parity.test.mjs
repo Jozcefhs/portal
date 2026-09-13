@@ -12,7 +12,8 @@ const pageStyleVersions = new Map([
 ]);
 const adminScriptVersion = '20260910-session-edge-recovery';
 const parentScriptVersion = '20260909-academic-report-workflow';
-const notificationVersion = '20260804-read-efficiency';
+const notificationScriptVersion = '20260913-branch-scope';
+const notificationStyleVersion = '20260804-read-efficiency';
 const pageNames = [
   'admin.html',
   'application.html',
@@ -111,10 +112,10 @@ test('all portal pages reference the current shared stylesheet version', () => {
     assert.match(html, new RegExp(`css/style\\.css\\?v=${version}`), `${name} should use its current stylesheet version`);
   });
   assert.match(pages[pageNames.indexOf('admin.html')], new RegExp(`js/admin\\.js\\?v=${adminScriptVersion}`));
-  assert.match(pages[pageNames.indexOf('admin.html')], new RegExp(`js/notifications\\.js\\?v=${notificationVersion}`));
-  assert.match(pages[pageNames.indexOf('admin.html')], new RegExp(`css/notifications\\.css\\?v=${notificationVersion}`));
+  assert.match(pages[pageNames.indexOf('admin.html')], new RegExp(`js/notifications\\.js\\?v=${notificationScriptVersion}`));
+  assert.match(pages[pageNames.indexOf('admin.html')], new RegExp(`css/notifications\\.css\\?v=${notificationStyleVersion}`));
   assert.match(pages[pageNames.indexOf('parent-dashboard.html')], new RegExp(`js/parent-dashboard\\.js\\?v=${parentScriptVersion}`));
-  assert.match(pages[pageNames.indexOf('parent-dashboard.html')], new RegExp(`css/notifications\\.css\\?v=${notificationVersion}`));
+  assert.match(pages[pageNames.indexOf('parent-dashboard.html')], new RegExp(`css/notifications\\.css\\?v=${notificationStyleVersion}`));
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {

@@ -59,6 +59,20 @@ test('church recipients come only from active members and church-edition staff',
   assert.deepEqual(staff.targetUsernames, ['pastor']);
 });
 
+test('church announcement audiences can be restricted to one working branch', () => {
+  const result = buildChurchAnnouncementAudienceGroups([
+    { MemberId: 'MEM-MAIN', Email: 'main@example.com', BranchId: 'main', MembershipStatus: 'Active' },
+    { MemberId: 'MEM-WEST', Email: 'west@example.com', BranchId: 'west', MembershipStatus: 'Active' }
+  ], [
+    { Username: 'main.pastor', OrganisationEdition: 'church', BranchId: 'main', Active: 'YES' },
+    { Username: 'west.pastor', OrganisationEdition: 'church', BranchId: 'west', Active: 'YES' }
+  ], { Members: true, Staff: true }, { branchId: 'west' });
+  assert.deepEqual(result.summary, { Members: 1, Staff: 1 });
+  assert.deepEqual(result.groups.find((group) => group.audience === 'Member').targetEmails, ['west@example.com']);
+  assert.deepEqual(result.groups.find((group) => group.audience === 'Staff').targetUsernames, ['west.pastor']);
+  assert.equal(result.groups.every((group) => group.branchId === 'west'), true);
+});
+
 test('member notification records are email-targeted and branch-isolated', () => {
   const notification = normalizeNotification({
     EventKey: 'church-announcement:1', Audience: 'Member', Category: 'Announcements',
@@ -87,6 +101,7 @@ test('church notification UI and protected API are edition aware', async () => {
   assert.match(ui, /churchCategories = \['Offerings', 'Donations', 'Services', 'Funds', 'Attendance', 'Announcements', 'System'\]/);
   assert.match(api, /createChurchAnnouncement/);
   assert.match(api, /listChurchAnnouncements/);
+  assert.match(api, /listChurchAnnouncements\(env, \{ branchId: user\.branchId \}\)/);
   assert.match(scheduler, /processScheduledChurchAnnouncements/);
   assert.match(notifications, /'staff', 'parent', 'member'/);
 });

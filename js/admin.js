@@ -1637,6 +1637,9 @@ async function switchStaffBranch(nextBranchId) {
     activeBranchId: next
   };
   clearBranchScopedWorkspaceData();
+  window.dispatchEvent(new CustomEvent('dynamax:staff-branch-changed', {
+    detail: { branchId: selectedBranchId }
+  }));
   setStatus(dashboardStatus, `Switching to ${branchSelector.selectedOptions[0]?.textContent || 'the selected branch'}...`);
   const loaded = await loadDashboard({ mode: 'shell' });
   if (!loaded && currentUser) {
@@ -1647,6 +1650,9 @@ async function switchStaffBranch(nextBranchId) {
       activeBranchId: previous
     };
     clearBranchScopedWorkspaceData();
+    window.dispatchEvent(new CustomEvent('dynamax:staff-branch-changed', {
+      detail: { branchId: selectedBranchId }
+    }));
     await loadDashboard({ mode: 'shell' });
   } else if (loaded) {
     rememberStaffBranch();

@@ -162,7 +162,9 @@ async function responseData(env, user, options = {}) {
       loadNotificationSettings(env, 'Staff', user.username),
       listPushSubscriptions(env, user.username),
       canComposeAnnouncements
-        ? edition === 'church' ? listChurchAnnouncements(env) : listSchoolAnnouncements(env)
+        ? edition === 'church'
+          ? listChurchAnnouncements(env, { branchId: user.branchId })
+          : listSchoolAnnouncements(env, { branchId: user.branchId })
         : Promise.resolve([])
     ]);
   }
@@ -173,7 +175,8 @@ async function responseData(env, user, options = {}) {
     edition,
     metadataIncluded: includeMetadata,
     canManageSystemSettings: clean(user.role) === 'Super Admin',
-    canComposeAnnouncements
+    canComposeAnnouncements,
+    branchId: clean(user.branchId)
   };
 }
 

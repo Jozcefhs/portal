@@ -130,16 +130,19 @@ export function normalizeSchoolAnnouncementInput(input = {}, options = {}) {
     CreatedAt: createdAt,
     CreatedBy: clean(options.createdBy || input.CreatedBy || input.createdBy),
     SchoolId: lower(options.schoolId || input.SchoolId || input.schoolId),
+    BranchId: safeScopeId(options.branchId || input.BranchId || input.branchId || 'main'),
     Status: scheduledDate && scheduledDate.getTime() > new Date(createdAt).getTime() ? 'Scheduled' : 'Sending'
   };
 }
 
-export function buildSchoolAnnouncementAudienceGroups(students = [], staffUsers = [], recipients = {}) {
+export function buildSchoolAnnouncementAudienceGroups(students = [], staffUsers = [], recipients = {}, options = {}) {
+  const selectedBranchId = clean(options.branchId) ? safeScopeId(options.branchId) : '';
+  const branchAllowed = (row) => !selectedBranchId || branchFor(row) === selectedBranchId;
   const parentGroups = new Map();
   let dayStudents = 0;
   let boardingStudents = 0;
   const uniqueStudents = new Map();
-  (students || []).filter(activeRecord).forEach((student, index) => {
+  (students || []).filter(activeRecord).filter(branchAllowed).forEach((student, index) => {
     const references = studentReferences(student);
     const identity = references[0] || clean(student.__id) ||
       `${parentEmails(student)[0] || 'student'}:${lower(student.DisplayName || student.StudentName || index)}`;
@@ -177,7 +180,7 @@ export function buildSchoolAnnouncementAudienceGroups(students = [], staffUsers 
 
   const staffGroups = new Map();
   if (recipients.Staff) {
-    (staffUsers || []).filter(activeRecord).forEach((staff) => {
+    (staffUsers || []).filter(activeRecord).filter(branchAllowed).forEach((staff) => {
       const username = lower(staff.Username || staff.username || staff.__id);
       if (!username) return;
       const branchId = branchFor(staff);
@@ -235,13 +238,19 @@ async function queueAnnouncementPush(env, announcement, notification) {
 }
 
 export async function sendSchoolAnnouncement(env, announcement, options = {}) {
+  const branchId = safeScopeId(announcement.BranchId || 'main');
   const [students, staffUsers] = await Promise.all([
     announcement.Recipients.DayStudents || announcement.Recipients.BoardingStudents
-      ? listSchoolCollection(env, 'students')
+      ? listSchoolCollection(env, 'students', { branchId })
       : Promise.resolve([]),
     announcement.Recipients.Staff ? listCollection(env, 'staffUsers') : Promise.resolve([])
   ]);
-  const audience = buildSchoolAnnouncementAudienceGroups(students, staffUsers, announcement.Recipients);
+  const audience = buildSchoolAnnouncementAudienceGroups(
+    students,
+    staffUsers,
+    announcement.Recipients,
+    { branchId }
+  );
   if (!audience.groups.length) {
     const error = new Error('No active recipients were found in the selected groups.');
     error.status = 409;
@@ -297,10 +306,17 @@ export async function createSchoolAnnouncement(env, user, input = {}, options = 
     error.status = 403;
     throw error;
   }
+  const branchId = clean(user.branchId || user.activeBranchId);
+  if (!branchId || lower(branchId) === 'all') {
+    const error = new Error('Choose one working branch before sending or scheduling a notification.');
+    error.status = 400;
+    throw error;
+  }
   const announcement = normalizeSchoolAnnouncementInput(input, {
     now: options.now,
     createdBy: user.username,
-    schoolId: env.DYNAMAX_WORKSPACE_ID
+    schoolId: env.DYNAMAX_WORKSPACE_ID,
+    branchId
   });
   const settings = await loadNotificationSettings(env).catch(() => null);
   const blocked = [];
@@ -330,6 +346,7 @@ export async function createSchoolAnnouncement(env, user, input = {}, options = 
 
 export async function listSchoolAnnouncements(env, options = {}) {
   const schoolId = lower(env.DYNAMAX_WORKSPACE_ID);
+  const branchId = clean(options.branchId) ? safeScopeId(options.branchId) : '';
   const limit = Math.min(100, Math.max(1, Number(options.limit || 40)));
   const scanLimit = Math.min(100, Math.max(50, limit));
   const rows = await queryCollection(env, 'notificationAnnouncements', {
@@ -339,6 +356,7 @@ export async function listSchoolAnnouncements(env, options = {}) {
   return rows
     .filter((row) => lower(row.Edition) !== 'church')
     .filter((row) => !schoolId || !clean(row.SchoolId) || lower(row.SchoolId) === schoolId)
+    .filter((row) => !branchId || safeScopeId(row.BranchId || 'main') === branchId)
     .slice(0, limit);
 }
 

@@ -39,6 +39,7 @@ test('future announcements are scheduled and immediate announcements are ready t
   assert.equal(scheduled.Status, 'Scheduled');
   assert.equal(immediate.Status, 'Sending');
   assert.deepEqual(scheduled.Channels, { InApp: true, Push: true });
+  assert.equal(scheduled.BranchId, 'main');
 });
 
 test('failed scheduled announcements retry while interrupted push jobs recover after their lease expires', () => {
@@ -78,6 +79,20 @@ test('day and boarding audiences route to linked parents while staff stay separa
   assert.deepEqual(staff.targetUsernames, ['admin']);
 });
 
+test('school announcement audiences include only the selected working branch', () => {
+  const result = buildSchoolAnnouncementAudienceGroups([
+    { AccountRef: 'MAIN-1', StudentType: 'Day Student', ParentEmail: 'main@example.com', BranchId: 'main', Status: 'Active' },
+    { AccountRef: 'WEST-1', StudentType: 'Day Student', ParentEmail: 'west@example.com', BranchId: 'west', Status: 'Active' }
+  ], [
+    { Username: 'main.staff', BranchId: 'main', Active: 'YES' },
+    { Username: 'west.staff', BranchId: 'west', Active: 'YES' }
+  ], { DayStudents: true, Staff: true }, { branchId: 'west' });
+  assert.deepEqual(result.summary, { DayStudents: 1, BoardingStudents: 0, ParentAccounts: 1, Staff: 1 });
+  assert.deepEqual(result.groups.find((group) => group.audience === 'Parent').targetEmails, ['west@example.com']);
+  assert.deepEqual(result.groups.find((group) => group.audience === 'Staff').targetUsernames, ['west.staff']);
+  assert.equal(result.groups.every((group) => group.branchId === 'west'), true);
+});
+
 test('composer, protected endpoint and scheduler are wired together', async () => {
   const [ui, css, api, scheduler, library, workflow] = await Promise.all([
     readFile(new URL('../js/notifications.js', import.meta.url), 'utf8'),
@@ -93,12 +108,14 @@ test('composer, protected endpoint and scheduler are wired together', async () =
   assert.match(ui, /name="Staff"/);
   assert.match(ui, /update\('sendAnnouncement'/);
   assert.match(ui, /Sent and scheduled messages/);
+  assert.match(ui, /dynamax:staff-branch-changed/);
   assert.match(ui, /allowedByInterface/);
   assert.match(css, /\.notification-compose-form\{/);
   assert.match(css, /\.notification-announcement-history\{/);
   assert.match(api, /action === 'sendannouncement'/);
   assert.match(api, /action === 'processannouncementpush'/);
   assert.match(api, /canComposeAnnouncements/);
+  assert.match(api, /listSchoolAnnouncements\(env, \{ branchId: user\.branchId \}\)/);
   assert.match(scheduler, /processScheduledSchoolAnnouncements/);
   assert.match(scheduler, /announcementsOnly/);
   assert.match(library, /Category: 'Announcements'/);

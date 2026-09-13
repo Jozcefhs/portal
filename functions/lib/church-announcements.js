@@ -91,10 +91,12 @@ export function normalizeChurchAnnouncementInput(input = {}, options = {}) {
   };
 }
 
-export function buildChurchAnnouncementAudienceGroups(members = [], staffUsers = [], recipients = {}) {
+export function buildChurchAnnouncementAudienceGroups(members = [], staffUsers = [], recipients = {}, options = {}) {
+  const selectedBranchId = clean(options.branchId) ? resolveMembershipBranch({}, options.branchId) : '';
+  const branchAllowed = (row) => !selectedBranchId || branchFor(row) === selectedBranchId;
   const memberBranches = new Map();
   if (recipients.Members) {
-    (members || []).filter(activeMember).forEach((member) => {
+    (members || []).filter(activeMember).filter(branchAllowed).forEach((member) => {
       const email = lower(member.Email || member.email);
       if (!email) return;
       const branchId = branchFor(member);
@@ -112,6 +114,7 @@ export function buildChurchAnnouncementAudienceGroups(members = [], staffUsers =
   const staffBranches = new Map();
   if (recipients.Staff) {
     (staffUsers || []).filter(activeStaff)
+      .filter(branchAllowed)
       .filter((staff) => staffRecordMatchesEdition(staff, { edition: 'church' }))
       .forEach((staff) => {
         const username = lower(staff.Username || staff.username || staff.__id);
@@ -167,8 +170,9 @@ export async function sendChurchAnnouncement(env, announcement, options = {}) {
   ]);
   const audience = buildChurchAnnouncementAudienceGroups(
     members,
-    staffUsers.filter((staff) => branchFor(staff) === branchId),
-    announcement.Recipients
+    staffUsers,
+    announcement.Recipients,
+    { branchId }
   );
   if (!audience.groups.length) {
     throw Object.assign(new Error('No active church recipients with notification contact details were found.'), { status: 409 });
@@ -238,6 +242,7 @@ export async function createChurchAnnouncement(env, user, input = {}, options = 
 
 export async function listChurchAnnouncements(env, options = {}) {
   const workspaceId = lower(env.DYNAMAX_WORKSPACE_ID);
+  const branchId = clean(options.branchId) ? resolveMembershipBranch({}, options.branchId) : '';
   const limit = Math.min(100, Math.max(1, Number(options.limit || 40)));
   const scanLimit = Math.min(100, Math.max(50, limit));
   const rows = await queryCollection(env, 'notificationAnnouncements', {
@@ -246,6 +251,7 @@ export async function listChurchAnnouncements(env, options = {}) {
   }).catch(() => []);
   return rows.filter((row) => lower(row.Edition) === 'church')
     .filter((row) => !workspaceId || !clean(row.SchoolId) || lower(row.SchoolId) === workspaceId)
+    .filter((row) => !branchId || branchFor(row) === branchId)
     .slice(0, limit);
 }
 

@@ -108,6 +108,7 @@
   let historyRecords = [];
   let currentData = {};
   let loading = false;
+  let loadGeneration = 0;
   let lastLoadedAt = 0;
   let activeEdition = '';
   const notificationPollIntervalMs = 5 * 60 * 1000;
@@ -136,8 +137,8 @@
     categorySelect.value = categories.includes(selectedCategory) ? selectedCategory : '';
     dialog.querySelector('[data-announcement-edition-label]').textContent = church ? 'CHURCH ANNOUNCEMENT' : 'SCHOOL ANNOUNCEMENT';
     dialog.querySelector('[data-announcement-help]').textContent = church
-      ? 'Messages for members use contact details in the church member register.'
-      : 'Messages for student groups are delivered to their linked parent accounts.';
+      ? 'Messages use contacts from the current working branch only.'
+      : 'Messages use students, linked parents and staff from the current working branch only.';
     dialog.querySelector('[data-recipient-option="DayStudents"]').hidden = church;
     dialog.querySelector('[data-recipient-option="BoardingStudents"]').hidden = church;
     dialog.querySelector('[data-recipient-option="Members"]').hidden = !church;
@@ -237,24 +238,30 @@
 
   async function load(force = false, includeMetadata = false) {
     if (identity.hidden || document.hidden || loading || (!force && Date.now() - lastLoadedAt < 15000)) return;
+    const generation = loadGeneration;
     loading = true;
     try {
       const params = new URLSearchParams({ limit: '20' });
       if (includeMetadata) params.set('includeMeta', 'true');
       const response = await request(`/api/staff-notifications?${params}`, { cache: 'no-store' });
       const data = await response.json().catch(() => ({}));
-      if (response.ok && data.ok) { render(data); lastLoadedAt = Date.now(); }
-    } finally { loading = false; }
+      if (generation === loadGeneration && response.ok && data.ok) { render(data); lastLoadedAt = Date.now(); }
+    } finally {
+      if (generation === loadGeneration) loading = false;
+    }
   }
 
   async function update(action, values = {}) {
+    const generation = loadGeneration;
     const response = await request('/api/staff-notifications', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ...values })
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not update notifications.');
-    render(data);
-    lastLoadedAt = Date.now();
+    if (generation === loadGeneration) {
+      render(data);
+      lastLoadedAt = Date.now();
+    }
     return data;
   }
 
@@ -303,12 +310,14 @@
   }
 
   async function loadHistory(append = false) {
+    const generation = loadGeneration;
     const cursor = append ? currentData.nextCursor : '';
     historyList.setAttribute('aria-busy', 'true');
     const response = await request(`/api/staff-notifications?${historyQuery(cursor)}`, { cache: 'no-store' });
     const data = await response.json().catch(() => ({}));
     historyList.removeAttribute('aria-busy');
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load notification history.');
+    if (generation !== loadGeneration) return;
     currentData = {
       ...currentData,
       ...data,
@@ -557,6 +566,24 @@
   });
 
   window.addEventListener('dynamax:foreground-notification', () => load(true));
+  window.addEventListener('dynamax:staff-branch-changed', () => {
+    loadGeneration += 1;
+    loading = false;
+    records = [];
+    historyRecords = [];
+    currentData = {};
+    lastLoadedAt = 0;
+    badge.textContent = '0';
+    badge.hidden = true;
+    markAll.disabled = true;
+    list.innerHTML = '<p class="notification-empty">Loading branch notifications…</p>';
+    historyList.innerHTML = '';
+    announcementHistory.innerHTML = '';
+    loadMore.hidden = true;
+    popover.hidden = true;
+    trigger.setAttribute('aria-expanded', 'false');
+    void load(true, true);
+  });
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && Date.now() - lastLoadedAt >= foregroundRefreshAgeMs) load();
   });
