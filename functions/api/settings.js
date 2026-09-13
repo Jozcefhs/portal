@@ -134,6 +134,12 @@ function defaultProfile(env) {
 }
 
 function validatePaymentSettings(profile = {}) {
+  const paystackSubaccountCode = clean(profile.PaystackSubaccountCode);
+  if (paystackSubaccountCode && (!/^ACCT_[A-Za-z0-9]+$/.test(paystackSubaccountCode) || paystackSubaccountCode.length > 80)) {
+    const error = new Error('Enter a valid Paystack subaccount code beginning with ACCT_.');
+    error.status = 400;
+    throw error;
+  }
   if (clean(profile.DirectBankTransferEnabled).toUpperCase() !== 'YES') return;
   const missing = [
     ['bank name', profile.PaymentBankName],

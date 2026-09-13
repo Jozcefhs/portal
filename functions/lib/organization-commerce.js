@@ -10,7 +10,11 @@ import {
   sendOrganizationCommercePaymentLinkEmail,
   sendOrganizationCommerceReceiptEmail
 } from './organization-commerce-email.js';
-import { createDirectTransferRequest, publicPaymentMethods } from './direct-bank-transfer.js';
+import {
+  branchPaymentConfiguration,
+  createDirectTransferRequest,
+  withPaystackBranchRouting
+} from './direct-bank-transfer.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -523,9 +527,6 @@ export async function recordManualOrganizationCommerceSale(env, section, body = 
 }
 
 export async function initializeOnlineOrganizationCommerceSale(env, request, section, body = {}, user = {}, options = {}) {
-  const paymentMethods = await publicPaymentMethods(env, clean(body.BranchId || user.branchId || 'main'));
-  if (!paymentMethods.online.enabled) throw error('Automated online payment is disabled for this branch.', 503);
-  if (!clean(env.PAYSTACK_SECRET_KEY)) throw error('Paystack is not configured for online sales.', 503);
   const email = lower(body.CustomerEmail || body.customerEmail || body.Email || body.email);
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     throw error('Enter the customer email for the Paystack receipt and payment confirmation.');
@@ -550,8 +551,13 @@ export async function initializeOnlineOrganizationCommerceSale(env, request, sec
   }
   const cart = await authoritativeCart(env, section, body, user);
   const sale = baseSale(section, body, user, cart, id, 'Paystack Online');
+  if (!clean(env.PAYSTACK_SECRET_KEY)) throw error('Paystack is not configured for online sales.', 503);
+  const paymentConfiguration = await branchPaymentConfiguration(env, sale.BranchId);
+  if (!paymentConfiguration.online.enabled) throw error('Automated online payment is disabled for this branch.', 503);
   const reference = safeId(`DYN-COM-${Date.now()}-${crypto.randomUUID().slice(0, 10).toUpperCase()}`);
   sale.PaymentReference = reference;
+  sale.PaystackSubaccountCode = paymentConfiguration.paystack.subaccountCode;
+  sale.PaystackSettlementMode = paymentConfiguration.paystack.settlementMode;
   const created = await createDocumentIfAbsent(
     env,
     COMMERCE_CONFIG.organizationStore.sales,
@@ -579,6 +585,8 @@ export async function initializeOnlineOrganizationCommerceSale(env, request, sec
     OrganisationEdition: sale.OrganisationEdition,
     Amount: sale.Amount,
     Currency: sale.Currency,
+    PaystackSubaccountCode: paymentConfiguration.paystack.subaccountCode,
+    PaystackSettlementMode: paymentConfiguration.paystack.settlementMode,
     Status: 'Pending',
     CreatedAt: nowIso()
   };
@@ -596,7 +604,7 @@ export async function initializeOnlineOrganizationCommerceSale(env, request, sec
       Authorization: `Bearer ${env.PAYSTACK_SECRET_KEY}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({
+    body: JSON.stringify(withPaystackBranchRouting({
       email,
       amount: Math.round(sale.Amount * 100),
       currency: sale.Currency,
@@ -608,7 +616,7 @@ export async function initializeOnlineOrganizationCommerceSale(env, request, sec
         commerceSection: section,
         branchId: sale.BranchId
       }
-    })
+    }, paymentConfiguration))
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || !data.status || !data.data?.authorization_url) {

@@ -15,7 +15,11 @@ import { getSchoolStructure } from './school-scope.js';
 import { getWebBranding } from './web-branding.js';
 import { ensureGivingTypes, resolveGivingType } from './church-funds.js';
 import { getDonationCurrencySettings, registerDonorFromPaidDonation } from './church-donation-management.js';
-import { createDirectTransferRequest, publicPaymentMethods } from './direct-bank-transfer.js';
+import {
+  branchPaymentConfiguration,
+  createDirectTransferRequest,
+  withPaystackBranchRouting
+} from './direct-bank-transfer.js';
 import {
   ACCOUNTING_BASE_CURRENCY,
   convertedDonationBaseAmount,
@@ -1106,11 +1110,10 @@ export async function buildChurchPaymentInitMetadata(env, donation = {}, body = 
 export async function initChurchDonationPayment(env, user, body = {}, requestUrl = '') {
   await requireDonationsEdition(env);
   requireCapability(user, 'canInitiateOnline');
-  if (!env.PAYSTACK_SECRET_KEY) {
-    inputError('Paystack is not configured in this environment.', 500);
-  }
-
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
+  if (!env.PAYSTACK_SECRET_KEY) inputError('Paystack is not configured in this environment.', 503);
+  const paymentConfiguration = await branchPaymentConfiguration(env, branchId);
+  if (!paymentConfiguration.online.enabled) inputError('Automated online payment is disabled for this branch.', 503);
   const { givingTypes } = await ensureGivingTypes(env, branchId);
   const givingType = resolveGivingType(
     givingTypes,
@@ -1172,14 +1175,14 @@ export async function initChurchDonationPayment(env, user, body = {}, requestUrl
       Authorization: `Bearer ${env.PAYSTACK_SECRET_KEY}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({
+    body: JSON.stringify(withPaystackBranchRouting({
       email: donation.DonorEmail,
       amount: Math.round(donation.Amount * 100),
       currency: donation.Currency,
       reference,
       callback_url: callbackUrl,
       metadata
-    })
+    }, paymentConfiguration))
   });
   const paystackData = await paystackResponse.json().catch(() => null);
   if (!paystackData || !paystackData.status) {
@@ -1197,6 +1200,8 @@ export async function initChurchDonationPayment(env, user, body = {}, requestUrl
     Reference: reference,
     PaymentLink: authorizationUrl,
     Gateway: 'Paystack',
+    PaystackSubaccountCode: paymentConfiguration.paystack.subaccountCode,
+    PaystackSettlementMode: paymentConfiguration.paystack.settlementMode,
     GatewayReference: reference,
     GatewayInitiatedAt: nowIso(),
     Notes: donation.Notes,
@@ -1275,8 +1280,6 @@ export async function initPublicChurchDonationPayment(env, body = {}, requestUrl
   if (!(structure.Branches || []).some((branch) => resolveMembershipBranch({}, branch.Id || branch.id || branch.Name) === branchId)) {
     inputError('Choose a valid giving branch.', 400);
   }
-  const paymentMethods = await publicPaymentMethods(env, branchId);
-  if (!paymentMethods.online.enabled) inputError('Automated online payment is disabled for this branch.', 503);
   const suppliedType = clean(body.PaymentType || body.paymentType) || 'Donation';
   const { givingTypes } = await ensureGivingTypes(env, branchId);
   const givingType = resolveGivingType(givingTypes, body.GivingTypeId || body.givingTypeId || suppliedType);

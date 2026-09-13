@@ -6,6 +6,7 @@ import {
   upsertDocument
 } from './firestore.js';
 import { normalizeOrganizationEdition, resolveOrganizationConfig } from './organization-config.js';
+import { branchPaymentConfiguration, withPaystackBranchRouting } from './direct-bank-transfer.js';
 import QRCode from 'qrcode';
 
 const PAYSTACK_INIT_URL = 'https://api.paystack.co/transaction/initialize';
@@ -640,6 +641,8 @@ export async function initPublicHotelReservationPayment(env, body = {}, requestO
   const room = await getDocument(env, HOTEL_COLLECTIONS.rooms, safeId(roomId)).catch(() => null);
   if (!room || clean(room.BranchId).toLowerCase() !== branchId) throw inputError('Choose an available room.');
   if (hotelRoomUnavailableForBooking(room)) throw inputError('That room is not currently available for booking.', 409);
+  const paymentConfiguration = await branchPaymentConfiguration(env, branchId);
+  if (!paymentConfiguration.online.enabled) throw inputError('Automated online payment is disabled for this branch.', 503);
 
   const reservationId = safeId(`RSV-WEB-${crypto.randomUUID()}`);
   const reservation = normalizeHotelReservation({
@@ -700,14 +703,14 @@ export async function initPublicHotelReservationPayment(env, body = {}, requestO
       Authorization: `Bearer ${env.PAYSTACK_SECRET_KEY}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({
+    body: JSON.stringify(withPaystackBranchRouting({
       email: reservation.GuestEmail,
       amount: Math.round(totals.TotalAmount * 100),
       currency: 'NGN',
       reference,
       callback_url: callbackUrl,
       metadata
-    })
+    }, paymentConfiguration))
   });
   const paystackData = await paystackResponse.json().catch(() => null);
   if (!paystackResponse.ok || !paystackData?.status) {
@@ -724,6 +727,8 @@ export async function initPublicHotelReservationPayment(env, body = {}, requestO
     RoomType: clean(room.RoomType),
     PaymentStatus: 'Pending',
     PaymentReference: reference,
+    PaystackSubaccountCode: paymentConfiguration.paystack.subaccountCode,
+    PaystackSettlementMode: paymentConfiguration.paystack.settlementMode,
     PaymentLink: authorizationUrl,
     CreatedAt: timestamp,
     CreatedBy: 'Public hotel self-service',
@@ -739,6 +744,8 @@ export async function initPublicHotelReservationPayment(env, body = {}, requestO
     AccountRef: reservationId,
     Amount: totals.TotalAmount,
     Currency: 'NGN',
+    PaystackSubaccountCode: paymentConfiguration.paystack.subaccountCode,
+    PaystackSettlementMode: paymentConfiguration.paystack.settlementMode,
     Status: 'Pending',
     CreatedAt: timestamp,
     Metadata: metadata

@@ -12,7 +12,12 @@ import {
   readJsonBody,
   verifyTurnstile
 } from '../lib/request-security.js';
-import { createDirectTransferRequest, normalizePublicPaymentMethod, publicPaymentMethods } from '../lib/direct-bank-transfer.js';
+import {
+  branchPaymentConfiguration,
+  createDirectTransferRequest,
+  normalizePublicPaymentMethod,
+  withPaystackBranchRouting
+} from '../lib/direct-bank-transfer.js';
 import { requireGuestFeePaymentToken } from '../lib/guest-fee-payment.js';
 
 const PAYSTACK_INIT_URL = 'https://api.paystack.co/transaction/initialize';
@@ -323,6 +328,21 @@ export async function onRequestPost(context) {
     const schoolCode = await getSchoolCode(env);
     const reference = cleanReference(`${schoolCode}-${feeCode}-${account.ApplicationReference || account.AccountRef}-${Date.now()}`);
     const callbackUrl = `${origin}/payment-success.html?reference=${encodeURIComponent(reference)}`;
+    const paymentBranchId = String(account.BranchId || 'main').trim().toLowerCase() || 'main';
+    let paymentConfiguration = null;
+    if (paymentMethod === 'paystack') {
+      if (!env.PAYSTACK_SECRET_KEY) {
+        const error = new Error('Online payment is not configured yet.');
+        error.status = 503;
+        throw error;
+      }
+      paymentConfiguration = await branchPaymentConfiguration(env, paymentBranchId);
+      if (!paymentConfiguration.online.enabled) {
+        const error = new Error('Automated online payment is disabled for this branch.');
+        error.status = 503;
+        throw error;
+      }
+    }
     await createDocumentIfAbsent(env, 'paymentIntents', safeDocumentId(reference), {
       Reference: reference,
       PaymentType: isWallet ? 'Wallet' : (isSchoolFeesTotal ? 'SchoolFeesTotal' : 'Fee'),
@@ -330,12 +350,15 @@ export async function onRequestPost(context) {
       AccountRefNormalized: safeDocumentId(account.AccountRef).toLowerCase(),
       ApplicationReference: account.ApplicationReference || '',
       AdmissionNo: account.AdmissionNo || '',
+      BranchId: paymentBranchId,
       FeeCode: feeCode,
       FeeName: fee.FeeName,
       FeeCategory: fee.FeeCategory || '',
       Amount: amount,
       Currency: String(fee.Currency || 'NGN'),
       PaymentMethod: paymentMethod === 'direct_bank_transfer' ? 'Direct Bank Transfer' : 'Paystack',
+      PaystackSubaccountCode: paymentConfiguration?.paystack?.subaccountCode || '',
+      PaystackSettlementMode: paymentConfiguration?.paystack?.settlementMode || '',
       AuthorizationMode: guestAccess ? 'Parent OTP Guest Payment' : (session ? 'Parent Session' : 'Parent Credential'),
       Status: paymentMethod === 'direct_bank_transfer' ? 'Awaiting Verification' : 'Pending',
       CreatedAt: new Date().toISOString()
@@ -345,7 +368,7 @@ export async function onRequestPost(context) {
       const result = await createDirectTransferRequest(env, {
         reference,
         context: 'school-payment',
-        branchId: account.BranchId || body.branchId || body.BranchId || 'main',
+        branchId: paymentBranchId,
         amount,
         currency: String(fee.Currency || 'NGN'),
         payerName: account.DisplayName,
@@ -377,25 +400,13 @@ export async function onRequestPost(context) {
       await completeIdempotentRequest(env, idempotency, result, 200);
       return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
     }
-    const publicMethods = await publicPaymentMethods(env, account.BranchId || body.branchId || body.BranchId || 'main');
-    if (!publicMethods.online.enabled) {
-      const error = new Error('Automated online payment is disabled for this branch.');
-      error.status = 503;
-      throw error;
-    }
-    if (!env.PAYSTACK_SECRET_KEY) {
-      const error = new Error('Online payment is not configured yet.');
-      error.status = 503;
-      throw error;
-    }
-
     const paystackRes = await fetch(PAYSTACK_INIT_URL, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${env.PAYSTACK_SECRET_KEY}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
+      body: JSON.stringify(withPaystackBranchRouting({
         email,
         amount: Math.round(amount * 100),
         currency: String(fee.Currency || 'NGN'),
@@ -417,11 +428,12 @@ export async function onRequestPost(context) {
           studentType: account.StudentType,
           academicSession: account.AcademicSession,
           term: account.Term,
+          branchId: paymentBranchId,
           verificationEmail: email,
           authorizationMode: guestAccess ? 'parent_otp_guest_payment' : (session ? 'parent_session' : 'parent_credential'),
           storeCart: storeCart.length ? storeCart : undefined
         }
-      })
+      }, paymentConfiguration))
     });
     const paystackData = await paystackRes.json();
     if (!paystackData.status) {

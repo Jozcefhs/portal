@@ -480,6 +480,11 @@
               <label for="onlinePaymentEnabled">Automated online payment</label>
               <select id="onlinePaymentEnabled" name="OnlinePaymentEnabled"><option value="YES">Enabled &mdash; Card, USSD and bank through Paystack</option><option value="NO">Disabled</option></select>
             </div>
+            <div class="settings-field" id="paystackSubaccountField">
+              <label for="paystackSubaccountCode">Branch Paystack subaccount</label>
+              <input id="paystackSubaccountCode" name="PaystackSubaccountCode" maxlength="80" autocomplete="off" placeholder="ACCT_xxxxxxxxxxxxxxxx">
+              <small id="paystackSubaccountHelp" class="settings-help">Available for branch overrides. Payments for this branch settle to this Paystack subaccount, and the branch bears the Paystack fee.</small>
+            </div>
             <div class="settings-field">
               <label for="directBankTransferEnabled">Direct bank transfer</label>
               <select id="directBankTransferEnabled" name="DirectBankTransferEnabled"><option value="NO">Disabled</option><option value="YES">Enabled &mdash; manual verification required</option></select>
@@ -503,6 +508,6 @@
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
-  <script src="js/setup.js?v=20260910-branch-communication"></script>
+  <script src="js/setup.js?v=20260913-branch-paystack"></script>
 </body>
 </html>

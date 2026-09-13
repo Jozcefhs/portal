@@ -4,7 +4,12 @@
 import { getAdmissionClasses, getSchoolCode } from './backend.js';
 import { createDocumentIfAbsent, requireFirestoreEnv } from '../lib/firestore.js';
 import { normalizeClassKey } from '../lib/class-names.js';
-import { createDirectTransferRequest, normalizePublicPaymentMethod, publicPaymentMethods } from '../lib/direct-bank-transfer.js';
+import {
+  branchPaymentConfiguration,
+  createDirectTransferRequest,
+  normalizePublicPaymentMethod,
+  withPaystackBranchRouting
+} from '../lib/direct-bank-transfer.js';
 import { getSchoolStructure, safeScopeId } from '../lib/school-scope.js';
 import {
   beginIdempotentRequest,
@@ -95,6 +100,20 @@ export async function onRequestPost(context) {
     const origin = new URL(request.url).origin;
     const reference = cleanReference(`${await getSchoolCode(env)}-FORM-${Date.now()}`);
     const callbackUrl = `${origin}/payment-success.html?type=form&reference=${encodeURIComponent(reference)}&branch=${encodeURIComponent(branchId)}`;
+    let paymentConfiguration = null;
+    if (paymentMethod === 'paystack') {
+      if (!env.PAYSTACK_SECRET_KEY) {
+        const error = new Error('Online payment is not configured yet.');
+        error.status = 503;
+        throw error;
+      }
+      paymentConfiguration = await branchPaymentConfiguration(env, branchId);
+      if (!paymentConfiguration.online.enabled) {
+        const error = new Error('Automated online payment is disabled for this branch.');
+        error.status = 503;
+        throw error;
+      }
+    }
     await createDocumentIfAbsent(env, 'paymentIntents', reference, {
       Reference: reference,
       PaymentType: 'AdmissionForm',
@@ -106,6 +125,8 @@ export async function onRequestPost(context) {
       Amount: amount,
       Currency: 'NGN',
       PaymentMethod: paymentMethod === 'direct_bank_transfer' ? 'Direct Bank Transfer' : 'Paystack',
+      PaystackSubaccountCode: paymentConfiguration?.paystack?.subaccountCode || '',
+      PaystackSettlementMode: paymentConfiguration?.paystack?.settlementMode || '',
       Status: paymentMethod === 'direct_bank_transfer' ? 'Awaiting Verification' : 'Pending',
       CreatedAt: new Date().toISOString()
     });
@@ -134,25 +155,13 @@ export async function onRequestPost(context) {
       await completeIdempotentRequest(env, idempotency, result, 200);
       return Response.json(result, { headers: { 'Cache-Control': 'no-store' } });
     }
-    const publicMethods = await publicPaymentMethods(env, branchId);
-    if (!publicMethods.online.enabled) {
-      const error = new Error('Automated online payment is disabled for this branch.');
-      error.status = 503;
-      throw error;
-    }
-    if (!env.PAYSTACK_SECRET_KEY) {
-      const error = new Error('Online payment is not configured yet.');
-      error.status = 503;
-      throw error;
-    }
-
     const paystackRes = await fetch(PAYSTACK_INIT_URL, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${env.PAYSTACK_SECRET_KEY}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
+      body: JSON.stringify(withPaystackBranchRouting({
         email,
         amount: Math.round(amount * 100),
         currency: 'NGN',
@@ -166,7 +175,7 @@ export async function onRequestPost(context) {
           branchId,
           formAmount: amount
         }
-      })
+      }, paymentConfiguration))
     });
     const paystackData = await paystackRes.json();
     if (!paystackData.status) {

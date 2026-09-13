@@ -86,6 +86,21 @@ test('communication sender identities can be overridden without exposing credent
   assert.equal(BRANCH_PROFILE_OVERRIDE_FIELDS.includes('BrevoApiKey'), false);
 });
 
+test('branch payment routing stores a Paystack subaccount code but never a gateway secret', () => {
+  const values = deriveBranchProfileOverrides({
+    PaystackSubaccountCode: '',
+    OnlinePaymentEnabled: 'YES'
+  }, {
+    PaystackSubaccountCode: 'ACCT_branch123',
+    OnlinePaymentEnabled: 'YES',
+    PaystackSecretKey: 'sk_live_must_not_be_stored'
+  });
+
+  assert.deepEqual(values, { PaystackSubaccountCode: 'ACCT_branch123' });
+  assert.equal(BRANCH_PROFILE_OVERRIDE_FIELDS.includes('PaystackSubaccountCode'), true);
+  assert.equal(BRANCH_PROFILE_OVERRIDE_FIELDS.includes('PaystackSecretKey'), false);
+});
+
 test('organisation editions tolerate a missing legacy school profile', () => {
   const effective = applyBranchProfileOverrides(null, null, 'Main Branch');
 
@@ -114,6 +129,8 @@ test('web and desktop settings use the same branch-effective profile contract', 
   assert.match(setupScript, /OrganisationExecutiveReplyToEmail/);
   assert.match(settingsApi, /patchDocumentFields\(env, 'settings', 'brevo'/);
   assert.doesNotMatch(setupHtml, /BrevoApiKey/);
+  assert.match(setupHtml, /id="paystackSubaccountCode"/);
+  assert.match(setupScript, /settingsScopeField\.value === 'branch'[\s\S]*PaystackSubaccountCode/);
   assert.match(desktopSource, /"SettingsScope": "branch" if branch_settings else "organisation"/);
   assert.match(desktopSource, /def reset_selected_branch_settings/);
 });

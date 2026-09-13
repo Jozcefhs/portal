@@ -48,6 +48,7 @@ export const BRANCH_PROFILE_OVERRIDE_FIELDS = Object.freeze([
   'ResultDisplayMode',
   'ShowResultsOnline',
   'OnlinePaymentEnabled',
+  'PaystackSubaccountCode',
   'DirectBankTransferEnabled',
   'PaymentBankName',
   'PaymentAccountName',

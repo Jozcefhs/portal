@@ -94,6 +94,7 @@ import {
   resetBranchProfileOverrides,
   saveBranchProfileOverrides
 } from '../lib/branch-profile-settings.js';
+import { normalizePaystackSubaccountCode } from '../lib/direct-bank-transfer.js';
 import { refreshOrganizationPlanPolicy } from '../lib/plan-policy-sync.js';
 import {
   IMPREST_ADVANCE_ACCOUNT,
@@ -2414,6 +2415,9 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
       if (Object.prototype.hasOwnProperty.call(body, field)) submittedProfile[field] = body[field];
       else if (Object.prototype.hasOwnProperty.call(body, camelField)) submittedProfile[field] = body[camelField];
     });
+    if (Object.prototype.hasOwnProperty.call(submittedProfile, 'PaystackSubaccountCode')) {
+      submittedProfile.PaystackSubaccountCode = normalizePaystackSubaccountCode(submittedProfile.PaystackSubaccountCode);
+    }
     const saved = await saveBranchProfileOverrides(env, {
       branchId: body.BranchId || body.branchId,
       defaultProfile: defaults,

@@ -99,10 +99,11 @@ test('direct-transfer settings are branch-overridable and enforced by public end
     'functions/api/init-form-payment.js',
     'functions/api/init-payment.js',
     'functions/lib/church-payments.js',
-    'functions/lib/organization-commerce.js'
+    'functions/lib/organization-commerce.js',
+    'functions/lib/hotel-services.js'
   ]) {
     const code = await source(file);
-    assert.match(code, /publicPaymentMethods/);
+    assert.match(code, /branchPaymentConfiguration/);
     assert.match(code, /online\.enabled/);
   }
 });

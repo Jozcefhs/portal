@@ -11,6 +11,15 @@ function error(message, status = 400) {
   return result;
 }
 
+export function normalizePaystackSubaccountCode(value) {
+  const code = clean(value);
+  if (!code) return '';
+  if (!/^ACCT_[A-Za-z0-9]+$/.test(code) || code.length > 80) {
+    throw error('Enter a valid Paystack subaccount code beginning with ACCT_.');
+  }
+  return code;
+}
+
 export function normalizePublicPaymentMethod(value) {
   const method = clean(value || 'paystack').toLowerCase().replace(/[^a-z0-9]+/g, '');
   if (['paystack', 'online', 'card', 'ussd', 'bank', 'paywithbank', 'onlinebanktransfer'].includes(method)) return 'paystack';
@@ -34,12 +43,11 @@ function configurationFromProfile(env, profile = {}, branchId = '') {
 }
 
 export async function directTransferConfiguration(env, branchId = '') {
-  const saved = await getDocument(env, 'settings', 'schoolProfile').catch(() => null) || {};
-  const profile = branchId ? await effectiveBranchProfile(env, saved, branchId) : saved;
-  return configurationFromProfile(env, profile, branchId);
+  const configuration = await branchPaymentConfiguration(env, branchId);
+  return configuration.directTransfer;
 }
 
-export async function publicPaymentMethods(env, branchId = '') {
+export async function branchPaymentConfiguration(env, branchId = '') {
   const saved = await getDocument(env, 'settings', 'schoolProfile').catch(() => null) || {};
   const profile = branchId ? await effectiveBranchProfile(env, saved, branchId) : saved;
   const directTransfer = configurationFromProfile(env, profile, branchId);
@@ -49,10 +57,34 @@ export async function publicPaymentMethods(env, branchId = '') {
       provider: 'Paystack',
       label: 'Pay online (Card / USSD / Bank)'
     },
+    paystack: {
+      subaccountCode: normalizePaystackSubaccountCode(profile.PaystackSubaccountCode),
+      settlementMode: clean(profile.PaystackSubaccountCode) ? 'Branch Subaccount' : 'Organisation Account'
+    },
     directTransfer: {
       ...directTransfer,
       enabled: directTransfer.ready
     }
+  };
+}
+
+export function withPaystackBranchRouting(payload = {}, configuration = {}) {
+  const subaccountCode = normalizePaystackSubaccountCode(
+    configuration?.paystack?.subaccountCode || configuration?.PaystackSubaccountCode
+  );
+  if (!subaccountCode) return { ...payload };
+  return {
+    ...payload,
+    subaccount: subaccountCode,
+    bearer: 'subaccount'
+  };
+}
+
+export async function publicPaymentMethods(env, branchId = '') {
+  const configuration = await branchPaymentConfiguration(env, branchId);
+  return {
+    online: configuration.online,
+    directTransfer: configuration.directTransfer
   };
 }
 

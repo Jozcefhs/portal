@@ -625,6 +625,9 @@ function profileFromForm() {
     CurrentTerm: data.get('CurrentTerm'),
     ...senderProfile
   };
+  if (settingsScopeField.value === 'branch') {
+    profile.PaystackSubaccountCode = data.get('PaystackSubaccountCode');
+  }
   if (webLogoChanged) profile.WebLogoDataUrl = webLogoDataUrl;
   return profile;
 }
@@ -711,6 +714,7 @@ function applyProfile(profile = {}, settingsAccess = null) {
   setField('subscriptionPlan', profile.SubscriptionPlan || 'Starter');
   setField('userLimit', profile.UserLimit || 5);
   setField('onlinePaymentEnabled', profile.OnlinePaymentEnabled || 'YES');
+  setField('paystackSubaccountCode', profile.PaystackSubaccountCode);
   setField('directBankTransferEnabled', profile.DirectBankTransferEnabled || 'NO');
   setField('paymentBankName', profile.PaymentBankName);
   setField('paymentAccountName', profile.PaymentAccountName);
@@ -748,6 +752,16 @@ function updateSettingsScopeUI(profile = {}) {
     control.disabled = branchMode || id === 'organisationEdition';
     control.closest('.settings-section, .settings-field, .settings-logo-card')?.classList.toggle('settings-scope-locked', branchMode);
   });
+  const paystackSubaccountCode = document.getElementById('paystackSubaccountCode');
+  const paystackSubaccountField = document.getElementById('paystackSubaccountField');
+  const paystackSubaccountHelp = document.getElementById('paystackSubaccountHelp');
+  if (paystackSubaccountCode) paystackSubaccountCode.disabled = !branchMode;
+  paystackSubaccountField?.classList.toggle('settings-scope-locked', !branchMode);
+  if (paystackSubaccountHelp) {
+    paystackSubaccountHelp.textContent = branchMode
+      ? 'Payments for this branch settle to this Paystack subaccount, and the branch bears the Paystack fee. Leave blank to use the organisation Paystack account.'
+      : 'Select a branch override to configure its Paystack subaccount. The organisation payment gateway remains protected in Cloudflare.';
+  }
   if (branchMode) {
     webLogoDataUrl = '';
     webLogoChanged = false;
