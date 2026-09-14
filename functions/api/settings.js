@@ -21,6 +21,7 @@ import { refreshOrganizationPlanPolicy } from '../lib/plan-policy-sync.js';
 import { readStaffSession } from '../lib/staff-auth.js';
 import { requireSetupAdministrator, resolveSetupSettingsAccess } from '../lib/setup-auth.js';
 import { mergedProfileText } from '../lib/profile-settings-update.js';
+import { paystackSecretMode } from '../lib/paystack-environment.js';
 import {
   applyPublicPortalContent,
   PUBLIC_PORTAL_CONTENT_DOCUMENT,
@@ -123,6 +124,8 @@ function defaultProfile(env) {
     UserLimit: Math.max(1, Number(env.USER_LIMIT || 5) || 5),
     TurnstileSiteKey: clean(env.TURNSTILE_SITE_KEY),
     OnlinePaymentEnabled: clean(env.ONLINE_PAYMENT_ENABLED || (env.PAYSTACK_SECRET_KEY ? 'YES' : 'NO')).toUpperCase() === 'NO' ? 'NO' : 'YES',
+    PaystackConnectionMode: paystackSecretMode(env.PAYSTACK_SECRET_KEY),
+    PaystackSelfServiceAvailable: Boolean(clean(env.TENANT_CONTROL_PLANE_PRIVATE_KEY)),
     DirectBankTransferEnabled: clean(env.DIRECT_BANK_TRANSFER_ENABLED || 'NO').toUpperCase() === 'YES' ? 'YES' : 'NO',
     PaymentBankName: clean(env.PAYMENT_BANK_NAME),
     PaymentAccountName: clean(env.PAYMENT_ACCOUNT_NAME),
@@ -250,6 +253,8 @@ async function loadProfile(env, options = {}) {
   }
   if (!profile.SettingsScope) profile = await effectiveBranchProfile(env, profile);
   profile.TurnstileSiteKey = clean(env.TURNSTILE_SITE_KEY);
+  profile.PaystackConnectionMode = paystackSecretMode(env.PAYSTACK_SECRET_KEY);
+  profile.PaystackSelfServiceAvailable = Boolean(clean(env.TENANT_CONTROL_PLANE_PRIVATE_KEY));
   delete profile.GoogleDocumentsUrl;
   delete profile.googleDocumentsUrl;
   profile.DocumentStorageProvider = 'Cloudflare R2';
@@ -501,6 +506,8 @@ export async function onRequestPost(context) {
     delete profile.WebLogoUrl;
     delete profile.WebLogoConfigured;
     delete profile.TurnstileSiteKey;
+    delete profile.PaystackConnectionMode;
+    delete profile.PaystackSelfServiceAvailable;
     await upsertDocument(env, 'settings', 'organisationProfile', organizationProfileDocument({
       ...organization,
       WorkspaceId: deployment.workspaceId,

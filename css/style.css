@@ -535,6 +535,7 @@ html[data-theme="dark"] .preference-switch-row:has(.preference-switch input:chec
 .settings-section-heading h2{margin:1px 0 4px;color:#163a5e;font-size:20px;letter-spacing:-.01em}
 .settings-section-heading p:last-child{margin:0;color:#718096;font-size:13px}
 .settings-fields{display:grid;gap:18px}.settings-fields.two-column{grid-template-columns:repeat(2,minmax(0,1fr))}.settings-fields .full-width{grid-column:1/-1}
+.paystack-connection-card{display:grid;gap:13px;padding:16px;border:1px solid #c9dbe8;border-radius:12px;background:#f7fafc}.paystack-connection-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.paystack-connection-heading label,.paystack-connection-heading strong,.paystack-connection-heading small{display:block}.paystack-connection-heading strong{margin-top:4px;color:#173b5c;font-size:16px}.paystack-connection-badge{flex:0 0 auto;padding:5px 9px;border-radius:999px;background:#e7edf4;color:#52667d;font-size:9px;font-weight:850;letter-spacing:.05em;text-transform:uppercase}.paystack-connection-badge.is-connected{background:#fff0c7;color:#765500}.paystack-connection-badge.is-live{background:#dff6ed;color:#08705c}.paystack-connection-controls{display:grid;grid-template-columns:minmax(260px,1fr) minmax(280px,1fr) auto;align-items:end;gap:10px}.paystack-connection-controls>label:first-child{display:grid;gap:5px}.paystack-connection-controls>label:first-child span{color:#40566d;font-size:11px;font-weight:750}.paystack-replace-confirmation{display:grid!important;grid-template-columns:18px minmax(0,1fr);align-items:center;gap:7px;min-height:43px;margin:0!important;color:#6b4f08;font-size:10px!important;line-height:1.35}.paystack-replace-confirmation[hidden]{display:none!important}.paystack-replace-confirmation input{width:16px!important;height:16px!important;min-height:16px!important;margin:0!important}.paystack-connection-controls button{width:fit-content;min-height:43px;margin:0;white-space:nowrap}.paystack-webhook-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:9px;padding:9px 10px;border-radius:8px;background:#edf4f8;color:#526b80;font-size:10px}.paystack-webhook-row code{overflow:hidden;color:#173b5c;font-size:10px;text-overflow:ellipsis;white-space:nowrap}.paystack-webhook-row .settings-secondary-action{width:fit-content;min-height:31px;margin:0;padding:5px 9px;border:1px solid #b9cad8;background:#fff;color:#234a6d;font-size:9px}.paystack-connection-status{min-height:17px;margin:0!important;font-size:11px!important}
 .settings-field{min-width:0}.settings-field label{margin:0 0 7px;color:#26354a;font-size:13px;font-weight:750}
 .settings-field input,.settings-field select,.settings-field textarea{min-height:46px;padding:10px 12px;border-color:#cbd7e5;border-radius:8px;background:#fff;color:#172033;transition:border-color .16s,box-shadow .16s}
 .settings-field textarea{min-height:86px}.settings-field input:hover,.settings-field select:hover,.settings-field textarea:hover{border-color:#9eb3ca}
@@ -568,6 +569,7 @@ html[data-theme="dark"] .preference-switch-row:has(.preference-switch input:chec
   .settings-nav-link{grid-template-columns:26px auto;padding:8px}.settings-nav-link>span{width:25px;height:25px}.settings-nav-link small{display:none}
   .settings-unlock-card{grid-template-columns:auto 1fr;margin-top:42px}.settings-unlock-control{grid-column:1/-1}.settings-unlock-card button{grid-column:1/-1}.settings-login-status{grid-column:1/-1}
   .academic-policy-grid-head{display:none}.academic-component-grid,.academic-grade-grid,.academic-cumulative-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.academic-policy-row .academic-remove-row{justify-self:end}.academic-policy-row input[type=checkbox]{justify-self:start}
+  .paystack-connection-controls{grid-template-columns:1fr}.paystack-connection-controls button{justify-self:start}.paystack-webhook-row{grid-template-columns:1fr auto}.paystack-webhook-row>span{grid-column:1/-1}
 }
 @media (max-width:680px){
   .settings-shell{padding:10px 9px 30px}.settings-topbar{align-items:flex-start;margin-bottom:14px;padding:7px 2px 14px}.settings-logo-wrap{width:48px;height:48px;flex-basis:48px}.settings-logo{max-width:36px;max-height:36px}.settings-topbar h1{font-size:24px}.settings-brand>div>p:last-child{display:none}
@@ -1397,6 +1399,12 @@ html[data-theme="dark"] .settings-logo-preview{
   border-color:#3b5068;
   background:#0d1a29;
 }
+html[data-theme="dark"] .paystack-connection-card{border-color:#33465c;background:#0d1a29}
+html[data-theme="dark"] .paystack-connection-heading strong,
+html[data-theme="dark"] .paystack-connection-controls>label:first-child span,
+html[data-theme="dark"] .paystack-webhook-row code{color:#dce8f8}
+html[data-theme="dark"] .paystack-webhook-row{background:#172a3e;color:#a8b8cb}
+html[data-theme="dark"] .paystack-webhook-row .settings-secondary-action{border-color:#3b526b;background:#14263a;color:#d9eaff}
 html[data-theme="dark"] .settings-text-button{
   border-color:#3b526b;
   background:#14263a;

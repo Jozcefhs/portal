@@ -1,0 +1,45 @@
+name: Enable tenant Paystack onboarding
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: Cloudflare tenant project name, or all
+        required: true
+        default: all
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dynamax-tenant-payment-onboarding
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    name: Configure secure tenant payment onboarding
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev' }}
+      DYNAMAX_PLATFORM_PROJECT: dynamaxms
+      DYNAMAX_TENANT_PROJECT: ${{ inputs.project || 'all' }}
+      DYNAMAX_TENANT_PROVISIONER_SECRET: ${{ secrets.DYNAMAX_TENANT_PROVISIONER_SECRET }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate security and tenant-pool contracts
+        run: node --test tests/tenant-payment-onboarding.test.mjs tests/tenant-project-pool.test.mjs
+
+      - name: Enable secure payment onboarding
+        run: node scripts/backfill-tenant-payment-onboarding.mjs

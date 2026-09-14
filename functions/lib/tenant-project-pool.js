@@ -13,6 +13,7 @@ import {
   recordTrialUseTombstone,
   TENANT_RETIREMENT_REQUEST_COLLECTION
 } from './tenant-trial-lifecycle.js';
+import { validTenantControlPublicKey } from './tenant-control-plane.js';
 
 export const TENANT_PROJECT_POOL_COLLECTION = 'tenantProjectPool';
 export const TENANT_PROVISIONING_REQUEST_COLLECTION = 'tenantProvisioningRequests';
@@ -65,6 +66,7 @@ export function publicTenantProjectSlot(slot = {}) {
     ReadyAt: clean(slot.ReadyAt),
     LastError: clean(slot.LastError),
     ProvisioningBatchId: clean(slot.ProvisioningBatchId),
+    TenantControlKeyConfigured: validTenantControlPublicKey(slot.TenantControlPublicKey),
     UpdatedAt: clean(slot.UpdatedAt || slot.__updateTime || slot.CreatedAt)
   };
 }
@@ -168,6 +170,12 @@ export async function registerTenantProjectSlot(platformEnv, value = {}) {
     throw error;
   }
   const now = new Date().toISOString();
+  const tenantControlPublicKey = clean(value.TenantControlPublicKey || current?.TenantControlPublicKey);
+  if (tenantControlPublicKey && !validTenantControlPublicKey(tenantControlPublicKey)) {
+    const error = new Error('The tenant control-plane public key is invalid.');
+    error.status = 400;
+    throw error;
+  }
   const slot = {
     ...(current ? withoutFirestoreMetadata(current) : {}),
     Id: id,
@@ -179,6 +187,7 @@ export async function registerTenantProjectSlot(platformEnv, value = {}) {
     PortalUrl: clean(value.PortalUrl || `https://${cloudflareProject}.pages.dev`),
     Region: clean(value.Region),
     ProvisioningBatchId: clean(value.ProvisioningBatchId),
+    TenantControlPublicKey: tenantControlPublicKey,
     LastError: clean(value.LastError),
     ReadyAt: lower(value.Status || 'Ready') === 'ready' ? clean(current?.ReadyAt || now) : clean(current?.ReadyAt),
     CreatedAt: clean(current?.CreatedAt || now),
@@ -186,6 +195,52 @@ export async function registerTenantProjectSlot(platformEnv, value = {}) {
   };
   await upsertDocument(platformEnv, TENANT_PROJECT_POOL_COLLECTION, id, slot);
   return publicTenantProjectSlot(slot);
+}
+
+export async function saveTenantControlPublicKey(platformEnv, projectId, publicKey) {
+  const id = safeKey(projectId);
+  const tenantControlPublicKey = clean(publicKey);
+  if (!id || !validTenantControlPublicKey(tenantControlPublicKey)) {
+    const error = new Error('A valid tenant project and control-plane public key are required.');
+    error.status = 400;
+    throw error;
+  }
+  let slot = await getDocument(platformEnv, TENANT_PROJECT_POOL_COLLECTION, id);
+  if (!slot || safeKey(slot.CloudflareProject) !== id) {
+    const slots = await listCollection(platformEnv, TENANT_PROJECT_POOL_COLLECTION, {
+      pageSize: 1000,
+      maxPages: 10
+    });
+    slot = slots.find((candidate) => safeKey(candidate.CloudflareProject) === id) || null;
+  }
+  if (!slot || safeKey(slot.CloudflareProject) !== id) {
+    const error = new Error('The tenant project was not found in the managed pool.');
+    error.status = 404;
+    throw error;
+  }
+  const slotDocumentId = clean(slot.__id || slot.Id);
+  const now = new Date().toISOString();
+  await upsertDocument(platformEnv, TENANT_PROJECT_POOL_COLLECTION, slotDocumentId, {
+    ...withoutFirestoreMetadata(slot),
+    TenantControlPublicKey: tenantControlPublicKey,
+    TenantControlKeyUpdatedAt: now,
+    UpdatedAt: now
+  });
+  const registrationReference = clean(slot.AssignedRegistrationReference);
+  if (registrationReference) {
+    const registration = await getDocument(platformEnv, 'tenantRegistrations', registrationReference);
+    if (!registration) {
+      const error = new Error('The assigned tenant registration was not found.');
+      error.status = 409;
+      throw error;
+    }
+    await patchDocumentFieldsIfCurrent(platformEnv, 'tenantRegistrations', registrationReference, {
+      TenantControlPublicKey: tenantControlPublicKey,
+      TenantControlKeyUpdatedAt: now,
+      UpdatedAt: now
+    }, registration);
+  }
+  return publicTenantProjectSlot({ ...slot, TenantControlPublicKey: tenantControlPublicKey, UpdatedAt: now });
 }
 
 export async function requestTenantProjectProvisioning(platformEnv, value = {}) {
@@ -396,6 +451,7 @@ export async function reserveTenantProjectSlot(platformEnv, currentRegistration 
       FirebaseProjectId: clean(candidate.FirebaseProjectId),
       CloudflareProject: clean(candidate.CloudflareProject),
       PortalUrl: clean(candidate.PortalUrl),
+      TenantControlPublicKey: clean(candidate.TenantControlPublicKey),
       ProvisioningStatus: 'Ready',
       ProjectAssignedAt: now,
       UpdatedAt: now

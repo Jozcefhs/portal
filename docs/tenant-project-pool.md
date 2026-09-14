@@ -50,7 +50,7 @@ Email failure never loses the subscription or project assignment. The central re
 - `settings/tenantPoolPolicy`: edition targets, default Firestore region and project prefix.
 - `tenantRegistrations`: receives `WorkspaceId`, `FirebaseProjectId`, `CloudflareProject`, `PortalUrl` and provisioning state after assignment.
 
-These records contain identifiers, status and hashed activation challenges only. They do not contain tenant Firebase private keys, Cloudflare tokens, administrator passwords or subscriber operational data.
+These records contain identifiers, status, hashed activation challenges and tenant control-plane public keys only. They do not contain tenant Firebase private keys, Cloudflare tokens, Paystack secret keys, administrator passwords or subscriber operational data.
 
 ## One-time GitHub configuration
 
@@ -106,7 +106,11 @@ For each requested project, the worker:
 7. Direct-uploads the existing application files without compiling them.
 8. Registers the completed slot in the Dynamax pool and completes the queue request.
 
-Paystack, organisation email, document storage, custom domains and other subscriber-owned integrations are intentionally not copied from another organisation. Configure them after assignment when that subscriber enables the relevant service.
+Paystack, organisation email, document storage, custom domains and other subscriber-owned integrations are intentionally not copied from another organisation. After assignment, an organisation-wide Super Administrator can open **Settings -> Payments and direct transfer**, paste the organisation's `sk_test_...` or `sk_live_...` key once, and connect it. The tenant signs that request with its encrypted private control key; the central platform validates the signature and Paystack credential, writes the credential directly to that tenant's Cloudflare Pages `PAYSTACK_SECRET_KEY` encrypted variable, and queues a fresh production deployment. The key is never written to Firestore, browser storage, audit records or an API response.
+
+The administrator must also copy the displayed tenant webhook URL into Paystack **API Keys & Webhooks**. Replacing a connected account requires an explicit acknowledgement because pending transactions created under the old business must be reconciled first. Branches that settle independently continue to use their own Paystack subaccount code under branch settings.
+
+Existing ready or assigned pool projects receive their per-tenant signing keys through the manual **Enable tenant Paystack onboarding** GitHub workflow. The same job configures the central `dynamaxms` production project with `CLOUDFLARE_ACCOUNT_ID` and the encrypted `CLOUDFLARE_PAGES_API_TOKEN`; the token must have only the Cloudflare **Pages Write** permission needed to update the assigned tenant project and queue its deployment.
 
 ## Capacity and cost controls
 

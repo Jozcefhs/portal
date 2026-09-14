@@ -8,6 +8,11 @@ const settingsBranchField = document.getElementById('settingsBranch');
 const settingsScopeSummary = document.getElementById('settingsScopeSummary');
 const settingsSaveScopeLabel = document.getElementById('settingsSaveScopeLabel');
 const resetBranchSettingsButton = document.getElementById('resetBranchSettings');
+const paystackConnectionPanel = document.getElementById('paystackConnectionPanel');
+const paystackSecretKeyField = document.getElementById('paystackSecretKey');
+const confirmPaystackReplacement = document.getElementById('confirmPaystackReplacement');
+const connectPaystackButton = document.getElementById('connectPaystackButton');
+const paystackConnectionStatus = document.getElementById('paystackConnectionStatus');
 const academicPolicySection = document.getElementById('academic-policy-settings');
 const academicPolicyIssues = document.getElementById('academicPolicyIssues');
 const activateAcademicPolicyButton = document.getElementById('activateAcademicPolicyButton');
@@ -23,6 +28,8 @@ let webLogoChanged = false;
 let activeSettingsEdition = 'school';
 let loadedAcademicPolicyView = null;
 let activeSettingsAccess = { scope: requestedSettingsScope, branchId: requestedSettingsBranch, scopeLocked: false };
+let paystackConnectionMode = 'not-configured';
+let paystackSelfServiceAvailable = false;
 const fixedPlanUserLimits = { Free: 5, Starter: 5, Standard: 20, Professional: 50 };
 const organisationOnlyControlIds = [
   'organisationEdition', 'nameFormat', 'webLogoFile', 'removeWebLogo',
@@ -144,6 +151,48 @@ function setStatus(message, type) {
 function setLoginStatus(message, type) {
   setupLoginStatus.textContent = message || '';
   setupLoginStatus.className = 'status ' + (type || '');
+}
+
+function paystackConfigured() {
+  return paystackConnectionMode !== 'not-configured';
+}
+
+function setPaystackConnectionStatus(message, type = '') {
+  if (!paystackConnectionStatus) return;
+  paystackConnectionStatus.textContent = message || '';
+  paystackConnectionStatus.className = `status paystack-connection-status ${type}`.trim();
+}
+
+function updatePaystackConnectionUI(profile = {}) {
+  paystackConnectionMode = String(profile.PaystackConnectionMode || paystackConnectionMode || 'not-configured').trim().toLowerCase();
+  paystackSelfServiceAvailable = profile.PaystackSelfServiceAvailable === true;
+  const configured = paystackConfigured();
+  const modeLabel = paystackConnectionMode === 'live'
+    ? 'Live payments connected'
+    : paystackConnectionMode === 'test'
+      ? 'Test payments connected'
+      : configured ? 'Payment credential connected' : 'No Paystack account connected';
+  const state = document.getElementById('paystackConnectionState');
+  const badge = document.getElementById('paystackConnectionBadge');
+  const confirmation = document.getElementById('paystackReplaceConfirmation');
+  const webhook = document.getElementById('paystackWebhookUrl');
+  if (state) state.textContent = modeLabel;
+  if (badge) {
+    badge.textContent = configured ? `${paystackConnectionMode} mode` : 'Not connected';
+    badge.classList.toggle('is-connected', configured);
+    badge.classList.toggle('is-live', paystackConnectionMode === 'live');
+  }
+  if (confirmation) confirmation.hidden = !configured;
+  if (confirmPaystackReplacement && !configured) confirmPaystackReplacement.checked = false;
+  if (connectPaystackButton) connectPaystackButton.textContent = configured ? 'Replace Paystack account' : 'Connect Paystack';
+  if (webhook) webhook.textContent = `${window.location.origin}/api/paystack-webhook`;
+  if (!paystackSelfServiceAvailable) {
+    setPaystackConnectionStatus('This tenant still needs the one-time secure onboarding upgrade before it can connect Paystack.', 'bad');
+  } else if (!configured) {
+    setPaystackConnectionStatus('Paste a Paystack secret key to validate and connect this organisation.');
+  } else {
+    setPaystackConnectionStatus('The secret remains encrypted in Cloudflare and is never displayed here.', 'ok');
+  }
 }
 
 function announceSettingsChange() {
@@ -714,6 +763,7 @@ function applyProfile(profile = {}, settingsAccess = null) {
   setField('subscriptionPlan', profile.SubscriptionPlan || 'Starter');
   setField('userLimit', profile.UserLimit || 5);
   setField('onlinePaymentEnabled', profile.OnlinePaymentEnabled || 'YES');
+  updatePaystackConnectionUI(profile);
   setField('paystackSubaccountCode', profile.PaystackSubaccountCode);
   setField('directBankTransferEnabled', profile.DirectBankTransferEnabled || 'NO');
   setField('paymentBankName', profile.PaymentBankName);
@@ -762,6 +812,11 @@ function updateSettingsScopeUI(profile = {}) {
       ? 'Payments for this branch settle to this Paystack subaccount, and the branch bears the Paystack fee. Leave blank to use the organisation Paystack account.'
       : 'Select a branch override to configure its Paystack subaccount. The organisation payment gateway remains protected in Cloudflare.';
   }
+  const connectionLocked = branchMode || !paystackSelfServiceAvailable;
+  [paystackSecretKeyField, confirmPaystackReplacement, connectPaystackButton].forEach((control) => {
+    if (control) control.disabled = connectionLocked;
+  });
+  paystackConnectionPanel?.classList.toggle('settings-scope-locked', branchMode);
   if (branchMode) {
     webLogoDataUrl = '';
     webLogoChanged = false;
@@ -894,6 +949,55 @@ setupForm.addEventListener('input', (event) => {
 });
 
 document.getElementById('subscriptionPlan')?.addEventListener('change', alignPlanUserLimit);
+
+connectPaystackButton?.addEventListener('click', async () => {
+  const secret = String(paystackSecretKeyField?.value || '').trim();
+  if (!secret) {
+    setPaystackConnectionStatus('Paste the Paystack secret key first.', 'bad');
+    paystackSecretKeyField?.focus();
+    return;
+  }
+  if (paystackConfigured() && !confirmPaystackReplacement?.checked) {
+    setPaystackConnectionStatus('Confirm the replacement after reconciling payments created with the current account.', 'bad');
+    return;
+  }
+  if (!window.DynamaxActionFeedback.begin(connectPaystackButton, 'Validating and connecting…')) return;
+  try {
+    setPaystackConnectionStatus('Validating the key with Paystack and installing the encrypted Cloudflare secret…');
+    const response = await fetch('/api/paystack-connection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        password: unlockedPassword,
+        SettingsScope: 'organisation',
+        paystackSecretKey: secret,
+        confirmReplacement: confirmPaystackReplacement?.checked === true
+      })
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.ok) throw new Error(data?.message || 'Paystack could not be connected.');
+    paystackConnectionMode = String(data.mode || 'configured').trim().toLowerCase();
+    if (confirmPaystackReplacement) confirmPaystackReplacement.checked = false;
+    updatePaystackConnectionUI({ PaystackConnectionMode: paystackConnectionMode, PaystackSelfServiceAvailable: true });
+    setPaystackConnectionStatus(`${data.message} Add the webhook URL shown above in Paystack API Keys & Webhooks.`, 'ok');
+    setStatus('Paystack connection saved securely. The payment deployment is updating.', 'ok');
+  } catch (error) {
+    setPaystackConnectionStatus(error.message, 'bad');
+  } finally {
+    if (paystackSecretKeyField) paystackSecretKeyField.value = '';
+    window.DynamaxActionFeedback.end(connectPaystackButton);
+  }
+});
+
+document.getElementById('copyPaystackWebhook')?.addEventListener('click', async () => {
+  const value = document.getElementById('paystackWebhookUrl')?.textContent || '';
+  try {
+    await navigator.clipboard.writeText(value);
+    setPaystackConnectionStatus('Webhook URL copied.', 'ok');
+  } catch (_error) {
+    setPaystackConnectionStatus('Copy the webhook URL manually from the field above.', 'bad');
+  }
+});
 
 policyField('addAcademicComponent')?.addEventListener('click', () => {
   policyField('academicComponents').appendChild(createAcademicComponentRow({}, policyField('academicComponents').children.length));

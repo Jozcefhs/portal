@@ -6,7 +6,7 @@ const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260903-hotel-tabs';
 const pageStyleVersions = new Map([
   ['admin.html', '20260910-session-edge-recovery'],
-  ['setup.html', '20260909-academic-report-workflow'],
+  ['setup.html', '20260914-paystack-onboarding'],
   ['plan-management.html', '20260830-dual-currency-pricing'],
   ['register-organization.html', '20260830-flex-module-layout']
 ]);

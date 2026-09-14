@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
@@ -57,6 +57,15 @@ function editionLabel(value) {
 
 function randomSecret(bytes = 32) {
   return randomBytes(bytes).toString('base64url');
+}
+
+function tenantControlKeyPair() {
+  const pair = generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+  });
+  return { publicKey: clean(pair.publicKey), privateKey: clean(pair.privateKey) };
 }
 
 function generatedProjectId(sequence) {
@@ -207,7 +216,7 @@ async function createFirebaseWebApp(projectId) {
   return googleRequest(`https://firebase.googleapis.com/v1beta1/projects/${projectId}/webApps/${encodeURIComponent(appId)}/config`);
 }
 
-function deploymentVariables(projectId, serviceAccount, webConfig, privateKey) {
+function deploymentVariables(projectId, serviceAccount, webConfig, privateKey, tenantControlPrivateKey) {
   const portalUrl = `https://${projectId}.pages.dev`;
   const plain = (value) => ({ type: 'plain_text', value: clean(value) });
   const secret = (value) => ({ type: 'secret_text', value: clean(value) });
@@ -234,7 +243,8 @@ function deploymentVariables(projectId, serviceAccount, webConfig, privateKey) {
     MFA_ENCRYPTION_SECRET: secret(randomSecret()),
     PARENT_SESSION_SECRET: secret(randomSecret()),
     NOTIFICATION_SCHEDULER_SECRET: secret(randomSecret()),
-    FACE_TEMPLATE_ENCRYPTION_KEY: secret(randomSecret())
+    FACE_TEMPLATE_ENCRYPTION_KEY: secret(randomSecret()),
+    TENANT_CONTROL_PLANE_PRIVATE_KEY: secret(tenantControlPrivateKey)
   };
 }
 
@@ -363,7 +373,8 @@ async function provisionProject(projectId) {
     command('gcloud', ['iam', 'service-accounts', 'keys', 'create', keyFile, `--iam-account=${runtimeEmail}`, '--project', projectId, '--quiet']);
     const serviceAccountKey = JSON.parse(readFileSync(keyFile, 'utf8'));
     const webConfig = await createFirebaseWebApp(projectId);
-    const variables = deploymentVariables(projectId, runtimeEmail, webConfig, serviceAccountKey.private_key);
+    const tenantControl = tenantControlKeyPair();
+    const variables = deploymentVariables(projectId, runtimeEmail, webConfig, serviceAccountKey.private_key, tenantControl.privateKey);
     await configureCloudflareProject(projectId, variables);
 
     const firebaseConfig = edition === 'school'
@@ -388,7 +399,8 @@ async function provisionProject(projectId) {
       PortalUrl: `https://${projectId}.pages.dev`,
       Region: region,
       Status: 'Ready',
-      ProvisioningBatchId: requestReference
+      ProvisioningBatchId: requestReference,
+      TenantControlPublicKey: tenantControl.publicKey
     };
     await platformApi({ action: 'register', slot });
     return slot;

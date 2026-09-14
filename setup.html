@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Settings</title>
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260909-academic-report-workflow">
+  <link rel="stylesheet" href="css/style.css?v=20260914-paystack-onboarding">
 </head>
 <body class="settings-page">
   <main class="settings-shell">
@@ -480,6 +480,27 @@
               <label for="onlinePaymentEnabled">Automated online payment</label>
               <select id="onlinePaymentEnabled" name="OnlinePaymentEnabled"><option value="YES">Enabled &mdash; Card, USSD and bank through Paystack</option><option value="NO">Disabled</option></select>
             </div>
+            <div class="settings-field full-width paystack-connection-card" id="paystackConnectionPanel">
+              <div class="paystack-connection-heading">
+                <div>
+                  <label for="paystackSecretKey">Organisation Paystack account</label>
+                  <strong id="paystackConnectionState">Checking secure connection…</strong>
+                  <small id="paystackConnectionHelp" class="settings-help">The secret key is sent once over HTTPS and installed directly as an encrypted Cloudflare secret. It is never saved in the browser or database.</small>
+                </div>
+                <span id="paystackConnectionBadge" class="paystack-connection-badge">Not connected</span>
+              </div>
+              <div class="paystack-connection-controls">
+                <label for="paystackSecretKey"><span>Paystack secret key</span><input id="paystackSecretKey" type="password" maxlength="200" autocomplete="new-password" spellcheck="false" placeholder="sk_live_… or sk_test_…"></label>
+                <label id="paystackReplaceConfirmation" class="paystack-replace-confirmation" hidden><input id="confirmPaystackReplacement" type="checkbox"><span>I understand that pending payments created with the previous Paystack account must be reconciled before replacement.</span></label>
+                <button id="connectPaystackButton" type="button">Connect Paystack</button>
+              </div>
+              <div class="paystack-webhook-row">
+                <span>Paystack webhook URL</span>
+                <code id="paystackWebhookUrl"></code>
+                <button id="copyPaystackWebhook" type="button" class="settings-secondary-action">Copy URL</button>
+              </div>
+              <p id="paystackConnectionStatus" class="status paystack-connection-status" role="status"></p>
+            </div>
             <div class="settings-field" id="paystackSubaccountField">
               <label for="paystackSubaccountCode">Branch Paystack subaccount</label>
               <input id="paystackSubaccountCode" name="PaystackSubaccountCode" maxlength="80" autocomplete="off" placeholder="ACCT_xxxxxxxxxxxxxxxx">
@@ -508,6 +529,6 @@
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
-  <script src="js/setup.js?v=20260913-branch-paystack"></script>
+  <script src="js/setup.js?v=20260914-paystack-onboarding"></script>
 </body>
 </html>

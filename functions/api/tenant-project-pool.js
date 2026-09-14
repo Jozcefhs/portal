@@ -11,6 +11,7 @@ import {
   finishTenantProvisioningRequest,
   loadTenantProjectPool,
   registerTenantProjectSlot,
+  saveTenantControlPublicKey,
   releaseTenantProjectSlot,
   requestTenantProjectProvisioning,
   reserveTenantProjectSlot,
@@ -27,6 +28,7 @@ const clean = (value) => String(value ?? '').trim();
 const PROVISIONER_ACTIONS = new Set([
   'load',
   'register',
+  'set-control-key',
   'request',
   'claim-next',
   'finish-request',
@@ -70,6 +72,12 @@ export async function onRequestPost({ request, env }) {
         slot: currentSlot ? { ...slot, Status: currentSlot.Status, AssignedOrganisationName: currentSlot.AssignedOrganisationName } : slot,
         assignments
       }, {
+        headers: { 'Cache-Control': 'no-store' }
+      });
+    }
+    if (action === 'set-control-key') {
+      const slot = await saveTenantControlPublicKey(platformEnv, body.projectId, body.publicKey);
+      return Response.json({ ok: true, message: 'Tenant control-plane key registered.', slot }, {
         headers: { 'Cache-Control': 'no-store' }
       });
     }

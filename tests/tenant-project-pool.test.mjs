@@ -36,6 +36,7 @@ test('public project slots expose assignment state without credentials', () => {
   assert.equal(result.Id, 'slot-1');
   assert.equal(result.Edition, 'faith');
   assert.equal(result.FirebaseProjectId, 'tenant-1');
+  assert.equal(result.TenantControlKeyConfigured, false);
   assert.equal('FIREBASE_PRIVATE_KEY' in result, false);
 });
 
@@ -67,6 +68,8 @@ test('provisioning plans are repeatable and can resume from a user-precreated pr
   assert.match(provisionerSource, /Using pre-created Google Cloud project/);
   assert.match(provisionerSource, /DYNAMAX_TENANT_PROVISIONER_SECRET/);
   assert.match(provisionerSource, /DYNAMAX_GCP_BILLING_REQUIRED/);
+  assert.match(provisionerSource, /TENANT_CONTROL_PLANE_PRIVATE_KEY/);
+  assert.match(provisionerSource, /TenantControlPublicKey/);
   assert.match(provisionerSource, /Billing linkage is optional for this provisioning run/);
   assert.match(provisionerSource, /function commandWithRetry/);
   assert.match(provisionerSource, /Using existing tenant runtime account/);
