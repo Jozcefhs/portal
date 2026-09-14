@@ -7,10 +7,7 @@ import {
   signTenantControlRequest,
   verifyTenantControlRequest
 } from '../functions/lib/tenant-control-plane.js';
-import {
-  retryLatestPagesProductionDeployment,
-  setPagesProductionSecret
-} from '../functions/lib/cloudflare-pages-secrets.js';
+import { setPagesProductionSecret } from '../functions/lib/cloudflare-pages-secrets.js';
 import {
   normalizePaystackSecretKey,
   validatePaystackSecretKey
@@ -25,6 +22,7 @@ const middleware = await readFile(new URL('../functions/_middleware.js', import.
 const provisioner = await readFile(new URL('../scripts/provision-tenant-projects.mjs', import.meta.url), 'utf8');
 const backfill = await readFile(new URL('../scripts/backfill-tenant-payment-onboarding.mjs', import.meta.url), 'utf8');
 const workflow = await readFile(new URL('../.github/workflows/backfill-tenant-payment-onboarding.yml', import.meta.url), 'utf8');
+const tenantFleetWorkflow = await readFile(new URL('../.github/workflows/deploy-tenant-pool.yml', import.meta.url), 'utf8');
 
 function controlKeyPair() {
   return generateKeyPairSync('rsa', {
@@ -63,16 +61,10 @@ test('Paystack keys are format-checked and validated server-side through a read-
   assert.equal(JSON.stringify(result).includes('1234567890abcdef'), false);
 });
 
-test('Cloudflare receives one encrypted production variable and a new production deployment is queued', async () => {
+test('Cloudflare receives only the encrypted production variable', async () => {
   const calls = [];
   const fetchImpl = async (url, options = {}) => {
     calls.push({ url: String(url), options });
-    if (String(url).includes('/deployments?')) {
-      return Response.json({ success: true, result: [{ id: 'deployment-one', is_skipped: false }] });
-    }
-    if (String(url).endsWith('/retry')) {
-      return Response.json({ success: true, result: { id: 'deployment-two' } });
-    }
     return Response.json({ success: true, result: {} });
   };
   const env = { CLOUDFLARE_ACCOUNT_ID: 'account-1', CLOUDFLARE_PAGES_API_TOKEN: 'control-token' };
@@ -82,11 +74,8 @@ test('Cloudflare receives one encrypted production variable and a new production
   assert.deepEqual(Object.keys(payload.deployment_configs.production.env_vars), ['PAYSTACK_SECRET_KEY']);
   assert.equal(payload.deployment_configs.production.env_vars.PAYSTACK_SECRET_KEY.type, 'secret_text');
   assert.equal(JSON.stringify(saved).includes('sk_live_'), false);
-
-  const retry = await retryLatestPagesProductionDeployment(env, 'tenant-school-1', fetchImpl);
-  assert.equal(retry.queued, true);
-  assert.match(calls[1].url, /env=production/);
-  assert.match(calls[2].url, /deployment-one\/retry$/);
+  assert.equal(calls.length, 1);
+  assert.doesNotMatch(calls[0].url, /deployments|retry/);
 });
 
 test('tenant endpoint requires organisation-wide Super Administrator authority and returns no secret', () => {
@@ -108,6 +97,8 @@ test('central endpoint verifies tenant identity before validating or installing 
   assert.match(centralApi, /portalHost\(registration\.PortalUrl\)/);
   assert.match(centralApi, /tenantControlRequests/);
   assert.match(centralApi, /PaystackConnected: true/);
+  assert.match(centralApi, /queueTenantPaystackDeployment/);
+  assert.match(centralApi, /PaystackDeploymentRequestedAt/);
   assert.doesNotMatch(centralApi, /PaystackSecretKey:\s*details\.paystackSecretKey/);
   assert.doesNotMatch(centralApi, /console\.(log|error).*paystackSecretKey/);
   assert.match(middleware, /PLATFORM_SUBSCRIPTION_PROXY_PATHS[\s\S]*?'\/api\/tenant-paystack-connection'/);
@@ -130,8 +121,14 @@ test('new and existing pooled tenants receive asymmetric control keys without ex
   assert.match(backfill, /TenantControlKeyConfigured !== true/);
   assert.match(backfill, /TENANT_CONTROL_PLANE_PRIVATE_KEY: \{ type: 'secret_text'/);
   assert.match(backfill, /action: 'set-control-key'/);
+  assert.doesNotMatch(backfill, /\/retry|retryProductionDeployment/);
   assert.doesNotMatch(backfill, /process\.stdout\.write\([^\n]+privateKey/);
   assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /gh workflow run deploy-platform\.yml/);
+  assert.match(workflow, /gh workflow run deploy-tenant-pool\.yml/);
   assert.match(workflow, /DYNAMAX_TENANT_PROVISIONER_SECRET/);
   assert.match(workflow, /CLOUDFLARE_API_TOKEN/);
+  assert.match(tenantFleetWorkflow, /cron: '\*\/5 \* \* \* \*'/);
+  assert.match(tenantFleetWorkflow, /PaystackDeploymentPending == true/);
+  assert.match(tenantFleetWorkflow, /complete-paystack-deployment/);
 });

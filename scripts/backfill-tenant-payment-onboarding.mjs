@@ -41,18 +41,6 @@ async function patchProductionVariables(project, envVars) {
   });
 }
 
-async function retryProductionDeployment(project) {
-  const listed = await jsonRequest(`${cloudflareEndpoint(project, '/deployments')}?env=production&page=1&per_page=5`, {
-    headers: cloudflareHeaders()
-  });
-  const deployment = (listed.result || []).find((item) => clean(item?.id) && item?.is_skipped !== true);
-  if (!deployment) return false;
-  await jsonRequest(cloudflareEndpoint(project, `/deployments/${encodeURIComponent(deployment.id)}/retry`), {
-    method: 'POST', headers: cloudflareHeaders(), body: '{}'
-  });
-  return true;
-}
-
 async function platformApi(payload) {
   return jsonRequest(`${platformUrl}/api/tenant-project-pool`, {
     method: 'POST',
@@ -75,8 +63,7 @@ async function configureCentralControlPlane() {
     CLOUDFLARE_ACCOUNT_ID: { type: 'plain_text', value: cloudflareAccountId },
     CLOUDFLARE_PAGES_API_TOKEN: { type: 'secret_text', value: cloudflareToken }
   });
-  const queued = await retryProductionDeployment(centralProject);
-  process.stdout.write(`Central payment control plane configured${queued ? ' and deployment queued' : ''}.\n`);
+  process.stdout.write('Central payment control plane variables configured.\n');
 }
 
 async function main() {
@@ -101,8 +88,7 @@ async function main() {
       TENANT_CONTROL_PLANE_PRIVATE_KEY: { type: 'secret_text', value: keyPair.privateKey }
     });
     await platformApi({ action: 'set-control-key', projectId: project, publicKey: keyPair.publicKey });
-    const queued = await retryProductionDeployment(project);
-    process.stdout.write(`${project}: secure payment onboarding enabled${queued ? '; deployment queued' : ''}.\n`);
+    process.stdout.write(`${project}: secure payment onboarding keys configured.\n`);
   }
   process.stdout.write(`Updated ${slots.length} tenant project(s).\n`);
 }

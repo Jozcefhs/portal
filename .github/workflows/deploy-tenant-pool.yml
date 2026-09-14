@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+  schedule:
+    - cron: '*/5 * * * *'
   workflow_dispatch:
     inputs:
       project:
@@ -29,6 +31,7 @@ jobs:
       DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev' }}
       DYNAMAX_TENANT_PROVISIONER_SECRET: ${{ secrets.DYNAMAX_TENANT_PROVISIONER_SECRET }}
       TARGET_PROJECT: ${{ inputs.project || 'all' }}
+      EVENT_NAME: ${{ github.event_name }}
     steps:
       - name: Load ready and assigned projects
         id: inventory
@@ -38,7 +41,7 @@ jobs:
           [[ -n "${DYNAMAX_TENANT_PROVISIONER_SECRET}" ]] || { echo '::error::DYNAMAX_TENANT_PROVISIONER_SECRET is required.'; exit 1; }
           payload="$(jq -nc --arg password "${DYNAMAX_TENANT_PROVISIONER_SECRET}" '{password:$password,action:"load"}')"
           response="$(curl --fail-with-body --silent --show-error "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" -H 'Content-Type: application/json' --data "${payload}")"
-          projects="$(jq -c --arg target "${TARGET_PROJECT}" '[.slots[] | select((.Status | ascii_downcase) == "ready" or (.Status | ascii_downcase) == "assigned") | select($target == "all" or .FirebaseProjectId == $target)]' <<<"${response}")"
+          projects="$(jq -c --arg target "${TARGET_PROJECT}" --arg event "${EVENT_NAME}" '[.slots[] | select((.Status | ascii_downcase) == "ready" or (.Status | ascii_downcase) == "assigned") | select(if $event == "schedule" then .PaystackDeploymentPending == true else ($target == "all" or .FirebaseProjectId == $target) end)]' <<<"${response}")"
           count="$(jq 'length' <<<"${projects}")"
           if [[ "${TARGET_PROJECT}" != "all" && "${count}" == "0" ]]; then
             echo "::error::No ready or assigned pool project matched ${TARGET_PROJECT}."
@@ -157,3 +160,23 @@ jobs:
           --url "https://${{ matrix.project.CloudflareProject }}.pages.dev"
           --workspace "${EXPECTED_WORKSPACE_ID}"
           --edition "${EXPECTED_EDITION}"
+
+      - name: Mark Paystack deployment complete
+        if: ${{ matrix.project.PaystackDeploymentPending == true }}
+        env:
+          DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev' }}
+          DYNAMAX_TENANT_PROVISIONER_SECRET: ${{ secrets.DYNAMAX_TENANT_PROVISIONER_SECRET }}
+          CLOUDFLARE_PROJECT: ${{ matrix.project.CloudflareProject }}
+          PAYSTACK_DEPLOYMENT_REQUESTED_AT: ${{ matrix.project.PaystackDeploymentRequestedAt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload="$(jq -nc \
+            --arg password "${DYNAMAX_TENANT_PROVISIONER_SECRET}" \
+            --arg projectId "${CLOUDFLARE_PROJECT}" \
+            --arg requestedAt "${PAYSTACK_DEPLOYMENT_REQUESTED_AT}" \
+            '{password:$password,action:"complete-paystack-deployment",projectId:$projectId,requestedAt:$requestedAt}')"
+          curl --fail-with-body --silent --show-error \
+            "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" \
+            -H 'Content-Type: application/json' \
+            --data "${payload}"

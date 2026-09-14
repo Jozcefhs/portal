@@ -67,21 +67,3 @@ export async function setPagesProductionSecret(env, project, name, value, fetchI
   }, fetchImpl);
   return { project: targetProject, variable: variableName };
 }
-
-export async function retryLatestPagesProductionDeployment(env, project, fetchImpl = fetch) {
-  const { accountId, apiToken } = cloudflareConfiguration(env);
-  const targetProject = projectName(project);
-  const base = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/pages/projects/${encodeURIComponent(targetProject)}/deployments`;
-  const listed = await cloudflareRequest(`${base}?env=production&page=1&per_page=5`, {
-    headers: cloudflareHeaders(apiToken)
-  }, fetchImpl);
-  const deployment = (Array.isArray(listed?.result) ? listed.result : [])
-    .find((item) => clean(item?.id) && item?.is_skipped !== true);
-  if (!deployment) return { queued: false, deploymentId: '' };
-  const retried = await cloudflareRequest(`${base}/${encodeURIComponent(deployment.id)}/retry`, {
-    method: 'POST',
-    headers: cloudflareHeaders(apiToken),
-    body: '{}'
-  }, fetchImpl);
-  return { queued: true, deploymentId: clean(retried?.result?.id || deployment.id) };
-}

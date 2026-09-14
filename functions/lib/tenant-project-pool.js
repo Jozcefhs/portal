@@ -67,6 +67,8 @@ export function publicTenantProjectSlot(slot = {}) {
     LastError: clean(slot.LastError),
     ProvisioningBatchId: clean(slot.ProvisioningBatchId),
     TenantControlKeyConfigured: validTenantControlPublicKey(slot.TenantControlPublicKey),
+    PaystackDeploymentPending: slot.PaystackDeploymentPending === true,
+    PaystackDeploymentRequestedAt: clean(slot.PaystackDeploymentRequestedAt),
     UpdatedAt: clean(slot.UpdatedAt || slot.__updateTime || slot.CreatedAt)
   };
 }
@@ -197,14 +199,9 @@ export async function registerTenantProjectSlot(platformEnv, value = {}) {
   return publicTenantProjectSlot(slot);
 }
 
-export async function saveTenantControlPublicKey(platformEnv, projectId, publicKey) {
+async function tenantPoolSlotByProject(platformEnv, projectId) {
   const id = safeKey(projectId);
-  const tenantControlPublicKey = clean(publicKey);
-  if (!id || !validTenantControlPublicKey(tenantControlPublicKey)) {
-    const error = new Error('A valid tenant project and control-plane public key are required.');
-    error.status = 400;
-    throw error;
-  }
+  if (!id) return null;
   let slot = await getDocument(platformEnv, TENANT_PROJECT_POOL_COLLECTION, id);
   if (!slot || safeKey(slot.CloudflareProject) !== id) {
     const slots = await listCollection(platformEnv, TENANT_PROJECT_POOL_COLLECTION, {
@@ -213,7 +210,18 @@ export async function saveTenantControlPublicKey(platformEnv, projectId, publicK
     });
     slot = slots.find((candidate) => safeKey(candidate.CloudflareProject) === id) || null;
   }
-  if (!slot || safeKey(slot.CloudflareProject) !== id) {
+  return slot && safeKey(slot.CloudflareProject) === id ? slot : null;
+}
+
+export async function saveTenantControlPublicKey(platformEnv, projectId, publicKey) {
+  const tenantControlPublicKey = clean(publicKey);
+  if (!safeKey(projectId) || !validTenantControlPublicKey(tenantControlPublicKey)) {
+    const error = new Error('A valid tenant project and control-plane public key are required.');
+    error.status = 400;
+    throw error;
+  }
+  const slot = await tenantPoolSlotByProject(platformEnv, projectId);
+  if (!slot) {
     const error = new Error('The tenant project was not found in the managed pool.');
     error.status = 404;
     throw error;
@@ -241,6 +249,76 @@ export async function saveTenantControlPublicKey(platformEnv, projectId, publicK
     }, registration);
   }
   return publicTenantProjectSlot({ ...slot, TenantControlPublicKey: tenantControlPublicKey, UpdatedAt: now });
+}
+
+export async function queueTenantPaystackDeployment(platformEnv, projectId, requestedAt = new Date().toISOString()) {
+  const slot = await tenantPoolSlotByProject(platformEnv, projectId);
+  if (!slot) {
+    const error = new Error('The tenant project was not found in the managed pool.');
+    error.status = 404;
+    throw error;
+  }
+  const slotDocumentId = clean(slot.__id || slot.Id);
+  const timestamp = clean(requestedAt) || new Date().toISOString();
+  await patchDocumentFieldsIfCurrent(platformEnv, TENANT_PROJECT_POOL_COLLECTION, slotDocumentId, {
+    PaystackDeploymentPending: true,
+    PaystackDeploymentRequestedAt: timestamp,
+    UpdatedAt: timestamp
+  }, slot);
+  return publicTenantProjectSlot({
+    ...slot,
+    PaystackDeploymentPending: true,
+    PaystackDeploymentRequestedAt: timestamp,
+    UpdatedAt: timestamp
+  });
+}
+
+export async function completeTenantPaystackDeployment(platformEnv, projectId, requestedAt) {
+  const slot = await tenantPoolSlotByProject(platformEnv, projectId);
+  if (!slot) {
+    const error = new Error('The tenant project was not found in the managed pool.');
+    error.status = 404;
+    throw error;
+  }
+  const expectedRequest = clean(requestedAt);
+  if (!expectedRequest || clean(slot.PaystackDeploymentRequestedAt) !== expectedRequest) {
+    return { completed: false, slot: publicTenantProjectSlot(slot) };
+  }
+  const slotDocumentId = clean(slot.__id || slot.Id);
+  const completedAt = new Date().toISOString();
+  try {
+    await patchDocumentFieldsIfCurrent(platformEnv, TENANT_PROJECT_POOL_COLLECTION, slotDocumentId, {
+      PaystackDeploymentPending: false,
+      PaystackDeploymentCompletedAt: completedAt,
+      UpdatedAt: completedAt
+    }, slot);
+  } catch (error) {
+    if (error?.code !== 'FIRESTORE_WRITE_CONFLICT') throw error;
+    const latest = await tenantPoolSlotByProject(platformEnv, projectId);
+    if (!latest || clean(latest.PaystackDeploymentRequestedAt) !== expectedRequest) {
+      return { completed: false, slot: publicTenantProjectSlot(latest || {}) };
+    }
+    await patchDocumentFieldsIfCurrent(platformEnv, TENANT_PROJECT_POOL_COLLECTION, clean(latest.__id || latest.Id), {
+      PaystackDeploymentPending: false,
+      PaystackDeploymentCompletedAt: completedAt,
+      UpdatedAt: completedAt
+    }, latest);
+  }
+  const registrationReference = clean(slot.AssignedRegistrationReference);
+  if (registrationReference) {
+    const registration = await getDocument(platformEnv, 'tenantRegistrations', registrationReference);
+    if (registration && clean(registration.PaystackDeploymentRequestedAt) === expectedRequest) {
+      await patchDocumentFieldsIfCurrent(platformEnv, 'tenantRegistrations', registrationReference, {
+        PaystackDeploymentQueued: false,
+        PaystackDeploymentCompletedAt: completedAt,
+        UpdatedAt: completedAt
+      }, registration);
+    }
+  }
+  return {
+    completed: true,
+    slot: publicTenantProjectSlot({ ...slot, PaystackDeploymentPending: false, UpdatedAt: completedAt })
+  };
 }
 
 export async function requestTenantProjectProvisioning(platformEnv, value = {}) {

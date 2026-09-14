@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: dynamax-tenant-payment-onboarding
@@ -43,3 +44,13 @@ jobs:
 
       - name: Enable secure payment onboarding
         run: node scripts/backfill-tenant-payment-onboarding.mjs
+
+      - name: Redeploy the central control plane
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy-platform.yml
+
+      - name: Redeploy tenant projects with their encrypted signing keys
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy-tenant-pool.yml -f project="${DYNAMAX_TENANT_PROJECT}"

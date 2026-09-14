@@ -37,6 +37,7 @@ test('public project slots expose assignment state without credentials', () => {
   assert.equal(result.Edition, 'faith');
   assert.equal(result.FirebaseProjectId, 'tenant-1');
   assert.equal(result.TenantControlKeyConfigured, false);
+  assert.equal(result.PaystackDeploymentPending, false);
   assert.equal('FIREBASE_PRIVATE_KEY' in result, false);
 });
 

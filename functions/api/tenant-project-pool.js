@@ -9,6 +9,7 @@ import {
   claimNextTenantProvisioningRequest,
   ensureTenantPoolCapacity,
   finishTenantProvisioningRequest,
+  completeTenantPaystackDeployment,
   loadTenantProjectPool,
   registerTenantProjectSlot,
   saveTenantControlPublicKey,
@@ -31,6 +32,7 @@ const PROVISIONER_ACTIONS = new Set([
   'set-control-key',
   'request',
   'claim-next',
+  'complete-paystack-deployment',
   'finish-request',
   'process-lifecycle',
   'claim-retirement',
@@ -80,6 +82,16 @@ export async function onRequestPost({ request, env }) {
       return Response.json({ ok: true, message: 'Tenant control-plane key registered.', slot }, {
         headers: { 'Cache-Control': 'no-store' }
       });
+    }
+    if (action === 'complete-paystack-deployment') {
+      const result = await completeTenantPaystackDeployment(platformEnv, body.projectId, body.requestedAt);
+      return Response.json({
+        ok: true,
+        message: result.completed
+          ? 'Tenant Paystack deployment marked complete.'
+          : 'A newer Paystack deployment request remains queued.',
+        ...result
+      }, { headers: { 'Cache-Control': 'no-store' } });
     }
     if (action === 'release') {
       const slot = await releaseTenantProjectSlot(platformEnv, body.slotId);

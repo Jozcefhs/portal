@@ -1,9 +1,10 @@
 import { createDocumentIfAbsent, patchDocumentFields, queryCollection } from '../lib/firestore.js';
-import { setPagesProductionSecret, retryLatestPagesProductionDeployment } from '../lib/cloudflare-pages-secrets.js';
+import { setPagesProductionSecret } from '../lib/cloudflare-pages-secrets.js';
 import { validatePaystackSecretKey } from '../lib/paystack-connection.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { assertFreshTenantControlRequest, verifyTenantControlRequest } from '../lib/tenant-control-plane.js';
+import { queueTenantPaystackDeployment } from '../lib/tenant-project-pool.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -83,25 +84,24 @@ export async function onRequestPost({ request, env }) {
     }
     const cloudflareProject = clean(registration.CloudflareProject);
     await setPagesProductionSecret(env, cloudflareProject, 'PAYSTACK_SECRET_KEY', details.paystackSecretKey);
-    const deployment = await retryLatestPagesProductionDeployment(env, cloudflareProject);
     const connectedAt = new Date().toISOString();
+    await queueTenantPaystackDeployment(platformEnv, cloudflareProject, connectedAt);
     await patchDocumentFields(platformEnv, 'tenantRegistrations', clean(registration.__id || registration.Reference), {
       PaystackConnected: true,
       PaystackMode: validation.mode,
       PaystackConnectedAt: connectedAt,
       PaystackConnectedBy: 'Tenant Super Administrator',
-      PaystackDeploymentQueued: deployment.queued === true,
+      PaystackDeploymentQueued: true,
+      PaystackDeploymentRequestedAt: connectedAt,
       UpdatedAt: connectedAt
     });
     const webhookUrl = new URL('/api/paystack-webhook', clean(registration.PortalUrl)).href;
     return Response.json({
       ok: true,
-      message: deployment.queued
-        ? `Paystack ${validation.mode} mode was connected securely. The tenant deployment is updating now.`
-        : `Paystack ${validation.mode} mode was connected securely.`,
+      message: `Paystack ${validation.mode} mode was connected securely. The tenant deployment is queued and normally finishes within five minutes.`,
       mode: validation.mode,
       connectedAt,
-      deploymentQueued: deployment.queued,
+      deploymentQueued: true,
       webhookUrl
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
