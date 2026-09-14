@@ -12,6 +12,7 @@ import {
   completeTenantPaystackDeployment,
   loadTenantProjectPool,
   registerTenantProjectSlot,
+  resetTenantPaystackConnection,
   saveTenantControlPublicKey,
   releaseTenantProjectSlot,
   requestTenantProjectProvisioning,
@@ -29,6 +30,7 @@ const clean = (value) => String(value ?? '').trim();
 const PROVISIONER_ACTIONS = new Set([
   'load',
   'register',
+  'reset-paystack-connection',
   'set-control-key',
   'request',
   'claim-next',
@@ -82,6 +84,14 @@ export async function onRequestPost({ request, env }) {
       return Response.json({ ok: true, message: 'Tenant control-plane key registered.', slot }, {
         headers: { 'Cache-Control': 'no-store' }
       });
+    }
+    if (action === 'reset-paystack-connection') {
+      const slot = await resetTenantPaystackConnection(platformEnv, body.projectId, body.requestedAt);
+      return Response.json({
+        ok: true,
+        message: 'Tenant Paystack connection metadata reset and deployment queued.',
+        slot
+      }, { headers: { 'Cache-Control': 'no-store' } });
     }
     if (action === 'complete-paystack-deployment') {
       const result = await completeTenantPaystackDeployment(platformEnv, body.projectId, body.requestedAt);

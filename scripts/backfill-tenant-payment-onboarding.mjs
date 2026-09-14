@@ -7,6 +7,7 @@ const cloudflareAccountId = clean(process.env.CLOUDFLARE_ACCOUNT_ID);
 const cloudflareToken = clean(process.env.CLOUDFLARE_API_TOKEN);
 const centralProject = clean(process.env.DYNAMAX_PLATFORM_PROJECT || 'dynamaxms').toLowerCase();
 const selectedProject = clean(process.env.DYNAMAX_TENANT_PROJECT || 'all').toLowerCase();
+const clearTenantPaystackKeys = clean(process.env.DYNAMAX_CLEAR_TENANT_PAYSTACK_KEYS).toLowerCase() === 'true';
 
 function requireConfiguration() {
   const missing = [];
@@ -73,24 +74,41 @@ async function main() {
   const slots = (inventory.slots || []).filter((slot) => {
     const active = ['ready', 'assigned'].includes(clean(slot.Status).toLowerCase());
     const selected = selectedProject === 'all' || clean(slot.CloudflareProject).toLowerCase() === selectedProject;
-    return active && selected && slot.TenantControlKeyConfigured !== true;
+    return active && selected;
   });
   if (selectedProject !== 'all' && !slots.length) {
-    const existing = (inventory.slots || []).find((slot) => clean(slot.CloudflareProject).toLowerCase() === selectedProject);
-    if (!existing) throw new Error(`Tenant project ${selectedProject} was not found in the managed pool.`);
-    process.stdout.write(`Tenant project ${selectedProject} already has secure payment onboarding.\n`);
-    return;
+    throw new Error(`Active tenant project ${selectedProject} was not found in the managed pool.`);
   }
+  let updated = 0;
   for (const slot of slots) {
     const project = clean(slot.CloudflareProject).toLowerCase();
-    const keyPair = tenantControlKeyPair();
-    await patchProductionVariables(project, {
-      TENANT_CONTROL_PLANE_PRIVATE_KEY: { type: 'secret_text', value: keyPair.privateKey }
-    });
-    await platformApi({ action: 'set-control-key', projectId: project, publicKey: keyPair.publicKey });
-    process.stdout.write(`${project}: secure payment onboarding keys configured.\n`);
+    const variables = {};
+    let keyPair = null;
+    if (slot.TenantControlKeyConfigured !== true) {
+      keyPair = tenantControlKeyPair();
+      variables.TENANT_CONTROL_PLANE_PRIVATE_KEY = { type: 'secret_text', value: keyPair.privateKey };
+    }
+    if (clearTenantPaystackKeys) variables.PAYSTACK_SECRET_KEY = null;
+    if (Object.keys(variables).length) await patchProductionVariables(project, variables);
+    if (keyPair) {
+      await platformApi({ action: 'set-control-key', projectId: project, publicKey: keyPair.publicKey });
+    }
+    if (clearTenantPaystackKeys) {
+      await platformApi({
+        action: 'reset-paystack-connection',
+        projectId: project,
+        requestedAt: new Date().toISOString()
+      });
+    }
+    if (keyPair || clearTenantPaystackKeys) {
+      updated += 1;
+      const changes = [keyPair ? 'secure onboarding key added' : '', clearTenantPaystackKeys ? 'Paystack key cleared' : '']
+        .filter(Boolean)
+        .join('; ');
+      process.stdout.write(`${project}: ${changes}.\n`);
+    }
   }
-  process.stdout.write(`Updated ${slots.length} tenant project(s).\n`);
+  process.stdout.write(`Updated ${updated} of ${slots.length} active tenant project(s).\n`);
 }
 
 main().catch((error) => {

@@ -112,6 +112,8 @@ The administrator must also copy the displayed tenant webhook URL into Paystack 
 
 Existing ready or assigned pool projects receive their per-tenant signing keys through the manual **Enable tenant Paystack onboarding** GitHub workflow. The same job configures the central `dynamaxms` production project with `CLOUDFLARE_ACCOUNT_ID` and the encrypted `CLOUDFLARE_PAGES_API_TOKEN`; the token must have only the Cloudflare **Pages Write** permission needed to update the assigned tenant project and queue its deployment.
 
+The workflow's `clear_paystack_keys` option is intentionally off by default. When explicitly enabled, it deletes only `PAYSTACK_SECRET_KEY` from the selected active pooled tenant projects, resets their non-secret connection status, and queues their redeployment. It never changes the central Dynamax subscription Paystack key or unrelated organisation deployments.
+
 ## Capacity and cost controls
 
 Ready projects are real billable resources, so do not create an unlimited inventory. Keep a small warm target and replenish as projects are assigned. Firebase quotas are isolated per Google project; Cloudflare Pages usage remains governed by the Cloudflare account and plan that owns the projects.

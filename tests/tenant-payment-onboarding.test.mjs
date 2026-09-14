@@ -119,11 +119,15 @@ test('new and existing pooled tenants receive asymmetric control keys without ex
   assert.match(provisioner, /TENANT_CONTROL_PLANE_PRIVATE_KEY: secret\(tenantControlPrivateKey\)/);
   assert.match(provisioner, /TenantControlPublicKey: tenantControl\.publicKey/);
   assert.match(backfill, /TenantControlKeyConfigured !== true/);
-  assert.match(backfill, /TENANT_CONTROL_PLANE_PRIVATE_KEY: \{ type: 'secret_text'/);
+  assert.match(backfill, /TENANT_CONTROL_PLANE_PRIVATE_KEY = \{ type: 'secret_text'/);
   assert.match(backfill, /action: 'set-control-key'/);
+  assert.match(backfill, /variables\.PAYSTACK_SECRET_KEY = null/);
+  assert.match(backfill, /action: 'reset-paystack-connection'/);
   assert.doesNotMatch(backfill, /\/retry|retryProductionDeployment/);
   assert.doesNotMatch(backfill, /process\.stdout\.write\([^\n]+privateKey/);
   assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /clear_paystack_keys:/);
+  assert.match(workflow, /DYNAMAX_CLEAR_TENANT_PAYSTACK_KEYS/);
   assert.match(workflow, /gh workflow run deploy-platform\.yml/);
   assert.match(workflow, /gh workflow run deploy-tenant-pool\.yml/);
   assert.match(workflow, /DYNAMAX_TENANT_PROVISIONER_SECRET/);

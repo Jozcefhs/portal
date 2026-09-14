@@ -321,6 +321,43 @@ export async function completeTenantPaystackDeployment(platformEnv, projectId, r
   };
 }
 
+export async function resetTenantPaystackConnection(platformEnv, projectId, requestedAt = new Date().toISOString()) {
+  const slot = await tenantPoolSlotByProject(platformEnv, projectId);
+  if (!slot) {
+    const error = new Error('The tenant project was not found in the managed pool.');
+    error.status = 404;
+    throw error;
+  }
+  const timestamp = clean(requestedAt) || new Date().toISOString();
+  const slotDocumentId = clean(slot.__id || slot.Id);
+  await patchDocumentFieldsIfCurrent(platformEnv, TENANT_PROJECT_POOL_COLLECTION, slotDocumentId, {
+    PaystackDeploymentPending: true,
+    PaystackDeploymentRequestedAt: timestamp,
+    UpdatedAt: timestamp
+  }, slot);
+  const registrationReference = clean(slot.AssignedRegistrationReference);
+  if (registrationReference) {
+    const registration = await getDocument(platformEnv, 'tenantRegistrations', registrationReference);
+    if (registration) {
+      await patchDocumentFieldsIfCurrent(platformEnv, 'tenantRegistrations', registrationReference, {
+        PaystackConnected: false,
+        PaystackMode: 'not-configured',
+        PaystackConnectedAt: '',
+        PaystackConnectedBy: '',
+        PaystackDeploymentQueued: true,
+        PaystackDeploymentRequestedAt: timestamp,
+        UpdatedAt: timestamp
+      }, registration);
+    }
+  }
+  return publicTenantProjectSlot({
+    ...slot,
+    PaystackDeploymentPending: true,
+    PaystackDeploymentRequestedAt: timestamp,
+    UpdatedAt: timestamp
+  });
+}
+
 export async function requestTenantProjectProvisioning(platformEnv, value = {}) {
   const edition = poolEdition(value.Edition);
   const mode = lower(value.Mode) === 'branded' ? 'branded' : 'pool';

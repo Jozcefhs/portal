@@ -8,6 +8,11 @@ on:
         required: true
         default: all
         type: string
+      clear_paystack_keys:
+        description: Delete PAYSTACK_SECRET_KEY from the selected tenant projects before redeploying
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -26,6 +31,7 @@ jobs:
       DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev' }}
       DYNAMAX_PLATFORM_PROJECT: dynamaxms
       DYNAMAX_TENANT_PROJECT: ${{ inputs.project || 'all' }}
+      DYNAMAX_CLEAR_TENANT_PAYSTACK_KEYS: ${{ inputs.clear_paystack_keys || false }}
       DYNAMAX_TENANT_PROVISIONER_SECRET: ${{ secrets.DYNAMAX_TENANT_PROVISIONER_SECRET }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
