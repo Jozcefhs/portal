@@ -13,6 +13,11 @@ on:
         required: true
         default: false
         type: boolean
+      include_managed_organisations:
+        description: Include dedicated organisations from deploy/organisations.json
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -32,6 +37,7 @@ jobs:
       DYNAMAX_PLATFORM_PROJECT: dynamaxms
       DYNAMAX_TENANT_PROJECT: ${{ inputs.project || 'all' }}
       DYNAMAX_CLEAR_TENANT_PAYSTACK_KEYS: ${{ inputs.clear_paystack_keys || false }}
+      DYNAMAX_INCLUDE_MANAGED_ORGANISATIONS: ${{ inputs.include_managed_organisations || false }}
       DYNAMAX_TENANT_PROVISIONER_SECRET: ${{ secrets.DYNAMAX_TENANT_PROVISIONER_SECRET }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -49,6 +55,7 @@ jobs:
         run: node --test tests/tenant-payment-onboarding.test.mjs tests/tenant-project-pool.test.mjs
 
       - name: Enable secure payment onboarding
+        id: enable
         run: node scripts/backfill-tenant-payment-onboarding.mjs
 
       - name: Redeploy the central control plane
@@ -57,6 +64,13 @@ jobs:
         run: gh workflow run deploy-platform.yml
 
       - name: Redeploy tenant projects with their encrypted signing keys
+        if: steps.enable.outputs.pool_updated == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run deploy-tenant-pool.yml -f project="${DYNAMAX_TENANT_PROJECT}"
+        run: gh workflow run deploy-tenant-pool.yml -f project="${{ steps.enable.outputs.pool_target }}"
+
+      - name: Redeploy managed organisations with their encrypted signing keys
+        if: steps.enable.outputs.managed_updated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy-organisations.yml -f organisation="${{ steps.enable.outputs.managed_target }}"

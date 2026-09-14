@@ -110,9 +110,9 @@ Paystack, organisation email, document storage, custom domains and other subscri
 
 The administrator must also copy the displayed tenant webhook URL into Paystack **API Keys & Webhooks**. Replacing a connected account requires an explicit acknowledgement because pending transactions created under the old business must be reconciled first. Branches that settle independently continue to use their own Paystack subaccount code under branch settings.
 
-Existing ready or assigned pool projects receive their per-tenant signing keys through the manual **Enable tenant Paystack onboarding** GitHub workflow. The same job configures the central `dynamaxms` production project with `CLOUDFLARE_ACCOUNT_ID` and the encrypted `CLOUDFLARE_PAGES_API_TOKEN`; the token must have only the Cloudflare **Pages Write** permission needed to update the assigned tenant project and queue its deployment.
+Existing ready or assigned pool projects and dedicated deployments listed in `deploy/organisations.json` receive their per-tenant signing keys through the manual **Enable tenant Paystack onboarding** GitHub workflow. The same job configures the central `dynamaxms` production project with `CLOUDFLARE_ACCOUNT_ID` and the encrypted `CLOUDFLARE_PAGES_API_TOKEN`; the token must have only the Cloudflare **Pages Write** permission needed to update the assigned tenant project and queue its deployment. Pooled and dedicated deployment schedulers independently process only their pending projects and clear the exact request after a verified deployment.
 
-The workflow's `clear_paystack_keys` option is intentionally off by default. When explicitly enabled, it deletes only `PAYSTACK_SECRET_KEY` from the selected active pooled tenant projects, resets their non-secret connection status, and queues their redeployment. It never changes the central Dynamax subscription Paystack key or unrelated organisation deployments.
+The workflow's `clear_paystack_keys` option is intentionally off by default. When explicitly enabled, it deletes only `PAYSTACK_SECRET_KEY` from the selected active pooled and enabled dedicated organisation projects, resets their non-secret connection status, and queues their redeployment. It never changes the central Dynamax subscription Paystack key or projects outside those two registries.
 
 ## Capacity and cost controls
 

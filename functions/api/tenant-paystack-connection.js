@@ -5,6 +5,11 @@ import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { assertFreshTenantControlRequest, verifyTenantControlRequest } from '../lib/tenant-control-plane.js';
 import { queueTenantPaystackDeployment } from '../lib/tenant-project-pool.js';
+import {
+  findManagedOrganisationForTenant,
+  MANAGED_ORGANISATION_COLLECTION,
+  queueManagedOrganisationPaystackDeployment
+} from '../lib/managed-organisations.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -23,23 +28,39 @@ async function tenantRegistration(platformEnv, details) {
     filters: [{ field: 'WorkspaceId', op: '==', value: clean(details.workspaceId) }],
     limit: 20
   });
-  const registration = rows
+  const matchingRegistration = rows
     .filter(activeRegistration)
+    .filter((row) => portalHost(row.PortalUrl) === lower(details.portalHost))
     .sort((left, right) => clean(right.UpdatedAt || right.CreatedAt).localeCompare(clean(left.UpdatedAt || left.CreatedAt)))[0];
-  if (!registration) {
+  if (matchingRegistration) {
+    return {
+      ...matchingRegistration,
+      __controlCollection: 'tenantRegistrations',
+      __managedOrganisation: false
+    };
+  }
+  const managedOrganisation = await findManagedOrganisationForTenant(
+    platformEnv,
+    details.workspaceId,
+    details.portalHost
+  );
+  if (managedOrganisation) {
+    return {
+      ...managedOrganisation,
+      __controlCollection: MANAGED_ORGANISATION_COLLECTION,
+      __managedOrganisation: true
+    };
+  }
+  if (!rows.filter(activeRegistration).length) {
     const error = new Error('This tenant is not attached to an active Dynamax subscription.');
     error.status = 404;
     error.code = 'TENANT_REGISTRATION_NOT_FOUND';
     throw error;
   }
-  const expectedHost = portalHost(registration.PortalUrl);
-  if (!expectedHost || expectedHost !== lower(details.portalHost)) {
-    const error = new Error('The tenant portal does not match the registered workspace.');
-    error.status = 409;
-    error.code = 'TENANT_PORTAL_MISMATCH';
-    throw error;
-  }
-  return registration;
+  const error = new Error('The tenant portal does not match the registered workspace.');
+  error.status = 409;
+  error.code = 'TENANT_PORTAL_MISMATCH';
+  throw error;
 }
 
 export async function onRequestPost({ request, env }) {
@@ -85,16 +106,25 @@ export async function onRequestPost({ request, env }) {
     const cloudflareProject = clean(registration.CloudflareProject);
     await setPagesProductionSecret(env, cloudflareProject, 'PAYSTACK_SECRET_KEY', details.paystackSecretKey);
     const connectedAt = new Date().toISOString();
-    await queueTenantPaystackDeployment(platformEnv, cloudflareProject, connectedAt);
-    await patchDocumentFields(platformEnv, 'tenantRegistrations', clean(registration.__id || registration.Reference), {
-      PaystackConnected: true,
-      PaystackMode: validation.mode,
-      PaystackConnectedAt: connectedAt,
-      PaystackConnectedBy: 'Tenant Super Administrator',
-      PaystackDeploymentQueued: true,
-      PaystackDeploymentRequestedAt: connectedAt,
-      UpdatedAt: connectedAt
-    });
+    if (registration.__managedOrganisation === true) {
+      await queueManagedOrganisationPaystackDeployment(platformEnv, cloudflareProject, connectedAt);
+    } else {
+      await queueTenantPaystackDeployment(platformEnv, cloudflareProject, connectedAt);
+    }
+    await patchDocumentFields(
+      platformEnv,
+      clean(registration.__controlCollection || 'tenantRegistrations'),
+      clean(registration.__id || registration.Reference || registration.Id),
+      {
+        PaystackConnected: true,
+        PaystackMode: validation.mode,
+        PaystackConnectedAt: connectedAt,
+        PaystackConnectedBy: 'Tenant Super Administrator',
+        PaystackDeploymentQueued: true,
+        PaystackDeploymentRequestedAt: connectedAt,
+        UpdatedAt: connectedAt
+      }
+    );
     const webhookUrl = new URL('/api/paystack-webhook', clean(registration.PortalUrl)).href;
     return Response.json({
       ok: true,

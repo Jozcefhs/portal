@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+  schedule:
+    - cron: '*/5 * * * *'
   workflow_dispatch:
     inputs:
       organisation:
@@ -23,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       organisations: ${{ steps.matrix.outputs.organisations }}
+      count: ${{ steps.matrix.outputs.count }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -37,15 +40,25 @@ jobs:
         shell: bash
         env:
           TARGET_ORGANISATION: ${{ inputs.organisation || 'all' }}
+          EVENT_NAME: ${{ github.event_name }}
+          DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev' }}
+          DYNAMAX_TENANT_PROVISIONER_SECRET: ${{ secrets.DYNAMAX_TENANT_PROVISIONER_SECRET }}
         run: |
           set -euo pipefail
-          organisations="$(node scripts/organisation-deployment-matrix.mjs --target "${TARGET_ORGANISATION}")"
+          if [[ "${EVENT_NAME}" == "push" ]]; then
+            organisations="$(node scripts/organisation-deployment-matrix.mjs --target "${TARGET_ORGANISATION}")"
+          elif [[ "${EVENT_NAME}" == "schedule" ]]; then
+            organisations="$(node scripts/managed-organisation-deployment-matrix.mjs --target all --pending-only)"
+          else
+            organisations="$(node scripts/managed-organisation-deployment-matrix.mjs --target "${TARGET_ORGANISATION}")"
+          fi
           echo "organisations=${organisations}" >> "${GITHUB_OUTPUT}"
+          echo "count=$(jq 'length' <<<"${organisations}")" >> "${GITHUB_OUTPUT}"
 
   deploy:
     name: ${{ matrix.organisation.name }}
     needs: validate
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.MULTI_ORG_DEPLOY_ENABLED == 'true' }}
+    if: ${{ needs.validate.outputs.count != '0' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || vars.MULTI_ORG_DEPLOY_ENABLED == 'true') }}
     strategy:
       fail-fast: false
       max-parallel: 3
@@ -61,4 +74,6 @@ jobs:
       firebase_config: ${{ matrix.organisation.firebaseConfig }}
       cloudflare_account_id: ${{ matrix.organisation.cloudflareAccountId }}
       cloudflare_project: ${{ matrix.organisation.cloudflareProject }}
+      platform_url: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev' }}
+      paystack_deployment_requested_at: ${{ matrix.organisation.paystackDeploymentRequestedAt || '' }}
     secrets: inherit

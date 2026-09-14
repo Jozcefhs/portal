@@ -23,6 +23,9 @@ const provisioner = await readFile(new URL('../scripts/provision-tenant-projects
 const backfill = await readFile(new URL('../scripts/backfill-tenant-payment-onboarding.mjs', import.meta.url), 'utf8');
 const workflow = await readFile(new URL('../.github/workflows/backfill-tenant-payment-onboarding.yml', import.meta.url), 'utf8');
 const tenantFleetWorkflow = await readFile(new URL('../.github/workflows/deploy-tenant-pool.yml', import.meta.url), 'utf8');
+const managedOrganisations = await readFile(new URL('../functions/lib/managed-organisations.js', import.meta.url), 'utf8');
+const organisationFleetWorkflow = await readFile(new URL('../.github/workflows/deploy-organisations.yml', import.meta.url), 'utf8');
+const organisationWorkflow = await readFile(new URL('../.github/workflows/deploy-organisation.yml', import.meta.url), 'utf8');
 
 function controlKeyPair() {
   return generateKeyPairSync('rsa', {
@@ -94,10 +97,13 @@ test('central endpoint verifies tenant identity before validating or installing 
   const installIndex = centralApi.indexOf("setPagesProductionSecret(env, cloudflareProject, 'PAYSTACK_SECRET_KEY'");
   assert.ok(verifyIndex >= 0 && validateIndex > verifyIndex && installIndex > validateIndex);
   assert.match(centralApi, /WorkspaceId/);
-  assert.match(centralApi, /portalHost\(registration\.PortalUrl\)/);
+  assert.match(centralApi, /portalHost\(row\.PortalUrl\)/);
   assert.match(centralApi, /tenantControlRequests/);
   assert.match(centralApi, /PaystackConnected: true/);
   assert.match(centralApi, /queueTenantPaystackDeployment/);
+  assert.match(centralApi, /findManagedOrganisationForTenant/);
+  assert.match(centralApi, /queueManagedOrganisationPaystackDeployment/);
+  assert.match(centralApi, /__controlCollection/);
   assert.match(centralApi, /PaystackDeploymentRequestedAt/);
   assert.doesNotMatch(centralApi, /PaystackSecretKey:\s*details\.paystackSecretKey/);
   assert.doesNotMatch(centralApi, /console\.(log|error).*paystackSecretKey/);
@@ -123,11 +129,15 @@ test('new and existing pooled tenants receive asymmetric control keys without ex
   assert.match(backfill, /action: 'set-control-key'/);
   assert.match(backfill, /variables\.PAYSTACK_SECRET_KEY = null/);
   assert.match(backfill, /action: 'reset-paystack-connection'/);
+  assert.match(backfill, /deploy\/organisations\.json/);
+  assert.match(backfill, /action: 'register-managed-organisation'/);
   assert.doesNotMatch(backfill, /\/retry|retryProductionDeployment/);
   assert.doesNotMatch(backfill, /process\.stdout\.write\([^\n]+privateKey/);
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /clear_paystack_keys:/);
   assert.match(workflow, /DYNAMAX_CLEAR_TENANT_PAYSTACK_KEYS/);
+  assert.match(workflow, /include_managed_organisations:/);
+  assert.match(workflow, /gh workflow run deploy-organisations\.yml/);
   assert.match(workflow, /gh workflow run deploy-platform\.yml/);
   assert.match(workflow, /gh workflow run deploy-tenant-pool\.yml/);
   assert.match(workflow, /DYNAMAX_TENANT_PROVISIONER_SECRET/);
@@ -135,4 +145,18 @@ test('new and existing pooled tenants receive asymmetric control keys without ex
   assert.match(tenantFleetWorkflow, /cron: '\*\/5 \* \* \* \*'/);
   assert.match(tenantFleetWorkflow, /PaystackDeploymentPending == true/);
   assert.match(tenantFleetWorkflow, /complete-paystack-deployment/);
+});
+
+test('dedicated managed organisations use the same signed Paystack onboarding and queued deployment lifecycle', () => {
+  assert.match(managedOrganisations, /MANAGED_ORGANISATION_COLLECTION = 'managedOrganisations'/);
+  assert.match(managedOrganisations, /validTenantControlPublicKey/);
+  assert.match(managedOrganisations, /PaystackDeploymentPending: true/);
+  assert.match(managedOrganisations, /PaystackDeploymentRequestedAt/);
+  assert.match(managedOrganisations, /completeManagedOrganisationPaystackDeployment/);
+  assert.doesNotMatch(managedOrganisations, /PaystackSecretKey/);
+  assert.match(organisationFleetWorkflow, /cron: '\*\/5 \* \* \* \*'/);
+  assert.match(organisationFleetWorkflow, /managed-organisation-deployment-matrix\.mjs/);
+  assert.match(organisationFleetWorkflow, /--pending-only/);
+  assert.match(organisationWorkflow, /complete-managed-paystack-deployment/);
+  assert.match(organisationWorkflow, /paystack_deployment_requested_at/);
 });

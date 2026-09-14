@@ -35,10 +35,22 @@ on:
         description: Cloudflare account containing the Pages project
         required: true
         type: string
+      platform_url:
+        description: Central Dynamax platform URL
+        required: true
+        type: string
+      paystack_deployment_requested_at:
+        description: Exact queued Paystack deployment timestamp, when applicable
+        required: false
+        default: ''
+        type: string
     secrets:
       CLOUDFLARE_API_TOKEN:
         description: Cloudflare token allowed to deploy Pages projects
         required: true
+      DYNAMAX_TENANT_PROVISIONER_SECRET:
+        description: Provisioner credential used only to complete queued payment deployments
+        required: false
 
 permissions:
   contents: read
@@ -158,6 +170,27 @@ jobs:
           --url "https://${{ inputs.cloudflare_project }}.pages.dev"
           --workspace "${EXPECTED_WORKSPACE_ID}"
           --edition "${EXPECTED_EDITION}"
+
+      - name: Mark managed Paystack deployment complete
+        if: ${{ inputs.paystack_deployment_requested_at != '' }}
+        env:
+          DYNAMAX_PLATFORM_URL: ${{ inputs.platform_url }}
+          DYNAMAX_TENANT_PROVISIONER_SECRET: ${{ secrets.DYNAMAX_TENANT_PROVISIONER_SECRET }}
+          CLOUDFLARE_PROJECT: ${{ inputs.cloudflare_project }}
+          PAYSTACK_DEPLOYMENT_REQUESTED_AT: ${{ inputs.paystack_deployment_requested_at }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${DYNAMAX_TENANT_PROVISIONER_SECRET}" ]] || { echo '::error::DYNAMAX_TENANT_PROVISIONER_SECRET is required.'; exit 1; }
+          payload="$(jq -nc \
+            --arg password "${DYNAMAX_TENANT_PROVISIONER_SECRET}" \
+            --arg projectId "${CLOUDFLARE_PROJECT}" \
+            --arg requestedAt "${PAYSTACK_DEPLOYMENT_REQUESTED_AT}" \
+            '{password:$password,action:"complete-managed-paystack-deployment",projectId:$projectId,requestedAt:$requestedAt}')"
+          curl --fail-with-body --silent --show-error \
+            "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" \
+            -H 'Content-Type: application/json' \
+            --data "${payload}"
 
       - name: Write deployment summary
         if: always()

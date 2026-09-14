@@ -5,6 +5,7 @@ import {
   buildDeploymentMatrix,
   validateOrganisationRegistry
 } from '../scripts/organisation-deployment-matrix.mjs';
+import { buildManagedOrganisationDeploymentMatrix } from '../scripts/managed-organisation-deployment-matrix.mjs';
 import {
   validateDeploymentPayload,
   validateSubscriptionBridgePayload
@@ -88,6 +89,28 @@ test('the coordinator can deploy one or all organisations without cancelling una
   assert.match(coordinator, /matrix\.organisation\.cloudflareAccountId/);
   assert.match(coordinator, /uses: \.\/\.github\/workflows\/deploy-organisation\.yml/);
   assert.match(coordinator, /secrets: inherit/);
+  assert.match(coordinator, /cron: '\*\/5 \* \* \* \*'/);
+  assert.match(coordinator, /managed-organisation-deployment-matrix\.mjs/);
+  assert.match(reusable, /complete-managed-paystack-deployment/);
+});
+
+test('scheduled managed-organisation deployments include only pending registered projects', () => {
+  const matrix = buildManagedOrganisationDeploymentMatrix(registry, [
+    {
+      CloudflareProject: 'destinychristianacademy',
+      PaystackDeploymentPending: true,
+      PaystackDeploymentRequestedAt: '2026-09-14T02:30:00.000Z'
+    },
+    {
+      CloudflareProject: 'digc-suite',
+      PaystackDeploymentPending: false,
+      PaystackDeploymentRequestedAt: ''
+    }
+  ], { target: 'all', pendingOnly: true });
+  assert.equal(matrix.length, 1);
+  assert.equal(matrix[0].id, 'destinychristianacademy');
+  assert.equal(matrix[0].paystackDeploymentPending, true);
+  assert.equal(matrix[0].paystackDeploymentRequestedAt, '2026-09-14T02:30:00.000Z');
 });
 
 test('deployed organisation identity must match its registry boundary', () => {

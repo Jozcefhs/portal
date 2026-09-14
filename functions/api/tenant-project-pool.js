@@ -5,6 +5,11 @@ import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { issueTenantActivation } from '../lib/tenant-activation.js';
 import {
+  completeManagedOrganisationPaystackDeployment,
+  loadManagedOrganisations,
+  saveManagedOrganisationControlIdentity
+} from '../lib/managed-organisations.js';
+import {
   assignWaitingTenantRegistrations,
   claimNextTenantProvisioningRequest,
   ensureTenantPoolCapacity,
@@ -29,6 +34,9 @@ import {
 const clean = (value) => String(value ?? '').trim();
 const PROVISIONER_ACTIONS = new Set([
   'load',
+  'load-managed-organisations',
+  'register-managed-organisation',
+  'complete-managed-paystack-deployment',
   'register',
   'reset-paystack-connection',
   'set-control-key',
@@ -59,6 +67,29 @@ export async function onRequestPost({ request, env }) {
       return Response.json({ ok: true, ...(await loadTenantProjectPool(platformEnv)) }, {
         headers: { 'Cache-Control': 'no-store' }
       });
+    }
+    if (action === 'load-managed-organisations') {
+      return Response.json({ ok: true, organisations: await loadManagedOrganisations(platformEnv) }, {
+        headers: { 'Cache-Control': 'no-store' }
+      });
+    }
+    if (action === 'register-managed-organisation') {
+      const organisation = await saveManagedOrganisationControlIdentity(platformEnv, body.organisation || body);
+      return Response.json({
+        ok: true,
+        message: 'Managed organisation control-plane identity registered.',
+        organisation
+      }, { headers: { 'Cache-Control': 'no-store' } });
+    }
+    if (action === 'complete-managed-paystack-deployment') {
+      const result = await completeManagedOrganisationPaystackDeployment(platformEnv, body.projectId, body.requestedAt);
+      return Response.json({
+        ok: true,
+        message: result.completed
+          ? 'Managed organisation Paystack deployment marked complete.'
+          : 'A newer managed-organisation Paystack deployment remains queued.',
+        ...result
+      }, { headers: { 'Cache-Control': 'no-store' } });
     }
     if (action === 'register') {
       const slot = await registerTenantProjectSlot(platformEnv, body.slot || body);
