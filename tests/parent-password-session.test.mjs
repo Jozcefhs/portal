@@ -100,6 +100,8 @@ test('parent portal uses browser password manager fields and never stores raw pa
   assert.match(api, /PARENT_ONBOARDING_TEMPORARY_PASSWORD = '12345678'/);
   assert.match(api, /passwordChangeRequired: true/);
   assert.match(upload, /readParentSession/);
+  assert.doesNotMatch(upload, /storedPassword\.configured\s*&&\s*!storedPassword\.valid/);
+  assert.match(upload, /authenticated:\s*Boolean\(session \|\| storedPassword\.valid\)/);
   assert.match(passport, /readParentSession/);
   assert.match(payment, /readParentSession/);
 });

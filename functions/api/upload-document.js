@@ -631,9 +631,12 @@ export async function onRequestPost(context) {
     const storedPassword = session
       ? { configured: false, valid: false }
       : await verifyStoredParentPassword(env, email, code);
-    if (storedPassword.configured && !storedPassword.valid) {
-      return Response.json({ ok: false, message: 'Invalid parent email or password.' }, { status: 401 });
-    }
+    // This public form deliberately accepts either the admission verification
+    // code or the newer parent-dashboard password.  A parent who has already
+    // configured a password must not lose the ability to use the verification
+    // code printed for a specific application.  Only a valid stored password
+    // widens lookup to the parent's authenticated records; otherwise the
+    // application/student identity matcher still verifies the supplied code.
     const firestoreApp = await findFirestoreApplication(env, email, code, {
       targetReference: targetApplicationReference,
       targetScopePath: body.scopePath || body.ScopePath,
@@ -642,7 +645,7 @@ export async function onRequestPost(context) {
     if (!firestoreApp) {
       return Response.json({
         ok: false,
-        message: 'No student or application matched that email and verification or parent login code.'
+        message: 'No student or application matched that email and verification code, parent login code, or password.'
       }, { status: 404 });
     }
     const targetCollection = uploadTargetCollection(firestoreApp);
