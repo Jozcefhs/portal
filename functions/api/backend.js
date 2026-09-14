@@ -7769,7 +7769,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       return {
         ok: true,
         message: 'Applications loaded from the database.',
-        applications: (await listSchoolCollection(env, 'applications')).map(normalizeApplication)
+        applications: (await listSchoolCollection(env, 'applications', requestedStudentScope(body))).map(normalizeApplication)
       };
     case 'getStudents':
       return {
