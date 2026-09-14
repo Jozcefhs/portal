@@ -411,8 +411,9 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(pricingJs, /existing subscribers remain on their current Paystack plans/);
   assert.doesNotMatch(pricingJs, /class="sr-only"/);
   assert.doesNotMatch(setupHtml, /href="plan-management\.html"/);
-  assert.match(setupHtml, /<option>Free<\/option>/);
-  assert.match(setupHtml, /<option>Flex<\/option>/);
+  assert.match(setupHtml, /id="subscriptionPlan"[^>]*readonly/);
+  assert.match(setupHtml, /id="userLimit"[^>]*readonly/);
+  assert.doesNotMatch(setupHtml, /productKeyMode|Product key requirement/);
   assert.match(registrationApi, /plan: planCode/);
   assert.match(registrationApi, /PAYSTACK_SECRET_KEY/);
   assert.match(registrationApi, /freeTrialWindow/);

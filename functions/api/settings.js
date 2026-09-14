@@ -110,7 +110,6 @@ function defaultProfile(env) {
     CurrentAcademicSession: clean(env.CURRENT_ACADEMIC_SESSION) || '',
     CurrentTerm: clean(env.CURRENT_TERM) || 'First Term',
     DeclarationStatement: clean(env.DECLARATION_STATEMENT) || 'I declare that the information supplied in this application is complete and correct.',
-    ProductKeyMode: clean(env.PRODUCT_KEY_MODE) || 'off',
     DocumentStorageProvider: 'Cloudflare R2',
     DocumentStorageConfigured: documentStorageConfigured(env),
     SubscriptionPlan: clean(env.SUBSCRIPTION_PLAN) || 'Starter',
@@ -402,7 +401,7 @@ export async function onRequestPost(context) {
         Code: incoming.OrganisationCode || incoming.OrganizationCode || incoming.SchoolCode || existing.OrganisationCode,
         FeatureOverrides: incoming.FeatureOverrides || incoming.FeatureFlags
           || incoming.Features || existing.FeatureOverrides,
-        Plan: incoming.SubscriptionPlan || existing.SubscriptionPlan,
+        Plan: existing.SubscriptionPlan,
         SubscriptionStatus: existing.SubscriptionStatus,
         TrialStartedAt: existing.TrialStartedAt,
         TrialEndsAt: existing.TrialEndsAt,
@@ -414,7 +413,7 @@ export async function onRequestPost(context) {
         PlanEntitlements: existing.PlanEntitlements,
         DisabledFeatureEntitlements: existing.DisabledFeatureEntitlements,
         PlanCatalogRevision: existing.PlanCatalogRevision,
-        UserLimit: incoming.UserLimit || existing.UserLimit
+        UserLimit: existing.UserLimit
       },
       legacyProfile: { ...existing, ...incoming }
     });
@@ -469,7 +468,6 @@ export async function onRequestPost(context) {
       CurrentAcademicSession: clean(incoming.CurrentAcademicSession),
       CurrentTerm: clean(incoming.CurrentTerm) || 'First Term',
       DeclarationStatement: clean(incoming.DeclarationStatement) || 'I declare that the information supplied in this application is complete and correct.',
-      ProductKeyMode: ['off', 'required'].includes(clean(incoming.ProductKeyMode)) ? clean(incoming.ProductKeyMode) : 'off',
       SubscriptionPlan: organization.Plan,
       SubscriptionStatus: organization.SubscriptionStatus,
       SubscriptionActive: organization.SubscriptionActive,
@@ -490,7 +488,7 @@ export async function onRequestPost(context) {
       PaymentAccountNumber: clean(incoming.PaymentAccountNumber),
       PaymentBankCurrency: clean(incoming.PaymentBankCurrency || 'NGN').toUpperCase().slice(0, 3),
       PaymentTransferInstructions: clean(incoming.PaymentTransferInstructions).slice(0, 500),
-      UserLimit: Math.max(1, Number(incoming.UserLimit || existing.UserLimit || 5) || 5),
+      UserLimit: organization.UserLimit,
       UpdatedAt: new Date().toISOString()
     };
     if (incoming.WebLogoDataUrl !== undefined) {

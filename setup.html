@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Settings</title>
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260914-paystack-onboarding">
+  <link rel="stylesheet" href="css/style.css?v=20260914-subscription-readonly">
 </head>
 <body class="settings-page">
   <main class="settings-shell">
@@ -422,30 +422,21 @@
             <div><span class="settings-section-icon">K</span></div>
             <div>
               <p class="settings-eyebrow">Application access</p>
-              <h2>Product licensing</h2>
-              <p>Configure whether a product key is required before application use.</p>
+              <h2>Subscription access</h2>
+              <p>Review the organisation's current plan and staff-user allowance.</p>
             </div>
           </div>
           <div class="settings-fields">
             <div class="settings-field">
               <label for="subscriptionPlan">Subscription plan</label>
-              <select id="subscriptionPlan" name="SubscriptionPlan">
-                <option>Free</option><option>Starter</option><option>Standard</option><option>Professional</option><option>Flex</option><option>Enterprise</option>
-              </select>
+              <input id="subscriptionPlan" type="text" value="Starter" readonly aria-readonly="true">
             </div>
             <div class="settings-field">
               <label for="userLimit">Maximum active users</label>
-              <input id="userLimit" name="UserLimit" type="number" min="1" value="5">
-            </div>
-            <div class="settings-field">
-              <label for="productKeyMode">Product key requirement</label>
-              <select id="productKeyMode" name="ProductKeyMode">
-                <option value="off">Off for now</option>
-                <option value="required">Require product key before app use</option>
-              </select>
-              <small class="settings-help">Enforcement is controlled by the organisation's subscription and activation record.</small>
+              <input id="userLimit" type="number" min="1" value="5" readonly aria-readonly="true">
             </div>
           </div>
+          <small class="settings-help">Plan, module access, activation, renewal and staff-user allowance are managed by the organisation's online subscription.</small>
         </section>
 
         <section id="storage-settings" class="settings-section">
@@ -529,6 +520,6 @@
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
-  <script src="js/setup.js?v=20260914-paystack-onboarding"></script>
+  <script src="js/setup.js?v=20260914-subscription-readonly"></script>
 </body>
 </html>

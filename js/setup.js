@@ -30,10 +30,9 @@ let loadedAcademicPolicyView = null;
 let activeSettingsAccess = { scope: requestedSettingsScope, branchId: requestedSettingsBranch, scopeLocked: false };
 let paystackConnectionMode = 'not-configured';
 let paystackSelfServiceAvailable = false;
-const fixedPlanUserLimits = { Free: 5, Starter: 5, Standard: 20, Professional: 50 };
 const organisationOnlyControlIds = [
   'organisationEdition', 'nameFormat', 'webLogoFile', 'removeWebLogo',
-  'productKeyMode', 'googleDocumentsUrl', 'subscriptionPlan', 'userLimit'
+  'googleDocumentsUrl', 'subscriptionPlan', 'userLimit'
 ];
 
 const settingsTerminology = {
@@ -132,15 +131,6 @@ function applyEditionTerminology(profile = {}) {
     activeLink.classList.remove('active');
     visibleLinks[0]?.classList.add('active');
   }
-}
-
-function alignPlanUserLimit() {
-  const planField = document.getElementById('subscriptionPlan');
-  const limitField = document.getElementById('userLimit');
-  if (!planField || !limitField) return;
-  const fixedLimit = fixedPlanUserLimits[planField.value];
-  limitField.readOnly = Boolean(fixedLimit);
-  if (fixedLimit) limitField.value = fixedLimit;
 }
 
 function setStatus(message, type) {
@@ -659,10 +649,7 @@ function profileFromForm() {
     PortalNotice: data.get('PortalNotice'),
     ResultDisplayMode: data.get('ResultDisplayMode'),
     ShowResultsOnline: data.get('ShowResultsOnline'),
-    ProductKeyMode: data.get('ProductKeyMode'),
     OrganisationEdition: document.getElementById('organisationEdition').value,
-    SubscriptionPlan: data.get('SubscriptionPlan'),
-    UserLimit: data.get('UserLimit'),
     OnlinePaymentEnabled: data.get('OnlinePaymentEnabled'),
     DirectBankTransferEnabled: data.get('DirectBankTransferEnabled'),
     PaymentBankName: data.get('PaymentBankName'),
@@ -753,7 +740,6 @@ function applyProfile(profile = {}, settingsAccess = null) {
   document.getElementById('webLogoPreview').src = profile.WebLogoUrl || 'images/Logo.png';
   setField('resultDisplayMode', profile.ResultDisplayMode || 'subjects');
   setField('showResultsOnline', profile.ShowResultsOnline || 'NO');
-  setField('productKeyMode', profile.ProductKeyMode || 'off');
   const storageStatus = document.getElementById('r2StorageStatus');
   if (storageStatus) {
     storageStatus.textContent = profile.DocumentStorageConfigured
@@ -775,7 +761,6 @@ function applyProfile(profile = {}, settingsAccess = null) {
   setField('academicPolicyTerm', profile.CurrentTerm || 'First Term');
   applyEditionTerminology(profile);
   updateSettingsScopeUI(profile);
-  alignPlanUserLimit();
 }
 
 function updateSettingsScopeUI(profile = {}) {
@@ -947,8 +932,6 @@ setupForm.addEventListener('input', (event) => {
   if (academicPolicySection?.contains(event.target)) return;
   setStatus('You have unsaved changes.', '');
 });
-
-document.getElementById('subscriptionPlan')?.addEventListener('change', alignPlanUserLimit);
 
 connectPaystackButton?.addEventListener('click', async () => {
   const secret = String(paystackSecretKeyField?.value || '').trim();

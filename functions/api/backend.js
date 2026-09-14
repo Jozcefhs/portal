@@ -2435,12 +2435,20 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
       ].filter(Boolean).join(' ')
     };
   }
-  const [storedProfile, existingOrganization, savedPublicContent] = await Promise.all([
+  const [storedProfile, savedOrganization, savedPublicContent] = await Promise.all([
     getDocument(env, 'settings', 'schoolProfile').catch(() => null),
     getDocument(env, 'settings', 'organisationProfile').catch(() => null),
     getDocument(env, 'settings', PUBLIC_PORTAL_CONTENT_DOCUMENT).catch(() => null)
   ]);
+  const existingOrganization = savedOrganization
+    ? await refreshOrganizationPlanPolicy(env, savedOrganization)
+    : savedOrganization;
   const existingProfile = applyPublicPortalContent(storedProfile || {}, savedPublicContent);
+  const authoritativeSubscription = resolveOrganizationConfig({
+    env,
+    organizationProfile: existingOrganization,
+    legacyProfile: existingProfile
+  });
   const branchValues = Array.isArray(body.SchoolBranches) ? body.SchoolBranches : clean(body.SchoolBranches || body.schoolBranches || 'Main Branch').split(',');
   const sections = [];
   if (yesNo(body.EnablePrimarySection ?? body.enablePrimarySection ?? 'YES') === 'YES') sections.push('primary');
@@ -2504,15 +2512,15 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
     ShowResultsOnline: yesNo(mergedProfileText(existingProfile, body, 'ShowResultsOnline', 'showResultsOnline', 'NO')) || 'NO',
     OfferDocumentBodyTemplate: mergedProfileText(existingProfile, body, 'OfferDocumentBodyTemplate', 'offerDocumentBodyTemplate'),
     AdmissionDocumentBodyTemplate: mergedProfileText(existingProfile, body, 'AdmissionDocumentBodyTemplate', 'admissionDocumentBodyTemplate'),
-    SubscriptionPlan: clean(existingOrganization?.Plan || body.SubscriptionPlan || body.subscriptionPlan) || 'Starter',
-    SubscriptionStatus: clean(existingOrganization?.SubscriptionStatus || body.SubscriptionStatus || body.subscriptionStatus),
-    TrialStartedAt: clean(existingOrganization?.TrialStartedAt || body.TrialStartedAt || body.trialStartedAt),
-    TrialEndsAt: clean(existingOrganization?.TrialEndsAt || body.TrialEndsAt || body.trialEndsAt),
-    PaidThroughAt: clean(existingOrganization?.PaidThroughAt),
-    RenewalDueAt: clean(existingOrganization?.RenewalDueAt || existingOrganization?.PaidThroughAt),
-    GracePeriodEndsAt: clean(existingOrganization?.GracePeriodEndsAt),
-    DataRetentionEndsAt: clean(existingOrganization?.DataRetentionEndsAt),
-    UserLimit: Math.max(1, Number(body.UserLimit || body.userLimit || 5) || 5),
+    SubscriptionPlan: authoritativeSubscription.Plan,
+    SubscriptionStatus: authoritativeSubscription.SubscriptionStatus,
+    TrialStartedAt: authoritativeSubscription.TrialStartedAt,
+    TrialEndsAt: authoritativeSubscription.TrialEndsAt,
+    PaidThroughAt: authoritativeSubscription.PaidThroughAt,
+    RenewalDueAt: authoritativeSubscription.RenewalDueAt,
+    GracePeriodEndsAt: authoritativeSubscription.GracePeriodEndsAt,
+    DataRetentionEndsAt: authoritativeSubscription.DataRetentionEndsAt,
+    UserLimit: authoritativeSubscription.UserLimit,
     UpdatedAt: nowIso(),
     UpdatedBy: clean(body.UserRole || body.UpdatedBy || body.updatedBy) || 'Super Admin'
   };
