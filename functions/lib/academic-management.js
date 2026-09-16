@@ -4018,17 +4018,63 @@ function academicRecordedScoreComponentIds(componentScores = []) {
     .map((component) => clean(component.ComponentId)).filter(Boolean))];
 }
 
+function academicScoreCells(componentScores = []) {
+  return (componentScores || []).flatMap((component) => {
+    const componentId = clean(component.ComponentId);
+    const parts = Array.isArray(component.Parts) ? component.Parts : [];
+    if (!parts.length) return componentId ? [{ CellId: componentId, ...component }] : [];
+    return parts.map((part) => ({
+      CellId: `${componentId}:${clean(part.PartId)}`,
+      ComponentId: componentId,
+      PartId: clean(part.PartId),
+      ...part
+    })).filter((part) => part.ComponentId && part.PartId);
+  });
+}
+
+export function academicLockedScoreCellIds(score = {}) {
+  if (Array.isArray(score.LockedScoreCellIds)) {
+    return [...new Set(score.LockedScoreCellIds.map(clean).filter(Boolean))];
+  }
+  const legacyLocked = new Set(academicLockedScoreComponentIds(score));
+  return [...new Set(academicScoreCells(score.ComponentScores).filter((cell) => (
+    legacyLocked.has(cell.ComponentId) || ACADEMIC_RECORDED_SCORE_STATES.has(clean(cell.State))
+  )).map((cell) => cell.CellId))];
+}
+
+function academicRecordedScoreCellIds(componentScores = []) {
+  return [...new Set(academicScoreCells(componentScores)
+    .filter((cell) => ACADEMIC_RECORDED_SCORE_STATES.has(clean(cell.State)))
+    .map((cell) => cell.CellId))];
+}
+
 export function academicLockedScoreChanges(previous = null, nextScores = [], editingReactivated = false) {
   if (!previous || editingReactivated) return [];
-  const locked = new Set(academicLockedScoreComponentIds(previous));
-  const beforeByComponent = new Map((previous.ComponentScores || [])
-    .map((component) => [clean(component.ComponentId), component]));
-  return nextScores.filter((component) => {
-    if (!locked.has(clean(component.ComponentId))) return false;
-    const before = beforeByComponent.get(clean(component.ComponentId));
-    return !before || clean(before.State) !== clean(component.State)
-      || Number(before.RawScore ?? 0) !== Number(component.RawScore ?? 0);
-  }).map((component) => clean(component.ComponentId));
+  const locked = new Set(academicLockedScoreCellIds(previous));
+  const beforeByCell = new Map(academicScoreCells(previous.ComponentScores).map((cell) => [cell.CellId, cell]));
+  return academicScoreCells(nextScores).filter((cell) => {
+    if (!locked.has(cell.CellId)) return false;
+    const before = beforeByCell.get(cell.CellId);
+    return !before || clean(before.State) !== clean(cell.State)
+      || Number(before.RawScore ?? 0) !== Number(cell.RawScore ?? 0);
+  }).map((cell) => cell.CellId);
+}
+
+function academicChangedComponentScores(previousScores = [], nextScores = []) {
+  const beforeByCell = new Map(academicScoreCells(previousScores).map((cell) => [cell.CellId, cell]));
+  return nextScores.flatMap((score) => {
+    if (!Array.isArray(score.Parts) || !score.Parts.length) {
+      const before = beforeByCell.get(clean(score.ComponentId));
+      return !before || clean(before.State) !== clean(score.State) || Number(before.RawScore ?? 0) !== Number(score.RawScore ?? 0)
+        ? [score]
+        : [];
+    }
+    const changedParts = score.Parts.filter((part) => {
+      const before = beforeByCell.get(`${clean(score.ComponentId)}:${clean(part.PartId)}`);
+      return !before || clean(before.State) !== clean(part.State) || Number(before.RawScore ?? 0) !== Number(part.RawScore ?? 0);
+    });
+    return changedParts.length ? [{ ...score, Parts: changedParts }] : [];
+  });
 }
 
 export async function saveAcademicScoreDraft(env, user = {}, input = {}) {
@@ -4057,11 +4103,7 @@ export async function saveAcademicScoreDraft(env, user = {}, input = {}) {
       throw failure('One or more saved score cells are locked. Ask an Admin or Management user to reactivate this subject and arm before editing them.', 409, 'ACADEMIC_SCORE_CELL_LOCKED');
     }
     const previousScores = normalizeAcademicComponentScores(previous?.ComponentScores || [], scheme);
-    const previousByComponent = new Map(previousScores.map((score) => [score.ComponentId, score]));
-    const changedScores = normalizedScores.filter((score) => {
-      const before = previousByComponent.get(score.ComponentId);
-      return !before || before.State !== score.State || Number(before.RawScore ?? 0) !== Number(score.RawScore ?? 0);
-    });
+    const changedScores = academicChangedComponentScores(previousScores, normalizedScores);
     const sourceIssues = academicScoreSourceIssues(scheme, changedScores, 'manual');
     if (sourceIssues.length) throw failure(sourceIssues[0], 409, 'ACADEMIC_SCORE_SOURCE_FORBIDDEN');
     const calculated = calculateAcademicStudentScore(scheme, normalizedScores);
@@ -4074,6 +4116,7 @@ export async function saveAcademicScoreDraft(env, user = {}, input = {}) {
         AssessmentRevisionId: scheme.RevisionId,
         ...calculated,
         LockedComponentIds: academicRecordedScoreComponentIds(calculated.ComponentScores),
+        LockedScoreCellIds: academicRecordedScoreCellIds(calculated.ComponentScores),
         ScoreCellsLockedAt: timestamp, ScoreCellsLockedBy: actorName(user),
         ScoreCellsLockedByUsername: actorUsername(user),
         SourceType: 'Manual', SourceId: '',
@@ -5079,6 +5122,7 @@ export async function importAcademicScores(env, user = {}, input = {}) {
         AssessmentRevisionId: scheme.RevisionId,
         ...row.Calculated,
         LockedComponentIds: academicRecordedScoreComponentIds(row.Calculated.ComponentScores),
+        LockedScoreCellIds: academicRecordedScoreCellIds(row.Calculated.ComponentScores),
         ScoreCellsLockedAt: timestamp, ScoreCellsLockedBy: actorName(user),
         ScoreCellsLockedByUsername: actorUsername(user),
         SourceType: 'SpreadsheetImport', SourceId: ImportId,
@@ -5363,12 +5407,20 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
   const updatedScores = preview.Rows.map((row) => {
     const ScoreId = academicStudentScoreId(SheetId, row.StudentRef);
     const previous = findById(state.studentScores, ScoreId);
-    const componentScores = normalizeAcademicComponentScores([{
-      ComponentId: component.Id,
-      State: row.State,
-      RawScore: row.RawScore,
-      Note: `${sourceType === 'BuiltInCBT' ? 'Built-in' : 'External'} CBT batch ${batchKey}`
-    }], scheme, { existing: previous?.ComponentScores || [], partial: true });
+    const componentScores = normalizeAcademicComponentScores([
+      component.ScoreEntryMode === 'objective-theory' ? {
+        ComponentId: component.Id,
+        Parts: [{
+          PartId: 'objective', State: row.State, RawScore: row.RawScore,
+          Note: `${sourceType === 'BuiltInCBT' ? 'Built-in' : 'External'} CBT batch ${batchKey}`
+        }]
+      } : {
+        ComponentId: component.Id,
+        State: row.State,
+        RawScore: row.RawScore,
+        Note: `${sourceType === 'BuiltInCBT' ? 'Built-in' : 'External'} CBT batch ${batchKey}`
+      }
+    ], scheme, { existing: previous?.ComponentScores || [], partial: true });
     const lockedChanges = academicLockedScoreChanges(previous, componentScores, existing?.ScoreEditingReactivated === true);
     if (lockedChanges.length) {
       throw failure('The destination score cell is already locked. Ask an Admin or Management user to reactivate this subject and arm before synchronizing a replacement score.', 409, 'ACADEMIC_SCORE_CELL_LOCKED');
@@ -5383,6 +5435,7 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
         AssessmentRevisionId: scheme.RevisionId,
         ...calculated,
         LockedComponentIds: academicRecordedScoreComponentIds(calculated.ComponentScores),
+        LockedScoreCellIds: academicRecordedScoreCellIds(calculated.ComponentScores),
         ScoreCellsLockedAt: timestamp, ScoreCellsLockedBy: actorName(user),
         ScoreCellsLockedByUsername: actorUsername(user),
         SourceType: sourceType, SourceId: SyncId, SourceBatchId: batchKey,
@@ -5413,7 +5466,8 @@ export async function syncAcademicCbtScores(env, user = {}, input = {}) {
     ProviderId: clean(input.ProviderId).slice(0, 120),
     SourceFileName: clean(input.SourceFileName).slice(0, 240),
     SigningKeyId: signingKeyId,
-    AssessmentComponentId: component.Id, MaximumScore: component.MaximumScore,
+    AssessmentComponentId: component.Id,
+    MaximumScore: component.ScoreEntryMode === 'objective-theory' ? component.ObjectiveMaximumScore : component.MaximumScore,
     NumericCount: preview.NumericCount, AbsentCount: preview.AbsentCount,
     ImportedRows: updatedScores.length, RosterCount: preview.RosterCount,
     AffectedScoreIds: updatedScores.map((row) => row.record.ScoreId),
@@ -5593,6 +5647,9 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
   const component = (context.scheme.Components || []).find((row) => row.Id === componentId);
   if (!component || !['any', 'built-in-cbt'].includes(lower(component.SourceMode))) {
     throw failure('Choose an active Test Type that accepts Built-in CBT scores.', 409, 'ACADEMIC_CBT_COMPONENT_REQUIRED');
+  }
+  if (component.ScoreEntryMode === 'objective-theory') {
+    throw failure('Create this A/B Objective + Theory test in the Desktop Local CBT Server so both timed papers are packaged together.', 409, 'ACADEMIC_CBT_SPLIT_REQUIRES_LOCAL_SERVER');
   }
   const questionCount = Number(input.NumberOfQuestions);
   if (!Number.isInteger(questionCount) || questionCount < 1 || questionCount > 200) {

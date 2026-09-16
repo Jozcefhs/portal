@@ -265,6 +265,21 @@ function createAcademicComponentRow(component = {}, index = 0) {
   ], component.SourceMode || 'any', 'Allowed score source');
   const required = createPolicyInput('checkbox', '', 'Required assessment component');
   required.checked = component.Required !== false;
+  const split = createPolicyInput('checkbox', '', 'Separate this component into Objective (A) and Theory (B) scorebook fields');
+  split.checked = component.ScoreEntryMode === 'objective-theory';
+  const configuredMaximum = Number(component.MaximumScore || 0);
+  const objective = createPolicyInput(
+    'number',
+    component.ObjectiveMaximumScore ?? (split.checked ? configuredMaximum / 2 : configuredMaximum),
+    'Objective (A) maximum score',
+    { min: '0', step: '0.01' }
+  );
+  const theory = createPolicyInput(
+    'number',
+    component.TheoryMaximumScore ?? (split.checked ? configuredMaximum / 2 : 0),
+    'Theory (B) maximum score',
+    { min: '0', step: '0.01' }
+  );
   const midTerm = createPolicyInput('checkbox', '', 'Include in mid-term result');
   midTerm.checked = Boolean(component.MidTermIncluded);
   const remove = document.createElement('button');
@@ -273,7 +288,28 @@ function createAcademicComponentRow(component = {}, index = 0) {
   remove.setAttribute('aria-label', `Remove assessment component ${index + 1}`);
   remove.textContent = '×';
   remove.addEventListener('click', () => row.remove());
-  row.append(name, maximum, weight, source, required, midTerm, remove);
+  const syncSplitFields = () => {
+    const enabled = split.checked;
+    objective.disabled = !enabled;
+    theory.disabled = !enabled;
+    maximum.readOnly = enabled;
+    source.disabled = enabled;
+    if (enabled) {
+      source.value = 'built-in-cbt';
+      if (Number(objective.value || 0) <= 0 || Number(theory.value || 0) <= 0) {
+        const current = Number(maximum.value || 0);
+        const a = current > 0 ? Math.floor(current / 2) : 0;
+        objective.value = a;
+        theory.value = Math.max(0, current - a);
+      }
+      maximum.value = Number(objective.value || 0) + Number(theory.value || 0);
+    }
+  };
+  split.addEventListener('change', syncSplitFields);
+  objective.addEventListener('input', syncSplitFields);
+  theory.addEventListener('input', syncSplitFields);
+  row.append(name, maximum, weight, source, split, objective, theory, required, midTerm, remove);
+  syncSplitFields();
   return row;
 }
 
@@ -404,19 +440,22 @@ function renderAcademicPolicy(policy = {}) {
 
 function academicPolicyFromForm() {
   const components = [...policyField('academicComponents').children].map((row, index) => {
-    const [name, maximum, weight, source, required] = row.children;
+    const [name, maximum, weight, source, split, objective, theory, required] = row.children;
     return {
       Id: row.dataset.policyId,
       Name: name.value,
       MaximumScore: Number(maximum.value || 0),
       WeightPercentage: Number(weight.value || 0),
       SourceMode: source.value,
+      ScoreEntryMode: split.checked ? 'objective-theory' : 'single',
+      ObjectiveMaximumScore: split.checked ? Number(objective.value || 0) : Number(maximum.value || 0),
+      TheoryMaximumScore: split.checked ? Number(theory.value || 0) : 0,
       Required: required.checked,
       Order: index + 1
     };
   });
   const midTermComponentIds = [...policyField('academicComponents').children]
-    .filter((row) => row.children[5]?.checked)
+    .filter((row) => row.children[8]?.checked)
     .map((row, index) => row.dataset.policyId || components[index]?.Id || String(components[index]?.Name || '')
       .trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80))
     .filter(Boolean);

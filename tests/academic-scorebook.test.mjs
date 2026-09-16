@@ -7,6 +7,7 @@ import {
   ACADEMIC_SCOREBOOK_STATE_KEYS,
   academicCbtScoreBatchDigest,
   academicLockedScoreChanges,
+  academicLockedScoreCellIds,
   academicLockedScoreComponentIds,
   academicScoreTeacherAllocations,
   createAcademicCbtSyncPreparation,
@@ -84,6 +85,68 @@ test('AM-009 score calculations preserve states, weights, grades, points and rem
   ]);
   assert.equal(missing.CompletionStatus, 'Incomplete');
   assert.equal(missing.Grade, '');
+});
+
+test('split assessment components keep Objective A and Theory B separate while calculating one component', () => {
+  const splitPolicy = structuredClone(policy);
+  splitPolicy.Assessment.Components[0] = {
+    ...splitPolicy.Assessment.Components[0],
+    ScoreEntryMode: 'objective-theory',
+    ObjectiveMaximumScore: 20,
+    TheoryMaximumScore: 20,
+    SourceMode: 'built-in-cbt'
+  };
+  const scheme = academicAssessmentScheme(splitPolicy);
+  assert.equal(scheme.Ready, true);
+  assert.deepEqual(scheme.Components[0].ScoreParts.map((part) => part.Id), ['objective', 'theory']);
+  const score = calculateAcademicStudentScore(scheme, [
+    {
+      ComponentId: 'ca',
+      Parts: [
+        { PartId: 'objective', State: 'Numeric', RawScore: 16 },
+        { PartId: 'theory', State: 'Numeric', RawScore: 15 }
+      ]
+    },
+    { ComponentId: 'exam', State: 'Numeric', RawScore: 50 }
+  ]);
+  assert.equal(score.ComponentScores[0].RawScore, 31);
+  assert.equal(score.Percentage, 81);
+  assert.equal(score.CompletionStatus, 'Complete');
+
+  const objectiveOnly = calculateAcademicStudentScore(scheme, [
+    { ComponentId: 'ca', Parts: [{ PartId: 'objective', State: 'Numeric', RawScore: 16 }] },
+    { ComponentId: 'exam', State: 'Numeric', RawScore: 50 }
+  ]);
+  assert.equal(objectiveOnly.CompletionStatus, 'Incomplete');
+  assert.ok(objectiveOnly.UnresolvedComponentIds.includes('ca:theory'));
+});
+
+test('split score locks protect CBT Objective A without blocking manual Theory B', () => {
+  const previous = {
+    LockedScoreCellIds: ['ca:objective'],
+    ComponentScores: [{
+      ComponentId: 'ca', State: 'Missing', RawScore: null,
+      Parts: [
+        { PartId: 'objective', State: 'Numeric', RawScore: 18 },
+        { PartId: 'theory', State: 'Missing', RawScore: null }
+      ]
+    }]
+  };
+  assert.deepEqual(academicLockedScoreCellIds(previous), ['ca:objective']);
+  assert.deepEqual(academicLockedScoreChanges(previous, [{
+    ComponentId: 'ca', State: 'Numeric', RawScore: 33,
+    Parts: [
+      { PartId: 'objective', State: 'Numeric', RawScore: 18 },
+      { PartId: 'theory', State: 'Numeric', RawScore: 15 }
+    ]
+  }]), []);
+  assert.deepEqual(academicLockedScoreChanges(previous, [{
+    ComponentId: 'ca', State: 'Numeric', RawScore: 34,
+    Parts: [
+      { PartId: 'objective', State: 'Numeric', RawScore: 19 },
+      { PartId: 'theory', State: 'Numeric', RawScore: 15 }
+    ]
+  }]), ['ca:objective']);
 });
 
 test('AM-009 saved score cells lock recorded values and require managed reactivation for changes', () => {
@@ -244,6 +307,27 @@ test('Milestone 8 CBT batches accept finalized submissions without changing unto
   });
   assert.equal(invalid.Ready, false);
   assert.ok(invalid.Issues.some((issue) => issue.includes('between 0 and 40')));
+});
+
+test('split CBT batches validate against the Objective A maximum instead of the combined component maximum', () => {
+  const splitPolicy = structuredClone(policy);
+  splitPolicy.Assessment.Components[0] = {
+    ...splitPolicy.Assessment.Components[0],
+    ScoreEntryMode: 'objective-theory', ObjectiveMaximumScore: 20, TheoryMaximumScore: 20,
+    SourceMode: 'built-in-cbt'
+  };
+  const scheme = academicAssessmentScheme(splitPolicy);
+  const valid = validateAcademicCbtScoreBatch({
+    SourceType: 'BuiltInCBT', AssessmentComponentId: 'ca', MaximumScore: 20,
+    Scores: [{ StudentRef: 'DCA/001', State: 'Numeric', RawScore: 18 }]
+  }, { scheme, sourceMode: 'built-in-cbt', roster: [{ StudentRef: 'DCA/001' }] });
+  assert.equal(valid.Ready, true);
+  const wrongMaximum = validateAcademicCbtScoreBatch({
+    SourceType: 'BuiltInCBT', AssessmentComponentId: 'ca', MaximumScore: 40,
+    Scores: [{ StudentRef: 'DCA/001', State: 'Numeric', RawScore: 18 }]
+  }, { scheme, sourceMode: 'built-in-cbt', roster: [{ StudentRef: 'DCA/001' }] });
+  assert.equal(wrongMaximum.Ready, false);
+  assert.ok(wrongMaximum.Issues.some((issue) => issue.includes('Objective (A) is marked over 20')));
 });
 
 test('Milestone 8 server contract exposes idempotent approved CBT score synchronization', () => {

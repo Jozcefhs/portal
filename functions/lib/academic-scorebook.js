@@ -29,15 +29,34 @@ function componentId(row = {}) {
 function normalizedComponents(policy = {}) {
   const assessment = policy.Assessment || policy.assessment || {};
   return (Array.isArray(assessment.Components) ? assessment.Components : [])
-    .map((row, index) => ({
-      Id: componentId(row),
-      Name: clean(row.Name || row.Label || componentId(row)),
-      MaximumScore: finiteNumber(row.MaximumScore) ?? 0,
-      WeightPercentage: finiteNumber(row.WeightPercentage) ?? 0,
-      SourceMode: clean(row.SourceMode || 'any'),
-      Required: row.Required !== false,
-      Order: Number(row.Order || index + 1)
-    }))
+    .map((row, index) => {
+      const MaximumScore = finiteNumber(row.MaximumScore) ?? 0;
+      const ScoreEntryMode = lower(row.ScoreEntryMode || row.ScoreLayout) === 'objective-theory'
+        ? 'objective-theory'
+        : 'single';
+      const ObjectiveMaximumScore = ScoreEntryMode === 'objective-theory'
+        ? finiteNumber(row.ObjectiveMaximumScore) ?? 0
+        : MaximumScore;
+      const TheoryMaximumScore = ScoreEntryMode === 'objective-theory'
+        ? finiteNumber(row.TheoryMaximumScore) ?? 0
+        : 0;
+      return {
+        Id: componentId(row),
+        Name: clean(row.Name || row.Label || componentId(row)),
+        MaximumScore,
+        WeightPercentage: finiteNumber(row.WeightPercentage) ?? 0,
+        SourceMode: clean(row.SourceMode || 'any'),
+        Required: row.Required !== false,
+        Order: Number(row.Order || index + 1),
+        ScoreEntryMode,
+        ObjectiveMaximumScore,
+        TheoryMaximumScore,
+        ScoreParts: ScoreEntryMode === 'objective-theory' ? [
+          { Id: 'objective', Name: 'A · Objective', MaximumScore: ObjectiveMaximumScore, SourceMode: 'built-in-cbt', Required: row.Required !== false },
+          { Id: 'theory', Name: 'B · Theory', MaximumScore: TheoryMaximumScore, SourceMode: 'manual', Required: row.Required !== false }
+        ] : []
+      };
+    })
     .filter((row) => row.Id)
     .sort((a, b) => a.Order - b.Order || a.Name.localeCompare(b.Name));
 }
@@ -69,6 +88,13 @@ export function academicAssessmentScheme(policy = {}, options = {}) {
     componentIds.add(lower(component.Id));
     if (component.MaximumScore <= 0) Issues.push(`${component.Name} needs a maximum score greater than zero.`);
     if (component.WeightPercentage <= 0) Issues.push(`${component.Name} needs a weight greater than zero.`);
+    if (component.ScoreEntryMode === 'objective-theory') {
+      if (component.ObjectiveMaximumScore <= 0) Issues.push(`${component.Name} needs an Objective (A) maximum greater than zero.`);
+      if (component.TheoryMaximumScore <= 0) Issues.push(`${component.Name} needs a Theory (B) maximum greater than zero.`);
+      if (Math.abs(component.ObjectiveMaximumScore + component.TheoryMaximumScore - component.MaximumScore) > 0.001) {
+        Issues.push(`${component.Name} Objective (A) and Theory (B) marks must total ${component.MaximumScore}.`);
+      }
+    }
   });
   const weight = rounded(Components.reduce((sum, row) => sum + row.WeightPercentage, 0), 4);
   if (!Components.length) Issues.push('No active assessment components are configured.');
@@ -122,6 +148,38 @@ function inferredScoreState(row = {}) {
   return tokens[token] || 'Numeric';
 }
 
+function suppliedScorePartMap(value) {
+  const map = new Map();
+  const rows = Array.isArray(value) ? value : [];
+  rows.forEach((row = {}) => {
+    const id = clean(row.PartId || row.Id || row.Code);
+    if (id) map.set(lower(id), row);
+  });
+  return map;
+}
+
+function normalizeScorePart(row = {}, definition = {}) {
+  const State = inferredScoreState(row);
+  let RawScore = null;
+  if (State === 'Numeric') {
+    RawScore = finiteNumber(row.RawScore ?? row.Score ?? row.Value);
+    if (RawScore === null) throw new Error(`Enter a numeric score for ${definition.Name}.`);
+    if (RawScore < 0 || RawScore > definition.MaximumScore) {
+      throw new Error(`${definition.Name} must be between 0 and ${definition.MaximumScore}.`);
+    }
+    RawScore = rounded(RawScore, 4);
+  }
+  return {
+    PartId: definition.Id,
+    State,
+    RawScore,
+    MaximumScore: definition.MaximumScore,
+    SourceMode: definition.SourceMode,
+    Note: clean(row.Note).slice(0, 300),
+    ...(row.StateExplicit === true ? { StateExplicit: true } : {})
+  };
+}
+
 export function normalizeAcademicComponentScores(value, schemeValue = {}, options = {}) {
   const scheme = schemeValue.Components ? schemeValue : academicAssessmentScheme(schemeValue);
   if (!scheme.Ready && options.requireReady !== false) throw new Error(scheme.Issues[0] || 'Configure an active assessment scheme first.');
@@ -132,6 +190,36 @@ export function normalizeAcademicComponentScores(value, schemeValue = {}, option
   if (unknown.length) throw new Error(`Unknown assessment component: ${unknown.join(', ')}.`);
   return scheme.Components.map((component) => {
     const row = supplied.get(lower(component.Id)) || (options.partial ? existing.get(lower(component.Id)) : null) || {};
+    if (component.ScoreEntryMode === 'objective-theory') {
+      const suppliedRow = supplied.get(lower(component.Id)) || {};
+      const existingRow = existing.get(lower(component.Id)) || {};
+      const suppliedParts = suppliedScorePartMap(suppliedRow.Parts || suppliedRow.ScoreParts);
+      const existingParts = suppliedScorePartMap(existingRow.Parts || existingRow.ScoreParts);
+      const Parts = component.ScoreParts.map((definition) => normalizeScorePart(
+        suppliedParts.get(lower(definition.Id))
+          || (options.partial ? existingParts.get(lower(definition.Id)) : null)
+          || {},
+        definition
+      ));
+      const unresolved = Parts.filter((part) => ['Missing', 'Incomplete'].includes(part.State));
+      const recorded = Parts.filter((part) => ['Numeric', 'Absent'].includes(part.State));
+      const allExempt = Parts.length > 0 && Parts.every((part) => part.State === 'Exempt');
+      const State = allExempt ? 'Exempt' : unresolved.some((part) => part.State === 'Incomplete')
+        ? 'Incomplete'
+        : unresolved.length ? 'Missing' : 'Numeric';
+      const RawScore = State === 'Numeric'
+        ? rounded(recorded.reduce((sum, part) => sum + (part.State === 'Numeric' ? Number(part.RawScore || 0) : 0), 0), 4)
+        : null;
+      return {
+        ComponentId: component.Id,
+        State,
+        RawScore,
+        MaximumScore: component.MaximumScore,
+        WeightPercentage: component.WeightPercentage,
+        Parts,
+        Note: clean(suppliedRow.Note || existingRow.Note).slice(0, 300)
+      };
+    }
     const State = inferredScoreState(row);
     let RawScore = null;
     if (State === 'Numeric') {
@@ -170,6 +258,20 @@ export function calculateAcademicStudentScore(schemeValue = {}, componentScores 
   const unresolved = [];
   Scores.forEach((score) => {
     const component = scheme.Components.find((row) => row.Id === score.ComponentId);
+    if (component.ScoreEntryMode === 'objective-theory') {
+      (score.Parts || []).forEach((part) => {
+        const definition = component.ScoreParts.find((row) => row.Id === part.PartId);
+        if (!definition) return;
+        const partWeight = component.MaximumScore > 0
+          ? component.WeightPercentage * definition.MaximumScore / component.MaximumScore
+          : 0;
+        if (part.State === 'Exempt') return;
+        includedWeight += partWeight;
+        if (part.State === 'Numeric') weightedEarned += (part.RawScore / definition.MaximumScore) * partWeight;
+        if (['Missing', 'Incomplete'].includes(part.State) && definition.Required) unresolved.push(`${component.Id}:${definition.Id}`);
+      });
+      return;
+    }
     if (score.State === 'Exempt') return;
     includedWeight += component.WeightPercentage;
     if (score.State === 'Numeric') weightedEarned += (score.RawScore / component.MaximumScore) * component.WeightPercentage;
@@ -198,7 +300,17 @@ export function academicScoreSourceIssues(schemeValue = {}, componentScores = []
   const source = lower(sourceMode);
   return scheme.Components.flatMap((component) => {
     const row = supplied.get(lower(component.Id));
-    if (!row || ['missing', 'incomplete'].includes(lower(inferredScoreState(row)))) return [];
+    if (!row) return [];
+    if (component.ScoreEntryMode === 'objective-theory') {
+      const parts = suppliedScorePartMap(row.Parts || row.ScoreParts);
+      return component.ScoreParts.flatMap((part) => {
+        const partRow = parts.get(lower(part.Id));
+        if (!partRow || ['missing', 'incomplete'].includes(lower(inferredScoreState(partRow)))) return [];
+        const allowed = lower(part.SourceMode);
+        return ['any', source].includes(allowed) ? [] : [`${component.Name} ${part.Name} accepts scores only from ${part.SourceMode}.`];
+      });
+    }
+    if (['missing', 'incomplete'].includes(lower(inferredScoreState(row)))) return [];
     const allowed = lower(component.SourceMode || 'any');
     return ['any', source].includes(allowed) ? [] : [`${component.Name} accepts scores only from ${component.SourceMode}.`];
   });
@@ -221,13 +333,17 @@ export function validateAcademicCbtScoreBatch(value = {}, options = {}) {
   if (!scheme.Ready) Issues.push(scheme.Issues[0] || 'Configure an active assessment scheme first.');
   if (!sourceMode) Issues.push('Choose BuiltInCBT or ExternalCBT as the score source.');
   if (!component) Issues.push('The CBT batch assessment component is not configured for this scorebook.');
-  if (component && Math.abs(Number(payload.MaximumScore) - Number(component.MaximumScore)) > 0.0001) {
-    Issues.push(`${component.Name} is marked over ${component.MaximumScore}; the CBT batch uses ${payload.MaximumScore}.`);
+  const cbtMaximum = component?.ScoreEntryMode === 'objective-theory'
+    ? Number(component.ObjectiveMaximumScore)
+    : Number(component?.MaximumScore);
+  if (component && Math.abs(Number(payload.MaximumScore) - cbtMaximum) > 0.0001) {
+    Issues.push(`${component.Name}${component.ScoreEntryMode === 'objective-theory' ? ' Objective (A)' : ''} is marked over ${cbtMaximum}; the CBT batch uses ${payload.MaximumScore}.`);
   }
   if (component && sourceMode) {
-    const sourceIssues = academicScoreSourceIssues(scheme, [{
-      ComponentId: component.Id, State: 'Numeric', RawScore: 0
-    }], sourceMode);
+    const sourceIssues = academicScoreSourceIssues(scheme, [component.ScoreEntryMode === 'objective-theory' ? {
+      ComponentId: component.Id,
+      Parts: [{ PartId: 'objective', State: 'Numeric', RawScore: 0 }]
+    } : { ComponentId: component.Id, State: 'Numeric', RawScore: 0 }], sourceMode);
     Issues.push(...sourceIssues);
   }
   if (!supplied.length) Issues.push('The CBT score batch has no student scores.');
@@ -246,8 +362,8 @@ export function validateAcademicCbtScoreBatch(value = {}, options = {}) {
     if (State === 'Numeric') {
       RawScore = finiteNumber(row.RawScore);
       if (RawScore === null) RowIssues.push(`${StudentRef || `Row ${index + 1}`} needs a numeric CBT score.`);
-      else if (component && (RawScore < 0 || RawScore > component.MaximumScore)) {
-        RowIssues.push(`${StudentRef} must be between 0 and ${component.MaximumScore}.`);
+      else if (component && (RawScore < 0 || RawScore > cbtMaximum)) {
+        RowIssues.push(`${StudentRef} must be between 0 and ${cbtMaximum}.`);
       } else RawScore = rounded(RawScore, 4);
     }
     return {

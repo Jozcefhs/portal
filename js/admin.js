@@ -12159,24 +12159,44 @@ function academicScorebookWorkspace(data, rows) {
   const classroomLabel = (arm) => `${academicLabel(rows.classes, arm.ClassId)} / ${arm.Name}`;
   const allocationValue = (row) => `${row.SubjectId}::${clean(row.TeacherUsername).toLowerCase()}`;
   const selectedAllocationValue = selectedAllocation ? allocationValue(selectedAllocation) : '';
-  const componentHeaders = (scheme.Components || []).map((component) => `<th>${escapeHtml(component.Name)}<small>${component.MaximumScore} marks · ${component.WeightPercentage}% · ${escapeHtml(component.SourceMode || 'any source')}</small></th>`).join('');
+  const scoreFields = (scheme.Components || []).flatMap((component) => (
+    component.ScoreEntryMode === 'objective-theory'
+      ? (component.ScoreParts || []).map((part) => ({
+        component, part,
+        cellId: `${component.Id}:${part.Id}`,
+        name: `${component.Name} · ${part.Name}`,
+        maximum: Number(part.MaximumScore || 0),
+        weight: Number(component.MaximumScore || 0) > 0
+          ? Number(component.WeightPercentage || 0) * Number(part.MaximumScore || 0) / Number(component.MaximumScore)
+          : 0,
+        sourceMode: part.SourceMode || (part.Id === 'objective' ? 'built-in-cbt' : 'manual')
+      }))
+      : [{ component, part: null, cellId: component.Id, name: component.Name, maximum: Number(component.MaximumScore || 0), weight: Number(component.WeightPercentage || 0), sourceMode: component.SourceMode || 'any' }]
+  ));
+  const componentHeaders = scoreFields.map((field) => `<th>${escapeHtml(field.name)}<small>${field.maximum} marks · ${Math.round((field.weight + Number.EPSILON) * 100) / 100}% · ${escapeHtml(field.sourceMode)}</small></th>`).join('');
   const scoreRows = roster.map((membership) => {
     const score = scoreByStudent.get(clean(membership.StudentRef).toLowerCase()) || {};
     const byComponent = new Map((score.ComponentScores || []).map((entry) => [entry.ComponentId, entry]));
-    const lockedComponentIds = new Set(Array.isArray(score.LockedComponentIds)
-      ? score.LockedComponentIds.map(clean)
-      : (score.ComponentScores || []).filter((entry) => ['Numeric', 'Absent', 'Exempt'].includes(clean(entry.State))).map((entry) => clean(entry.ComponentId)));
-    const componentCells = (scheme.Components || []).map((component) => {
-      const savedEntry = byComponent.get(component.Id);
+    const lockedScoreCellIds = new Set(Array.isArray(score.LockedScoreCellIds)
+      ? score.LockedScoreCellIds.map(clean)
+      : (score.ComponentScores || []).flatMap((entry) => Array.isArray(entry.Parts) && entry.Parts.length
+        ? entry.Parts.filter((part) => ['Numeric', 'Absent', 'Exempt'].includes(clean(part.State))).map((part) => `${clean(entry.ComponentId)}:${clean(part.PartId)}`)
+        : ['Numeric', 'Absent', 'Exempt'].includes(clean(entry.State)) ? [clean(entry.ComponentId)] : []));
+    const componentCells = scoreFields.map((field) => {
+      const component = field.component;
+      const savedComponent = byComponent.get(component.Id);
+      const savedEntry = field.part
+        ? (savedComponent?.Parts || []).find((part) => clean(part.PartId) === field.part.Id)
+        : savedComponent;
       const automaticMissing = clean(savedEntry?.State) === 'Missing' && savedEntry?.StateExplicit !== true;
       const entry = !savedEntry || automaticMissing ? { ...(savedEntry || {}), State: 'Numeric', RawScore: '' } : savedEntry;
       const numeric = entry.State === 'Numeric';
-      const sourceMode = clean(component.SourceMode || 'any').toLowerCase();
+      const sourceMode = clean(field.sourceMode || 'any').toLowerCase();
       const manualAllowed = ['any', 'manual'].includes(sourceMode);
-      const cellLocked = lockedComponentIds.has(component.Id) && !correctionActive;
+      const cellLocked = lockedScoreCellIds.has(field.cellId) && !correctionActive;
       const cellEditable = canEdit && manualAllowed && !cellLocked;
       if (cellEditable) editableCellCount += 1;
-      return `<td><div class="academic-score-component${manualAllowed ? '' : ' is-source-locked'}${cellLocked ? ' is-saved-locked' : ''}" data-academic-score-component="${escapeHtml(component.Id)}" data-maximum="${component.MaximumScore}" data-weight="${component.WeightPercentage}" data-required="${component.Required === false ? 'false' : 'true'}" data-manual-allowed="${manualAllowed ? 'true' : 'false'}" data-cell-locked="${cellLocked ? 'true' : 'false'}" data-state-explicit="${entry.StateExplicit === true ? 'true' : 'false'}"${cellLocked ? ' title="Saved score locked. Admin or Management must reactivate this subject and arm before correction."' : ''}><input type="number" min="0" max="${component.MaximumScore}" step="0.01" value="${numeric ? escapeHtml(entry.RawScore) : ''}" data-academic-score-value ${numeric && cellEditable ? '' : 'disabled'} aria-label="${escapeHtml(component.Name)} score for ${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}"><select data-academic-score-state ${cellEditable ? '' : 'disabled'} aria-label="${escapeHtml(component.Name)} status">${academicScoreStateOptions(entry.State || 'Numeric')}</select>${cellLocked ? '<small class="academic-score-cell-lock">&#128274; Saved</small>' : ''}</div></td>`;
+      return `<td><div class="academic-score-component${manualAllowed ? '' : ' is-source-locked'}${cellLocked ? ' is-saved-locked' : ''}" data-academic-score-component="${escapeHtml(component.Id)}" data-academic-score-part="${escapeHtml(field.part?.Id || '')}" data-maximum="${field.maximum}" data-weight="${field.weight}" data-required="${component.Required === false ? 'false' : 'true'}" data-manual-allowed="${manualAllowed ? 'true' : 'false'}" data-cell-locked="${cellLocked ? 'true' : 'false'}" data-state-explicit="${entry.StateExplicit === true ? 'true' : 'false'}"${cellLocked ? ' title="Saved score locked. Admin or Management must reactivate this subject and arm before correction."' : ''}><input type="number" min="0" max="${field.maximum}" step="0.01" value="${numeric ? escapeHtml(entry.RawScore) : ''}" data-academic-score-value ${numeric && cellEditable ? '' : 'disabled'} aria-label="${escapeHtml(field.name)} score for ${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}"><select data-academic-score-state ${cellEditable ? '' : 'disabled'} aria-label="${escapeHtml(field.name)} status">${academicScoreStateOptions(entry.State || 'Numeric')}</select>${cellLocked ? '<small class="academic-score-cell-lock">&#128274; Saved</small>' : (!manualAllowed ? '<small class="academic-score-cell-lock">CBT only</small>' : '')}</div></td>`;
     }).join('');
     return `<tr data-academic-score-student="${escapeHtml(membership.StudentRef)}" data-score-id="${escapeHtml(score.ScoreId || '')}" data-revision-token="${escapeHtml(score.RevisionToken || '')}"><td><strong>${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}</strong><small>${escapeHtml(membership.StudentRef)}</small></td>${componentCells}<td data-academic-score-total>${score.Percentage === null || score.Percentage === undefined ? '—' : `${score.Percentage}%`}</td><td data-academic-score-grade>${escapeHtml(score.Grade || '—')}</td><td data-academic-score-completion>${escapeHtml(score.CompletionStatus || 'Incomplete')}</td></tr>`;
   }).join('');
@@ -12201,7 +12221,7 @@ function academicScorebookWorkspace(data, rows) {
       <label>Subject and teacher<select name="AllocationId" data-academic-scorebook-allocation required><option value="">Choose allocated subject</option>${selectedAllocations.map((allocation) => `<option value="${escapeHtml(allocationValue(allocation))}"${allocationValue(allocation) === selectedAllocationValue ? ' selected' : ''}>${escapeHtml(`${academicLabel(rows.subjects, allocation.SubjectId)} · ${academicLabel(data.staff, allocation.TeacherUsername, allocation.TeacherUsername)}`)}</option>`).join('')}</select></label>
       <label>Workflow status<input value="${escapeHtml(sheet?.Status || 'New Draft')}" readonly></label>
     </div>
-    <div class="academic-attendance-table academic-scorebook-table"><table><thead><tr><th>Student</th>${componentHeaders}<th>Total</th><th>Grade</th><th>Completion</th></tr></thead><tbody>${scoreRows || `<tr><td colspan="${(scheme.Components || []).length + 4}">Choose an allocated classroom and subject with active students.</td></tr>`}</tbody></table></div>
+    <div class="academic-attendance-table academic-scorebook-table"><table><thead><tr><th>Student</th>${componentHeaders}<th>Total</th><th>Grade</th><th>Completion</th></tr></thead><tbody>${scoreRows || `<tr><td colspan="${scoreFields.length + 4}">Choose an allocated classroom and subject with active students.</td></tr>`}</tbody></table></div>
     <div class="academic-scorebook-actions"><button type="submit" ${canEdit && roster.length && editableCellCount ? '' : 'disabled'}>Save and lock recorded scores</button>${sheet?.Status === 'Draft' && data.permissions?.canEnterScores ? `<button type="button" class="secondary" data-academic-score-status="Submitted" data-academic-id="${escapeHtml(sheet.SheetId)}" data-academic-revision="${escapeHtml(sheet.RevisionToken)}">Submit complete sheet</button>` : ''}${reactivateButton}</div>
   </form>`;
   const workflow = table('Score Sheet Workflow', rows.scoreSheets, [
@@ -12863,9 +12883,12 @@ function academicCbtWorkspace(data, rows) {
     academicCbtDraft.contextKey = clean(subjectContexts[0]?.key);
   }
   const selectedContext = subjectContexts.find((context) => context.key === academicCbtDraft.contextKey) || null;
-  const components = (data.assessmentScheme?.Ready ? data.assessmentScheme.Components : []).filter((component) => (
+  const assessmentComponents = data.assessmentScheme?.Ready ? data.assessmentScheme.Components : [];
+  const splitComponents = assessmentComponents.filter((component) => component.ScoreEntryMode === 'objective-theory');
+  const components = assessmentComponents.filter((component) => (
     ['any', 'built-in-cbt'].includes(clean(component.SourceMode || 'any').toLowerCase())
       && Number(component.MaximumScore) > 0
+      && component.ScoreEntryMode !== 'objective-theory'
   ));
   if (!components.some((component) => component.Id === academicCbtDraft.componentId)) {
     academicCbtDraft.componentId = clean(components[0]?.Id);
@@ -12881,6 +12904,7 @@ function academicCbtWorkspace(data, rows) {
     <div class="academic-management-editor-heading"><div><small>Step 1 of 2</small><h3>${editing ? 'Correct scheduled test' : 'Test details and schedule'}</h3><p class="muted">Choose the class and subject. Every student in that class who offers the subject is included across all arms.</p></div>${editing ? '<button type="button" data-academic-cbt-new>Clear</button>' : ''}</div>
     ${!contexts.length ? '<p class="status bad">No eligible subject-teacher class allocation with students was found for this period.</p>' : ''}
     ${!components.length ? '<p class="status bad">No Test Type currently accepts Built-in CBT scores. Configure an assessment component in Account &amp; settings first.</p>' : ''}
+    ${splitComponents.length ? '<p class="status">A/B Objective + Theory Test Types are created in Desktop &rarr; Local CBT Server so both timed papers can be packaged together. This online form lists single-paper CBT Test Types only.</p>' : ''}
     <div class="academic-cbt-detail-grid">
       <label>Test Type<small>Created from the active assessment components.</small><select name="AssessmentComponentId" data-academic-cbt-component required>${academicSelectOptions(components.map((row) => ({ ...row, RecordId: row.Id })), component?.Id || '', (row) => row.Name, 'Choose Test Type')}</select></label>
       <label>Overall mark<small>The maximum score configured for this Test Type.</small><input data-academic-cbt-maximum value="${escapeHtml(component?.MaximumScore ?? '')}" readonly></label>
@@ -13286,17 +13310,32 @@ function populateAcademicForm(type, record) {
 }
 
 function academicScorebookRowPayload(row) {
+  const byComponent = new Map();
+  [...row.querySelectorAll('[data-academic-score-component][data-manual-allowed="true"][data-cell-locked="false"]')]
+    .map((cell) => ({
+      ComponentId: cell.dataset.academicScoreComponent,
+      PartId: clean(cell.dataset.academicScorePart),
+      State: cell.querySelector('[data-academic-score-state]').value,
+      RawScore: cell.querySelector('[data-academic-score-value]').value,
+      ...(cell.dataset.stateExplicit === 'true' ? { StateExplicit: true } : {})
+    }))
+    .filter((score) => score.State !== 'Numeric' || clean(score.RawScore))
+    .forEach((score) => {
+      if (!score.PartId) {
+        byComponent.set(score.ComponentId, score);
+        return;
+      }
+      const component = byComponent.get(score.ComponentId) || { ComponentId: score.ComponentId, Parts: [] };
+      component.Parts.push({
+        PartId: score.PartId, State: score.State, RawScore: score.RawScore,
+        ...(score.StateExplicit === true ? { StateExplicit: true } : {})
+      });
+      byComponent.set(score.ComponentId, component);
+    });
   return {
     StudentRef: row.dataset.academicScoreStudent,
     RevisionToken: row.dataset.revisionToken || '',
-    ComponentScores: [...row.querySelectorAll('[data-academic-score-component][data-manual-allowed="true"][data-cell-locked="false"]')]
-      .map((component) => ({
-        ComponentId: component.dataset.academicScoreComponent,
-        State: component.querySelector('[data-academic-score-state]').value,
-        RawScore: component.querySelector('[data-academic-score-value]').value,
-        ...(component.dataset.stateExplicit === 'true' ? { StateExplicit: true } : {})
-      }))
-      .filter((score) => score.State !== 'Numeric' || clean(score.RawScore))
+    ComponentScores: [...byComponent.values()]
   };
 }
 

@@ -4,7 +4,7 @@ const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value || {}, key);
 
-export const ACADEMIC_POLICY_SCHEMA_VERSION = 3;
+export const ACADEMIC_POLICY_SCHEMA_VERSION = 4;
 export const ACADEMIC_POLICY_SCOPE_TYPES = Object.freeze([
   'organisation',
   'branch',
@@ -100,13 +100,34 @@ function policyId(value, fallback = '') {
 
 function normalizeComponent(row = {}, index = 0) {
   const name = clean(row.Name || row.name || row.Label || row.label);
+  const scoreEntryMode = oneOf(
+    row.ScoreEntryMode ?? row.scoreEntryMode ?? row.ScoreLayout,
+    ['single', 'objective-theory'],
+    'single'
+  );
+  const maximumScore = boundedNumber(row.MaximumScore ?? row.maximumScore ?? row.MaxScore, 0, 0, 10000);
+  const objectiveMaximum = boundedNumber(
+    row.ObjectiveMaximumScore ?? row.objectiveMaximumScore,
+    scoreEntryMode === 'objective-theory' ? maximumScore / 2 : maximumScore,
+    0,
+    10000
+  );
+  const theoryMaximum = boundedNumber(
+    row.TheoryMaximumScore ?? row.theoryMaximumScore,
+    scoreEntryMode === 'objective-theory' ? Math.max(0, maximumScore - objectiveMaximum) : 0,
+    0,
+    10000
+  );
   return {
     Id: policyId(row.Id || row.id, name || `component-${index + 1}`),
     Name: name,
-    MaximumScore: boundedNumber(row.MaximumScore ?? row.maximumScore ?? row.MaxScore, 0, 0, 10000),
+    MaximumScore: maximumScore,
     WeightPercentage: boundedNumber(row.WeightPercentage ?? row.weightPercentage ?? row.Weight, 0, 0, 100),
     SourceMode: oneOf(row.SourceMode ?? row.sourceMode ?? row.Source, ASSESSMENT_SOURCE_MODES, 'any'),
     Required: yesNoBoolean(row.Required ?? row.required, true),
+    ScoreEntryMode: scoreEntryMode,
+    ObjectiveMaximumScore: scoreEntryMode === 'objective-theory' ? objectiveMaximum : maximumScore,
+    TheoryMaximumScore: scoreEntryMode === 'objective-theory' ? theoryMaximum : 0,
     Order: Math.max(1, Math.floor(boundedNumber(row.Order ?? row.order, index + 1, 1, 1000)))
   };
 }
@@ -541,6 +562,13 @@ export function academicPolicyIssues(value = {}, options = {}) {
     if (!component.Name) add('ASSESSMENT_COMPONENT_NAME_REQUIRED', `Assessment component ${index + 1} needs a name.`, `Assessment.Components.${index}.Name`);
     if (component.MaximumScore <= 0) add('ASSESSMENT_COMPONENT_MAXIMUM_INVALID', `${component.Name || `Component ${index + 1}`} needs a maximum score greater than zero.`, `Assessment.Components.${index}.MaximumScore`);
     if (component.WeightPercentage <= 0) add('ASSESSMENT_COMPONENT_WEIGHT_INVALID', `${component.Name || `Component ${index + 1}`} needs a weight greater than zero.`, `Assessment.Components.${index}.WeightPercentage`);
+    if (component.ScoreEntryMode === 'objective-theory') {
+      if (component.ObjectiveMaximumScore <= 0) add('ASSESSMENT_OBJECTIVE_MAXIMUM_INVALID', `${component.Name || `Component ${index + 1}`} needs an Objective (A) maximum greater than zero.`, `Assessment.Components.${index}.ObjectiveMaximumScore`);
+      if (component.TheoryMaximumScore <= 0) add('ASSESSMENT_THEORY_MAXIMUM_INVALID', `${component.Name || `Component ${index + 1}`} needs a Theory (B) maximum greater than zero.`, `Assessment.Components.${index}.TheoryMaximumScore`);
+      if (Math.abs(component.ObjectiveMaximumScore + component.TheoryMaximumScore - component.MaximumScore) > 0.001) {
+        add('ASSESSMENT_SPLIT_MAXIMUM_INVALID', `${component.Name || `Component ${index + 1}`} Objective (A) and Theory (B) marks must total ${component.MaximumScore}.`, `Assessment.Components.${index}`);
+      }
+    }
   });
   const totalWeight = components.reduce((sum, component) => sum + component.WeightPercentage, 0);
   if ((activation || components.length) && Math.abs(totalWeight - 100) > 0.001) {

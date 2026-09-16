@@ -161,6 +161,27 @@ test('invalid component totals and grade ranges are reported before activation',
   assert.ok(issues.some((issue) => issue.code === 'GRADE_BAND_OVERLAP'));
 });
 
+test('assessment policy can create separate Objective A and Theory B scorebook fields', () => {
+  const policy = completePolicy();
+  policy.Assessment.Components[0] = {
+    ...policy.Assessment.Components[0],
+    ScoreEntryMode: 'objective-theory',
+    ObjectiveMaximumScore: 25,
+    TheoryMaximumScore: 15,
+    SourceMode: 'built-in-cbt'
+  };
+  const normalized = normalizeAcademicPolicy(policy);
+  assert.equal(normalized.Assessment.Components[0].ScoreEntryMode, 'objective-theory');
+  assert.equal(normalized.Assessment.Components[0].ObjectiveMaximumScore, 25);
+  assert.equal(normalized.Assessment.Components[0].TheoryMaximumScore, 15);
+  assert.equal(academicPolicyIssues(normalized, { forActivation: true }).filter((issue) => issue.path.startsWith('Assessment.Components.0')).length, 0);
+
+  normalized.Assessment.Components[0].TheoryMaximumScore = 10;
+  assert.ok(academicPolicyIssues(normalized).some((issue) => issue.code === 'ASSESSMENT_SPLIT_MAXIMUM_INVALID'));
+  assert.match(setupHtmlSource, /Split A\/B/);
+  assert.match(setupJsSource, /ScoreEntryMode: split\.checked \? 'objective-theory' : 'single'/);
+});
+
 test('mid-term release is policy-controlled and limited to one or two configured components', () => {
   const policy = completePolicy();
   policy.MidTerm = { Enabled: true, ComponentIds: ['ca'] };
