@@ -609,7 +609,8 @@ export async function initializeSubscriptionCheckout({
       amount: String(Math.round(amount * 100)),
       currency: catalog.Currency,
       reference,
-      ...(adjustment ? { channels: ['card'] } : { plan: planCode }),
+      channels: ['card'],
+      ...(adjustment ? {} : { plan: planCode }),
       callback_url: callbackUrl.href,
       metadata: JSON.stringify(metadata)
     })

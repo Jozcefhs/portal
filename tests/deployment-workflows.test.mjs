@@ -177,6 +177,9 @@ test('the tenant pool provisioner is opt-in, uses WIF and creates isolated deplo
   assert.match(tenantProvisioner, /TENANT_POOL_AUTOMATION_ENABLED == 'true'/);
   assert.match(tenantProvisioner, /google-github-actions\/auth@v3/);
   assert.match(tenantProvisioner, /DYNAMAX_PROVISION_SERVICE_ACCOUNT/);
+  assert.match(tenantProvisioner, /Resolve Google Cloud project parent/);
+  assert.match(tenantProvisioner, /gcloud projects describe/);
+  assert.match(tenantProvisioner, /DYNAMAX_GCP_PARENT=.*GITHUB_ENV/);
   assert.match(tenantProvisioner, /claim-next/);
   assert.match(tenantProvisioner, /MANUAL_TENANT_PROJECT_ID/);
   assert.match(tenantProvisioner, /GitHub exact-project provisioner/);

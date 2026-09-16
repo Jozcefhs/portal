@@ -46,6 +46,20 @@ function platformPaymentMoney(amount, currency) {
   }
 }
 
+function showPlatformPaymentOutcome(data = {}) {
+  const onboarding = data.onboarding || data.result || {};
+  const destination = onboarding.activationUrl || onboarding.loginUrl || '';
+  const label = onboarding.activationUrl
+    ? 'Open administrator activation'
+    : onboarding.loginUrl
+      ? 'Open organisation sign-in'
+      : '';
+  setStatus(platformPaymentStatus, data.message || 'Subscription transfer updated.', data.warning ? 'bad' : 'ok');
+  if (destination && label) {
+    platformPaymentStatus.innerHTML = `${escapeHtml(data.message || 'Subscription transfer updated.')} <a class="settings-link" href="${escapeHtml(destination)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`;
+  }
+}
+
 function finishPlatformTransferDecision(result = null) {
   const resolve = platformTransferDecisionResolver;
   platformTransferDecisionResolver = null;
@@ -112,16 +126,24 @@ function renderPlatformPaymentState() {
   document.getElementById('platformPaymentTransferInstructions').value = settings.PaymentTransferInstructions || '';
   const transfers = Array.isArray(platformPaymentState?.transfers) ? platformPaymentState.transfers : [];
   platformTransferRows.innerHTML = transfers.length ? transfers.map((transfer) => {
-    const awaiting = String(transfer.Status || '').toLowerCase() === 'awaiting verification';
+    const status = String(transfer.Status || '').toLowerCase();
+    const awaiting = status === 'awaiting verification';
+    const paid = status === 'paid';
+    const onboardingAction = paid && !transfer.AdministratorActivated
+      ? `<button type="button" class="compact-action" data-platform-transfer-onboarding="${escapeHtml(transfer.Reference)}">${transfer.WorkspacePending ? 'Retry provisioning' : 'Issue activation'}</button>`
+      : '';
+    const closedCopy = transfer.AdministratorActivated
+      ? 'Administrator active'
+      : [transfer.ActivationStatus, transfer.ProvisioningStatus, transfer.ReviewNotes || 'Closed'].find(Boolean);
     return `<tr>
       <td><strong>${escapeHtml(transfer.OrganisationName || transfer.RegistrationReference)}</strong><small>${escapeHtml(transfer.Email)}</small></td>
       <td>${escapeHtml(transfer.Plan)}<small>${escapeHtml(transfer.BillingCycle)}</small></td>
       <td>${escapeHtml(platformPaymentMoney(transfer.Amount, transfer.Currency))}</td>
       <td>${escapeHtml(transfer.BankReference)}</td>
       <td>${transfer.HasProof ? `<button type="button" class="compact-action" data-platform-transfer-proof="${escapeHtml(transfer.Reference)}">View proof</button>` : '<span class="muted">Not supplied</span>'}</td>
-      <td><span class="tenant-pool-status ${awaiting ? '' : String(transfer.Status).toLowerCase() === 'paid' ? 'ok' : 'bad'}">${escapeHtml(transfer.Status)}</span></td>
+      <td><span class="tenant-pool-status ${awaiting ? '' : paid ? 'ok' : 'bad'}">${escapeHtml(transfer.Status)}</span>${transfer.ProvisioningStatus ? `<small>${escapeHtml(transfer.ProvisioningStatus)}</small>` : ''}</td>
       <td>${transfer.CreatedAt ? escapeHtml(new Date(transfer.CreatedAt).toLocaleString()) : '&mdash;'}</td>
-      <td>${awaiting ? `<span class="compact-row-actions"><button type="button" class="compact-action" data-platform-transfer-decision="approve" data-reference="${escapeHtml(transfer.Reference)}">Approve</button><button type="button" class="compact-action danger" data-platform-transfer-decision="reject" data-reference="${escapeHtml(transfer.Reference)}">Reject</button></span>` : escapeHtml(transfer.ReviewNotes || 'Closed')}</td>
+      <td>${awaiting ? `<span class="compact-row-actions"><button type="button" class="compact-action" data-platform-transfer-decision="approve" data-reference="${escapeHtml(transfer.Reference)}">Approve</button><button type="button" class="compact-action danger" data-platform-transfer-decision="reject" data-reference="${escapeHtml(transfer.Reference)}">Reject</button></span>` : `<span class="compact-row-actions"><span>${escapeHtml(closedCopy || 'Closed')}</span>${onboardingAction}</span>`}</td>
     </tr>`;
   }).join('') : '<tr><td colspan="8">No direct subscription transfers have been submitted.</td></tr>';
 }
@@ -534,6 +556,25 @@ platformTransferRows?.addEventListener('click', async (event) => {
     }
     return;
   }
+  const onboardingButton = event.target.closest('[data-platform-transfer-onboarding]');
+  if (onboardingButton) {
+    if (!window.DynamaxActionFeedback.begin(onboardingButton, 'Resuming...')) return;
+    try {
+      platformPaymentState = await platformPaymentRequest({
+        action: 'decision',
+        reference: onboardingButton.dataset.platformTransferOnboarding,
+        decision: 'approve',
+        notes: ''
+      });
+      renderPlatformPaymentState();
+      showPlatformPaymentOutcome(platformPaymentState);
+    } catch (error) {
+      setStatus(platformPaymentStatus, error.message || String(error), 'bad');
+    } finally {
+      window.DynamaxActionFeedback.end(onboardingButton);
+    }
+    return;
+  }
   const decisionButton = event.target.closest('[data-platform-transfer-decision][data-reference]');
   if (!decisionButton) return;
   const approve = decisionButton.dataset.platformTransferDecision === 'approve';
@@ -549,7 +590,7 @@ platformTransferRows?.addEventListener('click', async (event) => {
       notes
     });
     renderPlatformPaymentState();
-    setStatus(platformPaymentStatus, platformPaymentState.message, platformPaymentState.warning ? 'bad' : 'ok');
+    showPlatformPaymentOutcome(platformPaymentState);
   } catch (error) {
     setStatus(platformPaymentStatus, error.message || String(error), 'bad');
   } finally {

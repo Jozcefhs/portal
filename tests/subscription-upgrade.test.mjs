@@ -111,7 +111,8 @@ test('Flex proration is enforced by checkout, payment initialization and activat
   ]);
   assert.match(checkout, /if \(flexChange\?\.reduced\)/);
   assert.match(checkout, /paymentAdjustment = proratedFlexUpgrade/);
-  assert.match(registration, /adjustment \? \{ channels: \['card'\] \} : \{ plan: planCode \}/);
+  assert.match(registration, /channels: \['card'\]/);
+  assert.match(registration, /adjustment \? \{\} : \{ plan: planCode \}/);
   assert.match(registration, /Prorated Flex upgrades must be paid online by card/);
   assert.match(verification, /PreservePaidThroughAt/);
   assert.match(verification, /createScheduledPaystackSubscription/);

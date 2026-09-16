@@ -379,7 +379,7 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(pricingHtml, /id="planEntitlementMatrix"/);
   assert.match(pricingHtml, /<select id="planPricingCurrency"><option value="NGN">NGN<\/option><option value="USD">USD<\/option><\/select>/);
   assert.match(pricingHtml, /id="planUsdToNgnRate"/);
-  assert.match(pricingHtml, /plan-management\.js\?v=20260909-paystack-environment/);
+  assert.match(pricingHtml, /plan-management\.js\?v=20260916-subscription-onboarding/);
   assert.match(pricingHtml, /id="tenantPoolSummary"/);
   assert.match(pricingHtml, /Other organisation/);
   assert.match(pricingHtml, /Save plans &amp; pricing/);
@@ -398,6 +398,7 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(registrationHtml, /20260830-flex-faith-pricing/);
   assert.match(registrationJs, /\/api\/plan-catalog\?v=6/);
   assert.match(registrationJs, /class="flex-module-title"/);
+  assert.match(registrationApi, /channels:\s*\['card'\]/);
   assert.match(styleCss, /\.flex-module-option \{ display: grid; grid-template-columns: 20px minmax\(0, 1fr\)/);
   assert.doesNotMatch(styleCss, /\.flex-module-option \{[^}]*max-content/);
   assert.match(registrationJs, /FlexModules: flexQuote/);

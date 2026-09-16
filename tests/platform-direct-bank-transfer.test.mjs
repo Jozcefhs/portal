@@ -38,10 +38,13 @@ test('subscription bank evidence is bounded and reusable references normalize id
 
 test('the public verification queue excludes proof payloads', () => {
   const record = publicPlatformTransferRecord({
-    Reference: 'DMX-TRF-1', PaymentMethod: 'Direct Bank Transfer', ProofDataUrl: 'data:application/pdf;base64,AAAA', Amount: 60000
+    Reference: 'DMX-TRF-1', PaymentMethod: 'Direct Bank Transfer', ProofDataUrl: 'data:application/pdf;base64,AAAA', Amount: 60000,
+    WorkspacePending: true, ProvisioningStatus: 'Waiting for ready project'
   });
   assert.equal(record.HasProof, true);
   assert.equal(record.Amount, 60000);
+  assert.equal(record.WorkspacePending, true);
+  assert.equal(record.ProvisioningStatus, 'Waiting for ready project');
   assert.equal('ProofDataUrl' in record, false);
 });
 
@@ -66,13 +69,14 @@ test('Dynamax registration and upgrades use the central payment chooser', async 
 });
 
 test('manual subscription approval is server-controlled and duplicate-reference protected', async () => {
-  const [registrationApi, settingsApi, verifier, statusApi, planApi, managementHtml] = await Promise.all([
+  const [registrationApi, settingsApi, verifier, statusApi, planApi, managementHtml, managementClient] = await Promise.all([
     source('functions/api/register-organization.js'),
     source('functions/api/platform-payment-settings.js'),
     source('functions/api/verify-subscription-payment.js'),
     source('functions/api/registration-status.js'),
     source('functions/api/plan-catalog.js'),
-    source('plan-management.html')
+    source('plan-management.html'),
+    source('js/plan-management.js')
   ]);
   assert.match(registrationApi, /Status:\s*'Awaiting Verification'/);
   assert.match(registrationApi, /PreserveActivePlan:\s*Boolean\(preserveActivePlan\)/);
@@ -82,9 +86,14 @@ test('manual subscription approval is server-controlled and duplicate-reference 
   assert.match(settingsApi, /activateSavedSubscriptionPayment/);
   assert.match(settingsApi, /No plan was activated/);
   assert.match(settingsApi, /provider:\s*'Direct Bank Transfer'/);
+  assert.match(settingsApi, /resumeApprovedTransferOnboarding/);
+  assert.match(settingsApi, /No ready workspace is available yet/);
+  assert.match(settingsApi, /issueTenantActivation/);
   assert.match(verifier, /AutoRenewalEnabled:\s*paystack/);
   assert.match(statusApi, /awaiting Dynamax verification/i);
   assert.match(planApi, /OnlinePaymentEnabled !== 'NO'/);
   assert.match(managementHtml, /id="platformTransferRows"/);
   assert.match(managementHtml, /Save payment settings/);
+  assert.match(managementClient, /data-platform-transfer-onboarding/);
+  assert.match(managementClient, /Open administrator activation/);
 });

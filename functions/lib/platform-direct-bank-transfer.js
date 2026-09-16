@@ -99,6 +99,12 @@ export function publicPlatformTransferRecord(row = {}) {
     CreatedAt: clean(row.CreatedAt),
     UpdatedAt: clean(row.UpdatedAt),
     ReviewedAt: clean(row.ReviewedAt),
-    ReviewNotes: clean(row.ReviewNotes)
+    ReviewNotes: clean(row.ReviewNotes),
+    WorkspacePending: row.WorkspacePending === true,
+    WorkspaceId: clean(row.WorkspaceId),
+    PortalUrl: clean(row.PortalUrl),
+    ProvisioningStatus: clean(row.ProvisioningStatus),
+    ActivationStatus: clean(row.ActivationStatus),
+    AdministratorActivated: row.AdministratorActivated === true
   };
 }

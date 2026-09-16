@@ -1,6 +1,7 @@
 import {
   createDocumentIfAbsent,
   getDocument,
+  patchDocumentFields,
   queryCollection,
   updateDocumentIfCurrent,
   upsertDocument
@@ -16,6 +17,8 @@ import {
 } from '../lib/platform-direct-bank-transfer.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { paystackSecretMode } from '../lib/paystack-environment.js';
+import { issueTenantActivation } from '../lib/tenant-activation.js';
+import { reserveTenantProjectSlot } from '../lib/tenant-project-pool.js';
 import {
   activateSavedSubscriptionPayment,
   disablePaystackSubscription
@@ -83,6 +86,91 @@ async function clearRejectedPendingRegistration(platformEnv, payment, notes) {
   });
 }
 
+function onboardingFields(result = {}) {
+  return {
+    WorkspacePending: result.workspacePending === true,
+    WorkspaceId: clean(result.workspaceId),
+    PortalUrl: clean(result.portalUrl),
+    ProvisioningStatus: clean(result.provisioningStatus),
+    ActivationStatus: result.administratorActivated
+      ? 'Administrator active'
+      : result.activationUrl
+        ? 'Activation link issued'
+        : result.workspacePending
+          ? 'Waiting for workspace'
+          : result.activationPending
+            ? 'Activation pending'
+            : '',
+    AdministratorActivated: result.administratorActivated === true
+  };
+}
+
+function onboardingMessage(result = {}) {
+  if (result.administratorActivated) return 'The subscription is active and the organisation administrator account is ready.';
+  if (result.activationUrl && result.activationEmailSent) {
+    return 'The subscription is active. The administrator activation link was issued and emailed to the subscriber.';
+  }
+  if (result.activationUrl) {
+    return 'The subscription is active and the administrator activation link is ready. Open or copy it now because email delivery was not confirmed.';
+  }
+  if (result.workspacePending) {
+    return 'The payment is confirmed and the subscription is active. No ready workspace is available yet, so isolated workspace provisioning has been queued.';
+  }
+  return 'The payment is confirmed and the subscription is active. Administrator activation is still being prepared.';
+}
+
+async function saveOnboardingFields(platformEnv, reference, result = {}) {
+  const fields = onboardingFields(result);
+  await patchDocumentFields(platformEnv, 'subscriptionPayments', reference, {
+    ...fields,
+    UpdatedAt: new Date().toISOString()
+  }).catch(() => null);
+  return fields;
+}
+
+async function resumeApprovedTransferOnboarding(env, platformEnv, reference, payment, savedRegistration = null) {
+  let registration = savedRegistration || await getDocument(
+    platformEnv,
+    'tenantRegistrations',
+    clean(payment.RegistrationReference)
+  );
+  if (!registration) {
+    const error = new Error('The subscriber registration for this approved transfer was not found.');
+    error.status = 409;
+    throw error;
+  }
+  if (!clean(registration.WorkspaceId)) {
+    const assignment = await reserveTenantProjectSlot(platformEnv, registration);
+    registration = assignment.registration;
+  }
+  let result = {
+    workspacePending: !clean(registration.WorkspaceId),
+    workspaceId: clean(registration.WorkspaceId),
+    portalUrl: clean(registration.PortalUrl),
+    provisioningStatus: clean(registration.ProvisioningStatus)
+  };
+  if (!result.workspacePending) {
+    try {
+      const activation = await issueTenantActivation(platformEnv, registration, env);
+      result = {
+        ...result,
+        activationUrl: clean(activation.activationUrl),
+        activationExpiresAt: clean(activation.expiresAt),
+        activationEmailSent: activation.emailSent === true,
+        activationEmailStatus: clean(activation.emailStatus),
+        administratorActivated: activation.alreadyActivated === true,
+        loginUrl: clean(activation.loginUrl),
+        activationPending: !activation.issued && !activation.alreadyActivated
+      };
+    } catch (error) {
+      result.activationPending = true;
+      result.activationError = clean(error.message || error).slice(0, 300);
+    }
+  }
+  const fields = await saveOnboardingFields(platformEnv, reference, result);
+  return { ...result, ...fields, message: onboardingMessage(result) };
+}
+
 async function decideTransfer(env, platformEnv, body) {
   const reference = safeId(body.reference);
   const decision = clean(body.decision).toLowerCase();
@@ -98,20 +186,27 @@ async function decideTransfer(env, platformEnv, body) {
     error.status = 404;
     throw error;
   }
-  if (clean(payment.Status).toLowerCase() === 'paid' && decision === 'approve') {
-    return { message: 'This subscription transfer was already approved.', payment: publicPlatformTransferRecord(payment) };
-  }
-  if (clean(payment.Status).toLowerCase() !== 'awaiting verification') {
-    const error = new Error(`This transfer is already ${clean(payment.Status) || 'closed'} and cannot be changed.`);
-    error.status = 409;
-    throw error;
-  }
   const registrationReference = clean(payment.RegistrationReference);
   const registration = registrationReference
     ? await getDocument(platformEnv, 'tenantRegistrations', registrationReference)
     : null;
   if (!registration) {
     const error = new Error('The subscriber registration for this transfer was not found.');
+    error.status = 409;
+    throw error;
+  }
+  if (clean(payment.Status).toLowerCase() === 'paid' && decision === 'approve') {
+    const onboarding = await resumeApprovedTransferOnboarding(
+      env, platformEnv, reference, payment, registration
+    );
+    return {
+      message: onboarding.message,
+      payment: publicPlatformTransferRecord({ ...payment, ...onboarding }),
+      onboarding
+    };
+  }
+  if (clean(payment.Status).toLowerCase() !== 'awaiting verification') {
+    const error = new Error(`This transfer is already ${clean(payment.Status) || 'closed'} and cannot be changed.`);
     error.status = 409;
     throw error;
   }
@@ -191,9 +286,24 @@ async function decideTransfer(env, platformEnv, body) {
       }
       await upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, result.updatedRegistration);
     }
+    const onboarding = {
+      workspacePending: result.workspacePending === true,
+      workspaceId: clean(result.workspaceId),
+      portalUrl: clean(result.portalUrl),
+      provisioningStatus: clean(result.updatedRegistration?.ProvisioningStatus),
+      activationUrl: clean(result.activationUrl),
+      activationExpiresAt: clean(result.activationExpiresAt),
+      activationEmailSent: result.activationEmailSent === true,
+      activationEmailStatus: clean(result.activationEmailStatus),
+      administratorActivated: result.administratorActivated === true,
+      loginUrl: clean(result.loginUrl),
+      activationPending: result.activationPending === true
+    };
+    await saveOnboardingFields(platformEnv, reference, onboarding);
     return {
-      message: warning || 'The bank transfer was approved and the selected subscription is now active.',
+      message: warning || onboardingMessage(onboarding),
       warning,
+      onboarding,
       result: { ...result, updatedRegistration: undefined }
     };
   } catch (error) {

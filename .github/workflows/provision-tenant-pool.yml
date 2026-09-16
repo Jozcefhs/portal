@@ -46,6 +46,7 @@ jobs:
       DYNAMAX_GCP_BILLING_ACCOUNT: ${{ vars.DYNAMAX_GCP_BILLING_ACCOUNT }}
       DYNAMAX_GCP_BILLING_REQUIRED: ${{ vars.DYNAMAX_GCP_BILLING_REQUIRED || 'true' }}
       DYNAMAX_GCP_PARENT: ${{ vars.DYNAMAX_GCP_PARENT }}
+      DYNAMAX_PROVISION_PROJECT_ID: ${{ vars.DYNAMAX_PROVISION_PROJECT_ID }}
       DYNAMAX_TENANT_REGION: ${{ vars.DYNAMAX_TENANT_REGION || 'africa-south1' }}
       DYNAMAX_TENANT_PROJECT_PREFIX: ${{ vars.DYNAMAX_TENANT_PROJECT_PREFIX || 'dynamax-tenant' }}
       MANUAL_TENANT_EDITION: ${{ inputs.edition || '' }}
@@ -97,6 +98,28 @@ jobs:
       - name: Set up Google Cloud CLI
         if: ${{ env.APPLY_CHANGES == 'true' }}
         uses: google-github-actions/setup-gcloud@v3
+
+      - name: Resolve Google Cloud project parent
+        if: ${{ env.APPLY_CHANGES == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          parent="${DYNAMAX_GCP_PARENT}"
+          if [[ -z "${parent}" ]]; then
+            parent_json="$(gcloud projects describe "${DYNAMAX_PROVISION_PROJECT_ID}" --format='json(parent)')"
+            parent_type="$(jq -r '.parent.type // empty' <<<"${parent_json}")"
+            parent_id="$(jq -r '.parent.id // empty' <<<"${parent_json}")"
+            case "${parent_type}" in
+              organization) parent="organizations/${parent_id}" ;;
+              folder) parent="folders/${parent_id}" ;;
+            esac
+          fi
+          if [[ ! "${parent}" =~ ^(organizations|folders)/[0-9]+$ ]]; then
+            echo '::error::Tenant projects require a Google Cloud organisation or folder parent. Set the DYNAMAX_GCP_PARENT repository variable to organizations/NUMBER or folders/NUMBER.'
+            exit 1
+          fi
+          echo "DYNAMAX_GCP_PARENT=${parent}" >> "${GITHUB_ENV}"
+          echo "Using Google Cloud project parent ${parent}." >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Claim next provisioning request
         id: claim
