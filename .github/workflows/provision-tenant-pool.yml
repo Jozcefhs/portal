@@ -104,6 +104,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [[ -n "${MANUAL_TENANT_PROJECT_ID}" ]] && gcloud projects describe "${MANUAL_TENANT_PROJECT_ID}" --format='value(projectId)' >/dev/null 2>&1; then
+            echo "Using pre-created Google Cloud project ${MANUAL_TENANT_PROJECT_ID}; no project parent is required." >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
           parent="${DYNAMAX_GCP_PARENT}"
           if [[ -z "${parent}" ]]; then
             parent_json="$(gcloud projects describe "${DYNAMAX_PROVISION_PROJECT_ID}" --format='json(parent)')"
