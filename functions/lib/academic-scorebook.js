@@ -294,6 +294,86 @@ export function calculateAcademicStudentScore(schemeValue = {}, componentScores 
   };
 }
 
+function scoreStateRecorded(value) {
+  return ['Numeric', 'Absent', 'Exempt'].includes(clean(value));
+}
+
+function componentHasRecordedScore(score = {}) {
+  const parts = Array.isArray(score.Parts) ? score.Parts : [];
+  return parts.length
+    ? parts.some((part) => scoreStateRecorded(part.State))
+    : scoreStateRecorded(score.State);
+}
+
+export function migrateAcademicScoreLayout(previousSchemeValue = {}, nextSchemeValue = {}, scoreRecord = {}) {
+  const previousScheme = previousSchemeValue.Components ? previousSchemeValue : academicAssessmentScheme(previousSchemeValue);
+  const nextScheme = nextSchemeValue.Components ? nextSchemeValue : academicAssessmentScheme(nextSchemeValue);
+  if (!previousScheme.Ready) throw new Error(previousScheme.Issues?.[0] || 'The previous scorebook layout is invalid.');
+  if (!nextScheme.Ready) throw new Error(nextScheme.Issues?.[0] || 'The active scorebook layout is invalid.');
+  const previousDefinitions = new Map(previousScheme.Components.map((component) => [lower(component.Id), component]));
+  const nextDefinitions = new Map(nextScheme.Components.map((component) => [lower(component.Id), component]));
+  const previousScores = suppliedComponentMap(scoreRecord.ComponentScores || []);
+  previousScores.forEach((score, id) => {
+    if (!nextDefinitions.has(id) && componentHasRecordedScore(score)) {
+      const name = previousDefinitions.get(id)?.Name || score.ComponentId || id;
+      throw new Error(`${name} has a recorded score but is not present in the active assessment layout.`);
+    }
+  });
+  const sourceType = lower(scoreRecord.SourceType).replace(/[^a-z]/g, '');
+  const migrated = nextScheme.Components.map((nextComponent) => {
+    const previousComponent = previousDefinitions.get(lower(nextComponent.Id));
+    const previousScore = previousScores.get(lower(nextComponent.Id));
+    if (!previousComponent || !previousScore) return { ComponentId: nextComponent.Id };
+    const previousMode = previousComponent.ScoreEntryMode || 'single';
+    const nextMode = nextComponent.ScoreEntryMode || 'single';
+    if (previousMode === nextMode) {
+      return nextMode === 'objective-theory'
+        ? { ComponentId: nextComponent.Id, Parts: previousScore.Parts || [], Note: previousScore.Note }
+        : { ...previousScore, ComponentId: nextComponent.Id };
+    }
+    if (previousMode === 'single' && nextMode === 'objective-theory') {
+      const state = inferredScoreState(previousScore);
+      if (!scoreStateRecorded(state)) return { ComponentId: nextComponent.Id };
+      if (state === 'Exempt') {
+        return {
+          ComponentId: nextComponent.Id,
+          Parts: nextComponent.ScoreParts.map((part) => ({ PartId: part.Id, State: 'Exempt', RawScore: null, Note: previousScore.Note }))
+        };
+      }
+      const looksLikeCbt = ['builtincbt', 'externalcbt'].includes(sourceType)
+        || /\bcbt\b/i.test(clean(previousScore.Note))
+        || ['built-in-cbt', 'external-cbt'].includes(lower(previousComponent.SourceMode));
+      return {
+        ComponentId: nextComponent.Id,
+        Parts: [{
+          PartId: looksLikeCbt ? 'objective' : 'theory',
+          State: state,
+          RawScore: previousScore.RawScore,
+          Note: previousScore.Note
+        }]
+      };
+    }
+    if (previousMode === 'objective-theory' && nextMode === 'single') {
+      const parts = Array.isArray(previousScore.Parts) ? previousScore.Parts : [];
+      if (!parts.some((part) => scoreStateRecorded(part.State))) return { ComponentId: nextComponent.Id };
+      if (parts.length && parts.every((part) => clean(part.State) === 'Exempt')) {
+        return { ComponentId: nextComponent.Id, State: 'Exempt', RawScore: null, Note: previousScore.Note };
+      }
+      if (parts.some((part) => !['Numeric', 'Absent'].includes(clean(part.State)))) {
+        throw new Error(`${nextComponent.Name} has an incomplete A/B score that cannot be merged into one field.`);
+      }
+      return {
+        ComponentId: nextComponent.Id,
+        State: 'Numeric',
+        RawScore: rounded(parts.reduce((sum, part) => sum + (clean(part.State) === 'Numeric' ? Number(part.RawScore || 0) : 0), 0), 4),
+        Note: previousScore.Note
+      };
+    }
+    throw new Error(`${nextComponent.Name} cannot be converted to the active assessment layout.`);
+  });
+  return calculateAcademicStudentScore(nextScheme, migrated);
+}
+
 export function academicScoreSourceIssues(schemeValue = {}, componentScores = [], sourceMode = 'manual') {
   const scheme = schemeValue.Components ? schemeValue : academicAssessmentScheme(schemeValue);
   const supplied = suppliedComponentMap(componentScores);

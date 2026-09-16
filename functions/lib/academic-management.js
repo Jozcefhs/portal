@@ -38,6 +38,7 @@ import {
   academicAssessmentScheme,
   academicScoreSourceIssues,
   calculateAcademicStudentScore,
+  migrateAcademicScoreLayout,
   normalizeAcademicComponentScores,
   validateAcademicCbtScoreBatch,
   validateAcademicScoreImport
@@ -3977,6 +3978,19 @@ function academicScoreRowsInput(value) {
 
 export async function getAcademicScorebookContext(env, user = {}, input = {}) {
   const context = await academicScoreSheetContext(env, user, input, 'canEnterScores');
+  let activeScheme = context.scheme;
+  if (context.existing && lower(context.existing.Status) === 'draft') {
+    activeScheme = await academicAssessmentForPeriod(env, context.scope, context.session, context.term, {
+      classId: context.schoolClass.ClassId,
+      subjectId: context.subject.SubjectId
+    });
+  }
+  const layoutUpdateAvailable = Boolean(
+    context.existing
+    && lower(context.existing.Status) === 'draft'
+    && clean(activeScheme.RevisionId)
+    && clean(activeScheme.RevisionId) !== clean(context.scheme.RevisionId)
+  );
   return {
     ok: true,
     partialAcademicManagement: true,
@@ -3988,8 +4002,11 @@ export async function getAcademicScorebookContext(env, user = {}, input = {}) {
       ArmId: context.arm.ArmId,
       SubjectId: context.subject.SubjectId,
       TeacherUsername: context.allocation.TeacherUsername,
-      RosterCount: context.roster.length
-    }
+      RosterCount: context.roster.length,
+      LayoutUpdateAvailable: layoutUpdateAvailable,
+      ActiveAssessmentRevisionId: layoutUpdateAvailable ? activeScheme.RevisionId : ''
+    },
+    ...(layoutUpdateAvailable ? { activeAssessmentScheme: activeScheme } : {})
   };
 }
 
@@ -4278,6 +4295,83 @@ async function academicTermResultContext(env, user, input, capability = 'canCalc
 function academicTermResultId(scope, sessionId, termId, classId, armId, studentRef, resultType = 'End of Term') {
   const prefix = lower(resultType) === 'mid-term' ? 'midterm-result' : 'term-result';
   return academicId(prefix, scope.branchId, scope.section, sessionId, termId, classId, armId, studentRef);
+}
+
+export async function applyActiveAcademicScoreLayout(env, user = {}, input = {}) {
+  const context = await academicScoreSheetContext(env, user, input, 'canManageScoreCorrections');
+  const { scope, state, existing } = context;
+  if (!existing) throw failure('Create the Draft score sheet before applying an updated assessment layout.', 409, 'ACADEMIC_SCORE_SHEET_EMPTY');
+  if (lower(existing.Status) !== 'draft') {
+    throw failure('Only a Draft score sheet can adopt a newer assessment layout.', 409, 'ACADEMIC_SCORE_SHEET_LOCKED');
+  }
+  const activeScheme = await academicAssessmentForPeriod(env, scope, context.session, context.term, {
+    classId: context.schoolClass.ClassId,
+    subjectId: context.subject.SubjectId
+  });
+  if (clean(activeScheme.RevisionId) === clean(context.scheme.RevisionId)) {
+    return { ok: true, refreshAcademicManagement: true, message: 'This Draft already uses the active assessment layout.' };
+  }
+  const timestamp = nowIso();
+  const previousRevisionId = clean(context.scheme.RevisionId);
+  const sheetScores = state.studentScores.filter((row) => row.SheetId === existing.SheetId);
+  let migratedScores;
+  try {
+    migratedScores = sheetScores.map((previous) => {
+      const calculated = migrateAcademicScoreLayout(context.scheme, activeScheme, previous);
+      return {
+        previous,
+        record: {
+          ...previous,
+          AssessmentRevisionId: activeScheme.RevisionId,
+          ...calculated,
+          LockedComponentIds: academicRecordedScoreComponentIds(calculated.ComponentScores),
+          LockedScoreCellIds: academicRecordedScoreCellIds(calculated.ComponentScores),
+          AssessmentLayoutMigratedAt: timestamp,
+          AssessmentLayoutMigratedBy: actorName(user),
+          AssessmentLayoutMigratedByUsername: actorUsername(user),
+          PreviousAssessmentRevisionId: previousRevisionId,
+          UpdatedAt: timestamp,
+          UpdatedBy: actorName(user),
+          UpdatedByUsername: actorUsername(user)
+        }
+      };
+    });
+  } catch (error) {
+    throw failure(`The active assessment layout cannot be applied safely: ${clean(error?.message || error)}`, 409, 'ACADEMIC_SCORE_LAYOUT_MIGRATION_UNSAFE');
+  }
+  const activeContext = { ...context, scheme: activeScheme };
+  const sheet = academicScoreSheetRecord(activeContext, existing, user, timestamp, {
+    ...academicScoreSheetCounts(migratedScores.map((item) => item.record)),
+    AssessmentLayoutMigratedAt: timestamp,
+    AssessmentLayoutMigratedBy: actorName(user),
+    AssessmentLayoutMigratedByUsername: actorUsername(user),
+    PreviousAssessmentRevisionId: previousRevisionId
+  });
+  const writes = migratedScores.map(({ previous, record }) => ({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentScores,
+    documentId: record.ScoreId,
+    data: withoutMetadata(record),
+    ...writePrecondition(previous, previous.__updateTime)
+  }));
+  writes.push({
+    collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.scoreSheets,
+    documentId: sheet.SheetId,
+    data: withoutMetadata(sheet),
+    ...writePrecondition(existing, input.RevisionToken || input.SheetRevisionToken)
+  });
+  writes.push(auditWrite(
+    user,
+    'APPLY_ACTIVE_SCORE_LAYOUT',
+    'scoreSheet',
+    sheet,
+    `${previousRevisionId} -> ${activeScheme.RevisionId}; ${migratedScores.length} student score record${migratedScores.length === 1 ? '' : 's'}`
+  ));
+  await commitAcademicBatch(env, writes, 'The score sheet changed while the active assessment layout was being applied. Reload and try again.');
+  return {
+    ok: true,
+    refreshAcademicManagement: true,
+    message: `The active assessment layout was applied. Configured Objective (A) and Theory (B) fields are now separate for ${context.subject.Name}.`
+  };
 }
 
 function resultRevisionToken(input = {}, resultId = '') {
@@ -5570,6 +5664,7 @@ async function academicCbtClassContext(env, user = {}, input = {}) {
 
 async function academicCbtPackageDigest(record = {}) {
   const paperFiles = academicCbtPaperFiles(record);
+  const theoryPaperFiles = academicCbtPaperFiles(record, 'theory');
   const material = JSON.stringify({
     CbtTestId: record.CbtTestId,
     SessionId: record.SessionId,
@@ -5580,8 +5675,14 @@ async function academicCbtPackageDigest(record = {}) {
     TeacherUsername: record.TeacherUsername,
     AssessmentComponentId: record.AssessmentComponentId,
     MaximumScore: record.MaximumScore,
+    PaperMode: record.PaperMode || 'single',
+    ScoreEntryMode: record.ScoreEntryMode || 'single',
+    ObjectiveMaximumScore: record.ObjectiveMaximumScore,
+    TheoryMaximumScore: record.TheoryMaximumScore,
     StartsAt: record.StartsAt,
     EndsAt: record.EndsAt,
+    ObjectiveDurationMinutes: record.ObjectiveDurationMinutes || record.DurationMinutes,
+    TheoryDurationMinutes: record.TheoryDurationMinutes || 0,
     NumberOfQuestions: record.NumberOfQuestions,
     OptionStyle: record.OptionStyle,
     Options: record.Options,
@@ -5594,20 +5695,30 @@ async function academicCbtPackageDigest(record = {}) {
       Digest: file.Digest,
       ByteLength: file.ByteLength,
       PageNumber: file.PageNumber
+    })),
+    TheoryPaperFiles: theoryPaperFiles.map((file) => ({
+      FileName: file.FileName,
+      MimeType: file.MimeType,
+      Digest: file.Digest,
+      ByteLength: file.ByteLength,
+      PageNumber: file.PageNumber
     }))
   });
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
   return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
 }
 
-function academicCbtPaperFiles(input = {}) {
-  const supplied = Array.isArray(input.PaperFiles) ? input.PaperFiles : [];
-  const legacy = clean(input.PaperUrl) ? [{
-    Url: input.PaperUrl,
-    FileName: input.PaperFileName,
-    MimeType: input.PaperMimeType,
-    Digest: input.PaperDigest,
-    ByteLength: input.PaperByteLength,
+function academicCbtPaperFiles(input = {}, paperType = 'objective') {
+  const theory = paperType === 'theory';
+  const supplied = Array.isArray(theory ? input.TheoryPaperFiles : input.PaperFiles)
+    ? (theory ? input.TheoryPaperFiles : input.PaperFiles) : [];
+  const legacyUrl = clean(theory ? input.TheoryPaperUrl : input.PaperUrl);
+  const legacy = legacyUrl ? [{
+    Url: legacyUrl,
+    FileName: theory ? input.TheoryPaperFileName : input.PaperFileName,
+    MimeType: theory ? input.TheoryPaperMimeType : input.PaperMimeType,
+    Digest: theory ? input.TheoryPaperDigest : input.PaperDigest,
+    ByteLength: theory ? input.TheoryPaperByteLength : input.PaperByteLength,
     PageNumber: 1
   }] : [];
   return (supplied.length ? supplied : legacy).map((file, index) => ({
@@ -5620,13 +5731,13 @@ function academicCbtPaperFiles(input = {}) {
   }));
 }
 
-function validateAcademicCbtPaperFiles(files = []) {
+function validateAcademicCbtPaperFiles(files = [], label = 'question paper') {
   if (!files.length || files.length > 12) {
-    throw failure('Upload one PDF or between 1 and 12 PNG/JPG question-paper pages.', 400, 'ACADEMIC_CBT_PAPER_REQUIRED');
+    throw failure(`Upload one PDF or between 1 and 12 PNG/JPG pages for the ${label}.`, 400, 'ACADEMIC_CBT_PAPER_REQUIRED');
   }
   files.forEach((file) => {
     if (!file.Url || !file.FileName || !['application/pdf', 'image/jpeg', 'image/png'].includes(file.MimeType)) {
-      throw failure('Upload a valid PDF, JPEG or PNG question paper.', 400, 'ACADEMIC_CBT_PAPER_REQUIRED');
+      throw failure(`Upload a valid PDF, JPEG or PNG ${label}.`, 400, 'ACADEMIC_CBT_PAPER_REQUIRED');
     }
     if (!/^[a-f0-9]{64}$/.test(file.Digest)) {
       throw failure('An uploaded question-paper page has an invalid digest.', 400, 'ACADEMIC_CBT_PAPER_DIGEST_INVALID');
@@ -5648,16 +5759,18 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
   if (!component || !['any', 'built-in-cbt'].includes(lower(component.SourceMode))) {
     throw failure('Choose an active Test Type that accepts Built-in CBT scores.', 409, 'ACADEMIC_CBT_COMPONENT_REQUIRED');
   }
-  if (component.ScoreEntryMode === 'objective-theory') {
-    throw failure('Create this A/B Objective + Theory test in the Desktop Local CBT Server so both timed papers are packaged together.', 409, 'ACADEMIC_CBT_SPLIT_REQUIRES_LOCAL_SERVER');
-  }
+  const splitPaper = component.ScoreEntryMode === 'objective-theory';
   const questionCount = Number(input.NumberOfQuestions);
   if (!Number.isInteger(questionCount) || questionCount < 1 || questionCount > 200) {
     throw failure('Number of questions must be a whole number between 1 and 200.', 400, 'ACADEMIC_CBT_QUESTION_COUNT_INVALID');
   }
   const durationMinutes = Number(input.DurationMinutes);
   if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 480) {
-    throw failure('Duration must be a whole number between 1 and 480 minutes.', 400, 'ACADEMIC_CBT_DURATION_INVALID');
+    throw failure(`${splitPaper ? 'Paper 1 duration' : 'Duration'} must be a whole number between 1 and 480 minutes.`, 400, 'ACADEMIC_CBT_DURATION_INVALID');
+  }
+  const theoryDurationMinutes = splitPaper ? Number(input.TheoryDurationMinutes) : 0;
+  if (splitPaper && (!Number.isInteger(theoryDurationMinutes) || theoryDurationMinutes < 1 || theoryDurationMinutes > 480)) {
+    throw failure('Paper 2 duration must be a whole number between 1 and 480 minutes.', 400, 'ACADEMIC_CBT_THEORY_DURATION_INVALID');
   }
   const optionStyle = academicCbtOptionStyle(input.OptionStyle);
   const options = [...ACADEMIC_CBT_OPTION_STYLES[optionStyle]];
@@ -5667,11 +5780,18 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
   }
   const startsAt = new Date(clean(input.StartsAt));
   if (!Number.isFinite(startsAt.getTime())) throw failure('Choose a valid test date and start time.', 400, 'ACADEMIC_CBT_SCHEDULE_INVALID');
-  const endsAt = new Date(startsAt.getTime() + durationMinutes * 60 * 1000);
+  const endsAt = new Date(startsAt.getTime() + (durationMinutes + theoryDurationMinutes) * 60 * 1000);
   if (endsAt.getTime() <= Date.now()) throw failure('The test schedule has already ended. Choose a current or future start time.', 400, 'ACADEMIC_CBT_SCHEDULE_ENDED');
   const suppliedPaperFiles = academicCbtPaperFiles(input);
+  const suppliedTheoryPaperFiles = academicCbtPaperFiles(input, 'theory');
   if (input.RequirePaper !== false) {
-    validateAcademicCbtPaperFiles(suppliedPaperFiles);
+    validateAcademicCbtPaperFiles(suppliedPaperFiles, splitPaper ? 'Paper 1 Objective paper' : 'question paper');
+    if (splitPaper) validateAcademicCbtPaperFiles(suppliedTheoryPaperFiles, 'Paper 2 Theory paper');
+    const uploadBytes = [...suppliedPaperFiles, ...suppliedTheoryPaperFiles]
+      .reduce((sum, file) => sum + Math.max(0, file.ByteLength), 0);
+    if (uploadBytes > 32 * 1024 * 1024) {
+      throw failure('Paper 1 and Paper 2 together exceed the 32 MB upload limit.', 413, 'ACADEMIC_CBT_PAPERS_TOO_LARGE');
+    }
   }
   const requestedId = clean(input.CbtTestId);
   const existing = requestedId ? findById(context.state.cbtTests, requestedId) : null;
@@ -5702,7 +5822,11 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
     .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
   const maximumScore = Number(component.MaximumScore);
   const paperFiles = suppliedPaperFiles.length ? suppliedPaperFiles : academicCbtPaperFiles(existing || {});
+  const theoryPaperFiles = splitPaper
+    ? (suppliedTheoryPaperFiles.length ? suppliedTheoryPaperFiles : academicCbtPaperFiles(existing || {}, 'theory'))
+    : [];
   const firstPaper = paperFiles[0] || {};
+  const firstTheoryPaper = theoryPaperFiles[0] || {};
   const record = {
     ...(existing || {}),
     RecordId: cbtTestId,
@@ -5718,9 +5842,15 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
     AssessmentComponentId: component.Id,
     AssessmentComponentName: clean(component.Name),
     MaximumScore: maximumScore,
+    PaperMode: splitPaper ? 'split' : 'single',
+    ScoreEntryMode: splitPaper ? 'objective-theory' : 'single',
+    ObjectiveMaximumScore: splitPaper ? Number(component.ObjectiveMaximumScore) : maximumScore,
+    TheoryMaximumScore: splitPaper ? Number(component.TheoryMaximumScore) : 0,
     StartsAt: startsAt.toISOString(),
     EndsAt: endsAt.toISOString(),
     DurationMinutes: durationMinutes,
+    ObjectiveDurationMinutes: durationMinutes,
+    TheoryDurationMinutes: theoryDurationMinutes,
     NumberOfQuestions: questionCount,
     OptionStyle: optionStyle,
     Options: options,
@@ -5733,6 +5863,12 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
     PaperMimeType: firstPaper.MimeType || clean(existing?.PaperMimeType),
     PaperDigest: firstPaper.Digest || clean(existing?.PaperDigest),
     PaperByteLength: Number(firstPaper.ByteLength || existing?.PaperByteLength || 0),
+    TheoryPaperFiles: theoryPaperFiles,
+    TheoryPaperUrl: firstTheoryPaper.Url || '',
+    TheoryPaperFileName: firstTheoryPaper.FileName || '',
+    TheoryPaperMimeType: firstTheoryPaper.MimeType || '',
+    TheoryPaperDigest: firstTheoryPaper.Digest || '',
+    TheoryPaperByteLength: Number(firstTheoryPaper.ByteLength || 0),
     Status: 'Scheduled',
     PackageRevision: Number(existing?.PackageRevision || 0) + 1,
     BranchId: context.scope.branchId,
@@ -5747,8 +5883,17 @@ export async function validateAcademicCbtTestInput(env, user = {}, input = {}) {
 }
 
 async function finalizeAcademicCbtPaper(validation, input = {}) {
-  const paperFiles = validateAcademicCbtPaperFiles(academicCbtPaperFiles(input));
+  const splitPaper = validation.record.PaperMode === 'split';
+  const paperFiles = validateAcademicCbtPaperFiles(academicCbtPaperFiles(input), splitPaper ? 'Paper 1 Objective paper' : 'question paper');
+  const theoryPaperFiles = splitPaper
+    ? validateAcademicCbtPaperFiles(academicCbtPaperFiles(input, 'theory'), 'Paper 2 Theory paper') : [];
+  const uploadBytes = [...paperFiles, ...theoryPaperFiles]
+    .reduce((sum, file) => sum + Math.max(0, file.ByteLength), 0);
+  if (uploadBytes > 32 * 1024 * 1024) {
+    throw failure('Paper 1 and Paper 2 together exceed the 32 MB upload limit.', 413, 'ACADEMIC_CBT_PAPERS_TOO_LARGE');
+  }
   const firstPaper = paperFiles[0];
+  const firstTheoryPaper = theoryPaperFiles[0] || {};
   const record = {
     ...validation.record,
     PaperFiles: paperFiles,
@@ -5756,7 +5901,13 @@ async function finalizeAcademicCbtPaper(validation, input = {}) {
     PaperFileName: firstPaper.FileName,
     PaperMimeType: firstPaper.MimeType,
     PaperDigest: firstPaper.Digest,
-    PaperByteLength: firstPaper.ByteLength
+    PaperByteLength: firstPaper.ByteLength,
+    TheoryPaperFiles: theoryPaperFiles,
+    TheoryPaperUrl: firstTheoryPaper.Url || '',
+    TheoryPaperFileName: firstTheoryPaper.FileName || '',
+    TheoryPaperMimeType: firstTheoryPaper.MimeType || '',
+    TheoryPaperDigest: firstTheoryPaper.Digest || '',
+    TheoryPaperByteLength: Number(firstTheoryPaper.ByteLength || 0)
   };
   record.PackageDigest = await academicCbtPackageDigest(record);
   return { ...validation, record };
@@ -5786,6 +5937,12 @@ export async function saveAcademicCbtTest(env, user = {}, input = {}, options = 
         PaperMimeType: '',
         PaperDigest: '',
         PaperByteLength: 0,
+        TheoryPaperFiles: [],
+        TheoryPaperUrl: '',
+        TheoryPaperFileName: '',
+        TheoryPaperMimeType: '',
+        TheoryPaperDigest: '',
+        TheoryPaperByteLength: 0,
         SupersededByCbtTestId: record.CbtTestId,
         SupersededAt: record.UpdatedAt,
         SupersededBy: record.UpdatedBy,
@@ -5821,9 +5978,12 @@ export async function rescheduleAcademicCbtTest(env, user = {}, input = {}) {
   if (!Number.isFinite(startsAt.getTime())) {
     throw failure('Choose a valid new test date and start time.', 400, 'ACADEMIC_CBT_SCHEDULE_INVALID');
   }
-  const durationMinutes = Number(record.DurationMinutes || 0);
-  const endsAt = new Date(startsAt.getTime() + durationMinutes * 60 * 1000);
-  if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || endsAt.getTime() <= Date.now()) {
+  const durationMinutes = Number(record.ObjectiveDurationMinutes || record.DurationMinutes || 0);
+  const theoryDurationMinutes = record.PaperMode === 'split' ? Number(record.TheoryDurationMinutes || 0) : 0;
+  const endsAt = new Date(startsAt.getTime() + (durationMinutes + theoryDurationMinutes) * 60 * 1000);
+  if (!Number.isInteger(durationMinutes) || durationMinutes < 1
+    || (record.PaperMode === 'split' && (!Number.isInteger(theoryDurationMinutes) || theoryDurationMinutes < 1))
+    || endsAt.getTime() <= Date.now()) {
     throw failure('The new test schedule must leave enough time for students to complete the test.', 400, 'ACADEMIC_CBT_SCHEDULE_ENDED');
   }
   const timestamp = nowIso();
@@ -5861,7 +6021,9 @@ export async function rescheduleAcademicCbtTest(env, user = {}, input = {}) {
 }
 
 async function deleteAcademicCbtPapers(env, record = {}) {
-  const urls = [...new Set(academicCbtPaperFiles(record).map((file) => file.Url).filter(Boolean))];
+  const urls = [...new Set([
+    ...academicCbtPaperFiles(record), ...academicCbtPaperFiles(record, 'theory')
+  ].map((file) => file.Url).filter(Boolean))];
   await Promise.all(urls.map((url) => deleteStoredDocument(env, url).catch(() => false)));
   return urls.length;
 }
@@ -5909,8 +6071,9 @@ async function loadAcademicCbtPaperFile(env, metadata) {
   return { FileName: stored.fileName, MimeType: stored.mimeType, FileBase64: fileBase64, PageNumber: metadata.PageNumber };
 }
 
-async function loadAcademicCbtPapers(env, record) {
-  const files = validateAcademicCbtPaperFiles(academicCbtPaperFiles(record));
+async function loadAcademicCbtPapers(env, record, paperType = 'objective') {
+  const label = paperType === 'theory' ? 'Paper 2 Theory paper' : (record.PaperMode === 'split' ? 'Paper 1 Objective paper' : 'question paper');
+  const files = validateAcademicCbtPaperFiles(academicCbtPaperFiles(record, paperType), label);
   return Promise.all(files.map((file) => loadAcademicCbtPaperFile(env, file)));
 }
 
@@ -5922,10 +6085,15 @@ export async function downloadAcademicCbtTestPackage(env, user = {}, input = {})
   if (!record) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
   academicCbtAuthority(user, context, record);
   const papers = await loadAcademicCbtPapers(env, record);
+  const theoryPapers = record.PaperMode === 'split' ? await loadAcademicCbtPapers(env, record, 'theory') : [];
   return {
     ok: true,
     message: 'The scheduled CBT package is ready for local import.',
-    cbtPackage: { ...publicRecord(record), Paper: papers[0], Papers: papers }
+    cbtPackage: {
+      ...publicRecord(record),
+      Paper: papers[0], Papers: papers,
+      TheoryPaper: theoryPapers[0] || null, TheoryPapers: theoryPapers
+    }
   };
 }
 
@@ -6306,6 +6474,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['decideacademicattendancecorrection', 'decideattendancecorrection'].includes(action)) return decideAcademicAttendanceCorrection(env, user, input);
   if (['saveacademicscoredraft', 'saveacademicstudentscores'].includes(action)) return saveAcademicScoreDraft(env, user, input);
   if (['getacademicscorebookcontext', 'openscorebook'].includes(action)) return getAcademicScorebookContext(env, user, input);
+  if (['applyactiveacademicscorelayout', 'applyactivescorelayout'].includes(action)) return applyActiveAcademicScoreLayout(env, user, input);
   if (['reactivateacademicscoreediting', 'reactivatescoreediting'].includes(action)) return reactivateAcademicScoreEditing(env, user, input);
   if (['changeacademicscoresheetstatus', 'changescoresheetstatus'].includes(action)) return changeAcademicScoreSheetStatus(env, user, input);
   if (['previewacademicscoreimport', 'previewscoresheetimport'].includes(action)) return previewAcademicScoreImport(env, user, input);

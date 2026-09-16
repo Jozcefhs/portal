@@ -172,8 +172,8 @@ let academicAnalysisSnapshot = null;
 let accountWalletSetupState = { account: null, accountRef: '', cardId: '' };
 let academicCbtDraft = {
   step: 1, testId: '', revisionToken: '', clientRequestId: '', classroomId: '', contextKey: '',
-  componentId: '', startDate: '', startTime: '', durationMinutes: '40', questionCount: '20',
-  optionStyle: 'ABCD', answerKey: [], files: [], previewUrls: []
+  componentId: '', startDate: '', startTime: '', durationMinutes: '40', theoryDurationMinutes: '40', questionCount: '20',
+  optionStyle: 'ABCD', answerKey: [], files: [], theoryFiles: [], previewUrls: [], theoryPreviewUrls: []
 };
 const organizationCommerceCarts = {
   organizationStore: new Map(),
@@ -12154,6 +12154,7 @@ function academicScorebookWorkspace(data, rows) {
     && (row.SubjectIds || []).includes(selectedAllocation?.SubjectId))
     .sort((a, b) => academicLabel(data.students, a.StudentRef, a.StudentRef).localeCompare(academicLabel(data.students, b.StudentRef, b.StudentRef), undefined, { sensitivity: 'base' }));
   const correctionActive = sheet?.ScoreEditingReactivated === true;
+  const layoutUpdateAvailable = data.scorebookContext?.LayoutUpdateAvailable === true;
   const canEdit = data.permissions?.canEnterScores === true && (!sheet || sheet.Status === 'Draft') && scheme.Ready;
   let editableCellCount = 0;
   const classroomLabel = (arm) => `${academicLabel(rows.classes, arm.ClassId)} / ${arm.Name}`;
@@ -12201,8 +12202,13 @@ function academicScorebookWorkspace(data, rows) {
     return `<tr data-academic-score-student="${escapeHtml(membership.StudentRef)}" data-score-id="${escapeHtml(score.ScoreId || '')}" data-revision-token="${escapeHtml(score.RevisionToken || '')}"><td><strong>${escapeHtml(academicLabel(data.students, membership.StudentRef, membership.StudentRef))}</strong><small>${escapeHtml(membership.StudentRef)}</small></td>${componentCells}<td data-academic-score-total>${score.Percentage === null || score.Percentage === undefined ? '—' : `${score.Percentage}%`}</td><td data-academic-score-grade>${escapeHtml(score.Grade || '—')}</td><td data-academic-score-completion>${escapeHtml(score.CompletionStatus || 'Incomplete')}</td></tr>`;
   }).join('');
   const blocking = scheme.Ready
-    ? `<div class="academic-score-scheme-banner is-ready"><strong>Active scheme</strong><span>${scheme.Components.length} components · ${scheme.GradeBands.length} grade bands · revision ${escapeHtml(scheme.RevisionId)}</span></div>`
+    ? `<div class="academic-score-scheme-banner is-ready"><strong>${layoutUpdateAvailable ? 'Score sheet scheme' : 'Active scheme'}</strong><span>${scheme.Components.length} components · ${scheme.GradeBands.length} grade bands · revision ${escapeHtml(scheme.RevisionId)}</span></div>`
     : `<div class="academic-score-scheme-banner has-errors"><strong>Score entry is blocked</strong><span>${escapeHtml((scheme.Issues || []).join(' '))}</span></div>`;
+  const layoutUpdate = layoutUpdateAvailable
+    ? `<div class="academic-score-lock-banner is-reactivated"><strong>New assessment layout available</strong><span>This Draft still uses its earlier captured columns. Apply revision ${escapeHtml(data.scorebookContext?.ActiveAssessmentRevisionId || '')} to show the configured Objective (A) and Theory (B) fields.</span>${data.permissions?.canManageScoreCorrections
+      ? `<button type="button" class="secondary" data-academic-score-layout-update data-academic-id="${escapeHtml(sheet?.SheetId || '')}">Apply active layout</button>`
+      : '<small>Ask an Admin or Management user to apply the active layout.</small>'}</div>`
+    : '';
   const lockingNotice = sheet
     ? correctionActive
       ? `<div class="academic-score-lock-banner is-reactivated"><strong>Correction access active</strong><span>Admin/Management reactivated this subject and arm. All recorded cells will lock again after the next save.</span></div>`
@@ -12214,6 +12220,7 @@ function academicScorebookWorkspace(data, rows) {
   const scorebook = `<form class="academic-management-editor academic-management-editor-wide academic-scorebook" data-academic-scorebook data-editable="${canEdit ? 'true' : 'false'}">
     <div class="academic-management-editor-heading"><div><small>AM-009 score recording</small><h3>Enter student scores</h3><p class="muted">Scores remain Draft until the complete class-subject sheet is submitted. Missing and Incomplete block submission; Absent counts as zero; Exempt is excluded from the applicable weight.</p></div><strong>${roster.length} students</strong></div>
     ${blocking}
+    ${layoutUpdate}
     ${lockingNotice}
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}"><input type="hidden" name="SheetId" value="${escapeHtml(sheet?.SheetId || '')}"><input type="hidden" name="SheetRevisionToken" value="${escapeHtml(sheet?.RevisionToken || '')}">
     <div class="academic-management-form-grid academic-management-form-grid-3">
@@ -12781,18 +12788,19 @@ function academicCbtLocalParts(value = '') {
 
 function resetAcademicCbtDraft() {
   clearAcademicCbtPreviewUrls();
+  clearAcademicCbtPreviewUrls('theoryPreviewUrls');
   const schedule = academicCbtLocalParts();
   academicCbtDraft = {
     step: 1, testId: '', revisionToken: '', clientRequestId: academicCbtRequestId(),
     classroomId: '', contextKey: '', componentId: '', startDate: schedule.date,
-    startTime: schedule.time, durationMinutes: '40', questionCount: '20',
-    optionStyle: 'ABCD', answerKey: [], files: [], previewUrls: []
+    startTime: schedule.time, durationMinutes: '40', theoryDurationMinutes: '40', questionCount: '20',
+    optionStyle: 'ABCD', answerKey: [], files: [], theoryFiles: [], previewUrls: [], theoryPreviewUrls: []
   };
 }
 
-function clearAcademicCbtPreviewUrls() {
-  (academicCbtDraft.previewUrls || []).forEach((url) => URL.revokeObjectURL(url));
-  academicCbtDraft.previewUrls = [];
+function clearAcademicCbtPreviewUrls(key = 'previewUrls') {
+  (academicCbtDraft[key] || []).forEach((url) => URL.revokeObjectURL(url));
+  academicCbtDraft[key] = [];
 }
 
 function validateAcademicCbtPaperFiles(files = []) {
@@ -12813,13 +12821,15 @@ function validateAcademicCbtPaperFiles(files = []) {
   return selected;
 }
 
-function academicCbtPaperPreviewMarkup(files = []) {
-  clearAcademicCbtPreviewUrls();
+function academicCbtPaperPreviewMarkup(files = [], options = {}) {
+  const previewKey = options.previewKey || 'previewUrls';
+  const paperLabel = options.paperLabel || 'Question paper';
+  clearAcademicCbtPreviewUrls(previewKey);
   if (!files.length) return '';
   return files.map((file, index) => {
     const url = URL.createObjectURL(file);
-    academicCbtDraft.previewUrls.push(url);
-    const label = files.length > 1 ? `Page ${index + 1}` : 'Question paper';
+    academicCbtDraft[previewKey].push(url);
+    const label = files.length > 1 ? `${paperLabel} · Page ${index + 1}` : paperLabel;
     const name = escapeHtml(file.name || label);
     const isPdf = clean(file.type).toLowerCase() === 'application/pdf' || /\.pdf$/i.test(file.name || '');
     return `<figure class="academic-cbt-paper-preview-page"><figcaption><strong>${label}</strong><span>${name}</span></figcaption>${isPdf
@@ -12884,16 +12894,15 @@ function academicCbtWorkspace(data, rows) {
   }
   const selectedContext = subjectContexts.find((context) => context.key === academicCbtDraft.contextKey) || null;
   const assessmentComponents = data.assessmentScheme?.Ready ? data.assessmentScheme.Components : [];
-  const splitComponents = assessmentComponents.filter((component) => component.ScoreEntryMode === 'objective-theory');
   const components = assessmentComponents.filter((component) => (
     ['any', 'built-in-cbt'].includes(clean(component.SourceMode || 'any').toLowerCase())
       && Number(component.MaximumScore) > 0
-      && component.ScoreEntryMode !== 'objective-theory'
   ));
   if (!components.some((component) => component.Id === academicCbtDraft.componentId)) {
     academicCbtDraft.componentId = clean(components[0]?.Id);
   }
   const component = components.find((row) => row.Id === academicCbtDraft.componentId) || null;
+  const splitPaper = component?.ScoreEntryMode === 'objective-theory';
   const options = ACADEMIC_CBT_OPTION_STYLES[academicCbtDraft.optionStyle] || ACADEMIC_CBT_OPTION_STYLES.ABCD;
   const questionCount = Math.max(1, Math.min(200, Number(academicCbtDraft.questionCount || 20)));
   const answered = academicCbtDraft.answerKey.filter((answer, index) => index < questionCount && options.includes(answer)).length;
@@ -12904,16 +12913,18 @@ function academicCbtWorkspace(data, rows) {
     <div class="academic-management-editor-heading"><div><small>Step 1 of 2</small><h3>${editing ? 'Correct scheduled test' : 'Test details and schedule'}</h3><p class="muted">Choose the class and subject. Every student in that class who offers the subject is included across all arms.</p></div>${editing ? '<button type="button" data-academic-cbt-new>Clear</button>' : ''}</div>
     ${!contexts.length ? '<p class="status bad">No eligible subject-teacher class allocation with students was found for this period.</p>' : ''}
     ${!components.length ? '<p class="status bad">No Test Type currently accepts Built-in CBT scores. Configure an assessment component in Account &amp; settings first.</p>' : ''}
-    ${splitComponents.length ? '<p class="status">A/B Objective + Theory Test Types are created in Desktop &rarr; Local CBT Server so both timed papers can be packaged together. This online form lists single-paper CBT Test Types only.</p>' : ''}
+    ${splitPaper ? '<div class="academic-cbt-split-note"><strong>Split A/B assessment</strong><span>Paper 1 Objective is marked automatically and locked in the scorebook. Paper 2 Theory is timed separately and marked manually by the teacher.</span></div>' : ''}
     <div class="academic-cbt-detail-grid">
       <label>Test Type<small>Created from the active assessment components.</small><select name="AssessmentComponentId" data-academic-cbt-component required>${academicSelectOptions(components.map((row) => ({ ...row, RecordId: row.Id })), component?.Id || '', (row) => row.Name, 'Choose Test Type')}</select></label>
-      <label>Overall mark<small>The maximum score configured for this Test Type.</small><input data-academic-cbt-maximum value="${escapeHtml(component?.MaximumScore ?? '')}" readonly></label>
+      <label>Overall mark<small>${splitPaper ? 'Combined Objective A and Theory B maximum.' : 'The maximum score configured for this Test Type.'}</small><input data-academic-cbt-maximum value="${escapeHtml(component?.MaximumScore ?? '')}" readonly></label>
       <label>Class<small>The test applies to eligible students in every arm of this class.</small><select name="ClassroomId" data-academic-cbt-classroom required>${academicSelectOptions(classroomContexts.map((row) => ({ RecordId: row.classId, Name: row.classroomLabel })), academicCbtDraft.classroomId, (row) => row.Name, 'Choose class')}</select></label>
       <label>Subject<small>The teacher is taken from the saved allocation.</small><select name="ContextKey" data-academic-cbt-context required>${academicSelectOptions(subjectContexts.map((row) => ({ RecordId: row.key, Name: `${row.subjectLabel}${subjectContexts.filter((item) => item.subjectId === row.subjectId).length > 1 ? ` · ${row.teacherLabel}` : ''}` })), academicCbtDraft.contextKey, (row) => row.Name, 'Choose subject')}</select></label>
       <label>Subject teacher<small>The account responsible for this test.</small><input value="${escapeHtml(selectedContext?.teacherLabel || '')}" readonly></label>
       <label>Scheduled date<small>Students cannot open the test before this date.</small><input type="date" name="StartDate" value="${escapeHtml(academicCbtDraft.startDate)}" required></label>
       <label>Start time<small>The test becomes active at this local school time.</small><input type="time" name="StartTime" value="${escapeHtml(academicCbtDraft.startTime)}" required></label>
-      <label>Duration (minutes)<small>The test closes automatically after this time.</small><input type="number" name="DurationMinutes" min="1" max="480" value="${escapeHtml(academicCbtDraft.durationMinutes)}" required></label>
+      ${splitPaper ? `<label>Objective A mark<small>Configured in the active assessment layout.</small><input value="${escapeHtml(component?.ObjectiveMaximumScore ?? '')}" readonly></label><label>Theory B mark<small>Configured in the active assessment layout.</small><input value="${escapeHtml(component?.TheoryMaximumScore ?? '')}" readonly></label>` : ''}
+      <label>${splitPaper ? 'Paper 1 duration (minutes)' : 'Duration (minutes)'}<small>${splitPaper ? 'Independent timer for the Objective paper.' : 'The test closes automatically after this time.'}</small><input type="number" name="DurationMinutes" min="1" max="480" value="${escapeHtml(academicCbtDraft.durationMinutes)}" required></label>
+      ${splitPaper ? `<label>Paper 2 duration (minutes)<small>Independent timer for the Theory paper.</small><input type="number" name="TheoryDurationMinutes" min="1" max="480" value="${escapeHtml(academicCbtDraft.theoryDurationMinutes)}" required></label>` : ''}
       <label>Number of questions<small>Choose between 1 and 200 questions.</small><input type="number" name="NumberOfQuestions" min="1" max="200" value="${escapeHtml(academicCbtDraft.questionCount)}" required></label>
       <label>Multiple-choice style<small>Controls the answer choices shown to students.</small><select name="OptionStyle" data-academic-cbt-option-style>${Object.keys(ACADEMIC_CBT_OPTION_STYLES).map((key) => `<option value="${key}"${key === academicCbtDraft.optionStyle ? ' selected' : ''}>${key === 'TRUE_FALSE' ? 'True / False' : key}</option>`).join('')}</select></label>
     </div>
@@ -12922,26 +12933,35 @@ function academicCbtWorkspace(data, rows) {
   </div>`;
 
   const answerRows = Array.from({ length: questionCount }, (_unused, index) => `<div class="academic-cbt-answer-row"><strong>${index + 1}</strong><div>${options.map((answer) => `<label><input type="radio" name="AcademicCbtAnswer-${index}" value="${escapeHtml(answer)}" data-academic-cbt-answer="${index}"${academicCbtDraft.answerKey[index] === answer ? ' checked' : ''}><span>${escapeHtml(answer)}</span></label>`).join('')}</div></div>`).join('');
+  const theoryReady = !splitPaper || academicCbtDraft.theoryFiles.length > 0;
+  const theoryUpload = splitPaper ? `<section class="academic-cbt-upload-well academic-cbt-theory-upload${academicCbtDraft.theoryFiles.length ? ' has-preview' : ''}">
+        <div class="academic-cbt-upload-summary"><div><small>Paper 2 · Theory</small><h4>${escapeHtml(component?.Name || 'CBT test')} · Theory B</h4><p>${escapeHtml(selectedContext?.classroomLabel || '')}<br>${escapeHtml(selectedContext?.subjectLabel || '')} · ${escapeHtml(academicCbtDraft.theoryDurationMinutes)} minutes · ${escapeHtml(component?.TheoryMaximumScore ?? '')} marks</p></div>
+          <label class="academic-cbt-file-button">Choose theory PDF or page(s)<input type="file" multiple accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" data-academic-cbt-theory-paper></label>
+          <span>${academicCbtDraft.theoryFiles.length ? escapeHtml(`${academicCbtDraft.theoryFiles.length} file${academicCbtDraft.theoryFiles.length === 1 ? '' : 's'} selected`) : 'No theory paper selected'}</span>
+          <small>Students may cross-reference both papers, but only the paper they start has an active countdown. No typed theory response is stored.</small>
+        </div>
+        <div class="academic-cbt-paper-preview" data-academic-cbt-theory-preview>${academicCbtPaperPreviewMarkup(academicCbtDraft.theoryFiles, { previewKey: 'theoryPreviewUrls', paperLabel: 'Paper 2 · Theory' })}</div>
+      </section>` : '';
   const stepTwo = `<div class="academic-cbt-paper-step" data-academic-cbt-step="2"${academicCbtDraft.step === 2 ? '' : ' hidden'}>
-    <div class="academic-management-editor-heading"><div><small>Step 2 of 2</small><h3>Question paper and correct answers</h3><p class="muted">Upload one PDF, or several PNG/JPG pages in their reading order, then select exactly one answer for every question.</p></div><strong data-academic-cbt-answer-count>${answered} of ${questionCount}</strong></div>
+    <div class="academic-management-editor-heading"><div><small>Step 2 of 2</small><h3>${splitPaper ? 'Paper 1, Paper 2 and correct answers' : 'Question paper and correct answers'}</h3><p class="muted">${splitPaper ? 'Upload both papers in reading order. The answer key belongs only to Paper 1 Objective.' : 'Upload one PDF, or several PNG/JPG pages in their reading order, then select exactly one answer for every question.'}</p></div><strong data-academic-cbt-answer-count>${answered} of ${questionCount}</strong></div>
     <div class="academic-cbt-paper-grid">
       <section class="academic-cbt-answer-key"><header><div><strong>Correct answer key</strong><span>${escapeHtml(academicCbtDraft.optionStyle === 'TRUE_FALSE' ? 'True / False' : academicCbtDraft.optionStyle)}</span></div><button type="button" class="secondary" data-academic-cbt-reset-answers>Reset answers</button></header><div>${answerRows}</div></section>
-      <section class="academic-cbt-upload-well${academicCbtDraft.files.length ? ' has-preview' : ''}">
-        <div class="academic-cbt-upload-summary"><div><small>Question paper</small><h4>${escapeHtml(component?.Name || 'CBT test')}</h4><p>${escapeHtml(selectedContext?.classroomLabel || '')}<br>${escapeHtml(selectedContext?.subjectLabel || '')} · ${questionCount} questions · ${escapeHtml(academicCbtDraft.durationMinutes)} minutes</p></div>
-          <label class="academic-cbt-file-button">Choose PDF or image page(s)<input type="file" multiple accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" data-academic-cbt-paper></label>
-          <span data-academic-cbt-file-name>${academicCbtDraft.files.length ? escapeHtml(`${academicCbtDraft.files.length} file${academicCbtDraft.files.length === 1 ? '' : 's'} selected`) : 'No file selected'}</span>
-          <small>One PDF, or up to ${ACADEMIC_CBT_MAX_PAPER_FILES} PNG/JPG pages. Each file may be 8 MB; the complete paper may be 32 MB. Image pages retain the selected order.</small>
-        </div>
-        <div class="academic-cbt-paper-preview" data-academic-cbt-paper-preview>${academicCbtPaperPreviewMarkup(academicCbtDraft.files)}</div>
-      </section>
+      <div class="academic-cbt-paper-uploads"><section class="academic-cbt-upload-well${academicCbtDraft.files.length ? ' has-preview' : ''}">
+          <div class="academic-cbt-upload-summary"><div><small>${splitPaper ? 'Paper 1 · Objective' : 'Question paper'}</small><h4>${escapeHtml(component?.Name || 'CBT test')}${splitPaper ? ' · Objective A' : ''}</h4><p>${escapeHtml(selectedContext?.classroomLabel || '')}<br>${escapeHtml(selectedContext?.subjectLabel || '')} · ${questionCount} questions · ${escapeHtml(academicCbtDraft.durationMinutes)} minutes</p></div>
+            <label class="academic-cbt-file-button">Choose ${splitPaper ? 'objective ' : ''}PDF or page(s)<input type="file" multiple accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" data-academic-cbt-paper></label>
+            <span data-academic-cbt-file-name>${academicCbtDraft.files.length ? escapeHtml(`${academicCbtDraft.files.length} file${academicCbtDraft.files.length === 1 ? '' : 's'} selected`) : 'No file selected'}</span>
+            <small>One PDF, or up to ${ACADEMIC_CBT_MAX_PAPER_FILES} PNG/JPG pages. Across both papers the upload may be 32 MB.</small>
+          </div>
+          <div class="academic-cbt-paper-preview" data-academic-cbt-paper-preview>${academicCbtPaperPreviewMarkup(academicCbtDraft.files, { paperLabel: splitPaper ? 'Paper 1 · Objective' : 'Question paper' })}</div>
+        </section>${theoryUpload}</div>
     </div>
-    <div class="academic-cbt-form-actions"><button type="button" class="secondary" data-academic-cbt-back>Back</button><button type="submit"${answered === questionCount && academicCbtDraft.files.length ? '' : ' disabled'} data-academic-cbt-save>${editing ? 'Save corrected test' : 'Create scheduled test'}</button></div>
+    <div class="academic-cbt-form-actions"><button type="button" class="secondary" data-academic-cbt-back>Back</button><button type="submit"${answered === questionCount && academicCbtDraft.files.length && theoryReady ? '' : ' disabled'} data-academic-cbt-save>${editing ? 'Save corrected test' : 'Create scheduled test'}</button></div>
   </div>`;
 
   const editor = `<form class="academic-management-editor academic-management-editor-wide academic-cbt-editor" data-academic-cbt-editor>${stepOne}${stepTwo}</form>`;
   const register = table('Scheduled CBT Tests', rows.cbtTests, [
     { label: 'Date and time', value: (row) => new Date(row.StartsAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) },
-    { label: 'Test Type', value: (row) => `${row.AssessmentComponentName} / ${row.MaximumScore}` },
+    { label: 'Test Type', value: (row) => `${row.AssessmentComponentName} / ${row.MaximumScore}${row.PaperMode === 'split' ? ' · A/B' : ''}` },
     { label: 'Class', value: (row) => academicLabel(rows.classes, row.ClassId) },
     { label: 'Subject', value: (row) => academicLabel(rows.subjects, row.SubjectId, row.SubjectName) },
     { label: 'Questions', value: (row) => row.NumberOfQuestions },
@@ -13441,8 +13461,23 @@ function readAcademicCbtStepOne(form) {
   academicCbtDraft.startDate = clean(form.elements.StartDate?.value);
   academicCbtDraft.startTime = clean(form.elements.StartTime?.value);
   academicCbtDraft.durationMinutes = clean(form.elements.DurationMinutes?.value);
+  if (form.elements.TheoryDurationMinutes) academicCbtDraft.theoryDurationMinutes = clean(form.elements.TheoryDurationMinutes.value);
   academicCbtDraft.questionCount = clean(form.elements.NumberOfQuestions?.value);
   academicCbtDraft.optionStyle = clean(form.elements.OptionStyle?.value) || 'ABCD';
+}
+
+function academicCbtSelectedComponent() {
+  return (academicManagementData?.assessmentScheme?.Components || [])
+    .find((component) => component.Id === academicCbtDraft.componentId) || null;
+}
+
+function academicCbtSplitSelected() {
+  return academicCbtSelectedComponent()?.ScoreEntryMode === 'objective-theory';
+}
+
+function academicCbtCombinedUploadBytes() {
+  return [...(academicCbtDraft.files || []), ...(academicCbtDraft.theoryFiles || [])]
+    .reduce((sum, file) => sum + Number(file?.size || 0), 0);
 }
 
 function academicCbtSelectedContext() {
@@ -13612,12 +13647,31 @@ function bindAcademicManagement() {
     cbtForm.querySelector('[data-academic-cbt-paper]')?.addEventListener('change', (event) => {
       try {
         const files = validateAcademicCbtPaperFiles(event.target.files);
+        const combinedBytes = files.reduce((sum, file) => sum + Number(file.size || 0), 0)
+          + (academicCbtDraft.theoryFiles || []).reduce((sum, file) => sum + Number(file.size || 0), 0);
+        if (combinedBytes > ACADEMIC_CBT_MAX_TOTAL_BYTES) throw new Error('Paper 1 and Paper 2 together exceed the 32 MB upload limit.');
         clearAcademicCbtPreviewUrls();
         academicCbtDraft.files = files;
         renderAcademicManagement(academicManagementData || {});
       } catch (error) {
         clearAcademicCbtPreviewUrls();
         academicCbtDraft.files = [];
+        event.target.value = '';
+        setStatus(document.getElementById('academicManagementStatus'), error.message || String(error), 'bad');
+      }
+    });
+    cbtForm.querySelector('[data-academic-cbt-theory-paper]')?.addEventListener('change', (event) => {
+      try {
+        const files = validateAcademicCbtPaperFiles(event.target.files);
+        const combinedBytes = files.reduce((sum, file) => sum + Number(file.size || 0), 0)
+          + (academicCbtDraft.files || []).reduce((sum, file) => sum + Number(file.size || 0), 0);
+        if (combinedBytes > ACADEMIC_CBT_MAX_TOTAL_BYTES) throw new Error('Paper 1 and Paper 2 together exceed the 32 MB upload limit.');
+        clearAcademicCbtPreviewUrls('theoryPreviewUrls');
+        academicCbtDraft.theoryFiles = files;
+        renderAcademicManagement(academicManagementData || {});
+      } catch (error) {
+        clearAcademicCbtPreviewUrls('theoryPreviewUrls');
+        academicCbtDraft.theoryFiles = [];
         event.target.value = '';
         setStatus(document.getElementById('academicManagementStatus'), error.message || String(error), 'bad');
       }
@@ -13631,7 +13685,8 @@ function bindAcademicManagement() {
       const counter = cbtForm.querySelector('[data-academic-cbt-answer-count]');
       if (counter) counter.textContent = `${answered} of ${questionCount}`;
       const save = cbtForm.querySelector('[data-academic-cbt-save]');
-      if (save) save.disabled = answered !== questionCount || !academicCbtDraft.files.length;
+      if (save) save.disabled = answered !== questionCount || !academicCbtDraft.files.length
+        || (academicCbtSplitSelected() && !academicCbtDraft.theoryFiles.length);
     }));
     cbtForm.querySelector('[data-academic-cbt-reset-answers]')?.addEventListener('click', () => {
       academicCbtDraft.answerKey = [];
@@ -13655,31 +13710,40 @@ function bindAcademicManagement() {
       if (academicCbtDraft.step === 1) {
         readAcademicCbtStepOne(cbtForm);
         const context = academicCbtSelectedContext();
+        const splitPaper = academicCbtSplitSelected();
         const questionCount = Number(academicCbtDraft.questionCount);
         const duration = Number(academicCbtDraft.durationMinutes);
+        const theoryDuration = Number(academicCbtDraft.theoryDurationMinutes);
         if (!context) return setStatus(status, 'Choose an allocated classroom and subject.', 'bad');
         if (!academicCbtDraft.componentId) return setStatus(status, 'Choose a Test Type.', 'bad');
         if (!Number.isInteger(questionCount) || questionCount < 1 || questionCount > 200) return setStatus(status, 'Number of questions must be between 1 and 200.', 'bad');
-        if (!Number.isInteger(duration) || duration < 1 || duration > 480) return setStatus(status, 'Duration must be between 1 and 480 minutes.', 'bad');
+        if (!Number.isInteger(duration) || duration < 1 || duration > 480) return setStatus(status, `${splitPaper ? 'Paper 1 duration' : 'Duration'} must be between 1 and 480 minutes.`, 'bad');
+        if (splitPaper && (!Number.isInteger(theoryDuration) || theoryDuration < 1 || theoryDuration > 480)) return setStatus(status, 'Paper 2 duration must be between 1 and 480 minutes.', 'bad');
         const startsAt = new Date(`${academicCbtDraft.startDate}T${academicCbtDraft.startTime}:00`);
         if (!Number.isFinite(startsAt.getTime())) return setStatus(status, 'Choose a valid scheduled date and start time.', 'bad');
-        if (startsAt.getTime() + duration * 60 * 1000 <= Date.now()) return setStatus(status, 'The test schedule has already ended. Choose a current or future time.', 'bad');
+        if (startsAt.getTime() + (duration + (splitPaper ? theoryDuration : 0)) * 60 * 1000 <= Date.now()) return setStatus(status, 'The test schedule has already ended. Choose a current or future time.', 'bad');
         const options = ACADEMIC_CBT_OPTION_STYLES[academicCbtDraft.optionStyle] || [];
         academicCbtDraft.answerKey = Array.from({ length: questionCount }, (_unused, index) => options.includes(academicCbtDraft.answerKey[index]) ? academicCbtDraft.answerKey[index] : '');
         clearAcademicCbtPreviewUrls();
+        clearAcademicCbtPreviewUrls('theoryPreviewUrls');
         academicCbtDraft.files = [];
+        academicCbtDraft.theoryFiles = [];
         academicCbtDraft.step = 2;
         renderAcademicManagement(academicManagementData || {});
         return;
       }
       const context = academicCbtSelectedContext();
+      const splitPaper = academicCbtSplitSelected();
       const files = academicCbtDraft.files;
+      const theoryFiles = academicCbtDraft.theoryFiles || [];
       const questionCount = Number(academicCbtDraft.questionCount);
       const options = ACADEMIC_CBT_OPTION_STYLES[academicCbtDraft.optionStyle] || [];
       const answerKey = academicCbtDraft.answerKey.slice(0, questionCount);
       try {
         if (!context) throw new Error('The selected subject-teacher allocation is no longer available.');
         validateAcademicCbtPaperFiles(files);
+        if (splitPaper) validateAcademicCbtPaperFiles(theoryFiles);
+        if (academicCbtCombinedUploadBytes() > ACADEMIC_CBT_MAX_TOTAL_BYTES) throw new Error('Paper 1 and Paper 2 together exceed the 32 MB upload limit.');
         if (answerKey.length !== questionCount || answerKey.some((answer) => !options.includes(answer))) throw new Error('Select one correct answer for every question.');
         const submit = cbtForm.querySelector('[data-academic-cbt-save]');
         await runButtonAction(submit, 'Uploading...', async () => {
@@ -13688,6 +13752,11 @@ function bindAcademicManagement() {
             FileBase64: await readFinanceAttachmentBase64(file),
             PageNumber: index + 1
           })));
+          const theoryPaperFiles = splitPaper ? await Promise.all(theoryFiles.map(async (file, index) => ({
+            FileName: file.name,
+            FileBase64: await readFinanceAttachmentBase64(file),
+            PageNumber: index + 1
+          }))) : [];
           const startsAt = new Date(`${academicCbtDraft.startDate}T${academicCbtDraft.startTime}:00`).toISOString();
           const result = await uploadAcademicCbtPaper({
             SchoolSection: academicManagementFilters.section,
@@ -13700,13 +13769,15 @@ function bindAcademicManagement() {
             AssessmentComponentId: academicCbtDraft.componentId,
             StartsAt: startsAt,
             DurationMinutes: Number(academicCbtDraft.durationMinutes),
+            TheoryDurationMinutes: splitPaper ? Number(academicCbtDraft.theoryDurationMinutes) : 0,
             NumberOfQuestions: questionCount,
             OptionStyle: academicCbtDraft.optionStyle,
             AnswerKey: answerKey,
             CbtTestId: academicCbtDraft.testId,
             RevisionToken: academicCbtDraft.revisionToken,
             ClientRequestId: academicCbtDraft.clientRequestId,
-            Files: paperFiles
+            Files: paperFiles,
+            TheoryFiles: theoryPaperFiles
           }, academicCbtDraft.clientRequestId);
           mergeAcademicCbtTest(result);
           resetAcademicCbtDraft();
@@ -13738,11 +13809,14 @@ function bindAcademicManagement() {
       startDate: schedule.date,
       startTime: schedule.time,
       durationMinutes: String(record.DurationMinutes || 40),
+      theoryDurationMinutes: String(record.TheoryDurationMinutes || 40),
       questionCount: String(record.NumberOfQuestions || 20),
       optionStyle: record.OptionStyle || 'ABCD',
       answerKey: [...(record.AnswerKey || [])],
       files: [],
-      previewUrls: []
+      theoryFiles: [],
+      previewUrls: [],
+      theoryPreviewUrls: []
     };
     academicManagementTaskViews.cbt = 'create';
     renderAcademicManagement(academicManagementData || {});
@@ -14208,6 +14282,22 @@ function bindAcademicManagement() {
       const status = document.getElementById('academicManagementStatus');
       try {
         const data = await academicManagementRequest('reactivateAcademicScoreEditing', academicScoreSheetRequestPayload(sheet, { Reason: reason }));
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  }));
+  panelEl.querySelectorAll('[data-academic-score-layout-update]').forEach((button) => button.addEventListener('click', async () => {
+    const sheet = academicFind(academicManagementData?.scoreSheets || [], button.dataset.academicId);
+    if (!sheet) return;
+    if (!await window.DynamaxDialogs.confirm({
+      title: 'Apply active assessment layout',
+      message: 'Update this Draft to the active assessment columns? Existing CBT scores will move to Objective (A), existing manual scores will move to Theory (B), and every migration will be recorded in the audit trail.',
+      confirmText: 'Apply active layout'
+    })) return;
+    await runButtonAction(button, 'Applying...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('applyActiveAcademicScoreLayout', academicScoreSheetRequestPayload(sheet));
         renderAcademicManagement(data, data.message);
       } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
     });

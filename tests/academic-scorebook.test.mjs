@@ -18,6 +18,7 @@ import {
   academicAssessmentScheme,
   academicScoreSourceIssues,
   calculateAcademicStudentScore,
+  migrateAcademicScoreLayout,
   normalizeAcademicScoreImportRows,
   validateAcademicCbtScoreBatch,
   validateAcademicScoreImport
@@ -149,6 +150,32 @@ test('split score locks protect CBT Objective A without blocking manual Theory B
   }]), ['ca:objective']);
 });
 
+test('Draft score layouts migrate existing CBT and manual scores into their safe A/B fields', () => {
+  const splitPolicy = structuredClone(policy);
+  splitPolicy.Assessment.Components[0] = {
+    ...splitPolicy.Assessment.Components[0],
+    ScoreEntryMode: 'objective-theory', ObjectiveMaximumScore: 20, TheoryMaximumScore: 20,
+    SourceMode: 'built-in-cbt'
+  };
+  const previous = academicAssessmentScheme(policy, { RevisionId: 'old' });
+  const active = academicAssessmentScheme(splitPolicy, { RevisionId: 'active' });
+  const cbt = migrateAcademicScoreLayout(previous, active, {
+    SourceType: 'BuiltInCBT',
+    ComponentScores: [{ ComponentId: 'ca', State: 'Numeric', RawScore: 18 }, { ComponentId: 'exam', State: 'Numeric', RawScore: 50 }]
+  });
+  assert.equal(cbt.ComponentScores[0].Parts.find((part) => part.PartId === 'objective').RawScore, 18);
+  assert.equal(cbt.ComponentScores[0].Parts.find((part) => part.PartId === 'theory').State, 'Missing');
+  const manual = migrateAcademicScoreLayout(previous, active, {
+    SourceType: 'Manual',
+    ComponentScores: [{ ComponentId: 'ca', State: 'Numeric', RawScore: 17 }, { ComponentId: 'exam', State: 'Numeric', RawScore: 50 }]
+  });
+  assert.equal(manual.ComponentScores[0].Parts.find((part) => part.PartId === 'theory').RawScore, 17);
+  assert.throws(() => migrateAcademicScoreLayout(previous, active, {
+    SourceType: 'BuiltInCBT',
+    ComponentScores: [{ ComponentId: 'ca', State: 'Numeric', RawScore: 30 }, { ComponentId: 'exam', State: 'Numeric', RawScore: 50 }]
+  }), /between 0 and 20/);
+});
+
 test('AM-009 saved score cells lock recorded values and require managed reactivation for changes', () => {
   const previous = {
     ComponentScores: [
@@ -248,6 +275,10 @@ test('Milestone 5 server and web contracts expose controlled score sheets, impor
   assert.match(academicManagementSource, /ACADEMIC_SCORE_CELL_LOCKED/);
   assert.match(backendSource, /case 'reactivateAcademicScoreEditing'/);
   assert.match(adminSource, /data-academic-score-reactivate/);
+  assert.match(academicManagementSource, /applyActiveAcademicScoreLayout/);
+  assert.match(backendSource, /case 'applyActiveAcademicScoreLayout'/);
+  assert.match(adminSource, /data-academic-score-layout-update/);
+  assert.match(adminSource, /Apply active layout/);
   assert.match(adminSource, /Save and lock recorded scores/);
   assert.match(styleSource, /\.academic-score-component\.is-saved-locked/);
 });

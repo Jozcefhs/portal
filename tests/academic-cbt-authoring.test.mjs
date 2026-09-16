@@ -46,6 +46,11 @@ test('teachers may author online packages that are pulled onto the local desktop
   assert.match(admin, /academicCbtPaperPreviewMarkup/);
   assert.match(admin, /Choose one PDF by itself, or choose several PNG\/JPG image pages/);
   assert.match(admin, /Files: paperFiles/);
+  assert.match(admin, /TheoryFiles: theoryPaperFiles/);
+  assert.match(admin, /Paper 1, Paper 2 and correct answers/);
+  assert.match(admin, /data-academic-cbt-theory-paper/);
+  assert.match(admin, /Paper 2 duration \(minutes\)/);
+  assert.match(admin, /No typed theory response is stored/);
   assert.match(admin, /data-academic-cbt-reschedule/);
   assert.match(admin, /Only the activation date and time will change/);
   assert.match(admin, /New schedule to pull/);
@@ -57,6 +62,10 @@ test('teachers may author online packages that are pulled onto the local desktop
   assert.match(backend, /ArmId: ''/);
   assert.match(backend, /PaperFiles: paperFiles/);
   assert.match(backend, /Papers: papers/);
+  assert.match(backend, /TheoryPaperFiles: theoryPaperFiles/);
+  assert.match(backend, /TheoryPapers: theoryPapers/);
+  assert.match(backend, /PaperMode: splitPaper \? 'split' : 'single'/);
+  assert.match(backend, /durationMinutes \+ theoryDurationMinutes/);
   assert.match(backend, /rescheduleAcademicCbtTest/);
   assert.match(backend, /completed local attempts preserved/);
   assert.match(backend, /replacementCandidates/);
@@ -64,9 +73,13 @@ test('teachers may author online packages that are pulled onto the local desktop
   assert.doesNotMatch(backend, /ACADEMIC_CBT_LOCAL_ONLY/);
   assert.match(endpoint, /putStoredDocument\(env/);
   assert.match(endpoint, /category: 'academic-cbt'/);
-  assert.match(endpoint, /Array\.isArray\(body\.Files\)/);
-  assert.match(endpoint, /question-paper-page-/);
+  assert.match(endpoint, /Array\.isArray\(body\[key\]\)/);
+  assert.match(endpoint, /theory-paper/);
+  assert.match(endpoint, /uploadPaperSet/);
+  assert.match(endpoint, /TheoryPaperFiles: theoryPaperFiles/);
+  assert.match(endpoint, /Paper 1 and Paper 2 together exceed the 32 MB upload limit/);
   assert.match(endpoint, /preview\.replacementCandidates/);
   assert.doesNotMatch(endpoint, /GOOGLE_APPS_SCRIPT/);
   assert.doesNotMatch(endpoint, /ACADEMIC_CBT_LOCAL_ONLY/);
+  assert.doesNotMatch(backend, /ACADEMIC_CBT_SPLIT_REQUIRES_LOCAL_SERVER/);
 });
