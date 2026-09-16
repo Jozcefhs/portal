@@ -105,3 +105,19 @@ test('parent portal uses browser password manager fields and never stores raw pa
   assert.match(passport, /readParentSession/);
   assert.match(payment, /readParentSession/);
 });
+
+test('configured parent passwords do not revoke issued verification codes', async () => {
+  const api = await readFile(new URL('../functions/api/parent-dashboard.js', import.meta.url), 'utf8');
+  assert.match(api, /const issuedCodeMatch = \(/);
+  assert.doesNotMatch(api, /!storedPassword\.configured\s*&&\s*\(/);
+  assert.match(api, /!storedPassword\.valid\s*&&\s*!issuedCodeMatch/);
+});
+
+test('parent pages return to the school admission portal instead of the suite launcher', async () => {
+  const [dashboard, uploads] = await Promise.all([
+    readFile(new URL('../parent-dashboard.html', import.meta.url), 'utf8'),
+    readFile(new URL('../upload-documents.html', import.meta.url), 'utf8')
+  ]);
+  assert.match(dashboard, /href="school\.html">Return to admission portal/);
+  assert.match(uploads, /href="school\.html">Return to admission portal/);
+});

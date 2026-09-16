@@ -1050,15 +1050,16 @@ async function assertParentAccess(env, sources, email, secret, sessionEmail = ''
       throw err;
     }
     const storedPassword = await verifyStoredParentPassword(env, wantedEmail, wantedSecret);
-    const legacyMatch = !storedPassword.configured && (
+    // The sign-in field accepts either the parent's private password or the
+    // verification/login code issued for the family records. Configuring a
+    // private password must not revoke an existing application code.
+    const issuedCodeMatch = (
       matchingSales.some((row) => clean(pick(row, ['VerificationCode', 'verificationCode'])).toUpperCase() === wantedCode)
       || matchingApplications.some((row) => clean(pick(row, ['VerificationCode', 'verificationCode'])).toUpperCase() === wantedCode)
       || matchingStudents.some((row) => studentLoginCode(row) === wantedCode)
     );
-    if (!storedPassword.valid && !legacyMatch) {
-      const err = new Error(storedPassword.configured
-        ? 'Invalid parent email or password.'
-        : 'Invalid parent email or verification code.');
+    if (!storedPassword.valid && !issuedCodeMatch) {
+      const err = new Error('Invalid parent email, password, or verification code.');
       err.status = 401;
       throw err;
     }
