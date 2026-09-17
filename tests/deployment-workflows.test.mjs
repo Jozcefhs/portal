@@ -177,12 +177,28 @@ test('the tenant pool provisioner is opt-in, uses WIF and creates isolated deplo
   assert.match(tenantProvisioner, /TENANT_POOL_AUTOMATION_ENABLED == 'true'/);
   assert.match(tenantProvisioner, /google-github-actions\/auth@v3/);
   assert.match(tenantProvisioner, /DYNAMAX_PROVISION_SERVICE_ACCOUNT/);
+  assert.match(tenantProvisioner, /Inspect next provisioning request/);
+  assert.match(tenantProvisioner, /action:\"load\"/);
+  assert.match(tenantProvisioner, /No tenant project request is waiting; no infrastructure validation or provisioning was needed/);
+  assert.ok(
+    tenantProvisioner.indexOf('Inspect next provisioning request') < tenantProvisioner.indexOf('Authenticate to Google Cloud'),
+    'the workflow must inspect the queue before starting Google Cloud authentication'
+  );
+  assert.ok(
+    tenantProvisioner.indexOf('Resolve Google Cloud project parent') < tenantProvisioner.indexOf('Claim next provisioning request'),
+    'the workflow must validate infrastructure before claiming and mutating a queued request'
+  );
+  assert.match(tenantProvisioner, /sort_by\(\.RequestedAt\)/);
+  assert.match(tenantProvisioner, /steps\.inspect\.outputs\.has_request == 'true' && env\.APPLY_CHANGES == 'true'/);
   assert.match(tenantProvisioner, /Resolve Google Cloud project parent/);
   assert.match(tenantProvisioner, /Using pre-created Google Cloud project/);
-  assert.match(tenantProvisioner, /gcloud projects describe "\$\{MANUAL_TENANT_PROJECT_ID\}"/);
+  assert.match(tenantProvisioner, /gcloud projects describe "\$\{TARGET_TENANT_PROJECT_ID\}"/);
   assert.match(tenantProvisioner, /gcloud projects describe/);
+  assert.match(tenantProvisioner, /gcloud organizations list --format='value\(name\)'/);
+  assert.match(tenantProvisioner, /Automatically discovered Google Cloud parent/);
   assert.match(tenantProvisioner, /DYNAMAX_GCP_PARENT=.*GITHUB_ENV/);
   assert.match(tenantProvisioner, /claim-next/);
+  assert.match(tenantProvisioner, /--arg reference "\$\{INSPECTED_REFERENCE\}"/);
   assert.match(tenantProvisioner, /MANUAL_TENANT_PROJECT_ID/);
   assert.match(tenantProvisioner, /GitHub exact-project provisioner/);
   assert.match(tenantProvisionerScript, /projects', 'create'/);
