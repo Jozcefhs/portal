@@ -7,7 +7,7 @@ import { getStoredDocument } from '../lib/document-storage.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { readParentSession, verifyStoredParentPassword } from '../lib/parent-auth.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
-import { verifyDesktopCredential } from '../lib/backend-security.js';
+import { applyDesktopDeviceBranchScope, verifyDesktopCredential } from '../lib/backend-security.js';
 import {
   admissionApplicationScopePath,
   admissionStudentScopePath,
@@ -146,7 +146,15 @@ export async function onRequestPost(context) {
   try {
     const { request, env } = context;
     requireFirestoreEnv(env);
-    const body = await readJsonBody(request, { maxBytes: 64 * 1024 });
+    let body = await readJsonBody(request, { maxBytes: 64 * 1024 });
+    const suppliedSecret = clean(body.Secret || body.secret);
+    let desktopAuthentication = null;
+    if (suppliedSecret) {
+      desktopAuthentication = await verifyDesktopCredential(env, suppliedSecret, 'passport photograph endpoint')
+        .catch(() => null);
+      if (desktopAuthentication) body = applyDesktopDeviceBranchScope(body, desktopAuthentication);
+    }
+    const desktopBranchId = clean(desktopAuthentication?.branchId);
     const reference = clean(body.applicationReference || body.ApplicationReference || body.accountRef || body.AccountRef);
     if (!reference) return Response.json({ ok: false, message: 'Student or application reference is required.' }, { status: 400 });
     const requestedScopePath = clean(body.scopePath || body.ScopePath);
@@ -160,7 +168,12 @@ export async function onRequestPost(context) {
 
     const direct = targetScopePath
       ? await getDocument(env, targetScopePath, safeDocumentId(reference)).catch(() => null)
-      : await getSchoolDocumentById(env, targetCollection, safeDocumentId(reference)).catch(() => null);
+      : await getSchoolDocumentById(
+          env,
+          targetCollection,
+          safeDocumentId(reference),
+          desktopBranchId ? { branchId: desktopBranchId } : null
+        ).catch(() => null);
     const directApplication = direct
       ? {
           ...direct,
@@ -186,7 +199,9 @@ export async function onRequestPost(context) {
             ],
         filterJoin: 'OR',
         limit: 20,
-        ...(targetScopePath ? { scopePath: targetScopePath } : {})
+        ...(targetScopePath
+          ? { scopePath: targetScopePath }
+          : desktopBranchId ? { scope: { branchId: desktopBranchId } } : {})
       }).catch(() => []);
       candidates = uniqueApplications([...candidates, ...queried.map((row) => ({
         ...row,
@@ -195,16 +210,22 @@ export async function onRequestPost(context) {
         sameText(applicationReference(row), reference) || sameText(row.__id, reference)
       );
     }
+    if (desktopAuthentication?.branchId) {
+      candidates = candidates.filter((row) => {
+        try {
+          applyDesktopDeviceBranchScope({ Application: row }, desktopAuthentication);
+          return true;
+        } catch (error) {
+          if (error?.code === 'DESKTOP_DEVICE_BRANCH_MISMATCH') return false;
+          throw error;
+        }
+      });
+    }
     const application = candidates.length === 1 ? candidates[0] : null;
     if (!application) return Response.json({ ok: false, message: 'Student or application was not found in the database.' }, { status: 404 });
+    if (desktopAuthentication) applyDesktopDeviceBranchScope({ Application: application }, desktopAuthentication);
 
-    const suppliedSecret = clean(body.Secret || body.secret);
-    let desktopAuthorized = false;
-    if (suppliedSecret) {
-      desktopAuthorized = await verifyDesktopCredential(env, suppliedSecret, 'passport photograph endpoint')
-        .then(() => true)
-        .catch(() => false);
-    }
+    const desktopAuthorized = Boolean(desktopAuthentication);
     let signedInStaff = null;
     try {
       signedInStaff = await requireStaffSession(env, request);

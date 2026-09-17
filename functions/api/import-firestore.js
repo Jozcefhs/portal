@@ -195,7 +195,13 @@ export async function onRequestPost({ request, env }) {
       request.headers.get('x-backend-secret') ||
       request.headers.get('x-import-secret')
     );
-    await verifyDesktopCredential(env, providedSecret, 'database import endpoint');
+    const desktopAuthentication = await verifyDesktopCredential(env, providedSecret, 'database import endpoint');
+    if (desktopAuthentication.type === 'device' && desktopAuthentication.branchId) {
+      const error = new Error('Database imports require an organisation-wide desktop device. This computer is paired to one branch.');
+      error.status = 403;
+      error.code = 'DESKTOP_DEVICE_ORGANISATION_WIDE_REQUIRED';
+      throw error;
+    }
 
     const collection = normalizeCollection(body.collection || body.Collection);
     if (!collection) {

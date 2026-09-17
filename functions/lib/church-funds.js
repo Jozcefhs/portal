@@ -195,7 +195,12 @@ export function resolveGivingType(givingTypes = [], value = '') {
   ) || null;
 }
 
-export async function ensureGivingTypes(env, branchId = 'main') {
+export function organisationGivingAccountSeedAllowed(input = {}) {
+  return !clean(input.DeviceBranchId || input.deviceBranchId);
+}
+
+export async function ensureGivingTypes(env, branchId = 'main', options = {}) {
+  const allowGlobalChartSeed = options.allowGlobalChartSeed !== false;
   const path = churchCollectionPath(CHURCH_COLLECTIONS.givingTypes, branchId);
   const [existingTypes, chart] = await Promise.all([
     listCollection(env, path).catch(() => []),
@@ -204,7 +209,7 @@ export async function ensureGivingTypes(env, branchId = 'main') {
   const chartCodes = new Set(chart.map((row) => clean(row.Code || row.__id)));
   const typesById = new Map(existingTypes.map((row) => [lower(row.GivingTypeId || row.__id), row]));
   for (const standard of DEFAULT_GIVING_TYPES) {
-    if (!chartCodes.has(standard.RevenueAccountCode)) {
+    if (!chartCodes.has(standard.RevenueAccountCode) && allowGlobalChartSeed) {
       const accountName = DEFAULT_GIVING_ACCOUNT_NAMES.get(standard.RevenueAccountCode);
       await upsertDocument(env, 'chartOfAccounts', standard.RevenueAccountCode, {
         Code: standard.RevenueAccountCode,
@@ -310,7 +315,9 @@ export async function listChurchFunds(env, user, body = {}) {
   const [funds, mappings, givingSetup, audit] = await Promise.all([
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.funds, branchId)).catch(() => []),
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.fundMappings, branchId)).catch(() => []),
-    ensureGivingTypes(env, branchId),
+    ensureGivingTypes(env, branchId, {
+      allowGlobalChartSeed: organisationGivingAccountSeedAllowed(body)
+    }),
     capabilities.canViewAudit
       ? listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.fundAudit, branchId)).catch(() => [])
       : Promise.resolve([])
@@ -345,7 +352,9 @@ export async function saveGivingType(env, user, body = {}) {
   const organization = await requireFundsEdition(env);
   requireCapability(user, 'canManageGivingTypes');
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
-  const { givingTypes, chart } = await ensureGivingTypes(env, branchId);
+  const { givingTypes, chart } = await ensureGivingTypes(env, branchId, {
+    allowGlobalChartSeed: organisationGivingAccountSeedAllowed(body)
+  });
   const givingType = normalizeGivingType(
     body.givingType || body.GivingType || body,
     branchId

@@ -10,6 +10,7 @@ import { resolveMembershipBranch } from './church-membership.js';
 import {
   effectiveFundMapping,
   ensureGivingTypes,
+  organisationGivingAccountSeedAllowed,
   resolveGivingType
 } from './church-funds.js';
 import { saveAccountingJournal } from '../api/backend.js';
@@ -305,12 +306,14 @@ async function writeOfferingAccountingAudit(env, user, journal, details = '') {
   });
 }
 
-async function offeringReferenceData(env, branchId) {
+async function offeringReferenceData(env, branchId, input = {}) {
   const [funds, mappings, occurrences, givingSetup] = await Promise.all([
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.funds, branchId)).catch(() => []),
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.fundMappings, branchId)).catch(() => []),
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.serviceOccurrences, branchId)).catch(() => []),
-    ensureGivingTypes(env, branchId)
+    ensureGivingTypes(env, branchId, {
+      allowGlobalChartSeed: organisationGivingAccountSeedAllowed(input)
+    })
   ]);
   return { funds, mappings, occurrences, givingTypes: givingSetup.givingTypes };
 }
@@ -547,7 +550,7 @@ export async function listChurchOfferings(env, user, body = {}) {
   const branchId = resolveMembershipBranch(user, body.BranchId || body.branchId);
   const [offerings, references, audit, routes] = await Promise.all([
     listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.offerings, branchId)).catch(() => []),
-    offeringReferenceData(env, branchId),
+    offeringReferenceData(env, branchId, body),
     capabilities.canViewAudit
       ? listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.offeringAudit, branchId)).catch(() => [])
     : Promise.resolve([]),
@@ -606,7 +609,7 @@ export async function saveChurchOffering(env, user, body = {}) {
   const [existing, offerings, references] = await Promise.all([
     getDocument(env, path, id).catch(() => null),
     listCollection(env, path).catch(() => []),
-    offeringReferenceData(env, branchId)
+    offeringReferenceData(env, branchId, body)
   ]);
   const caseVariantId = offerings.find((row) =>
     lower(row.OfferingId || row.__id) === lower(offering.OfferingId) &&
@@ -677,7 +680,9 @@ export async function reconcileChurchOffering(env, user, body = {}) {
   const mappings = await listCollection(
     env, churchCollectionPath(CHURCH_COLLECTIONS.fundMappings, branchId)
   ).catch(() => []);
-  const { givingTypes } = await ensureGivingTypes(env, branchId);
+  const { givingTypes } = await ensureGivingTypes(env, branchId, {
+    allowGlobalChartSeed: organisationGivingAccountSeedAllowed(body)
+  });
   const mapping = givingTypeMapping(
     existing,
     givingTypes,
@@ -802,7 +807,9 @@ export async function postChurchOfferingToAccounting(env, user, body = {}) {
     return { ok: true, duplicate: true, message: 'Offering was already posted.', offering };
   }
   const mappings = await listCollection(env, churchCollectionPath(CHURCH_COLLECTIONS.fundMappings, branchId)).catch(() => []);
-  const { givingTypes } = await ensureGivingTypes(env, branchId);
+  const { givingTypes } = await ensureGivingTypes(env, branchId, {
+    allowGlobalChartSeed: organisationGivingAccountSeedAllowed(body)
+  });
   const mapping = givingTypeMapping(
     offering,
     givingTypes,

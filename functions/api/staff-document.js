@@ -2,7 +2,7 @@
 
 import { deleteDocument, getDocument, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
-import { verifyDesktopCredential } from '../lib/backend-security.js';
+import { applyDesktopDeviceBranchScope, verifyDesktopCredential } from '../lib/backend-security.js';
 import { getSchoolDocumentById, querySchoolCollection, upsertSchoolDocument } from '../lib/school-scope.js';
 import {
   deleteStoredDocument,
@@ -129,11 +129,13 @@ async function handleRequest(context, body = null) {
     const { request, env } = context;
     requireFirestoreEnv(env);
     let sharedSecretAuthorized = false;
+    let desktopAuthentication = null;
     const suppliedCredential = body && clean(body.Secret || body.secret);
     if (suppliedCredential) {
-      sharedSecretAuthorized = await verifyDesktopCredential(env, suppliedCredential, 'staff document endpoint')
-        .then(() => true)
-        .catch(() => false);
+      desktopAuthentication = await verifyDesktopCredential(env, suppliedCredential, 'staff document endpoint')
+        .catch(() => null);
+      sharedSecretAuthorized = Boolean(desktopAuthentication);
+      if (desktopAuthentication) body = applyDesktopDeviceBranchScope(body, desktopAuthentication);
     }
     let user = null;
     if (!sharedSecretAuthorized) {
@@ -163,7 +165,12 @@ async function handleRequest(context, body = null) {
 
     const direct = applicationScopePath
       ? await getDocument(env, applicationScopePath, safeDocumentId(applicationReference)).catch(() => null)
-      : await getSchoolDocumentById(env, 'applications', safeDocumentId(applicationReference)).catch(() => null);
+      : await getSchoolDocumentById(
+          env,
+          'applications',
+          safeDocumentId(applicationReference),
+          desktopAuthentication?.branchId ? { branchId: desktopAuthentication.branchId } : null
+        ).catch(() => null);
     const directApplication = direct
       ? { ...direct, __scopePath: direct.__scopePath || applicationScopePath || 'applications' }
       : null;
@@ -178,13 +185,27 @@ async function handleRequest(context, body = null) {
         ],
         filterJoin: 'OR',
         limit: 20,
-        ...(applicationScopePath ? { scopePath: applicationScopePath } : {})
+        ...(applicationScopePath
+          ? { scopePath: applicationScopePath }
+          : desktopAuthentication?.branchId ? { scope: { branchId: desktopAuthentication.branchId } } : {})
       }).catch(() => []);
       candidates = uniqueApplications([...candidates, ...queried])
         .filter((row) => lower(reference(row)) === lower(applicationReference));
     }
+    if (desktopAuthentication?.branchId) {
+      candidates = candidates.filter((row) => {
+        try {
+          applyDesktopDeviceBranchScope({ Application: row }, desktopAuthentication);
+          return true;
+        } catch (error) {
+          if (error?.code === 'DESKTOP_DEVICE_BRANCH_MISMATCH') return false;
+          throw error;
+        }
+      });
+    }
     const application = candidates.length === 1 ? candidates[0] : null;
     if (!application) return Response.json({ ok: false, message: 'Application not found.' }, { status: 404 });
+    if (desktopAuthentication) applyDesktopDeviceBranchScope({ Application: application }, desktopAuthentication);
     if (user && !staffCanAccessApplicationDocument(user, application)) {
       return Response.json({ ok: false, message: 'This application belongs to another school branch or section.' }, { status: 403 });
     }

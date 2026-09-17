@@ -9,6 +9,8 @@ import {
   parseDesktopPairingCode,
   secureDesktopHashEqual
 } from '../functions/lib/desktop-pairing.js';
+import { applyDesktopDeviceBranchScope } from '../functions/lib/backend-security.js';
+import { enforceDesktopDeviceActionScope } from '../functions/api/backend.js';
 
 const portalRoot = new URL('../', import.meta.url);
 
@@ -22,6 +24,13 @@ test('pairing and device credentials use separate strict formats', () => {
     {
       credential: 'DXD.abcdefghijklmnop.ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef',
       deviceId: 'abcdefghijklmnop'
+    }
+  );
+  assert.deepEqual(
+    parseDesktopDeviceCredential('DXD.AbCdEfGhIjKlMnOp.ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef'),
+    {
+      credential: 'DXD.AbCdEfGhIjKlMnOp.ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef',
+      deviceId: 'AbCdEfGhIjKlMnOp'
     }
   );
   assert.equal(parseDesktopDeviceCredential(code), null);
@@ -60,6 +69,93 @@ test('backend accepts revocable device credentials while retaining legacy migrat
   assert.match(security, /has been revoked/);
 });
 
+test('remote approval stores only locally generated credential hashes and exposes authenticated status polling', async () => {
+  const [api, library] = await Promise.all([
+    readFile(new URL('functions/api/desktop-pairing.js', portalRoot), 'utf8'),
+    readFile(new URL('functions/lib/desktop-pairing.js', portalRoot), 'utf8')
+  ]);
+  assert.match(api, /action === 'request'/);
+  assert.match(api, /action === 'status'/);
+  assert.match(api, /action === 'approve'/);
+  assert.match(api, /action === 'reject'/);
+  assert.match(api, /256-bit claim token/);
+  assert.match(library, /CredentialHash: credentialHash/);
+  assert.match(library, /ClaimHash: await desktopCredentialHash\(claimToken\)/);
+  assert.match(library, /authenticatedPairingRequest\(env, requestId, claimToken\)/);
+  assert.doesNotMatch(library, /DeviceCredential:\s*options\./);
+  assert.match(library, /options\.organisationWide === true/);
+  assert.match(library, /DESKTOP_APPROVAL_BRANCH_REQUIRED/);
+});
+
+test('branch-bound desktop credentials force branch scope and reject nested cross-branch paths', () => {
+  const authentication = { type: 'device', branchId: 'lords-garden', branchName: "Lord's Garden" };
+  const scoped = applyDesktopDeviceBranchScope({ Action: 'getStudents' }, authentication);
+  assert.equal(scoped.BranchId, 'lords-garden');
+  assert.equal(scoped.UserBranchId, 'lords-garden');
+  assert.equal(scoped.DeviceBranchId, 'lords-garden');
+  assert.throws(
+    () => applyDesktopDeviceBranchScope({ BranchId: 'main' }, authentication),
+    (error) => error?.code === 'DESKTOP_DEVICE_BRANCH_MISMATCH'
+  );
+  assert.throws(
+    () => applyDesktopDeviceBranchScope({ Student: { __scopePath: 'schoolBranches/main/sections/primary/students' } }, authentication),
+    (error) => error?.code === 'DESKTOP_DEVICE_BRANCH_MISMATCH'
+  );
+  assert.throws(
+    () => applyDesktopDeviceBranchScope({ StudentScopePath: 'students' }, authentication),
+    (error) => error?.code === 'DESKTOP_DEVICE_BRANCH_MISMATCH'
+  );
+  const organisationWide = { Action: 'getStudents', BranchId: 'main' };
+  assert.equal(applyDesktopDeviceBranchScope(organisationWide, { type: 'device', branchId: '' }), organisationWide);
+});
+
+test('branch-bound devices fail closed for unverified global and bare-ID actions', async () => {
+  const backend = await readFile(new URL('functions/api/backend.js', portalRoot), 'utf8');
+  const branchDevice = { type: 'device', branchId: 'north', branchName: 'North' };
+  const allowed = enforceDesktopDeviceActionScope(branchDevice, 'getStudents', { Action: 'getStudents' });
+  assert.equal(allowed.Action, 'getStudents');
+
+  [
+    'updateApplicationStatus', 'deleteApplication', 'importStudents', 'promoteStudents',
+    'getClinicRecords', 'getClinicInventory', 'getKitchenInventory',
+    'getStoreOverview', 'getFormSales', 'saveFeeItem', 'recordSale',
+    'recordManualPayment', 'generateSchoolFeeInvoices', 'getAccountingOverview',
+    'saveAccountingPeriod', 'saveAccountingApprovalLimit', 'saveAccountingCloseChecklist',
+    'syncAccountingRevenue', 'savePayrollTaxProfile', 'exportBackup',
+    'saveOrganisationStructure', 'saveOrganizationModulePreferences'
+  ].forEach((action) => {
+    assert.throws(
+      () => enforceDesktopDeviceActionScope(branchDevice, action, {
+        Action: action,
+        ApplicationReference: 'SOUTH/26/000001'
+      }),
+      (error) => error?.code === 'DESKTOP_DEVICE_ORGANISATION_WIDE_REQUIRED',
+      `${action} must fail closed for a branch-bound device`
+    );
+  });
+
+  const organisationWideBody = { Action: 'deleteApplication', ApplicationReference: 'ANY/26/000001' };
+  assert.equal(
+    enforceDesktopDeviceActionScope({ type: 'device', branchId: '' }, 'deleteApplication', organisationWideBody),
+    organisationWideBody
+  );
+  assert.equal(
+    enforceDesktopDeviceActionScope({ type: 'legacy-secret' }, 'deleteApplication', organisationWideBody),
+    organisationWideBody
+  );
+
+  assert.match(backend, /BRANCH_BOUND_DEVICE_ACTIONS/);
+  assert.match(backend, /if \(!BRANCH_BOUND_DEVICE_ACTIONS\.has\(action\)\)/);
+  assert.match(backend, /action !== 'saveSchoolProfile'/);
+  assert.match(backend, /SettingsScope: 'branch'/);
+  assert.match(backend, /body\.DeviceBranchId[\s\S]*saveBranchProfileOverrides\(env/);
+  assert.match(backend, /message: `\$\{saved\.branch\.name\} email sender settings saved\.`/);
+  assert.match(backend, /duplicateIsSelectedStudent[\s\S]*duplicate\.__scopePath, student\.__scopePath/);
+  assert.match(backend, /balance: updatedAccount\.WalletBalance/);
+  assert.match(backend, /const desktopAuthentication = await requireBackendSecret/);
+  assert.match(backend, /applyDesktopDeviceBranchScope\(body, desktopAuthentication\)/);
+});
+
 test('desktop document bridges accept device credentials instead of requiring the Cloudflare secret', async () => {
   const sources = await Promise.all([
     readFile(new URL('functions/api/passport-photo.js', portalRoot), 'utf8'),
@@ -67,6 +163,10 @@ test('desktop document bridges accept device credentials instead of requiring th
     readFile(new URL('functions/api/import-firestore.js', portalRoot), 'utf8')
   ]);
   sources.forEach((source) => assert.match(source, /verifyDesktopCredential/));
+  sources.forEach((source) => assert.match(source, /desktopAuthentication/));
+  assert.match(sources[0], /applyDesktopDeviceBranchScope/);
+  assert.match(sources[1], /applyDesktopDeviceBranchScope/);
+  assert.match(sources[2], /DESKTOP_DEVICE_ORGANISATION_WIDE_REQUIRED/);
   assert.doesNotMatch(sources[0], /suppliedSecret === clean\(env\.BACKEND_SHARED_SECRET\)/);
   assert.doesNotMatch(sources[1], /clean\(body\.Secret \|\| body\.secret\) === clean\(env\.BACKEND_SHARED_SECRET\)/);
 });

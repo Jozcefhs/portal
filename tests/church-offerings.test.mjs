@@ -39,6 +39,15 @@ test('desktop backend authenticates and dispatches every offering workflow actio
   assert.match(backendSource, /return handleChurchOfferingAction\(env,/);
 });
 
+test('branch offering workflows suppress organisation-wide giving account seeding', async () => {
+  const source = await readFile(new URL('../functions/lib/church-offerings.js', import.meta.url), 'utf8');
+  assert.match(source, /offeringReferenceData\(env, branchId, body\)/);
+  assert.equal(
+    [...source.matchAll(/allowGlobalChartSeed: organisationGivingAccountSeedAllowed\((?:input|body)\)/g)].length,
+    3
+  );
+});
+
 test('denomination input supports value x quantity and rejects ambiguous duplicates', () => {
   assert.deepEqual(normalizeDenominations('1000x10, 500x4'), [
     { Denomination: 1000, Quantity: 10, Amount: 10000 },

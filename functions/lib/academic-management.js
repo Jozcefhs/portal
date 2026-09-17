@@ -641,6 +641,10 @@ export function scopedSection(input = {}, required = true) {
   return value;
 }
 
+export function academicLegacyClassCompatibilityEnabled(input = {}) {
+  return !clean(input.DeviceBranchId || input.deviceBranchId);
+}
+
 function assertUserSection(user = {}, section = '') {
   const assigned = lower(user.schoolSectionAccess || user.SchoolSectionAccess || 'all');
   if (assigned !== 'all' && section && assigned !== section) {
@@ -659,7 +663,12 @@ async function academicScope(env, user = {}, input = {}, { requireSection = fals
   if (!branch) throw failure('The selected branch is not configured for this school.', 403, 'ACADEMIC_BRANCH_FORBIDDEN');
   const section = scopedSection(input, requireSection);
   assertUserSection(user, section);
-  return { branchId: safeScopeId(branchId), section, structure };
+  return {
+    branchId: safeScopeId(branchId),
+    section,
+    structure,
+    legacyClassCompatibility: academicLegacyClassCompatibilityEnabled(input)
+  };
 }
 
 export function normalizeAcademicSession(input = {}, context = {}, existing = null) {
@@ -1536,7 +1545,8 @@ function withoutMetadata(row = {}) {
   return copy;
 }
 
-function legacyClassWrite(state, projectedRecord, type) {
+function legacyClassWrite(state, projectedRecord, type, scope = {}) {
+  if (scope.legacyClassCompatibility === false) return null;
   const schoolClass = type === 'class'
     ? projectedRecord
     : findById(state.classes, projectedRecord.ClassId);
@@ -1911,7 +1921,7 @@ export async function saveAcademicManagementRecord(env, user = {}, input = {}) {
     writes.push(movementWrite(user, academicMovementForState(state, input, scope, null, record)));
   }
   if (['class', 'arm'].includes(type)) {
-    const compatibility = legacyClassWrite(state, record, type);
+    const compatibility = legacyClassWrite(state, record, type, scope);
     if (compatibility) writes.push(compatibility);
   }
   if (type === 'studentmembership') {
@@ -2082,7 +2092,7 @@ export async function bulkCreateAcademicClasses(env, user = {}, input = {}) {
     writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.classes, documentId: record.ClassId, data: withoutMetadata(record), exists: false });
   }
   createdRecords.forEach((record) => {
-    const compatibility = legacyClassWrite(projected, record, 'class');
+    const compatibility = legacyClassWrite(projected, record, 'class', scope);
     if (compatibility) writes.push(compatibility);
   });
   if (createdRecords.length) writes.push(auditWrite(user, 'BULK CREATE', 'class', {
@@ -2295,7 +2305,7 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
   }
   const affectedClassIds = new Set(createdRecords.map((row) => row.ClassId));
   classes.filter((row) => affectedClassIds.has(row.ClassId)).forEach((schoolClass) => {
-    const compatibility = legacyClassWrite(projected, schoolClass, 'class');
+    const compatibility = legacyClassWrite(projected, schoolClass, 'class', scope);
     if (compatibility) writes.push(compatibility);
   });
   if (createdRecords.length) writes.push(auditWrite(user, 'BULK APPLY', 'arm', {
@@ -3037,7 +3047,7 @@ export async function archiveAcademicManagementRecord(env, user = {}, input = {}
     auditWrite(user, 'ARCHIVE', type, archived, clean(existing.Name || existing.StudentRef || existing.TeacherUsername))
   ];
   if (['class', 'arm'].includes(type)) {
-    const compatibility = legacyClassWrite(state, archived, type);
+    const compatibility = legacyClassWrite(state, archived, type, scope);
     if (compatibility) writes.push(compatibility);
   }
   await batchCommitDocuments(env, writes);
@@ -3076,7 +3086,7 @@ export async function deleteAcademicManagementRecord(env, user = {}, input = {})
     { collectionPath: definition.collection, documentId: recordId(existing), operation: 'delete', updateTime: revisionToken },
     auditWrite(user, 'DELETE', type, existing, deletedLabel)
   ];
-  if (type === 'class') {
+  if (type === 'class' && scope.legacyClassCompatibility) {
     writes.push({
       collectionPath: 'settings/academics/classes',
       documentId: clean(existing.LegacyDocumentId) || legacyDocumentId(existing.Name),
@@ -3086,7 +3096,7 @@ export async function deleteAcademicManagementRecord(env, user = {}, input = {})
   if (type === 'arm') {
     const projected = { ...state, arms: state.arms.filter((row) => recordId(row) !== recordId(existing)) };
     const schoolClass = findById(projected.classes, existing.ClassId);
-    const compatibility = schoolClass ? legacyClassWrite(projected, schoolClass, 'class') : null;
+    const compatibility = schoolClass ? legacyClassWrite(projected, schoolClass, 'class', scope) : null;
     if (compatibility) writes.push(compatibility);
   }
   await commitAcademicBatch(env, writes, 'This academic record changed while it was being deleted. Reload and try again.');

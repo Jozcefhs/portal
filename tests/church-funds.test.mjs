@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import {
   DEFAULT_GIVING_TYPES,
@@ -8,6 +9,7 @@ import {
   normalizeChurchFund,
   normalizeFundMapping,
   normalizeGivingType,
+  organisationGivingAccountSeedAllowed,
   resolveGivingType,
   validateGivingTypeAccount,
   validateFundMappingAccounts
@@ -28,6 +30,16 @@ test('default giving types have individual income accounts', () => {
   const matching = DEFAULT_GIVING_TYPES.filter((row) => required.includes(row.Name));
   assert.deepEqual(matching.map((row) => row.Name), required);
   assert.equal(new Set(matching.map((row) => row.RevenueAccountCode)).size, required.length);
+});
+
+test('branch-paired church requests cannot seed organisation-wide giving accounts', async () => {
+  assert.equal(organisationGivingAccountSeedAllowed({ DeviceBranchId: 'abuja' }), false);
+  assert.equal(organisationGivingAccountSeedAllowed({ deviceBranchId: 'lagos' }), false);
+  assert.equal(organisationGivingAccountSeedAllowed({}), true);
+
+  const source = await readFile(new URL('../functions/lib/church-funds.js', import.meta.url), 'utf8');
+  assert.match(source, /!chartCodes\.has\(standard\.RevenueAccountCode\) && allowGlobalChartSeed/);
+  assert.match(source, /ensureGivingTypes\(env, branchId, \{\s*allowGlobalChartSeed: organisationGivingAccountSeedAllowed\(body\)/);
 });
 
 test('giving types resolve by name or id and require a unique revenue account', () => {

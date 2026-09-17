@@ -1,6 +1,6 @@
 import { batchCommitDocuments, batchUpsertDocuments, createDocumentIfAbsent, deleteDocument, findOneByField, getDocument, listCollection, listCollectionPage, patchDocumentFields, queryCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { getAccountingChartRows, invalidateAccountingChartRows, primeAccountingChartRows } from '../lib/accounting-reference-cache.js';
-import { deleteSchoolDocument, getSchoolDocumentById, getSchoolStructure, invalidateSchoolStructureCache, listSchoolCollection, normalizeSchoolStructure, querySchoolCollection, safeScopeId, schoolCollectionPaths, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
+import { canonicalSchoolBranchId, deleteSchoolDocument, getSchoolDocumentById, getSchoolStructure, invalidateSchoolStructureCache, listSchoolCollection, normalizeSchoolStructure, querySchoolCollection, safeScopeId, schoolCollectionPaths, schoolSectionFor, upsertSchoolDocument } from '../lib/school-scope.js';
 import { canonicalConfiguredClass, classNamesMatch } from '../lib/class-names.js';
 import { categoryApplies, deleteStoreCategory, ensureStoreCategories, resolveStoreCategory, saveStoreCategory } from '../lib/store-categories.js';
 import {
@@ -13,6 +13,7 @@ import { calculateConfigurablePayroll, calculateLegacyPayroll } from '../lib/pay
 import { assertPayrollCanRegenerate, buildFinalizedRunSnapshot, validatePayrollForSubmission } from '../lib/payroll/payroll-run-guards.js';
 import { buildPayrollJournalLines } from '../lib/payroll/payroll-ledger-service.js';
 import {
+  applyDesktopDeviceBranchScope,
   applyAuthoritativeActor,
   requireConfiguredDesktopSecret,
   resolveAuthoritativeDesktopActorForEnv,
@@ -821,6 +822,90 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'updateApplicationStatus', 'updateApplicantIntelligence', 'updateApplicationDetails',
   'enrollStudent', 'recordSale'
 ]);
+
+// Branch credentials fail closed.  Add an action here only after its complete
+// read/write path has been verified to consume the branch scope injected by
+// applyDesktopDeviceBranchScope.  Organisation-wide and legacy credentials
+// retain the existing action surface for backwards compatibility.
+const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
+  'ping',
+  'getApplications', 'getStudents',
+  'getStudentConductCases', 'saveStudentConductCase', 'deleteStudentConductCase',
+  'getAcademicManagement', 'saveAcademicSession', 'saveAcademicTerm', 'saveAcademicClass',
+  'saveAcademicArmTemplate', 'saveAcademicArm', 'saveAcademicSubject', 'saveAcademicDepartment', 'saveAcademicOffering',
+  'bulkCreateAcademicClasses', 'bulkCreateAcademicArmTemplates', 'bulkApplyAcademicArmTemplates',
+  'bulkCreateAcademicSubjects', 'configureAcademicSeniorChoiceSubjects', 'bulkApplyAcademicSubjects',
+  'bulkAssignAcademicSubjectTeacher', 'updateAcademicSubjectTeacherAllocation',
+  'saveAcademicTeacherAllocation', 'saveAcademicStudentMembership', 'bulkAllocateAcademicStudents',
+  'bulkImportAcademicStudentMemberships', 'bulkAssignAcademicArmStudentSubjects',
+  'saveAcademicTimetableSettings', 'saveAcademicTimetableConstraint', 'deleteAcademicTimetableConstraint',
+  'createAcademicTimetableVersion', 'copyAcademicTimetableVersion', 'previewAcademicTimetableCopy',
+  'copyAcademicTimetableSelection', 'saveAcademicTimetableEntry', 'deleteAcademicTimetableEntry',
+  'saveAcademicTimetableSubstitution', 'cancelAcademicTimetableSubstitution',
+  'changeAcademicTimetableVersionStatus', 'saveAcademicStudentAttendance', 'decideAcademicAttendanceCorrection',
+  'getAcademicScorebookContext', 'applyActiveAcademicScoreLayout', 'saveAcademicScoreDraft',
+  'reactivateAcademicScoreEditing', 'changeAcademicScoreSheetStatus', 'previewAcademicScoreImport',
+  'importAcademicScores', 'rollbackAcademicScoreImport', 'syncAcademicCbtScores',
+  'syncLocalCbtStudentPasswords', 'rescheduleAcademicCbtTest', 'downloadAcademicCbtTestPackage',
+  'acknowledgeAcademicCbtImport', 'prepareLocalCbtIdentityPackage',
+  'moveAcademicStudentMembership', 'withdrawAcademicStudentMembership', 'reinstateAcademicStudentMembership',
+  'archiveAcademicRecord', 'deleteAcademicRecord',
+  'getExecutiveOffice', 'searchExecutiveDirectory', 'listOfficialCorrespondence',
+  'saveOfficialCorrespondenceDraft', 'saveOfficialCorrespondenceTemplate',
+  'getOfficialCorrespondenceDocument', 'issueOfficialCorrespondence',
+  'sendOfficialCorrespondence', 'saveExecutiveDashboardPreferences',
+  'getChurchMembership', 'saveChurchMember', 'saveChurchHousehold', 'importChurchMembers',
+  'getChurchServices', 'saveChurchService', 'saveChurchServiceOccurrence', 'recordChurchAttendance',
+  'getChurchFunds', 'saveChurchFund', 'saveChurchFundMapping',
+  'getChurchOfferings', 'saveChurchOffering', 'reconcileChurchOffering',
+  'approveChurchOffering', 'rejectChurchOffering', 'postChurchOffering',
+  'approvechurchoffering', 'rejectchurchoffering', 'postchurchoffering',
+  'getOrganizationDepartments', 'saveDepartment', 'importOrganizationMembers', 'importDepartments',
+  'deleteDepartment', 'savePosition', 'saveDepartmentMember', 'removeDepartmentMember',
+  'saveDepartmentMeeting', 'recordDepartmentAttendance', 'saveDepartmentOffering',
+  'markDepartmentOfferingPaid', 'saveSpecialProgram', 'registerProgramParticipant', 'saveForeignVisitor',
+  'getHotelServices', 'saveHotelRoom', 'saveHotelReservation', 'changeHotelReservationStatus',
+  'recordHotelCharge', 'recordHotelPayment', 'setHotelHousekeepingStatus',
+  'updateStudentProfile', 'reissueParentOnboarding',
+  'getSchoolClasses', 'saveSchoolClasses', 'resetSchoolClasses',
+  'getAdmissionClasses', 'saveAdmissionClasses', 'resetAdmissionClasses',
+  'getAccountsOverview',
+  'getWalletCardAccount', 'saveWalletCard', 'recordWalletPurchase',
+  'getAccountingRequisitionDocument',
+  'saveAccountingJournal', 'saveAccountingExpense', 'saveAccountingBudget',
+  'submitAccountingImprest', 'reviewAccountingImprest', 'issueAccountingImprest',
+  'submitAccountingImprestRetirement', 'verifyAccountingImprestRetirement',
+  'saveAccountingBank', 'saveAccountingReconciliation',
+  'saveAccountingOpeningBalance', 'saveAccountingVendor', 'saveAccountingSupplierBill',
+  'payAccountingSupplierBill', 'saveAccountingAsset', 'postAccountingDepreciation',
+  'saveAccountingAdjustment',
+  'importAccountingBankStatement', 'matchAccountingBankStatement',
+  'savePayrollProfile', 'createPayrollProfilesFromStaff', 'importPayrollProfiles',
+  'generatePayrollRun', 'requestPayrollTaxOverride', 'approvePayrollTaxOverride',
+  'savePayrollRunStatus', 'payPayrollItem',
+  'getStaffUsers', 'saveStaffUser', 'deleteStaffUser',
+  'saveBrevoSettings', 'saveSchoolProfile', 'getSchoolProfile', 'resetBranchProfileOverrides'
+]);
+
+export function enforceDesktopDeviceActionScope(authentication, action, body) {
+  const branchId = clean(authentication?.branchId);
+  if (authentication?.type !== 'device' || !branchId) return body;
+  if (!BRANCH_BOUND_DEVICE_ACTIONS.has(action)) {
+    const error = new Error('This action has not been approved for branch-scoped desktop access. Use an organisation-wide desktop device.');
+    error.status = 403;
+    error.code = 'DESKTOP_DEVICE_ORGANISATION_WIDE_REQUIRED';
+    throw error;
+  }
+  if (action !== 'saveSchoolProfile') return body;
+  const branchBody = { ...body, SettingsScope: 'branch', settingsScope: 'branch' };
+  // Older desktop builds bundled the shared branch registry into profile saves.
+  // A branch-bound device may save only its branch overrides.
+  delete branchBody.SchoolBranches;
+  delete branchBody.schoolBranches;
+  delete branchBody.ActiveBranchId;
+  delete branchBody.activeBranchId;
+  return branchBody;
+}
 
 async function verifyDesktopActor(env, action, body) {
   if (!VERIFIED_ACTOR_ACTIONS.has(action)) return body;
@@ -2368,6 +2453,37 @@ async function saveBrevoSettings(env, body, deploymentIdentity = null) {
     UpdatedAt: now,
     UpdatedBy: clean(body.UserRole || body.UpdatedBy || body.updatedBy) || 'Super Admin'
   };
+  const branchId = clean(
+    body.DeviceBranchId
+    || (clean(body.SettingsScope || body.settingsScope).toLowerCase() === 'branch'
+      ? body.BranchId || body.branchId
+      : '')
+  );
+  if (branchId) {
+    const defaults = (await getSchoolProfile(env)).profile;
+    const saved = await saveBranchProfileOverrides(env, {
+      branchId,
+      defaultProfile: defaults,
+      submittedProfile: senderFields,
+      updatedBy: payload.UpdatedBy
+    });
+    const credentialSource = environmentApiKeyConfigured
+      ? 'cloudflare-secret'
+      : (legacyDatabaseKeyConfigured ? 'legacy-database' : 'not-configured');
+    return {
+      ok: true,
+      message: `${saved.branch.name} email sender settings saved.`,
+      settings: {
+        ...senderFields,
+        SenderScope: 'branch',
+        EffectiveBranchId: saved.branch.id,
+        HasBrevoApiKey: environmentApiKeyConfigured || legacyDatabaseKeyConfigured,
+        CredentialSource: credentialSource,
+        LegacyCredentialMigrationRequired: legacyDatabaseKeyConfigured && !environmentApiKeyConfigured,
+        SubmittedCredentialIgnored: Boolean(submittedApiKey)
+      }
+    };
+  }
   // Use a field-mask patch so a pre-existing database key is not deleted
   // automatically. New or submitted credentials are never written here.
   await patchDocumentFields(env, 'settings', 'brevo', payload);
@@ -4432,10 +4548,6 @@ async function walletActivityForAccount(env, accountRef, studentScope = null) {
   return summarizeWalletActivity(rows, accountRef);
 }
 
-async function walletBalanceForAccount(env, accountRef) {
-  return (await walletActivityForAccount(env, accountRef)).balance;
-}
-
 async function accountCreditBalanceForAccount(env, accountRef) {
   const account = await getDocument(env, 'accountSummaries', safeDocumentId(accountRef)).catch(() => null) ||
     await refreshAccountFinancialSummary(env, accountRef);
@@ -4523,7 +4635,10 @@ export async function saveWalletCard(env, body) {
     throw err;
   }
   const duplicate = await findStudentByWalletCard(env, cardId);
-  if (duplicate && !sameText(duplicate.AdmissionNo, student.AdmissionNo)) {
+  const duplicateIsSelectedStudent = duplicate
+    && sameText(duplicate.AdmissionNo, student.AdmissionNo)
+    && sameText(duplicate.__scopePath, student.__scopePath);
+  if (duplicate && !duplicateIsSelectedStudent) {
     const err = new Error('This wallet card is already assigned to another student.');
     err.status = 400;
     throw err;
@@ -4630,12 +4745,13 @@ export async function recordWalletPurchase(env, body) {
   };
   await upsertDocument(env, 'ledger', safeDocumentId(ledgerNo), entry);
   await writeWalletPurchaseAccountingJournal(env, entry);
+  const updatedAccount = await walletAccountPayload(env, student);
   return {
     ok: true,
     message: 'Wallet purchase recorded.',
     ledger: entry,
-    balance: await walletBalanceForAccount(env, account.AccountRef),
-    account: await walletAccountPayload(env, student)
+    balance: updatedAccount.WalletBalance,
+    account: updatedAccount
   };
 }
 
@@ -7517,10 +7633,25 @@ function activeStaffSuperAdmins(rows, excluding = '') {
   return rows.filter((row) => !sameText(row.Username || row.__id, excluding) && clean(row.Role) === 'Super Admin' && staffUserIsActive(row));
 }
 
+function assignedStaffBranchId(row = {}) {
+  const assigned = clean(row.BranchId || row.branchId);
+  return assigned ? canonicalSchoolBranchId(assigned) : '';
+}
+
 async function getStaffUsersForDesktop(env, body) {
   requireStaffUserAdmin(body);
-  const users = await listCollection(env, 'staffUsers');
-  return { ok: true, message: 'Staff users loaded from the database.', users };
+  const deviceBranchId = clean(body.DeviceBranchId);
+  const allUsers = await listCollection(env, 'staffUsers');
+  const users = deviceBranchId
+    ? allUsers.filter((row) => assignedStaffBranchId(row) === canonicalSchoolBranchId(deviceBranchId))
+    : allUsers;
+  return {
+    ok: true,
+    message: deviceBranchId
+      ? `Staff users assigned to branch ${deviceBranchId} loaded from the database.`
+      : 'Staff users loaded from the database.',
+    users
+  };
 }
 
 async function saveStaffUserFromDesktop(env, body) {
@@ -7530,6 +7661,13 @@ async function saveStaffUserFromDesktop(env, body) {
   if (!username) { const err = new Error('Username is required.'); err.status = 400; throw err; }
   const users = await listCollection(env, 'staffUsers');
   const existing = users.find((row) => sameText(row.Username || row.__id, username));
+  const deviceBranchId = clean(body.DeviceBranchId);
+  if (deviceBranchId && existing && assignedStaffBranchId(existing) !== canonicalSchoolBranchId(deviceBranchId)) {
+    const err = new Error('This computer cannot update a staff account assigned to another branch.');
+    err.status = 403;
+    err.code = 'DESKTOP_DEVICE_BRANCH_MISMATCH';
+    throw err;
+  }
   const loginUsername = clean(
     incoming.LoginUsername || incoming.loginUsername || existing?.LoginUsername || username
   );
@@ -7572,7 +7710,7 @@ async function saveStaffUserFromDesktop(env, body) {
         || body.OrganisationEdition || body.organisationEdition
         || existing?.OrganisationEdition || existing?.OrganizationEdition
     ) || 'school',
-    BranchId: clean(incoming.BranchId || incoming.branchId || existing?.BranchId),
+    BranchId: deviceBranchId || clean(incoming.BranchId || incoming.branchId || existing?.BranchId),
     Active: active,
     Salt: clean(incoming.Salt),
     PasswordHash: clean(incoming.PasswordHash),
@@ -7598,6 +7736,13 @@ async function deleteStaffUserFromDesktop(env, body) {
   const users = await listCollection(env, 'staffUsers');
   const existing = users.find((row) => sameText(row.Username || row.__id, username));
   if (!existing) { const err = new Error('Staff account was not found.'); err.status = 404; throw err; }
+  const deviceBranchId = clean(body.DeviceBranchId);
+  if (deviceBranchId && assignedStaffBranchId(existing) !== canonicalSchoolBranchId(deviceBranchId)) {
+    const err = new Error('This computer cannot delete a staff account assigned to another branch.');
+    err.status = 403;
+    err.code = 'DESKTOP_DEVICE_BRANCH_MISMATCH';
+    throw err;
+  }
   if (sameText(username, body.RecordedBy)) { const err = new Error('You cannot delete the account currently signed in.'); err.status = 409; throw err; }
   if (clean(existing.Role) === 'Super Admin' && staffUserIsActive(existing) && activeStaffSuperAdmins(users, username).length === 0) {
     const err = new Error('At least one active Super Admin must remain.'); err.status = 409; throw err;
@@ -8327,18 +8472,24 @@ export async function onRequestPost(context) {
   try {
     const { request, env } = context;
     let body = await readJsonBody(request, { maxBytes: 16 * 1024 * 1024 });
-    await requireBackendSecret(env, body);
+    const desktopAuthentication = await requireBackendSecret(env, body);
     action = clean(body.Action || body.action);
     if (!action) {
       const error = new Error('Action is required.');
       error.status = 400;
       throw error;
     }
+    body = applyDesktopDeviceBranchScope(body, desktopAuthentication);
+    body = enforceDesktopDeviceActionScope(desktopAuthentication, action, body);
     const expectedIdentity = expectedDeploymentIdentityFromRequest(request, body);
     const configuredIdentity = assertExpectedDeploymentIdentity(env, expectedIdentity);
     requireFirestoreEnv(env);
     const deploymentIdentity = await loadDeploymentIdentity(env, { identity: configuredIdentity });
     body = await verifyDesktopActor(env, action, body);
+    // An authoritative actor lookup can replace UserBranchId. Reapplying the
+    // device scope both detects a user assigned elsewhere and preserves the
+    // approved computer branch for downstream reads and writes.
+    body = applyDesktopDeviceBranchScope(body, desktopAuthentication);
     const data = await routeAction(env, action, body, deploymentIdentity, new URL(request.url).origin);
     finishRequestMetric(metric, { status: 200, action });
     return Response.json(data, { headers: { 'Cache-Control': 'no-store' } });

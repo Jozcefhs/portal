@@ -109,6 +109,8 @@ let staffSessionAbortController = new AbortController();
 let selectedBranchId = 'all';
 let availableBranches = [];
 let branchSwitchInProgress = false;
+let desktopSetupRefreshTimer = 0;
+let desktopSetupRefreshBusy = false;
 let passkeyStatusRequest = null;
 let pendingMfaLogin = null;
 let pendingMfaCompletedLogin = null;
@@ -381,22 +383,105 @@ async function desktopPairingRequest(action, payload = {}) {
   return data;
 }
 
-function renderDesktopDevices(devices = []) {
+function normalizeDesktopPairingBranches(branches = []) {
+  return branches
+    .map((branch) => ({
+      id: clean(branch.id || branch.Id || branch.branchId || branch.BranchId),
+      name: clean(branch.name || branch.Name || branch.branchName || branch.BranchName || branch.id || branch.Id)
+    }))
+    .filter((branch, index, rows) => branch.id && lower(branch.id) !== 'all' && rows.findIndex((item) => lower(item.id) === lower(branch.id)) === index);
+}
+
+function desktopPairingDate(value, fallback = 'Date unavailable') {
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime()) ? date.toLocaleString() : fallback;
+}
+
+function desktopDeviceBranchLabel(device = {}, branches = []) {
+  const branchId = clean(device.branchId || device.BranchId);
+  const branchName = clean(device.branchName || device.BranchName);
+  if (!branchId) return 'Organisation-wide';
+  return branchName
+    || branches.find((branch) => lower(branch.id) === lower(branchId))?.name
+    || branchId;
+}
+
+function renderDesktopPairingRequests(requests = [], branches = []) {
+  const list = document.getElementById('staffDesktopRequests');
+  if (!list) return;
+  const selectedScopes = new Map(Array.from(list.querySelectorAll('[data-desktop-pairing-request]')).map((row) => [
+    clean(row.dataset.desktopPairingRequest),
+    clean(row.querySelector('[data-desktop-request-branch]')?.value)
+  ]));
+  const available = normalizeDesktopPairingBranches(branches);
+  const pending = requests.filter((request) => {
+    const status = lower(request.status || request.Status);
+    return !status || status === 'pending';
+  });
+  list.innerHTML = pending.length ? pending.map((request) => {
+    const requestId = clean(request.requestId || request.RequestId || request.id || request.Id);
+    const deviceName = clean(request.deviceName || request.DeviceName) || 'Unlabelled desktop';
+    const requestedAt = desktopPairingDate(request.requestedAt || request.RequestedAt, 'Time unavailable');
+    const expiresAt = desktopPairingDate(request.expiresAt || request.ExpiresAt, 'expiry unavailable');
+    const selectedScope = selectedScopes.get(requestId) ?? clean(request.branchId || request.BranchId);
+    const branchOptions = [
+      `<option value="" disabled${selectedScope ? '' : ' selected'}>Choose an authorised scope</option>`,
+      `<option value="__organisation_wide__"${selectedScope === '__organisation_wide__' ? ' selected' : ''}>Organisation-wide (all branches)</option>`,
+      ...available.map((branch) => `<option value="${escapeHtml(branch.id)}"${lower(selectedScope) === lower(branch.id) ? ' selected' : ''}>${escapeHtml(branch.name)}</option>`)
+    ].join('');
+    return `<article class="desktop-pairing-request-row" data-desktop-pairing-request="${escapeHtml(requestId)}">
+      <div><strong>${escapeHtml(deviceName)}</strong><small>Reference: <code>${escapeHtml(requestId)}</code></small><small>Requested ${escapeHtml(requestedAt)} · expires ${escapeHtml(expiresAt)}</small></div>
+      <div class="desktop-pairing-request-actions">
+        <label>Authorised scope<select data-desktop-request-branch aria-label="Authorised branch for ${escapeHtml(deviceName)}">${branchOptions}</select></label>
+        <button type="button" data-approve-desktop-request>Approve</button>
+        <button type="button" class="desktop-pairing-reject" data-reject-desktop-request>Reject</button>
+      </div>
+    </article>`;
+  }).join('') : '<p class="desktop-device-empty">No desktop is waiting for approval.</p>';
+}
+
+function renderDesktopDevices(devices = [], branches = []) {
   const list = document.getElementById('staffDesktopDevices');
   if (!list) return;
   list.innerHTML = devices.length ? devices.map((device) => {
     const active = device.active !== false;
-    const date = device.createdAt ? new Date(device.createdAt).toLocaleString() : 'Date unavailable';
+    const date = desktopPairingDate(device.createdAt || device.CreatedAt);
+    const branchLabel = desktopDeviceBranchLabel(device, normalizeDesktopPairingBranches(branches));
     return `<article class="desktop-device-row ${active ? '' : 'is-revoked'}">
-      <div><strong>${escapeHtml(device.deviceName || 'Desktop device')}</strong><small>${active ? `Paired ${escapeHtml(date)}` : `Revoked ${escapeHtml(device.revokedAt ? new Date(device.revokedAt).toLocaleString() : '')}`}${device.createdBy ? ` · by ${escapeHtml(device.createdBy)}` : ''}</small></div>
-      ${active ? `<button type="button" class="danger-button" data-revoke-desktop-device="${escapeHtml(device.deviceId)}" data-device-name="${escapeHtml(device.deviceName || 'this device')}">Revoke</button>` : '<span class="muted">Revoked</span>'}
+      <div><strong>${escapeHtml(device.deviceName || device.DeviceName || 'Desktop device')}</strong><small>Scope: ${escapeHtml(branchLabel)} · ${active ? `Paired ${escapeHtml(date)}` : `Revoked ${escapeHtml(desktopPairingDate(device.revokedAt || device.RevokedAt, ''))}`}${device.createdBy || device.CreatedBy ? ` · by ${escapeHtml(device.createdBy || device.CreatedBy)}` : ''}</small></div>
+      ${active ? `<button type="button" class="danger-button" data-revoke-desktop-device="${escapeHtml(device.deviceId || device.DeviceId)}" data-device-name="${escapeHtml(device.deviceName || device.DeviceName || 'this device')}">Revoke</button>` : '<span class="muted">Revoked</span>'}
     </article>`;
   }).join('') : '<p class="desktop-device-empty">No desktop device has been paired yet.</p>';
 }
 
 async function loadDesktopDevices() {
   const data = await desktopPairingRequest('list');
-  renderDesktopDevices(data.devices || []);
+  const branches = Array.isArray(data.branches) ? data.branches : availableBranches;
+  renderDesktopPairingRequests(data.requests || [], branches);
+  renderDesktopDevices(data.devices || [], branches);
+  return data;
+}
+
+function stopDesktopSetupRefresh() {
+  if (desktopSetupRefreshTimer) window.clearInterval(desktopSetupRefreshTimer);
+  desktopSetupRefreshTimer = 0;
+  desktopSetupRefreshBusy = false;
+}
+
+function startDesktopSetupRefresh() {
+  stopDesktopSetupRefresh();
+  desktopSetupRefreshTimer = window.setInterval(async () => {
+    if (!desktopSetupDialog.open || desktopSetupRefreshBusy) return;
+    if (document.getElementById('staffDesktopRequests')?.contains(document.activeElement)) return;
+    desktopSetupRefreshBusy = true;
+    try {
+      await loadDesktopDevices();
+    } catch (_error) {
+      // Keep the current list and the manual Refresh control available.
+    } finally {
+      desktopSetupRefreshBusy = false;
+    }
+  }, 8000);
 }
 
 async function openDesktopSetup() {
@@ -405,9 +490,13 @@ async function openDesktopSetup() {
   document.getElementById('staffDesktopPairingPanel').hidden = true;
   setStatus(document.getElementById('staffDesktopSetupStatus'), 'Loading paired desktop devices...');
   desktopSetupDialog.showModal();
+  startDesktopSetupRefresh();
   try {
-    await loadDesktopDevices();
-    setStatus(document.getElementById('staffDesktopSetupStatus'), 'Generate a code only when the desktop is ready to connect.');
+    const data = await loadDesktopDevices();
+    const waiting = (data.requests || []).filter((request) => !clean(request.status || request.Status) || lower(request.status || request.Status) === 'pending').length;
+    setStatus(document.getElementById('staffDesktopSetupStatus'), waiting
+      ? `${waiting} desktop ${waiting === 1 ? 'request is' : 'requests are'} waiting for your decision.`
+      : 'Remote desktop requests will appear here for approval.');
   } catch (error) {
     setStatus(document.getElementById('staffDesktopSetupStatus'), error.message || String(error), 'bad');
   }
@@ -18494,6 +18583,7 @@ approvalSettingsButton.addEventListener('click', openApprovalSettings);
 subscriptionButton.addEventListener('click', openStaffSubscription);
 desktopSetupButton.addEventListener('click', openDesktopSetup);
 document.getElementById('staffDesktopSetupClose').addEventListener('click', () => desktopSetupDialog.close());
+desktopSetupDialog.addEventListener('close', stopDesktopSetupRefresh);
 document.getElementById('staffDesktopPortalCopy').addEventListener('click', async () => {
   const status = document.getElementById('staffDesktopSetupStatus');
   try {
@@ -18529,6 +18619,22 @@ document.getElementById('staffDesktopPairingGenerate').addEventListener('click',
     setButtonLoading(button, false, 'Generating...', 'Generate one-time pairing code');
   }
 });
+document.getElementById('staffDesktopRequestsRefresh').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  const status = document.getElementById('staffDesktopSetupStatus');
+  setButtonLoading(button, true, 'Refreshing...', 'Refresh');
+  try {
+    const data = await loadDesktopDevices();
+    const waiting = (data.requests || []).filter((request) => !clean(request.status || request.Status) || lower(request.status || request.Status) === 'pending').length;
+    setStatus(status, waiting
+      ? `${waiting} desktop ${waiting === 1 ? 'request is' : 'requests are'} waiting for your decision.`
+      : 'No desktop is currently waiting for approval.', 'ok');
+  } catch (error) {
+    setStatus(status, error.message || String(error), 'bad');
+  } finally {
+    setButtonLoading(button, false, 'Refreshing...', 'Refresh');
+  }
+});
 document.getElementById('staffDesktopDevicesRefresh').addEventListener('click', async (event) => {
   const button = event.currentTarget;
   const status = document.getElementById('staffDesktopSetupStatus');
@@ -18540,6 +18646,63 @@ document.getElementById('staffDesktopDevicesRefresh').addEventListener('click', 
     setStatus(status, error.message || String(error), 'bad');
   } finally {
     setButtonLoading(button, false, 'Refreshing...', 'Refresh');
+  }
+});
+document.getElementById('staffDesktopRequests').addEventListener('click', async (event) => {
+  const approveButton = event.target.closest('[data-approve-desktop-request]');
+  const rejectButton = event.target.closest('[data-reject-desktop-request]');
+  const button = approveButton || rejectButton;
+  if (!button) return;
+  const row = button.closest('[data-desktop-pairing-request]');
+  const requestId = clean(row?.dataset.desktopPairingRequest);
+  const deviceName = clean(row?.querySelector('strong')?.textContent) || 'this desktop';
+  const status = document.getElementById('staffDesktopSetupStatus');
+  if (!requestId) {
+    setStatus(status, 'This desktop request is missing its reference. Refresh the list and try again.', 'bad');
+    return;
+  }
+  const approving = Boolean(approveButton);
+  const branchSelect = row.querySelector('[data-desktop-request-branch]');
+  const selectedScope = approving ? clean(branchSelect?.value) : '';
+  if (approving && !selectedScope) {
+    setStatus(status, 'Choose a branch or explicitly choose Organisation-wide before approving this desktop.', 'bad');
+    branchSelect?.focus();
+    return;
+  }
+  const organisationWide = selectedScope === '__organisation_wide__';
+  const branchId = organisationWide ? '' : selectedScope;
+  const scopeName = approving
+    ? clean(branchSelect?.selectedOptions?.[0]?.textContent) || 'Organisation-wide'
+    : '';
+  const confirmed = await window.DynamaxDialogs.confirm({
+    title: approving ? 'Approve desktop request' : 'Reject desktop request',
+    message: approving
+      ? `${deviceName} will receive access scoped to ${scopeName}. Continue?`
+      : `${deviceName} will not be allowed to connect. Continue?`,
+    tone: approving ? 'default' : 'danger',
+    confirmText: approving ? 'Approve desktop' : 'Reject request'
+  });
+  if (!confirmed) return;
+  const otherButton = row.querySelector(approving ? '[data-reject-desktop-request]' : '[data-approve-desktop-request]');
+  if (branchSelect) branchSelect.disabled = true;
+  if (otherButton) otherButton.disabled = true;
+  setButtonLoading(button, true, approving ? 'Approving...' : 'Rejecting...', approving ? 'Approve' : 'Reject');
+  try {
+    const data = await desktopPairingRequest(approving ? 'approve' : 'reject', {
+      requestId,
+      ...(approving
+        ? (organisationWide ? { organisationWide: true } : { branchId })
+        : {})
+    });
+    await loadDesktopDevices();
+    setStatus(status, data.message || (approving
+      ? `${deviceName} was approved for ${scopeName}.`
+      : `${deviceName} was rejected.`), 'ok');
+  } catch (error) {
+    setStatus(status, error.message || String(error), 'bad');
+    if (branchSelect) branchSelect.disabled = false;
+    if (otherButton) otherButton.disabled = false;
+    setButtonLoading(button, false, approving ? 'Approving...' : 'Rejecting...', approving ? 'Approve' : 'Reject');
   }
 });
 document.getElementById('staffDesktopDevices').addEventListener('click', async (event) => {

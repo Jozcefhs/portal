@@ -41,7 +41,16 @@ export async function verifyDesktopCredential(env = {}, supplied = '', label = '
   const credential = clean(supplied);
   if (parseDesktopDeviceCredential(credential)) {
     const device = await verifyDesktopDeviceCredential(env, credential);
-    if (device) return { type: 'device', deviceId: device.deviceId, deviceName: device.deviceName };
+    if (device) {
+      return {
+        type: 'device',
+        deviceId: device.deviceId,
+        deviceName: device.deviceName,
+        branchId: clean(device.branchId),
+        branchName: clean(device.branchName),
+        organisationWide: !clean(device.branchId)
+      };
+    }
     const error = new Error('Unauthorized. This desktop device is not paired or has been revoked.');
     error.status = 401;
     error.code = 'DESKTOP_DEVICE_INVALID';
@@ -49,6 +58,69 @@ export async function verifyDesktopCredential(env = {}, supplied = '', label = '
   }
   verifyDesktopSecret(env, credential, label);
   return { type: 'legacy-secret' };
+}
+
+function canonicalDeviceBranchId(value) {
+  const branchId = lower(value)
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+  return branchId === 'main-branch' ? 'main' : branchId;
+}
+
+function desktopBranchMismatch(field, deviceBranchId) {
+  const error = new Error(`This computer is paired with branch ${deviceBranchId} and cannot access a different branch through ${field}.`);
+  error.status = 403;
+  error.code = 'DESKTOP_DEVICE_BRANCH_MISMATCH';
+  return error;
+}
+
+function branchFromScopePath(value) {
+  const path = clean(value).replace(/^\/+|\/+$/g, '');
+  const match = /^(?:schoolBranches|organisationBranches)\/([^/]+)(?:\/|$)/i.exec(path);
+  return match ? canonicalDeviceBranchId(match[1]) : '';
+}
+
+function assertBranchBoundPayload(value, deviceBranchId, path = 'request', depth = 0) {
+  if (depth > 24 || value === null || value === undefined) return;
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertBranchBoundPayload(item, deviceBranchId, `${path}[${index}]`, depth + 1));
+    return;
+  }
+  if (typeof value !== 'object') return;
+  Object.entries(value).forEach(([key, item]) => {
+    const field = `${path}.${key}`;
+    if (/branchid$/i.test(key) && item !== null && typeof item !== 'object') {
+      const requested = canonicalDeviceBranchId(item);
+      if (requested && requested !== deviceBranchId) throw desktopBranchMismatch(field, deviceBranchId);
+    }
+    if ((/^__scopepath$/i.test(key) || /scopepath$/i.test(key)) && item !== null && typeof item !== 'object') {
+      const scopePath = clean(item);
+      if (scopePath) {
+        const pathBranch = branchFromScopePath(scopePath);
+        if (pathBranch && pathBranch !== deviceBranchId) throw desktopBranchMismatch(field, deviceBranchId);
+        // Legacy root student/application collections represent the main branch.
+        // A non-main device must always use an explicitly branch-scoped path.
+        if (!pathBranch && deviceBranchId !== 'main') throw desktopBranchMismatch(field, deviceBranchId);
+      }
+    }
+    assertBranchBoundPayload(item, deviceBranchId, field, depth + 1);
+  });
+}
+
+export function applyDesktopDeviceBranchScope(body = {}, authentication = {}) {
+  const deviceBranchId = canonicalDeviceBranchId(authentication?.branchId);
+  if (clean(authentication?.type) !== 'device' || !deviceBranchId) return body;
+  assertBranchBoundPayload(body, deviceBranchId);
+  return {
+    ...body,
+    BranchId: deviceBranchId,
+    branchId: deviceBranchId,
+    UserBranchId: deviceBranchId,
+    userBranchId: deviceBranchId,
+    DeviceBranchId: deviceBranchId,
+    DeviceBranchName: clean(authentication.branchName)
+  };
 }
 
 export function isActiveStaffUser(user) {

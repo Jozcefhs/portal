@@ -12,6 +12,7 @@ import {
   academicPermanentDeleteDependants,
   academicManagementCapabilities,
   academicManagementViewStateKeys,
+  academicLegacyClassCompatibilityEnabled,
   academicOfferingSubjectRole,
   academicSeniorCoreSubjectIds,
   academicStudentMatchesClass,
@@ -616,6 +617,55 @@ test('subject teachers are batch-assigned only to the exact selected classrooms'
   assert.match(librarySource, /bulkassignacademicsubjectteacher/);
 });
 
+test('branch-paired class and arm actions never write the organisation legacy class catalogue', () => {
+  for (const Action of [
+    'saveAcademicClass',
+    'saveAcademicArm',
+    'bulkCreateAcademicClasses',
+    'bulkApplyAcademicArmTemplates',
+    'archiveAcademicRecord',
+    'deleteAcademicRecord'
+  ]) {
+    assert.equal(
+      academicLegacyClassCompatibilityEnabled({ Action, DeviceBranchId: 'north-campus' }),
+      false,
+      `${Action} must suppress organisation-wide legacy class compatibility for branch devices`
+    );
+  }
+  assert.equal(academicLegacyClassCompatibilityEnabled({ Action: 'saveAcademicClass' }), true);
+
+  assert.match(
+    librarySource,
+    /legacyClassCompatibility: academicLegacyClassCompatibilityEnabled\(input\)/
+  );
+  const saveSource = librarySource.slice(
+    librarySource.indexOf('export async function saveAcademicManagementRecord'),
+    librarySource.indexOf('function uniqueStudentReferences')
+  );
+  assert.match(saveSource, /legacyClassWrite\(state, record, type, scope\)/);
+  const bulkClassSource = librarySource.slice(
+    librarySource.indexOf('export async function bulkCreateAcademicClasses'),
+    librarySource.indexOf('export async function bulkCreateAcademicArmTemplates')
+  );
+  assert.match(bulkClassSource, /legacyClassWrite\(projected, record, 'class', scope\)/);
+  const bulkArmSource = librarySource.slice(
+    librarySource.indexOf('export async function bulkApplyAcademicArmTemplates'),
+    librarySource.indexOf('export async function bulkApplyAcademicSubjects')
+  );
+  assert.match(bulkArmSource, /legacyClassWrite\(projected, schoolClass, 'class', scope\)/);
+  const archiveSource = librarySource.slice(
+    librarySource.indexOf('export async function archiveAcademicManagementRecord'),
+    librarySource.indexOf('export async function deleteAcademicManagementRecord')
+  );
+  assert.match(archiveSource, /legacyClassWrite\(state, archived, type, scope\)/);
+  const deleteSource = librarySource.slice(
+    librarySource.indexOf('export async function deleteAcademicManagementRecord'),
+    librarySource.indexOf('function academicOperationalViewForCapability')
+  );
+  assert.match(deleteSource, /if \(type === 'class' && scope\.legacyClassCompatibility\)/);
+  assert.match(deleteSource, /legacyClassWrite\(projected, schoolClass, 'class', scope\)/);
+});
+
 test('subject teacher candidates are active Academics staff in the selected school section', () => {
   const candidates = academicSubjectTeacherCandidates([
     { Username: 'academics-all', Department: 'Academics', Active: true, SchoolSectionAccess: 'All' },
@@ -842,7 +892,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
   assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260917-card-search/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260917-desktop-pairing/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260917-remote-desktop-approval/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {
