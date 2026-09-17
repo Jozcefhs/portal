@@ -302,6 +302,7 @@ function renderTenantPool() {
   document.getElementById('tenantTargetOrganization').value = Number(policy.TargetReadyPerEdition?.organization || 2);
   document.getElementById('tenantDefaultRegion').value = policy.DefaultRegion || 'africa-south1';
   document.getElementById('tenantProjectPrefix').value = policy.ProjectPrefix || 'dynamax-tenant';
+  document.getElementById('tenantPrecreatedProjectIds').value = (policy.PrecreatedProjectIds || []).join('\n');
   document.getElementById('tenantSlotRegion').value ||= policy.DefaultRegion || 'africa-south1';
 }
 
@@ -775,7 +776,8 @@ document.getElementById('saveTenantPoolPolicy')?.addEventListener('click', async
           organization: document.getElementById('tenantTargetOrganization').value
         },
         DefaultRegion: document.getElementById('tenantDefaultRegion').value,
-        ProjectPrefix: document.getElementById('tenantProjectPrefix').value
+        ProjectPrefix: document.getElementById('tenantProjectPrefix').value,
+        PrecreatedProjectIds: document.getElementById('tenantPrecreatedProjectIds').value
       }
     });
     await loadTenantPool(data.message);

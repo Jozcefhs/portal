@@ -62,7 +62,7 @@ The workflow is `.github/workflows/provision-tenant-pool.yml`. Add the following
 - `DYNAMAX_PROVISION_SERVICE_ACCOUNT`: service-account email used only by the provisioner.
 - `DYNAMAX_PROVISION_PROJECT_ID`: Google project that owns the Workload Identity configuration.
 - `DYNAMAX_GCP_BILLING_ACCOUNT`: billing account linked to new tenant projects.
-- `DYNAMAX_GCP_PARENT`: optional `folders/123...` or `organizations/123...` parent.
+- `DYNAMAX_GCP_PARENT`: `folders/123...` or `organizations/123...` parent used to create projects automatically. It may be omitted only when unused projects are explicitly listed in the central pool settings.
 - `DYNAMAX_TENANT_REGION`: Firestore region, for example `eur3`.
 - `DYNAMAX_TENANT_PROJECT_PREFIX`: short lowercase prefix; default is `dynamax-tenant`.
 - `TENANT_POOL_AUTOMATION_ENABLED`: keep `false` until a dry run and one live project both succeed; set `true` to let the scheduled worker process queued requests.
@@ -74,6 +74,8 @@ Add these repository secrets:
 - `CLOUDFLARE_API_TOKEN`: account-scoped token with **Pages Write**. Do not use the Global API key.
 
 The GitHub provisioner identity needs permission to create projects under the chosen parent, link the billing account, enable services, add Firebase, create Firestore databases and indexes, manage the tenant runtime service account and create its key. A practical initial role set is Project Creator on the parent, Billing Account User on the billing account, plus Service Usage Admin, Firebase Admin, Cloud Datastore Owner, Project IAM Admin, Service Account Admin and Service Account Key Admin in the provisioning boundary. Reduce this to a reviewed custom role after the first successful rollout.
+
+Google service accounts cannot create projects under **No organization**. If the platform Google account has no organisation or folder, create a small inventory of empty projects with the signed-in Google user, then open **Dynamax administration -> Plans and pricing -> Ready project pool -> Pool settings** and add each project ID under **Pre-created project IDs**. These identifiers are not secrets. The scheduled worker selects only IDs on that explicit list, ignores every project already registered in the tenant pool, verifies that Google Cloud still exposes the project, and then configures it for the oldest waiting request. Remove retired or data-bearing projects from the list; assigned projects are never reused.
 
 The runtime service account created inside each tenant receives only Cloud Datastore User and Firebase Cloud Messaging Admin. Its private key is written directly to that tenant's Pages encrypted variables and the temporary workflow file is deleted.
 

@@ -16,6 +16,7 @@ test('pool policy maintains a safe ready target for every organisation edition',
     TargetReadyPerEdition: { school: 2, faith: 2, organization: 2 },
     DefaultRegion: 'africa-south1',
     ProjectPrefix: 'dynamax-tenant',
+    PrecreatedProjectIds: [],
     UpdatedAt: ''
   });
   assert.deepEqual(normalizeTenantPoolPolicy({
@@ -23,6 +24,9 @@ test('pool policy maintains a safe ready target for every organisation edition',
     DefaultRegion: 'us-central1',
     ProjectPrefix: 'My Project Pool'
   }).TargetReadyPerEdition, { school: 4, faith: 2, organization: 20 });
+  assert.deepEqual(normalizeTenantPoolPolicy({
+    PrecreatedProjectIds: 'DYNAMAX-TENANT-001, invalid project\ndynamax-tenant-002\ndynamax-tenant-001'
+  }).PrecreatedProjectIds, ['dynamax-tenant-001', 'dynamax-tenant-002']);
 });
 
 test('public project slots expose assignment state without credentials', () => {
@@ -68,6 +72,8 @@ test('provisioning plans are repeatable and can resume from a user-precreated pr
   assert.match(provisionerSource, /createHash\('sha256'\)\.update\(`\$\{requestReference\}:\$\{sequence\}`\)/);
   assert.match(provisionerSource, /gcloud', \['projects', 'describe'/);
   assert.match(provisionerSource, /Using pre-created Google Cloud project/);
+  assert.match(provisionerSource, /DYNAMAX_PRECREATED_PROJECT_IDS/);
+  assert.match(provisionerSource, /Pre-created Google Cloud project .* is no longer accessible/);
   assert.match(provisionerSource, /DYNAMAX_TENANT_PROVISIONER_SECRET/);
   assert.match(provisionerSource, /DYNAMAX_GCP_BILLING_REQUIRED/);
   assert.match(provisionerSource, /TENANT_CONTROL_PLANE_PRIVATE_KEY/);

@@ -196,6 +196,10 @@ test('the tenant pool provisioner is opt-in, uses WIF and creates isolated deplo
   assert.match(tenantProvisioner, /gcloud projects describe/);
   assert.match(tenantProvisioner, /gcloud organizations list --format='value\(name\)'/);
   assert.match(tenantProvisioner, /Automatically discovered Google Cloud parent/);
+  assert.match(tenantProvisioner, /PRECREATED_IDS_BASE64/);
+  assert.match(tenantProvisioner, /REGISTERED_IDS_BASE64/);
+  assert.match(tenantProvisioner, /Using .* explicitly approved, pre-created Google Cloud project/);
+  assert.match(tenantProvisioner, /index\(\$project_id\) != null/);
   assert.match(tenantProvisioner, /DYNAMAX_GCP_PARENT=.*GITHUB_ENV/);
   assert.match(tenantProvisioner, /claim-next/);
   assert.match(tenantProvisioner, /--arg reference "\$\{INSPECTED_REFERENCE\}"/);

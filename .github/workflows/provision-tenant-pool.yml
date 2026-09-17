@@ -80,6 +80,7 @@ jobs:
           set -euo pipefail
           if [[ -n "${MANUAL_TENANT_PROJECT_ID}" ]]; then
             request="$(jq -nc --arg reference "PRECHECK-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --arg edition "${MANUAL_TENANT_EDITION}" --arg project_id "${MANUAL_TENANT_PROJECT_ID}" '{Reference:$reference,Edition:$edition,Mode:"branded",Count:1,RequestedProjectId:$project_id,Status:"Pending",RequestedBy:"GitHub exact-project preflight"}')"
+            response='{}'
           else
             payload="$(jq -nc --arg password "${DYNAMAX_TENANT_PROVISIONER_SECRET}" '{password:$password,action:"load"}')"
             response="$(curl --fail-with-body --silent --show-error "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" -H 'Content-Type: application/json' --data "${payload}")"
@@ -96,6 +97,8 @@ jobs:
           printf 'edition=%s\n' "$(jq -r '.Edition' <<<"${request}")" >> "${GITHUB_OUTPUT}"
           printf 'count=%s\n' "$(jq -r '.Count' <<<"${request}")" >> "${GITHUB_OUTPUT}"
           printf 'requested_project_id=%s\n' "$(jq -r '.RequestedProjectId // empty' <<<"${request}")" >> "${GITHUB_OUTPUT}"
+          printf 'precreated_ids_base64=%s\n' "$(jq -c '.policy.PrecreatedProjectIds // []' <<<"${response}" | base64 -w 0)" >> "${GITHUB_OUTPUT}"
+          printf 'registered_ids_base64=%s\n' "$(jq -c '[.slots[]?.FirebaseProjectId | select(length > 0)]' <<<"${response}" | base64 -w 0)" >> "${GITHUB_OUTPUT}"
 
       - name: Validate provisioning infrastructure
         if: ${{ steps.inspect.outputs.has_request == 'true' && env.APPLY_CHANGES == 'true' }}
@@ -137,6 +140,9 @@ jobs:
         shell: bash
         env:
           TARGET_TENANT_PROJECT_ID: ${{ steps.inspect.outputs.requested_project_id }}
+          REQUESTED_PROJECT_COUNT: ${{ steps.inspect.outputs.count }}
+          PRECREATED_IDS_BASE64: ${{ steps.inspect.outputs.precreated_ids_base64 }}
+          REGISTERED_IDS_BASE64: ${{ steps.inspect.outputs.registered_ids_base64 }}
         run: |
           set -euo pipefail
           if [[ -n "${TARGET_TENANT_PROJECT_ID}" ]] && gcloud projects describe "${TARGET_TENANT_PROJECT_ID}" --format='value(projectId)' >/dev/null 2>&1; then
@@ -160,8 +166,30 @@ jobs:
               echo "Automatically discovered Google Cloud parent ${parent}." >> "${GITHUB_STEP_SUMMARY}"
             fi
           fi
+          if [[ -z "${parent}" ]]; then
+            precreated_json="$(printf '%s' "${PRECREATED_IDS_BASE64}" | base64 --decode)"
+            registered_json="$(printf '%s' "${REGISTERED_IDS_BASE64}" | base64 --decode)"
+            required_count="$((REQUESTED_PROJECT_COUNT + 0))"
+            selected_projects=()
+            while IFS= read -r project_id; do
+              [[ "${project_id}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]] || continue
+              if jq -e --arg project_id "${project_id}" 'index($project_id) != null' <<<"${registered_json}" >/dev/null; then
+                continue
+              fi
+              if gcloud projects describe "${project_id}" --format='value(projectId)' >/dev/null 2>&1; then
+                selected_projects+=("${project_id}")
+              fi
+              (( ${#selected_projects[@]} >= required_count )) && break
+            done < <(jq -r '.[]' <<<"${precreated_json}")
+            if (( ${#selected_projects[@]} >= required_count )); then
+              selected_csv="$(IFS=,; echo "${selected_projects[*]}")"
+              echo "DYNAMAX_PRECREATED_PROJECT_IDS=${selected_csv}" >> "${GITHUB_ENV}"
+              echo "Using ${#selected_projects[@]} explicitly approved, pre-created Google Cloud project(s): ${selected_csv}." >> "${GITHUB_STEP_SUMMARY}"
+              exit 0
+            fi
+          fi
           if [[ ! "${parent}" =~ ^(organizations|folders)/[0-9]+$ ]]; then
-            echo '::error::A tenant is waiting, but no unique Google Cloud organisation or folder is available. Set the DYNAMAX_GCP_PARENT Actions repository variable to organizations/NUMBER or folders/NUMBER, or supply an existing project ID for manual provisioning.'
+            echo '::error::A tenant is waiting, but no Google Cloud project source is available. Set DYNAMAX_GCP_PARENT to organizations/NUMBER or folders/NUMBER, or add enough unused project IDs under Plans and pricing -> Ready project pool -> Pool settings.'
             exit 1
           fi
           echo "DYNAMAX_GCP_PARENT=${parent}" >> "${GITHUB_ENV}"

@@ -2535,7 +2535,10 @@ html[data-theme="dark"] .onboarding-progress li.is-complete > span { background:
 .tenant-pool-actions-grid { display: grid; grid-template-columns: repeat(5, minmax(130px, 1fr)) auto; gap: .65rem; align-items: end; margin-bottom: .8rem; }
 .tenant-pool-actions-grid label { min-width: 0; color: #38536c; font-size: 10px; font-weight: 800; }
 .tenant-pool-actions-grid input,
-.tenant-pool-actions-grid select { width: 100%; min-height: 39px; margin-top: .25rem; font-size: 11px; }
+.tenant-pool-actions-grid select,
+.tenant-pool-actions-grid textarea { width: 100%; min-height: 39px; margin-top: .25rem; font-size: 11px; }
+.tenant-pool-actions-grid textarea { resize: vertical; }
+.tenant-policy-controls .tenant-precreated-projects { grid-column: 1 / -2; }
 .tenant-pool-actions-grid button { width: fit-content; min-height: 39px; white-space: nowrap; }
 .tenant-pool-table-wrap { max-width: 100%; overflow: auto; border: 1px solid #d5e0ea; border-radius: 11px; }
 .tenant-pool-table { width: 100%; min-width: 760px; border-collapse: collapse; background: #fff; font-size: 10px; }

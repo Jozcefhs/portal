@@ -46,6 +46,20 @@ function positiveInteger(value, fallback = 1, maximum = 100) {
   return Number.isFinite(number) && number > 0 ? Math.min(maximum, number) : fallback;
 }
 
+function precreatedProjectEntries(value) {
+  return (Array.isArray(value)
+    ? value
+    : clean(value).split(/[\r\n,]+/))
+    .map((entry) => lower(entry))
+    .filter(Boolean);
+}
+
+function precreatedProjectIds(value) {
+  return [...new Set(precreatedProjectEntries(value)
+    .filter((entry) => /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(entry)))]
+    .slice(0, 100);
+}
+
 function poolEdition(value) {
   return normalizeOrganizationEdition(value);
 }
@@ -83,6 +97,7 @@ export function normalizeTenantPoolPolicy(value = {}) {
     },
     DefaultRegion: clean(value.DefaultRegion || 'africa-south1'),
     ProjectPrefix: safeKey(value.ProjectPrefix, 'dynamax-tenant').slice(0, 18),
+    PrecreatedProjectIds: precreatedProjectIds(value.PrecreatedProjectIds),
     UpdatedAt: clean(value.UpdatedAt)
   };
 }
@@ -94,6 +109,13 @@ export async function loadTenantPoolPolicy(platformEnv) {
 }
 
 export async function saveTenantPoolPolicy(platformEnv, value = {}) {
+  const invalidProjectIds = precreatedProjectEntries(value.PrecreatedProjectIds)
+    .filter((entry) => !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(entry));
+  if (invalidProjectIds.length) {
+    const error = new Error(`Invalid pre-created Google Cloud project ID: ${invalidProjectIds[0]}. Use one project ID per line.`);
+    error.status = 400;
+    throw error;
+  }
   const policy = {
     ...normalizeTenantPoolPolicy(value),
     UpdatedAt: new Date().toISOString(),

@@ -103,9 +103,10 @@
             <label>Ready other organisations<input id="tenantTargetOrganization" type="number" min="1" max="20" value="2"></label>
             <label>Default region<input id="tenantDefaultRegion" value="africa-south1"></label>
             <label>Project prefix<input id="tenantProjectPrefix" value="dynamax-tenant"></label>
+            <label class="tenant-precreated-projects">Pre-created project IDs<textarea id="tenantPrecreatedProjectIds" rows="3" placeholder="dynamax-tenant-001&#10;dynamax-tenant-002"></textarea></label>
             <button id="saveTenantPoolPolicy" type="button">Save pool settings</button>
           </div>
-          <p class="plan-entitlement-help">The project ID is permanent. Ready-pool projects use generic IDs; choose branded mode only when the subscriber requires a specific available project ID.</p>
+          <p class="plan-entitlement-help">The project ID is permanent. If Google Cloud shows <strong>No organization</strong>, create empty projects in Google Cloud first and list their IDs here. The worker consumes only listed projects that are not already registered; it never reuses an assigned tenant project. Leave this inventory blank when the provisioner can create projects under a Google organisation or folder.</p>
         </div>
         <p id="tenantPoolStatus" class="status" aria-live="polite"></p>
       </section>

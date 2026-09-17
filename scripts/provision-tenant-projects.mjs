@@ -24,6 +24,11 @@ const requestReference = clean(request.Reference);
 const edition = normalizeEdition(request.Edition);
 const mode = lower(request.Mode) === 'branded' ? 'branded' : 'pool';
 const count = mode === 'branded' ? 1 : boundedInteger(request.Count, 1, 20);
+const precreatedProjectIds = clean(process.env.DYNAMAX_PRECREATED_PROJECT_IDS)
+  .split(',')
+  .map((value) => lower(value))
+  .filter(Boolean);
+const precreatedProjectSet = new Set(precreatedProjectIds);
 const npxCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 const deployDirectory = resolve('.tenant-pages-deploy');
 const createdProjects = [];
@@ -87,6 +92,12 @@ function requireConfiguration() {
   if (!cloudflareAccountId) missing.push('CLOUDFLARE_ACCOUNT_ID');
   if (!cloudflareToken) missing.push('CLOUDFLARE_API_TOKEN');
   if (applyChanges && billingRequired && !billingAccount) missing.push('DYNAMAX_GCP_BILLING_ACCOUNT');
+  if (precreatedProjectIds.some((projectId) => !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(projectId))) {
+    missing.push('valid DYNAMAX_PRECREATED_PROJECT_IDS');
+  }
+  if (precreatedProjectIds.length && precreatedProjectIds.length < count) {
+    missing.push(`${count} pre-created project IDs`);
+  }
   if (missing.length) throw new Error(`Missing provisioning configuration: ${missing.join(', ')}.`);
 }
 
@@ -321,6 +332,9 @@ async function provisionProject(projectId) {
     allowFailure: true
   })) === projectId;
   if (!existingProject) {
+    if (precreatedProjectSet.has(projectId)) {
+      throw new Error(`Pre-created Google Cloud project ${projectId} is no longer accessible. The queued request was not assigned to a different project.`);
+    }
     const createArgs = ['projects', 'create', projectId, `--name=${displayName}`, '--quiet'];
     if (projectParent.startsWith('folders/')) createArgs.push(`--folder=${projectParent.slice('folders/'.length)}`);
     if (projectParent.startsWith('organizations/')) createArgs.push(`--organization=${projectParent.slice('organizations/'.length)}`);
@@ -411,7 +425,9 @@ async function provisionProject(projectId) {
 
 async function main() {
   requireConfiguration();
-  const plannedIds = Array.from({ length: count }, (_, index) => generatedProjectId(index + 1));
+  const plannedIds = precreatedProjectIds.length
+    ? precreatedProjectIds.slice(0, count)
+    : Array.from({ length: count }, (_, index) => generatedProjectId(index + 1));
   process.stdout.write(`${applyChanges ? 'Provisioning' : 'Dry run for'} ${plannedIds.length} ${editionLabel(edition)} project(s): ${plannedIds.join(', ')}\n`);
   if (!applyChanges) {
     writeFileSync('tenant-provision-result.json', JSON.stringify({ dryRun: true, requestReference, plannedIds }, null, 2));
