@@ -89,6 +89,11 @@ test('executive Records Desk access includes safe staff search without staff sec
   assert.equal(seniorPastor.canViewStaffSecurity, false);
 });
 
+test('executive student directory searches card IDs without returning them', () => {
+  assert.match(executiveSource, /\[row\.WalletCardId, row\.walletCardId, row\.CardId, row\.cardId\]/);
+  assert.match(executiveSource, /\.map\(\(\{ __searchText: _searchText, \.\.\.row \}\) => row\)/);
+});
+
 test('executive staff counts and directory never cross organisation editions', () => {
   const faithScope = { edition: 'faith', branchId: 'main', schoolSection: '' };
   const faithExecutive = { edition: 'faith', username: 'faith.admin' };

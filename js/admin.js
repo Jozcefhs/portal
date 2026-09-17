@@ -4562,7 +4562,7 @@ function renderDepartmentOperations(section, data) {
     <section class="config-card"><header class="config-card-heading"><div><small>Patient care</small><h3>Record a clinic visit</h3></div></header>
       <form id="clinicRecordForm" class="workflow-form workflow-form-grid config-form">
         <label>Date<input type="date" name="Date" value="${new Date().toISOString().slice(0, 10)}" required></label>
-        <label>Admission number<input name="AdmissionNo" required placeholder="Finds the enrolled student"></label>
+        <label>Admission number or card ID<input name="AdmissionNo" required placeholder="Enter admission number or tap a card"></label>
         <label>Complaint<textarea name="Complaint" required></textarea></label><label>Treatment<textarea name="Treatment"></textarea></label>
         <label>Disposition<select name="Disposition"><option>Treated and returned</option><option>Resting in clinic</option><option>Sent home</option><option>Referred to hospital</option></select></label>
         <label>Notes<input name="Notes"></label>
@@ -4572,7 +4572,7 @@ function renderDepartmentOperations(section, data) {
     ${section === 'clinic' ? `
     <section class="config-card department-primary-workflow"><header class="config-card-heading"><div><small>Parent communication</small><h3>Email a clinic report</h3></div></header>
       <form id="clinicReportForm" class="workflow-form workflow-form-grid config-form">
-        <label>Admission number<input name="AccountRef" value="${escapeHtml(clinicReport?.AccountRef || '')}" required></label>
+        <label>Admission number or card ID<input name="AccountRef" value="${escapeHtml(clinicReport?.AccountRef || '')}" required placeholder="Enter admission number or tap a card"></label>
         <label>Subject<input name="Subject" value="${escapeHtml(clinicReport ? `Clinic report - ${clinicReport.StudentName}` : 'Clinic Report')}"></label>
         <label class="workflow-wide-field">Message<textarea name="Message">Please find the clinic report below.</textarea></label>
         ${clinicReport ? `<div class="workflow-wide-field report-recipient-preview"><strong>${escapeHtml(clinicReport.StudentName)}</strong><span>${escapeHtml(clinicReport.ClassName)} &middot; ${escapeHtml(clinicReport.ParentEmail)} &middot; ${clinicReport.RecordCount} clinic record(s)</span></div>` : ''}
@@ -9107,7 +9107,7 @@ function renderRecordsDesk() {
       <div class="records-desk-heading"><span aria-hidden="true">\u{1F5C2}</span><div><small>Universal lookup</small><h2>Records Desk</h2></div></div>
       <form id="recordsDeskSearchForm" class="records-desk-search" role="search">
         <label for="recordsDeskSearch">Search permitted records</label>
-        <div><span aria-hidden="true">\u{1F50D}</span><input id="recordsDeskSearch" name="query" type="search" minlength="3" maxlength="120" autocomplete="off" placeholder="Name, ID, phone, email..." value="${escapeHtml(recordsDeskState.query)}"><button type="submit">Search</button></div>
+        <div><span aria-hidden="true">\u{1F50D}</span><input id="recordsDeskSearch" name="query" type="search" minlength="3" maxlength="120" autocomplete="off" placeholder="Name, ID, card, phone, email..." value="${escapeHtml(recordsDeskState.query)}"><button type="submit">Search</button></div>
       </form>
       ${faceLookupButton}
       <nav class="records-desk-type-list" aria-label="Record type filters">
@@ -9582,7 +9582,7 @@ function renderExecutiveDirectory() {
       <div class="executive-directory-main">
         <form id="executiveDirectorySearch" class="executive-directory-search" role="search">
           <label>Search ${escapeHtml(types.find((type) => type.id === executiveDirectoryType)?.label || 'directory')}
-            <span><input name="query" value="${escapeHtml(executiveDirectoryQuery)}" placeholder="Name, ID, email, phone or class"><button type="submit">Search</button></span>
+            <span><input name="query" value="${escapeHtml(executiveDirectoryQuery)}" placeholder="${executiveDirectoryType === 'student' ? 'Name, admission number, card, email or class' : 'Name, ID, email, phone or class'}"><button type="submit">Search</button></span>
           </label>
         </form>
         <p id="executiveDirectoryStatus" class="status"></p>
@@ -10202,7 +10202,8 @@ function bindStudentConductStudentSearch(data) {
     ref: clean(row.StudentRef),
     name: clean(row.StudentName),
     className: clean(row.ClassName),
-    searchText: lower([row.StudentName, row.StudentRef, row.ClassName].filter(Boolean).join(' '))
+    cardId: clean(row.WalletCardId),
+    searchText: lower([row.StudentName, row.StudentRef, row.WalletCardId, row.ClassName].filter(Boolean).join(' '))
   })).filter((row) => row.ref);
   search.disabled = false;
   searchButton.disabled = false;
@@ -10282,7 +10283,7 @@ function renderStudentConduct(selected = {}) {
           ${selectedClosed ? '' : `<div class="student-conduct-student-search">
             <label for="studentConductStudentSearch">Find student</label>
             <div class="student-conduct-student-search-controls">
-              <input id="studentConductStudentSearch" type="search" placeholder="Name, admission no. or class" autocomplete="off">
+              <input id="studentConductStudentSearch" type="search" placeholder="Name, admission no., card or class" autocomplete="off">
               <button type="button" id="studentConductStudentSearchButton">Search</button>
             </div>
             <small id="studentConductStudentSearchStatus" aria-live="polite"></small>
@@ -10422,7 +10423,7 @@ function academicCheckboxChoices(name, options = [], idPrefix = name) {
   return options.length
     ? options.map((option, index) => {
       const inputId = `${prefix}-${index + 1}`;
-      return `<label class="academic-checkbox-option${option.disabled ? ' academic-subject-locked' : ''}" for="${escapeHtml(inputId)}"${option.disabled ? ' aria-disabled="true"' : ''}><input type="checkbox" id="${escapeHtml(inputId)}" name="${escapeHtml(name)}" value="${escapeHtml(option.value)}"${option.disabled ? ' disabled' : ''}><span>${escapeHtml(option.label)}</span></label>`;
+      return `<label class="academic-checkbox-option${option.disabled ? ' academic-subject-locked' : ''}" for="${escapeHtml(inputId)}"${option.disabled ? ' aria-disabled="true"' : ''}${option.searchText ? ` data-academic-search-text="${escapeHtml(option.searchText)}"` : ''}><input type="checkbox" id="${escapeHtml(inputId)}" name="${escapeHtml(name)}" value="${escapeHtml(option.value)}"${option.disabled ? ' disabled' : ''}><span>${escapeHtml(option.label)}</span></label>`;
     }).join('')
     : '<span class="academic-checkbox-empty">No choices are currently available.</span>';
 }
@@ -10705,7 +10706,7 @@ function filterAcademicStudentCandidateOptions(form) {
   const query = clean(search.value).toLowerCase();
   let visible = 0;
   field.querySelectorAll('.academic-checkbox-option').forEach((option) => {
-    const matches = !query || clean(option.textContent).toLowerCase().includes(query);
+    const matches = !query || clean(option.dataset.academicSearchText || option.textContent).toLowerCase().includes(query);
     option.hidden = !matches;
     if (matches) visible += 1;
   });
@@ -10760,7 +10761,11 @@ function syncAcademicStudentPlacementForm(form, changedName = '') {
   }
   const candidateField = form.querySelector('[data-academic-checkbox-purpose="student-arm-candidates"]');
   if (candidateField) {
-    const options = candidates.map((row) => ({ value: row.StudentRef, label: `${row.StudentName} (${row.StudentRef})` }));
+    const options = candidates.map((row) => ({
+      value: row.StudentRef,
+      label: `${row.StudentName} (${row.StudentRef})`,
+      searchText: [row.StudentName, row.StudentRef, row.WalletCardId].filter(Boolean).join(' ')
+    }));
     candidateField.querySelector('.academic-checkbox-options').innerHTML = academicCheckboxChoices('StudentRefs', options, 'bulk-allocation-students');
     candidateField._academicShiftAnchor = null;
     candidateField.dataset.academicCandidateSummary = summary;
@@ -11104,7 +11109,11 @@ function academicClassroomWorkspace(data, rows) {
   if (selectedArm && selectedClass) {
     const seniorNeedsDepartment = selectedStage === 'senior-secondary' && !selectedDepartment;
     const { students, candidates } = academicStudentAllocationCandidates(sessionId, termId, selectedClass.ClassId);
-    const candidateOptions = candidates.map((row) => ({ value: row.StudentRef, label: `${row.StudentName} (${row.StudentRef})` }));
+    const candidateOptions = candidates.map((row) => ({
+      value: row.StudentRef,
+      label: `${row.StudentName} (${row.StudentRef})`,
+      searchText: [row.StudentName, row.StudentRef, row.WalletCardId].filter(Boolean).join(' ')
+    }));
     const candidateSummary = seniorNeedsDepartment
       ? 'Assign the classroom department before adding Senior Secondary students.'
       : `${candidates.length} of ${students.length} ${selectedClass.Name} ${students.length === 1 ? learner.singular : learner.plural} remain unassigned for this period. Select up to 100. Shift-click to select a range.`;
@@ -11116,7 +11125,7 @@ function academicClassroomWorkspace(data, rows) {
       <input type="hidden" name="ArmId" value="${escapeHtml(selectedArm.ArmId)}">
       <input type="hidden" name="DepartmentId" value="${escapeHtml(selectedArm.DepartmentId || '')}">
       <div class="academic-management-editor-heading"><div><small>Classroom ${learner.plural}</small><h3>Assign ${learner.plural}</h3><p class="muted">Only unassigned ${learner.plural} whose existing class is ${escapeHtml(selectedClass.Name)} are shown.</p></div></div>
-      <label>Find ${learner.singular}<input type="search" data-academic-student-candidate-search placeholder="Search by name or admission number" autocomplete="off"><small>Search does not clear ${learner.plural} already selected.</small></label>
+      <label>Find ${learner.singular}<input type="search" data-academic-student-candidate-search placeholder="Search by name, admission number or card" autocomplete="off"><small>Search does not clear ${learner.plural} already selected.</small></label>
       ${academicCheckboxField({ name: 'StudentRefs', label: learner.singular === 'pupil' ? 'Pupils ready for this classroom' : 'Students ready for this classroom', options: candidateOptions, required: true, max: 100, idPrefix: 'classroom-students', purpose: 'student-arm-candidates', help: candidateSummary })}
       <label>Allocation note<input name="Reason" placeholder="Classroom allocation"></label>
       <button type="submit"${seniorNeedsDepartment || !candidates.length ? ' disabled' : ''}>Assign selected ${learner.plural}</button>
@@ -11670,7 +11679,7 @@ function academicStudentWorkspace(data, rows) {
       </section>
       <section class="academic-management-editor academic-student-allocation-register">
         <div class="academic-management-editor-heading"><div><small>Class-specific register</small><h3>Unassigned ${learner.plural}</h3><p class="muted">Select one ${learner.singular} or several ${learner.plural}. The list refreshes immediately after each successful allocation.</p></div></div>
-        <label>Find ${learner.singular}<input type="search" data-academic-student-candidate-search placeholder="Search by name or admission number" autocomplete="off"><small>Search narrows this register without clearing ${learner.plural} already selected.</small></label>
+        <label>Find ${learner.singular}<input type="search" data-academic-student-candidate-search placeholder="Search by name, admission number or card" autocomplete="off"><small>Search narrows this register without clearing ${learner.plural} already selected.</small></label>
         ${academicCheckboxField({ name: 'StudentRefs', label: learner.singular === 'pupil' ? 'Pupils awaiting an arm' : 'Students awaiting an arm', options: [], required: true, max: 100, idPrefix: 'bulk-allocation-students', purpose: 'student-arm-candidates', help: `Choose the session, term, class and arm to display unassigned ${learner.plural}. Select one checkbox, then Shift-click another to select the range.` })}
       </section>
     </form>
@@ -12624,7 +12633,7 @@ function academicSessionAnalysisWorkspace(data) {
       <label>Result completeness<select name="completeness"><option value="">Complete and incomplete</option><option value="complete"${academicAnalysisFilters.completeness === 'complete' ? ' selected' : ''}>Complete only</option><option value="incomplete"${academicAnalysisFilters.completeness === 'incomplete' ? ' selected' : ''}>Incomplete only</option></select></label>
       <label>Minimum score<input name="minimumAverage" type="number" min="0" max="100" step="0.1" value="${escapeHtml(academicAnalysisFilters.minimumAverage)}" placeholder="0"></label>
       <label>Maximum score<input name="maximumAverage" type="number" min="0" max="100" step="0.1" value="${escapeHtml(academicAnalysisFilters.maximumAverage)}" placeholder="100"></label>
-      <label class="academic-analysis-search">Search<input name="query" type="search" value="${escapeHtml(academicAnalysisFilters.query)}" placeholder="Name, admission number, class or outcome"></label>
+      <label class="academic-analysis-search">Search<input name="query" type="search" value="${escapeHtml(academicAnalysisFilters.query)}" placeholder="Name, admission number, card, class or outcome"></label>
     </div>
     <div class="academic-analysis-filter-actions"><button type="submit">Apply filters</button><span>${analysis.Rows.length.toLocaleString()} matching student${analysis.Rows.length === 1 ? '' : 's'} · ${escapeHtml(analysis.Period)}</span></div>
   </form>`;

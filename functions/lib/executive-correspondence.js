@@ -666,7 +666,7 @@ function searchText(row) {
   return Object.values(row).map(clean).join(' ').toLowerCase();
 }
 
-function searchResult(type, id, name, subtitle, email, address, row, tokenValues = {}) {
+function searchResult(type, id, name, subtitle, email, address, row, tokenValues = {}, searchValues = []) {
   return {
     id: clean(id),
     type,
@@ -676,7 +676,9 @@ function searchResult(type, id, name, subtitle, email, address, row, tokenValues
     address: boundText(address, 1000),
     branchId: lower(row?.BranchId || 'main') || 'main',
     schoolSection: clean(row?.SchoolSection || row?.SchoolSectionAccess),
-    tokenValues: normalizeTokenValues(tokenValues)
+    tokenValues: normalizeTokenValues(tokenValues),
+    // Removed before returning the result: searchable, but never displayed.
+    __searchText: searchValues.map(clean).filter(Boolean).join(' ').toLowerCase()
   };
 }
 
@@ -720,7 +722,8 @@ async function searchDirectory(env, body, capabilities, scope, user = {}) {
             CLASS: [row.ClassName, row.ClassArm].map(clean).filter(Boolean).join(' '),
             ADMISSION_DATE: row.AdmissionDate,
             ACADEMIC_SESSION: row.AcademicSession
-          }
+          },
+          [row.WalletCardId, row.walletCardId, row.CardId, row.cardId]
         ));
     }
     if (type === 'staff') {
@@ -778,7 +781,8 @@ async function searchDirectory(env, body, capabilities, scope, user = {}) {
   const results = groups.flat()
     .filter((row) => row.id && terms.every((term) => searchText(row).includes(term)))
     .sort((left, right) => left.name.localeCompare(right.name))
-    .slice(0, 40);
+    .slice(0, 40)
+    .map(({ __searchText: _searchText, ...row }) => row);
   return { query, availableTypes: available, results };
 }
 

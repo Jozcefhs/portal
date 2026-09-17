@@ -745,6 +745,10 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /One or up to 100 at once/);
   assert.match(adminSource, /function academicStudentAllocationCandidates/);
   assert.match(adminSource, /data-academic-checkbox-purpose="student-arm-candidates"/);
+  assert.match(adminSource, /data-academic-search-text/);
+  assert.match(adminSource, /row\.StudentName, row\.StudentRef, row\.WalletCardId/);
+  assert.match(adminSource, /Search by name, admission number or card/);
+  assert.match(librarySource, /WalletCardId: clean\(row\.WalletCardId/);
   assert.match(adminSource, /remain unassigned for this period/);
   assert.match(adminSource, /Students awaiting an arm/);
   assert.match(adminSource, /function academicBulkSetupWorkspace/);
@@ -837,8 +841,8 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /showAcademicManagementTask\('students', 'transfer'\)/);
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
-  assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260909-roster-facets/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260916-split-cbt-web/);
+  assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260917-card-search/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260917-card-search/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

@@ -56,7 +56,7 @@ function analysisInput() {
   return {
     SessionId: 'session-1',
     Students: [
-      { StudentRef: 'DCA/001', StudentName: 'Ada Student', Gender: 'Female', StudentType: 'Boarding' },
+      { StudentRef: 'DCA/001', StudentName: 'Ada Student', WalletCardId: 'CARD-ADA-001', Gender: 'Female', StudentType: 'Boarding' },
       { StudentRef: 'DCA/002', StudentName: 'Ben Student', Gender: 'Male', StudentType: 'Day' }
     ],
     Classes: [{ ClassId: 'class-10', Name: 'Grade 10', SchoolStage: 'senior-secondary' }],
@@ -122,6 +122,11 @@ test('combined demographic, subject, teacher, status and score filters change th
     period: 'annual', attendanceBand: '50–74%', promotionOutcome: 'Repeated', classification: 'Fail'
   });
   assert.deepEqual(risk.Rows.map((row) => row.StudentRef), ['DCA/002']);
+});
+
+test('session analysis search accepts a student wallet card ID', () => {
+  const output = buildAcademicSessionAnalysis(analysisInput(), { period: 'annual', query: 'card-ada-001' });
+  assert.deepEqual(output.Rows.map((row) => row.StudentRef), ['DCA/001']);
 });
 
 test('term selection changes the source rows while retaining session trend analysis', () => {

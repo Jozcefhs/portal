@@ -103,11 +103,11 @@ function visibleStaffDirectoryRecord(row, user, requestedBranch = '') {
 
 function searchFields(type, capabilities) {
   const fields = [...(SEARCH_FIELDS[type] || [])];
+  if (type === 'students') {
+    fields.push('WalletCardId', 'walletCardId', 'CardId', 'cardId');
+  }
   if (type === 'students' && capabilities.canViewStudentContact) {
     fields.push('ParentPhone', 'ParentEmail');
-  }
-  if (type === 'students' && capabilities.canViewStudentWallet) {
-    fields.push('WalletCardId');
   }
   if (type === 'donors' && capabilities.canViewDonorNotes) fields.push('Notes');
   return fields;

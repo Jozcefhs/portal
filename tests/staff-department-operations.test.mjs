@@ -85,6 +85,11 @@ test('clinic reports use the parent email stored on the scoped student record', 
   assert.match(adminJs, /id="clinicReportForm"/);
 });
 
+test('clinic student lookup accepts either admission number or wallet card ID', () => {
+  assert.match(api, /findScopedStudent\(env, user, searchValue, searchValue\)/);
+  assert.match(adminJs, /Admission number or card ID/);
+});
+
 test('clinic, kitchen and restaurant market lists are emailed and audited without exposing credentials', () => {
   assert.match(api, /\['clinic', 'kitchen', 'restaurant'\]\.includes\(section\)/);
   assert.match(api, /Supplier Market List/);

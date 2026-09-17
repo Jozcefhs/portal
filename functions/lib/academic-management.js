@@ -1657,6 +1657,7 @@ function displayStudents(rows = [], classes = []) {
     ClassName: clean(row.ClassName || row.ClassAdmitted), ClassAdmitted: clean(row.ClassAdmitted),
     ClassArm: clean(row.ClassArm), SchoolSection: clean(row.SchoolSection),
     Gender: clean(row.Gender || row.gender), StudentType: clean(row.StudentType || row.studentType),
+    WalletCardId: clean(row.WalletCardId || row.walletCardId || row.CardId || row.cardId),
     PassportPhotoAvailable: Boolean(clean(
       row.documents?.PassportPhotograph?.url
       || row.DocPassportPhotographUrl

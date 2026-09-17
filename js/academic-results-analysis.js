@@ -152,6 +152,7 @@
       return {
         StudentRef: clean(membership.StudentRef),
         StudentName: clean(student.StudentName || student.DisplayName || membership.StudentName || membership.StudentRef),
+        WalletCardId: clean(student.WalletCardId || student.walletCardId || student.CardId || student.cardId),
         Gender: clean(student.Gender || membership.Gender || 'Not recorded'),
         StudentType: clean(student.StudentType || membership.StudentType || 'Not recorded'),
         ClassId: clean(membership.ClassId),
@@ -230,6 +231,7 @@
       return {
         ResultId: clean(result.CumulativeResultId || result.ResultId), StudentRef: clean(result.StudentRef),
         StudentName: clean(student.StudentName || student.DisplayName || result.StudentName || result.StudentRef),
+        WalletCardId: clean(student.WalletCardId || student.walletCardId || student.CardId || student.cardId),
         Gender: clean(student.Gender || result.Gender || 'Not recorded'),
         StudentType: clean(student.StudentType || result.StudentType || 'Not recorded'),
         ClassId: clean(result.ClassId), ClassName: clean(result.ClassName || labelFor(classIndex, result.ClassId, result.ClassId)),
@@ -271,7 +273,7 @@
       if (Number.isFinite(numericMinimum) && row.Score < numericMinimum) return false;
       if (Number.isFinite(numericMaximum) && row.Score > numericMaximum) return false;
       if (filters.query && !lower([
-        row.StudentName, row.StudentRef, row.ClassName, row.ArmName, row.DepartmentName,
+        row.StudentName, row.StudentRef, row.WalletCardId, row.ClassName, row.ArmName, row.DepartmentName,
         row.Status, row.Grade, row.PromotionOutcome
       ].join(' ')).includes(filters.query)) return false;
       return true;

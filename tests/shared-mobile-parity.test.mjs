@@ -10,7 +10,7 @@ const pageStyleVersions = new Map([
   ['plan-management.html', '20260830-dual-currency-pricing'],
   ['register-organization.html', '20260830-flex-module-layout']
 ]);
-const adminScriptVersion = '20260916-split-cbt-web';
+const adminScriptVersion = '20260917-card-search';
 const parentScriptVersion = '20260909-academic-report-workflow';
 const notificationScriptVersion = '20260913-branch-scope';
 const notificationStyleVersion = '20260804-read-efficiency';
@@ -119,7 +119,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v283-subscription-onboarding/);
+  assert.match(serviceWorker, /dynamax-v284-card-search/);
   assert.match(serviceWorker, /'\/verify-result\.html'/);
   assert.match(serviceWorker, /'\/js\/verify-result\.js'/);
   assert.match(serviceWorker, /'\/css\/school-landing\.css'/);

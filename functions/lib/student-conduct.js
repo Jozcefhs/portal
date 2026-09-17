@@ -212,7 +212,8 @@ async function listCases(env, user, body = {}) {
       StudentRef: clean(row.AdmissionNo || row.AccountRef || row.ApplicationReference || row.__id),
       StudentName: clean(row.DisplayName || row.ApplicantName || row.StudentName),
       ClassName: clean(row.ClassName),
-      ClassArm: clean(row.ClassArm)
+      ClassArm: clean(row.ClassArm),
+      WalletCardId: clean(row.WalletCardId || row.walletCardId || row.CardId || row.cardId)
     })).filter((row) => row.StudentRef).sort((a, b) => a.StudentName.localeCompare(b.StudentName))
   };
 }

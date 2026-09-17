@@ -172,8 +172,9 @@ async function recordMovement(env, section, body, user) {
 }
 
 async function saveClinicRecord(env, body, user) {
-  const student = await findScopedStudent(env, user, body.AdmissionNo || body.AccountRef);
-  if (!student) { const err = new Error('Find an enrolled student with a valid admission number before recording a clinic visit.'); err.status = 404; throw err; }
+  const searchValue = body.AdmissionNo || body.AccountRef || body.WalletCardId;
+  const student = await findScopedStudent(env, user, searchValue, searchValue);
+  if (!student) { const err = new Error('Find an enrolled student with a valid admission number or card ID before recording a clinic visit.'); err.status = 404; throw err; }
   const studentName = clean(student.DisplayName || student.StudentName || student.ApplicantName);
   const complaint = clean(body.Complaint);
   if (!complaint) { const err = new Error('Complaint is required.'); err.status = 400; throw err; }
@@ -257,7 +258,8 @@ function clinicHistory(records, student) {
 }
 
 async function prepareClinicReport(env, body, user) {
-  const student = await findScopedStudent(env, user, body.AccountRef || body.AdmissionNo);
+  const searchValue = body.AccountRef || body.AdmissionNo || body.WalletCardId;
+  const student = await findScopedStudent(env, user, searchValue, searchValue);
   if (!student) { const err = new Error('Student was not found in your branch and school section.'); err.status = 404; throw err; }
   const email = parentEmailFor(student);
   if (!email) { const err = new Error('No parent email is saved for this student.'); err.status = 400; throw err; }

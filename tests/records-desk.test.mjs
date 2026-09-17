@@ -128,6 +128,15 @@ test('student projections whitelist fields and keep credentials out of every res
   });
 });
 
+test('student record searches accept card aliases without exposing the card in search cards', () => {
+  assert.match(apiSource, /fields\.push\('WalletCardId', 'walletCardId', 'CardId', 'cardId'\)/);
+  assert.match(adminJs, /Name, ID, card, phone, email/);
+  const card = studentSearchCard({
+    AdmissionNo: 'DCA/26/001', DisplayName: 'Ada Grace', WalletCardId: '2159387502'
+  });
+  assert.doesNotMatch(JSON.stringify(card), /2159387502/);
+});
+
 test('student search and detail projections expose only safe passport availability metadata', () => {
   const row = {
     AdmissionNo: 'DCA/26/002',
