@@ -85,6 +85,8 @@ let staffApprovalAccounts = [];
 let staffRoleAccessData = null;
 let staffRoleAccessSelectedRole = '';
 let staffModulePreferencesData = null;
+let staffNameFormat = 'Surname, first name, middle name';
+let staffNameMigration = { migratable: 0, requiresReview: 0 };
 let canAssignStaffBranches = false;
 let humanResourcesData = null;
 let staffAttendanceReportFilters = null;
@@ -17445,6 +17447,44 @@ function staffMfaAccountLabel(username = '') {
   return `${methods.join(' + ')} • ${Number(account.recoveryCodesRemaining || 0)} recovery code${Number(account.recoveryCodesRemaining || 0) === 1 ? '' : 's'}`;
 }
 
+function staffNameFieldOrder(value = staffNameFormat) {
+  const supported = new Set(['first name', 'middle name', 'surname']);
+  const order = clean(value).toLowerCase().split(',').map(clean).filter((part) => supported.has(part));
+  return order.length ? order : ['surname', 'first name', 'middle name'];
+}
+
+function staffDisplayNameFromFields(fields = {}) {
+  const parts = {
+    'first name': clean(fields.FirstName),
+    'middle name': clean(fields.MiddleName),
+    surname: clean(fields.Surname)
+  };
+  return staffNameFieldOrder().map((part) => parts[part]).filter(Boolean).join(' ');
+}
+
+function inferStaffNameFields(displayName = '') {
+  const tokens = clean(displayName).split(/\s+/).filter(Boolean);
+  if (tokens.length < 2 || tokens.length > 3) return null;
+  const order = tokens.length === 2
+    ? staffNameFieldOrder().filter((part) => part !== 'middle name')
+    : staffNameFieldOrder();
+  if (order.length !== tokens.length) return null;
+  const parts = { 'first name': '', 'middle name': '', surname: '' };
+  order.forEach((part, index) => { parts[part] = tokens[index]; });
+  return parts['first name'] && parts.surname
+    ? { FirstName: parts['first name'], MiddleName: parts['middle name'], Surname: parts.surname }
+    : null;
+}
+
+function syncStaffDisplayName(form) {
+  if (!form?.elements?.DisplayName) return;
+  form.elements.DisplayName.value = staffDisplayNameFromFields({
+    FirstName: form.elements.FirstName?.value,
+    MiddleName: form.elements.MiddleName?.value,
+    Surname: form.elements.Surname?.value
+  });
+}
+
 function updateMfaPolicyEditor() {
   const mode = document.getElementById('staffMfaPolicyMode');
   if (!mode) return;
@@ -17492,14 +17532,16 @@ function renderStaffUsers() {
   const canManageOrganisationPolicy = canManageOrganisationSettings(currentUser);
   const canManageMfaPolicy = canManageOrganisationPolicy;
   const canAssignAnyStaffBranch = canAssignStaffBranches;
+  const migratableStaffNames = Number(staffNameMigration?.migratable || 0);
+  const staffNamesNeedingReview = Number(staffNameMigration?.requiresReview || 0);
   const staffBranchChoices = availableBranches.length
     ? availableBranches
     : [{ id: clean(currentUser?.assignedBranchId || currentUser?.branchId || 'main'), name: clean(currentUser?.branchName || 'Main Branch') }];
   const staffBranchOptions = `${canAssignAnyStaffBranch ? '<option value="all">All branches (organisation-wide)</option>' : ''}${staffBranchChoices.map((branch) => `<option value="${escapeHtml(branch.id)}">${escapeHtml(branch.name || branch.id)}</option>`).join('')}`;
   panelEl.innerHTML = `
     <div class="workflow-intro">
-      <div><p class="eyebrow">Identity & access</p><h2>Staff & Permissions</h2><p class="muted">Shared database accounts for desktop and web access</p></div>
-      <div class="workflow-primary-actions"><button type="button" id="newStaffUser">+ New Staff Account</button><button type="button" id="uploadStaffCsv">Upload Staff CSV</button><button type="button" class="workflow-icon-action" id="staffCsvTemplate">CSV Template</button><button type="button" class="workflow-icon-action" id="refreshStaffUsers">Refresh</button><input type="file" id="staffCsvFile" accept=".csv,text/csv" hidden></div>
+      <div><p class="eyebrow">Identity & access</p><h2>Staff & Permissions</h2><p class="muted">Shared database accounts for desktop and web access</p>${staffNamesNeedingReview ? `<p class="muted">${staffNamesNeedingReview} legacy staff name${staffNamesNeedingReview === 1 ? '' : 's'} cannot be safely split automatically and should be reviewed when edited.</p>` : ''}</div>
+      <div class="workflow-primary-actions"><button type="button" id="newStaffUser">+ New Staff Account</button><button type="button" id="uploadStaffCsv">Upload Staff CSV</button><button type="button" class="workflow-icon-action" id="staffCsvTemplate">CSV Template</button>${migratableStaffNames ? `<button type="button" class="workflow-icon-action" id="migrateStaffNames">Split existing names (${migratableStaffNames})</button>` : ''}<button type="button" class="workflow-icon-action" id="refreshStaffUsers">Refresh</button><input type="file" id="staffCsvFile" accept=".csv,text/csv" hidden></div>
     </div>
     <p id="staffUsersStatus" class="status"></p>
     <div class="workflow-kpis staff-user-kpis">
@@ -17583,7 +17625,10 @@ function renderStaffUsers() {
       <form id="staffUserForm" class="workflow-form config-dialog-form">
         <section class="config-group"><header><strong>Account identity</strong><small>Basic sign-in identity and organizational access.</small></header><div class="config-grid">
           <label>Username <span class="required">*</span><input name="Username" required></label>
-          <label>Display name <span class="required">*</span><input name="DisplayName" required></label>
+          <label>First name <span class="required">*</span><input name="FirstName" autocomplete="given-name" required></label>
+          <label>Surname <span class="required">*</span><input name="Surname" autocomplete="family-name" required></label>
+          <label>Middle name<input name="MiddleName" autocomplete="additional-name"></label>
+          <label>Display name<input name="DisplayName" readonly><small>Generated using ${escapeHtml(staffNameFormat)}.</small></label>
           <label>Role <select name="Role" required>${availableRoles.map((role) => `<option>${role}</option>`).join('')}</select></label>
           <label>Department<input name="Department" placeholder="Required for Department User"></label>
           <label>Assigned branch<select name="BranchId"${canAssignAnyStaffBranch ? '' : ' disabled'}>${staffBranchOptions}</select><small>${canAssignAnyStaffBranch ? 'Choose any configured branch without changing your working branch.' : 'Your account may create staff only in its assigned branch.'}</small></label>
@@ -17673,7 +17718,12 @@ function openStaffUserDialog(username = '') {
   document.getElementById('staffUserDialogTitle').textContent = user ? 'Manage Staff Account' : 'New Staff Account';
   if (user) {
     form.elements.Username.value = user.Username;
-    form.elements.DisplayName.value = user.DisplayName || user.Username;
+    const inferred = (!user.FirstName || !user.Surname) ? inferStaffNameFields(user.DisplayName) : null;
+    form.elements.FirstName.value = user.FirstName || inferred?.FirstName || '';
+    form.elements.MiddleName.value = user.MiddleName || inferred?.MiddleName || '';
+    form.elements.Surname.value = user.Surname || inferred?.Surname || '';
+    if (form.elements.FirstName.value && form.elements.Surname.value) syncStaffDisplayName(form);
+    else form.elements.DisplayName.value = user.DisplayName || user.Username;
     form.elements.Role.value = user.Role;
     form.elements.Department.value = user.Department || '';
     form.elements.BranchId.value = user.BranchId || 'all';
@@ -17706,6 +17756,11 @@ function openStaffUserDialog(username = '') {
 }
 
 function bindStaffUserEvents() {
+  ['FirstName', 'MiddleName', 'Surname'].forEach((field) => {
+    document.querySelector(`#staffUserForm [name="${field}"]`)?.addEventListener('input', (event) => {
+      syncStaffDisplayName(event.currentTarget.form);
+    });
+  });
   document.querySelector('#staffUserForm [name="SchoolSectionAccess"]')?.addEventListener('change', (event) => {
     syncSchoolLeadershipRoleOptions(event.currentTarget.form);
   });
@@ -17715,6 +17770,26 @@ function bindStaffUserEvents() {
   document.getElementById('newStaffUser')?.addEventListener('click', () => openStaffUserDialog());
   document.getElementById('refreshStaffUsers')?.addEventListener('click', (event) => {
     runButtonAction(event.currentTarget, 'Refreshing...', loadStaffUsers);
+  });
+  document.getElementById('migrateStaffNames')?.addEventListener('click', async (event) => {
+    if (!await window.DynamaxDialogs.confirm({
+      title: 'Split existing staff names',
+      message: `Add separate first-name, surname and middle-name fields to ${Number(staffNameMigration?.migratable || 0)} unambiguous account(s)? Existing displayed names will not change, and ambiguous names will be left for manual review.`,
+      confirmText: 'Split names'
+    })) return;
+    const button = event.currentTarget;
+    const normalText = clean(button.textContent) || 'Split existing names';
+    setButtonLoading(button, true, 'Splitting...', normalText);
+    try {
+      const data = await staffUserRequest('migrate-names');
+      await loadStaffUsers();
+      const reviewNames = (data.review || []).slice(0, 5).map((row) => row.DisplayName || row.Username).filter(Boolean);
+      const reviewText = reviewNames.length ? ` Review manually: ${reviewNames.join(', ')}${Number(data.requiresReview || 0) > reviewNames.length ? ', and others' : ''}.` : '';
+      setStatus(document.getElementById('staffUsersStatus'), `${data.message}${reviewText}`, Number(data.requiresReview || 0) ? 'bad' : 'ok');
+    } catch (error) {
+      setStatus(document.getElementById('staffUsersStatus'), error.message || String(error), 'bad');
+      if (button.isConnected) setButtonLoading(button, false, 'Splitting...', normalText);
+    }
   });
   document.getElementById('uploadStaffCsv')?.addEventListener('click', () => document.getElementById('staffCsvFile').click());
   document.getElementById('staffCsvTemplate')?.addEventListener('click', downloadStaffCsvTemplate);
@@ -18076,6 +18151,8 @@ async function loadStaffUsers() {
     staffApprovalAccounts = data.approvalAccounts || [];
     staffRoleAccessData = data.roleAccess || null;
     staffModulePreferencesData = data.modulePreferences || null;
+    staffNameFormat = clean(data.nameFormat) || 'Surname, first name, middle name';
+    staffNameMigration = data.nameMigration || { migratable: 0, requiresReview: 0 };
     if (Array.isArray(data.branches) && data.branches.length) {
       availableBranches = data.branches.map((branch) => ({
         id: clean(branch.id || branch.Id),

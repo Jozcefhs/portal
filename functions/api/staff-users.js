@@ -54,6 +54,46 @@ function staffNameOrder(value) {
   return order.length ? order : ['surname', 'first name', 'middle name'];
 }
 
+export function inferStaffNameParts(displayName = '', profile = {}) {
+  const tokens = clean(displayName).split(/\s+/).filter(Boolean);
+  if (tokens.length < 2 || tokens.length > 3) return null;
+  const order = staffNameOrder(profile.NameFormat || profile.nameFormat);
+  const assignedOrder = tokens.length === 2
+    ? order.filter((part) => part !== 'middle name')
+    : order;
+  if (assignedOrder.length !== tokens.length) return null;
+  const parts = { 'first name': '', 'middle name': '', surname: '' };
+  assignedOrder.forEach((part, index) => { parts[part] = tokens[index]; });
+  if (!parts['first name'] || !parts.surname) return null;
+  return {
+    FirstName: parts['first name'],
+    MiddleName: parts['middle name'],
+    Surname: parts.surname
+  };
+}
+
+function staffSplitNameState(row = {}) {
+  const firstName = clean(row.FirstName || row.firstName);
+  const middleName = clean(row.MiddleName || row.middleName);
+  const surname = clean(row.Surname || row.surname || row.LastName || row.lastName);
+  if (firstName && surname) return 'complete';
+  if (firstName || middleName || surname) return 'partial';
+  return 'empty';
+}
+
+function staffNameMigrationSummary(rows = [], profile = {}) {
+  let migratable = 0;
+  let requiresReview = 0;
+  rows.forEach((row) => {
+    const state = staffSplitNameState(row);
+    if (state === 'complete') return;
+    if (state === 'partial') { requiresReview += 1; return; }
+    if (inferStaffNameParts(row.DisplayName || row.displayName, profile)) migratable += 1;
+    else requiresReview += 1;
+  });
+  return { migratable, requiresReview };
+}
+
 export function staffImportIdentity(row = {}, existing = {}, profile = {}) {
   const firstName = firstValue(row, ['FirstName', 'First Name', 'GivenName', 'Given Name'])
     || clean(existing.FirstName || existing.firstName);
@@ -228,19 +268,39 @@ async function saveUser(env, actor, body) {
   const password = String(body.Password || body.password || '');
   if (!existing && !password) { const err = new Error('Password is required for a new staff account.'); err.status = 400; throw err; }
   const passwordFields = password ? await hashStaffPassword(password) : {};
+  const [structure, profile] = await Promise.all([
+    getSchoolStructure(env),
+    getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+  ]);
   const branchId = resolveStaffAssignmentBranch(
     assignmentActor(env, actor),
     body.BranchId || body.branchId,
     existing?.BranchId || existing?.branchId,
-    await getSchoolStructure(env)
+    structure
   );
+  const splitNameSubmitted = ['FirstName', 'firstName', 'MiddleName', 'middleName', 'Surname', 'surname', 'LastName', 'lastName']
+    .some((key) => Object.prototype.hasOwnProperty.call(body, key));
+  const identity = splitNameSubmitted
+    ? staffImportIdentity({
+        FirstName: clean(body.FirstName || body.firstName),
+        MiddleName: clean(body.MiddleName || body.middleName),
+        Surname: clean(body.Surname || body.surname || body.LastName || body.lastName),
+        DisplayName: clean(body.DisplayName || body.displayName)
+      }, {}, profile || {})
+    : staffImportIdentity(body, existing || {}, profile || {});
+  if (splitNameSubmitted && (!identity.FirstName || !identity.Surname)) {
+    const err = new Error('First name and surname are required.'); err.status = 400; throw err;
+  }
   const payload = {
     ...(existing || {}),
     Username: username,
     UsernameKey: lower(username),
     LoginUsername: clean(existing?.LoginUsername || username),
     LoginUsernameKey: lower(existing?.LoginUsername || username),
-    DisplayName: clean(body.DisplayName || body.displayName) || username,
+    DisplayName: identity.DisplayName || username,
+    FirstName: identity.FirstName,
+    MiddleName: identity.MiddleName,
+    Surname: identity.Surname,
     Role: role,
     Department: department,
     OrganisationEdition: clean(actor.edition) || 'school',
@@ -266,6 +326,57 @@ async function saveUser(env, actor, body) {
   await upsertDocument(env, 'staffUsers', id, payload);
   await audit(env, actor, existing ? 'UPDATE USER' : 'CREATE USER', username, `${role}${department ? ` | ${department}` : ''}`, branchId);
   return { ok: true, message: existing ? 'Staff account updated.' : 'Staff account created.', user: publicUser(payload, edition, actor.featureFlags) };
+}
+
+async function migrateStaffNames(env, actor) {
+  const [rows, profile] = await Promise.all([
+    listCollection(env, 'staffUsers'),
+    getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+  ]);
+  const visibleRows = rows.filter((row) => staffRecordMatchesEdition(row, actor) && branchRecordVisible(row, actor));
+  const writes = [];
+  const review = [];
+  visibleRows.forEach((row) => {
+    const username = clean(row.Username || row.username || row.__id);
+    const state = staffSplitNameState(row);
+    if (state === 'complete') return;
+    if (state === 'partial') {
+      review.push({ Username: username, DisplayName: clean(row.DisplayName || row.displayName) });
+      return;
+    }
+    const parts = inferStaffNameParts(row.DisplayName || row.displayName, profile || {});
+    if (!parts) {
+      review.push({ Username: username, DisplayName: clean(row.DisplayName || row.displayName) });
+      return;
+    }
+    const payload = {
+      ...row,
+      ...parts,
+      UpdatedAt: nowIso(),
+      UpdatedBy: actor.displayName || actor.username
+    };
+    delete payload.__id;
+    delete payload.__name;
+    delete payload.__createTime;
+    delete payload.__updateTime;
+    writes.push({
+      collectionPath: 'staffUsers',
+      documentId: clean(row.__id) || safeId(username),
+      data: payload,
+      ...(row.__updateTime ? { updateTime: row.__updateTime } : {})
+    });
+  });
+  for (let index = 0; index < writes.length; index += 500) {
+    await batchUpsertDocuments(env, writes.slice(index, index + 500));
+  }
+  const migrated = writes.length;
+  const message = migrated
+    ? `${migrated} staff name${migrated === 1 ? '' : 's'} migrated without changing the displayed names.${review.length ? ` ${review.length} account${review.length === 1 ? ' needs' : 's need'} manual review.` : ''}`
+    : review.length
+      ? `No names were changed. ${review.length} account${review.length === 1 ? ' needs' : 's need'} manual review.`
+      : 'All visible staff accounts already use separate name fields.';
+  await audit(env, actor, 'MIGRATE STAFF NAMES', `${migrated} staff`, `${review.length} need manual review`, actorBranchScope(actor) || 'main');
+  return { ok: true, message, migrated, requiresReview: review.length, review };
 }
 
 async function importUsers(env, actor, body) {
@@ -549,14 +660,15 @@ export async function onRequestPost(context) {
     const action = lower(body.action || 'list');
     let result;
     if (action === 'list') {
-      const [staffRows, audit, accounts, roleAccess, userLimit, moduleSettings, structure] = await Promise.all([
+      const [staffRows, audit, accounts, roleAccess, userLimit, moduleSettings, structure, profile] = await Promise.all([
         listCollection(env, 'staffUsers'),
         listSecurityAudit(env, actor),
         listCollection(env, 'chartOfAccounts'),
         roleAccessSettings(env, actor),
         loadSubscriptionUserLimit(env),
         organizationModuleSettings(env),
-        getSchoolStructure(env)
+        getSchoolStructure(env),
+        getDocument(env, 'settings', 'schoolProfile').catch(() => null)
       ]);
       const visibleRows = staffRows.filter((row) => staffRecordMatchesEdition(row, actor) && branchRecordVisible(row, actor));
       const subscriptionRows = staffAccountsForSubscription(staffRows, actor.edition, actor.username);
@@ -569,6 +681,8 @@ export async function onRequestPost(context) {
         users,
         audit,
         roleAccess,
+        nameFormat: clean(profile?.NameFormat || profile?.nameFormat) || 'Surname, first name, middle name',
+        nameMigration: staffNameMigrationSummary(visibleRows, profile || {}),
         branches: configuredStaffBranches(structure),
         canAssignStaffBranches: assignmentActor(env, actor).canSwitchBranches === true,
         modulePreferences: modulePreferencesView(moduleSettings.organization),
@@ -584,6 +698,7 @@ export async function onRequestPost(context) {
     else if (action === 'save') result = await saveUser(env, actor, body);
     else if (action === 'delete') result = await deleteUser(env, actor, body);
     else if (action === 'import') result = await importUsers(env, actor, body);
+    else if (action === 'migrate-names') result = await migrateStaffNames(env, actor);
     else if (action === 'save-role-access') result = await saveRoleAccess(env, actor, body);
     else if (action === 'reset-role-access') result = await resetRoleAccess(env, actor, body);
     else if (action === 'save-organization-modules') result = await saveOrganizationModules(env, actor, body);
