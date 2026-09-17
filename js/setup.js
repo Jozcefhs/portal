@@ -13,6 +13,12 @@ const paystackSecretKeyField = document.getElementById('paystackSecretKey');
 const confirmPaystackReplacement = document.getElementById('confirmPaystackReplacement');
 const connectPaystackButton = document.getElementById('connectPaystackButton');
 const paystackConnectionStatus = document.getElementById('paystackConnectionStatus');
+const emailProviderPanel = document.getElementById('emailProviderPanel');
+const connectGoogleEmailButton = document.getElementById('connectGoogleEmail');
+const useBrevoEmailButton = document.getElementById('useBrevoEmail');
+const testEmailProviderButton = document.getElementById('testEmailProvider');
+const emailProviderTestRecipient = document.getElementById('emailProviderTestRecipient');
+const emailProviderStatus = document.getElementById('emailProviderStatus');
 const academicPolicySection = document.getElementById('academic-policy-settings');
 const academicPolicyIssues = document.getElementById('academicPolicyIssues');
 const activateAcademicPolicyButton = document.getElementById('activateAcademicPolicyButton');
@@ -22,6 +28,12 @@ const requestedSettingsBranch = (requestedSettingsParams.get('branch') || '').tr
 const requestedSettingsScope = requestedSettingsParams.get('scope') === 'branch' && requestedSettingsBranch
   ? 'branch'
   : 'organisation';
+const requestedEmailConnection = String(
+  requestedSettingsParams.get('emailConnection') || requestedSettingsParams.get('emailStatus') || ''
+).trim().toLowerCase();
+const requestedEmailMessage = String(
+  requestedSettingsParams.get('emailMessage') || requestedSettingsParams.get('emailCode') || ''
+).trim().slice(0, 240);
 let unlockedPassword = '';
 let webLogoDataUrl = '';
 let webLogoChanged = false;
@@ -30,6 +42,10 @@ let loadedAcademicPolicyView = null;
 let activeSettingsAccess = { scope: requestedSettingsScope, branchId: requestedSettingsBranch, scopeLocked: false };
 let paystackConnectionMode = 'not-configured';
 let paystackSelfServiceAvailable = false;
+let activeEmailProvider = 'brevo';
+let emailProviderConnectionReady = false;
+let emailProviderSelfServiceAvailable = false;
+let emailConnectionCallbackHandled = false;
 const organisationOnlyControlIds = [
   'organisationEdition', 'nameFormat', 'webLogoFile', 'removeWebLogo',
   'googleDocumentsUrl', 'subscriptionPlan', 'userLimit'
@@ -183,6 +199,93 @@ function updatePaystackConnectionUI(profile = {}) {
   } else {
     setPaystackConnectionStatus('The secret remains encrypted in Cloudflare and is never displayed here.', 'ok');
   }
+}
+
+function setEmailProviderStatus(message, type = '') {
+  if (!emailProviderStatus) return;
+  emailProviderStatus.textContent = message || '';
+  emailProviderStatus.className = `status email-provider-status ${type}`.trim();
+}
+
+function updateEmailProviderUI(profile = {}) {
+  const configuredProvider = String(profile.EmailProvider || activeEmailProvider || 'brevo').trim().toLowerCase();
+  activeEmailProvider = ['brevo', 'gmail'].includes(configuredProvider) ? configuredProvider : 'unsupported';
+  emailProviderConnectionReady = profile.EmailProviderConnectionReady === true;
+  emailProviderSelfServiceAvailable = profile.EmailProviderSelfServiceAvailable === true;
+  const connectedEmail = String(profile.GmailConnectedEmail || '').trim();
+  const isGoogle = activeEmailProvider === 'gmail';
+  const isUnsupported = activeEmailProvider === 'unsupported';
+  const state = document.getElementById('emailProviderState');
+  const account = document.getElementById('emailProviderAccount');
+  const badge = document.getElementById('emailProviderBadge');
+  if (state) state.textContent = isGoogle
+    ? 'Google Workspace / Gmail'
+    : isUnsupported ? 'Unsupported provider configuration' : 'Brevo';
+  if (account) {
+    account.textContent = isUnsupported
+      ? 'Online email is disabled until the deployment provider is corrected.'
+      : isGoogle
+      ? connectedEmail ? `Connected mailbox: ${connectedEmail}` : 'No connected Google mailbox reported.'
+      : emailProviderConnectionReady
+        ? 'The existing encrypted Brevo credential is active.'
+        : 'Brevo is selected but its secure credential is not ready.';
+  }
+  if (badge) {
+    badge.textContent = emailProviderConnectionReady ? 'Ready' : 'Setup required';
+    badge.classList.toggle('is-ready', emailProviderConnectionReady);
+    badge.classList.toggle('is-google', isGoogle);
+  }
+  if (connectGoogleEmailButton) {
+    connectGoogleEmailButton.textContent = isGoogle ? 'Reconnect Google account' : 'Connect Google account';
+  }
+  if (useBrevoEmailButton) useBrevoEmailButton.hidden = !isGoogle && !isUnsupported;
+  if (emailProviderTestRecipient && !emailProviderTestRecipient.value) {
+    emailProviderTestRecipient.value = String(profile.SchoolEmail || '').trim();
+  }
+  if (isUnsupported) {
+    setEmailProviderStatus('The deployed EMAIL_PROVIDER value is unsupported. Choose Brevo or reconnect Google before sending email.', 'bad');
+  } else if (!emailProviderSelfServiceAvailable) {
+    setEmailProviderStatus(emailProviderConnectionReady
+      ? 'Email delivery is ready. Provider changes require the secure self-service deployment upgrade.'
+      : 'Secure email-provider self-service is not available for this deployment.', emailProviderConnectionReady ? '' : 'bad');
+  } else if (emailProviderConnectionReady) {
+    setEmailProviderStatus(`${isGoogle ? 'Google' : 'Brevo'} email delivery is ready.`, 'ok');
+  } else {
+    setEmailProviderStatus(isGoogle
+      ? 'Reconnect the Google account to complete email delivery setup.'
+      : 'Connect Google, or ask the platform administrator to configure Brevo.', 'bad');
+  }
+}
+
+function handleEmailConnectionCallback() {
+  if (!requestedEmailConnection || emailConnectionCallbackHandled) return;
+  emailConnectionCallbackHandled = true;
+  const succeeded = ['connected', 'success', 'ready'].includes(requestedEmailConnection);
+  const message = requestedEmailMessage || (succeeded
+    ? 'Google email connected successfully.'
+    : 'Google email could not be connected. Please try again.');
+  setEmailProviderStatus(message, succeeded ? 'ok' : 'bad');
+  setStatus(message, succeeded ? 'ok' : 'bad');
+  const cleanUrl = new URL(window.location.href);
+  ['emailConnection', 'emailMessage', 'emailProvider', 'emailStatus', 'emailCode'].forEach((key) => cleanUrl.searchParams.delete(key));
+  cleanUrl.hash = 'document-settings';
+  window.history.replaceState({}, '', cleanUrl);
+}
+
+async function requestEmailProviderAction(action, extra = {}) {
+  const response = await fetch('/api/email-provider-connection', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action,
+      password: unlockedPassword,
+      SettingsScope: 'organisation',
+      ...extra
+    })
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data?.ok) throw new Error(data?.message || 'The email-provider request could not be completed.');
+  return data;
 }
 
 function announceSettingsChange() {
@@ -635,7 +738,7 @@ async function loadAcademicPolicy({ silent = false } = {}) {
 }
 
 function revealRequestedSettingsSection() {
-  const sectionId = window.location.hash.slice(1);
+  const sectionId = requestedEmailConnection ? 'document-settings' : window.location.hash.slice(1);
   const section = sectionId ? document.getElementById(sectionId) : null;
   if (!section || section.hidden) return;
   document.querySelectorAll('.settings-nav-link').forEach((link) => {
@@ -770,6 +873,7 @@ function applyProfile(profile = {}, settingsAccess = null) {
   setField('executiveSenderEmail', schoolSender ? profile.ExecutiveSenderEmail : profile.OrganisationExecutiveSenderEmail);
   setField('executiveReplyToName', schoolSender ? profile.ExecutiveReplyToName : profile.OrganisationExecutiveReplyToName);
   setField('executiveReplyToEmail', schoolSender ? profile.ExecutiveReplyToEmail : profile.OrganisationExecutiveReplyToEmail);
+  updateEmailProviderUI(profile);
   setField('nameFormat', profile.NameFormat || 'Surname, first name, middle name');
   setField('portalHeadline', profile.PortalHeadline);
   setField('portalSubheading', profile.PortalSubheading);
@@ -841,6 +945,19 @@ function updateSettingsScopeUI(profile = {}) {
     if (control) control.disabled = connectionLocked;
   });
   paystackConnectionPanel?.classList.toggle('settings-scope-locked', branchMode);
+  const providerChangeLocked = branchMode || !emailProviderSelfServiceAvailable;
+  [connectGoogleEmailButton, useBrevoEmailButton].forEach((control) => {
+    if (control) control.disabled = providerChangeLocked;
+  });
+  if (emailProviderTestRecipient) emailProviderTestRecipient.disabled = branchMode || !emailProviderConnectionReady;
+  if (testEmailProviderButton) testEmailProviderButton.disabled = branchMode || !emailProviderConnectionReady;
+  emailProviderPanel?.classList.toggle('settings-scope-locked', branchMode);
+  const emailProviderScopeHelp = document.getElementById('emailProviderScopeHelp');
+  if (emailProviderScopeHelp) {
+    emailProviderScopeHelp.textContent = branchMode
+      ? `${branchName} inherits the organisation email provider. Only its sender and reply-to identities below can be overridden here.`
+      : 'Every branch uses this provider while retaining its own sender and reply-to identities.';
+  }
   if (branchMode) {
     webLogoDataUrl = '';
     webLogoChanged = false;
@@ -887,6 +1004,7 @@ setupLoginForm.addEventListener('submit', async (event) => {
     setupLoginForm.hidden = true;
     setupForm.hidden = false;
     setStatus('Settings loaded and ready to edit.', 'ok');
+    handleEmailConnectionCallback();
     revealRequestedSettingsSection();
   } catch (error) {
     unlockedPassword = '';
@@ -1021,6 +1139,81 @@ document.getElementById('copyPaystackWebhook')?.addEventListener('click', async 
   }
 });
 
+connectGoogleEmailButton?.addEventListener('click', async () => {
+  if (!emailProviderSelfServiceAvailable) {
+    setEmailProviderStatus('This deployment still needs the secure provider self-service upgrade.', 'bad');
+    return;
+  }
+  if (!window.DynamaxActionFeedback.begin(connectGoogleEmailButton, 'Preparing Google sign-in…')) return;
+  let navigating = false;
+  try {
+    setEmailProviderStatus('Preparing a secure Google OAuth connection…');
+    const data = await requestEmailProviderAction('connect-google');
+    const authorizationUrl = new URL(String(data.authorizationUrl || ''));
+    if (authorizationUrl.protocol !== 'https:' || authorizationUrl.hostname !== 'accounts.google.com') {
+      throw new Error('The email service returned an invalid Google authorisation address.');
+    }
+    window.location.assign(authorizationUrl.href);
+    navigating = true;
+  } catch (error) {
+    setEmailProviderStatus(error.message, 'bad');
+  } finally {
+    if (!navigating && connectGoogleEmailButton.isConnected) window.DynamaxActionFeedback.end(connectGoogleEmailButton);
+  }
+});
+
+useBrevoEmailButton?.addEventListener('click', async () => {
+  if (!await window.DynamaxDialogs.confirm({
+    title: 'Use Brevo for email delivery',
+    message: 'Disconnect Google as the active provider and return this organisation to its existing Brevo configuration?',
+    confirmText: 'Use Brevo'
+  })) return;
+  if (!window.DynamaxActionFeedback.begin(useBrevoEmailButton, 'Switching provider…')) return;
+  let deploymentQueued = false;
+  try {
+    setEmailProviderStatus('Requesting the secure provider change…');
+    const data = await requestEmailProviderAction('use-brevo');
+    const state = document.getElementById('emailProviderState');
+    const badge = document.getElementById('emailProviderBadge');
+    if (state) state.textContent = 'Switching to Brevo';
+    if (badge) {
+      badge.textContent = 'Updating';
+      badge.classList.remove('is-ready', 'is-google');
+    }
+    deploymentQueued = true;
+    setEmailProviderStatus(data.message || 'The switch to Brevo is being applied securely.', 'ok');
+    setStatus('Email-provider update submitted. Reload after the deployment finishes to verify the active provider.', 'ok');
+  } catch (error) {
+    setEmailProviderStatus(error.message, 'bad');
+  } finally {
+    if (useBrevoEmailButton.isConnected) window.DynamaxActionFeedback.end(useBrevoEmailButton);
+    if (deploymentQueued) {
+      [connectGoogleEmailButton, useBrevoEmailButton, testEmailProviderButton, emailProviderTestRecipient].forEach((control) => {
+        if (control) control.disabled = true;
+      });
+    }
+  }
+});
+
+testEmailProviderButton?.addEventListener('click', async () => {
+  const recipientEmail = String(emailProviderTestRecipient?.value || '').trim();
+  if (!recipientEmail || !emailProviderTestRecipient.checkValidity()) {
+    emailProviderTestRecipient?.reportValidity();
+    setEmailProviderStatus('Enter a valid recipient email address for the test.', 'bad');
+    return;
+  }
+  if (!window.DynamaxActionFeedback.begin(testEmailProviderButton, 'Sending test email…')) return;
+  try {
+    setEmailProviderStatus(`Sending a test through ${activeEmailProvider === 'gmail' ? 'Google' : 'Brevo'}…`);
+    const data = await requestEmailProviderAction('test', { recipientEmail });
+    setEmailProviderStatus(data.message || `Test email sent to ${recipientEmail}.`, 'ok');
+  } catch (error) {
+    setEmailProviderStatus(error.message, 'bad');
+  } finally {
+    if (testEmailProviderButton.isConnected) window.DynamaxActionFeedback.end(testEmailProviderButton);
+  }
+});
+
 policyField('addAcademicComponent')?.addEventListener('click', () => {
   policyField('academicComponents').appendChild(createAcademicComponentRow({}, policyField('academicComponents').children.length));
 });
@@ -1151,6 +1344,14 @@ const settingsNavLinks = [...document.querySelectorAll('.settings-nav-link')];
 settingsNavLinks.forEach((link) => link.addEventListener('click', () => {
   settingsNavLinks.forEach((item) => item.classList.toggle('active', item === link));
 }));
+
+if (requestedEmailConnection) {
+  const succeeded = ['connected', 'success', 'ready'].includes(requestedEmailConnection);
+  const message = requestedEmailMessage || (succeeded
+    ? 'Google email connection completed.'
+    : 'Google email connection was not completed.');
+  setLoginStatus(`${message} Unlock settings to review email delivery.`, succeeded ? 'ok' : 'bad');
+}
 
 if ('IntersectionObserver' in window) {
   const sectionObserver = new IntersectionObserver((entries) => {

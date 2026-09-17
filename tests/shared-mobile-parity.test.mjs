@@ -6,7 +6,7 @@ const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260903-hotel-tabs';
 const pageStyleVersions = new Map([
   ['admin.html', '20260917-remote-desktop-approval'],
-  ['setup.html', '20260917-desktop-pairing'],
+  ['setup.html', '20260917-email-provider'],
   ['plan-management.html', '20260830-dual-currency-pricing'],
   ['register-organization.html', '20260830-flex-module-layout']
 ]);
@@ -119,7 +119,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v284-card-search/);
+  assert.match(serviceWorker, /dynamax-v285-email-provider/);
   assert.match(serviceWorker, /'\/verify-result\.html'/);
   assert.match(serviceWorker, /'\/js\/verify-result\.js'/);
   assert.match(serviceWorker, /'\/css\/school-landing\.css'/);

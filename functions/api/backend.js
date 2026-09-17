@@ -2421,12 +2421,34 @@ async function saveBrevoSettings(env, body, deploymentIdentity = null) {
   const executiveReplyToName = clean(body.ExecutiveReplyToName || body.executiveReplyToName);
   const organisationScoped = ['faith', 'organization'].includes(clean(deploymentIdentity?.edition).toLowerCase());
   if (!senderEmail) {
-    const err = new Error('Brevo sender email is required.');
+    const err = new Error('An online email sender address is required.');
     err.status = 400;
     throw err;
   }
   const existing = await getDocument(env, 'settings', 'brevo').catch(() => null);
   const legacyDatabaseKeyConfigured = Boolean(clean(existing?.BrevoApiKey));
+  const configuredEmailProvider = clean(env.EMAIL_PROVIDER).toLowerCase();
+  const emailProvider = !configuredEmailProvider
+    ? 'brevo'
+    : ['brevo', 'gmail'].includes(configuredEmailProvider)
+      ? configuredEmailProvider
+      : 'unsupported';
+  const gmailConnectionReady = Boolean(
+    clean(env.GMAIL_OAUTH_CLIENT_ID)
+    && clean(env.GMAIL_OAUTH_CLIENT_SECRET)
+    && clean(env.GMAIL_REFRESH_TOKEN)
+    && clean(env.GMAIL_CONNECTED_EMAIL)
+  );
+  const emailProviderConnectionReady = emailProvider === 'gmail'
+    ? gmailConnectionReady
+    : emailProvider === 'brevo'
+      ? environmentApiKeyConfigured || legacyDatabaseKeyConfigured
+      : false;
+  const providerSettings = {
+    EmailProvider: emailProvider,
+    EmailProviderConnectionReady: emailProviderConnectionReady,
+    GmailConnectedEmail: emailProvider === 'gmail' ? clean(env.GMAIL_CONNECTED_EMAIL) : ''
+  };
   const now = nowIso();
   const senderFields = organisationScoped ? {
     OrganisationSenderName: senderName,
@@ -2475,6 +2497,7 @@ async function saveBrevoSettings(env, body, deploymentIdentity = null) {
       message: `${saved.branch.name} email sender settings saved.`,
       settings: {
         ...senderFields,
+        ...providerSettings,
         SenderScope: 'branch',
         EffectiveBranchId: saved.branch.id,
         HasBrevoApiKey: environmentApiKeyConfigured || legacyDatabaseKeyConfigured,
@@ -2492,7 +2515,11 @@ async function saveBrevoSettings(env, body, deploymentIdentity = null) {
     : (legacyDatabaseKeyConfigured ? 'legacy-database' : 'not-configured');
   return {
     ok: true,
-    message: credentialSource === 'legacy-database'
+    message: emailProvider === 'gmail'
+      ? (emailProviderConnectionReady
+        ? 'Email sender settings saved. Google Workspace / Gmail is active for online delivery.'
+        : 'Email sender settings saved, but the Google email connection needs to be completed again.')
+      : credentialSource === 'legacy-database'
       ? 'Brevo sender settings saved. Migrate the legacy database credential to the BREVO_API_KEY Cloudflare secret.'
       : (credentialSource === 'not-configured'
         ? 'Brevo sender settings saved, but online delivery still needs the BREVO_API_KEY encrypted Cloudflare secret.'
@@ -2506,6 +2533,7 @@ async function saveBrevoSettings(env, body, deploymentIdentity = null) {
       ExecutiveSenderEmail: executiveSenderEmail,
       ExecutiveReplyToEmail: executiveReplyToEmail,
       ExecutiveReplyToName: executiveReplyToName,
+      ...providerSettings,
       SenderScope: payload.SenderScope,
       HasBrevoApiKey: environmentApiKeyConfigured || legacyDatabaseKeyConfigured,
       CredentialSource: credentialSource,
@@ -2757,6 +2785,22 @@ async function getSchoolProfile(env, options = {}) {
   const structure = normalizeSchoolStructure(storedStructure || await getSchoolStructure(env));
   const enabledDocuments = documentSettings?.Enabled && typeof documentSettings.Enabled === 'object' ? documentSettings.Enabled : {};
   const organization = resolveOrganizationConfig({ env, organizationProfile, legacyProfile: profile || {} });
+  const configuredEmailProvider = clean(env.EMAIL_PROVIDER).toLowerCase();
+  const emailProvider = !configuredEmailProvider
+    ? 'brevo'
+    : ['brevo', 'gmail'].includes(configuredEmailProvider)
+      ? configuredEmailProvider
+      : 'unsupported';
+  const emailProviderConnectionReady = emailProvider === 'gmail'
+    ? Boolean(
+        clean(env.GMAIL_OAUTH_CLIENT_ID)
+        && clean(env.GMAIL_OAUTH_CLIENT_SECRET)
+        && clean(env.GMAIL_REFRESH_TOKEN)
+        && clean(env.GMAIL_CONNECTED_EMAIL)
+      )
+    : emailProvider === 'brevo'
+      ? Boolean(clean(env.BREVO_API_KEY) || clean(brevoSettings?.BrevoApiKey))
+      : false;
   const baseProfile = { ...(profile || {
       SchoolName: 'Dynamax',
       SchoolCode: normalizeSchoolCode(env.SCHOOL_CODE),
@@ -2801,6 +2845,9 @@ async function getSchoolProfile(env, options = {}) {
       OrganisationExecutiveSenderEmail: clean(profile?.OrganisationExecutiveSenderEmail || brevoSettings?.OrganisationExecutiveSenderEmail),
       OrganisationExecutiveReplyToEmail: clean(profile?.OrganisationExecutiveReplyToEmail || brevoSettings?.OrganisationExecutiveReplyToEmail),
       OrganisationExecutiveReplyToName: clean(profile?.OrganisationExecutiveReplyToName || brevoSettings?.OrganisationExecutiveReplyToName),
+      EmailProvider: emailProvider,
+      EmailProviderConnectionReady: emailProviderConnectionReady,
+      GmailConnectedEmail: emailProvider === 'gmail' ? clean(env.GMAIL_CONNECTED_EMAIL) : '',
       FeatureFlags: organization.FeatureFlags,
       PlanEntitlements: organization.PlanEntitlements,
       EnabledFeatureEntitlements: organization.EnabledFeatureEntitlements,

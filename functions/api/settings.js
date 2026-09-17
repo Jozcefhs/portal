@@ -58,6 +58,37 @@ function normalizeSchoolCode(value) {
   return clean(value).toUpperCase().replace(/[^A-Z0-9]/g, '') || 'DCA';
 }
 
+export function emailProviderProfile(env = {}, { legacyBrevoApiKeyConfigured = false } = {}) {
+  const configuredProvider = clean(env.EMAIL_PROVIDER).toLowerCase();
+  const provider = !configuredProvider
+    ? 'brevo'
+    : ['brevo', 'gmail'].includes(configuredProvider)
+      ? configuredProvider
+      : 'unsupported';
+  const gmailConnectedEmail = clean(env.GMAIL_CONNECTED_EMAIL);
+  let canonicalPortal = null;
+  try { canonicalPortal = new URL(clean(env.CANONICAL_PORTAL_URL)); } catch (_error) { canonicalPortal = null; }
+  const gmailReady = Boolean(
+    clean(env.GMAIL_OAUTH_CLIENT_ID)
+    && clean(env.GMAIL_OAUTH_CLIENT_SECRET)
+    && clean(env.GMAIL_REFRESH_TOKEN)
+    && gmailConnectedEmail
+  );
+  return {
+    EmailProvider: provider,
+    GmailConnectedEmail: provider === 'gmail' ? gmailConnectedEmail : '',
+    EmailProviderConnectionReady: provider === 'gmail'
+      ? gmailReady
+      : provider === 'brevo'
+        ? Boolean(clean(env.BREVO_API_KEY) || legacyBrevoApiKeyConfigured)
+        : false,
+    EmailProviderSelfServiceAvailable: Boolean(
+      clean(env.TENANT_CONTROL_PLANE_PRIVATE_KEY)
+      && canonicalPortal?.protocol === 'https:'
+    )
+  };
+}
+
 function defaultProfile(env) {
   const deployment = requiredDeploymentIdentity(env);
   const organization = resolveOrganizationConfig({
@@ -131,6 +162,7 @@ function defaultProfile(env) {
     PaymentAccountNumber: clean(env.PAYMENT_ACCOUNT_NUMBER),
     PaymentBankCurrency: clean(env.PAYMENT_BANK_CURRENCY || 'NGN').toUpperCase(),
     PaymentTransferInstructions: clean(env.PAYMENT_TRANSFER_INSTRUCTIONS),
+    ...emailProviderProfile(env),
     UpdatedAt: ''
   };
 }
@@ -176,6 +208,7 @@ async function loadProfile(env, options = {}) {
   const requestedBranchId = clean(options.branchId || options.BranchId);
   let profile = defaultProfile(env);
   let savedOrganization = null;
+  let legacyBrevoApiKeyConfigured = false;
   try {
     requireFirestoreEnv(env);
     const [saved, storedOrganization, branding, structure, savedPublicContent, savedBrevo] = await Promise.all([
@@ -197,6 +230,7 @@ async function loadProfile(env, options = {}) {
     SENDER_PROFILE_FIELDS.forEach((field) => {
       profile[field] = clean(profile[field] || savedBrevo?.[field]);
     });
+    legacyBrevoApiKeyConfigured = Boolean(clean(savedBrevo?.BrevoApiKey));
     profile = applyPublicPortalContent(profile, savedPublicContent);
     const identity = deploymentIdentityDetails({
       env,
@@ -254,6 +288,7 @@ async function loadProfile(env, options = {}) {
   profile.TurnstileSiteKey = clean(env.TURNSTILE_SITE_KEY);
   profile.PaystackConnectionMode = paystackSecretMode(env.PAYSTACK_SECRET_KEY);
   profile.PaystackSelfServiceAvailable = Boolean(clean(env.TENANT_CONTROL_PLANE_PRIVATE_KEY));
+  Object.assign(profile, emailProviderProfile(env, { legacyBrevoApiKeyConfigured }));
   delete profile.GoogleDocumentsUrl;
   delete profile.googleDocumentsUrl;
   profile.DocumentStorageProvider = 'Cloudflare R2';
@@ -506,6 +541,10 @@ export async function onRequestPost(context) {
     delete profile.TurnstileSiteKey;
     delete profile.PaystackConnectionMode;
     delete profile.PaystackSelfServiceAvailable;
+    delete profile.EmailProvider;
+    delete profile.GmailConnectedEmail;
+    delete profile.EmailProviderConnectionReady;
+    delete profile.EmailProviderSelfServiceAvailable;
     await upsertDocument(env, 'settings', 'organisationProfile', organizationProfileDocument({
       ...organization,
       WorkspaceId: deployment.workspaceId,

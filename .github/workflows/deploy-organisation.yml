@@ -44,6 +44,16 @@ on:
         required: false
         default: ''
         type: string
+      email_deployment_requested_at:
+        description: Exact queued email-provider deployment timestamp, when applicable
+        required: false
+        default: ''
+        type: string
+      email_deployment_provider:
+        description: Target queued email provider, when applicable
+        required: false
+        default: ''
+        type: string
     secrets:
       CLOUDFLARE_API_TOKEN:
         description: Cloudflare token allowed to deploy Pages projects
@@ -187,6 +197,37 @@ jobs:
             --arg projectId "${CLOUDFLARE_PROJECT}" \
             --arg requestedAt "${PAYSTACK_DEPLOYMENT_REQUESTED_AT}" \
             '{password:$password,action:"complete-managed-paystack-deployment",projectId:$projectId,requestedAt:$requestedAt}')"
+          curl --fail-with-body --silent --show-error \
+            "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" \
+            -H 'Content-Type: application/json' \
+            --data "${payload}"
+
+      - name: Mark managed email-provider deployment complete
+        if: ${{ inputs.email_deployment_requested_at != '' }}
+        env:
+          DYNAMAX_PLATFORM_URL: ${{ inputs.platform_url }}
+          DYNAMAX_TENANT_PROVISIONER_SECRET: ${{ secrets.DYNAMAX_TENANT_PROVISIONER_SECRET }}
+          CLOUDFLARE_PROJECT: ${{ inputs.cloudflare_project }}
+          EMAIL_DEPLOYMENT_REQUESTED_AT: ${{ inputs.email_deployment_requested_at }}
+          EMAIL_DEPLOYMENT_PROVIDER: ${{ inputs.email_deployment_provider }}
+          TENANT_PORTAL_URL: https://${{ inputs.cloudflare_project }}.pages.dev
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${DYNAMAX_TENANT_PROVISIONER_SECRET}" ]] || { echo '::error::DYNAMAX_TENANT_PROVISIONER_SECRET is required.'; exit 1; }
+          [[ "${EMAIL_DEPLOYMENT_PROVIDER}" == "brevo" || "${EMAIL_DEPLOYMENT_PROVIDER}" == "gmail" ]] || { echo '::error::Queued email provider is invalid.'; exit 1; }
+          readiness="$(curl --fail-with-body --silent --show-error "${TENANT_PORTAL_URL}/api/email-provider-readiness")"
+          jq -e \
+            --arg provider "${EMAIL_DEPLOYMENT_PROVIDER}" \
+            --arg requestedAt "${EMAIL_DEPLOYMENT_REQUESTED_AT}" \
+            '.ok == true and .ready == true and .provider == $provider and .requestedAt == $requestedAt' \
+            <<<"${readiness}" >/dev/null || { echo '::error::Deployed email provider is not ready or does not match the queued transition.'; exit 1; }
+          payload="$(jq -nc \
+            --arg password "${DYNAMAX_TENANT_PROVISIONER_SECRET}" \
+            --arg projectId "${CLOUDFLARE_PROJECT}" \
+            --arg requestedAt "${EMAIL_DEPLOYMENT_REQUESTED_AT}" \
+            --arg provider "${EMAIL_DEPLOYMENT_PROVIDER}" \
+            '{password:$password,action:"complete-managed-email-deployment",projectId:$projectId,requestedAt:$requestedAt,provider:$provider}')"
           curl --fail-with-body --silent --show-error \
             "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" \
             -H 'Content-Type: application/json' \

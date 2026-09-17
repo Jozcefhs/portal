@@ -5,6 +5,7 @@ import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { issueTenantActivation } from '../lib/tenant-activation.js';
 import {
+  completeManagedOrganisationEmailDeployment,
   completeManagedOrganisationPaystackDeployment,
   loadManagedOrganisations,
   saveManagedOrganisationControlIdentity
@@ -14,6 +15,7 @@ import {
   claimNextTenantProvisioningRequest,
   ensureTenantPoolCapacity,
   finishTenantProvisioningRequest,
+  completeTenantEmailDeployment,
   completeTenantPaystackDeployment,
   loadTenantProjectPool,
   registerTenantProjectSlot,
@@ -41,12 +43,14 @@ const PROVISIONER_ACTIONS = new Set([
   'load-managed-organisations',
   'register-managed-organisation',
   'complete-managed-paystack-deployment',
+  'complete-managed-email-deployment',
   'register',
   'reset-paystack-connection',
   'set-control-key',
   'request',
   'claim-next',
   'complete-paystack-deployment',
+  'complete-email-deployment',
   'finish-request',
   'process-lifecycle',
   'claim-retirement',
@@ -110,6 +114,21 @@ export async function onRequestPost({ request, env }) {
         ...result
       }, { headers: { 'Cache-Control': 'no-store' } });
     }
+    if (action === 'complete-managed-email-deployment') {
+      const result = await completeManagedOrganisationEmailDeployment(
+        platformEnv,
+        body.projectId,
+        body.requestedAt,
+        body.provider
+      );
+      return Response.json({
+        ok: true,
+        message: result.completed
+          ? 'Managed organisation email-provider deployment marked complete.'
+          : 'A newer managed-organisation email-provider deployment remains queued.',
+        ...result
+      }, { headers: { 'Cache-Control': 'no-store' } });
+    }
     if (action === 'register') {
       const slot = await registerTenantProjectSlot(platformEnv, body.slot || body);
       const provisioningRequest = slot.ProvisioningBatchId
@@ -150,6 +169,16 @@ export async function onRequestPost({ request, env }) {
         message: result.completed
           ? 'Tenant Paystack deployment marked complete.'
           : 'A newer Paystack deployment request remains queued.',
+        ...result
+      }, { headers: { 'Cache-Control': 'no-store' } });
+    }
+    if (action === 'complete-email-deployment') {
+      const result = await completeTenantEmailDeployment(platformEnv, body.projectId, body.requestedAt, body.provider);
+      return Response.json({
+        ok: true,
+        message: result.completed
+          ? 'Tenant email-provider deployment marked complete.'
+          : 'A newer email-provider deployment request remains queued.',
         ...result
       }, { headers: { 'Cache-Control': 'no-store' } });
     }

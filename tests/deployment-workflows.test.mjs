@@ -92,6 +92,7 @@ test('the coordinator can deploy one or all organisations without cancelling una
   assert.match(coordinator, /cron: '\*\/5 \* \* \* \*'/);
   assert.match(coordinator, /managed-organisation-deployment-matrix\.mjs/);
   assert.match(reusable, /complete-managed-paystack-deployment/);
+  assert.match(reusable, /complete-managed-email-deployment/);
 });
 
 test('scheduled managed-organisation deployments include only pending registered projects', () => {
@@ -99,18 +100,26 @@ test('scheduled managed-organisation deployments include only pending registered
     {
       CloudflareProject: 'destinychristianacademy',
       PaystackDeploymentPending: true,
-      PaystackDeploymentRequestedAt: '2026-09-14T02:30:00.000Z'
+      PaystackDeploymentRequestedAt: '2026-09-14T02:30:00.000Z',
+      EmailDeploymentPending: false,
+      EmailDeploymentRequestedAt: ''
     },
     {
       CloudflareProject: 'digc-suite',
       PaystackDeploymentPending: false,
-      PaystackDeploymentRequestedAt: ''
+      PaystackDeploymentRequestedAt: '',
+      EmailDeploymentPending: true,
+      EmailDeploymentRequestedAt: '2026-09-17T10:00:00.000Z'
     }
   ], { target: 'all', pendingOnly: true });
-  assert.equal(matrix.length, 1);
+  assert.equal(matrix.length, 2);
   assert.equal(matrix[0].id, 'destinychristianacademy');
   assert.equal(matrix[0].paystackDeploymentPending, true);
   assert.equal(matrix[0].paystackDeploymentRequestedAt, '2026-09-14T02:30:00.000Z');
+  assert.equal(matrix[0].emailDeploymentPending, false);
+  assert.equal(matrix[1].id, 'digc-suite');
+  assert.equal(matrix[1].emailDeploymentPending, true);
+  assert.equal(matrix[1].emailDeploymentRequestedAt, '2026-09-17T10:00:00.000Z');
 });
 
 test('deployed organisation identity must match its registry boundary', () => {
@@ -215,6 +224,8 @@ test('the tenant pool provisioner is opt-in, uses WIF and creates isolated deplo
   assert.match(tenantProvisionerScript, /wrangler@4\.61\.0/);
   assert.doesNotMatch(tenantProvisionerScript, /DYNAMAX_PLATFORM_FIREBASE_(?:PRIVATE_KEY|CLIENT_EMAIL)/);
   assert.match(tenantFleet, /TENANT_POOL_FLEET_DEPLOY_ENABLED == 'true'/);
+  assert.match(tenantFleet, /EmailDeploymentPending/);
+  assert.match(tenantFleet, /complete-email-deployment/);
   assert.match(tenantFleet, /fromJSON\(needs\.inventory\.outputs\.projects\)/);
   assert.match(tenantFleet, /firebase\.organization\.json/);
   assert.match(tenantFleet, /max-parallel: 3/);

@@ -6,7 +6,8 @@ const LOW_READ_IDENTITY_PATHS = new Set([
   '/api/staff-session',
   '/api/staff-passkey',
   '/api/staff-mfa',
-  '/api/admin'
+  '/api/admin',
+  '/api/email-provider-readiness'
 ]);
 
 const PLATFORM_SUBSCRIPTION_PROXY_PATHS = new Set([
@@ -15,6 +16,8 @@ const PLATFORM_SUBSCRIPTION_PROXY_PATHS = new Set([
   '/api/platform-payment-settings',
   '/api/tenant-project-pool',
   '/api/tenant-paystack-connection',
+  '/api/tenant-email-provider',
+  '/api/google-email-callback',
   '/api/subscription-policy',
   '/api/subscription-checkout',
   '/api/pricing-book-pdf',
@@ -42,6 +45,8 @@ const SUBSCRIPTION_RECOVERY_PATHS = new Set([
   '/api/registration-status',
   '/api/tenant-activation',
   '/api/tenant-paystack-connection',
+  '/api/tenant-email-provider',
+  '/api/google-email-callback',
   '/api/complete-tenant-activation',
   '/api/pricing-book-pdf',
   '/api/verify-subscription-payment',

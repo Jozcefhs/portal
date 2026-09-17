@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Settings</title>
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260917-desktop-pairing">
+  <link rel="stylesheet" href="css/style.css?v=20260917-email-provider">
 </head>
 <body class="settings-page">
   <main class="settings-shell">
@@ -170,12 +170,39 @@
           </div>
           <div class="settings-subsection">
             <div class="settings-subsection-title">
-              <strong>Transactional email sender</strong>
-              <span>The name and verified address recipients see on routine messages.</span>
+              <strong>Email delivery provider</strong>
+              <span>Choose the organisation account used for transactional messages.</span>
+            </div>
+            <div id="emailProviderPanel" class="email-provider-card">
+              <div class="email-provider-heading">
+                <div>
+                  <small class="settings-eyebrow">Organisation-wide delivery</small>
+                  <strong id="emailProviderState">Checking email provider…</strong>
+                  <span id="emailProviderAccount">No connected mailbox reported.</span>
+                </div>
+                <span id="emailProviderBadge" class="email-provider-badge">Checking</span>
+              </div>
+              <p id="emailProviderScopeHelp" class="settings-help">Branches use this organisation provider while retaining their own sender and reply-to identities below.</p>
+              <div class="email-provider-actions">
+                <button id="connectGoogleEmail" type="button">Connect Google account</button>
+                <button id="useBrevoEmail" type="button" class="settings-secondary-action" hidden>Use Brevo instead</button>
+              </div>
+              <div class="email-provider-test">
+                <label for="emailProviderTestRecipient"><span>Send a test email to</span><input id="emailProviderTestRecipient" type="email" autocomplete="email" placeholder="administrator@example.org"></label>
+                <button id="testEmailProvider" type="button" class="settings-secondary-action">Send test email</button>
+              </div>
+              <p id="emailProviderStatus" class="status email-provider-status" role="status"></p>
+              <small class="settings-help">Google connects securely with OAuth. Dynamax never asks for or stores a Gmail password in this page.</small>
+            </div>
+          </div>
+          <div class="settings-subsection">
+            <div class="settings-subsection-title">
+              <strong>Transactional email identity</strong>
+              <span>Brevo uses this address as the sender. Google sends from the connected mailbox and uses this address as Reply-To when they differ.</span>
             </div>
             <div class="settings-fields two-column">
               <div class="settings-field"><label for="senderName">Sender name</label><input id="senderName" autocomplete="organization"></div>
-              <div class="settings-field"><label for="senderEmail">Verified sender email</label><input id="senderEmail" type="email" autocomplete="email"></div>
+              <div class="settings-field"><label for="senderEmail">Sender / reply-to email</label><input id="senderEmail" type="email" autocomplete="email"></div>
               <div class="settings-field"><label for="replyToName">Reply-to name</label><input id="replyToName"></div>
               <div class="settings-field"><label for="replyToEmail">Reply-to email</label><input id="replyToEmail" type="email"></div>
             </div>
@@ -183,7 +210,7 @@
           <div class="settings-subsection">
             <div class="settings-subsection-title">
               <strong>Executive office email (optional)</strong>
-              <span>Leave blank to use the transactional sender above.</span>
+              <span>Leave blank to use the identity above. With Google, a different address is used as Reply-To.</span>
             </div>
             <div class="settings-fields two-column">
               <div class="settings-field"><label for="executiveSenderName">Sender name</label><input id="executiveSenderName"></div>
@@ -192,7 +219,7 @@
               <div class="settings-field"><label for="executiveReplyToEmail">Reply-to email</label><input id="executiveReplyToEmail" type="email"></div>
             </div>
           </div>
-          <p class="settings-help">Branches inherit these sender identities until an administrator saves different values for that branch. The encrypted Brevo API key remains organisation-wide and is never exposed here.</p>
+          <p class="settings-help">Branches inherit these sender identities until an administrator saves different values for that branch. Email-provider credentials remain organisation-wide and are never exposed here.</p>
         </section>
 
         <section id="parent-settings" class="settings-section" data-school-settings-only>
@@ -520,6 +547,6 @@
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
-  <script src="js/setup.js?v=20260916-split-cbt-web"></script>
+  <script src="js/setup.js?v=20260917-email-provider"></script>
 </body>
 </html>

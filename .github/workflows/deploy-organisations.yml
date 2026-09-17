@@ -76,4 +76,6 @@ jobs:
       cloudflare_project: ${{ matrix.organisation.cloudflareProject }}
       platform_url: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev' }}
       paystack_deployment_requested_at: ${{ matrix.organisation.paystackDeploymentRequestedAt || '' }}
+      email_deployment_requested_at: ${{ matrix.organisation.emailDeploymentRequestedAt || '' }}
+      email_deployment_provider: ${{ matrix.organisation.emailDeploymentProvider || '' }}
     secrets: inherit

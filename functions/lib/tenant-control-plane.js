@@ -48,14 +48,20 @@ export async function tenantControlSecretHash(value) {
 }
 
 export async function tenantControlCanonicalRequest(details = {}) {
+  const action = clean(details.action).toLowerCase();
+  const protectedCredential = action === 'connect-paystack'
+    ? details.paystackSecretKey
+    : ['use-brevo', 'disconnect-google'].includes(action)
+      ? details.gmailRefreshToken
+      : '';
   return JSON.stringify([
-    clean(details.action).toLowerCase(),
+    action,
     clean(details.workspaceId).toLowerCase(),
     clean(details.portalHost).toLowerCase(),
     clean(details.requestId),
     clean(details.issuedAt),
     details.replaceConfirmed === true,
-    await tenantControlSecretHash(details.paystackSecretKey)
+    await tenantControlSecretHash(protectedCredential)
   ]);
 }
 

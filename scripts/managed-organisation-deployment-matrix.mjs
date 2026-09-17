@@ -38,10 +38,15 @@ export function buildManagedOrganisationDeploymentMatrix(registry, managedOrgani
       return {
         ...organisation,
         paystackDeploymentPending: managed?.PaystackDeploymentPending === true,
-        paystackDeploymentRequestedAt: clean(managed?.PaystackDeploymentRequestedAt)
+        paystackDeploymentRequestedAt: clean(managed?.PaystackDeploymentRequestedAt),
+        emailDeploymentPending: managed?.EmailDeploymentPending === true,
+        emailDeploymentRequestedAt: clean(managed?.EmailDeploymentRequestedAt),
+        emailDeploymentProvider: lower(managed?.EmailDeploymentProvider)
       };
     })
-    .filter((organisation) => !pendingOnly || organisation.paystackDeploymentPending);
+    .filter((organisation) => !pendingOnly
+      || organisation.paystackDeploymentPending
+      || organisation.emailDeploymentPending);
 }
 
 async function main() {

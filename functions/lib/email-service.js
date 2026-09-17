@@ -1,6 +1,11 @@
 import { getDocument } from './firestore.js';
 import { resolveOrganizationConfig } from './organization-config.js';
 import { effectiveBranchProfile } from './branch-profile-settings.js';
+import {
+  classifyGmailFailure,
+  gmailFailureError,
+  submitGmailEmail
+} from './gmail-email-provider.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -135,6 +140,17 @@ function normalizeAttachments(attachments) {
   }).filter(Boolean);
 }
 
+export function resolveEmailProvider(env = {}, providerOverride = '') {
+  const provider = clean(providerOverride || env.EMAIL_PROVIDER).toLowerCase();
+  if (!provider) return 'brevo';
+  if (provider === 'brevo' || provider === 'gmail') return provider;
+  const error = new Error(`The configured email provider "${provider}" is not supported.`);
+  error.status = 503;
+  error.code = 'EMAIL_PROVIDER_UNSUPPORTED';
+  error.retrySafe = true;
+  throw error;
+}
+
 export function selectActiveBrevoSender(profile = {}, senders = []) {
   const activeEmails = new Set((Array.isArray(senders) ? senders : [])
     .filter((sender) => sender?.active === true && validEmail(sender?.email))
@@ -228,7 +244,7 @@ export function classifyBrevoFailure(status = 0, providerError = {}) {
     return {
       code: 'BREVO_PROVIDER_UNAVAILABLE',
       status: 502,
-      message: 'Brevo is temporarily unavailable. The document remains issued; try sending it again shortly.'
+      message: 'Brevo returned a temporary error and did not confirm whether it accepted the message. Automatic resend is paused to prevent a duplicate.'
     };
   }
   if (Number(status) === 400 || /invalid_parameter|missing_parameter|not_acceptable/.test(combined)) {
@@ -261,6 +277,9 @@ function brevoFailureError(status, providerError) {
   const error = new Error(failure.message);
   error.status = failure.status;
   error.code = failure.code;
+  error.deliveryUncertain = Number(status) >= 500;
+  error.retrySafe = !error.deliveryUncertain;
+  error.provider = 'brevo';
   return error;
 }
 
@@ -313,6 +332,8 @@ async function resolveBrevoDeliverySender(apiKey, profile) {
     );
     err.status = 503;
     err.code = 'BREVO_SENDER_NOT_VALIDATED';
+    err.retrySafe = true;
+    err.provider = 'brevo';
     throw err;
   } catch (error) {
     if (error?.status) throw error;
@@ -335,6 +356,8 @@ async function submitBrevoEmail(apiKey, payload) {
     error.status = 503;
     error.code = 'EMAIL_DELIVERY_UNCERTAIN';
     error.deliveryUncertain = true;
+    error.retrySafe = false;
+    error.provider = 'brevo';
     error.cause = cause;
     throw error;
   }
@@ -360,12 +383,16 @@ export async function sendConfiguredEmail(env, {
   htmlContent,
   attachments = [],
   senderProfile = '',
-  branchId = ''
+  branchId = '',
+  providerOverride = '',
+  senderOverride = null
 }) {
   const recipient = clean(toEmail);
   if (!validEmail(recipient)) {
     const err = new Error('A valid recipient email address is required.');
     err.status = 400;
+    err.code = 'EMAIL_RECIPIENT_INVALID';
+    err.retrySafe = true;
     throw err;
   }
   const [brevo, organizationProfile, defaultSchoolProfile] = await Promise.all([
@@ -379,25 +406,137 @@ export async function sendConfiguredEmail(env, {
     : organizationProfile;
   // Sender identities are deliberately scoped by edition. A faith or generic
   // organisation deployment never falls through to school sender fields.
-  const senderProfileConfig = resolveEmailSenderProfile(env, {
+  let senderProfileConfig = resolveEmailSenderProfile(env, {
     brevo,
     organizationProfile: effectiveOrganizationProfile,
     schoolProfile,
     senderProfile
   });
+  const overrideEmail = clean(senderOverride?.email);
+  if (overrideEmail) {
+    if (!validEmail(overrideEmail)) {
+      const err = new Error('The explicit sender email address is invalid.');
+      err.status = 400;
+      err.code = 'EMAIL_SENDER_INVALID';
+      err.retrySafe = true;
+      throw err;
+    }
+    senderProfileConfig = {
+      ...senderProfileConfig,
+      senderEmail: overrideEmail,
+      senderName: clean(senderOverride?.name) || senderProfileConfig.senderName,
+      fallbackSenderEmail: overrideEmail,
+      fallbackSenderName: clean(senderOverride?.name) || senderProfileConfig.fallbackSenderName,
+      replyToEmail: clean(senderOverride?.replyToEmail),
+      replyToName: clean(senderOverride?.replyToName)
+    };
+  }
   const { organization } = senderProfileConfig;
+  const provider = resolveEmailProvider(env, providerOverride);
+  if (provider === 'gmail' && !validEmail(senderProfileConfig.senderEmail)
+    && validEmail(env.GMAIL_CONNECTED_EMAIL)) {
+    senderProfileConfig = {
+      ...senderProfileConfig,
+      senderEmail: clean(env.GMAIL_CONNECTED_EMAIL).toLowerCase(),
+      fallbackSenderEmail: clean(env.GMAIL_CONNECTED_EMAIL).toLowerCase()
+    };
+  }
+  const normalizedAttachments = normalizeAttachments(attachments);
+  const resolvedSubject = clean(subject) || `Message from ${organization.Name || 'Dynamax'}`;
+  if (!validEmail(senderProfileConfig.senderEmail)) {
+    const err = new Error(`The ${provider === 'gmail' ? 'Google' : 'Brevo'} sender email could not be resolved for this organisation.`);
+    err.status = 503;
+    err.code = 'EMAIL_SENDER_UNAVAILABLE';
+    err.retrySafe = true;
+    err.provider = provider;
+    throw err;
+  }
+
+  if (provider === 'gmail') {
+    const connectedEmail = clean(env.GMAIL_CONNECTED_EMAIL).toLowerCase();
+    const configuredSenderDiffers = validEmail(connectedEmail)
+      && connectedEmail !== clean(senderProfileConfig.senderEmail).toLowerCase();
+    const gmailMessage = {
+      fromName: clean(senderProfileConfig.senderName) || clean(senderProfileConfig.fallbackSenderName),
+      replyToEmail: configuredSenderDiffers
+        ? senderProfileConfig.senderEmail
+        : senderProfileConfig.replyToEmail,
+      replyToName: configuredSenderDiffers
+        ? senderProfileConfig.senderName
+        : senderProfileConfig.replyToName,
+      toEmail: recipient,
+      toName: clean(toName) || recipient,
+      subject: resolvedSubject,
+      textContent: clean(textContent),
+      htmlContent: clean(htmlContent),
+      attachments: normalizedAttachments
+    };
+    let delivery;
+    let attachmentFallback = false;
+    try {
+      delivery = await submitGmailEmail(env, gmailMessage);
+    } catch (error) {
+      if (normalizedAttachments.length && error?.code === 'GMAIL_ATTACHMENT_REJECTED') {
+        console.warn(JSON.stringify({
+          event: 'email_attachment_fallback',
+          provider: 'gmail',
+          status: Number(error?.status || 0),
+          senderProfile: clean(senderProfile) || 'default',
+          attachmentCount: normalizedAttachments.length,
+          failureCode: error.code
+        }));
+        delivery = await submitGmailEmail(env, { ...gmailMessage, attachments: [] });
+        attachmentFallback = delivery.ok;
+      } else {
+        throw error;
+      }
+    }
+    if (!delivery.ok && normalizedAttachments.length) {
+      const initialFailure = classifyGmailFailure(delivery.status, delivery.providerError);
+      if (initialFailure.code === 'GMAIL_REQUEST_REJECTED') {
+        console.warn(JSON.stringify({
+          event: 'email_attachment_fallback',
+          provider: 'gmail',
+          status: delivery.status,
+          senderProfile: clean(senderProfile) || 'default',
+          attachmentCount: normalizedAttachments.length,
+          failureCode: initialFailure.code
+        }));
+        delivery = await submitGmailEmail(env, { ...gmailMessage, attachments: [] });
+        attachmentFallback = delivery.ok;
+      }
+    }
+    if (!delivery.ok) {
+      const failure = classifyGmailFailure(delivery.status, delivery.providerError);
+      console.error(JSON.stringify({
+        event: 'email_provider_rejected',
+        provider: 'gmail',
+        status: delivery.status,
+        senderProfile: clean(senderProfile) || 'default',
+        attachmentCount: normalizedAttachments.length,
+        failureCode: failure.code
+      }));
+      throw gmailFailureError(delivery.status, delivery.providerError);
+    }
+    return {
+      ok: true,
+      status: delivery.status,
+      provider: 'gmail',
+      providerMessageId: clean(delivery.providerResult?.id),
+      attachmentFallback
+    };
+  }
+
   // Prefer the encrypted environment secret. Existing installations may still
   // have a legacy server-side credential while they complete the migration;
   // it is consumed only inside the Worker and is never returned to clients.
   const apiKey = clean(env.BREVO_API_KEY || brevo?.BrevoApiKey);
   if (!apiKey) {
-    const err = new Error('The existing email-service credential is unavailable in this portal environment.');
+    const err = new Error('The Brevo email credential is unavailable in this portal environment.');
     err.status = 503;
-    throw err;
-  }
-  if (!validEmail(senderProfileConfig.senderEmail)) {
-    const err = new Error('The existing sender email could not be resolved for this organisation.');
-    err.status = 503;
+    err.code = 'BREVO_CONFIGURATION_MISSING';
+    err.retrySafe = true;
+    err.provider = 'brevo';
     throw err;
   }
   const {
@@ -406,11 +545,10 @@ export async function sendConfiguredEmail(env, {
     replyToEmail,
     replyToName
   } = await resolveBrevoDeliverySender(apiKey, senderProfileConfig);
-  const normalizedAttachments = normalizeAttachments(attachments);
   const payload = {
     sender: { name: senderName, email: senderEmail },
     to: [{ email: recipient, name: clean(toName) || recipient }],
-    subject: clean(subject) || `Message from ${organization.Name || 'Dynamax'}`,
+    subject: resolvedSubject,
     textContent: clean(textContent),
     htmlContent: clean(htmlContent)
   };
@@ -450,6 +588,7 @@ export async function sendConfiguredEmail(env, {
   return {
     ok: true,
     status: delivery.status,
+    provider: 'brevo',
     providerMessageId: clean(delivery.providerResult?.messageId),
     attachmentFallback
   };

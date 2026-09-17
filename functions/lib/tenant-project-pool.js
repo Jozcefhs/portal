@@ -83,8 +83,23 @@ export function publicTenantProjectSlot(slot = {}) {
     TenantControlKeyConfigured: validTenantControlPublicKey(slot.TenantControlPublicKey),
     PaystackDeploymentPending: slot.PaystackDeploymentPending === true,
     PaystackDeploymentRequestedAt: clean(slot.PaystackDeploymentRequestedAt),
+    EmailDeploymentPending: slot.EmailDeploymentPending === true,
+    EmailDeploymentRequestedAt: clean(slot.EmailDeploymentRequestedAt),
+    EmailDeploymentProvider: clean(slot.EmailDeploymentProvider).toLowerCase(),
     UpdatedAt: clean(slot.UpdatedAt || slot.__updateTime || slot.CreatedAt)
   };
+}
+
+export function tenantProjectAssignmentMatches(slot = {}, expected = {}) {
+  const registrationReference = clean(expected.registrationReference);
+  const workspaceId = lower(expected.workspaceId);
+  return Boolean(
+    registrationReference
+    && workspaceId
+    && lower(slot.Status) === 'assigned'
+    && clean(slot.AssignedRegistrationReference) === registrationReference
+    && lower(slot.WorkspaceId) === workspaceId
+  );
 }
 
 export function normalizeTenantPoolPolicy(value = {}) {
@@ -259,6 +274,32 @@ async function tenantPoolSlotByProject(platformEnv, projectId) {
   return slot && safeKey(slot.CloudflareProject) === id ? slot : null;
 }
 
+export async function assertTenantProjectAssignment(platformEnv, projectId, expected = {}) {
+  const slot = await tenantPoolSlotByProject(platformEnv, projectId);
+  if (!slot || !tenantProjectAssignmentMatches(slot, expected)) {
+    const error = new Error('The tenant project assignment changed before the provider update could be applied.');
+    error.status = 409;
+    error.code = 'TENANT_PROJECT_ASSIGNMENT_CHANGED';
+    throw error;
+  }
+  return publicTenantProjectSlot(slot);
+}
+
+export async function assertTenantEmailDeploymentCurrent(platformEnv, projectId, expected = {}) {
+  const slot = await tenantPoolSlotByProject(platformEnv, projectId);
+  if (!slot
+      || !tenantProjectAssignmentMatches(slot, expected)
+      || slot.EmailDeploymentPending !== true
+      || clean(slot.EmailDeploymentRequestedAt) !== clean(expected.requestedAt)
+      || lower(slot.EmailDeploymentProvider) !== lower(expected.provider)) {
+    const error = new Error('This email-provider transition was superseded before its credentials could be staged.');
+    error.status = 409;
+    error.code = 'EMAIL_PROVIDER_TRANSITION_SUPERSEDED';
+    throw error;
+  }
+  return publicTenantProjectSlot(slot);
+}
+
 export async function saveTenantControlPublicKey(platformEnv, projectId, publicKey) {
   const tenantControlPublicKey = clean(publicKey);
   if (!safeKey(projectId) || !validTenantControlPublicKey(tenantControlPublicKey)) {
@@ -364,6 +405,292 @@ export async function completeTenantPaystackDeployment(platformEnv, projectId, r
   return {
     completed: true,
     slot: publicTenantProjectSlot({ ...slot, PaystackDeploymentPending: false, UpdatedAt: completedAt })
+  };
+}
+
+export async function queueTenantEmailDeployment(
+  platformEnv,
+  projectId,
+  requestedAt = new Date().toISOString(),
+  provider = '',
+  expectedAssignment = {}
+) {
+  const slot = await tenantPoolSlotByProject(platformEnv, projectId);
+  if (!slot) {
+    const error = new Error('The tenant project was not found in the managed pool.');
+    error.status = 404;
+    throw error;
+  }
+  const slotDocumentId = clean(slot.__id || slot.Id);
+  const timestamp = clean(requestedAt) || new Date().toISOString();
+  const targetProvider = ['brevo', 'gmail'].includes(lower(provider)) ? lower(provider) : '';
+  if (!targetProvider) {
+    const error = new Error('A valid target email provider is required for deployment.');
+    error.status = 400;
+    throw error;
+  }
+  if (!tenantProjectAssignmentMatches(slot, expectedAssignment)) {
+    const error = new Error('The tenant project assignment changed before its email deployment could be queued.');
+    error.status = 409;
+    error.code = 'TENANT_PROJECT_ASSIGNMENT_CHANGED';
+    throw error;
+  }
+  if (slot.EmailDeploymentPending === true) {
+    const sameTransition = clean(slot.EmailDeploymentRequestedAt) === timestamp
+      && lower(slot.EmailDeploymentProvider) === targetProvider;
+    if (sameTransition) return publicTenantProjectSlot(slot);
+    const error = new Error('Another email-provider transition is still being deployed. Wait for it to finish before starting another.');
+    error.status = 409;
+    error.code = 'EMAIL_PROVIDER_TRANSITION_IN_PROGRESS';
+    throw error;
+  }
+  await patchDocumentFieldsIfCurrent(platformEnv, TENANT_PROJECT_POOL_COLLECTION, slotDocumentId, {
+    EmailDeploymentPending: true,
+    EmailDeploymentRequestedAt: timestamp,
+    EmailDeploymentProvider: targetProvider,
+    UpdatedAt: timestamp
+  }, slot);
+  return publicTenantProjectSlot({
+    ...slot,
+    EmailDeploymentPending: true,
+    EmailDeploymentRequestedAt: timestamp,
+    EmailDeploymentProvider: targetProvider,
+    UpdatedAt: timestamp
+  });
+}
+
+function tenantEmailTransitionSupersededError() {
+  const error = new Error('This email-provider transition was superseded before it could be cancelled.');
+  error.status = 409;
+  error.code = 'EMAIL_PROVIDER_TRANSITION_SUPERSEDED';
+  return error;
+}
+
+function cancelledTenantEmailQueueFields(requestedAt, provider, cancelledAt) {
+  return {
+    EmailDeploymentPending: false,
+    EmailDeploymentRequestedAt: '',
+    EmailDeploymentProvider: '',
+    EmailDeploymentCancelledRequestedAt: requestedAt,
+    EmailDeploymentCancelledProvider: provider,
+    EmailDeploymentCancelledAt: cancelledAt,
+    UpdatedAt: cancelledAt
+  };
+}
+
+function cancelledTenantEmailMetadataFields(requestedAt, provider, cancelledAt) {
+  return {
+    EmailProviderPending: '',
+    GmailConnectedEmailPending: '',
+    EmailProviderConnectedByPending: '',
+    EmailProviderTransitionStatus: 'Cancelled',
+    EmailDeploymentQueued: false,
+    EmailDeploymentRequestedAt: '',
+    EmailDeploymentCancelledRequestedAt: requestedAt,
+    EmailDeploymentCancelledProvider: provider,
+    EmailDeploymentCancelledAt: cancelledAt,
+    UpdatedAt: cancelledAt
+  };
+}
+
+export async function cancelTenantEmailDeployment(
+  platformEnv,
+  projectId,
+  requestedAt,
+  provider = '',
+  expectedAssignment = {}
+) {
+  const expectedRequest = clean(requestedAt);
+  const expectedProvider = lower(provider);
+  if (!expectedRequest || !['brevo', 'gmail'].includes(expectedProvider)) {
+    const error = new Error('A valid email-provider transition is required for cancellation.');
+    error.status = 400;
+    throw error;
+  }
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const slot = await tenantPoolSlotByProject(platformEnv, projectId);
+    if (!slot) {
+      const error = new Error('The tenant project was not found in the managed pool.');
+      error.status = 404;
+      throw error;
+    }
+    if (!tenantProjectAssignmentMatches(slot, expectedAssignment)) {
+      const error = new Error('The tenant project assignment changed before its email deployment could be cancelled.');
+      error.status = 409;
+      error.code = 'TENANT_PROJECT_ASSIGNMENT_CHANGED';
+      throw error;
+    }
+
+    if (slot.EmailDeploymentPending !== true) {
+      const alreadyCancelled = clean(slot.EmailDeploymentCancelledRequestedAt) === expectedRequest
+        && lower(slot.EmailDeploymentCancelledProvider) === expectedProvider;
+      return { cancelled: false, alreadyCancelled, slot: publicTenantProjectSlot(slot) };
+    }
+
+    if (clean(slot.EmailDeploymentRequestedAt) !== expectedRequest
+        || lower(slot.EmailDeploymentProvider) !== expectedProvider) {
+      throw tenantEmailTransitionSupersededError();
+    }
+
+    const registrationReference = clean(expectedAssignment.registrationReference);
+    const workspaceId = lower(expectedAssignment.workspaceId);
+    const registration = await getDocument(platformEnv, 'tenantRegistrations', registrationReference);
+    const actualRegistrationReference = clean(registration?.__id || registration?.Reference || registration?.Id);
+    if (!registration
+        || actualRegistrationReference !== registrationReference
+        || lower(registration.WorkspaceId) !== workspaceId) {
+      const error = new Error('The tenant project assignment changed before its email deployment could be cancelled.');
+      error.status = 409;
+      error.code = 'TENANT_PROJECT_ASSIGNMENT_CHANGED';
+      throw error;
+    }
+
+    const registrationProvider = lower(registration.EmailProviderPending);
+    const registrationRequest = clean(registration.EmailDeploymentRequestedAt);
+    const matchingRegistrationMetadata = registrationProvider === expectedProvider
+      && registrationRequest === expectedRequest;
+    if (registration.EmailDeploymentQueued === true && !matchingRegistrationMetadata) {
+      throw tenantEmailTransitionSupersededError();
+    }
+
+    const cancelledAt = new Date().toISOString();
+    const slotFields = cancelledTenantEmailQueueFields(expectedRequest, expectedProvider, cancelledAt);
+    const writes = [{
+      collectionPath: TENANT_PROJECT_POOL_COLLECTION,
+      documentId: clean(slot.__id || slot.Id),
+      data: { ...withoutFirestoreMetadata(slot), ...slotFields },
+      updateTime: slot.__updateTime
+    }];
+    if (matchingRegistrationMetadata) {
+      writes.push({
+        collectionPath: 'tenantRegistrations',
+        documentId: registrationReference,
+        data: {
+          ...withoutFirestoreMetadata(registration),
+          ...cancelledTenantEmailMetadataFields(expectedRequest, expectedProvider, cancelledAt)
+        },
+        updateTime: registration.__updateTime
+      });
+    }
+
+    try {
+      await batchCommitDocuments(platformEnv, writes);
+      return {
+        cancelled: true,
+        alreadyCancelled: false,
+        registrationMetadataCleared: matchingRegistrationMetadata,
+        slot: publicTenantProjectSlot({ ...slot, ...slotFields })
+      };
+    } catch (error) {
+      if (error?.code !== 'FIRESTORE_WRITE_CONFLICT' || attempt > 0) throw error;
+    }
+  }
+
+  throw tenantEmailTransitionSupersededError();
+}
+
+export async function completeTenantEmailDeployment(platformEnv, projectId, requestedAt, provider = '') {
+  const slot = await tenantPoolSlotByProject(platformEnv, projectId);
+  if (!slot) {
+    const error = new Error('The tenant project was not found in the managed pool.');
+    error.status = 404;
+    throw error;
+  }
+  const expectedRequest = clean(requestedAt);
+  const expectedProvider = lower(provider);
+  if (!['brevo', 'gmail'].includes(expectedProvider)) {
+    const error = new Error('The deployed email provider must be confirmed before completing the queue.');
+    error.status = 400;
+    throw error;
+  }
+  if (!expectedRequest || clean(slot.EmailDeploymentRequestedAt) !== expectedRequest
+      || lower(slot.EmailDeploymentProvider) !== expectedProvider) {
+    return { completed: false, slot: publicTenantProjectSlot(slot) };
+  }
+  const slotDocumentId = clean(slot.__id || slot.Id);
+  const completedAt = new Date().toISOString();
+  const registrationReference = clean(slot.AssignedRegistrationReference);
+  if (!registrationReference) {
+    const error = new Error('The queued tenant email deployment has no assigned registration.');
+    error.status = 409;
+    error.code = 'TENANT_PROJECT_ASSIGNMENT_CHANGED';
+    throw error;
+  }
+  let registration = await getDocument(platformEnv, 'tenantRegistrations', registrationReference);
+  if (!registration || clean(registration.EmailDeploymentRequestedAt) !== expectedRequest) {
+    return { completed: false, slot: publicTenantProjectSlot(slot) };
+  }
+  let registrationComplete = registration.EmailDeploymentQueued === false
+    && lower(registration.EmailProvider) === expectedProvider
+    && Boolean(clean(registration.EmailDeploymentCompletedAt));
+  if (!registrationComplete) {
+    const registrationFields = {
+      EmailProvider: expectedProvider,
+      GmailConnectedEmail: expectedProvider === 'gmail' ? clean(registration.GmailConnectedEmailPending) : '',
+      EmailProviderConnectedAt: completedAt,
+      EmailProviderConnectedBy: clean(registration.EmailProviderConnectedByPending || 'Tenant Super Administrator'),
+      EmailProviderPending: '',
+      GmailConnectedEmailPending: '',
+      EmailProviderConnectedByPending: '',
+      EmailProviderTransitionStatus: 'Connected',
+      EmailProviderFailureCode: '',
+      EmailDeploymentQueued: false,
+      EmailDeploymentCompletedAt: completedAt,
+      UpdatedAt: completedAt
+    };
+    try {
+      await patchDocumentFieldsIfCurrent(
+        platformEnv,
+        'tenantRegistrations',
+        registrationReference,
+        registrationFields,
+        registration
+      );
+      registrationComplete = true;
+    } catch (error) {
+      if (error?.code !== 'FIRESTORE_WRITE_CONFLICT') throw error;
+      registration = await getDocument(platformEnv, 'tenantRegistrations', registrationReference);
+      if (!registration || clean(registration.EmailDeploymentRequestedAt) !== expectedRequest) {
+        return { completed: false, slot: publicTenantProjectSlot(slot) };
+      }
+      registrationComplete = registration.EmailDeploymentQueued === false
+        && lower(registration.EmailProvider) === expectedProvider
+        && Boolean(clean(registration.EmailDeploymentCompletedAt));
+      if (!registrationComplete) {
+        await patchDocumentFieldsIfCurrent(platformEnv, 'tenantRegistrations', registrationReference, {
+          ...registrationFields,
+          GmailConnectedEmail: expectedProvider === 'gmail' ? clean(registration.GmailConnectedEmailPending) : '',
+          EmailProviderConnectedBy: clean(registration.EmailProviderConnectedByPending || 'Tenant Super Administrator')
+        }, registration);
+      }
+    }
+  }
+
+  // Registration is finalized first. A slot CAS failure leaves the pending
+  // job visible so the deployment scheduler can safely retry idempotently.
+  try {
+    await patchDocumentFieldsIfCurrent(platformEnv, TENANT_PROJECT_POOL_COLLECTION, slotDocumentId, {
+      EmailDeploymentPending: false,
+      EmailDeploymentCompletedAt: completedAt,
+      UpdatedAt: completedAt
+    }, slot);
+  } catch (error) {
+    if (error?.code !== 'FIRESTORE_WRITE_CONFLICT') throw error;
+    const latest = await tenantPoolSlotByProject(platformEnv, projectId);
+    if (!latest || clean(latest.EmailDeploymentRequestedAt) !== expectedRequest
+        || lower(latest.EmailDeploymentProvider) !== expectedProvider) {
+      return { completed: false, slot: publicTenantProjectSlot(latest || {}) };
+    }
+    await patchDocumentFieldsIfCurrent(platformEnv, TENANT_PROJECT_POOL_COLLECTION, clean(latest.__id || latest.Id), {
+      EmailDeploymentPending: false,
+      EmailDeploymentCompletedAt: completedAt,
+      UpdatedAt: completedAt
+    }, latest);
+  }
+  return {
+    completed: true,
+    slot: publicTenantProjectSlot({ ...slot, EmailDeploymentPending: false, UpdatedAt: completedAt })
   };
 }
 

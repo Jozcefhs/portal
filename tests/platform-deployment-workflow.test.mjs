@@ -21,6 +21,12 @@ test('the central Dynamax platform deploys to Cloudflare Pages on main', () => {
   assert.match(workflow, /wranglerVersion: "4\.125\.0"/);
   assert.match(workflow, /pages deploy \.pages-deploy/);
   assert.match(workflow, /verify-platform-deployment\.mjs/);
+  assert.match(workflow, /GOOGLE_OAUTH_CLIENT_ID/);
+  assert.match(workflow, /GOOGLE_OAUTH_CLIENT_SECRET/);
+  assert.match(workflow, /pages secret bulk/);
+  assert.match(workflow, /GOOGLE_OAUTH_CLIENT_ID":null/);
+  assert.match(workflow, /GOOGLE_OAUTH_CLIENT_SECRET":null/);
+  assert.match(workflow, /stale central OAuth secrets were removed/);
   assert.doesNotMatch(workflow, /DYNAMAX_PLATFORM_FIREBASE_PRIVATE_KEY|PAYSTACK_SECRET_KEY|ADMIN_WEB_PASSWORD/);
 });
 

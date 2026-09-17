@@ -1424,7 +1424,7 @@ async function sendCorrespondence(env, user, body, scope, identity, authorizatio
     }
     if (lower(transition.document.Status) === 'uncertain') {
       throw inputError(
-        'The provider did not confirm the previous delivery. Automatic resend is paused to prevent a duplicate email; check the Brevo log before retrying.',
+        'The provider did not confirm the previous delivery. Automatic resend is paused to prevent a duplicate email; check the active email provider log before retrying.',
         409
       );
     }
@@ -1638,7 +1638,7 @@ export async function handleExecutiveOfficeAction(env, user, body = {}, options 
       message: result.alreadySent
         ? 'Official correspondence was already sent; no duplicate email was sent.'
         : result.attachmentFallback
-          ? 'Official correspondence sent. Brevo accepted it without the optional endorsement-image attachments; the signed and stamped status remains on the official record.'
+          ? 'Official correspondence sent. The email provider accepted it without the optional endorsement-image attachments; the signed and stamped status remains on the official record.'
           : 'Official correspondence sent.',
       alreadySent: Boolean(result.alreadySent),
       attachmentFallback: Boolean(result.attachmentFallback),

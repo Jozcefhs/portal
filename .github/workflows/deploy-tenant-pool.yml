@@ -41,7 +41,7 @@ jobs:
           [[ -n "${DYNAMAX_TENANT_PROVISIONER_SECRET}" ]] || { echo '::error::DYNAMAX_TENANT_PROVISIONER_SECRET is required.'; exit 1; }
           payload="$(jq -nc --arg password "${DYNAMAX_TENANT_PROVISIONER_SECRET}" '{password:$password,action:"load"}')"
           response="$(curl --fail-with-body --silent --show-error "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" -H 'Content-Type: application/json' --data "${payload}")"
-          projects="$(jq -c --arg target "${TARGET_PROJECT}" --arg event "${EVENT_NAME}" '[.slots[] | select((.Status | ascii_downcase) == "ready" or (.Status | ascii_downcase) == "assigned") | select(if $event == "schedule" then .PaystackDeploymentPending == true else ($target == "all" or .FirebaseProjectId == $target) end)]' <<<"${response}")"
+          projects="$(jq -c --arg target "${TARGET_PROJECT}" --arg event "${EVENT_NAME}" '[.slots[] | select((.Status | ascii_downcase) == "ready" or (.Status | ascii_downcase) == "assigned") | select(if $event == "schedule" then (.PaystackDeploymentPending == true or .EmailDeploymentPending == true) else ($target == "all" or .FirebaseProjectId == $target) end)]' <<<"${response}")"
           count="$(jq 'length' <<<"${projects}")"
           if [[ "${TARGET_PROJECT}" != "all" && "${count}" == "0" ]]; then
             echo "::error::No ready or assigned pool project matched ${TARGET_PROJECT}."
@@ -176,6 +176,36 @@ jobs:
             --arg projectId "${CLOUDFLARE_PROJECT}" \
             --arg requestedAt "${PAYSTACK_DEPLOYMENT_REQUESTED_AT}" \
             '{password:$password,action:"complete-paystack-deployment",projectId:$projectId,requestedAt:$requestedAt}')"
+          curl --fail-with-body --silent --show-error \
+            "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" \
+            -H 'Content-Type: application/json' \
+            --data "${payload}"
+
+      - name: Mark email-provider deployment complete
+        if: ${{ matrix.project.EmailDeploymentPending == true }}
+        env:
+          DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev' }}
+          DYNAMAX_TENANT_PROVISIONER_SECRET: ${{ secrets.DYNAMAX_TENANT_PROVISIONER_SECRET }}
+          CLOUDFLARE_PROJECT: ${{ matrix.project.CloudflareProject }}
+          EMAIL_DEPLOYMENT_REQUESTED_AT: ${{ matrix.project.EmailDeploymentRequestedAt }}
+          EMAIL_DEPLOYMENT_PROVIDER: ${{ matrix.project.EmailDeploymentProvider }}
+          TENANT_PORTAL_URL: https://${{ matrix.project.CloudflareProject }}.pages.dev
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${EMAIL_DEPLOYMENT_PROVIDER}" == "brevo" || "${EMAIL_DEPLOYMENT_PROVIDER}" == "gmail" ]] || { echo '::error::Queued email provider is invalid.'; exit 1; }
+          readiness="$(curl --fail-with-body --silent --show-error "${TENANT_PORTAL_URL}/api/email-provider-readiness")"
+          jq -e \
+            --arg provider "${EMAIL_DEPLOYMENT_PROVIDER}" \
+            --arg requestedAt "${EMAIL_DEPLOYMENT_REQUESTED_AT}" \
+            '.ok == true and .ready == true and .provider == $provider and .requestedAt == $requestedAt' \
+            <<<"${readiness}" >/dev/null || { echo '::error::Deployed email provider is not ready or does not match the queued transition.'; exit 1; }
+          payload="$(jq -nc \
+            --arg password "${DYNAMAX_TENANT_PROVISIONER_SECRET}" \
+            --arg projectId "${CLOUDFLARE_PROJECT}" \
+            --arg requestedAt "${EMAIL_DEPLOYMENT_REQUESTED_AT}" \
+            --arg provider "${EMAIL_DEPLOYMENT_PROVIDER}" \
+            '{password:$password,action:"complete-email-deployment",projectId:$projectId,requestedAt:$requestedAt,provider:$provider}')"
           curl --fail-with-body --silent --show-error \
             "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" \
             -H 'Content-Type: application/json' \

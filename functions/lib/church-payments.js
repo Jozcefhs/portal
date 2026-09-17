@@ -10,7 +10,7 @@ import {
 import { CHURCH_COLLECTIONS, churchCollectionPath, safeChurchDocumentId } from './church-foundation.js';
 import { resolveOrganizationConfig } from './organization-config.js';
 import { resolveMembershipBranch } from './church-membership.js';
-import { resolveEmailSenderProfile } from './email-service.js';
+import { resolveEmailSenderProfile, sendConfiguredEmail } from './email-service.js';
 import { getSchoolStructure } from './school-scope.js';
 import { getWebBranding } from './web-branding.js';
 import { ensureGivingTypes, resolveGivingType } from './church-funds.js';
@@ -491,9 +491,6 @@ function settingsDocumentForDonation(brevo = {}, organizationProfile = {}, env =
   const name = clean(resolved.organization?.Name || env.ORGANISATION_NAME || env.ORGANIZATION_NAME || 'Church');
   return {
     name,
-    senderEmail: resolved.senderEmail,
-    senderName: resolved.senderName,
-    apiKey: clean(env.BREVO_API_KEY || brevo?.BrevoApiKey),
     profileName: name
   };
 }
@@ -696,51 +693,37 @@ export function buildDonationReceiptHtml(context, link = '') {
   </table>`;
 }
 
-async function sendSchoolEmail(env, settings, subject, textContent, htmlContent, toEmail, toName) {
-  if (!settings?.apiKey || !settings.senderEmail || !toEmail) {
-    return { ok: false, skipped: true, retrySafe: true, message: 'Brevo API key, sender email, or recipient email is missing.' };
-  }
-  let response;
+async function sendSchoolEmail(env, subject, textContent, htmlContent, toEmail, toName, branchId) {
   try {
-    response = await fetch('https://api.brevo.com/v3/smtp/email', {
-      method: 'POST',
-      headers: {
-        accept: 'application/json',
-        'api-key': settings.apiKey,
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify({
-        sender: { name: settings.senderName, email: settings.senderEmail },
-        to: [{ email: toEmail, name: toName || toEmail }],
-        subject,
-        textContent,
-        htmlContent
-      })
+    const delivery = await sendConfiguredEmail(env, {
+      toEmail,
+      toName,
+      subject,
+      textContent,
+      htmlContent,
+      branchId
     });
+    return {
+      ok: true,
+      status: delivery.status,
+      uncertain: false,
+      retrySafe: false,
+      provider: delivery.provider,
+      messageId: clean(delivery.providerMessageId),
+      message: ''
+    };
   } catch (error) {
+    const uncertain = error?.deliveryUncertain === true || clean(error?.code) === 'EMAIL_DELIVERY_UNCERTAIN';
     return {
       ok: false,
-      status: 0,
-      uncertain: true,
-      retrySafe: false,
-      message: clean(error?.message || error) || 'No response was received from the email provider.'
+      status: Number(error?.status || 0),
+      uncertain,
+      retrySafe: !uncertain,
+      provider: clean(error?.provider),
+      code: clean(error?.code),
+      message: clean(error?.message || error) || 'The email provider rejected the message.'
     };
   }
-  const detail = await response.text().catch(() => '');
-  let parsed = {};
-  try {
-    parsed = detail ? JSON.parse(detail) : {};
-  } catch {
-    parsed = {};
-  }
-  return {
-    ok: response.ok,
-    status: response.status,
-    uncertain: !response.ok && response.status >= 500,
-    retrySafe: !response.ok && response.status > 0 && response.status < 500,
-    messageId: clean(parsed.messageId || parsed.messageID || parsed.id),
-    message: clean(parsed.message || detail).slice(0, 1000)
-  };
 }
 
 function donationEmailStateFields(isPaymentRequest, status, details = {}) {
@@ -836,7 +819,7 @@ export async function sendChurchDonationReceipt(env, donation, options = {}) {
       message: 'Receipt was already sent.'
     };
   }
-  if (!settings.apiKey || !settings.senderEmail || !clean(donation.DonorEmail)) {
+  if (!clean(donation.DonorEmail)) {
     return {
       ok: false,
       skipped: true,
@@ -844,7 +827,7 @@ export async function sendChurchDonationReceipt(env, donation, options = {}) {
       deliveryState: 'NotStarted',
       purpose: isPaymentRequest ? 'payment-link' : 'receipt',
       donation,
-      message: 'Brevo API key, sender email, or recipient email is missing.'
+      message: 'A recipient email is required before delivery can start.'
     };
   }
 
@@ -1008,7 +991,15 @@ export async function sendChurchDonationReceipt(env, donation, options = {}) {
     ? `Complete your donation using this secure payment link: ${paymentLink}\nPayment reference: ${payload.Reference}\nAmount: ${payload.Currency} ${payload.Amount}\nNo payment has been received yet.`
     : `Donation receipt\nPayment reference: ${payload.Reference}\nAmount: ${payload.Currency} ${payload.Amount}\nStatus: Paid`;
   const htmlContent = `${buildDonationReceiptHtml(payload, paymentLink)}`;
-  const result = await sendSchoolEmail(env, settings, subject, content, htmlContent, payload.DonorEmail, donationName);
+  const result = await sendSchoolEmail(
+    env,
+    subject,
+    content,
+    htmlContent,
+    payload.DonorEmail,
+    donationName,
+    branchId
+  );
   if (!result.ok) {
     const uncertain = result.uncertain === true || !result.retrySafe;
     const status = uncertain ? 'Uncertain' : 'Failed';
@@ -1018,6 +1009,7 @@ export async function sendChurchDonationReceipt(env, donation, options = {}) {
     const failedAt = nowIso();
     await patchDocumentFields(env, 'churchDonationEmailDeliveries', deliveryId, {
       Status: status,
+      Provider: clean(result.provider),
       ProviderHttpStatus: Number(result.status || 0),
       ProviderMessage: reason.slice(0, 500),
       OutcomeUncertain: uncertain,
@@ -1049,6 +1041,7 @@ export async function sendChurchDonationReceipt(env, donation, options = {}) {
   try {
     await patchDocumentFields(env, 'churchDonationEmailDeliveries', deliveryId, {
       Status: 'Sent',
+      Provider: clean(result.provider),
       ProviderHttpStatus: Number(result.status || 202),
       ProviderMessageId: clean(result.messageId),
       ProviderMessage: clean(result.message).slice(0, 500),

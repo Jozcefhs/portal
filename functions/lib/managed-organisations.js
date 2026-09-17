@@ -61,6 +61,9 @@ function publicManagedOrganisation(row = {}) {
     PaystackMode: clean(row.PaystackMode || 'not-configured'),
     PaystackDeploymentPending: row.PaystackDeploymentPending === true,
     PaystackDeploymentRequestedAt: clean(row.PaystackDeploymentRequestedAt),
+    EmailDeploymentPending: row.EmailDeploymentPending === true,
+    EmailDeploymentRequestedAt: clean(row.EmailDeploymentRequestedAt),
+    EmailDeploymentProvider: clean(row.EmailDeploymentProvider).toLowerCase(),
     UpdatedAt: clean(row.UpdatedAt || row.__updateTime || row.CreatedAt)
   };
 }
@@ -201,5 +204,207 @@ export async function completeManagedOrganisationPaystackDeployment(platformEnv,
   return {
     completed: true,
     organisation: publicManagedOrganisation({ ...current, PaystackDeploymentPending: false, UpdatedAt: completedAt })
+  };
+}
+
+export async function queueManagedOrganisationEmailDeployment(platformEnv, projectId, requestedAt = new Date().toISOString(), provider = '') {
+  const current = await managedOrganisationByProject(platformEnv, projectId);
+  if (!current) {
+    const error = new Error('The managed organisation was not found.');
+    error.status = 404;
+    throw error;
+  }
+  const timestamp = clean(requestedAt) || new Date().toISOString();
+  const targetProvider = ['brevo', 'gmail'].includes(lower(provider)) ? lower(provider) : '';
+  if (!targetProvider) {
+    const error = new Error('A valid target email provider is required for deployment.');
+    error.status = 400;
+    throw error;
+  }
+  if (current.EmailDeploymentPending === true) {
+    const sameTransition = clean(current.EmailDeploymentRequestedAt) === timestamp
+      && lower(current.EmailDeploymentProvider) === targetProvider;
+    if (sameTransition) return publicManagedOrganisation(current);
+    const error = new Error('Another email-provider transition is still being deployed. Wait for it to finish before starting another.');
+    error.status = 409;
+    error.code = 'EMAIL_PROVIDER_TRANSITION_IN_PROGRESS';
+    throw error;
+  }
+  await patchDocumentFieldsIfCurrent(platformEnv, MANAGED_ORGANISATION_COLLECTION, clean(current.__id || current.Id), {
+    EmailDeploymentPending: true,
+    EmailDeploymentRequestedAt: timestamp,
+    EmailDeploymentProvider: targetProvider,
+    UpdatedAt: timestamp
+  }, current);
+  return publicManagedOrganisation({
+    ...current,
+    EmailDeploymentPending: true,
+    EmailDeploymentRequestedAt: timestamp,
+    EmailDeploymentProvider: targetProvider,
+    UpdatedAt: timestamp
+  });
+}
+
+function cancelledEmailProviderFields(requestedAt, provider, cancelledAt) {
+  return {
+    EmailDeploymentPending: false,
+    EmailDeploymentQueued: false,
+    EmailDeploymentRequestedAt: '',
+    EmailDeploymentProvider: '',
+    EmailProviderPending: '',
+    GmailConnectedEmailPending: '',
+    EmailProviderConnectedByPending: '',
+    EmailProviderTransitionStatus: 'Cancelled',
+    EmailDeploymentCancelledRequestedAt: requestedAt,
+    EmailDeploymentCancelledProvider: provider,
+    EmailDeploymentCancelledAt: cancelledAt,
+    UpdatedAt: cancelledAt
+  };
+}
+
+function emailTransitionSupersededError() {
+  const error = new Error('This email-provider transition was superseded before it could be cancelled.');
+  error.status = 409;
+  error.code = 'EMAIL_PROVIDER_TRANSITION_SUPERSEDED';
+  return error;
+}
+
+export async function cancelManagedOrganisationEmailDeployment(
+  platformEnv,
+  projectId,
+  requestedAt,
+  provider = ''
+) {
+  const expectedRequest = clean(requestedAt);
+  const expectedProvider = lower(provider);
+  if (!expectedRequest || !['brevo', 'gmail'].includes(expectedProvider)) {
+    const error = new Error('A valid email-provider transition is required for cancellation.');
+    error.status = 400;
+    throw error;
+  }
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const current = await managedOrganisationByProject(platformEnv, projectId);
+    if (!current) {
+      const error = new Error('The managed organisation was not found.');
+      error.status = 404;
+      throw error;
+    }
+
+    if (current.EmailDeploymentPending !== true) {
+      const alreadyCancelled = clean(current.EmailDeploymentCancelledRequestedAt) === expectedRequest
+        && lower(current.EmailDeploymentCancelledProvider) === expectedProvider;
+      return {
+        cancelled: false,
+        alreadyCancelled,
+        organisation: publicManagedOrganisation(current)
+      };
+    }
+
+    if (clean(current.EmailDeploymentRequestedAt) !== expectedRequest
+        || lower(current.EmailDeploymentProvider) !== expectedProvider) {
+      throw emailTransitionSupersededError();
+    }
+
+    // A queue write intentionally happens before the provider metadata write.
+    // An empty pending provider is therefore safe to cancel; a different one
+    // indicates a mismatched active transition and must never be cleared.
+    const pendingProvider = lower(current.EmailProviderPending);
+    if (pendingProvider && pendingProvider !== expectedProvider) {
+      throw emailTransitionSupersededError();
+    }
+
+    const cancelledAt = new Date().toISOString();
+    const fields = cancelledEmailProviderFields(expectedRequest, expectedProvider, cancelledAt);
+    try {
+      await patchDocumentFieldsIfCurrent(
+        platformEnv,
+        MANAGED_ORGANISATION_COLLECTION,
+        clean(current.__id || current.Id),
+        fields,
+        current
+      );
+      return {
+        cancelled: true,
+        alreadyCancelled: false,
+        organisation: publicManagedOrganisation({ ...current, ...fields })
+      };
+    } catch (error) {
+      if (error?.code !== 'FIRESTORE_WRITE_CONFLICT' || attempt > 0) throw error;
+    }
+  }
+
+  throw emailTransitionSupersededError();
+}
+
+function completedEmailProviderFields(record, provider, completedAt) {
+  return {
+    EmailProvider: provider,
+    GmailConnectedEmail: provider === 'gmail' ? clean(record.GmailConnectedEmailPending) : '',
+    EmailProviderConnectedAt: completedAt,
+    EmailProviderConnectedBy: clean(record.EmailProviderConnectedByPending || 'Tenant Super Administrator'),
+    EmailProviderPending: '',
+    GmailConnectedEmailPending: '',
+    EmailProviderConnectedByPending: '',
+    EmailProviderTransitionStatus: 'Connected',
+    EmailProviderFailureCode: '',
+    EmailDeploymentPending: false,
+    EmailDeploymentQueued: false,
+    EmailDeploymentCompletedAt: completedAt,
+    UpdatedAt: completedAt
+  };
+}
+
+export async function completeManagedOrganisationEmailDeployment(platformEnv, projectId, requestedAt, provider = '') {
+  const current = await managedOrganisationByProject(platformEnv, projectId);
+  if (!current) {
+    const error = new Error('The managed organisation was not found.');
+    error.status = 404;
+    throw error;
+  }
+  const expectedRequest = clean(requestedAt);
+  const expectedProvider = lower(provider);
+  if (!['brevo', 'gmail'].includes(expectedProvider)) {
+    const error = new Error('The deployed email provider must be confirmed before completing the queue.');
+    error.status = 400;
+    throw error;
+  }
+  if (!expectedRequest || clean(current.EmailDeploymentRequestedAt) !== expectedRequest
+      || lower(current.EmailDeploymentProvider) !== expectedProvider) {
+    return { completed: false, organisation: publicManagedOrganisation(current) };
+  }
+  const completedAt = new Date().toISOString();
+  try {
+    await patchDocumentFieldsIfCurrent(
+      platformEnv,
+      MANAGED_ORGANISATION_COLLECTION,
+      clean(current.__id || current.Id),
+      completedEmailProviderFields(current, expectedProvider, completedAt),
+      current
+    );
+  } catch (error) {
+    if (error?.code !== 'FIRESTORE_WRITE_CONFLICT') throw error;
+    const latest = await managedOrganisationByProject(platformEnv, projectId);
+    if (!latest || clean(latest.EmailDeploymentRequestedAt) !== expectedRequest
+        || lower(latest.EmailDeploymentProvider) !== expectedProvider) {
+      return { completed: false, organisation: publicManagedOrganisation(latest || {}) };
+    }
+    await patchDocumentFieldsIfCurrent(
+      platformEnv,
+      MANAGED_ORGANISATION_COLLECTION,
+      clean(latest.__id || latest.Id),
+      completedEmailProviderFields(latest, expectedProvider, completedAt),
+      latest
+    );
+  }
+  return {
+    completed: true,
+    organisation: publicManagedOrganisation({
+      ...current,
+      ...completedEmailProviderFields(current, expectedProvider, completedAt),
+      EmailDeploymentPending: false,
+      EmailDeploymentQueued: false,
+      UpdatedAt: completedAt
+    })
   };
 }
