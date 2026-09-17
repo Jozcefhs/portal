@@ -53,13 +53,56 @@ function assertSafeProject(project = {}) {
 
 async function deleteCloudflareProject(projectId) {
   const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(cloudflareAccountId)}/pages/projects/${encodeURIComponent(projectId)}`;
-  const response = await fetch(endpoint, {
+  let response = await fetch(endpoint, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${cloudflareToken}`, 'Content-Type': 'application/json' }
   });
   if (response.ok || response.status === 404) return;
-  const data = await response.json().catch(() => ({}));
-  throw new Error(data?.errors?.[0]?.message || `Cloudflare Pages deletion failed (${response.status}).`);
+  let data = await response.json().catch(() => ({}));
+  const message = clean(data?.errors?.[0]?.message || data?.message);
+  if (!/too many deployments/i.test(message)) {
+    throw new Error(message || `Cloudflare Pages deletion failed (${response.status}).`);
+  }
+  await pruneCloudflareDeployments(projectId);
+  response = await fetch(endpoint, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${cloudflareToken}`, 'Content-Type': 'application/json' }
+  });
+  if (response.ok || response.status === 404) return;
+  data = await response.json().catch(() => ({}));
+  throw new Error(data?.errors?.[0]?.message || `Cloudflare Pages deletion failed after pruning deployments (${response.status}).`);
+}
+
+async function pruneCloudflareDeployments(projectId) {
+  const base = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(cloudflareAccountId)}/pages/projects/${encodeURIComponent(projectId)}/deployments`;
+  let deleted = 0;
+  for (let pass = 0; pass < 200; pass += 1) {
+    const listing = await jsonRequest(`${base}?page=1&per_page=100`, {
+      headers: { Authorization: `Bearer ${cloudflareToken}`, 'Content-Type': 'application/json' }
+    });
+    const deployments = (Array.isArray(listing.result) ? listing.result : [])
+      .filter((row) => clean(row?.id))
+      .sort((left, right) => clean(right.created_on).localeCompare(clean(left.created_on)));
+    if (deployments.length <= 1) {
+      process.stdout.write(`Removed ${deleted} historical Cloudflare Pages deployment(s) from ${projectId}.\n`);
+      return;
+    }
+    const candidates = deployments.slice(1);
+    for (let index = 0; index < candidates.length; index += 10) {
+      const batch = candidates.slice(index, index + 10);
+      await Promise.all(batch.map(async (deployment) => {
+        const response = await fetch(`${base}/${encodeURIComponent(deployment.id)}?force=true`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${cloudflareToken}`, 'Content-Type': 'application/json' }
+        });
+        if (response.ok || response.status === 404) return;
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data?.errors?.[0]?.message || `Cloudflare deployment ${deployment.id} could not be deleted (${response.status}).`);
+      }));
+      deleted += batch.length;
+    }
+  }
+  throw new Error(`Cloudflare deployment cleanup exceeded its safe pass limit for ${projectId}.`);
 }
 
 function deleteGoogleProject(projectId) {
