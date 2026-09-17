@@ -74,32 +74,44 @@ async function deleteCloudflareProject(projectId) {
 }
 
 async function pruneCloudflareDeployments(projectId) {
-  const base = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(cloudflareAccountId)}/pages/projects/${encodeURIComponent(projectId)}/deployments`;
+  const projectEndpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(cloudflareAccountId)}/pages/projects/${encodeURIComponent(projectId)}`;
+  const base = `${projectEndpoint}/deployments`;
   let deleted = 0;
   for (let pass = 0; pass < 200; pass += 1) {
+    const project = await jsonRequest(projectEndpoint, {
+      headers: { Authorization: `Bearer ${cloudflareToken}`, 'Content-Type': 'application/json' }
+    });
+    const canonicalDeploymentId = clean(project.result?.canonical_deployment?.id);
+    if (!canonicalDeploymentId) throw new Error(`Cloudflare did not identify the canonical deployment for ${projectId}.`);
     const listing = await jsonRequest(`${base}?page=1&per_page=20`, {
       headers: { Authorization: `Bearer ${cloudflareToken}`, 'Content-Type': 'application/json' }
     });
     const deployments = (Array.isArray(listing.result) ? listing.result : [])
-      .filter((row) => clean(row?.id))
-      .sort((left, right) => clean(right.created_on).localeCompare(clean(left.created_on)));
+      .filter((row) => clean(row?.id));
     if (deployments.length <= 1) {
       process.stdout.write(`Removed ${deleted} historical Cloudflare Pages deployment(s) from ${projectId}.\n`);
       return;
     }
-    const candidates = deployments.slice(1);
+    const candidates = deployments.filter((deployment) => clean(deployment.id) !== canonicalDeploymentId);
+    let deletedThisPass = 0;
     for (let index = 0; index < candidates.length; index += 10) {
       const batch = candidates.slice(index, index + 10);
-      await Promise.all(batch.map(async (deployment) => {
+      const results = await Promise.all(batch.map(async (deployment) => {
         const response = await fetch(`${base}/${encodeURIComponent(deployment.id)}?force=true`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${cloudflareToken}`, 'Content-Type': 'application/json' }
         });
-        if (response.ok || response.status === 404) return;
+        if (response.ok || response.status === 404) return true;
         const data = await response.json().catch(() => ({}));
-        throw new Error(data?.errors?.[0]?.message || `Cloudflare deployment ${deployment.id} could not be deleted (${response.status}).`);
+        const message = clean(data?.errors?.[0]?.message);
+        if (/active production deployment/i.test(message)) return false;
+        throw new Error(message || `Cloudflare deployment ${deployment.id} could not be deleted (${response.status}).`);
       }));
-      deleted += batch.length;
+      deletedThisPass += results.filter(Boolean).length;
+    }
+    deleted += deletedThisPass;
+    if (!deletedThisPass) {
+      throw new Error(`Cloudflare did not allow any non-canonical deployment to be removed from ${projectId}.`);
     }
   }
   throw new Error(`Cloudflare deployment cleanup exceeded its safe pass limit for ${projectId}.`);

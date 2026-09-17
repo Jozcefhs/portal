@@ -46,6 +46,7 @@ test('workflow requires an explicit confirmation and scripts restrict project de
   assert.match(script, /\^dynamax-tenant-/);
   assert.match(script, /complete-noncore-subscriber-cleanup/);
   assert.match(script, /pruneCloudflareDeployments/);
+  assert.match(script, /canonical_deployment/);
   assert.match(script, /per_page=20/);
   assert.match(script, /deployments.*force=true/s);
   assert.match(script, /gcloud', \['projects', 'delete'/);
