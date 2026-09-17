@@ -16,6 +16,7 @@ import {
   applyAuthoritativeActor,
   requireConfiguredDesktopSecret,
   resolveAuthoritativeDesktopActorForEnv,
+  verifyDesktopCredential,
   verifyDesktopSecret
 } from '../lib/backend-security.js';
 import {
@@ -754,7 +755,8 @@ function normalizeInventory(row) {
 
 export function requireBackendSecret(env, body) {
   const supplied = clean(body.Secret || body.secret);
-  return verifyDesktopSecret(env, supplied, 'desktop backend');
+  if (!supplied.startsWith('DXD.')) return verifyDesktopSecret(env, supplied, 'desktop backend');
+  return verifyDesktopCredential(env, supplied, 'desktop backend');
 }
 
 const VERIFIED_ACTOR_ACTIONS = new Set([
@@ -8325,7 +8327,7 @@ export async function onRequestPost(context) {
   try {
     const { request, env } = context;
     let body = await readJsonBody(request, { maxBytes: 16 * 1024 * 1024 });
-    requireBackendSecret(env, body);
+    await requireBackendSecret(env, body);
     action = clean(body.Action || body.action);
     if (!action) {
       const error = new Error('Action is required.');

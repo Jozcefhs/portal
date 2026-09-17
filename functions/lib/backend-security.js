@@ -1,4 +1,5 @@
 import { getDocument, listCollection } from './firestore.js';
+import { parseDesktopDeviceCredential, verifyDesktopDeviceCredential } from './desktop-pairing.js';
 
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
@@ -34,6 +35,20 @@ export function verifyDesktopSecret(env = {}, supplied = '', label = 'desktop ba
   error.status = 401;
   error.code = 'BACKEND_SECRET_INVALID';
   throw error;
+}
+
+export async function verifyDesktopCredential(env = {}, supplied = '', label = 'desktop backend') {
+  const credential = clean(supplied);
+  if (parseDesktopDeviceCredential(credential)) {
+    const device = await verifyDesktopDeviceCredential(env, credential);
+    if (device) return { type: 'device', deviceId: device.deviceId, deviceName: device.deviceName };
+    const error = new Error('Unauthorized. This desktop device is not paired or has been revoked.');
+    error.status = 401;
+    error.code = 'DESKTOP_DEVICE_INVALID';
+    throw error;
+  }
+  verifyDesktopSecret(env, credential, label);
+  return { type: 'legacy-secret' };
 }
 
 export function isActiveStaffUser(user) {

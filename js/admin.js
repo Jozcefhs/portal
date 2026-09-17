@@ -12,6 +12,8 @@ const approvalSettingsForm = document.getElementById('staffApprovalSettingsForm'
 const paymentSettingsButton = document.getElementById('staffPaymentSettings');
 const subscriptionButton = document.getElementById('staffSubscriptionButton');
 const subscriptionDialog = document.getElementById('staffSubscriptionDialog');
+const desktopSetupButton = document.getElementById('staffDesktopSetup');
+const desktopSetupDialog = document.getElementById('staffDesktopSetupDialog');
 const profileSubscriptionSection = document.getElementById('staffProfileSubscription');
 const financeDecisionDialog = document.getElementById('financeDecisionDialog');
 const financeDecisionForm = document.getElementById('financeDecisionForm');
@@ -364,6 +366,51 @@ function canManageOrganisationSettings(user = {}) {
     user.assignedBranchId || (user.canSwitchBranches === false ? user.branchId : '')
   );
   return clean(user.role) === 'Super Admin' && !assignedBranchId;
+}
+
+async function desktopPairingRequest(action, payload = {}) {
+  const response = await staffFetch('/api/desktop-pairing', {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...payload })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.ok) throw new Error(data.message || 'Desktop setup could not be completed.');
+  return data;
+}
+
+function renderDesktopDevices(devices = []) {
+  const list = document.getElementById('staffDesktopDevices');
+  if (!list) return;
+  list.innerHTML = devices.length ? devices.map((device) => {
+    const active = device.active !== false;
+    const date = device.createdAt ? new Date(device.createdAt).toLocaleString() : 'Date unavailable';
+    return `<article class="desktop-device-row ${active ? '' : 'is-revoked'}">
+      <div><strong>${escapeHtml(device.deviceName || 'Desktop device')}</strong><small>${active ? `Paired ${escapeHtml(date)}` : `Revoked ${escapeHtml(device.revokedAt ? new Date(device.revokedAt).toLocaleString() : '')}`}${device.createdBy ? ` · by ${escapeHtml(device.createdBy)}` : ''}</small></div>
+      ${active ? `<button type="button" class="danger-button" data-revoke-desktop-device="${escapeHtml(device.deviceId)}" data-device-name="${escapeHtml(device.deviceName || 'this device')}">Revoke</button>` : '<span class="muted">Revoked</span>'}
+    </article>`;
+  }).join('') : '<p class="desktop-device-empty">No desktop device has been paired yet.</p>';
+}
+
+async function loadDesktopDevices() {
+  const data = await desktopPairingRequest('list');
+  renderDesktopDevices(data.devices || []);
+}
+
+async function openDesktopSetup() {
+  if (!canManageOrganisationSettings(currentUser || {})) return;
+  document.getElementById('staffDesktopPortalUrl').value = window.location.origin;
+  document.getElementById('staffDesktopPairingPanel').hidden = true;
+  setStatus(document.getElementById('staffDesktopSetupStatus'), 'Loading paired desktop devices...');
+  desktopSetupDialog.showModal();
+  try {
+    await loadDesktopDevices();
+    setStatus(document.getElementById('staffDesktopSetupStatus'), 'Generate a code only when the desktop is ready to connect.');
+  } catch (error) {
+    setStatus(document.getElementById('staffDesktopSetupStatus'), error.message || String(error), 'bad');
+  }
 }
 
 function newIdempotencyKey() {
@@ -1668,6 +1715,7 @@ function showLogin(message = '', type = '') {
   dashboardEl.hidden = true;
   identityEl.hidden = true;
   approvalSettingsButton.hidden = true;
+  desktopSetupButton.hidden = true;
   mobileNav.hidden = true;
   loginCard.hidden = false;
   setStatus(loginStatus, message, type);
@@ -1893,6 +1941,7 @@ function showDashboard(user, options = {}) {
   );
   paymentSettingsButton.hidden = user.role !== 'Super Admin';
   subscriptionButton.hidden = !canManageOrganisationSettings(user);
+  desktopSetupButton.hidden = !canManageOrganisationSettings(user);
   if (subscriptionAccessBanner) {
     const readOnly = user.subscriptionReadOnly === true;
     subscriptionAccessBanner.hidden = !readOnly;
@@ -18443,6 +18492,78 @@ passkeySetupButton.addEventListener('click', async () => {
 
 approvalSettingsButton.addEventListener('click', openApprovalSettings);
 subscriptionButton.addEventListener('click', openStaffSubscription);
+desktopSetupButton.addEventListener('click', openDesktopSetup);
+document.getElementById('staffDesktopSetupClose').addEventListener('click', () => desktopSetupDialog.close());
+document.getElementById('staffDesktopPortalCopy').addEventListener('click', async () => {
+  const status = document.getElementById('staffDesktopSetupStatus');
+  try {
+    await copyTextToClipboard(document.getElementById('staffDesktopPortalUrl').value);
+    setStatus(status, 'Portal address copied.', 'ok');
+  } catch (error) {
+    setStatus(status, error.message || String(error), 'bad');
+  }
+});
+document.getElementById('staffDesktopPairingCopy').addEventListener('click', async () => {
+  const status = document.getElementById('staffDesktopSetupStatus');
+  try {
+    await copyTextToClipboard(document.getElementById('staffDesktopPairingCode').textContent);
+    setStatus(status, 'One-time pairing code copied.', 'ok');
+  } catch (error) {
+    setStatus(status, error.message || String(error), 'bad');
+  }
+});
+document.getElementById('staffDesktopPairingGenerate').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  const status = document.getElementById('staffDesktopSetupStatus');
+  setButtonLoading(button, true, 'Generating...', 'Generate one-time pairing code');
+  try {
+    const data = await desktopPairingRequest('create');
+    document.getElementById('staffDesktopPortalUrl').value = data.portalUrl || window.location.origin;
+    document.getElementById('staffDesktopPairingCode').textContent = data.code;
+    document.getElementById('staffDesktopPairingExpiry').textContent = `Expires ${new Date(data.expiresAt).toLocaleString()}. The code becomes invalid immediately after one successful use.`;
+    document.getElementById('staffDesktopPairingPanel').hidden = false;
+    setStatus(status, data.message, 'ok');
+  } catch (error) {
+    setStatus(status, error.message || String(error), 'bad');
+  } finally {
+    setButtonLoading(button, false, 'Generating...', 'Generate one-time pairing code');
+  }
+});
+document.getElementById('staffDesktopDevicesRefresh').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  const status = document.getElementById('staffDesktopSetupStatus');
+  setButtonLoading(button, true, 'Refreshing...', 'Refresh');
+  try {
+    await loadDesktopDevices();
+    setStatus(status, 'Paired desktop devices refreshed.', 'ok');
+  } catch (error) {
+    setStatus(status, error.message || String(error), 'bad');
+  } finally {
+    setButtonLoading(button, false, 'Refreshing...', 'Refresh');
+  }
+});
+document.getElementById('staffDesktopDevices').addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-revoke-desktop-device]');
+  if (!button) return;
+  const deviceName = button.dataset.deviceName || 'this device';
+  const confirmed = await window.DynamaxDialogs.confirm({
+    title: 'Revoke desktop device',
+    message: `${deviceName} will immediately lose access to this organisation.`,
+    tone: 'danger',
+    confirmText: 'Revoke device'
+  });
+  if (!confirmed) return;
+  const status = document.getElementById('staffDesktopSetupStatus');
+  setButtonLoading(button, true, 'Revoking...', 'Revoke');
+  try {
+    const data = await desktopPairingRequest('revoke', { deviceId: button.dataset.revokeDesktopDevice });
+    await loadDesktopDevices();
+    setStatus(status, data.message, 'ok');
+  } catch (error) {
+    setStatus(status, error.message || String(error), 'bad');
+    setButtonLoading(button, false, 'Revoking...', 'Revoke');
+  }
+});
 document.getElementById('staffProfileSubscriptionOpen').addEventListener('click', () => {
   staffProfileDialog.close();
   openStaffSubscription();

@@ -1,5 +1,5 @@
 import { batchUpsertDocuments, requireFirestoreEnv } from '../lib/firestore.js';
-import { requireConfiguredDesktopSecret, verifyDesktopSecret } from '../lib/backend-security.js';
+import { requireConfiguredDesktopSecret, verifyDesktopCredential } from '../lib/backend-security.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
 
@@ -195,7 +195,7 @@ export async function onRequestPost({ request, env }) {
       request.headers.get('x-backend-secret') ||
       request.headers.get('x-import-secret')
     );
-    verifyDesktopSecret(env, providedSecret, 'database import endpoint');
+    await verifyDesktopCredential(env, providedSecret, 'database import endpoint');
 
     const collection = normalizeCollection(body.collection || body.Collection);
     if (!collection) {

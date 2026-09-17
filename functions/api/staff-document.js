@@ -2,6 +2,7 @@
 
 import { deleteDocument, getDocument, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
+import { verifyDesktopCredential } from '../lib/backend-security.js';
 import { getSchoolDocumentById, querySchoolCollection, upsertSchoolDocument } from '../lib/school-scope.js';
 import {
   deleteStoredDocument,
@@ -127,7 +128,13 @@ async function handleRequest(context, body = null) {
   try {
     const { request, env } = context;
     requireFirestoreEnv(env);
-    const sharedSecretAuthorized = body && clean(env.BACKEND_SHARED_SECRET) && clean(body.Secret || body.secret) === clean(env.BACKEND_SHARED_SECRET);
+    let sharedSecretAuthorized = false;
+    const suppliedCredential = body && clean(body.Secret || body.secret);
+    if (suppliedCredential) {
+      sharedSecretAuthorized = await verifyDesktopCredential(env, suppliedCredential, 'staff document endpoint')
+        .then(() => true)
+        .catch(() => false);
+    }
     let user = null;
     if (!sharedSecretAuthorized) {
       user = await requireStaffSession(env, request);

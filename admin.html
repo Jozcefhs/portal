@@ -6,7 +6,7 @@
   <title>Organisation Staff Portal</title>
   <meta name="theme-color" content="#071b33">
   <script src="js/preferences.js?v=20260812-audio-face-guidance"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260916-split-cbt-web">
+  <link rel="stylesheet" href="css/style.css?v=20260917-desktop-pairing">
   <link rel="stylesheet" href="css/notifications.css?v=20260804-read-efficiency">
 </head>
 <body class="staff-page">
@@ -85,6 +85,9 @@
                 </button>
                 <button type="button" id="staffSubscriptionButton" class="staff-profile-settings" hidden>
                   <span aria-hidden="true">&#8593;</span> Subscription
+                </button>
+                <button type="button" id="staffDesktopSetup" class="staff-profile-settings" hidden>
+                  <span aria-hidden="true">&#128187;</span> Desktop setup
                 </button>
                 <button type="button" id="staffMfaSettings" class="staff-profile-settings">
                   <span aria-hidden="true">&#128737;</span> Two-factor security
@@ -344,6 +347,32 @@
     </section>
   </dialog>
 
+  <dialog id="staffDesktopSetupDialog" class="workflow-dialog staff-desktop-setup-dialog">
+    <div class="workflow-dialog-header">
+      <div><small>Secure device access</small><h2>Desktop setup</h2></div>
+      <button type="button" id="staffDesktopSetupClose" aria-label="Close desktop setup">&times;</button>
+    </div>
+    <section class="staff-desktop-setup-content">
+      <p class="muted">Pair a Dynamax desktop without exposing the organisation's Cloudflare backend secret. Each code expires after 15 minutes and works once.</p>
+      <div class="desktop-pairing-steps">
+        <div><span>1</span><p>Open Dynamax desktop and choose <strong>Sign in to existing organisation</strong>.</p></div>
+        <div><span>2</span><p>Enter this portal address, then generate and enter the one-time code below.</p></div>
+      </div>
+      <label>Organisation portal address
+        <div class="desktop-pairing-copy-row"><input id="staffDesktopPortalUrl" readonly><button type="button" id="staffDesktopPortalCopy" class="secondary">Copy</button></div>
+      </label>
+      <button type="button" id="staffDesktopPairingGenerate">Generate one-time pairing code</button>
+      <section id="staffDesktopPairingPanel" class="desktop-pairing-code-panel" hidden>
+        <small>One-time pairing code</small>
+        <div class="desktop-pairing-copy-row"><code id="staffDesktopPairingCode"></code><button type="button" id="staffDesktopPairingCopy" class="secondary">Copy code</button></div>
+        <p id="staffDesktopPairingExpiry" class="muted"></p>
+      </section>
+      <div class="desktop-device-heading"><div><small>Paired installations</small><h3>Desktop devices</h3></div><button type="button" id="staffDesktopDevicesRefresh" class="secondary">Refresh</button></div>
+      <div id="staffDesktopDevices" class="desktop-device-list"></div>
+      <p id="staffDesktopSetupStatus" class="status" role="status"></p>
+    </section>
+  </dialog>
+
   <dialog id="financeDecisionDialog" class="workflow-dialog finance-decision-dialog">
     <div class="workflow-dialog-header">
       <div><small>Secure decision</small><h2 id="financeDecisionTitle">Approve Document</h2></div>
@@ -384,7 +413,7 @@
   <script src="js/app-dialogs.js?v=20260910-detailed-messages"></script>
   <script src="js/list-sorting.js?v=20260815-shared-list-sorting"></script>
   <script src="js/academic-results-analysis.js?v=20260917-card-search"></script>
-  <script src="js/admin.js?v=20260917-card-search"></script>
+  <script src="js/admin.js?v=20260917-desktop-pairing"></script>
   <script src="js/web-push.js?v=20260801-mobile-push"></script>
   <script src="js/notifications.js?v=20260913-branch-scope"></script>
 </body>

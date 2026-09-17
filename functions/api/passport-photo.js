@@ -7,6 +7,7 @@ import { getStoredDocument } from '../lib/document-storage.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { readParentSession, verifyStoredParentPassword } from '../lib/parent-auth.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
+import { verifyDesktopCredential } from '../lib/backend-security.js';
 import {
   admissionApplicationScopePath,
   admissionStudentScopePath,
@@ -198,14 +199,19 @@ export async function onRequestPost(context) {
     if (!application) return Response.json({ ok: false, message: 'Student or application was not found in the database.' }, { status: 404 });
 
     const suppliedSecret = clean(body.Secret || body.secret);
+    let desktopAuthorized = false;
+    if (suppliedSecret) {
+      desktopAuthorized = await verifyDesktopCredential(env, suppliedSecret, 'passport photograph endpoint')
+        .then(() => true)
+        .catch(() => false);
+    }
     let signedInStaff = null;
     try {
       signedInStaff = await requireStaffSession(env, request);
     } catch (_error) {
       signedInStaff = null;
     }
-    const staffAuthorized = Boolean(signedInStaff)
-      || (Boolean(env.BACKEND_SHARED_SECRET) && suppliedSecret === clean(env.BACKEND_SHARED_SECRET));
+    const staffAuthorized = Boolean(signedInStaff) || desktopAuthorized;
     if (!staffAuthorized) {
       const session = await readParentSession(env, request);
       const email = lower(session?.email || body.email || body.ParentEmail || body.Email);
