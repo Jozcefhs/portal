@@ -30,6 +30,10 @@ import {
   processTenantSubscriptionLifecycle,
   queueTenantRetirementRequest
 } from '../lib/tenant-trial-lifecycle.js';
+import {
+  completeNonCoreSubscriberCleanup,
+  previewNonCoreSubscriberCleanup
+} from '../lib/tenant-subscriber-cleanup.js';
 
 const clean = (value) => String(value ?? '').trim();
 const PROVISIONER_ACTIONS = new Set([
@@ -46,7 +50,9 @@ const PROVISIONER_ACTIONS = new Set([
   'finish-request',
   'process-lifecycle',
   'claim-retirement',
-  'finish-retirement'
+  'finish-retirement',
+  'preview-noncore-subscriber-cleanup',
+  'complete-noncore-subscriber-cleanup'
 ]);
 
 function requireTenantPoolAccess(env, password, action) {
@@ -72,6 +78,19 @@ export async function onRequestPost({ request, env }) {
       return Response.json({ ok: true, organisations: await loadManagedOrganisations(platformEnv) }, {
         headers: { 'Cache-Control': 'no-store' }
       });
+    }
+    if (action === 'preview-noncore-subscriber-cleanup') {
+      return Response.json({ ok: true, plan: await previewNonCoreSubscriberCleanup(platformEnv) }, {
+        headers: { 'Cache-Control': 'no-store' }
+      });
+    }
+    if (action === 'complete-noncore-subscriber-cleanup') {
+      const plan = await completeNonCoreSubscriberCleanup(platformEnv, body);
+      return Response.json({
+        ok: true,
+        message: 'Non-core subscriber records were permanently removed.',
+        plan
+      }, { headers: { 'Cache-Control': 'no-store' } });
     }
     if (action === 'register-managed-organisation') {
       const organisation = await saveManagedOrganisationControlIdentity(platformEnv, body.organisation || body);
