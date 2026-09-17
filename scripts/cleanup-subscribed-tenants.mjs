@@ -77,7 +77,7 @@ async function pruneCloudflareDeployments(projectId) {
   const base = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(cloudflareAccountId)}/pages/projects/${encodeURIComponent(projectId)}/deployments`;
   let deleted = 0;
   for (let pass = 0; pass < 200; pass += 1) {
-    const listing = await jsonRequest(`${base}?page=1&per_page=100`, {
+    const listing = await jsonRequest(`${base}?page=1&per_page=20`, {
       headers: { Authorization: `Bearer ${cloudflareToken}`, 'Content-Type': 'application/json' }
     });
     const deployments = (Array.isArray(listing.result) ? listing.result : [])
