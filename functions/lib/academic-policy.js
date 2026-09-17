@@ -12,6 +12,7 @@ export const ACADEMIC_POLICY_SCOPE_TYPES = Object.freeze([
   'class',
   'subject'
 ]);
+export const ACADEMIC_POLICY_INHERITANCE_MODES = Object.freeze(['inherit', 'independent']);
 export const RESULT_VISIBILITY_MODES = Object.freeze([
   'unconfigured',
   'current-term',
@@ -446,11 +447,19 @@ export function deriveAcademicPolicyOverrides(inheritedPolicy = {}, submittedPol
   return deepDiff(normalizeAcademicPolicy(inheritedPolicy), normalizeAcademicPolicy(submittedPolicy)) || {};
 }
 
+export function academicPolicyRevisionInheritanceMode(revision = {}) {
+  const scopeType = lower(revision?.Scope?.Type || revision?.Scope?.type);
+  if (scopeType === 'organisation' || scopeType === 'organization') return 'independent';
+  return lower(revision?.InheritanceMode) === 'independent' ? 'independent' : 'inherit';
+}
+
 export function resolveAcademicPolicyChain(revisions = []) {
-  return (Array.isArray(revisions) ? revisions : []).reduce(
-    (policy, revision) => applyAcademicPolicyOverrides(policy, revision?.Overrides || revision || {}),
-    defaultAcademicPolicy()
-  );
+  return (Array.isArray(revisions) ? revisions : []).reduce((policy, revision) => {
+    const base = academicPolicyRevisionInheritanceMode(revision) === 'independent'
+      ? defaultAcademicPolicy()
+      : policy;
+    return applyAcademicPolicyOverrides(base, revision?.Overrides || revision || {});
+  }, defaultAcademicPolicy());
 }
 
 export function normalizeAcademicPolicyScope(value = {}) {

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Settings</title>
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260917-email-provider">
+  <link rel="stylesheet" href="css/style.css?v=20260917-independent-branch-policy">
 </head>
 <body class="settings-page">
   <main class="settings-shell">
@@ -272,6 +272,20 @@
             </div>
           </div>
 
+          <div id="academicPolicyScopeMode" class="settings-subsection" hidden>
+            <div class="settings-subsection-title"><strong>Branch policy source</strong><span>Choose whether organisation changes may flow into this branch.</span></div>
+            <div class="settings-fields">
+              <div class="settings-field">
+                <label for="academicPolicyInheritanceMode">Academic policy and test components</label>
+                <select id="academicPolicyInheritanceMode">
+                  <option value="inherit">Organisation policy with branch overrides</option>
+                  <option value="independent">Independent branch policy</option>
+                </select>
+                <small id="academicPolicyInheritanceHelp" class="settings-help">Independent mode snapshots the complete branch policy, including assessment components, so later organisation changes cannot replace it.</small>
+              </div>
+            </div>
+          </div>
+
           <div class="settings-subsection">
             <div class="settings-subsection-title"><strong>Parent result access</strong><span>The protected result module will enforce the active policy when it is introduced.</span></div>
             <div class="settings-fields two-column">
@@ -463,6 +477,7 @@
               <input id="userLimit" type="number" min="1" value="5" readonly aria-readonly="true">
             </div>
           </div>
+
           <small class="settings-help">Plan, module access, activation, renewal and staff-user allowance are managed by the organisation's online subscription.</small>
         </section>
 
@@ -547,6 +562,6 @@
   <script src="js/password-toggle.js?v=20260718-password-toggle"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
-  <script src="js/setup.js?v=20260917-email-provider"></script>
+  <script src="js/setup.js?v=20260917-independent-branch-policy"></script>
 </body>
 </html>

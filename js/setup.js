@@ -21,6 +21,9 @@ const emailProviderTestRecipient = document.getElementById('emailProviderTestRec
 const emailProviderStatus = document.getElementById('emailProviderStatus');
 const academicPolicySection = document.getElementById('academic-policy-settings');
 const academicPolicyIssues = document.getElementById('academicPolicyIssues');
+const academicPolicyScopeMode = document.getElementById('academicPolicyScopeMode');
+const academicPolicyInheritanceMode = document.getElementById('academicPolicyInheritanceMode');
+const academicPolicyInheritanceHelp = document.getElementById('academicPolicyInheritanceHelp');
 const activateAcademicPolicyButton = document.getElementById('activateAcademicPolicyButton');
 const inheritAcademicPolicyButton = document.getElementById('inheritAcademicPolicyButton');
 const requestedSettingsParams = new URLSearchParams(window.location.search);
@@ -667,18 +670,36 @@ function renderAcademicPolicyView(view = {}, message = '') {
   loadedAcademicPolicyView = view;
   renderAcademicPolicy(view.Policy || {});
   const hasDraft = Boolean(view.DraftRevisionId);
+  const branchMode = settingsScopeField.value === 'branch';
   const active = Boolean(view.ActiveRevisionId);
+  const effectiveActive = active || (Array.isArray(view.Sources) && view.Sources.length > 0);
+  const inheritanceMode = branchMode && view.InheritanceMode === 'independent' ? 'independent' : 'inherit';
+  if (academicPolicyScopeMode) academicPolicyScopeMode.hidden = !branchMode;
+  if (academicPolicyInheritanceMode) academicPolicyInheritanceMode.value = inheritanceMode;
+  if (academicPolicyInheritanceHelp) {
+    academicPolicyInheritanceHelp.textContent = inheritanceMode === 'independent'
+      ? 'Independent mode is active for this draft or policy. Its complete academic rules and test components are isolated from later organisation changes.'
+      : 'Organisation policy changes continue to flow into this branch except where an activated branch override differs.';
+  }
   policyField('academicPolicyStateTitle').textContent = hasDraft && view.DraftRevisionId !== view.ActiveRevisionId
     ? 'Draft saved; activation pending'
-    : active
-      ? 'Active academic policy'
-      : 'No active academic policy';
-  policyField('academicPolicyStateSummary').textContent = message || (hasDraft
+    : branchMode && !active && effectiveActive
+      ? 'Inheriting organisation academic policy'
+      : active
+        ? branchMode ? 'Active branch academic policy' : 'Active academic policy'
+        : 'No active academic policy';
+  const sourceSummary = branchMode
+    ? inheritanceMode === 'independent'
+      ? 'This branch is isolated from organisation academic-policy and test-component changes.'
+      : 'This branch currently follows the organisation policy plus any activated branch differences.'
+    : '';
+  const stateSummary = message || (hasDraft
     ? `${view.Period?.Session || ''} / ${view.Period?.Term || ''} · ${view.Scope?.Type || 'organisation'} scope`
     : 'Complete and save a draft before activation.');
+  policyField('academicPolicyStateSummary').textContent = [stateSummary, sourceSummary].filter(Boolean).join(' ');
   renderAcademicPolicyIssues(view.ActivationIssues || [], hasDraft);
   activateAcademicPolicyButton.disabled = !view.CanActivate;
-  inheritAcademicPolicyButton.hidden = settingsScopeField.value !== 'branch';
+  inheritAcademicPolicyButton.hidden = !branchMode;
 }
 
 function academicPolicyRequestBody(action, extra = {}) {
@@ -690,6 +711,9 @@ function academicPolicyRequestBody(action, extra = {}) {
     password: unlockedPassword,
     SettingsScope: settingsScopeField.value,
     BranchId: settingsScopeField.value === 'branch' ? settingsBranchField.value : '',
+    InheritanceMode: settingsScopeField.value === 'branch'
+      ? academicPolicyInheritanceMode?.value || 'inherit'
+      : 'independent',
     Session: session,
     Term: term,
     ...extra
@@ -913,6 +937,7 @@ function updateSettingsScopeUI(profile = {}) {
     if (activeSettingsAccess.branchId) settingsBranchField.value = activeSettingsAccess.branchId;
   }
   const branchMode = settingsScopeField.value === 'branch';
+  if (academicPolicyScopeMode) academicPolicyScopeMode.hidden = !branchMode;
   settingsScopeField.disabled = scopeLocked;
   settingsBranchField.disabled = !branchMode || scopeLocked;
   resetBranchSettingsButton.hidden = !branchMode;
@@ -1228,6 +1253,14 @@ policyField('addAcademicCumulativeTerm')?.addEventListener('click', () => {
 
 policyField('academicFeeClearanceMode')?.addEventListener('change', updateAcademicPolicyConditionalFields);
 policyField('academicPromotionMode')?.addEventListener('change', updateAcademicPolicyConditionalFields);
+academicPolicyInheritanceMode?.addEventListener('change', () => {
+  if (academicPolicyInheritanceHelp) {
+    academicPolicyInheritanceHelp.textContent = academicPolicyInheritanceMode.value === 'independent'
+      ? 'Save and activate the draft to isolate this branch’s complete academic policy and test components from organisation changes.'
+      : 'Save and activate the draft to keep only this branch’s differences while inheriting every other organisation rule.';
+  }
+  setStatus('The branch academic-policy source has changed. Save the policy draft, then activate it.', '');
+});
 
 policyField('loadAcademicPolicyButton')?.addEventListener('click', async (event) => {
   const button = event.currentTarget;

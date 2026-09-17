@@ -2,8 +2,10 @@ import { createDocumentIfAbsent, getDocument, upsertDocument } from './firestore
 import {
   academicPolicyAssignmentId,
   academicPolicyIssues,
+  academicPolicyRevisionInheritanceMode,
   applyAcademicPolicyOverrides,
   assertAcademicPolicyActivatable,
+  defaultAcademicPolicy,
   deriveAcademicPolicyOverrides,
   normalizeAcademicPolicy,
   normalizeAcademicPolicyPeriod,
@@ -12,6 +14,7 @@ import {
 } from './academic-policy.js';
 
 const clean = (value) => String(value ?? '').trim();
+const lower = (value) => clean(value).toLowerCase();
 
 export const ACADEMIC_POLICY_ASSIGNMENTS_COLLECTION = 'academicPolicyAssignments';
 export const ACADEMIC_POLICY_REVISIONS_COLLECTION = 'academicPolicyRevisions';
@@ -24,6 +27,13 @@ function sameScope(left = {}, right = {}) {
 
 function actorName(actor = {}) {
   return clean(actor.displayName || actor.DisplayName || actor.username || actor.Username || actor.UpdatedBy) || 'Administrator';
+}
+
+function requestedInheritanceMode(scope = {}, requested = '', fallback = 'inherit') {
+  if (normalizeAcademicPolicyScope(scope).Type === 'organisation') return 'independent';
+  const mode = lower(requested);
+  if (mode === 'independent' || mode === 'inherit') return mode;
+  return fallback === 'independent' ? 'independent' : 'inherit';
 }
 
 export async function loadAcademicPolicyAssignment(env, scopeValue = {}, periodValue = {}) {
@@ -65,15 +75,37 @@ export async function loadAcademicPolicyView(env, {
   }
   const targetEntry = entries.at(-1);
   const draftRevision = await loadAcademicPolicyRevision(env, targetEntry?.assignment?.DraftRevisionId);
-  const inheritedRevisions = entries.slice(0, -1).map((entry) => entry.revision).filter(Boolean);
+  const inheritedEntries = entries.slice(0, -1).filter((entry) => entry.revision);
+  const inheritedRevisions = inheritedEntries.map((entry) => entry.revision);
   const inheritedPolicy = resolveAcademicPolicyChain(inheritedRevisions);
+  const activeInheritanceMode = requestedInheritanceMode(
+    scope,
+    academicPolicyRevisionInheritanceMode(targetEntry?.revision || {}),
+    'inherit'
+  );
+  const activeBasePolicy = activeInheritanceMode === 'independent'
+    ? defaultAcademicPolicy()
+    : inheritedPolicy;
   const activePolicy = targetEntry?.revision
-    ? applyAcademicPolicyOverrides(inheritedPolicy, targetEntry.revision.Overrides || {})
+    ? applyAcademicPolicyOverrides(activeBasePolicy, targetEntry.revision.Overrides || {})
+    : inheritedPolicy;
+  const draftInheritanceMode = draftRevision
+    ? requestedInheritanceMode(scope, academicPolicyRevisionInheritanceMode(draftRevision), activeInheritanceMode)
+    : activeInheritanceMode;
+  const draftBasePolicy = draftInheritanceMode === 'independent'
+    ? defaultAcademicPolicy()
     : inheritedPolicy;
   const draftPolicy = draftRevision
-    ? applyAcademicPolicyOverrides(inheritedPolicy, draftRevision.Overrides || {})
+    ? applyAcademicPolicyOverrides(draftBasePolicy, draftRevision.Overrides || {})
     : activePolicy;
   const draftIssues = academicPolicyIssues(draftPolicy, { forActivation: true });
+  const activeEntries = entries.filter((entry) => entry.revision);
+  const lastIndependentIndex = activeEntries.findLastIndex((entry) => (
+    academicPolicyRevisionInheritanceMode(entry.revision) === 'independent'
+  ));
+  const effectiveSourceEntries = lastIndependentIndex >= 0
+    ? activeEntries.slice(lastIndependentIndex)
+    : activeEntries;
   return {
     Scope: scope,
     Period: period,
@@ -82,15 +114,18 @@ export async function loadAcademicPolicyView(env, {
     ActivePolicy: activePolicy,
     Policy: draftPolicy,
     DraftOverrides: draftRevision?.Overrides || {},
+    InheritanceMode: draftInheritanceMode,
+    ActiveInheritanceMode: activeInheritanceMode,
     ActiveRevisionId: clean(targetEntry?.assignment?.ActiveRevisionId),
     DraftRevisionId: clean(targetEntry?.assignment?.DraftRevisionId),
     ActiveRevision: targetEntry?.revision || null,
     DraftRevision: draftRevision || null,
     ActivationIssues: draftIssues,
     CanActivate: Boolean(draftRevision) && draftIssues.length === 0,
-    Sources: entries.filter((entry) => entry.revision).map((entry) => ({
+    Sources: effectiveSourceEntries.map((entry) => ({
       Scope: entry.scope,
-      RevisionId: clean(entry.revision?.RevisionId || entry.assignment?.ActiveRevisionId)
+      RevisionId: clean(entry.revision?.RevisionId || entry.assignment?.ActiveRevisionId),
+      InheritanceMode: academicPolicyRevisionInheritanceMode(entry.revision)
     }))
   };
 }
@@ -105,11 +140,14 @@ export async function saveAcademicPolicyDraft(env, {
   scopeChain,
   period,
   policy,
+  inheritanceMode = '',
   actor = {}
 } = {}) {
   const view = await loadAcademicPolicyView(env, { scope, scopeChain, period });
   const submitted = normalizeAcademicPolicy(policy);
-  const overrides = deriveAcademicPolicyOverrides(view.InheritedPolicy, submitted);
+  const mode = requestedInheritanceMode(view.Scope, inheritanceMode, view.InheritanceMode);
+  const basePolicy = mode === 'independent' ? defaultAcademicPolicy() : view.InheritedPolicy;
+  const overrides = deriveAcademicPolicyOverrides(basePolicy, submitted);
   const issues = academicPolicyIssues(submitted, { forActivation: true });
   const id = revisionId(view.AssignmentId);
   const now = new Date().toISOString();
@@ -118,6 +156,7 @@ export async function saveAcademicPolicyDraft(env, {
     AssignmentId: view.AssignmentId,
     Scope: view.Scope,
     Period: view.Period,
+    InheritanceMode: mode,
     Overrides: overrides,
     ActivationIssues: issues,
     CreatedAt: now,

@@ -235,6 +235,36 @@ test('policy chains resolve organisation, branch, section, class and subject pre
   assert.equal(effective.Assessment.Components[0].WeightPercentage, 100);
 });
 
+test('independent branch policies isolate the complete policy and test components from organisation changes', () => {
+  const organisation = completePolicy();
+  organisation.Assessment.Components = [{
+    Id: 'organisation-exam', Name: 'Organisation exam', MaximumScore: 100,
+    WeightPercentage: 100, SourceMode: 'built-in-cbt', Required: true, Order: 1
+  }];
+  const branch = completePolicy();
+  branch.Assessment.Components = [
+    { Id: 'branch-test', Name: 'Branch test', MaximumScore: 30, WeightPercentage: 30, SourceMode: 'any', Required: true, Order: 1 },
+    { Id: 'branch-exam', Name: 'Branch exam', MaximumScore: 70, WeightPercentage: 70, SourceMode: 'built-in-cbt', Required: true, Order: 2 }
+  ];
+
+  const effective = resolveAcademicPolicyChain([
+    {
+      Scope: { Type: 'organisation', Id: 'organisation' },
+      InheritanceMode: 'independent',
+      Overrides: deriveAcademicPolicyOverrides(defaultAcademicPolicy(), organisation)
+    },
+    {
+      Scope: { Type: 'branch', Id: 'area-one' },
+      InheritanceMode: 'independent',
+      Overrides: deriveAcademicPolicyOverrides(defaultAcademicPolicy(), branch)
+    }
+  ]);
+
+  assert.deepEqual(effective.Assessment.Components.map((row) => row.Id), ['branch-test', 'branch-exam']);
+  assert.equal(effective.Position.Mode, branch.Position.Mode);
+  assert.equal(effective.ResultAccess.FinancialClearance.Mode, branch.ResultAccess.FinancialClearance.Mode);
+});
+
 test('effective-dated assignment ids are stable and isolated by scope', () => {
   const organisationId = academicPolicyAssignmentId(
     { Type: 'organisation' },
@@ -282,6 +312,8 @@ test('protected academic policy persistence keeps immutable revisions separate f
   assert.match(policyStoreSource, /DraftRevisionId/);
   assert.match(policyStoreSource, /ActiveRevisionId: view\.DraftRevisionId,[\s\S]*DraftRevisionId: ''/);
   assert.match(policyStoreSource, /assertAcademicPolicyActivatable/);
+  assert.match(policyStoreSource, /InheritanceMode: mode/);
+  assert.match(policyStoreSource, /mode === 'independent' \? defaultAcademicPolicy\(\) : view\.InheritedPolicy/);
 });
 
 test('academic policy assignments and immutable revisions are covered by dynamic backup and restore', () => {
@@ -297,6 +329,8 @@ test('School settings expose configurable result, grading and promotion policy c
   assert.match(setupHtmlSource, /id="academicFeeClearanceMode"/);
   assert.match(setupHtmlSource, /id="academicPositionMode"/);
   assert.match(setupHtmlSource, /id="academicComponents"/);
+  assert.match(setupHtmlSource, /id="academicPolicyInheritanceMode"/);
+  assert.match(setupHtmlSource, /Independent branch policy/);
   assert.match(setupHtmlSource, /id="academicMidTermEnabled"/);
   assert.match(setupHtmlSource, /id="academicGradeBands"/);
   assert.match(setupHtmlSource, /id="academicCumulativeTerms"/);
@@ -314,6 +348,7 @@ test('School settings expose configurable result, grading and promotion policy c
   assert.match(setupHtmlSource, /protected result module will enforce the active policy when it is introduced/);
   assert.match(setupJsSource, /fetch\('\/api\/academic-policy'/);
   assert.match(setupJsSource, /function academicPolicyFromForm\(\)/);
+  assert.match(setupJsSource, /InheritanceMode: settingsScopeField\.value === 'branch'/);
   assert.match(setupJsSource, /MidTermIncluded/);
   assert.match(setupJsSource, /function renderAcademicCumulativeTerms\(/);
   assert.match(setupJsSource, /function renderAcademicPolicyView\(view = \{\}, message = ''\)/);
@@ -323,8 +358,8 @@ test('School settings expose configurable result, grading and promotion policy c
   assert.doesNotMatch(setupJsSource, /DynamaxDialogs\.confirm\([\s\S]{0,500}\)\) return;\s*const button = event\.currentTarget;/);
   assert.match(setupJsSource, /requestAcademicPolicy\('activate'\);\s*announceSettingsChange\(\);/);
   assert.match(setupJsSource, /requestAcademicPolicy\('inherit'\);\s*announceSettingsChange\(\);/);
-  assert.match(setupHtmlSource, /css\/style\.css\?v=20260917-email-provider/);
-  assert.match(setupHtmlSource, /js\/setup\.js\?v=20260917-email-provider/);
+  assert.match(setupHtmlSource, /css\/style\.css\?v=20260917-independent-branch-policy/);
+  assert.match(setupHtmlSource, /js\/setup\.js\?v=20260917-independent-branch-policy/);
   assert.match(setupHtmlSource, /<span>Split A\/B<\/span><span>A objective<\/span><span>B theory<\/span><span>Required<\/span><span>Mid-term<\/span>/);
   assert.match(setupJsSource, /row\.append\(name, maximum, weight, source, split, objective, theory, required, midTerm, remove\)/);
   assert.match(styleSource, /\.academic-component-grid/);

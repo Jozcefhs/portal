@@ -58,6 +58,8 @@ function responseView(view = {}) {
     Policy: view.Policy,
     ActiveRevisionId: view.ActiveRevisionId,
     DraftRevisionId: view.DraftRevisionId,
+    InheritanceMode: view.InheritanceMode,
+    ActiveInheritanceMode: view.ActiveInheritanceMode,
     ActivationIssues: view.ActivationIssues,
     CanActivate: view.CanActivate,
     Sources: view.Sources
@@ -96,6 +98,7 @@ export async function onRequestPost(context) {
         scopeChain,
         period,
         policy: body.policy || body.Policy,
+        inheritanceMode: body.InheritanceMode || body.inheritanceMode,
         actor
       });
       message = view.CanActivate
