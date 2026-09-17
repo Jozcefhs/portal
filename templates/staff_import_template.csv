@@ -1,0 +1,2 @@
+Username,FirstName,Surname,MiddleName,Role,Department,BranchId,SchoolSectionAccess,Password,Active,MustChangePassword,ApprovalEnabled,ApprovalMaxAmount,ApprovalAccounts,BiometricLookupEnabled,TabAccess
+ada.okafor,Ada,Okafor,Grace,Front Desk,Administration,main,All,ChangeMe123,YES,YES,NO,0,"6010,6090",NO,"admissions,students"

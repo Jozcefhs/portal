@@ -40,6 +40,37 @@ function nowIso() { return new Date().toISOString(); }
 function activeValue(value) { return !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(value)); }
 function explicitOptIn(value) { return ['yes', 'true', '1', 'enabled', 'on'].includes(lower(value)); }
 
+function firstValue(row = {}, keys = []) {
+  for (const key of keys) {
+    const value = clean(row?.[key]);
+    if (value) return value;
+  }
+  return '';
+}
+
+function staffNameOrder(value) {
+  const supported = new Set(['first name', 'middle name', 'surname']);
+  const order = clean(value).toLowerCase().split(',').map(clean).filter((part) => supported.has(part));
+  return order.length ? order : ['surname', 'first name', 'middle name'];
+}
+
+export function staffImportIdentity(row = {}, existing = {}, profile = {}) {
+  const firstName = firstValue(row, ['FirstName', 'First Name', 'GivenName', 'Given Name'])
+    || clean(existing.FirstName || existing.firstName);
+  const middleName = firstValue(row, ['MiddleName', 'Middle Name', 'OtherName', 'Other Name'])
+    || clean(existing.MiddleName || existing.middleName);
+  const surname = firstValue(row, ['Surname', 'LastName', 'Last Name', 'FamilyName', 'Family Name'])
+    || clean(existing.Surname || existing.surname || existing.LastName || existing.lastName);
+  const legacyDisplayName = firstValue(row, ['DisplayName', 'Display Name', 'FullName', 'Full Name', 'Name'])
+    || clean(existing.DisplayName || existing.displayName);
+  const parts = { 'first name': firstName, 'middle name': middleName, surname };
+  const displayName = staffNameOrder(profile.NameFormat || profile.nameFormat)
+    .map((part) => parts[part])
+    .filter(Boolean)
+    .join(' ') || legacyDisplayName;
+  return { FirstName: firstName, MiddleName: middleName, Surname: surname, DisplayName: displayName };
+}
+
 const WEB_SECTION_KEY_SET = new Set(WEB_SECTION_KEYS);
 const PRIMARY_LEADERSHIP_ROLES = new Set(['Head Teacher', 'Assistant Head Teacher']);
 const SECONDARY_LEADERSHIP_ROLES = new Set(['Vice Principal Academics', 'Vice Principal Administration']);
@@ -82,6 +113,9 @@ function publicUser(row, edition = 'school', featureFlags = null) {
     Username: clean(row.Username || row.username || row.__id),
     LoginUsername: clean(row.LoginUsername || row.loginUsername || row.Username || row.username || row.__id),
     DisplayName: clean(row.DisplayName || row.displayName),
+    FirstName: clean(row.FirstName || row.firstName),
+    MiddleName: clean(row.MiddleName || row.middleName),
+    Surname: clean(row.Surname || row.surname || row.LastName || row.lastName),
     Role: clean(row.Role || row.role) || 'Front Desk',
     Department: clean(row.Department || row.department),
     BranchId: clean(row.BranchId || row.branchId),
@@ -243,7 +277,10 @@ async function importUsers(env, actor, body) {
   const subscriptionRows = staffAccountsForSubscription(existingRows, edition, actor.username);
   const plannedRows = subscriptionRows.map((row) => ({ ...row }));
   const existingByName = new Map(existingRows.map((row) => [lower(row.Username || row.__id), row]));
-  const structure = await getSchoolStructure(env);
+  const [structure, profile] = await Promise.all([
+    getSchoolStructure(env),
+    getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+  ]);
   const writes = []; const failures = []; const seen = new Set();
   for (let index = 0; index < users.length; index += 1) {
     try {
@@ -258,6 +295,12 @@ async function importUsers(env, actor, body) {
       if (existing && !branchRecordVisible(existing, actor)) throw new Error('This staff account belongs to another branch.');
       const password = String(row.Password || row.password || '');
       if (!existing && !password) throw new Error('Password is required for a new staff account.');
+      const identity = staffImportIdentity(row, existing, profile || {});
+      const legacyDisplayName = firstValue(row, ['DisplayName', 'Display Name', 'FullName', 'Full Name', 'Name'])
+        || clean(existing?.DisplayName || existing?.displayName);
+      if ((!identity.FirstName || !identity.Surname) && !legacyDisplayName) {
+        throw new Error('FirstName and Surname are required when DisplayName is blank.');
+      }
       const role = clean(row.Role || row.role) || 'Front Desk';
       ensureRoleAvailable(role, edition);
       const department = clean(row.Department || row.department);
@@ -280,7 +323,10 @@ async function importUsers(env, actor, body) {
         UsernameKey: lower(username),
         LoginUsername: clean(existing?.LoginUsername || username),
         LoginUsernameKey: lower(existing?.LoginUsername || username),
-        DisplayName: clean(row.DisplayName || row.displayName) || username,
+        DisplayName: identity.DisplayName || username,
+        FirstName: identity.FirstName,
+        MiddleName: identity.MiddleName,
+        Surname: identity.Surname,
         Role: role, Department: department,
         OrganisationEdition: clean(actor.edition) || 'school',
         BranchId: branchId,

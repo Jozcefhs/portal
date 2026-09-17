@@ -18022,10 +18022,9 @@ async function importOrganizationCsv(event, options, status) {
 function downloadStaffCsvTemplate() {
   const schoolEdition = resolveDashboardEdition(currentUser || {}) === 'school';
   const content = schoolEdition
-    ? 'Username,DisplayName,Role,Department,BranchId,SchoolSectionAccess,Password,Active,MustChangePassword,ApprovalEnabled,ApprovalMaxAmount,ApprovalAccounts,BiometricLookupEnabled,TabAccess\nexample.user,Example User,Front Desk,Administration,main,All,ChangeMe123,YES,YES,NO,0,"6010,6090",NO,"admissions,students"\n'
-    : 'Username,DisplayName,Role,Department,BranchId,Password,Active,MustChangePassword,ApprovalEnabled,ApprovalMaxAmount,ApprovalAccounts,TabAccess\nexample.user,Example User,Church Administrator,Administration,main,ChangeMe123,YES,YES,NO,0,"6010,6090","members,services,offerings"\n';
-  const url = URL.createObjectURL(new Blob([content], { type: 'text/csv' }));
-  const link = document.createElement('a'); link.href = url; link.download = 'staff_upload_template.csv'; link.click(); URL.revokeObjectURL(url);
+    ? 'Username,FirstName,Surname,MiddleName,Role,Department,BranchId,SchoolSectionAccess,Password,Active,MustChangePassword,ApprovalEnabled,ApprovalMaxAmount,ApprovalAccounts,BiometricLookupEnabled,TabAccess\nada.okafor,Ada,Okafor,Grace,Front Desk,Administration,main,All,ChangeMe123,YES,YES,NO,0,"6010,6090",NO,"admissions,students"\n'
+    : 'Username,FirstName,Surname,MiddleName,Role,Department,BranchId,Password,Active,MustChangePassword,ApprovalEnabled,ApprovalMaxAmount,ApprovalAccounts,TabAccess\nada.okafor,Ada,Okafor,Grace,Church Administrator,Administration,main,ChangeMe123,YES,YES,NO,0,"6010,6090","members,services,offerings"\n';
+  downloadCsvFile('staff_upload_template.csv', content);
 }
 
 async function importStaffCsv(event) {
