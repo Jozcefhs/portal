@@ -4572,11 +4572,11 @@ function renderDepartmentOperations(section, data) {
     ${section === 'clinic' ? `
     <section class="config-card department-primary-workflow"><header class="config-card-heading"><div><small>Parent communication</small><h3>Email a clinic report</h3></div></header>
       <form id="clinicReportForm" class="workflow-form workflow-form-grid config-form">
-        <label>Admission number or card ID<input name="AccountRef" value="${escapeHtml(clinicReport?.AccountRef || '')}" required placeholder="Enter admission number or tap a card"></label>
+        <label>Admission number or card ID<input name="AccountRef" value="${escapeHtml(clinicReport?.AccountRef || '')}" autocomplete="off" required placeholder="Enter admission number or tap a card"></label>
         <label>Subject<input name="Subject" value="${escapeHtml(clinicReport ? `Clinic report - ${clinicReport.StudentName}` : 'Clinic Report')}"></label>
         <label class="workflow-wide-field">Message<textarea name="Message">Please find the clinic report below.</textarea></label>
         ${clinicReport ? `<div class="workflow-wide-field report-recipient-preview"><strong>${escapeHtml(clinicReport.StudentName)}</strong><span>${escapeHtml(clinicReport.ClassName)} &middot; ${escapeHtml(clinicReport.ParentEmail)} &middot; ${clinicReport.RecordCount} clinic record(s)</span></div>` : ''}
-        <div class="config-actionbar"><p class="status" data-department-status></p><div class="inline-action-group"><button type="button" id="prepareClinicReport">Prepare report</button><button type="submit" ${clinicReport ? '' : 'disabled'}>Send to parent</button></div></div>
+        <div class="config-actionbar"><p class="status" data-department-status></p><div class="inline-action-group"><button type="button" id="prepareClinicReport">Find student / Prepare report</button><button type="submit" ${clinicReport ? '' : 'disabled'}>Send to parent</button></div></div>
       </form>
     </section>` : ''}
     ${['clinic', 'kitchen', 'restaurant'].includes(section) ? `
@@ -4755,6 +4755,11 @@ function renderDepartmentOperations(section, data) {
     const form = document.getElementById('clinicReportForm'); const status = form.querySelector('[data-department-status]');
     try { await runButtonAction(event.currentTarget, 'Preparing...', () => requestDepartmentAction(section, 'prepareClinicReport', Object.fromEntries(new FormData(form).entries()))); }
     catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+  });
+  document.getElementById('clinicReportForm')?.elements?.AccountRef?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || !clean(event.currentTarget.value)) return;
+    event.preventDefault();
+    document.getElementById('prepareClinicReport')?.click();
   });
   document.getElementById('clinicReportForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -9883,6 +9888,8 @@ async function searchExecutiveDirectory() {
 
 function bindExecutiveOfficeEvents() {
   document.getElementById('refreshExecutiveOffice')?.addEventListener('click', (event) => {
+    executiveDirectoryQuery = '';
+    executiveDirectoryResults = [];
     runButtonAction(event.currentTarget, 'Refreshing...', loadExecutiveOffice);
   });
   panelEl.querySelectorAll('[data-executive-tab]').forEach((button) => button.addEventListener('click', () => switchExecutiveOfficeTab(button.dataset.executiveTab)));

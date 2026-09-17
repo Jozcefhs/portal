@@ -145,6 +145,39 @@ function poolSummary(slots, policy) {
   return summary;
 }
 
+export function annotateProvisioningRequests(requestRows = [], slotRows = [], policyValue = {}, nowMs = Date.now()) {
+  const policy = normalizeTenantPoolPolicy(policyValue);
+  const remainingByEdition = Object.fromEntries(['school', 'faith', 'organization'].map((edition) => {
+    const ready = slotRows.filter((slot) => poolEdition(slot.Edition) === edition && lower(slot.Status) === 'ready').length;
+    return [edition, Math.max(0, policy.TargetReadyPerEdition[edition] - ready)];
+  }));
+  const staleBefore = nowMs - (90 * 60 * 1000);
+  const requests = requestRows
+    .map(publicProvisioningRequest)
+    .sort((left, right) => left.RequestedAt.localeCompare(right.RequestedAt));
+
+  // A running request already covers part of the target. Do not start another
+  // request for the same capacity while the first runner still owns it.
+  for (const request of requests) {
+    if (request.Mode !== 'pool' || lower(request.Status) !== 'provisioning') continue;
+    if (!Number.isFinite(Date.parse(request.StartedAt)) || Date.parse(request.StartedAt) < staleBefore) continue;
+    remainingByEdition[request.Edition] = Math.max(0, remainingByEdition[request.Edition] - request.Count);
+  }
+
+  return requests.map((request) => {
+    const status = lower(request.Status);
+    const retryable = status === 'pending'
+      || (status === 'provisioning' && Date.parse(request.StartedAt) < staleBefore);
+    if (!retryable) return { ...request, ActionRequired: false, EffectiveCount: 0 };
+    if (request.Mode === 'branded') {
+      return { ...request, ActionRequired: true, EffectiveCount: request.Count };
+    }
+    const effectiveCount = Math.min(request.Count, remainingByEdition[request.Edition]);
+    remainingByEdition[request.Edition] = Math.max(0, remainingByEdition[request.Edition] - effectiveCount);
+    return { ...request, ActionRequired: effectiveCount > 0, EffectiveCount: effectiveCount };
+  });
+}
+
 export async function loadTenantProjectPool(platformEnv) {
   const [slotRows, requestRows, retirementRows, policy] = await Promise.all([
     listCollection(platformEnv, TENANT_PROJECT_POOL_COLLECTION, { pageSize: 1000, maxPages: 10 }).catch(() => []),
@@ -157,17 +190,8 @@ export async function loadTenantProjectPool(platformEnv) {
       || left.Status.localeCompare(right.Status)
       || left.Id.localeCompare(right.Id)
   ));
-  const requests = requestRows.map((request) => ({
-    Reference: clean(request.Reference || request.__id),
-    Edition: poolEdition(request.Edition),
-    Mode: lower(request.Mode) === 'branded' ? 'branded' : 'pool',
-    Count: positiveInteger(request.Count, 1, 20),
-    RequestedProjectId: clean(request.RequestedProjectId),
-    Status: clean(request.Status || 'Pending'),
-    RequestedAt: clean(request.RequestedAt || request.CreatedAt),
-    RequestedBy: clean(request.RequestedBy),
-    LastError: clean(request.LastError)
-  })).sort((left, right) => right.RequestedAt.localeCompare(left.RequestedAt));
+  const requests = annotateProvisioningRequests(requestRows, slotRows, policy)
+    .sort((left, right) => right.RequestedAt.localeCompare(left.RequestedAt));
   const retirements = retirementRows
     .map(publicTenantRetirementRequest)
     .sort((left, right) => right.RequestedAt.localeCompare(left.RequestedAt));
@@ -433,20 +457,27 @@ function publicProvisioningRequest(request = {}) {
 export async function claimNextTenantProvisioningRequest(platformEnv, runnerId = '', requestedReference = '') {
   const staleBefore = Date.now() - (90 * 60 * 1000);
   const targetReference = clean(requestedReference);
-  const requests = (await listCollection(platformEnv, TENANT_PROVISIONING_REQUEST_COLLECTION, {
-    pageSize: 250,
-    maxPages: 4
-  }))
+  const [requestRows, slotRows, policy] = await Promise.all([
+    listCollection(platformEnv, TENANT_PROVISIONING_REQUEST_COLLECTION, { pageSize: 250, maxPages: 4 }),
+    listCollection(platformEnv, TENANT_PROJECT_POOL_COLLECTION, { pageSize: 1000, maxPages: 10 }),
+    loadTenantPoolPolicy(platformEnv)
+  ]);
+  const queueState = new Map(annotateProvisioningRequests(requestRows, slotRows, policy)
+    .map((request) => [request.Reference, request]));
+  const requests = requestRows
     .filter((request) => (!targetReference || clean(request.Reference || request.__id) === targetReference)
       && (lower(request.Status) === 'pending'
         || (lower(request.Status) === 'provisioning'
-          && Date.parse(clean(request.StartedAt)) < staleBefore)))
+          && Date.parse(clean(request.StartedAt)) < staleBefore))
+      && queueState.get(clean(request.Reference || request.__id))?.ActionRequired)
     .sort((left, right) => clean(left.RequestedAt || left.CreatedAt).localeCompare(clean(right.RequestedAt || right.CreatedAt)));
 
   for (const request of requests) {
     const now = new Date().toISOString();
+    const requestState = queueState.get(clean(request.Reference || request.__id));
     const claimed = {
       ...withoutFirestoreMetadata(request),
+      Count: requestState?.EffectiveCount || positiveInteger(request.Count, 1, 20),
       Status: 'Provisioning',
       RunnerId: clean(runnerId || `runner-${crypto.randomUUID()}`),
       StartedAt: now,

@@ -189,6 +189,8 @@ test('the tenant pool provisioner is opt-in, uses WIF and creates isolated deplo
     'the workflow must validate infrastructure before claiming and mutating a queued request'
   );
   assert.match(tenantProvisioner, /sort_by\(\.RequestedAt\)/);
+  assert.match(tenantProvisioner, /\.ActionRequired == true/);
+  assert.match(tenantProvisioner, /\.EffectiveCount \/\/ \.Count/);
   assert.match(tenantProvisioner, /steps\.inspect\.outputs\.has_request == 'true' && env\.APPLY_CHANGES == 'true'/);
   assert.match(tenantProvisioner, /Resolve Google Cloud project parent/);
   assert.match(tenantProvisioner, /Using pre-created Google Cloud project/);

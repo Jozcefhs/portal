@@ -70,6 +70,7 @@ test('executive workspace provides configurable metrics, directories, templates,
   assert.doesNotMatch(adminJs, /\.filter\(\(metric\) => selected\.has\(metric\.id\)\)\s*\.slice\(0, 6\)/);
   assert.match(adminJs, /data-executive-manage-staff>Manage staff accounts/);
   assert.match(adminJs, /data-executive-manage-staff\]'\)\?\.addEventListener\('click', \(\) => selectSection\('staffUsers'\)\)/);
+  assert.match(adminJs, /refreshExecutiveOffice['"]\)\?\.addEventListener\('click',[\s\S]*?executiveDirectoryQuery = '';[\s\S]*?executiveDirectoryResults = \[\];[\s\S]*?loadExecutiveOffice/);
 });
 
 test('executive office remains responsive and readable in dark mode', () => {

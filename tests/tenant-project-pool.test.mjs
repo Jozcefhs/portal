@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
+  annotateProvisioningRequests,
   normalizeTenantPoolPolicy,
   publicTenantProjectSlot
 } from '../functions/lib/tenant-project-pool.js';
@@ -43,6 +44,29 @@ test('public project slots expose assignment state without credentials', () => {
   assert.equal(result.TenantControlKeyConfigured, false);
   assert.equal(result.PaystackDeploymentPending, false);
   assert.equal('FIREBASE_PRIVATE_KEY' in result, false);
+});
+
+test('provisioning queue ignores stale pool requests after ready capacity is restored', () => {
+  const requests = annotateProvisioningRequests([
+    { Reference: 'POOL-1', Edition: 'organization', Mode: 'pool', Count: 1, Status: 'Pending', RequestedAt: '2026-09-16T22:10:51.000Z' },
+    { Reference: 'BRANDED-1', Edition: 'organization', Mode: 'branded', Count: 1, Status: 'Pending', RequestedProjectId: 'custom-project', RequestedAt: '2026-09-16T22:11:51.000Z' }
+  ], [
+    { Edition: 'organization', Status: 'Ready' },
+    { Edition: 'organization', Status: 'Ready' }
+  ], normalizeTenantPoolPolicy({}));
+  assert.equal(requests[0].ActionRequired, false);
+  assert.equal(requests[0].EffectiveCount, 0);
+  assert.equal(requests[1].ActionRequired, true);
+});
+
+test('provisioning queue caps a pool request to the current shortfall', () => {
+  const [request] = annotateProvisioningRequests([
+    { Reference: 'POOL-2', Edition: 'school', Mode: 'pool', Count: 3, Status: 'Pending', RequestedAt: '2026-09-16T22:10:51.000Z' }
+  ], [
+    { Edition: 'school', Status: 'Ready' }
+  ], normalizeTenantPoolPolicy({}));
+  assert.equal(request.ActionRequired, true);
+  assert.equal(request.EffectiveCount, 1);
 });
 
 test('assignment is concurrency-safe and payment remains recoverable when capacity is empty', () => {

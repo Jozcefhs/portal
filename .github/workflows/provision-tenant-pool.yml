@@ -84,7 +84,7 @@ jobs:
           else
             payload="$(jq -nc --arg password "${DYNAMAX_TENANT_PROVISIONER_SECRET}" '{password:$password,action:"load"}')"
             response="$(curl --fail-with-body --silent --show-error "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" -H 'Content-Type: application/json' --data "${payload}")"
-            request="$(jq -c '[.requests[] | select((.Status | ascii_downcase) == "pending")] | sort_by(.RequestedAt) | .[0] // empty' <<<"${response}")"
+            request="$(jq -c '[.requests[] | select((.Status | ascii_downcase) == "pending" and .ActionRequired == true) | .Count = (.EffectiveCount // .Count)] | sort_by(.RequestedAt) | .[0] // empty' <<<"${response}")"
           fi
           if [[ -z "${request}" || "${request}" == "null" ]]; then
             echo 'has_request=false' >> "${GITHUB_OUTPUT}"

@@ -279,9 +279,13 @@ function renderTenantPool() {
   tenantPoolRows.innerHTML = (tenantPoolState.slots || []).length ? tenantPoolState.slots.map((slot) => `
     <tr><td><strong>${escapeHtml(slot.FirebaseProjectId)}</strong><small>${escapeHtml(slot.Region || 'Default region')}</small></td><td>${escapeHtml(editionLabel(slot.Edition))}</td><td><span class="tenant-pool-status ${poolStatusClass(slot.Status)}">${escapeHtml(slot.Status)}</span></td><td>${escapeHtml(slot.AssignedOrganisationName || '—')}</td><td>${slot.PortalUrl ? `<a href="${escapeHtml(slot.PortalUrl)}" target="_blank" rel="noopener">Open</a>` : '—'}</td><td>${String(slot.Status).toLowerCase() === 'reserved' && !slot.AssignedRegistrationReference ? `<button type="button" class="compact-action" data-release-tenant-slot="${escapeHtml(slot.Id)}">Release</button>` : String(slot.Status).toLowerCase() === 'assigned' ? '<span class="muted">Secure retirement only</span>' : '—'}</td></tr>
   `).join('') : '<tr><td colspan="6">No tenant projects have been registered yet.</td></tr>';
-  tenantRequestRows.innerHTML = (tenantPoolState.requests || []).length ? tenantPoolState.requests.map((request) => `
-    <tr><td>${escapeHtml(request.Reference)}</td><td>${escapeHtml(editionLabel(request.Edition))}</td><td>${escapeHtml(request.Mode)}</td><td>${Number(request.Count || 1)}</td><td><span class="tenant-pool-status ${poolStatusClass(request.Status)}">${escapeHtml(request.Status)}</span></td><td>${request.RequestedAt ? escapeHtml(new Date(request.RequestedAt).toLocaleString()) : '—'}</td></tr>
-  `).join('') : '<tr><td colspan="6">No provisioning requests are waiting.</td></tr>';
+  tenantRequestRows.innerHTML = (tenantPoolState.requests || []).length ? tenantPoolState.requests.map((request) => {
+    const displayStatus = String(request.Status).toLowerCase() === 'pending' && request.Mode === 'pool' && request.ActionRequired === false
+      ? 'Capacity met'
+      : request.Status;
+    return `
+    <tr><td>${escapeHtml(request.Reference)}</td><td>${escapeHtml(editionLabel(request.Edition))}</td><td>${escapeHtml(request.Mode)}</td><td>${Number(request.ActionRequired ? request.EffectiveCount || request.Count || 1 : request.Count || 1)}</td><td><span class="tenant-pool-status ${poolStatusClass(displayStatus)}">${escapeHtml(displayStatus)}</span></td><td>${request.RequestedAt ? escapeHtml(new Date(request.RequestedAt).toLocaleString()) : '—'}</td></tr>`;
+  }).join('') : '<tr><td colspan="6">No provisioning requests are waiting.</td></tr>';
   if (tenantRetirementRows) {
     tenantRetirementRows.innerHTML = (tenantPoolState.retirements || []).length ? tenantPoolState.retirements.map((request) => `
       <tr><td>${escapeHtml(request.FirebaseProjectId)}</td><td>${escapeHtml(editionLabel(request.Edition))}</td><td><span class="tenant-pool-status ${poolStatusClass(request.Status)}">${escapeHtml(request.Status)}</span></td><td>${Number(request.Attempts || 0)}</td><td>${request.RequestedAt ? escapeHtml(new Date(request.RequestedAt).toLocaleString()) : '—'}</td><td>${escapeHtml(request.LastError || '—')}</td></tr>

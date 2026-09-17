@@ -87,7 +87,12 @@ test('clinic reports use the parent email stored on the scoped student record', 
 
 test('clinic student lookup accepts either admission number or wallet card ID', () => {
   assert.match(api, /findScopedStudent\(env, user, searchValue, searchValue\)/);
+  assert.match(api, /\[row\.WalletCardId, row\.walletCardId, row\.CardId, row\.cardId\]/);
+  assert.match(api, /some\(\(value\) => sameRef\(value, card\)\)/);
   assert.match(adminJs, /Admission number or card ID/);
+  assert.match(adminJs, /Find student \/ Prepare report/);
+  assert.match(adminJs, /clinicReportForm['"]\)\?\.elements\?\.AccountRef\?\.addEventListener\('keydown'/);
+  assert.match(adminJs, /event\.key !== 'Enter'/);
 });
 
 test('clinic, kitchen and restaurant market lists are emailed and audited without exposing credentials', () => {

@@ -210,9 +210,10 @@ async function scopedStudents(env, user) {
 
 async function findScopedStudent(env, user, reference, cardId = '') {
   const students = await scopedStudents(env, user);
-  const card = clean(cardId).toUpperCase();
+  const card = clean(cardId);
   const ref = clean(reference);
-  return students.find((row) => (card && clean(row.WalletCardId).toUpperCase() === card)
+  return students.find((row) => (card && [row.WalletCardId, row.walletCardId, row.CardId, row.cardId]
+    .some((value) => sameRef(value, card)))
     || (ref && [row.AdmissionNo, row.AccountRef, row.ApplicationReference, row.Reference].some((value) => sameRef(value, ref))));
 }
 
