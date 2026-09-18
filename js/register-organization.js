@@ -8,50 +8,6 @@ let registrationIdempotencyKey = '';
 let planCatalog = null;
 const flexSelections = { school: new Set(), faith: new Set(), organization: new Set() };
 let flexUserLimit = 1;
-const planBookThemes = {
-  free: {
-    sheet: '#eefcff',
-    cover: '#0f8fa8',
-    strip: '#a9e8f1',
-    accent: '#075766'
-  },
-  starter: {
-    sheet: '#f3f7ff',
-    cover: '#2f6ff2',
-    strip: '#c5d7ff',
-    accent: '#173f96'
-  },
-  standard: {
-    sheet: '#f2fbf2',
-    cover: '#2f9b52',
-    strip: '#bfe5c6',
-    accent: '#1d5a34'
-  },
-  professional: {
-    sheet: '#fff6fb',
-    cover: '#9f38d8',
-    strip: '#edc8f7',
-    accent: '#5c1e83'
-  },
-  flex: {
-    sheet: '#eefbf8',
-    cover: '#0c9278',
-    strip: '#b9eadf',
-    accent: '#075d4e'
-  },
-  enterprise: {
-    sheet: '#fff7e8',
-    cover: '#f08a2d',
-    strip: '#ffd8a1',
-    accent: '#8d4f07'
-  }
-};
-const defaultPlanTheme = {
-  sheet: '#f3f7ff',
-  cover: '#4f6eff',
-  strip: '#c9d7ff',
-  accent: '#2246b8'
-};
 
 const fallbackPlans = [
   { Name: 'Free', Summary: 'Seven-day full-access trial', UserLimit: 5, TrialDays: 7, MonthlyAmount: 0, YearlyAmount: 0, Active: true, FeaturesByEdition: { school: ['Full access to every school module for 7 days', 'Up to 5 active users during the trial', 'Paid subscription required after the trial'], faith: ['Full access to every church module for 7 days', 'Up to 5 active users during the trial', 'Paid subscription required after the trial'], organization: ['Full access to every organisation module for 7 days', 'Up to 5 active users during the trial', 'Paid subscription required after the trial'] } },
@@ -74,10 +30,6 @@ function normalizePlanName(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '');
-}
-
-function planTheme(planName) {
-  return planBookThemes[normalizePlanName(planName)] || defaultPlanTheme;
 }
 
 function visiblePlans() {
@@ -351,7 +303,6 @@ function renderPlans() {
     const selected = plan.Name === selectedName;
     const active = plan.Active !== false;
     const slug = normalizePlanName(plan.Name);
-    const theme = planTheme(plan.Name);
     const recommended = slug === 'professional';
     const cardClass = ['plan-choice-card', `plan-${slug}`, active ? '' : 'unavailable', selected ? 'selected' : '']
       .filter(Boolean)
@@ -360,7 +311,7 @@ function renderPlans() {
       ? `Up to ${Number(plan.UserLimit || 0).toLocaleString('en-NG')} users or custom`
       : `${Number(plan.UserLimit || 0).toLocaleString('en-NG')} users`;
     const period = Number(amount) > 0 ? `<em> / ${cycle === 'yearly' ? 'year' : 'month'}</em>` : '';
-    return `<article class="${cardClass}" style="--plan-sheet:${theme.sheet}; --plan-cover:${theme.cover}; --plan-strip:${theme.strip}; --plan-accent:${theme.accent};">
+    return `<article class="${cardClass}">
       <label class="plan-choice-select">
         <input type="radio" name="Plan" value="${escapeHtml(plan.Name)}" ${selected ? 'checked' : ''} ${active ? '' : 'disabled'}>
         <span class="plan-choice-main">${recommended ? '<span class="plan-choice-tag" aria-hidden="true">Recommended</span>' : ''}<strong>${escapeHtml(plan.Name)}</strong><small>${escapeHtml(userText)} · ${escapeHtml(plan.Summary)}</small><b>${active ? `${escapeHtml(displayedPlanPrice(plan, amount, planCatalog?.Currency || 'NGN'))}${plan.Name === 'Free' ? '' : period}` : 'Currently unavailable'}</b></span>
@@ -371,7 +322,6 @@ function renderPlans() {
     const amount = cycle === 'yearly' ? plan.YearlyAmount : plan.MonthlyAmount;
     const features = plan.FeaturesByEdition?.[currentEdition] || [];
     const slug = normalizePlanName(plan.Name);
-    const theme = planTheme(plan.Name);
     const compareClass = ['plan-comparison-column', `plan-${slug}`, plan.Active === false ? 'unavailable' : '']
       .filter(Boolean)
       .join(' ');
@@ -379,7 +329,7 @@ function renderPlans() {
       ? `Up to ${Number(plan.UserLimit || 0).toLocaleString('en-NG')} users or custom`
       : `${Number(plan.UserLimit || 0).toLocaleString('en-NG')} active users`;
     const period = Number(amount) > 0 ? ` per ${cycle === 'yearly' ? 'year' : 'month'}` : '';
-    return `<article class="${compareClass}" style="--plan-sheet:${theme.sheet}; --plan-cover:${theme.cover}; --plan-strip:${theme.strip}; --plan-accent:${theme.accent};">
+    return `<article class="${compareClass}">
       <header><h3>${escapeHtml(plan.Name)}</h3><strong>${escapeHtml(displayedPlanPrice(plan, amount, planCatalog?.Currency || 'NGN'))}${escapeHtml(plan.Name === 'Free' ? '' : period)}</strong><small>${escapeHtml(userText)}</small></header>
       <ul>${features.map((feature) => `<li>${escapeHtml(feature)}</li>`).join('')}</ul>
     </article>`;

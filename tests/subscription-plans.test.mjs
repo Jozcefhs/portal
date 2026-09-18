@@ -394,8 +394,8 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(pricingJs, /UsdToNgnRate/);
   assert.match(registrationJs, /dualFormattedPrice/);
   assert.match(registrationHtml, /id="flexPlanBuilder"/);
-  assert.match(registrationHtml, /20260830-flex-module-layout/);
-  assert.match(registrationHtml, /20260830-flex-faith-pricing/);
+  assert.match(registrationHtml, /css\/style\.css\?v=20260918-neutral-plan-cards/);
+  assert.match(registrationHtml, /js\/register-organization\.js\?v=20260918-neutral-plan-cards/);
   assert.match(registrationJs, /\/api\/plan-catalog\?v=6/);
   assert.match(registrationJs, /class="flex-module-title"/);
   assert.match(registrationApi, /channels:\s*\['card'\]/);

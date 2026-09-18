@@ -32,10 +32,13 @@ test('pricing book produces a valid two-page landscape PDF', async () => {
   });
 });
 
-test('pricing cards keep their content above decorative cover layers', async () => {
-  const css = await readFile(new URL('../css/style.css', import.meta.url), 'utf8');
-  assert.match(css, /\.plan-choice-card::before[^}]*z-index:\s*0[^}]*pointer-events:\s*none/);
-  assert.match(css, /\.plan-choice-card::after[^}]*z-index:\s*0[^}]*pointer-events:\s*none/);
-  assert.match(css, /\.plan-choice-select\s*\{[^}]*position:\s*relative;[^}]*z-index:\s*1/);
-  assert.match(css, /\.plan-choice-main\s*\{[^}]*position:\s*relative;[^}]*z-index:\s*1/);
+test('pricing cards use neutral surfaces without plan-specific cover colours', async () => {
+  const [css, registration] = await Promise.all([
+    readFile(new URL('../css/style.css', import.meta.url), 'utf8'),
+    readFile(new URL('../js/register-organization.js', import.meta.url), 'utf8')
+  ]);
+  assert.match(css, /\.plan-choice-card \{[^}]*background:\s*#fff/);
+  assert.match(css, /\.plan-choice-card::before, \.plan-choice-card::after \{ content: none; \}/);
+  assert.match(css, /\.plan-comparison-column \{[^}]*background:\s*#fff/);
+  assert.doesNotMatch(registration, /planBookThemes|--plan-sheet|--plan-cover|--plan-strip|--plan-accent/);
 });

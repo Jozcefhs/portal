@@ -8,7 +8,7 @@ const pageStyleVersions = new Map([
   ['admin.html', '20260918-academic-readability'],
   ['setup.html', '20260917-independent-branch-policy'],
   ['plan-management.html', '20260830-dual-currency-pricing'],
-  ['register-organization.html', '20260830-flex-module-layout']
+  ['register-organization.html', '20260918-neutral-plan-cards']
 ]);
 const adminScriptVersion = '20260918-tabulated-results';
 const parentScriptVersion = '20260918-tabulated-results';
