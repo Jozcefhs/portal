@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const [apiSource, dashboardSource, dashboardHtml, styleSource] = await Promise.all([
+const [apiSource, dashboardSource, dashboardHtml, styleSource, adminSource] = await Promise.all([
   readFile(new URL('../functions/api/parent-dashboard.js', import.meta.url), 'utf8'),
   readFile(new URL('../js/parent-dashboard.js', import.meta.url), 'utf8'),
   readFile(new URL('../parent-dashboard.html', import.meta.url), 'utf8'),
-  readFile(new URL('../css/style.css', import.meta.url), 'utf8')
+  readFile(new URL('../css/style.css', import.meta.url), 'utf8'),
+  readFile(new URL('../js/admin.js', import.meta.url), 'utf8')
 ]);
 
 test('AM-001 parent activity resolves only scoped academic results and active clearances', () => {
@@ -45,4 +46,20 @@ test('Milestone 9 parent progress and printing use only permitted result fields 
   assert.match(dashboardSource, /api\/academic-result-qr\?reference=/);
   assert.match(dashboardSource, /verify-result\.html\?reference=/);
   assert.match(styleSource, /\.academic-progress-overview/);
+});
+
+test('academic result samples mirror the official printable result structure', () => {
+  const officialColumns = '<th>Subject</th><th>Total</th><th>Grade</th><th>Point</th><th>Position / assessed</th><th>Remark</th>';
+  assert.equal(dashboardSource.includes(officialColumns), true);
+  assert.equal(adminSource.includes(officialColumns), true);
+  for (const source of [dashboardSource, adminSource]) {
+    assert.match(source, /class="identity"/);
+    assert.match(source, /\.identity div\{min-width:0;padding:8px 10px;border-right:1px solid #cad8e3\}/);
+    assert.match(source, /class="remarks"/);
+    assert.match(source, /class="endorsement/);
+    assert.match(source, /class="criteria"/);
+    assert.match(source, /class="verification"/);
+    assert.match(source, /api\/academic-result-qr\?reference=/);
+  }
+  assert.match(adminSource, /SAMPLE PREVIEW · NOT AN OFFICIAL RESULT/);
 });
