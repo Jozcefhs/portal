@@ -165,6 +165,30 @@ function publicAttendanceSummary(attendance = {}) {
   };
 }
 
+function publicAcademicResultPolicySnapshot(policy = {}) {
+  const promotion = policy.Promotion || {};
+  return {
+    Assessment: {
+      GradeBands: (policy.Assessment?.GradeBands || []).map((band) => ({
+        Grade: clean(band.Grade),
+        MinimumPercentage: band.MinimumPercentage ?? 0,
+        MaximumPercentage: band.MaximumPercentage ?? 100,
+        GradePoint: band.GradePoint ?? null,
+        Classification: clean(band.Classification),
+        Remark: clean(band.Remark)
+      }))
+    },
+    Promotion: {
+      Mode: clean(promotion.Mode),
+      MinimumOverallAverage: promotion.MinimumOverallAverage ?? null,
+      MaximumFailedSubjects: promotion.MaximumFailedSubjects ?? null,
+      MinimumAttendancePercentage: promotion.MinimumAttendancePercentage ?? null,
+      JuniorSecondary: { ...(promotion.JuniorSecondary || {}) },
+      SeniorSecondary: { ...(promotion.SeniorSecondary || {}) }
+    }
+  };
+}
+
 export function publicAcademicResult(result = {}, access = {}, policyValue = {}) {
   const policy = normalizeAcademicPolicy(policyValue);
   const output = {
@@ -174,6 +198,8 @@ export function publicAcademicResult(result = {}, access = {}, policyValue = {})
     Term: clean(result.Term || result.TermName || result.TermId),
     ClassName: clean(result.ClassName || result.ClassId),
     ArmName: clean(result.ArmName || result.ArmId),
+    SchoolStage: clean(result.SchoolStage || result.SchoolSection),
+    ResultType: clean(result.ResultType || 'End of Term'),
     PublicationStatus: clean(result.PublicationStatus || result.Status),
     PublishedAt: clean(result.PublishedAt),
     Access: accessDecision(Boolean(access.Allowed), clean(access.Code), clean(access.Message), {
@@ -185,11 +211,13 @@ export function publicAcademicResult(result = {}, access = {}, policyValue = {})
   output.OverallAverage = result.OverallAverage ?? result.Average ?? '';
   output.OverallGrade = clean(result.OverallGrade || result.Grade);
   output.TotalScore = result.TotalScore ?? result.Total ?? '';
+  output.ClassAverage = result.ClassAverage ?? '';
   output.TeacherRemark = clean(result.TeacherRemark || result.FormTeacherRemark);
   output.PrincipalRemark = clean(result.PrincipalRemark || result.HeadTeacherRemark);
   output.OverallRemark = clean(result.OverallRemark);
   output.Recommendation = clean(result.Recommendation);
   output.Attendance = publicAttendanceSummary(result.Attendance || result.AttendanceSummary || {});
+  output.PolicySnapshot = publicAcademicResultPolicySnapshot(policy);
   if (policy.Position.Mode === 'exact-overall') output.OverallPosition = result.OverallPosition ?? result.Position ?? '';
   if (policy.Position.Mode === 'percentile-band') output.PerformanceBand = clean(result.PerformanceBand || result.PercentileBand);
   if (policy.Position.Mode === 'assessed-count') output.AssessedStudentCount = result.AssessedStudentCount ?? '';

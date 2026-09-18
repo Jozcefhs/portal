@@ -30,7 +30,7 @@ test('AM-001 result view, denial, exemption use and print are audited without fi
 
 test('AM-001 parent Results tab renders only server-approved details and rechecks before printing', () => {
   assert.match(dashboardHtml, /id="academicTermResults"/);
-  assert.match(dashboardHtml, /js\/parent-dashboard\.js\?v=20260909-academic-report-workflow/);
+  assert.match(dashboardHtml, /js\/parent-dashboard\.js\?v=20260918-tabulated-results/);
   assert.match(dashboardSource, /function renderAcademicResults\(child\)/);
   assert.match(dashboardSource, /if \(!record\.Access\?\.Allowed\)/);
   assert.match(dashboardSource, /action: 'getAcademicResultForPrint'/);
@@ -53,12 +53,15 @@ test('academic result samples mirror the official printable result structure', (
   assert.equal(dashboardSource.includes(officialColumns), true);
   assert.equal(adminSource.includes(officialColumns), true);
   for (const source of [dashboardSource, adminSource]) {
-    assert.match(source, /class="identity"/);
-    assert.match(source, /\.identity div\{min-width:0;padding:8px 10px;border-right:1px solid #cad8e3\}/);
-    assert.match(source, /class="remarks"/);
-    assert.match(source, /class="endorsement/);
-    assert.match(source, /class="criteria"/);
-    assert.match(source, /class="verification"/);
+    assert.match(source, /class="report-table identity-table"/);
+    assert.match(source, /class="report-table subject-table"/);
+    assert.match(source, /class="report-table summary-table"/);
+    assert.match(source, /class="report-table remarks-table"/);
+    assert.match(source, /class="report-table criteria-table"/);
+    assert.match(source, /class="report-table verification-table"/);
+    assert.match(source, /<th>Grade key<\/th><th>Junior<\/th><th>Senior<\/th>/);
+    assert.match(source, /Academic session/);
+    assert.match(source, /Official stamp/);
     assert.match(source, /api\/academic-result-qr\?reference=/);
   }
   assert.match(adminSource, /SAMPLE PREVIEW · NOT AN OFFICIAL RESULT/);

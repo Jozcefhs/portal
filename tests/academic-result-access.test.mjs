@@ -18,13 +18,21 @@ function policy(visibility = 'current-term', financialMode = 'none', financial =
     ...financial
   };
   value.Position.Mode = 'none';
+  value.Assessment.GradeBands = [{
+    Id: 'grade-a', Grade: 'A', MinimumPercentage: 70, MaximumPercentage: 100,
+    GradePoint: 5, Classification: 'pass', Remark: 'Excellent', Order: 1
+  }];
+  value.Promotion.MinimumOverallAverage = 50;
+  value.Promotion.JuniorSecondary.PromotedMinimumAverage = 50;
   return value;
 }
 
 const published = {
   ResultId: 'result-1', Status: 'Published', AcademicSession: '2026/2027', Term: 'First Term',
+  ClassName: 'Grade 10', SchoolStage: 'senior-secondary', ResultType: 'End of Term',
   Subjects: [{ SubjectId: 'math', SubjectName: 'Mathematics', Total: 78, Grade: 'A', Position: 1 }],
-  OverallAverage: 78, OverallPosition: 2, ArmName: 'Brilliance', Recommendation: 'Promote after review',
+  OverallAverage: 78, ClassAverage: 68, OverallPosition: 2, AssessedStudentCount: 35,
+  ArmName: 'Brilliance', Recommendation: 'Promote after review',
   Attendance: { RegisterType: 'Daily', Present: 18, Absent: 1, Late: 1, Total: 20, AttendancePercentage: 95 },
   InternalReviewNote: 'Never expose this note'
 };
@@ -76,7 +84,14 @@ test('AM-001 category balances do not double-count invoice credits and position 
   assert.equal('OverallPosition' in hidden, false);
   assert.equal('Position' in hidden.Subjects[0], false);
   assert.equal(hidden.ArmName, 'Brilliance');
+  assert.equal(hidden.ClassName, 'Grade 10');
+  assert.equal(hidden.SchoolStage, 'senior-secondary');
+  assert.equal(hidden.ResultType, 'End of Term');
+  assert.equal(hidden.ClassAverage, 68);
   assert.equal(hidden.Recommendation, 'Promote after review');
+  assert.equal(hidden.PolicySnapshot.Assessment.GradeBands[0].Grade, 'A');
+  assert.equal(hidden.PolicySnapshot.Promotion.MinimumOverallAverage, 50);
+  assert.equal('AssessedStudentCount' in hidden, false);
   assert.deepEqual(hidden.Attendance, { RegisterType: 'Daily', Present: 18, Absent: 1, Late: 1, Excused: 0, LeftEarly: 0, Total: 20, AttendancePercentage: 95 });
   assert.equal('InternalReviewNote' in hidden, false);
   const blocked = publicAcademicResult(published, { Allowed: false, Code: 'FINANCIAL_CLEARANCE_REQUIRED', Message: 'Contact accounts' }, policy('all-published'));
@@ -84,6 +99,7 @@ test('AM-001 category balances do not double-count invoice credits and position 
   assert.equal('OverallAverage' in blocked, false);
   assert.equal('Recommendation' in blocked, false);
   assert.equal('Attendance' in blocked, false);
+  assert.equal('PolicySnapshot' in blocked, false);
 });
 
 test('AM-001 financial summaries exclude wallet activity from the result gate', () => {

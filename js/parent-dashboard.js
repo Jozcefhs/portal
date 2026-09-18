@@ -1463,8 +1463,40 @@ function academicResultCriteriaMarkup(record = {}) {
     senior.PromotedMinimumCredits ? `Promoted: at least ${senior.PromotedMinimumCredits} Core credits at ${senior.CreditMinimumPercentage ?? 50}% or above` : '',
     senior.ProbationCreditCount ? `Probation review: ${senior.ProbationCreditCountMode === 'at-least' ? 'at least ' : ''}${senior.ProbationCreditCount} Core credits` : ''
   ].filter(Boolean);
-  if (!gradeRows && !general.length && !juniorRows.length && !seniorRows.length) return '';
-  return `<section class="criteria"><div><h3>Grading scale</h3><ul>${gradeRows || '<li>Uses the approved grading policy for this result.</li>'}</ul></div><div><h3>Promotion criteria</h3><ul>${[...general, ...juniorRows, ...seniorRows].map((line) => `<li>${escapeHtml(line)}</li>`).join('') || '<li>Subject to management review and the captured promotion policy.</li>'}</ul></div></section>`;
+  const generalRows = general.map((line) => `<li>${escapeHtml(line)}</li>`).join('');
+  const fallback = '<li>Subject to management review and the approved promotion policy.</li>';
+  return `<table class="report-table criteria-table"><thead><tr><th>Grade key</th><th>Junior</th><th>Senior</th></tr></thead><tbody><tr><td><ul>${gradeRows || '<li>Uses the approved grading policy for this result.</li>'}</ul></td><td><ul>${generalRows}${juniorRows.map((line) => `<li>${escapeHtml(line)}</li>`).join('') || fallback}</ul></td><td><ul>${generalRows}${seniorRows.map((line) => `<li>${escapeHtml(line)}</li>`).join('') || fallback}</ul></td></tr></tbody></table>`;
+}
+
+function academicResultIdentityMarkup(child = {}, record = {}, learnerLabel = 'Student') {
+  const className = clean(record.ClassName || '-');
+  const armName = clean(record.ArmName);
+  const classLabel = armName && !className.toLowerCase().includes(armName.toLowerCase())
+    ? `${className} / ${armName}`
+    : className;
+  const cells = [
+    [learnerLabel, child.DisplayName || child.StudentName || child.AccountRef || learnerLabel],
+    ['Admission number', child.AccountRef || record.StudentRef || '-'],
+    ['Class', classLabel],
+    ['Gender', child.Gender || record.Gender || 'Not recorded'],
+    ['Academic session', record.AcademicSession || '-'],
+    ['Period', [record.Term, record.ResultType].filter(Boolean).join(' · ') || '-']
+  ];
+  return `<table class="report-table identity-table"><tbody>${[cells.slice(0, 3), cells.slice(3)].map((row) => `<tr>${row.map(([label, value]) => `<td><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+
+function academicResultSummaryMarkup(record = {}) {
+  const position = record.OverallPosition !== '' && record.OverallPosition !== undefined
+    ? ` · ${record.OverallPosition}${record.AssessedStudentCount ? ` of ${record.AssessedStudentCount}` : ''}`
+    : '';
+  const cells = [
+    ['Overall average', record.OverallAverage !== '' && record.OverallAverage !== undefined ? `${record.OverallAverage}%` : '-'],
+    ['Class average', record.ClassAverage !== '' && record.ClassAverage !== undefined ? `${record.ClassAverage}%` : '-'],
+    ['Overall grade', `${record.OverallGrade || '-'}${position}`],
+    ['Attendance', `${record.Attendance?.AttendancePercentage ?? 0}%`],
+    ['Decision', record.Recommendation || record.OverallRemark || record.OverallClassification || 'Pending review']
+  ];
+  return `<table class="report-table summary-table"><thead><tr>${cells.map(([label]) => `<th>${escapeHtml(label)}</th>`).join('')}</tr></thead><tbody><tr>${cells.map(([, value]) => `<td>${escapeHtml(value)}</td>`).join('')}</tr></tbody></table>`;
 }
 
 function fileAsDataUrl(blob) {
@@ -1508,22 +1540,14 @@ function academicResultPrintMarkup(child, record, options = {}) {
   const passport = options.passportDataUrl
     ? `<img class="passport" src="${escapeHtml(options.passportDataUrl)}" alt="Student passport photograph">`
     : `<div class="passport passport-empty" aria-label="Passport photograph unavailable">${escapeHtml(childInitials(child))}</div>`;
-  const summary = [
-    record.OverallAverage !== '' && record.OverallAverage !== undefined ? `Average: ${record.OverallAverage}` : '',
-    record.ClassAverage !== '' && record.ClassAverage !== undefined ? `Class average: ${record.ClassAverage}` : '',
-    record.OverallGrade ? `Grade: ${record.OverallGrade}` : '',
-    record.OverallPosition !== '' && record.OverallPosition !== undefined ? `Position: ${record.OverallPosition}` : '',
-    record.PerformanceBand ? `Band: ${record.PerformanceBand}` : '',
-    record.AssessedStudentCount !== '' && record.AssessedStudentCount !== undefined ? `Assessed students: ${record.AssessedStudentCount}` : ''
-  ].filter(Boolean).join(' · ');
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(record.Term || 'Academic Result')}</title><style>
-    @page{size:A4 portrait;margin:12mm}*{box-sizing:border-box}body{font:12px/1.4 Arial,sans-serif;color:#17324d;margin:22px}.report{border:2px solid #42576b;padding:18px}.letterhead{display:grid;grid-template-columns:82px 1fr 92px;align-items:center;gap:14px;border-bottom:3px solid #08735f;padding-bottom:12px}.logo{width:76px;height:76px;object-fit:contain}.school{text-align:center}.school h1{margin:0;color:#123f6d;font-size:23px}.school p{margin:3px 0;color:#526b80}.passport{width:82px;height:96px;border:2px solid #c5d2dd;border-radius:12px;object-fit:cover}.passport-empty{display:grid;place-items:center;background:#eef3f7;color:#63788c;font-size:22px;font-weight:800}.title{text-align:center;margin:14px 0 10px}.title h2{margin:0;color:#123f6d}.identity{display:grid;grid-template-columns:repeat(3,1fr);margin-bottom:12px;border:1px solid #cad8e3;background:#eef6fb}.identity div{min-width:0;padding:8px 10px;border-right:1px solid #cad8e3}.identity div:last-child{border-right:0}.identity span{display:block;color:#61768a;font-size:9px;text-transform:uppercase}.identity strong{display:block}.summary{margin:12px 0;padding:9px;background:#edf8f5;font-weight:700;text-align:center}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border:1px solid #cad8e3;padding:6px;text-align:left}th{background:#eef4f8}.remarks{display:grid;grid-template-columns:1fr 170px;gap:18px;margin-top:15px}.endorsement{text-align:center}.stamp{display:block;width:105px;height:82px;margin:0 auto 4px;object-fit:contain}.criteria{display:grid;grid-template-columns:1fr 1.35fr;gap:15px;margin-top:16px;padding-top:12px;border-top:1px solid #cad8e3}.criteria h3{margin:0 0 4px;color:#123f6d;font-size:12px}.criteria ul{margin:0;padding-left:17px;font-size:10px}.verification{display:flex;align-items:center;gap:12px;margin-top:14px;padding-top:10px;border-top:1px solid #cad8e3}.verification img{width:74px;height:74px}.reference{font-size:9px;color:#647b90}@media print{body{margin:0}.report{border-color:#42576b}}
-  </style></head><body><main class="report"><header class="letterhead"><img class="logo" src="${escapeHtml(logoUrl)}" alt="${escapeHtml(schoolName)} logo" onerror="this.style.visibility='hidden'"><div class="school"><h1>${escapeHtml(schoolName)}</h1><p>${escapeHtml(profile.SchoolAddress || '')}</p><p>${escapeHtml([profile.SchoolPhone, profile.SchoolEmail].filter(Boolean).join(' · '))}</p></div>${passport}</header><section class="title"><h2>${escapeHtml(reportTitle)}</h2><p>${escapeHtml([record.ClassName, record.AcademicSession, record.Term].filter(Boolean).join(' · '))}</p></section><section class="identity"><div><span>${learnerLabel}</span><strong>${escapeHtml(child.DisplayName || child.AccountRef || learnerLabel)}</strong></div><div><span>Admission number</span><strong>${escapeHtml(child.AccountRef || record.StudentRef || '-')}</strong></div><div><span>Class</span><strong>${escapeHtml(record.ClassName || '-')}</strong></div></section>
-  ${summary ? `<div class="summary">${escapeHtml(summary)}</div>` : ''}
-  <table><thead><tr><th>Subject</th><th>Total</th><th>Grade</th><th>Point</th><th>Position / assessed</th><th>Remark</th></tr></thead><tbody>${academicResultSubjectRows(record)}</tbody></table>
-  <div class="remarks"><div><p><strong>Attendance:</strong> ${escapeHtml(record.Attendance?.AttendancePercentage ?? 0)}%</p><p><strong>Form Teacher:</strong> ${escapeHtml(record.TeacherRemark || '-')}</p><p><strong>${executiveLabel}:</strong> ${escapeHtml(record.PrincipalRemark || '-')}</p><p><strong>Recommendation:</strong> ${escapeHtml(record.Recommendation || '-')}</p></div><div class="endorsement"><img class="stamp" src="${escapeHtml(stampUrl)}" alt="Official stamp" onerror="this.style.visibility='hidden'"><strong>${escapeHtml(profile.ResultSignatoryName || 'Authorized school officer')}</strong><br><small>${escapeHtml(profile.ResultSignatoryTitle || 'Official result signatory')}</small></div></div>
+    @page{size:A4 portrait;margin:12mm}*{box-sizing:border-box}body{font:12px/1.4 Arial,sans-serif;color:#17324d;margin:22px}.report{border:2px solid #42576b;padding:18px}.letterhead{display:grid;grid-template-columns:82px 1fr 92px;align-items:center;gap:14px;border-bottom:3px solid #08735f;padding-bottom:12px}.logo{width:76px;height:76px;object-fit:contain}.school{text-align:center}.school h1{margin:0;color:#123f6d;font-size:23px}.school p{margin:3px 0;color:#526b80}.passport{width:82px;height:96px;border:2px solid #c5d2dd;border-radius:12px;object-fit:cover}.passport-empty{display:grid;place-items:center;background:#eef3f7;color:#63788c;font-size:22px;font-weight:800}.title{text-align:center;margin:14px 0 10px}.title h2{margin:0;color:#123f6d}.report-table{width:100%;border-collapse:collapse;margin-top:10px;table-layout:fixed}.report-table th,.report-table td{border:1px solid #cad8e3;padding:6px;text-align:left;vertical-align:top}.report-table th{background:#164a78;color:#fff;font-size:9px;text-transform:uppercase}.identity-table{margin-top:0;background:#eef6fb}.identity-table td{padding:7px 9px}.identity-table span{display:block;color:#61768a;font-size:8px;font-weight:700;text-transform:uppercase}.identity-table strong{display:block;margin-top:3px}.subject-table td:not(:first-child),.subject-table th:not(:first-child),.summary-table td,.summary-table th{text-align:center}.summary-table th{background:#edf8f5;color:#08735f}.summary-table td{font-weight:800}.remarks-table td:first-child{width:72%}.remarks-table p{margin:5px 0}.endorsement{text-align:center}.endorsement .decision{display:block;margin-bottom:4px;color:#08735f}.stamp{display:block;width:105px;height:82px;margin:0 auto 4px;object-fit:contain}.criteria-table th{background:#eef4f8;color:#123f6d}.criteria-table ul{margin:0;padding-left:17px;font-size:9px}.verification-table td:first-child{width:90px;text-align:center}.verification-table img{width:74px;height:74px}.reference{font-size:9px;color:#647b90;overflow-wrap:anywhere}@media print{body{margin:0}.report{border-color:#42576b}}
+  </style></head><body><main class="report"><header class="letterhead"><img class="logo" src="${escapeHtml(logoUrl)}" alt="${escapeHtml(schoolName)} logo" onerror="this.style.visibility='hidden'"><div class="school"><h1>${escapeHtml(schoolName)}</h1><p>${escapeHtml(profile.SchoolAddress || '')}</p><p>${escapeHtml([profile.SchoolPhone, profile.SchoolEmail].filter(Boolean).join(' · '))}</p></div>${passport}</header><section class="title"><h2>${escapeHtml(reportTitle)}</h2></section>${academicResultIdentityMarkup(child, record, learnerLabel)}
+  <table class="report-table subject-table"><thead><tr><th>Subject</th><th>Total</th><th>Grade</th><th>Point</th><th>Position / assessed</th><th>Remark</th></tr></thead><tbody>${academicResultSubjectRows(record)}</tbody></table>
+  ${academicResultSummaryMarkup(record)}
+  <table class="report-table remarks-table"><tbody><tr><td><p><strong>Form Teacher:</strong> ${escapeHtml(record.TeacherRemark || '-')}</p><p><strong>${executiveLabel}:</strong> ${escapeHtml(record.PrincipalRemark || '-')}</p></td><td class="endorsement"><strong class="decision">${escapeHtml(record.Recommendation || record.OverallRemark || 'Pending review')}</strong><img class="stamp" src="${escapeHtml(stampUrl)}" alt="Official stamp" onerror="this.style.visibility='hidden'"><strong>${escapeHtml(profile.ResultSignatoryName || 'Authorized school officer')}</strong><br><small>${escapeHtml(profile.ResultSignatoryTitle || 'Official result signatory')}</small></td></tr></tbody></table>
   ${academicResultCriteriaMarkup(record)}
-  <div class="verification"><img src="${escapeHtml(`${location.origin}/api/academic-result-qr?reference=${encodeURIComponent(record.ResultReference || record.ResultId)}`)}" alt="Result verification QR code"><p class="reference">Result reference: ${escapeHtml(record.ResultReference || record.ResultId)}<br>Verification: ${escapeHtml(`${location.origin}/verify-result.html?reference=${encodeURIComponent(record.ResultReference || record.ResultId)}`)}</p></div></main></body></html>`;
+  <table class="report-table verification-table"><tbody><tr><td><img src="${escapeHtml(`${location.origin}/api/academic-result-qr?reference=${encodeURIComponent(record.ResultReference || record.ResultId)}`)}" alt="Result verification QR code"></td><td><strong>Result verification</strong><p class="reference">Result reference: ${escapeHtml(record.ResultReference || record.ResultId)}<br>Verification: ${escapeHtml(`${location.origin}/verify-result.html?reference=${encodeURIComponent(record.ResultReference || record.ResultId)}`)}</p></td></tr></tbody></table></main></body></html>`;
 }
 
 async function printAcademicResult(child, record, button) {
