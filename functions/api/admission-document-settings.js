@@ -15,9 +15,12 @@ export async function onRequestGet({ env }) {
     const settings = await getDocument(env, 'settings', 'admissionDocuments').catch(() => null);
     const enabled = settings?.Enabled && typeof settings.Enabled === 'object' ? settings.Enabled : {};
     return Response.json({ ok: true, documents: DOCUMENTS.filter((item) => enabled[item.key] !== false) }, {
-      headers: { 'Cache-Control': 'public, max-age=60' }
+      headers: { 'Cache-Control': 'no-store' }
     });
   } catch (error) {
-    return Response.json({ ok: false, message: error.message || String(error), documents: DOCUMENTS }, { status: 500 });
+    return Response.json({ ok: false, message: error.message || String(error), documents: DOCUMENTS }, {
+      status: 500,
+      headers: { 'Cache-Control': 'no-store' }
+    });
   }
 }

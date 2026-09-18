@@ -1944,18 +1944,43 @@ async function loadParentDocumentSettings() {
   try {
     const data = window.DynamaxPublicApi?.getJson
       ? await window.DynamaxPublicApi.getJson('/api/admission-document-settings', {
-          cacheKey: 'parent-admission-document-settings'
+          cacheKey: 'parent-admission-document-settings',
+          force: true,
+          cache: false,
+          fetchCache: 'no-store',
+          errorMessage: 'Could not load the school document requirements.',
+          invalidMessage: 'The school document requirements returned an invalid response.'
         })
-      : await fetch('/api/admission-document-settings', { cache: 'no-cache' }).then((response) => response.json());
-    if (!data?.ok) return;
+      : await fetch('/api/admission-document-settings', {
+          credentials: 'same-origin',
+          cache: 'no-store'
+        }).then(async (response) => {
+          const payload = await response.json().catch(() => null);
+          if (!response.ok || !payload?.ok) {
+            throw new Error(payload?.message || 'Could not load the school document requirements.');
+          }
+          return payload;
+        });
+    if (!data?.ok) throw new Error(data?.message || 'Could not load the school document requirements.');
     const enabled = new Set((data.documents || []).map((item) => item.key));
     document.querySelectorAll('[data-parent-document-row]').forEach((row) => {
       const active = enabled.has(row.dataset.parentDocumentRow);
       row.hidden = !active;
       row.querySelector('input[type="file"]')?.toggleAttribute('disabled', !active);
     });
-  } catch (_error) {
-    // Retain the built-in admission document list while settings are temporarily unavailable.
+    if (parentUploadDocumentsBtn) parentUploadDocumentsBtn.disabled = false;
+    if (parentDocumentUploadStatus?.dataset.settingsError === 'true') {
+      setParentDocumentStatus('', '');
+      delete parentDocumentUploadStatus.dataset.settingsError;
+    }
+  } catch (error) {
+    document.querySelectorAll('[data-parent-document-row]').forEach((row) => {
+      row.hidden = false;
+      row.querySelector('input[type="file"]')?.toggleAttribute('disabled', true);
+    });
+    if (parentUploadDocumentsBtn) parentUploadDocumentsBtn.disabled = true;
+    if (parentDocumentUploadStatus) parentDocumentUploadStatus.dataset.settingsError = 'true';
+    setParentDocumentStatus(`${error.message || 'Could not load the school document requirements.'} Refresh this page and try again.`, 'bad');
   }
 }
 
@@ -2004,6 +2029,8 @@ parentDocumentUploadForm?.addEventListener('submit', async (event) => {
         : {};
       const response = await fetch('/api/upload-document', {
         method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
         headers: {
           'Content-Type': 'application/json',
           'Idempotency-Key': idempotencyKey
@@ -2567,6 +2594,9 @@ if (dashboardNav) {
     if (child && button.dataset.dashboardTarget === 'results') {
       renderAcademicResults(child);
       renderEntranceResults(child);
+    }
+    if (button.dataset.dashboardTarget === 'documents') {
+      void loadParentDocumentSettings();
     }
   });
 }

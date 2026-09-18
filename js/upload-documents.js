@@ -41,9 +41,15 @@ async function loadDocumentSettings() {
   try {
     const data = window.DynamaxPublicApi?.getJson
       ? await window.DynamaxPublicApi.getJson('/api/admission-document-settings', {
-          cacheKey: 'admission-document-settings'
+          cacheKey: 'admission-document-settings',
+          force: true,
+          cache: false,
+          fetchCache: 'no-store'
         })
-      : await fetch('/api/admission-document-settings', { cache: 'no-cache' }).then((response) => response.json());
+      : await fetch('/api/admission-document-settings', {
+          credentials: 'same-origin',
+          cache: 'no-store'
+        }).then((response) => response.json());
     if (!data.ok) return;
     const enabled = new Set((data.documents || []).map((item) => item.key));
     document.querySelectorAll('[data-document-row]').forEach((row) => {
@@ -184,6 +190,8 @@ form.addEventListener('submit', async (event) => {
         : {};
       const response = await fetch('/api/upload-document', {
         method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
         headers: {
           'Content-Type': 'application/json',
           'Idempotency-Key': idempotencyKey

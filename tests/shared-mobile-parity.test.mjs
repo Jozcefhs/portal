@@ -11,7 +11,7 @@ const pageStyleVersions = new Map([
   ['register-organization.html', '20260918-neutral-plan-cards']
 ]);
 const adminScriptVersion = '20260918-profile-name-fields';
-const parentScriptVersion = '20260918-tabulated-results';
+const parentScriptVersion = '20260918-parent-documents';
 const notificationScriptVersion = '20260913-branch-scope';
 const notificationStyleVersion = '20260804-read-efficiency';
 const pageNames = [
@@ -119,7 +119,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v285-email-provider/);
+  assert.match(serviceWorker, /dynamax-v286-parent-documents/);
   assert.match(serviceWorker, /'\/verify-result\.html'/);
   assert.match(serviceWorker, /'\/js\/verify-result\.js'/);
   assert.match(serviceWorker, /'\/css\/school-landing\.css'/);

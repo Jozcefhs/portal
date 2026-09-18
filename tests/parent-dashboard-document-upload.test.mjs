@@ -9,6 +9,15 @@ const [html, script, css] = await Promise.all([
   readFile(new URL('css/style.css', portalRoot), 'utf8')
 ]);
 
+test('parent dashboard loads fresh shared and admission-document settings', () => {
+  assert.match(html, /<body data-fresh-site-profile>/);
+  assert.match(html, /js\/site-config\.js\?v=20260918-parent-documents/);
+  assert.match(html, /js\/parent-dashboard\.js\?v=20260918-parent-documents/);
+  assert.match(script, /cacheKey: 'parent-admission-document-settings',[\s\S]*?force: true,[\s\S]*?cache: false,[\s\S]*?fetchCache: 'no-store'/);
+  assert.match(script, /fetch\('\/api\/admission-document-settings',[\s\S]*?credentials: 'same-origin',[\s\S]*?cache: 'no-store'/);
+  assert.match(script, /button\.dataset\.dashboardTarget === 'documents'[\s\S]*?loadParentDocumentSettings\(\)/);
+});
+
 test('parent dashboard exposes admission document upload for the selected child', () => {
   assert.match(html, /data-dashboard-target="documents"/);
   assert.match(html, /id="parentDocumentUploadForm"/);
@@ -23,6 +32,7 @@ test('parent dashboard exposes admission document upload for the selected child'
 
 test('parent upload reuses authenticated credentials and securely targets the selected application', () => {
   assert.match(script, /fetch\('\/api\/upload-document'/);
+  assert.match(script, /fetch\('\/api\/upload-document',[\s\S]*?credentials: 'same-origin',[\s\S]*?cache: 'no-store'/);
   assert.match(script, /body: JSON\.stringify\(\{[\s\S]*?\.\.\.authPayload\(\),[\s\S]*?applicationReference,[\s\S]*?accountRef: child\.AccountRef/);
   assert.match(script, /sourceType: child\.SourceType \|\| 'Student'/);
   assert.match(script, /'Idempotency-Key': idempotencyKey/);
@@ -49,6 +59,9 @@ test('parent upload rows follow the school admission-document settings', () => {
   assert.match(script, /\/api\/admission-document-settings/);
   assert.match(script, /\[data-parent-document-row\]/);
   assert.match(script, /row\.hidden = !active/);
+  assert.match(script, /row\.querySelector\('input\[type="file"\]'\)\?\.toggleAttribute\('disabled', true\)/);
+  assert.match(script, /parentUploadDocumentsBtn\.disabled = true/);
+  assert.match(script, /dataset\.settingsError = 'true'/);
 });
 
 test('parent dashboard has an authenticated notification center', () => {
