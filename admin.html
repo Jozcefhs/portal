@@ -165,7 +165,12 @@
       <button type="button" id="staffProfileSubscriptionOpen">Manage subscription / Upgrade plan</button>
     </section>
     <form id="staffProfileForm" class="workflow-form">
-      <label>Display name <span class="required">*</span><input id="staffProfileDisplayName" name="displayName" required></label>
+      <div class="config-grid">
+        <label>First name <span class="required">*</span><input id="staffProfileFirstName" name="firstName" autocomplete="given-name" required></label>
+        <label>Surname <span class="required">*</span><input id="staffProfileSurname" name="surname" autocomplete="family-name" required></label>
+        <label>Middle name<input id="staffProfileMiddleName" name="middleName" autocomplete="additional-name"></label>
+        <label>Display name<input id="staffProfileDisplayName" name="displayName" readonly><small id="staffProfileNameFormat" class="muted">Generated from the organisation name format.</small></label>
+      </div>
       <div class="profile-photo-editor">
         <div class="profile-photo-preview">
           <img id="staffProfilePhotoPreview" alt="Profile picture preview" hidden>
@@ -423,7 +428,7 @@
   <script src="js/app-dialogs.js?v=20260910-detailed-messages"></script>
   <script src="js/list-sorting.js?v=20260815-shared-list-sorting"></script>
   <script src="js/academic-results-analysis.js?v=20260918-academic-readability"></script>
-  <script src="js/admin.js?v=20260918-name-format-header"></script>
+  <script src="js/admin.js?v=20260918-profile-name-fields"></script>
   <script src="js/web-push.js?v=20260801-mobile-push"></script>
   <script src="js/notifications.js?v=20260913-branch-scope"></script>
 </body>

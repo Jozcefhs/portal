@@ -30,7 +30,21 @@ test('staff can update only their own display profile through the authenticated 
   assert.match(sessionApi, /await batchUpsertDocuments\(env/);
   assert.match(sessionApi, /collectionPath: 'staffProfileImages'/);
   assert.match(sessionApi, /ProfilePhotoDataUrl: photo/);
+  assert.match(sessionApi, /FirstName: firstName/);
+  assert.match(sessionApi, /MiddleName: middleName/);
+  assert.match(sessionApi, /Surname: surname/);
+  assert.match(sessionApi, /sessionStaffDisplayName/);
   assert.match(sessionApi, /createStaffSession\(env, refreshedUser\)/);
+});
+
+test('staff profile edits canonical name fields and generates the display order', () => {
+  assert.match(adminHtml, /id="staffProfileFirstName"[^>]*required/);
+  assert.match(adminHtml, /id="staffProfileSurname"[^>]*required/);
+  assert.match(adminHtml, /id="staffProfileMiddleName"/);
+  assert.match(adminHtml, /id="staffProfileDisplayName"[^>]*readonly/);
+  assert.match(adminJs, /function syncOwnProfileDisplayName\(\)/);
+  assert.match(adminJs, /firstName,\s*middleName,\s*surname,/);
+  assert.doesNotMatch(adminJs, /action: 'updateProfile',\s*displayName,/);
 });
 
 test('staff profile lookup accepts either the stored username or its database document id', () => {
@@ -56,7 +70,7 @@ test('profile pictures reload from the canonical staff document after a new logi
 });
 
 test('dashboard hydration does not erase the separately loaded profile picture', () => {
-  assert.match(adminHtml, /js\/admin\.js\?v=20260918-name-format-header/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260918-profile-name-fields/);
   assert.match(adminJs, /const dashboardUser = data\.user \|\| \{\}/);
   assert.match(
     adminJs,

@@ -145,6 +145,10 @@ function authoritativeSessionUser(record, sessionUser, profilePhotoUrl = '', sch
       schoolProfile,
       record.DisplayName || sessionUser.displayName || record.Username || sessionUser.username
     ),
+    firstName: clean(record.FirstName || record.firstName),
+    middleName: clean(record.MiddleName || record.middleName),
+    surname: clean(record.Surname || record.surname || record.LastName || record.lastName),
+    nameFormat: clean(schoolProfile.NameFormat || schoolProfile.nameFormat) || 'Surname, first name, middle name',
     profilePhotoUrl: clean(profilePhotoUrl || record.ProfilePhotoDataUrl || sessionUser.profilePhotoUrl),
     role,
     department: clean(record.Department || sessionUser.department || inferredDepartment),
@@ -227,8 +231,17 @@ export async function onRequestPost(context) {
           [clearStaffSessionCookie(), clearLegacyStaffSessionCookie()]
         );
       }
-      const displayName = String(body.displayName || '').trim();
-      if (!displayName) return response({ ok: false, message: 'Display name is required.' }, 400);
+      const firstName = clean(body.firstName ?? body.FirstName ?? existing.FirstName ?? existing.firstName);
+      const middleName = clean(body.middleName ?? body.MiddleName ?? existing.MiddleName ?? existing.middleName);
+      const surname = clean(body.surname ?? body.Surname ?? existing.Surname ?? existing.surname ?? existing.LastName ?? existing.lastName);
+      if (!firstName || !surname) {
+        return response({ ok: false, message: 'First name and surname are required. They are stored as identity fields and only their display order changes.' }, 400);
+      }
+      const schoolProfile = await getDocument(env, 'settings', 'schoolProfile').catch(() => null);
+      const displayName = sessionStaffDisplayName(
+        { FirstName: firstName, MiddleName: middleName, Surname: surname },
+        schoolProfile || {}
+      );
       const updatedAt = new Date().toISOString();
       const photo = profilePhoto(body.profilePhotoDataUrl);
       const staffDocumentId = clean(existing.__id || safeStaffId(existing.Username || sessionUser.username));
@@ -236,6 +249,9 @@ export async function onRequestPost(context) {
       const updated = {
         ...existing,
         DisplayName: displayName,
+        FirstName: firstName,
+        MiddleName: middleName,
+        Surname: surname,
         ProfilePhotoDataUrl: '',
         UpdatedAt: updatedAt,
         UpdatedBy: sessionUser.username
@@ -258,7 +274,6 @@ export async function onRequestPost(context) {
           }
         }
       ]);
-      const schoolProfile = await getDocument(env, 'settings', 'schoolProfile').catch(() => null);
       const refreshedUser = authoritativeSessionUser(
         updated,
         { ...sessionUser, mustChangePassword: Boolean(sessionUser.mustChangePassword) },

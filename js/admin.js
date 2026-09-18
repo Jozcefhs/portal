@@ -1201,7 +1201,11 @@ function openStaffProfile() {
   staffProfileForm.reset();
   document.getElementById('staffLoginDetailsForm').reset();
   profilePhotoState = clean(currentUser.profilePhotoUrl);
-  document.getElementById('staffProfileDisplayName').value = currentUser.displayName || currentUser.username || '';
+  document.getElementById('staffProfileFirstName').value = currentUser.firstName || '';
+  document.getElementById('staffProfileMiddleName').value = currentUser.middleName || '';
+  document.getElementById('staffProfileSurname').value = currentUser.surname || '';
+  syncOwnProfileDisplayName();
+  document.getElementById('staffProfileNameFormat').textContent = `Generated using ${currentUser.nameFormat || 'the organisation name format'}.`;
   document.getElementById('staffProfileLoginUsername').value = currentUser.loginUsername || currentUser.username || '';
   renderProfilePhoto(profilePhotoState, currentUser.displayName || currentUser.username);
   const canManageSubscription = canManageOrganisationSettings(currentUser);
@@ -17727,13 +17731,23 @@ function staffNameFieldOrder(value = staffNameFormat) {
   return order.length ? order : ['surname', 'first name', 'middle name'];
 }
 
-function staffDisplayNameFromFields(fields = {}) {
+function staffDisplayNameFromFields(fields = {}, nameFormat = staffNameFormat) {
   const parts = {
     'first name': clean(fields.FirstName),
     'middle name': clean(fields.MiddleName),
     surname: clean(fields.Surname)
   };
-  return staffNameFieldOrder().map((part) => parts[part]).filter(Boolean).join(' ');
+  return staffNameFieldOrder(nameFormat).map((part) => parts[part]).filter(Boolean).join(' ');
+}
+
+function syncOwnProfileDisplayName() {
+  const displayName = staffDisplayNameFromFields({
+    FirstName: document.getElementById('staffProfileFirstName')?.value,
+    MiddleName: document.getElementById('staffProfileMiddleName')?.value,
+    Surname: document.getElementById('staffProfileSurname')?.value
+  }, currentUser?.nameFormat || staffNameFormat);
+  const input = document.getElementById('staffProfileDisplayName');
+  if (input) input.value = displayName || currentUser?.displayName || currentUser?.username || '';
 }
 
 function syncStaffDisplayName(form) {
@@ -18928,12 +18942,16 @@ document.getElementById('staffProfilePhotoFile').addEventListener('change', asyn
 staffProfileForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = document.getElementById('staffProfileSave');
-  const displayName = clean(document.getElementById('staffProfileDisplayName').value);
+  const firstName = clean(document.getElementById('staffProfileFirstName').value);
+  const middleName = clean(document.getElementById('staffProfileMiddleName').value);
+  const surname = clean(document.getElementById('staffProfileSurname').value);
   setButtonLoading(button, true, 'Saving...', 'Save profile');
   try {
     const { response, data } = await sessionRequest('POST', {
       action: 'updateProfile',
-      displayName,
+      firstName,
+      middleName,
+      surname,
       profilePhotoDataUrl: profilePhotoState
     });
     if (!response.ok || !data.ok) throw new Error(data.message || 'Profile could not be updated.');
@@ -18945,6 +18963,10 @@ staffProfileForm.addEventListener('submit', async (event) => {
   } finally {
     setButtonLoading(button, false, 'Saving...', 'Save profile');
   }
+});
+
+['staffProfileFirstName', 'staffProfileMiddleName', 'staffProfileSurname'].forEach((id) => {
+  document.getElementById(id)?.addEventListener('input', syncOwnProfileDisplayName);
 });
 
 document.getElementById('staffLoginDetailsForm').addEventListener('submit', async (event) => {
