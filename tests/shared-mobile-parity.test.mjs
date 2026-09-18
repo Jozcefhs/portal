@@ -5,12 +5,12 @@ import { readFile } from 'node:fs/promises';
 const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260903-hotel-tabs';
 const pageStyleVersions = new Map([
-  ['admin.html', '20260917-remote-desktop-approval'],
-  ['setup.html', '20260917-email-provider'],
+  ['admin.html', '20260918-academic-readability'],
+  ['setup.html', '20260917-independent-branch-policy'],
   ['plan-management.html', '20260830-dual-currency-pricing'],
   ['register-organization.html', '20260830-flex-module-layout']
 ]);
-const adminScriptVersion = '20260917-remote-desktop-approval';
+const adminScriptVersion = '20260918-academic-readability';
 const parentScriptVersion = '20260909-academic-report-workflow';
 const notificationScriptVersion = '20260913-branch-scope';
 const notificationStyleVersion = '20260804-read-efficiency';
