@@ -16,7 +16,7 @@ enter a Gmail password or create their own Google Cloud project.
 3. Create a Web application OAuth client.
 4. Add this exact authorised redirect URI:
 
-   `https://dynamaxms.pages.dev/api/google-email-callback`
+   `https://dynamax.cc/api/google-email-callback`
 
 5. Add these repository secrets in GitHub:
 

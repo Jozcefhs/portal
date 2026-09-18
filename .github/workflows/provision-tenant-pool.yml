@@ -41,7 +41,7 @@ jobs:
     timeout-minutes: 180
     env:
       APPLY_CHANGES: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
-      DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev' }}
+      DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamax.cc' }}
       DYNAMAX_TENANT_PROVISIONER_SECRET: ${{ secrets.DYNAMAX_TENANT_PROVISIONER_SECRET }}
       DYNAMAX_GCP_BILLING_ACCOUNT: ${{ vars.DYNAMAX_GCP_BILLING_ACCOUNT }}
       DYNAMAX_GCP_BILLING_REQUIRED: ${{ vars.DYNAMAX_GCP_BILLING_REQUIRED || 'true' }}

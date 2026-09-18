@@ -41,7 +41,7 @@ jobs:
         env:
           TARGET_ORGANISATION: ${{ inputs.organisation || 'all' }}
           EVENT_NAME: ${{ github.event_name }}
-          DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev' }}
+          DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamax.cc' }}
           DYNAMAX_TENANT_PROVISIONER_SECRET: ${{ secrets.DYNAMAX_TENANT_PROVISIONER_SECRET }}
         run: |
           set -euo pipefail
@@ -74,7 +74,7 @@ jobs:
       firebase_config: ${{ matrix.organisation.firebaseConfig }}
       cloudflare_account_id: ${{ matrix.organisation.cloudflareAccountId }}
       cloudflare_project: ${{ matrix.organisation.cloudflareProject }}
-      platform_url: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev' }}
+      platform_url: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamax.cc' }}
       paystack_deployment_requested_at: ${{ matrix.organisation.paystackDeploymentRequestedAt || '' }}
       email_deployment_requested_at: ${{ matrix.organisation.emailDeploymentRequestedAt || '' }}
       email_deployment_provider: ${{ matrix.organisation.emailDeploymentProvider || '' }}

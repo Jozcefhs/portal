@@ -8,7 +8,7 @@ import { ensureCloudflareR2Storage } from './cloudflare-r2.mjs';
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 const applyChanges = lower(process.env.TENANT_PROVISION_APPLY) === 'true';
-const platformUrl = clean(process.env.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev').replace(/\/$/, '');
+const platformUrl = clean(process.env.DYNAMAX_PLATFORM_URL || 'https://dynamax.cc').replace(/\/$/, '');
 const platformPassword = clean(process.env.DYNAMAX_TENANT_PROVISIONER_SECRET);
 const cloudflareAccountId = clean(process.env.CLOUDFLARE_ACCOUNT_ID);
 const cloudflareToken = clean(process.env.CLOUDFLARE_API_TOKEN);

@@ -8,7 +8,7 @@ const applyChanges = lower(process.env.TENANT_POOL_MAINTENANCE_APPLY) === 'true'
 const preservedProjectId = lower(process.env.PRESERVE_TENANT_PROJECT_ID);
 const deletedProjectId = lower(process.env.DELETE_TENANT_PROJECT_ID);
 const confirmation = clean(process.env.TENANT_POOL_MAINTENANCE_CONFIRMATION);
-const platformUrl = clean(process.env.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev').replace(/\/$/, '');
+const platformUrl = clean(process.env.DYNAMAX_PLATFORM_URL || 'https://dynamax.cc').replace(/\/$/, '');
 const platformPassword = clean(process.env.DYNAMAX_TENANT_PROVISIONER_SECRET);
 const cloudflareAccountId = clean(process.env.CLOUDFLARE_ACCOUNT_ID);
 const cloudflareToken = clean(process.env.CLOUDFLARE_API_TOKEN);

@@ -94,9 +94,9 @@ export function publicSubscriptionReceipt(receipt = {}) {
 }
 
 export function subscriptionReceiptUrl(env = {}, receipt = {}) {
-  const configured = clean(env.CANONICAL_PORTAL_URL || env.PUBLIC_PORTAL_URL || 'https://dynamaxms.pages.dev');
+  const configured = clean(env.CANONICAL_PORTAL_URL || env.PUBLIC_PORTAL_URL || 'https://dynamax.cc');
   let base;
-  try { base = new URL(configured); } catch (_error) { base = new URL('https://dynamaxms.pages.dev'); }
+  try { base = new URL(configured); } catch (_error) { base = new URL('https://dynamax.cc'); }
   const url = new URL('/subscription-receipt.html', base.origin);
   url.searchParams.set('reference', clean(receipt.PaymentReference));
   url.searchParams.set('registration', clean(receipt.RegistrationReference));

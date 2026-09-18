@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev' }}
+      DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamax.cc' }}
       DYNAMAX_PLATFORM_PROJECT: dynamaxms
       DYNAMAX_TENANT_PROJECT: ${{ inputs.project || 'all' }}
       DYNAMAX_CLEAR_TENANT_PAYSTACK_KEYS: ${{ inputs.clear_paystack_keys || false }}

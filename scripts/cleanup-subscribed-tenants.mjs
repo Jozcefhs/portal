@@ -6,7 +6,7 @@ const lower = (value) => clean(value).toLowerCase();
 const applyChanges = lower(process.env.TENANT_SUBSCRIBER_CLEANUP_APPLY) === 'true';
 const confirmation = clean(process.env.TENANT_SUBSCRIBER_CLEANUP_CONFIRMATION);
 const requiredConfirmation = 'DELETE ALL NONCORE SUBSCRIBERS';
-const platformUrl = clean(process.env.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev').replace(/\/$/, '');
+const platformUrl = clean(process.env.DYNAMAX_PLATFORM_URL || 'https://dynamax.cc').replace(/\/$/, '');
 const platformPassword = clean(process.env.DYNAMAX_TENANT_PROVISIONER_SECRET);
 const cloudflareAccountId = clean(process.env.CLOUDFLARE_ACCOUNT_ID);
 const cloudflareToken = clean(process.env.CLOUDFLARE_API_TOKEN);

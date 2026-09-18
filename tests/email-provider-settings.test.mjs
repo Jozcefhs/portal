@@ -18,7 +18,7 @@ test('email-provider readiness exposes status without returning credentials', ()
     EMAIL_PROVIDER: 'unknown',
     BREVO_API_KEY: 'brevo-secret',
     TENANT_CONTROL_PLANE_PRIVATE_KEY: 'tenant-private-key',
-    CANONICAL_PORTAL_URL: 'https://dynamaxms.pages.dev'
+    CANONICAL_PORTAL_URL: 'https://dynamax.cc'
   });
   assert.deepEqual(brevo, {
     EmailProvider: 'unsupported',
@@ -49,7 +49,7 @@ test('email-provider self-service requires a tenant control key and HTTPS contro
     CANONICAL_PORTAL_URL: 'http://localhost:8788'
   }).EmailProviderSelfServiceAvailable, false);
   assert.equal(emailProviderProfile({
-    CANONICAL_PORTAL_URL: 'https://dynamaxms.pages.dev'
+    CANONICAL_PORTAL_URL: 'https://dynamax.cc'
   }).EmailProviderSelfServiceAvailable, false);
 });
 

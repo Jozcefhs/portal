@@ -12,7 +12,7 @@ function argumentValue(name, fallback = '') {
 }
 
 async function platformApi() {
-  const platformUrl = clean(process.env.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev').replace(/\/$/, '');
+  const platformUrl = clean(process.env.DYNAMAX_PLATFORM_URL || 'https://dynamax.cc').replace(/\/$/, '');
   const password = clean(process.env.DYNAMAX_TENANT_PROVISIONER_SECRET);
   if (!password) throw new Error('DYNAMAX_TENANT_PROVISIONER_SECRET is required to load managed deployments.');
   const response = await fetch(`${platformUrl}/api/tenant-project-pool`, {

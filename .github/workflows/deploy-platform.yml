@@ -21,7 +21,7 @@ jobs:
     env:
       CLOUDFLARE_ACCOUNT_ID: a5aa57ffa1fd00e4fd98e78ee7d32f01
       CLOUDFLARE_PROJECT: dynamaxms
-      PLATFORM_URL: https://dynamaxms.pages.dev
+      PLATFORM_URL: https://dynamax.cc
     steps:
       - name: Check out repository
         uses: actions/checkout@v6

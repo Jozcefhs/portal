@@ -56,7 +56,7 @@ These records contain identifiers, status, hashed activation challenges and tena
 
 The workflow is `.github/workflows/provision-tenant-pool.yml`. Add the following repository variables:
 
-- `DYNAMAX_PLATFORM_URL`: central Dynamax Pages URL; current value is `https://dynamaxms.pages.dev`.
+- `DYNAMAX_PLATFORM_URL`: canonical central Dynamax URL; current value is `https://dynamax.cc`.
 - `CLOUDFLARE_ACCOUNT_ID`: account that will own the ready Pages projects.
 - `GCP_WIF_PROVIDER`: full GitHub Workload Identity provider resource name.
 - `DYNAMAX_PROVISION_SERVICE_ACCOUNT`: service-account email used only by the provisioner.

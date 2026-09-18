@@ -36,7 +36,7 @@ const tenantWorkflow = await readFile(new URL('../.github/workflows/deploy-tenan
 const managedWorkflow = await readFile(new URL('../.github/workflows/deploy-organisation.yml', import.meta.url), 'utf8');
 
 const oauthEnv = {
-  CANONICAL_PORTAL_URL: 'https://dynamaxms.pages.dev',
+  CANONICAL_PORTAL_URL: 'https://dynamax.cc',
   GOOGLE_OAUTH_CLIENT_ID: 'google-client-id.apps.googleusercontent.com',
   GOOGLE_OAUTH_CLIENT_SECRET: 'central-google-client-secret'
 };
@@ -50,10 +50,10 @@ function controlKeyPair() {
 }
 
 test('Google email authorization uses PKCE, send-only scope, offline consent and a short one-use state', async () => {
-  const start = await createGoogleOAuthStart(oauthEnv, 'https://dynamaxms.pages.dev/api/tenant-email-provider', 2_000_000);
+  const start = await createGoogleOAuthStart(oauthEnv, 'https://dynamax.cc/api/tenant-email-provider', 2_000_000);
   const url = new URL(start.authorizationUrl);
   assert.equal(url.origin, 'https://accounts.google.com');
-  assert.equal(url.searchParams.get('redirect_uri'), 'https://dynamaxms.pages.dev/api/google-email-callback');
+  assert.equal(url.searchParams.get('redirect_uri'), 'https://dynamax.cc/api/google-email-callback');
   assert.equal(url.searchParams.get('access_type'), 'offline');
   assert.equal(url.searchParams.get('prompt'), 'consent');
   assert.equal(url.searchParams.has('include_granted_scopes'), false);
@@ -78,7 +78,7 @@ test('Google token exchange requires a refresh token and userinfo requires a ver
   const tokens = await exchangeGoogleAuthorizationCode(oauthEnv, {
     code: 'one-use-code',
     codeVerifier: 'a'.repeat(64),
-    redirectUri: 'https://dynamaxms.pages.dev/api/google-email-callback'
+    redirectUri: 'https://dynamax.cc/api/google-email-callback'
   }, async (_url, options) => {
     tokenBody = String(options.body);
     return Response.json({
@@ -101,7 +101,7 @@ test('Google token exchange requires a refresh token and userinfo requires a ver
     exchangeGoogleAuthorizationCode(oauthEnv, {
       code: 'one-use-code',
       codeVerifier: 'a'.repeat(64),
-      redirectUri: 'https://dynamaxms.pages.dev/api/google-email-callback'
+      redirectUri: 'https://dynamax.cc/api/google-email-callback'
     }, async () => Response.json({
       access_token: 'access-token',
       refresh_token: 'refresh-token',

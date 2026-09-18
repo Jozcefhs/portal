@@ -60,7 +60,7 @@ Every organisation Pages project must also have these production plaintext varia
 
 - `ALLOW_CANONICAL_API_PROXY=true`
 - `CANONICAL_API_PROXY_SCOPE=platform-subscriptions`
-- `CANONICAL_PORTAL_URL=https://dynamaxms.pages.dev`
+- `CANONICAL_PORTAL_URL=https://dynamax.cc`
 
 The deployment verifier checks the central plan catalogue after each upload, so a missing bridge prevents the deployment from being reported as successful.
 

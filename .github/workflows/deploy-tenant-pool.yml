@@ -28,7 +28,7 @@ jobs:
       projects: ${{ steps.inventory.outputs.projects }}
       count: ${{ steps.inventory.outputs.count }}
     env:
-      DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev' }}
+      DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamax.cc' }}
       DYNAMAX_TENANT_PROVISIONER_SECRET: ${{ secrets.DYNAMAX_TENANT_PROVISIONER_SECRET }}
       TARGET_PROJECT: ${{ inputs.project || 'all' }}
       EVENT_NAME: ${{ github.event_name }}
@@ -164,7 +164,7 @@ jobs:
       - name: Mark Paystack deployment complete
         if: ${{ matrix.project.PaystackDeploymentPending == true }}
         env:
-          DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev' }}
+          DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamax.cc' }}
           DYNAMAX_TENANT_PROVISIONER_SECRET: ${{ secrets.DYNAMAX_TENANT_PROVISIONER_SECRET }}
           CLOUDFLARE_PROJECT: ${{ matrix.project.CloudflareProject }}
           PAYSTACK_DEPLOYMENT_REQUESTED_AT: ${{ matrix.project.PaystackDeploymentRequestedAt }}
@@ -184,7 +184,7 @@ jobs:
       - name: Mark email-provider deployment complete
         if: ${{ matrix.project.EmailDeploymentPending == true }}
         env:
-          DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev' }}
+          DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamax.cc' }}
           DYNAMAX_TENANT_PROVISIONER_SECRET: ${{ secrets.DYNAMAX_TENANT_PROVISIONER_SECRET }}
           CLOUDFLARE_PROJECT: ${{ matrix.project.CloudflareProject }}
           EMAIL_DEPLOYMENT_REQUESTED_AT: ${{ matrix.project.EmailDeploymentRequestedAt }}
