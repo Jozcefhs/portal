@@ -1,4 +1,4 @@
-import { getDocument, upsertDocument } from '../lib/firestore.js';
+import { getDocument, patchDocumentFields, upsertDocument } from '../lib/firestore.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { syncRegistrationSubscriptionToWorkspace } from '../lib/subscription-workspace-sync.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
@@ -8,6 +8,12 @@ import {
   paidSubscriptionRecoveryFields,
   paystackPaidThroughAt
 } from '../lib/paid-subscription-lifecycle.js';
+import {
+  buildSubscriptionReceipt,
+  deliverSubscriptionReceiptEmail,
+  publicSubscriptionReceipt,
+  subscriptionReceiptUrl
+} from '../lib/subscription-receipt.js';
 
 const clean = (value) => String(value ?? '').trim();
 const safeId = (value) => clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140);
@@ -156,6 +162,14 @@ export async function activateSavedSubscriptionPayment(env, options = {}) {
   const providerFields = options.providerFields && typeof options.providerFields === 'object'
     ? options.providerFields
     : {};
+  const receipt = buildSubscriptionReceipt(intent, registration, {
+    reference,
+    registrationReference,
+    provider,
+    paidAt,
+    providerFields,
+    issuedAt: updatedAt
+  });
   const updatedRegistration = {
     ...withoutFirestoreMetadata(registration),
     Plan: clean(intent.Plan),
@@ -170,6 +184,9 @@ export async function activateSavedSubscriptionPayment(env, options = {}) {
     Status: 'Payment Confirmed',
     SubscriptionPaymentProvider: provider,
     SubscriptionPaymentReference: reference,
+    LastSubscriptionReceiptNo: receipt.ReceiptNo,
+    LastSubscriptionReceiptReference: reference,
+    LastSubscriptionReceiptAt: receipt.IssuedAt,
     PreviousPaystackSubscriptionCode: clean(intent.PreviousPaystackSubscriptionCode),
     PendingPlan: '',
     PendingBillingCycle: '',
@@ -201,17 +218,30 @@ export async function activateSavedSubscriptionPayment(env, options = {}) {
     UpdatedAt: updatedAt
   };
   await Promise.all([
-    upsertDocument(platformEnv, 'subscriptionPayments', reference, {
-      ...withoutFirestoreMetadata(intent),
+    patchDocumentFields(platformEnv, 'subscriptionPayments', reference, {
       Status: 'Paid',
       PaymentMethod: provider,
       PaidAt: paidAt,
+      ReceiptNo: receipt.ReceiptNo,
+      Receipt: receipt,
       ...providerFields,
       UpdatedAt: updatedAt
     }),
-    upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, updatedRegistration)
+    upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, updatedRegistration),
+    upsertDocument(platformEnv, 'subscriptionReceipts', reference, receipt)
   ]);
   await syncRegistrationSubscriptionToWorkspace(env, updatedRegistration);
+  let receiptDelivery = { sent: false, status: 'Failed' };
+  try {
+    receiptDelivery = await deliverSubscriptionReceiptEmail(env, platformEnv, reference, receipt);
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'subscription_receipt_email_failed',
+      reference,
+      registrationReference,
+      message: clean(error.message || error).slice(0, 300)
+    }));
+  }
   let activation = {};
   if (clean(updatedRegistration.WorkspaceId)) {
     try {
@@ -243,6 +273,10 @@ export async function activateSavedSubscriptionPayment(env, options = {}) {
     workspaceId: clean(updatedRegistration.WorkspaceId),
     portalUrl: clean(updatedRegistration.PortalUrl),
     workspacePending: !clean(updatedRegistration.WorkspaceId),
+    receipt: publicSubscriptionReceipt(receipt),
+    receiptUrl: subscriptionReceiptUrl(env, receipt),
+    receiptEmailStatus: clean(receiptDelivery.status),
+    receiptEmailSent: receiptDelivery.sent === true,
     updatedRegistration,
     ...activation
   };
