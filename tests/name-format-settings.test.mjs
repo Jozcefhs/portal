@@ -34,6 +34,7 @@ test('student names follow every configured split-name order without rewriting t
 });
 
 test('staff names use the same configured order', () => {
+  const original = structuredClone(person);
   assert.equal(
     staffDisplayName(person, { NameFormat: 'First name, surname, middle name' }),
     'Ada Okafor Grace'
@@ -42,6 +43,7 @@ test('staff names use the same configured order', () => {
     staffDisplayName(person, { NameFormat: 'Surname, middle name, first name' }),
     'Okafor Grace Ada'
   );
+  assert.deepEqual(person, original);
 });
 
 test('legacy unsplit names remain intact instead of being guessed', () => {
@@ -61,4 +63,10 @@ test('web and desktop student/staff reads apply the current saved profile', () =
   assert.match(backendSource, /normalizeStudent\(row, profile \|\| \{\}\)/);
   assert.match(backendSource, /DisplayName: formatPersonName\(row, profile \|\| \{\}/);
   assert.match(staffSource, /listUsers\(staffRows, actor, profile \|\| \{\}\)/);
+});
+
+test('staff identity fields are never inferred from a formatted display name', () => {
+  assert.doesNotMatch(staffSource, /inferStaffNameParts/);
+  assert.match(staffSource, /Automatic splitting is disabled because the name-format setting only controls display order/);
+  assert.doesNotMatch(adminSource, /inferStaffNameFields/);
 });

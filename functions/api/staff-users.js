@@ -66,24 +66,6 @@ export function staffDisplayName(row = {}, profile = {}) {
     .join(' ') || clean(row.DisplayName || row.displayName || row.Username || row.username);
 }
 
-export function inferStaffNameParts(displayName = '', profile = {}) {
-  const tokens = clean(displayName).split(/\s+/).filter(Boolean);
-  if (tokens.length < 2 || tokens.length > 3) return null;
-  const order = staffNameOrder(profile.NameFormat || profile.nameFormat);
-  const assignedOrder = tokens.length === 2
-    ? order.filter((part) => part !== 'middle name')
-    : order;
-  if (assignedOrder.length !== tokens.length) return null;
-  const parts = { 'first name': '', 'middle name': '', surname: '' };
-  assignedOrder.forEach((part, index) => { parts[part] = tokens[index]; });
-  if (!parts['first name'] || !parts.surname) return null;
-  return {
-    FirstName: parts['first name'],
-    MiddleName: parts['middle name'],
-    Surname: parts.surname
-  };
-}
-
 function staffSplitNameState(row = {}) {
   const firstName = clean(row.FirstName || row.firstName);
   const middleName = clean(row.MiddleName || row.middleName);
@@ -93,17 +75,14 @@ function staffSplitNameState(row = {}) {
   return 'empty';
 }
 
-function staffNameMigrationSummary(rows = [], profile = {}) {
-  let migratable = 0;
+function staffNameMigrationSummary(rows = []) {
   let requiresReview = 0;
   rows.forEach((row) => {
     const state = staffSplitNameState(row);
     if (state === 'complete') return;
-    if (state === 'partial') { requiresReview += 1; return; }
-    if (inferStaffNameParts(row.DisplayName || row.displayName, profile)) migratable += 1;
-    else requiresReview += 1;
+    requiresReview += 1;
   });
-  return { migratable, requiresReview };
+  return { migratable: 0, requiresReview };
 }
 
 export function staffImportIdentity(row = {}, existing = {}, profile = {}) {
@@ -341,54 +320,18 @@ async function saveUser(env, actor, body) {
 }
 
 async function migrateStaffNames(env, actor) {
-  const [rows, profile] = await Promise.all([
-    listCollection(env, 'staffUsers'),
-    getDocument(env, 'settings', 'schoolProfile').catch(() => null)
-  ]);
+  const rows = await listCollection(env, 'staffUsers');
   const visibleRows = rows.filter((row) => staffRecordMatchesEdition(row, actor) && branchRecordVisible(row, actor));
-  const writes = [];
-  const review = [];
-  visibleRows.forEach((row) => {
-    const username = clean(row.Username || row.username || row.__id);
-    const state = staffSplitNameState(row);
-    if (state === 'complete') return;
-    if (state === 'partial') {
-      review.push({ Username: username, DisplayName: clean(row.DisplayName || row.displayName) });
-      return;
-    }
-    const parts = inferStaffNameParts(row.DisplayName || row.displayName, profile || {});
-    if (!parts) {
-      review.push({ Username: username, DisplayName: clean(row.DisplayName || row.displayName) });
-      return;
-    }
-    const payload = {
-      ...row,
-      ...parts,
-      UpdatedAt: nowIso(),
-      UpdatedBy: actor.displayName || actor.username
-    };
-    delete payload.__id;
-    delete payload.__name;
-    delete payload.__createTime;
-    delete payload.__updateTime;
-    writes.push({
-      collectionPath: 'staffUsers',
-      documentId: clean(row.__id) || safeId(username),
-      data: payload,
-      ...(row.__updateTime ? { updateTime: row.__updateTime } : {})
-    });
-  });
-  for (let index = 0; index < writes.length; index += 500) {
-    await batchUpsertDocuments(env, writes.slice(index, index + 500));
-  }
-  const migrated = writes.length;
-  const message = migrated
-    ? `${migrated} staff name${migrated === 1 ? '' : 's'} migrated without changing the displayed names.${review.length ? ` ${review.length} account${review.length === 1 ? ' needs' : 's need'} manual review.` : ''}`
-    : review.length
-      ? `No names were changed. ${review.length} account${review.length === 1 ? ' needs' : 's need'} manual review.`
-      : 'All visible staff accounts already use separate name fields.';
-  await audit(env, actor, 'MIGRATE STAFF NAMES', `${migrated} staff`, `${review.length} need manual review`, actorBranchScope(actor) || 'main');
-  return { ok: true, message, migrated, requiresReview: review.length, review };
+  const review = visibleRows
+    .filter((row) => staffSplitNameState(row) !== 'complete')
+    .map((row) => ({
+      Username: clean(row.Username || row.username || row.__id),
+      DisplayName: clean(row.DisplayName || row.displayName)
+    }));
+  const message = review.length
+    ? `No names were changed. Automatic splitting is disabled because the name-format setting only controls display order. Review ${review.length} account${review.length === 1 ? '' : 's'} manually.`
+    : 'All visible staff accounts already use separate name fields.';
+  return { ok: true, message, migrated: 0, requiresReview: review.length, review };
 }
 
 async function importUsers(env, actor, body) {
@@ -694,7 +637,7 @@ export async function onRequestPost(context) {
         audit,
         roleAccess,
         nameFormat: clean(profile?.NameFormat || profile?.nameFormat) || 'Surname, first name, middle name',
-        nameMigration: staffNameMigrationSummary(visibleRows, profile || {}),
+        nameMigration: staffNameMigrationSummary(visibleRows),
         branches: configuredStaffBranches(structure),
         canAssignStaffBranches: assignmentActor(env, actor).canSwitchBranches === true,
         modulePreferences: modulePreferencesView(moduleSettings.organization),
