@@ -1,6 +1,7 @@
 import {
   batchCommitDocuments,
   createDocumentIfAbsent,
+  deleteDocumentIfCurrent,
   getDocument,
   listCollection,
   patchDocumentFieldsIfCurrent,
@@ -78,6 +79,9 @@ export function publicTenantProjectSlot(slot = {}) {
     AssignedOrganisationName: clean(slot.AssignedOrganisationName),
     ReservedAt: clean(slot.ReservedAt),
     ReadyAt: clean(slot.ReadyAt),
+    MaintenanceAt: clean(slot.MaintenanceAt),
+    MaintenanceReason: clean(slot.MaintenanceReason),
+    SanitizedAt: clean(slot.SanitizedAt),
     LastError: clean(slot.LastError),
     ProvisioningBatchId: clean(slot.ProvisioningBatchId),
     TenantControlKeyConfigured: validTenantControlPublicKey(slot.TenantControlPublicKey),
@@ -251,6 +255,9 @@ export async function registerTenantProjectSlot(platformEnv, value = {}) {
     Region: clean(value.Region),
     ProvisioningBatchId: clean(value.ProvisioningBatchId),
     TenantControlPublicKey: tenantControlPublicKey,
+    SanitizedAt: clean(value.SanitizedAt || current?.SanitizedAt),
+    MaintenanceAt: lower(value.Status || 'Ready') === 'maintenance' ? clean(value.MaintenanceAt || current?.MaintenanceAt || now) : '',
+    MaintenanceReason: lower(value.Status || 'Ready') === 'maintenance' ? clean(value.MaintenanceReason || current?.MaintenanceReason) : '',
     LastError: clean(value.LastError),
     ReadyAt: lower(value.Status || 'Ready') === 'ready' ? clean(current?.ReadyAt || now) : clean(current?.ReadyAt),
     CreatedAt: clean(current?.CreatedAt || now),
@@ -258,6 +265,58 @@ export async function registerTenantProjectSlot(platformEnv, value = {}) {
   };
   await upsertDocument(platformEnv, TENANT_PROJECT_POOL_COLLECTION, id, slot);
   return publicTenantProjectSlot(slot);
+}
+
+export async function quarantineTenantProjectSlot(platformEnv, projectId, reason = '') {
+  const slot = await tenantPoolSlotByProject(platformEnv, projectId);
+  if (!slot) {
+    const error = new Error('The tenant project was not found in the managed pool.');
+    error.status = 404;
+    throw error;
+  }
+  if (clean(slot.AssignedRegistrationReference) || !['ready', 'maintenance'].includes(lower(slot.Status))) {
+    const error = new Error('Only an unassigned Ready or Maintenance project can enter maintenance.');
+    error.status = 409;
+    throw error;
+  }
+  const now = new Date().toISOString();
+  const documentId = clean(slot.__id || slot.Id);
+  const maintenance = {
+    ...withoutFirestoreMetadata(slot),
+    Status: 'Maintenance',
+    MaintenanceAt: clean(slot.MaintenanceAt || now),
+    MaintenanceReason: clean(reason || 'Tenant data sanitation'),
+    PaystackDeploymentPending: false,
+    EmailDeploymentPending: false,
+    UpdatedAt: now
+  };
+  await patchDocumentFieldsIfCurrent(platformEnv, TENANT_PROJECT_POOL_COLLECTION, documentId, maintenance, slot);
+  return publicTenantProjectSlot(maintenance);
+}
+
+export async function removeQuarantinedTenantProjectSlot(platformEnv, projectId) {
+  const slot = await tenantPoolSlotByProject(platformEnv, projectId);
+  if (!slot) return { removed: false, projectId: safeKey(projectId) };
+  if (lower(slot.Status) !== 'maintenance' || clean(slot.AssignedRegistrationReference)) {
+    const error = new Error('Only an unassigned Maintenance project can be removed from the pool.');
+    error.status = 409;
+    throw error;
+  }
+  const normalizedProjectId = safeKey(slot.FirebaseProjectId || projectId);
+  const policy = await loadTenantPoolPolicy(platformEnv);
+  if (policy.PrecreatedProjectIds.includes(normalizedProjectId)) {
+    await saveTenantPoolPolicy(platformEnv, {
+      ...policy,
+      PrecreatedProjectIds: policy.PrecreatedProjectIds.filter((entry) => entry !== normalizedProjectId)
+    });
+  }
+  await deleteDocumentIfCurrent(
+    platformEnv,
+    TENANT_PROJECT_POOL_COLLECTION,
+    clean(slot.__id || slot.Id),
+    slot
+  );
+  return { removed: true, projectId: normalizedProjectId };
 }
 
 async function tenantPoolSlotByProject(platformEnv, projectId) {

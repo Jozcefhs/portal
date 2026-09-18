@@ -1,0 +1,118 @@
+name: Maintain unassigned tenant projects
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Permanently execute the reviewed sanitation and deletion plan
+        required: true
+        default: false
+        type: boolean
+      preserve_project_id:
+        description: Exact unassigned tenant project to sanitize and reprovision
+        required: true
+        default: dynamax-tenant-001
+        type: string
+      delete_project_id:
+        description: Exact unassigned tenant project to permanently delete
+        required: true
+        default: dynamax-tenant-org-25fa571228
+        type: string
+      confirmation:
+        description: For apply, enter SANITIZE <preserve ID> DELETE <delete ID>
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: dynamax-tenant-pool-provisioner
+  cancel-in-progress: false
+
+jobs:
+  maintain:
+    name: Quarantine, sanitize and remove reviewed projects
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      TENANT_POOL_MAINTENANCE_APPLY: ${{ inputs.apply }}
+      TENANT_POOL_MAINTENANCE_CONFIRMATION: ${{ inputs.confirmation }}
+      PRESERVE_TENANT_PROJECT_ID: ${{ inputs.preserve_project_id }}
+      DELETE_TENANT_PROJECT_ID: ${{ inputs.delete_project_id }}
+      DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamaxms.pages.dev' }}
+      DYNAMAX_TENANT_PROVISIONER_SECRET: ${{ secrets.DYNAMAX_TENANT_PROVISIONER_SECRET }}
+      DYNAMAX_GCP_BILLING_ACCOUNT: ${{ vars.DYNAMAX_GCP_BILLING_ACCOUNT }}
+      DYNAMAX_GCP_BILLING_REQUIRED: ${{ vars.DYNAMAX_GCP_BILLING_REQUIRED || 'true' }}
+      DYNAMAX_GCP_PARENT: ${{ vars.DYNAMAX_GCP_PARENT }}
+      DYNAMAX_TENANT_REGION: ${{ vars.DYNAMAX_TENANT_REGION || 'africa-south1' }}
+      DYNAMAX_TENANT_PROJECT_PREFIX: ${{ vars.DYNAMAX_TENANT_PROJECT_PREFIX || 'dynamax-tenant' }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate exact maintenance request
+        shell: bash
+        run: |
+          set -euo pipefail
+          project_pattern='^dynamax-tenant-[a-z0-9-]+$'
+          google_project_pattern='^[a-z][a-z0-9-]{4,28}[a-z0-9]$'
+          [[ "${PRESERVE_TENANT_PROJECT_ID}" =~ ${project_pattern} && "${PRESERVE_TENANT_PROJECT_ID}" =~ ${google_project_pattern} ]] || { echo '::error::The preserve project ID is invalid.'; exit 1; }
+          [[ "${DELETE_TENANT_PROJECT_ID}" =~ ${project_pattern} && "${DELETE_TENANT_PROJECT_ID}" =~ ${google_project_pattern} ]] || { echo '::error::The delete project ID is invalid.'; exit 1; }
+          [[ "${PRESERVE_TENANT_PROJECT_ID}" != "${DELETE_TENANT_PROJECT_ID}" ]] || { echo '::error::The two project IDs must be different.'; exit 1; }
+          [[ -n "${DYNAMAX_TENANT_PROVISIONER_SECRET}" ]] || { echo '::error::DYNAMAX_TENANT_PROVISIONER_SECRET is not configured.'; exit 1; }
+          if [[ "${TENANT_POOL_MAINTENANCE_APPLY}" == "true" ]]; then
+            expected="SANITIZE ${PRESERVE_TENANT_PROJECT_ID} DELETE ${DELETE_TENANT_PROJECT_ID}"
+            [[ "${TENANT_POOL_MAINTENANCE_CONFIRMATION}" == "${expected}" ]] || { echo "::error::Enter ${expected} exactly."; exit 1; }
+            [[ -n "${CLOUDFLARE_ACCOUNT_ID}" ]] || { echo '::error::CLOUDFLARE_ACCOUNT_ID is not configured.'; exit 1; }
+            [[ -n "${CLOUDFLARE_API_TOKEN}" ]] || { echo '::error::CLOUDFLARE_API_TOKEN is not configured.'; exit 1; }
+          fi
+
+      - name: Authenticate to Google Cloud
+        if: ${{ inputs.apply }}
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.DYNAMAX_PROVISION_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.DYNAMAX_PROVISION_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        if: ${{ inputs.apply }}
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install deployment dependencies
+        if: ${{ inputs.apply }}
+        run: npm ci --ignore-scripts --omit=dev
+
+      - name: Run exact tenant maintenance
+        run: node scripts/sanitize-tenant-pool-projects.mjs
+
+      - name: Summarize maintenance
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [[ -f tenant-pool-maintenance-result.json ]]; then
+            echo '## Tenant project maintenance' >> "${GITHUB_STEP_SUMMARY}"
+            echo '```json' >> "${GITHUB_STEP_SUMMARY}"
+            jq '{apply, completed, preserve: .preserve.FirebaseProjectId, delete: .delete.FirebaseProjectId, deletedProject, preservedProject}' tenant-pool-maintenance-result.json >> "${GITHUB_STEP_SUMMARY}"
+            echo '```' >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload maintenance evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tenant-project-maintenance-${{ github.run_id }}
+          path: tenant-pool-maintenance-result.json
+          if-no-files-found: ignore
+          retention-days: 30

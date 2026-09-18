@@ -11,6 +11,7 @@ const poolSource = await readFile(new URL('../functions/lib/tenant-project-pool.
 const apiSource = await readFile(new URL('../functions/api/tenant-project-pool.js', import.meta.url), 'utf8');
 const paymentSource = await readFile(new URL('../functions/api/verify-subscription-payment.js', import.meta.url), 'utf8');
 const provisionerSource = await readFile(new URL('../scripts/provision-tenant-projects.mjs', import.meta.url), 'utf8');
+const sanitizerSource = await readFile(new URL('../scripts/sanitize-tenant-pool-projects.mjs', import.meta.url), 'utf8');
 
 test('pool policy maintains a safe ready target for every organisation edition', () => {
   assert.deepEqual(normalizeTenantPoolPolicy({}), {
@@ -89,7 +90,25 @@ test('tenant pool administration is protected and supports worker lifecycle stat
   assert.match(apiSource, /body\.reference/);
   assert.match(apiSource, /finish-request/);
   assert.match(apiSource, /ensure-capacity/);
+  assert.match(apiSource, /quarantine/);
+  assert.match(apiSource, /remove-quarantined-slot/);
   assert.match(apiSource, /issueTenantActivation/);
+});
+
+test('unassigned pool sanitation stays quarantined until verification completes', () => {
+  assert.match(poolSource, /Only an unassigned Ready or Maintenance project can enter maintenance/);
+  assert.match(poolSource, /Only an unassigned Maintenance project can be removed from the pool/);
+  assert.match(poolSource, /PrecreatedProjectIds\.filter/);
+  assert.match(sanitizerSource, /SANITIZE \$\{preservedProjectId\} DELETE \$\{deletedProjectId\}/);
+  assert.match(sanitizerSource, /status: 'Maintenance'/);
+  assert.match(sanitizerSource, /await verifyFirestoreEmpty\(preservedProjectId\)/);
+  assert.match(sanitizerSource, /await verifyFirebaseAuthEmpty\(preservedProjectId\)/);
+  assert.match(sanitizerSource, /objects\?per_page=1000/);
+  assert.match(sanitizerSource, /encodedR2ObjectKey/);
+  assert.ok(
+    sanitizerSource.indexOf("status: 'Maintenance'") < sanitizerSource.indexOf("Status: 'Ready'"),
+    'the sanitized project must remain unavailable until every empty-state check passes'
+  );
 });
 
 test('provisioning plans are repeatable and can resume from a user-precreated project', () => {

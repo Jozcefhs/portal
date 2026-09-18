@@ -2,6 +2,7 @@ import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { ensureCloudflareR2Storage } from './cloudflare-r2.mjs';
 
 const clean = (value) => String(value ?? '').trim();
@@ -64,7 +65,7 @@ function randomSecret(bytes = 32) {
   return randomBytes(bytes).toString('base64url');
 }
 
-function tenantControlKeyPair() {
+export function tenantControlKeyPair() {
   const pair = generateKeyPairSync('rsa', {
     modulusLength: 2048,
     publicKeyEncoding: { type: 'spki', format: 'pem' },
@@ -227,7 +228,7 @@ async function createFirebaseWebApp(projectId) {
   return googleRequest(`https://firebase.googleapis.com/v1beta1/projects/${projectId}/webApps/${encodeURIComponent(appId)}/config`);
 }
 
-function deploymentVariables(projectId, serviceAccount, webConfig, privateKey, tenantControlPrivateKey) {
+export function deploymentVariables(projectId, serviceAccount, webConfig, privateKey, tenantControlPrivateKey) {
   const portalUrl = `https://${projectId}.pages.dev`;
   const plain = (value) => ({ type: 'plain_text', value: clean(value) });
   const secret = (value) => ({ type: 'secret_text', value: clean(value) });
@@ -259,7 +260,7 @@ function deploymentVariables(projectId, serviceAccount, webConfig, privateKey, t
   };
 }
 
-async function configureCloudflareProject(projectId, variables) {
+export async function configureCloudflareProject(projectId, variables) {
   const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(cloudflareAccountId)}/pages/projects`;
   const headers = { Authorization: `Bearer ${cloudflareToken}`, 'Content-Type': 'application/json' };
   const deploymentConfig = {
@@ -294,7 +295,7 @@ async function configureCloudflareProject(projectId, variables) {
   });
 }
 
-function preparePagesDeployment() {
+export function preparePagesDeployment() {
   const resolvedRoot = resolve(process.cwd());
   if (!deployDirectory.startsWith(`${resolvedRoot}\\`) && !deployDirectory.startsWith(`${resolvedRoot}/`)) {
     throw new Error('Refusing to prepare a deployment directory outside the repository.');
@@ -316,7 +317,7 @@ function preparePagesDeployment() {
   }
 }
 
-async function platformApi(payload) {
+export async function platformApi(payload) {
   return jsonRequest(`${platformUrl}/api/tenant-project-pool`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -324,7 +325,7 @@ async function platformApi(payload) {
   });
 }
 
-async function provisionProject(projectId) {
+export async function provisionProject(projectId, options = {}) {
   const displayName = `Dynamax ${editionLabel(edition)} ${projectId.slice(-8)}`.slice(0, 30);
   const existingProject = clean(command('gcloud', ['projects', 'describe', projectId, '--format=value(projectId)'], {
     capture: true,
@@ -412,7 +413,8 @@ async function provisionProject(projectId) {
       WorkspaceId: projectId,
       PortalUrl: `https://${projectId}.pages.dev`,
       Region: region,
-      Status: 'Ready',
+      Status: clean(options.status || 'Ready'),
+      SanitizedAt: clean(options.sanitizedAt),
       ProvisioningBatchId: requestReference,
       TenantControlPublicKey: tenantControl.publicKey
     };
@@ -458,7 +460,11 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(`${error?.stack || error}\n`);
-  process.exitCode = 1;
-});
+const invokedDirectly = process.argv[1]
+  && pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
+if (invokedDirectly) {
+  main().catch((error) => {
+    process.stderr.write(`${error?.stack || error}\n`);
+    process.exitCode = 1;
+  });
+}

@@ -18,7 +18,9 @@ import {
   completeTenantEmailDeployment,
   completeTenantPaystackDeployment,
   loadTenantProjectPool,
+  quarantineTenantProjectSlot,
   registerTenantProjectSlot,
+  removeQuarantinedTenantProjectSlot,
   resetTenantPaystackConnection,
   saveTenantControlPublicKey,
   releaseTenantProjectSlot,
@@ -45,6 +47,8 @@ const PROVISIONER_ACTIONS = new Set([
   'complete-managed-paystack-deployment',
   'complete-managed-email-deployment',
   'register',
+  'quarantine',
+  'remove-quarantined-slot',
   'reset-paystack-connection',
   'set-control-key',
   'request',
@@ -147,6 +151,22 @@ export async function onRequestPost({ request, env }) {
       }, {
         headers: { 'Cache-Control': 'no-store' }
       });
+    }
+    if (action === 'quarantine') {
+      const slot = await quarantineTenantProjectSlot(platformEnv, body.projectId, body.reason);
+      return Response.json({
+        ok: true,
+        message: 'Unassigned tenant project quarantined from automatic assignment.',
+        slot
+      }, { headers: { 'Cache-Control': 'no-store' } });
+    }
+    if (action === 'remove-quarantined-slot') {
+      const result = await removeQuarantinedTenantProjectSlot(platformEnv, body.projectId);
+      return Response.json({
+        ok: true,
+        message: result.removed ? 'Quarantined tenant project removed from the central pool.' : 'Tenant project was already absent from the central pool.',
+        ...result
+      }, { headers: { 'Cache-Control': 'no-store' } });
     }
     if (action === 'set-control-key') {
       const slot = await saveTenantControlPublicKey(platformEnv, body.projectId, body.publicKey);

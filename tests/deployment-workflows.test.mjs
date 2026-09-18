@@ -31,6 +31,7 @@ const platformIndexes = JSON.parse(await readFile(new URL('../firestore.platform
 const tenantProvisioner = await readFile(new URL('../.github/workflows/provision-tenant-pool.yml', import.meta.url), 'utf8');
 const tenantFleet = await readFile(new URL('../.github/workflows/deploy-tenant-pool.yml', import.meta.url), 'utf8');
 const tenantProvisionerScript = await readFile(new URL('../scripts/provision-tenant-projects.mjs', import.meta.url), 'utf8');
+const tenantMaintenance = await readFile(new URL('../.github/workflows/maintain-unassigned-tenant-projects.yml', import.meta.url), 'utf8');
 
 function indexFields(index) {
   return (index.fields || []).map((field) => field.fieldPath).join('|');
@@ -230,6 +231,17 @@ test('the tenant pool provisioner is opt-in, uses WIF and creates isolated deplo
   assert.match(tenantFleet, /firebase\.organization\.json/);
   assert.match(tenantFleet, /max-parallel: 3/);
   assert.match(tenantFleet, /wranglerVersion: "4\.125\.0"/);
+});
+
+test('destructive tenant maintenance is manual, exact and evidence-producing', () => {
+  assert.match(tenantMaintenance, /workflow_dispatch:/);
+  assert.match(tenantMaintenance, /SANITIZE \$\{PRESERVE_TENANT_PROJECT_ID\} DELETE \$\{DELETE_TENANT_PROJECT_ID\}/);
+  assert.match(tenantMaintenance, /google-github-actions\/auth@v3/);
+  assert.match(tenantMaintenance, /DYNAMAX_PROVISION_SERVICE_ACCOUNT/);
+  assert.match(tenantMaintenance, /TENANT_POOL_MAINTENANCE_APPLY/);
+  assert.match(tenantMaintenance, /sanitize-tenant-pool-projects\.mjs/);
+  assert.match(tenantMaintenance, /tenant-pool-maintenance-result\.json/);
+  assert.match(tenantMaintenance, /group: dynamax-tenant-pool-provisioner/);
 });
 
 test('church indexes cover member notifications without carrying school-only composites', () => {
