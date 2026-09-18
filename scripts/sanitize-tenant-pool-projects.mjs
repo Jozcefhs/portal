@@ -115,6 +115,10 @@ function assertMaintainableSlot(slot, projectId) {
   return slot;
 }
 
+function firebaseAuthConfigurationMissing(error) {
+  return /CONFIGURATION_NOT_FOUND/i.test(clean(error?.message));
+}
+
 async function emptyR2Bucket(projectId, { removeBucket = false } = {}) {
   const bucket = r2BucketNameForProject(projectId);
   const bucketPath = `/r2/buckets/${encodeURIComponent(bucket)}`;
@@ -149,9 +153,15 @@ async function emptyR2Bucket(projectId, { removeBucket = false } = {}) {
 async function deleteFirebaseAuthUsers(projectId) {
   let deletedUsers = 0;
   for (let pass = 0; pass < 10000; pass += 1) {
-    const page = await googleRequest(
-      `https://identitytoolkit.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/accounts:batchGet?maxResults=1000`
-    );
+    let page;
+    try {
+      page = await googleRequest(
+        `https://identitytoolkit.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/accounts:batchGet?maxResults=1000`
+      );
+    } catch (error) {
+      if (firebaseAuthConfigurationMissing(error)) return deletedUsers;
+      throw error;
+    }
     const localIds = (Array.isArray(page.users) ? page.users : []).map((user) => clean(user.localId)).filter(Boolean);
     if (!localIds.length) return deletedUsers;
     if (localIds.length) {
@@ -172,9 +182,15 @@ async function deleteFirebaseAuthUsers(projectId) {
 }
 
 async function verifyFirebaseAuthEmpty(projectId) {
-  const verification = await googleRequest(
-    `https://identitytoolkit.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/accounts:batchGet?maxResults=1`
-  );
+  let verification;
+  try {
+    verification = await googleRequest(
+      `https://identitytoolkit.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/accounts:batchGet?maxResults=1`
+    );
+  } catch (error) {
+    if (firebaseAuthConfigurationMissing(error)) return;
+    throw error;
+  }
   if (Array.isArray(verification.users) && verification.users.length) {
     throw new Error(`Firebase Authentication still contains users in ${projectId}.`);
   }
@@ -320,10 +336,11 @@ async function main() {
     inventory.slots?.find((slot) => lower(slot.FirebaseProjectId) === preservedProjectId),
     preservedProjectId
   );
-  const deleteSlot = assertMaintainableSlot(
-    inventory.slots?.find((slot) => lower(slot.FirebaseProjectId) === deletedProjectId),
-    deletedProjectId
-  );
+  const deleteCandidate = inventory.slots?.find((slot) => lower(slot.FirebaseProjectId) === deletedProjectId);
+  const deleteSlot = deleteCandidate ? assertMaintainableSlot(deleteCandidate, deletedProjectId) : null;
+  if (!deleteSlot && lower(preserveSlot.Status) !== 'maintenance') {
+    throw new Error(`${deletedProjectId} is absent, but ${preservedProjectId} is not in Maintenance; refusing an unverified resume.`);
+  }
   const preservedEdition = lower(preserveSlot.Edition);
   if (!['school', 'faith', 'organization'].includes(preservedEdition)) {
     throw new Error(`${preservedProjectId} has an unsupported tenant edition.`);
@@ -351,17 +368,26 @@ async function main() {
   });
   const { preparePagesDeployment, provisionProject } = await import('./provision-tenant-projects.mjs');
 
-  await Promise.all([
-    platformApi({ action: 'quarantine', projectId: preservedProjectId, reason: 'Sanitize and reprovision unassigned project' }),
-    platformApi({ action: 'quarantine', projectId: deletedProjectId, reason: 'Delete unassigned data-bearing project' })
-  ]);
-  await Promise.all([verifyProjectExists(preservedProjectId), verifyProjectExists(deletedProjectId)]);
+  const quarantine = [
+    platformApi({ action: 'quarantine', projectId: preservedProjectId, reason: 'Sanitize and reprovision unassigned project' })
+  ];
+  if (deleteSlot) {
+    quarantine.push(platformApi({ action: 'quarantine', projectId: deletedProjectId, reason: 'Delete unassigned data-bearing project' }));
+  }
+  await Promise.all(quarantine);
+  const projectChecks = [verifyProjectExists(preservedProjectId)];
+  if (deleteSlot) projectChecks.push(verifyProjectExists(deletedProjectId));
+  await Promise.all(projectChecks);
 
   const deletedR2 = await emptyR2Bucket(deletedProjectId, { removeBucket: true });
   await deleteCloudflareProject(deletedProjectId);
   deleteGoogleProject(deletedProjectId);
-  await platformApi({ action: 'remove-quarantined-slot', projectId: deletedProjectId });
-  report.deletedProject = { googleDeletionRequested: true, cloudflareDeleted: true, r2: deletedR2, poolEntryRemoved: true };
+  report.deletedProject = {
+    googleDeletionRequested: true,
+    cloudflareDeleted: true,
+    r2: deletedR2,
+    poolEntryRemoved: !deleteSlot
+  };
   writeFileSync(resultFile, JSON.stringify(report, null, 2));
 
   const preservedR2 = await emptyR2Bucket(preservedProjectId, { removeBucket: true });
@@ -379,6 +405,11 @@ async function main() {
   const runtimeKeys = countRuntimeKeys(preservedProjectId);
   if (finalR2.deletedObjects !== 0 || runtimeKeys !== 1) {
     throw new Error(`Post-provision verification failed for ${preservedProjectId}.`);
+  }
+  if (deleteSlot) {
+    await platformApi({ action: 'remove-quarantined-slot', projectId: deletedProjectId });
+    report.deletedProject.poolEntryRemoved = true;
+    writeFileSync(resultFile, JSON.stringify(report, null, 2));
   }
   const ready = await platformApi({
     action: 'register',

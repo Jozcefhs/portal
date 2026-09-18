@@ -103,6 +103,8 @@ test('unassigned pool sanitation stays quarantined until verification completes'
   assert.match(sanitizerSource, /status: 'Maintenance'/);
   assert.match(sanitizerSource, /await verifyFirestoreEmpty\(preservedProjectId\)/);
   assert.match(sanitizerSource, /await verifyFirebaseAuthEmpty\(preservedProjectId\)/);
+  assert.match(sanitizerSource, /CONFIGURATION_NOT_FOUND/);
+  assert.match(sanitizerSource, /refusing an unverified resume/);
   assert.match(sanitizerSource, /objects\?per_page=1000/);
   assert.match(sanitizerSource, /encodedR2ObjectKey/);
   assert.ok(
