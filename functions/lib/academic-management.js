@@ -1007,30 +1007,59 @@ function studentReference(row = {}) {
 
 export function academicMigrationReadiness(state = {}, students = []) {
   const issues = [];
-  const add = (severity, code, message, recordType = '', recordIdValue = '') => issues.push({
+  const add = (severity, code, message, recordType = '', recordIdValue = '', recordLabel = '') => issues.push({
     Severity: severity, Code: code, Message: message,
-    RecordType: recordType, RecordId: clean(recordIdValue)
+    RecordType: recordType, RecordId: clean(recordIdValue), RecordLabel: clean(recordLabel)
   });
-  const sessions = new Set((state.sessions || []).map(recordId));
-  const terms = new Set((state.terms || []).map(recordId));
+  const sessionRows = new Map((state.sessions || []).map((row) => [recordId(row), row]));
+  const termRows = new Map((state.terms || []).map((row) => [recordId(row), row]));
   const classes = new Map((state.classes || []).map((row) => [recordId(row), row]));
   const arms = new Map((state.arms || []).map((row) => [recordId(row), row]));
-  const subjects = new Set((state.subjects || []).map(recordId));
+  const subjectRows = new Map((state.subjects || []).map((row) => [recordId(row), row]));
   const departments = new Map((state.departments || []).map((row) => [recordId(row), row]));
-  const studentRefs = new Set((students || []).map((row) => lower(studentReference(row))).filter(Boolean));
+  const studentRows = new Map((students || []).map((row) => [lower(studentReference(row)), row]).filter(([key]) => key));
+  const sessions = new Set(sessionRows.keys());
+  const terms = new Set(termRows.keys());
+  const subjects = new Set(subjectRows.keys());
+  const studentRefs = new Set(studentRows.keys());
+  const readableName = (row = {}, fallback = '') => clean(
+    row.Name || row.DisplayName || row.StudentName || row.FullName
+      || [row.FirstName, row.MiddleName, row.Surname || row.LastName].map(clean).filter(Boolean).join(' ')
+      || fallback
+  );
+  const academicPeriodLabel = (row = {}) => {
+    const termName = readableName(termRows.get(row.TermId), row.Term || row.TermName || row.TermId);
+    const sessionName = readableName(sessionRows.get(row.SessionId), row.AcademicSession || row.SessionId);
+    return [termName, sessionName].filter(Boolean).join(', ');
+  };
+  const classroomLabel = (row = {}) => {
+    const className = readableName(classes.get(row.ClassId), row.ClassName || row.ClassId || 'Unknown class');
+    const armName = row.ArmId
+      ? readableName(arms.get(row.ArmId), row.ArmName || row.ArmId || 'Unknown arm')
+      : 'All arms';
+    return `${className} / ${armName}`;
+  };
+  const offeringLabel = (row = {}) => {
+    const subjectName = readableName(subjectRows.get(row.SubjectId), row.SubjectName || row.SubjectId || 'Unknown subject');
+    return [subjectName, classroomLabel(row), academicPeriodLabel(row)].filter(Boolean).join(' — ');
+  };
+  const membershipLabel = (row = {}) => {
+    const studentName = readableName(studentRows.get(lower(row.StudentRef)), row.StudentName || row.StudentRef || 'Unknown student');
+    return [studentName, classroomLabel(row), academicPeriodLabel(row)].filter(Boolean).join(' — ');
+  };
 
   (state.arms || []).forEach((row) => {
-    if (!classes.has(row.ClassId)) add('Error', 'ORPHAN_ARM_CLASS', 'This classroom references a class that no longer exists.', 'arm', recordId(row));
+    if (!classes.has(row.ClassId)) add('Error', 'ORPHAN_ARM_CLASS', 'This classroom references a class that no longer exists.', 'arm', recordId(row), readableName(row, 'Unlinked classroom'));
   });
   (state.departments || []).forEach((row) => (row.CoreSubjectIds || []).forEach((subjectId) => {
-    if (!subjects.has(subjectId)) add('Error', 'ORPHAN_DEPARTMENT_SUBJECT', 'This department references a Core subject that no longer exists.', 'department', recordId(row));
+    if (!subjects.has(subjectId)) add('Error', 'ORPHAN_DEPARTMENT_SUBJECT', 'This department references a Core subject that no longer exists.', 'department', recordId(row), `${readableName(row, 'Unnamed department')} — Missing Core subject`);
   }));
   (state.offerings || []).forEach((row) => {
     const schoolClass = classes.get(row.ClassId);
     if (!sessions.has(row.SessionId) || !terms.has(row.TermId) || !schoolClass || !subjects.has(row.SubjectId) || (row.ArmId && !arms.has(row.ArmId))) {
-      add('Error', 'ORPHAN_SUBJECT_OFFERING', 'This subject offering contains a missing session, term, class, arm or subject reference.', 'offering', recordId(row));
+      add('Error', 'ORPHAN_SUBJECT_OFFERING', 'This subject offering contains a missing session, term, class, arm or subject reference.', 'offering', recordId(row), offeringLabel(row));
     } else if (schoolStageValue(schoolClass.SchoolStage, schoolClass.SchoolSection, schoolClass.Name) === 'senior-secondary') {
-      add('Warning', 'LEGACY_SENIOR_OFFERING', 'This legacy Senior class offering no longer controls Core, Trade or Optional curriculum and should be reviewed.', 'offering', recordId(row));
+      add('Warning', 'LEGACY_SENIOR_OFFERING', 'This legacy Senior class offering no longer controls Core, Trade or Optional curriculum and should be reviewed.', 'offering', recordId(row), offeringLabel(row));
     }
   });
 
@@ -1040,25 +1069,25 @@ export function academicMigrationReadiness(state = {}, students = []) {
     const schoolClass = classes.get(row.ClassId);
     const arm = arms.get(row.ArmId);
     if (!sessions.has(row.SessionId) || !terms.has(row.TermId) || !schoolClass || !arm || arm.ClassId !== row.ClassId) {
-      add('Error', 'ORPHAN_STUDENT_MEMBERSHIP', 'This membership contains a missing or mismatched session, term, class or arm reference.', 'student membership', id);
+      add('Error', 'ORPHAN_STUDENT_MEMBERSHIP', 'This membership contains a missing or mismatched session, term, class or arm reference.', 'student membership', id, membershipLabel(row));
     }
     if (!studentRefs.has(lower(row.StudentRef))) {
-      add('Error', 'MISSING_STUDENT_PROFILE', 'This academic membership has no matching branch and section student profile.', 'student membership', id);
+      add('Error', 'MISSING_STUDENT_PROFILE', 'This academic membership has no matching branch and section student profile.', 'student membership', id, membershipLabel(row));
     }
     const stage = schoolStageValue(row.SchoolStage || schoolClass?.SchoolStage, row.SchoolSection, schoolClass?.Name);
     if (stage === 'senior-secondary' && !departments.has(row.DepartmentId)) {
-      add('Warning', 'PENDING_SENIOR_DEPARTMENT', 'Choose a valid Senior department before this curriculum is considered ready.', 'student membership', id);
+      add('Warning', 'PENDING_SENIOR_DEPARTMENT', 'Choose a valid Senior department before this curriculum is considered ready.', 'student membership', id, membershipLabel(row));
     }
     if (stage === 'senior-secondary' && !(row.TradeSubjectIds || []).length) {
-      add('Warning', 'PENDING_TRADE_SUBJECT', 'This Senior student must choose at least one Trade subject.', 'student membership', id);
+      add('Warning', 'PENDING_TRADE_SUBJECT', 'This Senior student must choose at least one Trade subject.', 'student membership', id, membershipLabel(row));
     }
     if (/pending/i.test(clean(row.CurriculumStatus))) {
-      add('Warning', 'PENDING_CURRICULUM', 'This student curriculum is still marked for completion.', 'student membership', id);
+      add('Warning', 'PENDING_CURRICULUM', 'This student curriculum is still marked for completion.', 'student membership', id, membershipLabel(row));
     }
     if (lower(row.Status) === 'active') {
       const key = [lower(row.BranchId), lower(row.SchoolSection), row.SessionId, row.TermId, lower(row.StudentRef)].join('|');
       if (currentMemberships.has(key)) {
-        add('Error', 'DUPLICATE_CURRENT_MEMBERSHIP', 'The student has more than one active membership in the same academic period.', 'student membership', id);
+        add('Error', 'DUPLICATE_CURRENT_MEMBERSHIP', 'The student has more than one active membership in the same academic period.', 'student membership', id, membershipLabel(row));
       } else currentMemberships.set(key, id);
     }
   });

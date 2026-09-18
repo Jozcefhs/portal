@@ -13187,9 +13187,13 @@ function academicMigrationReadinessWorkspace(data) {
     { label: 'Severity', value: (row) => row.Severity },
     { label: 'Issue', value: (row) => row.Code },
     { label: 'Record type', value: (row) => row.RecordType },
-    { label: 'Record', value: (row) => row.RecordId },
+    { label: 'Record', render: (row) => {
+      const label = clean(row.RecordLabel) || `${clean(row.RecordType) || 'Academic'} record`;
+      const recordId = clean(row.RecordId);
+      return `<div class="academic-readiness-record"><strong>${escapeHtml(label)}</strong>${recordId ? `<details><summary>Technical ID</summary><div><code>${escapeHtml(recordId)}</code><button type="button" class="secondary" data-academic-copy-record-id="${escapeHtml(recordId)}">Copy ID</button></div></details>` : ''}</div>`;
+    } },
     { label: 'Required action', value: (row) => row.Message }
-  ], { emptyMessage: 'No migration integrity issues were found.' });
+  ], { emptyMessage: 'No migration integrity issues were found.', className: 'academic-readiness-register' });
   return `${summary}${register}`;
 }
 
@@ -13739,6 +13743,16 @@ function openAcademicCbtRescheduleDialog(record = {}) {
 
 function bindAcademicManagement() {
   panelEl.querySelectorAll('[data-academic-checkbox-field]').forEach(bindAcademicCheckboxField);
+  panelEl.querySelectorAll('[data-academic-copy-record-id]').forEach((button) => button.addEventListener('click', async () => {
+    const original = button.textContent;
+    try {
+      await copyTextToClipboard(button.dataset.academicCopyRecordId);
+      button.textContent = 'Copied';
+      window.setTimeout(() => { button.textContent = original; }, 1400);
+    } catch (error) {
+      setStatus(document.getElementById('academicManagementStatus'), error.message || String(error), 'bad');
+    }
+  }));
   const clearanceForm = panelEl.querySelector('[data-academic-finance-clearance]');
   const clearClearanceForm = () => {
     clearanceForm?.reset();

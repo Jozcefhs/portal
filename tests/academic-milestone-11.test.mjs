@@ -78,12 +78,36 @@ test('AM-002 migration readiness blocks orphan and duplicate academic data witho
   assert.equal(state.studentMemberships.length, 2);
 });
 
+test('migration readiness describes records with readable catalogue names while retaining technical ids', () => {
+  const state = {
+    sessions: [{ SessionId: 'session__main__2026-2027', Name: '2026/2027' }],
+    terms: [{ TermId: 'term__first-term', SessionId: 'session__main__2026-2027', Name: 'First Term' }],
+    classes: [{ ClassId: 'class__grade-10', Name: 'Grade 10', SchoolStage: 'senior-secondary' }],
+    arms: [],
+    subjects: [{ SubjectId: 'subject__biology', Name: 'Biology' }],
+    departments: [],
+    offerings: [{
+      OfferingId: 'offering__main__secondary__session__term__class__all-arms__subject',
+      SessionId: 'session__main__2026-2027', TermId: 'term__first-term', ClassId: 'class__grade-10',
+      ArmId: '', SubjectId: 'subject__biology'
+    }],
+    studentMemberships: []
+  };
+
+  const report = academicMigrationReadiness(state, []);
+  const offering = report.Issues.find((issue) => issue.Code === 'LEGACY_SENIOR_OFFERING');
+
+  assert.equal(offering.RecordLabel, 'Biology — Grade 10 / All arms — First Term, 2026/2027');
+  assert.equal(offering.RecordId, 'offering__main__secondary__session__term__class__all-arms__subject');
+});
+
 test('Milestone 11 web UI exposes finance clearance and migration readiness workspaces', () => {
   assert.match(adminSource, /Result clearances/);
   assert.match(adminSource, /data-academic-finance-clearance/);
   assert.match(adminSource, /grantAcademicResultClearance/);
   assert.match(adminSource, /revokeAcademicResultClearance/);
   assert.match(adminSource, /Academic Migration Readiness/);
+  assert.match(adminSource, /data-academic-copy-record-id/);
   assert.match(adminSource, /data\.permissions\?\.financeView/);
 });
 
