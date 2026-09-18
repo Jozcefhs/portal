@@ -6163,8 +6163,32 @@ async function deleteAcademicCbtPapers(env, record = {}) {
   const urls = [...new Set([
     ...academicCbtPaperFiles(record), ...academicCbtPaperFiles(record, 'theory')
   ].map((file) => file.Url).filter(Boolean))];
-  await Promise.all(urls.map((url) => deleteStoredDocument(env, url).catch(() => false)));
+  await Promise.all(urls.map((url) => deleteStoredDocument(env, url)));
   return urls.length;
+}
+
+function withoutAcademicCbtCloudPapers(record = {}, details = {}) {
+  return {
+    ...record,
+    PaperFiles: [],
+    PaperUrl: '',
+    PaperFileName: '',
+    PaperMimeType: '',
+    PaperDigest: '',
+    PaperByteLength: 0,
+    TheoryPaperFiles: [],
+    TheoryPaperUrl: '',
+    TheoryPaperFileName: '',
+    TheoryPaperMimeType: '',
+    TheoryPaperDigest: '',
+    TheoryPaperByteLength: 0,
+    CloudPaperRemovedAt: clean(details.removedAt),
+    CloudPaperRemovedBy: clean(details.removedBy),
+    CloudPaperRemovalReason: clean(details.reason),
+    CloudPaperObjectCount: Number(details.objectCount || 0),
+    UpdatedAt: clean(details.removedAt),
+    UpdatedBy: clean(details.removedBy)
+  };
 }
 
 export async function deleteAcademicCbtTest(env, user = {}, input = {}) {
@@ -6179,16 +6203,63 @@ export async function deleteAcademicCbtTest(env, user = {}, input = {}) {
   }
   const revisionToken = clean(input.RevisionToken);
   if (!revisionToken) throw failure('Reload this CBT register before deleting the test.', 409);
+  const deletedObjectCount = await deleteAcademicCbtPapers(env, record);
   await commitAcademicBatch(env, [
     { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests, documentId: record.CbtTestId, operation: 'delete', updateTime: revisionToken },
     auditWrite(user, 'DELETE', 'cbtTests', record, clean(input.Reason) || 'CBT test created in error.')
   ], 'The CBT test changed while it was being deleted. Reload and try again.');
-  await deleteAcademicCbtPapers(env, record).catch(() => false);
   return {
     ok: true,
     partialAcademicManagement: true,
-    message: 'The unused online CBT test was deleted.',
+    message: `The unused online CBT test and ${deletedObjectCount} stored paper file${deletedObjectCount === 1 ? '' : 's'} were permanently deleted.`,
     deletedCbtTestId: record.CbtTestId
+  };
+}
+
+export async function removeAcademicCbtCloudPapers(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canCreateCbt', {
+    stateKeys: ['sessions', 'terms', 'cbtTests']
+  });
+  const record = findById(context.state.cbtTests, input.CbtTestId);
+  if (!record) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
+  academicCbtAuthority(user, context, record);
+  if (!clean(record.LocalDownloadedAt)) {
+    throw failure('This test has not reached the local CBT server. Delete the unused test instead.', 409, 'ACADEMIC_CBT_NOT_DOWNLOADED');
+  }
+  const revisionToken = clean(input.RevisionToken);
+  if (!revisionToken) throw failure('Reload this CBT register before removing the stored paper.', 409);
+  const urls = [...academicCbtPaperFiles(record), ...academicCbtPaperFiles(record, 'theory')]
+    .map((file) => clean(file.Url)).filter(Boolean);
+  if (!urls.length) {
+    return {
+      ok: true,
+      partialAcademicManagement: true,
+      message: 'The cloud copy of this CBT paper was already removed.',
+      cbtTest: publicRecord(record)
+    };
+  }
+  const removedAt = nowIso();
+  const removedBy = actorName(user);
+  const reason = clean(input.Reason) || 'Cloud paper removed after successful local synchronization.';
+  const deletedObjectCount = await deleteAcademicCbtPapers(env, record);
+  const updated = withoutAcademicCbtCloudPapers(record, {
+    removedAt, removedBy, reason, objectCount: deletedObjectCount
+  });
+  const commit = await commitAcademicBatch(env, [
+    {
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.cbtTests,
+      documentId: record.CbtTestId,
+      data: withoutMetadata(updated),
+      updateTime: revisionToken
+    },
+    auditWrite(user, 'DELETE_CLOUD_PAPERS', 'cbtTests', updated,
+      `${deletedObjectCount} R2 paper file${deletedObjectCount === 1 ? '' : 's'} removed; ${reason}`)
+  ], 'The CBT test changed while its cloud paper was being removed. Reload and try again.');
+  return {
+    ok: true,
+    partialAcademicManagement: true,
+    message: `${deletedObjectCount} cloud paper file${deletedObjectCount === 1 ? '' : 's'} permanently removed from Cloudflare R2. The local test and its audit record were preserved.`,
+    cbtTest: publicRecord({ ...updated, __updateTime: clean(commit?.writeResults?.[0]?.updateTime) })
   };
 }
 
@@ -6223,6 +6294,13 @@ export async function downloadAcademicCbtTestPackage(env, user = {}, input = {})
   const record = findById(context.state.cbtTests, input.CbtTestId);
   if (!record) throw failure('The selected CBT test was not found.', 404, 'ACADEMIC_CBT_TEST_NOT_FOUND');
   academicCbtAuthority(user, context, record);
+  if (clean(record.CloudPaperRemovedAt)) {
+    throw failure(
+      'The cloud paper for this test was permanently removed after local synchronization. Restore the local CBT backup instead of downloading it again.',
+      410,
+      'ACADEMIC_CBT_CLOUD_PAPER_REMOVED'
+    );
+  }
   const papers = await loadAcademicCbtPapers(env, record);
   const theoryPapers = record.PaperMode === 'split' ? await loadAcademicCbtPapers(env, record, 'theory') : [];
   return {
@@ -6638,6 +6716,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['changeacademictranscriptstatus', 'changetranscriptstatus'].includes(action)) return changeAcademicTranscriptStatus(env, user, input);
   if (['rescheduleacademiccbttest', 'reschedulecbttest'].includes(action)) return rescheduleAcademicCbtTest(env, user, input);
   if (['deleteacademiccbttest', 'deletecbttest'].includes(action)) return deleteAcademicCbtTest(env, user, input);
+  if (['removeacademiccbtcloudpapers', 'removecbtcloudpapers'].includes(action)) return removeAcademicCbtCloudPapers(env, user, input);
   if (['downloadacademiccbttestpackage', 'downloadcbttestpackage'].includes(action)) return downloadAcademicCbtTestPackage(env, user, input);
   if (['acknowledgeacademiccbtimport', 'acknowledgecbtimport'].includes(action)) return acknowledgeAcademicCbtImport(env, user, input);
   if (['preparelocalcbtidentitypackage', 'preparecbtidentitypackage'].includes(action)) return prepareLocalCbtIdentityPackage(env, user, input);

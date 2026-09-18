@@ -52,6 +52,9 @@ test('teachers may author online packages that are pulled onto the local desktop
   assert.match(admin, /Paper 2 duration \(minutes\)/);
   assert.match(admin, /No typed theory response is stored/);
   assert.match(admin, /data-academic-cbt-reschedule/);
+  assert.match(admin, /data-academic-cbt-remove-cloud-paper/);
+  assert.match(admin, /Remove paper files from Cloudflare R2/);
+  assert.match(admin, /removeAcademicCbtCloudPapers/);
   assert.match(admin, /Only the activation date and time will change/);
   assert.match(admin, /New schedule to pull/);
   assert.match(backend, /cbt: ACADEMIC_CBT_STATE_KEYS/);
@@ -67,6 +70,10 @@ test('teachers may author online packages that are pulled onto the local desktop
   assert.match(backend, /PaperMode: splitPaper \? 'split' : 'single'/);
   assert.match(backend, /durationMinutes \+ theoryDurationMinutes/);
   assert.match(backend, /rescheduleAcademicCbtTest/);
+  assert.match(backend, /removeAcademicCbtCloudPapers/);
+  assert.match(backend, /DELETE_CLOUD_PAPERS/);
+  assert.match(backend, /await deleteAcademicCbtPapers\(env, record\)/);
+  assert.match(backend, /ACADEMIC_CBT_CLOUD_PAPER_REMOVED/);
   assert.match(backend, /completed local attempts preserved/);
   assert.match(backend, /replacementCandidates/);
   assert.match(backend, /SupersededByCbtTestId/);

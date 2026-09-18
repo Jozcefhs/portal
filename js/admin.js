@@ -13034,7 +13034,15 @@ function academicCbtStatus(record = {}) {
   if (clean(record.LocalDownloadedAt)) {
     const changed = Date.parse(record.ScheduleUpdatedAt || '') || 0;
     const synchronized = Date.parse(record.LocalScheduleSyncedAt || record.LocalDownloadedAt || '') || 0;
-    if (changed > synchronized) return { label: 'New schedule to pull', className: 'scheduled' };
+    if (changed > synchronized) {
+      return {
+        label: clean(record.CloudPaperRemovedAt) ? 'New schedule to pull · cloud paper removed' : 'New schedule to pull',
+        className: 'scheduled'
+      };
+    }
+    if (clean(record.CloudPaperRemovedAt)) {
+      return { label: 'Local copy kept · cloud paper removed', className: 'synced' };
+    }
     return { label: 'Synced locally', className: 'synced' };
   }
   const now = Date.now();
@@ -13043,6 +13051,15 @@ function academicCbtStatus(record = {}) {
   if (Number.isFinite(ends) && ends <= now) return { label: 'Ended', className: 'ended' };
   if (Number.isFinite(starts) && starts <= now) return { label: 'Active', className: 'active' };
   return { label: 'Scheduled', className: 'scheduled' };
+}
+
+function academicCbtHasCloudPapers(record = {}) {
+  return Boolean(
+    (Array.isArray(record.PaperFiles) && record.PaperFiles.some((file) => clean(file?.Url || file?.PaperUrl)))
+    || clean(record.PaperUrl)
+    || (Array.isArray(record.TheoryPaperFiles) && record.TheoryPaperFiles.some((file) => clean(file?.Url || file?.PaperUrl)))
+    || clean(record.TheoryPaperUrl)
+  );
 }
 
 function academicCbtWorkspace(data, rows) {
@@ -13133,7 +13150,7 @@ function academicCbtWorkspace(data, rows) {
     { label: 'Students', value: (row) => row.RosterCount },
     { label: 'Status', render: (row) => { const status = academicCbtStatus(row); return `<span class="academic-cbt-status academic-cbt-status-${status.className}">${escapeHtml(status.label)}</span>`; } },
     { label: 'Actions', render: (row) => `<div class="academic-management-row-actions"><button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-reschedule="${escapeHtml(row.CbtTestId)}" title="Reschedule date and time" aria-label="Reschedule date and time"><span aria-hidden="true">&#128197;</span></button>${clean(row.LocalDownloadedAt)
-      ? ''
+      ? (academicCbtHasCloudPapers(row) ? `<button type="button" class="compact-icon-action academic-archive-action" data-academic-cbt-remove-cloud-paper="${escapeHtml(row.CbtTestId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Remove paper files from Cloudflare R2" aria-label="Remove paper files from Cloudflare R2"><span aria-hidden="true">&#128465;</span></button>` : '')
       : `<button type="button" class="compact-icon-action compact-edit-action" data-academic-cbt-edit="${escapeHtml(row.CbtTestId)}" title="Edit test package" aria-label="Edit test package"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action academic-archive-action" data-academic-cbt-delete="${escapeHtml(row.CbtTestId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Delete test" aria-label="Delete test"><span aria-hidden="true">&#128465;</span></button>`}</div>` }
   ], { emptyMessage: 'No online CBT tests have been scheduled for this period.' });
   return `${editor}${register}`;
@@ -14103,6 +14120,33 @@ function bindAcademicManagement() {
           RevisionToken: version.RevisionToken, Name: name
         });
         renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  }));
+  panelEl.querySelectorAll('[data-academic-cbt-remove-cloud-paper]').forEach((button) => button.addEventListener('click', async () => {
+    const reason = clean(await window.DynamaxDialogs.prompt({
+      title: 'Remove CBT paper from cloud storage',
+      message: 'Permanently delete this test\'s uploaded paper files from Cloudflare R2? The test already stored on the local CBT server, its answer key, schedule, audit history and submitted results will remain. This paper cannot be downloaded onto another CBT server after removal.',
+      label: 'Reason for removing the cloud copy',
+      placeholder: 'Local copy verified and cloud retention is no longer required',
+      required: true,
+      tone: 'danger',
+      confirmText: 'Remove cloud paper'
+    }));
+    if (!reason) return;
+    await runButtonAction(button, 'Removing...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('removeAcademicCbtCloudPapers', {
+          SchoolSection: academicManagementFilters.section,
+          SessionId: academicManagementFilters.sessionId,
+          TermId: academicManagementFilters.termId,
+          CbtTestId: button.dataset.academicCbtRemoveCloudPaper,
+          RevisionToken: button.dataset.academicRevision,
+          Reason: reason
+        });
+        mergeAcademicCbtTest(data);
+        renderAcademicManagement(academicManagementData || data, data.message || 'The cloud paper was removed.');
       } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
     });
   }));
