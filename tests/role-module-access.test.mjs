@@ -29,23 +29,23 @@ test('role settings use branch policy first, then organisation-wide policy, then
   };
   assert.deepEqual(
     configuredModulesForUser(document, { branchId: 'west' }, 'Treasurer', 'faith', flags),
-    ['donations']
+    ['donations', 'financeRequests', 'payroll']
   );
   assert.deepEqual(
     configuredModulesForUser(document, { branchId: 'east' }, 'Treasurer', 'faith', flags),
-    ['funds', 'incomeAnalytics']
+    ['funds', 'incomeAnalytics', 'financeRequests', 'payroll']
   );
   assert.equal(configuredModulesForUser(document, { branchId: 'east' }, 'Pastor', 'faith', flags), null);
 });
 
-test('saved role modules replace hardcoded role defaults without silently adding HR', () => {
+test('saved role modules preserve universal staff self-service without silently adding HR', () => {
   const flags = featureFlagsForEdition('faith');
   const resolved = allowedSectionsFor(
     { role: 'Treasurer' },
     flags,
     { edition: 'faith', roleModules: ['donations'] }
   );
-  assert.deepEqual(resolved, ['donations']);
+  assert.deepEqual(resolved, ['donations', 'financeRequests', 'payroll']);
   assert.equal(resolved.includes('humanResources'), false);
   assert.equal(resolved.includes('staffAttendance'), false);
 });
@@ -53,11 +53,36 @@ test('saved role modules replace hardcoded role defaults without silently adding
 test('Super Admin can never lose backup, security audit or permission settings modules', () => {
   const flags = featureFlagsForEdition('school');
   const scopes = withRoleModules({}, 'main', 'Super Admin', ['students'], 'school', flags);
-  assert.deepEqual(scopes.main['Super Admin'], ['students', 'dataBackup', 'securityAudit', 'staffUsers']);
+  assert.deepEqual(scopes.main['Super Admin'], [
+    'students', 'financeRequests', 'payroll', 'dataBackup', 'securityAudit', 'staffUsers'
+  ]);
   assert.deepEqual(
     allowedSectionsFor({ role: 'Super Admin' }, flags, { edition: 'school', roleModules: ['students'] }),
-    ['students', 'dataBackup', 'securityAudit', 'staffUsers']
+    ['students', 'financeRequests', 'payroll', 'dataBackup', 'securityAudit', 'staffUsers']
   );
+});
+
+test('every staff role receives payroll and finance request self-service', () => {
+  for (const edition of ['school', 'faith', 'organization']) {
+    const flags = featureFlagsForEdition(edition);
+    for (const role of rolesForEdition(edition)) {
+      const defaults = defaultModulesForRole(role, { edition, featureFlags: flags });
+      assert.equal(defaults.includes('payroll'), true, `${edition} ${role} lacks payroll`);
+      assert.equal(defaults.includes('financeRequests'), true, `${edition} ${role} lacks finance requests`);
+
+      const configured = configuredModulesForUser(
+        { Scopes: { global: { [role]: [] } } }, {}, role, edition, flags
+      );
+      assert.equal(configured.includes('payroll'), true, `${edition} ${role} configured payroll missing`);
+      assert.equal(configured.includes('financeRequests'), true, `${edition} ${role} configured requests missing`);
+
+      const individual = allowedSectionsFor(
+        { role, TabAccess: ['humanResources'] }, flags, { edition }
+      );
+      assert.equal(individual.includes('payroll'), true, `${edition} ${role} individual payroll missing`);
+      assert.equal(individual.includes('financeRequests'), true, `${edition} ${role} individual requests missing`);
+    }
+  }
 });
 
 test('resetting a branch role restores organisation inheritance without changing other roles', () => {
@@ -71,7 +96,7 @@ test('resetting a branch role restores organisation inheritance without changing
   assert.deepEqual(scopes.main, { Pastor: ['services'] });
   const view = roleAccessView({ Scopes: scopes }, { branchId: 'main' }, 'faith', featureFlagsForEdition('faith'));
   assert.equal(view.roles.Treasurer.source, 'global');
-  assert.deepEqual(view.roles.Treasurer.modules, ['funds']);
+  assert.deepEqual(view.roles.Treasurer.modules, ['funds', 'financeRequests', 'payroll']);
 });
 
 test('legacy defaults remain only as an unsaved starting policy', () => {
@@ -112,6 +137,8 @@ test('staff settings API and interface expose persisted role module controls', (
   assert.match(adminJs, /name="RoleModuleOption"/);
   assert.match(adminJs, /staffUserRequest\('save-role-access'/);
   assert.match(adminJs, /label: 'Role access'/);
+  assert.match(adminJs, /universalStaffModules = new Set\(\['financeRequests', 'payroll'\]\)/);
+  assert.match(adminJs, /My Payroll and Finance Requests &amp; Imprest remain available to every staff account/);
 });
 
 test('role access settings expose only edition-appropriate roles and modules', () => {

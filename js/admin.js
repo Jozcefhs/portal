@@ -17792,7 +17792,7 @@ function renderStaffUsers() {
           <label class="check-row config-switch"><input name="ApprovalEnabled" type="checkbox"> Allow this user to approve finance documents</label>
           <label>Maximum approval amount<input name="ApprovalMaxAmount" type="number" min="0" step="0.01" value="0" data-finance-input><small>Zero blocks approval. Super Admin is unrestricted.</small></label>
         </div><div class="approval-account-list config-option-list"><strong>Accounts this user may approve directly from</strong>${staffApprovalAccounts.length ? staffApprovalAccounts.map((account) => `<label class="check-row"><input type="checkbox" name="ApprovalAccountOption" value="${escapeHtml(account.Code)}"> ${escapeHtml(account.Code)} - ${escapeHtml(account.Name || '')}</label>`).join('') : '<small>Create active Chart of Accounts entries in the desktop Finance tab first.</small>'}</div></section>
-        <section class="config-group"><header><strong>Web companion access</strong><small>Optional user-specific override. Leave all clear to inherit the module access saved for the selected role.</small></header><div class="approval-account-list config-option-list config-option-grid">${permissionTabs.map(([key, label]) => `<label class="check-row"><input type="checkbox" name="TabAccessOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}</div></section>
+        <section class="config-group"><header><strong>Web companion access</strong><small>Optional user-specific override. Leave all clear to inherit the module access saved for the selected role. My Payroll and Finance Requests &amp; Imprest remain available to every staff account.</small></header><div class="approval-account-list config-option-list config-option-grid">${permissionTabs.map(([key, label]) => `<label class="check-row"><input type="checkbox" name="TabAccessOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}</div></section>
         <section class="config-group"><header><strong>Security</strong><small>Password and account-state controls.</small></header><div class="config-grid">
           <label>New or reset password<input name="Password" type="password" minlength="6" autocomplete="new-password"><small>Required for a new account. Leave blank when editing unless resetting it.</small></label>
           <div class="config-toggle-stack"><label class="check-row"><input name="Active" type="checkbox" checked> Account active</label><label class="check-row"><input name="MustChangePassword" type="checkbox" checked> Require password change at next sign-in</label>${schoolEdition ? '<label class="check-row sensitive-access-toggle"><input name="BiometricLookupEnabled" type="checkbox"> Allow student face-enrollment management</label>' : ''}</div>
@@ -17821,7 +17821,12 @@ function renderRoleAccessEditor(role = staffRoleAccessSelectedRole, roles = staf
   selector.value = staffRoleAccessSelectedRole;
   const policy = roles[staffRoleAccessSelectedRole] || { modules: [], source: 'default', locallyConfigured: false };
   const allowed = new Set(policy.modules || []);
-  document.querySelectorAll('[name="RoleModuleOption"]').forEach((input) => { input.checked = allowed.has(input.value); });
+  const universalStaffModules = new Set(['financeRequests', 'payroll']);
+  document.querySelectorAll('[name="RoleModuleOption"]').forEach((input) => {
+    input.checked = allowed.has(input.value) || universalStaffModules.has(input.value);
+    input.disabled = universalStaffModules.has(input.value);
+    if (input.disabled) input.closest('label')?.setAttribute('title', 'Available to every staff account for personal self-service.');
+  });
   const source = document.getElementById('roleAccessSource');
   if (source) {
     source.textContent = policy.source === 'default'

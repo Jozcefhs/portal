@@ -34,15 +34,15 @@ const [endpoint, backend, backendSecurity, executiveSource, emailSource, backupS
 test('school and ministry leaders receive their edition-scoped executive access', () => {
   assert.deepEqual(
     allowedSectionsFor({ role: 'Principal' }, featureFlagsForEdition('school')),
-    ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct', 'humanResources', 'staffAttendance']
+    ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct', 'humanResources', 'staffAttendance', 'financeRequests', 'payroll']
   );
   assert.deepEqual(
     allowedSectionsFor({ role: 'Senior Pastor' }, featureFlagsForEdition('faith')),
-    ['recordsDesk', 'executiveOffice', 'humanResources', 'staffAttendance']
+    ['recordsDesk', 'executiveOffice', 'humanResources', 'staffAttendance', 'financeRequests', 'payroll']
   );
   assert.deepEqual(
     allowedSectionsFor({ role: 'Head Minister' }, featureFlagsForEdition('organization')),
-    ['recordsDesk', 'executiveOffice', 'humanResources', 'staffAttendance']
+    ['recordsDesk', 'executiveOffice', 'humanResources', 'staffAttendance', 'financeRequests', 'payroll']
   );
   assert.equal(canonicalExecutiveRole('Head Minister'), 'Senior Pastor');
   for (const role of [

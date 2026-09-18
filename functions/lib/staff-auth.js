@@ -7,7 +7,11 @@ import {
   resolveOrganizationConfig
 } from './organization-config.js';
 import { deploymentIdentityDetails, requiredDeploymentIdentity } from './deployment-identity.js';
-import { configuredModulesForUser, defaultModulesForRole } from './role-module-access.js';
+import {
+  configuredModulesForUser,
+  defaultModulesForRole,
+  withRequiredRoleModules
+} from './role-module-access.js';
 import { getSchoolStructure } from './school-scope.js';
 import { applyStaffBranchContext } from './staff-branch-context.js';
 import { refreshOrganizationPlanPolicy } from './plan-policy-sync.js';
@@ -278,20 +282,18 @@ export function allowedSectionsFor(user = {}, featureFlags = null, options = {})
     const inherited = role === 'Super Admin'
       ? [...custom, 'humanResources', 'dataBackup', 'securityAudit', 'staffUsers']
       : [...custom, 'humanResources'];
+    const required = withRequiredRoleModules(role, inherited, options.edition || 'school', featureFlags);
     const recordsDeskSources = new Set([
       'admissions', 'students', 'accounts', 'clinic', 'tuckShop',
       'staffUsers', 'members', 'funds', 'offerings', 'executiveOffice'
     ]);
-    if (inherited.some((section) => recordsDeskSources.has(section))) inherited.push('recordsDesk');
-    return withDepartmentEntitlements(inherited);
+    if (required.some((section) => recordsDeskSources.has(section))) required.push('recordsDesk');
+    return withDepartmentEntitlements(required);
   }
   if (Array.isArray(options.roleModules)) {
-    const configured = [...options.roleModules];
-    if (role === 'Super Admin') {
-      if (!configured.includes('dataBackup')) configured.push('dataBackup');
-      if (!configured.includes('securityAudit')) configured.push('securityAudit');
-      if (!configured.includes('staffUsers')) configured.push('staffUsers');
-    }
+    const configured = withRequiredRoleModules(
+      role, options.roleModules, options.edition || 'school', featureFlags
+    );
     return withDepartmentEntitlements(configured);
   }
   return withDepartmentEntitlements(defaultModulesForRole(role, {

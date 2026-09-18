@@ -471,7 +471,9 @@ test('Academic Management is a School-only role module with a constrained Teache
   assert.equal(staffRoleAllowedForEdition('Teacher', 'faith'), false);
   assert.equal(modulesForEdition('school').some((module) => module.key === 'academics'), true);
   assert.equal(modulesForEdition('faith').some((module) => module.key === 'academics'), false);
-  assert.deepEqual(defaultModulesForRole('Teacher', { edition: 'school' }), ['academics', 'humanResources', 'staffAttendance']);
+  assert.deepEqual(defaultModulesForRole('Teacher', { edition: 'school' }), [
+    'academics', 'humanResources', 'staffAttendance', 'financeRequests', 'payroll'
+  ]);
 
   const teacher = academicManagementCapabilities({ edition: 'school', role: 'Teacher', allowedSections: ['academics'] });
   assert.equal(teacher.enabled, true);

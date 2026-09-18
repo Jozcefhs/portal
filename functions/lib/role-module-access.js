@@ -41,6 +41,7 @@ export const WEB_SECTION_CATALOG = Object.freeze([
 
 export const WEB_SECTION_KEYS = Object.freeze(WEB_SECTION_CATALOG.map(({ key }) => key));
 const WEB_SECTION_KEY_SET = new Set(WEB_SECTION_KEYS);
+const STAFF_SELF_SERVICE_MODULES = Object.freeze(['financeRequests', 'payroll']);
 
 export const ORGANIZATION_SECTION_LABELS = Object.freeze({
   recordsDesk: 'Records Centre',
@@ -170,22 +171,21 @@ export function defaultModulesForRole(role, { edition = 'school', featureFlags =
     ? departmentUserDefaults(department)
     : [...(LEGACY_ROLE_DEFAULTS[name] || []), ...(name ? ['humanResources'] : [])];
   if (name) base.push('staffAttendance');
-  if (name === 'Super Admin') base.push('dataBackup', 'securityAudit', 'staffUsers');
-  return normalizeModuleList(base, edition, featureFlags);
+  return withRequiredRoleModules(name, base, edition, featureFlags);
 }
 
 export function roleAccessScope(user = {}) {
   return lower(user.branchId || user.BranchId) || 'global';
 }
 
-function withRequiredRoleModules(role, modules = []) {
-  const normalized = [...modules];
+export function withRequiredRoleModules(role, modules = [], edition = 'school', featureFlags = null) {
+  const normalized = [...modules, ...STAFF_SELF_SERVICE_MODULES];
   if (role === 'Super Admin') {
     if (!normalized.includes('dataBackup')) normalized.push('dataBackup');
     if (!normalized.includes('securityAudit')) normalized.push('securityAudit');
     if (!normalized.includes('staffUsers')) normalized.push('staffUsers');
   }
-  return normalized;
+  return normalizeModuleList(normalized, edition, featureFlags);
 }
 
 function roleMapForScope(document, scope) {
@@ -201,10 +201,10 @@ export function configuredModulesForUser(document, user = {}, role = clean(user.
   const local = roleMapForScope(document, scope);
   const global = roleMapForScope(document, 'global');
   if (Object.prototype.hasOwnProperty.call(local, role)) {
-    return normalizeModuleList(local[role], edition, featureFlags);
+    return withRequiredRoleModules(role, local[role], edition, featureFlags);
   }
   if (scope !== 'global' && Object.prototype.hasOwnProperty.call(global, role)) {
-    return normalizeModuleList(global[role], edition, featureFlags);
+    return withRequiredRoleModules(role, global[role], edition, featureFlags);
   }
   return null;
 }
@@ -217,10 +217,10 @@ export function roleAccessView(document, user = {}, edition = 'school', featureF
     const localConfigured = Object.prototype.hasOwnProperty.call(local, role);
     const globalConfigured = scope !== 'global' && Object.prototype.hasOwnProperty.call(global, role);
     const modules = withRequiredRoleModules(role, localConfigured
-      ? normalizeModuleList(local[role], edition, featureFlags)
+      ? local[role]
       : globalConfigured
-        ? normalizeModuleList(global[role], edition, featureFlags)
-        : defaultModulesForRole(role, { edition, featureFlags }));
+        ? global[role]
+        : defaultModulesForRole(role, { edition, featureFlags }), edition, featureFlags);
     return [role, {
       modules,
       source: localConfigured ? scope : globalConfigured ? 'global' : 'default',
@@ -240,7 +240,7 @@ export function withRoleModules(document, scope, role, modules, edition, feature
     ? { ...document.Scopes }
     : {};
   const current = { ...roleMapForScope(document, scope) };
-  const normalized = withRequiredRoleModules(role, normalizeModuleList(modules, edition, featureFlags));
+  const normalized = withRequiredRoleModules(role, modules, edition, featureFlags);
   current[role] = normalized;
   scopes[scope] = current;
   return scopes;

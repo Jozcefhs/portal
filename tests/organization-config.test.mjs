@@ -88,7 +88,9 @@ test('church is canonicalized to faith while retaining shared finance modules', 
 
 test('church staff role defaults respect the membership privacy boundary', () => {
   const flags = featureFlagsForEdition('church');
-  assert.deepEqual(allowedSectionsFor({ role: 'Membership Officer' }, flags), ['recordsDesk', 'members', 'services', 'humanResources', 'staffAttendance']);
+  assert.deepEqual(allowedSectionsFor({ role: 'Membership Officer' }, flags), [
+    'recordsDesk', 'members', 'services', 'humanResources', 'staffAttendance', 'financeRequests', 'payroll'
+  ]);
   assert.equal(allowedSectionsFor({ role: 'Pastor' }, flags).includes('members'), true);
   assert.equal(allowedSectionsFor({ role: 'Treasurer' }, flags).includes('members'), false);
   assert.equal(allowedSectionsFor({ role: 'Auditor' }, flags).includes('members'), false);

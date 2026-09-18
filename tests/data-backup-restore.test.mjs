@@ -78,5 +78,5 @@ test('desktop export uses the complete shared catalogue and exposes restore tran
 test('Backup & Restore is mandatory for Super Administrators in every edition', () => {
   assert.match(roleAccess, /key: 'dataBackup', label: 'Backup & Restore'/);
   assert.match(roleAccess, /if \(!normalized\.includes\('dataBackup'\)\) normalized\.push\('dataBackup'\)/);
-  assert.match(staffAuth, /configured\.includes\('dataBackup'\)/);
+  assert.match(staffAuth, /withRequiredRoleModules\(/);
 });
