@@ -49,6 +49,24 @@ function lower(value) {
   return clean(value).toLowerCase();
 }
 
+function nameFormatOrder(value) {
+  const supported = new Set(['first name', 'middle name', 'surname']);
+  const order = clean(value).toLowerCase().split(',').map(clean).filter((part) => supported.has(part));
+  return order.length ? order : ['surname', 'first name', 'middle name'];
+}
+
+export function sessionStaffDisplayName(record = {}, profile = {}, fallback = '') {
+  const parts = {
+    'first name': clean(record.FirstName || record.firstName),
+    'middle name': clean(record.MiddleName || record.middleName),
+    surname: clean(record.Surname || record.surname || record.LastName || record.lastName)
+  };
+  return nameFormatOrder(profile.NameFormat || profile.nameFormat)
+    .map((part) => parts[part])
+    .filter(Boolean)
+    .join(' ') || clean(fallback || record.DisplayName || record.displayName || record.Username || record.username);
+}
+
 function publicSessionError(error) {
   if (clean(error?.code) === 'FIRESTORE_QUOTA_EXHAUSTED'
     || clean(error?.upstreamCode).toUpperCase() === 'RESOURCE_EXHAUSTED'
@@ -107,7 +125,7 @@ function isActiveStaffRecord(record) {
   return !['no', 'false', '0', 'inactive', 'disabled'].includes(lower(record?.Active ?? true));
 }
 
-function authoritativeSessionUser(record, sessionUser, profilePhotoUrl = '') {
+function authoritativeSessionUser(record, sessionUser, profilePhotoUrl = '', schoolProfile = {}) {
   const role = clean(record.Role || sessionUser.role) || 'Front Desk';
   const inferredDepartment = {
     'Tuck Shop User': 'Tuck Shop',
@@ -122,7 +140,11 @@ function authoritativeSessionUser(record, sessionUser, profilePhotoUrl = '') {
   return {
     username: clean(record.Username || record.__id || sessionUser.username),
     loginUsername: clean(record.LoginUsername || sessionUser.loginUsername || record.Username || sessionUser.username),
-    displayName: clean(record.DisplayName || sessionUser.displayName || record.Username || sessionUser.username),
+    displayName: sessionStaffDisplayName(
+      record,
+      schoolProfile,
+      record.DisplayName || sessionUser.displayName || record.Username || sessionUser.username
+    ),
     profilePhotoUrl: clean(profilePhotoUrl || record.ProfilePhotoDataUrl || sessionUser.profilePhotoUrl),
     role,
     department: clean(record.Department || sessionUser.department || inferredDepartment),
@@ -154,11 +176,15 @@ export async function onRequestGet(context) {
       error.status = 401;
       throw error;
     }
-    const profileImage = await loadStaffProfileImage(context.env, authoritativeRecord, sessionUser);
+    const [profileImage, schoolProfile] = await Promise.all([
+      loadStaffProfileImage(context.env, authoritativeRecord, sessionUser),
+      getDocument(context.env, 'settings', 'schoolProfile').catch(() => null)
+    ]);
     const user = authoritativeSessionUser(
       authoritativeRecord,
       sessionUser,
-      profileImage?.ProfilePhotoDataUrl
+      profileImage?.ProfilePhotoDataUrl,
+      schoolProfile || {}
     );
     const access = user ? await staffAccessFor(context.env, user) : null;
     return response({
@@ -232,12 +258,13 @@ export async function onRequestPost(context) {
           }
         }
       ]);
-      const refreshedUser = {
-        ...sessionUser,
-        displayName,
-        profilePhotoUrl: photo,
-        mustChangePassword: Boolean(sessionUser.mustChangePassword)
-      };
+      const schoolProfile = await getDocument(env, 'settings', 'schoolProfile').catch(() => null);
+      const refreshedUser = authoritativeSessionUser(
+        updated,
+        { ...sessionUser, mustChangePassword: Boolean(sessionUser.mustChangePassword) },
+        photo,
+        schoolProfile || {}
+      );
       const refreshedToken = await createStaffSession(env, refreshedUser);
       const access = await staffAccessFor(env, refreshedUser);
       return response({
@@ -267,7 +294,10 @@ export async function onRequestPost(context) {
         );
       }
       const passwordFields = await hashStaffPassword(password);
-      const profileImage = await loadStaffProfileImage(env, existing, sessionUser);
+      const [profileImage, schoolProfile] = await Promise.all([
+        loadStaffProfileImage(env, existing, sessionUser),
+        getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+      ]);
       const updated = {
         ...existing,
         ...passwordFields,
@@ -279,17 +309,12 @@ export async function onRequestPost(context) {
       delete updated.__id;
       delete updated.__name;
       await upsertDocument(env, 'staffUsers', existing.__id, updated);
-      const refreshedUser = {
-        username: String(existing.Username || existing.__id || sessionUser.username).trim(),
-        loginUsername: String(existing.LoginUsername || existing.Username || existing.__id || sessionUser.username).trim(),
-        displayName: String(existing.DisplayName || existing.Username || sessionUser.displayName).trim(),
-        profilePhotoUrl: String(profileImage?.ProfilePhotoDataUrl || existing.ProfilePhotoDataUrl || sessionUser.profilePhotoUrl || '').trim(),
-        role: String(existing.Role || sessionUser.role || 'Front Desk').trim(),
-        department: String(existing.Department || sessionUser.department || '').trim(),
-        branchId: String(existing.BranchId || sessionUser.branchId || '').trim(),
-        schoolSectionAccess: String(existing.SchoolSectionAccess || sessionUser.schoolSectionAccess || 'All').trim(),
-        mustChangePassword: false
-      };
+      const refreshedUser = authoritativeSessionUser(
+        updated,
+        { ...sessionUser, mustChangePassword: false },
+        profileImage?.ProfilePhotoDataUrl,
+        schoolProfile || {}
+      );
       const refreshedToken = await createStaffSession(env, refreshedUser);
       const access = await staffAccessFor(env, refreshedUser);
       return response(
@@ -379,11 +404,15 @@ export async function onRequestPost(context) {
           }
         }
       ]);
-      const profileImage = await loadStaffProfileImage(env, existing, sessionUser);
+      const [profileImage, schoolProfile] = await Promise.all([
+        loadStaffProfileImage(env, existing, sessionUser),
+        getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+      ]);
       const refreshedUser = authoritativeSessionUser(
         updated,
         { ...sessionUser, loginUsername, mustChangePassword: false },
-        profileImage?.ProfilePhotoDataUrl
+        profileImage?.ProfilePhotoDataUrl,
+        schoolProfile || {}
       );
       const refreshedToken = await createStaffSession(env, refreshedUser);
       const access = await staffAccessFor(env, refreshedUser);
@@ -426,17 +455,25 @@ export async function onRequestPost(context) {
     const user = await finalizeStaffAuthentication(env, passwordUser.username, 'Web Password');
     if (!user) return response({ ok: false, message: 'This staff account is inactive or no longer exists.' }, 401);
     const staffRecord = await findStaffUserRecord(env, user.username).catch(() => null);
-    const profileImage = await loadStaffProfileImage(env, staffRecord || {}, user);
-    if (profileImage?.ProfilePhotoDataUrl) user.profilePhotoUrl = clean(profileImage.ProfilePhotoDataUrl);
-    const token = await createStaffSession(env, user);
-    const access = await staffAccessFor(env, user);
+    const [profileImage, schoolProfile] = await Promise.all([
+      loadStaffProfileImage(env, staffRecord || {}, user),
+      getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+    ]);
+    const refreshedUser = authoritativeSessionUser(
+      staffRecord || environmentAdminProfile(env, user) || user,
+      user,
+      profileImage?.ProfilePhotoDataUrl,
+      schoolProfile || {}
+    );
+    const token = await createStaffSession(env, refreshedUser);
+    const access = await staffAccessFor(env, refreshedUser);
     return response({
       ok: true,
       authenticated: true,
       message: 'Signed in.',
       mfaEnrollmentDueAt: clean(mfa.requirement?.dueAt),
       sessionToken: token,
-      user: staffUserForAccess(user, access)
+      user: staffUserForAccess(refreshedUser, access)
     }, 200, staffSessionCookie(token));
   } catch (err) {
     return response({ ok: false, message: publicSessionError(err) }, err.status || 500);

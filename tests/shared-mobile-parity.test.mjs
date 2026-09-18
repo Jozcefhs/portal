@@ -10,7 +10,7 @@ const pageStyleVersions = new Map([
   ['plan-management.html', '20260830-dual-currency-pricing'],
   ['register-organization.html', '20260918-neutral-plan-cards']
 ]);
-const adminScriptVersion = '20260918-cbt-r2-delete';
+const adminScriptVersion = '20260918-name-format-header';
 const parentScriptVersion = '20260918-tabulated-results';
 const notificationScriptVersion = '20260913-branch-scope';
 const notificationStyleVersion = '20260804-read-efficiency';

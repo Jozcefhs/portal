@@ -94,7 +94,7 @@ test('password sign-in is not authenticated until the pending MFA challenge succ
   assert.match(staffSessionApi, /authenticateStaff\(env, body\.username, body\.password, \{ recordLogin: false \}\)/);
   assert.match(staffSessionApi, /beginStaffMfaLogin\(env, passwordUser\)/);
   assert.match(staffSessionApi, /if \(mfa\.required\)[\s\S]*?return response\(\{ ok: true, \.\.\.mfa \}\)/);
-  assert.ok(staffSessionApi.indexOf('if (mfa.required)') < staffSessionApi.indexOf('createStaffSession(env, user)'));
+  assert.ok(staffSessionApi.indexOf('if (mfa.required)') < staffSessionApi.lastIndexOf('createStaffSession(env, refreshedUser)'));
   assert.match(mfaApi, /action === 'verify-login'/);
   assert.match(mfaLibrary, /deleteDocumentIfCurrent\(env, CHALLENGE_COLLECTION, id, challenge\)/);
   assert.match(mfaLibrary, /MAX_CHALLENGE_ATTEMPTS = 5/);

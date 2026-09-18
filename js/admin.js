@@ -2151,6 +2151,10 @@ async function loadDashboard(options = {}) {
     currentUser = {
       ...currentUser,
       ...dashboardUser,
+      // The session endpoint applies the live organisation name format to the
+      // canonical identity fields. Do not replace it with a stale stored
+      // DisplayName returned by the general dashboard authorization path.
+      displayName: clean(currentUser?.displayName) || clean(dashboardUser.displayName),
       // Profile images live in staffProfileImages and are hydrated by the
       // session endpoint. The general dashboard response intentionally omits
       // that large data URL, so do not let it erase the hydrated avatar.

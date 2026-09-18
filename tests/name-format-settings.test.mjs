@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { displayNameForProfile } from '../functions/api/admin.js';
+import { sessionStaffDisplayName } from '../functions/api/staff-session.js';
 import { staffDisplayName } from '../functions/api/staff-users.js';
 
 const [adminSource, backendSource, staffSource] = await Promise.all([
@@ -42,6 +43,19 @@ test('staff names use the same configured order', () => {
   assert.equal(
     staffDisplayName(person, { NameFormat: 'Surname, middle name, first name' }),
     'Okafor Grace Ada'
+  );
+  assert.deepEqual(person, original);
+});
+
+test('signed-in staff header uses the configured order without changing identity fields', () => {
+  const original = structuredClone(person);
+  assert.equal(
+    sessionStaffDisplayName(person, { NameFormat: 'First name, middle name, surname' }),
+    'Ada Grace Okafor'
+  );
+  assert.equal(
+    sessionStaffDisplayName(person, { NameFormat: 'Surname, first name, middle name' }),
+    'Okafor Ada Grace'
   );
   assert.deepEqual(person, original);
 });

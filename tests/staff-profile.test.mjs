@@ -56,11 +56,15 @@ test('profile pictures reload from the canonical staff document after a new logi
 });
 
 test('dashboard hydration does not erase the separately loaded profile picture', () => {
-  assert.match(adminHtml, /js\/admin\.js\?v=20260918-cbt-r2-delete/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260918-name-format-header/);
   assert.match(adminJs, /const dashboardUser = data\.user \|\| \{\}/);
   assert.match(
     adminJs,
     /profilePhotoUrl: clean\(dashboardUser\.profilePhotoUrl\) \|\| clean\(currentUser\?\.profilePhotoUrl\)/
+  );
+  assert.match(
+    adminJs,
+    /displayName: clean\(currentUser\?\.displayName\) \|\| clean\(dashboardUser\.displayName\)/
   );
 });
 
