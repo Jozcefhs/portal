@@ -18,6 +18,7 @@ import {
 import { academicManagementCapabilities, academicTimetableTargetCopyPlan } from '../functions/lib/academic-management.js';
 
 const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
+const backendSource = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
 const adminSource = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
 const adminHtml = await readFile(new URL('../admin.html', import.meta.url), 'utf8');
 const portalCss = await readFile(new URL('../css/style.css', import.meta.url), 'utf8');
@@ -176,7 +177,8 @@ test('academic roles separate timetable publishing from allocated attendance mar
 
 test('timetable publication and attendance corrections use protected audited workflows', () => {
   for (const action of [
-    'saveAcademicTimetableSettings', 'createAcademicTimetableVersion', 'saveAcademicTimetableEntry',
+    'saveAcademicTimetableSettings', 'createAcademicTimetableVersion', 'updateAcademicTimetableVersion',
+    'deleteAcademicTimetableVersion', 'saveAcademicTimetableEntry',
     'saveAcademicTimetableConstraint', 'copyAcademicTimetableVersion', 'changeAcademicTimetableVersionStatus',
     'previewAcademicTimetableCopy', 'copyAcademicTimetableSelection',
     'saveAcademicTimetableSubstitution', 'cancelAcademicTimetableSubstitution',
@@ -196,6 +198,12 @@ test('timetable publication and attendance corrections use protected audited wor
   assert.match(source, /The substitute teacher already has another substitution during this period/);
   assert.match(source, /substituteClassrooms\.forEach\(\(row\) => visibleKeys\.add/);
   assert.match(source, /Enter the reason for withdrawing this timetable/);
+  assert.match(source, /Only a Draft timetable version can be edited/);
+  assert.match(source, /Only a Draft timetable version can be deleted/);
+  assert.match(source, /Status: 'Deleting'/);
+  assert.match(source, /attendance or substitution history and cannot be deleted/);
+  assert.match(backendSource, /case 'updateAcademicTimetableVersion':/);
+  assert.match(backendSource, /case 'deleteAcademicTimetableVersion':/);
 });
 
 test('staff workspace exposes focused timetable and attendance interfaces', () => {
@@ -216,6 +224,9 @@ test('staff workspace exposes focused timetable and attendance interfaces', () =
   assert.match(adminSource, /data-academic-timetable-print="class"/);
   assert.match(adminSource, /Print-ready schedules/);
   assert.match(adminSource, /data-academic-timetable-open-version/);
+  assert.match(adminSource, /data-academic-timetable-version-edit/);
+  assert.match(adminSource, /data-academic-timetable-version-delete/);
+  assert.match(adminSource, /Delete draft timetable/);
   assert.match(adminSource, /The server rejects overlapping classrooms, teachers or rooms/);
   assert.match(adminSource, /data-academic-attendance-register/);
   assert.match(adminSource, /data-academic-attendance-all="Present"/);

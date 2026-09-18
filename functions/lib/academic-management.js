@@ -3257,6 +3257,105 @@ export async function createAcademicTimetableVersion(env, user = {}, input = {})
   return academicOperationalResponse(env, user, input, scope, `${name} created as a draft timetable.`);
 }
 
+export async function updateAcademicTimetableVersion(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const { scope, state, session, term } = context;
+  const version = findById(state.timetableVersions, input.VersionId || input.RecordId);
+  if (!version || version.SessionId !== session.SessionId || version.TermId !== term.TermId) {
+    throw failure('The timetable version was not found.', 404);
+  }
+  if (lower(version.Status) !== 'draft') {
+    throw failure('Only a Draft timetable version can be edited.', 409, 'ACADEMIC_TIMETABLE_LOCKED');
+  }
+  const name = clean(input.Name);
+  if (!name) throw failure('Enter a timetable version name.');
+  const duplicate = state.timetableVersions.find((row) => row.VersionId !== version.VersionId
+    && row.SessionId === session.SessionId && row.TermId === term.TermId && lower(row.Name) === lower(name));
+  if (duplicate) throw failure('A timetable version with this name already exists.');
+  const timestamp = nowIso();
+  const updated = {
+    ...version, Name: name, UpdatedAt: timestamp, UpdatedBy: actorName(user)
+  };
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions, documentId: version.VersionId,
+      data: withoutMetadata(updated), ...writePrecondition(version, input.RevisionToken) },
+    auditWrite(user, 'UPDATE', 'timetableVersion', updated, `${version.Name} -> ${name}`)
+  ], 'The timetable version changed while it was being edited. Reload and try again.');
+  return academicOperationalResponse(env, user, input, scope, `${name} draft updated.`);
+}
+
+export async function deleteAcademicTimetableVersion(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const { scope, state, session, term } = context;
+  let version = findById(state.timetableVersions, input.VersionId || input.RecordId);
+  if (!version || version.SessionId !== session.SessionId || version.TermId !== term.TermId) {
+    throw failure('The timetable version was not found.', 404);
+  }
+  if (!['draft', 'deleting'].includes(lower(version.Status))) {
+    throw failure('Only a Draft timetable version can be deleted.', 409, 'ACADEMIC_TIMETABLE_LOCKED');
+  }
+  const versionEntries = state.timetableEntries.filter((row) => row.VersionId === version.VersionId);
+  const entryIds = new Set(versionEntries.map((row) => row.EntryId));
+  if (state.timetableSubstitutions.some((row) => entryIds.has(row.TimetableEntryId))
+      || state.studentAttendance.some((row) => entryIds.has(row.TimetableEntryId))) {
+    throw failure('This timetable version has attendance or substitution history and cannot be deleted.', 409, 'ACADEMIC_TIMETABLE_IN_USE');
+  }
+
+  if (lower(version.Status) === 'draft') {
+    const revisionToken = clean(input.RevisionToken);
+    if (!revisionToken || revisionToken !== clean(version.__updateTime)) {
+      throw failure('This timetable version changed after it was loaded. Reload and try again.', 409, 'ACADEMIC_WRITE_CONFLICT');
+    }
+    const timestamp = nowIso();
+    const deleting = {
+      ...version, Status: 'Deleting', DeletionStartedAt: timestamp,
+      UpdatedAt: timestamp, UpdatedBy: actorName(user)
+    };
+    await commitAcademicBatch(env, [{
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions,
+      documentId: version.VersionId, data: withoutMetadata(deleting), updateTime: revisionToken
+    }], 'The timetable version changed while deletion was starting. Reload and try again.');
+    version = deleting;
+  }
+
+  // Marking the version as Deleting prevents new lesson writes. Query the
+  // authoritative collection after that marker so a concurrent final lesson
+  // save cannot be left behind.
+  let deletedCount = 0;
+  while (true) {
+    let remaining = await queryCollection(env, ACADEMIC_MANAGEMENT_COLLECTIONS.timetableEntries, {
+      filters: [{ field: 'VersionId', op: '==', value: version.VersionId }]
+    });
+    remaining = remaining.filter((row) => lower(row.BranchId || 'main') === lower(scope.branchId)
+      && lower(row.SchoolSection) === lower(scope.section));
+    if (!remaining.length) break;
+    for (let offset = 0; offset < remaining.length; offset += 450) {
+      const chunk = remaining.slice(offset, offset + 450);
+      await commitAcademicBatch(env, chunk.map((entry) => ({
+        collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableEntries,
+        documentId: entry.EntryId || recordId(entry), operation: 'delete',
+        ...(entry.__updateTime ? { updateTime: entry.__updateTime } : {})
+      })), 'A timetable lesson changed while the draft was being deleted. Run Delete again to safely resume.');
+      deletedCount += chunk.length;
+    }
+  }
+
+  const freshVersion = await getDocument(env, ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions, version.VersionId);
+  if (!freshVersion) {
+    return academicOperationalResponse(env, user, input, scope, 'The draft timetable was already deleted.');
+  }
+  if (lower(freshVersion.Status) !== 'deleting') {
+    throw failure('This timetable version changed while it was being deleted. Reload and try again.', 409, 'ACADEMIC_WRITE_CONFLICT');
+  }
+  await commitAcademicBatch(env, [
+    { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableVersions,
+      documentId: freshVersion.VersionId, operation: 'delete', updateTime: freshVersion.__updateTime },
+    auditWrite(user, 'DELETE', 'timetableVersion', freshVersion,
+      `${freshVersion.Name}; ${deletedCount} lesson(s) deleted`)
+  ], 'The timetable version changed while deletion was finishing. Run Delete again to safely resume.');
+  return academicOperationalResponse(env, user, input, scope, `${freshVersion.Name} draft and its lessons were deleted.`);
+}
+
 function assertAcademicTimetableVersionLessons(state, version, entries) {
   entries.forEach((entry) => {
     if (!academicSubjectTeacherAllocation(state, entry)) {
@@ -6473,6 +6572,8 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['saveacademictimetableconstraint', 'savetimetableconstraint'].includes(action)) return saveAcademicTimetableConstraint(env, user, input);
   if (['deleteacademictimetableconstraint', 'deletetimetableconstraint'].includes(action)) return deleteAcademicTimetableConstraint(env, user, input);
   if (['createacademictimetableversion', 'createtimetableversion'].includes(action)) return createAcademicTimetableVersion(env, user, input);
+  if (['updateacademictimetableversion', 'updatetimetableversion'].includes(action)) return updateAcademicTimetableVersion(env, user, input);
+  if (['deleteacademictimetableversion', 'deletetimetableversion'].includes(action)) return deleteAcademicTimetableVersion(env, user, input);
   if (['copyacademictimetableversion', 'copytimetableversion'].includes(action)) return copyAcademicTimetableVersion(env, user, input);
   if (['previewacademictimetablecopy', 'previewtimetablecopy'].includes(action)) return previewAcademicTimetableCopy(env, user, input);
   if (['copyacademictimetableselection', 'copytimetableselection'].includes(action)) return copyAcademicTimetableSelection(env, user, input);

@@ -11929,7 +11929,7 @@ function academicTimetableWorkspace(data, rows) {
   const settings = rows.timetableSettings.find((row) => row.SessionId === sessionId && row.TermId === termId);
   const constraints = rows.timetableConstraints.filter((row) => row.SessionId === sessionId && row.TermId === termId);
   const versions = rows.timetableVersions.filter((row) => row.SessionId === sessionId && row.TermId === termId);
-  const allVersions = (data.timetableVersions || []).filter((row) => row.Status !== 'Copying');
+  const allVersions = (data.timetableVersions || []).filter((row) => !['Copying', 'Deleting'].includes(row.Status));
   let version = academicFind(versions, academicTimetableDraft.versionId)
     || versions.find((row) => row.Status === 'Draft') || versions.find((row) => row.Status === 'Published') || versions[0];
   academicTimetableDraft.versionId = clean(version?.VersionId);
@@ -12036,13 +12036,17 @@ function academicTimetableWorkspace(data, rows) {
     <div class="academic-attendance-bulk-actions"><button type="button" data-academic-timetable-print="class" ${version ? '' : 'disabled'}>Preview class schedules</button><button type="button" class="secondary" data-academic-timetable-print="teacher" ${version ? '' : 'disabled'}>Preview teacher schedules</button></div>
   </form>`;
   const versionActions = (row) => {
-    const open = `<button type="button" class="compact-icon-action compact-edit-action" data-academic-timetable-open-version="${escapeHtml(row.VersionId)}" title="Open this version">&#128065;</button>`;
-    if (!canPublish) return open;
+    const open = `<button type="button" class="compact-icon-action compact-edit-action" data-academic-timetable-open-version="${escapeHtml(row.VersionId)}" title="Open this version" aria-label="Open ${escapeHtml(row.Name)}">&#128065;</button>`;
+    const edit = canManage && row.Status === 'Draft'
+      ? `<button type="button" class="compact-icon-action compact-edit-action" data-academic-timetable-version-edit="${escapeHtml(row.VersionId)}" title="Edit draft name" aria-label="Edit ${escapeHtml(row.Name)} draft name">&#9998;</button>` : '';
+    const remove = canManage && ['Draft', 'Deleting'].includes(row.Status)
+      ? `<button type="button" class="compact-icon-action academic-archive-action" data-academic-timetable-version-delete="${escapeHtml(row.VersionId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="${row.Status === 'Deleting' ? 'Resume deleting draft' : 'Delete draft'}" aria-label="Delete ${escapeHtml(row.Name)} draft">&#128465;</button>` : '';
+    if (!canPublish) return `<div class="academic-management-row-actions">${open}${edit}${remove}</div>`;
     const statuses = row.Status === 'Draft' ? ['Approved']
       : row.Status === 'Approved' ? ['Draft', 'Published']
         : row.Status === 'Published' ? ['Withdrawn'] : [];
     const actions = statuses.map((next) => `<button type="button" class="compact-icon-action ${next === 'Withdrawn' ? 'academic-archive-action' : 'compact-edit-action'}" data-academic-timetable-status="${escapeHtml(next)}" data-academic-id="${escapeHtml(row.VersionId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="${next === 'Draft' ? 'Return to Draft' : `Move to ${next}`}">&#10132;</button>`).join('');
-    return `<div class="academic-management-row-actions">${open}${actions}</div>`;
+    return `<div class="academic-management-row-actions">${open}${edit}${remove}${actions}</div>`;
   };
   const versionTable = table('Timetable Versions', versions, [
     { label: 'Version', value: (row) => row.Name }, { label: 'Status', value: (row) => row.Status },
@@ -14060,6 +14064,55 @@ function bindAcademicManagement() {
     academicTimetableDraft.dayCode = '';
     academicManagementTaskViews.timetable = 'schedule';
     renderAcademicManagement(academicManagementData || {});
+  }));
+  panelEl.querySelectorAll('[data-academic-timetable-version-edit]').forEach((button) => button.addEventListener('click', async () => {
+    const version = academicFind(academicManagementData?.timetableVersions || [], button.dataset.academicTimetableVersionEdit);
+    if (!version || version.Status !== 'Draft') return;
+    const name = clean(await window.DynamaxDialogs.prompt({
+      title: 'Edit draft timetable',
+      message: 'Change the draft name. The timetable lessons and version identity will be retained.',
+      label: 'Draft name', value: version.Name, required: true, maxLength: 120,
+      confirmText: 'Save draft'
+    }));
+    if (!name || name === version.Name) return;
+    await runButtonAction(button, 'Saving...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('updateAcademicTimetableVersion', {
+          SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId,
+          TermId: academicManagementFilters.termId, VersionId: version.VersionId,
+          RevisionToken: version.RevisionToken, Name: name
+        });
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  }));
+  panelEl.querySelectorAll('[data-academic-timetable-version-delete]').forEach((button) => button.addEventListener('click', async () => {
+    const version = academicFind(academicManagementData?.timetableVersions || [], button.dataset.academicTimetableVersionDelete);
+    if (!version || !['Draft', 'Deleting'].includes(version.Status)) return;
+    const lessonCount = (academicManagementData?.timetableEntries || []).filter((row) => row.VersionId === version.VersionId).length;
+    const confirmed = await window.DynamaxDialogs.confirm({
+      title: version.Status === 'Deleting' ? 'Finish deleting draft timetable' : 'Delete draft timetable',
+      message: version.Status === 'Deleting'
+        ? `Finish deleting ${version.Name}?`
+        : `Delete ${version.Name} and its ${lessonCount} scheduled lesson${lessonCount === 1 ? '' : 's'}? This cannot be undone.`,
+      tone: 'danger', confirmText: version.Status === 'Deleting' ? 'Finish deletion' : 'Delete draft'
+    });
+    if (!confirmed) return;
+    await runButtonAction(button, 'Deleting...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('deleteAcademicTimetableVersion', {
+          SchoolSection: academicManagementFilters.section, SessionId: academicManagementFilters.sessionId,
+          TermId: academicManagementFilters.termId, VersionId: version.VersionId,
+          RevisionToken: version.RevisionToken
+        });
+        if (academicTimetableDraft.versionId === version.VersionId) {
+          academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
+        }
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
   }));
   panelEl.querySelector('[data-academic-timetable-day]')?.addEventListener('change', (event) => {
     academicTimetableDraft.dayCode = event.target.value;
