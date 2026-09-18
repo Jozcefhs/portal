@@ -28,6 +28,13 @@
     return clean(row?.Name || row?.DisplayName || row?.StudentName || row?.Username || fallback || id);
   }
 
+  function subjectLabel(subjectIndex, subject = {}) {
+    const subjectId = clean(subject.SubjectId);
+    const catalogueSubject = subjectIndex.get(lower(subjectId));
+    return clean(catalogueSubject?.Name || catalogueSubject?.SubjectName || catalogueSubject?.DisplayName
+      || subject.SubjectName || subjectId);
+  }
+
   function scoreBand(score) {
     const value = finiteNumber(score);
     if (value >= 70) return '70–100';
@@ -170,7 +177,7 @@
       && (!filters.armId || !clean(allocation.ArmId) || same(allocation.ArmId, filters.armId))
     )).map((allocation) => ({
       ...allocation,
-      SubjectName: labelFor(subjectIndex, allocation.SubjectId, allocation.SubjectId),
+      SubjectName: subjectLabel(subjectIndex, allocation),
       TeacherName: labelFor(staffIndex, allocation.TeacherUsername, allocation.TeacherUsername)
     }));
     const promotionByStudent = new Map();
@@ -189,7 +196,7 @@
       const promotion = promotionByStudent.get(lower(result.StudentRef)) || {};
       const resultSubjects = (result.Subjects || []).map((subject) => ({
         ...subject,
-        SubjectName: clean(subject.SubjectName || labelFor(subjectIndex, subject.SubjectId, subject.SubjectId)),
+        SubjectName: subjectLabel(subjectIndex, subject),
         Score: subjectScore(subject, annual),
         Pass: subjectPass(subject, subjectScore(subject, annual))
       }));

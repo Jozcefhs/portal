@@ -108,6 +108,24 @@ test('management session analysis calculates annual performance, coverage, risk 
   assert.ok(output.Facets.teachers.some((row) => row.label === 'Martha Maths'));
 });
 
+test('subject comparisons display catalogue names instead of internal scoped identifiers', () => {
+  const input = analysisInput();
+  input.Subjects = [
+    { SubjectId: 'subject__main__secondary__bio', Name: 'Biology' },
+    { SubjectId: 'eng', Name: 'English Language' }
+  ];
+  input.CumulativeResults.forEach((row) => {
+    row.Subjects[0].SubjectId = 'subject__main__secondary__bio';
+    row.Subjects[0].SubjectName = 'subject__main__secondary__bio';
+  });
+
+  const output = buildAcademicSessionAnalysis(input, { period: 'annual' });
+  const biology = output.Comparisons.Subjects.find((row) => row.Key === 'subject__main__secondary__bio');
+
+  assert.equal(biology.Label, 'Biology');
+  assert.equal(output.Rows[0].Subjects[0].SubjectName, 'Biology');
+});
+
 test('combined demographic, subject, teacher, status and score filters change the analysed cohort', () => {
   const femaleMath = buildAcademicSessionAnalysis(analysisInput(), {
     period: 'annual', gender: 'Female', subjectId: 'math', teacherUsername: 'math.teacher',
