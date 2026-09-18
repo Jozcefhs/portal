@@ -1,5 +1,5 @@
 import { getAccountsOverview } from './backend.js';
-import { listCollection, requireFirestoreEnv } from '../lib/firestore.js';
+import { getDocument, listCollection, requireFirestoreEnv } from '../lib/firestore.js';
 import { requireStaffSession } from '../lib/staff-auth.js';
 import { getSchoolStructure, listSchoolCollection, schoolSectionFor } from '../lib/school-scope.js';
 import { configuredStaffBranches } from '../lib/staff-branch-context.js';
@@ -13,6 +13,43 @@ function clean(value) {
 function toNumber(value) {
   const number = Number(String(value ?? '0').replace(/,/g, ''));
   return Number.isFinite(number) ? number : 0;
+}
+
+export function displayNameForProfile(row = {}, profile = {}, fallback = '') {
+  const supported = new Set(['first name', 'middle name', 'surname']);
+  const order = clean(profile.NameFormat || profile.nameFormat)
+    .toLowerCase()
+    .split(',')
+    .map(clean)
+    .filter((part) => supported.has(part));
+  const parts = {
+    'first name': clean(row.FirstName || row.firstName || row.GivenName || row.givenName),
+    'middle name': clean(row.MiddleName || row.middleName || row.OtherName || row.otherName),
+    surname: clean(row.Surname || row.surname || row.LastName || row.lastName || row.FamilyName || row.familyName)
+  };
+  const formatted = (order.length ? order : ['surname', 'first name', 'middle name'])
+    .map((part) => parts[part])
+    .filter(Boolean)
+    .join(' ');
+  return formatted || clean(fallback);
+}
+
+function applicationWithConfiguredName(row = {}, profile = {}) {
+  const displayName = displayNameForProfile(
+    row,
+    profile,
+    row.ApplicantName || row.applicantName || row.DisplayName || row.displayName || row.Name || row.name
+  );
+  return displayName ? { ...row, ApplicantName: displayName, Name: displayName } : row;
+}
+
+function studentWithConfiguredName(row = {}, profile = {}) {
+  const displayName = displayNameForProfile(
+    row,
+    profile,
+    row.DisplayName || row.displayName || row.ApplicantName || row.applicantName || row.StudentName || row.studentName
+  );
+  return displayName ? { ...row, DisplayName: displayName, ApplicantName: displayName } : row;
 }
 
 function publicRows(rows, limit = 50) {
@@ -158,6 +195,7 @@ export async function onRequestPost(context) {
       tuckShopMovements
       ,storeItems
       ,storeOrders
+      ,schoolProfile
     ] = await Promise.all([
       shouldLoad('admissions') ? listSchoolCollection(env, 'applications', {
         branchId: user.branchId,
@@ -181,7 +219,10 @@ export async function onRequestPost(context) {
       shouldLoad('tuckShop') ? listCollection(env, 'tuckShopInventory') : Promise.resolve([]),
       shouldLoad('tuckShop') ? listCollection(env, 'tuckShopMovements') : Promise.resolve([]),
       shouldLoadStore() ? listCollection(env, 'storeItems') : Promise.resolve([]),
-      shouldLoadStore() ? listCollection(env, 'storeOrders') : Promise.resolve([])
+      shouldLoadStore() ? listCollection(env, 'storeOrders') : Promise.resolve([]),
+      (shouldLoad('admissions') || shouldLoad('students'))
+        ? getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+        : Promise.resolve(null)
     ]);
 
     const staffScope = (rows) => rows.filter((row) => {
@@ -200,7 +241,8 @@ export async function onRequestPost(context) {
         const overviewInputs = {
           payments: staffScope(payments),
           invoices: staffScope(invoices),
-          ledger: staffScope(ledger)
+          ledger: staffScope(ledger),
+          ...(schoolProfile ? { schoolProfile } : {})
         };
         if (schoolInsights || shouldLoad('admissions')) overviewInputs.applications = applications;
         if (schoolInsights || shouldLoad('students')) overviewInputs.students = students;
@@ -213,8 +255,10 @@ export async function onRequestPost(context) {
       }
     }
     const displayInvoices = reconcileInvoiceDisplay(invoices, accountOverview && accountOverview.ok ? accountOverview.accounts : []);
-    const visibleApplications = staffScope(applications);
-    const visibleStudents = staffScope(students);
+    const visibleApplications = staffScope(applications)
+      .map((row) => applicationWithConfiguredName(row, schoolProfile || {}));
+    const visibleStudents = staffScope(students)
+      .map((row) => studentWithConfiguredName(row, schoolProfile || {}));
     const visibleFormSales = staffScope(formSales);
     const visibleClinicRecords = staffScope(clinicRecords);
     const visibleClinicMovements = staffScope(clinicMovements);

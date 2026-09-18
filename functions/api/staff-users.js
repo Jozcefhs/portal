@@ -54,6 +54,18 @@ function staffNameOrder(value) {
   return order.length ? order : ['surname', 'first name', 'middle name'];
 }
 
+export function staffDisplayName(row = {}, profile = {}) {
+  const parts = {
+    'first name': clean(row.FirstName || row.firstName),
+    'middle name': clean(row.MiddleName || row.middleName),
+    surname: clean(row.Surname || row.surname || row.LastName || row.lastName)
+  };
+  return staffNameOrder(profile.NameFormat || profile.nameFormat)
+    .map((part) => parts[part])
+    .filter(Boolean)
+    .join(' ') || clean(row.DisplayName || row.displayName || row.Username || row.username);
+}
+
 export function inferStaffNameParts(displayName = '', profile = {}) {
   const tokens = clean(displayName).split(/\s+/).filter(Boolean);
   if (tokens.length < 2 || tokens.length > 3) return null;
@@ -147,12 +159,12 @@ function ensureRoleAvailable(role, edition) {
   throw err;
 }
 
-function publicUser(row, edition = 'school', featureFlags = null) {
+function publicUser(row, edition = 'school', featureFlags = null, profile = {}) {
   const normalizedEdition = normalizeOrganizationEdition(edition);
   return {
     Username: clean(row.Username || row.username || row.__id),
     LoginUsername: clean(row.LoginUsername || row.loginUsername || row.Username || row.username || row.__id),
-    DisplayName: clean(row.DisplayName || row.displayName),
+    DisplayName: staffDisplayName(row, profile),
     FirstName: clean(row.FirstName || row.firstName),
     MiddleName: clean(row.MiddleName || row.middleName),
     Surname: clean(row.Surname || row.surname || row.LastName || row.lastName),
@@ -223,10 +235,10 @@ function activeSuperAdmins(rows, excluding = '') {
     clean(row.Role) === 'Super Admin' && (row.Active === undefined || activeValue(row.Active)));
 }
 
-function listUsers(rows, actor) {
+function listUsers(rows, actor, profile = {}) {
   return rows
     .filter((row) => staffRecordMatchesEdition(row, actor) && branchRecordVisible(row, actor))
-    .map((row) => publicUser(row, actor.edition, actor.featureFlags))
+    .map((row) => publicUser(row, actor.edition, actor.featureFlags, profile))
     .sort((a, b) => a.LoginUsername.localeCompare(b.LoginUsername));
 }
 
@@ -325,7 +337,7 @@ async function saveUser(env, actor, body) {
   delete payload.__name;
   await upsertDocument(env, 'staffUsers', id, payload);
   await audit(env, actor, existing ? 'UPDATE USER' : 'CREATE USER', username, `${role}${department ? ` | ${department}` : ''}`, branchId);
-  return { ok: true, message: existing ? 'Staff account updated.' : 'Staff account created.', user: publicUser(payload, edition, actor.featureFlags) };
+  return { ok: true, message: existing ? 'Staff account updated.' : 'Staff account created.', user: publicUser(payload, edition, actor.featureFlags, profile || {}) };
 }
 
 async function migrateStaffNames(env, actor) {
@@ -672,7 +684,7 @@ export async function onRequestPost(context) {
       ]);
       const visibleRows = staffRows.filter((row) => staffRecordMatchesEdition(row, actor) && branchRecordVisible(row, actor));
       const subscriptionRows = staffAccountsForSubscription(staffRows, actor.edition, actor.username);
-      const users = listUsers(staffRows, actor);
+      const users = listUsers(staffRows, actor, profile || {});
       const visibleActive = activeStaffAccountCount(visibleRows);
       const organisationActive = activeStaffAccountCount(subscriptionRows);
       const scopedAccounts = accountingChartForEdition(accounts, actor.edition);

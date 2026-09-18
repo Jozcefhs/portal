@@ -7689,7 +7689,10 @@ function assignedStaffBranchId(row = {}) {
 async function getStaffUsersForDesktop(env, body) {
   requireStaffUserAdmin(body);
   const deviceBranchId = clean(body.DeviceBranchId);
-  const allUsers = await listCollection(env, 'staffUsers');
+  const [allUsers, profile] = await Promise.all([
+    listCollection(env, 'staffUsers'),
+    getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+  ]);
   const users = deviceBranchId
     ? allUsers.filter((row) => assignedStaffBranchId(row) === canonicalSchoolBranchId(deviceBranchId))
     : allUsers;
@@ -7698,7 +7701,10 @@ async function getStaffUsersForDesktop(env, body) {
     message: deviceBranchId
       ? `Staff users assigned to branch ${deviceBranchId} loaded from the database.`
       : 'Staff users loaded from the database.',
-    users
+    users: users.map((row) => ({
+      ...row,
+      DisplayName: formatPersonName(row, profile || {}, row.DisplayName || row.Username || row.__id)
+    }))
   };
 }
 
@@ -7744,13 +7750,18 @@ async function saveStaffUserFromDesktop(env, body) {
   if (existing && clean(existing.Role) === 'Super Admin' && staffUserIsActive(existing) && (role !== 'Super Admin' || !active) && activeStaffSuperAdmins(users, username).length === 0) {
     const err = new Error('At least one active Super Admin must remain.'); err.status = 409; throw err;
   }
+  const profile = await getDocument(env, 'settings', 'schoolProfile').catch(() => null);
+  const identity = { ...(existing || {}), ...incoming };
   const payload = {
     ...(existing || {}),
     Username: username,
     UsernameKey: lower(username),
     LoginUsername: loginUsername,
     LoginUsernameKey: lower(loginUsername),
-    DisplayName: clean(incoming.DisplayName) || username,
+    DisplayName: formatPersonName(identity, profile || {}, clean(incoming.DisplayName || existing?.DisplayName) || username),
+    FirstName: clean(incoming.FirstName || incoming.firstName || existing?.FirstName || existing?.firstName),
+    MiddleName: clean(incoming.MiddleName || incoming.middleName || existing?.MiddleName || existing?.middleName),
+    Surname: clean(incoming.Surname || incoming.surname || incoming.LastName || incoming.lastName || existing?.Surname || existing?.surname || existing?.LastName || existing?.lastName),
     Role: role,
     Department: department,
     OrganisationEdition: clean(
@@ -7961,17 +7972,29 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'optimizeFirestoreData':
       return optimizeFirestoreData(env, body);
     case 'getApplications':
-      return {
-        ok: true,
-        message: 'Applications loaded from the database.',
-        applications: (await listSchoolCollection(env, 'applications', requestedStudentScope(body))).map(normalizeApplication)
-      };
+      {
+        const [rows, profile] = await Promise.all([
+          listSchoolCollection(env, 'applications', requestedStudentScope(body)),
+          getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+        ]);
+        return {
+          ok: true,
+          message: 'Applications loaded from the database.',
+          applications: rows.map((row) => normalizeApplication(row, profile || {}))
+        };
+      }
     case 'getStudents':
-      return {
-        ok: true,
-        message: 'Students loaded from the database.',
-        students: (await listSchoolCollection(env, 'students', requestedStudentScope(body))).map(normalizeStudent)
-      };
+      {
+        const [rows, profile] = await Promise.all([
+          listSchoolCollection(env, 'students', requestedStudentScope(body)),
+          getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+        ]);
+        return {
+          ok: true,
+          message: 'Students loaded from the database.',
+          students: rows.map((row) => normalizeStudent(row, profile || {}))
+        };
+      }
     case 'getStudentConductCases':
     case 'saveStudentConductCase':
     case 'deleteStudentConductCase':
