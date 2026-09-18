@@ -1,7 +1,7 @@
 {
-  "version": "3.1.3",
+  "version": "3.1.4",
   "channel": "stable",
   "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup.exe",
-  "sha256": "829cd8e878ebd5c65c79a8b4b60279895e939c838d645a16d02cd4a8e3f8d48d",
-  "notes": "Dynamax Desktop v3.1.3 isolates academic sessions, terms and reusable arms by school section, safely handles legacy shared academic setup, and resets desktop academic data when switching between Primary and Secondary. The web companion uses the same section-aware backend rules."
+  "sha256": "493c97feb05712c3a59869e926d0ede897ae2f21d902fca6b448944b725042ee",
+  "notes": "Dynamax Desktop v3.1.4 adds secure remote device pairing, admission-purchase QR access, split-paper CBT improvements, term-scoped CBT records, answer-key evidence, paper previews, safer backup restore selection, and consistent non-mutating student and staff name formatting."
 }
