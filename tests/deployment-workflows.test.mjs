@@ -66,7 +66,11 @@ test('the reusable workflow deploys indexes and Pages with short-lived, environm
   assert.match(reusable, /vars\.FIREBASE_PROJECT_ID/);
   assert.match(reusable, /vars\.GCP_WIF_PROVIDER/);
   assert.match(reusable, /vars\.GCP_INDEX_SERVICE_ACCOUNT/);
-  assert.match(reusable, /firebase-tools@15\.24\.0 deploy/);
+  assert.match(reusable, /fetch-depth: 0/);
+  assert.match(reusable, /Detect required Firestore index deployment/);
+  assert.match(reusable, /git diff --quiet "\$\{BEFORE_SHA\}" "\$\{GITHUB_SHA\}"/);
+  assert.match(reusable, /steps\.firestore_indexes\.outputs\.should_deploy == 'true'/);
+  assert.match(reusable, /firebase-tools@15\.30\.2 deploy/);
   assert.match(reusable, /--only firestore:indexes/);
   assert.match(reusable, /--config "\$\{FIREBASE_CONFIG\}"/);
   assert.match(reusable, /cloudflare\/wrangler-action@v3/);
@@ -231,6 +235,9 @@ test('the tenant pool provisioner is opt-in, uses WIF and creates isolated deplo
   assert.match(tenantFleet, /firebase\.organization\.json/);
   assert.match(tenantFleet, /max-parallel: 3/);
   assert.match(tenantFleet, /wranglerVersion: "4\.125\.0"/);
+  assert.match(tenantFleet, /Detect required Firestore index deployment/);
+  assert.match(tenantFleet, /firebase-tools@15\.30\.2 deploy/);
+  assert.match(tenantFleet, /steps\.firestore_indexes\.outputs\.should_deploy == 'true'/);
 });
 
 test('destructive tenant maintenance is manual, exact and evidence-producing', () => {

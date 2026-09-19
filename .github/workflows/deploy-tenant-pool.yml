@@ -73,6 +73,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Validate deployment configuration
         shell: bash
@@ -94,13 +96,6 @@ jobs:
             exit 1
           fi
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v3
-        with:
-          project_id: ${{ vars.DYNAMAX_PROVISION_PROJECT_ID }}
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.DYNAMAX_PROVISION_SERVICE_ACCOUNT }}
-
       - name: Use Node.js 22
         uses: actions/setup-node@v4
         with:
@@ -116,9 +111,45 @@ jobs:
             *) echo "::error::Unsupported edition ${EXPECTED_EDITION}."; exit 1 ;;
           esac
 
+      - name: Detect required Firestore index deployment
+        id: firestore_indexes
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before || '' }}
+        run: |
+          set -euo pipefail
+          should_deploy=false
+          index_file="$(node -e "const fs=require('node:fs'); const config=JSON.parse(fs.readFileSync(process.env.FIREBASE_CONFIG,'utf8')); const firestore=Array.isArray(config.firestore)?config.firestore[0]:config.firestore; process.stdout.write(firestore.indexes);")"
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            should_deploy=true
+          elif [[ "${EVENT_NAME}" == "push" ]]; then
+            if [[ "${BEFORE_SHA}" =~ ^[0-9a-f]{40}$ && "${BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
+              if ! git diff --quiet "${BEFORE_SHA}" "${GITHUB_SHA}" -- "${FIREBASE_CONFIG}" "${index_file}"; then
+                should_deploy=true
+              else
+                echo "Firestore index definitions are unchanged; continuing directly to the application deployment."
+              fi
+            else
+              should_deploy=true
+            fi
+          else
+            echo "Scheduled application deployment is reusing the project's existing Firestore index profile."
+          fi
+          echo "should_deploy=${should_deploy}" >> "${GITHUB_OUTPUT}"
+
+      - name: Authenticate to Google Cloud
+        if: ${{ steps.firestore_indexes.outputs.should_deploy == 'true' }}
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.DYNAMAX_PROVISION_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.DYNAMAX_PROVISION_SERVICE_ACCOUNT }}
+
       - name: Apply required Firestore indexes
+        if: ${{ steps.firestore_indexes.outputs.should_deploy == 'true' }}
         run: >-
-          npx --yes firebase-tools@15.24.0 deploy
+          npx --yes firebase-tools@15.30.2 deploy
           --only firestore:indexes
           --project "${FIREBASE_PROJECT_ID}"
           --config "${FIREBASE_CONFIG}"
