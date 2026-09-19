@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  admissionIntakeClassification,
   accountingDestinationForPayment,
   accountingDestinationForWalletPurchase,
   applyBillingCategoryOverrides,
@@ -14,6 +15,7 @@ import {
   calculateInvoiceCreditAllocations,
   financialRowMatchesAccount,
   financialRowMatchesLinkedApplication,
+  feeMatchesApplication,
   formSaleFinancialAmounts,
   isNewIntakeApplication,
   isSchoolInvoiceCredit,
@@ -21,6 +23,7 @@ import {
   isStandaloneAcceptanceInvoiceForPayment,
   paymentCreditedAmount,
   reconciliationDifference,
+  resolveStudentEnrollmentCategory,
   sameFinancialPeriod,
   shouldResolveStudentForPayable
 } from '../functions/api/backend.js';
@@ -30,6 +33,60 @@ test('admitted applications without an explicit intake category are new intake',
   assert.equal(isNewIntakeApplication({ ResultStatus: 'Admitted', EnrollmentCategory: 'Returning' }), false);
   assert.equal(isNewIntakeApplication({ Status: 'Active' }), false);
   assert.equal(isNewIntakeApplication({ Status: 'Active', EnrollmentCategory: 'Imported' }), false);
+});
+
+test('new-intake school fee rules apply to admission students', () => {
+  const fee = {
+    FeeCode: 'NEW_INTAKE_PACK',
+    FeeName: 'New intake pack',
+    FeeCategory: 'School Fee',
+    ClassName: 'All',
+    StudentType: 'All',
+    BillingCategory: 'All',
+    Gender: 'All',
+    EnrollmentCategory: 'New Intake',
+    AcademicProgress: 'All',
+    AcademicSession: 'All',
+    Term: 'All'
+  };
+  assert.equal(feeMatchesApplication(fee, {
+    ResultStatus: 'Admitted',
+    Status: 'Accepted',
+    EnrollmentCategory: 'New Intake'
+  }), true);
+  assert.equal(feeMatchesApplication(fee, {
+    Status: 'Active',
+    EnrollmentCategory: 'Returning'
+  }), false);
+});
+
+test('admission enrollment stamps and repairs the new-intake classification', () => {
+  assert.deepEqual(admissionIntakeClassification({}), {
+    EnrollmentCategory: 'New Intake',
+    AcademicProgress: 'New Intake'
+  });
+  assert.equal(resolveStudentEnrollmentCategory({
+    ApplicationReference: 'APP-100',
+    AcademicSession: '2026/2027',
+    EnrollmentCategory: 'Returning'
+  }, {
+    ApplicationReference: 'APP-100',
+    AcademicSession: '2026/2027',
+    ResultStatus: 'Admitted',
+    Status: 'Enrolled',
+    Enrolled: 'YES'
+  }), 'New Intake');
+  assert.equal(resolveStudentEnrollmentCategory({
+    ApplicationReference: 'APP-100',
+    AcademicSession: '2027/2028',
+    EnrollmentCategory: 'Returning',
+    PromotedAt: '2027-08-01T00:00:00.000Z'
+  }, {
+    ApplicationReference: 'APP-100',
+    AcademicSession: '2026/2027',
+    ResultStatus: 'Admitted',
+    Status: 'Enrolled'
+  }), 'Returning');
 });
 
 test('acceptance-fee applicants do not trigger an enrolled-student collection search', () => {

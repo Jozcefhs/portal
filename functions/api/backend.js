@@ -537,6 +537,8 @@ function normalizeApplication(row, profile = {}) {
     AcademicSession: pick(row, ['academicSession', 'AcademicSession']),
     Term: pick(row, ['term', 'Term']),
     BillingCategory: pick(row, ['billingCategory', 'BillingCategory'], 'Regular'),
+    EnrollmentCategory: pick(row, ['enrollmentCategory', 'EnrollmentCategory', 'IntakeCategory', 'StudentEntryType'], 'New Intake'),
+    AcademicProgress: pick(row, ['academicProgress', 'AcademicProgress', 'ProgressCategory'], 'New Intake'),
     VerificationEmail: lower(pick(row, ['verificationEmail', 'VerificationEmail', 'email', 'Email'], parent.email)),
     VerificationCode: clean(pick(row, ['verificationCode', 'VerificationCode'])).toUpperCase(),
     Email: lower(pick(row, ['email', 'Email'], parent.email)),
@@ -1073,7 +1075,7 @@ function feeFieldMatches(ruleValue, actualValue, allowBlankActual = false) {
   return ruleVariants.some((variant) => actualVariants.includes(variant));
 }
 
-function feeMatchesApplication(fee, app) {
+export function feeMatchesApplication(fee, app) {
   const appClass = app.ClassApplyingFor || app.ClassAdmitted || app.ClassName || '';
   const appType = app.StudentType || '';
   const appBillingCategory = app.BillingCategory || 'Regular';
@@ -1100,6 +1102,38 @@ export function isNewIntakeApplication(app = {}) {
   const resultStatus = normalizeMatchText(app.ResultStatus || app.AdmissionDecision || '');
   const applicationStatus = normalizeMatchText(app.Status || '');
   return resultStatus === 'admitted' || ['admitted', 'accepted', 'admission letter sent'].includes(applicationStatus);
+}
+
+export function admissionIntakeClassification(record = {}) {
+  return {
+    EnrollmentCategory: 'New Intake',
+    AcademicProgress: clean(record.AcademicProgress || record.ProgressCategory) || 'New Intake'
+  };
+}
+
+export function resolveStudentEnrollmentCategory(student = {}, application = {}) {
+  const configured = clean(student.EnrollmentCategory || student.IntakeCategory);
+  const studentReference = clean(student.ApplicationReference || student.applicationReference);
+  const applicationReference = clean(
+    application.ApplicationReference || application.ApplicationID || application.applicationReference || application.__id
+  );
+  const studentSession = normalizeMatchText(student.AcademicSession || '');
+  const applicationSession = normalizeMatchText(application.AcademicSession || '');
+  const sameAdmissionSession = !studentSession || !applicationSession || studentSession === applicationSession;
+  const wasPromoted = Boolean(clean(student.PromotedAt || student.PromotionHistory || student.PreviousClass));
+  const linkedAdmission = Boolean(
+    studentReference && applicationReference &&
+    sameReferenceIdentity(studentReference, applicationReference) &&
+    sameAdmissionSession &&
+    !wasPromoted &&
+    (
+      isNewIntakeApplication(application) ||
+      yesNo(application.Enrolled) === 'YES' ||
+      ['accepted', 'admission letter sent', 'enrolled'].includes(normalizeMatchText(application.Status || ''))
+    )
+  );
+  if (linkedAdmission) return 'New Intake';
+  return configured || (isNewIntakeApplication(student) ? 'New Intake' : 'Returning');
 }
 
 function termRank(value) {
@@ -1757,7 +1791,7 @@ export async function getPayableFees(env, body = {}) {
     if (student.StudentType) billingApp.StudentType = student.StudentType;
     if (student.BillingCategory) billingApp.BillingCategory = student.BillingCategory;
     if (student.Gender) billingApp.Gender = student.Gender;
-    if (student.EnrollmentCategory) billingApp.EnrollmentCategory = student.EnrollmentCategory;
+    billingApp.EnrollmentCategory = resolveStudentEnrollmentCategory(student, app);
     if (student.AcademicProgress) billingApp.AcademicProgress = student.AcademicProgress;
     if (student.AdmissionNo) billingApp.AdmissionNo = student.AdmissionNo;
     if (student.DisplayName || student.ApplicantName) billingApp.ApplicantName = student.DisplayName || student.ApplicantName;
@@ -2123,7 +2157,13 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
     registerAccountAliases(key, accountRefsFrom(accountMap.get(key)));
   };
   const applicationCreatedMap = new Map();
-  applications.map((row) => normalizeApplication(row, resolvedSchoolProfile)).forEach((app) => {
+  const normalizedApplications = applications.map((row) => normalizeApplication(row, resolvedSchoolProfile));
+  const applicationByReference = new Map();
+  normalizedApplications.forEach((app) => {
+    const reference = clean(app.ApplicationReference || app.ApplicationID || app.__id).toLowerCase();
+    if (reference) applicationByReference.set(reference, app);
+  });
+  normalizedApplications.forEach((app) => {
     const refs = accountRefsFrom(app);
     const createdAt = timestampMs(app.SubmittedAt || app.CreatedAt || app.UpdatedAt);
     refs.forEach((ref) => {
@@ -2140,7 +2180,10 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
     StudentType: student.StudentType,
     BillingCategory: student.BillingCategory,
     Gender: student.Gender,
-    EnrollmentCategory: student.EnrollmentCategory,
+    EnrollmentCategory: resolveStudentEnrollmentCategory(
+      student,
+      applicationByReference.get(clean(student.ApplicationReference).toLowerCase()) || {}
+    ),
     AcademicProgress: student.AcademicProgress,
     AcademicSession: student.AcademicSession,
     Term: student.Term,
@@ -2153,7 +2196,7 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
   // Student register identity and eligibility fields are authoritative. Legacy
   // account rows may still say New Intake after a CSV import, so merge them second.
   accounts.map(normalizeAccount).forEach(putAccount);
-  applications.map((row) => normalizeApplication(row, resolvedSchoolProfile)).forEach((app) => putAccount({
+  normalizedApplications.forEach((app) => putAccount({
     AccountRef: app.AdmissionNo || app.AdmissionNumber || app.ApplicationReference || app.ApplicationID,
     ApplicationReference: app.ApplicationReference || app.ApplicationID,
     AdmissionNo: app.AdmissionNo || app.AdmissionNumber,
@@ -3069,7 +3112,10 @@ async function updateEntranceResult(env, body) {
     ShowResultOnPortal: clean(body.ShowResultOnPortal || body.showResultOnPortal || body.ResultReadyOnline || body.ResultPublished || ''),
     UpdatedAt: nowIso()
   };
-  if (resultStatus === 'Admitted') updates.Status = 'Accepted';
+  if (resultStatus === 'Admitted') {
+    updates.Status = 'Accepted';
+    Object.assign(updates, admissionIntakeClassification(existing));
+  }
   if (resultStatus === 'Not Admitted') updates.Status = 'Rejected';
   if (resultStatus === 'Pending') updates.Status = 'Pending';
   const saved = await saveApplication(env, { ...existing, ...updates });
@@ -3321,6 +3367,7 @@ async function enrollStudent(env, body) {
   if (!admissionNo) throw new Error('Admission number is missing.');
   const appRef = pick(existing, ['ApplicationReference', 'ApplicationID']);
   const enrolledBy = clean(body.RecordedBy || body.EnrolledBy || body.enrolledBy) || 'Admissions Office';
+  const intakeClassification = admissionIntakeClassification(existing);
   const applicantName = pick(existing, ['ApplicantName', 'Name', 'DisplayName']);
   const studentScopePath = identityScopePathForCollection(existing, 'students');
   const assignedStudent = await getSelectedIdentityRow(env, 'students', admissionNo, studentScopePath);
@@ -3333,8 +3380,15 @@ async function enrollStudent(env, body) {
       );
     }
     const enrolledAt = pick(existing, ['EnrolledAt']) || nowIso();
+    const repairedStudent = await saveStudent(env, {
+      ...assignedStudent,
+      ApplicationReference: pick(assignedStudent, ['ApplicationReference']) || appRef,
+      ...intakeClassification,
+      UpdatedAt: nowIso()
+    });
     const application = await saveApplication(env, {
       ...existing,
+      ...intakeClassification,
       AdmissionNo: pick(assignedStudent, ['AdmissionNo', 'AdmissionNumber']) || admissionNo,
       Enrolled: 'YES',
       EnrolledAt: enrolledAt,
@@ -3347,7 +3401,7 @@ async function enrollStudent(env, body) {
       message: 'The existing student record was linked and the application was marked enrolled.',
       reconciled: true,
       application,
-      student: normalizeStudent(assignedStudent)
+      student: normalizeStudent(repairedStudent)
     };
   }
   const linkedStudents = appRef ? await querySchoolCollection(env, 'students', {
@@ -3360,8 +3414,15 @@ async function enrollStudent(env, body) {
   if (matchingLinkedStudents.length === 1) {
     const linkedStudent = matchingLinkedStudents[0];
     const linkedAdmissionNo = pick(linkedStudent, ['AdmissionNo', 'AdmissionNumber']);
+    const repairedStudent = await saveStudent(env, {
+      ...linkedStudent,
+      ApplicationReference: appRef,
+      ...intakeClassification,
+      UpdatedAt: nowIso()
+    });
     const application = await saveApplication(env, {
       ...existing,
+      ...intakeClassification,
       AdmissionNo: linkedAdmissionNo || admissionNo,
       Enrolled: 'YES',
       EnrolledAt: pick(existing, ['EnrolledAt']) || nowIso(),
@@ -3374,7 +3435,7 @@ async function enrollStudent(env, body) {
       message: 'The existing student record was linked and the application was marked enrolled.',
       reconciled: true,
       application,
-      student: normalizeStudent(linkedStudent)
+      student: normalizeStudent(repairedStudent)
     };
   }
   if (matchingLinkedStudents.length > 1) {
@@ -3407,8 +3468,7 @@ async function enrollStudent(env, body) {
     Term: pick(existing, ['Term']),
     StudentType: pick(existing, ['StudentType']),
     BillingCategory: pick(existing, ['BillingCategory'], 'Regular'),
-    EnrollmentCategory: 'New Intake',
-    AcademicProgress: 'New Intake',
+    ...intakeClassification,
     ParentName: pick(existing, ['FatherName', 'MotherName', 'GuardianName', 'ParentName']),
     ParentPhone: pick(existing, ['FatherPhone', 'MotherPhone', 'GuardianPhone', 'ParentPhone']),
     ParentEmail: pick(existing, ['ParentEmail', 'VerificationEmail', 'FatherEmail', 'MotherEmail']),
@@ -3429,7 +3489,7 @@ async function enrollStudent(env, body) {
     Status: 'Active',
     UpdatedAt: nowIso()
   });
-  const application = await saveApplication(env, { ...existing, Enrolled: 'YES', EnrolledAt: nowIso(), EnrolledBy: enrolledBy, Status: 'Enrolled', UpdatedAt: nowIso() });
+  const application = await saveApplication(env, { ...existing, ...intakeClassification, Enrolled: 'YES', EnrolledAt: nowIso(), EnrolledBy: enrolledBy, Status: 'Enrolled', UpdatedAt: nowIso() });
   return { ok: true, message: 'Student enrolled successfully.', application, student };
 }
 
@@ -4526,11 +4586,22 @@ async function generateSchoolFeeInvoices(env, body) {
 }
 
 async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
-  const student = body.ResolvedStudent || await findStudentByAccountRef(env, accountRef, {
+  let student = body.ResolvedStudent || await findStudentByAccountRef(env, accountRef, {
     branchId: clean(body.BranchId || body.branchId),
     schoolSectionAccess: clean(body.SchoolSection || body.schoolSection)
   });
   if (!student) throw applicationNotFound(accountRef);
+  const linkedApplication = clean(student.ApplicationReference)
+    ? await findApplication(env, student.ApplicationReference).catch(() => null)
+    : null;
+  const resolvedEnrollmentCategory = resolveStudentEnrollmentCategory(student, linkedApplication || {});
+  if (resolvedEnrollmentCategory === 'New Intake' && normalizeMatchText(student.EnrollmentCategory) !== 'new intake') {
+    student = await saveStudent(env, {
+      ...student,
+      ...admissionIntakeClassification(student),
+      UpdatedAt: nowIso()
+    });
+  }
   const profileResult = student.AcademicSession && student.Term
     ? { profile: {} }
     : await getSchoolProfile(env).catch(() => ({ profile: {} }));
@@ -4541,7 +4612,8 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
     ClassAdmitted: student.ClassName,
     AcademicSession: student.AcademicSession || activeProfile.CurrentAcademicSession,
     Term: student.Term || activeProfile.CurrentTerm || 'First Term',
-    BillingCategory: student.BillingCategory || 'Regular'
+    BillingCategory: student.BillingCategory || 'Regular',
+    EnrollmentCategory: resolvedEnrollmentCategory
   };
   const billingSession = clean(billingApp.AcademicSession);
   const billingTerm = clean(billingApp.Term);
