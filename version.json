@@ -1,7 +1,7 @@
 {
-  "version": "3.1.4",
+  "version": "3.1.5",
   "channel": "stable",
   "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup.exe",
-  "sha256": "493c97feb05712c3a59869e926d0ede897ae2f21d902fca6b448944b725042ee",
-  "notes": "Dynamax Desktop v3.1.4 adds secure remote device pairing, admission-purchase QR access, split-paper CBT improvements, term-scoped CBT records, answer-key evidence, paper previews, safer backup restore selection, and consistent non-mutating student and staff name formatting."
+  "sha256": "bedb2340a80bff3066bc0b8cc697e3d5cd321b0926298ba58686d0d7c584564f",
+  "notes": "Dynamax Desktop v3.1.5 keeps admissions communication progress current automatically, preserves applicant selections during refresh, and checks existing-student conflicts before batch enrollment so eligible applicants can be reconciled safely."
 }
