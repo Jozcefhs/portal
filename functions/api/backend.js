@@ -1012,6 +1012,37 @@ function displayNameFromApplication(app) {
     [pick(app, ['Surname']), pick(app, ['FirstName']), pick(app, ['MiddleName'])].map(clean).filter(Boolean).join(' ');
 }
 
+export function studentMatchesEnrollmentApplication(student = {}, application = {}) {
+  const studentFirst = normalizeReferenceText(pick(student, ['FirstName', 'firstName', 'GivenName']));
+  const studentSurname = normalizeReferenceText(pick(student, ['Surname', 'surname', 'LastName', 'FamilyName']));
+  const applicationFirst = normalizeReferenceText(pick(application, ['FirstName', 'firstName', 'GivenName']));
+  const applicationSurname = normalizeReferenceText(pick(application, ['Surname', 'surname', 'LastName', 'FamilyName']));
+  if (studentFirst && studentSurname && applicationFirst && applicationSurname) {
+    if (studentFirst !== applicationFirst || studentSurname !== applicationSurname) return false;
+  } else {
+    const studentName = normalizeReferenceText(pick(student, ['DisplayName', 'ApplicantName', 'Name']));
+    const applicationName = normalizeReferenceText(displayNameFromApplication(application));
+    const nameMatches = studentName && applicationName && (
+      studentName === applicationName ||
+      (applicationFirst && applicationSurname &&
+        studentName.startsWith(applicationFirst) && studentName.endsWith(applicationSurname))
+    );
+    if (!nameMatches) {
+      return false;
+    }
+  }
+  const studentDob = clean(pick(student, ['DateOfBirth', 'dateOfBirth', 'DOB']));
+  const applicationDob = clean(pick(application, ['DateOfBirth', 'dateOfBirth', 'DOB']));
+  return !(studentDob && applicationDob && studentDob !== applicationDob);
+}
+
+function enrollmentConflict(message, code) {
+  const error = new Error(message);
+  error.status = 409;
+  error.code = code;
+  return error;
+}
+
 function accountRefFromApplication(app) {
   return clean(pick(app, ['AdmissionNo', 'AdmissionNumber', 'ApplicationReference', 'ApplicationID', '__id']));
 }
@@ -3289,9 +3320,75 @@ async function enrollStudent(env, body) {
   const admissionNo = pick(existing, ['AdmissionNo', 'AdmissionNumber']);
   if (!admissionNo) throw new Error('Admission number is missing.');
   const appRef = pick(existing, ['ApplicationReference', 'ApplicationID']);
-  if (await findStudent(env, admissionNo, appRef)) throw new Error('A student record already exists for this application or admission number.');
   const enrolledBy = clean(body.RecordedBy || body.EnrolledBy || body.enrolledBy) || 'Admissions Office';
   const applicantName = pick(existing, ['ApplicantName', 'Name', 'DisplayName']);
+  const studentScopePath = identityScopePathForCollection(existing, 'students');
+  const assignedStudent = await getSelectedIdentityRow(env, 'students', admissionNo, studentScopePath);
+  if (assignedStudent) {
+    if (!studentMatchesEnrollmentApplication(assignedStudent, existing)) {
+      const registeredName = pick(assignedStudent, ['DisplayName', 'ApplicantName', 'Name']) || 'another student';
+      throw enrollmentConflict(
+        `Admission number ${admissionNo} already belongs to ${registeredName}. Assign a different admission number before enrolling ${applicantName || appRef}.`,
+        'ENROLLMENT_ADMISSION_NUMBER_CONFLICT'
+      );
+    }
+    const enrolledAt = pick(existing, ['EnrolledAt']) || nowIso();
+    const application = await saveApplication(env, {
+      ...existing,
+      AdmissionNo: pick(assignedStudent, ['AdmissionNo', 'AdmissionNumber']) || admissionNo,
+      Enrolled: 'YES',
+      EnrolledAt: enrolledAt,
+      EnrolledBy: enrolledBy,
+      Status: 'Enrolled',
+      UpdatedAt: nowIso()
+    });
+    return {
+      ok: true,
+      message: 'The existing student record was linked and the application was marked enrolled.',
+      reconciled: true,
+      application,
+      student: normalizeStudent(assignedStudent)
+    };
+  }
+  const linkedStudents = appRef ? await querySchoolCollection(env, 'students', {
+    filters: [{ field: 'ApplicationReference', op: '==', value: appRef }],
+    ...(studentScopePath ? { scopePath: studentScopePath } : {}),
+    limit: 10
+  }) : [];
+  const matchingLinkedStudents = linkedStudents.filter((student) =>
+    studentMatchesEnrollmentApplication(student, existing));
+  if (matchingLinkedStudents.length === 1) {
+    const linkedStudent = matchingLinkedStudents[0];
+    const linkedAdmissionNo = pick(linkedStudent, ['AdmissionNo', 'AdmissionNumber']);
+    const application = await saveApplication(env, {
+      ...existing,
+      AdmissionNo: linkedAdmissionNo || admissionNo,
+      Enrolled: 'YES',
+      EnrolledAt: pick(existing, ['EnrolledAt']) || nowIso(),
+      EnrolledBy: enrolledBy,
+      Status: 'Enrolled',
+      UpdatedAt: nowIso()
+    });
+    return {
+      ok: true,
+      message: 'The existing student record was linked and the application was marked enrolled.',
+      reconciled: true,
+      application,
+      student: normalizeStudent(linkedStudent)
+    };
+  }
+  if (matchingLinkedStudents.length > 1) {
+    throw enrollmentConflict(
+      `More than one student record matches application ${appRef}. Resolve the duplicate student records before enrollment.`,
+      'ENROLLMENT_DUPLICATE_STUDENT_RECORDS'
+    );
+  }
+  if (linkedStudents.length) {
+    throw enrollmentConflict(
+      `Application ${appRef} is already linked to a different student record. Correct that link before enrolling ${applicantName || appRef}.`,
+      'ENROLLMENT_APPLICATION_REFERENCE_CONFLICT'
+    );
+  }
   const admittedClass = canonicalConfiguredClass(pick(existing, ['ClassApplyingFor', 'ClassName']), await configuredClassNames(env));
   const student = await saveStudent(env, {
     EnrolledAt: nowIso(),
