@@ -1075,6 +1075,12 @@ function feeFieldMatches(ruleValue, actualValue, allowBlankActual = false) {
   return ruleVariants.some((variant) => actualVariants.includes(variant));
 }
 
+function feeClassRuleMatches(ruleValue, actualValue) {
+  const rule = normalizeMatchText(ruleValue);
+  if (!rule || rule === 'all' || rule === '*') return true;
+  return String(ruleValue).split(',').some((part) => classNamesMatch(part, actualValue));
+}
+
 export function feeMatchesApplication(fee, app) {
   const appClass = app.ClassApplyingFor || app.ClassAdmitted || app.ClassName || '';
   const appType = app.StudentType || '';
@@ -1086,7 +1092,7 @@ export function feeMatchesApplication(fee, app) {
     (isNewIntakeApplication(app) ? 'New Intake' : 'Returning');
   const academicProgress = app.AcademicProgress || app.ProgressCategory || 'Promoted';
   if (normalizeMatchText(academicProgress) === 'repeating' && /book|uniform|school wear/.test(normalizeMatchText(`${fee.FeeCategory || ''} ${fee.FeeName || ''}`))) return false;
-  return (!clean(fee.ClassName) || ['all', '*'].includes(normalizeMatchText(fee.ClassName)) || classNamesMatch(fee.ClassName, appClass)) &&
+  return feeClassRuleMatches(fee.ClassName, appClass) &&
     feeFieldMatches(fee.StudentType, appType) &&
     feeFieldMatches(fee.BillingCategory || 'All', appBillingCategory, true) &&
     feeFieldMatches(fee.Gender || 'All', appGender) &&
@@ -1152,7 +1158,7 @@ function feeMatchesAccountPeriod(fee, app) {
   const appSession = app.AcademicSession || '';
   const appTerm = app.Term || '';
   if (normalizeMatchText(app.AcademicProgress || 'Promoted') === 'repeating' && /book|uniform|school wear/.test(normalizeMatchText(`${fee.FeeCategory || ''} ${fee.FeeName || ''}`))) return false;
-  if (clean(fee.ClassName) && !['all', '*'].includes(normalizeMatchText(fee.ClassName)) && !classNamesMatch(fee.ClassName, appClass)) return false;
+  if (!feeClassRuleMatches(fee.ClassName, appClass)) return false;
   if (!feeFieldMatches(fee.StudentType, appType)) return false;
   if (!feeFieldMatches(fee.BillingCategory || 'All', appBillingCategory, true)) return false;
   if (!feeFieldMatches(fee.Gender || 'All', app.Gender || '')) return false;
@@ -1306,7 +1312,7 @@ function feeMatchesAccountBase(fee, app) {
   const appBillingCategory = app.BillingCategory || 'Regular';
   const appSession = app.AcademicSession || '';
   if (normalizeMatchText(app.AcademicProgress || 'Promoted') === 'repeating' && /book|uniform|school wear/.test(normalizeMatchText(`${fee.FeeCategory || ''} ${fee.FeeName || ''}`))) return false;
-  return (!clean(fee.ClassName) || ['all', '*'].includes(normalizeMatchText(fee.ClassName)) || classNamesMatch(fee.ClassName, appClass)) &&
+  return feeClassRuleMatches(fee.ClassName, appClass) &&
     feeFieldMatches(fee.StudentType, appType) &&
     feeFieldMatches(fee.BillingCategory || 'All', appBillingCategory, true) &&
     feeFieldMatches(fee.Gender || 'All', app.Gender || '') &&

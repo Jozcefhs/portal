@@ -61,6 +61,54 @@ test('new-intake school fee rules apply to admission students', () => {
   }), false);
 });
 
+test('parent fee matching includes every component from a multi-class rule', () => {
+  const student = {
+    ClassName: 'Grade 7',
+    StudentType: 'Day Student',
+    BillingCategory: 'Regular',
+    Gender: 'Female',
+    EnrollmentCategory: 'New Intake',
+    AcademicProgress: 'New Intake',
+    AcademicSession: '2026/2027',
+    Term: 'First Term'
+  };
+  const component = (FeeCode, FeeName, Amount, overrides = {}) => ({
+    FeeCode,
+    FeeName,
+    Amount,
+    FeeCategory: 'School Fee',
+    ClassName: 'All',
+    StudentType: 'All',
+    BillingCategory: 'Regular',
+    Gender: 'All',
+    EnrollmentCategory: 'All',
+    AcademicProgress: 'All',
+    AcademicSession: '2026/2027',
+    Term: 'All',
+    ...overrides
+  });
+  const fees = [
+    component('CAE', 'CA & Examination E-Results', 18000),
+    component('CAM', 'Cambridge Checkpoint Textbook', 42000, { ClassName: 'Grade 7, Grade 8', Term: 'First Term' }),
+    component('CBT', 'CBT & Examination fees', 27500),
+    component('DEV', 'Development fees', 90000, { Term: 'First Term' }),
+    component('TAB', 'E-Learning Tablet Device', 250000, { Term: 'First Term' }),
+    component('MED', 'Medicals', 18000),
+    component('NBK', 'Notebooks', 27000, { ClassName: 'Grade 7, Grade 8', Term: 'First Term' }),
+    component('PTA', 'PTA Levy', 5000),
+    component('SPO', 'Co-Curricular/Sports Activities', 28000),
+    component('STA', 'Stationeries', 15000),
+    component('TXT', 'Textbooks (All Subjects)', 120065, { ClassName: 'Grade 7, Grade 8', EnrollmentCategory: 'New Intake', Term: 'First Term' }),
+    component('TUI', 'Tuition', 204600),
+    component('UNI', 'School Uniforms - Girls', 192000, { Gender: 'Female', Term: 'First Term' })
+  ];
+
+  const matched = fees.filter((fee) => feeMatchesApplication(fee, student));
+
+  assert.equal(matched.length, 13);
+  assert.equal(matched.reduce((sum, fee) => sum + fee.Amount, 0), 1037165);
+});
+
 test('admission enrollment stamps and repairs the new-intake classification', () => {
   assert.deepEqual(admissionIntakeClassification({}), {
     EnrollmentCategory: 'New Intake',
