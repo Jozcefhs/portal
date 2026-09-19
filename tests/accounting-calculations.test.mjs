@@ -12,6 +12,7 @@ import {
   buildReceivablesAgeing,
   buildWalletPurchaseAccountingJournal,
   calculateAccountFinancialSummary,
+  calculateCarryForwardSchoolCredit,
   calculateInvoiceCreditAllocations,
   financialRowMatchesAccount,
   financialRowMatchesLinkedApplication,
@@ -125,6 +126,16 @@ test('acceptance deposit and remaining school fee settle one school invoice with
   assert.equal(summary.TotalCredit, 294600);
   assert.equal(summary.OutstandingBalance, 0);
   assert.equal(summary.CreditBalance, 0);
+});
+
+test('first-term acceptance deposit is not allocated twice in the payable breakdown', () => {
+  assert.equal(calculateCarryForwardSchoolCredit({
+    schoolFeeRelatedCredit: 100000,
+    currentPeriodSchoolFeeCredit: 0,
+    priorSchoolFeeCharge: 0,
+    accountCreditDebits: 0,
+    acceptanceCreditAppliedSeparately: 100000
+  }), 0);
 });
 
 test('acceptance deposit is not duplicated as a standalone invoice', () => {

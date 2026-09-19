@@ -35,6 +35,24 @@ test('parent account summary does not double-count invoice allocation and paymen
   });
 });
 
+test('paid acceptance deposit is not presented as available account credit before school invoicing', () => {
+  const summary = accountSummaryForKeys([], ['DCA/26/000005'], [{
+    AccountRef: 'DCA/26/000005',
+    FeeCode: 'ACC',
+    FeeName: 'Acceptance fee',
+    FeeCategory: 'Admission',
+    Credit: 100000
+  }]);
+
+  assert.deepEqual(summary, {
+    TotalDebit: 100000,
+    TotalCredit: 100000,
+    AccountCreditDebits: 0,
+    OutstandingBalance: 0,
+    CreditBalance: 0
+  });
+});
+
 test('a parent may select a second sibling application after family authentication', () => {
   const applications = [
     {

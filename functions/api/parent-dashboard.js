@@ -1142,6 +1142,26 @@ function isOptionalSubscriptionEntry(entry) {
     description.includes('club subscription');
 }
 
+function isAcceptanceFeeEntry(entry) {
+  const text = lower(`${entry?.FeeCode || ''} ${entry?.FeeName || ''} ${entry?.Description || ''} ${entry?.FeeCategory || ''}`)
+    .replace(/[_-]+/g, ' ');
+  return text.includes('acceptance fee') ||
+    (text.includes('acceptance') && text.includes('admission')) ||
+    (/\baccept(?:ance)?\b/.test(text) && /\b(fee|admission|day|board)\b/.test(text));
+}
+
+function unappliedAcceptanceCharge(ledgerEntries = [], invoiceEntries = []) {
+  const hasAllocatedInvoice = invoiceEntries.some((entry) => {
+    const debit = asMoneyNumber(entry.Debit || entry.Amount);
+    return debit > 0 && (isAcceptanceFeeEntry(entry) || isSchoolFee(entry));
+  });
+  if (hasAllocatedInvoice) return 0;
+  return ledgerEntries.reduce((sum, entry) => {
+    if (isWalletLedger(entry) || isOptionalSubscriptionEntry(entry) || !isAcceptanceFeeEntry(entry)) return sum;
+    return sum + asMoneyNumber(entry.Credit);
+  }, 0);
+}
+
 function feeAccountSummary(entries) {
   const rows = (entries || []).filter((entry) => !isWalletLedger(entry) && !isOptionalSubscriptionEntry(entry));
   const debit = rows.reduce((sum, row) => {
@@ -1183,7 +1203,11 @@ export function accountSummaryForKeys(accounts, keys, ledgerEntries, invoiceEntr
   // in the ledger. Use invoices for debit only so parent balances do not count
   // one payment twice.
   const invoiceDebits = (invoiceEntries || []).map((row) => ({ ...row, Credit: 0 }));
-  const liveFinancialRows = [...invoiceDebits, ...(ledgerEntries || [])];
+  const acceptanceCharge = unappliedAcceptanceCharge(ledgerEntries, invoiceEntries);
+  const syntheticAcceptanceCharge = acceptanceCharge > 0
+    ? [{ FeeCode: 'ACCEPTANCE_FEE', FeeName: 'Acceptance Fee', FeeCategory: 'Admission', Debit: acceptanceCharge, Credit: 0 }]
+    : [];
+  const liveFinancialRows = [...invoiceDebits, ...syntheticAcceptanceCharge, ...(ledgerEntries || [])];
   if (liveFinancialRows.length) return feeAccountSummary(liveFinancialRows);
   const account = (accounts || []).find((row) => {
     const rowKeys = [
@@ -1524,7 +1548,7 @@ export function schoolFeeCreditSummary(items, total, originalTotal) {
   };
 }
 
-function schoolFeeTotalItem(breakdown) {
+export function schoolFeeTotalItem(breakdown) {
   const items = (breakdown || []).filter(isSchoolFee);
   if (!items.length) return null;
   const total = asMoneyNumber(items.reduce((sum, fee) => sum + asMoneyNumber(fee.Amount), 0));
@@ -1806,12 +1830,13 @@ async function getDashboard(env, body, options = {}) {
     const identity = parentChildIdentity(child);
     const keys = accountKeys(child);
     const childLedger = ledger.filter((entry) => financialReferenceMatches(entry.AccountRef, child));
+    const childInvoices = invoices.filter((entry) => financialReferenceMatches(entry.AccountRef, child));
     const walletEntries = ledger.filter((entry) => {
       return financialReferenceMatches(entry.AccountRef, child) &&
         lower(entry.FeeCategory) === 'wallet';
     }).sort((a, b) => clean(b.Date).localeCompare(clean(a.Date)));
     child.WalletBalance = walletBalance(walletEntries);
-    const accountSummary = accountSummaryForKeys(sources.accounts, keys, childLedger);
+    const accountSummary = accountSummaryForKeys(sources.accounts, keys, childLedger, childInvoices);
     child.TotalDebit = accountSummary.TotalDebit;
     child.TotalCredit = accountSummary.TotalCredit;
     child.OutstandingBalance = accountSummary.OutstandingBalance;

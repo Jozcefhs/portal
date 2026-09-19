@@ -1945,7 +1945,19 @@ export async function getPayableFees(env, body = {}) {
       isGeneralFeeCredit(row);
     return schoolRelated && rowIsCurrentPeriod(row) ? sum + asMoneyNumber(row.Credit) : sum;
   }, 0) : 0;
-  const carryForwardSchoolCredit = Math.max(0, schoolFeeRelatedCredit - currentPeriodSchoolFeeCredit - priorSchoolFeeCharge - accountCreditDebits);
+  const acceptanceLedgerCredit = paidLedgerRows.reduce((sum, row) => {
+    return isAcceptanceFeeLike(row) ? sum + asMoneyNumber(row.Credit) : sum;
+  }, 0);
+  const acceptanceCreditAppliedSeparately = currentTermRank === 1
+    ? Math.min(acceptanceLedgerCredit, acceptanceCreditRemaining)
+    : 0;
+  const carryForwardSchoolCredit = calculateCarryForwardSchoolCredit({
+    schoolFeeRelatedCredit,
+    currentPeriodSchoolFeeCredit,
+    priorSchoolFeeCharge,
+    accountCreditDebits,
+    acceptanceCreditAppliedSeparately
+  });
   if (currentTermRank > 1) {
     acceptanceCreditRemaining = 0;
   }
@@ -1957,7 +1969,7 @@ export async function getPayableFees(env, body = {}) {
   }, 0);
   const priorSchoolFeeBalance = Math.max(0, priorSchoolFeeCharge + accountCreditDebits - (schoolFeeRelatedCredit - currentPeriodSchoolFeeCredit));
 
-  const fees = matchedFees.map((fee) => {
+  const calculatedFees = matchedFees.map((fee) => {
     const copy = { ...fee };
     const originalAmount = asMoneyNumber(copy.Amount);
     const optionalSubscription = isOptionalSubscriptionFee(copy);
@@ -2027,11 +2039,12 @@ export async function getPayableFees(env, body = {}) {
     copy.PaymentType = isWalletFee(fee) ? 'Wallet' : 'Fee';
     copy.AppliesTo = [copy.ClassName || 'All', copy.StudentType || 'All', copy.AcademicSession || 'All', copy.Term || 'All'].join(' / ');
     return copy;
-  }).filter((fee) => isWalletFee(fee) || asMoneyNumber(fee.Amount) > 0);
+  });
+  const fees = calculatedFees.filter((fee) => isWalletFee(fee) || asMoneyNumber(fee.Amount) > 0);
 
   if (priorSchoolFeeBalance > 0 && currentTermRank > 1) {
     const firstSchoolFee = fees.find((fee) => !isWalletFee(fee) && normalizeMatchText(fee.FeeCategory || 'School Fee') === 'school fee') || matchedFees.find((fee) => normalizeMatchText(fee.FeeCategory || 'School Fee') === 'school fee') || {};
-    fees.unshift({
+    const previousBalanceFee = {
       FeeCode: 'PREVIOUS_SCHOOL_FEE_BALANCE',
       FeeName: 'Previous Balance',
       FeeCategory: 'School Fee',
@@ -2049,10 +2062,16 @@ export async function getPayableFees(env, body = {}) {
       DueDate: firstSchoolFee.DueDate || '',
       PaymentType: 'Fee',
       AppliesTo: 'Previous unpaid school fee balance'
-    });
+    };
+    fees.unshift(previousBalanceFee);
+    calculatedFees.unshift(previousBalanceFee);
   }
 
-  const schoolFeeBreakdown = fees.filter((fee) => !isWalletFee(fee) && normalizeMatchText(fee.FeeCategory || 'School Fee') === 'school fee');
+  const schoolFeeBreakdown = calculatedFees.filter((fee) =>
+    !isWalletFee(fee) &&
+    normalizeMatchText(fee.FeeCategory || 'School Fee') === 'school fee' &&
+    asMoneyNumber(fee.OriginalAmount || fee.Amount) > 0
+  );
   const schoolFeeTotal = schoolFeeBreakdown.reduce((total, fee) => total + asMoneyNumber(fee.Amount), 0);
   const identityScope = student || selectedApplication || app || billingApp;
   return {
@@ -4749,6 +4768,22 @@ export function summarizeWalletActivity(rows, accountRef, today = new Date()) {
     }
     return summary;
   }, { balance: 0, spentToday: 0 });
+}
+
+export function calculateCarryForwardSchoolCredit({
+  schoolFeeRelatedCredit = 0,
+  currentPeriodSchoolFeeCredit = 0,
+  priorSchoolFeeCharge = 0,
+  accountCreditDebits = 0,
+  acceptanceCreditAppliedSeparately = 0
+} = {}) {
+  return Math.max(0,
+    asMoneyNumber(schoolFeeRelatedCredit) -
+    asMoneyNumber(currentPeriodSchoolFeeCredit) -
+    asMoneyNumber(priorSchoolFeeCharge) -
+    asMoneyNumber(accountCreditDebits) -
+    asMoneyNumber(acceptanceCreditAppliedSeparately)
+  );
 }
 
 async function walletActivityForAccount(env, accountRef, studentScope = null) {
