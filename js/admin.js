@@ -17390,6 +17390,38 @@ async function restoreOrganizationBackup(payload, password) {
   return dataBackupRequest('complete-restore', { jobId: prepared.jobId });
 }
 
+async function resetOrganizationTestData(payload, currentPassword, confirmation) {
+  const prepared = await dataBackupRequest('prepare-reset', {
+    confirmation,
+    currentPassword,
+    safetyBackupCreated: true
+  });
+  const collectionPaths = Array.isArray(prepared.collectionPaths) ? prepared.collectionPaths : [];
+  let removedRecords = 0;
+  for (let index = 0; index < collectionPaths.length; index += 1) {
+    const collectionPath = collectionPaths[index];
+    setDataBackupStatus(`Clearing ${collectionPath} (${index + 1} of ${collectionPaths.length})...`);
+    dataBackupProgress('Clearing operational collections', index, collectionPaths.length);
+    for (let clearPass = 0; clearPass < 10000; clearPass += 1) {
+      const cleared = await dataBackupRequest('clear-collection', { jobId: prepared.jobId, collectionPath });
+      removedRecords += Math.max(0, Number(cleared.removed || 0));
+      if (!cleared.more) break;
+      if (clearPass === 9999) throw new Error(`Could not finish clearing ${collectionPath}.`);
+    }
+    dataBackupProgress('Clearing operational collections', index + 1, collectionPaths.length);
+  }
+  let removedObjects = 0;
+  setDataBackupStatus('Clearing private Cloudflare R2 files...');
+  for (let clearPass = 0; clearPass < 10000; clearPass += 1) {
+    const cleared = await dataBackupRequest('clear-reset-r2', { jobId: prepared.jobId });
+    removedObjects += Math.max(0, Number(cleared.removed || 0));
+    if (!cleared.more) break;
+    if (clearPass === 9999) throw new Error('Could not finish clearing private Cloudflare R2 files.');
+  }
+  const completed = await dataBackupRequest('complete-reset', { jobId: prepared.jobId });
+  return { ...completed, removedRecords, removedObjects, payloadRecords: backupDocumentCount(payload) };
+}
+
 function renderDataBackup() {
   if (clean(currentUser?.role) !== 'Super Admin') {
     panelEl.innerHTML = '<p class="status bad">Only a Super Administrator can access Backup &amp; Restore.</p>';
@@ -17417,6 +17449,15 @@ function renderDataBackup() {
           <div id="selectedBackupSummary" class="selected-backup-summary" hidden></div>
           <label>Backup password <input id="restoreBackupPassword" type="password" minlength="10" autocomplete="current-password" placeholder="Password used for this backup"></label>
           <button type="button" id="restoreDataBackup" class="danger" disabled>Restore selected backup</button>
+        </article>
+        <article class="data-backup-card data-backup-reset-card">
+          <span class="data-backup-card-icon" aria-hidden="true">&#9888;</span>
+          <div><p class="eyebrow">Controlled clean start</p><h3>Reset test workspace</h3><p>Downloads an encrypted database backup, removes operational records and every private R2 file, and preserves organisation settings, branch structure, subscription, deployment bindings and this Super Administrator.</p></div>
+          <div class="data-backup-reset-warning"><strong>R2 files cannot be restored from the database backup.</strong> Use this only when every uploaded file is disposable test data.</div>
+          <label>Safety-backup password <input id="resetBackupPassword" type="password" minlength="10" autocomplete="new-password" placeholder="At least 10 characters"></label>
+          <label>Confirm safety-backup password <input id="confirmResetBackupPassword" type="password" minlength="10" autocomplete="new-password" placeholder="Repeat the password"></label>
+          <label>Current Super Administrator password <input id="resetCurrentPassword" type="password" autocomplete="current-password" placeholder="Required for approval"></label>
+          <button type="button" id="resetTestWorkspace" class="danger">Preview and reset test data</button>
         </article>
       </div>
       <div id="dataBackupProgress" class="data-backup-progress" hidden><i><b id="dataBackupProgressBar"></b></i><span></span></div>
@@ -17497,6 +17538,59 @@ function renderDataBackup() {
       dataBackupState.busy = false;
       hideDataBackupProgress();
       if (button.isConnected) setButtonLoading(button, false, 'Restoring...', 'Restore selected backup');
+    }
+  });
+  document.getElementById('resetTestWorkspace')?.addEventListener('click', async (event) => {
+    const backupPassword = document.getElementById('resetBackupPassword').value;
+    const backupConfirmation = document.getElementById('confirmResetBackupPassword').value;
+    const currentPassword = document.getElementById('resetCurrentPassword').value;
+    if (backupPassword.length < 10) return setDataBackupStatus('Use a safety-backup password of at least 10 characters.', 'bad');
+    if (backupPassword !== backupConfirmation) return setDataBackupStatus('The safety-backup passwords do not match.', 'bad');
+    if (!currentPassword) return setDataBackupStatus('Enter your current Super Administrator password.', 'bad');
+    const button = event.currentTarget;
+    setButtonLoading(button, true, 'Preparing preview...', 'Preview and reset test data');
+    dataBackupState.busy = true;
+    try {
+      setDataBackupStatus('Preparing the reset preview and encrypted safety backup...');
+      const payload = await collectOrganizationBackup('Reset preview');
+      const preview = await dataBackupRequest('preview-reset');
+      const resetPaths = new Set(Array.isArray(preview.collectionPaths) ? preview.collectionPaths : []);
+      const recordCount = Object.entries(payload.collections || {}).reduce(
+        (total, [path, rows]) => total + (resetPaths.has(path) && Array.isArray(rows) ? rows.length : 0),
+        0
+      );
+      const r2Count = Math.max(0, Number(preview.r2ObjectCount || 0));
+      const r2Summary = preview.r2ObjectCountTruncated ? `at least ${r2Count.toLocaleString()}` : r2Count.toLocaleString();
+      const phrase = `RESET ${preview.workspaceId || payload.workspaceId}`.toUpperCase();
+      const confirmation = await window.DynamaxDialogs.prompt({
+        title: 'Reset test workspace',
+        message: `This will permanently clear ${recordCount.toLocaleString()} operational database record(s), remove ${r2Summary} private R2 file(s) under ${preview.r2Prefix || `v1/${payload.edition}/`}, and sign out deleted test staff. Settings, branch structure, subscription, deployment bindings and your current Super Administrator account remain. Type ${phrase} to continue.`,
+        label: 'Exact confirmation', placeholder: phrase, required: true, maxLength: 180,
+        tone: 'danger', confirmText: 'Download backup and reset'
+      });
+      if (clean(confirmation).toUpperCase() !== phrase) {
+        if (confirmation !== null) setDataBackupStatus('Reset cancelled because the confirmation text did not match.', 'bad');
+        return;
+      }
+      setDataBackupStatus('Encrypting and downloading the mandatory safety backup...');
+      const envelope = await encryptOrganizationBackup(payload, backupPassword);
+      downloadBackupFile(envelope, 'pre-reset-safety-backup');
+      const result = await resetOrganizationTestData(payload, currentPassword, confirmation);
+      setDataBackupStatus(`${result.message} ${result.removedRecords.toLocaleString()} database record(s) and ${result.removedObjects.toLocaleString()} private file(s) removed.`, 'good');
+      await window.DynamaxDialogs.alert({
+        title: 'Test workspace reset completed',
+        message: `${result.removedRecords.toLocaleString()} database record(s) and ${result.removedObjects.toLocaleString()} private file(s) were removed. Refresh the desktop application before onboarding real records.`,
+        confirmText: 'Reload portal'
+      });
+      window.location.reload();
+    } catch (error) {
+      setDataBackupStatus(`${error.message || String(error)} If deletion started, keep the downloaded safety backup and contact support before entering real data.`, 'bad');
+    } finally {
+      dataBackupState.busy = false;
+      const currentPasswordInput = document.getElementById('resetCurrentPassword');
+      if (currentPasswordInput) currentPasswordInput.value = '';
+      hideDataBackupProgress();
+      if (button.isConnected) setButtonLoading(button, false, 'Preparing preview...', 'Preview and reset test data');
     }
   });
 }

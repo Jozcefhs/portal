@@ -66,3 +66,26 @@ After a deployment:
 4. Delete the test document through the application and confirm both the R2
    object and Firestore metadata are removed.
 5. Repeat for each independently deployed edition/project.
+
+## Resetting disposable test workspaces
+
+An assigned organisation must not be cleaned by deleting its R2 prefix alone,
+because Firestore would retain references to missing files. An
+organisation-wide Super Administrator can instead open **Backup & Restore** and
+use **Reset test workspace**. The guarded flow:
+
+1. discovers the operational Firestore collections and the deployment's R2
+   prefix;
+2. previews the record and file counts;
+3. creates and downloads an encrypted database safety backup;
+4. verifies the current Super Administrator password and a workspace-specific
+   typed confirmation;
+5. clears operational records and `v1/<edition>/` R2 objects in bounded batches;
+6. preserves organisation settings, branch structure, subscription and
+   deployment identity, integrations, and the administrator performing the
+   reset.
+
+The safety backup contains database records and R2 references, not the private
+file bytes. R2 deletion is therefore permanent and the reset must be used only
+when every uploaded file is known disposable test data. The R2 prefixes appear
+again automatically when the application stores the first new real file.

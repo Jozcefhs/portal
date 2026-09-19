@@ -1,11 +1,15 @@
 import { requireFirestoreEnv } from '../lib/firestore.js';
-import { requireStaffSession } from '../lib/staff-auth.js';
+import { requireStaffSession, verifyStaffApprovalPassword } from '../lib/staff-auth.js';
 import { readJsonBody } from '../lib/request-security.js';
 import {
   clearOrganizationRestoreCollection,
+  clearOrganizationResetObjects,
+  completeOrganizationReset,
   completeOrganizationRestore,
   exportOrganizationBackupPage,
+  prepareOrganizationReset,
   prepareOrganizationRestore,
+  previewOrganizationReset,
   writeOrganizationRestoreChunk
 } from '../lib/organization-backup.js';
 
@@ -41,6 +45,24 @@ export async function onRequestPost({ request, env }) {
       result = await writeOrganizationRestoreChunk(env, user, body.jobId, body.collectionPath, body.documents);
     } else if (action === 'complete-restore') {
       result = await completeOrganizationRestore(env, user, body.jobId);
+    } else if (action === 'preview-reset') {
+      result = await previewOrganizationReset(env, user);
+    } else if (action === 'prepare-reset') {
+      const password = String(body.currentPassword || '');
+      if (!password || !(await verifyStaffApprovalPassword(env, user.username, password))) {
+        const error = new Error('The current Super Administrator password is incorrect.');
+        error.status = 401;
+        error.code = 'RESET_APPROVAL_FAILED';
+        throw error;
+      }
+      result = await prepareOrganizationReset(env, user, {
+        confirmation: body.confirmation,
+        safetyBackupCreated: body.safetyBackupCreated === true
+      });
+    } else if (action === 'clear-reset-r2') {
+      result = await clearOrganizationResetObjects(env, user, body.jobId);
+    } else if (action === 'complete-reset') {
+      result = await completeOrganizationReset(env, user, body.jobId);
     } else {
       const error = new Error('Unknown backup or restore action.');
       error.status = 400;

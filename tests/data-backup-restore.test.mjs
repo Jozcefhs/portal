@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { sanitizeBackupDocument } from '../functions/lib/organization-backup.js';
+import {
+  isOrganizationResetProtectedPath,
+  sanitizeBackupDocument
+} from '../functions/lib/organization-backup.js';
 
 const [backupLib, backupApi, firestore, backend, admin, styles, middleware, roleAccess, staffAuth] = await Promise.all([
   readFile(new URL('../functions/lib/organization-backup.js', import.meta.url), 'utf8'),
@@ -65,6 +68,38 @@ test('web companion encrypts downloads and requires typed confirmation before re
   assert.match(admin, /write-collection/);
   assert.match(styles, /\.data-backup-workspace/);
   assert.match(styles, /@media\(max-width:560px\)[\s\S]*\.data-backup-card/);
+});
+
+test('one-click test reset preserves identity/configuration paths and targets operational data', () => {
+  assert.equal(isOrganizationResetProtectedPath('settings'), true);
+  assert.equal(isOrganizationResetProtectedPath('settings/academics/classes'), true);
+  assert.equal(isOrganizationResetProtectedPath('schoolBranches'), true);
+  assert.equal(isOrganizationResetProtectedPath('organisationBranches/main/schoolClasses'), true);
+  assert.equal(isOrganizationResetProtectedPath('subscriptionPayments'), true);
+  assert.equal(isOrganizationResetProtectedPath('roleModuleAccess'), true);
+  assert.equal(isOrganizationResetProtectedPath('schoolBranches/main/sections/secondary/students'), false);
+  assert.equal(isOrganizationResetProtectedPath('schoolBranches/main/sections/secondary/applications'), false);
+  assert.equal(isOrganizationResetProtectedPath('staffUsers'), false);
+  assert.equal(isOrganizationResetProtectedPath('payments'), false);
+});
+
+test('one-click test reset is password-approved, safety-backed and clears R2 through its binding', () => {
+  assert.match(backupApi, /verifyStaffApprovalPassword/);
+  assert.match(backupApi, /action === 'preview-reset'/);
+  assert.match(backupApi, /action === 'prepare-reset'/);
+  assert.match(backupApi, /action === 'clear-reset-r2'/);
+  assert.match(backupApi, /action === 'complete-reset'/);
+  assert.match(backupLib, /RESET_SAFETY_REQUIRED/);
+  assert.match(backupLib, /RESET \$\{identity\.workspaceId\}/);
+  assert.match(backupLib, /bucket\.list\(\{ prefix, limit: 1000 \}\)/);
+  assert.match(backupLib, /await bucket\.delete\(keys\)/);
+  assert.match(backupLib, /path === 'staffUsers'[\s\S]*actor\.username/);
+  assert.match(admin, /Reset test workspace/);
+  assert.match(admin, /pre-reset-safety-backup/);
+  assert.match(admin, /Preview and reset test data/);
+  assert.match(admin, /preview-reset/);
+  assert.match(admin, /clear-reset-r2/);
+  assert.match(styles, /\.data-backup-reset-warning/);
 });
 
 test('desktop export uses the complete shared catalogue and exposes restore transport actions', () => {

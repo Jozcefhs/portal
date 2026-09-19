@@ -64,10 +64,88 @@ const IDENTITY_SETTING_FIELDS = Object.freeze([
   'SubscriptionStartedAt', 'FeatureEntitlements', 'FeatureFlags', 'MaximumActiveUsers', 'MaxUsers'
 ]);
 
+const RESET_PRESERVED_ROOT_COLLECTIONS = new Set([
+  'settings',
+  'organisationbranches',
+  'organizationbranches',
+  'rolemoduleaccess',
+  'subscriptions',
+  'subscriptionpayments',
+  'tenantregistrations',
+  'tenantprojectpool',
+  'managedorganisations',
+  'managedorganizations'
+]);
+
+const RESET_PRESERVED_ROOT_PREFIXES = Object.freeze([
+  'deployment',
+  'feature',
+  'integration',
+  'permission',
+  'role',
+  'subscription',
+  'tenant',
+  'workspace'
+]);
+
 function safePath(value) {
   const path = clean(value).replace(/^\/+|\/+$/g, '');
   if (!path || path.split('/').some((part) => !part || part === '.' || part === '..')) return '';
   return path;
+}
+
+export function isOrganizationResetProtectedPath(value) {
+  const path = safePath(value);
+  if (!path) return true;
+  const parts = path.split('/');
+  const root = lower(parts[0]);
+  // Preserve branch identity documents, while allowing their explicitly
+  // discovered operational subcollections (students, applications, conduct)
+  // to be cleared.
+  if (root === 'schoolbranches') return parts.length === 1;
+  if (RESET_PRESERVED_ROOT_COLLECTIONS.has(root)) return true;
+  if (RESET_PRESERVED_ROOT_PREFIXES.some((prefix) => root.startsWith(prefix))) return true;
+  return /(?:config|configuration|policies|policy|settings|structures|structure|templates|template)$/.test(root);
+}
+
+async function organizationResetPlan(env) {
+  const identity = requiredDeploymentIdentity(env);
+  const bucket = env?.DYNAMAX_DOCUMENTS;
+  if (!bucket || typeof bucket.list !== 'function' || typeof bucket.delete !== 'function') {
+    throw restoreError('Cloudflare R2 document storage is not connected, so a coordinated reset cannot start.', 503, 'RESET_R2_NOT_CONFIGURED');
+  }
+  const descriptors = await organizationBackupDescriptors(env);
+  const collectionPaths = descriptors
+    .map(({ path }) => safePath(path))
+    .filter((path) => path && !isOrganizationResetProtectedPath(path));
+  const protectedPaths = descriptors
+    .map(({ path }) => safePath(path))
+    .filter((path) => path && isOrganizationResetProtectedPath(path));
+  return {
+    identity,
+    bucket,
+    collectionPaths,
+    protectedPaths,
+    r2Prefix: `v1/${identity.edition}/`
+  };
+}
+
+export async function previewOrganizationReset(env, user) {
+  const actor = restoreActor(user);
+  if (actor.role !== 'Super Admin') throw restoreError('Only a Super Administrator can preview a test-data reset.', 403, 'RESET_FORBIDDEN');
+  const plan = await organizationResetPlan(env);
+  const listed = await plan.bucket.list({ prefix: plan.r2Prefix, limit: 1000 });
+  return {
+    ok: true,
+    workspaceId: plan.identity.workspaceId,
+    edition: plan.identity.edition,
+    collectionPaths: plan.collectionPaths,
+    protectedPaths: plan.protectedPaths,
+    r2Prefix: plan.r2Prefix,
+    r2ObjectCount: Array.isArray(listed?.objects) ? listed.objects.length : 0,
+    r2ObjectCountTruncated: listed?.truncated === true,
+    message: 'Test-data reset preview prepared.'
+  };
 }
 
 function withoutTransportMetadata(row = {}) {
@@ -279,6 +357,52 @@ export async function prepareOrganizationRestore(env, user, manifest = {}, colle
   return { ok: true, jobId, message: 'Secure restore session prepared.', collections: requested.length };
 }
 
+export async function prepareOrganizationReset(env, user, options = {}) {
+  const actor = restoreActor(user);
+  if (actor.role !== 'Super Admin') throw restoreError('Only a Super Administrator can reset organisation test data.', 403, 'RESET_FORBIDDEN');
+  if (options.safetyBackupCreated !== true) {
+    throw restoreError('Download the automatic encrypted safety backup before resetting test data.', 409, 'RESET_SAFETY_REQUIRED');
+  }
+  const plan = await organizationResetPlan(env);
+  const identity = plan.identity;
+  const expectedConfirmation = `RESET ${identity.workspaceId}`.toUpperCase();
+  if (clean(options.confirmation).toUpperCase() !== expectedConfirmation) {
+    throw restoreError(`Type ${expectedConfirmation} exactly to reset this workspace.`, 409, 'RESET_CONFIRMATION_INVALID');
+  }
+  const collectionPaths = plan.collectionPaths;
+  if (!collectionPaths.length) {
+    throw restoreError('No operational collections were found to reset.', 409, 'RESET_NOTHING_TO_CLEAR');
+  }
+  const jobId = `RESET-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const createdAt = nowIso();
+  const r2Prefix = plan.r2Prefix;
+  await upsertDocument(env, RESTORE_JOB_COLLECTION, jobId, {
+    JobId: jobId,
+    JobType: 'Reset',
+    Status: 'Prepared',
+    ActorUsername: actor.username,
+    Actor: actor.displayName,
+    WorkspaceId: identity.workspaceId,
+    Edition: identity.edition,
+    CollectionPaths: collectionPaths,
+    R2Prefix: r2Prefix,
+    RemovedRecords: 0,
+    RemovedObjects: 0,
+    CreatedAt: createdAt,
+    UpdatedAt: createdAt,
+    ExpiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString()
+  });
+  return {
+    ok: true,
+    jobId,
+    workspaceId: identity.workspaceId,
+    edition: identity.edition,
+    collectionPaths,
+    r2Prefix,
+    message: 'Protected test-data reset prepared.'
+  };
+}
+
 function jobAllowsCollection(job, collectionPath) {
   const path = safePath(collectionPath);
   if (!path || !(Array.isArray(job.CollectionPaths) ? job.CollectionPaths : []).includes(path)) {
@@ -315,6 +439,7 @@ export async function clearOrganizationRestoreCollection(env, user, jobId, colle
   await upsertDocument(env, RESTORE_JOB_COLLECTION, clean(jobId), {
     ...withoutTransportMetadata(job),
     Status: 'Restoring',
+    ...(clean(job.JobType) === 'Reset' ? { RemovedRecords: Math.max(0, Number(job.RemovedRecords || 0)) + rows.length } : {}),
     UpdatedAt: nowIso()
   });
   return {
@@ -345,6 +470,7 @@ async function protectedRestoreDocument(env, path, row, actor) {
 export async function writeOrganizationRestoreChunk(env, user, jobId, collectionPath, documents = []) {
   const actor = restoreActor(user);
   const job = await currentRestoreJob(env, jobId, actor);
+  if (clean(job.JobType) === 'Reset') throw restoreError('Reset sessions cannot write records.', 409, 'RESET_WRITE_FORBIDDEN');
   const path = jobAllowsCollection(job, collectionPath);
   const rows = Array.isArray(documents) ? documents : [];
   if (!rows.length || rows.length > MAX_RESTORE_DOCUMENTS) {
@@ -358,6 +484,7 @@ export async function writeOrganizationRestoreChunk(env, user, jobId, collection
 export async function completeOrganizationRestore(env, user, jobId) {
   const actor = restoreActor(user);
   const job = await currentRestoreJob(env, jobId, actor);
+  if (clean(job.JobType) === 'Reset') throw restoreError('Complete this operation as a test-data reset.', 409, 'RESET_COMPLETION_REQUIRED');
   await upsertDocument(env, RESTORE_JOB_COLLECTION, clean(jobId), {
     ...withoutTransportMetadata(job),
     Status: 'Completed',
@@ -365,4 +492,54 @@ export async function completeOrganizationRestore(env, user, jobId) {
     UpdatedAt: nowIso()
   });
   return { ok: true, message: 'Organisation data restore completed successfully.', restoredAt: nowIso() };
+}
+
+export async function clearOrganizationResetObjects(env, user, jobId) {
+  const actor = restoreActor(user);
+  const job = await currentRestoreJob(env, jobId, actor);
+  if (clean(job.JobType) !== 'Reset') throw restoreError('This session is not a test-data reset.', 409, 'RESET_JOB_REQUIRED');
+  const bucket = env?.DYNAMAX_DOCUMENTS;
+  if (!bucket || typeof bucket.list !== 'function' || typeof bucket.delete !== 'function') {
+    throw restoreError('Cloudflare R2 document storage is not connected.', 503, 'RESET_R2_NOT_CONFIGURED');
+  }
+  const prefix = clean(job.R2Prefix);
+  const listed = await bucket.list({ prefix, limit: 1000 });
+  const keys = (Array.isArray(listed?.objects) ? listed.objects : [])
+    .map((object) => clean(object?.key))
+    .filter(Boolean);
+  if (keys.length) await bucket.delete(keys);
+  const removedObjects = Math.max(0, Number(job.RemovedObjects || 0)) + keys.length;
+  await upsertDocument(env, RESTORE_JOB_COLLECTION, clean(jobId), {
+    ...withoutTransportMetadata(job),
+    Status: 'Restoring',
+    RemovedObjects: removedObjects,
+    UpdatedAt: nowIso()
+  });
+  return {
+    ok: true,
+    removed: keys.length,
+    removedObjects,
+    more: listed?.truncated === true,
+    message: keys.length ? `Removed ${keys.length} private file(s).` : 'Private document storage is clear.'
+  };
+}
+
+export async function completeOrganizationReset(env, user, jobId) {
+  const actor = restoreActor(user);
+  const job = await currentRestoreJob(env, jobId, actor);
+  if (clean(job.JobType) !== 'Reset') throw restoreError('This session is not a test-data reset.', 409, 'RESET_JOB_REQUIRED');
+  const completedAt = nowIso();
+  await upsertDocument(env, RESTORE_JOB_COLLECTION, clean(jobId), {
+    ...withoutTransportMetadata(job),
+    Status: 'Completed',
+    CompletedAt: completedAt,
+    UpdatedAt: completedAt
+  });
+  return {
+    ok: true,
+    message: 'Test records and private files were cleared. Organisation configuration and the active Super Administrator were preserved.',
+    removedRecords: Math.max(0, Number(job.RemovedRecords || 0)),
+    removedObjects: Math.max(0, Number(job.RemovedObjects || 0)),
+    resetAt: completedAt
+  };
 }
