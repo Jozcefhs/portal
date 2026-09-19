@@ -217,6 +217,20 @@ async function findScopedStudent(env, user, reference, cardId = '') {
     || (ref && [row.AdmissionNo, row.AccountRef, row.ApplicationReference, row.Reference].some((value) => sameRef(value, ref))));
 }
 
+async function lookupClinicStudent(env, body, user) {
+  const searchValue = clean(body.AdmissionNo || body.AccountRef || body.WalletCardId);
+  if (!searchValue) { const err = new Error('Enter an admission number or card ID.'); err.status = 400; throw err; }
+  const student = await findScopedStudent(env, user, searchValue, searchValue);
+  if (!student) { const err = new Error('No enrolled student was found for that admission number or card ID in your branch and school section.'); err.status = 404; throw err; }
+  return {
+    AccountRef: studentReference(student),
+    StudentName: clean(student.DisplayName || student.StudentName || student.ApplicantName),
+    ClassName: clean(student.ClassName || student.ClassAdmitted),
+    StudentType: clean(student.StudentType),
+    ProfileStatus: clean(student.ProfileCompletionStatus || student.Status)
+  };
+}
+
 async function lookupWallet(env, body, user) {
   const student = await findScopedStudent(env, user, body.AccountRef, body.WalletCardId);
   if (!student) { const err = new Error('No student wallet was found for that card or admission number.'); err.status = 404; throw err; }
@@ -359,6 +373,7 @@ export async function onRequestPost(context) {
     if (action === 'saveitem') await saveInventory(env, section, body, user);
     else if (action === 'recordmovement') await recordMovement(env, section, body, user);
     else if (action === 'saveclinicrecord' && section === 'clinic') await saveClinicRecord(env, body, user);
+    else if (action === 'lookupclinicstudent' && section === 'clinic') actionResult = { clinicStudent: await lookupClinicStudent(env, body, user) };
     else if (action === 'lookupwallet' && section === 'tuckShop') actionResult = { walletAccount: await lookupWallet(env, body, user) };
     else if (action === 'recordwalletpurchase' && section === 'tuckShop') {
       const purchase = await postWalletPurchase(env, body, user);
@@ -384,6 +399,7 @@ export async function onRequestPost(context) {
       saveitem: `${CONFIG[section].label} inventory item saved.`,
       recordmovement: `${CONFIG[section].label} stock movement recorded.`,
       saveclinicrecord: 'Clinic visit saved.',
+      lookupclinicstudent: 'Student found. Complete the clinic visit details.',
       lookupwallet: 'Wallet account loaded.',
       recordwalletpurchase: 'Wallet purchase recorded and posted to Finance and Accounting.',
       prepareclinicreport: 'Clinic report prepared for review.',

@@ -89,7 +89,14 @@ test('clinic student lookup accepts either admission number or wallet card ID', 
   assert.match(api, /findScopedStudent\(env, user, searchValue, searchValue\)/);
   assert.match(api, /\[row\.WalletCardId, row\.walletCardId, row\.CardId, row\.cardId\]/);
   assert.match(api, /some\(\(value\) => sameRef\(value, card\)\)/);
+  assert.match(api, /async function lookupClinicStudent/);
+  assert.match(api, /action === 'lookupclinicstudent' && section === 'clinic'/);
   assert.match(adminJs, /Admission number or card ID/);
+  assert.match(adminJs, /id="clinicStudentSearch"/);
+  assert.match(adminJs, /requestDepartmentAction\(section, 'lookupClinicStudent'/);
+  assert.match(adminJs, /lookupClinicStudent'[\s\S]*?\{ render: false \}/);
+  assert.match(adminJs, /clinicStudentInput\?\.addEventListener\('keydown'/);
+  assert.match(adminJs, /clinicLookupTimer = window\.setTimeout/);
   assert.match(adminJs, /Find student \/ Prepare report/);
   assert.match(adminJs, /clinicReportForm['"]\)\?\.elements\?\.AccountRef\?\.addEventListener\('keydown'/);
   assert.match(adminJs, /event\.key !== 'Enter'/);

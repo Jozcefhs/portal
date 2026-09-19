@@ -4447,7 +4447,7 @@ async function submitDepartmentAction(section, action, form) {
   }
 }
 
-async function requestDepartmentAction(section, action, payload = {}, idempotencyKey = '') {
+async function requestDepartmentAction(section, action, payload = {}, idempotencyKey = '', options = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
   const response = await staffFetch('/api/staff-departments', {
@@ -4462,7 +4462,7 @@ async function requestDepartmentAction(section, action, payload = {}, idempotenc
     error.responseReceived = true;
     throw error;
   }
-  renderDepartmentOperations(section, data);
+  if (options.render !== false) renderDepartmentOperations(section, data);
   setStatus(dashboardStatus, data.message, 'ok');
   return data;
 }
@@ -4667,6 +4667,7 @@ function renderDepartmentOperations(section, data) {
   const inventory = data.inventory || [];
   const records = data.records || [];
   const wallet = data.walletAccount || null;
+  const clinicStudent = data.clinicStudent || null;
   const clinicReport = data.clinicReport || null;
   const purchases = (dashboardData?.departments?.tuckShop || {}).purchases || [];
   renderModuleSummary(section, {
@@ -4708,11 +4709,12 @@ function renderDepartmentOperations(section, data) {
     <section class="config-card"><header class="config-card-heading"><div><small>Patient care</small><h3>Record a clinic visit</h3></div></header>
       <form id="clinicRecordForm" class="workflow-form workflow-form-grid config-form">
         <label>Date<input type="date" name="Date" value="${new Date().toISOString().slice(0, 10)}" required></label>
-        <label>Admission number or card ID<input name="AdmissionNo" required placeholder="Enter admission number or tap a card"></label>
+        <label>Admission number or card ID<input name="AdmissionNo" value="${escapeHtml(clinicStudent?.AccountRef || '')}" autocomplete="off" required placeholder="Enter admission number or tap a card"><small>Type the number and pause, press Enter, or use Search student.</small></label>
+        ${clinicStudent ? `<div class="workflow-wide-field report-recipient-preview" data-clinic-student-result role="status" aria-live="polite"><strong>${escapeHtml(clinicStudent.StudentName || clinicStudent.AccountRef)}</strong><span>${escapeHtml(clinicStudent.AccountRef)}${clinicStudent.ClassName ? ` &middot; ${escapeHtml(clinicStudent.ClassName)}` : ''}${clinicStudent.StudentType ? ` &middot; ${escapeHtml(clinicStudent.StudentType)}` : ''}</span></div>` : ''}
         <label>Complaint<textarea name="Complaint" required></textarea></label><label>Treatment<textarea name="Treatment"></textarea></label>
         <label>Disposition<select name="Disposition"><option>Treated and returned</option><option>Resting in clinic</option><option>Sent home</option><option>Referred to hospital</option></select></label>
         <label>Notes<input name="Notes"></label>
-        <div class="config-actionbar"><p class="status" data-department-status></p><div class="inline-action-group"><button type="button" id="clinicFaceLookup" class="student-face-workflow-action">&#128247; Verify by face</button><button type="submit" data-normal-text="Save visit">Save visit</button></div></div>
+        <div class="config-actionbar"><p class="status" data-department-status></p><div class="inline-action-group"><button type="button" id="clinicStudentSearch">&#128269; Search student</button><button type="button" id="clinicFaceLookup" class="student-face-workflow-action">&#128247; Verify by face</button><button type="submit" data-normal-text="Save visit">Save visit</button></div></div>
       </form>
     </section>` : ''}
     ${section === 'clinic' ? `
@@ -4819,6 +4821,61 @@ function renderDepartmentOperations(section, data) {
     document.getElementById(button.dataset.departmentJump)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }));
   document.getElementById('clinicRecordForm')?.addEventListener('submit', (event) => { event.preventDefault(); submitDepartmentAction(section, 'saveClinicRecord', event.currentTarget); });
+  const clinicRecordForm = document.getElementById('clinicRecordForm');
+  const clinicStudentInput = clinicRecordForm?.elements?.AdmissionNo;
+  const clinicStudentSearch = document.getElementById('clinicStudentSearch');
+  let clinicLookupTimer = 0;
+  const searchClinicStudent = async () => {
+    const value = clean(clinicStudentInput?.value);
+    const status = clinicRecordForm?.querySelector('[data-department-status]');
+    if (!value) {
+      setStatus(status, 'Enter an admission number or card ID.', 'bad');
+      clinicStudentInput?.focus();
+      return;
+    }
+    if (clinicStudentSearch?.disabled) return;
+    try {
+      const data = await runButtonAction(clinicStudentSearch, 'Searching...', () => requestDepartmentAction(section, 'lookupClinicStudent', { AdmissionNo: value }, '', { render: false }));
+      if (!data?.clinicStudent || !clinicStudentInput?.isConnected || clean(clinicStudentInput.value) !== value) return;
+      const student = data.clinicStudent;
+      clinicStudentInput.value = student.AccountRef || value;
+      clinicRecordForm.dataset.clinicStudentReference = student.AccountRef || value;
+      let result = clinicRecordForm.querySelector('[data-clinic-student-result]');
+      if (!result) {
+        result = document.createElement('div');
+        result.className = 'workflow-wide-field report-recipient-preview';
+        result.dataset.clinicStudentResult = '';
+        result.setAttribute('role', 'status');
+        result.setAttribute('aria-live', 'polite');
+        clinicStudentInput.closest('label')?.insertAdjacentElement('afterend', result);
+      }
+      result.innerHTML = `<strong>${escapeHtml(student.StudentName || student.AccountRef)}</strong><span>${escapeHtml(student.AccountRef)}${student.ClassName ? ` &middot; ${escapeHtml(student.ClassName)}` : ''}${student.StudentType ? ` &middot; ${escapeHtml(student.StudentType)}` : ''}</span>`;
+      result.hidden = false;
+      setStatus(status, `${student.StudentName || student.AccountRef} found. Complete the clinic visit details.`, 'ok');
+    } catch (error) {
+      setStatus(status, error.message || String(error), 'bad');
+    }
+  };
+  clinicStudentSearch?.addEventListener('click', searchClinicStudent);
+  clinicStudentInput?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    window.clearTimeout(clinicLookupTimer);
+    searchClinicStudent();
+  });
+  clinicStudentInput?.addEventListener('input', (event) => {
+    window.clearTimeout(clinicLookupTimer);
+    const input = event.currentTarget;
+    const value = clean(input.value);
+    delete clinicRecordForm.dataset.clinicStudentReference;
+    clinicRecordForm?.querySelector('[data-clinic-student-result]')?.setAttribute('hidden', '');
+    if (value.length < 3) return;
+    clinicLookupTimer = window.setTimeout(() => {
+      if (!input.isConnected || clean(input.value) !== value) return;
+      searchClinicStudent();
+    }, 700);
+  });
+  if (selectedAccountRef && section === 'clinic') window.setTimeout(searchClinicStudent, 0);
   document.getElementById('clinicFaceLookup')?.addEventListener('click', async () => {
     const form = document.getElementById('clinicRecordForm');
     const status = form?.querySelector('[data-department-status]');
@@ -4831,8 +4888,8 @@ function renderDepartmentOperations(section, data) {
           if (!form?.elements?.AdmissionNo) return;
           form.elements.AdmissionNo.value = match.id;
           form.dataset.faceVerifiedReference = match.id;
-          setStatus(status, `${match.title} confirmed by face. Complete the clinic visit details.`, 'ok');
-          form.elements.Complaint?.focus();
+          setStatus(status, `${match.title} confirmed by face. Loading the student record...`, 'ok');
+          document.getElementById('clinicStudentSearch')?.click();
         }
       });
     } catch (error) {

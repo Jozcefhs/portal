@@ -236,7 +236,7 @@ test('staff workspace exposes focused timetable and attendance interfaces', () =
   assert.match(adminSource, /data-academic-attendance-report/);
   assert.match(adminSource, /printAcademicAttendanceReport/);
   assert.match(adminSource, /All students start as Present/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260919-test-workspace-reset/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260919-clinic-student-search/);
   assert.match(portalCss, /\.academic-attendance-table\{max-height:480px;overflow:auto/);
   assert.match(portalCss, /\.academic-attendance-table th\{[^}]*white-space:nowrap;overflow-wrap:normal;word-break:normal/);
   assert.match(portalCss, /\.academic-attendance-report \.academic-attendance-table td:first-child\{font-size:12px;line-height:1\.3\}/);

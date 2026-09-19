@@ -10,7 +10,7 @@ const pageStyleVersions = new Map([
   ['plan-management.html', '20260830-dual-currency-pricing'],
   ['register-organization.html', '20260918-neutral-plan-cards']
 ]);
-const adminScriptVersion = '20260919-test-workspace-reset';
+const adminScriptVersion = '20260919-clinic-student-search';
 const parentScriptVersion = '20260918-parent-documents';
 const notificationScriptVersion = '20260913-branch-scope';
 const notificationStyleVersion = '20260804-read-efficiency';
