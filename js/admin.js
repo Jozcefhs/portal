@@ -17969,6 +17969,7 @@ function renderStaffUsers() {
       <div class="workflow-primary-actions"><button type="button" id="newStaffUser">+ New Staff Account</button><button type="button" id="uploadStaffCsv">Upload Staff CSV</button><button type="button" class="workflow-icon-action" id="staffCsvTemplate">CSV Template</button><button type="button" class="workflow-icon-action" id="refreshStaffUsers">Refresh</button><input type="file" id="staffCsvFile" accept=".csv,text/csv" hidden></div>
     </div>
     <p id="staffUsersStatus" class="status"></p>
+    <p class="muted">Staff CSV imports require only Username, FirstName and Surname. All other columns are optional. If Password is blank, open the imported account and set one before that staff member signs in.</p>
     <div class="workflow-kpis staff-user-kpis">
       <div><small>Total Accounts</small><strong>${staffUsersData.length}</strong><span>Database staff users</span></div>
       <div><small>Active</small><strong>${activeUsers}</strong><span>${otherBranchActiveUsers ? `${otherBranchActiveUsers} more in other branches` : 'Can sign in'}</span></div>
@@ -17980,7 +17981,7 @@ function renderStaffUsers() {
       ${staffUsersData.length ? staffUsersData.map((user) => `
         <article class="staff-user-row">
           <div class="staff-user-avatar">${escapeHtml((user.DisplayName || user.Username || 'U').split(/\s+/).slice(0,2).map((part) => part[0]).join('').toUpperCase())}</div>
-          <div class="staff-user-copy"><strong>${escapeHtml(user.DisplayName || user.LoginUsername || user.Username)}</strong><span>@${escapeHtml(user.LoginUsername || user.Username)} • ${escapeHtml(user.Role)}</span><small>${escapeHtml(user.Department || 'No department')} • ${escapeHtml(user.BranchId || 'All branches')}${schoolEdition ? ` / ${escapeHtml(user.SchoolSectionAccess || 'All sections')}` : ''}${yes(user.MustChangePassword) ? ' • Password change required' : ''}</small><small class="staff-mfa-account-state">${escapeHtml(staffMfaAccountLabel(user.Username))}</small></div>
+          <div class="staff-user-copy"><strong>${escapeHtml(user.DisplayName || user.LoginUsername || user.Username)}</strong><span>@${escapeHtml(user.LoginUsername || user.Username)} • ${escapeHtml(user.Role)}</span><small>${escapeHtml(user.Department || 'No department')} • ${escapeHtml(user.BranchId || 'All branches')}${schoolEdition ? ` / ${escapeHtml(user.SchoolSectionAccess || 'All sections')}` : ''}${yes(user.PasswordSetupRequired) ? ' • Password setup required' : yes(user.MustChangePassword) ? ' • Password change required' : ''}</small><small class="staff-mfa-account-state">${escapeHtml(staffMfaAccountLabel(user.Username))}</small></div>
           <span class="workflow-status ${yes(user.Active) ? 'status-approved' : 'status-rejected'}">${yes(user.Active) ? 'Active' : 'Disabled'}</span>
           <div class="staff-user-actions"><button type="button" class="compact-icon-action compact-edit-action" data-edit-user="${escapeHtml(user.Username)}" aria-label="Edit ${escapeHtml(user.DisplayName || user.Username)}" title="Edit staff account"><span aria-hidden="true">&#9998;</span></button><button type="button" class="compact-icon-action compact-delete-action" data-delete-user="${escapeHtml(user.Username)}" aria-label="Delete ${escapeHtml(user.DisplayName || user.Username)}" title="Delete staff account"><span aria-hidden="true">&#128465;&#65038;</span></button></div>
         </article>
@@ -18511,6 +18512,8 @@ function downloadStaffCsvTemplate() {
   downloadCsvFile('staff_upload_template.csv', content);
 }
 
+const STAFF_IMPORT_REQUIRED_COLUMNS = ['Username', 'FirstName', 'Surname'];
+
 async function importStaffCsv(event) {
   const input = event.currentTarget;
   const file = input.files?.[0];
@@ -18526,13 +18529,17 @@ async function importStaffCsv(event) {
   try {
     const users = parseCsv(await file.text());
     if (!users.length) throw new Error('The CSV has no staff data rows. Download the template and try again.');
-    const data = { imported: 0, failures: [], message: '' };
+    const headers = new Set(Object.keys(users[0] || {}));
+    const missing = STAFF_IMPORT_REQUIRED_COLUMNS.filter((column) => !headers.has(column));
+    if (missing.length) throw new Error(`The CSV is missing required column${missing.length === 1 ? '' : 's'}: ${missing.join(', ')}.`);
+    const data = { imported: 0, failures: [], passwordSetupRequired: 0, message: '' };
     for (let offset = 0; offset < users.length; offset += 25) {
       const result = await staffUserRequest('import', { users: users.slice(offset, offset + 25) });
       data.imported += Number(result.imported || 0);
+      data.passwordSetupRequired += Number(result.passwordSetupRequired || 0);
       data.failures.push(...(result.failures || []).map((failure) => ({ ...failure, row: Number(failure.row || 2) + offset })));
     }
-    data.message = `${data.imported} staff account(s) uploaded${data.failures.length ? `; ${data.failures.length} failed.` : '.'}`;
+    data.message = `${data.imported} staff account(s) uploaded${data.failures.length ? `; ${data.failures.length} failed` : ''}${data.passwordSetupRequired ? `; ${data.passwordSetupRequired} require password setup` : ''}.`;
     await loadStaffUsers();
     const failureText = (data.failures || []).slice(0, 5).map((row) => `Row ${row.row}: ${row.message}`).join(' | ');
     setStatus(document.getElementById('staffUsersStatus'), `${data.message}${failureText ? ` ${failureText}` : ''}`, data.failures?.length ? 'bad' : 'ok');

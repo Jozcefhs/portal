@@ -48,6 +48,23 @@ function firstValue(row = {}, keys = []) {
   return '';
 }
 
+export const STAFF_IMPORT_REQUIRED_COLUMNS = Object.freeze(['Username', 'FirstName', 'Surname']);
+
+export function requiredStaffImportIdentity(row = {}) {
+  const identity = {
+    Username: firstValue(row, ['Username', 'username']),
+    FirstName: firstValue(row, ['FirstName', 'First Name', 'GivenName', 'Given Name']),
+    Surname: firstValue(row, ['Surname', 'LastName', 'Last Name', 'FamilyName', 'Family Name'])
+  };
+  const missing = STAFF_IMPORT_REQUIRED_COLUMNS.filter((column) => !identity[column]);
+  if (missing.length) {
+    const error = new Error(`${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} required.`);
+    error.status = 400;
+    throw error;
+  }
+  return identity;
+}
+
 function staffNameOrder(value) {
   const supported = new Set(['first name', 'middle name', 'surname']);
   const order = clean(value).toLowerCase().split(',').map(clean).filter((part) => supported.has(part));
@@ -165,6 +182,7 @@ function publicUser(row, edition = 'school', featureFlags = null, profile = {}) 
     TabAccess: filterSectionsForFeatures(listValue(row.TabAccess), featureFlags)
       .filter((section) => WEB_SECTION_KEY_SET.has(section)),
     Active: row.Active === undefined ? true : activeValue(row.Active),
+    PasswordSetupRequired: activeValue(row.PasswordSetupRequired ?? false),
     MustChangePassword: row.MustChangePassword === undefined ? false : activeValue(row.MustChangePassword),
     CreatedAt: clean(row.CreatedAt),
     UpdatedAt: clean(row.UpdatedAt),
@@ -305,6 +323,7 @@ async function saveUser(env, actor, body) {
     BiometricLookupEnabled: explicitOptIn(body.BiometricLookupEnabled) && edition === 'school',
     TabAccess: scopedTabAccess(body.TabAccess, actor),
     Active: active,
+    PasswordSetupRequired: password ? false : activeValue(existing?.PasswordSetupRequired ?? false),
     MustChangePassword: password ? activeValue(body.MustChangePassword === undefined ? true : body.MustChangePassword) : activeValue(existing?.MustChangePassword || false),
     ...passwordFields,
     CreatedAt: existing?.CreatedAt || nowIso(),
@@ -351,27 +370,27 @@ async function importUsers(env, actor, body) {
   for (let index = 0; index < users.length; index += 1) {
     try {
       const row = users[index] || {};
-      const username = clean(row.Username || row.username);
+      const requiredIdentity = requiredStaffImportIdentity(row);
+      const username = requiredIdentity.Username;
       const id = safeId(username);
-      if (!username || !id) throw new Error('Username is required.');
+      if (!id) throw new Error('Enter a valid Username.');
       if (seen.has(lower(username))) throw new Error('Duplicate username in this CSV.');
       seen.add(lower(username));
       const existing = existingByName.get(lower(username));
       if (existing && !staffRecordMatchesEdition(existing, actor)) throw new Error('This staff account belongs to another organisation workspace.');
       if (existing && !branchRecordVisible(existing, actor)) throw new Error('This staff account belongs to another branch.');
       const password = String(row.Password || row.password || '');
-      if (!existing && !password) throw new Error('Password is required for a new staff account.');
-      const identity = staffImportIdentity(row, existing, profile || {});
-      const legacyDisplayName = firstValue(row, ['DisplayName', 'Display Name', 'FullName', 'Full Name', 'Name'])
-        || clean(existing?.DisplayName || existing?.displayName);
-      if ((!identity.FirstName || !identity.Surname) && !legacyDisplayName) {
-        throw new Error('FirstName and Surname are required when DisplayName is blank.');
-      }
-      const role = clean(row.Role || row.role) || 'Front Desk';
+      const identity = staffImportIdentity({
+        ...row,
+        FirstName: requiredIdentity.FirstName,
+        Surname: requiredIdentity.Surname
+      }, existing, profile || {});
+      const role = clean(row.Role || row.role) || clean(existing?.Role || existing?.role) || 'Front Desk';
       ensureRoleAvailable(role, edition);
-      const department = clean(row.Department || row.department);
-      if (role === 'Department User' && !department) throw new Error('Department is required for a Department User.');
-      const requestedActive = activeValue(row.Active === undefined ? true : row.Active);
+      const department = clean(row.Department || row.department) || clean(existing?.Department || existing?.department);
+      const requestedActive = clean(row.Active) === ''
+        ? activeValue(existing?.Active ?? true)
+        : activeValue(row.Active);
       assertSubscriptionSeatAvailable(plannedRows, existing, requestedActive, userLimit);
       const plannedIndex = existing ? plannedRows.findIndex((planned) => (
         clean(planned.__id) && clean(planned.__id) === clean(existing.__id)
@@ -397,15 +416,31 @@ async function importUsers(env, actor, body) {
         OrganisationEdition: clean(actor.edition) || 'school',
         BranchId: branchId,
         SchoolSectionAccess: schoolSectionAccessForRole(
-          role, row.SchoolSectionAccess || row.schoolSectionAccess, edition
+          role,
+          row.SchoolSectionAccess || row.schoolSectionAccess || existing?.SchoolSectionAccess || existing?.schoolSectionAccess,
+          edition
         ),
-        ApprovalEnabled: role === 'Super Admin' ? true : activeValue(row.ApprovalEnabled ?? false),
-        ApprovalMaxAmount: Math.max(0, Number(row.ApprovalMaxAmount || 0) || 0),
-        ApprovalAccounts: scopedApprovalAccounts(row.ApprovalAccounts, edition),
-        BiometricLookupEnabled: explicitOptIn(row.BiometricLookupEnabled) && edition === 'school',
-        TabAccess: scopedTabAccess(row.TabAccess, actor),
+        ApprovalEnabled: role === 'Super Admin'
+          ? true
+          : clean(row.ApprovalEnabled) === ''
+            ? activeValue(existing?.ApprovalEnabled ?? false)
+            : activeValue(row.ApprovalEnabled),
+        ApprovalMaxAmount: clean(row.ApprovalMaxAmount) === ''
+          ? Math.max(0, Number(existing?.ApprovalMaxAmount || 0) || 0)
+          : Math.max(0, Number(row.ApprovalMaxAmount || 0) || 0),
+        ApprovalAccounts: scopedApprovalAccounts(
+          clean(row.ApprovalAccounts) === '' ? existing?.ApprovalAccounts : row.ApprovalAccounts,
+          edition
+        ),
+        BiometricLookupEnabled: edition === 'school' && (clean(row.BiometricLookupEnabled) === ''
+          ? explicitOptIn(existing?.BiometricLookupEnabled)
+          : explicitOptIn(row.BiometricLookupEnabled)),
+        TabAccess: scopedTabAccess(clean(row.TabAccess) === '' ? existing?.TabAccess : row.TabAccess, actor),
         Active: requestedActive,
-        MustChangePassword: activeValue(row.MustChangePassword === undefined ? true : row.MustChangePassword),
+        PasswordSetupRequired: password ? false : activeValue(existing?.PasswordSetupRequired ?? !existing),
+        MustChangePassword: password
+          ? activeValue(row.MustChangePassword === undefined ? true : row.MustChangePassword)
+          : activeValue(existing?.MustChangePassword || false),
         ...(password ? await hashStaffPassword(password) : {}),
         CreatedAt: existing?.CreatedAt || nowIso(), CreatedBy: existing?.CreatedBy || actor.displayName || actor.username,
         UpdatedAt: nowIso(), UpdatedBy: actor.displayName || actor.username
@@ -418,8 +453,15 @@ async function importUsers(env, actor, body) {
   }
   if (writes.length) await batchUpsertDocuments(env, writes);
   const imported = writes.length;
+  const passwordSetupRequired = writes.filter((write) => write.data.PasswordSetupRequired === true).length;
   await audit(env, actor, 'BULK IMPORT', `${imported} staff`, `${failures.length} failed`, actorBranchScope(actor) || 'main');
-  return { ok: true, message: `${imported} staff account(s) uploaded${failures.length ? `; ${failures.length} failed.` : '.'}`, imported, failures };
+  return {
+    ok: true,
+    message: `${imported} staff account(s) uploaded${failures.length ? `; ${failures.length} failed` : ''}${passwordSetupRequired ? `; ${passwordSetupRequired} require password setup` : ''}.`,
+    imported,
+    failures,
+    passwordSetupRequired
+  };
 }
 
 async function deleteUser(env, actor, body) {
