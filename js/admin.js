@@ -10861,6 +10861,7 @@ const ACADEMIC_STUDENT_IMPORT_COLUMNS = [
   'StudentRef', 'StudentName', 'ClassCode', 'ArmCode', 'DepartmentCode',
   'TradeSubjectCodes', 'OptionalSubjectCodes', 'Reason'
 ];
+const ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS = ['StudentRef', 'StudentName', 'ClassCode'];
 
 function academicStudentMembershipImportRows(data, sessionId, termId) {
   const assigned = new Set((data.studentMemberships || [])
@@ -11903,7 +11904,7 @@ function academicStudentWorkspace(data, rows) {
       <button type="submit">Transfer or reassign ${learner.singular}</button>
     </form>
     <form class="academic-management-editor academic-student-import-layout" data-academic-student-membership-import>
-      <div class="academic-management-editor-heading"><div><small>Existing ${learner.singular} migration</small><h3>Import class-arm memberships</h3><p class="muted">Enter each admission number, ${learner.singular} name, reusable class code and arm code. If the ${learner.singular} is not yet in the master register, a branch-scoped profile marked Needs completion will be created automatically. Senior department, Trade and Optional subject codes may be left blank and completed in the app.</p></div></div>
+      <div class="academic-management-editor-heading"><div><small>Existing ${learner.singular} migration</small><h3>Import class memberships</h3><p class="muted">Enter each admission number, ${learner.singular} name and reusable class code. Arm code is optional; leave it blank to import the ${learner.singular} without assigning an arm. If the ${learner.singular} is not yet in the master register, a branch-scoped profile marked Needs completion will be created automatically. Senior department, Trade and Optional subject codes may also be left blank and completed in the app.</p></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
       <div class="academic-management-form-grid academic-management-form-grid-2">${periodFields}</div>
       <div class="academic-student-import-actions">
@@ -11911,7 +11912,7 @@ function academicStudentWorkspace(data, rows) {
         <button type="button" data-academic-import-student-memberships class="secondary">Import completed CSV</button>
         <input type="file" accept=".csv,text/csv" data-academic-student-import-file hidden>
       </div>
-      <small class="muted">Maximum 100 rows per import. StudentRef remains the unique identity. A StudentName is required when creating a missing profile. References already registered in another branch or school section are rejected; conflicting current-term memberships must use Transfer or change.</small>
+      <small class="muted">Maximum 100 rows per import. StudentRef, StudentName and ClassCode are required. ArmCode and the remaining columns are optional. StudentRef remains the unique identity. References already registered in another branch or school section are rejected; conflicting current-term memberships must use Transfer or change.</small>
     </form>
   </div>` : `<div class="academic-view-only-note"><strong>My class registers</strong><span>${learner.Plural} and movement history shown here come only from your teaching allocations.</span></div>`;
   return `${forms}${academicArmSubjectRegister(data, rows, canManage)}${table(membershipRegister, rows.studentMemberships, [
@@ -15348,7 +15349,7 @@ function bindAcademicManagement() {
     downloadCsvFile(`academic-student-memberships-${filePart}.csv`, academicStudentMembershipImportCsv(academicManagementData || {}, sessionId, termId));
     setStatus(status, rows.length
       ? `${rows.length} existing student${rows.length === 1 ? '' : 's'} added to the pre-filled CSV template.`
-      : 'Blank student migration template downloaded. Add admission numbers, names, class codes and arm codes before importing.', 'ok');
+      : 'Blank student migration template downloaded. Add admission numbers, names and class codes before importing. Arm codes are optional.', 'ok');
     event.currentTarget.blur();
   });
   studentImportButton?.addEventListener('click', () => studentImportFile?.click());
@@ -15366,7 +15367,7 @@ function bindAcademicManagement() {
       if (!rows.length) throw new Error('The CSV has no data rows. Download the pre-filled template and try again.');
       if (rows.length > 100) throw new Error('Import at most 100 student memberships at a time.');
       const headers = new Set(Object.keys(rows[0] || {}));
-      const missing = ACADEMIC_STUDENT_IMPORT_COLUMNS.filter((column) => !headers.has(column));
+      const missing = ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS.filter((column) => !headers.has(column));
       if (missing.length) throw new Error(`The CSV is missing required column${missing.length === 1 ? '' : 's'}: ${missing.join(', ')}.`);
       setStatus(status, `Validating and importing ${rows.length} existing student membership${rows.length === 1 ? '' : 's'} online...`);
       const data = await academicManagementRequest('bulkImportAcademicStudentMemberships', {

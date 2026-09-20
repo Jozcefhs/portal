@@ -423,6 +423,9 @@ export const ACADEMIC_STUDENT_IMPORT_COLUMNS = Object.freeze([
   'StudentRef', 'StudentName', 'ClassCode', 'ArmCode', 'DepartmentCode',
   'TradeSubjectCodes', 'OptionalSubjectCodes', 'Reason'
 ]);
+export const ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS = Object.freeze([
+  'StudentRef', 'StudentName', 'ClassCode'
+]);
 export const ACADEMIC_STUDENT_MOVEMENT_TYPES = Object.freeze([
   'Allocation', 'Class Transfer', 'Arm Transfer', 'Department Change', 'Subject Change', 'Withdrawal', 'Reinstatement'
 ]);
@@ -872,7 +875,7 @@ export function normalizeAcademicStudentMembership(input = {}, context = {}, exi
   const studentRef = clean(input.StudentRef || input.AdmissionNo || existing?.StudentRef);
   const classId = clean(input.ClassId || existing?.ClassId);
   const armId = clean(input.ArmId || existing?.ArmId);
-  if (!sessionId || !termId || !studentRef || !classId || !armId) {
+  if (!sessionId || !termId || !studentRef || !classId || (!armId && context.allowMissingArm !== true)) {
     throw failure('Choose a session, term, student, class and arm for this membership.');
   }
   const branchId = safeScopeId(context.branchId || input.BranchId || existing?.BranchId);
@@ -1356,6 +1359,9 @@ export function assertAcademicMembershipCapacity(state = {}, record = {}, exclud
   const classCount = activeMemberships.filter((row) => row.ClassId === record.ClassId).length;
   if (classCapacity && classCount >= classCapacity) {
     throw failure(`${schoolClass.Name || 'The selected class'} has reached its configured capacity.`, 409, 'ACADEMIC_CLASS_CAPACITY_REACHED');
+  }
+  if (!clean(record.ArmId)) {
+    return { ClassCount: classCount, ClassCapacity: classCapacity, ArmCount: 0, ArmCapacity: 0 };
   }
   const arm = assertReference(findById(state.arms || [], record.ArmId), 'The selected class arm is not active.');
   const armCapacity = wholeNumber(arm.Capacity, 0, 0, 10000);
@@ -2659,6 +2665,9 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
     const rowNumber = index + 2;
     try {
       if (!row.StudentRef) throw failure(`Row ${rowNumber}: enter the student admission or account reference.`);
+      if (!row.StudentName) {
+        throw failure(`Row ${rowNumber}: enter StudentName.`, 400, 'ACADEMIC_IMPORT_STUDENT_NAME_REQUIRED');
+      }
       const studentKey = lower(row.StudentRef);
       if (seenStudents.has(studentKey)) throw failure(`Row ${rowNumber}: ${row.StudentRef} appears more than once in this import.`);
       seenStudents.add(studentKey);
@@ -2669,13 +2678,15 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
         'class code',
         rowNumber
       );
-      const arm = academicImportReference(
-        state.arms.filter((candidate) => candidate.ClassId === schoolClass.ClassId),
-        row.ArmCode,
-        ['ArmId', 'RecordId', 'Code', 'Name'],
-        'arm code',
-        rowNumber
-      );
+      const arm = row.ArmCode
+        ? academicImportReference(
+          state.arms.filter((candidate) => candidate.ClassId === schoolClass.ClassId),
+          row.ArmCode,
+          ['ArmId', 'RecordId', 'Code', 'Name'],
+          'arm code',
+          rowNumber
+        )
+        : null;
       let student = people.students.find((candidate) => lower(studentReference(candidate)) === studentKey);
       let createdProfile = null;
       if (!student) {
@@ -2688,9 +2699,6 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
             409,
             'ACADEMIC_IMPORT_STUDENT_SCOPE_CONFLICT'
           );
-        }
-        if (!row.StudentName) {
-          throw failure(`Row ${rowNumber}: enter StudentName so a profile can be created for "${row.StudentRef}".`, 400, 'ACADEMIC_IMPORT_STUDENT_NAME_REQUIRED');
         }
         const documentId = academicStudentDocumentId(row.StudentRef);
         const documentConflict = allStudents.find((candidate) => lower(candidate.__id) === lower(documentId));
@@ -2726,10 +2734,10 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
       const existing = findById(projected.studentMemberships, existingId);
       const record = normalizeAcademicStudentMembership({
         SessionId: sessionId, TermId: termId, StudentRef: row.StudentRef,
-        ClassId: schoolClass.ClassId, ArmId: arm.ArmId, DepartmentId: departmentId,
+        ClassId: schoolClass.ClassId, ArmId: arm?.ArmId || '', DepartmentId: departmentId,
         SubjectIds: [...tradeSubjectIds, ...optionalSubjectIds], CoreSubjectIds: [],
         TradeSubjectIds: tradeSubjectIds, OptionalSubjectIds: optionalSubjectIds, CurriculumStatus: '', Status: 'Active'
-      }, scope, existing);
+      }, { ...scope, allowMissingArm: true }, existing);
       validateAcademicRecord(projected, 'studentmembership', record, {
         ...people, existing, allowIncompleteCurriculum: true
       });

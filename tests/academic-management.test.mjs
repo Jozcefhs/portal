@@ -6,6 +6,7 @@ import {
   ACADEMIC_MANAGEMENT_COLLECTIONS,
   ACADEMIC_SUBJECT_TEACHER_STATE_KEYS,
   ACADEMIC_STUDENT_IMPORT_COLUMNS,
+  ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS,
   ACADEMIC_VIEW_STATE_KEYS,
   applyAcademicStudentCurriculum,
   assertAcademicMembershipCapacity,
@@ -311,6 +312,10 @@ test('AM-002 student memberships allocate one arm and a unique subject set per t
   assert.throws(() => normalizeAcademicStudentMembership({
     SessionId: 'session-1', TermId: 'term-1', StudentRef: 'DCA/2026/001', ClassId: 'class-1'
   }, scope), /class and arm/);
+  const importedWithoutArm = normalizeAcademicStudentMembership({
+    SessionId: 'session-1', TermId: 'term-1', StudentRef: 'DCA/2026/002', ClassId: 'class-1'
+  }, { ...scope, allowMissingArm: true });
+  assert.equal(importedWithoutArm.ArmId, '');
 });
 
 test('AM-002 existing-student import rows use reusable codes and semicolon subject lists', () => {
@@ -318,6 +323,7 @@ test('AM-002 existing-student import rows use reusable codes and semicolon subje
     'StudentRef', 'StudentName', 'ClassCode', 'ArmCode', 'DepartmentCode',
     'TradeSubjectCodes', 'OptionalSubjectCodes', 'Reason'
   ]);
+  assert.deepEqual(ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS, ['StudentRef', 'StudentName', 'ClassCode']);
   assert.deepEqual(normalizeAcademicStudentImportRows([{
     AdmissionNo: 'DCA/2026/001', DisplayName: 'Ada Student', ClassCode: 'SS1', ArmCode: 'EXC',
     DepartmentCode: 'SCI', TradeSubjectCodes: 'CATER; AGR | CATER', OptionalSubjectCodes: 'BIO;MUSIC'
@@ -326,6 +332,12 @@ test('AM-002 existing-student import rows use reusable codes and semicolon subje
     DepartmentCode: 'SCI', TradeSubjectCodes: ['CATER', 'AGR'], OptionalSubjectCodes: ['BIO', 'MUSIC'], Reason: ''
   }]);
   assert.deepEqual(normalizeAcademicStudentImportRows('not-json'), []);
+  assert.deepEqual(normalizeAcademicStudentImportRows([{
+    StudentRef: 'DCA/2026/002', StudentName: 'No Arm Student', ClassCode: 'JSS1'
+  }]), [{
+    StudentRef: 'DCA/2026/002', StudentName: 'No Arm Student', ClassCode: 'JSS1', ArmCode: '',
+    DepartmentCode: '', TradeSubjectCodes: [], OptionalSubjectCodes: [], Reason: ''
+  }]);
 });
 
 test('AM-002 migration can stage a missing student profile for completion in Students', () => {
@@ -464,6 +476,10 @@ test('AM-003 class and arm capacities fail closed during allocation', () => {
   const candidate = { SessionId: 'session-1', TermId: 'term-1', ClassId: 'class-1', ArmId: 'arm-a', Status: 'Active' };
   assert.throws(() => assertAcademicMembershipCapacity(capacityState, candidate), /configured capacity/);
   assert.doesNotThrow(() => assertAcademicMembershipCapacity(capacityState, candidate, 'existing'));
+  assert.deepEqual(
+    assertAcademicMembershipCapacity(capacityState, { ...candidate, ArmId: '' }),
+    { ClassCount: 1, ClassCapacity: 2, ArmCount: 0, ArmCapacity: 0 }
+  );
 });
 
 test('Academic Management is a School-only role module with a constrained Teacher role', () => {
@@ -530,7 +546,7 @@ test('Academic writes are audited, optimistic and preserve legacy class/student 
   assert.match(librarySource, /scopedCollectionPath\('students', scope\.branchId, scope\.section\)/);
   assert.match(librarySource, /ACADEMIC_IMPORT_STUDENT_SCOPE_CONFLICT/);
   assert.match(librarySource, /allowIncompleteCurriculum: true/);
-  assert.match(adminSource, /Senior department, Trade and Optional subject codes may be left blank and completed in the app/);
+  assert.match(adminSource, /Senior department, Trade and Optional subject codes may also be left blank and completed in the app/);
   assert.match(adminSource, /ProfileCompletionStatus/);
   assert.match(backendSource, /ProfileCompletionStatus/);
   assert.match(staffStudentsSource, /ProfileCompletionStatus/);
@@ -780,6 +796,8 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /function academicStudentMembershipImportCsv/);
   assert.match(adminSource, /profile marked Needs completion will be created automatically/);
   assert.match(adminSource, /Blank student migration template downloaded/);
+  assert.match(adminSource, /ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS = \['StudentRef', 'StudentName', 'ClassCode'\]/);
+  assert.match(adminSource, /Arm codes are optional/);
   assert.match(adminSource, /data-academic-workflow="bulkAssignAcademicArmStudentSubjects"/);
   assert.match(adminSource, /function academicArmSubjectRegister/);
   assert.match(adminSource, /Core · locked/);
