@@ -4269,8 +4269,12 @@ function renderStaffStore(section, store) {
       <article class="workflow-record store-order-record"><div class="workflow-record-heading"><div><strong>${escapeHtml(order.DisplayName || order.CustomerName || order.AccountRef || 'Customer')}</strong><small>${escapeHtml(order.OrderNo)}</small></div></div>
       <p>${money(order.Amount)} &middot; ${escapeHtml(order.PaidAt || order.CreatedAt || '')}</p>
       <div class="store-order-actions">
-        ${!organisationStore && ready ? `<button type="button" class="student-face-workflow-action" data-store-face-order="${escapeHtml(order.OrderNo)}" aria-label="Find ${escapeHtml(order.DisplayName || order.AccountRef)} by face for collection">&#128247; Verify by face</button>` : ''}
-        <button type="button" class="store-order-status ${collected ? 'is-collected' : ''}" data-store-order="${escapeHtml(order.OrderNo)}" data-store-status="${escapeHtml(nextStatus)}" aria-label="${escapeHtml(statusLabel)} for ${escapeHtml(order.DisplayName || order.AccountRef)}" ${collected ? 'disabled' : ''}>${escapeHtml(statusLabel)}</button>
+        ${!organisationStore && ready ? `
+          <span class="store-order-ready-label">Ready for collection:</span>
+          <button type="button" class="store-collection-reference-action" data-store-order="${escapeHtml(order.OrderNo)}" data-store-status="Collected" data-store-collection-mode="card" aria-label="Verify ${escapeHtml(order.DisplayName || order.AccountRef)} by student card">&#128179; Verify by card</button>
+          <button type="button" class="store-collection-reference-action" data-store-order="${escapeHtml(order.OrderNo)}" data-store-status="Collected" data-store-collection-mode="admission" aria-label="Verify ${escapeHtml(order.DisplayName || order.AccountRef)} by admission number or parent code"># Admission no. / parent code</button>
+          <button type="button" class="student-face-workflow-action" data-store-face-order="${escapeHtml(order.OrderNo)}" aria-label="Find ${escapeHtml(order.DisplayName || order.AccountRef)} by face for collection">&#128247; Verify by face</button>
+        ` : `<button type="button" class="store-order-status ${collected ? 'is-collected' : ''}" data-store-order="${escapeHtml(order.OrderNo)}" data-store-status="${escapeHtml(nextStatus)}" aria-label="${escapeHtml(statusLabel)} for ${escapeHtml(order.DisplayName || order.AccountRef)}" ${collected ? 'disabled' : ''}>${escapeHtml(statusLabel)}</button>`}
       </div></article>`;
     }).join('') : '<p class="muted">No paid orders yet.</p>'}</div></section>`;
   mountWorkspaceTabs(section, [
@@ -4391,11 +4395,28 @@ function renderStaffStore(section, store) {
     }
   };
   panelEl.querySelectorAll('[data-store-order]').forEach((button) => button.addEventListener('click', async () => {
+    const collectionMode = clean(button.dataset.storeCollectionMode).toLowerCase();
+    const schoolPrompt = collectionMode === 'card'
+      ? {
+        message: "Tap or scan the student's card, or type the card ID.",
+        label: 'Student card ID'
+      }
+      : collectionMode === 'admission'
+        ? {
+          message: "Enter the student's admission number or parent verification code.",
+          label: 'Admission number / parent code'
+        }
+        : {
+          message: "Scan or enter the student's card ID, admission number, or parent verification code.",
+          label: 'Collection reference'
+        };
     const collectionReference = button.dataset.storeStatus === 'Collected'
       ? await window.DynamaxDialogs.prompt({
         title: 'Confirm item collection',
-        message: organisationStore ? 'Enter the order number or customer collection reference.' : "Scan or enter the student's card ID, admission number, or parent verification code.",
-        label: 'Collection reference', required: true, confirmText: 'Confirm collection'
+        message: organisationStore ? 'Enter the order number or customer collection reference.' : schoolPrompt.message,
+        label: organisationStore ? 'Collection reference' : schoolPrompt.label,
+        required: true,
+        confirmText: collectionMode === 'card' ? 'Verify card and collect' : 'Confirm collection'
       })
       : '';
     if (button.dataset.storeStatus === 'Collected' && !clean(collectionReference)) return;

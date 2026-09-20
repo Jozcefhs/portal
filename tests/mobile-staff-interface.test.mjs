@@ -367,14 +367,17 @@ test('edit and delete row actions use shared small accessible icons', () => {
   assert.match(portalCss, /\.compact-delete-action\{color:/);
 });
 
-test('store collection uses one state-aware status button per order', () => {
+test('store collection exposes card, admission-number and face verification in both school stores', () => {
   assert.match(adminJs, /const statusLabel = collected \? 'Collected' : ready \? 'Ready · Verify Collection' : 'Paid · Mark Ready'/);
   assert.match(adminJs, /class="store-order-status \$\{collected \? 'is-collected' : ''\}"/);
-  assert.match(adminJs, /\$\{collected \? 'disabled' : ''\}>\$\{escapeHtml\(statusLabel\)\}<\/button>/);
-  assert.doesNotMatch(adminJs, />Ready for Collection<\/button><button[^>]*>Verify & Mark Collected<\/button>/);
+  assert.match(adminJs, /!organisationStore && ready \? `[\s\S]*?data-store-collection-mode="card"[\s\S]*?Verify by card/);
+  assert.match(adminJs, /data-store-collection-mode="admission"[\s\S]*?Admission no\. \/ parent code/);
+  assert.match(adminJs, /data-store-face-order=/);
+  assert.match(adminJs, /collectionMode === 'card'[\s\S]*?Student card ID/);
+  assert.match(adminJs, /collectionMode === 'admission'[\s\S]*?Admission number \/ parent code/);
   assert.match(adminJs, /button\.dataset\.storeStatus === 'Collected'[\s\S]*?window\.DynamaxDialogs\.prompt/);
   assert.match(adminJs, /await loadStaffStore\(section\)/);
-  assert.match(portalCss, /\.store-order-status\{[^}]*width:100%;[^}]*min-height:38px/);
+  assert.match(portalCss, /\.store-collection-reference-action,[\s\S]*?\.student-face-workflow-action\{[^}]*min-height:38px/);
   assert.match(portalCss, /\.store-order-status\.is-collected,[\s\S]*?background:#e8f7ee/);
 });
 
