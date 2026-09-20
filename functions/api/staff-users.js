@@ -32,6 +32,8 @@ import {
   staffAccountsForSubscription
 } from '../lib/subscription-user-limit.js';
 import { refreshOrganizationPlanPolicy } from '../lib/plan-policy-sync.js';
+import { loadOrganizationNameProfile } from '../lib/organization-name-format.js';
+import { formatPersonName } from '../lib/person-name-format.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -65,22 +67,8 @@ export function requiredStaffImportIdentity(row = {}) {
   return identity;
 }
 
-function staffNameOrder(value) {
-  const supported = new Set(['first name', 'middle name', 'surname']);
-  const order = clean(value).toLowerCase().split(',').map(clean).filter((part) => supported.has(part));
-  return order.length ? order : ['surname', 'first name', 'middle name'];
-}
-
 export function staffDisplayName(row = {}, profile = {}) {
-  const parts = {
-    'first name': clean(row.FirstName || row.firstName),
-    'middle name': clean(row.MiddleName || row.middleName),
-    surname: clean(row.Surname || row.surname || row.LastName || row.lastName)
-  };
-  return staffNameOrder(profile.NameFormat || profile.nameFormat)
-    .map((part) => parts[part])
-    .filter(Boolean)
-    .join(' ') || clean(row.DisplayName || row.displayName || row.Username || row.username);
+  return formatPersonName(row, profile);
 }
 
 function staffSplitNameState(row = {}) {
@@ -111,11 +99,11 @@ export function staffImportIdentity(row = {}, existing = {}, profile = {}) {
     || clean(existing.Surname || existing.surname || existing.LastName || existing.lastName);
   const legacyDisplayName = firstValue(row, ['DisplayName', 'Display Name', 'FullName', 'Full Name', 'Name'])
     || clean(existing.DisplayName || existing.displayName);
-  const parts = { 'first name': firstName, 'middle name': middleName, surname };
-  const displayName = staffNameOrder(profile.NameFormat || profile.nameFormat)
-    .map((part) => parts[part])
-    .filter(Boolean)
-    .join(' ') || legacyDisplayName;
+  const displayName = formatPersonName(
+    { FirstName: firstName, MiddleName: middleName, Surname: surname },
+    profile,
+    legacyDisplayName
+  );
   return { FirstName: firstName, MiddleName: middleName, Surname: surname, DisplayName: displayName };
 }
 
@@ -279,7 +267,7 @@ async function saveUser(env, actor, body) {
   const passwordFields = password ? await hashStaffPassword(password) : {};
   const [structure, profile] = await Promise.all([
     getSchoolStructure(env),
-    getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+    loadOrganizationNameProfile(env)
   ]);
   const branchId = resolveStaffAssignmentBranch(
     assignmentActor(env, actor),
@@ -364,7 +352,7 @@ async function importUsers(env, actor, body) {
   const existingByName = new Map(existingRows.map((row) => [lower(row.Username || row.__id), row]));
   const [structure, profile] = await Promise.all([
     getSchoolStructure(env),
-    getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+    loadOrganizationNameProfile(env)
   ]);
   const writes = []; const failures = []; const seen = new Set();
   for (let index = 0; index < users.length; index += 1) {
@@ -665,7 +653,7 @@ export async function onRequestPost(context) {
         loadSubscriptionUserLimit(env),
         organizationModuleSettings(env),
         getSchoolStructure(env),
-        getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+        loadOrganizationNameProfile(env)
       ]);
       const visibleRows = staffRows.filter((row) => staffRecordMatchesEdition(row, actor) && branchRecordVisible(row, actor));
       const subscriptionRows = staffAccountsForSubscription(staffRows, actor.edition, actor.username);

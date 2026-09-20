@@ -26,6 +26,7 @@ import {
   putStoredDocument
 } from '../lib/document-storage.js';
 import { organizationModulePreferences, organizationProfileDocument, resolveOrganizationConfig } from '../lib/organization-config.js';
+import { loadOrganizationNameProfile } from '../lib/organization-name-format.js';
 import { invalidateStaffAccessCache } from '../lib/staff-auth.js';
 import { mergedProfileText } from '../lib/profile-settings-update.js';
 import {
@@ -2830,7 +2831,8 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
     PlanCatalogRevision: existingOrganization?.PlanCatalogRevision,
     UserLimit: profile.UserLimit,
     BrandName: 'Dynamax',
-    BrandLogoUrl: '/images/Logo.png'
+    BrandLogoUrl: '/images/Logo.png',
+    NameFormat: profile.NameFormat
   }, {
     UpdatedAt: profile.UpdatedAt, UpdatedBy: profile.UpdatedBy
   }));
@@ -2929,6 +2931,7 @@ async function getSchoolProfile(env, options = {}) {
       OrganisationEdition: organization.Edition,
       OrganisationName: organization.Name,
       OrganisationCode: organization.Code,
+      NameFormat: organization.NameFormat,
       BrevoSenderName: clean(profile?.BrevoSenderName || brevoSettings?.BrevoSenderName),
       BrevoSenderEmail: clean(profile?.BrevoSenderEmail || brevoSettings?.BrevoSenderEmail),
       BrevoReplyToEmail: clean(profile?.BrevoReplyToEmail || brevoSettings?.BrevoReplyToEmail),
@@ -7901,7 +7904,7 @@ async function getStaffUsersForDesktop(env, body) {
   const deviceBranchId = clean(body.DeviceBranchId);
   const [allUsers, profile] = await Promise.all([
     listCollection(env, 'staffUsers'),
-    getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+    loadOrganizationNameProfile(env)
   ]);
   const users = deviceBranchId
     ? allUsers.filter((row) => assignedStaffBranchId(row) === canonicalSchoolBranchId(deviceBranchId))
@@ -7960,7 +7963,7 @@ async function saveStaffUserFromDesktop(env, body) {
   if (existing && clean(existing.Role) === 'Super Admin' && staffUserIsActive(existing) && (role !== 'Super Admin' || !active) && activeStaffSuperAdmins(users, username).length === 0) {
     const err = new Error('At least one active Super Admin must remain.'); err.status = 409; throw err;
   }
-  const profile = await getDocument(env, 'settings', 'schoolProfile').catch(() => null);
+  const profile = await loadOrganizationNameProfile(env);
   const identity = { ...(existing || {}), ...incoming };
   const payload = {
     ...(existing || {}),

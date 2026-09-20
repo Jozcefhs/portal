@@ -21,6 +21,8 @@ import {
 } from '../lib/login-protection.js';
 import { beginStaffMfaLogin } from '../lib/staff-mfa.js';
 import { readJsonBody } from '../lib/request-security.js';
+import { loadOrganizationNameProfile } from '../lib/organization-name-format.js';
+import { formatPersonName } from '../lib/person-name-format.js';
 
 function response(data, status = 200, cookies = [], extraHeaders = {}) {
   const headers = new Headers({ 'Cache-Control': 'no-store' });
@@ -49,22 +51,8 @@ function lower(value) {
   return clean(value).toLowerCase();
 }
 
-function nameFormatOrder(value) {
-  const supported = new Set(['first name', 'middle name', 'surname']);
-  const order = clean(value).toLowerCase().split(',').map(clean).filter((part) => supported.has(part));
-  return order.length ? order : ['surname', 'first name', 'middle name'];
-}
-
 export function sessionStaffDisplayName(record = {}, profile = {}, fallback = '') {
-  const parts = {
-    'first name': clean(record.FirstName || record.firstName),
-    'middle name': clean(record.MiddleName || record.middleName),
-    surname: clean(record.Surname || record.surname || record.LastName || record.lastName)
-  };
-  return nameFormatOrder(profile.NameFormat || profile.nameFormat)
-    .map((part) => parts[part])
-    .filter(Boolean)
-    .join(' ') || clean(fallback || record.DisplayName || record.displayName || record.Username || record.username);
+  return formatPersonName(record, profile, fallback);
 }
 
 function publicSessionError(error) {
@@ -182,7 +170,7 @@ export async function onRequestGet(context) {
     }
     const [profileImage, schoolProfile] = await Promise.all([
       loadStaffProfileImage(context.env, authoritativeRecord, sessionUser),
-      getDocument(context.env, 'settings', 'schoolProfile').catch(() => null)
+      loadOrganizationNameProfile(context.env)
     ]);
     const user = authoritativeSessionUser(
       authoritativeRecord,
@@ -237,7 +225,7 @@ export async function onRequestPost(context) {
       if (!firstName || !surname) {
         return response({ ok: false, message: 'First name and surname are required. They are stored as identity fields and only their display order changes.' }, 400);
       }
-      const schoolProfile = await getDocument(env, 'settings', 'schoolProfile').catch(() => null);
+      const schoolProfile = await loadOrganizationNameProfile(env);
       const displayName = sessionStaffDisplayName(
         { FirstName: firstName, MiddleName: middleName, Surname: surname },
         schoolProfile || {}
@@ -311,7 +299,7 @@ export async function onRequestPost(context) {
       const passwordFields = await hashStaffPassword(password);
       const [profileImage, schoolProfile] = await Promise.all([
         loadStaffProfileImage(env, existing, sessionUser),
-        getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+        loadOrganizationNameProfile(env)
       ]);
       const updated = {
         ...existing,
@@ -421,7 +409,7 @@ export async function onRequestPost(context) {
       ]);
       const [profileImage, schoolProfile] = await Promise.all([
         loadStaffProfileImage(env, existing, sessionUser),
-        getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+        loadOrganizationNameProfile(env)
       ]);
       const refreshedUser = authoritativeSessionUser(
         updated,
@@ -472,7 +460,7 @@ export async function onRequestPost(context) {
     const staffRecord = await findStaffUserRecord(env, user.username).catch(() => null);
     const [profileImage, schoolProfile] = await Promise.all([
       loadStaffProfileImage(env, staffRecord || {}, user),
-      getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+      loadOrganizationNameProfile(env)
     ]);
     const refreshedUser = authoritativeSessionUser(
       staffRecord || environmentAdminProfile(env, user) || user,

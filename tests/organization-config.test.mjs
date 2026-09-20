@@ -329,6 +329,7 @@ test('organisation document stores canonical edition identity and flags', () => 
   assert.equal(document.Edition, 'faith');
   assert.equal(document.Name, 'Grace Assembly');
   assert.equal(document.Code, 'GRACE01');
+  assert.equal(document.NameFormat, 'Surname, first name, middle name');
   assert.equal(document.FeatureFlags.offerings, true);
   assert.deepEqual(document.DisabledFeatureEntitlements, []);
   assert.equal(document.UpdatedBy, 'Admin');

@@ -9,6 +9,8 @@ import { deleteStoredDocument, getStoredDocument } from './document-storage.js';
 import { safeStoredDocument } from './document-files.js';
 import { academicCbtPaperDigest } from './academic-cbt-papers.js';
 import { studentLoginCredentialCollection, studentLoginCredentialId } from './student-login-credentials.js';
+import { loadOrganizationNameProfile } from './organization-name-format.js';
+import { formatPersonName } from './person-name-format.js';
 import {
   STUDENT_FACE_MODEL_ID,
   decryptFaceDescriptor,
@@ -420,11 +422,11 @@ export const ACADEMIC_MEMBERSHIP_STATUSES = Object.freeze(['Active', 'Inactive',
 export const ACADEMIC_SUBJECT_ROLES = Object.freeze(['Core', 'Trade', 'Optional']);
 export const ACADEMIC_SENIOR_CHOICE_ROLES = Object.freeze(['Trade', 'Optional']);
 export const ACADEMIC_STUDENT_IMPORT_COLUMNS = Object.freeze([
-  'StudentRef', 'StudentName', 'ClassCode', 'ArmCode', 'DepartmentCode',
+  'StudentRef', 'FirstName', 'Surname', 'MiddleName', 'ClassCode', 'ArmCode', 'DepartmentCode',
   'TradeSubjectCodes', 'OptionalSubjectCodes', 'Reason'
 ]);
 export const ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS = Object.freeze([
-  'StudentRef', 'StudentName', 'ClassCode'
+  'StudentRef', 'FirstName', 'Surname', 'ClassCode'
 ]);
 export const ACADEMIC_STUDENT_MOVEMENT_TYPES = Object.freeze([
   'Allocation', 'Class Transfer', 'Arm Transfer', 'Department Change', 'Subject Change', 'Withdrawal', 'Reinstatement'
@@ -1125,10 +1127,13 @@ function academicStudentDocumentId(reference) {
     .slice(0, 140);
 }
 
-export function importedAcademicStudentProfile(row, scope, schoolClass, arm, session, term, user) {
+export function importedAcademicStudentProfile(row, scope, schoolClass, arm, session, term, user, nameProfile = {}) {
   const timestamp = nowIso();
   const studentRef = clean(row.StudentRef);
-  const studentName = clean(row.StudentName);
+  const firstName = clean(row.FirstName);
+  const middleName = clean(row.MiddleName);
+  const surname = clean(row.Surname);
+  const studentName = formatPersonName({ FirstName: firstName, MiddleName: middleName, Surname: surname }, nameProfile);
   const documentId = academicStudentDocumentId(studentRef);
   return {
     __id: documentId,
@@ -1137,6 +1142,9 @@ export function importedAcademicStudentProfile(row, scope, schoolClass, arm, ses
     AccountRef: studentRef,
     DisplayName: studentName,
     ApplicantName: studentName,
+    FirstName: firstName,
+    MiddleName: middleName,
+    Surname: surname,
     BranchId: scope.branchId,
     SchoolSection: scope.section,
     ClassName: clean(schoolClass?.Name),
@@ -2007,7 +2015,9 @@ export function normalizeAcademicStudentImportRows(value) {
   if (!Array.isArray(supplied)) return [];
   return supplied.map((row = {}) => ({
     StudentRef: clean(row.StudentRef || row.AdmissionNo || row.AccountRef),
-    StudentName: clean(row.StudentName || row.DisplayName),
+    FirstName: clean(row.FirstName || row.firstName || row.GivenName || row.givenName),
+    Surname: clean(row.Surname || row.surname || row.LastName || row.lastName || row.FamilyName || row.familyName),
+    MiddleName: clean(row.MiddleName || row.middleName || row.OtherName || row.otherName),
     ClassCode: clean(row.ClassCode || row.ClassId || row.ClassName),
     ArmCode: clean(row.ArmCode || row.ArmId || row.ArmName),
     DepartmentCode: clean(row.DepartmentCode || row.DepartmentId || row.DepartmentName),
@@ -2645,10 +2655,11 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
   const sessionId = clean(input.SessionId);
   const termId = clean(input.TermId);
   if (!sessionId || !termId) throw failure('Choose the academic session and term for this import.');
-  const [state, people, allStudents] = await Promise.all([
+  const [state, people, allStudents, nameProfile] = await Promise.all([
     loadScopedAcademicState(env, scope, ACADEMIC_STUDENT_STATE_KEYS),
     loadPeople(env, user, scope, { staff: false }),
-    listSchoolCollection(env, 'students')
+    listSchoolCollection(env, 'students'),
+    loadOrganizationNameProfile(env)
   ]);
   const session = assertReference(findById(state.sessions, sessionId), 'The selected session is not active.');
   const term = assertReference(findById(state.terms, termId), 'The selected term is not active.');
@@ -2665,9 +2676,8 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
     const rowNumber = index + 2;
     try {
       if (!row.StudentRef) throw failure(`Row ${rowNumber}: enter the student admission or account reference.`);
-      if (!row.StudentName) {
-        throw failure(`Row ${rowNumber}: enter StudentName.`, 400, 'ACADEMIC_IMPORT_STUDENT_NAME_REQUIRED');
-      }
+      if (!row.FirstName) throw failure(`Row ${rowNumber}: enter FirstName.`, 400, 'ACADEMIC_IMPORT_FIRST_NAME_REQUIRED');
+      if (!row.Surname) throw failure(`Row ${rowNumber}: enter Surname.`, 400, 'ACADEMIC_IMPORT_SURNAME_REQUIRED');
       const studentKey = lower(row.StudentRef);
       if (seenStudents.has(studentKey)) throw failure(`Row ${rowNumber}: ${row.StudentRef} appears more than once in this import.`);
       seenStudents.add(studentKey);
@@ -2705,7 +2715,7 @@ export async function bulkImportAcademicStudentMemberships(env, user = {}, input
         if (documentConflict) {
           throw failure(`Row ${rowNumber}: student reference "${row.StudentRef}" conflicts with another student record.`, 409, 'ACADEMIC_IMPORT_STUDENT_ID_CONFLICT');
         }
-        createdProfile = importedAcademicStudentProfile(row, scope, schoolClass, arm, session, term, user);
+        createdProfile = importedAcademicStudentProfile(row, scope, schoolClass, arm, session, term, user, nameProfile);
         student = createdProfile;
         people.students.push(student);
         allStudents.push(student);

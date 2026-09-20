@@ -320,35 +320,36 @@ test('AM-002 student memberships allocate one arm and a unique subject set per t
 
 test('AM-002 existing-student import rows use reusable codes and semicolon subject lists', () => {
   assert.deepEqual(ACADEMIC_STUDENT_IMPORT_COLUMNS, [
-    'StudentRef', 'StudentName', 'ClassCode', 'ArmCode', 'DepartmentCode',
+    'StudentRef', 'FirstName', 'Surname', 'MiddleName', 'ClassCode', 'ArmCode', 'DepartmentCode',
     'TradeSubjectCodes', 'OptionalSubjectCodes', 'Reason'
   ]);
-  assert.deepEqual(ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS, ['StudentRef', 'StudentName', 'ClassCode']);
+  assert.deepEqual(ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS, ['StudentRef', 'FirstName', 'Surname', 'ClassCode']);
   assert.deepEqual(normalizeAcademicStudentImportRows([{
-    AdmissionNo: 'DCA/2026/001', DisplayName: 'Ada Student', ClassCode: 'SS1', ArmCode: 'EXC',
+    AdmissionNo: 'DCA/2026/001', FirstName: 'Ada', MiddleName: 'Grace', Surname: 'Okafor', ClassCode: 'SS1', ArmCode: 'EXC',
     DepartmentCode: 'SCI', TradeSubjectCodes: 'CATER; AGR | CATER', OptionalSubjectCodes: 'BIO;MUSIC'
   }]), [{
-    StudentRef: 'DCA/2026/001', StudentName: 'Ada Student', ClassCode: 'SS1', ArmCode: 'EXC',
+    StudentRef: 'DCA/2026/001', FirstName: 'Ada', Surname: 'Okafor', MiddleName: 'Grace', ClassCode: 'SS1', ArmCode: 'EXC',
     DepartmentCode: 'SCI', TradeSubjectCodes: ['CATER', 'AGR'], OptionalSubjectCodes: ['BIO', 'MUSIC'], Reason: ''
   }]);
   assert.deepEqual(normalizeAcademicStudentImportRows('not-json'), []);
   assert.deepEqual(normalizeAcademicStudentImportRows([{
-    StudentRef: 'DCA/2026/002', StudentName: 'No Arm Student', ClassCode: 'JSS1'
+    StudentRef: 'DCA/2026/002', FirstName: 'No Arm', Surname: 'Student', ClassCode: 'JSS1'
   }]), [{
-    StudentRef: 'DCA/2026/002', StudentName: 'No Arm Student', ClassCode: 'JSS1', ArmCode: '',
+    StudentRef: 'DCA/2026/002', FirstName: 'No Arm', Surname: 'Student', MiddleName: '', ClassCode: 'JSS1', ArmCode: '',
     DepartmentCode: '', TradeSubjectCodes: [], OptionalSubjectCodes: [], Reason: ''
   }]);
 });
 
 test('AM-002 migration can stage a missing student profile for completion in Students', () => {
   const profile = importedAcademicStudentProfile(
-    { StudentRef: 'DCA/21/0777', StudentName: 'Nnaemeka Jerry' },
+    { StudentRef: 'DCA/21/0777', FirstName: 'Nnaemeka', MiddleName: 'Jerry', Surname: 'Okafor' },
     scope,
     { ClassId: 'jss-1', Name: 'JSS 1', SchoolStage: 'junior-secondary' },
     { ArmId: 'jss-1-bri', Name: 'Brilliance' },
     { Name: '2026/2027' },
     { Name: 'First Term' },
-    { displayName: 'School Admin' }
+    { displayName: 'School Admin' },
+    { NameFormat: 'First name, middle name, surname' }
   );
   assert.equal(profile.AdmissionNo, 'DCA/21/0777');
   assert.equal(profile.__id, 'DCA-21-0777');
@@ -356,6 +357,10 @@ test('AM-002 migration can stage a missing student profile for completion in Stu
   assert.equal(profile.ProfileCompletionStatus, 'Needs completion');
   assert.equal(profile.ClassName, 'JSS 1');
   assert.equal(profile.ClassArm, 'Brilliance');
+  assert.equal(profile.DisplayName, 'Nnaemeka Jerry Okafor');
+  assert.equal(profile.FirstName, 'Nnaemeka');
+  assert.equal(profile.MiddleName, 'Jerry');
+  assert.equal(profile.Surname, 'Okafor');
 });
 
 test('AM-002 arm allocation candidates must belong to the selected existing class', () => {
@@ -796,7 +801,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /function academicStudentMembershipImportCsv/);
   assert.match(adminSource, /profile marked Needs completion will be created automatically/);
   assert.match(adminSource, /Blank student migration template downloaded/);
-  assert.match(adminSource, /ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS = \['StudentRef', 'StudentName', 'ClassCode'\]/);
+  assert.match(adminSource, /ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS = \['StudentRef', 'FirstName', 'Surname', 'ClassCode'\]/);
   assert.match(adminSource, /Arm codes are optional/);
   assert.match(adminSource, /data-academic-workflow="bulkAssignAcademicArmStudentSubjects"/);
   assert.match(adminSource, /function academicArmSubjectRegister/);

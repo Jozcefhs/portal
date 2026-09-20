@@ -5,6 +5,7 @@ import {
   subscriptionPlanEntitlements,
   subscriptionPlanUserLimit
 } from './subscription-plans.js';
+import { normalizeNameFormat, personNameFormatProfile } from './person-name-format.js';
 
 const clean = (value) => String(value ?? '').trim();
 
@@ -231,6 +232,7 @@ export function organizationModulePreferences(edition, planFeatureFlags = {}, di
 export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, legacyProfile = {} } = {}) {
   const profile = organizationProfile && typeof organizationProfile === 'object' ? organizationProfile : {};
   const legacy = legacyProfile && typeof legacyProfile === 'object' ? legacyProfile : {};
+  const { NameFormat } = personNameFormatProfile({ env, organizationProfile: profile, legacyProfile: legacy });
   const britishEnvironmentEdition = clean(env.ORGANISATION_EDITION);
   const americanEnvironmentEdition = clean(env.ORGANIZATION_EDITION);
   const environmentEdition = britishEnvironmentEdition || americanEnvironmentEdition;
@@ -314,6 +316,7 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
     Edition: edition,
     Name: name,
     Code: code,
+    NameFormat,
     Plan: plan,
     UserLimit: Math.max(1, Number(profile.UserLimit || legacy.UserLimit || env.USER_LIMIT || defaultLimit) || defaultLimit),
     FeatureOverrides: overrides,
@@ -336,6 +339,7 @@ export function organizationProfileDocument(config, audit = {}) {
     Edition: resolved.Edition,
     Name: resolved.Name,
     Code: resolved.Code,
+    NameFormat: normalizeNameFormat(config.NameFormat || config.nameFormat || resolved.NameFormat),
     FeatureOverrides: config.FeatureOverrides || config.featureOverrides || resolved.FeatureOverrides || {},
     PlanEntitlements: config.PlanEntitlements ?? config.FeatureEntitlements ?? resolved.PlanEntitlements ?? null,
     DisabledFeatureEntitlements: config.DisabledFeatureEntitlements

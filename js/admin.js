@@ -10858,10 +10858,10 @@ function academicStudentAllocationCandidates(sessionId, termId, classId) {
 }
 
 const ACADEMIC_STUDENT_IMPORT_COLUMNS = [
-  'StudentRef', 'StudentName', 'ClassCode', 'ArmCode', 'DepartmentCode',
+  'StudentRef', 'FirstName', 'Surname', 'MiddleName', 'ClassCode', 'ArmCode', 'DepartmentCode',
   'TradeSubjectCodes', 'OptionalSubjectCodes', 'Reason'
 ];
-const ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS = ['StudentRef', 'StudentName', 'ClassCode'];
+const ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS = ['StudentRef', 'FirstName', 'Surname', 'ClassCode'];
 
 function academicStudentMembershipImportRows(data, sessionId, termId) {
   const assigned = new Set((data.studentMemberships || [])
@@ -10875,13 +10875,15 @@ function academicStudentMembershipImportRows(data, sessionId, termId) {
       || classArms.find((row) => clean(row.Name).toLowerCase() === clean(student.ClassArm).toLowerCase());
     return {
       StudentRef: clean(student.StudentRef),
-      StudentName: clean(student.StudentName),
+      FirstName: clean(student.FirstName || student.firstName),
+      Surname: clean(student.Surname || student.surname || student.LastName || student.lastName),
+      MiddleName: clean(student.MiddleName || student.middleName),
       ClassCode: clean(schoolClass?.Code || schoolClass?.Name || student.ClassName || student.ClassAdmitted),
       ArmCode: clean(arm?.Code || arm?.Name || student.ClassArm),
       DepartmentCode: clean(student.AcademicDepartmentCode),
       TradeSubjectCodes: '', OptionalSubjectCodes: '', Reason: ''
     };
-  }).sort((left, right) => clean(left.StudentName).localeCompare(clean(right.StudentName), undefined, { sensitivity: 'base' }));
+  }).sort((left, right) => clean(`${left.Surname} ${left.FirstName}`).localeCompare(clean(`${right.Surname} ${right.FirstName}`), undefined, { sensitivity: 'base' }));
 }
 
 function academicStudentMembershipImportCsv(data, sessionId, termId) {
@@ -11904,7 +11906,7 @@ function academicStudentWorkspace(data, rows) {
       <button type="submit">Transfer or reassign ${learner.singular}</button>
     </form>
     <form class="academic-management-editor academic-student-import-layout" data-academic-student-membership-import>
-      <div class="academic-management-editor-heading"><div><small>Existing ${learner.singular} migration</small><h3>Import class memberships</h3><p class="muted">Enter each admission number, ${learner.singular} name and reusable class code. Arm code is optional; leave it blank to import the ${learner.singular} without assigning an arm. If the ${learner.singular} is not yet in the master register, a branch-scoped profile marked Needs completion will be created automatically. Senior department, Trade and Optional subject codes may also be left blank and completed in the app.</p></div></div>
+      <div class="academic-management-editor-heading"><div><small>Existing ${learner.singular} migration</small><h3>Import class memberships</h3><p class="muted">Enter each admission number, first name, surname, optional middle name and reusable class code. Arm codes are optional; leave the field blank to import the ${learner.singular} without assigning an arm. If the ${learner.singular} is not yet in the master register, a branch-scoped profile marked Needs completion will be created automatically. Senior department, Trade and Optional subject codes may also be left blank and completed in the app.</p></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
       <div class="academic-management-form-grid academic-management-form-grid-2">${periodFields}</div>
       <div class="academic-student-import-actions">
@@ -11912,7 +11914,7 @@ function academicStudentWorkspace(data, rows) {
         <button type="button" data-academic-import-student-memberships class="secondary">Import completed CSV</button>
         <input type="file" accept=".csv,text/csv" data-academic-student-import-file hidden>
       </div>
-      <small class="muted">Maximum 100 rows per import. StudentRef, StudentName and ClassCode are required. ArmCode and the remaining columns are optional. StudentRef remains the unique identity. References already registered in another branch or school section are rejected; conflicting current-term memberships must use Transfer or change.</small>
+      <small class="muted">Maximum 100 rows per import. StudentRef, FirstName, Surname and ClassCode are required. MiddleName, ArmCode and the remaining columns are optional. StudentRef remains the unique identity. References already registered in another branch or school section are rejected; conflicting current-term memberships must use Transfer or change.</small>
     </form>
   </div>` : `<div class="academic-view-only-note"><strong>My class registers</strong><span>${learner.Plural} and movement history shown here come only from your teaching allocations.</span></div>`;
   return `${forms}${academicArmSubjectRegister(data, rows, canManage)}${table(membershipRegister, rows.studentMemberships, [
@@ -15349,7 +15351,7 @@ function bindAcademicManagement() {
     downloadCsvFile(`academic-student-memberships-${filePart}.csv`, academicStudentMembershipImportCsv(academicManagementData || {}, sessionId, termId));
     setStatus(status, rows.length
       ? `${rows.length} existing student${rows.length === 1 ? '' : 's'} added to the pre-filled CSV template.`
-      : 'Blank student migration template downloaded. Add admission numbers, names and class codes before importing. Arm codes are optional.', 'ok');
+      : 'Blank student migration template downloaded. Add admission numbers, first names, surnames and class codes before importing. Middle names and arm codes are optional.', 'ok');
     event.currentTarget.blur();
   });
   studentImportButton?.addEventListener('click', () => studentImportFile?.click());

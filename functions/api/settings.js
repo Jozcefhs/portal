@@ -1,6 +1,7 @@
 import { getDocument, patchDocumentFields, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { documentStorageConfigured } from '../lib/document-storage.js';
 import { organizationProfileDocument, resolveOrganizationConfig } from '../lib/organization-config.js';
+import { personNameFormatProfile } from '../lib/person-name-format.js';
 import {
   assertDeploymentEditionSelection,
   deploymentIdentityDetails,
@@ -227,6 +228,11 @@ async function loadProfile(env, options = {}) {
         if (saved[key] !== undefined) profile[key] = saved[key];
       });
     }
+    profile.NameFormat = personNameFormatProfile({
+      env,
+      organizationProfile: savedOrganization,
+      legacyProfile: profile
+    }).NameFormat;
     SENDER_PROFILE_FIELDS.forEach((field) => {
       profile[field] = clean(profile[field] || savedBrevo?.[field]);
     });
@@ -554,7 +560,8 @@ export async function onRequestPost(context) {
       PlanCatalogRevision: existing.PlanCatalogRevision,
       UserLimit: profile.UserLimit,
       BrandName: 'Dynamax',
-      BrandLogoUrl: '/images/Logo.png'
+      BrandLogoUrl: '/images/Logo.png',
+      NameFormat: profile.NameFormat
     }, {
       UpdatedAt: profile.UpdatedAt, UpdatedBy: 'Setup'
     }));

@@ -1,7 +1,7 @@
 {
-  "version": "3.1.5",
+  "version": "3.1.6",
   "channel": "stable",
   "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup.exe",
-  "sha256": "bedb2340a80bff3066bc0b8cc697e3d5cd321b0926298ba58686d0d7c584564f",
-  "notes": "Dynamax Desktop v3.1.5 keeps admissions communication progress current automatically, preserves applicant selections during refresh, and checks existing-student conflicts before batch enrollment so eligible applicants can be reconciled safely."
+  "sha256": "cdfe7547296ea5607e4995d5a1494dcc5f112e9615c38dbbed0a60efe5c77b64",
+  "notes": "Dynamax Desktop v3.1.6 uses separate first, surname and middle-name fields for student membership imports and loads configured optional services into the batch editor for direct updates."
 }
