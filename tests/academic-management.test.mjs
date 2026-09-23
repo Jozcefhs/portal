@@ -14,6 +14,7 @@ import {
   academicPermanentDeleteDependants,
   academicManagementCapabilities,
   academicManagementViewStateKeys,
+  academicMembershipCanReceiveInitialArm,
   academicLegacyClassCompatibilityEnabled,
   academicOfferingSubjectRole,
   academicSeniorCoreSubjectIds,
@@ -645,11 +646,36 @@ test('bulk student allocation maps every selected reference into membership and 
     librarySource.indexOf('export async function bulkAllocateAcademicStudents'),
     librarySource.indexOf('export async function bulkImportAcademicStudentMemberships')
   );
-  assert.equal([...bulkAllocationSource.matchAll(/StudentRef: studentRef/g)].length, 2);
+  assert.equal([...bulkAllocationSource.matchAll(/StudentRef: studentRef/g)].length, 3);
   assert.doesNotMatch(bulkAllocationSource, /\.\.\.input,\s*StudentRef(?:\s*[,}])/);
   assert.match(librarySource, /type === 'studentmembership' && arm\.DepartmentId/);
   assert.match(librarySource, /record\.DepartmentId = arm\.DepartmentId/);
   assert.match(bulkAllocationSource, /allowIncompleteCurriculum: true/);
+  assert.match(bulkAllocationSource, /academicMembershipCanReceiveInitialArm/);
+  assert.match(bulkAllocationSource, /writePrecondition\(existing, clean\(existing\.__updateTime\)\)/);
+  assert.match(bulkAllocationSource, /MovementType: 'Allocation'/);
+});
+
+test('an active class membership without an arm remains eligible for initial arm allocation', () => {
+  const period = { sessionId: 'session-1', termId: 'term-1', classId: 'grade-8' };
+  assert.equal(academicMembershipCanReceiveInitialArm({}, period), false);
+  assert.equal(academicMembershipCanReceiveInitialArm({
+    StudentRef: 'DCA/1', SessionId: 'session-1', TermId: 'term-1', ClassId: 'grade-8', ArmId: '', Status: 'Active'
+  }, period), true);
+  assert.equal(academicMembershipCanReceiveInitialArm({
+    StudentRef: 'DCA/1', SessionId: 'session-1', TermId: 'term-1', ClassId: 'grade-8', ArmId: 'brilliance', Status: 'Active'
+  }, period), false);
+  assert.equal(academicMembershipCanReceiveInitialArm({
+    StudentRef: 'DCA/1', SessionId: 'session-1', TermId: 'term-1', ClassId: 'grade-8', ArmId: '', Status: 'Withdrawn'
+  }, period), false);
+  assert.equal(academicMembershipCanReceiveInitialArm({
+    StudentRef: 'DCA/1', SessionId: 'session-1', TermId: 'term-1', ClassId: 'grade-9', ArmId: '', Status: 'Active'
+  }, period), false);
+  const candidateSource = adminSource.slice(
+    adminSource.indexOf('function academicStudentAllocationCandidates'),
+    adminSource.indexOf('const ACADEMIC_STUDENT_IMPORT_COLUMNS')
+  );
+  assert.match(candidateSource, /academicIsActive\(membership\).*membership\.ClassId === classId.*!clean\(membership\.ArmId\)/s);
 });
 
 test('subject teachers are batch-assigned only to the exact selected classrooms', () => {

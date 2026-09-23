@@ -10997,18 +10997,32 @@ function academicStudentBelongsToClass(student = {}, schoolClass = {}) {
 
 function academicStudentAllocationCandidates(sessionId, termId, classId) {
   const schoolClass = academicFind(academicManagementData?.classes || [], classId);
-  if (!schoolClass || !sessionId || !termId) return { schoolClass, students: [], candidates: [] };
+  if (!schoolClass || !sessionId || !termId) {
+    return { schoolClass, students: [], candidates: [], assignedCount: 0, unavailableCount: 0 };
+  }
   const students = (academicManagementData?.students || []).filter((student) => {
     const section = clean(student.SchoolSection).toLowerCase();
     return (!section || section === academicManagementFilters.section) && academicStudentBelongsToClass(student, schoolClass);
   }).sort((left, right) => clean(left.StudentName).localeCompare(clean(right.StudentName), undefined, { sensitivity: 'base' }));
-  const assigned = new Set((academicManagementData?.studentMemberships || [])
+  const membershipByStudent = new Map((academicManagementData?.studentMemberships || [])
     .filter((membership) => membership.SessionId === sessionId && membership.TermId === termId)
-    .map((membership) => clean(membership.StudentRef).toLowerCase()));
+    .map((membership) => [clean(membership.StudentRef).toLowerCase(), membership]));
+  let assignedCount = 0;
+  let unavailableCount = 0;
+  const candidates = students.filter((student) => {
+    const membership = membershipByStudent.get(clean(student.StudentRef).toLowerCase());
+    if (!membership) return true;
+    if (academicIsActive(membership) && membership.ClassId === classId && !clean(membership.ArmId)) return true;
+    if (clean(membership.ArmId)) assignedCount += 1;
+    else unavailableCount += 1;
+    return false;
+  });
   return {
     schoolClass,
     students,
-    candidates: students.filter((student) => !assigned.has(clean(student.StudentRef).toLowerCase()))
+    candidates,
+    assignedCount,
+    unavailableCount
   };
 }
 
@@ -11112,15 +11126,16 @@ function syncAcademicStudentPlacementForm(form, changedName = '') {
 
   const selectedTermId = clean(termControl.value);
   const selectedArmId = clean(armControl.value);
-  const { schoolClass, students, candidates } = selectedArmId
+  const { schoolClass, students, candidates, assignedCount = 0, unavailableCount = 0 } = selectedArmId
     ? academicStudentAllocationCandidates(sessionId, selectedTermId, selectedClassId)
-    : { schoolClass: academicFind(classRows, selectedClassId), students: [], candidates: [] };
+    : { schoolClass: academicFind(classRows, selectedClassId), students: [], candidates: [], assignedCount: 0, unavailableCount: 0 };
   const className = clean(schoolClass?.Name) || 'the selected class';
   let summary = 'Choose the session, term, class and arm to display unassigned students.';
   if (sessionId && selectedTermId && selectedClassId && !selectedArmId) summary = `Choose an arm for ${className} to display its unassigned students.`;
   else if (selectedArmId && !students.length) summary = `No students with ${className} as their existing class were found.`;
-  else if (selectedArmId && !candidates.length) summary = `All ${students.length} ${className} student${students.length === 1 ? '' : 's'} already have arm assignments for this period.`;
-  else if (selectedArmId) summary = `${candidates.length} of ${students.length} ${className} student${students.length === 1 ? '' : 's'} remain unassigned for this period. Select up to 100. Shift-click to select a range.`;
+  else if (selectedArmId && !candidates.length && assignedCount === students.length) summary = `All ${students.length} ${className} student${students.length === 1 ? '' : 's'} already have arm assignments for this period.`;
+  else if (selectedArmId && !candidates.length) summary = `No ${className} students are available for initial arm assignment.${assignedCount ? ` ${assignedCount} already have an arm.` : ''}${unavailableCount ? ` ${unavailableCount} must be handled through Transfer or Reassign.` : ''}`;
+  else if (selectedArmId) summary = `${candidates.length} of ${students.length} ${className} student${students.length === 1 ? '' : 's'} remain unassigned for this period.${unavailableCount ? ` ${unavailableCount} other record${unavailableCount === 1 ? '' : 's'} require Transfer or Reassign.` : ''} Select up to 100. Shift-click to select a range.`;
 
   const candidateSelect = form.querySelector('[data-academic-student-candidate-select]');
   if (candidateSelect) {

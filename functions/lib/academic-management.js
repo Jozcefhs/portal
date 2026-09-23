@@ -2454,6 +2454,15 @@ export async function bulkApplyAcademicSubjects(env, user = {}, input = {}) {
   return response;
 }
 
+export function academicMembershipCanReceiveInitialArm(membership = {}, context = {}) {
+  return Boolean(clean(membership.MembershipId || membership.RecordId || membership.StudentRef))
+    && statusActive(membership)
+    && clean(membership.SessionId) === clean(context.sessionId || context.SessionId)
+    && clean(membership.TermId) === clean(context.termId || context.TermId)
+    && clean(membership.ClassId) === clean(context.classId || context.ClassId)
+    && !clean(membership.ArmId);
+}
+
 export function normalizeAcademicClassTeacherAssignments(input = {}) {
   const supplied = Array.isArray(input.Assignments) ? input.Assignments : [];
   if (!supplied.length) throw failure('Choose at least one classroom and class teacher.');
@@ -2774,11 +2783,14 @@ export async function bulkAllocateAcademicStudents(env, user = {}, input = {}) {
   const projected = { ...state, studentMemberships: [...state.studentMemberships] };
   const writes = [];
   const skipped = [];
+  let created = 0;
+  let completed = 0;
   for (const studentRef of studentRefs) {
     const existingId = academicId('student', scope.branchId, scope.section, input.SessionId, input.TermId, studentRef);
     const existing = findById(projected.studentMemberships, existingId);
     const record = normalizeAcademicStudentMembership({
-      ...input, StudentRef: studentRef, Status: 'Active', SubjectIds: [], CoreSubjectIds: [], TradeSubjectIds: [], OptionalSubjectIds: []
+      ...input, StudentRef: studentRef, Status: 'Active',
+      ...(existing ? {} : { SubjectIds: [], CoreSubjectIds: [], TradeSubjectIds: [], OptionalSubjectIds: [] })
     }, scope, existing);
     validateAcademicRecord(projected, 'studentmembership', record, {
       ...people, existing, allowIncompleteCurriculum: true
@@ -2788,25 +2800,42 @@ export async function bulkAllocateAcademicStudents(env, user = {}, input = {}) {
         skipped.push(studentRef);
         continue;
       }
-      throw failure(`${studentRef} already has a different membership in this term. Use the transfer workflow instead.`, 409, 'ACADEMIC_BULK_MEMBERSHIP_CONFLICT');
+      if (!academicMembershipCanReceiveInitialArm(existing, {
+        sessionId: input.SessionId, termId: input.TermId, classId: input.ClassId
+      })) {
+        throw failure(`${studentRef} already has a different membership in this term. Use the transfer workflow instead.`, 409, 'ACADEMIC_BULK_MEMBERSHIP_CONFLICT');
+      }
+      stampAcademicRecord(record, user, existing);
+      projected.studentMemberships = projected.studentMemberships.map((row) => recordId(row) === existingId ? record : row);
+      writes.push({
+        collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+        documentId: recordId(existing), data: withoutMetadata(record),
+        ...writePrecondition(existing, clean(existing.__updateTime))
+      });
+      writes.push(movementWrite(user, academicMovementForState(projected, {
+        ...input, StudentRef: studentRef, MovementType: 'Allocation'
+      }, scope, existing, record)));
+      completed += 1;
+    } else {
+      stampAcademicRecord(record, user);
+      projected.studentMemberships.push(record);
+      writes.push({
+        collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
+        documentId: record.MembershipId, data: withoutMetadata(record), exists: false
+      });
+      writes.push(movementWrite(user, academicMovementForState(projected, { ...input, StudentRef: studentRef }, scope, null, record)));
+      created += 1;
     }
-    stampAcademicRecord(record, user);
-    projected.studentMemberships.push(record);
-    writes.push({
-      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.studentMemberships,
-      documentId: record.MembershipId, data: withoutMetadata(record), exists: false
-    });
-    writes.push(movementWrite(user, academicMovementForState(projected, { ...input, StudentRef: studentRef }, scope, null, record)));
     const compatibility = studentCompatibilityWrite(people, projected, record);
     if (compatibility) writes.push(compatibility);
   }
-  const created = studentRefs.length - skipped.length;
-  if (created) {
+  const allocated = created + completed;
+  if (allocated) {
     writes.push(auditWrite(user, 'BULK ALLOCATE', 'studentmembership', {
       BranchId: scope.branchId, SchoolSection: scope.section,
       SessionId: clean(input.SessionId), TermId: clean(input.TermId),
       MembershipId: `bulk-${Date.now()}`
-    }, `${created} student(s) allocated; ${skipped.length} already matched.`));
+    }, `${allocated} student(s) allocated; ${created} new membership(s); ${completed} pending arm assignment(s) completed; ${skipped.length} already matched.`));
     try {
       await batchCommitDocuments(env, writes);
     } catch (error) {
@@ -2819,10 +2848,13 @@ export async function bulkAllocateAcademicStudents(env, user = {}, input = {}) {
   const response = await bootstrapAcademicManagement(env, user, {
     ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'students'
   });
-  response.message = created
-    ? `${created} student${created === 1 ? '' : 's'} allocated online${skipped.length ? `; ${skipped.length} already matched and were skipped` : ''}.`
+  response.message = allocated
+    ? `${allocated} student${allocated === 1 ? '' : 's'} allocated online${completed ? `; ${completed} existing class membership${completed === 1 ? '' : 's'} completed with an arm` : ''}${skipped.length ? `; ${skipped.length} already matched and were skipped` : ''}.`
     : 'Every selected student already has this exact allocation.';
-  response.bulkResult = { Requested: studentRefs.length, Created: created, Skipped: skipped.length };
+  response.bulkResult = {
+    Requested: studentRefs.length, Allocated: allocated, Created: created,
+    Updated: completed, Skipped: skipped.length
+  };
   return response;
 }
 
