@@ -195,6 +195,10 @@ export function defaultAcademicPolicy() {
     },
     Promotion: {
       Mode: 'unconfigured',
+      ProbationResit: {
+        Enabled: false,
+        PassPercentage: 50
+      },
       MinimumOverallAverage: null,
       RequiredCoreSubjectIds: [],
       MaximumFailedSubjects: null,
@@ -230,6 +234,7 @@ export function normalizeAcademicPolicy(value = {}) {
   const midTerm = value.MidTerm || value.midTerm || {};
   const cumulative = value.Cumulative || value.cumulative || {};
   const promotion = value.Promotion || value.promotion || {};
+  const probationResit = promotion.ProbationResit || promotion.probationResit || {};
   const juniorPromotion = promotion.JuniorSecondary || promotion.juniorSecondary || {};
   const seniorPromotion = promotion.SeniorSecondary || promotion.seniorSecondary || {};
   const components = Array.isArray(assessment.Components || assessment.components)
@@ -319,6 +324,18 @@ export function normalizeAcademicPolicy(value = {}) {
     },
     Promotion: {
       Mode: oneOf(promotion.Mode ?? promotion.mode, PROMOTION_MODES, defaults.Promotion.Mode),
+      ProbationResit: {
+        Enabled: yesNoBoolean(
+          probationResit.Enabled ?? probationResit.enabled,
+          defaults.Promotion.ProbationResit.Enabled
+        ),
+        PassPercentage: optionalBoundedNumber(
+          probationResit.PassPercentage ?? probationResit.passPercentage
+            ?? defaults.Promotion.ProbationResit.PassPercentage,
+          0,
+          100
+        )
+      },
       MinimumOverallAverage: optionalBoundedNumber(
         promotion.MinimumOverallAverage ?? promotion.minimumOverallAverage,
         0,
@@ -618,6 +635,9 @@ export function academicPolicyIssues(value = {}, options = {}) {
   }
 
   const promotion = policy.Promotion;
+  if (promotion.ProbationResit.Enabled && promotion.ProbationResit.PassPercentage === null) {
+    add('PROBATION_RESIT_PASS_PERCENTAGE_REQUIRED', 'Enter the minimum percentage required to pass a student probation re-sit.', 'Promotion.ProbationResit.PassPercentage');
+  }
   if (activation && promotion.Mode === 'unconfigured') {
     add('PROMOTION_POLICY_REQUIRED', 'Choose manual review or configured promotion criteria.', 'Promotion.Mode');
   }

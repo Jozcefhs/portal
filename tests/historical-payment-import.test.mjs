@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { normalizeHistoricalPaymentImportRow } from '../functions/api/backend.js';
+import {
+  historicalPaymentTemplateAccountRows,
+  normalizeHistoricalPaymentImportRow
+} from '../functions/api/backend.js';
 
 const backendSource = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
 
@@ -49,4 +52,29 @@ test('historical payment import is role-gated, preflights rows, updates category
   assert.match(backendSource, /BillingCategory: row\.BillingCategory/);
   assert.match(backendSource, /DeferNotifications: true/);
   assert.match(backendSource, /Channel: 'Historical Payment Import'/);
+});
+
+test('historical payment template uses the fresh student register and collapses legacy duplicates', () => {
+  const rows = historicalPaymentTemplateAccountRows([
+    {
+      AdmissionNo: 'DCA/26/001', DisplayName: 'Legacy Name', BranchId: 'main',
+      SchoolSection: 'secondary', BillingCategory: 'Regular', __scopePath: 'students'
+    },
+    {
+      AdmissionNo: 'DCA/26/001', DisplayName: 'Current Name', BranchId: 'main',
+      SchoolSection: 'secondary', BillingCategory: 'School Staff Child',
+      AcademicSession: '2026/2027', Term: 'First Term',
+      __scopePath: 'schoolBranches/main/sections/secondary/students'
+    },
+    {
+      AdmissionNo: 'DCA/26/002', DisplayName: 'Primary Student', BranchId: 'main',
+      SchoolSection: 'primary', BillingCategory: 'Regular',
+      __scopePath: 'schoolBranches/main/sections/primary/students'
+    }
+  ]);
+  assert.equal(rows.length, 2);
+  assert.equal(rows.find((row) => row.AccountRef === 'DCA/26/001').DisplayName, 'Current Name');
+  assert.deepEqual(new Set(rows.map((row) => row.SchoolSection)), new Set(['primary', 'secondary']));
+  assert.match(backendSource, /case 'getHistoricalPaymentTemplateAccounts':[\s\S]*?return getHistoricalPaymentTemplateAccounts\(env, body\)/);
+  assert.match(backendSource, /listSchoolCollection\(env, 'students', \{ branchId \}\)/);
 });

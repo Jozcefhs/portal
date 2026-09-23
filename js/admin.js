@@ -11137,7 +11137,7 @@ function academicTaskDefinitions(view, root) {
   const definitions = {
     classrooms: [
       { key: 'register', label: 'Classroom register', title: 'Choose a classroom', description: 'Open an existing classroom to manage its students and form staff.', nodes: nodes(register('Classrooms')) },
-      { key: 'create', label: 'Create classroom', title: 'Create a classroom', description: 'Combine one reusable class and arm, then add a Senior department where required.', nodes: nodes(form('[data-academic-classroom-editor]')) },
+      { key: 'create', label: 'Create classrooms', title: 'Create classrooms in bulk', description: 'Select every reusable class and arm combination that should become a classroom.', nodes: nodes(form('[data-academic-classroom-creator]')) },
       { key: 'manage', label: 'Open classroom', title: 'Manage the open classroom', description: 'Assign students, form teacher and assistant without leaving the classroom.', nodes: nodes(form('.academic-classroom-open'), form('.academic-classroom-empty')) }
     ],
     structure: [
@@ -11332,27 +11332,17 @@ function academicClassroomWorkspace(data, rows) {
   const formTeacher = classroomAllocations.find((row) => row.AllocationRole === 'Form Teacher');
   const assistantTeacher = classroomAllocations.find((row) => row.AllocationRole === 'Assistant Teacher');
 
-  const editor = canStructure ? `<form class="academic-management-editor academic-classroom-create" data-academic-form="arm" data-academic-classroom-editor>
-    <input type="hidden" name="RecordId" value="${escapeHtml(academicRecordId(selectedArm || {}))}">
-    <input type="hidden" name="RevisionToken" value="${escapeHtml(selectedArm?.RevisionToken || '')}">
+  const classOptions = classes.map((row) => ({ value: row.ClassId, label: `${row.Code} - ${row.Name}` }));
+  const templateOptions = templates.map((row) => ({ value: row.ArmTemplateId, label: `${row.Code} - ${row.Name}` }));
+  const editor = canStructure ? `<form class="academic-management-editor academic-classroom-create" data-academic-workflow="bulkApplyAcademicArmTemplates" data-academic-classroom-creator>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(section)}">
-    <input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}">
-    <input type="hidden" name="TermId" value="${escapeHtml(termId)}">
-    <input type="hidden" name="Name" value="${escapeHtml(selectedArm?.Name || selectedTemplate?.Name || '')}">
-    <input type="hidden" name="Code" value="${escapeHtml(selectedArm?.Code || selectedTemplate?.Code || '')}">
-    <input type="hidden" name="Capacity" value="${escapeHtml(selectedArm?.Capacity ?? selectedTemplate?.DefaultCapacity ?? 0)}">
-    <input type="hidden" name="IsClassroom" value="YES">
-    <input type="hidden" name="Status" value="Active">
-    <div class="academic-management-editor-heading"><div><small>Classrooms</small><h3>Create classroom</h3><p class="muted">Choose a reusable class and arm. For Senior Secondary, also choose the department.</p></div></div>
-    <div class="academic-classroom-flow-grid">
-      <label>Reusable class<select name="ClassId" required>${academicSelectOptions(classes, selectedClass?.ClassId || '', (row) => `${row.Code} - ${row.Name} · ${academicSchoolStageLabel(row.SchoolStage)}`, 'Choose reusable class')}</select></label>
-      <label>Reusable arm<select name="ArmTemplateId" required>${academicSelectOptions(templates, selectedTemplate?.ArmTemplateId || '', (row) => `${row.Code} - ${row.Name}`, 'Choose reusable arm')}</select></label>
-      <label data-academic-classroom-department>Academic department<select name="DepartmentId">${academicSelectOptions(departments, selectedArm?.DepartmentId || '', (row) => `${row.Code} - ${row.Name}`, 'Choose Senior department')}</select><small>Required only for Senior Secondary.</small></label>
-    </div>
-    <button type="submit" data-academic-classroom-submit>Create classroom</button>
+    <div class="academic-management-editor-heading"><div><small>Batch classroom setup</small><h3>Create classrooms</h3><p class="muted">Choose one or more reusable classes and arms. Every selected arm will be applied to every selected class.</p></div></div>
+    ${academicCheckboxField({ name: 'ClassIds', label: 'Classes', options: classOptions, required: true, idPrefix: 'classroom-creation-classes', help: 'Select every class that should receive the chosen reusable arms.' })}
+    ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Reusable arms', options: templateOptions, required: true, idPrefix: 'classroom-creation-arms', help: 'Existing matching classrooms are skipped; no classroom is overwritten.' })}
+    <button type="submit">Create selected classrooms</button>
   </form>` : '<div class="academic-view-only-note"><strong>Classroom workspace</strong><span>Your role can open assigned classrooms but cannot create or reconfigure them.</span></div>';
 
-  let selectedWorkspace = '<div class="academic-classroom-empty"><strong>No classroom is open.</strong><span>Create one above, or open an existing classroom from the register below.</span></div>';
+  let selectedWorkspace = '<div class="academic-classroom-empty"><strong>No classroom is open.</strong><span>Create classrooms above, or open an existing classroom from the register below.</span></div>';
   if (selectedArm && selectedClass) {
     const seniorNeedsDepartment = selectedStage === 'senior-secondary' && !selectedDepartment;
     const { students, candidates } = academicStudentAllocationCandidates(sessionId, termId, selectedClass.ClassId);
@@ -11395,39 +11385,8 @@ function academicClassroomWorkspace(data, rows) {
     { label: 'Form teacher', value: (row) => { const allocation = periodAllocations.find((item) => item.ArmId === row.ArmId && item.AllocationRole === 'Form Teacher'); return academicLabel(data.staff, allocation?.TeacherUsername, 'Not assigned'); } },
     { label: 'Assistant', value: (row) => { const allocation = periodAllocations.find((item) => item.ArmId === row.ArmId && item.AllocationRole === 'Assistant Teacher'); return academicLabel(data.staff, allocation?.TeacherUsername, 'Not assigned'); } },
     { label: 'Action', render: (row) => `<button type="button" data-academic-open-classroom="${escapeHtml(row.ArmId)}">Open classroom</button>` }
-  ], { emptyMessage: 'No classrooms exist yet. Use Create classroom above.' });
+  ], { emptyMessage: 'No classrooms exist yet. Use Create classrooms above.' });
   return `${editor}${selectedWorkspace}${classroomRegister}`;
-}
-
-function syncAcademicClassroomEditor(form) {
-  if (!form || !academicManagementData) return;
-  const classId = clean(form.elements.ClassId?.value);
-  const templateId = clean(form.elements.ArmTemplateId?.value);
-  const schoolClass = academicFind(academicManagementData.classes || [], classId);
-  const template = academicFind(academicManagementData.armTemplates || [], templateId);
-  const classroom = (academicManagementData.arms || []).find((row) => academicIsActive(row)
-    && row.ClassId === classId && (row.ArmTemplateId === templateId
-      || (template && (clean(row.Name).toLowerCase() === clean(template.Name).toLowerCase()
-        || (clean(row.Code) && clean(row.Code).toLowerCase() === clean(template.Code).toLowerCase())))));
-  const senior = clean(schoolClass?.SchoolStage).toLowerCase() === 'senior-secondary';
-  const departmentLabel = form.querySelector('[data-academic-classroom-department]');
-  const department = form.elements.DepartmentId;
-  if (departmentLabel) departmentLabel.hidden = !senior;
-  if (department) {
-    department.required = senior;
-    if (senior && classroom) department.value = clean(classroom.DepartmentId);
-    if (!senior) department.value = '';
-  }
-  if (form.elements.RecordId) form.elements.RecordId.value = academicRecordId(classroom || {});
-  if (form.elements.RevisionToken) form.elements.RevisionToken.value = clean(classroom?.RevisionToken);
-  if (form.elements.Name) form.elements.Name.value = clean(classroom?.Name || template?.Name);
-  if (form.elements.Code) form.elements.Code.value = clean(classroom?.Code || template?.Code);
-  if (form.elements.Capacity) form.elements.Capacity.value = classroom?.Capacity ?? template?.DefaultCapacity ?? 0;
-  const submit = form.querySelector('[data-academic-classroom-submit]');
-  if (submit) {
-    submit.disabled = !schoolClass || !template || (senior && !clean(department?.value));
-    submit.textContent = 'Create classroom';
-  }
 }
 
 function academicStructureWorkspace(data, rows) {
@@ -12625,13 +12584,18 @@ function academicPromotionActions(row, permissions = {}) {
   if (!permissions.canManagePromotions) return '<span class="muted">View only</span>';
   const actions = [];
   const status = clean(row.Status || 'Draft');
+  const resitPolicy = row.PolicySnapshot?.Promotion?.ProbationResit || {};
+  const resitAllowed = resitPolicy.Enabled === true
+    && [row.RecommendedOutcome, row.FinalOutcome].some((value) => clean(value).toLowerCase() === 'probation')
+    && status !== 'Committed';
   if (status === 'Draft') actions.push(['Reviewed', 'Mark decision reviewed', '&#10003;']);
   if (status === 'Reviewed') actions.push(['Approved', 'Approve final decision', '&#10004;']);
   if (['Reviewed', 'Approved'].includes(status)) actions.push(['Draft', 'Reopen decision', '&#8634;']);
   const edit = status === 'Draft' ? `<button type="button" class="compact-icon-action compact-edit-action" data-academic-promotion-edit="${escapeHtml(row.PromotionDecisionId)}" title="Choose final outcome" aria-label="Choose final outcome">&#9998;</button>` : '';
+  const resit = resitAllowed ? `<button type="button" class="compact-icon-action compact-edit-action" data-academic-promotion-resit-open="${escapeHtml(row.PromotionDecisionId)}" title="Schedule or record probation re-sit" aria-label="Schedule or record probation re-sit">&#8635;</button>` : '';
   const workflow = actions.map(([target, title, icon]) => `<button type="button" class="compact-icon-action ${target === 'Draft' ? 'academic-archive-action' : 'compact-edit-action'}" data-academic-promotion-status="${escapeHtml(target)}" data-academic-promotion-id="${escapeHtml(row.PromotionDecisionId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${icon}</button>`).join('');
   const commit = status === 'Approved' ? `<button type="button" class="compact-icon-action compact-edit-action" data-academic-promotion-edit="${escapeHtml(row.PromotionDecisionId)}" title="Commit decision and placement" aria-label="Commit decision and placement">&#10148;</button>` : '';
-  return `<div class="academic-management-row-actions">${edit}${workflow}${commit}</div>`;
+  return `<div class="academic-management-row-actions">${edit}${resit}${workflow}${commit}</div>`;
 }
 
 function academicTranscriptActions(row, permissions = {}) {
@@ -12659,6 +12623,10 @@ function academicSessionOutcomesWorkspace(data, rows) {
   let selectedDecision = academicFind(promotionRows, academicOutcomeDraft.promotionDecisionId);
   if (!selectedDecision) academicOutcomeDraft.promotionDecisionId = '';
   selectedDecision = academicFind(promotionRows, academicOutcomeDraft.promotionDecisionId);
+  const selectedResitPolicy = selectedDecision?.PolicySnapshot?.Promotion?.ProbationResit || {};
+  const selectedResitAllowed = selectedResitPolicy.Enabled === true
+    && [selectedDecision?.RecommendedOutcome, selectedDecision?.FinalOutcome].some((value) => clean(value).toLowerCase() === 'probation')
+    && selectedDecision?.Status !== 'Committed';
   const sessions = rows.sessions.filter(academicIsActive);
   const destinationSessionId = clean(sessions.find((session) => session.SessionId !== academicManagementFilters.sessionId)?.SessionId || sessions[0]?.SessionId);
   const destinationTerms = (data.terms || []).filter((term) => term.SessionId === destinationSessionId && academicIsActive(term));
@@ -12689,6 +12657,19 @@ function academicSessionOutcomesWorkspace(data, rows) {
     <input type="hidden" name="SessionId" value="${escapeHtml(academicManagementFilters.sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(academicManagementFilters.termId)}"><input type="hidden" name="ArmId" value="${escapeHtml(selectedArm?.ArmId || '')}">
     <button type="submit"${selectedArm && cumulativeRows.some((row) => row.Status === 'Locked') ? '' : ' disabled'}>${promotionRows.length ? 'Recalculate Draft recommendations' : 'Calculate promotion recommendations'}</button>
   </form>` : '';
+  const promotionResitEditor = selectedResitAllowed ? `<fieldset class="academic-management-fieldset"><legend>Optional student probation re-sit</legend>
+      <p class="muted">This option is allowed by the captured promotion policy. Leave both score fields blank to schedule the re-sit; enter both to record the result. A pass changes the final outcome to Promoted and reopens the decision as Draft for normal review and approval.</p>
+      <div class="academic-management-form-grid academic-management-form-grid-3">
+        <label>Re-sit date<input type="date" name="ProbationResitDate" value="${escapeHtml(selectedDecision.ProbationResitDate || '')}" required></label>
+        <label>Assessment name<input name="ProbationResitAssessment" value="${escapeHtml(selectedDecision.ProbationResitAssessment || 'Probation re-sit')}" maxlength="160"></label>
+        <label>Subjects / papers<input name="ProbationResitSubjects" value="${escapeHtml(selectedDecision.ProbationResitSubjects || '')}" maxlength="500" placeholder="e.g. Mathematics, English"></label>
+        <label>Score<input type="number" name="ProbationResitScore" value="${escapeHtml(selectedDecision.ProbationResitScore ?? '')}" min="0" step="0.01" placeholder="Leave blank to schedule"></label>
+        <label>Maximum score<input type="number" name="ProbationResitMaximumScore" value="${escapeHtml(selectedDecision.ProbationResitMaximumScore ?? '')}" min="0.01" step="0.01" placeholder="Leave blank to schedule"></label>
+        <label>Policy pass mark<input value="${escapeHtml(selectedResitPolicy.PassPercentage ?? selectedDecision.ProbationResitPassPercentage ?? 50)}%" readonly></label>
+      </div>
+      <label>Re-sit notes<textarea name="ProbationResitNotes" rows="3" maxlength="1000">${escapeHtml(selectedDecision.ProbationResitNotes || '')}</textarea></label>
+      <div class="academic-management-form-actions"><button type="button" data-academic-probation-resit>${selectedDecision.ProbationResitStatus ? 'Update probation re-sit' : 'Schedule or record re-sit'}</button><span class="muted">Current: ${escapeHtml(selectedDecision.ProbationResitResult || selectedDecision.ProbationResitStatus || 'Not scheduled')}</span></div>
+    </fieldset>` : '';
   const promotionEditor = selectedDecision ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-promotion-editor>
     <div class="academic-management-editor-heading"><div><small>Final decision</small><h3>${escapeHtml(academicLabel(data.students, selectedDecision.StudentRef, selectedDecision.StudentRef))}</h3><p class="muted">Recommendation: ${escapeHtml(selectedDecision.RecommendedOutcome)} · ${escapeHtml((selectedDecision.Reasons || []).join(' ') || 'All configured criteria passed.')}</p></div><button type="button" class="secondary" data-academic-promotion-clear>Close</button></div>
     <input type="hidden" name="PromotionDecisionId" value="${escapeHtml(selectedDecision.PromotionDecisionId)}"><input type="hidden" name="RevisionToken" value="${escapeHtml(selectedDecision.RevisionToken)}">
@@ -12699,6 +12680,7 @@ function academicSessionOutcomesWorkspace(data, rows) {
       <label>Destination term<select name="DestinationTermId">${academicSelectOptions(destinationTerms, destinationTerms[0]?.TermId, (row) => row.Name, 'Choose term')}</select></label>
       <label>Destination classroom<select name="DestinationArmId">${academicSelectOptions(rows.arms.filter(academicIsActive), '', classroomLabel, 'Choose classroom')}</select></label>
     </div>
+    ${promotionResitEditor}
     <div class="academic-management-form-actions"><button type="submit" data-academic-promotion-save-outcome${selectedDecision.Status === 'Draft' ? '' : ' disabled'}>Save final outcome</button>${selectedDecision.Status === 'Approved' ? '<button type="button" data-academic-promotion-commit>Commit decision and placement</button>' : ''}</div>
   </form>` : '<div class="academic-view-only-note" data-academic-promotion-editor><strong>Choose a Draft or Approved decision from the register.</strong><span>Draft decisions can be corrected; Approved decisions can be committed to the permanent record.</span></div>';
   const promotionRegister = table('Promotion Decisions', promotionRows, [
@@ -12707,6 +12689,7 @@ function academicSessionOutcomesWorkspace(data, rows) {
     { label: 'Rule', render: (row) => `<strong>${escapeHtml(row.PolicyDivision === 'junior-secondary' ? 'Junior average' : row.PolicyDivision === 'senior-secondary' ? 'Senior Core credits' : 'General')}</strong>${row.CoreCreditCount === null || row.CoreCreditCount === undefined ? '' : `<small>${escapeHtml(row.CoreCreditCount)} of ${escapeHtml(row.CoreSubjectCount)} Core credits</small>`}` },
     { label: 'Recommendation', render: (row) => `<strong>${escapeHtml(row.RecommendedOutcome)}</strong><small>${escapeHtml(row.RecommendationType)}</small>` },
     { label: 'Final outcome', value: (row) => row.FinalOutcome },
+    { label: 'Re-sit', render: (row) => row.ProbationResitStatus ? `<strong>${escapeHtml(row.ProbationResitResult || row.ProbationResitStatus)}</strong><small>${row.ProbationResitPercentage === '' || row.ProbationResitPercentage === undefined ? escapeHtml(row.ProbationResitDate || '') : `${escapeHtml(row.ProbationResitPercentage)}%`}</small>` : '<span class="muted">Not used</span>' },
     { label: 'Status', value: (row) => row.Status },
     { label: 'Actions', render: (row) => academicPromotionActions(row, data.permissions || {}) }
   ], { emptyMessage: 'No promotion recommendations have been calculated for this classroom.' });
@@ -12964,6 +12947,7 @@ function academicTranscriptCriteria(transcript = {}) {
   const junior = promotion.JuniorSecondary || {};
   if (junior.PromotedMinimumAverage !== null && junior.PromotedMinimumAverage !== undefined) rules.push(`Junior promoted: ${junior.PromotedMinimumAverage}% and above`);
   if (junior.ProbationMinimumAverage !== null && junior.ProbationMinimumAverage !== undefined) rules.push(`Junior probation review begins at ${junior.ProbationMinimumAverage}%`);
+  if (promotion.ProbationResit?.Enabled === true) rules.push(`Optional probation re-sit pass mark: ${promotion.ProbationResit.PassPercentage ?? 50}%`);
   const senior = promotion.SeniorSecondary || {};
   if (senior.PromotedMinimumCredits) rules.push(`Senior promoted: at least ${senior.PromotedMinimumCredits} Core credits at ${senior.CreditMinimumPercentage ?? 50}% or above`);
   if (!gradeBands.length && !rules.length) return '';
@@ -12979,7 +12963,11 @@ async function printAcademicTranscript(transcript) {
   popup.opener = null;
   popup.document.write('<p style="font:16px Arial;padding:24px">Preparing transcript...</p>');
   const sessions = (transcript.Sessions || []).map((session) => `<section><h2>${escapeHtml(session.AcademicSession)} · ${escapeHtml(session.ClassName || '')}</h2><table><thead><tr><th>Subject</th><th>Annual total</th><th>Grade</th><th>Point</th></tr></thead><tbody>${(session.Subjects || []).map((subject) => `<tr><td>${escapeHtml(subject.SubjectName)}</td><td>${escapeHtml(subject.AnnualTotal)}</td><td>${escapeHtml(subject.Grade)}</td><td>${escapeHtml(subject.GradePoint ?? '')}</td></tr>`).join('')}</tbody></table><p><strong>Overall average:</strong> ${escapeHtml(session.OverallAverage)}% · <strong>Class average:</strong> ${escapeHtml(session.ClassAverage ?? '—')}% · <strong>Grade:</strong> ${escapeHtml(session.OverallGrade || '—')}</p></section>`).join('');
-  const outcomes = (transcript.Outcomes || []).map((row) => `<li>${escapeHtml(row.AcademicSession)}: ${escapeHtml(row.Outcome)}</li>`).join('');
+  const outcomes = (transcript.Outcomes || []).map((row) => {
+    const resit = row.ProbationResit;
+    const resitText = resit?.Status ? ` · Probation re-sit ${resit.Result || resit.Status}${resit.Percentage === '' || resit.Percentage === undefined ? '' : ` (${resit.Percentage}%)`}` : '';
+    return `<li>${escapeHtml(row.AcademicSession)}: ${escapeHtml(row.Outcome)}${escapeHtml(resitText)}</li>`;
+  }).join('');
   const qrSource = `${window.location.origin}/api/academic-transcript-qr?number=${encodeURIComponent(transcript.TranscriptNumber)}`;
   const qr = transcript.Status === 'Issued' ? `<img class="qr" src="${escapeHtml(qrSource)}" alt="Transcript verification QR code">` : '';
   const profile = academicManagementData?.reportProfile || {};
@@ -15054,6 +15042,12 @@ function bindAcademicManagement() {
     academicManagementTaskViews.outcomes = 'promotions';
     renderAcademicManagement(academicManagementData || {});
   }));
+  panelEl.querySelectorAll('[data-academic-promotion-resit-open]').forEach((button) => button.addEventListener('click', () => {
+    academicOutcomeDraft.promotionDecisionId = button.dataset.academicPromotionResitOpen;
+    academicManagementTaskViews.outcomes = 'promotions';
+    renderAcademicManagement(academicManagementData || {});
+    document.querySelector('[data-academic-probation-resit]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }));
   panelEl.querySelector('[data-academic-promotion-clear]')?.addEventListener('click', () => {
     academicOutcomeDraft.promotionDecisionId = '';
     renderAcademicManagement(academicManagementData || {});
@@ -15234,6 +15228,41 @@ function bindAcademicManagement() {
     academicAnalysisFilters = { ...academicAnalysisFilters, ...values };
     renderAcademicManagement(academicManagementData || {});
   });
+  promotionEditor?.querySelector('[data-academic-probation-resit]')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const decision = academicFind(academicManagementData?.promotionDecisions || [], promotionEditor.elements.PromotionDecisionId.value);
+    if (!decision) return;
+    const score = clean(promotionEditor.elements.ProbationResitScore?.value);
+    const maximumScore = clean(promotionEditor.elements.ProbationResitMaximumScore?.value);
+    const recordingResult = Boolean(score || maximumScore);
+    if (!await window.DynamaxDialogs.confirm({
+      title: recordingResult ? 'Record probation re-sit result' : 'Schedule probation re-sit',
+      message: recordingResult
+        ? `The result will be calculated against the captured ${clean(decision.PolicySnapshot?.Promotion?.ProbationResit?.PassPercentage ?? 50)}% pass mark. A pass changes the final promotion outcome to Promoted and returns the decision to Draft.`
+        : 'This makes a re-sit record for this student. It does not change the current Probation outcome.',
+      confirmText: recordingResult ? 'Record result' : 'Schedule re-sit'
+    })) return;
+    await runButtonAction(button, recordingResult ? 'Recording...' : 'Scheduling...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      try {
+        const data = await academicManagementRequest('saveAcademicProbationResit', {
+          SchoolSection: academicManagementFilters.section,
+          SessionId: academicManagementFilters.sessionId,
+          TermId: academicManagementFilters.termId,
+          PromotionDecisionId: decision.PromotionDecisionId,
+          RevisionToken: decision.RevisionToken,
+          ProbationResitDate: promotionEditor.elements.ProbationResitDate?.value,
+          ProbationResitAssessment: promotionEditor.elements.ProbationResitAssessment?.value,
+          ProbationResitSubjects: promotionEditor.elements.ProbationResitSubjects?.value,
+          ProbationResitScore: score,
+          ProbationResitMaximumScore: maximumScore,
+          ProbationResitNotes: promotionEditor.elements.ProbationResitNotes?.value
+        });
+        academicOutcomeDraft.promotionDecisionId = decision.PromotionDecisionId;
+        renderAcademicManagement(data, data.message);
+      } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+    });
+  });
   panelEl.querySelector('[data-academic-analysis-reset]')?.addEventListener('click', () => {
     academicAnalysisFilters = {
       period: 'annual', classId: '', armId: '', departmentId: '', schoolStage: '',
@@ -15325,15 +15354,6 @@ function bindAcademicManagement() {
     academicOutcomeDraft = { armId: '', promotionDecisionId: '', transcriptStudentRef: '' };
     renderAcademicManagement(academicManagementData || {});
   });
-  const classroomEditor = panelEl.querySelector('[data-academic-classroom-editor]');
-  ['ClassId', 'ArmTemplateId'].forEach((name) => classroomEditor?.elements.namedItem(name)?.addEventListener('change', () => syncAcademicClassroomEditor(classroomEditor)));
-  classroomEditor?.elements.DepartmentId?.addEventListener('change', () => {
-    const schoolClass = academicFind(academicManagementData?.classes || [], classroomEditor.elements.ClassId.value);
-    const needsDepartment = clean(schoolClass?.SchoolStage).toLowerCase() === 'senior-secondary';
-    const submit = classroomEditor.querySelector('[data-academic-classroom-submit]');
-    if (submit) submit.disabled = needsDepartment && !clean(classroomEditor.elements.DepartmentId.value);
-  });
-  syncAcademicClassroomEditor(classroomEditor);
   panelEl.querySelectorAll('[data-academic-open-classroom]').forEach((button) => button.addEventListener('click', () => {
     const arm = academicFind(academicManagementData?.arms || [], button.dataset.academicOpenClassroom);
     if (!arm) return;
@@ -15437,24 +15457,10 @@ function bindAcademicManagement() {
   panelEl.querySelectorAll('[data-academic-form]').forEach((form) => form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const button = form.querySelector('button[type="submit"]');
-    const classroomSelection = form.matches('[data-academic-classroom-editor]') ? {
-      sessionId: academicClassroomDraft.sessionId || academicManagementFilters.sessionId,
-      termId: academicClassroomDraft.termId || academicManagementFilters.termId,
-      classId: clean(form.elements.ClassId?.value),
-      armTemplateId: clean(form.elements.ArmTemplateId?.value)
-    } : null;
     await runButtonAction(button, 'Saving...', async () => {
       const status = document.getElementById('academicManagementStatus');
       try {
         const data = await academicManagementRequest(form.dataset.academicAction || 'save', academicFormPayload(form));
-        if (classroomSelection) {
-          const arm = (data.arms || []).find((row) => row.ClassId === classroomSelection.classId
-            && (row.ArmTemplateId === classroomSelection.armTemplateId
-              || clean(row.Name).toLowerCase() === clean(academicFind(data.armTemplates || [], classroomSelection.armTemplateId)?.Name).toLowerCase()));
-          academicClassroomDraft = { ...classroomSelection, armId: clean(arm?.ArmId) };
-          academicManagementView = 'classrooms';
-          academicManagementTaskViews.classrooms = 'manage';
-        }
         renderAcademicManagement(data, data.message || 'Academic record saved.');
       } catch (error) {
         setStatus(status, error.message || String(error), 'bad');

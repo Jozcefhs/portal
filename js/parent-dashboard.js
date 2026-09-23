@@ -1455,6 +1455,7 @@ function academicResultCriteriaMarkup(record = {}) {
   if (promotion.MinimumOverallAverage !== null && promotion.MinimumOverallAverage !== undefined) general.push(`Minimum average: ${promotion.MinimumOverallAverage}%`);
   if (promotion.MaximumFailedSubjects !== null && promotion.MaximumFailedSubjects !== undefined) general.push(`Maximum failed subjects: ${promotion.MaximumFailedSubjects}`);
   if (promotion.MinimumAttendancePercentage !== null && promotion.MinimumAttendancePercentage !== undefined) general.push(`Minimum attendance: ${promotion.MinimumAttendancePercentage}%`);
+  if (promotion.ProbationResit?.Enabled === true) general.push(`Optional probation re-sit: pass mark ${promotion.ProbationResit.PassPercentage ?? 50}%`);
   const juniorRows = [
     junior.PromotedMinimumAverage !== null && junior.PromotedMinimumAverage !== undefined ? `Promoted: ${junior.PromotedMinimumAverage}% and above` : '',
     junior.ProbationMinimumAverage !== null && junior.ProbationMinimumAverage !== undefined ? `Probation review: ${junior.ProbationMinimumAverage}% to below ${junior.PromotedMinimumAverage ?? 'the promoted threshold'}%` : ''

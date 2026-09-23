@@ -180,6 +180,7 @@ function publicAcademicResultPolicySnapshot(policy = {}) {
     },
     Promotion: {
       Mode: clean(promotion.Mode),
+      ProbationResit: { ...(promotion.ProbationResit || {}) },
       MinimumOverallAverage: promotion.MinimumOverallAverage ?? null,
       MaximumFailedSubjects: promotion.MaximumFailedSubjects ?? null,
       MinimumAttendancePercentage: promotion.MinimumAttendancePercentage ?? null,

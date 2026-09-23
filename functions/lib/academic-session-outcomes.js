@@ -443,6 +443,61 @@ export function evaluateAcademicPromotionDecision(cumulativeResult = {}, policyV
   };
 }
 
+export function buildAcademicProbationResit(decision = {}, input = {}) {
+  const policy = normalizeAcademicPolicy(decision.PolicySnapshot || {}).Promotion.ProbationResit;
+  if (!policy.Enabled) throw new Error('Student probation re-sits are not enabled in the captured promotion policy.');
+  if (![decision.RecommendedOutcome, decision.FinalOutcome].some((value) => lower(value) === 'probation')) {
+    throw new Error('Only a student whose promotion decision is Probation can receive a probation re-sit.');
+  }
+  if (lower(decision.Status) === 'committed') {
+    throw new Error('A committed promotion decision cannot receive or change a probation re-sit.');
+  }
+  const resitDate = clean(input.ProbationResitDate || input.ResitDate);
+  if (!resitDate) throw new Error('Choose the probation re-sit date.');
+  const parsedResitDate = new Date(`${resitDate}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(resitDate) || Number.isNaN(parsedResitDate.getTime())
+    || parsedResitDate.toISOString().slice(0, 10) !== resitDate) {
+    throw new Error('Choose a valid probation re-sit date.');
+  }
+  const scoreText = clean(input.ProbationResitScore ?? input.Score);
+  const maximumText = clean(input.ProbationResitMaximumScore ?? input.MaximumScore);
+  const hasScore = Boolean(scoreText);
+  const hasMaximum = Boolean(maximumText);
+  if (hasScore !== hasMaximum) throw new Error('Enter both the re-sit score and maximum score, or leave both blank while scheduling.');
+  const passPercentage = Number(policy.PassPercentage);
+  const result = {
+    ProbationResitAllowed: true,
+    ProbationResitDate: resitDate,
+    ProbationResitAssessment: clean(input.ProbationResitAssessment || input.AssessmentName || 'Probation re-sit').slice(0, 160),
+    ProbationResitSubjects: clean(input.ProbationResitSubjects || input.Subjects).slice(0, 500),
+    ProbationResitNotes: clean(input.ProbationResitNotes || input.Notes).slice(0, 1000),
+    ProbationResitPassPercentage: passPercentage,
+    ProbationResitScore: '',
+    ProbationResitMaximumScore: '',
+    ProbationResitPercentage: '',
+    ProbationResitResult: 'Pending',
+    ProbationResitStatus: 'Scheduled',
+    FinalOutcome: 'Probation'
+  };
+  if (!hasScore) return result;
+  const score = Number(scoreText);
+  const maximum = Number(maximumText);
+  if (!Number.isFinite(score) || !Number.isFinite(maximum) || maximum <= 0 || score < 0 || score > maximum) {
+    throw new Error('Enter a valid re-sit score between zero and the maximum score.');
+  }
+  const percentage = rounded((score / maximum) * 100, 2);
+  const passed = percentage >= passPercentage;
+  return {
+    ...result,
+    ProbationResitScore: score,
+    ProbationResitMaximumScore: maximum,
+    ProbationResitPercentage: percentage,
+    ProbationResitResult: passed ? 'Passed' : 'Failed',
+    ProbationResitStatus: 'Completed',
+    FinalOutcome: passed ? 'Promoted' : 'Probation'
+  };
+}
+
 export function buildAcademicTranscriptDraft(input = {}) {
   const cumulativeResults = (input.CumulativeResults || []).filter((row) => lower(row.Status) === 'locked')
     .sort((left, right) => clean(left.AcademicSession).localeCompare(clean(right.AcademicSession)));
@@ -504,7 +559,18 @@ export function buildAcademicTranscriptDraft(input = {}) {
       SessionId: decision.SessionId,
       AcademicSession: decision.AcademicSession,
       Outcome: decision.FinalOutcome,
-      CommittedAt: decision.CommittedAt
+      CommittedAt: decision.CommittedAt,
+      ProbationResit: clean(decision.ProbationResitStatus) ? {
+        Date: decision.ProbationResitDate,
+        Assessment: decision.ProbationResitAssessment,
+        Subjects: decision.ProbationResitSubjects,
+        Score: decision.ProbationResitScore,
+        MaximumScore: decision.ProbationResitMaximumScore,
+        Percentage: decision.ProbationResitPercentage,
+        PassPercentage: decision.ProbationResitPassPercentage,
+        Result: decision.ProbationResitResult,
+        Status: decision.ProbationResitStatus
+      } : null
     })),
     Status: 'Draft',
     Version: Number(input.Version || 1),

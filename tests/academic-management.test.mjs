@@ -607,6 +607,8 @@ test('Web and desktop transports share one protected Academic Management handler
   assert.match(backendSource, /case 'bulkImportAcademicStudentMemberships'/);
   assert.match(backendSource, /department: clean\(body\.UserDepartment\)/);
   assert.match(backendSource, /case 'bulkAssignAcademicArmStudentSubjects'/);
+  assert.match(backendSource, /case 'saveAcademicProbationResit'/);
+  assert.match(backendSource, /'calculateAcademicPromotionDecisions', 'saveAcademicPromotionOutcome', 'saveAcademicProbationResit'/);
   assert.match(librarySource, /assignments\.length > 200/);
   assert.match(backendSource, /case 'moveAcademicStudentMembership'/);
   assert.match(backendSource, /case 'withdrawAcademicStudentMembership'/);
@@ -676,6 +678,10 @@ test('branch-paired class and arm actions never write the organisation legacy cl
     librarySource.indexOf('export async function bulkApplyAcademicSubjects')
   );
   assert.match(bulkArmSource, /legacyClassWrite\(projected, schoolClass, 'class', scope\)/);
+  assert.match(bulkArmSource, /IsClassroom: true/);
+  assert.match(bulkArmSource, /!activeValue\(existing\.IsClassroom, false\)/);
+  assert.match(bulkArmSource, /existing arm\(s\) upgraded to classrooms/);
+  assert.match(bulkArmSource, /Upgraded: upgradedRecords\.length/);
   const archiveSource = librarySource.slice(
     librarySource.indexOf('export async function archiveAcademicManagementRecord'),
     librarySource.indexOf('export async function deleteAcademicManagementRecord')
@@ -740,12 +746,18 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(adminSource, /function renderAcademicManagement/);
   assert.match(adminSource, /let academicManagementView = 'classrooms'/);
   assert.match(adminSource, /function academicClassroomWorkspace/);
-  assert.match(adminSource, /function syncAcademicClassroomEditor/);
-  assert.match(adminSource, /data-academic-classroom-editor/);
-  assert.match(adminSource, /Create classroom/);
-  assert.match(adminSource, /Reusable class/);
-  assert.match(adminSource, /Reusable arm/);
-  assert.match(adminSource, /name="IsClassroom" value="YES"/);
+  const classroomWorkspace = adminSource.slice(
+    adminSource.indexOf('function academicClassroomWorkspace'),
+    adminSource.indexOf('function academicStructureWorkspace')
+  );
+  assert.match(classroomWorkspace, /data-academic-workflow="bulkApplyAcademicArmTemplates" data-academic-classroom-creator/);
+  assert.match(classroomWorkspace, /name: 'ClassIds', label: 'Classes'/);
+  assert.match(classroomWorkspace, /name: 'ArmTemplateIds', label: 'Reusable arms'/);
+  assert.match(classroomWorkspace, /Every selected arm will be applied to every selected class/);
+  assert.match(classroomWorkspace, /Existing matching classrooms are skipped; no classroom is overwritten/);
+  assert.match(classroomWorkspace, /Create selected classrooms/);
+  assert.doesNotMatch(classroomWorkspace, /data-academic-classroom-editor/);
+  assert.doesNotMatch(classroomWorkspace, /<select name="(?:ClassId|ArmTemplateId)"/);
   assert.match(adminSource, /row\.IsClassroom === true/);
   assert.match(adminSource, /if \(!wanted\) return null/);
   assert.match(adminSource, /Students ready for this classroom/);

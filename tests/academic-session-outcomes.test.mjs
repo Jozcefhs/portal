@@ -6,6 +6,7 @@ import {
   academicCumulativeTransition,
   academicPromotionTransition,
   academicTranscriptTransition,
+  buildAcademicProbationResit,
   buildAcademicTranscriptDraft,
   calculateAcademicCumulativeDrafts,
   evaluateAcademicPromotionDecision
@@ -206,6 +207,38 @@ test('Senior promotion pauses for review when the configured five-Core-subject c
   assert.equal(decision.RecommendationType, 'Curriculum Review');
 });
 
+test('student probation re-sits are optional, policy-gated and promote only after a passing recorded score', () => {
+  const configured = divisionPolicy();
+  configured.Promotion.ProbationResit = { Enabled: true, PassPercentage: 60 };
+  const decision = {
+    RecommendedOutcome: 'Probation', FinalOutcome: 'Probation', Status: 'Approved',
+    PolicySnapshot: configured
+  };
+  const scheduled = buildAcademicProbationResit(decision, {
+    ProbationResitDate: '2026-09-30', ProbationResitSubjects: 'Mathematics'
+  });
+  assert.equal(scheduled.ProbationResitStatus, 'Scheduled');
+  assert.equal(scheduled.ProbationResitResult, 'Pending');
+  assert.equal(scheduled.FinalOutcome, 'Probation');
+
+  const passed = buildAcademicProbationResit(decision, {
+    ProbationResitDate: '2026-09-30', ProbationResitScore: 36, ProbationResitMaximumScore: 50
+  });
+  assert.equal(passed.ProbationResitPercentage, 72);
+  assert.equal(passed.ProbationResitResult, 'Passed');
+  assert.equal(passed.FinalOutcome, 'Promoted');
+
+  const failed = buildAcademicProbationResit(decision, {
+    ProbationResitDate: '2026-09-30', ProbationResitScore: 29, ProbationResitMaximumScore: 50
+  });
+  assert.equal(failed.ProbationResitResult, 'Failed');
+  assert.equal(failed.FinalOutcome, 'Probation');
+
+  const disabled = structuredClone(decision);
+  disabled.PolicySnapshot.Promotion.ProbationResit.Enabled = false;
+  assert.throws(() => buildAcademicProbationResit(disabled, { ProbationResitDate: '2026-09-30' }), /not enabled/);
+});
+
 test('cumulative, promotion and transcript lifecycles require review before immutable states', () => {
   assert.equal(academicCumulativeTransition('Calculated Draft', 'Reviewed').Allowed, true);
   assert.equal(academicCumulativeTransition('Calculated Draft', 'Locked').Allowed, false);
@@ -219,12 +252,19 @@ test('transcript drafts snapshot locked sessions, terms and committed outcomes',
     TranscriptId: 'transcript-1', TranscriptNumber: 'TRN-0001', StudentRef: 'DCA/001', StudentName: 'Ada Student',
     CumulativeResults: [cumulative],
     TermResults: [termResult('DCA/001', 'First Term', 60, 70)],
-    PromotionDecisions: [{ Status: 'Committed', SessionId: 's1', AcademicSession: '2026/2027', FinalOutcome: 'Promoted' }]
+    PromotionDecisions: [{
+      Status: 'Committed', SessionId: 's1', AcademicSession: '2026/2027', FinalOutcome: 'Promoted',
+      ProbationResitStatus: 'Completed', ProbationResitDate: '2026-09-30', ProbationResitResult: 'Passed',
+      ProbationResitScore: 36, ProbationResitMaximumScore: 50, ProbationResitPercentage: 72,
+      ProbationResitPassPercentage: 60
+    }]
   });
   assert.equal(transcript.Status, 'Draft');
   assert.equal(transcript.Sessions.length, 1);
   assert.equal(transcript.Terms.length, 1);
   assert.equal(transcript.Outcomes[0].Outcome, 'Promoted');
+  assert.equal(transcript.Outcomes[0].ProbationResit.Result, 'Passed');
+  assert.equal(transcript.Outcomes[0].ProbationResit.Percentage, 72);
   assert.equal(transcript.Sessions[0].ClassAverage, 64.25);
   assert.ok(transcript.Sessions[0].GradeBands.length > 0);
   assert.ok(transcript.Sessions[0].PromotionPolicy);
@@ -238,6 +278,8 @@ test('Milestone 10 live actions persist outcomes, promotion destinations and imm
   assert.match(managementSource, /changeAcademicCumulativeStatus/);
   assert.match(managementSource, /saveAcademicCumulativeResultRemarks/);
   assert.match(managementSource, /calculateAcademicPromotionDecisions/);
+  assert.match(managementSource, /saveAcademicProbationResit/);
+  assert.match(managementSource, /ACADEMIC_PROBATION_RESIT_RECALCULATION_BLOCKED/);
   assert.match(managementSource, /DestinationMembershipId/);
   assert.match(managementSource, /createAcademicTranscriptDraft/);
   assert.match(managementSource, /academicOutcomeEventWrite/);
@@ -251,6 +293,8 @@ test('web and desktop companions expose the same session-outcome workflow withou
   assert.match(adminSource, /Cumulative results/);
   assert.match(adminSource, /data-academic-cumulative-remarks/);
   assert.match(adminSource, /Promotion decisions/);
+  assert.match(adminSource, /Optional student probation re-sit/);
+  assert.match(adminSource, /saveAcademicProbationResit/);
   assert.match(adminSource, /Official Transcripts/);
   assert.match(adminSource, /'Pending', 'Promoted', 'Probation', 'Repeated'/);
   assert.match(adminSource, /academic-transcript-qr/);
@@ -258,6 +302,8 @@ test('web and desktop companions expose the same session-outcome workflow withou
   assert.match(desktopSource, /"Pending", "Promoted", "Probation", "Repeated"/);
   assert.match(desktopSource, /Create Transcript Online/);
   assert.match(desktopSource, /calculateAcademicPromotionDecisions/);
+  assert.match(desktopSource, /Student Probation Re-sit/);
+  assert.match(desktopSource, /saveAcademicProbationResit/);
   assert.match(desktopSource, /build_transcript_print_html/);
 });
 

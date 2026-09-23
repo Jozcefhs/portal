@@ -82,6 +82,8 @@ test('academic policy starts explicitly unconfigured instead of hardcoding schoo
   assert.equal(policy.ResultAccess.FinancialClearance.Mode, 'unconfigured');
   assert.equal(policy.Position.Mode, 'unconfigured');
   assert.equal(policy.Promotion.Mode, 'unconfigured');
+  assert.equal(policy.Promotion.ProbationResit.Enabled, false);
+  assert.equal(policy.Promotion.ProbationResit.PassPercentage, 50);
   assert.deepEqual(policy.Assessment.Components, []);
   assert.deepEqual(policy.Assessment.GradeBands, []);
 });
@@ -97,12 +99,14 @@ test('normalization supports configurable result, finance, grading and promotion
   assert.equal(policy.Cumulative.MissingSubjectMode, 'manual-review');
   assert.deepEqual(policy.Promotion.RequiredCoreSubjectIds, ['english', 'mathematics']);
   assert.equal(policy.Promotion.MinimumAttendancePercentage, 75);
+  assert.equal(policy.Promotion.ProbationResit.Enabled, false);
 });
 
 test('separate Junior and Senior promotion rules are normalized and validated without hardcoded thresholds', () => {
   const policy = completePolicy();
   policy.Promotion = {
     Mode: 'division-rules',
+    ProbationResit: { Enabled: true, PassPercentage: 60 },
     RequireAllTerms: true,
     MinimumAttendancePercentage: null,
     JuniorSecondary: { PromotedMinimumAverage: 54.5, ProbationMinimumAverage: 49.5 },
@@ -120,6 +124,8 @@ test('separate Junior and Senior promotion rules are normalized and validated wi
   };
   const normalized = normalizeAcademicPolicy(policy);
   assert.equal(normalized.Promotion.JuniorSecondary.PromotedMinimumAverage, 54.5);
+  assert.equal(normalized.Promotion.ProbationResit.Enabled, true);
+  assert.equal(normalized.Promotion.ProbationResit.PassPercentage, 60);
   assert.equal(normalized.Promotion.SeniorSecondary.ExpectedCoreSubjectCount, 5);
   assert.deepEqual(normalized.Promotion.SeniorSecondary.PromotedRequiredSubjectIds, ['mathematics', 'english']);
   assert.equal(academicPolicyIssues(normalized, { forActivation: true }).filter((issue) => issue.path.startsWith('Promotion')).length, 0);
@@ -338,6 +344,8 @@ test('School settings expose configurable result, grading and promotion policy c
   assert.match(setupHtmlSource, /id="academicMissingSubjectMode"/);
   assert.match(setupHtmlSource, /id="academicIncludeTransferredResults"/);
   assert.match(setupHtmlSource, /id="academicPromotionMode"/);
+  assert.match(setupHtmlSource, /id="academicProbationResitEnabled"/);
+  assert.match(setupHtmlSource, /id="academicProbationResitPassPercentage"/);
   assert.match(setupHtmlSource, /id="academicJuniorPromotedMinimum"/);
   assert.match(setupHtmlSource, /id="academicJuniorProbationMinimum"/);
   assert.match(setupHtmlSource, /id="academicSeniorCreditMinimum"/);

@@ -488,6 +488,11 @@ function updateAcademicPolicyConditionalFields() {
     group.hidden = !active;
     group.querySelectorAll('input, select, textarea').forEach((field) => { field.disabled = !active; });
   });
+  const probationResitPass = policyField('academicProbationResitPassPercentage');
+  if (probationResitPass) {
+    probationResitPass.disabled = !['criteria', 'division-rules'].includes(promotionMode)
+      || policyField('academicProbationResitEnabled')?.value !== 'YES';
+  }
 }
 
 function renderAcademicPolicy(policy = {}) {
@@ -498,6 +503,7 @@ function renderAcademicPolicy(policy = {}) {
   const midTerm = policy.MidTerm || {};
   const cumulative = policy.Cumulative || {};
   const promotion = policy.Promotion || {};
+  const probationResit = promotion.ProbationResit || {};
   const juniorPromotion = promotion.JuniorSecondary || {};
   const seniorPromotion = promotion.SeniorSecondary || {};
   setField('academicResultVisibility', result.VisibilityMode || 'unconfigured');
@@ -523,6 +529,8 @@ function renderAcademicPolicy(policy = {}) {
   setField('academicMissingSubjectMode', cumulative.MissingSubjectMode || 'block');
   policyField('academicIncludeTransferredResults').checked = cumulative.IncludeTransferredResults !== false;
   setField('academicPromotionMode', promotion.Mode || 'unconfigured');
+  setField('academicProbationResitEnabled', probationResit.Enabled === true ? 'YES' : 'NO');
+  setField('academicProbationResitPassPercentage', probationResit.PassPercentage ?? 50);
   setField('academicMinimumOverallAverage', promotion.MinimumOverallAverage ?? '');
   setField('academicRequiredCoreSubjects', (promotion.RequiredCoreSubjectIds || []).join(', '));
   setField('academicMaximumFailedSubjects', promotion.MaximumFailedSubjects ?? '');
@@ -619,6 +627,10 @@ function academicPolicyFromForm() {
     },
     Promotion: {
       Mode: policyField('academicPromotionMode').value,
+      ProbationResit: {
+        Enabled: policyField('academicProbationResitEnabled').value === 'YES',
+        PassPercentage: policyNumber('academicProbationResitPassPercentage', 50)
+      },
       MinimumOverallAverage: policyNumber('academicMinimumOverallAverage'),
       RequiredCoreSubjectIds: policyList('academicRequiredCoreSubjects'),
       MaximumFailedSubjects: policyNumber('academicMaximumFailedSubjects'),
@@ -1253,6 +1265,7 @@ policyField('addAcademicCumulativeTerm')?.addEventListener('click', () => {
 
 policyField('academicFeeClearanceMode')?.addEventListener('change', updateAcademicPolicyConditionalFields);
 policyField('academicPromotionMode')?.addEventListener('change', updateAcademicPolicyConditionalFields);
+policyField('academicProbationResitEnabled')?.addEventListener('change', updateAcademicPolicyConditionalFields);
 academicPolicyInheritanceMode?.addEventListener('change', () => {
   if (academicPolicyInheritanceHelp) {
     academicPolicyInheritanceHelp.textContent = academicPolicyInheritanceMode.value === 'independent'

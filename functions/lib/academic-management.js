@@ -59,6 +59,7 @@ import {
   academicCumulativeTransition,
   academicPromotionTransition,
   academicTranscriptTransition,
+  buildAcademicProbationResit,
   buildAcademicTranscriptDraft,
   calculateAcademicCumulativeDrafts,
   evaluateAcademicPromotionDecision
@@ -2319,17 +2320,31 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
   }
   const writes = [];
   const createdRecords = [];
+  const upgradedRecords = [];
   let skipped = 0;
   for (const schoolClass of classes) {
     for (const template of templates) {
       const record = normalizeAcademicArm({
         ClassId: schoolClass.ClassId, Name: template.Name, Code: template.Code,
         ArmTemplateId: template.ArmTemplateId, Capacity: template.DefaultCapacity,
-        SortOrder: template.SortOrder, Status: 'Active'
+        SortOrder: template.SortOrder, IsClassroom: true, Status: 'Active'
       }, scope);
       const existing = findById(projected.arms, record.ArmId);
       if (existing) {
         if (statusActive(existing) && lower(existing.Name) === lower(record.Name)) {
+          if (!activeValue(existing.IsClassroom, false)) {
+            const upgraded = normalizeAcademicArm({ ...existing, IsClassroom: true }, scope, existing);
+            stampAcademicRecord(upgraded, user, existing);
+            projected.arms = projected.arms.map((row) => recordId(row) === recordId(existing) ? upgraded : row);
+            upgradedRecords.push(upgraded);
+            writes.push({
+              collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.arms,
+              documentId: upgraded.ArmId,
+              data: withoutMetadata(upgraded),
+              updateTime: existing.__updateTime
+            });
+            continue;
+          }
           skipped += 1;
           continue;
         }
@@ -2342,22 +2357,28 @@ export async function bulkApplyAcademicArmTemplates(env, user = {}, input = {}) 
       writes.push({ collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.arms, documentId: record.ArmId, data: withoutMetadata(record), exists: false });
     }
   }
-  const affectedClassIds = new Set(createdRecords.map((row) => row.ClassId));
+  const changedRecords = [...createdRecords, ...upgradedRecords];
+  const affectedClassIds = new Set(changedRecords.map((row) => row.ClassId));
   classes.filter((row) => affectedClassIds.has(row.ClassId)).forEach((schoolClass) => {
     const compatibility = legacyClassWrite(projected, schoolClass, 'class', scope);
     if (compatibility) writes.push(compatibility);
   });
-  if (createdRecords.length) writes.push(auditWrite(user, 'BULK APPLY', 'arm', {
+  if (changedRecords.length) writes.push(auditWrite(user, 'BULK APPLY', 'arm', {
     BranchId: scope.branchId, SchoolSection: scope.section, ArmId: `bulk-${Date.now()}`
-  }, `${createdRecords.length} class-arm assignment(s) created; ${skipped} already matched.`));
+  }, `${createdRecords.length} classroom(s) created; ${upgradedRecords.length} existing arm(s) upgraded to classrooms; ${skipped} already matched.`));
   await commitAcademicBatch(env, writes, 'The class or arm catalogue changed while assignments were being saved. Reload and try again.');
   const response = await bootstrapAcademicManagement(env, user, {
     ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'bulksetup'
   });
-  response.message = createdRecords.length
-    ? `${createdRecords.length} class-arm assignment${createdRecords.length === 1 ? '' : 's'} created online${skipped ? `; ${skipped} already matched and were skipped` : ''}.`
-    : 'Every selected class already has the selected reusable arms.';
-  response.bulkResult = { Requested: classIds.length * templateIds.length, Created: createdRecords.length, Skipped: skipped };
+  response.message = changedRecords.length
+    ? `${createdRecords.length} classroom${createdRecords.length === 1 ? '' : 's'} created online${upgradedRecords.length ? `; ${upgradedRecords.length} existing arm${upgradedRecords.length === 1 ? '' : 's'} upgraded to ${upgradedRecords.length === 1 ? 'a classroom' : 'classrooms'}` : ''}${skipped ? `; ${skipped} already matched and were skipped` : ''}.`
+    : 'Every selected class already has the selected reusable-arm classrooms.';
+  response.bulkResult = {
+    Requested: classIds.length * templateIds.length,
+    Created: createdRecords.length,
+    Upgraded: upgradedRecords.length,
+    Skipped: skipped
+  };
   return response;
 }
 
@@ -5021,12 +5042,17 @@ export async function calculateAcademicPromotionDecisions(env, user = {}, input 
     && row.ClassId === schoolClass.ClassId && row.ArmId === arm.ArmId);
   const immutable = existingDecisions.find((row) => lower(row.Status) !== 'draft');
   if (immutable) throw failure(`${immutable.StudentRef} already has a ${immutable.Status} promotion decision. Reopen it before recalculating.`, 409, 'ACADEMIC_PROMOTION_IMMUTABLE');
+  const resitStarted = existingDecisions.find((row) => clean(row.ProbationResitStatus));
+  if (resitStarted) {
+    throw failure(`${resitStarted.StudentRef} already has a probation re-sit record. Its captured decision cannot be recalculated.`, 409, 'ACADEMIC_PROBATION_RESIT_RECALCULATION_BLOCKED');
+  }
   const timestamp = nowIso();
   const writes = [];
   cumulative.forEach((result) => {
     const id = academicPromotionDecisionId(scope, session.SessionId, schoolClass.ClassId, arm.ArmId, result.StudentRef);
     const existing = findById(existingDecisions, id);
     const recommendation = evaluateAcademicPromotionDecision(result, result.PolicySnapshot || {});
+    const probationResitPolicy = normalizeAcademicPolicy(result.PolicySnapshot || {}).Promotion.ProbationResit;
     const decision = {
       ...(existing || {}),
       RecordId: id,
@@ -5047,6 +5073,8 @@ export async function calculateAcademicPromotionDecisions(env, user = {}, input 
       AttendancePercentage: result.Attendance?.AttendancePercentage || 0,
       ...recommendation,
       FinalOutcome: recommendation.RecommendedOutcome,
+      ProbationResitAllowed: probationResitPolicy.Enabled === true && recommendation.RecommendedOutcome === 'Probation',
+      ProbationResitPassPercentage: probationResitPolicy.PassPercentage,
       OverrideReason: '',
       Status: 'Draft',
       PolicyRevisionIds: result.PolicyRevisionIds || [],
@@ -6179,6 +6207,59 @@ async function deleteAcademicCbtPapers(env, record = {}) {
   return urls.length;
 }
 
+export async function saveAcademicProbationResit(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManagePromotions');
+  const existing = findById(context.state.promotionDecisions, input.PromotionDecisionId);
+  if (!existing) throw failure('Choose a student promotion decision.', 404);
+  let resit;
+  try {
+    resit = buildAcademicProbationResit(existing, input);
+  } catch (error) {
+    throw failure(clean(error?.message || error), 409, 'ACADEMIC_PROBATION_RESIT_INVALID');
+  }
+  const timestamp = nowIso();
+  const priorResult = clean(existing.ProbationResitResult);
+  const decision = {
+    ...existing,
+    ...resit,
+    Status: 'Draft',
+    OverrideReason: resit.ProbationResitResult === 'Passed'
+      ? 'Promoted after passing the policy-authorized probation re-sit.'
+      : '',
+    ProbationResitUpdatedAt: timestamp,
+    ProbationResitUpdatedBy: actorName(user),
+    ProbationResitUpdatedByUsername: actorUsername(user),
+    ...(resit.ProbationResitStatus === 'Completed'
+      ? { ProbationResitRecordedAt: timestamp, ProbationResitRecordedBy: actorName(user) }
+      : { ProbationResitScheduledAt: timestamp, ProbationResitScheduledBy: actorName(user) }),
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName(user)
+  };
+  const eventType = resit.ProbationResitStatus === 'Scheduled'
+    ? (clean(existing.ProbationResitStatus) ? 'PROBATION_RESIT_RESCHEDULED' : 'PROBATION_RESIT_SCHEDULED')
+    : `PROBATION_RESIT_${resit.ProbationResitResult.toUpperCase()}`;
+  const resultDetail = resit.ProbationResitStatus === 'Completed'
+    ? `${resit.ProbationResitScore}/${resit.ProbationResitMaximumScore} (${resit.ProbationResitPercentage}%); pass mark ${resit.ProbationResitPassPercentage}%; final outcome ${resit.FinalOutcome}.`
+    : `Scheduled for ${resit.ProbationResitDate}; final outcome remains Probation.`;
+  const details = `${resit.ProbationResitAssessment}${resit.ProbationResitSubjects ? `; ${resit.ProbationResitSubjects}` : ''}; ${resultDetail}`;
+  await commitAcademicBatch(env, [
+    {
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.promotionDecisions,
+      documentId: decision.PromotionDecisionId,
+      data: withoutMetadata(decision),
+      ...writePrecondition(existing, input.RevisionToken)
+    },
+    academicOutcomeEventWrite(user, ACADEMIC_MANAGEMENT_COLLECTIONS.promotionEvents,
+      'PROMOTION', decision, eventType, details),
+    auditWrite(user, eventType, 'promotionDecision', decision,
+      `${details}${priorResult ? ` Previous result: ${priorResult}.` : ''}`)
+  ], 'This student promotion decision changed while the probation re-sit was being saved. Reload and try again.');
+  const message = resit.ProbationResitStatus === 'Scheduled'
+    ? `${decision.StudentRef} probation re-sit scheduled. The promotion decision remains Probation.`
+    : `${decision.StudentRef} probation re-sit recorded as ${resit.ProbationResitResult}. The final promotion outcome is now ${decision.FinalOutcome} and must follow the normal review and approval workflow.`;
+  return academicOperationalResponse(env, user, input, context.scope, message);
+}
+
 function withoutAcademicCbtCloudPapers(record = {}, details = {}) {
   return {
     ...record,
@@ -6723,6 +6804,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['saveacademiccumulativeresultremarks', 'savecumulativeresultremarks'].includes(action)) return saveAcademicCumulativeResultRemarks(env, user, input);
   if (['calculateacademicpromotiondecisions', 'calculatepromotions'].includes(action)) return calculateAcademicPromotionDecisions(env, user, input);
   if (['saveacademicpromotionoutcome', 'savepromotionoutcome'].includes(action)) return saveAcademicPromotionOutcome(env, user, input);
+  if (['saveacademicprobationresit', 'saveprobationresit'].includes(action)) return saveAcademicProbationResit(env, user, input);
   if (['changeacademicpromotionstatus', 'changepromotionstatus'].includes(action)) return changeAcademicPromotionStatus(env, user, input);
   if (['createacademictranscriptdraft', 'createtranscript'].includes(action)) return createAcademicTranscriptDraft(env, user, input);
   if (['changeacademictranscriptstatus', 'changetranscriptstatus'].includes(action)) return changeAcademicTranscriptStatus(env, user, input);

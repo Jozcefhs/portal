@@ -877,6 +877,11 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'archiveAcademicRecord', 'deleteAcademicRecord',
   'syncAcademicCbtScores', 'syncLocalCbtStudentPasswords',
   'rescheduleAcademicCbtTest', 'downloadAcademicCbtTestPackage', 'acknowledgeAcademicCbtImport',
+  'calculateAcademicTermResults', 'calculateAcademicMidTermResults', 'previewAcademicTermResultWithdrawal',
+  'changeAcademicTermResultStatus', 'saveAcademicTermResultRemarks',
+  'calculateAcademicCumulativeResults', 'changeAcademicCumulativeStatus', 'saveAcademicCumulativeResultRemarks',
+  'calculateAcademicPromotionDecisions', 'saveAcademicPromotionOutcome', 'saveAcademicProbationResit',
+  'changeAcademicPromotionStatus', 'createAcademicTranscriptDraft', 'changeAcademicTranscriptStatus',
   'getAccountingRequisitionDocument', 'syncAccountingRevenue', 'saveChartAccount',
   'saveAccountingJournal', 'saveAccountingExpense', 'saveAccountingBudget',
   'submitAccountingImprest', 'reviewAccountingImprest', 'issueAccountingImprest',
@@ -928,6 +933,11 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'importAcademicScores', 'rollbackAcademicScoreImport', 'syncAcademicCbtScores',
   'syncLocalCbtStudentPasswords', 'rescheduleAcademicCbtTest', 'downloadAcademicCbtTestPackage',
   'acknowledgeAcademicCbtImport', 'prepareLocalCbtIdentityPackage',
+  'calculateAcademicTermResults', 'calculateAcademicMidTermResults', 'previewAcademicTermResultWithdrawal',
+  'changeAcademicTermResultStatus', 'saveAcademicTermResultRemarks',
+  'calculateAcademicCumulativeResults', 'changeAcademicCumulativeStatus', 'saveAcademicCumulativeResultRemarks',
+  'calculateAcademicPromotionDecisions', 'saveAcademicPromotionOutcome', 'saveAcademicProbationResit',
+  'changeAcademicPromotionStatus', 'createAcademicTranscriptDraft', 'changeAcademicTranscriptStatus',
   'moveAcademicStudentMembership', 'withdrawAcademicStudentMembership', 'reinstateAcademicStudentMembership',
   'archiveAcademicRecord', 'deleteAcademicRecord',
   'getExecutiveOffice', 'searchExecutiveDirectory', 'listOfficialCorrespondence',
@@ -949,7 +959,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'updateStudentProfile', 'reissueParentOnboarding',
   'getSchoolClasses', 'saveSchoolClasses', 'resetSchoolClasses',
   'getAdmissionClasses', 'saveAdmissionClasses', 'resetAdmissionClasses',
-  'getAccountsOverview', 'importHistoricalPayments',
+  'getAccountsOverview', 'getHistoricalPaymentTemplateAccounts', 'importHistoricalPayments',
   'getWalletCardAccount', 'saveWalletCard', 'recordWalletPurchase',
   'getAccountingRequisitionDocument',
   'saveAccountingJournal', 'saveAccountingExpense', 'saveAccountingBudget',
@@ -5078,6 +5088,60 @@ async function walletAccountPayload(env, student) {
 
 const HISTORICAL_PAYMENT_IMPORT_LIMIT = 50;
 
+export function historicalPaymentTemplateAccountRows(studentRows = []) {
+  const accountsByReference = new Map();
+  for (const source of studentRows || []) {
+    const student = normalizeStudent(source || {});
+    const accountRef = clean(student.AdmissionNo || student.AccountRef || student.ApplicationReference || student.__id);
+    const referenceKey = normalizeReferenceText(accountRef);
+    if (!referenceKey) continue;
+    const account = {
+      AccountRef: accountRef,
+      AdmissionNo: clean(student.AdmissionNo || accountRef),
+      ApplicationReference: clean(student.ApplicationReference),
+      DisplayName: clean(student.DisplayName || student.ApplicantName),
+      ClassName: clean(student.ClassName || student.ClassAdmitted),
+      StudentType: clean(student.StudentType),
+      BillingCategory: clean(student.BillingCategory) || 'Regular',
+      AcademicSession: clean(student.AcademicSession),
+      Term: clean(student.Term),
+      BranchId: canonicalSchoolBranchId(student.BranchId || 'main'),
+      SchoolSection: schoolSectionFor(student),
+      StudentScopePath: clean(student.__scopePath),
+      Status: clean(student.Status) || 'Active'
+    };
+    const existing = accountsByReference.get(referenceKey);
+    const existingScopePath = clean(existing && existing.StudentScopePath);
+    const accountScopePath = clean(account.StudentScopePath);
+    const existingIsScoped = Boolean(existingScopePath && existingScopePath !== 'students');
+    const accountIsScoped = Boolean(accountScopePath && accountScopePath !== 'students');
+    if (!existing || (accountIsScoped && !existingIsScoped)) accountsByReference.set(referenceKey, account);
+  }
+  return [...accountsByReference.values()].sort((left, right) =>
+    clean(left.DisplayName || left.AccountRef).localeCompare(clean(right.DisplayName || right.AccountRef)));
+}
+
+export async function getHistoricalPaymentTemplateAccounts(env, body = {}) {
+  requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
+  const branchId = accountingRequestBranch(body);
+  const students = await listSchoolCollection(env, 'students', { branchId });
+  const accounts = historicalPaymentTemplateAccountRows(students);
+  const sectionCounts = accounts.reduce((counts, account) => {
+    const section = schoolSectionFor(account);
+    counts[section] = (counts[section] || 0) + 1;
+    return counts;
+  }, {});
+  return {
+    ok: true,
+    message: `${accounts.length} current student account(s) loaded for the historical-payment template.`,
+    accounts,
+    total: accounts.length,
+    branchId,
+    sectionCounts,
+    generatedAt: nowIso()
+  };
+}
+
 function historicalPaymentImportError(message, rowNumber = 0) {
   const err = new Error(rowNumber ? `Row ${rowNumber}: ${message}` : message);
   err.status = 400;
@@ -8778,6 +8842,20 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'downloadAcademicCbtTestPackage':
     case 'acknowledgeAcademicCbtImport':
     case 'prepareLocalCbtIdentityPackage':
+    case 'calculateAcademicTermResults':
+    case 'calculateAcademicMidTermResults':
+    case 'previewAcademicTermResultWithdrawal':
+    case 'changeAcademicTermResultStatus':
+    case 'saveAcademicTermResultRemarks':
+    case 'calculateAcademicCumulativeResults':
+    case 'changeAcademicCumulativeStatus':
+    case 'saveAcademicCumulativeResultRemarks':
+    case 'calculateAcademicPromotionDecisions':
+    case 'saveAcademicPromotionOutcome':
+    case 'saveAcademicProbationResit':
+    case 'changeAcademicPromotionStatus':
+    case 'createAcademicTranscriptDraft':
+    case 'changeAcademicTranscriptStatus':
     case 'moveAcademicStudentMembership':
     case 'withdrawAcademicStudentMembership':
     case 'reinstateAcademicStudentMembership':
@@ -9015,6 +9093,8 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       return recordManualPayment(env, body);
     case 'importHistoricalPayments':
       return importHistoricalPayments(env, body);
+    case 'getHistoricalPaymentTemplateAccounts':
+      return getHistoricalPaymentTemplateAccounts(env, body);
     case 'getWalletCardAccount':
       return getWalletCardAccount(env, body);
     case 'saveWalletCard':
