@@ -302,6 +302,10 @@ export const ACADEMIC_SUBJECT_TEACHER_STATE_KEYS = Object.freeze([
   'offerings', 'teacherAllocations'
 ]);
 
+export const ACADEMIC_CLASS_TEACHER_STATE_KEYS = Object.freeze([
+  'sessions', 'terms', 'classes', 'arms', 'teacherAllocations'
+]);
+
 export const ACADEMIC_CLASSROOM_STATE_KEYS = Object.freeze([
   'sessions', 'terms', 'classes', 'armTemplates', 'arms', 'departments',
   'teacherAllocations', 'studentMemberships'
@@ -368,6 +372,7 @@ export const ACADEMIC_READINESS_STATE_KEYS = Object.freeze([
 
 export const ACADEMIC_VIEW_STATE_KEYS = Object.freeze({
   classrooms: ACADEMIC_CLASSROOM_STATE_KEYS,
+  classstaff: ACADEMIC_CLASS_TEACHER_STATE_KEYS,
   structure: ACADEMIC_STRUCTURE_STATE_KEYS,
   bulksetup: ACADEMIC_BULK_SETUP_STATE_KEYS,
   departments: ACADEMIC_DEPARTMENT_STATE_KEYS,
@@ -388,6 +393,7 @@ export const ACADEMIC_VIEW_STATE_KEYS = Object.freeze({
 function normalizedAcademicView(value = '') {
   const view = lower(value).replace(/[^a-z]/g, '');
   if (['teacher', 'subjectteacher', 'subjectteachers'].includes(view)) return 'teachers';
+  if (['classteacher', 'classteachers', 'classstaff'].includes(view)) return 'classstaff';
   if (['catalogue', 'catalogues'].includes(view)) return 'structure';
   return Object.hasOwn(ACADEMIC_VIEW_STATE_KEYS, view) ? view : 'classrooms';
 }
@@ -399,6 +405,7 @@ export function academicManagementViewStateKeys(value = '', permissions = {}) {
 
 const ACADEMIC_VIEW_PEOPLE = Object.freeze({
   classrooms: { staff: true, students: true },
+  classstaff: { staff: true, students: false },
   structure: { staff: false, students: false },
   bulksetup: { staff: false, students: false },
   departments: { staff: false, students: false },
@@ -2444,6 +2451,165 @@ export async function bulkApplyAcademicSubjects(env, user = {}, input = {}) {
     ? `${createdRecords.length} class-subject offering${createdRecords.length === 1 ? '' : 's'} created online${skipped ? `; ${skipped} already matched and were skipped` : ''}.`
     : 'Every selected class already has the selected reusable subjects.';
   response.bulkResult = { Requested: classIds.length * subjectIds.length, Created: createdRecords.length, Skipped: skipped };
+  return response;
+}
+
+export function normalizeAcademicClassTeacherAssignments(input = {}) {
+  const supplied = Array.isArray(input.Assignments) ? input.Assignments : [];
+  if (!supplied.length) throw failure('Choose at least one classroom and class teacher.');
+  if (supplied.length > 100) throw failure('Assign class teachers to at most 100 classrooms in one batch.');
+  const seen = new Set();
+  return supplied.map((row, index) => {
+    const rowNumber = index + 1;
+    const classroomId = clean(row.ClassroomId || row.ArmId);
+    const formTeacherUsername = lower(row.FormTeacherUsername || row.ClassTeacherUsername);
+    const assistantTeacherUsername = lower(row.AssistantTeacherUsername);
+    if (!classroomId) throw failure(`Row ${rowNumber}: choose a classroom.`);
+    if (!formTeacherUsername) throw failure(`Row ${rowNumber}: choose a class teacher.`);
+    if (assistantTeacherUsername && assistantTeacherUsername === formTeacherUsername) {
+      throw failure(`Row ${rowNumber}: the class teacher and assistant must be different staff members.`);
+    }
+    const classroomKey = lower(classroomId);
+    if (seen.has(classroomKey)) throw failure(`Row ${rowNumber}: each classroom can appear only once.`);
+    seen.add(classroomKey);
+    return {
+      ClassroomId: classroomId,
+      FormTeacherUsername: formTeacherUsername,
+      AssistantTeacherUsername: assistantTeacherUsername,
+      FormTeacherAllocationId: clean(row.FormTeacherAllocationId),
+      FormTeacherRevisionToken: clean(row.FormTeacherRevisionToken),
+      AssistantTeacherAllocationId: clean(row.AssistantTeacherAllocationId),
+      AssistantTeacherRevisionToken: clean(row.AssistantTeacherRevisionToken)
+    };
+  });
+}
+
+function assertAcademicClassTeacherSnapshot(current = [], allocationId = '', revisionToken = '', rowNumber = 0, role = '') {
+  const expectedId = clean(allocationId);
+  const expectedRevision = clean(revisionToken);
+  const matches = current.length === 1
+    && recordId(current[0]) === expectedId
+    && clean(current[0].__updateTime) === expectedRevision;
+  if ((!current.length && !expectedId && !expectedRevision) || matches) return;
+  throw failure(
+    `Row ${rowNumber}: this classroom's ${role.toLowerCase()} changed after the page loaded. Refresh before saving.`,
+    409,
+    'ACADEMIC_WRITE_CONFLICT'
+  );
+}
+
+export async function bulkAssignAcademicClassTeachers(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageAllocations');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  const assignments = normalizeAcademicClassTeacherAssignments(input);
+  const sessionId = clean(input.SessionId);
+  const termId = clean(input.TermId);
+  if (!sessionId || !termId) throw failure('Choose the academic session and term.');
+  const [state, people] = await Promise.all([
+    loadScopedAcademicState(env, scope, ACADEMIC_CLASS_TEACHER_STATE_KEYS),
+    loadPeople(env, user, scope, { students: false })
+  ]);
+  const writes = [];
+  const changedClassrooms = new Set();
+  let savedRoles = 0;
+  let clearedAssistants = 0;
+  let unchangedClassrooms = 0;
+
+  assignments.forEach((assignment, index) => {
+    const rowNumber = index + 1;
+    const classroom = assertReference(findById(state.arms, assignment.ClassroomId), `Row ${rowNumber}: choose an active classroom.`);
+    if (!activeValue(classroom.IsClassroom, false)) {
+      throw failure(`Row ${rowNumber}: ${classroom.Name} is an arm definition, not an opened classroom.`, 409, 'ACADEMIC_CLASSROOM_REQUIRED');
+    }
+    const schoolClass = assertReference(findById(state.classes, classroom.ClassId), `Row ${rowNumber}: the classroom class is not active.`);
+    if (lower(classroom.SchoolSection) !== scope.section || lower(schoolClass.SchoolSection) !== scope.section) {
+      throw failure(`Row ${rowNumber}: the classroom belongs to another school section.`, 409, 'ACADEMIC_SECTION_MISMATCH');
+    }
+    let rowChanged = false;
+    const roles = [
+      {
+        role: 'Form Teacher', username: assignment.FormTeacherUsername,
+        allocationId: assignment.FormTeacherAllocationId,
+        revisionToken: assignment.FormTeacherRevisionToken
+      },
+      {
+        role: 'Assistant Teacher', username: assignment.AssistantTeacherUsername,
+        allocationId: assignment.AssistantTeacherAllocationId,
+        revisionToken: assignment.AssistantTeacherRevisionToken
+      }
+    ];
+
+    roles.forEach(({ role, username, allocationId, revisionToken }) => {
+      const current = state.teacherAllocations.filter((row) => statusActive(row)
+        && row.SessionId === sessionId && row.TermId === termId
+        && row.ArmId === classroom.ArmId && row.AllocationRole === role);
+      assertAcademicClassTeacherSnapshot(current, allocationId, revisionToken, rowNumber, role);
+      if (!username) {
+        current.forEach((existing) => writes.push({
+          collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
+          documentId: recordId(existing), operation: 'delete', updateTime: clean(existing.__updateTime)
+        }));
+        if (current.length) {
+          clearedAssistants += 1;
+          rowChanged = true;
+        }
+        return;
+      }
+      if (current.length === 1 && lower(current[0].TeacherUsername) === username) return;
+      const candidate = normalizeAcademicTeacherAllocation({
+        SessionId: sessionId, TermId: termId, TeacherUsername: username,
+        ClassId: schoolClass.ClassId, ArmId: classroom.ArmId,
+        AllocationRole: role, Status: 'Active'
+      }, scope);
+      const exactExisting = findById(state.teacherAllocations, candidate.AllocationId);
+      validateAcademicRecord(state, 'teacherallocation', candidate, { ...people, existing: exactExisting });
+      current.forEach((existing) => writes.push({
+        collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
+        documentId: recordId(existing), operation: 'delete', updateTime: clean(existing.__updateTime)
+      }));
+      const record = exactExisting
+        ? normalizeAcademicTeacherAllocation({ ...candidate, Status: 'Active' }, scope, exactExisting)
+        : candidate;
+      delete record.ArchivedAt;
+      delete record.ArchivedBy;
+      stampAcademicRecord(record, user, exactExisting);
+      writes.push({
+        collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.teacherAllocations,
+        documentId: record.AllocationId,
+        data: withoutMetadata(record),
+        ...(exactExisting ? { updateTime: clean(exactExisting.__updateTime) } : { exists: false })
+      });
+      savedRoles += 1;
+      rowChanged = true;
+    });
+    if (rowChanged) changedClassrooms.add(classroom.ArmId);
+    else unchangedClassrooms += 1;
+  });
+
+  if (writes.length > 498) {
+    throw failure('This batch is too large to save atomically. Save fewer classroom rows at once.', 400, 'ACADEMIC_CLASS_TEACHER_BATCH_TOO_LARGE');
+  }
+  if (writes.length) {
+    writes.push(auditWrite(user, 'BULK ASSIGN', 'classroom staff', {
+      BranchId: scope.branchId, SchoolSection: scope.section,
+      SessionId: sessionId, TermId: termId, AllocationId: `class-staff-${Date.now()}`
+    }, `${changedClassrooms.size} classroom(s) updated; ${savedRoles} role(s) assigned; ${clearedAssistants} assistant assignment(s) cleared.`));
+  }
+  await commitAcademicBatch(env, writes, 'A classroom or teacher assignment changed while the batch was being saved. Refresh and try again.');
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'classStaff'
+  });
+  response.message = changedClassrooms.size
+    ? `${changedClassrooms.size} classroom staff assignment${changedClassrooms.size === 1 ? '' : 's'} saved online.`
+    : 'Every selected classroom assignment is already up to date.';
+  response.bulkResult = {
+    Requested: assignments.length,
+    Updated: changedClassrooms.size,
+    RolesSaved: savedRoles,
+    AssistantsCleared: clearedAssistants,
+    Unchanged: unchangedClassrooms
+  };
   return response;
 }
 
@@ -6763,6 +6929,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['bulkcreateacademicsubjects', 'bulkcreatesubjects'].includes(action)) return bulkCreateAcademicSubjects(env, user, input);
   if (['configureacademicseniorchoicesubjects', 'configureseniorchoicesubjects'].includes(action)) return configureAcademicSeniorChoiceSubjects(env, user, input);
   if (['bulkapplyacademicsubjects', 'bulkapplysubjects'].includes(action)) return bulkApplyAcademicSubjects(env, user, input);
+  if (['bulkassignacademicclassteachers', 'bulkassignclassteachers'].includes(action)) return bulkAssignAcademicClassTeachers(env, user, input);
   if (['bulkassignacademicsubjectteacher', 'bulkassignsubjectteacher'].includes(action)) return bulkAssignAcademicSubjectTeacher(env, user, input);
   if (['updateacademicsubjectteacherallocation', 'updatesubjectteacherallocation'].includes(action)) return updateAcademicSubjectTeacherAllocation(env, user, input);
   if (['bulkallocateacademicstudents', 'bulkallocatestudents'].includes(action)) return bulkAllocateAcademicStudents(env, user, input);

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
+  ACADEMIC_CLASS_TEACHER_STATE_KEYS,
   ACADEMIC_MANAGEMENT_COLLECTIONS,
   ACADEMIC_SUBJECT_TEACHER_STATE_KEYS,
   ACADEMIC_STUDENT_IMPORT_COLUMNS,
@@ -23,6 +24,7 @@ import {
   normalizeAcademicArm,
   normalizeAcademicArmTemplate,
   normalizeAcademicClass,
+  normalizeAcademicClassTeacherAssignments,
   normalizeAcademicDepartment,
   normalizeAcademicOffering,
   normalizeAcademicSession,
@@ -59,8 +61,11 @@ test('every academic workspace stays focused below the Worker subrequest ceiling
     'sessions', 'terms', 'classes', 'arms', 'subjects', 'departments',
     'offerings', 'teacherAllocations'
   ]);
+  assert.deepEqual(ACADEMIC_CLASS_TEACHER_STATE_KEYS, [
+    'sessions', 'terms', 'classes', 'arms', 'teacherAllocations'
+  ]);
   assert.deepEqual(Object.keys(ACADEMIC_VIEW_STATE_KEYS), [
-    'classrooms', 'structure', 'bulksetup', 'departments', 'offerings', 'teachers',
+    'classrooms', 'classstaff', 'structure', 'bulksetup', 'departments', 'offerings', 'teachers',
     'students', 'timetable', 'attendance', 'scorebook', 'results', 'outcomes',
     'analysis', 'clearances', 'readiness', 'cbt'
   ]);
@@ -71,6 +76,7 @@ test('every academic workspace stays focused below the Worker subrequest ceiling
     keys.forEach((key) => assert.ok(validKeys.has(key) && key !== 'audit', `${view} contains invalid state key ${key}`));
   });
   assert.equal(academicManagementViewStateKeys('subject-teachers'), ACADEMIC_SUBJECT_TEACHER_STATE_KEYS);
+  assert.equal(academicManagementViewStateKeys('class-teachers'), ACADEMIC_CLASS_TEACHER_STATE_KEYS);
   assert.equal(academicManagementViewStateKeys('unknown-view'), ACADEMIC_VIEW_STATE_KEYS.classrooms);
   assert.equal(academicManagementViewStateKeys('teachers', { financeView: true }), ACADEMIC_VIEW_STATE_KEYS.clearances);
   const saveSource = librarySource.slice(
@@ -316,6 +322,24 @@ test('AM-002 student memberships allocate one arm and a unique subject set per t
     SessionId: 'session-1', TermId: 'term-1', StudentRef: 'DCA/2026/002', ClassId: 'class-1'
   }, { ...scope, allowMissingArm: true });
   assert.equal(importedWithoutArm.ArmId, '');
+});
+
+test('class-teacher batches require one unique classroom, one class teacher and a different optional assistant', () => {
+  assert.deepEqual(normalizeAcademicClassTeacherAssignments({ Assignments: [{
+    ClassroomId: 'classroom-a', ClassTeacherUsername: ' ADA.FORM ', AssistantTeacherUsername: 'BEN.ASSIST'
+  }] }), [{
+    ClassroomId: 'classroom-a', FormTeacherUsername: 'ada.form', AssistantTeacherUsername: 'ben.assist',
+    FormTeacherAllocationId: '', FormTeacherRevisionToken: '',
+    AssistantTeacherAllocationId: '', AssistantTeacherRevisionToken: ''
+  }]);
+  assert.throws(() => normalizeAcademicClassTeacherAssignments({ Assignments: [] }), /at least one classroom/);
+  assert.throws(() => normalizeAcademicClassTeacherAssignments({ Assignments: [
+    { ClassroomId: 'classroom-a', FormTeacherUsername: 'ada.form' },
+    { ClassroomId: 'classroom-a', FormTeacherUsername: 'ben.form' }
+  ] }), /each classroom can appear only once/);
+  assert.throws(() => normalizeAcademicClassTeacherAssignments({ Assignments: [{
+    ClassroomId: 'classroom-a', FormTeacherUsername: 'ada.form', AssistantTeacherUsername: 'ADA.FORM'
+  }] }), /must be different staff members/);
 });
 
 test('AM-002 existing-student import rows use reusable codes and semicolon subject lists', () => {
@@ -599,6 +623,7 @@ test('Web and desktop transports share one protected Academic Management handler
   assert.match(backendSource, /case 'bulkCreateAcademicSubjects'/);
   assert.match(backendSource, /case 'configureAcademicSeniorChoiceSubjects'/);
   assert.match(backendSource, /case 'bulkApplyAcademicSubjects'/);
+  assert.match(backendSource, /case 'bulkAssignAcademicClassTeachers'/);
   assert.match(backendSource, /case 'bulkAssignAcademicSubjectTeacher'/);
   assert.match(backendSource, /case 'updateAcademicSubjectTeacherAllocation'/);
   assert.match(backendSource, /case 'deleteAcademicRecord'/);
@@ -640,6 +665,41 @@ test('subject teachers are batch-assigned only to the exact selected classrooms'
   assert.match(bulkTeacherSource, /AllocationRole: 'Subject Teacher'/);
   assert.match(bulkTeacherSource, /Repeat for another subject if needed/);
   assert.match(librarySource, /bulkassignacademicsubjectteacher/);
+});
+
+test('class teachers and assistants are assigned across multiple classroom rows in one protected batch', () => {
+  const bulkClassStaffSource = librarySource.slice(
+    librarySource.indexOf('export async function bulkAssignAcademicClassTeachers'),
+    librarySource.indexOf('export async function bulkAssignAcademicSubjectTeacher')
+  );
+  assert.match(bulkClassStaffSource, /normalizeAcademicClassTeacherAssignments\(input\)/);
+  assert.match(bulkClassStaffSource, /loadScopedAcademicState\(env, scope, ACADEMIC_CLASS_TEACHER_STATE_KEYS\)/);
+  assert.match(bulkClassStaffSource, /role: 'Form Teacher'/);
+  assert.match(bulkClassStaffSource, /role: 'Assistant Teacher'/);
+  assert.match(bulkClassStaffSource, /assertAcademicClassTeacherSnapshot/);
+  assert.match(bulkClassStaffSource, /operation: 'delete'/);
+  assert.match(bulkClassStaffSource, /commitAcademicBatch\(env, writes/);
+  assert.match(bulkClassStaffSource, /View: 'classStaff'/);
+  assert.match(librarySource, /bulkassignacademicclassteachers/);
+
+  const workspaceSource = adminSource.slice(
+    adminSource.indexOf('function academicClassStaffWorkspace'),
+    adminSource.indexOf('function academicStructureWorkspace')
+  );
+  assert.match(adminSource, /\['classStaff', 'Assign class teachers'\]/);
+  assert.match(workspaceSource, /data-academic-workflow="bulkAssignAcademicClassTeachers"/);
+  assert.match(workspaceSource, /data-academic-class-staff-row/);
+  assert.match(workspaceSource, /data-academic-classroom-select/);
+  assert.match(workspaceSource, /data-academic-class-teacher/);
+  assert.match(workspaceSource, /data-academic-assistant-teacher/);
+  assert.match(workspaceSource, /data-academic-class-staff-add/);
+  assert.match(workspaceSource, /Class Teacher Assignments/);
+  assert.match(workspaceSource, /Leaving Assistant blank removes the current assistant/);
+  assert.match(adminSource, /function syncAcademicClassStaffRow/);
+  assert.match(adminSource, /data-academic-class-staff-edit/);
+  assert.match(adminSource, /FormTeacherRevisionToken: clean\(row\.dataset\.formRevision\)/);
+  assert.match(adminSource, /AssistantTeacherRevisionToken: clean\(row\.dataset\.assistantRevision\)/);
+  assert.match(styleSource, /\.academic-class-staff-row\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\) 36px/);
 });
 
 test('branch-paired class and arm actions never write the organisation legacy class catalogue', () => {
