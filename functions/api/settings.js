@@ -28,6 +28,10 @@ import {
   PUBLIC_PORTAL_CONTENT_DOCUMENT,
   publicPortalContent
 } from '../lib/public-portal-content.js';
+import {
+  normalizeTutorialLinks,
+  normalizeYouTubeTutorialUrl
+} from '../lib/tutorial-links.js';
 
 const PROFILE_CACHE_MS = 60 * 1000;
 let profileCache = null;
@@ -504,6 +508,8 @@ export async function onRequestPost(context) {
       PortalHeadline: mergedProfileText(existing, incoming, 'PortalHeadline'),
       PortalSubheading: mergedProfileText(existing, incoming, 'PortalSubheading'),
       PortalNotice: mergedProfileText(existing, incoming, 'PortalNotice'),
+      TutorialLinks: normalizeTutorialLinks(incoming.TutorialLinks ?? existing.TutorialLinks ?? {}),
+      TutorialChannelUrl: normalizeYouTubeTutorialUrl(incoming.TutorialChannelUrl ?? existing.TutorialChannelUrl ?? ''),
       ResultDisplayMode: ['subjects', 'percentage'].includes(clean(incoming.ResultDisplayMode)) ? clean(incoming.ResultDisplayMode) : 'subjects',
       ShowResultsOnline: ['YES', 'NO'].includes(clean(incoming.ShowResultsOnline).toUpperCase()) ? clean(incoming.ShowResultsOnline).toUpperCase() : 'NO',
       CurrentAcademicSession: clean(incoming.CurrentAcademicSession),

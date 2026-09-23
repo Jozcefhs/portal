@@ -6,7 +6,7 @@
   <title>Organisation Staff Portal</title>
   <meta name="theme-color" content="#071b33">
   <script src="js/preferences.js?v=20260812-audio-face-guidance"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260923-class-teacher-batch">
+  <link rel="stylesheet" href="css/style.css?v=20260923-youtube-tutorials">
   <link rel="stylesheet" href="css/notifications.css?v=20260804-read-efficiency">
 </head>
 <body class="staff-page">
@@ -17,6 +17,9 @@
     </a>
     <div id="staffIdentity" class="staff-identity" hidden>
       <div class="staff-desktop-tools" aria-label="Dashboard controls">
+        <button type="button" id="staffTutorialButton" class="staff-header-icon staff-tutorial-button" aria-label="Open tutorial for this module" title="Open tutorial for this module">
+          <span aria-hidden="true">&#9654;</span>
+        </button>
         <button type="button" id="staffHeaderRefresh" class="staff-header-icon" aria-label="Refresh dashboard" title="Refresh dashboard">
           <span aria-hidden="true">&#8635;</span>
         </button>
@@ -83,6 +86,9 @@
                 <button type="button" id="staffPaymentSettings" class="staff-profile-settings" hidden>
                   <span aria-hidden="true">&#8358;</span> Payment settings
                 </button>
+                <button type="button" id="staffTutorialSettings" class="staff-profile-settings" hidden>
+                  <span aria-hidden="true">&#9654;</span> Tutorial video settings
+                </button>
                 <button type="button" id="staffSubscriptionButton" class="staff-profile-settings" hidden>
                   <span aria-hidden="true">&#8593;</span> Subscription
                 </button>
@@ -91,6 +97,9 @@
                 </button>
                 <button type="button" id="staffMfaSettings" class="staff-profile-settings">
                   <span aria-hidden="true">&#128737;</span> Two-factor security
+                </button>
+                <button type="button" id="staffTutorialMenu" class="staff-profile-settings">
+                  <span aria-hidden="true">&#9654;</span> Tutorial for this page
                 </button>
                 <button type="button" id="staffPasskeySetup" class="staff-passkey-setup" hidden>
                   <span aria-hidden="true">&#9673;</span> Set up biometric sign-in
@@ -428,7 +437,7 @@
   <script src="js/app-dialogs.js?v=20260910-detailed-messages"></script>
   <script src="js/list-sorting.js?v=20260815-shared-list-sorting"></script>
   <script src="js/academic-results-analysis.js?v=20260918-academic-readability"></script>
-  <script src="js/admin.js?v=20260923-class-teacher-batch"></script>
+  <script src="js/admin.js?v=20260923-youtube-tutorials"></script>
   <script src="js/web-push.js?v=20260801-mobile-push"></script>
   <script src="js/notifications.js?v=20260913-branch-scope"></script>
 </body>

@@ -555,6 +555,7 @@ html[data-theme="dark"] .preference-switch-row:has(.preference-switch input:chec
 .settings-file-actions{display:flex;flex-wrap:wrap;align-items:center;gap:9px}.settings-file-actions input[type=file]{position:absolute;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none}
 .settings-file-button,.settings-text-button{display:inline-flex;align-items:center;justify-content:center;min-height:39px;margin:0;padding:8px 13px;border-radius:8px;font-size:13px;font-weight:750;cursor:pointer}
 .settings-file-button{background:#174a7c;color:#fff}.settings-file-button:hover{background:#0f3459}
+.tutorial-settings-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}.tutorial-settings-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px;align-items:end;padding:11px;border:1px solid #dce5ef;border-radius:10px;background:#f8fbfe}.tutorial-settings-item label{display:grid;gap:5px;min-width:0;margin:0;color:#314a63;font-size:11px;font-weight:800}.tutorial-settings-item input{width:100%;min-width:0;margin:0}.tutorial-settings-item a{display:grid;place-items:center;width:38px;height:38px;border:1px solid #b9cce0;border-radius:8px;background:#fff;color:#15558d;text-decoration:none;font-size:16px}.tutorial-settings-item a[hidden]{display:none}.tutorial-settings-item a:hover{border-color:#15558d;background:#edf6ff}
 .settings-text-button{border:1px solid #cbd7e5;background:#fff;color:#174a7c}.settings-text-button:hover{background:#edf5ff;color:#0f3459}
 .academic-policy-state{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;border:1px solid #cbd9e8;border-radius:10px;background:#f6faff}.academic-policy-state strong,.academic-policy-state small{display:block}.academic-policy-state strong{color:#173a5d;font-size:14px}.academic-policy-state small{margin-top:3px;color:#6f8194;font-size:12px}.academic-policy-state button{width:fit-content;margin:0;white-space:nowrap}
 .academic-policy-checks{display:flex;flex-wrap:wrap;gap:10px 18px;margin-top:16px;padding:13px 14px;border:1px solid #e0e7ef;border-radius:9px;background:#f8fafc}.academic-policy-checks label{display:inline-flex;align-items:center;gap:7px;margin:0;color:#405269;font-size:12px;font-weight:700}.academic-policy-checks input{width:16px;height:16px;margin:0}
@@ -1604,6 +1605,7 @@ html[data-theme="dark"] .staff-summary .module-summary-card:nth-child(4n+4) .mod
   .staff-summary .module-summary-card strong{font-size:20px!important}
   .staff-summary .module-summary-card span:not(.module-summary-icon){margin-top:3px!important}
 }
+@media (max-width:680px){.tutorial-settings-list{grid-template-columns:1fr}.tutorial-settings-item{padding:9px}.tutorial-settings-item input{font-size:16px}}
 /* Generic organisation departments, program registration and recording charts */
 .department-summary-grid {
   display: flex;

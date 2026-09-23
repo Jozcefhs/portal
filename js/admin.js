@@ -10,6 +10,9 @@ const approvalSettingsButton = document.getElementById('staffApprovalSettings');
 const approvalSettingsDialog = document.getElementById('staffApprovalSettingsDialog');
 const approvalSettingsForm = document.getElementById('staffApprovalSettingsForm');
 const paymentSettingsButton = document.getElementById('staffPaymentSettings');
+const tutorialSettingsButton = document.getElementById('staffTutorialSettings');
+const tutorialButton = document.getElementById('staffTutorialButton');
+const tutorialMenuButton = document.getElementById('staffTutorialMenu');
 const subscriptionButton = document.getElementById('staffSubscriptionButton');
 const subscriptionDialog = document.getElementById('staffSubscriptionDialog');
 const desktopSetupButton = document.getElementById('staffDesktopSetup');
@@ -248,6 +251,39 @@ const tabConfig = [
   ['staffUsers', 'Staff & Permissions']
 ];
 
+const tutorialStorageKeys = Object.freeze({
+  overview: 'Overview',
+  recordsDesk: 'Records Desk',
+  executiveOffice: 'Executive Office',
+  admissions: 'Applications',
+  formPurchases: 'Admission Form Sale',
+  students: 'Students',
+  academics: 'Academic Management',
+  studentConduct: 'Student Conduct & Discipline',
+  humanResources: 'Human Resources',
+  members: 'Departments & Members',
+  services: 'Services & Attendance',
+  staffAttendance: 'Staff Attendance',
+  funds: 'Funds & Mappings',
+  offerings: 'Offerings',
+  donations: 'Donations',
+  accounts: 'Accounts',
+  incomeAnalytics: 'Income Analytics',
+  financeRequests: 'Finance & Accounting',
+  payroll: 'Payroll',
+  clinic: 'Clinic',
+  kitchen: 'Kitchen',
+  tuckShop: 'Tuck Shop',
+  bookstore: 'Bookstore',
+  uniformStore: 'Uniform Store',
+  organizationStore: 'Organisation Store',
+  restaurant: 'Restaurant',
+  hotel: 'Hotel Services',
+  dataBackup: 'Backup & Restore',
+  securityAudit: 'Logs',
+  staffUsers: 'Settings'
+});
+
 const schoolOnlyWebSections = new Set([
   'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts',
   'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'
@@ -361,6 +397,67 @@ function clean(value) {
 
 function lower(value) {
   return clean(value).toLowerCase();
+}
+
+function safeYouTubeTutorialUrl(value) {
+  const candidate = clean(value);
+  if (!candidate) return '';
+  try {
+    const parsed = new URL(candidate);
+    const hosts = new Set([
+      'youtube.com', 'www.youtube.com', 'm.youtube.com',
+      'youtu.be', 'www.youtu.be',
+      'youtube-nocookie.com', 'www.youtube-nocookie.com'
+    ]);
+    return parsed.protocol === 'https:' && hosts.has(parsed.hostname.toLowerCase()) && parsed.pathname !== '/'
+      ? parsed.href
+      : '';
+  } catch (_error) {
+    return '';
+  }
+}
+
+function tutorialDestination(section = activeSection) {
+  const links = dashboardData?.tutorials?.links || {};
+  const storageKey = tutorialStorageKeys[section] || '';
+  const displayedLabel = staffTabLabel(section, storageKey || section);
+  const candidates = [storageKey, section, displayedLabel];
+  const moduleUrl = candidates.map((key) => safeYouTubeTutorialUrl(links[key])).find(Boolean) || '';
+  return {
+    moduleUrl,
+    channelUrl: safeYouTubeTutorialUrl(dashboardData?.tutorials?.channelUrl),
+    label: displayedLabel || 'this page'
+  };
+}
+
+function updateTutorialControls() {
+  const destination = tutorialDestination();
+  const title = destination.moduleUrl
+    ? `Open the ${destination.label} tutorial`
+    : destination.channelUrl
+      ? `Open the tutorial channel (no ${destination.label} video is assigned yet)`
+      : `No ${destination.label} tutorial is published yet`;
+  [tutorialButton, tutorialMenuButton].filter(Boolean).forEach((button) => {
+    button.title = title;
+    button.setAttribute('aria-label', title);
+    button.classList.toggle('is-unconfigured', !destination.moduleUrl && !destination.channelUrl);
+  });
+}
+
+async function openCurrentTutorial() {
+  const destination = tutorialDestination();
+  const target = destination.moduleUrl || destination.channelUrl;
+  if (target) {
+    window.open(target, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  await window.DynamaxDialogs.alert({
+    title: 'Tutorial not published yet',
+    message: canManageOrganisationSettings(currentUser || {})
+      ? `No YouTube tutorial has been assigned to ${destination.label}. Open Account & settings, then Tutorial video settings, to add it.`
+      : `The YouTube tutorial for ${destination.label} has not been published yet.`,
+    confirmText: 'Close'
+  });
 }
 
 function canManageOrganisationSettings(user = {}) {
@@ -1850,6 +1947,12 @@ function staffTabLabel(key, fallback = '') {
   return fallback;
 }
 
+function tutorialSettingsUrl() {
+  const url = new URL('setup.html', window.location.href);
+  url.hash = 'tutorial-settings';
+  return `${url.pathname}${url.hash}`;
+}
+
 function staffLearnerTerms() {
   const primaryWorkspace = resolveDashboardEdition(currentUser || {}) === 'school'
     && clean(currentUser?.schoolSectionAccess).toLowerCase() === 'primary';
@@ -2033,6 +2136,7 @@ function showDashboard(user, options = {}) {
     user.approvalEnabled
   );
   paymentSettingsButton.hidden = user.role !== 'Super Admin';
+  tutorialSettingsButton.hidden = !canManageOrganisationSettings(user);
   subscriptionButton.hidden = !canManageOrganisationSettings(user);
   desktopSetupButton.hidden = !canManageOrganisationSettings(user);
   if (subscriptionAccessBanner) {
@@ -2986,6 +3090,7 @@ function renderWorkspace(active, options = {}) {
   renderModuleSummary(active);
   setDashboardClockActive(overview, options);
   renderDashboardCharts(dashboardData?.charts || {});
+  updateTutorialControls();
 }
 
 function selectSection(key, allowed = activeTabs.map(([tabKey]) => tabKey)) {
@@ -19470,6 +19575,8 @@ staffBrand.addEventListener('click', (event) => {
   if (!headerRefreshButton.disabled) refreshDashboard();
 });
 headerRefreshButton.addEventListener('click', refreshDashboard);
+tutorialButton.addEventListener('click', openCurrentTutorial);
+tutorialMenuButton.addEventListener('click', openCurrentTutorial);
 themeToggleButton.addEventListener('click', toggleStaffTheme);
 sidebarThemeToggleButton.addEventListener('click', toggleStaffTheme);
 branchSelector.addEventListener('change', () => switchStaffBranch(branchSelector.value));
@@ -19485,6 +19592,9 @@ window.addEventListener('storage', (event) => {
 });
 paymentSettingsButton.addEventListener('click', () => {
   window.location.assign(paymentSettingsUrl());
+});
+tutorialSettingsButton.addEventListener('click', () => {
+  window.location.assign(tutorialSettingsUrl());
 });
 new MutationObserver(updateStaffThemeToggle).observe(document.documentElement, {
   attributes: true,

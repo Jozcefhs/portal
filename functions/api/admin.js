@@ -5,6 +5,7 @@ import { getSchoolStructure, listSchoolCollection, schoolSectionFor } from '../l
 import { configuredStaffBranches } from '../lib/staff-branch-context.js';
 import { normalizeClassKey } from '../lib/class-names.js';
 import { readJsonBody } from '../lib/request-security.js';
+import { normalizeTutorialLinks, normalizeYouTubeTutorialUrl } from '../lib/tutorial-links.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -136,7 +137,10 @@ export async function onRequestPost(context) {
       throw err;
     }
     if (shellOnly) {
-      const structure = await getSchoolStructure(env);
+      const [structure, tutorialProfile] = await Promise.all([
+        getSchoolStructure(env),
+        getDocument(env, 'settings', 'schoolProfile').catch(() => null)
+      ]);
       const configuredBranches = configuredStaffBranches(structure);
       const branches = user.canSwitchBranches
         ? configuredBranches
@@ -166,6 +170,10 @@ export async function onRequestPost(context) {
         departments: {},
         branches,
         defaultBranchId: clean(structure.ActiveBranchId || configuredBranches[0]?.id || 'main'),
+        tutorials: {
+          links: normalizeTutorialLinks(tutorialProfile?.TutorialLinks || {}),
+          channelUrl: normalizeYouTubeTutorialUrl(tutorialProfile?.TutorialChannelUrl || '')
+        },
         summaryDeferred: true
       }, { headers: { 'Cache-Control': 'no-store' } });
     }

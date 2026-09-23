@@ -366,8 +366,8 @@ test('School settings expose configurable result, grading and promotion policy c
   assert.doesNotMatch(setupJsSource, /DynamaxDialogs\.confirm\([\s\S]{0,500}\)\) return;\s*const button = event\.currentTarget;/);
   assert.match(setupJsSource, /requestAcademicPolicy\('activate'\);\s*announceSettingsChange\(\);/);
   assert.match(setupJsSource, /requestAcademicPolicy\('inherit'\);\s*announceSettingsChange\(\);/);
-  assert.match(setupHtmlSource, /css\/style\.css\?v=20260917-independent-branch-policy/);
-  assert.match(setupHtmlSource, /js\/setup\.js\?v=20260917-independent-branch-policy/);
+  assert.match(setupHtmlSource, /css\/style\.css\?v=20260923-youtube-tutorials/);
+  assert.match(setupHtmlSource, /js\/setup\.js\?v=20260923-youtube-tutorials/);
   assert.match(setupHtmlSource, /<span>Split A\/B<\/span><span>A objective<\/span><span>B theory<\/span><span>Required<\/span><span>Mid-term<\/span>/);
   assert.match(setupJsSource, /row\.append\(name, maximum, weight, source, split, objective, theory, required, midTerm, remove\)/);
   assert.match(styleSource, /\.academic-component-grid/);
