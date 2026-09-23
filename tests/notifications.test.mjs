@@ -53,7 +53,7 @@ test('parent and staff notification types are school-managed by default', () => 
   assert.equal(parent.Categories.Requisitions, false);
 });
 
-test('staff requisition notifications target finance decision makers in the record scope', () => {
+test('staff requisition submission notifications target only Accounts in the record scope', () => {
   const notification = staffRequisitionNotification({
     ExpenseNo: 'WEB-MAT-20260730-ABC123',
     RequisitionType: 'Material',
@@ -65,10 +65,10 @@ test('staff requisition notifications target finance decision makers in the reco
   }, 'Requester');
   assert.equal(notification.Type, 'Requisition Submitted');
   assert.match(notification.Message, /Administration submitted WEB-MAT-20260730-ABC123/);
-  assert.deepEqual(notification.TargetRoles, ['Super Admin', 'Accounts Officer', 'Management']);
+  assert.deepEqual(notification.TargetRoles, ['Accounts Officer']);
   assert.equal(notificationTargetsRecipient(
     { ...notification, Audience: 'Staff' },
-    { audience: 'Staff', role: 'Super Admin', branchId: 'main', schoolSectionAccess: 'secondary' }
+    { audience: 'Staff', role: 'Accounts Officer', branchId: 'main', schoolSectionAccess: 'secondary' }
   ), true);
   assert.equal(notificationTargetsRecipient(
     { ...notification, Audience: 'Staff' },
@@ -77,7 +77,7 @@ test('staff requisition notifications target finance decision makers in the reco
   assert.equal(notificationTargetsRecipient(
     { ...notification, Audience: 'Staff' },
     { audience: 'Staff', role: 'Super Admin', branchId: '', schoolSectionAccess: 'All' }
-  ), true);
+  ), false);
 });
 
 test('parent payment notifications can be targeted through email or student account reference', () => {

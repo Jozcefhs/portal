@@ -1,4 +1,4 @@
-import { getDocument, patchDocumentFields, upsertDocument } from '../lib/firestore.js';
+import { getDocument, patchDocumentFields, patchDocumentFieldsIfCurrent, upsertDocument } from '../lib/firestore.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { syncRegistrationSubscriptionToWorkspace } from '../lib/subscription-workspace-sync.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
@@ -8,6 +8,8 @@ import {
   paidSubscriptionRecoveryFields,
   paystackPaidThroughAt
 } from '../lib/paid-subscription-lifecycle.js';
+import { freeTrialWindow } from '../lib/subscription-plans.js';
+import { recordTrialUseTombstone } from '../lib/tenant-trial-lifecycle.js';
 import {
   buildSubscriptionReceipt,
   deliverSubscriptionReceiptEmail,
@@ -18,6 +20,7 @@ import {
 const clean = (value) => String(value ?? '').trim();
 const safeId = (value) => clean(value).replace(/[\/\\?#\[\]]/g, '-').replace(/\s+/g, '_').slice(0, 140);
 const PAYSTACK_SUBSCRIPTION_URL = 'https://api.paystack.co/subscription';
+const PAYSTACK_REFUND_URL = 'https://api.paystack.co/refund';
 
 function withoutFirestoreMetadata(document = {}) {
   const value = { ...document };
@@ -33,6 +36,53 @@ function metadataFromTransaction(transaction = {}) {
   if (!metadata) return {};
   if (typeof metadata === 'object') return metadata;
   try { return JSON.parse(metadata); } catch (_error) { return {}; }
+}
+
+export function verifiedPaystackCardFields(transaction = {}, verifiedAt = new Date().toISOString()) {
+  const authorization = transaction.authorization && typeof transaction.authorization === 'object'
+    ? transaction.authorization
+    : {};
+  const channel = clean(transaction.channel || authorization.channel).toLowerCase();
+  if (channel !== 'card' || !clean(authorization.authorization_code)) {
+    const error = new Error('A successful bank-card transaction is required before a tenant project can be assigned.');
+    error.status = 409;
+    error.code = 'TENANT_CARD_VERIFICATION_REQUIRED';
+    throw error;
+  }
+  return {
+    CardVerificationStatus: 'Verified',
+    CardVerifiedAt: clean(verifiedAt) || new Date().toISOString(),
+    CardVerificationProvider: 'Paystack',
+    CardVerificationChannel: 'card',
+    CardVerificationSignature: clean(authorization.signature),
+    CardVerificationBrand: clean(authorization.brand),
+    CardVerificationLast4: clean(authorization.last4),
+    CardVerificationExpMonth: clean(authorization.exp_month),
+    CardVerificationExpYear: clean(authorization.exp_year),
+    CardVerificationBank: clean(authorization.bank),
+    CardVerificationCountryCode: clean(authorization.country_code),
+    CardVerificationReusable: authorization.reusable === true
+  };
+}
+
+export async function requestPaystackCardVerificationRefund(env, reference, amount, currency, fetchImpl = fetch) {
+  if (!clean(env.PAYSTACK_SECRET_KEY)) throw new Error('Paystack refund credentials are not configured.');
+  const response = await fetchImpl(PAYSTACK_REFUND_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${env.PAYSTACK_SECRET_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      transaction: clean(reference),
+      amount: Math.round(Number(amount || 0) * 100),
+      currency: clean(currency).toUpperCase()
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.status === false) throw new Error(data.message || 'Paystack could not start the automatic verification refund.');
+  return {
+    status: clean(data.data?.status || 'Refund Requested'),
+    refundId: clean(data.data?.id),
+    reference: clean(data.data?.transaction?.reference || reference)
+  };
 }
 
 export async function verifySubscriptionTransaction(env, reference) {
@@ -282,6 +332,181 @@ export async function activateSavedSubscriptionPayment(env, options = {}) {
   };
 }
 
+export async function recordVerifiedCardVerification(env, transaction, requestedRegistrationReference = '') {
+  const platformEnv = requirePlatformFirestoreEnv(env);
+  const reference = safeId(transaction.reference);
+  let intent = await getDocument(platformEnv, 'subscriptionPayments', reference);
+  if (!intent || clean(intent.PaymentPurpose).toLowerCase() !== 'card verification') {
+    const error = new Error('The saved card-verification request was not found.');
+    error.status = 409;
+    throw error;
+  }
+  const metadata = metadataFromTransaction(transaction);
+  if (clean(metadata.paymentType).toLowerCase() !== 'dynamaxcardverification') {
+    const error = new Error('This transaction is not a Dynamax card verification.');
+    error.status = 409;
+    throw error;
+  }
+  const registrationReference = clean(
+    metadata.registrationReference || intent.RegistrationReference || requestedRegistrationReference
+  );
+  if (!registrationReference || (clean(requestedRegistrationReference)
+      && clean(requestedRegistrationReference).toLowerCase() !== registrationReference.toLowerCase())) {
+    const error = new Error('The card verification belongs to a different organisation registration.');
+    error.status = 409;
+    throw error;
+  }
+  const savedRegistration = await getDocument(platformEnv, 'tenantRegistrations', registrationReference);
+  if (!savedRegistration) {
+    const error = new Error('The organisation registration for this card verification was not found.');
+    error.status = 409;
+    throw error;
+  }
+  if (clean(intent.Plan).toLowerCase() !== 'free' || clean(metadata.plan).toLowerCase() !== 'free') {
+    const error = new Error('The card verification does not match the saved free-trial request.');
+    error.status = 409;
+    throw error;
+  }
+  const paidAmount = Number(transaction.requested_amount || transaction.amount || 0) / 100;
+  if (Math.abs(Number(intent.Amount || 0) - paidAmount) > 0.01
+      || clean(intent.Currency).toUpperCase() !== clean(transaction.currency || intent.Currency).toUpperCase()) {
+    const error = new Error('The verified card transaction does not match the saved verification amount.');
+    error.status = 409;
+    throw error;
+  }
+  const paidAt = clean(transaction.paid_at || transaction.paidAt) || new Date().toISOString();
+  const cardFields = verifiedPaystackCardFields(transaction, paidAt);
+  const alreadyRefundedOrRequested = ['refund requested', 'pending', 'processing', 'processed', 'refunded']
+    .includes(clean(intent.CardVerificationRefundStatus).toLowerCase());
+  let ownsRefundRequest = false;
+  if (!alreadyRefundedOrRequested) {
+    try {
+      await patchDocumentFieldsIfCurrent(platformEnv, 'subscriptionPayments', reference, {
+        Status: 'Processing Card Verification',
+        CardVerificationProcessingAt: new Date().toISOString(),
+        UpdatedAt: new Date().toISOString()
+      }, intent);
+      ownsRefundRequest = true;
+    } catch (error) {
+      if (error?.code !== 'FIRESTORE_WRITE_CONFLICT') throw error;
+      intent = await getDocument(platformEnv, 'subscriptionPayments', reference) || intent;
+    }
+  }
+  const now = new Date().toISOString();
+  const pendingRegistration = {
+    ...withoutFirestoreMetadata(savedRegistration),
+    Plan: 'Free',
+    BillingCycle: 'monthly',
+    Price: 0,
+    Currency: clean(intent.Currency || 'NGN'),
+    UserLimit: Math.max(1, Number(intent.UserLimit || savedRegistration.UserLimit || 5) || 5),
+    FeatureEntitlements: intent.FeatureEntitlements || savedRegistration.FeatureEntitlements || [],
+    PlanCatalogRevision: clean(intent.PlanCatalogRevision || savedRegistration.PlanCatalogRevision),
+    ...cardFields,
+    CardVerificationReference: reference,
+    CardVerificationAuthorizationUrl: '',
+    PaymentStatus: 'Free Trial',
+    SubscriptionStatus: clean(savedRegistration.TrialStartedAt) ? clean(savedRegistration.SubscriptionStatus || 'Trialing') : 'Pending Trial Activation',
+    Status: clean(savedRegistration.TrialStartedAt) ? clean(savedRegistration.Status || 'Trial Active') : 'Pending Trial Activation',
+    TrialReservedAt: clean(savedRegistration.TrialReservedAt) || now,
+    UpdatedAt: now
+  };
+  await Promise.all([
+    upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, pendingRegistration),
+    patchDocumentFields(platformEnv, 'subscriptionPayments', reference, {
+      Status: 'Card Verified',
+      PaymentMethod: 'Paystack Card Verification',
+      PaidAt: paidAt,
+      ...cardFields,
+      UpdatedAt: now
+    })
+  ]);
+
+  let refundStatus = clean(intent.CardVerificationRefundStatus);
+  let refundWarning = '';
+  if (ownsRefundRequest) {
+    try {
+      const refund = await requestPaystackCardVerificationRefund(
+        env,
+        reference,
+        intent.Amount,
+        intent.Currency
+      );
+      refundStatus = clean(refund.status || 'Refund Requested');
+      await patchDocumentFields(platformEnv, 'subscriptionPayments', reference, {
+        CardVerificationRefundStatus: refundStatus,
+        CardVerificationRefundId: refund.refundId,
+        CardVerificationRefundRequestedAt: new Date().toISOString(),
+        UpdatedAt: new Date().toISOString()
+      });
+    } catch (error) {
+      refundStatus = 'Refund Failed';
+      refundWarning = 'Your card was verified, but the automatic verification-charge refund needs Dynamax support attention.';
+      await patchDocumentFields(platformEnv, 'subscriptionPayments', reference, {
+        CardVerificationRefundStatus: refundStatus,
+        CardVerificationRefundError: clean(error.message || error).slice(0, 500),
+        UpdatedAt: new Date().toISOString()
+      }).catch(() => null);
+    }
+  }
+
+  const assignment = clean(pendingRegistration.WorkspaceId)
+    ? { assigned: true, registration: pendingRegistration }
+    : await reserveTenantProjectSlot(platformEnv, pendingRegistration);
+  let updatedRegistration = assignment.registration;
+  if (assignment.assigned && !clean(updatedRegistration.TrialStartedAt)) {
+    const trial = freeTrialWindow();
+    updatedRegistration = {
+      ...withoutFirestoreMetadata(updatedRegistration),
+      PaymentStatus: 'Free Trial',
+      SubscriptionStatus: 'Trialing',
+      Status: 'Trial Active',
+      LifecycleStage: 'Trialing',
+      ProvisioningStatus: 'Ready',
+      ...trial,
+      UpdatedAt: new Date().toISOString()
+    };
+    await upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, updatedRegistration);
+    await recordTrialUseTombstone(platformEnv, updatedRegistration).catch(() => null);
+    await syncRegistrationSubscriptionToWorkspace(env, updatedRegistration);
+  }
+  let activation = {};
+  if (assignment.assigned && clean(updatedRegistration.WorkspaceId)) {
+    try {
+      const issued = await issueTenantActivation(platformEnv, updatedRegistration, env);
+      activation = issued.issued ? {
+        activationUrl: issued.activationUrl,
+        activationExpiresAt: issued.expiresAt,
+        activationEmailSent: issued.emailSent,
+        activationEmailStatus: issued.emailStatus
+      } : issued.alreadyActivated ? {
+        administratorActivated: true,
+        loginUrl: issued.loginUrl
+      } : {};
+    } catch (_error) {
+      activation = { activationPending: true };
+    }
+  }
+  return {
+    registrationReference,
+    plan: 'Free',
+    billingCycle: 'monthly',
+    amount: 0,
+    currency: clean(intent.Currency || 'NGN'),
+    cardVerification: true,
+    cardVerified: true,
+    verificationCharge: Number(intent.Amount || 0),
+    refundStatus: refundStatus || 'Processing',
+    workspaceId: clean(updatedRegistration.WorkspaceId),
+    portalUrl: clean(updatedRegistration.PortalUrl),
+    workspacePending: !clean(updatedRegistration.WorkspaceId),
+    trialStartedAt: clean(updatedRegistration.TrialStartedAt),
+    trialEndsAt: clean(updatedRegistration.TrialEndsAt),
+    warning: refundWarning,
+    ...activation
+  };
+}
+
 export async function recordVerifiedSubscriptionPayment(env, transaction, requestedRegistrationReference = '') {
   const platformEnv = requirePlatformFirestoreEnv(env);
   const reference = safeId(transaction.reference);
@@ -292,6 +517,9 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
     throw error;
   }
   const metadata = metadataFromTransaction(transaction);
+  if (clean(metadata.paymentType).toLowerCase() === 'dynamaxcardverification') {
+    return recordVerifiedCardVerification(env, transaction, requestedRegistrationReference);
+  }
   if (clean(metadata.paymentType).toLowerCase() !== 'dynamaxsubscription') {
     const error = new Error('This transaction is not a Dynamax subscription payment.');
     error.status = 409;
@@ -324,6 +552,17 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
     error.status = 409;
     throw error;
   }
+  const cardFields = verifiedPaystackCardFields(
+    transaction,
+    clean(transaction.paid_at || transaction.paidAt) || new Date().toISOString()
+  );
+  const cardVerifiedRegistration = {
+    ...withoutFirestoreMetadata(savedRegistration),
+    ...cardFields,
+    CardVerificationReference: reference,
+    UpdatedAt: new Date().toISOString()
+  };
+  await upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, cardVerifiedRegistration);
   const customerCode = clean(transaction.customer?.customer_code);
   let subscriptionCode = clean(transaction.subscription_code || transaction.subscription?.subscription_code);
   let subscriptionEmailToken = '';
@@ -351,7 +590,7 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
     platformEnv,
     reference,
     intent,
-    savedRegistration,
+    savedRegistration: cardVerifiedRegistration,
     registrationReference,
     provider: 'Paystack',
     paidAt,
@@ -362,7 +601,8 @@ export async function recordVerifiedSubscriptionPayment(env, transaction, reques
       PaystackSubscriptionCode: subscriptionCode,
       PaystackSubscriptionEmailToken: subscriptionEmailToken,
       PaystackSubscriptionStartsAt: subscriptionStartsAt,
-      RecurringPlanScheduleError: clean(intent.RecurringPlanScheduleError)
+      RecurringPlanScheduleError: clean(intent.RecurringPlanScheduleError),
+      ...cardFields
     }
   });
   const updatedRegistration = result.updatedRegistration;
@@ -401,9 +641,13 @@ export async function onRequestPost({ request, env }) {
     const result = await recordVerifiedSubscriptionPayment(env, transaction, body.registrationReference);
     return Response.json({
       ok: true,
-      message: result.warning || (result.workspacePending
-        ? 'Subscription payment confirmed. Your plan is active and a project is being prepared for your organisation.'
-        : 'Subscription payment confirmed. Your selected plan and organisation workspace are now active.'),
+      message: result.warning || (result.cardVerification
+        ? result.workspacePending
+          ? 'Your bank card is verified and the verification refund has been requested. Your isolated trial workspace is being prepared.'
+          : 'Your bank card is verified, the verification refund has been requested, and your isolated trial workspace is ready.'
+        : result.workspacePending
+          ? 'Subscription payment confirmed. Your plan is active and a project is being prepared for your organisation.'
+          : 'Subscription payment confirmed. Your selected plan and organisation workspace are now active.'),
       ...result
     }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {

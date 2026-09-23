@@ -717,7 +717,7 @@ export function staffRequisitionNotification(requisition = {}, submittedBy = '')
     EventKey: `requisition-submitted:${lower(requisition.BranchId || 'main')}:${lower(requisition.SchoolSection || 'all')}:${recordId}:${revision}`,
     Type: 'Requisition Submitted',
     Audience: 'Staff',
-    TargetRoles: ['Super Admin', 'Accounts Officer', 'Management'],
+    TargetRoles: ['Accounts Officer'],
     Title: material ? 'Material requisition submitted' : 'Requisition submitted',
     Message: `${clean(requisition.Department) || 'A department'} submitted ${recordId || 'a requisition'} for ${money(requisition.Amount)}.`,
     ActionUrl: 'admin.html?section=financeRequests',
@@ -739,6 +739,8 @@ function requisitionEventText(requisition, event) {
   const notes = clean(requisition.ReviewNotes || requisition.AccountsReviewNotes);
   const descriptions = {
     Submitted: `${department} submitted ${id || 'a requisition'} for ${money(requisition.Amount)}.`,
+    Confirmed: `${id || 'The requisition'} was confirmed by Accounts and is ready for Management authorization.`,
+    Authorized: `${id || 'The requisition'} was authorized by Management and is ready for administrative approval.`,
     Approved: `${id || 'The requisition'} was approved for ${money(requisition.Amount)}.`,
     Rejected: `${id || 'The requisition'} was rejected${notes ? `: ${notes}` : '.'}`,
     Pushed: `${id || 'The requisition'} was pushed to Accounts for desktop processing.`,
@@ -749,20 +751,31 @@ function requisitionEventText(requisition, event) {
 }
 
 function requisitionEventRecipients(requisition, event, settings) {
-  const configured = settings.WorkflowRecipients || {};
-  const configuredSubmitted = values(configured.SubmittedRoles);
-  const configuredProcessing = values(configured.ProcessingRoles);
-  const configuredManagement = values(configured.ManagementRoles);
-  const submittedRoles = configuredSubmitted.length ? configuredSubmitted : ['Super Admin', 'Accounts Officer', 'Management'];
-  const processingRoles = configuredProcessing.length ? configuredProcessing : ['Super Admin', 'Accounts Officer'];
-  const managementRoles = configuredManagement.length ? configuredManagement : ['Super Admin', 'Management'];
   const requester = clean(requisition.RequestedByUsername || requisition.SubmittedByUsername || requisition.CreatedByUsername);
-  if (event === 'Submitted') return { roles: submittedRoles, usernames: [] };
-  if (event === 'Approved') return { roles: processingRoles, usernames: [requester].filter(Boolean) };
+  if (clean(requisition.BillNo)) {
+    const configured = settings.WorkflowRecipients || {};
+    const submittedRoles = values(configured.SubmittedRoles).length
+      ? values(configured.SubmittedRoles)
+      : ['Super Admin', 'Accounts Officer', 'Management'];
+    const processingRoles = values(configured.ProcessingRoles).length
+      ? values(configured.ProcessingRoles)
+      : ['Super Admin', 'Accounts Officer'];
+    const managementRoles = values(configured.ManagementRoles).length
+      ? values(configured.ManagementRoles)
+      : ['Super Admin', 'Management'];
+    if (event === 'Submitted') return { roles: submittedRoles, usernames: [] };
+    if (event === 'Approved' || event === 'Pushed') return { roles: processingRoles, usernames: [requester].filter(Boolean) };
+    if (event === 'Rejected') return { roles: [], usernames: [requester].filter(Boolean) };
+    return { roles: managementRoles, usernames: [requester].filter(Boolean) };
+  }
+  if (event === 'Submitted') return { roles: ['Accounts Officer'], usernames: [] };
+  if (event === 'Confirmed') return { roles: ['Management'], usernames: [] };
+  if (event === 'Authorized') return { roles: ['Super Admin'], usernames: [] };
+  if (event === 'Approved') return { roles: ['Accounts Officer'], usernames: [] };
   if (event === 'Rejected') return { roles: [], usernames: [requester].filter(Boolean) };
-  if (event === 'Pushed') return { roles: processingRoles, usernames: [requester].filter(Boolean) };
-  if (event === 'Posted') return { roles: managementRoles, usernames: [requester].filter(Boolean) };
-  return { roles: managementRoles, usernames: [requester].filter(Boolean) };
+  if (event === 'Pushed') return { roles: ['Accounts Officer'], usernames: [] };
+  if (event === 'Posted') return { roles: [], usernames: [requester].filter(Boolean) };
+  return { roles: [], usernames: [requester].filter(Boolean) };
 }
 
 export async function notifyStaffRequisitionEvent(env, requisition = {}, event = 'Updated', actorName = '', options = {}) {
@@ -771,10 +784,12 @@ export async function notifyStaffRequisitionEvent(env, requisition = {}, event =
 }
 
 export function staffRequisitionEventNotification(requisition = {}, event = 'Updated', actorName = '', settings = DEFAULT_NOTIFICATION_SETTINGS) {
-  const normalizedEvent = ['Submitted', 'Approved', 'Rejected', 'Pushed', 'Posted'].includes(clean(event)) ? clean(event) : 'Updated';
+  const normalizedEvent = ['Submitted', 'Confirmed', 'Authorized', 'Approved', 'Rejected', 'Pushed', 'Posted'].includes(clean(event)) ? clean(event) : 'Updated';
   const recordId = clean(requisition.ExpenseNo || requisition.BillNo || requisition.RequisitionNo || requisition.RecordId);
   const eventMoment = clean(
     normalizedEvent === 'Submitted' ? (requisition.ResubmittedAt || requisition.RequestedAt) :
+    normalizedEvent === 'Confirmed' ? (requisition.AccountsConfirmedAt || requisition.AccountsReviewedAt) :
+    normalizedEvent === 'Authorized' ? requisition.ManagementAuthorizedAt :
     normalizedEvent === 'Approved' ? requisition.ApprovedAt :
     normalizedEvent === 'Rejected' ? requisition.RejectedAt :
     normalizedEvent === 'Pushed' ? requisition.AccountsReviewedAt :

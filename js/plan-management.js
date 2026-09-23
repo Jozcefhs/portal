@@ -767,6 +767,33 @@ document.getElementById('requestTenantProjects')?.addEventListener('click', asyn
   }
 });
 
+document.getElementById('createOwnerDemo')?.addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  if (!window.DynamaxActionFeedback.begin(button, 'Creating demo...')) return;
+  try {
+    const data = await tenantPoolRequest({
+      action: 'create-owner-demo',
+      edition: document.getElementById('ownerDemoEdition').value,
+      organisationName: document.getElementById('ownerDemoOrganisation').value,
+      contactName: document.getElementById('ownerDemoContact').value,
+      email: document.getElementById('ownerDemoEmail').value,
+      phone: document.getElementById('ownerDemoPhone').value,
+      country: document.getElementById('ownerDemoCountry').value
+    });
+    await loadTenantPool();
+    const destination = data.activationUrl || data.loginUrl || data.portalUrl;
+    setStatus(tenantPoolStatus, data.message, 'ok');
+    if (destination) {
+      const label = data.activationUrl ? 'Create demo administrator' : data.loginUrl ? 'Open demo sign-in' : 'Open demo workspace';
+      tenantPoolStatus.innerHTML = `${escapeHtml(data.message)} <a class="settings-link" href="${escapeHtml(destination)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`;
+    }
+  } catch (error) {
+    setStatus(tenantPoolStatus, error.message || String(error), 'bad');
+  } finally {
+    window.DynamaxActionFeedback.end(button);
+  }
+});
+
 document.getElementById('saveTenantPoolPolicy')?.addEventListener('click', async (event) => {
   const button = event.currentTarget;
   if (!window.DynamaxActionFeedback.begin(button, 'Saving...')) return;

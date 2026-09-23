@@ -22,6 +22,7 @@ import {
   isSchoolInvoiceCredit,
   isSchoolFeesTotalCode,
   isStandaloneAcceptanceInvoiceForPayment,
+  normalizeFeeBillingCategories,
   paymentCreditedAmount,
   reconciliationDifference,
   resolveStudentEnrollmentCategory,
@@ -107,6 +108,28 @@ test('parent fee matching includes every component from a multi-class rule', () 
 
   assert.equal(matched.length, 13);
   assert.equal(matched.reduce((sum, fee) => sum + fee.Amount, 0), 1037165);
+});
+
+test('one fee can apply to multiple selected billing categories', () => {
+  const fee = {
+    FeeCode: 'SHARED-DISCOUNT',
+    FeeName: 'Shared discounted tuition',
+    ClassName: 'All',
+    StudentType: 'All',
+    BillingCategories: ['School Staff Child', 'Church Staff Child'],
+    BillingCategory: 'School Staff Child, Church Staff Child',
+    Gender: 'All',
+    EnrollmentCategory: 'All',
+    AcademicProgress: 'All',
+    AcademicSession: 'All',
+    Term: 'All'
+  };
+
+  assert.equal(feeMatchesApplication(fee, { BillingCategory: 'School Staff Child' }), true);
+  assert.equal(feeMatchesApplication(fee, { BillingCategory: 'Church Staff Child' }), true);
+  assert.equal(feeMatchesApplication(fee, { BillingCategory: 'Regular' }), false);
+  assert.deepEqual(normalizeFeeBillingCategories('Regular, Sponsored; Regular'), ['Regular', 'Sponsored']);
+  assert.deepEqual(normalizeFeeBillingCategories(['Regular', 'All']), ['All']);
 });
 
 test('admission enrollment stamps and repairs the new-intake classification', () => {

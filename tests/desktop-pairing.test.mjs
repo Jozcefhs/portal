@@ -10,7 +10,10 @@ import {
   secureDesktopHashEqual
 } from '../functions/lib/desktop-pairing.js';
 import { applyDesktopDeviceBranchScope } from '../functions/lib/backend-security.js';
-import { enforceDesktopDeviceActionScope } from '../functions/api/backend.js';
+import {
+  desktopStaffUserMatchesDeviceScope,
+  enforceDesktopDeviceActionScope
+} from '../functions/api/backend.js';
 
 const portalRoot = new URL('../', import.meta.url);
 
@@ -107,6 +110,15 @@ test('branch-bound desktop credentials force branch scope and reject nested cros
   );
   const organisationWide = { Action: 'getStudents', BranchId: 'main' };
   assert.equal(applyDesktopDeviceBranchScope(organisationWide, { type: 'device', branchId: '' }), organisationWide);
+});
+
+test('branch pairing can complete with branch staff or an organisation-wide Super Admin', () => {
+  assert.equal(desktopStaffUserMatchesDeviceScope({ Role: 'Front Desk', BranchId: 'north' }, 'north'), true);
+  assert.equal(desktopStaffUserMatchesDeviceScope({ Role: 'Front Desk', BranchId: 'south' }, 'north'), false);
+  assert.equal(desktopStaffUserMatchesDeviceScope({ Role: 'Front Desk', BranchId: '' }, 'north'), false);
+  assert.equal(desktopStaffUserMatchesDeviceScope({ Role: 'Super Admin', BranchId: '' }, 'north'), true);
+  assert.equal(desktopStaffUserMatchesDeviceScope({ Role: 'Super Admin', BranchId: 'south' }, 'north'), false);
+  assert.equal(desktopStaffUserMatchesDeviceScope({ Role: 'Front Desk', BranchId: 'south' }, ''), true);
 });
 
 test('branch-bound devices fail closed for unverified global and bare-ID actions', async () => {

@@ -69,6 +69,7 @@
           <button type="button" class="active" data-tenant-pool-tab="projects" aria-pressed="true">Projects</button>
           <button type="button" data-tenant-pool-tab="requests" aria-pressed="false">Requests</button>
           <button type="button" data-tenant-pool-tab="retirements" aria-pressed="false">Retirements</button>
+          <button type="button" data-tenant-pool-tab="owner-demo" aria-pressed="false">Owner demo</button>
           <button type="button" data-tenant-pool-tab="settings" aria-pressed="false">Pool settings</button>
         </div>
         <div data-tenant-pool-panel="projects">
@@ -95,6 +96,18 @@
         <div data-tenant-pool-panel="retirements" hidden>
           <p class="plan-entitlement-help">Expired trials remain isolated for 30 days. Expired paid subscriptions receive a 7-day payment grace period followed by 90 days of retained data. Due projects are destroyed in Firebase and Cloudflare and are never returned to another subscriber.</p>
           <div class="tenant-pool-table-wrap"><table class="tenant-pool-table"><thead><tr><th>Project</th><th>Subscription</th><th>Edition</th><th>Status</th><th>Attempts</th><th>Requested</th><th>Last result</th></tr></thead><tbody id="tenantRetirementRows"></tbody></table></div>
+        </div>
+        <div data-tenant-pool-panel="owner-demo" hidden>
+          <p class="plan-entitlement-help"><strong>Private demonstration workspace.</strong> This creates a separate, non-billable tenant for the Dynamax owner with full edition access. It never opens a subscriber workspace. Enter synthetic demonstration records only—never copy live subscriber data into it.</p>
+          <div class="tenant-pool-actions-grid tenant-owner-demo-controls">
+            <label>Edition<select id="ownerDemoEdition"><option value="school">School</option><option value="faith">Church</option><option value="organization">Other organisation</option></select></label>
+            <label>Demo organisation<input id="ownerDemoOrganisation" value="Dynamax Owner Demo" maxlength="120"></label>
+            <label>Owner name<input id="ownerDemoContact" maxlength="120" autocomplete="name"></label>
+            <label>Owner email<input id="ownerDemoEmail" type="email" maxlength="160" autocomplete="email"></label>
+            <label>Phone<input id="ownerDemoPhone" maxlength="40" autocomplete="tel"></label>
+            <label>Country<input id="ownerDemoCountry" value="Nigeria" maxlength="80" autocomplete="country-name"></label>
+            <button id="createOwnerDemo" type="button">Create / open Owner Demo</button>
+          </div>
         </div>
         <div data-tenant-pool-panel="settings" hidden>
           <div class="tenant-pool-actions-grid tenant-policy-controls">
@@ -138,6 +151,6 @@
   </dialog>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
-  <script src="js/plan-management.js?v=20260916-subscription-onboarding"></script>
+  <script src="js/plan-management.js?v=20260923-owner-demo"></script>
 </body>
 </html>

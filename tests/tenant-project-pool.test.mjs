@@ -122,6 +122,7 @@ test('provisioning plans are repeatable and can resume from a user-precreated pr
   assert.match(provisionerSource, /DYNAMAX_TENANT_PROVISIONER_SECRET/);
   assert.match(provisionerSource, /DYNAMAX_GCP_BILLING_REQUIRED/);
   assert.match(provisionerSource, /TENANT_CONTROL_PLANE_PRIVATE_KEY/);
+  assert.match(provisionerSource, /STUDENT_FACE_LOOKUP_ENABLED: plain\(edition === 'school' \? 'true' : 'false'\)/);
   assert.match(provisionerSource, /TenantControlPublicKey/);
   assert.match(provisionerSource, /Billing linkage is optional for this provisioning run/);
   assert.match(provisionerSource, /function commandWithRetry/);

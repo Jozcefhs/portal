@@ -156,9 +156,20 @@ export async function refreshOrganizationPlanPolicy(env, organizationProfile = {
   const centrallyRevoked = central.registration === null
     && canonicalSubscriptionBridgeConfigured(env);
   const registration = central.registration || {};
-  const plan = normalizeSubscriptionPlan(registration.Plan || organizationProfile.Plan || 'Starter');
+  const ownerDemo = registration.OwnerDemo === true
+    || organizationProfile.OwnerDemo === true
+    || clean(registration.Plan || organizationProfile.Plan).toLowerCase() === 'owner demo';
+  const plan = ownerDemo
+    ? 'Owner Demo'
+    : normalizeSubscriptionPlan(registration.Plan || organizationProfile.Plan || 'Starter');
   const edition = clean(organizationProfile.Edition || registration.Edition) || 'school';
-  const entitlements = plan === 'Flex'
+  const entitlements = ownerDemo
+    ? Array.isArray(registration.FeatureEntitlements)
+      ? [...registration.FeatureEntitlements]
+      : Array.isArray(organizationProfile.PlanEntitlements)
+        ? [...organizationProfile.PlanEntitlements]
+        : []
+    : plan === 'Flex'
     ? Array.isArray(registration.FeatureEntitlements)
       ? [...registration.FeatureEntitlements]
       : Array.isArray(organizationProfile.PlanEntitlements)
@@ -169,13 +180,16 @@ export async function refreshOrganizationPlanPolicy(env, organizationProfile = {
   const enriched = {
     ...withoutFirestoreMetadata(organizationProfile),
     Plan: plan,
+    OwnerDemo: ownerDemo,
+    NonBillable: ownerDemo || registration.NonBillable === true,
+    SyntheticDataOnly: ownerDemo || registration.SyntheticDataOnly === true,
     PlanEntitlements: centrallyRevoked ? [] : entitlements,
     PlanCatalogRevision: revision,
     BillingCycle: clean(registration.BillingCycle || organizationProfile.BillingCycle),
     SubscriptionPrice: Number(registration.Price || organizationProfile.SubscriptionPrice || 0),
     SubscriptionCurrency: clean(registration.Currency || organizationProfile.SubscriptionCurrency || 'NGN'),
     SubscriptionPriceSnapshot: registration.PriceSnapshot ?? organizationProfile.SubscriptionPriceSnapshot ?? null,
-    UserLimit: Math.max(1, Number(registration.UserLimit || organizationProfile.UserLimit || central.catalog.Plans[plan]?.UserLimit || 5) || 5),
+    UserLimit: Math.max(1, Number(registration.UserLimit || organizationProfile.UserLimit || (ownerDemo ? 250 : central.catalog.Plans[plan]?.UserLimit) || 5) || 5),
     SubscriptionStatus: centrallyRevoked
       ? 'Terminated'
       : clean(registration.SubscriptionStatus || organizationProfile.SubscriptionStatus),
@@ -194,6 +208,9 @@ export async function refreshOrganizationPlanPolicy(env, organizationProfile = {
       : ''
   };
   const changed = clean(organizationProfile.Plan) !== clean(enriched.Plan)
+    || Boolean(organizationProfile.OwnerDemo) !== Boolean(enriched.OwnerDemo)
+    || Boolean(organizationProfile.NonBillable) !== Boolean(enriched.NonBillable)
+    || Boolean(organizationProfile.SyntheticDataOnly) !== Boolean(enriched.SyntheticDataOnly)
     || clean(organizationProfile.BillingCycle) !== clean(enriched.BillingCycle)
     || Number(organizationProfile.SubscriptionPrice || 0) !== Number(enriched.SubscriptionPrice || 0)
     || clean(organizationProfile.SubscriptionCurrency) !== clean(enriched.SubscriptionCurrency)

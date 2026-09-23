@@ -1423,6 +1423,12 @@ function buildEntranceResult(application, profile = {}) {
     ResultNextStep: pick(application, ['ResultNextStep', 'resultNextStep', 'NextStep', 'nextStep']),
     ResultUpdatedAt: toDisplayDate(pick(application, ['ResultUpdatedAt', 'resultUpdatedAt', 'UpdatedAt', 'updatedAt'])),
     ResultSentAt: toDisplayDate(pick(application, ['ResultSentAt', 'resultSentAt', 'EntranceResultSentAt', 'entranceResultSentAt']))
+    ,ProbationResitDate: toDisplayDate(pick(application, ['ProbationResitDate', 'probationResitDate']))
+    ,ProbationResitScore: pick(application, ['ProbationResitScore', 'probationResitScore'])
+    ,ProbationResitPercentage: pick(application, ['ProbationResitPercentage', 'probationResitPercentage'])
+    ,ProbationResult: pick(application, ['ProbationResult', 'probationResult'])
+    ,ProbationResultNotes: pick(application, ['ProbationResultNotes', 'probationResultNotes'])
+    ,ProbationResultUpdatedAt: toDisplayDate(pick(application, ['ProbationResultUpdatedAt', 'probationResultUpdatedAt']))
     ,ResultSent: pick(application, ['ResultSent', 'resultSent'], 'NO')
     ,OfferSent: pick(application, ['OfferSent', 'offerSent'], 'NO')
     ,AdmissionLetterSent: pick(application, ['AdmissionLetterSent', 'admissionLetterSent'], 'NO')

@@ -25,6 +25,22 @@ const DEFAULT_READY_TARGET = 2;
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 
+export function tenantProjectAssignmentEligibility(registration = {}) {
+  if (clean(registration.WorkspaceId)) return { eligible: true, existing: true, reason: '' };
+  const ownerDemo = registration.OwnerDemo === true
+    && registration.NonBillable === true
+    && registration.CardVerificationExempt === true
+    && ['owner authorized', 'active'].includes(lower(registration.PaymentStatus || registration.Status));
+  if (ownerDemo) return { eligible: true, ownerDemo: true, reason: '' };
+  const cardVerified = lower(registration.CardVerificationStatus) === 'verified'
+    && Boolean(clean(registration.CardVerifiedAt));
+  if (cardVerified) return { eligible: true, cardVerified: true, reason: '' };
+  return {
+    eligible: false,
+    reason: 'A successful Paystack card verification is required before a tenant project can be assigned.'
+  };
+}
+
 function withoutFirestoreMetadata(document = {}) {
   const value = { ...document };
   delete value.__id;
@@ -982,6 +998,13 @@ export async function reserveTenantProjectSlot(platformEnv, currentRegistration 
     throw error;
   }
   if (clean(registration.WorkspaceId)) return { assigned: true, registration, slot: null, existing: true };
+  const eligibility = tenantProjectAssignmentEligibility(registration);
+  if (!eligibility.eligible) {
+    const error = new Error(eligibility.reason);
+    error.status = 409;
+    error.code = 'TENANT_CARD_VERIFICATION_REQUIRED';
+    throw error;
+  }
   const edition = poolEdition(registration.Edition);
   const candidates = (await listCollection(platformEnv, TENANT_PROJECT_POOL_COLLECTION, { pageSize: 250, maxPages: 4 }))
     .filter((slot) => poolEdition(slot.Edition) === edition && lower(slot.Status) === 'ready')
@@ -1056,6 +1079,7 @@ export async function reserveTenantProjectSlot(platformEnv, currentRegistration 
 
 function waitingRegistration(registration = {}) {
   if (clean(registration.WorkspaceId)) return false;
+  if (!tenantProjectAssignmentEligibility(registration).eligible) return false;
   const values = [
     registration.ProvisioningStatus,
     registration.Status,

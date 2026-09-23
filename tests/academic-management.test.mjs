@@ -689,17 +689,20 @@ test('branch-paired class and arm actions never write the organisation legacy cl
   assert.match(deleteSource, /legacyClassWrite\(projected, schoolClass, 'class', scope\)/);
 });
 
-test('subject teacher candidates are active Academics staff in the selected school section', () => {
+test('Academic Management staff candidates are active Department Users in the exact Academics department', () => {
   const candidates = academicSubjectTeacherCandidates([
-    { Username: 'academics-all', Department: 'Academics', Active: true, SchoolSectionAccess: 'All' },
-    { Username: 'academic-primary', Department: 'Academic Department', Active: 'YES', SchoolSectionAccess: 'Primary' },
-    { Username: 'accounts', Department: 'Accounts', Active: true, SchoolSectionAccess: 'All' },
-    { Username: 'inactive', Department: 'Academics', Active: false, SchoolSectionAccess: 'All' },
-    { Username: 'secondary', Department: 'Academics', Active: true, SchoolSectionAccess: 'Secondary' }
+    { Username: 'academics-all', Role: 'Department User', Department: 'Academics', Active: true, SchoolSectionAccess: 'All' },
+    { Username: 'academics-primary', Role: 'Department User', Department: 'Academics', Active: 'YES', SchoolSectionAccess: 'Primary' },
+    { Username: 'wrong-role', Role: 'Teacher', Department: 'Academics', Active: true, SchoolSectionAccess: 'All' },
+    { Username: 'wrong-department', Role: 'Department User', Department: 'Academic Department', Active: true, SchoolSectionAccess: 'All' },
+    { Username: 'inactive', Role: 'Department User', Department: 'Academics', Active: false, SchoolSectionAccess: 'All' },
+    { Username: 'secondary', Role: 'Department User', Department: 'Academics', Active: true, SchoolSectionAccess: 'Secondary' }
   ], 'primary');
-  assert.deepEqual(candidates.map((row) => row.Username), ['academics-all', 'academic-primary']);
+  assert.deepEqual(candidates.map((row) => row.Username), ['academics-all', 'academics-primary']);
   assert.match(librarySource, /ACADEMIC_TEACHER_DEPARTMENT_INVALID/);
-  assert.match(librarySource, /focusedView === 'teachers'[\s\S]{0,250}academicSubjectTeacherCandidates/);
+  assert.match(librarySource, /staff: displayStaff\(academicSubjectTeacherCandidates\(visibleStaff, scope\.section\)\)/);
+  assert.match(adminSource, /function academicManagementStaffCandidates/);
+  assert.match(adminSource, /role === 'department user'[\s\S]{0,120}department === 'academics'/);
 });
 
 test('subject-teacher allocations can be corrected atomically or permanently deleted', () => {
@@ -760,7 +763,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(teacherWorkspace, /data-academic-workflow="bulkAssignAcademicSubjectTeacher"/);
   assert.match(teacherWorkspace, /academic-management-form-grid academic-management-form-grid-4/);
   assert.match(teacherWorkspace, /academicClassroomCheckboxField\(classes, classrooms\)/);
-  assert.match(teacherWorkspace, /\^academics\?\(\?:\\s\|\$\)/);
+  assert.match(teacherWorkspace, /academicManagementStaffCandidates\(data\.staff \|\| \[\], academicManagementFilters\.section\)/);
   assert.match(teacherWorkspace, /Repeat the process if the teacher handles another subject/);
   assert.doesNotMatch(teacherWorkspace, /<select name="AllocationRole"/);
   assert.match(teacherWorkspace, /data-academic-form="teacherAllocation"/);

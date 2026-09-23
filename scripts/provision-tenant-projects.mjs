@@ -256,6 +256,7 @@ export function deploymentVariables(projectId, serviceAccount, webConfig, privat
     PARENT_SESSION_SECRET: secret(randomSecret()),
     NOTIFICATION_SCHEDULER_SECRET: secret(randomSecret()),
     FACE_TEMPLATE_ENCRYPTION_KEY: secret(randomSecret()),
+    STUDENT_FACE_LOOKUP_ENABLED: plain(edition === 'school' ? 'true' : 'false'),
     TENANT_CONTROL_PLANE_PRIVATE_KEY: secret(tenantControlPrivateKey)
   };
 }

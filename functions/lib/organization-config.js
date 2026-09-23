@@ -290,12 +290,16 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
       || legacy.Plan || legacy.SubscriptionPlan
       || env.SUBSCRIPTION_PLAN
   );
+  const ownerDemo = profile.OwnerDemo === true
+    || legacy.OwnerDemo === true
+    || configuredPlan.toLowerCase() === 'owner demo';
   // Profiles created before subscription plans existed retain full operations
   // until an explicit plan is selected. New profiles are written with Starter.
-  const plan = normalizeSubscriptionPlan(configuredPlan || 'Professional');
-  const defaultLimit = subscriptionPlanUserLimit(plan);
+  const plan = ownerDemo ? 'Owner Demo' : normalizeSubscriptionPlan(configuredPlan || 'Professional');
+  const defaultLimit = ownerDemo ? 250 : subscriptionPlanUserLimit(plan);
   const subscription = subscriptionAccessState({
     Plan: plan,
+    OwnerDemo: ownerDemo,
     SubscriptionStatus: profile.SubscriptionStatus || legacy.SubscriptionStatus || env.SUBSCRIPTION_STATUS,
     TrialStartedAt: profile.TrialStartedAt || legacy.TrialStartedAt || env.TRIAL_STARTED_AT,
     TrialEndsAt: profile.TrialEndsAt || legacy.TrialEndsAt || env.TRIAL_ENDS_AT,
@@ -318,6 +322,9 @@ export function resolveOrganizationConfig({ env = {}, organizationProfile = {}, 
     Code: code,
     NameFormat,
     Plan: plan,
+    OwnerDemo: ownerDemo,
+    NonBillable: ownerDemo || profile.NonBillable === true,
+    SyntheticDataOnly: ownerDemo || profile.SyntheticDataOnly === true,
     UserLimit: Math.max(1, Number(profile.UserLimit || legacy.UserLimit || env.USER_LIMIT || defaultLimit) || defaultLimit),
     FeatureOverrides: overrides,
     PlanEntitlements: planEntitlements,
@@ -348,7 +355,12 @@ export function organizationProfileDocument(config, audit = {}) {
     FeatureFlags: resolved.FeatureFlags,
     UpdatedAt: clean(audit.UpdatedAt),
     UpdatedBy: clean(audit.UpdatedBy),
-    Plan: normalizeSubscriptionPlan(config.Plan || config.plan || resolved.Plan || 'Starter'),
+    Plan: (config.OwnerDemo === true || clean(config.Plan || config.plan || resolved.Plan).toLowerCase() === 'owner demo')
+      ? 'Owner Demo'
+      : normalizeSubscriptionPlan(config.Plan || config.plan || resolved.Plan || 'Starter'),
+    OwnerDemo: config.OwnerDemo === true || resolved.OwnerDemo === true,
+    NonBillable: config.NonBillable === true || resolved.NonBillable === true,
+    SyntheticDataOnly: config.SyntheticDataOnly === true || resolved.SyntheticDataOnly === true,
     UserLimit: Math.max(1, Number(config.UserLimit || config.userLimit || resolved.UserLimit || 5) || 5),
     SubscriptionStatus: clean(config.SubscriptionStatus || config.subscriptionStatus || resolved.SubscriptionStatus),
     TrialStartedAt: clean(config.TrialStartedAt || config.trialStartedAt || resolved.TrialStartedAt),

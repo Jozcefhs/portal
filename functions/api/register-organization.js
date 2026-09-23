@@ -43,6 +43,12 @@ const clean = (value) => String(value ?? '').trim();
 const PAYSTACK_INITIALIZE_URL = 'https://api.paystack.co/transaction/initialize';
 const PAYSTACK_PLAN_URL = 'https://api.paystack.co/plan';
 
+export function paystackCardVerificationAmount(currency, configuredAmount = '') {
+  const configured = Number(configuredAmount);
+  if (Number.isFinite(configured) && configured > 0) return Math.round(configured * 100) / 100;
+  return clean(currency).toUpperCase() === 'NGN' ? 50 : 2;
+}
+
 function normalizeSubscriptionPaymentMethod(value) {
   const method = clean(value || 'paystack').toLowerCase().replace(/[^a-z0-9]+/g, '');
   if (['paystack', 'online', 'card', 'ussd', 'bank', 'paywithbank'].includes(method)) return 'paystack';
@@ -316,12 +322,145 @@ export async function initializeSubscriptionCheckout({
         trialStartedAt: access.TrialStartedAt,
         trialEndsAt: access.TrialEndsAt,
         trialDaysRemaining: access.TrialDaysRemaining,
+        workspaceId: clean(currentRegistration.WorkspaceId),
+        portalUrl: clean(currentRegistration.PortalUrl),
+        workspacePending: !clean(currentRegistration.WorkspaceId),
         amount: 0
+      };
+    }
+    const cardVerified = clean(registration.CardVerificationStatus).toLowerCase() === 'verified'
+      && Boolean(clean(registration.CardVerifiedAt));
+    if (!cardVerified) {
+      const availableMethods = await publicPlatformPaymentMethods(env);
+      if (!availableMethods.online?.enabled || !clean(env.PAYSTACK_SECRET_KEY)) {
+        const error = new Error('A valid bank card must be verified before a trial workspace is assigned, but secure Paystack card verification is not configured yet.');
+        error.status = 503;
+        throw error;
+      }
+      const paystackIdentity = await paystackEnvironmentIdentity(env);
+      const verificationAmount = paystackCardVerificationAmount(
+        catalog.Currency,
+        env.PAYSTACK_CARD_VERIFICATION_AMOUNT
+      );
+      const reusableAuthorizationUrl = clean(registration.CardVerificationAuthorizationUrl);
+      const reusableReference = clean(registration.CardVerificationReference);
+      if (reusableAuthorizationUrl && reusableReference
+          && paystackCredentialMatches(registration, paystackIdentity)
+          && ['awaiting card verification', 'awaiting payment'].includes(clean(registration.PaymentStatus).toLowerCase())) {
+        return {
+          authorizationUrl: reusableAuthorizationUrl,
+          paymentReference: reusableReference,
+          amount: verificationAmount,
+          cardVerification: true,
+          verificationCharge: verificationAmount,
+          verificationCurrency: catalog.Currency,
+          refundable: true
+        };
+      }
+      const reference = `DMX-CARD-${Date.now()}-${crypto.randomUUID().slice(0, 10)}`;
+      const callbackUrl = new URL('/subscription-payment.html', new URL(request.url).origin);
+      callbackUrl.searchParams.set('registration', registrationReference);
+      const metadata = {
+        paymentType: 'dynamaxCardVerification',
+        registrationReference,
+        organisationName: clean(registration.OrganisationName),
+        plan: 'Free',
+        billingCycle: 'monthly',
+        expectedAmount: verificationAmount,
+        edition: clean(registration.Edition)
+      };
+      const createdAt = new Date().toISOString();
+      const verificationIntent = {
+        Reference: reference,
+        RegistrationReference: registrationReference,
+        Email: clean(registration.Email).toLowerCase(),
+        Plan: 'Free',
+        BillingCycle: 'monthly',
+        Amount: verificationAmount,
+        FullCycleAmount: 0,
+        Currency: catalog.Currency,
+        UserLimit: planEntry.UserLimit,
+        FeatureEntitlements: subscriptionPlanEntitlements('Free', clean(registration.Edition), catalog),
+        PlanCatalogRevision: catalog.PolicyRevision,
+        PaymentPurpose: 'Card Verification',
+        RefundRequired: true,
+        Status: 'Initializing',
+        CreatedAt: createdAt,
+        UpdatedAt: createdAt
+      };
+      await upsertDocument(platformEnv, 'subscriptionPayments', reference, verificationIntent);
+      const paystackResponse = await fetch(PAYSTACK_INITIALIZE_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${env.PAYSTACK_SECRET_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          email: clean(registration.Email).toLowerCase(),
+          amount: String(Math.round(verificationAmount * 100)),
+          currency: catalog.Currency,
+          reference,
+          channels: ['card'],
+          callback_url: callbackUrl.href,
+          metadata: JSON.stringify(metadata)
+        })
+      });
+      const data = await paystackResponse.json().catch(() => ({}));
+      const authorizationUrl = clean(data.data?.authorization_url);
+      if (!paystackResponse.ok || data.status === false || !authorizationUrl) {
+        await upsertDocument(platformEnv, 'subscriptionPayments', reference, {
+          ...verificationIntent,
+          Status: 'Initialization Failed',
+          LastError: clean(data.message || 'Paystack did not return a card-verification checkout link.').slice(0, 500),
+          UpdatedAt: new Date().toISOString()
+        });
+        const error = new Error(data.message || 'Paystack could not start secure card verification.');
+        error.status = 502;
+        throw error;
+      }
+      const updatedAt = new Date().toISOString();
+      await Promise.all([
+        upsertDocument(platformEnv, 'subscriptionPayments', reference, {
+          ...verificationIntent,
+          PaystackMode: paystackIdentity.mode,
+          PaystackCredentialFingerprint: paystackIdentity.fingerprint,
+          PaystackAccessCode: clean(data.data?.access_code),
+          AuthorizationUrl: authorizationUrl,
+          Status: 'Awaiting Card Verification',
+          UpdatedAt: updatedAt
+        }),
+        upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, {
+          ...withoutFirestoreMetadata(registration),
+          Plan: 'Free',
+          BillingCycle: 'monthly',
+          Price: 0,
+          Currency: catalog.Currency,
+          UserLimit: planEntry.UserLimit,
+          FeatureEntitlements: subscriptionPlanEntitlements('Free', clean(registration.Edition), catalog),
+          PlanCatalogRevision: catalog.PolicyRevision,
+          PaymentStatus: 'Awaiting Card Verification',
+          SubscriptionStatus: 'Pending Card Verification',
+          Status: 'Pending Card Verification',
+          CardVerificationReference: reference,
+          CardVerificationAuthorizationUrl: authorizationUrl,
+          PaystackMode: paystackIdentity.mode,
+          PaystackCredentialFingerprint: paystackIdentity.fingerprint,
+          UpdatedAt: updatedAt
+        })
+      ]);
+      return {
+        authorizationUrl,
+        paymentReference: reference,
+        amount: verificationAmount,
+        cardVerification: true,
+        verificationCharge: verificationAmount,
+        verificationCurrency: catalog.Currency,
+        refundable: true
       };
     }
     if (!clean(registration.WorkspaceId)) {
       const reservedAt = clean(registration.TrialReservedAt) || new Date().toISOString();
-      await upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, {
+      const pendingRegistration = {
         ...withoutFirestoreMetadata(registration),
         Plan: 'Free',
         BillingCycle: 'monthly',
@@ -330,13 +469,18 @@ export async function initializeSubscriptionCheckout({
         UserLimit: planEntry.UserLimit,
         FeatureEntitlements: subscriptionPlanEntitlements('Free', clean(registration.Edition), catalog),
         PlanCatalogRevision: catalog.PolicyRevision,
-        PaymentStatus: 'Not Required',
+        PaymentStatus: 'Free Trial',
         SubscriptionStatus: 'Pending Trial Activation',
         Status: 'Pending Trial Activation',
         TrialReservedAt: reservedAt,
         UpdatedAt: new Date().toISOString()
-      });
-      return { trialReserved: true, trialActive: false, amount: 0 };
+      };
+      await upsertDocument(platformEnv, 'tenantRegistrations', registrationReference, pendingRegistration);
+      const assignment = await reserveTenantProjectSlot(platformEnv, pendingRegistration);
+      if (!assignment.assigned) {
+        return { trialReserved: true, trialActive: false, amount: 0, cardVerified: true };
+      }
+      registration = assignment.registration;
     }
     const trial = freeTrialWindow();
     const activatedRegistration = {
@@ -362,6 +506,9 @@ export async function initializeSubscriptionCheckout({
       trialStartedAt: trial.TrialStartedAt,
       trialEndsAt: trial.TrialEndsAt,
       trialDaysRemaining: 7,
+      workspaceId: clean(activatedRegistration.WorkspaceId),
+      portalUrl: clean(activatedRegistration.PortalUrl),
+      workspacePending: !clean(activatedRegistration.WorkspaceId),
       amount: 0
     };
   }
@@ -412,6 +559,13 @@ export async function initializeSubscriptionCheckout({
   }
   const availableMethods = await publicPlatformPaymentMethods(env);
   if (selectedPaymentMethod === 'direct_bank_transfer') {
+    if (!clean(registration.WorkspaceId)
+        && !(clean(registration.CardVerificationStatus).toLowerCase() === 'verified' && clean(registration.CardVerifiedAt))) {
+      const error = new Error('A first-time subscriber must complete Paystack card verification before a tenant project can be assigned. Direct bank transfer is available after the workspace has been activated.');
+      error.status = 409;
+      error.code = 'TENANT_CARD_VERIFICATION_REQUIRED';
+      throw error;
+    }
     const directTransfer = availableMethods.directTransfer || {};
     if (!directTransfer.enabled) {
       const error = new Error('Dynamax direct bank transfer is not configured yet.');
@@ -790,15 +944,11 @@ export async function onRequestPost({ request, env }) {
     const existing = plan === 'Free' ? (priorTrial || currentRegistration) : currentRegistration;
     if (existing) {
       const boundRegistration = { ...existing, TrialFingerprint: clean(existing.TrialFingerprint) || trialFingerprint, ...(workspaceBinding || {}) };
-      const assignment = plan === 'Free' && !clean(boundRegistration.WorkspaceId)
-        ? await reserveTenantProjectSlot(platformEnv, boundRegistration)
-        : { registration: boundRegistration, assigned: Boolean(clean(boundRegistration.WorkspaceId)) };
-      const assignedRegistration = assignment.registration;
       const checkout = await initializeSubscriptionCheckout({
         request,
         env,
         platformEnv,
-        registration: assignedRegistration,
+        registration: boundRegistration,
         catalog,
         plan,
         billingCycle,
@@ -810,11 +960,13 @@ export async function onRequestPost({ request, env }) {
       const result = {
         ok: true,
         reference: clean(existing.Reference || existing.__id),
-        workspaceId: clean(assignedRegistration.WorkspaceId),
-        portalUrl: clean(assignedRegistration.PortalUrl),
-        workspacePending: !clean(assignedRegistration.WorkspaceId),
+        workspaceId: clean(boundRegistration.WorkspaceId),
+        portalUrl: clean(boundRegistration.PortalUrl),
+        workspacePending: !clean(boundRegistration.WorkspaceId),
         message: checkout?.trialActive
           ? `Your 7-day full-access trial is active until ${new Date(checkout.trialEndsAt).toLocaleString('en-NG')}.`
+          : checkout?.cardVerification
+          ? `Continue to Paystack to verify a valid bank card. The ${checkout.verificationCurrency} ${Number(checkout.verificationCharge || 0).toFixed(2)} verification charge will be refunded automatically, and no tenant project is assigned until verification succeeds.`
           : checkout?.trialReserved
           ? 'Your free trial is reserved. Its 7-day clock will begin when your workspace is activated.'
           : checkout
@@ -851,15 +1003,11 @@ export async function onRequestPost({ request, env }) {
       throw error;
     }
     const savedRegistration = { ...created.document, Reference: reference };
-    const assignment = plan === 'Free'
-      ? await reserveTenantProjectSlot(platformEnv, savedRegistration)
-      : { registration: savedRegistration, assigned: false };
-    const registration = assignment.registration;
     const checkout = await initializeSubscriptionCheckout({
       request,
       env,
       platformEnv,
-      registration,
+      registration: savedRegistration,
       catalog,
       plan,
       billingCycle,
@@ -871,12 +1019,14 @@ export async function onRequestPost({ request, env }) {
     const result = {
       ok: true,
       reference,
-      workspaceId: clean(registration.WorkspaceId),
-      portalUrl: clean(registration.PortalUrl),
-      workspacePending: !clean(registration.WorkspaceId),
+      workspaceId: clean(savedRegistration.WorkspaceId),
+      portalUrl: clean(savedRegistration.PortalUrl),
+      workspacePending: !clean(savedRegistration.WorkspaceId),
       message: checkout
         ? checkout.trialActive
           ? `Your 7-day full-access trial is active until ${new Date(checkout.trialEndsAt).toLocaleString('en-NG')}.`
+          : checkout.cardVerification
+          ? `Continue to Paystack to verify a valid bank card. The ${checkout.verificationCurrency} ${Number(checkout.verificationCharge || 0).toFixed(2)} verification charge will be refunded automatically, and no tenant project is assigned until verification succeeds.`
           : checkout.trialReserved
           ? 'Registration received. Your free trial is reserved, and its 7-day clock will begin when your workspace is activated.'
           : checkout.directTransfer

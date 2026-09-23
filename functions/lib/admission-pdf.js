@@ -88,6 +88,7 @@ function resultRemark(value) {
   const status = clean(value).toLowerCase();
   if (['passed', 'admitted'].includes(status)) return 'Congratulations. You have been offered admission.';
   if (status === 'pending') return 'Your result is still under review. Please await further communication.';
+  if (status === 'probation') return 'Your application is on probation. Admission can proceed only after a passing re-sit result.';
   return 'Thank you for participating. At this time, we are unable to offer you admission.';
 }
 
@@ -272,6 +273,9 @@ function contextFor(profile, application, issuedAt) {
     reference: stripMarkup(pick(application, ['ApplicationReference', 'ApplicationID', '__id'])) || '',
     percentage: stripMarkup(pick(application, ['ResultPercentage', 'Percentage'])) || '',
     status: displayStatus(pick(application, ['ResultStatus', 'Status'])),
+    probationResult: stripMarkup(pick(application, ['ProbationResult', 'probationResult'])) || '',
+    probationPercentage: stripMarkup(pick(application, ['ProbationResitPercentage', 'probationResitPercentage'])) || '',
+    probationDate: stripMarkup(pick(application, ['ProbationResitDate', 'probationResitDate'])) || '',
     schoolName: stripMarkup(profile.SchoolName || 'School'),
     schoolAddress: stripMarkup(profile.SchoolAddress),
     date: new Date(issuedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }).replace(/ /g, '-')
@@ -290,19 +294,31 @@ async function resultPdf(profile, application, issuedAt) {
   const context = contextFor(profile, application, issuedAt);
   page.drawText(context.schoolName.toUpperCase(), { x: centeredX(bold, context.schoolName.toUpperCase(), 16), y: 760, size: 16, font: bold, color: TEXT });
   if (context.schoolAddress) page.drawText(context.schoolAddress, { x: centeredX(regular, context.schoolAddress, 10), y: 742, size: 10, font: regular, color: TEXT });
-  const heading = 'OFFICIAL ENTRANCE EXAMINATION RESULT SLIP';
+  const completedProbationResit = ['passed', 'failed'].includes(clean(context.probationResult).toLowerCase());
+  const heading = completedProbationResit
+    ? 'OFFICIAL PROBATION RE-SIT RESULT SLIP'
+    : 'OFFICIAL ENTRANCE EXAMINATION RESULT SLIP';
   page.drawText(heading, { x: centeredX(bold, heading, 14), y: 675, size: 14, font: bold, color: TEXT });
   page.drawLine({ start: { x: 60, y: 658 }, end: { x: 552, y: 658 }, thickness: 3, color: TEXT });
-  const score = context.percentage ? `${context.percentage.replace(/%$/, '')}%` : '';
-  [['Candidate Name:', context.name, 620], ['Score:', score || 'Not recorded', 590], ['Status:', context.status, 560]].forEach(([label, value, y]) => {
+  const selectedPercentage = completedProbationResit ? context.probationPercentage : context.percentage;
+  const score = selectedPercentage ? `${selectedPercentage.replace(/%$/, '')}%` : '';
+  const displayedStatus = completedProbationResit
+    ? (clean(context.probationResult).toLowerCase() === 'passed' ? 'Passed - Admitted' : 'Failed - Probation')
+    : context.status;
+  [['Candidate Name:', context.name, 620], ['Score:', score || 'Not recorded', 590], ['Status:', displayedStatus, 560]].forEach(([label, value, y]) => {
     page.drawText(label, { x: 70, y, size: 12, font: bold, color: TEXT });
     page.drawText(value, { x: 200, y, size: 12, font: regular, color: TEXT });
   });
-  drawQrCode(page, `Name: ${context.name}, Score: ${score}, Status: ${context.status}`, 400, 560, 100);
+  drawQrCode(page, `Name: ${context.name}, Score: ${score}, Status: ${displayedStatus}`, 400, 560, 100);
   page.drawText('Result verification QR', { x: 390, y: 545, size: 8, font: regular, color: TEXT });
   page.drawText('Remark:', { x: 70, y: 505, size: 12, font: bold, color: TEXT });
   let y = 505;
-  wrapText(resultRemark(context.status), regular, 12, 340).forEach((line) => {
+  const remark = completedProbationResit
+    ? (clean(context.probationResult).toLowerCase() === 'passed'
+      ? 'Congratulations. The probation re-sit was passed and the admission status is now Admitted.'
+      : 'The probation re-sit was not passed. The admission status remains Probation.')
+    : resultRemark(context.status);
+  wrapText(remark, regular, 12, 340).forEach((line) => {
     page.drawText(line, { x: 140, y, size: 12, font: regular, color: TEXT });
     y -= 14;
   });

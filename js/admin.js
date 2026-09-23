@@ -1021,7 +1021,7 @@ async function attendancePasskeyProof(siteId, direction) {
 
 function attendanceFaceModule() {
   if (!attendanceFaceModulePromise) {
-    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260814-visible-camera-controls').catch((error) => {
+    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260923-authenticated-enrollment').catch((error) => {
       attendanceFaceModulePromise = null;
       throw error;
     });
@@ -9220,7 +9220,7 @@ function preloadRecordsDeskFaceRecognition() {
   recordsDeskFacePreloadScheduled = true;
   const preload = () => {
     recordsDeskFacePreloadScheduled = false;
-    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260814-visible-camera-controls')
+    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260923-authenticated-enrollment')
       .then((module) => module.preloadFaceRecognitionModel())
       .catch(() => {
         recordsDeskFacePreloadPromise = null;
@@ -9234,7 +9234,7 @@ function preloadRecordsDeskFaceRecognition() {
 }
 
 async function openStudentFaceLookupDialog(options = {}) {
-  const module = await import('./student-face-lookup.js?v=20260814-visible-camera-controls');
+  const module = await import('./student-face-lookup.js?v=20260923-authenticated-enrollment');
   return module.openStudentFaceLookup(options);
 }
 
@@ -10631,6 +10631,22 @@ function academicIsActive(row = {}) {
   return !/archived|inactive|closed|withdrawn/i.test(clean(row.Status));
 }
 
+function academicManagementStaffCandidates(rows = [], schoolSection = academicManagementFilters.section) {
+  const section = clean(schoolSection).toLowerCase();
+  return rows.filter((row) => {
+    const role = clean(row.Role || row.role).toLowerCase();
+    const department = clean(row.Department || row.department).toLowerCase();
+    const active = row.Active ?? row.active;
+    const assigned = clean(row.SchoolSectionAccess || row.schoolSectionAccess || 'all').toLowerCase();
+    return role === 'department user'
+      && department === 'academics'
+      && active !== false
+      && active !== 0
+      && !/^(no|false|0|inactive)$/.test(clean(active).toLowerCase())
+      && (!section || !['primary', 'secondary'].includes(assigned) || assigned === section);
+  });
+}
+
 function academicFind(rows = [], id = '') {
   const wanted = clean(id);
   if (!wanted) return null;
@@ -11306,10 +11322,7 @@ function academicClassroomWorkspace(data, rows) {
   };
   const selectedStage = clean(selectedClass?.SchoolStage).toLowerCase();
   const selectedDepartment = academicFind(departments, selectedArm?.DepartmentId);
-  const staff = (data.staff || []).filter((row) => {
-    const assigned = clean(row.SchoolSectionAccess).toLowerCase();
-    return !['primary', 'secondary'].includes(assigned) || assigned === section;
-  });
+  const staff = academicManagementStaffCandidates(data.staff || [], section);
   const periodMemberships = rows.studentMemberships.filter((row) => academicIsActive(row)
     && row.SessionId === sessionId && row.TermId === termId);
   const classroomMemberships = selectedArm ? periodMemberships.filter((row) => row.ArmId === selectedArm.ArmId) : [];
@@ -11731,17 +11744,12 @@ function academicTeacherWorkspace(data, rows) {
   });
   const subjects = rows.subjects.filter(academicIsActive);
   const subjectAllocations = rows.teacherAllocations.filter((row) => row.AllocationRole === 'Subject Teacher');
-  const staff = (data.staff || []).filter((row) => {
-    const department = clean(row.Department).toLowerCase();
-    const assigned = clean(row.SchoolSectionAccess).toLowerCase();
-    return /^academics?(?:\s|$)/.test(department)
-      && (!['primary', 'secondary'].includes(assigned) || assigned === academicManagementFilters.section);
-  });
+  const staff = academicManagementStaffCandidates(data.staff || [], academicManagementFilters.section);
   const form = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="bulkAssignAcademicSubjectTeacher">
     <div class="academic-management-editor-heading"><div><small>Subject teaching</small><h3>Assign a subject teacher</h3><p class="muted">Choose one teacher and one subject, then select the exact classrooms taught for that subject. Repeat the process if the teacher handles another subject.</p></div></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
     <div class="academic-management-form-grid academic-management-form-grid-4">
-      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, staff.length ? 'Choose teacher' : 'No active Academics staff')}</select><small>Only active staff assigned to the Academics department are listed.</small></label>
+      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, staff.length ? 'Choose teacher' : 'No eligible Academics Department Users')}</select><small>Only active Department Users in the Academics department are listed.</small></label>
       <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select></label>
       <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
       <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
@@ -11754,7 +11762,7 @@ function academicTeacherWorkspace(data, rows) {
     <div class="academic-management-editor-heading"><div><small>Correct saved allocation</small><h3>Edit subject-teacher allocation</h3><p class="muted">Change the teacher, subject, classroom or academic period, then update the existing allocation.</p></div><button type="button" class="academic-form-reset" data-academic-reset="teacherAllocation">Cancel edit</button></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
     <div class="academic-management-form-grid academic-management-form-grid-3">
-      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, staff.length ? 'Choose teacher' : 'No active Academics staff')}</select><small>Only active staff assigned to the Academics department are listed.</small></label>
+      <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, staff.length ? 'Choose teacher' : 'No eligible Academics Department Users')}</select><small>Only active Department Users in the Academics department are listed.</small></label>
       <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select></label>
       <label>Classroom<select name="ClassroomId" required>${academicSelectOptions(classrooms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'Choose classroom')}</select></label>
       <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, '', (row) => row.Name, 'Choose session')}</select></label>
@@ -12019,6 +12027,7 @@ function academicTimetableWorkspace(data, rows) {
   const constraints = rows.timetableConstraints.filter((row) => row.SessionId === sessionId && row.TermId === termId);
   const versions = rows.timetableVersions.filter((row) => row.SessionId === sessionId && row.TermId === termId);
   const allVersions = (data.timetableVersions || []).filter((row) => !['Copying', 'Deleting'].includes(row.Status));
+  const staff = academicManagementStaffCandidates(data.staff || [], academicManagementFilters.section);
   let version = academicFind(versions, academicTimetableDraft.versionId)
     || versions.find((row) => row.Status === 'Draft') || versions.find((row) => row.Status === 'Published') || versions[0];
   academicTimetableDraft.versionId = clean(version?.VersionId);
@@ -12084,7 +12093,7 @@ function academicTimetableWorkspace(data, rows) {
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}"><input type="hidden" name="SubstitutionId"><input type="hidden" name="RevisionToken">
     <div class="academic-management-form-grid academic-management-form-grid-2">
       <label>Published lesson<select name="TimetableEntryId" required>${academicSelectOptions(publishedLessons, '', substitutionLessonLabel, 'Choose published lesson')}</select></label>
-      <label>Substitute teacher<select name="SubstituteTeacherUsername" required>${academicSelectOptions(data.staff || [], '', (row) => `${row.DisplayName} · ${row.Role}`, 'Choose substitute teacher')}</select></label>
+      <label>Substitute teacher<select name="SubstituteTeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} · ${row.Role}`, 'Choose substitute teacher')}</select></label>
       <label>Substitution date<input name="SubstitutionDate" type="date" value="${new Date().toISOString().slice(0, 10)}" required></label>
       <label>Approved reason<input name="Reason" maxlength="500" required placeholder="For example teacher on approved leave"></label>
     </div>
@@ -12103,7 +12112,7 @@ function academicTimetableWorkspace(data, rows) {
     <div class="academic-management-editor-heading"><div><small>Teacher protection</small><h3>Availability and workload limits</h3><p class="muted">Use one line per day, for example MON | P1,P2. Enter 0 for an unlimited daily or weekly load.</p></div><button type="button" class="academic-form-reset" data-academic-timetable-constraint-clear>Clear</button></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(termId)}"><input type="hidden" name="RevisionToken">
     <div class="academic-management-form-grid academic-timetable-constraint-grid">
-      <label>Teacher<select name="TeacherUsername" data-academic-timetable-constraint-teacher required>${academicSelectOptions(data.staff || [], '', (row) => `${row.DisplayName} · ${row.Role}`, 'Choose teacher')}</select></label>
+      <label>Teacher<select name="TeacherUsername" data-academic-timetable-constraint-teacher required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} · ${row.Role}`, 'Choose teacher')}</select></label>
       <label>Unavailable lesson slots<textarea name="UnavailableSlots" rows="5" placeholder="MON | P1,P2&#10;FRI | P5"></textarea></label>
       <label>Maximum periods per day<input type="number" name="MaxPeriodsPerDay" min="0" max="100" value="0"></label>
       <label>Maximum periods per week<input type="number" name="MaxPeriodsPerWeek" min="0" max="1000" value="0"></label>
@@ -16302,9 +16311,11 @@ async function uploadFinanceFormAttachment(form, status) {
 function openFinanceDecision(button) {
   const action = button.dataset.workflowAction;
   const decision = button.dataset.decision || '';
+  const requisitionAdvance = action === 'advanceRequisition';
   const secureDecision = decision === 'Approved' || action === 'accountsReview' ||
+    (requisitionAdvance && decision !== 'Rejected') ||
     action === 'issueImprest' || (action === 'reviewImprestRetirement' && decision === 'Verified');
-  const posting = action === 'accountsReview';
+  const posting = action === 'accountsReview' || decision === 'Accounts Confirmed';
   const imprestAction = ['reviewImprest', 'issueImprest', 'reviewImprestRetirement'].includes(action);
   const profile = financeData?.approvalProfile || {};
   pendingFinanceDecision = {
@@ -16325,7 +16336,13 @@ function openFinanceDecision(button) {
       ? (decision === 'Verified' ? 'Verify Imprest Retirement' : 'Return Retirement for Correction')
       : decision === 'Rejected'
         ? (imprestAction ? 'Reject Imprest' : 'Reject Document')
-        : posting ? 'Accounts Review / Posting' : imprestAction ? 'Approve Imprest' : 'Approve Document';
+        : decision === 'Accounts Confirmed'
+          ? 'Confirm Requisition — Accounts'
+          : decision === 'Management Authorized'
+            ? 'Authorize Requisition — Management'
+            : requisitionAdvance
+              ? 'Approve Requisition — Administration'
+              : posting ? 'Accounts Review / Posting' : imprestAction ? 'Approve Imprest' : 'Approve Document';
   document.getElementById('financeDecisionRecord').textContent = button.dataset.recordId;
   document.getElementById('financeEndorsementOptions').hidden = !secureDecision || imprestAction;
   document.getElementById('financeDecisionVerification').hidden = !secureDecision;
@@ -16378,7 +16395,9 @@ async function verifyFinanceDecisionBiometric() {
     const started = await passkeyRequest('approval-options', {
       recordId: pendingFinanceDecision?.recordId,
       recordType: pendingFinanceDecision?.recordType,
-      decisionAction: pendingFinanceDecision?.action === 'accountsReview'
+      decisionAction: pendingFinanceDecision?.action === 'advanceRequisition'
+        ? `requisition:${clean(pendingFinanceDecision?.decision).toLowerCase().replace(/^accounts /, '').replace(/^management /, '')}`
+        : pendingFinanceDecision?.action === 'accountsReview'
         ? 'accountsReview'
         : pendingFinanceDecision?.action === 'issueImprest'
           ? 'imprest:issue'
@@ -16416,6 +16435,7 @@ async function submitFinanceDecision(event) {
   if (!pendingFinanceDecision) return;
   const context = pendingFinanceDecision;
   const secureDecision = context.decision === 'Approved' || context.action === 'accountsReview' ||
+    (context.action === 'advanceRequisition' && context.decision !== 'Rejected') ||
     context.action === 'issueImprest' || (context.action === 'reviewImprestRetirement' && context.decision === 'Verified');
   const password = financeDecisionForm.elements.approvalPassword.value;
   if (secureDecision && !password && !financeDecisionBiometricVerified) {
@@ -16488,9 +16508,17 @@ function materialItemsTable(items, grandTotal = null) {
   `;
 }
 
+function financeWorkflowStatus(record = {}, type = '') {
+  const status = pick(record, ['Status']) || 'Submitted';
+  const requisition = type === 'requisition' || Boolean(clean(record.ExpenseNo));
+  return requisition && clean(status).toLowerCase() === 'approved' && !clean(record.AdminReviewedAt)
+    ? 'Management Authorized'
+    : status;
+}
+
 function financeRecordRow(record, type, capabilities) {
   const id = pick(record, type === 'bill' ? ['BillNo', '__id'] : ['ExpenseNo', '__id']);
-  const status = pick(record, ['Status']) || 'Submitted';
+  const status = financeWorkflowStatus(record, type);
   const isMaterial = type === 'requisition' && clean(record.RequisitionType).toLowerCase() === 'material';
   const title = isMaterial
     ? 'Material Requisition'
@@ -16508,16 +16536,38 @@ function financeRecordRow(record, type, capabilities) {
       actions += `<button type="button" class="compact-icon-action compact-edit-action" data-edit-requisition="${escapeHtml(id)}" aria-label="Edit and resubmit ${escapeHtml(id)}" title="Edit and resubmit"><span aria-hidden="true">&#9998;</span></button>`;
     }
   }
-  if (capabilities.canApprove && clean(status).toLowerCase() === 'submitted') {
-    actions += `<button type="button" class="compact-icon-action compact-approve-action" data-workflow-action="review" data-decision="Approved" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Approve ${escapeHtml(id)}" title="Approve"><span aria-hidden="true">&#10003;</span></button>`;
-    actions += `<button type="button" class="compact-icon-action compact-reject-action" data-workflow-action="review" data-decision="Rejected" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Reject ${escapeHtml(id)}" title="Reject"><span aria-hidden="true">&#10005;</span></button>`;
-  }
-  if (capabilities.canAdminOverride && clean(status).toLowerCase() === 'approved' && !record.AdminReviewedAt) {
-    actions += `<button type="button" class="compact-icon-action compact-approve-action" data-workflow-action="review" data-decision="Approved" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Administratively approve ${escapeHtml(id)}" title="Administrative approval"><span aria-hidden="true">&#10003;</span></button>`;
-    actions += `<button type="button" class="compact-icon-action compact-reject-action" data-workflow-action="review" data-decision="Rejected" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Administratively reject ${escapeHtml(id)}" title="Administrative rejection"><span aria-hidden="true">&#10005;</span></button>`;
-  }
-  if (capabilities.canAccountsReview && clean(status).toLowerCase() === 'approved' && !accountsReviewed) {
-    actions += `<button type="button" class="compact-icon-action compact-approve-action" data-workflow-action="accountsReview" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Mark ${escapeHtml(id)} as accounts reviewed" title="Mark Accounts Reviewed"><span aria-hidden="true">&#10003;</span></button>`;
+  if (type === 'requisition') {
+    const workflowStatus = clean(status).toLowerCase() === 'approved' && !administrativelyApproved
+      ? 'management authorized'
+      : clean(status).toLowerCase();
+    let nextDecision = '';
+    let nextLabel = '';
+    if (capabilities.canConfirmRequisitions && workflowStatus === 'submitted') {
+      nextDecision = 'Accounts Confirmed';
+      nextLabel = 'Confirm as Accounts Officer';
+    } else if (capabilities.canAuthorizeRequisitions && workflowStatus === 'accounts confirmed') {
+      nextDecision = 'Management Authorized';
+      nextLabel = 'Authorize as Management';
+    } else if (capabilities.canApproveRequisitions && workflowStatus === 'management authorized') {
+      nextDecision = 'Approved';
+      nextLabel = 'Approve as Super Admin';
+    }
+    if (nextDecision) {
+      actions += `<button type="button" class="compact-icon-action compact-approve-action" data-workflow-action="advanceRequisition" data-decision="${escapeHtml(nextDecision)}" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="${escapeHtml(nextLabel)} ${escapeHtml(id)}" title="${escapeHtml(nextLabel)}"><span aria-hidden="true">&#10003;</span></button>`;
+      actions += `<button type="button" class="compact-icon-action compact-reject-action" data-workflow-action="advanceRequisition" data-decision="Rejected" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Reject ${escapeHtml(id)} at the current stage" title="Reject at current stage"><span aria-hidden="true">&#10005;</span></button>`;
+    }
+  } else {
+    if (capabilities.canApprove && clean(status).toLowerCase() === 'submitted') {
+      actions += `<button type="button" class="compact-icon-action compact-approve-action" data-workflow-action="review" data-decision="Approved" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Approve ${escapeHtml(id)}" title="Approve"><span aria-hidden="true">&#10003;</span></button>`;
+      actions += `<button type="button" class="compact-icon-action compact-reject-action" data-workflow-action="review" data-decision="Rejected" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Reject ${escapeHtml(id)}" title="Reject"><span aria-hidden="true">&#10005;</span></button>`;
+    }
+    if (capabilities.canAdminOverride && clean(status).toLowerCase() === 'approved' && !record.AdminReviewedAt) {
+      actions += `<button type="button" class="compact-icon-action compact-approve-action" data-workflow-action="review" data-decision="Approved" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Administratively approve ${escapeHtml(id)}" title="Administrative approval"><span aria-hidden="true">&#10003;</span></button>`;
+      actions += `<button type="button" class="compact-icon-action compact-reject-action" data-workflow-action="review" data-decision="Rejected" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Administratively reject ${escapeHtml(id)}" title="Administrative rejection"><span aria-hidden="true">&#10005;</span></button>`;
+    }
+    if (capabilities.canAccountsReview && clean(status).toLowerCase() === 'approved' && !accountsReviewed) {
+      actions += `<button type="button" class="compact-icon-action compact-approve-action" data-workflow-action="accountsReview" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Mark ${escapeHtml(id)} as accounts reviewed" title="Mark Accounts Reviewed"><span aria-hidden="true">&#10003;</span></button>`;
+    }
   }
   return `
     <tr>
@@ -16577,11 +16627,19 @@ function openFinanceRecordPrint(record, type, endorsements = {}, printableWindow
       : `<tr><th>Description</th><td>${escapeHtml(record.Description || '-')}</td><th>Amount</th><td>${escapeHtml(money(record.Amount))}</td></tr>`}
     <tr><th>Department</th><td>${escapeHtml(record.Department || '-')}</td><th>Date</th><td>${escapeHtml(record.Date || '-')}</td></tr>
     <tr><th>${type === 'bill' ? 'Due Date' : 'Vendor'}</th><td>${escapeHtml(type === 'bill' ? (record.DueDate || '-') : (record.Vendor || '-'))}</td><th>Requested By</th><td>${escapeHtml(record.RequestedBy || record.CreatedBy || '-')}</td></tr>
-    <tr><th>Approved By</th><td>${escapeHtml(record.ApprovedBy || '-')}</td><th>Approved At</th><td>${escapeHtml(record.ApprovedAt || '-')}</td></tr>
+    ${type === 'requisition'
+      ? `<tr><th>Accounts Confirmed By</th><td>${escapeHtml(record.AccountsConfirmedBy || record.AccountsReviewedBy || '-')}</td><th>Confirmed At</th><td>${escapeHtml(record.AccountsConfirmedAt || record.AccountsReviewedAt || '-')}</td></tr>
+         <tr><th>Management Authorized By</th><td>${escapeHtml(record.ManagementAuthorizedBy || (!record.AdminReviewedAt ? record.ApprovedBy : '') || '-')}</td><th>Authorized At</th><td>${escapeHtml(record.ManagementAuthorizedAt || (!record.AdminReviewedAt ? record.ApprovedAt : '') || '-')}</td></tr>
+         <tr><th>Admin Approved By</th><td>${escapeHtml(record.AdminReviewedBy || (record.AdminReviewedAt ? record.ApprovedBy : '') || '-')}</td><th>Approved At</th><td>${escapeHtml(record.AdminReviewedAt || '-')}</td></tr>`
+      : `<tr><th>Approved By</th><td>${escapeHtml(record.ApprovedBy || '-')}</td><th>Approved At</th><td>${escapeHtml(record.ApprovedAt || '-')}</td></tr>`}
   </tbody></table>${materialTable}${record.Notes ? `<p class="notes"><strong>Notes:</strong> ${escapeHtml(record.Notes)}</p>` : ''}${record.ReviewNotes ? `<p class="notes"><strong>Review:</strong> ${escapeHtml(record.ReviewNotes)}</p>` : ''}
-  ${approvalEndorsementBlock('Approved by', record.ApprovedBy, record.ApprovedAt, endorsements.approval)}
-  ${approvalEndorsementBlock('Administrative approval', record.AdminReviewedBy, record.AdminReviewedAt, endorsements.admin)}
-  ${approvalEndorsementBlock('Accounts review / posting', record.AccountsReviewedBy, record.AccountsReviewedAt, endorsements.accounts)}
+  ${type === 'requisition'
+    ? `${approvalEndorsementBlock('Accounts confirmation', record.AccountsConfirmedBy || record.AccountsReviewedBy, record.AccountsConfirmedAt || record.AccountsReviewedAt, endorsements.accounts)}
+       ${approvalEndorsementBlock('Management authorization', record.ManagementAuthorizedBy || (!record.AdminReviewedAt ? record.ApprovedBy : ''), record.ManagementAuthorizedAt || (!record.AdminReviewedAt ? record.ApprovedAt : ''), endorsements.management || (!record.AdminReviewedAt ? endorsements.approval : null))}
+       ${approvalEndorsementBlock('Administrative approval', record.AdminReviewedBy || (record.AdminReviewedAt ? record.ApprovedBy : ''), record.AdminReviewedAt, endorsements.admin)}`
+    : `${approvalEndorsementBlock('Approved by', record.ApprovedBy, record.ApprovedAt, endorsements.approval)}
+       ${approvalEndorsementBlock('Administrative approval', record.AdminReviewedBy, record.AdminReviewedAt, endorsements.admin)}
+       ${approvalEndorsementBlock('Accounts review / posting', record.AccountsReviewedBy, record.AccountsReviewedAt, endorsements.accounts)}`}
   </body></html>`);
   printable.document.close();
   printable.focus();
@@ -16724,7 +16782,7 @@ function renderFinanceWorkflow() {
   const imprests = financeData.imprests || [];
   const imprestSummary = financeData.imprestSummary || {};
   const allRecords = [...requisitions, ...bills];
-  const statusCount = (status) => allRecords.filter((record) => clean(record.Status).toLowerCase() === status).length;
+  const statusCount = (status) => allRecords.filter((record) => clean(financeWorkflowStatus(record)).toLowerCase() === status).length;
   const pendingValue = allRecords
     .filter((record) => clean(record.Status).toLowerCase() === 'submitted')
     .reduce((sum, record) => sum + Number(record.Amount || 0), 0);
@@ -16842,8 +16900,10 @@ function renderFinanceWorkflow() {
     <p id="financeWorkflowStatus" class="status"></p>
     ${!capabilities.canSubmit ? '<p class="status bad">A department must be assigned to your staff account before you can submit requests.</p>' : ''}
     <div class="workflow-kpis">
-      <div><small>Awaiting Approval</small><strong>${statusCount('submitted')}</strong><span>${escapeHtml(money(pendingValue))} pending</span></div>
-      <div><small>Approved</small><strong>${statusCount('approved')}</strong><span>Ready for Accounts</span></div>
+      <div><small>Awaiting Accounts</small><strong>${statusCount('submitted')}</strong><span>${escapeHtml(money(pendingValue))} pending confirmation</span></div>
+      <div><small>Accounts Confirmed</small><strong>${statusCount('accounts confirmed')}</strong><span>Ready for Management</span></div>
+      <div><small>Management Authorized</small><strong>${statusCount('management authorized')}</strong><span>Ready for Admin</span></div>
+      <div><small>Admin Approved</small><strong>${statusCount('approved')}</strong><span>Ready to post / pay</span></div>
       <div><small>Rejected</small><strong>${statusCount('rejected')}</strong><span>Requires attention</span></div>
       <div><small>Total Records</small><strong>${allRecords.length}</strong><span>Current view</span></div>
     </div>
@@ -17002,7 +17062,7 @@ function openRequisitionEditor(record) {
   if (submitButton) submitButton.textContent = 'Resubmit Requisition';
   setStatus(
     form.querySelector('[data-form-status]'),
-    `Editing revision ${revision}. Resubmission archives this revision and resets approval and Accounts review.`
+    `Editing revision ${revision}. Resubmission archives this revision and restarts Accounts confirmation, Management authorization, and Admin approval.`
   );
   dialog.showModal();
 }

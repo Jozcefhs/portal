@@ -393,6 +393,8 @@ test('the endpoint stores only encrypted templates, supports deletion, audits us
 });
 
 test('the browser UI keeps frames on-device, requires a live action and always stops camera tracks', () => {
+  assert.match(uiSource, /typeof window\.DynamaxStaffFetch === 'function'/);
+  assert.match(uiSource, /window\.fetch\.bind\(window\)/);
   assert.match(uiSource, /navigator\.mediaDevices\.getUserMedia/);
   assert.match(uiSource, /human\.detect\(video, \{[\s\S]*?description: \{ enabled: livenessConfirmed \}/);
   assert.match(uiSource, /actionObserved && blink\.open/);
@@ -481,7 +483,7 @@ test('eligible Records Desk sessions prepare the model during idle time without 
   assert.match(adminSource, /requestIdleCallback/);
   assert.match(adminSource, /window\.setTimeout\(preload, 300\)/);
   assert.match(adminSource, /preloadFaceRecognitionModel\(\)/);
-  assert.match(adminSource, /student-face-lookup\.js\?v=20260814-visible-camera-controls/);
+  assert.match(adminSource, /student-face-lookup\.js\?v=20260923-authenticated-enrollment/);
   const preloaderStart = uiSource.indexOf('export function preloadFaceRecognitionModel');
   const preloaderEnd = uiSource.indexOf('async function startCamera', preloaderStart);
   const preloaderSource = uiSource.slice(preloaderStart, preloaderEnd);

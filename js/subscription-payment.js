@@ -28,7 +28,10 @@ async function confirmPayment() {
     const nextUrl = data.activationUrl || data.loginUrl || data.portalUrl;
     const nextLabel = data.activationUrl ? 'Create administrator account' : data.loginUrl ? 'Sign in to organisation' : 'Open organisation portal';
     const receipt = data.receipt || {};
-    result.innerHTML = `<dl class="subscription-confirmation-summary"><div><dt>Reference</dt><dd>${safeText(data.registrationReference)}</dd></div><div><dt>Plan</dt><dd>${safeText(data.plan)}</dd></div><div><dt>Billing</dt><dd>${safeText(data.billingCycle)}</dd></div><div><dt>Receipt</dt><dd>${safeText(receipt.receiptNo || 'Generated')}</dd></div><div><dt>Workspace</dt><dd>${data.workspacePending ? 'Being prepared' : 'Ready'}</dd></div></dl>${data.receiptUrl ? `<p><a class="settings-link" href="${safeText(data.receiptUrl)}">View / print payment receipt</a></p>` : ''}${nextUrl ? `<p><a class="settings-link" href="${safeText(nextUrl)}">${safeText(nextLabel)}</a></p>` : ''}`;
+    const paymentSummary = data.cardVerification
+      ? `<div><dt>Card</dt><dd>Verified</dd></div><div><dt>Refund</dt><dd>${safeText(data.refundStatus || 'Processing')}</dd></div>`
+      : `<div><dt>Billing</dt><dd>${safeText(data.billingCycle)}</dd></div><div><dt>Receipt</dt><dd>${safeText(receipt.receiptNo || 'Generated')}</dd></div>`;
+    result.innerHTML = `<dl class="subscription-confirmation-summary"><div><dt>Reference</dt><dd>${safeText(data.registrationReference)}</dd></div><div><dt>Plan</dt><dd>${safeText(data.plan)}</dd></div>${paymentSummary}<div><dt>Workspace</dt><dd>${data.workspacePending ? 'Being prepared' : 'Ready'}</dd></div></dl>${data.receiptUrl ? `<p><a class="settings-link" href="${safeText(data.receiptUrl)}">View / print payment receipt</a></p>` : ''}${nextUrl ? `<p><a class="settings-link" href="${safeText(nextUrl)}">${safeText(nextLabel)}</a></p>` : ''}`;
   } catch (error) {
     message.textContent = 'Payment confirmation needs attention.';
     result.innerHTML = `<p class="status bad">${safeText(error.message || error)}</p>`;

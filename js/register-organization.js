@@ -341,7 +341,7 @@ function renderPlans() {
     ? currentFlexQuote().amount
     : cycle === 'yearly' ? selected?.YearlyAmount : selected?.MonthlyAmount;
   if (submit) submit.textContent = selected?.Name === 'Free'
-    ? 'Start free trial'
+    ? 'Verify card & start free trial'
     : Number(amount) > 0 ? 'Choose payment method' : 'Submit registration';
 }
 
@@ -398,7 +398,8 @@ form.addEventListener('submit', async (event) => {
       paymentChoice = await window.DynamaxPaymentMethods.choose({
         methodsUrl: '/api/platform-payment-methods',
         amount: selectedAmount,
-        currency: planCatalog?.Currency || 'NGN'
+        currency: planCatalog?.Currency || 'NGN',
+        allowDirectTransfer: false
       });
       if (!paymentChoice) return;
     }
@@ -456,7 +457,9 @@ form.addEventListener('submit', async (event) => {
     statusNode.innerHTML = `${escapeHtml(data.message)} Reference: ${escapeHtml(data.reference)}.${transferReference}${escapeHtml(deliveryNote)}${accountLink}`;
     registrationIdempotencyKey = '';
     if (data.authorizationUrl) {
-      statusNode.textContent = 'Opening Paystack secure checkout...';
+      statusNode.textContent = data.cardVerification
+        ? `Opening Paystack to verify your card. The ${data.verificationCurrency || planCatalog?.Currency || 'NGN'} ${Number(data.verificationCharge || data.amount || 0).toFixed(2)} verification charge will be refunded automatically.`
+        : 'Opening Paystack secure checkout...';
       window.location.assign(data.authorizationUrl);
       return;
     }

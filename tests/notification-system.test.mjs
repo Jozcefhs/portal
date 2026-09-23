@@ -153,7 +153,7 @@ test('scheduler reports duplicate reminder events without creating another', asy
   assert.equal(result.duplicates, 1);
 });
 
-for (const event of ['Submitted', 'Approved', 'Rejected', 'Pushed', 'Posted']) {
+for (const event of ['Submitted', 'Confirmed', 'Authorized', 'Approved', 'Rejected', 'Pushed', 'Posted']) {
   test(`requisition ${event.toLowerCase()} transition builds the correct notification`, () => {
     const row = staffRequisitionEventNotification({ ExpenseNo: 'REQ-1', Amount: 20000, Department: 'Science', RequestedByUsername: 'requester', BranchId: 'main', SchoolSection: 'secondary', UpdatedAt: '2026-08-01T10:00:00Z' }, event, 'reviewer');
     assert.equal(row.Type, `Requisition ${event}`);

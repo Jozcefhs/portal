@@ -141,6 +141,9 @@ function publicActivationRegistration(registration = {}) {
     planEntitlements: registration.FeatureEntitlements ?? registration.PlanEntitlements ?? null,
     planCatalogRevision: clean(registration.PlanCatalogRevision),
     subscriptionStatus: clean(registration.SubscriptionStatus),
+    ownerDemo: registration.OwnerDemo === true,
+    nonBillable: registration.NonBillable === true,
+    syntheticDataOnly: registration.SyntheticDataOnly === true,
     trialStartedAt: clean(registration.TrialStartedAt),
     trialEndsAt: clean(registration.TrialEndsAt)
   };

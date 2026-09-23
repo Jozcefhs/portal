@@ -568,16 +568,13 @@ function isSchoolEdition(user = {}) {
 }
 
 function isAcademicsDepartmentUser(user = {}) {
-  const role = clean(user.role || user.Role);
+  const role = lower(user.role || user.Role);
   const department = lower(user.department || user.Department);
-  return role === 'Department User'
-    && (department === 'academic' || department === 'academics' || department.startsWith('academic ') || department.startsWith('academics '));
+  return role === 'department user' && department === 'academics';
 }
 
 function isAcademicsDepartmentStaff(row = {}) {
-  const department = lower(row.Department || row.department);
-  return department === 'academic' || department === 'academics'
-    || department.startsWith('academic ') || department.startsWith('academics ');
+  return isAcademicsDepartmentUser(row);
 }
 
 export function academicSubjectTeacherCandidates(rows = [], schoolSection = '') {
@@ -1504,14 +1501,14 @@ function validateAcademicRecord(state, type, record, people = {}) {
   if (type === 'teacherallocation') {
     const teacher = people.staff.find((row) => lower(row.Username || row.username || row.__id) === record.TeacherUsername);
     if (!teacher || !activeValue(teacher.Active, true)) throw failure('The selected teacher is not an active staff account in this branch.');
+    if (!isAcademicsDepartmentStaff(teacher)) {
+      throw failure('Academic Management staff must have the Department User role and belong to the Academics department.', 409, 'ACADEMIC_TEACHER_DEPARTMENT_INVALID');
+    }
     const teacherSection = lower(teacher.SchoolSectionAccess || teacher.schoolSectionAccess || 'all');
     if (['primary', 'secondary'].includes(teacherSection) && teacherSection !== record.SchoolSection) {
       throw failure('The selected teacher is restricted to another school section.', 409, 'ACADEMIC_TEACHER_SECTION_INVALID');
     }
     if (record.AllocationRole === 'Subject Teacher') {
-      if (!isAcademicsDepartmentStaff(teacher)) {
-        throw failure('Subject teachers must be active staff in the Academics department.', 409, 'ACADEMIC_TEACHER_DEPARTMENT_INVALID');
-      }
       const offering = record.SchoolStage === 'senior-secondary' ? null : state.offerings.find((row) => statusActive(row)
         && row.SessionId === record.SessionId && row.TermId === record.TermId
         && row.ClassId === record.ClassId && row.SubjectId === record.SubjectId
@@ -1898,6 +1895,9 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
       assessmentScheme = { ...academicAssessmentScheme({}), Issues: [clean(error?.message || error)] };
     }
   }
+  const visibleStaff = permissions.teacherView
+    ? people.staff.filter((row) => lower(row.Username || row.__id) === actorUsername(user))
+    : people.staff;
   return {
     ok: true,
     partialAcademicManagement: true,
@@ -1915,13 +1915,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
     ...Object.fromEntries(Object.entries(state)
       .filter(([key]) => focusedStateKeys.includes(key))
       .map(([key, rows]) => [key, rows.map(publicRecord)])),
-    ...(peopleOptions.staff ? { staff: displayStaff(focusedView === 'teachers'
-      ? academicSubjectTeacherCandidates(permissions.teacherView
-        ? people.staff.filter((row) => lower(row.Username || row.__id) === actorUsername(user))
-        : people.staff, scope.section)
-      : (permissions.teacherView
-        ? people.staff.filter((row) => lower(row.Username || row.__id) === actorUsername(user))
-        : people.staff)) } : {}),
+    ...(peopleOptions.staff ? { staff: displayStaff(academicSubjectTeacherCandidates(visibleStaff, scope.section)) } : {}),
     ...(peopleOptions.students ? { students: displayStudents(students, state.classes) } : {})
   };
 }

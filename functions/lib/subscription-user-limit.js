@@ -91,6 +91,9 @@ export async function loadSubscriptionUserLimit(env) {
   const profile = await getDocument(env, 'settings', 'organisationProfile').catch(() => null);
   if (profile) {
     const configuredPlan = clean(profile.Plan || profile.SubscriptionPlan);
+    if (profile.OwnerDemo === true || configuredPlan.toLowerCase() === 'owner demo') {
+      return Math.max(1, Number(profile.UserLimit || 250) || 250);
+    }
     if (configuredPlan) {
       const plan = normalizeSubscriptionPlan(configuredPlan);
       if (plan !== 'Enterprise') return subscriptionPlanUserLimit(plan);

@@ -33,3 +33,15 @@ test('custom admission documents are valid PDFs with the approved page structure
     assert.equal(parsed.getPageCount(), expectedPages, `${type} PDF page count`);
   }
 });
+
+test('completed probation re-sit result produces a valid result PDF', async () => {
+  const bytes = await createAdmissionPdf(profile, {
+    ...application,
+    ResultStatus: 'Admitted',
+    ProbationResult: 'Passed',
+    ProbationResitPercentage: '74.5',
+    ProbationResitDate: '2026-09-23'
+  }, 'result', '2026-09-23T00:00:00.000Z');
+  const parsed = await PDFDocument.load(bytes);
+  assert.equal(parsed.getPageCount(), 1);
+});

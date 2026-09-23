@@ -177,7 +177,10 @@ function stopCamera(video = null) {
 }
 
 async function faceLookupRequest(action, payload = {}) {
-  const response = await fetch('/api/staff-face-lookup', {
+  const request = typeof window.DynamaxStaffFetch === 'function'
+    ? window.DynamaxStaffFetch
+    : window.fetch.bind(window);
+  const response = await request('/api/staff-face-lookup', {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',

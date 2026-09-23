@@ -379,7 +379,7 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(pricingHtml, /id="planEntitlementMatrix"/);
   assert.match(pricingHtml, /<select id="planPricingCurrency"><option value="NGN">NGN<\/option><option value="USD">USD<\/option><\/select>/);
   assert.match(pricingHtml, /id="planUsdToNgnRate"/);
-  assert.match(pricingHtml, /plan-management\.js\?v=20260916-subscription-onboarding/);
+  assert.match(pricingHtml, /plan-management\.js\?v=20260923-owner-demo/);
   assert.match(pricingHtml, /id="tenantPoolSummary"/);
   assert.match(pricingHtml, /Other organisation/);
   assert.match(pricingHtml, /Save plans &amp; pricing/);
@@ -395,7 +395,7 @@ test('registration and pricing interfaces expose feature details and recurring c
   assert.match(registrationJs, /dualFormattedPrice/);
   assert.match(registrationHtml, /id="flexPlanBuilder"/);
   assert.match(registrationHtml, /css\/style\.css\?v=20260918-neutral-plan-cards/);
-  assert.match(registrationHtml, /js\/register-organization\.js\?v=20260918-neutral-plan-cards/);
+  assert.match(registrationHtml, /js\/register-organization\.js\?v=20260923-card-before-pool/);
   assert.match(registrationJs, /\/api\/plan-catalog\?v=6/);
   assert.match(registrationJs, /class="flex-module-title"/);
   assert.match(registrationApi, /channels:\s*\['card'\]/);

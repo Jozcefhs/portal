@@ -9,6 +9,11 @@ import {
 import { loadStaffApprovalProfile, publicStaffApprovalProfile } from '../lib/staff-approval-profile.js';
 import { notifyStaffRequisitionEvent, notifyStaffRequisitionSubmitted } from '../lib/notifications.js';
 import {
+  REQUISITION_STATUS,
+  assertRequisitionTransition,
+  requisitionCapabilities
+} from '../lib/requisition-workflow.js';
+import {
   IMPREST_ADVANCE_ACCOUNT,
   buildImprestIssueJournal,
   buildImprestRetirementJournal,
@@ -204,7 +209,18 @@ export function buildRequisitionResubmission(existing = {}, body = {}, user = {}
     AccountsSignatureApplied: false,
     AccountsStampApplied: false,
     AccountsAuthenticationMethod: '',
-    AccountsReviewNotes: ''
+    AccountsReviewNotes: '',
+    AccountsConfirmedBy: '',
+    AccountsConfirmedByUsername: '',
+    AccountsConfirmedAt: '',
+    AccountsConfirmationNotes: '',
+    ManagementAuthorizedBy: '',
+    ManagementAuthorizedByUsername: '',
+    ManagementAuthorizedAt: '',
+    ManagementAuthorizationMethod: '',
+    ManagementAuthorizationNotes: '',
+    RejectedByUsername: '',
+    RejectedStage: ''
   });
   const revision = {
     RevisionId: revisionId,
@@ -274,7 +290,8 @@ function capabilities(user) {
     canApprove: clean(user.role) === 'Super Admin' || Boolean(user.approvalEnabled),
     canAdminOverride: clean(user.role) === 'Super Admin',
     canAccountsReview: ['Super Admin', 'Accounts Officer'].includes(clean(user.role)),
-    canViewAll: ['Super Admin', 'Management', 'Accounts Officer'].includes(clean(user.role))
+    canViewAll: ['Super Admin', 'Management', 'Accounts Officer'].includes(clean(user.role)),
+    ...requisitionCapabilities(user)
   };
 }
 
@@ -551,6 +568,11 @@ async function resubmitRequisition(env, user, body) {
       documentId: endorsementId(id, 'accounts'),
       operation: 'delete'
     },
+    {
+      collectionPath: 'financeDocumentEndorsements',
+      documentId: endorsementId(id, 'management'),
+      operation: 'delete'
+    },
     audit
   ]);
   await notifyStaffRequisitionSubmitted(env, payload, actor(user)).catch(() => null);
@@ -625,14 +647,153 @@ function approvalAccountAllows(user, existing, isBill) {
   return allowed.some((value) => value === lower(accountCode));
 }
 
+function requestedRequisitionStatus(decision) {
+  return ({
+    confirmed: REQUISITION_STATUS.ACCOUNTS_CONFIRMED,
+    'accounts confirmed': REQUISITION_STATUS.ACCOUNTS_CONFIRMED,
+    authorized: REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
+    authorised: REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
+    'management authorized': REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
+    'management authorised': REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
+    approved: REQUISITION_STATUS.APPROVED,
+    rejected: REQUISITION_STATUS.REJECTED
+  })[lower(decision)] || clean(decision);
+}
+
+async function advanceRequisition(env, user, body, request) {
+  const id = clean(body.recordId || body.ExpenseNo);
+  if (!id) {
+    const err = new Error('Select a requisition to review.');
+    err.status = 400;
+    throw err;
+  }
+  const direct = await getDocument(env, 'accountingExpenses', safeId(id));
+  const existing = direct || await findOneByField(env, 'accountingExpenses', 'ExpenseNo', id);
+  if (!existing || !scopedRows([existing], user, capabilities(user)).length) {
+    const err = new Error('The selected requisition was not found in this branch.');
+    err.status = 404;
+    throw err;
+  }
+
+  const requestedStatus = requestedRequisitionStatus(body.decision || body.status);
+  const transition = assertRequisitionTransition(existing, user.role, requestedStatus);
+  const timestamp = nowIso();
+  const notes = clean(body.notes);
+  const authorizationMethod = transition.event === 'Rejected'
+    ? ''
+    : await requireDecisionAuthorization(env, user, body, request, `requisition:${lower(transition.event)}`);
+  const endorsement = transition.event === 'Rejected'
+    ? null
+    : await buildEndorsement(env, user, body, id, transition.stage);
+  const common = {
+    ...existing,
+    Status: transition.nextStatus,
+    ReviewNotes: notes,
+    UpdatedAt: timestamp,
+    UpdatedBy: actor(user)
+  };
+  let stageFields = {};
+  if (transition.event === 'Confirmed') {
+    stageFields = {
+      AccountsReviewStatus: 'Confirmed',
+      AccountsConfirmedBy: actor(user),
+      AccountsConfirmedByUsername: clean(user.username),
+      AccountsConfirmedAt: timestamp,
+      AccountsConfirmationMethod: authorizationMethod,
+      AccountsConfirmationNotes: notes,
+      AccountsReviewedBy: actor(user),
+      AccountsReviewedByUsername: clean(user.username),
+      AccountsReviewedAt: timestamp,
+      AccountsAuthenticationMethod: authorizationMethod,
+      AccountsReviewNotes: notes,
+      AccountsSignatureApplied: Boolean(endorsement?.SignatureDataUrl),
+      AccountsStampApplied: Boolean(endorsement?.StampDataUrl),
+      RejectedAt: '',
+      RejectedBy: '',
+      RejectedByUsername: '',
+      RejectedStage: ''
+    };
+  } else if (transition.event === 'Authorized') {
+    stageFields = {
+      ManagementAuthorizedBy: actor(user),
+      ManagementAuthorizedByUsername: clean(user.username),
+      ManagementAuthorizedAt: timestamp,
+      ManagementAuthorizationMethod: authorizationMethod,
+      ManagementAuthorizationNotes: notes,
+      ManagementSignatureApplied: Boolean(endorsement?.SignatureDataUrl),
+      ManagementStampApplied: Boolean(endorsement?.StampDataUrl),
+      RejectedAt: '',
+      RejectedBy: '',
+      RejectedByUsername: '',
+      RejectedStage: ''
+    };
+  } else if (transition.event === 'Approved') {
+    stageFields = {
+      ApprovedAt: timestamp,
+      ApprovedBy: actor(user),
+      ApprovedByUsername: clean(user.username),
+      ApprovalAuthenticationMethod: authorizationMethod,
+      AdminReviewedAt: timestamp,
+      AdminReviewedBy: actor(user),
+      AdminReviewedByUsername: clean(user.username),
+      AdminSignatureApplied: Boolean(endorsement?.SignatureDataUrl),
+      AdminStampApplied: Boolean(endorsement?.StampDataUrl),
+      AdminAuthenticationMethod: authorizationMethod,
+      RejectedAt: '',
+      RejectedBy: '',
+      RejectedByUsername: '',
+      RejectedStage: ''
+    };
+  } else {
+    stageFields = {
+      RejectedAt: timestamp,
+      RejectedBy: actor(user),
+      RejectedByUsername: clean(user.username),
+      RejectedStage: transition.currentStatus,
+      RejectionNotes: notes
+    };
+  }
+  const payload = removeFirestoreMetadata({ ...common, ...stageFields });
+  const writes = [{
+    collectionPath: 'accountingExpenses',
+    documentId: safeId(id),
+    data: payload,
+    updateTime: documentVersion(existing)
+  }];
+  if (endorsement) writes.push({
+    collectionPath: 'financeDocumentEndorsements',
+    documentId: endorsementId(id, transition.stage),
+    data: endorsement
+  });
+  writes.push(auditWrite(
+    user,
+    transition.event.toUpperCase(),
+    'Expense Requisition',
+    id,
+    notes,
+    timestamp,
+    existing
+  ));
+  await commitFinanceDecision(env, writes);
+  await notifyStaffRequisitionEvent(env, payload, transition.event, actor(user)).catch(() => null);
+  return {
+    ok: true,
+    message: transition.event === 'Rejected'
+      ? 'Requisition rejected and returned to the requester.'
+      : `Requisition ${lower(transition.event)} and passed to the next office.`,
+    record: payload
+  };
+}
+
 async function reviewRecord(env, user, body, request) {
+  const type = lower(body.recordType);
+  if (type !== 'bill') return advanceRequisition(env, user, body, request);
   const access = capabilities(user);
   if (!access.canApprove) {
     const err = new Error('Approval rights have not been enabled for this account by an administrator.');
     err.status = 403;
     throw err;
   }
-  const type = lower(body.recordType);
   const decision = clean(body.decision);
   if (!['Approved', 'Rejected'].includes(decision)) {
     const err = new Error('Decision must be Approved or Rejected.');
@@ -732,6 +893,12 @@ async function reviewRecord(env, user, body, request) {
 }
 
 async function accountsReview(env, user, body, request) {
+  if (lower(body.recordType) !== 'bill') {
+    return advanceRequisition(env, user, {
+      ...body,
+      decision: REQUISITION_STATUS.ACCOUNTS_CONFIRMED
+    }, request);
+  }
   const access = capabilities(user);
   if (!access.canAccountsReview) {
     const err = new Error('Only Accounts or Super Admin can review approved requests for processing.');
@@ -1242,10 +1409,11 @@ async function documentRecord(env, user, body) {
     err.status = 404;
     throw err;
   }
-  const [approvalEndorsement, adminEndorsement, accountsEndorsement] = await Promise.all([
+  const [approvalEndorsement, adminEndorsement, accountsEndorsement, managementEndorsement] = await Promise.all([
     getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'approval')),
     getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'admin')),
-    getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'accounts'))
+    getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'accounts')),
+    getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'management'))
   ]);
   return {
     ok: true,
@@ -1253,7 +1421,8 @@ async function documentRecord(env, user, body) {
     endorsements: {
       approval: approvalEndorsement || null,
       admin: adminEndorsement || null,
-      accounts: accountsEndorsement || null
+      accounts: accountsEndorsement || null,
+      management: managementEndorsement || null
     }
   };
 }
@@ -1271,6 +1440,7 @@ export async function onRequestPost(context) {
       'submitmaterialrequisition',
       'resubmitrequisition',
       'submitbill',
+      'advancerequisition',
       'review',
       'accountsreview',
       'submitimprest',
@@ -1301,6 +1471,7 @@ export async function onRequestPost(context) {
     else if (action === 'submitmaterialrequisition') data = await submitMaterialRequisition(env, user, body);
     else if (action === 'resubmitrequisition') data = await resubmitRequisition(env, user, body);
     else if (action === 'submitbill') data = await submitBill(env, user, body);
+    else if (action === 'advancerequisition') data = await advanceRequisition(env, user, body, request);
     else if (action === 'review') data = await reviewRecord(env, user, body, request);
     else if (action === 'accountsreview') data = await accountsReview(env, user, body, request);
     else if (action === 'submitimprest') data = await submitImprest(env, user, body);
@@ -1315,7 +1486,7 @@ export async function onRequestPost(context) {
       throw err;
     }
     const headers = { 'Cache-Control': 'no-store' };
-    if (['review', 'accountsreview', 'reviewimprest', 'issueimprest', 'reviewimprestretirement'].includes(action)) {
+    if (['advancerequisition', 'review', 'accountsreview', 'reviewimprest', 'issueimprest', 'reviewimprestretirement'].includes(action)) {
       headers['Set-Cookie'] = clearStaffApprovalProofCookie();
     }
     if (mutationActions.has(action)) await completeIdempotentRequest(env, idempotency, data, 200);

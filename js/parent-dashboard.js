@@ -1712,11 +1712,21 @@ function renderEntranceResults(child) {
     const percentage = record.ResultPercentage ? `${record.ResultPercentage}%` : '';
     const status = record.ResultStatus || 'Pending';
     const date = record.ResultUpdatedAt || record.ResultSentAt || '';
+    const probationResult = record.ProbationResult || '';
+    const probationPercentage = record.ProbationResitPercentage ? `${String(record.ProbationResitPercentage).replace(/%$/, '')}%` : '';
+    const probationSummary = [
+      probationResult ? `Probation re-sit: ${probationResult}` : '',
+      probationPercentage,
+      record.ProbationResitDate ? `Sat ${record.ProbationResitDate}` : '',
+      record.ProbationResultUpdatedAt ? `Recorded ${record.ProbationResultUpdatedAt}` : ''
+    ].filter(Boolean).join(' | ');
     if (resultDisplayMode(child) === 'percentage') {
       item.innerHTML = `
         <strong>${status}</strong>
         <span>${[percentage || 'Percentage not recorded', date].filter(Boolean).join(' | ')}</span>
+        ${probationSummary ? `<span><b>${escapeHtml(probationSummary)}</b></span>` : ''}
         <small>${[record.ResultNotes, record.ResultNextStep].filter(Boolean).join(' | ')}</small>
+        ${record.ProbationResultNotes ? `<small>${escapeHtml(record.ProbationResultNotes)}</small>` : ''}
       `;
     } else {
       item.innerHTML = `
@@ -1728,7 +1738,9 @@ function renderEntranceResults(child) {
           <span>Interview / General: <strong>${record.InterviewScore || '-'}</strong></span>
           <span>Total: <strong>${record.TotalScore || '-'}</strong></span>
         </div>
+        ${probationSummary ? `<div class="result-scores"><span><b>${escapeHtml(probationSummary)}</b></span>${record.ProbationResitScore ? `<span>Re-sit score: <strong>${escapeHtml(record.ProbationResitScore)}</strong></span>` : ''}</div>` : ''}
         <small>${[record.ResultNotes, record.ResultNextStep].filter(Boolean).join(' | ')}</small>
+        ${record.ProbationResultNotes ? `<small>${escapeHtml(record.ProbationResultNotes)}</small>` : ''}
       `;
     }
     entranceResults.appendChild(item);

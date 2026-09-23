@@ -82,6 +82,11 @@ import {
   notifyParentPaymentReceived,
   notifyStaffRequisitionEvent
 } from '../lib/notifications.js';
+import {
+  REQUISITION_STATUS,
+  assertRequisitionTransition,
+  requisitionWorkflowStatus
+} from '../lib/requisition-workflow.js';
 import { invoiceReminderFields } from '../lib/notification-reminders.js';
 import { normalizeMinimumAdmissionAge } from '../lib/admission-age.js';
 import { enforceSubscriptionUserLimit, staffAccountsForSubscription } from '../lib/subscription-user-limit.js';
@@ -111,6 +116,74 @@ export const SCHOOL_FEES_TOTAL_CODE = 'SCHOOL_FEES_TOTAL';
 
 function clean(value) {
   return String(value ?? '').trim();
+}
+
+const YOUTUBE_TUTORIAL_HOSTS = new Set([
+  'youtube.com', 'www.youtube.com', 'm.youtube.com',
+  'youtu.be', 'www.youtu.be',
+  'youtube-nocookie.com', 'www.youtube-nocookie.com'
+]);
+
+export function normalizeYouTubeTutorialUrl(value) {
+  const url = clean(value);
+  if (!url) return '';
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch (_error) {
+    const err = new Error('Enter a valid YouTube URL.'); err.status = 400; throw err;
+  }
+  if (parsed.protocol !== 'https:' || !YOUTUBE_TUTORIAL_HOSTS.has(parsed.hostname.toLowerCase()) || parsed.pathname === '/') {
+    const err = new Error('Tutorial links must use an HTTPS YouTube video, playlist or channel address.');
+    err.status = 400;
+    throw err;
+  }
+  return url;
+}
+
+export function normalizeTutorialLinks(value) {
+  let source = value;
+  if (typeof source === 'string') {
+    try { source = source.trim() ? JSON.parse(source) : {}; } catch (_error) { source = {}; }
+  }
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return {};
+  const entries = Object.entries(source).slice(0, 64);
+  return Object.fromEntries(entries.flatMap(([rawLabel, rawUrl]) => {
+    const label = clean(rawLabel).slice(0, 120);
+    if (!label) return [];
+    const url = normalizeYouTubeTutorialUrl(rawUrl);
+    return url ? [[label, url]] : [];
+  }));
+}
+
+export function normalizeFeeBillingCategories(value, fallback = 'All') {
+  const rawValues = Array.isArray(value)
+    ? value
+    : clean(value).split(/[,;\n]+/);
+  const categories = [];
+  const seen = new Set();
+  for (const rawValue of rawValues) {
+    const category = clean(rawValue);
+    const normalized = category.toLowerCase();
+    if (!category || seen.has(normalized)) continue;
+    if (normalized === 'all' || normalized === '*') return ['All'];
+    seen.add(normalized);
+    categories.push(category);
+  }
+  return categories.length ? categories : [clean(fallback) || 'All'];
+}
+
+function feeBillingCategories(fee = {}) {
+  const configured = (Array.isArray(fee.BillingCategories) && fee.BillingCategories.length)
+    ? fee.BillingCategories
+    : ((Array.isArray(fee.billingCategories) && fee.billingCategories.length)
+      ? fee.billingCategories
+      : (fee.BillingCategory || fee.billingCategory));
+  return normalizeFeeBillingCategories(configured);
+}
+
+function feeBillingCategoryText(value) {
+  return normalizeFeeBillingCategories(value).join(', ');
 }
 
 function accountingEditionForRequest(env, body = {}) {
@@ -624,6 +697,7 @@ function normalizeAccount(row) {
 }
 
 function normalizeFeeItem(row) {
+  const billingCategories = feeBillingCategories(row);
   return {
     ...row,
     FeeCode: pick(row, ['feeCode', 'FeeCode', '__id']),
@@ -631,7 +705,8 @@ function normalizeFeeItem(row) {
     FeeCategory: pick(row, ['feeCategory', 'FeeCategory'], 'School Fee'),
     ClassName: pick(row, ['className', 'ClassName'], 'All'),
     StudentType: pick(row, ['studentType', 'StudentType'], 'All'),
-    BillingCategory: pick(row, ['billingCategory', 'BillingCategory'], 'All'),
+    BillingCategories: billingCategories,
+    BillingCategory: feeBillingCategoryText(billingCategories),
     Gender: pick(row, ['gender', 'Gender'], 'All'),
     EnrollmentCategory: pick(row, ['enrollmentCategory', 'EnrollmentCategory', 'IntakeCategory'], 'All'),
     AcademicProgress: pick(row, ['academicProgress', 'AcademicProgress', 'ProgressCategory'], 'All'),
@@ -817,12 +892,13 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'saveAdmissionClasses', 'resetAdmissionClasses',
   'saveFeeItem', 'deleteFeeItem', 'seedDefaultFeeItems',
   'saveBillingCategory', 'deleteBillingCategory', 'updateStudentBillingCategory',
-  'generateSchoolFeeInvoices', 'recordManualPayment',
+  'generateSchoolFeeInvoices', 'recordManualPayment', 'importHistoricalPayments',
   'saveWalletCard', 'recordWalletPurchase', 'recordCreditAction',
   'saveStoreItem', 'saveStoreCategory', 'deleteStoreCategory', 'updateStoreOrderStatus',
   'saveClinicInventoryItem', 'deleteClinicInventoryItem', 'recordClinicStockMovement',
   'saveKitchenInventoryItem', 'deleteKitchenInventoryItem', 'recordKitchenStockMovement',
   'updateApplicationStatus', 'updateApplicantIntelligence', 'updateApplicationDetails',
+  'updateProbationResit',
   'enrollStudent', 'recordSale'
 ]);
 
@@ -873,7 +949,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'updateStudentProfile', 'reissueParentOnboarding',
   'getSchoolClasses', 'saveSchoolClasses', 'resetSchoolClasses',
   'getAdmissionClasses', 'saveAdmissionClasses', 'resetAdmissionClasses',
-  'getAccountsOverview',
+  'getAccountsOverview', 'importHistoricalPayments',
   'getWalletCardAccount', 'saveWalletCard', 'recordWalletPurchase',
   'getAccountingRequisitionDocument',
   'saveAccountingJournal', 'saveAccountingExpense', 'saveAccountingBudget',
@@ -1064,13 +1140,14 @@ function feeMatchVariants(value) {
 }
 
 function feeFieldMatches(ruleValue, actualValue, allowBlankActual = false) {
-  const rule = normalizeMatchText(ruleValue);
-  if (!rule || rule === 'all' || rule === '*') return true;
+  const rules = (Array.isArray(ruleValue) ? ruleValue : String(ruleValue ?? '').split(','))
+    .map((part) => normalizeMatchText(part));
+  if (!rules.some(Boolean) || rules.some((rule) => rule === 'all' || rule === '*')) return true;
   if (!normalizeMatchText(actualValue) && allowBlankActual) return true;
   if (!normalizeMatchText(actualValue)) return false;
   const actualVariants = feeMatchVariants(actualValue);
   const ruleVariants = [];
-  rule.split(',').forEach((part) => {
+  rules.forEach((part) => {
     feeMatchVariants(part).forEach((variant) => ruleVariants.push(variant));
   });
   return ruleVariants.some((variant) => actualVariants.includes(variant));
@@ -1095,7 +1172,7 @@ export function feeMatchesApplication(fee, app) {
   if (normalizeMatchText(academicProgress) === 'repeating' && /book|uniform|school wear/.test(normalizeMatchText(`${fee.FeeCategory || ''} ${fee.FeeName || ''}`))) return false;
   return feeClassRuleMatches(fee.ClassName, appClass) &&
     feeFieldMatches(fee.StudentType, appType) &&
-    feeFieldMatches(fee.BillingCategory || 'All', appBillingCategory, true) &&
+    feeFieldMatches(feeBillingCategories(fee), appBillingCategory, true) &&
     feeFieldMatches(fee.Gender || 'All', appGender) &&
     feeFieldMatches(fee.EnrollmentCategory || 'All', enrollmentCategory, true) &&
     feeFieldMatches(fee.AcademicProgress || 'All', academicProgress, true) &&
@@ -1161,7 +1238,7 @@ function feeMatchesAccountPeriod(fee, app) {
   if (normalizeMatchText(app.AcademicProgress || 'Promoted') === 'repeating' && /book|uniform|school wear/.test(normalizeMatchText(`${fee.FeeCategory || ''} ${fee.FeeName || ''}`))) return false;
   if (!feeClassRuleMatches(fee.ClassName, appClass)) return false;
   if (!feeFieldMatches(fee.StudentType, appType)) return false;
-  if (!feeFieldMatches(fee.BillingCategory || 'All', appBillingCategory, true)) return false;
+  if (!feeFieldMatches(feeBillingCategories(fee), appBillingCategory, true)) return false;
   if (!feeFieldMatches(fee.Gender || 'All', app.Gender || '')) return false;
   const enrollmentCategory = app.EnrollmentCategory || app.IntakeCategory ||
     (isNewIntakeApplication(app) ? 'New Intake' : 'Returning');
@@ -1174,10 +1251,10 @@ function feeMatchesAccountPeriod(fee, app) {
 }
 
 function feeBillingSpecificity(fee, app) {
-  const rule = normalizeMatchText(fee.BillingCategory || 'All');
+  const rules = feeBillingCategories(fee);
   const actual = normalizeMatchText(app.BillingCategory || 'Regular');
-  if (!rule || rule === 'all' || rule === '*') return 0;
-  return feeFieldMatches(fee.BillingCategory, actual || 'Regular', true) ? 2 : 0;
+  if (rules.some((rule) => ['all', '*'].includes(normalizeMatchText(rule)))) return 0;
+  return feeFieldMatches(rules, actual || 'Regular', true) ? 2 : 0;
 }
 
 function feeOverrideKey(fee) {
@@ -1315,7 +1392,7 @@ function feeMatchesAccountBase(fee, app) {
   if (normalizeMatchText(app.AcademicProgress || 'Promoted') === 'repeating' && /book|uniform|school wear/.test(normalizeMatchText(`${fee.FeeCategory || ''} ${fee.FeeName || ''}`))) return false;
   return feeClassRuleMatches(fee.ClassName, appClass) &&
     feeFieldMatches(fee.StudentType, appType) &&
-    feeFieldMatches(fee.BillingCategory || 'All', appBillingCategory, true) &&
+    feeFieldMatches(feeBillingCategories(fee), appBillingCategory, true) &&
     feeFieldMatches(fee.Gender || 'All', app.Gender || '') &&
     feeFieldMatches(fee.EnrollmentCategory || 'All', app.EnrollmentCategory || 'Returning', true) &&
     feeFieldMatches(fee.AcademicProgress || 'All', app.AcademicProgress || 'Promoted', true) &&
@@ -2759,6 +2836,12 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
     ShowResultsOnline: yesNo(mergedProfileText(existingProfile, body, 'ShowResultsOnline', 'showResultsOnline', 'NO')) || 'NO',
     OfferDocumentBodyTemplate: mergedProfileText(existingProfile, body, 'OfferDocumentBodyTemplate', 'offerDocumentBodyTemplate'),
     AdmissionDocumentBodyTemplate: mergedProfileText(existingProfile, body, 'AdmissionDocumentBodyTemplate', 'admissionDocumentBodyTemplate'),
+    TutorialLinks: normalizeTutorialLinks(
+      body.TutorialLinks ?? body.tutorialLinks ?? existingProfile.TutorialLinks ?? existingProfile.tutorialLinks ?? {}
+    ),
+    TutorialChannelUrl: normalizeYouTubeTutorialUrl(
+      body.TutorialChannelUrl ?? body.tutorialChannelUrl ?? existingProfile.TutorialChannelUrl ?? existingProfile.tutorialChannelUrl ?? ''
+    ),
     SubscriptionPlan: authoritativeSubscription.Plan,
     SubscriptionStatus: authoritativeSubscription.SubscriptionStatus,
     TrialStartedAt: authoritativeSubscription.TrialStartedAt,
@@ -3119,11 +3202,24 @@ async function updateApplicantNotes(env, body) {
   return { ok: true, message: 'Applicant notes updated.', application: saved };
 }
 
-async function updateEntranceResult(env, body) {
-  const id = applicationIdFrom(body);
-  const existing = id ? await findApplication(env, id) : null;
-  if (!existing) throw applicationNotFound(id);
-  const resultStatus = clean(body.ResultStatus || body.resultStatus || 'Pending');
+export function buildEntranceResultUpdates(existing = {}, body = {}, timestamp = nowIso()) {
+  const requestedStatus = clean(body.ResultStatus || body.resultStatus || 'Pending').toLowerCase();
+  const statusLabels = {
+    pending: 'Pending',
+    'waiting list': 'Pending',
+    probation: 'Probation',
+    admitted: 'Admitted',
+    passed: 'Admitted',
+    'not admitted': 'Not Admitted',
+    failed: 'Not Admitted',
+    rejected: 'Not Admitted'
+  };
+  const resultStatus = statusLabels[requestedStatus];
+  if (!resultStatus) {
+    const error = new Error('Result status must be Pending, Probation, Admitted, or Not Admitted.');
+    error.status = 400;
+    throw error;
+  }
   const updates = {
     EnglishScore: body.EnglishScore ?? '',
     MathematicsScore: body.MathematicsScore ?? '',
@@ -3134,11 +3230,11 @@ async function updateEntranceResult(env, body) {
     ResultNotes: body.ResultNotes ?? '',
     ResultNextStep: body.ResultNextStep ?? body.NextStep ?? '',
     ResultUpdatedBy: clean(body.ResultUpdatedBy) || 'Admissions Office',
-    ResultUpdatedAt: nowIso(),
+    ResultUpdatedAt: timestamp,
     ResultReadyOnline: clean(body.ResultReadyOnline || body.resultReadyOnline || body.ResultPublished || body.ShowResultOnPortal || ''),
     ResultPublished: clean(body.ResultPublished || body.resultPublished || body.ResultReadyOnline || body.ShowResultOnPortal || ''),
     ShowResultOnPortal: clean(body.ShowResultOnPortal || body.showResultOnPortal || body.ResultReadyOnline || body.ResultPublished || ''),
-    UpdatedAt: nowIso()
+    UpdatedAt: timestamp
   };
   if (resultStatus === 'Admitted') {
     updates.Status = 'Accepted';
@@ -3146,8 +3242,132 @@ async function updateEntranceResult(env, body) {
   }
   if (resultStatus === 'Not Admitted') updates.Status = 'Rejected';
   if (resultStatus === 'Pending') updates.Status = 'Pending';
+  if (resultStatus === 'Probation') {
+    const continuingProbation = clean(existing.ResultStatus).toLowerCase() === 'probation';
+    updates.Status = 'Probation';
+    updates.ProbationResult = continuingProbation ? (clean(existing.ProbationResult) || 'Pending') : 'Pending';
+    updates.ProbationResitStatus = continuingProbation
+      ? (clean(existing.ProbationResitStatus) || (clean(existing.ProbationResitDate) ? 'Scheduled' : 'Not Scheduled'))
+      : 'Not Scheduled';
+    if (!continuingProbation) {
+      updates.ProbationResitDate = '';
+      updates.ProbationResitScore = '';
+      updates.ProbationResitPercentage = '';
+      updates.ProbationResultNotes = '';
+      updates.ProbationResultUpdatedBy = '';
+      updates.ProbationResultUpdatedAt = '';
+    }
+  }
+
+  const resultChanged = [
+    'EnglishScore', 'MathematicsScore', 'InterviewScore', 'TotalScore',
+    'ResultPercentage', 'ResultStatus', 'ResultNotes', 'ResultNextStep'
+  ].some((field) => clean(existing[field]) !== clean(updates[field]));
+  if (resultChanged) {
+    updates.ResultSent = 'NO';
+    updates.ResultSentAt = '';
+    updates.EntranceResultPdfUrl = '';
+    updates.EntranceResultPdfFileName = '';
+  }
+  if (resultStatus !== 'Admitted') {
+    updates.OfferSent = 'NO';
+    updates.OfferSentAt = '';
+    updates.AdmissionLetterSent = 'NO';
+    updates.AdmissionLetterSentAt = '';
+  }
+  return updates;
+}
+
+export function buildProbationResitUpdates(existing = {}, body = {}, timestamp = nowIso()) {
+  if (clean(existing.ResultStatus).toLowerCase() !== 'probation') {
+    const error = new Error('Only an applicant currently on Probation can receive a probation re-sit result.');
+    error.status = 409;
+    throw error;
+  }
+  const requestedOutcome = clean(body.ProbationResult || body.ProbationOutcome || body.probationResult || 'Pending').toLowerCase();
+  const outcomeLabels = { pending: 'Pending', passed: 'Passed', failed: 'Failed' };
+  const outcome = outcomeLabels[requestedOutcome];
+  if (!outcome) {
+    const error = new Error('Probation result must be Pending, Passed, or Failed.');
+    error.status = 400;
+    throw error;
+  }
+  const percentageText = clean(body.ProbationResitPercentage ?? body.ProbationPercentage ?? '');
+  if (outcome !== 'Pending') {
+    const percentage = Number(percentageText);
+    if (!percentageText || !Number.isFinite(percentage) || percentage < 0 || percentage > 100) {
+      const error = new Error('Enter a valid probation re-sit percentage from 0 to 100 before recording Passed or Failed.');
+      error.status = 400;
+      throw error;
+    }
+  }
+  const updatedBy = clean(body.ProbationResultUpdatedBy || body.ResultUpdatedBy || body.RecordedBy) || 'Admissions Office';
+  const updates = {
+    ProbationResitDate: clean(body.ProbationResitDate || body.probationResitDate),
+    ProbationResitScore: clean(body.ProbationResitScore ?? body.ProbationScore ?? ''),
+    ProbationResitPercentage: percentageText,
+    ProbationResult: outcome,
+    ProbationResultNotes: clean(body.ProbationResultNotes || body.ProbationNotes),
+    ProbationResultUpdatedBy: updatedBy,
+    ProbationResultUpdatedAt: timestamp,
+    ProbationResitStatus: outcome === 'Pending'
+      ? (clean(body.ProbationResitDate || body.probationResitDate) ? 'Scheduled' : 'Pending')
+      : 'Completed',
+    ResultUpdatedBy: updatedBy,
+    ResultUpdatedAt: timestamp,
+    UpdatedAt: timestamp
+  };
+  if (outcome === 'Passed') {
+    Object.assign(updates, admissionIntakeClassification(existing), {
+      ResultStatus: 'Admitted',
+      Status: 'Accepted',
+      ResultNextStep: clean(body.ResultNextStep || body.NextStep) || 'Congratulations. The probation re-sit was passed. Kindly proceed to the Admissions Office for the next stage of admission processing.',
+      ResultSent: 'NO',
+      ResultSentAt: '',
+      OfferSent: 'NO',
+      OfferSentAt: '',
+      AdmissionLetterSent: 'NO',
+      AdmissionLetterSentAt: '',
+      EntranceResultPdfUrl: '',
+      EntranceResultPdfFileName: ''
+    });
+  } else {
+    updates.ResultStatus = 'Probation';
+    updates.Status = 'Probation';
+  }
+  return updates;
+}
+
+async function updateEntranceResult(env, body) {
+  const id = applicationIdFrom(body);
+  const existing = id ? await findApplication(env, id) : null;
+  if (!existing) throw applicationNotFound(id);
+  const staleResultUrl = clean(existing.EntranceResultPdfUrl);
+  const updates = buildEntranceResultUpdates(existing, body);
   const saved = await saveApplication(env, { ...existing, ...updates });
+  if (staleResultUrl && Object.hasOwn(updates, 'EntranceResultPdfUrl') && !updates.EntranceResultPdfUrl) {
+    await deleteStoredDocument(env, staleResultUrl).catch(() => null);
+  }
   return { ok: true, message: 'Entrance result updated.', application: saved };
+}
+
+async function updateProbationResit(env, body) {
+  const id = applicationIdFrom(body);
+  const existing = id ? await findApplication(env, id) : null;
+  if (!existing) throw applicationNotFound(id);
+  const staleResultUrl = clean(existing.EntranceResultPdfUrl);
+  const updates = buildProbationResitUpdates(existing, body);
+  const saved = await saveApplication(env, { ...existing, ...updates });
+  if (staleResultUrl && updates.ProbationResult === 'Passed') {
+    await deleteStoredDocument(env, staleResultUrl).catch(() => null);
+  }
+  return {
+    ok: true,
+    message: updates.ProbationResult === 'Passed'
+      ? 'Probation re-sit passed. Admission status changed to Admitted; send the updated result before issuing an offer.'
+      : `Probation re-sit ${updates.ProbationResult.toLowerCase()} result saved. The applicant remains on Probation.`,
+    application: saved
+  };
 }
 
 async function updateApplicantIntelligence(env, body) {
@@ -4023,6 +4243,9 @@ async function saveFeeItem(env, body) {
   ]);
   const existing = existingRecord || {};
   const className = canonicalConfiguredClass(clean(body.ClassName || body.className) || 'All', classNames);
+  const billingCategories = normalizeFeeBillingCategories(
+    body.BillingCategories ?? body.billingCategories ?? body.BillingCategory ?? body.billingCategory
+  );
   const payload = {
     ...existing,
     FeeCode: feeCode,
@@ -4030,7 +4253,8 @@ async function saveFeeItem(env, body) {
     FeeCategory: clean(body.FeeCategory || body.feeCategory) || 'School Fee',
     ClassName: className,
     StudentType: clean(body.StudentType || body.studentType) || 'All',
-    BillingCategory: clean(body.BillingCategory || body.billingCategory) || 'All',
+    BillingCategories: billingCategories,
+    BillingCategory: feeBillingCategoryText(billingCategories),
     Gender: clean(body.Gender || body.gender) || 'All',
     EnrollmentCategory: clean(body.EnrollmentCategory || body.enrollmentCategory || body.IntakeCategory) || 'All',
     AcademicProgress: clean(body.AcademicProgress || body.academicProgress || body.ProgressCategory) || 'All',
@@ -4093,13 +4317,17 @@ async function saveFeeItems(env, body) {
   });
   const updatedAt = nowIso();
   const fees = prepared.map(({ item, feeCode }) => {
+    const billingCategories = normalizeFeeBillingCategories(
+      item.BillingCategories ?? item.billingCategories ?? item.BillingCategory ?? item.billingCategory
+    );
     return normalizeFeeItem({
       FeeCode: feeCode,
       FeeName: clean(item.FeeName || item.feeName),
       FeeCategory: clean(item.FeeCategory || item.feeCategory) || 'School Fee',
       ClassName: canonicalConfiguredClass(clean(item.ClassName || item.className) || 'All', classNames),
       StudentType: clean(item.StudentType || item.studentType) || 'All',
-      BillingCategory: clean(item.BillingCategory || item.billingCategory) || 'All',
+      BillingCategories: billingCategories,
+      BillingCategory: feeBillingCategoryText(billingCategories),
       Gender: clean(item.Gender || item.gender) || 'All',
       EnrollmentCategory: clean(item.EnrollmentCategory || item.enrollmentCategory || item.IntakeCategory) || 'All',
       AcademicProgress: clean(item.AcademicProgress || item.academicProgress || item.ProgressCategory) || 'All',
@@ -4431,6 +4659,7 @@ export async function recordManualPayment(env, body) {
     SchoolSection: payment.SchoolSection,
     DisplayName: payment.DisplayName,
     ClassName: payment.ClassName,
+    BillingCategory: payment.BillingCategory,
     EntryType: normalizeMatchText(payment.FeeCategory) === 'wallet' || clean(payment.FeeCode) === 'WALLET_TOPUP' ? 'Wallet Deposit' : 'Payment',
     FeeCode: payment.FeeCode,
     FeeName: payment.FeeName,
@@ -4844,6 +5073,171 @@ async function walletAccountPayload(env, student) {
     StudentScopePath: normalized.__scopePath || '',
     WalletBalance: activity.balance,
     WalletSpentToday: activity.spentToday
+  };
+}
+
+const HISTORICAL_PAYMENT_IMPORT_LIMIT = 50;
+
+function historicalPaymentImportError(message, rowNumber = 0) {
+  const err = new Error(rowNumber ? `Row ${rowNumber}: ${message}` : message);
+  err.status = 400;
+  return err;
+}
+
+export function normalizeHistoricalPaymentImportRow(row = {}, index = 0) {
+  const rowNumber = Math.max(2, Number(row.RowNumber || row.rowNumber) || Number(index) + 2);
+  const accountRef = clean(row.AccountRef || row.accountRef || row.AdmissionNo || row.admissionNo || row.ApplicationReference);
+  const billingCategory = clean(row.BillingCategory || row.billingCategory);
+  const feeCode = clean(row.FeeCode || row.feeCode);
+  const amount = asMoneyNumber(row.Amount || row.amount);
+  const paidAtSource = clean(row.PaidAt || row.PaymentDate || row.Date || row.paidAt || row.paymentDate);
+  const reference = clean(row.Reference || row.PaymentReference || row.reference || row.paymentReference);
+  const parsedPaidAt = new Date(paidAtSource);
+  if (!accountRef) throw historicalPaymentImportError('AccountRef is required.', rowNumber);
+  if (!billingCategory || sameText(billingCategory, 'All')) {
+    throw historicalPaymentImportError('BillingCategory must identify the student billing category.', rowNumber);
+  }
+  if (!feeCode) throw historicalPaymentImportError('FeeCode is required.', rowNumber);
+  if (amount <= 0) throw historicalPaymentImportError('Amount must be greater than zero.', rowNumber);
+  if (!paidAtSource || Number.isNaN(parsedPaidAt.getTime()) ||
+      (/^\d{4}-\d{2}-\d{2}$/.test(paidAtSource) && parsedPaidAt.toISOString().slice(0, 10) !== paidAtSource)) {
+    throw historicalPaymentImportError('PaidAt must be a valid date such as 2026-09-01.', rowNumber);
+  }
+  if (!reference) throw historicalPaymentImportError('Reference is required so duplicate payments can be prevented.', rowNumber);
+  return {
+    RowNumber: rowNumber,
+    AccountRef: accountRef,
+    BillingCategory: billingCategory,
+    FeeCode: feeCode,
+    FeeName: clean(row.FeeName || row.feeName),
+    FeeCategory: clean(row.FeeCategory || row.feeCategory),
+    Amount: amount,
+    PaidAt: /^\d{4}-\d{2}-\d{2}$/.test(paidAtSource) ? `${paidAtSource}T12:00:00.000Z` : parsedPaidAt.toISOString(),
+    Reference: reference,
+    Method: clean(row.Method || row.method) || 'Bank Transfer',
+    AcademicSession: clean(row.AcademicSession || row.academicSession),
+    Term: clean(row.Term || row.term),
+    ReceiptNo: clean(row.ReceiptNo || row.receiptNo),
+    Currency: clean(row.Currency || row.currency) || 'NGN',
+    Notes: clean(row.Notes || row.notes)
+  };
+}
+
+export async function importHistoricalPayments(env, body) {
+  requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
+  const sourceRows = Array.isArray(body.Payments) ? body.Payments : [];
+  if (!sourceRows.length) throw historicalPaymentImportError('Choose a historical-payment CSV containing at least one payment row.');
+  if (sourceRows.length > HISTORICAL_PAYMENT_IMPORT_LIMIT) {
+    throw historicalPaymentImportError(`Import no more than ${HISTORICAL_PAYMENT_IMPORT_LIMIT} payments in one request.`);
+  }
+
+  const normalizedRows = [];
+  const failures = [];
+  const referenceKeys = new Set();
+  const categoryByAccount = new Map();
+  for (let index = 0; index < sourceRows.length; index += 1) {
+    try {
+      const row = normalizeHistoricalPaymentImportRow(sourceRows[index], index);
+      const referenceKey = normalizeReferenceText(row.Reference);
+      if (referenceKeys.has(referenceKey)) {
+        throw historicalPaymentImportError('Reference is duplicated in this import.', row.RowNumber);
+      }
+      referenceKeys.add(referenceKey);
+      const accountKey = normalizeReferenceText(row.AccountRef);
+      const priorCategory = categoryByAccount.get(accountKey);
+      if (priorCategory && !sameText(priorCategory, row.BillingCategory)) {
+        throw historicalPaymentImportError('The same student has conflicting BillingCategory values in this import.', row.RowNumber);
+      }
+      categoryByAccount.set(accountKey, row.BillingCategory);
+      normalizedRows.push(row);
+    } catch (error) {
+      failures.push({ row: index + 2, message: error.message || String(error) });
+    }
+  }
+  if (failures.length) {
+    return { ok: true, message: 'No payments were imported because validation failed.', imported: 0, duplicates: 0, failures };
+  }
+
+  const scope = {
+    branchId: clean(body.BranchId || body.branchId || body.UserBranchId),
+    schoolSectionAccess: clean(body.SchoolSection || body.schoolSection || body.UserSchoolSectionAccess)
+  };
+  const prepared = [];
+  const categoryByStudent = new Map();
+  for (const row of normalizedRows) {
+    try {
+      const student = await findStudentByAccountRef(env, row.AccountRef, scope);
+      if (!student) throw historicalPaymentImportError(`Student account ${row.AccountRef} was not found.`, row.RowNumber);
+      const studentKey = clean(
+        student.__scopePath || student.__id || student.AdmissionNo || student.AccountRef || student.ApplicationReference || row.AccountRef
+      );
+      const priorStudentCategory = categoryByStudent.get(studentKey);
+      if (priorStudentCategory && !sameText(priorStudentCategory, row.BillingCategory)) {
+        throw historicalPaymentImportError('The same student has conflicting BillingCategory values in this import.', row.RowNumber);
+      }
+      categoryByStudent.set(studentKey, row.BillingCategory);
+      const existing = await findPaymentByReference(env, row.Reference);
+      if (existing) {
+        const existingPayment = normalizePayment(existing);
+        const sameAccount = referencesMatch(existingPayment.AccountRef, row.AccountRef) ||
+          accountRefsFrom(student).some((value) => referencesMatch(existingPayment.AccountRef, value));
+        const sameFee = sameText(existingPayment.FeeCode, row.FeeCode);
+        const sameAmount = Math.abs(paymentCreditedAmount(existingPayment) - row.Amount) < 0.005;
+        if (!sameAccount || !sameFee || !sameAmount) {
+          throw historicalPaymentImportError('Reference already belongs to a different payment.', row.RowNumber);
+        }
+      }
+      prepared.push({ row, student });
+    } catch (error) {
+      failures.push({ row: row.RowNumber, message: error.message || String(error) });
+    }
+  }
+  if (failures.length) {
+    return { ok: true, message: 'No payments were imported because validation failed.', imported: 0, duplicates: 0, failures };
+  }
+
+  const results = [];
+  let duplicates = 0;
+  for (const { row, student } of prepared) {
+    try {
+      let currentStudent = student;
+      if (!sameText(student.BillingCategory || 'Regular', row.BillingCategory)) {
+        currentStudent = await saveStudent(env, {
+          ...student,
+          BillingCategory: row.BillingCategory,
+          UpdatedAt: nowIso()
+        });
+      }
+      const result = await recordManualPayment(env, {
+        ...row,
+        AccountRef: clean(currentStudent.AdmissionNo || currentStudent.AccountRef || row.AccountRef),
+        ApplicationReference: clean(currentStudent.ApplicationReference),
+        AdmissionNo: clean(currentStudent.AdmissionNo),
+        BranchId: clean(currentStudent.BranchId || body.BranchId || 'main'),
+        SchoolSection: clean(currentStudent.SchoolSection || schoolSectionFor(currentStudent)),
+        DisplayName: clean(currentStudent.DisplayName || currentStudent.ApplicantName),
+        StudentType: clean(currentStudent.StudentType),
+        BillingCategory: row.BillingCategory,
+        RecordedBy: clean(body.RecordedBy) || 'Accounts Office',
+        Gateway: 'Manual',
+        Channel: 'Historical Payment Import',
+        Metadata: row.Notes ? `Historical payment import: ${row.Notes}` : 'Historical payment import',
+        DeferNotifications: true
+      });
+      if (result.duplicate) duplicates += 1;
+      results.push({ row: row.RowNumber, reference: row.Reference, accountRef: row.AccountRef, duplicate: Boolean(result.duplicate) });
+    } catch (error) {
+      failures.push({ row: row.RowNumber, message: error.message || String(error) });
+    }
+  }
+  return {
+    ok: true,
+    message: `${results.length} historical payment(s) processed${duplicates ? `; ${duplicates} already existed` : ''}${failures.length ? `; ${failures.length} failed` : ''}.`,
+    imported: results.length - duplicates,
+    processed: results.length,
+    duplicates,
+    failures,
+    results
   };
 }
 
@@ -6182,11 +6576,44 @@ async function saveAccountingExpense(env, body) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(expenseDate) || Number.isNaN(parsedExpenseDate.getTime()) || parsedExpenseDate.toISOString().slice(0, 10) !== expenseDate) {
     const err = new Error('A valid requisition date is required.'); err.status = 400; throw err;
   }
-  const requestedStatus = clean(body.Status || body.status || 'Draft');
-  const forcedDepartment = enforceDepartmentSubmission(body, existing, requestedStatus);
-  if (['approved', 'rejected'].includes(lower(requestedStatus)) || (lower(requestedStatus) === 'posted' && lower(existing.Status) !== 'approved')) {
-    await requireAccountingApprovalLimit(env, body, 'Expense', amount);
+  const requestedStatus = ({
+    confirmed: REQUISITION_STATUS.ACCOUNTS_CONFIRMED,
+    'accounts confirmed': REQUISITION_STATUS.ACCOUNTS_CONFIRMED,
+    authorized: REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
+    authorised: REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
+    'management authorized': REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
+    'management authorised': REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
+    approved: REQUISITION_STATUS.APPROVED,
+    rejected: REQUISITION_STATUS.REJECTED,
+    posted: REQUISITION_STATUS.POSTED,
+    submitted: REQUISITION_STATUS.SUBMITTED,
+    draft: REQUISITION_STATUS.DRAFT
+  })[lower(body.Status || body.status || 'Draft')] || clean(body.Status || body.status || 'Draft');
+  const actorRole = clean(body.UserRole || body.userRole);
+  const actorName = clean(body.RecordedBy || body.recordedBy);
+  const actorUsername = clean(body.UserUsername || body.userUsername);
+  const currentWorkflowStatus = requisitionWorkflowStatus(existing);
+  let transition = null;
+  if (!existing.ExpenseNo) {
+    if (![REQUISITION_STATUS.DRAFT, REQUISITION_STATUS.SUBMITTED].includes(requestedStatus)) {
+      const err = new Error('A new requisition must be saved as Draft or Submitted before any office can act on it.');
+      err.status = 409;
+      err.code = 'REQUISITION_SUBMISSION_REQUIRED';
+      throw err;
+    }
+  } else if (currentWorkflowStatus === REQUISITION_STATUS.DRAFT && requestedStatus === REQUISITION_STATUS.SUBMITTED) {
+    // Any staff member with an assigned finance department may submit a draft.
+  } else if (currentWorkflowStatus === REQUISITION_STATUS.REJECTED && requestedStatus === REQUISITION_STATUS.SUBMITTED) {
+    if (actorRole !== 'Super Admin' && lower(actorUsername) !== lower(existing.RequestedByUsername)) {
+      const err = new Error('Only the original requester or Super Admin can correct and resubmit a rejected requisition.');
+      err.status = 403;
+      throw err;
+    }
+  } else if (requestedStatus !== currentWorkflowStatus) {
+    transition = assertRequisitionTransition(existing, actorRole, requestedStatus);
   }
+  const forcedDepartment = enforceDepartmentSubmission(body, existing, requestedStatus);
+  const timestamp = nowIso();
   const payload = {
     ...existing, ExpenseNo: expenseNo, BranchId: branchId, Date: expenseDate,
     Vendor: clean(body.Vendor || body.vendor), Description: clean(body.Description || body.description), Amount: amount,
@@ -6198,11 +6625,64 @@ async function saveAccountingExpense(env, body) {
     Notes: clean(body.Notes || body.notes), Status: requestedStatus,
     PostingWarningAcknowledged: clean(body.PostingWarningAcknowledged || body.postingWarningAcknowledged),
     PostingWarningDetails: clean(body.PostingWarningDetails || body.postingWarningDetails),
-    RequestedBy: existing.RequestedBy || clean(body.RecordedBy || body.recordedBy), RequestedAt: existing.RequestedAt || nowIso(),
-    ApprovedBy: lower(requestedStatus) === 'approved' ? clean(body.RecordedBy || body.recordedBy) : (existing.ApprovedBy || ''),
-    ApprovedAt: lower(requestedStatus) === 'approved' ? nowIso() : (existing.ApprovedAt || ''), UpdatedAt: nowIso()
+    RequestedBy: existing.RequestedBy || actorName,
+    RequestedByUsername: existing.RequestedByUsername || actorUsername,
+    RequestedAt: existing.RequestedAt || timestamp,
+    UpdatedAt: timestamp,
+    UpdatedBy: actorName
   };
-  if (lower(requestedStatus) === 'posted') {
+  if (transition?.event === 'Confirmed') {
+    Object.assign(payload, {
+      AccountsReviewStatus: 'Confirmed',
+      AccountsConfirmedBy: actorName,
+      AccountsConfirmedByUsername: actorUsername,
+      AccountsConfirmedAt: timestamp,
+      AccountsConfirmationNotes: clean(body.Notes || body.notes),
+      AccountsReviewedBy: actorName,
+      AccountsReviewedByUsername: actorUsername,
+      AccountsReviewedAt: timestamp,
+      AccountsReviewNotes: clean(body.Notes || body.notes),
+      RejectedAt: '', RejectedBy: '', RejectedByUsername: '', RejectedStage: ''
+    });
+  } else if (transition?.event === 'Authorized') {
+    Object.assign(payload, {
+      ManagementAuthorizedBy: actorName,
+      ManagementAuthorizedByUsername: actorUsername,
+      ManagementAuthorizedAt: timestamp,
+      ManagementAuthorizationNotes: clean(body.Notes || body.notes),
+      RejectedAt: '', RejectedBy: '', RejectedByUsername: '', RejectedStage: ''
+    });
+  } else if (transition?.event === 'Approved') {
+    Object.assign(payload, {
+      ApprovedBy: actorName,
+      ApprovedByUsername: actorUsername,
+      ApprovedAt: timestamp,
+      AdminReviewedBy: actorName,
+      AdminReviewedByUsername: actorUsername,
+      AdminReviewedAt: timestamp,
+      RejectedAt: '', RejectedBy: '', RejectedByUsername: '', RejectedStage: ''
+    });
+  } else if (transition?.event === 'Rejected') {
+    Object.assign(payload, {
+      RejectedAt: timestamp,
+      RejectedBy: actorName,
+      RejectedByUsername: actorUsername,
+      RejectedStage: transition.currentStatus,
+      RejectionNotes: clean(body.Notes || body.notes)
+    });
+  }
+  if (requestedStatus === REQUISITION_STATUS.SUBMITTED && currentWorkflowStatus === REQUISITION_STATUS.REJECTED) {
+    Object.assign(payload, {
+      AccountsReviewStatus: '', AccountsConfirmedBy: '', AccountsConfirmedByUsername: '', AccountsConfirmedAt: '',
+      AccountsReviewedBy: '', AccountsReviewedByUsername: '', AccountsReviewedAt: '',
+      ManagementAuthorizedBy: '', ManagementAuthorizedByUsername: '', ManagementAuthorizedAt: '',
+      ApprovedBy: '', ApprovedByUsername: '', ApprovedAt: '',
+      AdminReviewedBy: '', AdminReviewedByUsername: '', AdminReviewedAt: '',
+      RejectedAt: '', RejectedBy: '', RejectedByUsername: '', RejectedStage: '',
+      ResubmittedAt: timestamp, ResubmittedBy: actorName, ResubmittedByUsername: actorUsername
+    });
+  }
+  if (requestedStatus === REQUISITION_STATUS.POSTED) {
     const journal = await saveAccountingJournal(env, {
       JournalNo: `SYS-EXP-${safeDocumentId(expenseNo)}`, Date: payload.Date, Status: 'Posted',
       Description: payload.Description, Reference: payload.Reference || expenseNo, Source: 'Expense', SourceId: expenseNo,
@@ -6213,13 +6693,19 @@ async function saveAccountingExpense(env, body) {
       ]
     }, true);
     payload.JournalNo = journal.JournalNo;
-    payload.PostedAt = nowIso(); payload.PostedBy = clean(body.RecordedBy || body.recordedBy);
+    payload.PostedAt = timestamp;
+    payload.PostedBy = actorName;
+    payload.PostedByUsername = actorUsername;
   }
   await upsertDocument(env, 'accountingExpenses', safeDocumentId(expenseNo), payload);
   await writeAccountingAudit(env, existing.ExpenseNo ? 'UPDATE' : 'CREATE', 'Expense', expenseNo, body, requestedStatus);
-  if (lower(existing.Status) !== lower(requestedStatus) && ['approved', 'rejected', 'posted'].includes(lower(requestedStatus))) {
-    const event = lower(requestedStatus) === 'posted' ? 'Posted' : lower(requestedStatus) === 'approved' ? 'Approved' : 'Rejected';
-    await notifyStaffRequisitionEvent(env, payload, event, clean(body.RecordedBy || body.recordedBy)).catch(() => null);
+  const event = transition?.event || (
+    requestedStatus === REQUISITION_STATUS.SUBMITTED && currentWorkflowStatus !== REQUISITION_STATUS.SUBMITTED
+      ? 'Submitted'
+      : ''
+  );
+  if (event) {
+    await notifyStaffRequisitionEvent(env, payload, event, actorName).catch(() => null);
   }
   return { ok: true, message: `Expense saved as ${requestedStatus}.`, expense: payload };
 }
@@ -7433,16 +7919,17 @@ async function getAccountingRequisitionDocument(env, body = {}) {
     'financeDocumentEndorsements',
     safeDocumentId(`${expenseNo}-${stage}`)
   ).catch(() => null);
-  const [approval, admin, accounts] = await Promise.all([
+  const [approval, admin, accounts, management] = await Promise.all([
     endorsement('approval'),
     endorsement('admin'),
-    endorsement('accounts')
+    endorsement('accounts'),
+    endorsement('management')
   ]);
   return {
     ok: true,
     message: 'Requisition document loaded.',
     record,
-    endorsements: { approval, admin, accounts }
+    endorsements: { approval, admin, accounts, management }
   };
 }
 
@@ -7899,6 +8386,18 @@ function assignedStaffBranchId(row = {}) {
   return assigned ? canonicalSchoolBranchId(assigned) : '';
 }
 
+export function desktopStaffUserMatchesDeviceScope(row = {}, deviceBranchId = '') {
+  const suppliedBranchId = clean(deviceBranchId);
+  if (!suppliedBranchId) return true;
+  const approvedBranchId = canonicalSchoolBranchId(suppliedBranchId);
+  const assignedBranchId = assignedStaffBranchId(row);
+  if (assignedBranchId) return assignedBranchId === approvedBranchId;
+  // An organisation-wide Super Admin must be able to complete first login on
+  // a newly paired branch computer. The device credential still forces every
+  // subsequent backend request into the approved branch scope.
+  return clean(row.Role || row.role) === 'Super Admin';
+}
+
 async function getStaffUsersForDesktop(env, body) {
   requireStaffUserAdmin(body);
   const deviceBranchId = clean(body.DeviceBranchId);
@@ -7907,12 +8406,12 @@ async function getStaffUsersForDesktop(env, body) {
     loadOrganizationNameProfile(env)
   ]);
   const users = deviceBranchId
-    ? allUsers.filter((row) => assignedStaffBranchId(row) === canonicalSchoolBranchId(deviceBranchId))
+    ? allUsers.filter((row) => desktopStaffUserMatchesDeviceScope(row, deviceBranchId))
     : allUsers;
   return {
     ok: true,
     message: deviceBranchId
-      ? `Staff users assigned to branch ${deviceBranchId} loaded from the database.`
+      ? `Staff users assigned to branch ${deviceBranchId}, including organisation-wide Super Admins, loaded from the database.`
       : 'Staff users loaded from the database.',
     users: users.map((row) => ({
       ...row,
@@ -8514,6 +9013,8 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       return generateSchoolFeeInvoices(env, body);
     case 'recordManualPayment':
       return recordManualPayment(env, body);
+    case 'importHistoricalPayments':
+      return importHistoricalPayments(env, body);
     case 'getWalletCardAccount':
       return getWalletCardAccount(env, body);
     case 'saveWalletCard':
@@ -8720,6 +9221,8 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
       return updateApplicantNotes(env, body);
     case 'updateEntranceResult':
       return updateEntranceResult(env, body);
+    case 'updateProbationResit':
+      return updateProbationResit(env, body);
     case 'updateApplicantIntelligence':
       return updateApplicantIntelligence(env, body);
     case 'updateApplicationDetails':

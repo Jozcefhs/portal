@@ -1,9 +1,14 @@
-import { getDocument } from '../lib/firestore.js';
+import { createDocumentIfAbsent, getDocument, queryCollection } from '../lib/firestore.js';
 import { requirePlatformAdmin } from '../lib/platform-admin.js';
 import { secureTextEqual } from '../lib/backend-security.js';
 import { requirePlatformFirestoreEnv } from '../lib/platform-firestore.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { issueTenantActivation } from '../lib/tenant-activation.js';
+import { normalizeOrganizationEdition } from '../lib/organization-config.js';
+import {
+  normalizeSubscriptionPlanCatalog,
+  subscriptionPlanEntitlements
+} from '../lib/subscription-plans.js';
 import {
   completeManagedOrganisationEmailDeployment,
   completeManagedOrganisationPaystackDeployment,
@@ -40,6 +45,7 @@ import {
 } from '../lib/tenant-subscriber-cleanup.js';
 
 const clean = (value) => String(value ?? '').trim();
+const validEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean(value));
 const PROVISIONER_ACTIONS = new Set([
   'load',
   'load-managed-organisations',
@@ -283,6 +289,87 @@ export async function onRequestPost({ request, env }) {
       }, {
         headers: { 'Cache-Control': 'no-store' }
       });
+    }
+    if (action === 'create-owner-demo') {
+      const edition = normalizeOrganizationEdition(body.edition);
+      const organisationName = clean(body.organisationName || 'Dynamax Owner Demo');
+      const contactName = clean(body.contactName);
+      const email = clean(body.email).toLowerCase();
+      const phone = clean(body.phone);
+      const country = clean(body.country || 'Nigeria');
+      if (!organisationName || !contactName || !validEmail(email) || !phone || !country) {
+        const error = new Error('Demo organisation, owner name, valid email, phone and country are required.');
+        error.status = 400;
+        throw error;
+      }
+      const existingRows = await queryCollection(platformEnv, 'tenantRegistrations', {
+        filters: [{ field: 'Email', op: '==', value: email }],
+        limit: 50
+      }).catch(() => []);
+      let registration = existingRows.find((row) => row.OwnerDemo === true
+        && normalizeOrganizationEdition(row.Edition) === edition
+        && !['retiring', 'retired', 'deleted', 'terminated'].includes(clean(row.LifecycleStage || row.Status).toLowerCase()));
+      if (!registration) {
+        const catalog = normalizeSubscriptionPlanCatalog(
+          await getDocument(platformEnv, 'settings', 'dynamaxPlanCatalog') || {}
+        );
+        const reference = `DMX-OWNER-DEMO-${Date.now()}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
+        const now = new Date().toISOString();
+        const created = await createDocumentIfAbsent(platformEnv, 'tenantRegistrations', reference, {
+          Reference: reference,
+          OrganisationName: organisationName,
+          Edition: edition,
+          ContactName: contactName,
+          Email: email,
+          Phone: phone,
+          Country: country,
+          Plan: 'Owner Demo',
+          BillingCycle: 'internal',
+          Price: 0,
+          Currency: catalog.Currency,
+          UserLimit: Math.max(1, Number(catalog.Plans?.Enterprise?.UserLimit || 250)),
+          FeatureEntitlements: subscriptionPlanEntitlements('Enterprise', edition, catalog),
+          PlanCatalogRevision: catalog.PolicyRevision,
+          PaymentStatus: 'Owner Authorized',
+          SubscriptionStatus: 'Active',
+          Status: 'Active',
+          LifecycleStage: 'Active',
+          OwnerDemo: true,
+          NonBillable: true,
+          CardVerificationExempt: true,
+          SyntheticDataOnly: true,
+          DataClassification: 'Synthetic demonstration data only',
+          Source: 'Dynamax platform owner',
+          CreatedAt: now,
+          UpdatedAt: now
+        });
+        if (!created.created) {
+          const error = new Error('Could not create a unique Owner Demo registration. Please try again.');
+          error.status = 409;
+          throw error;
+        }
+        registration = { ...created.document, Reference: reference };
+      }
+      const assignment = await reserveTenantProjectSlot(platformEnv, registration);
+      const activeRegistration = assignment.registration;
+      const activation = assignment.assigned
+        ? await issueTenantActivation(platformEnv, activeRegistration, env).catch(() => ({ issued: false }))
+        : { issued: false };
+      return Response.json({
+        ok: true,
+        message: assignment.assigned
+          ? 'Your isolated, non-billable Owner Demo workspace is ready. Use synthetic demonstration records only.'
+          : 'The Owner Demo plan was created. An isolated project has been queued and no subscriber workspace will be used.',
+        ownerDemo: true,
+        reference: clean(activeRegistration.Reference || activeRegistration.__id),
+        workspaceId: clean(activeRegistration.WorkspaceId),
+        portalUrl: clean(activeRegistration.PortalUrl),
+        workspacePending: !clean(activeRegistration.WorkspaceId),
+        activationIssued: Boolean(activation.issued),
+        activationEmailSent: Boolean(activation.emailSent),
+        activationUrl: clean(activation.activationUrl),
+        loginUrl: clean(activation.loginUrl)
+      }, { headers: { 'Cache-Control': 'no-store' } });
     }
     if (action === 'assign') {
       const reference = clean(body.registrationReference);

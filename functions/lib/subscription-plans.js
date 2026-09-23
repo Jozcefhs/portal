@@ -284,7 +284,9 @@ export function freeTrialWindow(startedAt = new Date()) {
 
 export function subscriptionAccessState(value = {}, options = {}) {
   const source = value && typeof value === 'object' ? value : {};
-  const plan = normalizeSubscriptionPlan(source.Plan || source.SubscriptionPlan || source.plan || 'Professional', 'Professional');
+  const rawPlan = clean(source.Plan || source.SubscriptionPlan || source.plan || 'Professional');
+  const ownerDemo = source.OwnerDemo === true || rawPlan.toLowerCase() === 'owner demo';
+  const plan = ownerDemo ? 'Owner Demo' : normalizeSubscriptionPlan(rawPlan, 'Professional');
   const status = clean(source.SubscriptionStatus || source.Status || source.subscriptionStatus).toLowerCase();
   const inactiveStatus = /^(cancelled|canceled|expired|inactive|suspended|payment failed|past due|terminated|retired|revoked|deleted)$/.test(status);
   const terminalStatus = /^(terminated|retired|revoked|deleted)$/.test(status)
@@ -332,7 +334,9 @@ export function subscriptionAccessState(value = {}, options = {}) {
     RenewalDueAt: paidWindow.applicable ? paidWindow.paidThroughAt : clean(source.RenewalDueAt || source.PaidThroughAt),
     GracePeriodEndsAt: paidWindow.applicable ? paidWindow.graceEndsAt : clean(source.GracePeriodEndsAt),
     DataRetentionEndsAt: paidWindow.applicable ? paidWindow.retentionEndsAt : clean(source.DataRetentionEndsAt),
-    SubscriptionMessage: isTrial
+    SubscriptionMessage: ownerDemo && active
+      ? 'Owner Demo workspace. Use synthetic demonstration records only.'
+      : isTrial
       ? active
         ? `Your full-access trial has ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} remaining.`
         : 'Your 7-day full-access trial has ended. Choose a paid subscription to continue.'
