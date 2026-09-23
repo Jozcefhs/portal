@@ -2105,9 +2105,12 @@ async function loadDashboard(options = {}) {
   const section = clean(options.section || (legacyDashboardSections.has(activeSection) ? activeSection : ''));
   const mode = clean(options.mode || (section ? 'section' : 'shell')).toLowerCase();
   const merge = options.merge === true || mode === 'section';
+  const refreshOverview = options.refreshOverview === true && activeSection === 'overview';
   const requestedBranchId = clean(selectedBranchId) || 'all';
   setDashboardRefreshLoading(true);
-  setStatus(dashboardStatus, mode === 'shell'
+  setStatus(dashboardStatus, refreshOverview
+    ? 'Refreshing dashboard...'
+    : mode === 'shell'
     ? 'Opening your permitted workspace...'
     : `Loading ${staffTabLabel(section, section) || 'module'} records...`);
   try {
@@ -2177,13 +2180,18 @@ async function loadDashboard(options = {}) {
       activeSection = workspaceSections.includes(requestedSection) ? requestedSection : 'overview';
     }
     renderTabs(allowed);
-    renderWorkspace(activeSection);
+    renderWorkspace(activeSection, { loadAttendance: !refreshOverview });
     renderSection(activeSection);
+    if (refreshOverview && activeSection === 'overview' && attendanceDashboardAllowed()) {
+      await loadDashboardAttendanceCard(true);
+    }
     scheduleGenericOrganizationVocabulary();
     setStatus(dashboardStatus, currentUser.subscriptionActive === false
       ? (currentUser.subscriptionMessage || 'This subscription is not active. Choose a paid subscription to continue.')
       : currentUser.subscriptionReadOnly === true
       ? (currentUser.subscriptionMessage || 'Payment grace period: records are available in read-only mode.')
+      : refreshOverview
+      ? 'Dashboard refreshed.'
       : mode === 'shell'
       ? 'Workspace ready. Records load only when you open a module.'
       : `${staffTabLabel(section, section) || 'Module'} updated.`, currentUser.subscriptionActive === false ? 'bad' : currentUser.subscriptionReadOnly === true ? 'warn' : 'ok');
@@ -2216,6 +2224,11 @@ async function loadDashboard(options = {}) {
   } finally {
     setDashboardRefreshLoading(false);
   }
+}
+
+async function refreshDashboard() {
+  if (activeSection !== 'overview') return loadDashboard();
+  return loadDashboard({ mode: 'shell', refreshOverview: true });
 }
 
 function renderDashboardCharts(charts) {
@@ -2539,7 +2552,7 @@ async function loadDashboardAttendanceCard(force = false, message = '', tone = '
   }
 }
 
-function setDashboardClockActive(active) {
+function setDashboardClockActive(active, options = {}) {
   if (!dashboardClockEl) return;
   dashboardClockEl.hidden = !active;
   if (!active) {
@@ -2549,7 +2562,7 @@ function setDashboardClockActive(active) {
   renderDashboardTimeAttendance(dashboardAttendanceCache?.data || null);
   stopDashboardClock();
   dashboardClockTimer = window.setInterval(updateDashboardClockFace, 1000);
-  if (attendanceDashboardAllowed()) void loadDashboardAttendanceCard();
+  if (attendanceDashboardAllowed() && options.loadAttendance !== false) void loadDashboardAttendanceCard();
 }
 
 async function loadOrganizationDashboardCharts() {
@@ -2963,7 +2976,7 @@ function renderTabs(allowed) {
   renderMobileNavigation(tabs, visibleTabs);
 }
 
-function renderWorkspace(active) {
+function renderWorkspace(active, options = {}) {
   const overview = active === 'overview';
   welcomeEl.hidden = false;
   welcomeEl.classList.toggle('branch-context-only', !overview);
@@ -2971,7 +2984,7 @@ function renderWorkspace(active) {
   panelEl.hidden = overview;
   staffMainContent.classList.toggle('module-view-active', !overview);
   renderModuleSummary(active);
-  setDashboardClockActive(overview);
+  setDashboardClockActive(overview, options);
   renderDashboardCharts(dashboardData?.charts || {});
 }
 
@@ -19306,9 +19319,9 @@ staffBrand.addEventListener('click', (event) => {
     && !dashboardEl.hidden;
   if (!mobileDashboard || !event.target.closest('.nav-logo')) return;
   event.preventDefault();
-  if (!headerRefreshButton.disabled) loadDashboard();
+  if (!headerRefreshButton.disabled) refreshDashboard();
 });
-headerRefreshButton.addEventListener('click', loadDashboard);
+headerRefreshButton.addEventListener('click', refreshDashboard);
 themeToggleButton.addEventListener('click', toggleStaffTheme);
 sidebarThemeToggleButton.addEventListener('click', toggleStaffTheme);
 branchSelector.addEventListener('change', () => switchStaffBranch(branchSelector.value));

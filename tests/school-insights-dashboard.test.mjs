@@ -20,7 +20,7 @@ test('school insights is a school-only, accounts-protected on-demand workspace',
 
 test('default dashboard remains dedicated to time and attendance', () => {
   assert.match(adminJs, /const overview = active === 'overview'/);
-  assert.match(adminJs, /setDashboardClockActive\(overview\)/);
+  assert.match(adminJs, /setDashboardClockActive\(overview, options\)/);
   assert.match(adminJs, /if \(!dashboardClockEl \|\| activeSection !== 'overview'/);
 });
 

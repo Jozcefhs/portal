@@ -21,13 +21,20 @@ test('desktop header owns refresh and theme controls while the mobile logo refre
   assert.match(adminHtml, /id="staffHeaderRefresh"[\s\S]*?id="staffThemeToggle"/);
   assert.doesNotMatch(adminHtml, /id="staffRefresh"/);
   assert.match(adminHtml, /id="staffBrand"/);
-  assert.match(adminJs, /headerRefreshButton\.addEventListener\('click', loadDashboard\)/);
+  assert.match(adminJs, /headerRefreshButton\.addEventListener\('click', refreshDashboard\)/);
   assert.match(adminJs, /themeToggleButton\.addEventListener\('click', toggleStaffTheme\)/);
   assert.match(adminJs, /DIGCPreferences\.save\(\{ \.\.\.preferences, theme: nextTheme \}\)/);
   assert.match(adminJs, /window\.matchMedia\('\(max-width:680px\)'\)\.matches[\s\S]*?!dashboardEl\.hidden/);
   assert.match(adminJs, /event\.target\.closest\('\.nav-logo'\)/);
-  assert.match(adminJs, /if \(!headerRefreshButton\.disabled\) loadDashboard\(\)/);
+  assert.match(adminJs, /if \(!headerRefreshButton\.disabled\) refreshDashboard\(\)/);
   assert.match(portalCss, /@media \(max-width:680px\)\{[\s\S]*?\.staff-desktop-tools\{display:none\}[\s\S]*?\.staff-brand \.nav-logo\{cursor:pointer\}[\s\S]*?\.staff-brand\.is-refreshing \.nav-logo\{animation:button-spin/);
+});
+
+test('dashboard refresh bypasses the attendance cache and waits for live overview data', () => {
+  assert.match(adminJs, /async function refreshDashboard\(\)[\s\S]*?loadDashboard\(\{ mode: 'shell', refreshOverview: true \}\)/);
+  assert.match(adminJs, /renderWorkspace\(activeSection, \{ loadAttendance: !refreshOverview \}\)[\s\S]*?await loadDashboardAttendanceCard\(true\)/);
+  assert.match(adminJs, /attendanceDashboardAllowed\(\) && options\.loadAttendance !== false/);
+  assert.match(adminJs, /refreshOverview\s*\? 'Dashboard refreshed\.'/);
 });
 
 test('mobile sidebar exposes the theme toggle in its workspace heading', () => {
