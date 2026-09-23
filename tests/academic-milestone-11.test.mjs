@@ -122,3 +122,8 @@ test('Milestone 11 removes insecure random identifiers and applies response hard
   assert.match(middlewareSource, /responseHeaders\.set\('X-Frame-Options', 'DENY'\)/);
   assert.match(middlewareSource, /responseHeaders\.set\('Referrer-Policy', 'no-referrer'\)/);
 });
+
+test('versioned JavaScript and stylesheet assets revalidate on every page load', () => {
+  assert.match(headers, /\/css\/\*[\s\S]*?Cache-Control: public, max-age=0, must-revalidate/);
+  assert.match(headers, /\/js\/\*[\s\S]*?Cache-Control: public, max-age=0, must-revalidate/);
+});
