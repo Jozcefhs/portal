@@ -6,13 +6,13 @@
   <title>Parent Dashboard</title>
   <meta name="theme-color" content="#0f3d66"><link rel="manifest" href="/api/app-manifest?v=20260809-branded-app-icon"><link rel="icon" type="image/png" href="images/Logo.png?v=20260801-transparent-app-logo"><link rel="apple-touch-icon" href="images/Logo.png?v=20260801-transparent-app-logo">
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260903-hotel-tabs">
+  <link rel="stylesheet" href="css/style.css?v=20260923-parent-tutorials">
   <link rel="stylesheet" href="css/notifications.css?v=20260804-read-efficiency">
 </head>
-<body data-fresh-site-profile>
+<body class="parent-dashboard-page" data-fresh-site-profile>
   <dialog id="changeParentPasswordDialog" class="notification-history-dialog parent-password-dialog">
     <div class="notification-history-shell">
-      <header><div><small>ACCOUNT SECURITY</small><h2>Change password</h2></div><button type="button" id="closeChangeParentPasswordDialog" aria-label="Close">&times;</button></header>
+      <header><div><small>ACCOUNT SECURITY</small><h2>Change password</h2></div><div class="parent-dialog-header-actions"><button type="button" class="parent-dialog-tutorial" data-parent-tutorial-context="password" aria-label="Open the password change tutorial" title="Open the password change tutorial">&#9654;</button><button type="button" id="closeChangeParentPasswordDialog" aria-label="Close">&times;</button></div></header>
       <form id="changeParentPasswordForm" autocomplete="on">
         <label for="changeParentEmail">Parent email</label>
         <input id="changeParentEmail" name="username" type="email" autocomplete="username" readonly>
@@ -30,7 +30,7 @@
   </dialog>
   <dialog id="requiredParentPasswordDialog" class="notification-history-dialog parent-password-dialog">
     <div class="notification-history-shell">
-      <header><div><small>FIRST SIGN-IN SECURITY</small><h2>Create your private password</h2></div></header>
+      <header><div><small>FIRST SIGN-IN SECURITY</small><h2>Create your private password</h2></div><div class="parent-dialog-header-actions"><button type="button" class="parent-dialog-tutorial" data-parent-tutorial-context="password" aria-label="Open the password setup tutorial" title="Open the password setup tutorial">&#9654;</button></div></header>
       <form id="requiredParentPasswordForm" autocomplete="on">
         <label for="requiredParentEmail">Parent email</label>
         <input id="requiredParentEmail" name="username" type="email" autocomplete="username" readonly>
@@ -52,6 +52,10 @@
           <h1>Parent Dashboard</h1>
           <p class="muted"><span data-school-name>School Portal</span> - monitor results, payments, wallet spending, clinic visits, and student activity.</p>
         </div>
+        <button type="button" id="parentTutorialButton" class="parent-tutorial-button" aria-label="Open tutorial for this operation" title="Open tutorial for this operation">
+          <span class="parent-tutorial-icon" aria-hidden="true">&#9654;</span>
+          <span class="parent-tutorial-label">Tutorial</span>
+        </button>
       </div>
 
       <form id="parentLoginForm" class="dashboard-login" autocomplete="on">
@@ -328,7 +332,7 @@
 
   <dialog id="parentNotificationDialog" class="notification-history-dialog">
     <div class="notification-history-shell">
-      <header><div><small>COMMUNICATION CENTRE</small><h2>Notifications</h2></div><button type="button" id="closeParentNotificationDialog" aria-label="Close">&times;</button></header>
+      <header><div><small>COMMUNICATION CENTRE</small><h2>Notifications</h2></div><div class="parent-dialog-header-actions"><button type="button" class="parent-dialog-tutorial" data-parent-tutorial-context="notifications" aria-label="Open the notifications tutorial" title="Open the notifications tutorial">&#9654;</button><button type="button" id="closeParentNotificationDialog" aria-label="Close">&times;</button></div></header>
       <section data-parent-notification-panel="history">
         <div class="notification-history-filters"><label>Category<select id="parentNotificationCategory"><option value="">All categories</option><option>Fees</option><option>Payments</option><option>Attendance</option><option>Academics</option><option>Announcements</option><option>System</option></select></label><label><input type="checkbox" id="parentNotificationUnread"> Unread only</label><label><input type="checkbox" id="parentNotificationArchived"> Archived</label><button type="button" id="refreshParentNotificationHistory">Refresh</button></div>
         <div id="parentNotificationHistory" class="notification-history-list"></div><button type="button" id="loadMoreParentNotifications" class="notification-load-more" hidden>Load older notifications</button>
@@ -336,7 +340,7 @@
     </div>
   </dialog>
 
-  <script src="js/site-config.js?v=20260918-parent-documents"></script>
+  <script src="js/site-config.js?v=20260923-parent-tutorials"></script>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
   <script src="js/pwa-install.js?v=20260809-custom-dialogs"></script>
@@ -344,6 +348,6 @@
   <script src="js/password-toggle.js?v=20260726-biometric"></script>
   <script src="js/financial-values.js?v=20260803-finance-commas"></script>
   <script src="js/payment-methods.js?v=20260809-direct-transfer-sharp-text"></script>
-  <script src="js/parent-dashboard.js?v=20260918-parent-documents"></script>
+  <script src="js/parent-dashboard.js?v=20260923-parent-tutorials"></script>
 </body>
 </html>

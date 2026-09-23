@@ -62,6 +62,7 @@ const markAllParentNotificationsReadBtn = document.getElementById('markAllParent
 const manageParentNotificationsBtn = document.getElementById('manageParentNotificationsBtn');
 const parentNotificationDialog = document.getElementById('parentNotificationDialog');
 const parentNotificationHistory = document.getElementById('parentNotificationHistory');
+const parentTutorialButton = document.getElementById('parentTutorialButton');
 
 let dashboard = null;
 let selectedChildKey = '';
@@ -85,6 +86,21 @@ const parentOnboardingAdmission = onboardingHash.get('admission') || '';
 let parentPasswordSetupToken = '';
 if (window.location.hash) window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}`);
 const PARENT_DOCUMENT_MAX_FILE_SIZE = 8 * 1024 * 1024;
+const parentTutorialContexts = Object.freeze({
+  signIn: { storageKey: 'Parent Portal - Sign In', label: 'parent sign in' },
+  profileSetup: { storageKey: 'Parent Portal - Student Profile Setup', label: 'student profile setup' },
+  overview: { storageKey: 'Parent Portal - Overview', label: 'dashboard overview' },
+  payments: { storageKey: 'Parent Portal - Payments', label: 'fee payment' },
+  optional: { storageKey: 'Parent Portal - Optional Payments', label: 'optional payments' },
+  results: { storageKey: 'Parent Portal - Results', label: 'academic results' },
+  academics: { storageKey: 'Parent Portal - Schedule & Attendance', label: 'schedule and attendance' },
+  documents: { storageKey: 'Parent Portal - Documents', label: 'document upload' },
+  wallet: { storageKey: 'Parent Portal - Wallet', label: 'wallet and spending controls' },
+  clinic: { storageKey: 'Parent Portal - Clinic', label: 'clinic records' },
+  stores: { storageKey: 'Parent Portal - School Store', label: 'school store' },
+  notifications: { storageKey: 'Parent Portal - Notifications', label: 'notifications' },
+  password: { storageKey: 'Parent Portal - Change Password', label: 'password change' }
+});
 
 function newIdempotencyKey() {
   if (window.crypto?.randomUUID) return window.crypto.randomUUID();
@@ -101,6 +117,107 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+function safeYouTubeTutorialUrl(value) {
+  const candidate = String(value || '').trim();
+  if (!candidate) return '';
+  try {
+    const parsed = new URL(candidate);
+    const hosts = new Set([
+      'youtube.com', 'www.youtube.com', 'm.youtube.com',
+      'youtu.be', 'www.youtu.be',
+      'youtube-nocookie.com', 'www.youtube-nocookie.com'
+    ]);
+    return parsed.protocol === 'https:' && hosts.has(parsed.hostname.toLowerCase()) && parsed.pathname !== '/'
+      ? parsed.href
+      : '';
+  } catch (_error) {
+    return '';
+  }
+}
+
+function parentTutorialLinks(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_error) {
+    return {};
+  }
+}
+
+function currentParentTutorialContext() {
+  if (requiredParentPasswordDialog?.open || changeParentPasswordDialog?.open) return parentTutorialContexts.password;
+  if (parentNotificationDialog?.open || (parentNotificationPanel && !parentNotificationPanel.hidden)) {
+    return parentTutorialContexts.notifications;
+  }
+  if (parentOnboardingPanel && !parentOnboardingPanel.hidden) return parentTutorialContexts.profileSetup;
+  if (dashboardContent && !dashboardContent.hidden) {
+    return parentTutorialContexts[activeDashboardView] || parentTutorialContexts.overview;
+  }
+  return parentTutorialContexts.signIn;
+}
+
+function parentTutorialDestination(context = currentParentTutorialContext()) {
+  const publicProfile = window.SCHOOL_PROFILE || {};
+  const authenticatedTutorials = dashboard?.tutorials || {};
+  const links = {
+    ...parentTutorialLinks(publicProfile.TutorialLinks || publicProfile.tutorialLinks),
+    ...parentTutorialLinks(authenticatedTutorials.links)
+  };
+  const operationUrl = [context.storageKey, context.label]
+    .map((key) => safeYouTubeTutorialUrl(links[key]))
+    .find(Boolean) || '';
+  return {
+    operationUrl,
+    channelUrl: safeYouTubeTutorialUrl(
+      authenticatedTutorials.channelUrl || publicProfile.TutorialChannelUrl || publicProfile.tutorialChannelUrl
+    ),
+    label: context.label
+  };
+}
+
+function updateParentTutorialControl() {
+  if (!parentTutorialButton) return;
+  const destination = parentTutorialDestination();
+  const title = destination.operationUrl
+    ? `Open the ${destination.label} tutorial`
+    : destination.channelUrl
+      ? `Open the tutorial channel (no ${destination.label} video is assigned yet)`
+      : `No ${destination.label} tutorial is published yet`;
+  parentTutorialButton.title = title;
+  parentTutorialButton.setAttribute('aria-label', title);
+  parentTutorialButton.classList.toggle('is-unconfigured', !destination.operationUrl && !destination.channelUrl);
+}
+
+async function openParentTutorial(event) {
+  const explicitContext = event?.currentTarget?.dataset?.parentTutorialContext;
+  const context = parentTutorialContexts[explicitContext] || currentParentTutorialContext();
+  let destination = parentTutorialDestination(context);
+  if (!destination.operationUrl && !destination.channelUrl && window.siteProfileReady) {
+    try {
+      await window.siteProfileReady;
+      destination = parentTutorialDestination(context);
+    } catch (_error) {
+      // The unavailable message below remains useful if the public profile cannot load.
+    }
+  }
+  const target = destination.operationUrl || destination.channelUrl;
+  if (target) {
+    window.open(target, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  if (window.DynamaxDialogs?.alert) {
+    await window.DynamaxDialogs.alert({
+      title: 'Tutorial not published yet',
+      message: `The YouTube tutorial for ${destination.label} has not been published yet.`,
+      confirmText: 'Close'
+    });
+  } else {
+    setStatus(`The YouTube tutorial for ${destination.label} has not been published yet.`, 'bad');
+  }
 }
 
 function childInitials(child) {
@@ -284,6 +401,7 @@ function openParentOnboarding() {
     '',
     ''
   );
+  updateParentTutorialControl();
 }
 
 function closeParentOnboarding() {
@@ -293,6 +411,7 @@ function closeParentOnboarding() {
   loginForm.hidden = false;
   setInlineStatus(parentOnboardingAccessStatus, '');
   setInlineStatus(parentOnboardingProfileStatus, '');
+  updateParentTutorialControl();
 }
 
 function populateParentOnboardingProfile(student = {}) {
@@ -333,6 +452,7 @@ function openRequiredParentPassword(data) {
   document.getElementById('requiredParentEmail').value = data.parentEmail || '';
   setInlineStatus(requiredParentPasswordStatus, data.message || 'Create a private password to continue.');
   if (requiredParentPasswordDialog && !requiredParentPasswordDialog.open) requiredParentPasswordDialog.showModal();
+  updateParentTutorialControl();
 }
 
 document.getElementById('openParentOnboardingBtn')?.addEventListener('click', openParentOnboarding);
@@ -405,6 +525,7 @@ parentOnboardingProfileForm?.addEventListener('submit', async (event) => {
     parentOnboardingAccessForm.reset();
     parentOnboardingPanel.hidden = true;
     loginForm.hidden = false;
+    updateParentTutorialControl();
     document.getElementById('parentEmail').value = data.parentEmail || '';
     document.getElementById('verificationCode').value = '';
     setStatus(data.message, 'ok');
@@ -535,6 +656,7 @@ function openParentNotificationAction(actionUrl) {
       parentNotificationPanel.hidden = true;
       parentNotificationsBtn?.setAttribute('aria-expanded', 'false');
       parentNotificationDialog?.close();
+      updateParentTutorialControl();
       return;
     }
     if (target.protocol === 'https:') window.open(target.href, '_blank', 'noopener,noreferrer');
@@ -735,6 +857,7 @@ function showDashboardView(view, scrollToContent = false) {
       });
     }
   }
+  updateParentTutorialControl();
 }
 
 function renderChildren() {
@@ -2502,11 +2625,13 @@ changeParentPasswordBtn?.addEventListener('click', () => {
     changeParentPasswordStatus.className = 'status';
   }
   changeParentPasswordDialog?.showModal();
+  updateParentTutorialControl();
 });
 
 function closeParentPasswordDialog() {
   changeParentPasswordForm?.reset();
   changeParentPasswordDialog?.close();
+  updateParentTutorialControl();
 }
 
 document.getElementById('closeChangeParentPasswordDialog')?.addEventListener('click', closeParentPasswordDialog);
@@ -2553,6 +2678,7 @@ parentNotificationsBtn?.addEventListener('click', () => {
   if (parentNotificationPanel) parentNotificationPanel.hidden = !opening;
   parentNotificationsBtn.setAttribute('aria-expanded', opening ? 'true' : 'false');
   if (opening) void loadParentNotifications();
+  updateParentTutorialControl();
 });
 
 markAllParentNotificationsReadBtn?.addEventListener('click', () => {
@@ -2563,9 +2689,13 @@ markAllParentNotificationsReadBtn?.addEventListener('click', () => {
 
 manageParentNotificationsBtn?.addEventListener('click', async () => {
   parentNotificationDialog?.showModal();
+  updateParentTutorialControl();
   try { await loadParentNotificationHistory(false); } catch (error) { setParentNotificationStatus(error.message, 'bad'); }
 });
-document.getElementById('closeParentNotificationDialog')?.addEventListener('click', () => parentNotificationDialog?.close());
+document.getElementById('closeParentNotificationDialog')?.addEventListener('click', () => {
+  parentNotificationDialog?.close();
+  updateParentTutorialControl();
+});
 ['parentNotificationCategory', 'parentNotificationUnread', 'parentNotificationArchived'].forEach((id) => document.getElementById(id)?.addEventListener('change', () => loadParentNotificationHistory(false).catch((error) => setParentNotificationStatus(error.message, 'bad'))));
 document.getElementById('refreshParentNotificationHistory')?.addEventListener('click', () => loadParentNotificationHistory(false).catch((error) => setParentNotificationStatus(error.message, 'bad')));
 document.getElementById('loadMoreParentNotifications')?.addEventListener('click', () => loadParentNotificationHistory(true).catch((error) => setParentNotificationStatus(error.message, 'bad')));
@@ -2597,6 +2727,13 @@ async function enableParentPushOnThisDevice() {
 }
 document.getElementById('enableParentPushPrompt')?.addEventListener('click', enableParentPushOnThisDevice);
 window.addEventListener('dynamax:foreground-notification', () => { if (dashboard) void loadParentNotifications(); });
+parentTutorialButton?.addEventListener('click', openParentTutorial);
+document.querySelectorAll('[data-parent-tutorial-context]').forEach((button) => {
+  button.addEventListener('click', openParentTutorial);
+});
+[changeParentPasswordDialog, requiredParentPasswordDialog, parentNotificationDialog].filter(Boolean).forEach((dialog) => {
+  dialog.addEventListener('close', updateParentTutorialControl);
+});
 
 if (dashboardNav) {
   dashboardNav.addEventListener('click', (event) => {
@@ -2634,9 +2771,12 @@ loadParentDocumentSettings();
 }());
 
 window.addEventListener('school-profile-ready', () => {
+  updateParentTutorialControl();
   const child = selectedChild();
   if (child) {
     renderAcademicResults(child);
     renderEntranceResults(child);
   }
 });
+
+updateParentTutorialControl();

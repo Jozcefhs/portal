@@ -13,7 +13,9 @@ const siteProfileFallback = {
   ResultDisplayMode: 'subjects',
   ShowResultsOnline: 'NO',
   DeclarationStatement: 'I declare that the information supplied in this application is complete and correct.',
-  TurnstileSiteKey: ''
+  TurnstileSiteKey: '',
+  TutorialLinks: {},
+  TutorialChannelUrl: ''
 };
 
 function readPublicCache(cacheKey, ttlMs) {

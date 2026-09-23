@@ -87,7 +87,20 @@ const tutorialModuleCatalogue = Object.freeze([
   { key: 'hotel', storageKey: 'Hotel Services', label: 'Hotel Services', editions: ['faith', 'organization'] },
   { key: 'dataBackup', storageKey: 'Backup & Restore', label: 'Backup & Restore', editions: ['school', 'faith', 'organization'] },
   { key: 'securityAudit', storageKey: 'Logs', label: 'Security Audit Log', editions: ['school', 'faith', 'organization'] },
-  { key: 'staffUsers', storageKey: 'Settings', label: 'Staff & Permissions', organizationLabel: 'Users & Permissions', editions: ['school', 'faith', 'organization'] }
+  { key: 'staffUsers', storageKey: 'Settings', label: 'Staff & Permissions', organizationLabel: 'Users & Permissions', editions: ['school', 'faith', 'organization'] },
+  { key: 'parentSignIn', storageKey: 'Parent Portal - Sign In', label: 'Parent portal · Sign in', editions: ['school'] },
+  { key: 'parentProfileSetup', storageKey: 'Parent Portal - Student Profile Setup', label: 'Parent portal · Complete student profile', editions: ['school'] },
+  { key: 'parentOverview', storageKey: 'Parent Portal - Overview', label: 'Parent portal · Dashboard overview', editions: ['school'] },
+  { key: 'parentPayments', storageKey: 'Parent Portal - Payments', label: 'Parent portal · Pay fees', editions: ['school'] },
+  { key: 'parentOptionalPayments', storageKey: 'Parent Portal - Optional Payments', label: 'Parent portal · Optional payments', editions: ['school'] },
+  { key: 'parentResults', storageKey: 'Parent Portal - Results', label: 'Parent portal · Results', editions: ['school'] },
+  { key: 'parentAcademics', storageKey: 'Parent Portal - Schedule & Attendance', label: 'Parent portal · Schedule & attendance', editions: ['school'] },
+  { key: 'parentDocuments', storageKey: 'Parent Portal - Documents', label: 'Parent portal · Upload documents', editions: ['school'] },
+  { key: 'parentWallet', storageKey: 'Parent Portal - Wallet', label: 'Parent portal · Wallet and controls', editions: ['school'] },
+  { key: 'parentClinic', storageKey: 'Parent Portal - Clinic', label: 'Parent portal · Clinic records', editions: ['school'] },
+  { key: 'parentStores', storageKey: 'Parent Portal - School Store', label: 'Parent portal · School store', editions: ['school'] },
+  { key: 'parentNotifications', storageKey: 'Parent Portal - Notifications', label: 'Parent portal · Notifications', editions: ['school'] },
+  { key: 'parentPassword', storageKey: 'Parent Portal - Change Password', label: 'Parent portal · Change password', editions: ['school'] }
 ]);
 
 const settingsTerminology = {

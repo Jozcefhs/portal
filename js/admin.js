@@ -10745,7 +10745,8 @@ function academicOfferingSubjectRole(offering = {}, schoolStage = '') {
   return supported || (offering.Compulsory === true ? 'Core' : 'Optional');
 }
 
-function academicIsActive(row = {}) {
+function academicIsActive(row) {
+  if (!row || typeof row !== 'object') return false;
   return !/archived|inactive|closed|withdrawn/i.test(clean(row.Status));
 }
 

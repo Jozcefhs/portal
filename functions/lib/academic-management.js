@@ -553,7 +553,8 @@ function recordId(row = {}) {
   );
 }
 
-function statusActive(row = {}) {
+function statusActive(row) {
+  if (!row || typeof row !== 'object') return false;
   return !['archived', 'inactive', 'closed', 'withdrawn', 'cancelled'].includes(lower(row.Status));
 }
 

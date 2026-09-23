@@ -222,7 +222,8 @@ test('AM-002 active Senior departments reserve their Core subjects from school-w
   assert.deepEqual(academicSeniorCoreSubjectIds([
     { DepartmentId: 'science', CoreSubjectIds: ['physics', 'chemistry'], Status: 'Active' },
     { DepartmentId: 'arts', CoreSubjectIds: ['literature', 'physics'], Status: 'Active' },
-    { DepartmentId: 'old', CoreSubjectIds: ['history'], Status: 'Archived' }
+    { DepartmentId: 'old', CoreSubjectIds: ['history'], Status: 'Archived' },
+    null
   ]), ['physics', 'chemistry', 'literature']);
 });
 
@@ -689,6 +690,8 @@ test('subject teachers are batch-assigned only to the exact selected classrooms'
   assert.doesNotMatch(bulkTeacherSource, /for \(const schoolClass of classes\)/);
   assert.doesNotMatch(bulkTeacherSource, /for \(const armTemplate of armTemplates\)/);
   assert.match(bulkTeacherSource, /AllocationRole: 'Subject Teacher'/);
+  assert.match(librarySource, /statusActive\(department\)/);
+  assert.match(librarySource, /function statusActive\(row\) \{\s*if \(!row \|\| typeof row !== 'object'\) return false;/);
   assert.match(bulkTeacherSource, /Repeat for another subject if needed/);
   assert.match(librarySource, /bulkassignacademicsubjectteacher/);
 });
@@ -1018,7 +1021,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
   assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260918-academic-readability/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260923-youtube-tutorials/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260923-teacher-subject-null-safety/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

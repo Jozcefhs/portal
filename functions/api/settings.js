@@ -327,7 +327,8 @@ function publicProfile(profile = {}) {
     'SchoolName', 'SchoolAddress', 'SchoolPhone', 'SchoolEmail',
     'PortalHeadline', 'PortalSubheading', 'PortalNotice', 'NameFormat',
     'ResultDisplayMode', 'ShowResultsOnline', 'DeclarationStatement',
-    'WebLogoUrl', 'WebLogoConfigured', 'TurnstileSiteKey', 'EffectiveBranchId'
+    'WebLogoUrl', 'WebLogoConfigured', 'TurnstileSiteKey', 'EffectiveBranchId',
+    'TutorialLinks', 'TutorialChannelUrl'
   ];
   return Object.fromEntries(keys
     .filter((key) => profile[key] !== undefined)
