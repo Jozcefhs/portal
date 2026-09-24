@@ -10806,6 +10806,56 @@ function academicCheckboxField({ name, label, options = [], help = '', required 
   </fieldset>`;
 }
 
+function academicExistingClassroomTemplateIds(classId, arms = [], templates = []) {
+  const classroomArms = arms.filter((arm) => academicIsActive(arm) && arm.ClassId === classId
+    && (arm.IsClassroom === true || /^(yes|true|1)$/i.test(clean(arm.IsClassroom))));
+  return templates.filter((template) => academicIsActive(template) && classroomArms.some((arm) => (
+    clean(arm.ArmTemplateId) === clean(template.ArmTemplateId)
+    || (!clean(arm.ArmTemplateId) && (
+      (clean(arm.Code) && clean(arm.Code).toLowerCase() === clean(template.Code).toLowerCase())
+      || clean(arm.Name).toLowerCase() === clean(template.Name).toLowerCase()
+    ))
+  ))).map((template) => template.ArmTemplateId);
+}
+
+function bindAcademicClassroomArmSelection(form, arms = [], templates = []) {
+  if (!form) return;
+  const classInputs = [...form.querySelectorAll('input[name="ClassIds"]')];
+  const associated = new Map(classInputs.map((input) => [
+    input.value, academicExistingClassroomTemplateIds(input.value, arms, templates)
+  ]));
+  const manual = new Set(academicCheckedValues(form, 'ArmTemplateIds'));
+  const excluded = new Set();
+  form._academicClassroomManualTemplateIds = manual;
+  let previousClasses = new Set(academicCheckedValues(form, 'ClassIds'));
+  const sync = () => {
+    const selectedClasses = academicCheckedValues(form, 'ClassIds');
+    const automatic = selectedClasses.flatMap((classId) => associated.get(classId) || []);
+    setAcademicCheckedValues(form, 'ArmTemplateIds',
+      [...new Set([...automatic, ...manual])].filter((templateId) => !excluded.has(templateId)));
+  };
+  form.addEventListener('change', (event) => {
+    const input = event.target;
+    if (input?.name === 'ClassIds') {
+      const selectedClasses = new Set(academicCheckedValues(form, 'ClassIds'));
+      selectedClasses.forEach((classId) => {
+        if (!previousClasses.has(classId)) (associated.get(classId) || []).forEach((templateId) => excluded.delete(templateId));
+      });
+      previousClasses = selectedClasses;
+      sync();
+    } else if (input?.name === 'ArmTemplateIds') {
+      if (input.checked) {
+        manual.add(input.value);
+        excluded.delete(input.value);
+      } else {
+        manual.delete(input.value);
+        excluded.add(input.value);
+      }
+    }
+  });
+  sync();
+}
+
 function academicClassroomCheckboxField(classes = [], classrooms = []) {
   let armIndex = 0;
   const groups = classes.map((schoolClass, classIndex) => {
@@ -10829,8 +10879,88 @@ function academicClassroomCheckboxField(classes = [], classrooms = []) {
     <div class="academic-checkbox-options academic-classroom-checkbox-options" role="group" aria-labelledby="${legendId}" aria-describedby="${helpId}">
       ${groups ? `<div class="academic-classroom-checkbox-heading" aria-hidden="true"><span>Class</span><span>Arms</span></div>${groups}` : '<span class="academic-checkbox-empty">No classrooms are currently available.</span>'}
     </div>
-    <small id="${helpId}" data-academic-checkbox-help>${groups ? 'Tick a class to select all of its arms, or tick only the individual arms taught by this teacher. Only the checked arms will be saved.' : 'Create classrooms before assigning subject teachers.'}</small>
+    <small id="${helpId}" data-academic-checkbox-help>${groups ? 'Saved classrooms are checked for the selected teacher, subject and period. Tick a class to select all its arms, or choose individual arms. Unchecking a saved arm here does not remove its assignment; use Saved assignments to delete it.' : 'Create classrooms before assigning subject teachers.'}</small>
   </fieldset>`;
+}
+
+function academicSavedSubjectTeacherAllocations(allocations = [], teacherUsername = '', sessionId = '', termId = '') {
+  const username = clean(teacherUsername).toLowerCase();
+  return username && sessionId && termId ? allocations.filter((row) => academicIsActive(row)
+    && clean(row.AllocationRole).toLowerCase() === 'subject teacher'
+    && clean(row.TeacherUsername).toLowerCase() === username
+    && row.SessionId === sessionId && row.TermId === termId) : [];
+}
+
+function academicSavedSubjectTeacherClassroomIds(allocations = [], subjectId = '', classrooms = []) {
+  const saved = allocations.filter((row) => row.SubjectId === subjectId);
+  return classrooms.filter((classroom) => academicIsActive(classroom) && saved.some((row) => (
+    row.ArmId === classroom.ArmId || (!row.ArmId && row.ClassId === classroom.ClassId)
+  ))).map((classroom) => classroom.ArmId);
+}
+
+function bindAcademicSubjectTeacherSelection(form, data = {}) {
+  if (!form) return;
+  const teacherControl = form.elements.namedItem('TeacherUsername');
+  const subjectControl = form.elements.namedItem('SubjectId');
+  const sessionControl = form.elements.namedItem('SessionId');
+  const termControl = form.elements.namedItem('TermId');
+  const subjectHelp = form.querySelector('[data-academic-teacher-subject-help]');
+  if (!teacherControl || !subjectControl || !sessionControl || !termControl) return;
+  const subjects = (data.subjects || []).filter(academicIsActive);
+  const classrooms = (data.arms || []).filter((row) => academicIsActive(row)
+    && (row.IsClassroom === true || /^(yes|true|1)$/i.test(clean(row.IsClassroom))));
+  const drafts = new Map();
+  const subjectDrafts = new Map();
+  let currentKey = '';
+
+  const sync = ({ teacherChanged = false, sessionChanged = false, periodChanged = false } = {}) => {
+    const sessionId = clean(sessionControl.value);
+    if (sessionChanged) {
+      const terms = (data.terms || []).filter((row) => academicIsActive(row) && row.SessionId === sessionId);
+      const currentTerm = clean(termControl.value);
+      const selectedTerm = terms.some((row) => row.TermId === currentTerm) ? currentTerm : clean(terms[0]?.TermId);
+      termControl.innerHTML = academicSelectOptions(terms, selectedTerm, (row) => row.Name, 'Choose term');
+    }
+    const termId = clean(termControl.value);
+    const teacherUsername = clean(teacherControl.value);
+    const saved = academicSavedSubjectTeacherAllocations(data.teacherAllocations || [], teacherUsername, sessionId, termId);
+    const availableSubjects = new Set(subjects.map((row) => row.SubjectId));
+    const savedSubjects = new Set(saved.map((row) => row.SubjectId).filter((id) => availableSubjects.has(id)));
+    const currentSubject = clean(subjectControl.value);
+    const firstSaved = subjects.find((row) => savedSubjects.has(row.SubjectId))?.SubjectId || '';
+    const periodKey = teacherUsername && sessionId && termId
+      ? JSON.stringify([teacherUsername.toLowerCase(), sessionId, termId]) : '';
+    const draftedSubject = periodKey && availableSubjects.has(subjectDrafts.get(periodKey))
+      ? subjectDrafts.get(periodKey) : '';
+    const suggestedSubject = teacherChanged
+      ? (savedSubjects.has(currentSubject) ? currentSubject : firstSaved)
+      : periodChanged && !savedSubjects.has(currentSubject) && firstSaved ? firstSaved : currentSubject;
+    const selectedSubject = (teacherChanged || periodChanged) && draftedSubject ? draftedSubject : suggestedSubject;
+    subjectControl.innerHTML = academicSelectOptions(subjects, selectedSubject,
+      (row) => `${row.Code} - ${row.Name}${savedSubjects.has(row.SubjectId) ? ' (saved)' : ''}`, 'Choose subject');
+    if (subjectHelp) subjectHelp.textContent = !teacherUsername ? 'Choose a teacher to see saved subjects and classrooms.'
+      : savedSubjects.size ? `${savedSubjects.size} saved subject${savedSubjects.size === 1 ? '' : 's'} for this period. Choose a subject to see its checked classrooms.`
+        : 'No saved subject assignments for this teacher in the selected period.';
+    const subjectId = clean(subjectControl.value);
+    if (periodKey && subjectId) subjectDrafts.set(periodKey, subjectId);
+    currentKey = teacherUsername && subjectId && sessionId && termId
+      ? JSON.stringify([teacherUsername.toLowerCase(), subjectId, sessionId, termId]) : '';
+    const selected = currentKey && drafts.has(currentKey)
+      ? [...drafts.get(currentKey)]
+      : academicSavedSubjectTeacherClassroomIds(saved, subjectId, classrooms);
+    setAcademicCheckedValues(form, 'ClassroomIds', selected);
+  };
+
+  teacherControl.addEventListener('change', () => sync({ teacherChanged: true }));
+  subjectControl.addEventListener('change', () => sync());
+  sessionControl.addEventListener('change', () => sync({ sessionChanged: true, periodChanged: true }));
+  termControl.addEventListener('change', () => sync({ periodChanged: true }));
+  form.addEventListener('change', (event) => {
+    if (!currentKey || (event.target?.name !== 'ClassroomIds'
+      && !event.target?.hasAttribute?.('data-academic-checkbox-group-toggle'))) return;
+    drafts.set(currentKey, new Set(academicCheckedValues(form, 'ClassroomIds')));
+  });
+  sync();
 }
 
 function academicCheckedValues(form, name) {
@@ -11482,11 +11612,11 @@ function academicClassroomWorkspace(data, rows) {
 
   const classOptions = classes.map((row) => ({ value: row.ClassId, label: `${row.Code} - ${row.Name}` }));
   const templateOptions = templates.map((row) => ({ value: row.ArmTemplateId, label: `${row.Code} - ${row.Name}` }));
-  const editor = canStructure ? `<form class="academic-management-editor academic-classroom-create" data-academic-workflow="bulkApplyAcademicArmTemplates" data-academic-classroom-creator>
+  const editor = canStructure ? `<form class="academic-management-editor academic-classroom-create" data-academic-workflow="bulkApplyAcademicArmTemplates" data-academic-classroom-creator data-academic-class-arm-selection>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(section)}">
     <div class="academic-management-editor-heading"><div><small>Batch classroom setup</small><h3>Create classrooms</h3><p class="muted">Choose one or more reusable classes and arms. Every selected arm will be applied to every selected class.</p></div></div>
     ${academicCheckboxField({ name: 'ClassIds', label: 'Classes', options: classOptions, required: true, idPrefix: 'classroom-creation-classes', help: 'Select every class that should receive the chosen reusable arms.' })}
-    ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Reusable arms', options: templateOptions, required: true, idPrefix: 'classroom-creation-arms', help: 'Existing matching classrooms are skipped; no classroom is overwritten.' })}
+    ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Reusable arms', options: templateOptions, required: true, idPrefix: 'classroom-creation-arms', help: 'Checking a class selects its existing reusable arms. Every checked arm applies to every checked class; existing matching classrooms are skipped and none is overwritten.' })}
     <button type="submit">Create selected classrooms</button>
   </form>` : '<div class="academic-view-only-note"><strong>Classroom workspace</strong><span>Your role can open assigned classrooms but cannot create or reconfigure them.</span></div>';
 
@@ -11795,11 +11925,11 @@ function academicBulkSetupWorkspace(data, rows) {
       <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
       <button type="submit">Save reusable arm</button>
     </form>
-    <form class="academic-management-editor" data-academic-workflow="bulkApplyAcademicArmTemplates">
+    <form class="academic-management-editor" data-academic-workflow="bulkApplyAcademicArmTemplates" data-academic-class-arm-selection>
       <div class="academic-management-editor-heading"><div><small>Atomic assignment</small><h3>Apply arms to classes</h3></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
       ${academicCheckboxField({ name: 'ClassIds', label: 'Classes', options: classOptions, required: true, idPrefix: 'arm-application-classes', help: 'Every selected reusable arm will be applied to every selected class.' })}
-      ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Reusable arms', options: templateOptions, required: true, idPrefix: 'arm-application-templates', help: 'Existing matching class arms are skipped; no class arm is overwritten.' })}
+      ${academicCheckboxField({ name: 'ArmTemplateIds', label: 'Reusable arms', options: templateOptions, required: true, idPrefix: 'arm-application-templates', help: 'Checking a class selects its existing reusable arms. Every checked arm applies to every checked class; existing matching class arms are skipped and none is overwritten.' })}
       <button type="submit">Apply selected arms</button>
     </form>
     <form class="academic-management-editor" data-academic-workflow="bulkCreateAcademicSubjects">
@@ -11961,12 +12091,12 @@ function academicTeacherWorkspace(data, rows) {
   const subjects = rows.subjects.filter(academicIsActive);
   const subjectAllocations = rows.teacherAllocations.filter((row) => row.AllocationRole === 'Subject Teacher');
   const staff = academicManagementStaffCandidates(data.staff || [], academicManagementFilters.section);
-  const form = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="bulkAssignAcademicSubjectTeacher">
+  const form = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="bulkAssignAcademicSubjectTeacher" data-academic-subject-teacher-selection>
     <div class="academic-management-editor-heading"><div><small>Subject teaching</small><h3>Assign a subject teacher</h3><p class="muted">Choose one teacher and one subject, then select the exact classrooms taught for that subject. Repeat the process if the teacher handles another subject.</p></div></div>
     <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
     <div class="academic-management-form-grid academic-management-form-grid-4">
       <label>Teacher<select name="TeacherUsername" required>${academicSelectOptions(staff, '', (row) => `${row.DisplayName} (${row.Role}${row.Department ? ` · ${row.Department}` : ''})`, staff.length ? 'Choose teacher' : 'No eligible Academics Department Users')}</select><small>Only active Department Users in the Academics department are listed.</small></label>
-      <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select></label>
+      <label>Subject<select name="SubjectId" required>${academicSelectOptions(subjects, '', (row) => `${row.Code} - ${row.Name}`, 'Choose subject')}</select><small data-academic-teacher-subject-help>Choose a teacher to see saved subjects and classrooms.</small></label>
       <label>Session<select name="SessionId" required>${academicSelectOptions(sessions, academicManagementFilters.sessionId, (row) => row.Name, 'Choose session')}</select></label>
       <label>Term<select name="TermId" required>${academicSelectOptions(terms, academicManagementFilters.termId, (row) => row.Name, 'Choose term')}</select></label>
     </div>
@@ -14153,6 +14283,12 @@ function openAcademicCbtRescheduleDialog(record = {}) {
 
 function bindAcademicManagement() {
   panelEl.querySelectorAll('[data-academic-checkbox-field]').forEach(bindAcademicCheckboxField);
+  bindAcademicSubjectTeacherSelection(
+    panelEl.querySelector('[data-academic-subject-teacher-selection]'), academicManagementData || {}
+  );
+  panelEl.querySelectorAll('[data-academic-class-arm-selection]').forEach((form) => bindAcademicClassroomArmSelection(
+    form, academicManagementData?.arms || [], academicManagementData?.armTemplates || []
+  ));
   panelEl.querySelectorAll('[data-academic-copy-record-id]').forEach((button) => button.addEventListener('click', async () => {
     const original = button.textContent;
     try {
@@ -15596,6 +15732,7 @@ function bindAcademicManagement() {
     academicManagementTaskViews.bulkSetup = 'applyArms';
     renderAcademicManagement(academicManagementData || {});
     const form = panelEl.querySelector('[data-academic-workflow="bulkApplyAcademicArmTemplates"]');
+    form?._academicClassroomManualTemplateIds?.add(templateId);
     setAcademicCheckedValues(form, 'ArmTemplateIds', [templateId]);
     form?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     form?.querySelector('input[name="ClassIds"]')?.focus();
