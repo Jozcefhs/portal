@@ -35,6 +35,7 @@ const precreatedProjectSet = new Set(precreatedProjectIds);
 const npxCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 const deployDirectory = resolve('.tenant-pages-deploy');
 const createdProjects = [];
+let canLinkBilling = false;
 
 function boundedInteger(value, fallback, maximum) {
   const number = Math.floor(Number(value));
@@ -165,7 +166,7 @@ async function googleRequest(url, options = {}) {
 }
 
 async function verifyBillingAccess() {
-  if (!billingAccount) return;
+  if (!billingAccount) return false;
   let result;
   try {
     result = await googleRequest(`https://cloudbilling.googleapis.com/v1/billingAccounts/${encodeURIComponent(billingAccount)}:testIamPermissions`, {
@@ -173,11 +174,20 @@ async function verifyBillingAccess() {
       body: JSON.stringify({ permissions: ['billing.resourceAssociations.create'] })
     });
   } catch (error) {
-    throw new Error(`The Google provisioner could not verify access to billing account ${billingAccount}. Check that the account ID is correct and grant Billing Account User to the provisioner service account.`, { cause: error });
+    if (billingRequired) {
+      throw new Error(`The Google provisioner could not verify access to billing account ${billingAccount}. Check that the account ID is correct and grant Billing Account User to the provisioner service account.`, { cause: error });
+    }
+    process.stdout.write(`Billing account ${billingAccount} is optional and cannot be verified; continuing without billing linkage.\n`);
+    return false;
   }
   if (!(result.permissions || []).includes('billing.resourceAssociations.create')) {
-    throw new Error(`The Google provisioner cannot link billing account ${billingAccount}. Grant Billing Account User to the provisioner service account on that billing account before provisioning tenants.`);
+    if (billingRequired) {
+      throw new Error(`The Google provisioner cannot link billing account ${billingAccount}. Grant Billing Account User to the provisioner service account on that billing account before provisioning tenants.`);
+    }
+    process.stdout.write(`Billing account ${billingAccount} is optional and the provisioner cannot link it; continuing without billing linkage.\n`);
+    return false;
   }
+  return true;
 }
 
 async function waitForGoogleOperation(operation, serviceBase, timeoutMs = 240000) {
@@ -371,10 +381,15 @@ export async function provisionProject(projectId, options = {}) {
   } else {
     process.stdout.write(`Using pre-created Google Cloud project ${projectId}.\n`);
   }
-  if (billingAccount) {
-    commandWithRetry('gcloud', ['billing', 'projects', 'link', projectId, `--billing-account=${billingAccount}`, '--quiet']);
+  if (canLinkBilling) {
+    try {
+      commandWithRetry('gcloud', ['billing', 'projects', 'link', projectId, `--billing-account=${billingAccount}`, '--quiet']);
+    } catch (error) {
+      if (billingRequired) throw error;
+      process.stdout.write(`Optional billing linkage failed for ${projectId}; continuing with Firebase free-tier setup.\n`);
+    }
   } else {
-    process.stdout.write('No billing account was supplied; continuing with Firebase free-tier setup.\n');
+    process.stdout.write('Continuing with Firebase free-tier setup without billing linkage.\n');
   }
   command('gcloud', [
     'services', 'enable',
@@ -468,7 +483,7 @@ async function main() {
     }
     createdProjects.push(...existingSlots);
     if (plannedIds.length) {
-      await verifyBillingAccess();
+      canLinkBilling = await verifyBillingAccess();
       preparedDeployment = true;
       preparePagesDeployment();
     }

@@ -61,7 +61,7 @@ The workflow is `.github/workflows/provision-tenant-pool.yml`. Add the following
 - `GCP_WIF_PROVIDER`: full GitHub Workload Identity provider resource name.
 - `DYNAMAX_PROVISION_SERVICE_ACCOUNT`: service-account email used only by the provisioner.
 - `DYNAMAX_PROVISION_PROJECT_ID`: Google project that owns the Workload Identity configuration.
-- `DYNAMAX_GCP_BILLING_ACCOUNT`: billing account linked to new tenant projects. If set, the provisioner verifies that it can link this account before creating any project.
+- `DYNAMAX_GCP_BILLING_ACCOUNT`: billing account to link to new tenant projects. When billing is required, the provisioner verifies access before creating a project. With `DYNAMAX_GCP_BILLING_REQUIRED=false`, an inaccessible billing account is skipped and Firebase free-tier setup is attempted instead.
 - `DYNAMAX_GCP_PARENT`: `folders/123...` or `organizations/123...` parent used to create projects automatically. It may be omitted only when unused projects are explicitly listed in the central pool settings.
 - `DYNAMAX_TENANT_REGION`: Firestore region, for example `eur3`.
 - `DYNAMAX_TENANT_PROJECT_PREFIX`: short lowercase prefix; default is `dynamax-tenant`.
