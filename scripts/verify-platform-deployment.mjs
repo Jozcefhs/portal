@@ -50,6 +50,18 @@ export function validatePlatformCatalogPayload(payload) {
   };
 }
 
+export function validateTutorialCatalogPayload(payload) {
+  if (!payload?.ok || typeof payload.published !== 'boolean'
+      || !payload.catalog || typeof payload.catalog !== 'object'
+      || typeof payload.catalog.ChannelUrl !== 'string'
+      || !['school', 'faith', 'organization'].every((edition) =>
+        payload.catalog.Editions?.[edition]?.Links
+        && typeof payload.catalog.Editions[edition].Links === 'object')) {
+    throw new Error('The central Dynamax tutorial catalogue did not return a valid response.');
+  }
+  return { tutorialPublished: payload.published };
+}
+
 async function fetchJson(url) {
   const response = await fetch(url, {
     headers: { Accept: 'application/json' },
@@ -69,7 +81,9 @@ export async function verifyPlatformDeployment(options = {}) {
     try {
       const cacheKey = `deployment=${Date.now()}-${attempt}`;
       const catalogUrl = new URL(`/api/plan-catalog?${cacheKey}`, baseUrl);
-      return validatePlatformCatalogPayload(await fetchJson(catalogUrl));
+      const tutorialUrl = new URL(`/api/tutorial-catalog?${cacheKey}`, baseUrl);
+      const plan = validatePlatformCatalogPayload(await fetchJson(catalogUrl));
+      return { ...plan, ...validateTutorialCatalogPayload(await fetchJson(tutorialUrl)) };
     } catch (error) {
       lastError = error;
       if (attempt < attempts && delayMs) {
@@ -98,11 +112,10 @@ if (invokedPath === import.meta.url) {
       url: argumentValue('--url')
     });
     process.stdout.write(
-      `Verified Dynamax platform catalogue v${result.version} with Hotel Services for Church and Other Organisation plans.\n`
+      `Verified Dynamax platform catalogue v${result.version} and owner tutorial API (published: ${result.tutorialPublished}).\n`
     );
   } catch (error) {
     process.stderr.write(`${error?.message || error}\n`);
     process.exitCode = 1;
   }
 }
-

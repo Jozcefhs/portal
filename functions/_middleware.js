@@ -12,6 +12,7 @@ const LOW_READ_IDENTITY_PATHS = new Set([
 
 const PLATFORM_SUBSCRIPTION_PROXY_PATHS = new Set([
   '/api/plan-catalog',
+  '/api/tutorial-catalog',
   '/api/platform-payment-methods',
   '/api/platform-payment-settings',
   '/api/tenant-project-pool',
@@ -69,11 +70,12 @@ function unavailableResponse(requestId, message = 'The API backend is not config
   });
 }
 
-function canonicalProxyPathAllowed(env, pathname) {
+function canonicalProxyPathAllowed(env, pathname, method) {
+  const normalizedPath = String(pathname || '').replace(/\/+$/, '') || '/';
+  if (normalizedPath === '/api/tutorial-catalog' && String(method || 'GET').toUpperCase() !== 'GET') return false;
   const scope = String(env.CANONICAL_API_PROXY_SCOPE || '').trim().toLowerCase();
   if (!scope) return true;
   if (scope !== 'platform-subscriptions') return false;
-  const normalizedPath = String(pathname || '').replace(/\/+$/, '') || '/';
   return PLATFORM_SUBSCRIPTION_PROXY_PATHS.has(normalizedPath);
 }
 
@@ -164,7 +166,7 @@ async function proxyApiRequest({ request, env, url, requestId }) {
   if (!proxyAllowed || !configuredOrigin) {
     return { response: unavailableResponse(requestId) };
   }
-  if (!canonicalProxyPathAllowed(env, url.pathname)) {
+  if (!canonicalProxyPathAllowed(env, url.pathname, request.method)) {
     return {
       response: unavailableResponse(requestId, 'This API route is not available on the public Dynamax deployment.')
     };

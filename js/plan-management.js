@@ -24,6 +24,7 @@ let catalog = null;
 let tenantPoolState = null;
 let platformPaymentState = null;
 let ownerTutorialCatalog = null;
+let ownerTutorialCatalogReady = false;
 let selectedEntitlementEdition = 'school';
 let platformTransferDecisionResolver = null;
 
@@ -63,7 +64,7 @@ function safeYouTubeHref(value) {
 }
 
 function saveVisibleTutorialDraft() {
-  if (!ownerTutorialCatalog) return;
+  if (!ownerTutorialCatalogReady || !ownerTutorialCatalog) return;
   ownerTutorialCatalog.ChannelUrl = document.getElementById('ownerTutorialChannelUrl').value.trim();
   ownerTutorialCatalog.Editions[ownerTutorialEdition.value].Links = Object.fromEntries(
     [...ownerTutorialLinksList.querySelectorAll('[data-tutorial-storage-key]')]
@@ -80,7 +81,7 @@ function renderOwnerTutorialLinks() {
     faith: 'Church modules',
     organization: 'Other-organisation modules'
   };
-  document.getElementById('ownerTutorialEditionTitle').textContent = titles[edition];
+  document.getElementById('ownerTutorialEditionTitle').textContent = `${titles[edition]} — individual video links`;
   const links = ownerTutorialCatalog.Editions[edition].Links;
   ownerTutorialLinksList.dataset.edition = edition;
   ownerTutorialLinksList.replaceChildren(...window.DynamaxTutorialModuleCatalogue
@@ -101,6 +102,7 @@ function renderOwnerTutorialLinks() {
       input.placeholder = 'https://youtu.be/...';
       input.dataset.tutorialStorageKey = module.storageKey;
       input.value = String(links[module.storageKey] || links[module.key] || '').trim();
+      input.disabled = !ownerTutorialCatalogReady;
       label.htmlFor = input.id;
       label.append(title, input);
       const openLink = document.createElement('a');
@@ -121,6 +123,16 @@ function renderOwnerTutorialLinks() {
     }));
 }
 
+function setOwnerTutorialEditorReady(ready) {
+  ownerTutorialCatalogReady = ready;
+  document.getElementById('ownerTutorialChannelUrl').disabled = !ready;
+  document.getElementById('saveOwnerTutorials').disabled = !ready;
+  document.getElementById('retryOwnerTutorials').hidden = ready;
+  ownerTutorialLinksList.querySelectorAll('[data-tutorial-storage-key]').forEach((input) => {
+    input.disabled = !ready;
+  });
+}
+
 async function ownerTutorialRequest(payload = null) {
   const response = await fetch('/api/tutorial-catalog', payload ? {
     method: 'POST',
@@ -133,16 +145,21 @@ async function ownerTutorialRequest(payload = null) {
 }
 
 async function loadOwnerTutorialCatalog() {
+  ownerTutorialCatalog = tutorialCatalogDraft();
+  document.getElementById('ownerTutorialChannelUrl').value = '';
+  setOwnerTutorialEditorReady(false);
+  renderOwnerTutorialLinks();
   try {
     const data = await ownerTutorialRequest();
     ownerTutorialCatalog = tutorialCatalogDraft(data.catalog);
     document.getElementById('ownerTutorialChannelUrl').value = ownerTutorialCatalog.ChannelUrl;
+    setOwnerTutorialEditorReady(true);
     renderOwnerTutorialLinks();
     setStatus(ownerTutorialStatus, data.published
       ? 'Published tutorial links loaded. Changes take effect only when you publish again.'
       : 'No owner catalogue has been published yet. Existing subscriber links remain available until your first publication.', 'ok');
   } catch (error) {
-    setStatus(ownerTutorialStatus, error.message || String(error), 'bad');
+    setStatus(ownerTutorialStatus, `${error.message || String(error)} Individual module fields are shown, but publishing is disabled until the catalogue loads.`, 'bad');
   }
 }
 
@@ -646,7 +663,7 @@ ownerTutorialEdition?.addEventListener('change', (event) => {
 
 document.getElementById('saveOwnerTutorials')?.addEventListener('click', async (event) => {
   const button = event.currentTarget;
-  if (!ownerTutorialCatalog || !window.DynamaxActionFeedback.begin(button, 'Publishing...')) return;
+  if (!ownerTutorialCatalogReady || !ownerTutorialCatalog || !window.DynamaxActionFeedback.begin(button, 'Publishing...')) return;
   try {
     saveVisibleTutorialDraft();
     const data = await ownerTutorialRequest({ password: unlockedPassword, catalog: ownerTutorialCatalog });
@@ -655,6 +672,16 @@ document.getElementById('saveOwnerTutorials')?.addEventListener('click', async (
     setStatus(ownerTutorialStatus, data.message, 'ok');
   } catch (error) {
     setStatus(ownerTutorialStatus, error.message || String(error), 'bad');
+  } finally {
+    window.DynamaxActionFeedback.end(button);
+  }
+});
+
+document.getElementById('retryOwnerTutorials')?.addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  if (!window.DynamaxActionFeedback.begin(button, 'Loading...')) return;
+  try {
+    await loadOwnerTutorialCatalog();
   } finally {
     window.DynamaxActionFeedback.end(button);
   }

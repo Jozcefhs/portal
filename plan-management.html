@@ -67,9 +67,9 @@
         <div class="settings-fields two-column">
           <div class="settings-field"><label for="ownerTutorialEdition">Edition</label><select id="ownerTutorialEdition"><option value="school">School</option><option value="faith">Church</option><option value="organization">Other organisation</option></select></div>
           <div class="settings-field"><label for="ownerTutorialChannelUrl">Main YouTube channel or playlist</label><input id="ownerTutorialChannelUrl" type="text" inputmode="url" autocomplete="url" spellcheck="false" placeholder="https://www.youtube.com/@DynamaxVendmac"><small class="settings-help">Used when a module has no specific tutorial.</small></div>
-          <div class="settings-field full-width"><div class="settings-subsection-title"><strong id="ownerTutorialEditionTitle">School modules and parent operations</strong><span>Leave links blank until their videos are ready.</span></div><div id="ownerTutorialLinksList" class="tutorial-settings-list" aria-live="polite"></div></div>
+          <div class="settings-field full-width"><div class="settings-subsection-title"><strong id="ownerTutorialEditionTitle">Individual module video links</strong><span>Each module has its own YouTube link. Leave links blank until their videos are ready.</span></div><div id="ownerTutorialLinksList" class="tutorial-settings-list" aria-live="polite"></div></div>
         </div>
-        <div class="settings-actions"><button id="saveOwnerTutorials" type="button">Publish tutorial links</button></div>
+        <div class="settings-actions"><button id="saveOwnerTutorials" type="button" disabled>Publish tutorial links</button><button id="retryOwnerTutorials" type="button" class="secondary">Retry loading</button></div>
         <p id="ownerTutorialStatus" class="status" aria-live="polite"></p>
       </section>
       <section class="settings-section tenant-pool-section">
@@ -162,6 +162,6 @@
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
   <script src="js/tutorial-module-catalogue.js?v=20260924-owner-tutorials"></script>
-  <script src="js/plan-management.js?v=20260924-owner-tutorials"></script>
+  <script src="js/plan-management.js?v=20260924-owner-tutorial-fix"></script>
 </body>
 </html>

@@ -46,8 +46,12 @@ test('only owner plan management edits and publishes tutorial links', () => {
   assert.match(ownerHtml, /id="ownerTutorialSettings"/);
   assert.match(ownerHtml, /id="ownerTutorialEdition"/);
   assert.match(ownerHtml, /id="ownerTutorialLinksList"/);
+  assert.match(ownerHtml, /id="retryOwnerTutorials"/);
+  assert.match(ownerHtml, /Each module has its own YouTube link/);
   assert.match(ownerHtml, /js\/tutorial-module-catalogue\.js/);
   assert.match(ownerJs, /ownerTutorialRequest\(\{ password: unlockedPassword, catalog: ownerTutorialCatalog \}\)/);
+  assert.match(ownerJs, /ownerTutorialCatalog = tutorialCatalogDraft\(\);[\s\S]*?setOwnerTutorialEditorReady\(false\);\s*renderOwnerTutorialLinks\(\);\s*try \{/);
+  assert.match(ownerJs, /input\.disabled = !ownerTutorialCatalogReady/);
   assert.match(catalogApiSource, /requirePlatformAdmin\(env, body\.password\)/);
   assert.match(settingsSource, /TutorialLinks: normalizeTutorialLinks\(existing\.TutorialLinks/);
   assert.match(settingsSource, /TutorialChannelUrl: normalizeYouTubeTutorialUrl\(existing\.TutorialChannelUrl/);

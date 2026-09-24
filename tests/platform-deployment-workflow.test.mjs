@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { validatePlatformCatalogPayload } from '../scripts/verify-platform-deployment.mjs';
+import { validatePlatformCatalogPayload, validateTutorialCatalogPayload, verifyPlatformDeployment } from '../scripts/verify-platform-deployment.mjs';
 import {
   SUBSCRIPTION_MODULE_CATALOG_VERSION,
   subscriptionModulesForEdition
@@ -60,4 +60,46 @@ test('the live platform verifier requires Hotel Services for Church and Other Or
     }),
     /faith module catalogue does not match|Hotel Services is missing/
   );
+});
+
+test('the live platform verifier rejects an unavailable or malformed owner tutorial API', () => {
+  const catalog = {
+    ChannelUrl: '',
+    Editions: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
+      edition, { Links: {} }
+    ]))
+  };
+  assert.deepEqual(validateTutorialCatalogPayload({ ok: true, published: false, catalog }), {
+    tutorialPublished: false
+  });
+  assert.throws(() => validateTutorialCatalogPayload({ ok: false, message: 'The API backend is not configured for this deployment.' }), /tutorial catalogue/);
+  assert.throws(() => validateTutorialCatalogPayload({ ok: true, published: false, catalog: {} }), /tutorial catalogue/);
+});
+
+test('deployment verification reads both the plan and owner tutorial APIs', async () => {
+  const originalFetch = globalThis.fetch;
+  const requestedPaths = [];
+  globalThis.fetch = async (url) => {
+    const path = new URL(url).pathname;
+    requestedPaths.push(path);
+    if (path === '/api/plan-catalog') {
+      return Response.json({ ok: true, catalog: {
+        ModuleCatalogVersion: SUBSCRIPTION_MODULE_CATALOG_VERSION,
+        ModuleCatalog: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
+          edition, subscriptionModulesForEdition(edition)
+        ]))
+      } });
+    }
+    return Response.json({ ok: true, published: false, catalog: {
+      ChannelUrl: '',
+      Editions: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [edition, { Links: {} }]))
+    } });
+  };
+  try {
+    const result = await verifyPlatformDeployment({ url: 'https://dynamax.example', attempts: 1, delayMs: 0 });
+    assert.equal(result.tutorialPublished, false);
+    assert.deepEqual(requestedPaths, ['/api/plan-catalog', '/api/tutorial-catalog']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

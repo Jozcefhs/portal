@@ -17,6 +17,7 @@ test('Dynamax Pages fail closed unless an API proxy is explicitly configured', (
   assert.match(middleware, /env\.CANONICAL_API_PROXY_SCOPE/);
   assert.match(middleware, /PLATFORM_SUBSCRIPTION_PROXY_PATHS/);
   assert.match(middleware, /'\/api\/tenant-project-pool'/);
+  assert.match(middleware, /'\/api\/tutorial-catalog'/);
   assert.match(middleware, /'\/api\/tenant-activation'/);
   assert.match(middleware, /'\/api\/complete-tenant-activation'/);
   assert.match(middleware, /if \(!proxyAllowed \|\| !configuredOrigin\)/);
@@ -158,6 +159,25 @@ test('the central Dynamax backend serves subscriber APIs without a tenant Fireba
   assert.equal(nextCalled, true);
   assert.equal(identityCalled, false);
   assert.deepEqual(await response.json(), { ok: true, platform: true });
+});
+
+test('the central owner tutorial catalogue runs without a tenant backend or deployment identity', async () => {
+  let identityCalled = false;
+  let nextCalled = false;
+  const response = await onRequestWithIdentityLoader({
+    request: new Request('https://dynamax.cc/api/tutorial-catalog'),
+    env: { DYNAMAX_PLATFORM_FIREBASE_PROJECT_ID: 'dynamax-platform' },
+    next: async () => {
+      nextCalled = true;
+      return Response.json({ ok: true, published: false, catalog: {} });
+    }
+  }, async () => {
+    identityCalled = true;
+    throw new Error('The owner catalogue must not load tenant deployment identity.');
+  });
+  assert.equal(response.status, 200);
+  assert.equal(nextCalled, true);
+  assert.equal(identityCalled, false);
 });
 
 test('staff sign-in uses environment deployment identity without an extra Firestore profile read', async () => {
@@ -332,6 +352,23 @@ test('the public subscription bridge forwards billing APIs but blocks tenant sta
       'https://canonical.example/api/pricing-book-pdf?edition=faith'
     ]);
 
+    const tutorialRead = await onRequest({
+      request: new Request('https://dynamax.example/api/tutorial-catalog'),
+      env,
+      next: async () => Response.json({ ok: false })
+    });
+    assert.equal(tutorialRead.status, 200);
+    assert.equal(forwarded.at(-1), 'https://canonical.example/api/tutorial-catalog');
+
+    const tutorialWrite = await onRequest({
+      request: new Request('https://dynamax.example/api/tutorial-catalog', { method: 'POST', body: '{}' }),
+      env,
+      next: async () => Response.json({ ok: false })
+    });
+    assert.equal(tutorialWrite.status, 503);
+    assert.match((await tutorialWrite.json()).message, /not available on the public Dynamax deployment/i);
+    assert.equal(forwarded.length, 3);
+
     const staff = await onRequest({
       request: new Request('https://dynamax.example/api/staff-session', { method: 'POST' }),
       env,
@@ -339,7 +376,7 @@ test('the public subscription bridge forwards billing APIs but blocks tenant sta
     });
     assert.equal(staff.status, 503);
     assert.match((await staff.json()).message, /not available on the public Dynamax deployment/i);
-    assert.equal(forwarded.length, 2);
+    assert.equal(forwarded.length, 3);
   } finally {
     globalThis.fetch = originalFetch;
   }
