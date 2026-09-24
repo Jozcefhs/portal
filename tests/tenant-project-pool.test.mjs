@@ -70,6 +70,40 @@ test('provisioning queue caps a pool request to the current shortfall', () => {
   assert.equal(request.EffectiveCount, 1);
 });
 
+test('a delayed retry keeps its project capacity reserved and becomes claimable when due', () => {
+  const nowMs = Date.parse('2026-09-24T12:00:00.000Z');
+  const requests = annotateProvisioningRequests([
+    { Reference: 'POOL-RETRY', Edition: 'school', Mode: 'pool', Count: 1, Status: 'Pending', RequestedAt: '2026-09-24T10:00:00.000Z', NextAttemptAt: '2026-09-24T12:15:00.000Z' },
+    { Reference: 'POOL-LATER', Edition: 'school', Mode: 'pool', Count: 1, Status: 'Pending', RequestedAt: '2026-09-24T11:00:00.000Z' }
+  ], [{ Edition: 'school', Status: 'Ready' }], normalizeTenantPoolPolicy({}), nowMs);
+  assert.equal(requests[0].ActionRequired, false);
+  assert.equal(requests[0].EffectiveCount, 1);
+  assert.equal(requests[1].ActionRequired, false);
+  assert.equal(requests[1].EffectiveCount, 0);
+  const [due] = annotateProvisioningRequests([requests[0]], [{ Edition: 'school', Status: 'Ready' }], normalizeTenantPoolPolicy({}), nowMs + 900001);
+  assert.equal(due.ActionRequired, true);
+});
+
+test('a partially provisioned request resumes only its unregistered projects', () => {
+  const [request] = annotateProvisioningRequests([
+    { Reference: 'POOL-PARTIAL', Edition: 'school', Mode: 'pool', Count: 2, Status: 'Pending', RequestedAt: '2026-09-24T10:00:00.000Z' }
+  ], [
+    { Edition: 'school', Status: 'Ready', ProvisioningBatchId: 'POOL-PARTIAL' }
+  ], normalizeTenantPoolPolicy({ TargetReadyPerEdition: { school: 2 } }));
+  assert.equal(request.ActionRequired, true);
+  assert.equal(request.EffectiveCount, 1);
+});
+
+test('a request with all projects registered remains claimable for finalization only', () => {
+  const [request] = annotateProvisioningRequests([
+    { Reference: 'POOL-FINALIZE', Edition: 'school', Mode: 'pool', Count: 1, Status: 'Pending', RequestedAt: '2026-09-24T10:00:00.000Z' }
+  ], [
+    { Edition: 'school', Status: 'Ready', ProvisioningBatchId: 'POOL-FINALIZE' }
+  ], normalizeTenantPoolPolicy({ TargetReadyPerEdition: { school: 1 } }));
+  assert.equal(request.ActionRequired, true);
+  assert.equal(request.EffectiveCount, 0);
+});
+
 test('assignment is concurrency-safe and payment remains recoverable when capacity is empty', () => {
   assert.match(poolSource, /batchCommitDocuments/);
   assert.match(poolSource, /updateTime: candidate\.__updateTime/);
@@ -124,7 +158,9 @@ test('provisioning plans are repeatable and can resume from a user-precreated pr
   assert.match(provisionerSource, /TENANT_CONTROL_PLANE_PRIVATE_KEY/);
   assert.match(provisionerSource, /STUDENT_FACE_LOOKUP_ENABLED: plain\(edition === 'school' \? 'true' : 'false'\)/);
   assert.match(provisionerSource, /TenantControlPublicKey/);
-  assert.match(provisionerSource, /Billing linkage is optional for this provisioning run/);
+  assert.match(provisionerSource, /billing\.resourceAssociations\.create/);
+  assert.match(provisionerSource, /Grant Billing Account User to the provisioner service account/);
+  assert.match(provisionerSource, /NextAttemptAt: new Date\(Date\.now\(\) \+ retryMinutes \* 60000\)/);
   assert.match(provisionerSource, /function commandWithRetry/);
   assert.match(provisionerSource, /Using existing tenant runtime account/);
   assert.match(provisionerSource, /Using existing Firestore database/);

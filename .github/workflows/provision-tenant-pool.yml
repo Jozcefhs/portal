@@ -84,7 +84,7 @@ jobs:
           else
             payload="$(jq -nc --arg password "${DYNAMAX_TENANT_PROVISIONER_SECRET}" '{password:$password,action:"load"}')"
             response="$(curl --fail-with-body --silent --show-error "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" -H 'Content-Type: application/json' --data "${payload}")"
-            request="$(jq -c '[.requests[] | select((.Status | ascii_downcase) == "pending" and .ActionRequired == true) | .Count = (.EffectiveCount // .Count)] | sort_by(.RequestedAt) | .[0] // empty' <<<"${response}")"
+            request="$(jq -c '[.requests[] | select((.Status | ascii_downcase) == "pending" and .ActionRequired == true)] | sort_by(.RequestedAt) | .[0] // empty' <<<"${response}")"
           fi
           if [[ -z "${request}" || "${request}" == "null" ]]; then
             echo 'has_request=false' >> "${GITHUB_OUTPUT}"
@@ -95,7 +95,7 @@ jobs:
           printf 'request_base64=%s\n' "$(printf '%s' "${request}" | base64 -w 0)" >> "${GITHUB_OUTPUT}"
           printf 'reference=%s\n' "$(jq -r '.Reference' <<<"${request}")" >> "${GITHUB_OUTPUT}"
           printf 'edition=%s\n' "$(jq -r '.Edition' <<<"${request}")" >> "${GITHUB_OUTPUT}"
-          printf 'count=%s\n' "$(jq -r '.Count' <<<"${request}")" >> "${GITHUB_OUTPUT}"
+          printf 'count=%s\n' "$(jq -r '.EffectiveCount // .Count' <<<"${request}")" >> "${GITHUB_OUTPUT}"
           printf 'requested_project_id=%s\n' "$(jq -r '.RequestedProjectId // empty' <<<"${request}")" >> "${GITHUB_OUTPUT}"
           printf 'precreated_ids_base64=%s\n' "$(jq -c '.policy.PrecreatedProjectIds // []' <<<"${response}" | base64 -w 0)" >> "${GITHUB_OUTPUT}"
           printf 'registered_ids_base64=%s\n' "$(jq -c '[.slots[]?.FirebaseProjectId | select(length > 0)]' <<<"${response}" | base64 -w 0)" >> "${GITHUB_OUTPUT}"
@@ -231,7 +231,7 @@ jobs:
           printf 'request_base64=%s\n' "$(printf '%s' "${request}" | base64 -w 0)" >> "${GITHUB_OUTPUT}"
           printf 'reference=%s\n' "$(jq -r '.Reference' <<<"${request}")" >> "${GITHUB_OUTPUT}"
           printf 'edition=%s\n' "$(jq -r '.Edition' <<<"${request}")" >> "${GITHUB_OUTPUT}"
-          printf 'count=%s\n' "$(jq -r '.Count' <<<"${request}")" >> "${GITHUB_OUTPUT}"
+          printf 'count=%s\n' "$(jq -r '.EffectiveCount // .Count' <<<"${request}")" >> "${GITHUB_OUTPUT}"
 
       - name: Use Node.js 22
         if: ${{ steps.claim.outputs.has_request == 'true' }}
@@ -251,11 +251,12 @@ jobs:
           TENANT_PROVISIONING_REQUEST_BASE64: ${{ steps.claim.outputs.request_base64 }}
         run: node scripts/provision-tenant-projects.mjs
 
-      - name: Mark interrupted request failed
-        if: ${{ failure() && env.APPLY_CHANGES == 'true' && steps.claim.outputs.has_request == 'true' }}
+      - name: Reschedule request interrupted before provisioning
+        if: ${{ failure() && env.APPLY_CHANGES == 'true' && steps.claim.outputs.has_request == 'true' && steps.provision.outcome != 'failure' }}
         shell: bash
         run: |
-          payload="$(jq -nc --arg password "${DYNAMAX_TENANT_PROVISIONER_SECRET}" --arg reference '${{ steps.claim.outputs.reference }}' '{password:$password,action:"finish-request",request:{Reference:$reference,Status:"Failed",LastError:"The GitHub provisioning run was interrupted. Review the workflow log."}}')"
+          retry_at="$(date -u -d '+30 minutes' '+%Y-%m-%dT%H:%M:%SZ')"
+          payload="$(jq -nc --arg password "${DYNAMAX_TENANT_PROVISIONER_SECRET}" --arg reference '${{ steps.claim.outputs.reference }}' --arg retry_at "${retry_at}" '{password:$password,action:"finish-request",request:{Reference:$reference,Status:"Pending",NextAttemptAt:$retry_at,LastError:"The GitHub provisioning run was interrupted before the provisioner could report its result."}}')"
           curl --silent --show-error "${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool" -H 'Content-Type: application/json' --data "${payload}" || true
 
       - name: Summarize provisioning

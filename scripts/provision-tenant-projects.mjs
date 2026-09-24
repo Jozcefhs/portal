@@ -24,7 +24,9 @@ const request = JSON.parse(encodedRequest
 const requestReference = clean(request.Reference);
 const edition = normalizeEdition(request.Edition);
 const mode = lower(request.Mode) === 'branded' ? 'branded' : 'pool';
-const count = mode === 'branded' ? 1 : boundedInteger(request.Count, 1, 20);
+const count = Number.isInteger(Number(request.EffectiveCount)) && Number(request.EffectiveCount) >= 0
+  ? Math.min(20, Number(request.EffectiveCount))
+  : mode === 'branded' ? 1 : boundedInteger(request.Count, 1, 20);
 const precreatedProjectIds = clean(process.env.DYNAMAX_PRECREATED_PROJECT_IDS)
   .split(',')
   .map((value) => lower(value))
@@ -162,6 +164,22 @@ async function googleRequest(url, options = {}) {
   });
 }
 
+async function verifyBillingAccess() {
+  if (!billingAccount) return;
+  let result;
+  try {
+    result = await googleRequest(`https://cloudbilling.googleapis.com/v1/billingAccounts/${encodeURIComponent(billingAccount)}:testIamPermissions`, {
+      method: 'POST',
+      body: JSON.stringify({ permissions: ['billing.resourceAssociations.create'] })
+    });
+  } catch (error) {
+    throw new Error(`The Google provisioner could not verify access to billing account ${billingAccount}. Check that the account ID is correct and grant Billing Account User to the provisioner service account.`, { cause: error });
+  }
+  if (!(result.permissions || []).includes('billing.resourceAssociations.create')) {
+    throw new Error(`The Google provisioner cannot link billing account ${billingAccount}. Grant Billing Account User to the provisioner service account on that billing account before provisioning tenants.`);
+  }
+}
+
 async function waitForGoogleOperation(operation, serviceBase, timeoutMs = 240000) {
   if (!operation?.name || operation.done) {
     if (operation?.error) throw new Error(operation.error.message || 'Google Cloud operation failed.');
@@ -192,12 +210,21 @@ async function addFirebase(projectId) {
 }
 
 async function createFirestoreDatabase(projectId) {
-  try {
-    await googleRequest(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/${encodeURIComponent('(default)')}`);
-    process.stdout.write(`Using existing Firestore database for ${projectId}.\n`);
-    return;
-  } catch (error) {
-    if (Number(error.status) !== 404) throw error;
+  const databaseUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${encodeURIComponent('(default)')}`;
+  for (let attempt = 1; attempt <= 18; attempt += 1) {
+    try {
+      await googleRequest(databaseUrl);
+      process.stdout.write(`Using existing Firestore database for ${projectId}.\n`);
+      return;
+    } catch (error) {
+      if (Number(error.status) === 404) break;
+      if (Number(error.status) !== 403) throw error;
+      if (attempt === 18) {
+        throw new Error(`Firestore access remained denied for ${projectId} after IAM propagation checks. The provisioner needs datastore.databases.getMetadata and datastore.databases.create on this project or its parent folder.`, { cause: error });
+      }
+      process.stdout.write(`Waiting for Firestore IAM access to ${projectId} (attempt ${attempt}/18).\n`);
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 10000));
+    }
   }
   try {
     const operation = await googleRequest(`https://firestore.googleapis.com/v1/projects/${projectId}/databases?databaseId=${encodeURIComponent('(default)')}`, {
@@ -345,12 +372,7 @@ export async function provisionProject(projectId, options = {}) {
     process.stdout.write(`Using pre-created Google Cloud project ${projectId}.\n`);
   }
   if (billingAccount) {
-    command('gcloud', ['billing', 'projects', 'link', projectId, `--billing-account=${billingAccount}`, '--quiet'], {
-      allowFailure: !billingRequired
-    });
-    if (!billingRequired) {
-      process.stdout.write('Billing linkage is optional for this provisioning run; continuing with Firebase free-tier setup if the billing account is unavailable.\n');
-    }
+    commandWithRetry('gcloud', ['billing', 'projects', 'link', projectId, `--billing-account=${billingAccount}`, '--quiet']);
   } else {
     process.stdout.write('No billing account was supplied; continuing with Firebase free-tier setup.\n');
   }
@@ -427,17 +449,29 @@ export async function provisionProject(projectId, options = {}) {
 }
 
 async function main() {
-  requireConfiguration();
-  const plannedIds = precreatedProjectIds.length
-    ? precreatedProjectIds.slice(0, count)
-    : Array.from({ length: count }, (_, index) => generatedProjectId(index + 1));
-  process.stdout.write(`${applyChanges ? 'Provisioning' : 'Dry run for'} ${plannedIds.length} ${editionLabel(edition)} project(s): ${plannedIds.join(', ')}\n`);
-  if (!applyChanges) {
-    writeFileSync('tenant-provision-result.json', JSON.stringify({ dryRun: true, requestReference, plannedIds }, null, 2));
-    return;
-  }
-  preparePagesDeployment();
+  let preparedDeployment = false;
   try {
+    requireConfiguration();
+    const poolState = applyChanges ? await platformApi({ action: 'load' }) : {};
+    const existingSlots = (poolState.slots || []).filter((slot) => slot.ProvisioningBatchId === requestReference
+      && ['ready', 'assigned', 'reserved'].includes(lower(slot.Status)));
+    const existingIds = new Set(existingSlots.map((slot) => clean(slot.FirebaseProjectId)));
+    const candidateIds = precreatedProjectIds.length
+      ? precreatedProjectIds
+      : Array.from({ length: boundedInteger(request.Count, count, 20) }, (_, index) => generatedProjectId(index + 1));
+    const plannedIds = candidateIds.filter((projectId) => !existingIds.has(projectId)).slice(0, count);
+    if (plannedIds.length < count) throw new Error(`Only ${plannedIds.length} unregistered project IDs are available for the ${count} remaining project(s) in request ${requestReference}.`);
+    process.stdout.write(`${applyChanges ? 'Provisioning' : 'Dry run for'} ${plannedIds.length} ${editionLabel(edition)} project(s): ${plannedIds.join(', ')}\n`);
+    if (!applyChanges) {
+      writeFileSync('tenant-provision-result.json', JSON.stringify({ dryRun: true, requestReference, plannedIds }, null, 2));
+      return;
+    }
+    createdProjects.push(...existingSlots);
+    if (plannedIds.length) {
+      await verifyBillingAccess();
+      preparedDeployment = true;
+      preparePagesDeployment();
+    }
     for (const projectId of plannedIds) {
       createdProjects.push(await provisionProject(projectId));
     }
@@ -451,13 +485,22 @@ async function main() {
     });
     writeFileSync('tenant-provision-result.json', JSON.stringify({ dryRun: false, requestReference, projects: createdProjects }, null, 2));
   } catch (error) {
-    await platformApi({
-      action: 'finish-request',
-      request: { Reference: requestReference, Status: 'Failed', LastError: error.message || String(error) }
-    }).catch(() => null);
+    if (applyChanges && requestReference && platformPassword) {
+      const attempt = Math.max(1, Number(request.Attempts) || 1);
+      const retryMinutes = Math.min(360, 15 * (2 ** Math.min(5, attempt - 1)));
+      await platformApi({
+        action: 'finish-request',
+        request: {
+          Reference: requestReference,
+          Status: 'Pending',
+          NextAttemptAt: new Date(Date.now() + retryMinutes * 60000).toISOString(),
+          LastError: error.message || String(error)
+        }
+      }).catch((reportError) => process.stderr.write(`Could not schedule provisioning retry: ${reportError.message || reportError}\n`));
+    }
     throw error;
   } finally {
-    rmSync(deployDirectory, { recursive: true, force: true });
+    if (preparedDeployment) rmSync(deployDirectory, { recursive: true, force: true });
   }
 }
 

@@ -182,6 +182,13 @@ function poolSummary(slots, policy) {
 
 export function annotateProvisioningRequests(requestRows = [], slotRows = [], policyValue = {}, nowMs = Date.now()) {
   const policy = normalizeTenantPoolPolicy(policyValue);
+  const registeredByRequest = new Map();
+  for (const slot of slotRows) {
+    const reference = clean(slot.ProvisioningBatchId);
+    if (reference && ['ready', 'assigned', 'reserved'].includes(lower(slot.Status))) {
+      registeredByRequest.set(reference, (registeredByRequest.get(reference) || 0) + 1);
+    }
+  }
   const remainingByEdition = Object.fromEntries(['school', 'faith', 'organization'].map((edition) => {
     const ready = slotRows.filter((slot) => poolEdition(slot.Edition) === edition && lower(slot.Status) === 'ready').length;
     return [edition, Math.max(0, policy.TargetReadyPerEdition[edition] - ready)];
@@ -196,7 +203,8 @@ export function annotateProvisioningRequests(requestRows = [], slotRows = [], po
   for (const request of requests) {
     if (request.Mode !== 'pool' || lower(request.Status) !== 'provisioning') continue;
     if (!Number.isFinite(Date.parse(request.StartedAt)) || Date.parse(request.StartedAt) < staleBefore) continue;
-    remainingByEdition[request.Edition] = Math.max(0, remainingByEdition[request.Edition] - request.Count);
+    const outstanding = Math.max(0, request.Count - (registeredByRequest.get(request.Reference) || 0));
+    remainingByEdition[request.Edition] = Math.max(0, remainingByEdition[request.Edition] - outstanding);
   }
 
   return requests.map((request) => {
@@ -204,12 +212,18 @@ export function annotateProvisioningRequests(requestRows = [], slotRows = [], po
     const retryable = status === 'pending'
       || (status === 'provisioning' && Date.parse(request.StartedAt) < staleBefore);
     if (!retryable) return { ...request, ActionRequired: false, EffectiveCount: 0 };
-    if (request.Mode === 'branded') {
-      return { ...request, ActionRequired: true, EffectiveCount: request.Count };
+    const retryDue = !Number.isFinite(Date.parse(request.NextAttemptAt))
+      || Date.parse(request.NextAttemptAt) <= nowMs;
+    const outstanding = Math.max(0, request.Count - (registeredByRequest.get(request.Reference) || 0));
+    if (outstanding === 0) {
+      return { ...request, ActionRequired: retryDue, EffectiveCount: 0 };
     }
-    const effectiveCount = Math.min(request.Count, remainingByEdition[request.Edition]);
+    if (request.Mode === 'branded') {
+      return { ...request, ActionRequired: retryDue && outstanding > 0, EffectiveCount: outstanding };
+    }
+    const effectiveCount = Math.min(outstanding, remainingByEdition[request.Edition]);
     remainingByEdition[request.Edition] = Math.max(0, remainingByEdition[request.Edition] - effectiveCount);
-    return { ...request, ActionRequired: effectiveCount > 0, EffectiveCount: effectiveCount };
+    return { ...request, ActionRequired: retryDue && effectiveCount > 0, EffectiveCount: effectiveCount };
   });
 }
 
@@ -852,7 +866,11 @@ function publicProvisioningRequest(request = {}) {
     RunnerId: clean(request.RunnerId),
     StartedAt: clean(request.StartedAt),
     CompletedAt: clean(request.CompletedAt),
-    LastError: clean(request.LastError)
+    LastError: clean(request.LastError),
+    NextAttemptAt: clean(request.NextAttemptAt),
+    Attempts: Math.max(0, Number(request.Attempts) || 0),
+    ProvisioningBatchId: clean(request.ProvisioningBatchId),
+    EffectiveCount: Math.max(0, Number(request.EffectiveCount) || 0)
   };
 }
 
@@ -879,10 +897,12 @@ export async function claimNextTenantProvisioningRequest(platformEnv, runnerId =
     const requestState = queueState.get(clean(request.Reference || request.__id));
     const claimed = {
       ...withoutFirestoreMetadata(request),
-      Count: requestState?.EffectiveCount || positiveInteger(request.Count, 1, 20),
+      EffectiveCount: requestState?.EffectiveCount ?? positiveInteger(request.Count, 1, 20),
       Status: 'Provisioning',
       RunnerId: clean(runnerId || `runner-${crypto.randomUUID()}`),
       StartedAt: now,
+      Attempts: Math.max(0, Number(request.Attempts) || 0) + 1,
+      NextAttemptAt: '',
       LastError: '',
       UpdatedAt: now
     };
@@ -916,13 +936,17 @@ export async function finishTenantProvisioningRequest(platformEnv, value = {}) {
     error.status = 404;
     throw error;
   }
-  const status = lower(value.Status) === 'completed' ? 'Completed' : 'Failed';
+  const requestedStatus = lower(value.Status);
+  const status = requestedStatus === 'completed' ? 'Completed' : requestedStatus === 'pending' ? 'Pending' : 'Failed';
   const now = new Date().toISOString();
   const completed = {
     ...withoutFirestoreMetadata(request),
     Status: status,
-    CompletedAt: now,
-    LastError: status === 'Failed' ? clean(value.LastError || value.error || 'Provisioning failed.') : '',
+    CompletedAt: status === 'Pending' ? '' : now,
+    NextAttemptAt: status === 'Pending' && Number.isFinite(Date.parse(value.NextAttemptAt))
+      ? new Date(value.NextAttemptAt).toISOString()
+      : '',
+    LastError: status === 'Completed' ? '' : clean(value.LastError || value.error || 'Provisioning failed.'),
     ProvisionedProjectIds: Array.isArray(value.ProvisionedProjectIds)
       ? value.ProvisionedProjectIds.map(clean).filter(Boolean).slice(0, 20)
       : [],
@@ -945,12 +969,21 @@ export async function ensureTenantPoolCapacity(platformEnv, selectedEdition = ''
     listCollection(platformEnv, TENANT_PROVISIONING_REQUEST_COLLECTION, { pageSize: 500, maxPages: 10 }).catch(() => [])
   ]);
   const editions = selectedEdition ? [poolEdition(selectedEdition)] : ['school', 'faith', 'organization'];
+  const registeredByRequest = new Map();
+  for (const slot of slotRows) {
+    const reference = clean(slot.ProvisioningBatchId);
+    if (reference && ['ready', 'assigned', 'reserved'].includes(lower(slot.Status))) {
+      registeredByRequest.set(reference, (registeredByRequest.get(reference) || 0) + 1);
+    }
+  }
   const queued = [];
   for (const edition of editions) {
     const ready = slotRows.filter((slot) => poolEdition(slot.Edition) === edition && lower(slot.Status) === 'ready').length;
     const inFlight = requestRows
       .filter((request) => poolEdition(request.Edition) === edition && ['pending', 'provisioning'].includes(lower(request.Status)))
-      .reduce((total, request) => total + positiveInteger(request.Count, 1, 20), 0);
+      .reduce((total, request) => total + Math.max(0,
+        positiveInteger(request.Count, 1, 20) - (registeredByRequest.get(clean(request.Reference || request.__id)) || 0)
+      ), 0);
     const shortfall = Math.max(0, policy.TargetReadyPerEdition[edition] - ready - inFlight);
     if (!shortfall) continue;
     queued.push(await requestTenantProjectProvisioning(platformEnv, {
