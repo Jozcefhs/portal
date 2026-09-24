@@ -836,7 +836,7 @@ const VERIFIED_ACTOR_ACTIONS = new Set([
   'getStudentConductCases', 'saveStudentConductCase', 'deleteStudentConductCase',
   'getAcademicManagement', 'saveAcademicSession', 'saveAcademicTerm', 'saveAcademicClass',
   'saveAcademicArmTemplate', 'saveAcademicArm', 'saveAcademicSubject', 'saveAcademicDepartment', 'saveAcademicOffering',
-  'bulkCreateAcademicClasses', 'bulkCreateAcademicArmTemplates', 'bulkApplyAcademicArmTemplates',
+  'bulkCreateAcademicClasses', 'bulkCreateAcademicArmTemplates', 'bulkApplyAcademicArmTemplates', 'bulkAssignAcademicClassroomDepartments',
   'bulkCreateAcademicSubjects', 'configureAcademicSeniorChoiceSubjects', 'bulkApplyAcademicSubjects', 'bulkAssignAcademicClassTeachers', 'bulkAssignAcademicSubjectTeacher', 'updateAcademicSubjectTeacherAllocation',
   'saveAcademicTeacherAllocation', 'saveAcademicStudentMembership', 'bulkAllocateAcademicStudents',
   'bulkImportAcademicStudentMemberships',
@@ -885,7 +885,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'getStudentConductCases', 'saveStudentConductCase', 'deleteStudentConductCase',
   'getAcademicManagement', 'saveAcademicSession', 'saveAcademicTerm', 'saveAcademicClass',
   'saveAcademicArmTemplate', 'saveAcademicArm', 'saveAcademicSubject', 'saveAcademicDepartment', 'saveAcademicOffering',
-  'bulkCreateAcademicClasses', 'bulkCreateAcademicArmTemplates', 'bulkApplyAcademicArmTemplates',
+  'bulkCreateAcademicClasses', 'bulkCreateAcademicArmTemplates', 'bulkApplyAcademicArmTemplates', 'bulkAssignAcademicClassroomDepartments',
   'bulkCreateAcademicSubjects', 'configureAcademicSeniorChoiceSubjects', 'bulkApplyAcademicSubjects',
   'bulkAssignAcademicClassTeachers', 'bulkAssignAcademicSubjectTeacher', 'updateAcademicSubjectTeacherAllocation',
   'saveAcademicTeacherAllocation', 'saveAcademicStudentMembership', 'bulkAllocateAcademicStudents',
@@ -8772,6 +8772,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'bulkCreateAcademicClasses':
     case 'bulkCreateAcademicArmTemplates':
     case 'bulkApplyAcademicArmTemplates':
+    case 'bulkAssignAcademicClassroomDepartments':
     case 'bulkCreateAcademicSubjects':
     case 'configureAcademicSeniorChoiceSubjects':
     case 'bulkApplyAcademicSubjects':

@@ -18,6 +18,7 @@ import {
   academicLegacyClassCompatibilityEnabled,
   academicOfferingSubjectRole,
   academicSeniorCoreSubjectIds,
+  academicSeniorSubjectIsCoreForClassroom,
   academicStudentMatchesClass,
   academicSubjectTeacherCandidates,
   academicTeacherVisibleMemberships,
@@ -225,6 +226,42 @@ test('AM-002 active Senior departments reserve their Core subjects from school-w
     { DepartmentId: 'old', CoreSubjectIds: ['history'], Status: 'Archived' },
     null
   ]), ['physics', 'chemistry', 'literature']);
+});
+
+test('Senior Core subjects can belong to several departments without becoming global choices', () => {
+  const departments = [
+    { DepartmentId: 'science', Name: 'Science', CoreSubjectIds: ['english', 'math', 'physics'], Status: 'Active' },
+    { DepartmentId: 'arts', Name: 'Arts', CoreSubjectIds: ['english', 'literature'], Status: 'Active' },
+    { DepartmentId: 'business', Name: 'Business', CoreSubjectIds: ['english', 'math'], Status: 'Active' },
+    { DepartmentId: 'old', Name: 'Old', CoreSubjectIds: ['physics'], Status: 'Inactive' }
+  ];
+  assert.equal(academicSeniorSubjectIsCoreForClassroom(departments, { DepartmentId: 'science' }, 'english'), true);
+  assert.equal(academicSeniorSubjectIsCoreForClassroom(departments, { DepartmentId: 'arts' }, 'english'), true);
+  assert.equal(academicSeniorSubjectIsCoreForClassroom(departments, { DepartmentId: 'business' }, 'english'), true);
+  assert.equal(academicSeniorSubjectIsCoreForClassroom(departments, { DepartmentId: 'science' }, 'math'), true);
+  assert.equal(academicSeniorSubjectIsCoreForClassroom(departments, { DepartmentId: 'business' }, 'math'), true);
+  assert.equal(academicSeniorSubjectIsCoreForClassroom(departments, { DepartmentId: 'arts' }, 'math'), false);
+  assert.equal(academicSeniorSubjectIsCoreForClassroom(departments, { DepartmentId: 'old' }, 'physics'), false);
+  assert.equal(academicSeniorSubjectIsCoreForClassroom(departments, {}, 'english'), false);
+});
+
+test('Senior classroom departments can be corrected in a protected atomic batch', () => {
+  const batchSource = librarySource.slice(
+    librarySource.indexOf('export async function bulkAssignAcademicClassroomDepartments'),
+    librarySource.indexOf('export function academicMembershipCanReceiveInitialArm')
+  );
+  assert.match(batchSource, /requireCapability\(user, 'canManageStructure'\)/);
+  assert.match(batchSource, /loadScopedAcademicState\(env, scope, ACADEMIC_RECORD_STATE_KEYS\.arm\)/);
+  assert.match(batchSource, /validateAcademicRecord\(state, 'arm', record, \{ existing \}\)/);
+  assert.match(batchSource, /writePrecondition\(existing, assignment\.RevisionToken\)/);
+  assert.match(batchSource, /commitAcademicBatch\(env, writes/);
+  assert.match(librarySource, /bulkassignacademicclassroomdepartments/);
+  assert.match(backendSource, /case 'bulkAssignAcademicClassroomDepartments':/);
+  assert.match(adminSource, /data-academic-classroom-departments/);
+  assert.match(adminSource, /data-original-department-id/);
+  assert.match(adminSource, /Choose or change a Senior classroom department before saving/);
+  assert.match(librarySource, /ACADEMIC_CLASSROOM_DEPARTMENT_REQUIRED/);
+  assert.match(librarySource, /ACADEMIC_SUBJECT_NOT_IN_DEPARTMENT/);
 });
 
 test('AM-003 permanent deletion detects current and historical academic references', () => {
@@ -1021,7 +1058,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
   assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260918-academic-readability/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260924-edition-tutorial-catalogue/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260924-senior-classroom-departments/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

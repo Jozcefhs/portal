@@ -11273,6 +11273,7 @@ function academicTaskDefinitions(view, root) {
     classrooms: [
       { key: 'register', label: 'Classroom register', title: 'Choose a classroom', description: 'Open an existing classroom to manage its students and form staff.', nodes: nodes(register('Classrooms')) },
       { key: 'create', label: 'Create classrooms', title: 'Create classrooms in bulk', description: 'Select every reusable class and arm combination that should become a classroom.', nodes: nodes(form('[data-academic-classroom-creator]')) },
+      { key: 'departments', label: 'Senior departments', title: 'Assign Senior classroom departments', description: 'Choose the department for each Senior classroom, then save all changed rows together.', nodes: nodes(form('[data-academic-classroom-departments]')) },
       { key: 'manage', label: 'Open classroom', title: 'Manage the open classroom', description: 'Assign students, form teacher and assistant without leaving the classroom.', nodes: nodes(form('.academic-classroom-open'), form('.academic-classroom-empty')) }
     ],
     classStaff: [
@@ -11480,6 +11481,16 @@ function academicClassroomWorkspace(data, rows) {
     <button type="submit">Create selected classrooms</button>
   </form>` : '<div class="academic-view-only-note"><strong>Classroom workspace</strong><span>Your role can open assigned classrooms but cannot create or reconfigure them.</span></div>';
 
+  const seniorClassrooms = classrooms.filter((row) => clean(academicFind(classes, row.ClassId)?.SchoolStage).toLowerCase() === 'senior-secondary');
+  const departmentEditor = section === 'secondary' && canStructure ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="bulkAssignAcademicClassroomDepartments" data-academic-classroom-departments>
+    <input type="hidden" name="SchoolSection" value="secondary">
+    <div class="academic-management-editor-heading"><div><small>Senior classrooms</small><h3>Assign departments</h3><p class="muted">A subject may be Core in several departments. Each classroom still needs its own department so subject-teacher assignments use the correct Core list.</p></div></div>
+    ${seniorClassrooms.length && departments.length ? `<div class="academic-classroom-department-list">${seniorClassrooms.map((row) => `<div class="academic-classroom-department-row" data-academic-classroom-department-row data-classroom-id="${escapeHtml(row.ArmId)}" data-revision-token="${escapeHtml(row.RevisionToken || '')}" data-original-department-id="${escapeHtml(row.DepartmentId || '')}">
+      <strong>${escapeHtml(`${academicLabel(classes, row.ClassId)} / ${row.Name}`)}</strong>
+      <label>Department<select data-academic-classroom-department-select>${academicSelectOptions(departments, row.DepartmentId, (department) => department.Name, 'Choose department')}${row.DepartmentId && !academicFind(departments, row.DepartmentId) ? `<option value="${escapeHtml(row.DepartmentId)}" selected>Inactive or missing department — reassign</option>` : ''}</select></label>
+    </div>`).join('')}</div><button type="submit">Save changed departments</button>` : `<div class="academic-classroom-empty"><strong>${seniorClassrooms.length ? 'No active Senior departments' : 'No Senior classrooms'}</strong><span>${seniorClassrooms.length ? 'Create Senior departments and set their Core subjects first.' : 'Create Senior classrooms first.'}</span></div>`}
+  </form>` : '';
+
   let selectedWorkspace = '<div class="academic-classroom-empty"><strong>No classroom is open.</strong><span>Create classrooms above, or open an existing classroom from the register below.</span></div>';
   if (selectedArm && selectedClass) {
     const seniorNeedsDepartment = selectedStage === 'senior-secondary' && !selectedDepartment;
@@ -11524,7 +11535,7 @@ function academicClassroomWorkspace(data, rows) {
     { label: 'Assistant', value: (row) => { const allocation = periodAllocations.find((item) => item.ArmId === row.ArmId && item.AllocationRole === 'Assistant Teacher'); return academicLabel(data.staff, allocation?.TeacherUsername, 'Not assigned'); } },
     { label: 'Action', render: (row) => `<button type="button" data-academic-open-classroom="${escapeHtml(row.ArmId)}">Open classroom</button>` }
   ], { emptyMessage: 'No classrooms exist yet. Use Create classrooms above.' });
-  return `${editor}${selectedWorkspace}${classroomRegister}`;
+  return `${editor}${departmentEditor}${selectedWorkspace}${classroomRegister}`;
 }
 
 function academicClassStaffWorkspace(data, rows) {
@@ -13722,6 +13733,21 @@ function academicFormPayload(form) {
 }
 
 function academicWorkflowPayload(form) {
+  if (form.dataset.academicWorkflow === 'bulkAssignAcademicClassroomDepartments') {
+    const assignments = [...form.querySelectorAll('[data-academic-classroom-department-row]')].map((row) => {
+      const departmentId = clean(row.querySelector('[data-academic-classroom-department-select]')?.value);
+      if (departmentId === clean(row.dataset.originalDepartmentId)) return null;
+      if (!departmentId) throw new Error(`Choose a department for ${row.querySelector('strong')?.textContent || 'each changed classroom'}.`);
+      return {
+        ClassroomId: clean(row.dataset.classroomId),
+        DepartmentId: departmentId,
+        RevisionToken: clean(row.dataset.revisionToken)
+      };
+    }).filter(Boolean);
+    if (!assignments.length) throw new Error('Choose or change a Senior classroom department before saving.');
+    if (assignments.length > 100) throw new Error('Save at most 100 changed classrooms at once.');
+    return { SchoolSection: 'secondary', Assignments: assignments };
+  }
   if (form.dataset.academicWorkflow === 'bulkAssignAcademicClassTeachers') {
     const selectedClassrooms = new Set();
     const assignments = [...form.querySelectorAll('[data-academic-class-staff-row]')].map((row) => {

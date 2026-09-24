@@ -562,6 +562,11 @@ export function academicSeniorCoreSubjectIds(departments = []) {
   return uniqueIds((departments || []).filter(statusActive).flatMap((department) => department.CoreSubjectIds || []));
 }
 
+export function academicSeniorSubjectIsCoreForClassroom(departments = [], classroom = {}, subjectId = '') {
+  const department = findById(departments, classroom?.DepartmentId);
+  return Boolean(statusActive(department) && (department.CoreSubjectIds || []).includes(subjectId));
+}
+
 function publicRecord(row = {}) {
   const copy = { ...row, RecordId: recordId(row), RevisionToken: clean(row.__updateTime) };
   delete copy.__name;
@@ -1528,10 +1533,20 @@ function validateAcademicRecord(state, type, record, people = {}) {
       const classroom = findById(state.arms, record.ArmId);
       const department = findById(state.departments, classroom?.DepartmentId);
       const availableSeniorCore = record.SchoolStage === 'senior-secondary'
-        && statusActive(department)
-        && (department.CoreSubjectIds || []).includes(record.SubjectId);
+        && academicSeniorSubjectIsCoreForClassroom(state.departments, classroom, record.SubjectId);
       if (!offering && !globallyAvailableSeniorChoice && !availableSeniorCore) {
-        throw failure('Configure this subject for the selected classroom through its Senior department or Senior choices before allocating a teacher.');
+        const schoolClass = findById(state.classes, record.ClassId);
+        const classroomName = `${schoolClass?.Name || 'Class'} / ${classroom?.Name || 'arm'}`;
+        if (record.SchoolStage === 'senior-secondary') {
+          if (!classroom?.DepartmentId) {
+            throw failure(`${classroomName} has no Senior department. Use Classrooms → Senior departments to assign one before allocating a ${subject?.Name || 'subject'} teacher.`, 409, 'ACADEMIC_CLASSROOM_DEPARTMENT_REQUIRED');
+          }
+          if (!statusActive(department)) {
+            throw failure(`${classroomName} has an inactive or missing Senior department. Correct its department before allocating a teacher.`, 409, 'ACADEMIC_CLASSROOM_DEPARTMENT_INVALID');
+          }
+          throw failure(`${subject?.Name || 'This subject'} is not Core in ${department.Name} for ${classroomName}. Add it to that department's Core subjects before allocating a teacher.`, 409, 'ACADEMIC_SUBJECT_NOT_IN_DEPARTMENT');
+        }
+        throw failure(`${subject?.Name || 'This subject'} is not offered to ${classroomName} for this session and term. Configure the class subject before allocating a teacher.`, 409, 'ACADEMIC_SUBJECT_NOT_OFFERED');
       }
     }
   }
@@ -2452,6 +2467,51 @@ export async function bulkApplyAcademicSubjects(env, user = {}, input = {}) {
     ? `${createdRecords.length} class-subject offering${createdRecords.length === 1 ? '' : 's'} created online${skipped ? `; ${skipped} already matched and were skipped` : ''}.`
     : 'Every selected class already has the selected reusable subjects.';
   response.bulkResult = { Requested: classIds.length * subjectIds.length, Created: createdRecords.length, Skipped: skipped };
+  return response;
+}
+
+export async function bulkAssignAcademicClassroomDepartments(env, user = {}, input = {}) {
+  requireWritableSubscription(user);
+  requireCapability(user, 'canManageStructure');
+  const scope = await academicScope(env, user, input, { requireSection: true });
+  if (scope.section !== 'secondary') throw failure('Senior classroom departments are available only in Secondary school.');
+  const assignments = Array.isArray(input.Assignments) ? input.Assignments : [];
+  if (!assignments.length || assignments.length > 100) throw failure('Choose between 1 and 100 Senior classrooms to update.');
+  const state = await loadScopedAcademicState(env, scope, ACADEMIC_RECORD_STATE_KEYS.arm);
+  const seen = new Set();
+  const writes = [];
+  for (const assignment of assignments) {
+    const armId = clean(assignment?.ClassroomId);
+    const departmentId = clean(assignment?.DepartmentId);
+    if (!armId || !departmentId) throw failure('Choose a Senior department for every selected classroom.');
+    if (seen.has(armId)) throw failure('Each classroom may appear only once in this batch.');
+    seen.add(armId);
+    const existing = assertReference(findById(state.arms, armId), 'One selected classroom is not active.');
+    const schoolClass = assertReference(findById(state.classes, existing.ClassId), 'One selected classroom belongs to an inactive class.');
+    if (!activeValue(existing.IsClassroom, false) || schoolStageValue(schoolClass.SchoolStage, schoolClass.SchoolSection, schoolClass.Name) !== 'senior-secondary') {
+      throw failure(`${schoolClass.Name} / ${existing.Name} is not a Senior Secondary classroom.`);
+    }
+    if (existing.DepartmentId === departmentId) continue;
+    const record = normalizeAcademicArm({ ...existing, DepartmentId: departmentId }, scope, existing);
+    validateAcademicRecord(state, 'arm', record, { existing });
+    stampAcademicRecord(record, user, existing);
+    writes.push({
+      collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.arms,
+      documentId: record.ArmId,
+      data: withoutMetadata(record),
+      ...writePrecondition(existing, assignment.RevisionToken)
+    });
+    writes.push(auditWrite(user, 'UPDATE', 'arm', record, `Senior department: ${schoolClass.Name} / ${record.Name} -> ${findById(state.departments, departmentId)?.Name || departmentId}`));
+  }
+  await commitAcademicBatch(env, writes, 'A classroom changed while its department was being saved. Reload and try again.');
+  const response = await bootstrapAcademicManagement(env, user, {
+    ...input, BranchId: scope.branchId, SchoolSection: scope.section, View: 'classrooms'
+  });
+  const changed = writes.length / 2;
+  response.message = changed
+    ? `${changed} Senior classroom department${changed === 1 ? '' : 's'} saved. Subject teachers can now be assigned where the subject is Core in each selected department.`
+    : 'The selected classroom departments already match the saved settings.';
+  response.bulkResult = { Requested: assignments.length, Updated: changed };
   return response;
 }
 
@@ -6959,6 +7019,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['bulkcreateacademicclasses', 'bulkcreateclasses'].includes(action)) return bulkCreateAcademicClasses(env, user, input);
   if (['bulkcreateacademicarmtemplates', 'bulkcreatearmtemplates'].includes(action)) return bulkCreateAcademicArmTemplates(env, user, input);
   if (['bulkapplyacademicarmtemplates', 'bulkapplyarmtemplates'].includes(action)) return bulkApplyAcademicArmTemplates(env, user, input);
+  if (['bulkassignacademicclassroomdepartments', 'bulkassignclassroomdepartments'].includes(action)) return bulkAssignAcademicClassroomDepartments(env, user, input);
   if (['bulkcreateacademicsubjects', 'bulkcreatesubjects'].includes(action)) return bulkCreateAcademicSubjects(env, user, input);
   if (['configureacademicseniorchoicesubjects', 'configureseniorchoicesubjects'].includes(action)) return configureAcademicSeniorChoiceSubjects(env, user, input);
   if (['bulkapplyacademicsubjects', 'bulkapplysubjects'].includes(action)) return bulkApplyAcademicSubjects(env, user, input);
