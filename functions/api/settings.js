@@ -32,6 +32,7 @@ import {
   normalizeTutorialLinks,
   normalizeYouTubeTutorialUrl
 } from '../lib/tutorial-links.js';
+import { loadPublishedTutorials } from '../lib/tutorial-catalog.js';
 
 const PROFILE_CACHE_MS = 60 * 1000;
 let profileCache = null;
@@ -355,7 +356,13 @@ export async function onRequestGet(context) {
     ? await readStaffSession(context.env, context.request).catch(() => null)
     : null;
   const fresh = Boolean(staff);
-  const profile = publicProfile(await getProfile(context.env, { branchId, fresh }));
+  const storedProfile = await getProfile(context.env, { branchId, fresh });
+  const tutorials = await loadPublishedTutorials(context.env, storedProfile.OrganisationEdition, storedProfile);
+  const profile = publicProfile({
+    ...storedProfile,
+    TutorialLinks: tutorials.links,
+    TutorialChannelUrl: tutorials.channelUrl
+  });
   finishRequestMetric(metric, { status: 200, action: 'load-public-profile' });
   return Response.json({ ok: true, profile }, {
     headers: {
@@ -509,8 +516,8 @@ export async function onRequestPost(context) {
       PortalHeadline: mergedProfileText(existing, incoming, 'PortalHeadline'),
       PortalSubheading: mergedProfileText(existing, incoming, 'PortalSubheading'),
       PortalNotice: mergedProfileText(existing, incoming, 'PortalNotice'),
-      TutorialLinks: normalizeTutorialLinks(incoming.TutorialLinks ?? existing.TutorialLinks ?? {}),
-      TutorialChannelUrl: normalizeYouTubeTutorialUrl(incoming.TutorialChannelUrl ?? existing.TutorialChannelUrl ?? ''),
+      TutorialLinks: normalizeTutorialLinks(existing.TutorialLinks ?? {}),
+      TutorialChannelUrl: normalizeYouTubeTutorialUrl(existing.TutorialChannelUrl ?? ''),
       ResultDisplayMode: ['subjects', 'percentage'].includes(clean(incoming.ResultDisplayMode)) ? clean(incoming.ResultDisplayMode) : 'subjects',
       ShowResultsOnline: ['YES', 'NO'].includes(clean(incoming.ShowResultsOnline).toUpperCase()) ? clean(incoming.ShowResultsOnline).toUpperCase() : 'NO',
       CurrentAcademicSession: clean(incoming.CurrentAcademicSession),

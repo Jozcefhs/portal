@@ -62,6 +62,16 @@
         <div class="settings-section-heading"><div><span class="settings-section-icon">M</span></div><div><p class="settings-eyebrow">Plan access matrix</p><h2>Features and modules</h2><p>Select the organisation type, then check the modules that each plan may use. Module dependencies are applied automatically.</p></div></div>
         <div id="planEntitlementMatrix" aria-live="polite"></div>
       </section>
+      <section id="ownerTutorialSettings" class="settings-section owner-tutorial-section">
+        <div class="settings-section-heading"><div><span class="settings-section-icon" aria-hidden="true">&#9654;</span></div><div><p class="settings-eyebrow">Owner-managed help</p><h2>Video tutorial catalogue</h2><p>Publish tutorials once for every subscriber. Subscriber staff and parents can open the videos, but cannot edit these links.</p></div></div>
+        <div class="settings-fields two-column">
+          <div class="settings-field"><label for="ownerTutorialEdition">Edition</label><select id="ownerTutorialEdition"><option value="school">School</option><option value="faith">Church</option><option value="organization">Other organisation</option></select></div>
+          <div class="settings-field"><label for="ownerTutorialChannelUrl">Main YouTube channel or playlist</label><input id="ownerTutorialChannelUrl" type="text" inputmode="url" autocomplete="url" spellcheck="false" placeholder="https://www.youtube.com/@DynamaxVendmac"><small class="settings-help">Used when a module has no specific tutorial.</small></div>
+          <div class="settings-field full-width"><div class="settings-subsection-title"><strong id="ownerTutorialEditionTitle">School modules and parent operations</strong><span>Leave links blank until their videos are ready.</span></div><div id="ownerTutorialLinksList" class="tutorial-settings-list" aria-live="polite"></div></div>
+        </div>
+        <div class="settings-actions"><button id="saveOwnerTutorials" type="button">Publish tutorial links</button></div>
+        <p id="ownerTutorialStatus" class="status" aria-live="polite"></p>
+      </section>
       <section class="settings-section tenant-pool-section">
         <div class="settings-section-heading"><div><span class="settings-section-icon">T</span></div><div><p class="settings-eyebrow">Fast subscriber onboarding</p><h2>Ready project pool</h2><p>Keep isolated Firebase and Cloudflare projects ready, assign them safely after trial activation or confirmed payment, and replenish capacity before it runs out.</p></div></div>
         <div id="tenantPoolSummary" class="tenant-pool-summary" aria-live="polite"></div>
@@ -151,6 +161,7 @@
   </dialog>
   <script src="js/action-feedback.js?v=20260729-action-feedback"></script>
   <script src="js/app-dialogs.js?v=20260809-custom-dialogs"></script>
-  <script src="js/plan-management.js?v=20260924-pool-retries"></script>
+  <script src="js/tutorial-module-catalogue.js?v=20260924-owner-tutorials"></script>
+  <script src="js/plan-management.js?v=20260924-owner-tutorials"></script>
 </body>
 </html>

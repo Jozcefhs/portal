@@ -10,7 +10,6 @@ const approvalSettingsButton = document.getElementById('staffApprovalSettings');
 const approvalSettingsDialog = document.getElementById('staffApprovalSettingsDialog');
 const approvalSettingsForm = document.getElementById('staffApprovalSettingsForm');
 const paymentSettingsButton = document.getElementById('staffPaymentSettings');
-const tutorialSettingsButton = document.getElementById('staffTutorialSettings');
 const tutorialButton = document.getElementById('staffTutorialButton');
 const tutorialMenuButton = document.getElementById('staffTutorialMenu');
 const subscriptionButton = document.getElementById('staffSubscriptionButton');
@@ -454,9 +453,7 @@ async function openCurrentTutorial() {
   }
   await window.DynamaxDialogs.alert({
     title: 'Tutorial not published yet',
-    message: canManageOrganisationSettings(currentUser || {})
-      ? `No YouTube tutorial has been assigned to ${destination.label}. Open Account & settings, then Tutorial video settings, to add it.`
-      : `The YouTube tutorial for ${destination.label} has not been published yet.`,
+    message: `The YouTube tutorial for ${destination.label} has not been published yet.`,
     confirmText: 'Close'
   });
 }
@@ -1948,12 +1945,6 @@ function staffTabLabel(key, fallback = '') {
   return fallback;
 }
 
-function tutorialSettingsUrl() {
-  const url = new URL('setup.html', window.location.href);
-  url.hash = 'tutorial-settings';
-  return `${url.pathname}${url.hash}`;
-}
-
 function staffLearnerTerms() {
   const primaryWorkspace = resolveDashboardEdition(currentUser || {}) === 'school'
     && clean(currentUser?.schoolSectionAccess).toLowerCase() === 'primary';
@@ -2137,7 +2128,6 @@ function showDashboard(user, options = {}) {
     user.approvalEnabled
   );
   paymentSettingsButton.hidden = user.role !== 'Super Admin';
-  tutorialSettingsButton.hidden = !canManageOrganisationSettings(user);
   subscriptionButton.hidden = !canManageOrganisationSettings(user);
   desktopSetupButton.hidden = !canManageOrganisationSettings(user);
   if (subscriptionAccessBanner) {
@@ -19790,9 +19780,6 @@ window.addEventListener('storage', (event) => {
 });
 paymentSettingsButton.addEventListener('click', () => {
   window.location.assign(paymentSettingsUrl());
-});
-tutorialSettingsButton.addEventListener('click', () => {
-  window.location.assign(tutorialSettingsUrl());
 });
 new MutationObserver(updateStaffThemeToggle).observe(document.documentElement, {
   attributes: true,

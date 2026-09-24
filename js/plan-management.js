@@ -16,10 +16,14 @@ const platformTransferDecisionForm = document.getElementById('platformTransferDe
 const platformTransferDecisionNotes = document.getElementById('platformTransferDecisionNotes');
 const platformTransferDecisionStatus = document.getElementById('platformTransferDecisionStatus');
 const platformTransferDecisionConfirm = document.getElementById('platformTransferDecisionConfirm');
+const ownerTutorialEdition = document.getElementById('ownerTutorialEdition');
+const ownerTutorialLinksList = document.getElementById('ownerTutorialLinksList');
+const ownerTutorialStatus = document.getElementById('ownerTutorialStatus');
 let unlockedPassword = '';
 let catalog = null;
 let tenantPoolState = null;
 let platformPaymentState = null;
+let ownerTutorialCatalog = null;
 let selectedEntitlementEdition = 'school';
 let platformTransferDecisionResolver = null;
 
@@ -34,6 +38,112 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (character) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[character]);
+}
+
+function tutorialCatalogDraft(value = {}) {
+  return {
+    ChannelUrl: String(value.ChannelUrl || '').trim(),
+    Editions: Object.fromEntries(['school', 'faith', 'organization'].map((edition) => [
+      edition,
+      { Links: { ...(value.Editions?.[edition]?.Links || {}) } }
+    ]))
+  };
+}
+
+function safeYouTubeHref(value) {
+  try {
+    const url = new URL(String(value || '').trim());
+    return url.protocol === 'https:' && [
+      'youtube.com', 'www.youtube.com', 'm.youtube.com',
+      'youtu.be', 'www.youtu.be', 'youtube-nocookie.com', 'www.youtube-nocookie.com'
+    ].includes(url.hostname.toLowerCase()) && url.pathname !== '/' ? url.href : '';
+  } catch (_error) {
+    return '';
+  }
+}
+
+function saveVisibleTutorialDraft() {
+  if (!ownerTutorialCatalog) return;
+  ownerTutorialCatalog.ChannelUrl = document.getElementById('ownerTutorialChannelUrl').value.trim();
+  ownerTutorialCatalog.Editions[ownerTutorialEdition.value].Links = Object.fromEntries(
+    [...ownerTutorialLinksList.querySelectorAll('[data-tutorial-storage-key]')]
+      .map((input) => [input.dataset.tutorialStorageKey, input.value.trim()])
+      .filter(([, url]) => url)
+  );
+}
+
+function renderOwnerTutorialLinks() {
+  if (!ownerTutorialCatalog) return;
+  const edition = ownerTutorialEdition.value;
+  const titles = {
+    school: 'School modules and parent operations',
+    faith: 'Church modules',
+    organization: 'Other-organisation modules'
+  };
+  document.getElementById('ownerTutorialEditionTitle').textContent = titles[edition];
+  const links = ownerTutorialCatalog.Editions[edition].Links;
+  ownerTutorialLinksList.dataset.edition = edition;
+  ownerTutorialLinksList.replaceChildren(...window.DynamaxTutorialModuleCatalogue
+    .filter((module) => module.editions.includes(edition))
+    .map((module, index) => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'tutorial-settings-item';
+      const label = document.createElement('label');
+      const title = document.createElement('span');
+      title.textContent = edition === 'organization' && module.organizationLabel
+        ? module.organizationLabel : module.label;
+      const input = document.createElement('input');
+      input.id = `ownerTutorialModuleUrl${index}`;
+      input.type = 'text';
+      input.inputMode = 'url';
+      input.autocomplete = 'url';
+      input.spellcheck = false;
+      input.placeholder = 'https://youtu.be/...';
+      input.dataset.tutorialStorageKey = module.storageKey;
+      input.value = String(links[module.storageKey] || links[module.key] || '').trim();
+      label.htmlFor = input.id;
+      label.append(title, input);
+      const openLink = document.createElement('a');
+      openLink.target = '_blank';
+      openLink.rel = 'noopener noreferrer';
+      openLink.title = `Open ${title.textContent} tutorial`;
+      openLink.setAttribute('aria-label', openLink.title);
+      openLink.textContent = '\u25B6';
+      const updatePreview = () => {
+        const href = safeYouTubeHref(input.value);
+        openLink.href = href || '#';
+        openLink.hidden = !href;
+      };
+      input.addEventListener('input', updatePreview);
+      updatePreview();
+      wrapper.append(label, openLink);
+      return wrapper;
+    }));
+}
+
+async function ownerTutorialRequest(payload = null) {
+  const response = await fetch('/api/tutorial-catalog', payload ? {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  } : { cache: 'no-store' });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data?.ok) throw new Error(data?.message || 'Tutorial catalogue could not be loaded.');
+  return data;
+}
+
+async function loadOwnerTutorialCatalog() {
+  try {
+    const data = await ownerTutorialRequest();
+    ownerTutorialCatalog = tutorialCatalogDraft(data.catalog);
+    document.getElementById('ownerTutorialChannelUrl').value = ownerTutorialCatalog.ChannelUrl;
+    renderOwnerTutorialLinks();
+    setStatus(ownerTutorialStatus, data.published
+      ? 'Published tutorial links loaded. Changes take effect only when you publish again.'
+      : 'No owner catalogue has been published yet. Existing subscriber links remain available until your first publication.', 'ok');
+  } catch (error) {
+    setStatus(ownerTutorialStatus, error.message || String(error), 'bad');
+  }
 }
 
 function platformPaymentMoney(amount, currency) {
@@ -456,7 +566,7 @@ loginForm.addEventListener('submit', async (event) => {
     document.getElementById('planPricingCurrency').value = catalog.Currency || 'NGN';
     document.getElementById('planUsdToNgnRate').value = Number(catalog.UsdToNgnRate || 1350);
     renderCatalog();
-    await Promise.all([loadTenantPool(), loadPlatformPayments()]);
+    await Promise.all([loadTenantPool(), loadPlatformPayments(), loadOwnerTutorialCatalog()]);
     loginForm.hidden = true;
     pricingForm.hidden = false;
     setStatus(pricingStatus, 'Pricing loaded. Changes are not published until you save.', 'ok');
@@ -518,7 +628,36 @@ pricingForm.addEventListener('submit', async (event) => {
 
 pricingForm.addEventListener('input', (event) => {
   if (event.target.matches('[data-price-input], [data-flex-module-price], #planUsdToNgnRate')) updateConvertedPricePreviews();
-  if (!event.target.closest('.tenant-pool-section, .platform-payment-section')) setStatus(pricingStatus, 'You have unsaved pricing changes.');
+  if (!event.target.closest('.tenant-pool-section, .platform-payment-section, .owner-tutorial-section')) setStatus(pricingStatus, 'You have unsaved pricing changes.');
+});
+
+ownerTutorialEdition?.addEventListener('change', (event) => {
+  if (!ownerTutorialCatalog) return;
+  // The change event fires after the select value changes. Keep the previous
+  // edition's draft using the last rendered edition instead of the new value.
+  const previousEdition = ownerTutorialLinksList.dataset.edition || 'school';
+  ownerTutorialCatalog.Editions[previousEdition].Links = Object.fromEntries(
+    [...ownerTutorialLinksList.querySelectorAll('[data-tutorial-storage-key]')]
+      .map((input) => [input.dataset.tutorialStorageKey, input.value.trim()])
+      .filter(([, url]) => url)
+  );
+  renderOwnerTutorialLinks();
+});
+
+document.getElementById('saveOwnerTutorials')?.addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  if (!ownerTutorialCatalog || !window.DynamaxActionFeedback.begin(button, 'Publishing...')) return;
+  try {
+    saveVisibleTutorialDraft();
+    const data = await ownerTutorialRequest({ password: unlockedPassword, catalog: ownerTutorialCatalog });
+    ownerTutorialCatalog = tutorialCatalogDraft(data.catalog);
+    renderOwnerTutorialLinks();
+    setStatus(ownerTutorialStatus, data.message, 'ok');
+  } catch (error) {
+    setStatus(ownerTutorialStatus, error.message || String(error), 'bad');
+  } finally {
+    window.DynamaxActionFeedback.end(button);
+  }
 });
 
 document.getElementById('savePlatformPaymentSettings')?.addEventListener('click', async (event) => {

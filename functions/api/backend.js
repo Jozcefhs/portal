@@ -115,6 +115,7 @@ import {
   normalizeTutorialLinks,
   normalizeYouTubeTutorialUrl
 } from '../lib/tutorial-links.js';
+import { loadPublishedTutorials } from '../lib/tutorial-catalog.js';
 
 export { normalizeTutorialLinks, normalizeYouTubeTutorialUrl } from '../lib/tutorial-links.js';
 
@@ -2726,7 +2727,7 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
       submittedProfile,
       updatedBy: body.UserRole || body.UpdatedBy || body.updatedBy || 'Super Admin'
     });
-    const result = await getSchoolProfile(env, { branchId: saved.branch.id });
+    const result = await getSchoolProfile(env, { branchId: saved.branch.id, includeTutorials: true });
     return {
       ...result,
       message: [
@@ -2814,12 +2815,8 @@ async function saveSchoolProfile(env, body, deploymentIdentity) {
     ShowResultsOnline: yesNo(mergedProfileText(existingProfile, body, 'ShowResultsOnline', 'showResultsOnline', 'NO')) || 'NO',
     OfferDocumentBodyTemplate: mergedProfileText(existingProfile, body, 'OfferDocumentBodyTemplate', 'offerDocumentBodyTemplate'),
     AdmissionDocumentBodyTemplate: mergedProfileText(existingProfile, body, 'AdmissionDocumentBodyTemplate', 'admissionDocumentBodyTemplate'),
-    TutorialLinks: normalizeTutorialLinks(
-      body.TutorialLinks ?? body.tutorialLinks ?? existingProfile.TutorialLinks ?? existingProfile.tutorialLinks ?? {}
-    ),
-    TutorialChannelUrl: normalizeYouTubeTutorialUrl(
-      body.TutorialChannelUrl ?? body.tutorialChannelUrl ?? existingProfile.TutorialChannelUrl ?? existingProfile.tutorialChannelUrl ?? ''
-    ),
+    TutorialLinks: normalizeTutorialLinks(existingProfile.TutorialLinks ?? existingProfile.tutorialLinks ?? {}),
+    TutorialChannelUrl: normalizeYouTubeTutorialUrl(existingProfile.TutorialChannelUrl ?? existingProfile.tutorialChannelUrl ?? ''),
     SubscriptionPlan: authoritativeSubscription.Plan,
     SubscriptionStatus: authoritativeSubscription.SubscriptionStatus,
     TrialStartedAt: authoritativeSubscription.TrialStartedAt,
@@ -3046,9 +3043,16 @@ async function getSchoolProfile(env, options = {}) {
       EnableAcceptanceForm: enabledDocuments.AcceptanceForm === false ? 'NO' : 'YES',
       AvailableBranches: (structure.Branches || []).map((row) => ({ Id: clean(row.Id), Name: clean(row.Name || row.Id) })),
       WebLogoConfigured: Boolean(branding && clean(branding.WebLogoDataUrl)), WebLogoUrl: branding && clean(branding.WebLogoDataUrl) ? '/api/web-logo' : '' };
+  const scopedProfile = await effectiveBranchProfile(env, baseProfile, options.branchId || options.BranchId);
+  if (!options.includeTutorials) return { ok: true, profile: scopedProfile };
+  const tutorials = await loadPublishedTutorials(env, organization.Edition, scopedProfile);
   return {
     ok: true,
-    profile: await effectiveBranchProfile(env, baseProfile, options.branchId || options.BranchId)
+    profile: {
+      ...scopedProfile,
+      TutorialLinks: tutorials.links,
+      TutorialChannelUrl: tutorials.channelUrl
+    }
   };
 }
 
@@ -9222,10 +9226,10 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'saveOrganisationStructure':
       return saveOrganisationStructure(env, body);
     case 'getSchoolProfile':
-      return getSchoolProfile(env, body);
+      return getSchoolProfile(env, { ...body, includeTutorials: true });
     case 'resetBranchProfileOverrides': {
       const reset = await resetBranchProfileOverrides(env, body.BranchId || body.branchId);
-      const result = await getSchoolProfile(env, { branchId: reset.branch.id });
+      const result = await getSchoolProfile(env, { branchId: reset.branch.id, includeTutorials: true });
       return {
         ...result,
         message: `${reset.branch.name} now inherits every organisation setting.`

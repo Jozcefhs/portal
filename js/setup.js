@@ -26,8 +26,6 @@ const academicPolicyInheritanceMode = document.getElementById('academicPolicyInh
 const academicPolicyInheritanceHelp = document.getElementById('academicPolicyInheritanceHelp');
 const activateAcademicPolicyButton = document.getElementById('activateAcademicPolicyButton');
 const inheritAcademicPolicyButton = document.getElementById('inheritAcademicPolicyButton');
-const tutorialSettingsSection = document.getElementById('tutorial-settings');
-const tutorialLinksList = document.getElementById('tutorialLinksList');
 const requestedSettingsParams = new URLSearchParams(window.location.search);
 const requestedSettingsBranch = (requestedSettingsParams.get('branch') || '').trim();
 const requestedSettingsScope = requestedSettingsParams.get('scope') === 'branch' && requestedSettingsBranch
@@ -51,59 +49,10 @@ let activeEmailProvider = 'brevo';
 let emailProviderConnectionReady = false;
 let emailProviderSelfServiceAvailable = false;
 let emailConnectionCallbackHandled = false;
-let loadedTutorialLinks = {};
 const organisationOnlyControlIds = [
   'organisationEdition', 'nameFormat', 'webLogoFile', 'removeWebLogo',
-  'googleDocumentsUrl', 'subscriptionPlan', 'userLimit', 'tutorialChannelUrl'
+  'googleDocumentsUrl', 'subscriptionPlan', 'userLimit'
 ];
-
-const tutorialModuleCatalogue = Object.freeze([
-  { key: 'overview', storageKey: 'Overview', label: 'Dashboard', editions: ['school', 'faith', 'organization'] },
-  { key: 'schoolInsights', storageKey: 'School Insights', label: 'School Insights', editions: ['school'] },
-  { key: 'recordsDesk', storageKey: 'Records Desk', label: 'Records Desk', organizationLabel: 'Records Centre', editions: ['school', 'faith', 'organization'] },
-  { key: 'executiveOffice', storageKey: 'Executive Office', label: 'Executive Office', editions: ['school', 'faith', 'organization'] },
-  { key: 'admissions', storageKey: 'Applications', label: 'Admissions', editions: ['school'] },
-  { key: 'formPurchases', storageKey: 'Admission Form Sale', label: 'Form Purchases', editions: ['school'] },
-  { key: 'students', storageKey: 'Students', label: 'Students', editions: ['school'] },
-  { key: 'academics', storageKey: 'Academic Management', label: 'Academic Management', editions: ['school'] },
-  { key: 'studentConduct', storageKey: 'Student Conduct & Discipline', label: 'Student Conduct & Discipline', editions: ['school'] },
-  { key: 'humanResources', storageKey: 'Human Resources', label: 'Human Resources', editions: ['school', 'faith', 'organization'] },
-  { key: 'bulkEmail', storageKey: 'Bulk Email', label: 'Bulk Email', organizationLabel: 'Bulk Communication', editions: ['school', 'faith', 'organization'] },
-  { key: 'members', storageKey: 'Departments & Members', label: 'Departments & Members', organizationLabel: 'Departments & Personnel', editions: ['faith', 'organization'] },
-  { key: 'services', storageKey: 'Services & Attendance', label: 'Services & Attendance', organizationLabel: 'Meetings & Attendance', editions: ['faith', 'organization'] },
-  { key: 'staffAttendance', storageKey: 'Staff Attendance', label: 'Staff Attendance', editions: ['school', 'faith', 'organization'] },
-  { key: 'funds', storageKey: 'Funds & Mappings', label: 'Funds & Mappings', organizationLabel: 'Budgets & Account Mappings', editions: ['faith', 'organization'] },
-  { key: 'offerings', storageKey: 'Offerings', label: 'Offerings', organizationLabel: 'Income & Receipts', editions: ['faith', 'organization'] },
-  { key: 'donations', storageKey: 'Donations', label: 'Donations', organizationLabel: 'Grants & Contributions', editions: ['faith', 'organization'] },
-  { key: 'accounts', storageKey: 'Accounts', label: 'Accounts', editions: ['school'] },
-  { key: 'incomeAnalytics', storageKey: 'Income Analytics', label: 'Income Analytics', organizationLabel: 'Revenue Analytics', editions: ['school', 'faith', 'organization'] },
-  { key: 'financeRequests', storageKey: 'Finance & Accounting', label: 'Finance Requests & Imprest', editions: ['school', 'faith', 'organization'] },
-  { key: 'payroll', storageKey: 'Payroll', label: 'Payroll', editions: ['school', 'faith', 'organization'] },
-  { key: 'clinic', storageKey: 'Clinic', label: 'Clinic', editions: ['school'] },
-  { key: 'kitchen', storageKey: 'Kitchen', label: 'Kitchen', editions: ['school'] },
-  { key: 'tuckShop', storageKey: 'Tuck Shop', label: 'Tuck Shop', editions: ['school'] },
-  { key: 'bookstore', storageKey: 'Bookstore', label: 'Bookstore', editions: ['school'] },
-  { key: 'uniformStore', storageKey: 'Uniform Store', label: 'Uniform Store', editions: ['school'] },
-  { key: 'organizationStore', storageKey: 'Organisation Store', label: 'Organisation Store', editions: ['faith', 'organization'] },
-  { key: 'restaurant', storageKey: 'Restaurant', label: 'Restaurant', organizationLabel: 'Catering Operations', editions: ['faith', 'organization'] },
-  { key: 'hotel', storageKey: 'Hotel Services', label: 'Hotel Services', editions: ['faith', 'organization'] },
-  { key: 'dataBackup', storageKey: 'Backup & Restore', label: 'Backup & Restore', editions: ['school', 'faith', 'organization'] },
-  { key: 'securityAudit', storageKey: 'Logs', label: 'Security Audit Log', editions: ['school', 'faith', 'organization'] },
-  { key: 'staffUsers', storageKey: 'Settings', label: 'Staff & Permissions', organizationLabel: 'Users & Permissions', editions: ['school', 'faith', 'organization'] },
-  { key: 'parentSignIn', storageKey: 'Parent Portal - Sign In', label: 'Parent portal · Sign in', editions: ['school'] },
-  { key: 'parentProfileSetup', storageKey: 'Parent Portal - Student Profile Setup', label: 'Parent portal · Complete student profile', editions: ['school'] },
-  { key: 'parentOverview', storageKey: 'Parent Portal - Overview', label: 'Parent portal · Dashboard overview', editions: ['school'] },
-  { key: 'parentPayments', storageKey: 'Parent Portal - Payments', label: 'Parent portal · Pay fees', editions: ['school'] },
-  { key: 'parentOptionalPayments', storageKey: 'Parent Portal - Optional Payments', label: 'Parent portal · Optional payments', editions: ['school'] },
-  { key: 'parentResults', storageKey: 'Parent Portal - Results', label: 'Parent portal · Results', editions: ['school'] },
-  { key: 'parentAcademics', storageKey: 'Parent Portal - Schedule & Attendance', label: 'Parent portal · Schedule & attendance', editions: ['school'] },
-  { key: 'parentDocuments', storageKey: 'Parent Portal - Documents', label: 'Parent portal · Upload documents', editions: ['school'] },
-  { key: 'parentWallet', storageKey: 'Parent Portal - Wallet', label: 'Parent portal · Wallet and controls', editions: ['school'] },
-  { key: 'parentClinic', storageKey: 'Parent Portal - Clinic', label: 'Parent portal · Clinic records', editions: ['school'] },
-  { key: 'parentStores', storageKey: 'Parent Portal - School Store', label: 'Parent portal · School store', editions: ['school'] },
-  { key: 'parentNotifications', storageKey: 'Parent Portal - Notifications', label: 'Parent portal · Notifications', editions: ['school'] },
-  { key: 'parentPassword', storageKey: 'Parent Portal - Change Password', label: 'Parent portal · Change password', editions: ['school'] }
-]);
 
 const settingsTerminology = {
   school: {
@@ -169,69 +118,6 @@ function normalizeSettingsEdition(value) {
   return 'school';
 }
 
-function parseTutorialLinks(value) {
-  if (value && typeof value === 'object' && !Array.isArray(value)) return { ...value };
-  if (typeof value !== 'string' || !value.trim()) return {};
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch (_error) {
-    return {};
-  }
-}
-
-function tutorialModulesForEdition(edition = activeSettingsEdition) {
-  return tutorialModuleCatalogue.filter((module) => module.editions.includes(edition));
-}
-
-function renderTutorialLinks(links = loadedTutorialLinks) {
-  if (!tutorialLinksList) return;
-  loadedTutorialLinks = parseTutorialLinks(links);
-  tutorialLinksList.replaceChildren(...tutorialModulesForEdition().map((module, index) => {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'tutorial-settings-item';
-    const label = document.createElement('label');
-    const title = document.createElement('span');
-    title.textContent = activeSettingsEdition === 'organization' && module.organizationLabel
-      ? module.organizationLabel
-      : module.label;
-    const input = document.createElement('input');
-    input.id = `tutorialModuleUrl${index}`;
-    input.type = 'url';
-    input.inputMode = 'url';
-    input.autocomplete = 'url';
-    input.spellcheck = false;
-    input.placeholder = 'https://youtu.be/...';
-    input.dataset.tutorialStorageKey = module.storageKey;
-    input.dataset.tutorialSection = module.key;
-    input.value = String(loadedTutorialLinks[module.storageKey] || loadedTutorialLinks[module.key] || '').trim();
-    label.htmlFor = input.id;
-    label.append(title, input);
-    const openLink = document.createElement('a');
-    openLink.href = input.value || '#';
-    openLink.target = '_blank';
-    openLink.rel = 'noopener noreferrer';
-    openLink.title = `Open ${title.textContent} tutorial`;
-    openLink.setAttribute('aria-label', openLink.title);
-    openLink.textContent = '\u25B6';
-    openLink.hidden = !input.value;
-    input.addEventListener('input', () => {
-      const value = input.value.trim();
-      openLink.href = value || '#';
-      openLink.hidden = !value;
-    });
-    wrapper.append(label, openLink);
-    return wrapper;
-  }));
-}
-
-function tutorialLinksFromForm() {
-  if (!tutorialLinksList) return {};
-  return Object.fromEntries([...tutorialLinksList.querySelectorAll('[data-tutorial-storage-key]')]
-    .map((input) => [input.dataset.tutorialStorageKey, input.value.trim()])
-    .filter(([, url]) => url));
-}
-
 function applyEditionTerminology(profile = {}) {
   const edition = normalizeSettingsEdition(profile.OrganisationEdition);
   activeSettingsEdition = edition;
@@ -264,21 +150,6 @@ function applyEditionTerminology(profile = {}) {
     activeLink.classList.remove('active');
     visibleLinks[0]?.classList.add('active');
   }
-  const tutorialCatalogueTitle = document.getElementById('tutorialCatalogueTitle');
-  const tutorialCatalogueHelp = document.getElementById('tutorialCatalogueHelp');
-  if (tutorialCatalogueTitle) {
-    tutorialCatalogueTitle.textContent = edition === 'school'
-      ? 'School staff, desktop and parent operations'
-      : edition === 'faith'
-        ? 'Church staff and desktop modules'
-        : 'Organisation staff and desktop modules';
-  }
-  if (tutorialCatalogueHelp) {
-    tutorialCatalogueHelp.textContent = edition === 'school'
-      ? 'Each field controls the tutorial opened from that staff, desktop or parent workspace.'
-      : 'Each field controls the tutorial opened from that staff or desktop workspace.';
-  }
-  renderTutorialLinks(loadedTutorialLinks);
 }
 
 function setStatus(message, type) {
@@ -954,8 +825,6 @@ function profileFromForm() {
     PortalHeadline: data.get('PortalHeadline'),
     PortalSubheading: data.get('PortalSubheading'),
     PortalNotice: data.get('PortalNotice'),
-    TutorialLinks: tutorialLinksFromForm(),
-    TutorialChannelUrl: data.get('TutorialChannelUrl'),
     ResultDisplayMode: data.get('ResultDisplayMode'),
     ShowResultsOnline: data.get('ShowResultsOnline'),
     OrganisationEdition: document.getElementById('organisationEdition').value,
@@ -1045,8 +914,6 @@ function applyProfile(profile = {}, settingsAccess = null) {
   setField('portalHeadline', profile.PortalHeadline);
   setField('portalSubheading', profile.PortalSubheading);
   setField('portalNotice', profile.PortalNotice);
-  loadedTutorialLinks = parseTutorialLinks(profile.TutorialLinks);
-  setField('tutorialChannelUrl', profile.TutorialChannelUrl);
   webLogoDataUrl = '';
   webLogoChanged = false;
   document.getElementById('webLogoPreview').src = profile.WebLogoUrl || 'images/Logo.png';
@@ -1099,10 +966,6 @@ function updateSettingsScopeUI(profile = {}) {
     if (!control) return;
     control.disabled = branchMode || id === 'organisationEdition';
     control.closest('.settings-section, .settings-field, .settings-logo-card')?.classList.toggle('settings-scope-locked', branchMode);
-  });
-  tutorialSettingsSection?.classList.toggle('settings-scope-locked', branchMode);
-  tutorialSettingsSection?.querySelectorAll('input').forEach((control) => {
-    control.disabled = branchMode;
   });
   const paystackSubaccountCode = document.getElementById('paystackSubaccountCode');
   const paystackSubaccountField = document.getElementById('paystackSubaccountField');

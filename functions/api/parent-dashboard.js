@@ -48,7 +48,7 @@ import {
   publicAcademicResult
 } from '../lib/academic-result-access.js';
 import { academicTimetablePeriodsForDay } from '../lib/academic-timetable-attendance.js';
-import { normalizeTutorialLinks, normalizeYouTubeTutorialUrl } from '../lib/tutorial-links.js';
+import { loadPublishedTutorials } from '../lib/tutorial-catalog.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -1884,10 +1884,7 @@ async function getDashboard(env, body, options = {}) {
     notifications: notificationData.notifications,
     notificationUnreadCount: notificationData.unreadCount,
     unreadCount: notificationData.unreadCount,
-    tutorials: {
-      links: normalizeTutorialLinks(schoolProfile.TutorialLinks || {}),
-      channelUrl: normalizeYouTubeTutorialUrl(schoolProfile.TutorialChannelUrl || '')
-    },
+    tutorials: await loadPublishedTutorials(env, 'school', schoolProfile),
     storeCatalog: (sources.storeItems || []).filter((row) => isYes(row.Active === undefined ? 'YES' : row.Active) && asMoneyNumber(row.Quantity) > 0),
     storeOrders: (sources.storeOrders || []).filter((row) => children.some((child) => financialReferenceMatches(row.AccountRef || row.AdmissionNo, child)))
   };
