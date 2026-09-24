@@ -324,9 +324,6 @@ async function approvalOptions(request, env, body) {
 
 async function attendanceOptions(request, env, body) {
   const user = await requireStaffSession(env, request);
-  if (!(user.allowedSections || []).includes('staffAttendance')) {
-    return response({ ok: false, message: 'Staff attendance is not available to this account.' }, 403);
-  }
   const direction = clean(body.direction).toUpperCase();
   const siteId = clean(body.siteId);
   if (!siteId || !['IN', 'OUT', 'CHECK', 'ENROLL', 'REVOKE'].includes(direction)) {

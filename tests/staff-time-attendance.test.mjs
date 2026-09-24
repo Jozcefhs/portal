@@ -389,6 +389,13 @@ test('every active staff account can use personal clocking while attendance admi
   assert.match(attendanceApiSource, /Staff attendance administration is not available to this account/);
   assert.match(attendanceFaceApiSource, /const user = await requireStaffSession\(env, request\)/);
   assert.doesNotMatch(attendanceFaceApiSource, /allowedSections[\s\S]{0,80}staffAttendance/);
+  const passkeyAttendanceOptionsSource = passkeyApiSource.slice(
+    passkeyApiSource.indexOf('async function attendanceOptions'),
+    passkeyApiSource.indexOf('async function verifyAuthentication')
+  );
+  assert.match(passkeyAttendanceOptionsSource, /const user = await requireStaffSession\(env, request\)/);
+  assert.doesNotMatch(passkeyAttendanceOptionsSource, /allowedSections|staffAttendance/);
+  assert.match(passkeyAttendanceOptionsSource, /const credentials = \(await userPasskeys\(env, user\.username\)\)/);
   assert.match(attendanceSource, /if \(!canManageStaffAttendance\(user\)\) fail\('Only organisation or HR attendance administrators can manage daily work hours\.'/);
   assert.match(attendanceSource, /if \(!canManageStaffAttendance\(user\)\) fail\('Only organisation or HR attendance administrators can manage attendance locations\.'/);
 });
