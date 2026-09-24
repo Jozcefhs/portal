@@ -367,7 +367,7 @@ test('School settings expose configurable result, grading and promotion policy c
   assert.match(setupJsSource, /requestAcademicPolicy\('activate'\);\s*announceSettingsChange\(\);/);
   assert.match(setupJsSource, /requestAcademicPolicy\('inherit'\);\s*announceSettingsChange\(\);/);
   assert.match(setupHtmlSource, /css\/style\.css\?v=20260923-youtube-tutorials/);
-  assert.match(setupHtmlSource, /js\/setup\.js\?v=20260923-youtube-tutorials/);
+  assert.match(setupHtmlSource, /js\/setup\.js\?v=20260924-edition-tutorial-catalogue/);
   assert.match(setupHtmlSource, /<span>Split A\/B<\/span><span>A objective<\/span><span>B theory<\/span><span>Required<\/span><span>Mid-term<\/span>/);
   assert.match(setupJsSource, /row\.append\(name, maximum, weight, source, split, objective, theory, required, midTerm, remove\)/);
   assert.match(styleSource, /\.academic-component-grid/);

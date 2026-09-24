@@ -43,6 +43,28 @@ test('organisation settings expose and persist the YouTube tutorial catalogue', 
   assert.match(settingsSource, /TutorialChannelUrl: normalizeYouTubeTutorialUrl\(/);
 });
 
+test('Church settings expose dedicated YouTube fields for Church and desktop modules', () => {
+  [
+    ['Departments & Members', 'faith'],
+    ['Services & Attendance', 'faith'],
+    ['Funds & Mappings', 'faith'],
+    ['Offerings', 'faith'],
+    ['Donations', 'faith'],
+    ['Organisation Store', 'faith'],
+    ['Restaurant', 'faith'],
+    ['Hotel Services', 'faith'],
+    ['Bulk Email', 'faith']
+  ].forEach(([storageKey, edition]) => {
+    const escaped = storageKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.match(setupJs, new RegExp(`storageKey: '${escaped}'[\\s\\S]*?editions: \\[[^\\]]*'${edition}'`));
+  });
+  assert.match(setupJs, /key: 'schoolInsights', storageKey: 'School Insights'/);
+  assert.match(adminJs, /schoolInsights: 'School Insights'/);
+  assert.match(setupHtml, /id="tutorialCatalogueTitle"/);
+  assert.match(setupHtml, /id="tutorialCatalogueHelp"/);
+  assert.match(setupJs, /'Church staff and desktop modules'/);
+});
+
 test('staff companion exposes the tutorial for the active module on desktop and mobile', () => {
   assert.match(adminHtml, /id="staffTutorialButton"/);
   assert.match(adminHtml, /id="staffTutorialMenu"/);

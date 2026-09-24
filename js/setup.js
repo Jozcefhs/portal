@@ -59,6 +59,7 @@ const organisationOnlyControlIds = [
 
 const tutorialModuleCatalogue = Object.freeze([
   { key: 'overview', storageKey: 'Overview', label: 'Dashboard', editions: ['school', 'faith', 'organization'] },
+  { key: 'schoolInsights', storageKey: 'School Insights', label: 'School Insights', editions: ['school'] },
   { key: 'recordsDesk', storageKey: 'Records Desk', label: 'Records Desk', organizationLabel: 'Records Centre', editions: ['school', 'faith', 'organization'] },
   { key: 'executiveOffice', storageKey: 'Executive Office', label: 'Executive Office', editions: ['school', 'faith', 'organization'] },
   { key: 'admissions', storageKey: 'Applications', label: 'Admissions', editions: ['school'] },
@@ -67,6 +68,7 @@ const tutorialModuleCatalogue = Object.freeze([
   { key: 'academics', storageKey: 'Academic Management', label: 'Academic Management', editions: ['school'] },
   { key: 'studentConduct', storageKey: 'Student Conduct & Discipline', label: 'Student Conduct & Discipline', editions: ['school'] },
   { key: 'humanResources', storageKey: 'Human Resources', label: 'Human Resources', editions: ['school', 'faith', 'organization'] },
+  { key: 'bulkEmail', storageKey: 'Bulk Email', label: 'Bulk Email', organizationLabel: 'Bulk Communication', editions: ['school', 'faith', 'organization'] },
   { key: 'members', storageKey: 'Departments & Members', label: 'Departments & Members', organizationLabel: 'Departments & Personnel', editions: ['faith', 'organization'] },
   { key: 'services', storageKey: 'Services & Attendance', label: 'Services & Attendance', organizationLabel: 'Meetings & Attendance', editions: ['faith', 'organization'] },
   { key: 'staffAttendance', storageKey: 'Staff Attendance', label: 'Staff Attendance', editions: ['school', 'faith', 'organization'] },
@@ -162,7 +164,7 @@ const settingsTerminology = {
 
 function normalizeSettingsEdition(value) {
   const edition = String(value || '').trim().toLowerCase();
-  if (['faith', 'church', 'religious'].includes(edition)) return 'faith';
+  if (['faith', 'church', 'religious', 'religious body', 'religious organisation', 'religious organization'].includes(edition)) return 'faith';
   if (['organization', 'organisation', 'other'].includes(edition)) return 'organization';
   return 'school';
 }
@@ -261,6 +263,20 @@ function applyEditionTerminology(profile = {}) {
   if (activeLink?.hidden) {
     activeLink.classList.remove('active');
     visibleLinks[0]?.classList.add('active');
+  }
+  const tutorialCatalogueTitle = document.getElementById('tutorialCatalogueTitle');
+  const tutorialCatalogueHelp = document.getElementById('tutorialCatalogueHelp');
+  if (tutorialCatalogueTitle) {
+    tutorialCatalogueTitle.textContent = edition === 'school'
+      ? 'School staff, desktop and parent operations'
+      : edition === 'faith'
+        ? 'Church staff and desktop modules'
+        : 'Organisation staff and desktop modules';
+  }
+  if (tutorialCatalogueHelp) {
+    tutorialCatalogueHelp.textContent = edition === 'school'
+      ? 'Each field controls the tutorial opened from that staff, desktop or parent workspace.'
+      : 'Each field controls the tutorial opened from that staff or desktop workspace.';
   }
   renderTutorialLinks(loadedTutorialLinks);
 }

@@ -253,6 +253,7 @@ const tabConfig = [
 
 const tutorialStorageKeys = Object.freeze({
   overview: 'Overview',
+  schoolInsights: 'School Insights',
   recordsDesk: 'Records Desk',
   executiveOffice: 'Executive Office',
   admissions: 'Applications',
