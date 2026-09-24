@@ -53,6 +53,24 @@ test('paid acceptance deposit is not presented as available account credit befor
   });
 });
 
+test('parent dashboard keeps excess payment visible before a future school invoice is due', () => {
+  const summary = accountSummaryForKeys([], ['STU-1'], [{
+    AccountRef: 'STU-1', FeeCode: 'SCHOOL_FEES_TOTAL', FeeCategory: 'School Fee', Credit: 1200000
+  }], [
+    { AccountRef: 'STU-1', FeeCategory: 'School Fee', Debit: 300000, Credit: 300000, DueDate: '2026-09-14' },
+    { AccountRef: 'STU-1', FeeCategory: 'School Fee', Debit: 300000, Credit: 0, DueDate: '2099-01-10' }
+  ]);
+  assert.equal(summary.CreditBalance, 900000);
+  assert.equal(summary.TotalDebit, 600000);
+});
+
+test('parent dashboard does not present an earmarked future payment as transferable credit', () => {
+  const summary = accountSummaryForKeys([], ['STU-1'], [{ AccountRef: 'STU-1', FeeCategory: 'School Fee', Credit: 200000 }], [
+    { AccountRef: 'STU-1', FeeCategory: 'School Fee', Debit: 300000, Credit: 200000, DueDate: '2099-01-10' }
+  ]);
+  assert.equal(summary.CreditBalance, 0);
+});
+
 test('a parent may select a second sibling application after family authentication', () => {
   const applications = [
     {

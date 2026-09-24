@@ -49,6 +49,7 @@ import {
 } from '../lib/academic-result-access.js';
 import { academicTimetablePeriodsForDay } from '../lib/academic-timetable-attendance.js';
 import { loadPublishedTutorials } from '../lib/tutorial-catalog.js';
+import { invoiceIsDue } from '../lib/account-credit.js';
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -1163,10 +1164,14 @@ function unappliedAcceptanceCharge(ledgerEntries = [], invoiceEntries = []) {
   }, 0);
 }
 
-function feeAccountSummary(entries) {
+function feeAccountSummary(entries, futureAppliedCredit = 0) {
   const rows = (entries || []).filter((entry) => !isWalletLedger(entry) && !isOptionalSubscriptionEntry(entry));
   const debit = rows.reduce((sum, row) => {
     if (lower(row.FeeCategory) === 'account credit') return sum;
+    return sum + asMoneyNumber(row.Debit);
+  }, 0);
+  const dueDebit = rows.reduce((sum, row) => {
+    if (lower(row.FeeCategory) === 'account credit' || !invoiceIsDue(row)) return sum;
     return sum + asMoneyNumber(row.Debit);
   }, 0);
   const creditActionDebits = rows.reduce((sum, row) => {
@@ -1179,7 +1184,7 @@ function feeAccountSummary(entries) {
     TotalCredit: credit,
     AccountCreditDebits: creditActionDebits,
     OutstandingBalance: Math.max(0, balance),
-    CreditBalance: Math.max(0, -balance)
+    CreditBalance: Math.max(0, credit - creditActionDebits - dueDebit - futureAppliedCredit)
   };
 }
 
@@ -1204,12 +1209,14 @@ export function accountSummaryForKeys(accounts, keys, ledgerEntries, invoiceEntr
   // in the ledger. Use invoices for debit only so parent balances do not count
   // one payment twice.
   const invoiceDebits = (invoiceEntries || []).map((row) => ({ ...row, Credit: 0 }));
+  const futureAppliedCredit = (invoiceEntries || []).filter((row) => !invoiceIsDue(row))
+    .reduce((sum, row) => sum + Math.min(asMoneyNumber(row.Debit || row.Amount), asMoneyNumber(row.Credit)), 0);
   const acceptanceCharge = unappliedAcceptanceCharge(ledgerEntries, invoiceEntries);
   const syntheticAcceptanceCharge = acceptanceCharge > 0
     ? [{ FeeCode: 'ACCEPTANCE_FEE', FeeName: 'Acceptance Fee', FeeCategory: 'Admission', Debit: acceptanceCharge, Credit: 0 }]
     : [];
   const liveFinancialRows = [...invoiceDebits, ...syntheticAcceptanceCharge, ...(ledgerEntries || [])];
-  if (liveFinancialRows.length) return feeAccountSummary(liveFinancialRows);
+  if (liveFinancialRows.length) return feeAccountSummary(liveFinancialRows, futureAppliedCredit);
   const account = (accounts || []).find((row) => {
     const rowKeys = [
       pick(row, ['AccountRef', 'accountRef', '__id']),

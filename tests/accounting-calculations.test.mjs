@@ -12,6 +12,7 @@ import {
   buildReceivablesAgeing,
   buildWalletPurchaseAccountingJournal,
   calculateAccountFinancialSummary,
+  calculateDueSchoolFeeCreditAllocations,
   calculateCarryForwardSchoolCredit,
   calculateInvoiceCreditAllocations,
   financialRowMatchesAccount,
@@ -27,7 +28,8 @@ import {
   reconciliationDifference,
   resolveStudentEnrollmentCategory,
   sameFinancialPeriod,
-  shouldResolveStudentForPayable
+  shouldResolveStudentForPayable,
+  studentsShareParentForCreditTransfer
 } from '../functions/api/backend.js';
 
 test('admitted applications without an explicit intake category are new intake', () => {
@@ -207,6 +209,45 @@ test('first-term acceptance deposit is not allocated twice in the payable breakd
     accountCreditDebits: 0,
     acceptanceCreditAppliedSeparately: 100000
   }), 0);
+});
+
+test('excess school payment remains parent credit until the next term due date, then carries forward once', () => {
+  const first = { InvoiceId: 'INV-FIRST', AccountRef: 'STU-1', FeeCategory: 'School Fee', Amount: 300000, Debit: 300000, Credit: 300000, DueDate: '2026-09-14', AcademicSession: '2026/2027', Term: 'First Term' };
+  const second = { InvoiceId: 'INV-SECOND', AccountRef: 'STU-1', FeeCategory: 'School Fee', Amount: 300000, Debit: 300000, Credit: 0, DueDate: '10/1/2027', AcademicSession: '2026/2027', Term: 'Second Term' };
+  const paid = [{ AccountRef: 'STU-1', FeeCode: 'SCHOOL_FEES_TOTAL', FeeCategory: 'School Fee', Credit: 1200000, AcademicSession: '2026/2027', Term: 'First Term' }];
+  assert.equal(calculateAccountFinancialSummary([first, second], paid, 'STU-1', '2026-10-01').CreditBalance, 900000);
+  assert.equal(calculateDueSchoolFeeCreditAllocations([first, second], paid, '2026-10-01').allocations.length, 0);
+  const due = calculateDueSchoolFeeCreditAllocations([first, second], paid, '2027-01-10');
+  assert.deepEqual(due.allocations.map((row) => [row.invoice.InvoiceId, row.applied, row.Credit, row.Status]), [
+    ['INV-SECOND', 300000, 300000, 'Paid']
+  ]);
+  const settledSecond = { ...second, Credit: due.allocations[0].Credit };
+  assert.equal(calculateDueSchoolFeeCreditAllocations([first, settledSecond], paid, '2027-01-11').allocations.length, 0);
+  assert.equal(calculateAccountFinancialSummary([first, settledSecond], paid, 'STU-1', '2027-01-11').CreditBalance, 600000);
+});
+
+test('parent-directed credit actions reduce the balance available for future school fees', () => {
+  const invoices = [
+    { InvoiceId: 'FIRST', FeeCategory: 'School Fee', Amount: 300000, Credit: 300000, DueDate: '2026-09-14' },
+    { InvoiceId: 'SECOND', FeeCategory: 'School Fee', Amount: 800000, Credit: 0, DueDate: '2027-01-10' }
+  ];
+  const ledger = [
+    { FeeCode: 'SCHOOL_FEES_TOTAL', FeeCategory: 'School Fee', Credit: 1200000 },
+    { FeeCode: 'CREDIT_TRANSFER_OUT', FeeCategory: 'Account Credit', Debit: 200000 },
+    { FeeCode: 'WALLET_TOPUP', FeeCategory: 'Wallet', Credit: 200000 }
+  ];
+  assert.equal(calculateAccountFinancialSummary(invoices, ledger, 'STU-1', '2026-10-01').CreditBalance, 700000);
+  const allocation = calculateDueSchoolFeeCreditAllocations(invoices, ledger, '2027-01-10');
+  assert.deepEqual(allocation.allocations.map((row) => [row.invoice.InvoiceId, row.applied, row.Balance]), [['SECOND', 700000, 100000]]);
+  assert.equal(studentsShareParentForCreditTransfer({ ParentEmail: 'parent@example.com' }, { MotherEmail: 'PARENT@example.com' }), true);
+  assert.equal(studentsShareParentForCreditTransfer({ ParentEmail: 'parent@example.com' }, { ParentEmail: 'other@example.com' }), false);
+});
+
+test('a direct payment already earmarked to a future invoice cannot also be transferred as free credit', () => {
+  const future = [{ InvoiceId: 'NEXT', FeeCategory: 'School Fee', Amount: 300000, Credit: 200000, DueDate: '2027-01-10' }];
+  const receipts = [{ FeeCode: 'SCHOOL_FEES_TOTAL', FeeCategory: 'School Fee', Credit: 200000 }];
+  assert.equal(calculateAccountFinancialSummary(future, receipts, 'STU-1', '2026-10-01').CreditBalance, 0);
+  assert.equal(calculateDueSchoolFeeCreditAllocations(future, receipts, '2026-10-01').remaining, 0);
 });
 
 test('acceptance deposit is not duplicated as a standalone invoice', () => {

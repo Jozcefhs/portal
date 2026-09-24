@@ -1,5 +1,6 @@
 import { secureTextEqual } from '../lib/backend-security.js';
 import { processFeeReminderSchedule } from '../lib/notification-reminders.js';
+import { processDueSchoolFeeCredits } from './backend.js';
 import { retryFailedPushDeliveries } from '../lib/firebase-messaging.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { requiredDeploymentIdentity } from '../lib/deployment-identity.js';
@@ -48,6 +49,12 @@ async function run(context) {
     }
     const announcementsOnly = body.announcementsOnly === true;
     const attendanceOnly = body.attendanceOnly === true;
+    const schoolFeeCredits = announcementsOnly || attendanceOnly || identity.edition !== 'school'
+      ? { skipped: true }
+      : await processDueSchoolFeeCredits(context.env, {
+          today: clean(body.today),
+          limit: Number(body.creditLimit || 1000)
+        });
     const reminders = announcementsOnly || attendanceOnly ? { skipped: true } : await processFeeReminderSchedule(context.env, {
       today: clean(body.today),
       limit: Number(body.limit || 250)
@@ -77,16 +84,19 @@ async function run(context) {
       limit: Number(body.attendanceLimit || 2)
     });
     const pushRetries = announcementsOnly ? { skipped: true } : await retryFailedPushDeliveries(context.env, { limit: 50 });
+    const creditRunFailed = schoolFeeCredits.ok === false;
     return Response.json({
-      ok: true,
+      ok: !creditRunFailed,
+      ...(creditRunFailed ? { message: 'One or more due school-fee credits could not be applied; inspect schoolFeeCredits and retry.' } : {}),
       workspaceId: identity.workspaceId,
       edition: identity.edition,
+      schoolFeeCredits,
       reminders,
       announcements,
       announcementPush,
       attendancePresence,
       pushRetries
-    }, { headers: { 'Cache-Control': 'no-store' } });
+    }, { status: creditRunFailed ? 500 : 200, headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     return Response.json({ ok: false, message: error?.message || String(error) }, {
       status: error?.status || 500,

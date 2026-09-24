@@ -960,7 +960,7 @@ function renderAccountCredit(child) {
   if (!accountCreditSummary) return;
   const summary = accountSummaryFor(child);
   const creditNote = summary.CreditBalance > 0
-    ? `<p class="credit-note">This credit will be applied automatically to future school charges unless Accounts refunds or reallocates it.</p>`
+    ? `<p class="credit-note">This excess credit remains available until the next school-fee due date, when it is applied automatically. Ask the Accounts Office if you want it transferred to a sibling or wallet, or refunded instead.</p>`
     : '';
   accountCreditSummary.innerHTML = `
     <div><strong>${money(summary.TotalDebit)}</strong><span>Total Fee Charges</span></div>

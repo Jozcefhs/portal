@@ -88,6 +88,7 @@ import {
   requisitionWorkflowStatus
 } from '../lib/requisition-workflow.js';
 import { invoiceReminderFields } from '../lib/notification-reminders.js';
+import { feeDueDate, invoiceIsDue } from '../lib/account-credit.js';
 import { normalizeMinimumAdmissionAge } from '../lib/admission-age.js';
 import { enforceSubscriptionUserLimit, staffAccountsForSubscription } from '../lib/subscription-user-limit.js';
 import {
@@ -2351,6 +2352,11 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
   const normalizedFeeItems = feeItems.map(normalizeFeeItem);
   const accountRows = Array.from(accountMap.values()).map((account) => {
     const refs = accountRefsFrom(account);
+    const allPeriodSummary = calculateAccountFinancialSummary(
+      normalizedInvoices.filter((row) => financialRowMatchesLinkedApplication(row, account)),
+      normalizedStoredLedger.filter((row) => financialRowMatchesLinkedApplication(row, account)),
+      account.AccountRef
+    );
     let totalDebit = 0;
     let totalCredit = 0;
     let totalReceipts = 0;
@@ -2445,7 +2451,7 @@ export async function getAccountsOverview(env, preloaded = {}, requestedScope = 
       Balance: netBalance,
       OutstandingBalance: Math.max(0, netBalance),
       SchoolFeeOutstanding: calculateSchoolFeeOutstanding(schoolFeeExpectedDebit, schoolFeeCredit),
-      ExcessCredit: Math.max(0, -netBalance),
+      ExcessCredit: allPeriodSummary.CreditBalance,
       WalletBalance: asMoneyNumber(walletBalance),
       LastPaymentAt: lastPaymentAt
     };
@@ -4452,8 +4458,13 @@ async function writePaymentAccountingJournal(env, payment, hasMatchingInvoice) {
   });
 }
 
-export function calculateAccountFinancialSummary(invoiceRows = [], ledgerRows = [], accountRef = '') {
-  const debit = invoiceRows.map(normalizeInvoice).reduce((sum, row) => sum + asMoneyNumber(row.Debit || row.Amount), 0);
+export function calculateAccountFinancialSummary(invoiceRows = [], ledgerRows = [], accountRef = '', today = new Date().toISOString().slice(0, 10)) {
+  const invoices = invoiceRows.map(normalizeInvoice);
+  const debit = invoices.reduce((sum, row) => sum + asMoneyNumber(row.Debit || row.Amount), 0);
+  const dueDebit = invoices.filter((row) => invoiceIsDue(row, today))
+    .reduce((sum, row) => sum + asMoneyNumber(row.Debit || row.Amount), 0);
+  const futureAppliedCredit = invoices.filter((row) => !invoiceIsDue(row, today))
+    .reduce((sum, row) => sum + Math.min(asMoneyNumber(row.Debit || row.Amount), asMoneyNumber(row.Credit)), 0);
   const normalizedLedger = ledgerRows.map(normalizeLedger);
   const nonWallet = normalizedLedger.filter((row) => !isWalletLedger(row));
   const credit = nonWallet.reduce((sum, row) => sum + asMoneyNumber(row.Credit), 0);
@@ -4465,9 +4476,44 @@ export function calculateAccountFinancialSummary(invoiceRows = [], ledgerRows = 
   return {
     AccountRef: clean(accountRef), AccountRefNormalized: normalizeReferenceText(accountRef),
     TotalDebit: debit, TotalCredit: credit, AccountCreditDebits: accountCreditDebits,
-    OutstandingBalance: Math.max(0, balance), CreditBalance: Math.max(0, -balance),
+    OutstandingBalance: Math.max(0, balance), CreditBalance: Math.max(0, credit - accountCreditDebits - dueDebit - futureAppliedCredit),
     WalletBalance: wallet, UpdatedAt: nowIso()
   };
+}
+
+// Invoice Credit allocates an existing ledger receipt; it is not another receipt.
+// Keep allocations already made to a specific invoice, then carry only the
+// remaining credit into school invoices once their due date has arrived.
+export function calculateDueSchoolFeeCreditAllocations(invoiceRows = [], ledgerRows = [], today = new Date().toISOString().slice(0, 10)) {
+  const invoices = invoiceRows.map(normalizeInvoice);
+  const ledger = ledgerRows.map(normalizeLedger).filter((row) => !isWalletLedger(row));
+  const received = ledger.reduce((sum, row) => sum + asMoneyNumber(row.Credit), 0);
+  const creditActions = ledger.reduce((sum, row) =>
+    sum + (normalizeMatchText(row.FeeCategory) === 'account credit' ? asMoneyNumber(row.Debit) : 0), 0);
+  const reserved = invoices.reduce((sum, row) => {
+    const debit = asMoneyNumber(row.Debit || row.Amount);
+    const applied = Math.min(debit, asMoneyNumber(row.Credit));
+    if (!invoiceIsDue(row, today)) return sum + applied;
+    return sum + (isSchoolFeeCategory(row.FeeCategory) ? applied : debit);
+  }, 0);
+  let remaining = Math.max(0, asMoneyNumber(received - creditActions - reserved));
+  const allocations = [];
+  invoices.filter((row) => invoiceIsDue(row, today) && isSchoolFeeCategory(row.FeeCategory))
+    .sort((a, b) => {
+      const left = feeDueDate(a.DueDate) || feeDueDate(a.Date) || '';
+      const right = feeDueDate(b.DueDate) || feeDueDate(b.Date) || '';
+      return left.localeCompare(right) || clean(a.InvoiceId).localeCompare(clean(b.InvoiceId));
+    }).forEach((invoice) => {
+      const debit = asMoneyNumber(invoice.Debit || invoice.Amount);
+      const existingCredit = Math.min(debit, asMoneyNumber(invoice.Credit));
+      const applied = Math.min(Math.max(0, debit - existingCredit), remaining);
+      if (applied <= 0) return;
+      remaining = asMoneyNumber(remaining - applied);
+      const credit = asMoneyNumber(existingCredit + applied);
+      const balance = asMoneyNumber(Math.max(0, debit - credit));
+      allocations.push({ invoice, applied, Credit: credit, Balance: balance, Status: balance <= 0 ? 'Paid' : 'Part Paid' });
+    });
+  return { allocations, remaining };
 }
 
 async function refreshAccountFinancialSummary(env, accountRef, linkedReferences = []) {
@@ -4482,6 +4528,79 @@ async function refreshAccountFinancialSummary(env, accountRef, linkedReferences 
     LinkedReferences: [...new Set(linkedReferences.map(clean).filter(Boolean))]
   });
   return summary;
+}
+
+async function applyDueSchoolFeeCreditsForAccount(env, accountRef, linkedReferences = [], settings = null, today = new Date().toISOString().slice(0, 10)) {
+  const references = [accountRef, ...linkedReferences];
+  const [invoices, ledger, summarySnapshot] = await Promise.all([
+    queryAccountRowsForReferences(env, 'invoices', references),
+    queryAccountRowsForReferences(env, 'ledger', references),
+    getDocument(env, 'accountSummaries', safeDocumentId(accountRef))
+  ]);
+  const allocation = calculateDueSchoolFeeCreditAllocations(invoices, ledger, today);
+  if (allocation.allocations.length) {
+    const notificationSettings = settings || await loadNotificationSettings(env);
+    const updatedInvoices = new Map();
+    const writes = allocation.allocations.map((item) => {
+      const updated = {
+        ...item.invoice,
+        Credit: item.Credit,
+        Balance: item.Balance,
+        Status: item.Status,
+        DueDate: feeDueDate(item.invoice.DueDate) || item.invoice.DueDate || '',
+        AutomaticAccountCreditApplied: asMoneyNumber(asMoneyNumber(item.invoice.AutomaticAccountCreditApplied) + item.applied),
+        UpdatedAt: nowIso()
+      };
+      Object.assign(updated, invoiceReminderFields(updated, notificationSettings, today));
+      updatedInvoices.set(clean(updated.InvoiceId), updated);
+      return {
+        collectionPath: 'invoices', documentId: safeDocumentId(updated.InvoiceId), data: updated,
+        ...(item.invoice.__updateTime ? { updateTime: item.invoice.__updateTime } : {})
+      };
+    });
+    const summary = calculateAccountFinancialSummary(invoices.map((row) =>
+      updatedInvoices.get(clean(row.InvoiceId || row.__id)) || row), ledger, accountRef, today);
+    writes.push({
+      collectionPath: 'accountSummaries', documentId: safeDocumentId(accountRef),
+      ...(summarySnapshot?.__updateTime ? { updateTime: summarySnapshot.__updateTime } : { exists: false }),
+      data: { ...summary, LinkedReferences: [...new Set(linkedReferences.map(clean).filter(Boolean))] }
+    });
+    await batchUpsertDocuments(env, writes);
+  }
+  if (!allocation.allocations.length) await refreshAccountFinancialSummary(env, accountRef, linkedReferences);
+  return allocation;
+}
+
+export async function processDueSchoolFeeCredits(env, options = {}) {
+  const today = feeDueDate(options.today) || new Date().toISOString().slice(0, 10);
+  const limit = Math.max(1, Math.min(1500, Number(options.limit || 1000)));
+  const accounts = await queryCollection(env, 'accountSummaries', {
+    filters: [{ field: 'CreditBalance', op: '>', value: 0 }],
+    limit
+  });
+  let creditedInvoices = 0;
+  let creditedAccounts = 0;
+  const failures = [];
+  const settings = await loadNotificationSettings(env);
+  for (const account of accounts) {
+    const accountRef = clean(account.AccountRef || account.__id);
+    if (!accountRef) continue;
+    try {
+      const references = Array.isArray(account.LinkedReferences) ? account.LinkedReferences.map(clean).filter(Boolean) : [];
+      const invoices = (await queryAccountRowsForReferences(env, 'invoices', [accountRef, ...references])).map(normalizeInvoice);
+      if (!invoices.some((row) => invoiceIsDue(row, today) && isSchoolFeeCategory(row.FeeCategory) &&
+        asMoneyNumber(row.Debit || row.Amount) > asMoneyNumber(row.Credit))) continue;
+      const allocation = await applyDueSchoolFeeCreditsForAccount(env, accountRef, references, settings, today);
+      if (allocation.allocations.length) {
+        creditedAccounts += 1;
+        creditedInvoices += allocation.allocations.length;
+      }
+    } catch (error) {
+      failures.push({ accountRef, message: clean(error?.message || error) });
+    }
+  }
+  return { ok: failures.length === 0 && accounts.length < limit, date: today, inspected: accounts.length,
+    creditedAccounts, creditedInvoices, failed: failures.length, failures: failures.slice(0, 10), limitReached: accounts.length >= limit };
 }
 
 export function isStandaloneAcceptanceInvoiceForPayment(invoice, payment) {
@@ -4868,25 +4987,9 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
     err.status = 400;
     throw err;
   }
-  const existing = (Array.isArray(body.ExistingInvoices)
-    ? body.ExistingInvoices
-    : await queryAccountRows(env, 'invoices', accountRef)).map(normalizeInvoice);
+  // Payment posting can update invoices after its caller took a snapshot.
+  const existing = (await queryAccountRows(env, 'invoices', accountRef)).map(normalizeInvoice);
   const linkedReferences = [student.ApplicationReference].map(clean).filter(Boolean);
-  const ledgerRows = (await queryAccountRowsForReferences(env, 'ledger', [accountRef, ...linkedReferences])).map(normalizeLedger).filter((row) => {
-    const rowMatchesStudent = [row.AccountRef, row.AdmissionNo, row.ApplicationReference]
-      .some((value) => [accountRef, ...linkedReferences].some((reference) => sameReferenceIdentity(value, reference)));
-    return rowMatchesStudent && sameFinancialPeriod(row, billingSession, billingTerm);
-  });
-  let availableSchoolCredit = ledgerRows.reduce((sum, row) => {
-    if (isWalletLedger(row)) return sum;
-    const credit = asMoneyNumber(row.Credit);
-    if (credit <= 0) return sum;
-    return isSchoolInvoiceCredit(row) ? sum + credit : sum;
-  }, 0);
-  availableSchoolCredit = Math.max(0, availableSchoolCredit - ledgerRows.reduce((sum, row) => {
-    if (isWalletLedger(row)) return sum;
-    return normalizeMatchText(row.FeeCategory) === 'account credit' ? sum + asMoneyNumber(row.Debit) : sum;
-  }, 0));
   let created = 0;
   let updated = 0;
   const generatedInvoices = [];
@@ -4896,15 +4999,14 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
     const invoiceSession = resolvedPeriodValue(fee.AcademicSession, billingSession);
     const invoiceTerm = resolvedPeriodValue(fee.Term, billingTerm);
     const debit = asMoneyNumber(fee.Amount);
-    const credit = Math.min(debit, availableSchoolCredit);
-    availableSchoolCredit = Math.max(0, availableSchoolCredit - credit);
-    const balance = Math.max(0, debit - credit);
-    const status = balance <= 0 ? 'Paid' : credit > 0 ? 'Part Paid' : 'Unpaid';
     const duplicate = existing.find((invoice) => {
       return sameText(invoice.AccountRef, accountRef) &&
         sameText(invoice.FeeCode, fee.FeeCode) &&
         sameFinancialPeriod(invoice, invoiceSession, invoiceTerm);
     });
+    const credit = Math.min(debit, asMoneyNumber(duplicate?.Credit));
+    const balance = Math.max(0, debit - credit);
+    const status = balance <= 0 ? 'Paid' : credit > 0 ? 'Part Paid' : 'Unpaid';
     const invoiceId = duplicate ? duplicate.InvoiceId : ledgerDocumentId('INV');
     const invoicePayload = {
       ...(duplicate || {}),
@@ -4943,7 +5045,7 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
       Currency: fee.Currency || 'NGN',
       AcademicSession: invoiceSession,
       Term: invoiceTerm,
-      DueDate: fee.DueDate || '',
+      DueDate: feeDueDate(fee.DueDate) || fee.DueDate || '',
       Status: status,
       Date: duplicate?.Date || nowIso(),
       CreatedAt: duplicate?.CreatedAt || nowIso(),
@@ -4961,7 +5063,7 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
     else created += 1;
   }
   if (invoiceWrites.length) await batchUpsertDocuments(env, invoiceWrites);
-  await refreshAccountFinancialSummary(env, accountRef, linkedReferences);
+  await applyDueSchoolFeeCreditsForAccount(env, accountRef, linkedReferences, notificationSettings);
   return { ok: true, message: `${created} school fee invoice item(s) generated, ${updated} updated.`, created, updated };
 }
 
@@ -5020,15 +5122,20 @@ async function walletActivityForAccount(env, accountRef, studentScope = null) {
   return summarizeWalletActivity(rows, accountRef);
 }
 
-async function accountCreditBalanceForAccount(env, accountRef) {
-  const account = await getDocument(env, 'accountSummaries', safeDocumentId(accountRef)).catch(() => null) ||
-    await refreshAccountFinancialSummary(env, accountRef);
-  return Math.max(
-    asMoneyNumber(account.ExcessCredit || account.CreditBalance),
-    asMoneyNumber(account.CreditBalance),
-    Math.max(0, asMoneyNumber(account.TotalCredit) - asMoneyNumber(account.TotalDebit)),
-    Math.max(0, -asMoneyNumber(account.Balance))
-  );
+async function accountCreditBalanceForAccount(env, accountRef, linkedReferences = []) {
+  // Credit actions must use live invoices and ledger, not a cached account row.
+  const account = await refreshAccountFinancialSummary(env, accountRef, linkedReferences);
+  return asMoneyNumber(account.CreditBalance);
+}
+
+export function studentsShareParentForCreditTransfer(source = {}, target = {}) {
+  const emails = (student) => new Set([
+    ...(Array.isArray(student.ParentEmails) ? student.ParentEmails : []),
+    student.ParentEmail, student.VerificationEmail, student.FatherEmail,
+    student.MotherEmail, student.GuardianEmail
+  ].map(lower).filter(Boolean));
+  const sourceEmails = emails(source);
+  return [...emails(target)].some((email) => sourceEmails.has(email));
 }
 
 async function walletAccountPayload(env, student) {
@@ -5447,6 +5554,7 @@ export async function recordWalletPurchase(env, body) {
 }
 
 async function recordCreditAction(env, body) {
+  requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
   const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo || body.admissionNo);
   const action = clean(body.CreditAction || body.ActionType || body.actionType || body.Type).toLowerCase();
   const amount = asMoneyNumber(body.Amount || body.amount);
@@ -5462,10 +5570,16 @@ async function recordCreditAction(env, body) {
     err.status = 400;
     throw err;
   }
+  if (['refund to parent', 'refund', 'transfer to wallet', 'wallet', 'transfer to sibling', 'sibling'].includes(action) && !notes) {
+    const err = new Error('Record the parent instruction or refund details in Notes.');
+    err.status = 400;
+    throw err;
+  }
   const student = await findStudentByAccountRef(env, accountRef);
   if (!student) throw applicationNotFound(accountRef);
   const account = await walletAccountPayload(env, student);
-  const availableCredit = await accountCreditBalanceForAccount(env, account.AccountRef);
+  const linkedReferences = [student.ApplicationReference].map(clean).filter(Boolean);
+  const availableCredit = await accountCreditBalanceForAccount(env, account.AccountRef, linkedReferences);
   const isManualCredit = action === 'manual credit adjustment' || action === 'manual_credit' || action === 'credit_adjustment';
   if (!isManualCredit && amount > availableCredit) {
     const err = new Error(`Amount exceeds available account credit (${formatNairaAmount(availableCredit)}).`);
@@ -5473,7 +5587,14 @@ async function recordCreditAction(env, body) {
     throw err;
   }
   const reference = clean(body.Reference || body.reference) || ledgerDocumentId('CREDIT');
+  const actionId = safeDocumentId(`${account.AccountRef}-${reference}`);
+  if (await getDocument(env, 'creditActions', actionId)) {
+    const err = new Error('This credit action reference has already been recorded for this account.');
+    err.status = 409;
+    throw err;
+  }
   const entries = [];
+  let targetStudentForSummary = null;
   const base = {
     Date: nowIso(),
     AccountRef: account.AccountRef,
@@ -5503,7 +5624,6 @@ async function recordCreditAction(env, body) {
         availableCreditBefore: availableCredit
       })
     };
-    await upsertDocument(env, 'ledger', safeDocumentId(ledgerNo), payload);
     entries.push(payload);
   };
 
@@ -5550,6 +5670,23 @@ async function recordCreditAction(env, body) {
       err.status = 404;
       throw err;
     }
+    let sameParent = studentsShareParentForCreditTransfer(student, targetStudent);
+    if (!sameParent && student.ApplicationReference && targetStudent.ApplicationReference) {
+      const [sourceApplication, targetApplication] = await Promise.all([
+        findApplication(env, student.ApplicationReference).catch(() => null),
+        findApplication(env, targetStudent.ApplicationReference).catch(() => null)
+      ]);
+      sameParent = studentsShareParentForCreditTransfer(
+        { ...student, ParentEmails: [student.ParentEmail, sourceApplication?.ParentEmail, sourceApplication?.VerificationEmail] },
+        { ...targetStudent, ParentEmails: [targetStudent.ParentEmail, targetApplication?.ParentEmail, targetApplication?.VerificationEmail] }
+      );
+    }
+    if (sameReferenceIdentity(account.AccountRef, targetRef) || !sameParent) {
+      const err = new Error('The target must be another student linked to the same parent email.');
+      err.status = 400;
+      throw err;
+    }
+    targetStudentForSummary = targetStudent;
     const targetAccount = await walletAccountPayload(env, targetStudent);
     await addLedger({
       ...base,
@@ -5605,12 +5742,54 @@ async function recordCreditAction(env, body) {
     throw err;
   }
 
+  // Post both sides of a sibling/wallet transfer and its idempotency marker
+  // in one Firestore commit, so a partial transfer cannot be displayed.
+  const summarySnapshot = await getDocument(env, 'accountSummaries', safeDocumentId(account.AccountRef));
+  if (!summarySnapshot?.__updateTime) {
+    const err = new Error('The current account credit could not be locked. Refresh and try again.');
+    err.status = 409;
+    throw err;
+  }
+  if (!isManualCredit && amount > asMoneyNumber(summarySnapshot.CreditBalance)) {
+    const err = new Error('Available credit changed while this action was prepared. Refresh and try again.');
+    err.status = 409;
+    throw err;
+  }
+  await batchUpsertDocuments(env, [
+    ...entries.map((entry) => ({
+      collectionPath: 'ledger', documentId: safeDocumentId(entry.LedgerNo), data: entry
+    })),
+    {
+      collectionPath: 'creditActions', documentId: actionId, exists: false,
+      data: {
+        ActionId: actionId, AccountRef: account.AccountRef, TargetAccountRef: clean(body.TargetAccountRef || body.targetAccountRef),
+        Action: action, Amount: amount, Reference: reference, Notes: notes, RecordedBy: recordedBy,
+        LedgerNos: entries.map((entry) => entry.LedgerNo), CreatedAt: nowIso()
+      }
+    },
+    {
+      collectionPath: 'accountSummaries', documentId: safeDocumentId(account.AccountRef), updateTime: summarySnapshot.__updateTime,
+      data: {
+        ...summarySnapshot,
+        CreditBalance: asMoneyNumber(Math.max(0, asMoneyNumber(summarySnapshot.CreditBalance) + (isManualCredit ? amount : -amount))),
+        UpdatedAt: nowIso()
+      }
+    }
+  ]);
+  if (isManualCredit) {
+    await applyDueSchoolFeeCreditsForAccount(env, account.AccountRef, linkedReferences);
+  }
+  const senderSummary = await refreshAccountFinancialSummary(env, account.AccountRef, linkedReferences);
+  if (targetStudentForSummary) {
+    const targetAccountRef = clean(targetStudentForSummary.AdmissionNo || targetStudentForSummary.AccountRef || targetStudentForSummary.ApplicationReference);
+    await applyDueSchoolFeeCreditsForAccount(env, targetAccountRef, [targetStudentForSummary.ApplicationReference].map(clean).filter(Boolean));
+  }
   return {
     ok: true,
     message: 'Credit action recorded.',
     entries,
     availableCreditBefore: availableCredit,
-    availableCreditAfter: await accountCreditBalanceForAccount(env, account.AccountRef)
+    availableCreditAfter: senderSummary.CreditBalance
   };
 }
 
