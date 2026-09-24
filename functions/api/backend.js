@@ -36,7 +36,8 @@ import {
 import {
   accountingChartForEdition,
   accountingCodeAllowedForEdition,
-  accountingJournalsForEdition
+  accountingJournalsForEdition,
+  SCHOOL_ONLY_REVENUE_ACCOUNT_CODES
 } from '../lib/accounting-edition-scope.js';
 import {
   assertExpectedDeploymentIdentity,
@@ -1303,7 +1304,15 @@ function isWalletLedger(row) {
 }
 
 function isStorePurchase(row) {
-  return normalizeMatchText(row && row.FeeCategory) === 'store' ||
+  const metadata = parseMetadata(row && row.Metadata);
+  const nested = metadata.metadata && typeof metadata.metadata === 'object' ? metadata.metadata : {};
+  const storeType = normalizeMatchText(row && row.StoreType || metadata.storeType || nested.storeType);
+  const storeCart = Array.isArray(metadata.storeCart) ? metadata.storeCart :
+    (Array.isArray(nested.storeCart) ? nested.storeCart : []);
+  return ['store', 'uniform store', 'book store', 'bookstore'].includes(storeType) ||
+    storeCart.some((item) => ['store', 'uniform store', 'book store', 'bookstore'].includes(normalizeMatchText(item && item.StoreType))) ||
+    ['store', 'uniform store', 'book store', 'bookstore'].includes(normalizeMatchText(row && row.Department)) ||
+    normalizeMatchText(row && row.FeeCategory) === 'store' ||
     clean(row && row.FeeCode).toUpperCase() === 'STORE_CART' ||
     normalizeMatchText(row && row.EntryType).includes('store');
 }
@@ -1427,6 +1436,23 @@ export function isSchoolInvoiceCredit(row) {
     isSchoolFeesTotalPayment(row) ||
     normalizeMatchText(row && row.FeeCategory) === 'school fee' ||
     isGeneralFeeCredit(row);
+}
+
+// Only unrestricted school/account receipts can settle another term's school
+// invoice. An earmarked store, club or service payment must stay with its own
+// purchase even when legacy records incorrectly label it as a school fee.
+export function isAvailableSchoolCreditReceipt(row) {
+  if (!row || isWalletLedger(row) || isStorePurchase(row) || isOptionalSubscriptionFee(row)) return false;
+  const code = clean(row.FeeCode).toUpperCase();
+  if (/^(CLINIC|KITCHEN|BUS|CLUB|TRANSPORT|OPTIONAL|STORE)[_-]/.test(code)) return false;
+  return isSchoolInvoiceCredit(row) || code === 'TUITION';
+}
+
+export function isSchoolFeeInvoice(row) {
+  if (!row || !isSchoolFeeCategory(row.FeeCategory) || isWalletLedger(row) ||
+    isStorePurchase(row) || isOptionalSubscriptionFee(row)) return false;
+  const code = clean(row.FeeCode).toUpperCase();
+  return !/^(CLINIC|KITCHEN|BUS|CLUB|TRANSPORT|OPTIONAL|STORE)[_-]/.test(code);
 }
 
 export function calculateSchoolFeeOutstanding(expectedDebit, appliedCredit) {
@@ -1997,17 +2023,11 @@ export async function getPayableFees(env, body = {}) {
     return feeRank && feeRank < currentTermRank && feeMatchesAccountBase(fee, billingApp);
   }), billingApp).reduce((sum, fee) => sum + asMoneyNumber(fee.Amount), 0) : 0;
   const schoolFeeRelatedCredit = currentTermRank ? paidLedgerRows.reduce((sum, row) => {
-    const schoolRelated = isAcceptanceFeeLike(row) ||
-      isSchoolFeesTotalPayment(row) ||
-      normalizeMatchText(row.FeeCategory) === 'school fee' ||
-      isGeneralFeeCredit(row);
-    return schoolRelated ? sum + asMoneyNumber(row.Credit) : sum;
+    return isAvailableSchoolCreditReceipt(row) ? sum + asMoneyNumber(row.Credit) : sum;
   }, 0) : 0;
   const currentPeriodSchoolFeeCredit = currentTermRank ? paidLedgerRows.reduce((sum, row) => {
-    const schoolRelated = isSchoolFeesTotalPayment(row) ||
-      normalizeMatchText(row.FeeCategory) === 'school fee' ||
-      isGeneralFeeCredit(row);
-    return schoolRelated && rowIsCurrentPeriod(row) ? sum + asMoneyNumber(row.Credit) : sum;
+    return isAvailableSchoolCreditReceipt(row) && !isAcceptanceFeeLike(row) && rowIsCurrentPeriod(row)
+      ? sum + asMoneyNumber(row.Credit) : sum;
   }, 0) : 0;
   const acceptanceLedgerCredit = paidLedgerRows.reduce((sum, row) => {
     return isAcceptanceFeeLike(row) ? sum + asMoneyNumber(row.Credit) : sum;
@@ -4436,19 +4456,19 @@ async function findPaymentByReference(env, reference, options = {}) {
   return findOneByField(env, 'payments', 'GatewayReference', reference).catch(() => null);
 }
 
-async function writePaymentAccountingJournal(env, payment, hasMatchingInvoice) {
-  const sourceId = clean(payment.Reference || payment.GatewayReference || payment.PaymentId);
+export function buildPaymentAccountingJournal(payment = {}, hasMatchingInvoice = false, edition = 'school') {
+  const sourceId = clean(payment.Reference || payment.GatewayReference || payment.PaymentId || payment.__id);
   const amount = paymentCreditedAmount(payment);
-  if (!sourceId || amount <= 0) return;
+  if (!sourceId || amount <= 0) return null;
   const journalNo = `SYS-PAY-${safeDocumentId(sourceId)}`;
   const cash = accountingCashAccountFor(payment.Method, payment.Gateway);
-  const destination = accountingDestinationForPayment(payment, hasMatchingInvoice);
+  const destination = accountingDestinationForPayment(payment, hasMatchingInvoice, edition);
   const lines = [
     { AccountCode: cash, Debit: amount, Credit: 0, Description: clean(payment.Method || payment.Gateway || 'Payment received') },
     { AccountCode: destination, Debit: 0, Credit: amount, Description: clean(payment.AccountRef || payment.DisplayName) }
   ];
-  await upsertDocument(env, 'accountingJournals', safeDocumentId(journalNo), {
-    JournalNo: journalNo, Date: payment.PaidAt || nowIso(), Status: 'Posted',
+  return normalizedJournal({
+    JournalNo: journalNo, Date: payment.PaidAt || payment.PaymentDate || payment.Date || nowIso(), Status: 'Posted',
     Description: `Receipt: ${sourceId}`, Reference: sourceId,
     Source: 'Fee Payment', SourceId: sourceId, RecordedBy: 'System',
     BranchId: clean(payment.BranchId || payment.branchId || 'main').toLowerCase() || 'main',
@@ -4458,25 +4478,425 @@ async function writePaymentAccountingJournal(env, payment, hasMatchingInvoice) {
   });
 }
 
+export function buildSchoolPaymentReclassificationJournal(payment = {}, postedReceipt = {}, date = nowIso()) {
+  if (!isAvailableSchoolCreditReceipt(payment) || clean(postedReceipt.Status).toLowerCase() !== 'posted') return null;
+  const desired = buildPaymentAccountingJournal(payment);
+  if (!desired) return null;
+  const priorBranch = clean(postedReceipt.BranchId || 'main').toLowerCase();
+  if (priorBranch !== clean(desired.BranchId || 'main').toLowerCase() ||
+    !sameText(postedReceipt.Date, desired.Date) ||
+    !sameText(postedReceipt.AcademicSession, desired.AcademicSession) ||
+    !sameText(postedReceipt.Term, desired.Term)) return null;
+  const lines = accountingLines(postedReceipt.Lines);
+  const credits = lines.filter((line) => asMoneyNumber(line.Credit) > 0);
+  const debits = lines.filter((line) => asMoneyNumber(line.Debit) > 0);
+  if (credits.length !== 1 || debits.length !== 1 ||
+    asMoneyNumber(credits[0].Credit) !== desired.TotalCredit ||
+    asMoneyNumber(debits[0].Debit) !== desired.TotalDebit ||
+    clean(debits[0].AccountCode) !== clean(desired.Lines[0].AccountCode)) return null;
+  const priorDestination = clean(credits[0].AccountCode);
+  if (!priorDestination || priorDestination === '2310') return null;
+  return normalizedJournal({
+    JournalNo: `SYS-PAYRECLASS-${safeDocumentId(desired.SourceId)}`,
+    Date: clean(date).slice(0, 10), Status: 'Posted',
+    Description: `Reclassify parent advance: ${desired.SourceId}`,
+    Reference: desired.Reference, Source: 'Student Advance Reclassification', SourceId: desired.SourceId,
+    AccountRef: clean(payment.AccountRef),
+    BranchId: desired.BranchId, AcademicSession: desired.AcademicSession, Term: desired.Term,
+    RecordedBy: 'System',
+    Lines: [
+      { AccountCode: priorDestination, Debit: desired.TotalDebit, Credit: 0, Description: 'Reverse legacy receipt destination' },
+      { AccountCode: '2310', Debit: 0, Credit: desired.TotalCredit, Description: clean(payment.AccountRef || payment.DisplayName) }
+    ],
+    TotalDebit: desired.TotalDebit, TotalCredit: desired.TotalCredit,
+    CreatedAt: nowIso(), UpdatedAt: nowIso()
+  });
+}
+
+async function createSchoolPaymentReclassificationIfAbsent(env, journal) {
+  const documentId = safeDocumentId(journal.JournalNo);
+  const prior = await getDocument(env, 'accountingJournals', documentId).catch(() => null);
+  if (prior) {
+    if (lower(prior.Status) !== 'posted' ||
+      journalLineSignature(prior.Lines) !== journalLineSignature(journal.Lines) ||
+      !sameText(prior.Reference, journal.Reference) || !sameText(prior.SourceId, journal.SourceId) ||
+      !sameText(prior.BranchId, journal.BranchId) ||
+      !sameText(prior.AcademicSession, journal.AcademicSession) ||
+      !sameText(prior.Term, journal.Term) || !timestampMs(prior.Date)) {
+      const err = new Error(`Reclassification ${journal.JournalNo} differs from its posted journal; finance review is required.`);
+      err.status = 409;
+      throw err;
+    }
+    return false;
+  }
+  if (await accountingPeriodIsClosed(env, journal.Date)) {
+    const err = new Error(`Reclassification ${journal.JournalNo} falls in a closed accounting period; finance review is required.`);
+    err.status = 409;
+    throw err;
+  }
+  const created = await createDocumentIfAbsent(env, 'accountingJournals', documentId, journal);
+  if (!created.created) {
+    const existing = created.document || await getDocument(env, 'accountingJournals', documentId);
+    if (lower(existing?.Status) !== 'posted' ||
+      journalLineSignature(existing?.Lines) !== journalLineSignature(journal.Lines) ||
+      !sameText(existing?.Reference, journal.Reference) ||
+      !sameText(existing?.SourceId, journal.SourceId) ||
+      !sameText(existing?.BranchId, journal.BranchId) ||
+      !sameText(existing?.AcademicSession, journal.AcademicSession) ||
+      !sameText(existing?.Term, journal.Term) || !timestampMs(existing?.Date)) {
+      const err = new Error(`Reclassification ${journal.JournalNo} was changed concurrently; finance review is required.`);
+      err.status = 409;
+      throw err;
+    }
+  }
+  return created.created;
+}
+
+async function writePaymentAccountingJournal(env, payment, hasMatchingInvoice) {
+  const edition = accountingEditionForRequest(env);
+  const journal = buildPaymentAccountingJournal(payment, hasMatchingInvoice, edition);
+  if (!journal) return null;
+  if (edition === 'school' && isAvailableSchoolCreditReceipt(payment)) await seedAccountingChart(env);
+  const prior = await getDocument(env, 'accountingJournals', safeDocumentId(journal.JournalNo)).catch(() => null);
+  if (prior && edition === 'school' && isAvailableSchoolCreditReceipt(payment)) {
+    if (lower(prior.Status) !== 'posted') {
+      const err = new Error('The existing payment journal is not posted; finance review is required.');
+      err.status = 409;
+      throw err;
+    }
+    if (!sameText(prior.Date, journal.Date) || !sameText(prior.BranchId || 'main', journal.BranchId) ||
+      !sameText(prior.AcademicSession, journal.AcademicSession) || !sameText(prior.Term, journal.Term) ||
+      !sameText(prior.Reference, journal.Reference) || !sameText(prior.SourceId, journal.SourceId)) {
+      const err = new Error('The existing payment journal has a conflicting reference or accounting period; finance review is required.');
+      err.status = 409;
+      throw err;
+    }
+    if (journalLineSignature(prior.Lines) !== journalLineSignature(journal.Lines)) {
+      const reclassification = buildSchoolPaymentReclassificationJournal(payment, prior);
+      if (!reclassification) {
+        const err = new Error('The existing payment journal needs finance review before its parent credit can be used.');
+        err.status = 409;
+        throw err;
+      }
+      await createSchoolPaymentReclassificationIfAbsent(env, reclassification);
+    }
+    return prior;
+  }
+  if (!prior && await accountingPeriodIsClosed(env, journal.Date)) {
+    const err = new Error('The payment date belongs to a closed accounting period; finance review is required.');
+    err.status = 409;
+    throw err;
+  }
+  await upsertDocument(env, 'accountingJournals', safeDocumentId(journal.JournalNo), journal);
+  return journal;
+}
+
+export function buildSchoolInvoiceChargeAccountingJournal(row = {}) {
+  const invoice = normalizeInvoice(row);
+  const sourceId = clean(invoice.InvoiceId || row.__id);
+  const amount = asMoneyNumber(invoice.Debit || invoice.Amount);
+  if (!sourceId || amount <= 0 || !isSchoolFeeInvoice(invoice)) return null;
+  const revenue = accountingAccountCodeForRevenue(invoice.FeeCategory, invoice.FeeCode);
+  return normalizedJournal({
+    JournalNo: `SYS-INV-${safeDocumentId(sourceId)}`,
+    Date: invoice.CreatedAt || invoice.Date || nowIso(), Status: 'Posted',
+    Description: `Invoice: ${clean(invoice.FeeName || invoice.Description || sourceId)}`,
+    Reference: sourceId, Source: 'Student Invoice', SourceId: sourceId,
+    BranchId: clean(invoice.BranchId || 'main').toLowerCase() || 'main',
+    AcademicSession: invoice.AcademicSession || '', Term: invoice.Term || '', RecordedBy: 'System',
+    Lines: [
+      { AccountCode: '1100', Debit: amount, Credit: 0, Description: clean(invoice.AccountRef || invoice.DisplayName) },
+      { AccountCode: revenue, Debit: 0, Credit: amount, Description: clean(invoice.FeeName || invoice.FeeCategory) }
+    ],
+    TotalDebit: amount, TotalCredit: amount,
+    CreatedAt: invoice.CreatedAt || nowIso(), UpdatedAt: nowIso()
+  });
+}
+
+// The receipt remains an advance until its invoice credit is applied. Keep
+// this journal separate from both the receipt and the invoice charge so an
+// advance paid before invoicing is recognized exactly once when applied.
+export function buildSchoolInvoiceCreditAccountingJournal(row = {}, options = {}) {
+  const invoice = normalizeInvoice(row);
+  const sourceId = clean(invoice.InvoiceId || row.__id);
+  const amount = asMoneyNumber(options.amount ?? Math.min(asMoneyNumber(invoice.Debit || invoice.Amount), asMoneyNumber(invoice.Credit)));
+  if (!sourceId || amount <= 0 || !isSchoolFeeInvoice(invoice)) return null;
+  return normalizedJournal({
+    JournalNo: clean(options.journalNo) || `SYS-INVCREDIT-LEGACY-${safeDocumentId(sourceId)}`,
+    Date: clean(options.date) || invoice.CreditAppliedAt || invoice.UpdatedAt || invoice.Date || nowIso(), Status: 'Posted',
+    Description: `Parent credit applied: ${sourceId}`,
+    Reference: sourceId, Source: 'Student Invoice Credit', SourceId: sourceId,
+    PaymentReference: clean(options.paymentReference),
+    BranchId: clean(invoice.BranchId || 'main').toLowerCase() || 'main',
+    AcademicSession: invoice.AcademicSession || '', Term: invoice.Term || '', RecordedBy: 'System',
+    AccountRef: clean(invoice.AccountRef),
+    Lines: [
+      { AccountCode: '2310', Debit: amount, Credit: 0, Description: clean(invoice.AccountRef || invoice.DisplayName) },
+      { AccountCode: '1100', Debit: 0, Credit: amount, Description: clean(invoice.FeeName || invoice.FeeCategory) }
+    ],
+    TotalDebit: amount, TotalCredit: amount,
+    CreatedAt: invoice.CreatedAt || nowIso(), UpdatedAt: nowIso()
+  });
+}
+
+export function buildSchoolInvoiceCreditPaymentJournal(invoice, payment, amount) {
+  const invoiceId = clean(invoice.InvoiceId || invoice.__id);
+  const paymentId = clean(payment.Reference || payment.GatewayReference || payment.PaymentId || payment.__id);
+  if (!invoiceId || !paymentId) return null;
+  const paymentDate = clean(payment.PaidAt || payment.PaymentDate || payment.Date);
+  const invoiceDate = clean(invoice.CreatedAt || invoice.Date);
+  // A historical advance can be received before the invoice exists. Its
+  // application cannot precede the receivable/charge it settles.
+  const applicationDate = timestampMs(invoiceDate) > timestampMs(paymentDate)
+    ? invoiceDate : (paymentDate || invoiceDate || nowIso());
+  return buildSchoolInvoiceCreditAccountingJournal(invoice, {
+    amount, journalNo: `SYS-INVCREDIT-PAY-${safeDocumentId(paymentId)}-${safeDocumentId(invoiceId)}`,
+    date: applicationDate, paymentReference: paymentId
+  });
+}
+
+export function buildSchoolInvoiceCreditAutomaticJournal(invoice, priorCredit, newCredit, date) {
+  const invoiceId = clean(invoice.InvoiceId || invoice.__id);
+  const amount = asMoneyNumber(newCredit - priorCredit);
+  if (!invoiceId || amount <= 0) return null;
+  const priorCents = Math.round(asMoneyNumber(priorCredit) * 100);
+  const newCents = Math.round(asMoneyNumber(newCredit) * 100);
+  return buildSchoolInvoiceCreditAccountingJournal(invoice, {
+    amount, journalNo: `SYS-INVCREDIT-AUTO-${safeDocumentId(invoiceId)}-${priorCents}-${newCents}`,
+    date: date || nowIso()
+  });
+}
+
+export function schoolInvoiceCreditJournalGap(row = {}, journals = []) {
+  const invoice = normalizeInvoice(row);
+  const invoiceId = clean(invoice.InvoiceId || row.__id);
+  const expected = Math.min(asMoneyNumber(invoice.Debit || invoice.Amount), asMoneyNumber(invoice.Credit));
+  const related = journals.filter((journal) => sameText(journal.Source, 'Student Invoice Credit') &&
+    sameText(journal.SourceId, invoiceId));
+  const invalidPostedJournalIds = [];
+  const posted = asMoneyNumber(related.reduce((sum, journal) => {
+    if (lower(journal.Status) !== 'posted') {
+      invalidPostedJournalIds.push(clean(journal.JournalNo || journal.__id));
+      return sum;
+    }
+    const lines = accountingLines(journal.Lines);
+    const debit = lines.find((line) => clean(line.AccountCode) === '2310' && asMoneyNumber(line.Debit) > 0);
+    const credit = lines.find((line) => clean(line.AccountCode) === '1100' && asMoneyNumber(line.Credit) > 0);
+    if (lines.length !== 2 || !debit || !credit ||
+      asMoneyNumber(debit.Debit) !== asMoneyNumber(credit.Credit)) {
+      invalidPostedJournalIds.push(clean(journal.JournalNo || journal.__id));
+      return sum;
+    }
+    return sum + asMoneyNumber(debit.Debit);
+  }, 0));
+  const baselineJournalNo = `SYS-INVCREDIT-LEGACY-${safeDocumentId(invoiceId)}`;
+  return { invoiceId, expected, posted, missing: asMoneyNumber(expected - posted),
+    baselineExists: related.some((journal) => lower(journal.Status) === 'posted' && sameText(journal.JournalNo || journal.__id, baselineJournalNo)),
+    ...(invalidPostedJournalIds.length ? { invalidPostedJournalIds } : {}) };
+}
+
+async function upsertSystemJournalIfChanged(env, journal) {
+  if (!journal) return false;
+  const documentId = safeDocumentId(journal.JournalNo);
+  const prior = await getDocument(env, 'accountingJournals', documentId).catch(() => null);
+  if (prior && lower(prior.Status) !== 'posted') {
+    const err = new Error(`System journal ${journal.JournalNo} is not posted; finance review is required.`);
+    err.status = 409;
+    throw err;
+  }
+  if (prior && journalLineSignature(prior.Lines) === journalLineSignature(journal.Lines) &&
+    sameText(prior.Reference, journal.Reference) && sameText(prior.SourceId, journal.SourceId) &&
+    sameText(prior.Date, journal.Date) && sameText(prior.BranchId, journal.BranchId) &&
+    sameText(prior.AcademicSession, journal.AcademicSession) && sameText(prior.Term, journal.Term)) return false;
+  if (prior && lower(prior.Status) === 'posted') {
+    const err = new Error(`Posted system journal ${journal.JournalNo} differs from source data; finance review is required.`);
+    err.status = 409;
+    throw err;
+  }
+  if (!prior && await accountingPeriodIsClosed(env, journal.Date)) {
+    const err = new Error(`System journal ${journal.JournalNo} belongs to a closed period; finance review is required.`);
+    err.status = 409;
+    throw err;
+  }
+  await upsertDocument(env, 'accountingJournals', documentId, {
+    ...journal, CreatedAt: prior?.CreatedAt || journal.CreatedAt, UpdatedAt: nowIso()
+  });
+  return true;
+}
+
+// Repair just one parent's School subledger before a credit withdrawal or
+// transfer. This also reconciles receipts/invoice credits posted before these
+// journals existed, without scanning other students' financial records.
+export async function syncSchoolAccountCreditJournals(env, accountRef, linkedReferences = []) {
+  const references = [...new Set([accountRef, ...linkedReferences].map(clean).filter(Boolean))];
+  if (!references.length || accountingEditionForRequest(env) !== 'school') return { repaired: 0, unreconciledLegacyActions: [], unreconciledAllocation: null };
+  const [payments, invoices, ledgerRows, sourceActions, targetActionGroups] = await Promise.all([
+    queryAccountRowsForReferences(env, 'payments', references),
+    queryAccountRowsForReferences(env, 'invoices', references),
+    queryAccountRowsForReferences(env, 'ledger', references),
+    queryAccountRowsForReferences(env, 'creditActions', references),
+    Promise.all(references.map((reference) => queryCollection(env, 'creditActions', {
+      filters: [{ field: 'TargetAccountRef', op: '==', value: reference }]
+    })))
+  ]);
+  const actions = new Map();
+  [...sourceActions, ...targetActionGroups.flat()].forEach((row) => {
+    const key = clean(row.ActionId || row.__id);
+    if (key) actions.set(key, row);
+  });
+  const unreconciledLegacyActions = [];
+  for (const [actionId, action] of actions) {
+    const journalNo = clean(action.JournalNo) || `SYS-CREDIT-${safeDocumentId(actionId)}`;
+    const journal = await getDocument(env, 'accountingJournals', safeDocumentId(journalNo)).catch(() => null);
+    if (!journal || lower(journal.Status) !== 'posted') unreconciledLegacyActions.push(actionId);
+  }
+  if (unreconciledLegacyActions.length) return { repaired: 0, unreconciledLegacyActions, unreconciledAllocation: null };
+  const normalizedLedger = ledgerRows.map(normalizeLedger);
+  const receivedSchoolCredit = asMoneyNumber(normalizedLedger.filter(isAvailableSchoolCreditReceipt)
+    .reduce((sum, row) => sum + asMoneyNumber(row.Credit), 0));
+  const withdrawnCredit = asMoneyNumber(normalizedLedger.filter((row) =>
+    normalizeMatchText(row.FeeCategory) === 'account credit')
+    .reduce((sum, row) => sum + asMoneyNumber(row.Debit), 0));
+  const appliedToSchoolInvoices = asMoneyNumber(invoices.map(normalizeInvoice)
+    .filter(isSchoolFeeInvoice)
+    .reduce((sum, row) => sum + Math.min(asMoneyNumber(row.Debit || row.Amount), asMoneyNumber(row.Credit)), 0));
+  if (appliedToSchoolInvoices + withdrawnCredit > receivedSchoolCredit + 0.005) {
+    // A legacy allocation may have spent an earmarked store/service receipt.
+    // Do not create a negative 2310 liability without tracing its provenance.
+    return { repaired: 0, unreconciledLegacyActions: [], unreconciledAllocation: {
+      receivedSchoolCredit, appliedToSchoolInvoices, withdrawnCredit
+    } };
+  }
+  const baselineJournals = [];
+  for (const row of invoices) {
+    const invoice = normalizeInvoice(row);
+    if (!isSchoolFeeInvoice(invoice)) continue;
+    const creditJournals = await queryCollection(env, 'accountingJournals', {
+      filters: [{ field: 'SourceId', op: '==', value: invoice.InvoiceId }]
+    });
+    const gap = schoolInvoiceCreditJournalGap(invoice, creditJournals);
+    if (gap.invalidPostedJournalIds?.length || gap.missing < -0.005 || (gap.missing > 0.005 && gap.baselineExists)) {
+      return { repaired: 0, unreconciledLegacyActions: [], unreconciledAllocation: {
+        receivedSchoolCredit, appliedToSchoolInvoices, withdrawnCredit,
+        invoiceId: gap.invoiceId, expectedJournalCredit: gap.expected, postedJournalCredit: gap.posted,
+        invalidPostedJournalIds: gap.invalidPostedJournalIds || []
+      } };
+    }
+    if (gap.missing > 0.005) baselineJournals.push(buildSchoolInvoiceCreditAccountingJournal(invoice, {
+      amount: gap.missing, date: nowIso()
+    }));
+  }
+  const receiptPlans = [];
+  for (const row of payments) {
+    const payment = normalizePayment(row);
+    if (!isAvailableSchoolCreditReceipt(payment)) continue;
+    const journal = buildPaymentAccountingJournal(payment);
+    if (!journal) continue;
+    const prior = await getDocument(env, 'accountingJournals', safeDocumentId(journal.JournalNo)).catch(() => null);
+    if (!prior) {
+      receiptPlans.push({ journal });
+      continue;
+    }
+    if (lower(prior.Status) !== 'posted') {
+      return { repaired: 0, unreconciledLegacyActions: [], unreconciledAllocation: {
+        receivedSchoolCredit, appliedToSchoolInvoices, withdrawnCredit,
+        receiptId: journal.SourceId, reason: 'Receipt journal is not posted.'
+      } };
+    }
+    if (journalLineSignature(prior.Lines) === journalLineSignature(journal.Lines)) {
+      if (!sameText(prior.Date, journal.Date) || !sameText(prior.BranchId, journal.BranchId) ||
+        !sameText(prior.AcademicSession, journal.AcademicSession) || !sameText(prior.Term, journal.Term)) {
+        return { repaired: 0, unreconciledLegacyActions: [], unreconciledAllocation: {
+          receivedSchoolCredit, appliedToSchoolInvoices, withdrawnCredit,
+          receiptId: journal.SourceId, reason: 'Receipt accounting period or branch requires finance review.'
+        } };
+      }
+      continue;
+    }
+    const reclassification = buildSchoolPaymentReclassificationJournal(payment, prior);
+    if (!reclassification) {
+      return { repaired: 0, unreconciledLegacyActions: [], unreconciledAllocation: {
+        receivedSchoolCredit, appliedToSchoolInvoices, withdrawnCredit,
+        receiptId: journal.SourceId, reason: 'Legacy receipt amount or journal lines require finance review.'
+      } };
+    }
+    receiptPlans.push({ reclassification });
+  }
+  const invoiceChargePlans = [];
+  for (const row of invoices) {
+    const invoice = normalizeInvoice(row);
+    if (!isSchoolFeeInvoice(invoice)) continue;
+    const journal = buildSchoolInvoiceChargeAccountingJournal(invoice);
+    if (!journal) continue;
+    const prior = await getDocument(env, 'accountingJournals', safeDocumentId(journal.JournalNo)).catch(() => null);
+    if (prior && lower(prior.Status) === 'posted' &&
+      (journalLineSignature(prior.Lines) !== journalLineSignature(journal.Lines) ||
+        !sameText(prior.Date, journal.Date) || !sameText(prior.BranchId, journal.BranchId) ||
+        !sameText(prior.AcademicSession, journal.AcademicSession) || !sameText(prior.Term, journal.Term))) {
+      return { repaired: 0, unreconciledLegacyActions: [], unreconciledAllocation: {
+        receivedSchoolCredit, appliedToSchoolInvoices, withdrawnCredit,
+        invoiceId: invoice.InvoiceId, reason: 'Posted invoice charge differs from source data.'
+      } };
+    }
+    invoiceChargePlans.push(journal);
+  }
+  for (const journal of [
+    ...receiptPlans.filter((plan) => plan.journal).map((plan) => plan.journal),
+    ...receiptPlans.filter((plan) => plan.reclassification).map((plan) => plan.reclassification),
+    ...invoiceChargePlans,
+    ...baselineJournals
+  ]) {
+    const prior = await getDocument(env, 'accountingJournals', safeDocumentId(journal.JournalNo)).catch(() => null);
+    if (!prior && await accountingPeriodIsClosed(env, journal.Date)) {
+      return { repaired: 0, unreconciledLegacyActions: [], unreconciledAllocation: {
+        receivedSchoolCredit, appliedToSchoolInvoices, withdrawnCredit,
+        journalNo: journal.JournalNo, reason: 'Missing journal belongs to a closed accounting period.'
+      } };
+    }
+  }
+  await seedAccountingChart(env);
+  let repaired = 0;
+  for (const plan of receiptPlans) {
+    if (plan.journal && await upsertSystemJournalIfChanged(env, plan.journal)) repaired += 1;
+    if (plan.reclassification && await createSchoolPaymentReclassificationIfAbsent(env, plan.reclassification)) repaired += 1;
+  }
+  for (const journal of invoiceChargePlans) {
+    if (await upsertSystemJournalIfChanged(env, journal)) repaired += 1;
+  }
+  for (const journal of baselineJournals) {
+    if (await upsertSystemJournalIfChanged(env, journal)) repaired += 1;
+  }
+  return { repaired, unreconciledLegacyActions, unreconciledAllocation: null };
+}
+
 export function calculateAccountFinancialSummary(invoiceRows = [], ledgerRows = [], accountRef = '', today = new Date().toISOString().slice(0, 10)) {
   const invoices = invoiceRows.map(normalizeInvoice);
   const debit = invoices.reduce((sum, row) => sum + asMoneyNumber(row.Debit || row.Amount), 0);
-  const dueDebit = invoices.filter((row) => invoiceIsDue(row, today))
+  const schoolInvoices = invoices.filter(isSchoolFeeInvoice);
+  const dueDebit = schoolInvoices.filter((row) => invoiceIsDue(row, today))
     .reduce((sum, row) => sum + asMoneyNumber(row.Debit || row.Amount), 0);
-  const futureAppliedCredit = invoices.filter((row) => !invoiceIsDue(row, today))
+  const futureAppliedCredit = schoolInvoices.filter((row) => !invoiceIsDue(row, today))
     .reduce((sum, row) => sum + Math.min(asMoneyNumber(row.Debit || row.Amount), asMoneyNumber(row.Credit)), 0);
   const normalizedLedger = ledgerRows.map(normalizeLedger);
   const nonWallet = normalizedLedger.filter((row) => !isWalletLedger(row));
   const credit = nonWallet.reduce((sum, row) => sum + asMoneyNumber(row.Credit), 0);
+  const schoolCredit = nonWallet.filter(isAvailableSchoolCreditReceipt)
+    .reduce((sum, row) => sum + asMoneyNumber(row.Credit), 0);
   const accountCreditDebits = nonWallet.filter((row) => normalizeMatchText(row.FeeCategory) === 'account credit')
     .reduce((sum, row) => sum + asMoneyNumber(row.Debit), 0);
   const wallet = normalizedLedger.filter(isWalletLedger)
     .reduce((sum, row) => sum + asMoneyNumber(row.Credit) - asMoneyNumber(row.Debit), 0);
-  const balance = debit + accountCreditDebits - credit;
+  const schoolDebit = schoolInvoices.reduce((sum, row) => sum + asMoneyNumber(row.Debit || row.Amount), 0);
+  const otherDebit = asMoneyNumber(debit - schoolDebit);
+  const otherCredit = asMoneyNumber(credit - schoolCredit);
+  const outstandingBalance = asMoneyNumber(
+    Math.max(0, schoolDebit + accountCreditDebits - schoolCredit) +
+    Math.max(0, otherDebit - otherCredit)
+  );
   return {
     AccountRef: clean(accountRef), AccountRefNormalized: normalizeReferenceText(accountRef),
     TotalDebit: debit, TotalCredit: credit, AccountCreditDebits: accountCreditDebits,
-    OutstandingBalance: Math.max(0, balance), CreditBalance: Math.max(0, credit - accountCreditDebits - dueDebit - futureAppliedCredit),
+    OutstandingBalance: outstandingBalance, CreditBalance: Math.max(0, schoolCredit - accountCreditDebits - dueDebit - futureAppliedCredit),
     WalletBalance: wallet, UpdatedAt: nowIso()
   };
 }
@@ -4487,18 +4907,18 @@ export function calculateAccountFinancialSummary(invoiceRows = [], ledgerRows = 
 export function calculateDueSchoolFeeCreditAllocations(invoiceRows = [], ledgerRows = [], today = new Date().toISOString().slice(0, 10)) {
   const invoices = invoiceRows.map(normalizeInvoice);
   const ledger = ledgerRows.map(normalizeLedger).filter((row) => !isWalletLedger(row));
-  const received = ledger.reduce((sum, row) => sum + asMoneyNumber(row.Credit), 0);
+  const received = ledger.filter(isAvailableSchoolCreditReceipt)
+    .reduce((sum, row) => sum + asMoneyNumber(row.Credit), 0);
   const creditActions = ledger.reduce((sum, row) =>
     sum + (normalizeMatchText(row.FeeCategory) === 'account credit' ? asMoneyNumber(row.Debit) : 0), 0);
-  const reserved = invoices.reduce((sum, row) => {
+  const reserved = invoices.filter(isSchoolFeeInvoice).reduce((sum, row) => {
     const debit = asMoneyNumber(row.Debit || row.Amount);
     const applied = Math.min(debit, asMoneyNumber(row.Credit));
-    if (!invoiceIsDue(row, today)) return sum + applied;
-    return sum + (isSchoolFeeCategory(row.FeeCategory) ? applied : debit);
+    return sum + applied;
   }, 0);
   let remaining = Math.max(0, asMoneyNumber(received - creditActions - reserved));
   const allocations = [];
-  invoices.filter((row) => invoiceIsDue(row, today) && isSchoolFeeCategory(row.FeeCategory))
+  invoices.filter((row) => invoiceIsDue(row, today) && isSchoolFeeInvoice(row))
     .sort((a, b) => {
       const left = feeDueDate(a.DueDate) || feeDueDate(a.Date) || '';
       const right = feeDueDate(b.DueDate) || feeDueDate(b.Date) || '';
@@ -4537,8 +4957,19 @@ async function applyDueSchoolFeeCreditsForAccount(env, accountRef, linkedReferen
     queryAccountRowsForReferences(env, 'ledger', references),
     getDocument(env, 'accountSummaries', safeDocumentId(accountRef))
   ]);
+  const preflight = await syncSchoolAccountCreditJournals(env, accountRef, linkedReferences);
+  if (preflight.unreconciledLegacyActions?.length || preflight.unreconciledAllocation) {
+    const err = new Error('This parent credit needs finance review before it can be applied to another term.');
+    err.status = 409;
+    throw err;
+  }
   const allocation = calculateDueSchoolFeeCreditAllocations(invoices, ledger, today);
   if (allocation.allocations.length) {
+    if (await accountingPeriodIsClosed(env, today)) {
+      const err = new Error('The credit-allocation date belongs to a closed accounting period; finance review is required.');
+      err.status = 409;
+      throw err;
+    }
     const notificationSettings = settings || await loadNotificationSettings(env);
     const updatedInvoices = new Map();
     const writes = allocation.allocations.map((item) => {
@@ -4558,6 +4989,13 @@ async function applyDueSchoolFeeCreditsForAccount(env, accountRef, linkedReferen
         ...(item.invoice.__updateTime ? { updateTime: item.invoice.__updateTime } : {})
       };
     });
+    for (const item of allocation.allocations) {
+      const priorCredit = Math.min(asMoneyNumber(item.invoice.Debit || item.invoice.Amount), asMoneyNumber(item.invoice.Credit));
+      const journal = buildSchoolInvoiceCreditAutomaticJournal(item.invoice, priorCredit, item.Credit, today);
+      if (journal) writes.push({
+        collectionPath: 'accountingJournals', documentId: safeDocumentId(journal.JournalNo), exists: false, data: journal
+      });
+    }
     const summary = calculateAccountFinancialSummary(invoices.map((row) =>
       updatedInvoices.get(clean(row.InvoiceId || row.__id)) || row), ledger, accountRef, today);
     writes.push({
@@ -4588,7 +5026,7 @@ export async function processDueSchoolFeeCredits(env, options = {}) {
     try {
       const references = Array.isArray(account.LinkedReferences) ? account.LinkedReferences.map(clean).filter(Boolean) : [];
       const invoices = (await queryAccountRowsForReferences(env, 'invoices', [accountRef, ...references])).map(normalizeInvoice);
-      if (!invoices.some((row) => invoiceIsDue(row, today) && isSchoolFeeCategory(row.FeeCategory) &&
+      if (!invoices.some((row) => invoiceIsDue(row, today) && isSchoolFeeInvoice(row) &&
         asMoneyNumber(row.Debit || row.Amount) > asMoneyNumber(row.Credit))) continue;
       const allocation = await applyDueSchoolFeeCreditsForAccount(env, accountRef, references, settings, today);
       if (allocation.allocations.length) {
@@ -4655,10 +5093,23 @@ export async function recordManualPayment(env, body) {
   let payment = existingPayment ? normalizePayment(existingPayment) : null;
   let duplicate = Boolean(payment);
   let paymentDocumentId = safeDocumentId(existingPayment?.__id || reference);
+  if (!payment && await accountingPeriodIsClosed(env, clean(body.PaidAt || body.paidAt) || nowIso())) {
+    const err = new Error('The payment date belongs to a closed accounting period; record an approved current-period adjustment instead.');
+    err.status = 409;
+    throw err;
+  }
   if (payment) {
     accountRef = clean(payment.AccountRef || accountRef);
     feeCode = clean(payment.FeeCode || feeCode);
     amount = paymentCreditedAmount(payment) || amount;
+    if (isAvailableSchoolCreditReceipt(payment)) {
+      const preflight = await syncSchoolAccountCreditJournals(env, accountRef, [payment.ApplicationReference]);
+      if (preflight.unreconciledLegacyActions?.length || preflight.unreconciledAllocation) {
+        const err = new Error('This parent account needs finance review before its payment can be allocated to school fees.');
+        err.status = 409;
+        throw err;
+      }
+    }
     if (!clean(payment.ProcessingStatus)) {
       payment.ProcessingStatus = 'Processing';
       payment.ProcessingVersion = 2;
@@ -4677,7 +5128,7 @@ export async function recordManualPayment(env, body) {
     ? (await listCollection(env, 'feeItems')).map(normalizeFeeItem)
     : (directFee ? [normalizeFeeItem(directFee)] : []);
   const fee = configuredFees.find((item) => sameText(item.FeeCode, feeCode)) || normalizeFeeItem(body);
-  const schoolFeeCodes = new Set(configuredFees.filter((item) => isSchoolFeeCategory(item.FeeCategory)).map((item) => normalizeReferenceText(item.FeeCode)));
+  const schoolFeeCodes = new Set(configuredFees.filter(isSchoolFeeInvoice).map((item) => normalizeReferenceText(item.FeeCode)));
   const student = await findStudentByAccountRef(env, accountRef, paymentScope);
   const paymentId = ledgerDocumentId('PAY');
   const grossAmount = asMoneyNumber(body.GrossAmount || amount);
@@ -4733,6 +5184,14 @@ export async function recordManualPayment(env, body) {
       ProcessingVersion: 2,
       ProcessingStartedAt: nowIso()
     };
+    if (isAvailableSchoolCreditReceipt(payment)) {
+      const preflight = await syncSchoolAccountCreditJournals(env, accountRef, [payment.ApplicationReference]);
+      if (preflight.unreconciledLegacyActions?.length || preflight.unreconciledAllocation) {
+        const err = new Error('This parent account needs finance review before a new payment can be recorded.');
+        err.status = 409;
+        throw err;
+      }
+    }
     const paymentCreate = await createDocumentIfAbsent(env, 'payments', safeDocumentId(reference), payment);
     if (!paymentCreate.created) {
       payment = normalizePayment(paymentCreate.document || payment);
@@ -4741,6 +5200,14 @@ export async function recordManualPayment(env, body) {
       paymentDocumentId = safeDocumentId(paymentCreate.document?.__id || reference);
       accountRef = clean(payment.AccountRef || accountRef);
       feeCode = clean(payment.FeeCode || feeCode);
+      if (isAvailableSchoolCreditReceipt(payment)) {
+        const preflight = await syncSchoolAccountCreditJournals(env, accountRef, [payment.ApplicationReference]);
+        if (preflight.unreconciledLegacyActions?.length || preflight.unreconciledAllocation) {
+          const err = new Error('The existing parent account needs finance review before its payment can be allocated.');
+          err.status = 409;
+          throw err;
+        }
+      }
     }
   }
   const paymentCredit = paymentCreditedAmount(payment);
@@ -4787,8 +5254,9 @@ export async function recordManualPayment(env, body) {
   const accountInvoices = (await queryAccountRows(env, 'invoices', accountRef)).map(normalizeInvoice);
   const matchingInvoices = accountInvoices.filter((invoice) => {
     return sameText(invoice.AccountRef, accountRef) &&
+      (!isSchoolFeeInvoice(invoice) || isAvailableSchoolCreditReceipt(payment)) &&
       (isSchoolFeesTotalPayment(payment)
-        ? isSchoolFeeCategory(invoice.FeeCategory) || schoolFeeCodes.has(normalizeReferenceText(invoice.FeeCode))
+        ? isSchoolFeeInvoice(invoice) || schoolFeeCodes.has(normalizeReferenceText(invoice.FeeCode))
         : sameText(invoice.FeeCode, feeCode)) &&
       sameFinancialPeriod(invoice, paymentSession, paymentTerm) &&
       normalizeMatchText(invoice.Status) !== 'paid';
@@ -4801,6 +5269,16 @@ export async function recordManualPayment(env, body) {
   if (shouldApplyInvoiceAllocation) {
     notificationSettings = await loadNotificationSettings(env);
     const invoiceAllocation = calculateInvoiceCreditAllocations(matchingInvoices, paymentCredit);
+    const schoolCreditJournals = isAvailableSchoolCreditReceipt(payment)
+      ? invoiceAllocation.allocations.filter((allocation) => isSchoolFeeInvoice(allocation.invoice))
+        .map((allocation) => buildSchoolInvoiceCreditPaymentJournal(allocation.invoice, payment, allocation.AppliedCredit))
+        .filter(Boolean)
+      : [];
+    if (schoolCreditJournals.length && await accountingPeriodIsClosed(env, payment.PaidAt || payment.PaymentDate || payment.Date || nowIso())) {
+      const err = new Error('The payment allocation belongs to a closed accounting period; finance review is required.');
+      err.status = 409;
+      throw err;
+    }
     payment.InvoiceAllocationStatus = 'Completed';
     payment.InvoiceAllocationCompletedAt = nowIso();
     const currentPaymentVersion = await getDocument(env, 'payments', paymentDocumentId).catch(() => null);
@@ -4808,6 +5286,7 @@ export async function recordManualPayment(env, body) {
       ...invoiceAllocation.allocations.map((allocation) => ({
         collectionPath: 'invoices',
         documentId: safeDocumentId(allocation.invoice.InvoiceId),
+        ...(allocation.invoice.__updateTime ? { updateTime: allocation.invoice.__updateTime } : {}),
         data: {
           ...allocation.invoice,
           Credit: allocation.Credit,
@@ -4820,6 +5299,9 @@ export async function recordManualPayment(env, body) {
             Status: allocation.Status
           }, notificationSettings)
         }
+      })),
+      ...schoolCreditJournals.map((journal) => ({
+        collectionPath: 'accountingJournals', documentId: safeDocumentId(journal.JournalNo), exists: false, data: journal
       })),
       {
         collectionPath: 'payments',
@@ -4860,7 +5342,7 @@ export async function recordManualPayment(env, body) {
   let invoicePostingWarning = '';
   const shouldGenerateSchoolInvoices = Boolean(student) && (
     isSchoolFeesTotalPayment(payment) ||
-    isSchoolFeeCategory(payment.FeeCategory)
+    isSchoolFeeInvoice(payment)
   );
   if (shouldGenerateSchoolInvoices) {
     try {
@@ -4879,6 +5361,9 @@ export async function recordManualPayment(env, body) {
     }
   } else {
     await refreshAccountFinancialSummary(env, accountRef, [payment.ApplicationReference]);
+  }
+  if (!shouldGenerateSchoolInvoices || invoicePostingWarning) {
+    await syncSchoolAccountCreditJournals(env, accountRef, [payment.ApplicationReference]);
   }
   payment.ProcessingStatus = 'Completed';
   payment.ProcessingVersion = 2;
@@ -4977,7 +5462,7 @@ async function generateSchoolFeeInvoicesForAccount(env, body, accountRef) {
   const billingTerm = clean(billingApp.Term);
   const fees = applyBillingCategoryOverrides((await listCollection(env, 'feeItems')).map(normalizeFeeItem).filter((fee) => {
     return yesNo(fee.Active) === 'YES' &&
-      normalizeMatchText(fee.FeeCategory || 'School Fee') === 'school fee' &&
+      isSchoolFeeInvoice(fee) &&
       !isWalletFee(fee) &&
       asMoneyNumber(fee.Amount) > 0 &&
       feeMatchesApplication(fee, billingApp);
@@ -5553,8 +6038,72 @@ export async function recordWalletPurchase(env, body) {
   };
 }
 
+export function buildCreditActionAccountingJournal({
+  action = '', actionId = '', amount = 0, accountRef = '', targetAccountRef = '',
+  paymentAccount = '', offsetAccount = '', branchId = 'main', date = nowIso(),
+  reference = '', recordedBy = '', notes = ''
+} = {}) {
+  const kind = clean(action).toLowerCase();
+  const value = asMoneyNumber(amount);
+  const source = clean(accountRef);
+  const target = clean(targetAccountRef);
+  if (!clean(actionId) || !source || value <= 0) throw new Error('A valid credit action, source account and amount are required.');
+  let lines;
+  if (kind === 'refund to parent' || kind === 'refund') {
+    if (!clean(paymentAccount)) throw new Error('Select the cash or bank account used for the refund.');
+    lines = [
+      { AccountCode: '2310', Debit: value, Credit: 0, Description: `Parent credit refunded: ${source}` },
+      { AccountCode: clean(paymentAccount), Debit: 0, Credit: value, Description: `Refund paid to parent: ${source}` }
+    ];
+  } else if (kind === 'transfer to wallet' || kind === 'wallet') {
+    lines = [
+      { AccountCode: '2310', Debit: value, Credit: 0, Description: `Parent credit transferred: ${source}` },
+      { AccountCode: '2200', Debit: 0, Credit: value, Description: `Student wallet funded: ${source}` }
+    ];
+  } else if (kind === 'transfer to sibling' || kind === 'sibling') {
+    if (!target) throw new Error('Select the sibling account receiving this credit.');
+    lines = [
+      { AccountCode: '2310', Debit: value, Credit: 0, Description: `Parent credit transferred out: ${source}` },
+      { AccountCode: '2310', Debit: 0, Credit: value, Description: `Parent credit transferred in: ${target}` }
+    ];
+  } else if (['manual credit adjustment', 'manual_credit', 'credit_adjustment',
+    'manual debit adjustment', 'debit_adjustment'].includes(kind)) {
+    const offset = clean(offsetAccount);
+    if (!offset || offset === '2310') throw new Error('Select a valid offset account for the manual credit adjustment.');
+    const isDebit = kind === 'manual debit adjustment' || kind === 'debit_adjustment';
+    lines = isDebit
+      ? [
+          { AccountCode: '2310', Debit: value, Credit: 0, Description: `Manual parent credit reduction: ${source}` },
+          { AccountCode: offset, Debit: 0, Credit: value, Description: `Adjustment offset: ${source}` }
+        ]
+      : [
+          { AccountCode: offset, Debit: value, Credit: 0, Description: `Adjustment offset: ${source}` },
+          { AccountCode: '2310', Debit: 0, Credit: value, Description: `Manual parent credit increase: ${source}` }
+        ];
+  } else {
+    throw new Error('Choose a valid credit action.');
+  }
+  const journalNo = `SYS-CREDIT-${safeDocumentId(actionId)}`;
+  return normalizedJournal({
+    JournalNo: journalNo, Date: clean(date), Status: 'Posted',
+    Description: clean(notes) || `Account credit action: ${kind}`,
+    Reference: clean(reference) || clean(actionId),
+    Source: 'Student Account Credit Action', SourceId: clean(actionId),
+    AccountRef: source, TargetAccountRef: target,
+    RecordedBy: clean(recordedBy), BranchId: clean(branchId).toLowerCase() || 'main',
+    Lines: lines,
+    TotalDebit: value, TotalCredit: value,
+    CreatedAt: nowIso(), UpdatedAt: nowIso()
+  });
+}
+
 async function recordCreditAction(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer']);
+  if (accountingEditionForRequest(env) !== 'school') {
+    const err = new Error('Student account credit actions are available only in the School edition.');
+    err.status = 403;
+    throw err;
+  }
   const accountRef = clean(body.AccountRef || body.accountRef || body.AdmissionNo || body.admissionNo);
   const action = clean(body.CreditAction || body.ActionType || body.actionType || body.Type).toLowerCase();
   const amount = asMoneyNumber(body.Amount || body.amount);
@@ -5570,14 +6119,15 @@ async function recordCreditAction(env, body) {
     err.status = 400;
     throw err;
   }
-  if (['refund to parent', 'refund', 'transfer to wallet', 'wallet', 'transfer to sibling', 'sibling'].includes(action) && !notes) {
-    const err = new Error('Record the parent instruction or refund details in Notes.');
+  if (!notes) {
+    const err = new Error('Record the parent instruction or accounting reason in Notes.');
     err.status = 400;
     throw err;
   }
   const student = await findStudentByAccountRef(env, accountRef);
   if (!student) throw applicationNotFound(accountRef);
   const account = await walletAccountPayload(env, student);
+  accountingWriteBranch(body, account);
   const linkedReferences = [student.ApplicationReference].map(clean).filter(Boolean);
   const availableCredit = await accountCreditBalanceForAccount(env, account.AccountRef, linkedReferences);
   const isManualCredit = action === 'manual credit adjustment' || action === 'manual_credit' || action === 'credit_adjustment';
@@ -5595,6 +6145,7 @@ async function recordCreditAction(env, body) {
   }
   const entries = [];
   let targetStudentForSummary = null;
+  let targetAccountForSummary = null;
   const base = {
     Date: nowIso(),
     AccountRef: account.AccountRef,
@@ -5688,6 +6239,12 @@ async function recordCreditAction(env, body) {
     }
     targetStudentForSummary = targetStudent;
     const targetAccount = await walletAccountPayload(env, targetStudent);
+    targetAccountForSummary = targetAccount;
+    if (!sameText(account.BranchId || student.BranchId || 'main', targetAccount.BranchId || targetStudent.BranchId || 'main')) {
+      const err = new Error('Sibling credit transfers must remain in the same branch; use an approved inter-branch accounting transfer for another branch.');
+      err.status = 400;
+      throw err;
+    }
     await addLedger({
       ...base,
       EntryType: 'Credit Transfer',
@@ -5742,8 +6299,43 @@ async function recordCreditAction(env, body) {
     throw err;
   }
 
-  // Post both sides of a sibling/wallet transfer and its idempotency marker
-  // in one Firestore commit, so a partial transfer cannot be displayed.
+  const date = nowIso();
+  if (await accountingPeriodIsClosed(env, date)) {
+    const err = new Error('This accounting period is closed.');
+    err.status = 409;
+    throw err;
+  }
+  // Repair legacy school receipt and invoice journals before drawing down the
+  // parent-credit liability for a new action.
+  const sourceReconciliation = await syncSchoolAccountCreditJournals(env, account.AccountRef, linkedReferences);
+  if (sourceReconciliation.unreconciledLegacyActions?.length || sourceReconciliation.unreconciledAllocation) {
+    const err = new Error('This student account has earlier credit actions or invoice allocations needing finance reconciliation before another credit action can be posted.');
+    err.status = 409;
+    throw err;
+  }
+  const paymentAccount = clean(body.PaymentAccount || body.paymentAccount);
+  const offsetAccount = clean(body.OffsetAccountCode || body.offsetAccountCode);
+  if (['refund to parent', 'refund', 'manual credit adjustment', 'manual_credit', 'credit_adjustment',
+    'manual debit adjustment', 'debit_adjustment'].includes(action)) {
+    const chart = await getAccountingChartRows(env);
+    const wanted = ['refund to parent', 'refund'].includes(action) ? paymentAccount : offsetAccount;
+    const selected = chart.find((row) => sameText(row.Code || row.__id, wanted) && yesNo(row.Active || 'YES') === 'YES');
+    if (!selected || (['refund to parent', 'refund'].includes(action) &&
+      (!sameText(selected.Type, 'Asset') || !sameText(selected.Group, 'Cash and Bank')))) {
+      const err = new Error(['refund to parent', 'refund'].includes(action)
+        ? 'Select an active cash or bank ledger account for the refund.'
+        : 'Select an active offset ledger account for the manual adjustment.');
+      err.status = 400;
+      throw err;
+    }
+  }
+  const journal = buildCreditActionAccountingJournal({
+    action, actionId, amount, accountRef: account.AccountRef,
+    targetAccountRef: targetAccountForSummary?.AccountRef || '',
+    paymentAccount, offsetAccount, branchId: base.BranchId,
+    date, reference, recordedBy, notes
+  });
+  // Keep the subledger, liability/cash journal and idempotency marker atomic.
   const summarySnapshot = await getDocument(env, 'accountSummaries', safeDocumentId(account.AccountRef));
   if (!summarySnapshot?.__updateTime) {
     const err = new Error('The current account credit could not be locked. Refresh and try again.');
@@ -5755,6 +6347,23 @@ async function recordCreditAction(env, body) {
     err.status = 409;
     throw err;
   }
+  let targetSummarySnapshot = null;
+  if (targetStudentForSummary && targetAccountForSummary) {
+    const targetLinkedReferences = [targetStudentForSummary.ApplicationReference].map(clean).filter(Boolean);
+    const targetReconciliation = await syncSchoolAccountCreditJournals(env, targetAccountForSummary.AccountRef, targetLinkedReferences);
+    if (targetReconciliation.unreconciledLegacyActions?.length || targetReconciliation.unreconciledAllocation) {
+      const err = new Error('The sibling account has earlier credit actions or invoice allocations needing finance reconciliation before a transfer can be posted.');
+      err.status = 409;
+      throw err;
+    }
+    await refreshAccountFinancialSummary(env, targetAccountForSummary.AccountRef, targetLinkedReferences);
+    targetSummarySnapshot = await getDocument(env, 'accountSummaries', safeDocumentId(targetAccountForSummary.AccountRef));
+    if (!targetSummarySnapshot?.__updateTime) {
+      const err = new Error('The sibling account credit could not be locked. Refresh and try again.');
+      err.status = 409;
+      throw err;
+    }
+  }
   await batchUpsertDocuments(env, [
     ...entries.map((entry) => ({
       collectionPath: 'ledger', documentId: safeDocumentId(entry.LedgerNo), data: entry
@@ -5764,9 +6373,11 @@ async function recordCreditAction(env, body) {
       data: {
         ActionId: actionId, AccountRef: account.AccountRef, TargetAccountRef: clean(body.TargetAccountRef || body.targetAccountRef),
         Action: action, Amount: amount, Reference: reference, Notes: notes, RecordedBy: recordedBy,
-        LedgerNos: entries.map((entry) => entry.LedgerNo), CreatedAt: nowIso()
+        LedgerNos: entries.map((entry) => entry.LedgerNo), JournalNo: journal.JournalNo,
+        PaymentAccount: paymentAccount, OffsetAccountCode: offsetAccount, CreatedAt: date
       }
     },
+    { collectionPath: 'accountingJournals', documentId: safeDocumentId(journal.JournalNo), exists: false, data: journal },
     {
       collectionPath: 'accountSummaries', documentId: safeDocumentId(account.AccountRef), updateTime: summarySnapshot.__updateTime,
       data: {
@@ -5774,7 +6385,16 @@ async function recordCreditAction(env, body) {
         CreditBalance: asMoneyNumber(Math.max(0, asMoneyNumber(summarySnapshot.CreditBalance) + (isManualCredit ? amount : -amount))),
         UpdatedAt: nowIso()
       }
-    }
+    },
+    ...(targetSummarySnapshot ? [{
+      collectionPath: 'accountSummaries', documentId: safeDocumentId(targetAccountForSummary.AccountRef),
+      updateTime: targetSummarySnapshot.__updateTime,
+      data: {
+        ...targetSummarySnapshot,
+        CreditBalance: asMoneyNumber(asMoneyNumber(targetSummarySnapshot.CreditBalance) + amount),
+        UpdatedAt: nowIso()
+      }
+    }] : [])
   ]);
   if (isManualCredit) {
     await applyDueSchoolFeeCreditsForAccount(env, account.AccountRef, linkedReferences);
@@ -5959,6 +6579,7 @@ const DEFAULT_CHART_OF_ACCOUNTS = [
   ['1030', 'Online Payment Clearing', 'Asset', 'Cash and Bank', 'Debit'],
   ['1080', 'Staff Imprest and Cash Advances', 'Asset', 'Current Assets', 'Debit'],
   ['1100', 'Student Accounts Receivable', 'Asset', 'Receivables', 'Debit'],
+  ['1110', 'Trade and Other Receivables', 'Asset', 'Receivables', 'Debit'],
   ['1200', 'Inventory', 'Asset', 'Current Assets', 'Debit'],
   ['1500', 'Property and Equipment', 'Asset', 'Fixed Assets', 'Debit'],
   ['1600', 'Accumulated Depreciation', 'Asset', 'Fixed Assets', 'Credit'],
@@ -5966,6 +6587,7 @@ const DEFAULT_CHART_OF_ACCOUNTS = [
   ['2100', 'Taxes and Statutory Deductions', 'Liability', 'Statutory', 'Credit'],
   ['2200', 'Student Wallet Liability', 'Liability', 'Student Wallets', 'Credit'],
   ['2300', 'Salaries Payable', 'Liability', 'Payroll', 'Credit'],
+  ['2310', 'Student Overpayment Liability', 'Liability', 'Student Overpayments', 'Credit'],
   ['3000', 'Accumulated School Fund', 'Equity', 'School Fund', 'Credit'],
   ['4000', 'Tuition and School Fee Revenue', 'Revenue', 'Operating Revenue', 'Credit'],
   ['4010', 'Admission Form Revenue', 'Revenue', 'Operating Revenue', 'Credit'],
@@ -5983,6 +6605,7 @@ const DEFAULT_CHART_OF_ACCOUNTS = [
   ['4130', 'Restaurant and Catering Revenue', 'Revenue', 'Operating Revenue', 'Credit'],
   ['4140', 'Offering Income', 'Revenue', 'Church Revenue', 'Credit'],
   ['4150', 'Hotel Services Revenue', 'Revenue', 'Operating Revenue', 'Credit'],
+  ['4160', 'Revenue Reductions and Refunds', 'Revenue', 'Contra Revenue', 'Debit'],
   ['5000', 'Academic Direct Costs', 'Expense', 'Direct Cost', 'Debit'],
   ['5010', 'Boarding Direct Costs', 'Expense', 'Direct Cost', 'Debit'],
   ['5020', 'Transport Direct Costs', 'Expense', 'Direct Cost', 'Debit'],
@@ -6072,8 +6695,15 @@ function accountingAccountCodeForRevenue(category, feeCode = '') {
   return '4090';
 }
 
-export function accountingDestinationForPayment(row = {}, hasMatchingInvoice = false) {
-  if (isWalletLedger(row)) return '2200';
+function accountingRevenueAccountForEdition(category, feeCode = '', edition = 'school') {
+  const code = accountingAccountCodeForRevenue(category, feeCode);
+  if (clean(edition).toLowerCase() === 'school') return code;
+  return SCHOOL_ONLY_REVENUE_ACCOUNT_CODES.includes(code) ? '4090' : code;
+}
+
+export function accountingDestinationForPayment(row = {}, hasMatchingInvoice = false, edition = 'school') {
+  const schoolEdition = clean(edition).toLowerCase() === 'school';
+  if (isWalletLedger(row)) return schoolEdition ? '2200' : '2000';
   const metadata = parseMetadata(row && row.Metadata);
   const nested = metadata && typeof metadata.metadata === 'object' ? metadata.metadata : {};
   const department = normalizeMatchText(row && row.Department);
@@ -6099,9 +6729,10 @@ export function accountingDestinationForPayment(row = {}, hasMatchingInvoice = f
   ].some((value) => value === 'store' || value === 'uniform store' || value === 'book store' || value === 'bookstore');
 
   if (storeHint || cartHint || isStorePurchase(row) ||
-    (department === 'store' || department === 'uniform store' || department === 'bookstore' || department === 'book store')) return '4040';
-  if (hasMatchingInvoice) return '1100';
-  return accountingAccountCodeForRevenue(row.FeeCategory, row.FeeCode);
+    (department === 'store' || department === 'uniform store' || department === 'bookstore' || department === 'book store')) return schoolEdition ? '4040' : '4120';
+  if (schoolEdition && isAvailableSchoolCreditReceipt(row)) return '2310';
+  if (hasMatchingInvoice) return schoolEdition ? '1100' : '1110';
+  return accountingRevenueAccountForEdition(row.FeeCategory, row.FeeCode, edition);
 }
 
 export function accountingDestinationForWalletPurchase(row = {}) {
@@ -6540,6 +7171,7 @@ export async function saveAccountingJournal(env, body, system = false) {
 
 async function syncRevenueToAccounting(env) {
   await seedAccountingChart(env);
+  const edition = accountingEditionForRequest(env);
   const [invoices, payments, sales, journals, ledgerRows, legacyGatewayExpenses, gatewayCharges, admissionClasses, churchDonations] = await Promise.all([
     listCollection(env, 'invoices'),
     listCollection(env, 'payments'),
@@ -6580,14 +7212,14 @@ async function syncRevenueToAccounting(env) {
     const journalNo = `SYS-INV-${safeDocumentId(sourceId)}`;
     const amount = asMoneyNumber(row.Amount || row.amount);
     if (!sourceId || amount <= 0 || existing.has(journalNo)) continue;
-    const revenue = accountingAccountCodeForRevenue(row.FeeCategory || row.feeCategory, row.FeeCode || row.feeCode);
+    const revenue = accountingRevenueAccountForEdition(row.FeeCategory || row.feeCategory, row.FeeCode || row.feeCode, edition);
     await saveAccountingJournal(env, {
       JournalNo: journalNo, Date: row.CreatedAt || row.Date || nowIso(), Status: 'Posted',
       Description: `Invoice: ${clean(row.FeeName || row.Description || sourceId)}`,
       Reference: sourceId, Source: 'Student Invoice', SourceId: sourceId,
       AcademicSession: row.AcademicSession || '', Term: row.Term || '', RecordedBy: 'System',
       Lines: [
-        { AccountCode: '1100', Debit: amount, Credit: 0, Description: clean(row.AccountRef || row.DisplayName) },
+        { AccountCode: edition === 'school' ? '1100' : '1110', Debit: amount, Credit: 0, Description: clean(row.AccountRef || row.DisplayName) },
         { AccountCode: revenue, Debit: 0, Credit: amount, Description: clean(row.FeeName || row.FeeCategory) }
       ]
     }, true);
@@ -6635,12 +7267,12 @@ async function syncRevenueToAccounting(env) {
         created += 1;
       }
     }
-    const cash = accountingCashAccountFor(row.Method || row.PaymentMethod, row.Gateway);
-    const destination = accountingDestinationForPayment(payment, paymentHasMatchingInvoice(payment, invoices));
-    const lines = [
-      { AccountCode: cash, Debit: amount, Credit: 0, Description: clean(row.Method || row.Gateway || 'Payment received') },
-      { AccountCode: destination, Debit: 0, Credit: amount, Description: clean(row.AccountRef || row.DisplayName) }
-    ];
+    const receiptJournal = buildPaymentAccountingJournal({
+      ...payment, Reference: sourceId, Method: row.Method || row.PaymentMethod || payment.Method,
+      PaidAt: row.PaidAt || row.PaymentDate || row.Date,
+      BranchId: row.BranchId || payment.BranchId
+    }, paymentHasMatchingInvoice(payment, invoices), edition);
+    const lines = receiptJournal.Lines;
     const relatedJournals = journals.filter((journal) => lower(journal.Source) === 'fee payment' && (
       clean(journal.JournalNo || journal.__id) === journalNo ||
       paymentReferences.some((reference) =>
@@ -6651,6 +7283,11 @@ async function syncRevenueToAccounting(env) {
     for (const duplicate of relatedJournals) {
       const duplicateNo = clean(duplicate.JournalNo || duplicate.__id);
       if (duplicateNo === journalNo) continue;
+      if (lower(duplicate.Status) === 'posted') {
+        const err = new Error(`Duplicate posted receipt ${duplicateNo} requires finance review before reconciliation.`);
+        err.status = 409;
+        throw err;
+      }
       await deleteDocument(env, 'accountingJournals', clean(duplicate.__id) || safeDocumentId(duplicateNo));
       existing.delete(duplicateNo);
       journalsByNo.delete(duplicateNo);
@@ -6658,15 +7295,53 @@ async function syncRevenueToAccounting(env) {
     }
     const prior = relatedJournals.find((journal) => clean(journal.JournalNo || journal.__id) === journalNo) ||
       journalsByNo.get(journalNo);
+    if (edition === 'school' && isAvailableSchoolCreditReceipt(payment) && prior) {
+      if (lower(prior.Status) !== 'posted' || !sameText(prior.Reference, sourceId) ||
+        !sameText(prior.SourceId, sourceId)) {
+        const err = new Error(`Receipt ${sourceId} has a non-posted or mismatched journal; finance review is required.`);
+        err.status = 409;
+        throw err;
+      }
+      if (journalLineSignature(prior.Lines) !== journalLineSignature(lines)) {
+        const reclassification = buildSchoolPaymentReclassificationJournal(payment, prior);
+        if (!reclassification) {
+          const err = new Error(`Receipt ${sourceId} has irregular posted lines; finance review is required.`);
+          err.status = 409;
+          throw err;
+        }
+        if (await createSchoolPaymentReclassificationIfAbsent(env, reclassification)) created += 1;
+      } else if (!sameText(prior.Date, receiptJournal.Date) || !sameText(prior.BranchId, receiptJournal.BranchId) ||
+        !sameText(prior.AcademicSession, receiptJournal.AcademicSession) || !sameText(prior.Term, receiptJournal.Term)) {
+        const err = new Error(`Receipt ${sourceId} has a conflicting branch or accounting period; finance review is required.`);
+        err.status = 409;
+        throw err;
+      }
+      continue;
+    }
     if (prior && journalLineSignature(prior.Lines) === journalLineSignature(lines) &&
       sameText(prior.Reference, sourceId) && sameText(prior.SourceId, sourceId)) continue;
-    await saveAccountingJournal(env, {
-      JournalNo: journalNo, Date: row.PaidAt || row.PaymentDate || row.Date || nowIso(), Status: 'Posted',
-      Description: `Receipt: ${clean(row.Reference || sourceId)}`, Reference: clean(row.Reference || sourceId),
-      Source: 'Fee Payment', SourceId: sourceId, RecordedBy: 'System',
-      Lines: lines
-    }, true);
+    await saveAccountingJournal(env, receiptJournal, true);
     existing.add(journalNo); created += 1;
+  }
+  // Reconcile receipts first: an incompatible legacy receipt must not leave
+  // a new Dr 2310 / Cr 1100 invoice-credit journal without its liability.
+  if (edition === 'school') {
+    for (const row of invoices) {
+      if (!isSchoolFeeInvoice(row)) continue;
+      const gap = schoolInvoiceCreditJournalGap(row, journals);
+      if (gap.invalidPostedJournalIds?.length || gap.missing < -0.005 || (gap.missing > 0.005 && gap.baselineExists)) {
+        const err = new Error(`Invoice ${gap.invoiceId} has an unreconciled parent-credit application; finance review is required.`);
+        err.status = 409;
+        throw err;
+      }
+      if (gap.missing <= 0.005) continue;
+      const journal = buildSchoolInvoiceCreditAccountingJournal(row, { amount: gap.missing, date: nowIso() });
+      await saveAccountingJournal(env, journal, true);
+      journals.push(journal);
+      existing.add(journal.JournalNo);
+      journalsByNo.set(journal.JournalNo, journal);
+      created += 1;
+    }
   }
   for (const row of ledgerRows) {
     const journal = buildWalletPurchaseAccountingJournal(row);
@@ -7592,6 +8267,29 @@ async function postAccountingDepreciation(env, body) {
   return { ok: true, message: 'Depreciation posted.', asset: updated, journal };
 }
 
+export function buildAccountingAdjustmentJournal(adjustment, edition = 'school') {
+  const school = lower(edition) === 'school';
+  const amount = asMoneyNumber(adjustment.Amount);
+  const isRefund = lower(adjustment.Type).includes('refund');
+  const reductionAccount = school ? '4100' : '4160';
+  const receivableAccount = school ? '1100' : '1110';
+  return {
+    JournalNo: `SYS-ADJ-${safeDocumentId(adjustment.AdjustmentNo)}`,
+    Date: adjustment.Date,
+    Status: 'Posted',
+    Description: `${adjustment.Type}: ${adjustment.Reason}`,
+    Reference: adjustment.Reference || adjustment.AdjustmentNo,
+    Source: adjustment.Type,
+    SourceId: adjustment.AdjustmentNo,
+    BranchId: adjustment.BranchId,
+    Lines: [
+      { AccountCode: reductionAccount, Debit: amount, Credit: 0, Description: adjustment.Reason },
+      { AccountCode: isRefund ? adjustment.PaymentAccount : receivableAccount,
+        Debit: 0, Credit: amount, Description: adjustment.AccountRef }
+    ]
+  };
+}
+
 async function saveAccountingAdjustment(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer', 'Management']);
   const adjustmentNo = clean(body.AdjustmentNo) || ledgerDocumentId('ADJ');
@@ -7607,12 +8305,11 @@ async function saveAccountingAdjustment(env, body) {
     DisplayName: clean(body.DisplayName), Amount: amount, Reason: clean(body.Reason), Reference: clean(body.Reference), PaymentAccount: clean(body.PaymentAccount) || '1020',
     Status: status, RequestedBy: existing.RequestedBy || clean(body.RecordedBy), RequestedAt: existing.RequestedAt || nowIso(), UpdatedAt: nowIso() };
   if (lower(status) === 'posted') {
-    const isRefund = lower(type).includes('refund');
-    const journal = await saveAccountingJournal(env, { JournalNo: `SYS-ADJ-${safeDocumentId(adjustmentNo)}`, Date: payload.Date, Status: 'Posted',
-      Description: `${type}: ${payload.Reason}`, Reference: payload.Reference || adjustmentNo, Source: type, SourceId: adjustmentNo, BranchId: branchId, RecordedBy: clean(body.RecordedBy), Lines: [
-        { AccountCode: '4100', Debit: amount, Credit: 0, Description: payload.Reason },
-        { AccountCode: isRefund ? payload.PaymentAccount : '1100', Debit: 0, Credit: amount, Description: payload.AccountRef }
-      ] }, true);
+    await seedAccountingChart(env);
+    const journal = await saveAccountingJournal(env, {
+      ...buildAccountingAdjustmentJournal(payload, accountingEditionForRequest(env, body)),
+      RecordedBy: clean(body.RecordedBy)
+    }, true);
     payload.JournalNo = journal.JournalNo; payload.PostedAt = nowIso(); payload.PostedBy = clean(body.RecordedBy);
   }
   await upsertDocument(env, 'accountingAdjustments', safeDocumentId(adjustmentNo), payload);
@@ -7845,9 +8542,28 @@ export function buildAccountingReport(chart, journals, expenses, budgets, filter
   const totalExpenses = expenseRows.reduce((sum, row) => sum + row.Debit - row.Credit, 0);
   const assets = asOfTrialBalance.filter((row) => lower(row.Type) === 'asset').reduce((sum, row) => sum + row.Debit - row.Credit, 0);
   const liabilities = asOfTrialBalance.filter((row) => lower(row.Type) === 'liability').reduce((sum, row) => sum + row.Credit - row.Debit, 0);
-  const equity = asOfTrialBalance.filter((row) => lower(row.Type) === 'equity').reduce((sum, row) => sum + row.Credit - row.Debit, 0);
+  const postedEquity = asOfTrialBalance.filter((row) => lower(row.Type) === 'equity').reduce((sum, row) => sum + row.Credit - row.Debit, 0);
+  // Revenue and expense accounts remain open until a closing journal transfers
+  // their net balance into a posted equity account. Present that unclosed net
+  // balance as equity in the statement of financial position as of DateTo.
+  const unclosedEarnings = asMoneyNumber(asOfTrialBalance.reduce((sum, row) => {
+    if (lower(row.Type) === 'revenue') return sum + row.Credit - row.Debit;
+    if (lower(row.Type) === 'expense') return sum - row.Debit + row.Credit;
+    return sum;
+  }, 0));
+  const equity = asMoneyNumber(postedEquity + unclosedEarnings);
+  const balanceSheetEquity = asOfTrialBalance.filter((row) => lower(row.Type) === 'equity');
+  if (Math.abs(unclosedEarnings) > 0.005) {
+    balanceSheetEquity.push({
+      AccountCode: 'UN-CLOSED-EARNINGS', AccountName: 'Unclosed earnings (cumulative)',
+      Type: 'Equity', Group: 'Current Earnings',
+      Debit: Math.max(0, -unclosedEarnings), Credit: Math.max(0, unclosedEarnings),
+      Balance: -unclosedEarnings
+    });
+  }
   const cashPosition = calculateCashPosition(asOfTrialBalance);
-  const receivables = asOfTrialBalance.filter((row) => row.AccountCode === '1100').reduce((sum, row) => sum + row.Debit - row.Credit, 0);
+  const receivables = asOfTrialBalance.filter((row) => sameText(row.Group, 'Receivables'))
+    .reduce((sum, row) => sum + row.Debit - row.Credit, 0);
   const outstandingInvoiceReceivables = (Array.isArray(invoices) ? invoices : []).map(normalizeInvoice).filter((invoice) => {
     if (!accountingRowMatches(invoice, filter, true)) return false;
     const outstanding = Math.max(0, asMoneyNumber(invoice.Balance) || Math.max(0, asMoneyNumber(invoice.Debit) - asMoneyNumber(invoice.Credit)));
@@ -7862,11 +8578,12 @@ export function buildAccountingReport(chart, journals, expenses, budgets, filter
   return {
     dashboard: { GrossRevenue: grossRevenue, OtherIncome: otherIncome, Concessions: concessions, NetRevenue: netRevenue, TotalIncome: totalIncome, DirectCosts: directCosts,
       GrossSurplus: netRevenue - directCosts, TotalExpenditure: totalExpenses, NetSurplus: totalIncome - totalExpenses,
-      Assets: assets, Liabilities: liabilities, Equity: equity, PostedExpenses: postedExpense, BudgetTotal: budgetTotal,
+      Assets: assets, Liabilities: liabilities, Equity: equity, UnclosedEarnings: unclosedEarnings,
+      PostedExpenses: postedExpense, BudgetTotal: budgetTotal,
       CashPosition: cashPosition, Receivables: resolvedReceivables, BudgetRemaining: asMoneyNumber(budgetTotal - budgetActual) },
     filter, trialBalance, asOfTrialBalance, budgetVsActual,
     incomeStatement: { revenue: revenueRows, expenses: expenseRows },
-    balanceSheet: { assets: asOfTrialBalance.filter((r) => lower(r.Type) === 'asset'), liabilities: asOfTrialBalance.filter((r) => lower(r.Type) === 'liability'), equity: asOfTrialBalance.filter((r) => lower(r.Type) === 'equity') }
+    balanceSheet: { assets: asOfTrialBalance.filter((r) => lower(r.Type) === 'asset'), liabilities: asOfTrialBalance.filter((r) => lower(r.Type) === 'liability'), equity: balanceSheetEquity }
   };
 }
 

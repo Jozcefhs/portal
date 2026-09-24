@@ -6,6 +6,12 @@ import {
   accountingDestinationForWalletPurchase,
   applyBillingCategoryOverrides,
   buildAccountingReport,
+  buildPaymentAccountingJournal,
+  buildSchoolInvoiceChargeAccountingJournal,
+  buildSchoolInvoiceCreditAutomaticJournal,
+  buildSchoolInvoiceCreditAccountingJournal,
+  buildSchoolInvoiceCreditPaymentJournal,
+  buildSchoolPaymentReclassificationJournal,
   buildBudgetVsActual,
   buildChurchDonationAccountingJournal,
   buildGatewayCollectionsReport,
@@ -21,6 +27,8 @@ import {
   formSaleFinancialAmounts,
   isNewIntakeApplication,
   isSchoolInvoiceCredit,
+  isAvailableSchoolCreditReceipt,
+  isSchoolFeeInvoice,
   isSchoolFeesTotalCode,
   isStandaloneAcceptanceInvoiceForPayment,
   normalizeFeeBillingCategories,
@@ -28,6 +36,7 @@ import {
   reconciliationDifference,
   resolveStudentEnrollmentCategory,
   sameFinancialPeriod,
+  schoolInvoiceCreditJournalGap,
   shouldResolveStudentForPayable,
   studentsShareParentForCreditTransfer
 } from '../functions/api/backend.js';
@@ -248,6 +257,157 @@ test('a direct payment already earmarked to a future invoice cannot also be tran
   const receipts = [{ FeeCode: 'SCHOOL_FEES_TOTAL', FeeCategory: 'School Fee', Credit: 200000 }];
   assert.equal(calculateAccountFinancialSummary(future, receipts, 'STU-1', '2026-10-01').CreditBalance, 0);
   assert.equal(calculateDueSchoolFeeCreditAllocations(future, receipts, '2026-10-01').remaining, 0);
+});
+
+test('store and optional receipts cannot become transferable or automatic school-fee credit', () => {
+  const schoolInvoice = { InvoiceId: 'NEXT-TERM', FeeCategory: 'School Fee', Amount: 300000, Debit: 300000, Credit: 0, DueDate: '2027-01-10' };
+  const storeReceipt = { FeeCode: 'STORE_CART', FeeCategory: 'Store', Credit: 50000 };
+  const mislabeledStoreReceipt = { FeeCode: 'SPORTS_BAG', FeeCategory: 'School Fee', Credit: 25000,
+    Metadata: JSON.stringify({ storeCart: [{ StoreType: 'Uniform Store', ItemName: 'Sports Bag' }] }) };
+  const optionalReceipt = { FeeCode: 'BUS_ROUTE_A', FeeCategory: 'Bus Service', Credit: 40000 };
+  const serviceReceipt = { FeeCode: 'CLINIC_FEE', FeeCategory: 'School Fee', Credit: 15000 };
+  const ledger = [storeReceipt, mislabeledStoreReceipt, optionalReceipt, serviceReceipt];
+  assert.equal(ledger.some(isAvailableSchoolCreditReceipt), false);
+  assert.equal(calculateAccountFinancialSummary([schoolInvoice], ledger, 'STU-1', '2026-10-01').CreditBalance, 0);
+  assert.equal(calculateAccountFinancialSummary([schoolInvoice], ledger, 'STU-1', '2026-10-01').OutstandingBalance, 300000);
+  const due = calculateDueSchoolFeeCreditAllocations([schoolInvoice], ledger, '2027-01-10');
+  assert.equal(due.remaining, 0);
+  assert.deepEqual(due.allocations, []);
+  const generalCredit = { FeeCode: 'MANUAL_PAYMENT', FeeCategory: 'Account Credit', Credit: 120000 };
+  assert.equal(isAvailableSchoolCreditReceipt(generalCredit), true);
+  assert.equal(calculateDueSchoolFeeCreditAllocations([schoolInvoice], [...ledger, generalCredit], '2027-01-10').allocations[0].applied, 120000);
+  const mislabeledStoreInvoice = { InvoiceId: 'STORE-1', FeeCode: 'STORE_CART', FeeCategory: '', Debit: 50000, Credit: 50000 };
+  assert.equal(isSchoolFeeInvoice(mislabeledStoreInvoice), false);
+  assert.equal(buildSchoolInvoiceChargeAccountingJournal(mislabeledStoreInvoice), null);
+  assert.equal(buildSchoolInvoiceCreditAccountingJournal(mislabeledStoreInvoice), null);
+});
+
+test('school overpayment journals retain unused credit as liability and clear it when a later invoice is paid', () => {
+  const chart = [
+    { Code: '1020', Name: 'Main Bank Account', Type: 'Asset', Group: 'Cash and Bank', Direction: 'Debit' },
+    { Code: '1100', Name: 'Student Accounts Receivable', Type: 'Asset', Group: 'Receivables', Direction: 'Debit' },
+    { Code: '2310', Name: 'Student Overpayment Liability', Type: 'Liability', Group: 'Student Overpayments', Direction: 'Credit' },
+    { Code: '4000', Name: 'Tuition and School Fee Revenue', Type: 'Revenue', Group: 'Operating Revenue', Direction: 'Credit' }
+  ];
+  const invoice = { InvoiceId: 'INV-TERM-1', AccountRef: 'STU-1', FeeCode: 'TUITION', FeeCategory: 'School Fee',
+    FeeName: 'Tuition', Amount: 300000, Credit: 300000, CreatedAt: '2026-09-01', UpdatedAt: '2026-09-02' };
+  const payment = { Reference: 'PAY-1', AccountRef: 'STU-1', FeeCode: 'SCHOOL_FEES_TOTAL', FeeCategory: 'School Fee',
+    Amount: 1200000, Method: 'Bank Transfer', PaidAt: '2026-09-02' };
+  const receiptJournal = buildPaymentAccountingJournal(payment, true);
+  const invoiceJournal = buildSchoolInvoiceChargeAccountingJournal(invoice);
+  const applicationJournal = buildSchoolInvoiceCreditAccountingJournal(invoice);
+  assert.equal(receiptJournal.Lines[1].AccountCode, '2310');
+  assert.equal(applicationJournal.Lines[0].AccountCode, '2310');
+  const report = buildAccountingReport(chart, [receiptJournal, invoiceJournal, applicationJournal], [], [], {
+    DateFrom: '2026-01-01', DateTo: '2026-12-31', FinancialYear: '2026'
+  }, [invoice]);
+  const balance = (code) => {
+    const row = report.asOfTrialBalance.find((item) => item.AccountCode === code);
+    return row ? row.Debit - row.Credit : 0;
+  };
+  assert.equal(balance('1020'), 1200000);
+  assert.equal(balance('1100'), 0);
+  assert.equal(balance('2310'), -900000);
+  assert.equal(balance('4000'), -300000);
+  assert.equal(report.dashboard.Liabilities, 900000);
+  assert.equal(report.dashboard.Receivables, 0);
+  assert.equal(report.dashboard.GrossRevenue, 300000);
+  const nextInvoice = { ...invoice, InvoiceId: 'INV-TERM-2', CreatedAt: '2027-01-10', UpdatedAt: '2027-01-10' };
+  const nextApplication = buildSchoolInvoiceCreditAccountingJournal(nextInvoice);
+  assert.notEqual(nextApplication.JournalNo, applicationJournal.JournalNo);
+  const secondReport = buildAccountingReport(chart, [receiptJournal, invoiceJournal, applicationJournal,
+    buildSchoolInvoiceChargeAccountingJournal(nextInvoice), nextApplication], [], [], {
+    DateFrom: '2026-01-01', DateTo: '2027-12-31', FinancialYear: '2027'
+  }, [invoice, nextInvoice]);
+  assert.equal(secondReport.dashboard.Liabilities, 600000);
+  assert.equal(secondReport.dashboard.Receivables, 0);
+});
+
+test('school invoice credit events preserve each instalment in its original accounting period', () => {
+  const invoice = { InvoiceId: 'TERM-1', AccountRef: 'STU-1', FeeCode: 'TUITION', FeeCategory: 'School Fee',
+    Debit: 300000, Credit: 300000, CreatedAt: '2026-09-01' };
+  const first = buildSchoolInvoiceCreditPaymentJournal(invoice,
+    { Reference: 'PAY-2026', PaidAt: '2026-12-15' }, 200000);
+  const second = buildSchoolInvoiceCreditPaymentJournal(invoice,
+    { Reference: 'PAY-2027', PaidAt: '2027-01-15' }, 100000);
+  assert.notEqual(first.JournalNo, second.JournalNo);
+  assert.equal(first.Date, '2026-12-15');
+  assert.equal(second.Date, '2027-01-15');
+  assert.deepEqual(schoolInvoiceCreditJournalGap(invoice, [first, second]), {
+    invoiceId: 'TERM-1', expected: 300000, posted: 300000, missing: 0, baselineExists: false
+  });
+  const auto = buildSchoolInvoiceCreditAutomaticJournal(invoice, 200000, 300000, '2027-01-10');
+  assert.equal(auto.Date, '2027-01-10');
+  assert.equal(auto.Lines[0].Debit, 100000);
+  assert.equal(buildSchoolInvoiceCreditAutomaticJournal(invoice, 300000, 300000, '2027-01-11'), null);
+  const chart = [
+    { Code: '1100', Name: 'Receivables', Type: 'Asset', Group: 'Receivables', Direction: 'Debit' },
+    { Code: '2310', Name: 'Parent credit', Type: 'Liability', Group: 'Student Overpayments', Direction: 'Credit' }
+  ];
+  const through2026 = buildAccountingReport(chart, [first, second], [], [], {
+    DateFrom: '2026-01-01', DateTo: '2026-12-31', FinancialYear: '2026'
+  }, []);
+  const through2027 = buildAccountingReport(chart, [first, second], [], [], {
+    DateFrom: '2026-01-01', DateTo: '2027-12-31', FinancialYear: '2027'
+  }, []);
+  assert.equal(through2026.dashboard.Liabilities, -200000);
+  assert.equal(through2027.dashboard.Liabilities, -300000);
+});
+
+test('an older parent advance is not applied before the later invoice exists', () => {
+  const invoice = {
+    InvoiceId: 'INV-2026', AccountRef: 'STU-1', FeeCategory: 'School Fee',
+    FeeCode: 'TUITION', Amount: 300000, Credit: 300000, CreatedAt: '2026-09-01'
+  };
+  const payment = { Reference: 'PAY-2025', PaidAt: '2025-12-01' };
+  const journal = buildSchoolInvoiceCreditPaymentJournal(invoice, payment, 300000);
+  assert.equal(journal.Date, '2026-09-01');
+  assert.equal(journal.Lines[0].AccountCode, '2310');
+  assert.equal(journal.Lines[1].AccountCode, '1100');
+});
+
+test('legacy invoice-credit baseline only covers credit not already traced to immutable events', () => {
+  const invoice = { InvoiceId: 'MIXED', FeeCode: 'TUITION', FeeCategory: 'School Fee', Debit: 400000, Credit: 300000 };
+  const explicit = buildSchoolInvoiceCreditPaymentJournal(invoice, { Reference: 'PAY-NEW', PaidAt: '2027-02-01' }, 100000);
+  const initialGap = schoolInvoiceCreditJournalGap(invoice, [explicit]);
+  assert.equal(initialGap.missing, 200000);
+  const baseline = buildSchoolInvoiceCreditAccountingJournal(invoice, { amount: initialGap.missing, date: '2027-02-02' });
+  assert.equal(schoolInvoiceCreditJournalGap(invoice, [explicit, baseline]).missing, 0);
+  const laterInvoice = { ...invoice, Credit: 400000, UpdatedAt: '2027-03-01' };
+  const later = buildSchoolInvoiceCreditPaymentJournal(laterInvoice, { Reference: 'PAY-LATER', PaidAt: '2027-03-01' }, 100000);
+  assert.equal(schoolInvoiceCreditJournalGap(laterInvoice, [explicit, baseline, later]).missing, 0);
+  assert.equal(baseline.Date, '2027-02-02');
+  const ignoredDraft = { ...later, JournalNo: 'DRAFT-EVENT', Status: 'Draft' };
+  const draftGap = schoolInvoiceCreditJournalGap(laterInvoice, [explicit, baseline, ignoredDraft]);
+  assert.equal(draftGap.missing, 100000);
+  assert.deepEqual(draftGap.invalidPostedJournalIds, ['DRAFT-EVENT']);
+  const malformed = { ...later, JournalNo: 'MALFORMED', Lines: [
+    { AccountCode: '2310', Debit: 100000, Credit: 0 }, { AccountCode: '4090', Debit: 0, Credit: 100000 }
+  ] };
+  assert.deepEqual(schoolInvoiceCreditJournalGap(laterInvoice, [explicit, baseline, malformed]).invalidPostedJournalIds, ['MALFORMED']);
+});
+
+test('posted legacy receivable receipt is reclassified without replacing the historical journal', () => {
+  const payment = { Reference: 'LEGACY-PAY', AccountRef: 'STU-1', FeeCode: 'SCHOOL_FEES_TOTAL',
+    FeeCategory: 'School Fee', Amount: 1200000, PaymentDate: '2025-09-01', Method: 'Bank Transfer' };
+  const prior = { JournalNo: 'SYS-PAY-LEGACY-PAY', Status: 'Posted', Date: '2025-09-01',
+    Lines: [{ AccountCode: '1020', Debit: 1200000, Credit: 0 }, { AccountCode: '1100', Debit: 0, Credit: 1200000 }] };
+  const reclassification = buildSchoolPaymentReclassificationJournal(payment, prior, '2026-09-24');
+  assert.equal(buildPaymentAccountingJournal(payment).Date, '2025-09-01');
+  assert.equal(reclassification.Date, '2026-09-24');
+  assert.deepEqual(reclassification.Lines.map((line) => [line.AccountCode, line.Debit, line.Credit]), [
+    ['1100', 1200000, 0], ['2310', 0, 1200000]
+  ]);
+  assert.equal(prior.Lines[1].AccountCode, '1100');
+  assert.equal(buildSchoolPaymentReclassificationJournal(payment, {
+    ...prior, BranchId: 'another-branch'
+  }, '2026-09-24'), null);
+  assert.equal(buildSchoolPaymentReclassificationJournal(payment, {
+    ...prior, AcademicSession: '2024/2025'
+  }, '2026-09-24'), null);
+  assert.equal(buildSchoolPaymentReclassificationJournal(payment, {
+    ...prior, Term: 'Second Term'
+  }, '2026-09-24'), null);
 });
 
 test('acceptance deposit is not duplicated as a standalone invoice', () => {
@@ -562,9 +722,15 @@ test('payment accounting routes wallets, stores, receivables, and direct revenue
       }
     })
   }), '4040');
-  assert.equal(accountingDestinationForPayment({ FeeCode: 'TUITION', FeeCategory: 'School Fee' }, true), '1100');
-  assert.equal(accountingDestinationForPayment({ FeeCode: 'TUITION', FeeCategory: 'School Fee' }, false), '4000');
-  assert.equal(accountingDestinationForPayment({ FeeCode: 'ACCEPTANCE_FEE', FeeCategory: 'Admission' }, false), '4110');
+  assert.equal(accountingDestinationForPayment({ FeeCode: 'TUITION', FeeCategory: 'School Fee' }, true), '2310');
+  assert.equal(accountingDestinationForPayment({ FeeCode: 'TUITION', FeeCategory: 'School Fee' }, false), '2310');
+  assert.equal(accountingDestinationForPayment({ FeeCode: 'ACCEPTANCE_FEE', FeeCategory: 'Admission' }, false), '2310');
+  assert.equal(accountingDestinationForPayment({ FeeCode: 'MANUAL_PAYMENT', FeeCategory: 'Account Credit' }, false, 'faith'), '4090');
+  assert.equal(accountingDestinationForPayment({ FeeCode: 'MANUAL_PAYMENT', FeeCategory: 'Account Credit' }, false, 'organization'), '4090');
+  assert.equal(buildPaymentAccountingJournal({ Reference: 'CHURCH-1', FeeCode: 'MANUAL_PAYMENT', FeeCategory: 'Account Credit', Amount: 5000 }, false, 'faith').Lines[1].AccountCode, '4090');
+  assert.equal(accountingDestinationForPayment({ FeeCode: 'OTHER_FEE', FeeCategory: 'General' }, true, 'faith'), '1110');
+  assert.equal(accountingDestinationForPayment({ FeeCode: 'STORE_CART', FeeCategory: 'Store' }, false, 'organization'), '4120');
+  assert.equal(accountingDestinationForPayment({ FeeCode: 'WALLET_TOPUP' }, false, 'faith'), '2000');
 });
 
 test('wallet purchase destination follows department context and defaults to Other Income when unknown', () => {
