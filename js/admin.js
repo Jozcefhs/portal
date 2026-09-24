@@ -11128,6 +11128,15 @@ function syncAcademicStudentPlacementForm(form, changedName = '') {
 
   const selectedTermId = clean(termControl.value);
   const selectedArmId = clean(armControl.value);
+  const departmentControl = form.elements.namedItem('DepartmentId');
+  const seniorClass = clean(academicFind(classRows, selectedClassId)?.SchoolStage).toLowerCase() === 'senior-secondary';
+  if (departmentControl) {
+    if (changedName === 'ArmId' || changedName === 'ClassId' || (!changedName && !departmentControl.value)) {
+      const classroom = academicFind(armRows, selectedArmId);
+      departmentControl.value = seniorClass ? clean(classroom?.DepartmentId) : '';
+    }
+    departmentControl.required = seniorClass && Boolean(selectedArmId);
+  }
   const { schoolClass, students, candidates, assignedCount = 0, unavailableCount = 0 } = selectedArmId
     ? academicStudentAllocationCandidates(sessionId, selectedTermId, selectedClassId)
     : { schoolClass: academicFind(classRows, selectedClassId), students: [], candidates: [], assignedCount: 0, unavailableCount: 0 };
@@ -11273,7 +11282,7 @@ function academicTaskDefinitions(view, root) {
     classrooms: [
       { key: 'register', label: 'Classroom register', title: 'Choose a classroom', description: 'Open an existing classroom to manage its students and form staff.', nodes: nodes(register('Classrooms')) },
       { key: 'create', label: 'Create classrooms', title: 'Create classrooms in bulk', description: 'Select every reusable class and arm combination that should become a classroom.', nodes: nodes(form('[data-academic-classroom-creator]')) },
-      { key: 'departments', label: 'Senior departments', title: 'Assign Senior classroom departments', description: 'Choose the department for each Senior classroom, then save all changed rows together.', nodes: nodes(form('[data-academic-classroom-departments]')) },
+      { key: 'departments', label: 'Department defaults', title: 'Set optional classroom defaults', description: 'Set a default for single-department classrooms, or leave it blank for mixed departments. Each student keeps an individual department.', nodes: nodes(form('[data-academic-classroom-departments]')) },
       { key: 'manage', label: 'Open classroom', title: 'Manage the open classroom', description: 'Assign students, form teacher and assistant without leaving the classroom.', nodes: nodes(form('.academic-classroom-open'), form('.academic-classroom-empty')) }
     ],
     classStaff: [
@@ -11484,16 +11493,22 @@ function academicClassroomWorkspace(data, rows) {
   const seniorClassrooms = classrooms.filter((row) => clean(academicFind(classes, row.ClassId)?.SchoolStage).toLowerCase() === 'senior-secondary');
   const departmentEditor = section === 'secondary' && canStructure ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="bulkAssignAcademicClassroomDepartments" data-academic-classroom-departments>
     <input type="hidden" name="SchoolSection" value="secondary">
-    <div class="academic-management-editor-heading"><div><small>Senior classrooms</small><h3>Assign departments</h3><p class="muted">A subject may be Core in several departments. Each classroom still needs its own department so subject-teacher assignments use the correct Core list.</p></div></div>
+    <div class="academic-management-editor-heading"><div><small>Senior classrooms</small><h3>Optional department defaults</h3><p class="muted">A classroom may contain students from several departments. This optional default only preselects a department when placing students; it does not restrict or change their individual departments.</p></div></div>
     ${seniorClassrooms.length && departments.length ? `<div class="academic-classroom-department-list">${seniorClassrooms.map((row) => `<div class="academic-classroom-department-row" data-academic-classroom-department-row data-classroom-id="${escapeHtml(row.ArmId)}" data-revision-token="${escapeHtml(row.RevisionToken || '')}" data-original-department-id="${escapeHtml(row.DepartmentId || '')}">
       <strong>${escapeHtml(`${academicLabel(classes, row.ClassId)} / ${row.Name}`)}</strong>
-      <label>Department<select data-academic-classroom-department-select>${academicSelectOptions(departments, row.DepartmentId, (department) => department.Name, 'Choose department')}${row.DepartmentId && !academicFind(departments, row.DepartmentId) ? `<option value="${escapeHtml(row.DepartmentId)}" selected>Inactive or missing department — reassign</option>` : ''}</select></label>
-    </div>`).join('')}</div><button type="submit">Save changed departments</button>` : `<div class="academic-classroom-empty"><strong>${seniorClassrooms.length ? 'No active Senior departments' : 'No Senior classrooms'}</strong><span>${seniorClassrooms.length ? 'Create Senior departments and set their Core subjects first.' : 'Create Senior classrooms first.'}</span></div>`}
+      <label>Default department<select data-academic-classroom-department-select>${academicSelectOptions(departments, row.DepartmentId, (department) => department.Name, 'No default / mixed departments')}${row.DepartmentId && !academicFind(departments, row.DepartmentId) ? `<option value="${escapeHtml(row.DepartmentId)}" selected>Inactive or missing department — reassign</option>` : ''}</select></label>
+    </div>`).join('')}</div><button type="submit">Save changed defaults</button>` : `<div class="academic-classroom-empty"><strong>${seniorClassrooms.length ? 'No active Senior departments' : 'No Senior classrooms'}</strong><span>${seniorClassrooms.length ? 'Create Senior departments and set their Core subjects first.' : 'Create Senior classrooms first.'}</span></div>`}
   </form>` : '';
 
   let selectedWorkspace = '<div class="academic-classroom-empty"><strong>No classroom is open.</strong><span>Create classrooms above, or open an existing classroom from the register below.</span></div>';
   if (selectedArm && selectedClass) {
-    const seniorNeedsDepartment = selectedStage === 'senior-secondary' && !selectedDepartment;
+    const seniorNeedsDepartment = selectedStage === 'senior-secondary' && !departments.length;
+    const representedDepartments = [...new Set(classroomMemberships.map((row) => clean(row.DepartmentId)).filter(Boolean))];
+    const departmentSummary = selectedStage === 'senior-secondary'
+      ? representedDepartments.length
+        ? `Student departments: ${representedDepartments.map((id) => academicLabel(departments, id, id)).join(', ')}${selectedDepartment ? ` · Default: ${selectedDepartment.Name}` : ''}`
+        : `No students assigned${selectedDepartment ? ` · Default: ${selectedDepartment.Name}` : ' · No department default'}`
+      : academicSchoolStageLabel(selectedStage);
     const { students, candidates } = academicStudentAllocationCandidates(sessionId, termId, selectedClass.ClassId);
     const candidateOptions = candidates.map((row) => ({
       value: row.StudentRef,
@@ -11501,16 +11516,16 @@ function academicClassroomWorkspace(data, rows) {
       searchText: [row.StudentName, row.StudentRef, row.WalletCardId].filter(Boolean).join(' ')
     }));
     const candidateSummary = seniorNeedsDepartment
-      ? 'Assign the classroom department before adding Senior Secondary students.'
-      : `${candidates.length} of ${students.length} ${selectedClass.Name} ${students.length === 1 ? learner.singular : learner.plural} remain unassigned for this period. Select up to 100. Shift-click to select a range.`;
+      ? 'Create an active Senior department before allocating students.'
+      : `${candidates.length} of ${students.length} ${selectedClass.Name} ${students.length === 1 ? learner.singular : learner.plural} remain unassigned for this period. Select up to 100. Shift-click to select a range.${selectedStage === 'senior-secondary' ? ' Choose the department for this batch; repeat for other departments in the same classroom.' : ''}`;
     const studentForm = canAllocate ? `<form class="academic-management-editor academic-classroom-student-form" data-academic-workflow="bulkAllocateAcademicStudents" data-academic-classroom-student-placement>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(section)}">
       <input type="hidden" name="SessionId" value="${escapeHtml(sessionId)}">
       <input type="hidden" name="TermId" value="${escapeHtml(termId)}">
       <input type="hidden" name="ClassId" value="${escapeHtml(selectedClass.ClassId)}">
       <input type="hidden" name="ArmId" value="${escapeHtml(selectedArm.ArmId)}">
-      <input type="hidden" name="DepartmentId" value="${escapeHtml(selectedArm.DepartmentId || '')}">
       <div class="academic-management-editor-heading"><div><small>Classroom ${learner.plural}</small><h3>Assign ${learner.plural}</h3><p class="muted">Only unassigned ${learner.plural} whose existing class is ${escapeHtml(selectedClass.Name)} are shown.</p></div></div>
+      ${selectedStage === 'senior-secondary' ? `<label>Department for selected students<select name="DepartmentId" required>${academicSelectOptions(departments, selectedArm.DepartmentId, (row) => `${row.Code} - ${row.Name}`, 'Choose department for this batch')}</select><small>Students in the same classroom may belong to different departments.</small></label>` : ''}
       <label>Find ${learner.singular}<input type="search" data-academic-student-candidate-search placeholder="Search by name, admission number or card" autocomplete="off"><small>Search does not clear ${learner.plural} already selected.</small></label>
       ${academicCheckboxField({ name: 'StudentRefs', label: learner.singular === 'pupil' ? 'Pupils ready for this classroom' : 'Students ready for this classroom', options: candidateOptions, required: true, max: 100, idPrefix: 'classroom-students', purpose: 'student-arm-candidates', help: candidateSummary })}
       <label>Allocation note<input name="Reason" placeholder="Classroom allocation"></label>
@@ -11521,7 +11536,7 @@ function academicClassroomWorkspace(data, rows) {
       ${academicClassroomStaffForm({ role: 'Assistant Teacher', existing: assistantTeacher, staff, sessionId, termId, schoolClass: selectedClass, arm: selectedArm, section })}
     </div>` : '';
     selectedWorkspace = `<section class="academic-classroom-open">
-      <div class="academic-classroom-current"><div><small>Current classroom</small><h3>${escapeHtml(selectedClass.Name)} / ${escapeHtml(selectedArm.Name)}</h3><p>${selectedStage === 'senior-secondary' ? escapeHtml(selectedDepartment?.Name || 'Department not assigned') : escapeHtml(academicSchoolStageLabel(selectedStage))}</p></div><div><strong>${classroomMemberships.length}</strong><span>${learner.plural} this term</span></div></div>
+      <div class="academic-classroom-current"><div><small>Current classroom</small><h3>${escapeHtml(selectedClass.Name)} / ${escapeHtml(selectedArm.Name)}</h3><p>${escapeHtml(departmentSummary)}</p></div><div><strong>${classroomMemberships.length}</strong><span>${learner.plural} this term</span></div></div>
       ${studentForm}${staffForms}
     </section>`;
   }
@@ -11529,7 +11544,11 @@ function academicClassroomWorkspace(data, rows) {
   const classroomRegister = table('Classrooms', classrooms, [
     { label: 'Classroom', value: (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}` },
     { label: 'Division', value: (row) => academicSchoolStageLabel(academicFind(classes, row.ClassId)?.SchoolStage) },
-    { label: 'Department', value: (row) => clean(academicFind(classes, row.ClassId)?.SchoolStage).toLowerCase() === 'senior-secondary' ? academicLabel(departments, row.DepartmentId, 'Not assigned') : 'Not applicable' },
+    { label: 'Student departments', value: (row) => {
+      if (clean(academicFind(classes, row.ClassId)?.SchoolStage).toLowerCase() !== 'senior-secondary') return 'Not applicable';
+      const ids = [...new Set(periodMemberships.filter((membership) => membership.ArmId === row.ArmId).map((membership) => clean(membership.DepartmentId)).filter(Boolean))];
+      return ids.length ? ids.map((id) => academicLabel(departments, id, id)).join(', ') : (row.DepartmentId ? `Default: ${academicLabel(departments, row.DepartmentId, row.DepartmentId)}` : 'Not selected');
+    } },
     { label: learner.Plural, value: (row) => periodMemberships.filter((membership) => membership.ArmId === row.ArmId).length },
     { label: 'Form teacher', value: (row) => { const allocation = periodAllocations.find((item) => item.ArmId === row.ArmId && item.AllocationRole === 'Form Teacher'); return academicLabel(data.staff, allocation?.TeacherUsername, 'Not assigned'); } },
     { label: 'Assistant', value: (row) => { const allocation = periodAllocations.find((item) => item.ArmId === row.ArmId && item.AllocationRole === 'Assistant Teacher'); return academicLabel(data.staff, allocation?.TeacherUsername, 'Not assigned'); } },
@@ -12089,7 +12108,7 @@ function academicStudentWorkspace(data, rows) {
   const targetFields = `
     <label>Class<select name="ClassId" required>${academicSelectOptions(classes, '', (row) => `${row.Name} — ${academicSchoolStageLabel(row.SchoolStage)}`, 'Choose class')}</select></label>
     <label>Arm<select name="ArmId" required>${academicSelectOptions(arms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name}`, 'Choose arm')}</select></label>
-    ${academicManagementFilters.section === 'secondary' ? `<label>Senior department<select name="DepartmentId">${academicSelectOptions(departments, '', (row) => `${row.Code} - ${row.Name}`, 'Not applicable / choose for Senior')}</select></label>` : ''}`;
+    ${academicManagementFilters.section === 'secondary' ? `<label>Student's Senior department<select name="DepartmentId">${academicSelectOptions(departments, '', (row) => `${row.Code} - ${row.Name}`, 'Not applicable / choose for Senior')}</select><small>A student may belong to a different department from others in the same classroom.</small></label>` : ''}`;
   const draftSessionId = clean(academicFind(sessions, academicStudentAllocationDraft.sessionId)?.SessionId
     || academicFind(sessions, academicManagementFilters.sessionId)?.SessionId);
   const bulkTerms = (data.terms || []).filter((row) => academicIsActive(row) && row.SessionId === draftSessionId);
@@ -12105,7 +12124,7 @@ function academicStudentWorkspace(data, rows) {
   const bulkTargetFields = `
     <label>Class<select name="ClassId" required>${academicSelectOptions(classes, draftClassId, (row) => `${row.Name} — ${academicSchoolStageLabel(row.SchoolStage)}`, 'Choose class')}</select></label>
     <label>Arm<select name="ArmId" required${draftClassId ? '' : ' disabled'}>${academicSelectOptions(bulkArms, draftArmId, (row) => row.Name, draftClassId ? 'Choose arm' : 'Choose class first')}</select></label>
-    ${academicManagementFilters.section === 'secondary' ? `<label>Senior department<select name="DepartmentId">${academicSelectOptions(departments, '', (row) => `${row.Code} - ${row.Name}`, 'Not applicable / choose for Senior')}</select></label>` : ''}`;
+    ${academicManagementFilters.section === 'secondary' ? `<label>Department for selected students<select name="DepartmentId">${academicSelectOptions(departments, '', (row) => `${row.Code} - ${row.Name}`, 'Not applicable / choose for Senior')}</select><small>Required for Senior students. Repeat the allocation for another department in the same arm.</small></label>` : ''}`;
   const forms = canManage ? `<div class="academic-management-editor-grid">
     <form class="academic-student-allocation-layout" data-academic-workflow="bulkAllocateAcademicStudents" data-academic-student-placement="bulk">
       <section class="academic-management-editor academic-student-allocation-controls">
@@ -13737,14 +13756,13 @@ function academicWorkflowPayload(form) {
     const assignments = [...form.querySelectorAll('[data-academic-classroom-department-row]')].map((row) => {
       const departmentId = clean(row.querySelector('[data-academic-classroom-department-select]')?.value);
       if (departmentId === clean(row.dataset.originalDepartmentId)) return null;
-      if (!departmentId) throw new Error(`Choose a department for ${row.querySelector('strong')?.textContent || 'each changed classroom'}.`);
       return {
         ClassroomId: clean(row.dataset.classroomId),
         DepartmentId: departmentId,
         RevisionToken: clean(row.dataset.revisionToken)
       };
     }).filter(Boolean);
-    if (!assignments.length) throw new Error('Choose or change a Senior classroom department before saving.');
+    if (!assignments.length) throw new Error('Choose or clear a Senior classroom default before saving.');
     if (assignments.length > 100) throw new Error('Save at most 100 changed classrooms at once.');
     return { SchoolSection: 'secondary', Assignments: assignments };
   }
