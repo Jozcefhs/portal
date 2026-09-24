@@ -1,7 +1,7 @@
 {
-  "version": "3.1.7",
+  "version": "3.1.8",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.7.exe",
-  "sha256": "af10d869c52e3d36ecc9d4fb2050c0a76fe85d55672fc1187785b2c52779c420",
-  "notes": "Dynamax Desktop v3.1.7 adds bulk academic assignments, parent-credit actions and historical-payment tools, owner-managed tutorials, and department-scoped Budget vs Actual reporting."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.8.exe",
+  "sha256": "0041fc5e1895244ffaedce5f82566ffe70991c27d65bb97e53eae4062bf2e691",
+  "notes": "Dynamax Desktop v3.1.8 fixes approved-device connection failing with 'main thread is not in main loop' during first-run pairing."
 }
