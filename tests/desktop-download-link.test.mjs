@@ -21,19 +21,21 @@ test('desktop download resolves the current public release manifest', () => {
 });
 
 
-test('public release manifest includes a verified stable installer', () => {
+test('public release manifest includes a verified versioned installer', () => {
   assert.equal(releaseManifest.channel, 'stable');
+  assert.equal(releaseManifest.version, '3.1.7');
   assert.equal(
     releaseManifest.installer_url,
-    'https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup.exe',
+    'https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.7.exe',
   );
   assert.match(releaseManifest.sha256, /^[a-f0-9]{64}$/);
 });
 
 
-test('landing-page installer link uses the same public stable asset', () => {
+test('landing-page installer link uses the same versioned asset', () => {
   assert.match(
     indexSource,
-    /href="https:\/\/github\.com\/Jozcefhs\/portal\/releases\/download\/desktop-stable\/Dynamax_Setup\.exe"/,
+    /href="https:\/\/github\.com\/Jozcefhs\/portal\/releases\/download\/desktop-stable\/Dynamax_Setup_v3\.1\.7\.exe"/,
   );
+  assert.equal(indexSource.includes(`href="${releaseManifest.installer_url}"`), true);
 });
