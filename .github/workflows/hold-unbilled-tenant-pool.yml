@@ -1,0 +1,64 @@
+name: Hold unbilled tenant pool projects
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hold:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DYNAMAX_PLATFORM_URL: ${{ vars.DYNAMAX_PLATFORM_URL || 'https://dynamax.cc' }}
+      DYNAMAX_TENANT_PROVISIONER_SECRET: ${{ secrets.DYNAMAX_TENANT_PROVISIONER_SECRET }}
+    steps:
+      - name: Hold only the unbilled, unassigned projects verified on 2026-09-24
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${DYNAMAX_TENANT_PROVISIONER_SECRET}" ]] || { echo 'The pool access secret is missing.' >&2; exit 1; }
+          endpoint="${DYNAMAX_PLATFORM_URL}/api/tenant-project-pool"
+          load_payload="$(jq -nc --arg password "${DYNAMAX_TENANT_PROVISIONER_SECRET}" '{password:$password,action:"load"}')"
+          inventory="$(curl --fail-with-body --silent --show-error "${endpoint}" -H 'Content-Type: application/json' --data "${load_payload}")"
+          [[ "$(jq -r '.ok // false' <<<"${inventory}")" == 'true' ]] || { echo 'Could not load the tenant pool.' >&2; exit 1; }
+
+          held=0
+          skipped=0
+          for project_id in \
+            dynamax-tenant-002 \
+            dynamax-tenant-003 \
+            dynamax-tenant-004 \
+            dynamax-tenant-007 \
+            dynamax-tenant-009 \
+            dynamax-tenant-010 \
+            dynamax-tenant-sch-f432840944; do
+            slot="$(jq -c --arg project_id "${project_id}" '[.slots[] | select(.FirebaseProjectId == $project_id)] | .[0] // empty' <<<"${inventory}")"
+            if [[ -z "${slot}" ]]; then
+              printf '::warning::%s is no longer in the managed pool; skipped.\n' "${project_id}"
+              skipped=$((skipped + 1))
+              continue
+            fi
+            status="$(jq -r '.Status // "" | ascii_downcase' <<<"${slot}")"
+            assigned="$(jq -r '.AssignedRegistrationReference // ""' <<<"${slot}")"
+            billing_account="$(jq -r '.BillingAccountId // ""' <<<"${slot}")"
+            verified_at="$(jq -r '.BillingVerifiedAt // ""' <<<"${slot}")"
+            if [[ "${status}" != 'ready' || -n "${assigned}" || -n "${billing_account}" || -n "${verified_at}" ]]; then
+              printf '::notice::%s is not an unbilled, unassigned Ready slot; skipped.\n' "${project_id}"
+              skipped=$((skipped + 1))
+              continue
+            fi
+            hold_payload="$(jq -nc \
+              --arg password "${DYNAMAX_TENANT_PROVISIONER_SECRET}" \
+              --arg project_id "${project_id}" \
+              '{password:$password,action:"quarantine",projectId:$project_id,reason:"Billing disabled; hold until Blaze billing is verified"}')"
+            result="$(curl --fail-with-body --silent --show-error "${endpoint}" -H 'Content-Type: application/json' --data "${hold_payload}")"
+            [[ "$(jq -r '.slot.Status // ""' <<<"${result}")" == 'Maintenance' ]] || { echo "Failed to hold ${project_id}." >&2; exit 1; }
+            printf 'Held %s in Maintenance.\n' "${project_id}"
+            held=$((held + 1))
+          done
+          {
+            echo '### Unbilled tenant pool hold'
+            printf 'Held in Maintenance: %s. Skipped after live-state checks: %s. No projects or data were deleted.\n' "${held}" "${skipped}"
+          } >> "${GITHUB_STEP_SUMMARY}"
