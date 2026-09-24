@@ -26,6 +26,24 @@ jobs:
       - name: Set up Google Cloud CLI
         uses: google-github-actions/setup-gcloud@v3
 
+      - name: Check provisioner billing-account permission
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${DYNAMAX_GCP_BILLING_ACCOUNT}" ]] || { echo 'The target billing account is missing.' >&2; exit 1; }
+          token="$(gcloud auth print-access-token)"
+          target="billingAccounts/${DYNAMAX_GCP_BILLING_ACCOUNT}"
+          result="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer ${token}" \
+            -H 'Content-Type: application/json' \
+            --data '{"permissions":["billing.resourceAssociations.create"]}' \
+            "https://cloudbilling.googleapis.com/v1/${target}:testIamPermissions")"
+          if jq -e '(.permissions // []) | index("billing.resourceAssociations.create") != null' <<<"${result}" >/dev/null; then
+            echo 'Provisioner can link projects to the configured billing account.' >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo 'Provisioner CANNOT link projects to the configured billing account: Billing Account User access is missing.' >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
       - name: Check every registered tenant project
         shell: bash
         run: |
