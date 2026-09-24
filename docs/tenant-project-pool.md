@@ -62,6 +62,7 @@ The workflow is `.github/workflows/provision-tenant-pool.yml`. Add the following
 - `DYNAMAX_PROVISION_SERVICE_ACCOUNT`: service-account email used only by the provisioner.
 - `DYNAMAX_PROVISION_PROJECT_ID`: Google project that owns the Workload Identity configuration.
 - `DYNAMAX_GCP_BILLING_ACCOUNT`: billing account to link to new tenant projects. When billing is required, the provisioner verifies access before creating a project. With `DYNAMAX_GCP_BILLING_REQUIRED=false`, an inaccessible billing account is skipped and Firebase free-tier setup is attempted instead.
+- `DYNAMAX_GCP_BILLING_REQUIRED`: set to `true` for production Blaze tenants. The worker must verify that Google Cloud reports billing enabled on the configured account before registering a new project as Ready. The `false` setting is for intentionally unbilled test projects only.
 - `DYNAMAX_GCP_PARENT`: `folders/123...` or `organizations/123...` parent used to create projects automatically. It may be omitted only when unused projects are explicitly listed in the central pool settings.
 - `DYNAMAX_TENANT_REGION`: Firestore region, for example `eur3`.
 - `DYNAMAX_TENANT_PROJECT_PREFIX`: short lowercase prefix; default is `dynamax-tenant`.
@@ -74,6 +75,8 @@ Add these repository secrets:
 - `CLOUDFLARE_API_TOKEN`: account-scoped token with **Pages Write**. Do not use the Global API key.
 
 The GitHub provisioner identity needs permission to create projects under the chosen parent, link the billing account, enable services, add Firebase, create Firestore databases and indexes, manage the tenant runtime service account and create its key. A practical initial role set is Project Creator on the parent, Billing Account User on the billing account, plus Service Usage Admin, Firebase Admin, Cloud Datastore Owner, Project IAM Admin, Service Account Admin and Service Account Key Admin in the provisioning boundary. The billing grant must be made **on the billing account**, not on the Google project or folder. The Firestore and Firebase grants must apply to new projects through the parent folder or organisation. Reduce these to reviewed custom roles after the first successful rollout.
+
+Use **Actions -> Audit tenant project billing** to inspect billing status for registered pool projects without changing them. An `UNKNOWN` result means the provisioner cannot verify that project's billing association; it is not evidence that the project is unbilled. Existing Ready and Assigned projects need a separate review before changing their billing association.
 
 If a run fails after claiming a request, the same request is retried with a growing delay and the same deterministic project IDs. Completed projects in the batch are skipped on retry. The Requests tab shows the next retry time and last error, so a permission repair does not require a new request or create another orphan project.
 

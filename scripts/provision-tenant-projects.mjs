@@ -190,6 +190,26 @@ async function verifyBillingAccess() {
   return true;
 }
 
+async function verifyProjectBilling(projectId) {
+  if (!billingAccount) return false;
+  const expectedAccount = `billingAccounts/${billingAccount}`;
+  for (let attempt = 1; attempt <= 12; attempt += 1) {
+    try {
+      const info = await googleRequest(`https://cloudbilling.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/billingInfo`);
+      if (info.billingEnabled === true && clean(info.billingAccountName) === expectedAccount) return true;
+    } catch (error) {
+      if (attempt === 12 && billingRequired) {
+        throw new Error(`Google Cloud could not verify active billing for ${projectId} on ${expectedAccount}. The tenant was not registered as Ready.`, { cause: error });
+      }
+    }
+    if (attempt < 12) await new Promise((resolvePromise) => setTimeout(resolvePromise, 5000));
+  }
+  if (billingRequired) {
+    throw new Error(`Google Cloud does not report active billing for ${projectId} on ${expectedAccount}. The tenant was not registered as Ready.`);
+  }
+  return false;
+}
+
 async function waitForGoogleOperation(operation, serviceBase, timeoutMs = 240000) {
   if (!operation?.name || operation.done) {
     if (operation?.error) throw new Error(operation.error.message || 'Google Cloud operation failed.');
@@ -381,9 +401,11 @@ export async function provisionProject(projectId, options = {}) {
   } else {
     process.stdout.write(`Using pre-created Google Cloud project ${projectId}.\n`);
   }
+  let billingVerified = false;
   if (canLinkBilling) {
     try {
       commandWithRetry('gcloud', ['billing', 'projects', 'link', projectId, `--billing-account=${billingAccount}`, '--quiet']);
+      billingVerified = await verifyProjectBilling(projectId);
     } catch (error) {
       if (billingRequired) throw error;
       process.stdout.write(`Optional billing linkage failed for ${projectId}; continuing with Firebase free-tier setup.\n`);
@@ -454,6 +476,8 @@ export async function provisionProject(projectId, options = {}) {
       Status: clean(options.status || 'Ready'),
       SanitizedAt: clean(options.sanitizedAt),
       ProvisioningBatchId: requestReference,
+      BillingAccountId: billingVerified ? billingAccount : '',
+      BillingVerifiedAt: billingVerified ? new Date().toISOString() : '',
       TenantControlPublicKey: tenantControl.publicKey
     };
     await platformApi({ action: 'register', slot });

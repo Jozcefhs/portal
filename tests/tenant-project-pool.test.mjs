@@ -160,6 +160,8 @@ test('provisioning plans are repeatable and can resume from a user-precreated pr
   assert.match(provisionerSource, /TenantControlPublicKey/);
   assert.match(provisionerSource, /billing\.resourceAssociations\.create/);
   assert.match(provisionerSource, /Grant Billing Account User to the provisioner service account/);
+  assert.match(provisionerSource, /info\.billingEnabled === true && clean\(info\.billingAccountName\) === expectedAccount/);
+  assert.match(provisionerSource, /The tenant was not registered as Ready/);
   assert.match(provisionerSource, /NextAttemptAt: new Date\(Date\.now\(\) \+ retryMinutes \* 60000\)/);
   assert.match(provisionerSource, /function commandWithRetry/);
   assert.match(provisionerSource, /Using existing tenant runtime account/);
