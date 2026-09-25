@@ -45,6 +45,18 @@ test('authoritative staff record replaces client-supplied role and actor metadat
   );
 });
 
+test('Director and Admin inherit access while retaining their verified requisition roles', () => {
+  for (const [assigned, effective] of [['Director', 'Super Admin'], ['Admin', 'Management']]) {
+    const actor = resolveAuthoritativeDesktopActor(
+      { UserUsername: 'officer', UserRole: 'Super Admin', UserAssignedRole: 'Super Admin' },
+      [{ Username: 'officer', Role: assigned, Active: true }]
+    );
+    const body = applyAuthoritativeActor({ UserAssignedRole: 'Super Admin' }, actor);
+    assert.equal(body.UserRole, effective);
+    assert.equal(body.UserAssignedRole, assigned);
+  }
+});
+
 test('missing and disabled staff actors are rejected', () => {
   assert.throws(() => resolveAuthoritativeDesktopActor({ UserUsername: 'missing' }, []), /not found/i);
   assert.throws(

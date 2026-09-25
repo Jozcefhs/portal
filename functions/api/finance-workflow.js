@@ -219,8 +219,16 @@ export function buildRequisitionResubmission(existing = {}, body = {}, user = {}
     ManagementAuthorizedAt: '',
     ManagementAuthorizationMethod: '',
     ManagementAuthorizationNotes: '',
+    AdminStageReviewedBy: '',
+    AdminStageReviewedByUsername: '',
+    AdminStageReviewedAt: '',
+    AdminStageReviewNotes: '',
+    AdminStageReviewMethod: '',
+    FinalApprovedRole: '',
     RejectedByUsername: '',
-    RejectedStage: ''
+    RejectedByRole: '',
+    RejectedStage: '',
+    RejectionNotes: ''
   });
   const revision = {
     RevisionId: revisionId,
@@ -573,6 +581,16 @@ async function resubmitRequisition(env, user, body) {
       documentId: endorsementId(id, 'management'),
       operation: 'delete'
     },
+    {
+      collectionPath: 'financeDocumentEndorsements',
+      documentId: endorsementId(id, 'admin-review'),
+      operation: 'delete'
+    },
+    {
+      collectionPath: 'financeDocumentEndorsements',
+      documentId: endorsementId(id, 'director'),
+      operation: 'delete'
+    },
     audit
   ]);
   await notifyStaffRequisitionSubmitted(env, payload, actor(user)).catch(() => null);
@@ -651,6 +669,8 @@ function requestedRequisitionStatus(decision) {
   return ({
     confirmed: REQUISITION_STATUS.ACCOUNTS_CONFIRMED,
     'accounts confirmed': REQUISITION_STATUS.ACCOUNTS_CONFIRMED,
+    reviewed: REQUISITION_STATUS.ADMIN_REVIEWED,
+    'admin reviewed': REQUISITION_STATUS.ADMIN_REVIEWED,
     authorized: REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
     authorised: REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
     'management authorized': REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
@@ -676,7 +696,7 @@ async function advanceRequisition(env, user, body, request) {
   }
 
   const requestedStatus = requestedRequisitionStatus(body.decision || body.status);
-  const transition = assertRequisitionTransition(existing, user.role, requestedStatus);
+  const transition = assertRequisitionTransition(existing, user.assignedRole || user.role, requestedStatus);
   const timestamp = nowIso();
   const notes = clean(body.notes);
   const authorizationMethod = transition.event === 'Rejected'
@@ -713,6 +733,15 @@ async function advanceRequisition(env, user, body, request) {
       RejectedByUsername: '',
       RejectedStage: ''
     };
+  } else if (transition.event === 'Reviewed') {
+    stageFields = {
+      AdminStageReviewedBy: actor(user),
+      AdminStageReviewedByUsername: clean(user.username),
+      AdminStageReviewedAt: timestamp,
+      AdminStageReviewNotes: notes,
+      AdminStageReviewMethod: authorizationMethod,
+      RejectedAt: '', RejectedBy: '', RejectedByUsername: '', RejectedStage: '', RejectionNotes: ''
+    };
   } else if (transition.event === 'Authorized') {
     stageFields = {
       ManagementAuthorizedBy: actor(user),
@@ -739,6 +768,7 @@ async function advanceRequisition(env, user, body, request) {
       AdminSignatureApplied: Boolean(endorsement?.SignatureDataUrl),
       AdminStampApplied: Boolean(endorsement?.StampDataUrl),
       AdminAuthenticationMethod: authorizationMethod,
+      FinalApprovedRole: clean(user.assignedRole || user.role),
       RejectedAt: '',
       RejectedBy: '',
       RejectedByUsername: '',
@@ -749,6 +779,7 @@ async function advanceRequisition(env, user, body, request) {
       RejectedAt: timestamp,
       RejectedBy: actor(user),
       RejectedByUsername: clean(user.username),
+      RejectedByRole: clean(user.assignedRole || user.role),
       RejectedStage: transition.currentStatus,
       RejectionNotes: notes
     };
@@ -1409,11 +1440,13 @@ async function documentRecord(env, user, body) {
     err.status = 404;
     throw err;
   }
-  const [approvalEndorsement, adminEndorsement, accountsEndorsement, managementEndorsement] = await Promise.all([
+  const [approvalEndorsement, adminEndorsement, accountsEndorsement, managementEndorsement, adminReviewEndorsement, directorEndorsement] = await Promise.all([
     getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'approval')),
     getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'admin')),
     getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'accounts')),
-    getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'management'))
+    getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'management')),
+    getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'admin-review')),
+    getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'director'))
   ]);
   return {
     ok: true,
@@ -1422,7 +1455,9 @@ async function documentRecord(env, user, body) {
       approval: approvalEndorsement || null,
       admin: adminEndorsement || null,
       accounts: accountsEndorsement || null,
-      management: managementEndorsement || null
+      management: managementEndorsement || null,
+      'admin-review': adminReviewEndorsement || null,
+      director: directorEndorsement || null
     }
   };
 }

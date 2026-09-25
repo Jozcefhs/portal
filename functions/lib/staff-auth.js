@@ -240,12 +240,14 @@ function inferDepartment(user) {
 }
 
 function publicUser(user) {
+  const assignedRole = clean(user.AssignedRole || user.assignedRole || user.Role || user.role) || 'Front Desk';
   return {
     username: clean(user.Username || user.username || user.__id),
     loginUsername: clean(user.LoginUsername || user.loginUsername || user.Username || user.username || user.__id),
     displayName: clean(user.DisplayName || user.displayName || user.Username || user.username || user.__id),
     profilePhotoUrl: clean(user.ProfilePhotoDataUrl || user.profilePhotoUrl),
-    role: clean(user.Role || user.role) || 'Front Desk',
+    role: assignedRole === 'Director' ? 'Super Admin' : assignedRole === 'Admin' ? 'Management' : assignedRole,
+    assignedRole,
     department: inferDepartment(user),
     branchId: clean(user.BranchId || user.branchId),
     schoolSectionAccess: clean(user.SchoolSectionAccess || user.schoolSectionAccess) || 'All',
@@ -274,7 +276,8 @@ export function allowedSectionsFor(user = {}, featureFlags = null, options = {})
     ? ['academics']
     : [];
   const withDepartmentEntitlements = (modules) => filterSectionsForFeatures(
-    [...new Set([...modules, ...departmentEntitlements])],
+    [...new Set([...modules, ...departmentEntitlements])].filter((key) =>
+      clean(user.assignedRole || user.AssignedRole) !== 'Admin' || !['staffUsers', 'dataBackup', 'securityAudit'].includes(key)),
     featureFlags
   );
   const custom = Array.isArray(user.tabAccess || user.TabAccess) ? (user.tabAccess || user.TabAccess).map(clean).filter(Boolean) : [];
@@ -322,21 +325,21 @@ export function sectionAccessFor(user = {}, organization = {}, roleAccess = null
   const configuredRoleModules = configuredModulesForUser(
     roleAccess,
     user,
-    clean(user.role || user.Role),
+    clean(user.assignedRole || user.AssignedRole || user.role || user.Role),
     edition,
     featureFlags
   );
   const availableRoleModules = configuredModulesForUser(
     roleAccess,
     user,
-    clean(user.role || user.Role),
+    clean(user.assignedRole || user.AssignedRole || user.role || user.Role),
     edition,
     editionFeatureFlags
   );
   const planRoleModules = configuredModulesForUser(
     roleAccess,
     user,
-    clean(user.role || user.Role),
+    clean(user.assignedRole || user.AssignedRole || user.role || user.Role),
     edition,
     planFeatureFlags
   );

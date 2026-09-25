@@ -19,17 +19,20 @@ const [workflowSource, backendSource, adminSource] = await Promise.all([
 test('requisition offices have one non-overlapping responsibility each', () => {
   assert.deepEqual(requisitionCapabilities({ role: 'Accounts Officer' }), {
     canConfirmRequisitions: true,
-    canAuthorizeRequisitions: false,
+    canReviewRequisitions: false,
     canApproveRequisitions: false,
     canPostRequisitions: true
   });
-  assert.equal(requisitionCapabilities({ role: 'Management' }).canAuthorizeRequisitions, true);
+  assert.equal(requisitionCapabilities({ role: 'Admin' }).canReviewRequisitions, true);
+  assert.equal(requisitionCapabilities({ role: 'Management' }).canReviewRequisitions, false);
   assert.equal(requisitionCapabilities({ role: 'Management' }).canApproveRequisitions, false);
+  assert.equal(requisitionCapabilities({ role: 'Director' }).canApproveRequisitions, true);
   assert.equal(requisitionCapabilities({ role: 'Super Admin' }).canApproveRequisitions, true);
+  assert.equal(requisitionCapabilities({ role: 'Management', assignedRole: 'Admin' }).canReviewRequisitions, true);
   assert.equal(requisitionCapabilities({ role: 'Department User' }).canConfirmRequisitions, false);
 });
 
-test('requisition transitions enforce Accounts, Management, Admin, then Accounts', () => {
+test('requisition transitions enforce Accounts, Admin, Director or Super Admin, then Accounts', () => {
   assert.deepEqual(
     assertRequisitionTransition({ Status: 'Submitted' }, 'Accounts Officer', REQUISITION_STATUS.ACCOUNTS_CONFIRMED),
     {
@@ -38,13 +41,14 @@ test('requisition transitions enforce Accounts, Management, Admin, then Accounts
     }
   );
   assert.equal(
-    assertRequisitionTransition({ Status: 'Accounts Confirmed' }, 'Management', 'Management Authorized').event,
-    'Authorized'
+    assertRequisitionTransition({ Status: 'Accounts Confirmed' }, 'Admin', 'Admin Reviewed').event,
+    'Reviewed'
   );
   assert.equal(
-    assertRequisitionTransition({ Status: 'Management Authorized' }, 'Super Admin', 'Approved').event,
+    assertRequisitionTransition({ Status: 'Admin Reviewed' }, 'Director', 'Approved').event,
     'Approved'
   );
+  assert.equal(assertRequisitionTransition({ Status: 'Admin Reviewed' }, 'Super Admin', 'Approved').event, 'Approved');
   assert.equal(
     assertRequisitionTransition({ Status: 'Approved', AdminReviewedAt: '2026-09-23T10:00:00Z' }, 'Accounts Officer', 'Posted').event,
     'Posted'
@@ -78,18 +82,23 @@ test('legacy approval without administrative review still waits for Admin', () =
   );
 });
 
+test('Management Authorized legacy requests remain eligible for final approval', () => {
+  assert.equal(assertRequisitionTransition({ Status: 'Management Authorized' }, 'Director', 'Approved').event, 'Approved');
+});
+
 test('each requisition notification targets only the next office or requester', () => {
   const requisition = {
     ExpenseNo: 'REQ-1', Amount: 20000, Department: 'Science',
     RequestedByUsername: 'requester', BranchId: 'main', SchoolSection: 'secondary',
     RequestedAt: '2026-09-23T09:00:00Z', AccountsConfirmedAt: '2026-09-23T10:00:00Z',
-    ManagementAuthorizedAt: '2026-09-23T11:00:00Z', ApprovedAt: '2026-09-23T12:00:00Z',
+    AdminStageReviewedAt: '2026-09-23T11:00:00Z', ApprovedAt: '2026-09-23T12:00:00Z',
     PostedAt: '2026-09-23T13:00:00Z'
   };
   const expectations = {
     Submitted: { roles: ['Accounts Officer'], users: [] },
-    Confirmed: { roles: ['Management'], users: [] },
-    Authorized: { roles: ['Super Admin'], users: [] },
+    Confirmed: { roles: ['Admin'], users: [] },
+    Reviewed: { roles: ['Director', 'Super Admin'], users: [] },
+    Authorized: { roles: ['Director', 'Super Admin'], users: [] },
     Approved: { roles: ['Accounts Officer'], users: [] },
     Rejected: { roles: [], users: ['requester'] },
     Posted: { roles: [], users: ['requester'] }
@@ -102,11 +111,18 @@ test('each requisition notification targets only the next office or requester', 
 });
 
 test('shared web and desktop backends enforce the workflow without edition gates', () => {
-  assert.match(workflowSource, /assertRequisitionTransition\(existing, user\.role, requestedStatus\)/);
+  assert.match(workflowSource, /assertRequisitionTransition\(existing, user\.assignedRole \|\| user\.role, requestedStatus\)/);
   assert.match(backendSource, /assertRequisitionTransition\(existing, actorRole, requestedStatus\)/);
   assert.match(adminSource, /data-workflow-action="advanceRequisition"/);
   assert.match(adminSource, /canConfirmRequisitions/);
-  assert.match(adminSource, /canAuthorizeRequisitions/);
+  assert.match(adminSource, /canReviewRequisitions/);
   assert.match(adminSource, /canApproveRequisitions/);
   assert.doesNotMatch(workflowSource, /Edition[^\n]{0,120}requisition/i);
+});
+
+test('printable requisition records the rejecting officer, stage and reason', () => {
+  assert.match(adminSource, /record\.RejectedBy \|\| record\.UpdatedBy/);
+  assert.match(adminSource, /record\.RejectedAt/);
+  assert.match(adminSource, /record\.RejectedStage/);
+  assert.match(adminSource, /record\.RejectionNotes/);
 });

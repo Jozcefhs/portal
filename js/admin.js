@@ -290,7 +290,7 @@ const schoolOnlyWebSections = new Set([
 ]);
 
 const staffRoleOptions = [
-  'Super Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
+  'Super Admin', 'Director', 'Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
   'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'Senior Pastor', 'Head Minister',
   'Admissions Officer', 'Student Welfare Officer', 'Accounts Officer',
   'Management', 'Department User', 'Tuck Shop User', 'Clinic User',
@@ -2101,7 +2101,7 @@ function showDashboard(user, options = {}) {
     ? "Senior Pastor's Office"
     : (isExecutiveRole ? (isOrganisationOperations ? 'Executive Office' : executiveOfficeTitle()) : '');
   displayNameEl.textContent = displayName;
-  roleEl.textContent = [user.role, user.department].filter(Boolean).join(' • ');
+  roleEl.textContent = [user.assignedRole || user.role, user.department].filter(Boolean).join(' • ');
   renderProfilePhoto(user.profilePhotoUrl, displayName);
   sidebarEl.querySelector('.staff-sidebar-heading')?.setAttribute('data-initial', displayName.charAt(0).toUpperCase());
   editionLabel.textContent = isFaith ? 'Religious Organisation' : (isGenericOrganization ? 'Organisation Operations' : 'Staff Web Companion');
@@ -16798,10 +16798,10 @@ function openFinanceDecision(button) {
         ? (imprestAction ? 'Reject Imprest' : 'Reject Document')
         : decision === 'Accounts Confirmed'
           ? 'Confirm Requisition — Accounts'
-          : decision === 'Management Authorized'
-            ? 'Authorize Requisition — Management'
+          : decision === 'Admin Reviewed'
+            ? 'Review Requisition — Admin'
             : requisitionAdvance
-              ? 'Approve Requisition — Administration'
+              ? 'Approve Requisition — Director / Super Admin'
               : posting ? 'Accounts Review / Posting' : imprestAction ? 'Approve Imprest' : 'Approve Document';
   document.getElementById('financeDecisionRecord').textContent = button.dataset.recordId;
   document.getElementById('financeEndorsementOptions').hidden = !secureDecision || imprestAction;
@@ -17005,12 +17005,12 @@ function financeRecordRow(record, type, capabilities) {
     if (capabilities.canConfirmRequisitions && workflowStatus === 'submitted') {
       nextDecision = 'Accounts Confirmed';
       nextLabel = 'Confirm as Accounts Officer';
-    } else if (capabilities.canAuthorizeRequisitions && workflowStatus === 'accounts confirmed') {
-      nextDecision = 'Management Authorized';
-      nextLabel = 'Authorize as Management';
-    } else if (capabilities.canApproveRequisitions && workflowStatus === 'management authorized') {
+    } else if (capabilities.canReviewRequisitions && workflowStatus === 'accounts confirmed') {
+      nextDecision = 'Admin Reviewed';
+      nextLabel = 'Review as Admin';
+    } else if (capabilities.canApproveRequisitions && ['admin reviewed', 'management authorized'].includes(workflowStatus)) {
       nextDecision = 'Approved';
-      nextLabel = 'Approve as Super Admin';
+      nextLabel = 'Approve as Director or Super Admin';
     }
     if (nextDecision) {
       actions += `<button type="button" class="compact-icon-action compact-approve-action" data-workflow-action="advanceRequisition" data-decision="${escapeHtml(nextDecision)}" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="${escapeHtml(nextLabel)} ${escapeHtml(id)}" title="${escapeHtml(nextLabel)}"><span aria-hidden="true">&#10003;</span></button>`;
@@ -17089,14 +17089,18 @@ function openFinanceRecordPrint(record, type, endorsements = {}, printableWindow
     <tr><th>${type === 'bill' ? 'Due Date' : 'Vendor'}</th><td>${escapeHtml(type === 'bill' ? (record.DueDate || '-') : (record.Vendor || '-'))}</td><th>Requested By</th><td>${escapeHtml(record.RequestedBy || record.CreatedBy || '-')}</td></tr>
     ${type === 'requisition'
       ? `<tr><th>Accounts Confirmed By</th><td>${escapeHtml(record.AccountsConfirmedBy || record.AccountsReviewedBy || '-')}</td><th>Confirmed At</th><td>${escapeHtml(record.AccountsConfirmedAt || record.AccountsReviewedAt || '-')}</td></tr>
-         <tr><th>Management Authorized By</th><td>${escapeHtml(record.ManagementAuthorizedBy || (!record.AdminReviewedAt ? record.ApprovedBy : '') || '-')}</td><th>Authorized At</th><td>${escapeHtml(record.ManagementAuthorizedAt || (!record.AdminReviewedAt ? record.ApprovedAt : '') || '-')}</td></tr>
-         <tr><th>Admin Approved By</th><td>${escapeHtml(record.AdminReviewedBy || (record.AdminReviewedAt ? record.ApprovedBy : '') || '-')}</td><th>Approved At</th><td>${escapeHtml(record.AdminReviewedAt || '-')}</td></tr>`
+         ${record.ManagementAuthorizedBy || record.ManagementAuthorizedAt || (!record.AdminReviewedAt && record.ApprovedBy) ? `<tr><th>Legacy Management Authorized By</th><td>${escapeHtml(record.ManagementAuthorizedBy || record.ApprovedBy || '-')}</td><th>Authorized At</th><td>${escapeHtml(record.ManagementAuthorizedAt || record.ApprovedAt || '-')}</td></tr>` : ''}
+         <tr><th>Admin Reviewed By</th><td>${escapeHtml(record.AdminStageReviewedBy || '-')}</td><th>Reviewed At</th><td>${escapeHtml(record.AdminStageReviewedAt || '-')}</td></tr>
+         <tr><th>Director / Super Admin Approved By</th><td>${escapeHtml(record.AdminReviewedBy || (record.AdminReviewedAt ? record.ApprovedBy : '') || '-')}</td><th>Approved At</th><td>${escapeHtml(record.AdminReviewedAt || '-')}</td></tr>
+         ${clean(record.Status).toLowerCase() === 'rejected' ? `<tr><th>Rejected By</th><td>${escapeHtml(record.RejectedBy || record.UpdatedBy || '-')}</td><th>Rejected At</th><td>${escapeHtml(record.RejectedAt || '-')}</td></tr><tr><th>Officer Role</th><td>${escapeHtml(record.RejectedByRole || '-')}</td><th>Rejected At Stage</th><td>${escapeHtml(record.RejectedStage || '-')}</td></tr><tr><th>Action</th><td>Rejected</td><th></th><td></td></tr>` : ''}`
       : `<tr><th>Approved By</th><td>${escapeHtml(record.ApprovedBy || '-')}</td><th>Approved At</th><td>${escapeHtml(record.ApprovedAt || '-')}</td></tr>`}
-  </tbody></table>${materialTable}${record.Notes ? `<p class="notes"><strong>Notes:</strong> ${escapeHtml(record.Notes)}</p>` : ''}${record.ReviewNotes ? `<p class="notes"><strong>Review:</strong> ${escapeHtml(record.ReviewNotes)}</p>` : ''}
+  </tbody></table>${materialTable}${record.Notes ? `<p class="notes"><strong>Notes:</strong> ${escapeHtml(record.Notes)}</p>` : ''}${record.ReviewNotes ? `<p class="notes"><strong>Review:</strong> ${escapeHtml(record.ReviewNotes)}</p>` : ''}${clean(record.Status).toLowerCase() === 'rejected' && record.RejectionNotes ? `<p class="notes"><strong>Rejection reason:</strong> ${escapeHtml(record.RejectionNotes)}</p>` : ''}
   ${type === 'requisition'
     ? `${approvalEndorsementBlock('Accounts confirmation', record.AccountsConfirmedBy || record.AccountsReviewedBy, record.AccountsConfirmedAt || record.AccountsReviewedAt, endorsements.accounts)}
        ${approvalEndorsementBlock('Management authorization', record.ManagementAuthorizedBy || (!record.AdminReviewedAt ? record.ApprovedBy : ''), record.ManagementAuthorizedAt || (!record.AdminReviewedAt ? record.ApprovedAt : ''), endorsements.management || (!record.AdminReviewedAt ? endorsements.approval : null))}
-       ${approvalEndorsementBlock('Administrative approval', record.AdminReviewedBy || (record.AdminReviewedAt ? record.ApprovedBy : ''), record.AdminReviewedAt, endorsements.admin)}`
+       ${approvalEndorsementBlock('Admin review', record.AdminStageReviewedBy, record.AdminStageReviewedAt, endorsements['admin-review'])}
+       ${approvalEndorsementBlock('Director / Super Admin approval', record.AdminReviewedBy || (record.AdminReviewedAt ? record.ApprovedBy : ''), record.AdminReviewedAt, endorsements.director || endorsements.admin)}
+       ${clean(record.Status).toLowerCase() === 'rejected' ? approvalEndorsementBlock(`Rejection at ${record.RejectedStage || 'review'} stage`, record.RejectedBy || record.UpdatedBy, record.RejectedAt, null) : ''}`
     : `${approvalEndorsementBlock('Approved by', record.ApprovedBy, record.ApprovedAt, endorsements.approval)}
        ${approvalEndorsementBlock('Administrative approval', record.AdminReviewedBy, record.AdminReviewedAt, endorsements.admin)}
        ${approvalEndorsementBlock('Accounts review / posting', record.AccountsReviewedBy, record.AccountsReviewedAt, endorsements.accounts)}`}
@@ -17361,9 +17365,9 @@ function renderFinanceWorkflow() {
     ${!capabilities.canSubmit ? '<p class="status bad">A department must be assigned to your staff account before you can submit requests.</p>' : ''}
     <div class="workflow-kpis">
       <div><small>Awaiting Accounts</small><strong>${statusCount('submitted')}</strong><span>${escapeHtml(money(pendingValue))} pending confirmation</span></div>
-      <div><small>Accounts Confirmed</small><strong>${statusCount('accounts confirmed')}</strong><span>Ready for Management</span></div>
-      <div><small>Management Authorized</small><strong>${statusCount('management authorized')}</strong><span>Ready for Admin</span></div>
-      <div><small>Admin Approved</small><strong>${statusCount('approved')}</strong><span>Ready to post / pay</span></div>
+      <div><small>Accounts Confirmed</small><strong>${statusCount('accounts confirmed')}</strong><span>Ready for Admin</span></div>
+      <div><small>Admin Reviewed</small><strong>${statusCount('admin reviewed')}</strong><span>Ready for Director / Super Admin</span></div>
+      <div><small>Approved</small><strong>${statusCount('approved')}</strong><span>Ready for Accounts to post / pay</span></div>
       <div><small>Rejected</small><strong>${statusCount('rejected')}</strong><span>Requires attention</span></div>
       <div><small>Total Records</small><strong>${allRecords.length}</strong><span>Current view</span></div>
     </div>

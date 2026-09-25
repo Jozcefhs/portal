@@ -7469,6 +7469,8 @@ async function saveAccountingExpense(env, body) {
   const requestedStatus = ({
     confirmed: REQUISITION_STATUS.ACCOUNTS_CONFIRMED,
     'accounts confirmed': REQUISITION_STATUS.ACCOUNTS_CONFIRMED,
+    reviewed: REQUISITION_STATUS.ADMIN_REVIEWED,
+    'admin reviewed': REQUISITION_STATUS.ADMIN_REVIEWED,
     authorized: REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
     authorised: REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
     'management authorized': REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
@@ -7479,7 +7481,7 @@ async function saveAccountingExpense(env, body) {
     submitted: REQUISITION_STATUS.SUBMITTED,
     draft: REQUISITION_STATUS.DRAFT
   })[lower(body.Status || body.status || 'Draft')] || clean(body.Status || body.status || 'Draft');
-  const actorRole = clean(body.UserRole || body.userRole);
+  const actorRole = clean(body.UserAssignedRole || body.UserRole || body.userRole);
   const actorName = clean(body.RecordedBy || body.recordedBy);
   const actorUsername = clean(body.UserUsername || body.userUsername);
   const currentWorkflowStatus = requisitionWorkflowStatus(existing);
@@ -7494,11 +7496,18 @@ async function saveAccountingExpense(env, body) {
   } else if (currentWorkflowStatus === REQUISITION_STATUS.DRAFT && requestedStatus === REQUISITION_STATUS.SUBMITTED) {
     // Any staff member with an assigned finance department may submit a draft.
   } else if (currentWorkflowStatus === REQUISITION_STATUS.REJECTED && requestedStatus === REQUISITION_STATUS.SUBMITTED) {
-    if (actorRole !== 'Super Admin' && lower(actorUsername) !== lower(existing.RequestedByUsername)) {
-      const err = new Error('Only the original requester or Super Admin can correct and resubmit a rejected requisition.');
+    if (!['Super Admin', 'Director'].includes(actorRole) && lower(actorUsername) !== lower(existing.RequestedByUsername)) {
+      const err = new Error('Only the original requester, Director or Super Admin can correct and resubmit a rejected requisition.');
       err.status = 403;
       throw err;
     }
+  } else if (requestedStatus === currentWorkflowStatus && ![
+    REQUISITION_STATUS.DRAFT, REQUISITION_STATUS.SUBMITTED
+  ].includes(currentWorkflowStatus)) {
+    const err = new Error('A reviewed requisition cannot be edited without returning it to the requester.');
+    err.status = 409;
+    err.code = 'REQUISITION_REVIEW_LOCKED';
+    throw err;
   } else if (requestedStatus !== currentWorkflowStatus) {
     transition = assertRequisitionTransition(existing, actorRole, requestedStatus);
   }
@@ -7534,6 +7543,14 @@ async function saveAccountingExpense(env, body) {
       AccountsReviewNotes: clean(body.Notes || body.notes),
       RejectedAt: '', RejectedBy: '', RejectedByUsername: '', RejectedStage: ''
     });
+  } else if (transition?.event === 'Reviewed') {
+    Object.assign(payload, {
+      AdminStageReviewedBy: actorName,
+      AdminStageReviewedByUsername: actorUsername,
+      AdminStageReviewedAt: timestamp,
+      AdminStageReviewNotes: clean(body.Notes || body.notes),
+      RejectedAt: '', RejectedBy: '', RejectedByUsername: '', RejectedStage: '', RejectionNotes: ''
+    });
   } else if (transition?.event === 'Authorized') {
     Object.assign(payload, {
       ManagementAuthorizedBy: actorName,
@@ -7550,6 +7567,7 @@ async function saveAccountingExpense(env, body) {
       AdminReviewedBy: actorName,
       AdminReviewedByUsername: actorUsername,
       AdminReviewedAt: timestamp,
+      FinalApprovedRole: actorRole,
       RejectedAt: '', RejectedBy: '', RejectedByUsername: '', RejectedStage: ''
     });
   } else if (transition?.event === 'Rejected') {
@@ -7557,6 +7575,7 @@ async function saveAccountingExpense(env, body) {
       RejectedAt: timestamp,
       RejectedBy: actorName,
       RejectedByUsername: actorUsername,
+      RejectedByRole: actorRole,
       RejectedStage: transition.currentStatus,
       RejectionNotes: clean(body.Notes || body.notes)
     });
@@ -7566,9 +7585,12 @@ async function saveAccountingExpense(env, body) {
       AccountsReviewStatus: '', AccountsConfirmedBy: '', AccountsConfirmedByUsername: '', AccountsConfirmedAt: '',
       AccountsReviewedBy: '', AccountsReviewedByUsername: '', AccountsReviewedAt: '',
       ManagementAuthorizedBy: '', ManagementAuthorizedByUsername: '', ManagementAuthorizedAt: '',
+      AdminStageReviewedBy: '', AdminStageReviewedByUsername: '', AdminStageReviewedAt: '', AdminStageReviewNotes: '',
       ApprovedBy: '', ApprovedByUsername: '', ApprovedAt: '',
+      FinalApprovedRole: '',
       AdminReviewedBy: '', AdminReviewedByUsername: '', AdminReviewedAt: '',
-      RejectedAt: '', RejectedBy: '', RejectedByUsername: '', RejectedStage: '',
+      RejectedAt: '', RejectedBy: '', RejectedByUsername: '', RejectedByRole: '', RejectedStage: '',
+      RejectionNotes: '',
       ResubmittedAt: timestamp, ResubmittedBy: actorName, ResubmittedByUsername: actorUsername
     });
   }
@@ -8851,17 +8873,19 @@ async function getAccountingRequisitionDocument(env, body = {}) {
     'financeDocumentEndorsements',
     safeDocumentId(`${expenseNo}-${stage}`)
   ).catch(() => null);
-  const [approval, admin, accounts, management] = await Promise.all([
+  const [approval, admin, accounts, management, adminReview, director] = await Promise.all([
     endorsement('approval'),
     endorsement('admin'),
     endorsement('accounts'),
-    endorsement('management')
+    endorsement('management'),
+    endorsement('admin-review'),
+    endorsement('director')
   ]);
   return {
     ok: true,
     message: 'Requisition document loaded.',
     record,
-    endorsements: { approval, admin, accounts, management }
+    endorsements: { approval, admin, accounts, management, 'admin-review': adminReview, director }
   };
 }
 

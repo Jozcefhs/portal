@@ -194,10 +194,12 @@ export async function resolveAuthoritativeDesktopActorForEnv(env = {}, body = {}
 }
 
 export function applyAuthoritativeActor(body, actor) {
+  const assignedRole = actor.role;
   return {
     ...body,
     UserUsername: actor.username,
-    UserRole: actor.role,
+    UserRole: assignedRole === 'Director' ? 'Super Admin' : assignedRole === 'Admin' ? 'Management' : assignedRole,
+    UserAssignedRole: assignedRole,
     UserDepartment: actor.department,
     UserBranchId: actor.branchId,
     UserSchoolSectionAccess: actor.schoolSectionAccess,

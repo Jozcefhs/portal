@@ -60,7 +60,7 @@ export const ORGANIZATION_SECTION_LABELS = Object.freeze({
 });
 
 export const STAFF_ROLE_OPTIONS = Object.freeze([
-  'Super Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
+  'Super Admin', 'Director', 'Admin', 'Principal', 'Vice Principal Academics', 'Vice Principal Administration',
   'Head Teacher', 'Assistant Head Teacher', 'Teacher', 'Senior Pastor', 'Head Minister',
   'Admissions Officer', 'Student Welfare Officer', 'Accounts Officer',
   'Management', 'Department User', 'Tuck Shop User', 'Clinic User',
@@ -77,6 +77,8 @@ export const STAFF_ROLE_OPTIONS = Object.freeze([
 
 const LEGACY_ROLE_DEFAULTS = Object.freeze({
   'Super Admin': ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'hotel', 'dataBackup', 'securityAudit', 'staffUsers'],
+  Director: ['recordsDesk', 'executiveOffice', 'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts', 'incomeAnalytics', 'members', 'services', 'funds', 'offerings', 'donations', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore', 'organizationStore', 'restaurant', 'hotel', 'dataBackup', 'securityAudit', 'staffUsers'],
+  Admin: ['recordsDesk', 'admissions', 'formPurchases', 'students', 'academics', 'studentConduct', 'accounts', 'incomeAnalytics', 'financeRequests', 'payroll', 'clinic', 'kitchen', 'tuckShop', 'bookstore', 'uniformStore'],
   Principal: ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct'],
   'Vice Principal Academics': ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct'],
   'Vice Principal Administration': ['recordsDesk', 'executiveOffice', 'academics', 'studentConduct'],
@@ -180,12 +182,14 @@ export function roleAccessScope(user = {}) {
 
 export function withRequiredRoleModules(role, modules = [], edition = 'school', featureFlags = null) {
   const normalized = [...modules, ...STAFF_SELF_SERVICE_MODULES];
-  if (role === 'Super Admin') {
+  if (role === 'Super Admin' || role === 'Director') {
     if (!normalized.includes('dataBackup')) normalized.push('dataBackup');
     if (!normalized.includes('securityAudit')) normalized.push('securityAudit');
     if (!normalized.includes('staffUsers')) normalized.push('staffUsers');
   }
-  return normalizeModuleList(normalized, edition, featureFlags);
+  return normalizeModuleList(role === 'Admin'
+    ? normalized.filter((key) => !['staffUsers', 'dataBackup', 'securityAudit'].includes(key))
+    : normalized, edition, featureFlags);
 }
 
 function roleMapForScope(document, scope) {

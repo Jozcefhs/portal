@@ -739,7 +739,8 @@ function requisitionEventText(requisition, event) {
   const notes = clean(requisition.ReviewNotes || requisition.AccountsReviewNotes);
   const descriptions = {
     Submitted: `${department} submitted ${id || 'a requisition'} for ${money(requisition.Amount)}.`,
-    Confirmed: `${id || 'The requisition'} was confirmed by Accounts and is ready for Management authorization.`,
+    Confirmed: `${id || 'The requisition'} was confirmed by Accounts and is ready for Admin review.`,
+    Reviewed: `${id || 'The requisition'} was reviewed by Admin and is ready for Director or Super Admin approval.`,
     Authorized: `${id || 'The requisition'} was authorized by Management and is ready for administrative approval.`,
     Approved: `${id || 'The requisition'} was approved for ${money(requisition.Amount)}.`,
     Rejected: `${id || 'The requisition'} was rejected${notes ? `: ${notes}` : '.'}`,
@@ -769,8 +770,8 @@ function requisitionEventRecipients(requisition, event, settings) {
     return { roles: managementRoles, usernames: [requester].filter(Boolean) };
   }
   if (event === 'Submitted') return { roles: ['Accounts Officer'], usernames: [] };
-  if (event === 'Confirmed') return { roles: ['Management'], usernames: [] };
-  if (event === 'Authorized') return { roles: ['Super Admin'], usernames: [] };
+  if (event === 'Confirmed') return { roles: ['Admin'], usernames: [] };
+  if (event === 'Reviewed' || event === 'Authorized') return { roles: ['Director', 'Super Admin'], usernames: [] };
   if (event === 'Approved') return { roles: ['Accounts Officer'], usernames: [] };
   if (event === 'Rejected') return { roles: [], usernames: [requester].filter(Boolean) };
   if (event === 'Pushed') return { roles: ['Accounts Officer'], usernames: [] };
@@ -784,11 +785,12 @@ export async function notifyStaffRequisitionEvent(env, requisition = {}, event =
 }
 
 export function staffRequisitionEventNotification(requisition = {}, event = 'Updated', actorName = '', settings = DEFAULT_NOTIFICATION_SETTINGS) {
-  const normalizedEvent = ['Submitted', 'Confirmed', 'Authorized', 'Approved', 'Rejected', 'Pushed', 'Posted'].includes(clean(event)) ? clean(event) : 'Updated';
+  const normalizedEvent = ['Submitted', 'Confirmed', 'Reviewed', 'Authorized', 'Approved', 'Rejected', 'Pushed', 'Posted'].includes(clean(event)) ? clean(event) : 'Updated';
   const recordId = clean(requisition.ExpenseNo || requisition.BillNo || requisition.RequisitionNo || requisition.RecordId);
   const eventMoment = clean(
     normalizedEvent === 'Submitted' ? (requisition.ResubmittedAt || requisition.RequestedAt) :
     normalizedEvent === 'Confirmed' ? (requisition.AccountsConfirmedAt || requisition.AccountsReviewedAt) :
+    normalizedEvent === 'Reviewed' ? requisition.AdminStageReviewedAt :
     normalizedEvent === 'Authorized' ? requisition.ManagementAuthorizedAt :
     normalizedEvent === 'Approved' ? requisition.ApprovedAt :
     normalizedEvent === 'Rejected' ? requisition.RejectedAt :

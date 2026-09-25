@@ -33,7 +33,7 @@ export const ORGANIZATION_ONLY_STAFF_ROLES = Object.freeze([
 ]);
 
 export const SHARED_STAFF_ROLES = Object.freeze([
-  'Super Admin', 'Accounts Officer', 'Management', 'Department User',
+  'Super Admin', 'Director', 'Admin', 'Accounts Officer', 'Management', 'Department User',
   'Front Desk', 'HR Director', 'HR Manager', 'HR Business Partner',
   'HR Officer', 'HR Assistant', 'Recruitment Officer',
   'Learning & Development Officer', 'Employee Relations Officer',

@@ -10,6 +10,7 @@ export const REQUISITION_STATUS = Object.freeze({
   DRAFT: 'Draft',
   SUBMITTED: 'Submitted',
   ACCOUNTS_CONFIRMED: 'Accounts Confirmed',
+  ADMIN_REVIEWED: 'Admin Reviewed',
   MANAGEMENT_AUTHORIZED: 'Management Authorized',
   APPROVED: 'Approved',
   REJECTED: 'Rejected',
@@ -25,17 +26,26 @@ const TRANSITIONS = Object.freeze({
     verb: 'confirm'
   }),
   [REQUISITION_STATUS.ACCOUNTS_CONFIRMED]: Object.freeze({
-    role: 'Management',
-    nextStatus: REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
-    event: 'Authorized',
-    stage: 'management',
-    verb: 'authorize'
+    role: 'Admin',
+    nextStatus: REQUISITION_STATUS.ADMIN_REVIEWED,
+    event: 'Reviewed',
+    stage: 'admin-review',
+    verb: 'review'
   }),
-  [REQUISITION_STATUS.MANAGEMENT_AUTHORIZED]: Object.freeze({
-    role: 'Super Admin',
+  [REQUISITION_STATUS.ADMIN_REVIEWED]: Object.freeze({
+    role: 'Director or Super Admin',
+    roles: ['Director', 'Super Admin'],
     nextStatus: REQUISITION_STATUS.APPROVED,
     event: 'Approved',
-    stage: 'admin',
+    stage: 'director',
+    verb: 'approve'
+  }),
+  [REQUISITION_STATUS.MANAGEMENT_AUTHORIZED]: Object.freeze({
+    role: 'Director or Super Admin',
+    roles: ['Director', 'Super Admin'],
+    nextStatus: REQUISITION_STATUS.APPROVED,
+    event: 'Approved',
+    stage: 'director',
     verb: 'approve'
   }),
   [REQUISITION_STATUS.APPROVED]: Object.freeze({
@@ -59,6 +69,7 @@ export function requisitionWorkflowStatus(record = {}) {
     submitted: REQUISITION_STATUS.SUBMITTED,
     confirmed: REQUISITION_STATUS.ACCOUNTS_CONFIRMED,
     'accounts confirmed': REQUISITION_STATUS.ACCOUNTS_CONFIRMED,
+    'admin reviewed': REQUISITION_STATUS.ADMIN_REVIEWED,
     authorized: REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
     authorised: REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
     'management authorized': REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
@@ -72,11 +83,11 @@ export function requisitionWorkflowStatus(record = {}) {
 }
 
 export function requisitionCapabilities(user = {}) {
-  const role = clean(user.role || user.Role || user.UserRole);
+  const role = clean(user.assignedRole || user.AssignedRole || user.role || user.Role || user.UserRole);
   return {
     canConfirmRequisitions: role === 'Accounts Officer',
-    canAuthorizeRequisitions: role === 'Management',
-    canApproveRequisitions: role === 'Super Admin',
+    canReviewRequisitions: role === 'Admin',
+    canApproveRequisitions: ['Director', 'Super Admin'].includes(role),
     canPostRequisitions: role === 'Accounts Officer'
   };
 }
@@ -100,7 +111,7 @@ export function assertRequisitionTransition(record = {}, userRole = '', requeste
     err.code = 'REQUISITION_STAGE_COMPLETE';
     throw err;
   }
-  if (role !== transition.role) {
+  if (!(transition.roles || [transition.role]).includes(role)) {
     const err = new Error(`Only ${transition.role} can ${transition.verb} a requisition at the ${currentStatus} stage.`);
     err.status = 403;
     err.code = 'REQUISITION_STAGE_ROLE_REQUIRED';

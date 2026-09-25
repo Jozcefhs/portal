@@ -85,6 +85,20 @@ test('every staff role receives payroll and finance request self-service', () =>
   }
 });
 
+test('Director and Admin exist in every edition with distinct permission boundaries', () => {
+  for (const edition of ['school', 'faith', 'organization']) {
+    const flags = featureFlagsForEdition(edition);
+    assert.equal(rolesForEdition(edition).includes('Director'), true);
+    assert.equal(rolesForEdition(edition).includes('Admin'), true);
+    assert.equal(defaultModulesForRole('Director', { edition, featureFlags: flags }).includes('staffUsers'), true);
+    assert.equal(defaultModulesForRole('Admin', { edition, featureFlags: flags }).includes('staffUsers'), false);
+    assert.equal(allowedSectionsFor(
+      { role: 'Management', assignedRole: 'Admin', tabAccess: ['staffUsers', 'financeRequests'] },
+      flags, { edition }
+    ).includes('staffUsers'), false);
+  }
+});
+
 test('resetting a branch role restores organisation inheritance without changing other roles', () => {
   const original = {
     Scopes: {
