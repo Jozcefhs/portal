@@ -12,7 +12,7 @@ import {
   staffUserForAccess,
   verifyStaffApprovalPassword
 } from '../lib/staff-auth.js';
-import { batchUpsertDocuments, getDocument, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
+import { batchUpsertDocuments, listCollection, requireFirestoreEnv, upsertDocument } from '../lib/firestore.js';
 import { hashStaffPassword } from '../lib/staff-auth.js';
 import {
   checkStaffLoginAllowed,
@@ -23,6 +23,8 @@ import { beginStaffMfaLogin } from '../lib/staff-mfa.js';
 import { readJsonBody } from '../lib/request-security.js';
 import { loadOrganizationNameProfile } from '../lib/organization-name-format.js';
 import { formatPersonName } from '../lib/person-name-format.js';
+import { loadStaffProfileImage } from '../lib/staff-profile-image.js';
+export { staffProfileImageIds } from '../lib/staff-profile-image.js';
 
 function response(data, status = 200, cookies = [], extraHeaders = {}) {
   const headers = new Headers({ 'Cache-Control': 'no-store' });
@@ -66,24 +68,6 @@ function publicSessionError(error) {
 
 function safeStaffId(value) {
   return lower(value).replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120);
-}
-
-export function staffProfileImageIds(record = {}, user = {}) {
-  return [...new Set([
-    clean(record.__id),
-    safeStaffId(record.Username),
-    safeStaffId(record.LoginUsername),
-    safeStaffId(user.username),
-    safeStaffId(user.loginUsername)
-  ].filter(Boolean))];
-}
-
-async function loadStaffProfileImage(env, record = {}, user = {}) {
-  for (const profileId of staffProfileImageIds(record, user)) {
-    const profileImage = await getDocument(env, 'staffProfileImages', profileId).catch(() => null);
-    if (clean(profileImage?.ProfilePhotoDataUrl)) return profileImage;
-  }
-  return null;
 }
 
 function environmentAdminProfile(env, sessionUser) {
@@ -458,14 +442,11 @@ export async function onRequestPost(context) {
     const user = await finalizeStaffAuthentication(env, passwordUser.username, 'Web Password');
     if (!user) return response({ ok: false, message: 'This staff account is inactive or no longer exists.' }, 401);
     const staffRecord = await findStaffUserRecord(env, user.username).catch(() => null);
-    const [profileImage, schoolProfile] = await Promise.all([
-      loadStaffProfileImage(env, staffRecord || {}, user),
-      loadOrganizationNameProfile(env)
-    ]);
+    const schoolProfile = await loadOrganizationNameProfile(env);
     const refreshedUser = authoritativeSessionUser(
       staffRecord || environmentAdminProfile(env, user) || user,
       user,
-      profileImage?.ProfilePhotoDataUrl,
+      user.profilePhotoUrl,
       schoolProfile || {}
     );
     const token = await createStaffSession(env, refreshedUser);

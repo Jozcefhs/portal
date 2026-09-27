@@ -66,7 +66,8 @@ test('profile pictures reload from the canonical staff document after a new logi
     ['admin', 'digc-super-admin']
   );
   assert.match(sessionApi, /const staffRecord = await findStaffUserRecord\(env, user\.username\)\.catch\(\(\) => null\)/);
-  assert.match(sessionApi, /loadStaffProfileImage\(env, staffRecord \|\| \{\}, user\)/);
+  assert.match(staffAuth, /loadStaffProfileImage\(env, user \|\| \{\}, authenticated\)/);
+  assert.match(sessionApi, /staffRecord \|\| environmentAdminProfile\(env, user\) \|\| user,\s*user,\s*user.profilePhotoUrl/);
 });
 
 test('dashboard hydration does not erase the separately loaded profile picture', () => {

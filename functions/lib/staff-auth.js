@@ -16,6 +16,7 @@ import { getSchoolStructure } from './school-scope.js';
 import { requisitionEditGrant } from './requisition-edit-permission.js';
 import { applyStaffBranchContext } from './staff-branch-context.js';
 import { refreshOrganizationPlanPolicy } from './plan-policy-sync.js';
+import { loadStaffProfileImage } from './staff-profile-image.js';
 
 const encoder = new TextEncoder();
 const SESSION_COOKIE = '__Host-digc_staff_session';
@@ -562,6 +563,10 @@ export async function finalizeStaffAuthentication(env, username, sourcePlatform 
     });
   }
   if (!authenticated) return null;
+  // Password, passkey and every completed MFA flow share this path. Hydrate
+  // the photo before returning the login response, not only on page reload.
+  const profileImage = await loadStaffProfileImage(env, user || {}, authenticated);
+  authenticated.profilePhotoUrl = clean(profileImage?.ProfilePhotoDataUrl) || authenticated.profilePhotoUrl;
   const loginAt = new Date().toISOString();
   const auditId = `LOGIN-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
   await upsertDocument(env, 'staffSecurityAudit', auditId, {
