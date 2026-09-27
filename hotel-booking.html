@@ -9,7 +9,7 @@
   <link rel="icon" href="images/Logo.png">
   <script src="js/preferences.js?v=20260726-biometric"></script>
   <link rel="stylesheet" href="css/style.css?v=20260903-hotel-tabs">
-  <link rel="stylesheet" href="css/hotel-booking.css?v=20260903-hotel-self-service">
+  <link rel="stylesheet" href="css/hotel-booking.css?v=20260927-compact-room-picker">
 </head>
 <body class="hotel-booking-page">
   <main class="hotel-booking-shell">
@@ -47,9 +47,22 @@
         </div>
         <div>
           <strong class="hotel-booking-section-title">Available rooms</strong>
-          <div id="hotelRoomChoices" class="hotel-room-choices" role="radiogroup" aria-label="Available rooms">
+          <input type="hidden" name="RoomId" id="hotelSelectedRoomId">
+          <div id="hotelRoomTools" class="hotel-room-tools" hidden>
+            <label>Find a room<input id="hotelRoomSearch" type="search" placeholder="Room number or type" autocomplete="off"></label>
+            <label>Room type<select id="hotelRoomType"><option value="">All types</option></select></label>
+            <label>Sort rooms<select id="hotelRoomSort"><option value="number">Room number</option><option value="price-asc">Lowest price</option><option value="price-desc">Highest price</option></select></label>
+          </div>
+          <p id="hotelRoomCount" class="hotel-room-count" role="status" aria-live="polite"></p>
+          <div id="hotelRoomChoices" class="hotel-room-choices" role="group" aria-label="Choose an available room">
             <p class="muted">Checking room availability…</p>
           </div>
+          <div id="hotelRoomPager" class="hotel-room-pager" hidden>
+            <button type="button" id="hotelRoomPrevious">Previous</button>
+            <span id="hotelRoomPageLabel"></span>
+            <button type="button" id="hotelRoomNext">Next</button>
+          </div>
+          <p id="hotelSelectedRoomSummary" class="hotel-selected-room" aria-live="polite" hidden></p>
         </div>
         <div class="hotel-booking-row">
           <label>Full name<input name="GuestName" autocomplete="name" maxlength="160" required></label>
@@ -69,6 +82,6 @@
     </section>
   </main>
   <script src="js/site-config.js?v=20260809-branded-app-icon"></script>
-  <script src="js/hotel-booking.js?v=20260903-hotel-self-service"></script>
+  <script src="js/hotel-booking.js?v=20260927-compact-room-picker"></script>
 </body>
 </html>

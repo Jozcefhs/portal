@@ -2,6 +2,17 @@ const bookingForm = document.getElementById('hotelBookingForm');
 const bookingButton = document.getElementById('hotelBookingButton');
 const bookingStatus = document.getElementById('hotelBookingStatus');
 const roomChoices = document.getElementById('hotelRoomChoices');
+const roomTools = document.getElementById('hotelRoomTools');
+const roomSearch = document.getElementById('hotelRoomSearch');
+const roomType = document.getElementById('hotelRoomType');
+const roomSort = document.getElementById('hotelRoomSort');
+const roomCount = document.getElementById('hotelRoomCount');
+const roomPager = document.getElementById('hotelRoomPager');
+const roomPageLabel = document.getElementById('hotelRoomPageLabel');
+const roomPrevious = document.getElementById('hotelRoomPrevious');
+const roomNext = document.getElementById('hotelRoomNext');
+const selectedRoomId = document.getElementById('hotelSelectedRoomId');
+const selectedRoomSummary = document.getElementById('hotelSelectedRoomSummary');
 const totalNode = document.getElementById('hotelBookingTotal');
 const branchInput = document.getElementById('hotelBookingBranch');
 const arrivalInput = document.getElementById('hotelArrivalDate');
@@ -9,6 +20,9 @@ const departureInput = document.getElementById('hotelDepartureDate');
 const organisationNode = document.getElementById('hotelBookingOrganisation');
 const logoNode = document.getElementById('hotelBookingLogo');
 let availableRooms = [];
+let roomPage = 0;
+let availabilityRequest = 0;
+const ROOMS_PER_PAGE = 12;
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -36,8 +50,7 @@ function nights() {
 }
 
 function selectedRoom() {
-  const id = bookingForm.elements.RoomId?.value;
-  return availableRooms.find((room) => clean(room.RoomId) === clean(id));
+  return availableRooms.find((room) => clean(room.RoomId) === selectedRoomId.value);
 }
 
 function setStatus(message = '', tone = '') {
@@ -48,35 +61,102 @@ function setStatus(message = '', tone = '') {
 function updateTotal() {
   const room = selectedRoom();
   const stayNights = nights();
+  selectedRoomSummary.hidden = !room;
+  selectedRoomSummary.textContent = room
+    ? `Selected: ${clean(room.RoomType) || 'Room'} · Room ${clean(room.RoomNumber)} · ${money(room.NightlyRate)} / night · Up to ${room.Capacity} guest${Number(room.Capacity) === 1 ? '' : 's'}`
+    : '';
   totalNode.querySelector('strong').textContent = room && stayNights
     ? `${money(Number(room.NightlyRate || 0) * stayNights)} · ${stayNights} night${stayNights === 1 ? '' : 's'}`
     : 'Choose a room';
   bookingButton.disabled = !room || stayNights < 1;
 }
 
-function renderRooms(rooms = []) {
-  availableRooms = rooms;
-  if (!rooms.length) {
+function filteredRooms() {
+  const query = clean(roomSearch.value).toLowerCase();
+  const type = roomType.value;
+  const rooms = availableRooms.filter((room) => (
+    (!type || clean(room.RoomType) === type) &&
+    (!query || `${clean(room.RoomNumber)} ${clean(room.RoomType)}`.toLowerCase().includes(query))
+  ));
+  const compareNumber = (left, right) => clean(left.RoomNumber).localeCompare(clean(right.RoomNumber), undefined, { numeric: true });
+  if (roomSort.value === 'price-asc' || roomSort.value === 'price-desc') {
+    const direction = roomSort.value === 'price-asc' ? 1 : -1;
+    rooms.sort((left, right) => direction * (Number(left.NightlyRate) - Number(right.NightlyRate)) || compareNumber(left, right));
+  } else rooms.sort(compareNumber);
+  return rooms;
+}
+
+function renderRoomPage() {
+  if (!availableRooms.length) {
+    roomCount.textContent = '';
+    roomPager.hidden = true;
     roomChoices.innerHTML = '<p class="status bad">No rooms are available for these dates. Try another stay period or contact the hotel.</p>';
-    updateTotal();
     return;
   }
-  roomChoices.innerHTML = rooms.map((room, index) => `
-    <label class="hotel-room-choice">
-      <input type="radio" name="RoomId" value="${escapeHtml(room.RoomId)}" ${index === 0 ? 'checked' : ''} required>
-      <span><strong>${escapeHtml(room.RoomType || 'Room')} · ${escapeHtml(room.RoomNumber)}</strong><small>Up to ${escapeHtml(room.Capacity)} guest${Number(room.Capacity) === 1 ? '' : 's'}</small><b>${escapeHtml(money(room.NightlyRate))} / night</b></span>
-    </label>`).join('');
-  roomChoices.querySelectorAll('input[name="RoomId"]').forEach((input) => input.addEventListener('change', updateTotal));
+  const rooms = filteredRooms();
+  const pageCount = Math.max(1, Math.ceil(rooms.length / ROOMS_PER_PAGE));
+  roomPage = Math.min(roomPage, pageCount - 1);
+  roomCount.textContent = rooms.length === availableRooms.length
+    ? `${availableRooms.length} available room${availableRooms.length === 1 ? '' : 's'} for these dates`
+    : `${rooms.length} of ${availableRooms.length} available rooms match your filters`;
+  roomChoices.innerHTML = rooms.length
+    ? rooms.slice(roomPage * ROOMS_PER_PAGE, (roomPage + 1) * ROOMS_PER_PAGE).map((room) => `
+      <button type="button" class="hotel-room-choice" data-room-id="${escapeHtml(room.RoomId)}" aria-pressed="${clean(room.RoomId) === selectedRoomId.value}" aria-label="Choose ${escapeHtml(room.RoomType || 'room')} ${escapeHtml(room.RoomNumber)}, up to ${escapeHtml(room.Capacity)} guests, ${escapeHtml(money(room.NightlyRate))} per night">
+        <strong>Room ${escapeHtml(room.RoomNumber)}</strong>
+        <small>${escapeHtml(room.RoomType || 'Room')} · ${escapeHtml(room.Capacity)} guest${Number(room.Capacity) === 1 ? '' : 's'}</small>
+        <b>${escapeHtml(money(room.NightlyRate))}<span> / night</span></b>
+      </button>`).join('')
+    : '<p class="muted hotel-room-empty">No rooms match those filters. Try another type or search.</p>';
+  roomPager.hidden = pageCount < 2;
+  roomPageLabel.textContent = `Page ${roomPage + 1} of ${pageCount}`;
+  roomPrevious.disabled = roomPage === 0;
+  roomNext.disabled = roomPage >= pageCount - 1;
+}
+
+function renderRooms(rooms = [], preferredRoomId = '') {
+  availableRooms = rooms;
+  roomPage = 0;
+  roomTools.hidden = !rooms.length;
+  const types = [...new Set(rooms.map((room) => clean(room.RoomType)).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  roomType.innerHTML = '<option value="">All types</option>' + types.map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`).join('');
+  roomSearch.value = '';
+  roomSort.value = 'number';
+  selectedRoomId.value = rooms.find((room) => clean(room.RoomId) === preferredRoomId)?.RoomId || rooms[0]?.RoomId || '';
+  renderRoomPage();
   updateTotal();
 }
 
+roomSearch.addEventListener('input', () => { roomPage = 0; renderRoomPage(); });
+roomType.addEventListener('change', () => { roomPage = 0; renderRoomPage(); });
+roomSort.addEventListener('change', () => { roomPage = 0; renderRoomPage(); });
+roomPrevious.addEventListener('click', () => { roomPage -= 1; renderRoomPage(); });
+roomNext.addEventListener('click', () => { roomPage += 1; renderRoomPage(); });
+roomChoices.addEventListener('click', (event) => {
+  const choice = event.target.closest('button[data-room-id]');
+  if (!choice || !roomChoices.contains(choice)) return;
+  selectedRoomId.value = choice.dataset.roomId;
+  roomChoices.querySelectorAll('button[data-room-id]').forEach((button) => {
+    button.setAttribute('aria-pressed', String(button === choice));
+  });
+  delete bookingForm.dataset.idempotencyKey;
+  updateTotal();
+});
+
 async function loadAvailability() {
+  const request = ++availabilityRequest;
   if (!arrivalInput.value || !departureInput.value || nights() < 1) {
     renderRooms([]);
     setStatus('Departure date must be after the arrival date.', 'bad');
     return;
   }
+  const preferredRoomId = selectedRoomId.value;
+  availableRooms = [];
+  selectedRoomId.value = '';
   bookingButton.disabled = true;
+  roomTools.hidden = true;
+  roomPager.hidden = true;
+  roomCount.textContent = '';
+  updateTotal();
   roomChoices.innerHTML = '<p class="muted">Checking room availability…</p>';
   setStatus('');
   try {
@@ -87,10 +167,12 @@ async function loadAvailability() {
     });
     const response = await fetch(`/api/public-hotel?${query}`, { credentials: 'same-origin', cache: 'no-store' });
     const data = await response.json().catch(() => null);
+    if (request !== availabilityRequest) return;
     if (!response.ok || !data?.ok) throw new Error(data?.message || 'Room availability could not be loaded.');
     if (clean(data.organisationName)) organisationNode.textContent = clean(data.organisationName);
-    renderRooms(data.rooms || []);
+    renderRooms(data.rooms || [], preferredRoomId);
   } catch (error) {
+    if (request !== availabilityRequest) return;
     renderRooms([]);
     setStatus(error.message || String(error), 'bad');
   }
@@ -118,7 +200,9 @@ departureInput.addEventListener('change', () => {
   delete bookingForm.dataset.idempotencyKey;
   loadAvailability();
 });
-bookingForm.addEventListener('input', () => delete bookingForm.dataset.idempotencyKey);
+bookingForm.addEventListener('input', (event) => {
+  if (![roomSearch, roomType, roomSort].includes(event.target)) delete bookingForm.dataset.idempotencyKey;
+});
 
 window.siteProfileReady.then((profile) => {
   const name = clean(profile.OrganisationName || profile.OrganizationName || profile.SchoolName) || 'Dynamax';
