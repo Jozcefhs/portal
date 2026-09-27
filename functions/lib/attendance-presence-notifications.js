@@ -92,7 +92,10 @@ export async function processAttendancePresenceNotifications(env, options = {}) 
     if (clean(policy.PresenceCheckMode).toUpperCase() !== 'RANDOM'
       || clean(policy.PresenceCheckPushEnabled).toUpperCase() === 'NO') continue;
     const stateQuery = {
-      filters: [{ field: 'NextPresenceNotificationAt', op: '<=', value: nowIso }],
+      filters: [
+        { field: 'NextPresenceNotificationAt', op: '>', value: '' },
+        { field: 'NextPresenceNotificationAt', op: '<=', value: nowIso }
+      ],
       orderBy: [{ field: 'NextPresenceNotificationAt', direction: 'ASCENDING' }],
       limit: Math.max(1, limit - eligible)
     };
@@ -103,7 +106,16 @@ export async function processAttendancePresenceNotifications(env, options = {}) 
     for (const state of states) {
       if (eligible >= limit) break;
       const candidate = attendancePresenceNotificationCandidate(policy, state, now);
-      if (!candidate.eligible) continue;
+      if (!candidate.eligible) {
+        // Retire stale due markers so yesterday's clock-ins cannot starve today's
+        // limited query. The precondition protects a concurrent clock-in/update.
+        const stateId = safeStaffAttendanceDocumentId(state.Username || state.__id);
+        if (stateId && state.__updateTime && !state.__legacyStorage) {
+          await patch(env, statePath, stateId, { NextPresenceNotificationAt: '' }, { updateTime: state.__updateTime })
+            .catch((error) => { if (![409, 412].includes(Number(error?.status))) throw error; });
+        }
+        continue;
+      }
       eligible += 1;
       const username = lower(state.Username || state.__id);
       if (!username) continue;

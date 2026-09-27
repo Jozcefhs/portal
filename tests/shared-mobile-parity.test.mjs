@@ -11,9 +11,9 @@ const pageStyleVersions = new Map([
   ['plan-management.html', '20260830-dual-currency-pricing'],
   ['register-organization.html', '20260918-neutral-plan-cards']
 ]);
-const adminScriptVersion = '20260924-owner-tutorials';
+const adminScriptVersion = '20260927-spoken-alerts-camera';
 const parentScriptVersion = '20260923-parent-tutorials';
-const notificationScriptVersion = '20260913-branch-scope';
+const notificationScriptVersion = '20260927-spoken-alerts';
 const notificationStyleVersion = '20260804-read-efficiency';
 const pageNames = [
   'admin.html',
@@ -120,7 +120,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v300-owner-tutorial-fix/);
+  assert.match(serviceWorker, /dynamax-v301-spoken-alerts-face-capture/);
   assert.match(serviceWorker, /'\/verify-result\.html'/);
   assert.match(serviceWorker, /'\/js\/verify-result\.js'/);
   assert.match(serviceWorker, /'\/css\/school-landing\.css'/);

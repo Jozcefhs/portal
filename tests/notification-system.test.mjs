@@ -31,6 +31,25 @@ test('notification normalization stores central model metadata', () => {
   assert.equal(row.DeliveryStatus, 'Created');
 });
 
+test('Admin and Director inboxes query assigned as well as effective roles without crossing scope', async () => {
+  const notification = normalizeNotification({ EventKey: 'role-review', Audience: 'Staff', Channels: ['InApp'],
+    TargetRoles: ['Admin'], BranchId: 'main', Title: 'Admin review', Message: 'Review this requisition.' });
+  const recipient = { audience: 'Staff', recipientKey: 'admin.one', username: 'admin.one', role: 'Management', roles: ['Management', 'Admin'], branchId: 'main' };
+  assert.equal(notificationTargetsRecipient(notification, recipient), true);
+  assert.equal(notificationTargetsRecipient(notification, { ...recipient, roles: ['Management'] }), false);
+  assert.equal(notificationTargetsRecipient(notification, { ...recipient, branchId: 'west' }), false);
+  const queriedRoles = [];
+  const result = await listNotifications({}, recipient, { respectPreferences: false, queryCollection: async (_env, collection, query) => {
+    if (collection !== 'notifications') return [];
+    const role = query.filters.find((filter) => filter.field === 'TargetRoles')?.value;
+    if (role) queriedRoles.push(role);
+    return role === 'Admin' ? [notification] : [];
+  }});
+  assert.ok(queriedRoles.includes('Admin'));
+  assert.ok(queriedRoles.includes('Management'));
+  assert.equal(result.notifications.length, 1);
+});
+
 test('central notification creation is idempotent', async () => {
   let creates = 0;
   const createDocumentIfAbsent = async (_env, _collection, _id, record) => ({ created: ++creates === 1, document: record });

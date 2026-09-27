@@ -14,6 +14,7 @@ const RETURN_POSE_THRESHOLD = 0.1;
 let humanInstancePromise = null;
 let activeStream = null;
 let activeDialog = null;
+let detectionQueue = Promise.resolve();
 const audioGuidanceStates = new WeakMap();
 
 const clean = (value) => String(value ?? '').trim();
@@ -167,13 +168,13 @@ function setBusy(button, busy, busyText = 'Working...') {
 }
 
 function stopCamera(video = null) {
-  const stream = activeStream || video?.srcObject;
+  const stream = video ? video.srcObject : activeStream;
   stream?.getTracks?.().forEach((track) => track.stop());
   if (video) {
     video.pause();
     video.srcObject = null;
   }
-  activeStream = null;
+  if (activeStream === stream) activeStream = null;
 }
 
 async function faceLookupRequest(action, payload = {}) {
@@ -204,6 +205,7 @@ async function createHuman() {
   const config = {
     backend: 'webgl',
     cacheSensitivity: 0,
+    skipAllowed: false,
     cacheModels: true,
     warmup: 'face',
     modelBasePath: '/vendor/human/models/',
@@ -284,36 +286,117 @@ async function startCamera(dialog) {
   }
   const video = dialog.querySelector('[data-face-video]');
   const facingMode = selectedCameraFacingMode(dialog);
+  const selectedDevice = dialog.querySelector('[data-face-camera-select]')?.value || '';
+  const generation = (dialog.cameraGeneration || 0) + 1;
+  dialog.cameraGeneration = generation;
   stopCamera(video);
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
-      facingMode: { ideal: facingMode },
-      width: { ideal: 640 },
-      height: { ideal: 480 }
+      ...(selectedDevice.startsWith('device:')
+        ? { deviceId: { exact: selectedDevice.slice(7) } }
+        : { facingMode: { ideal: facingMode } }),
+      width: { ideal: 960 },
+      height: { ideal: 720 },
+      frameRate: { ideal: 30 }
     }
   });
-  if (!dialog.isConnected || !dialog.open) {
+  if (!dialog.isConnected || !dialog.open || dialog.cameraGeneration !== generation) {
     stream.getTracks().forEach((track) => track.stop());
     throw new Error('Face verification was cancelled.');
   }
   activeStream = stream;
   const actualFacingMode = clean(stream.getVideoTracks?.()[0]?.getSettings?.().facingMode);
-  if (['user', 'environment'].includes(actualFacingMode) && actualFacingMode !== facingMode) {
-    stopCamera();
-    throw new Error(`${cameraFacingLabel(facingMode)} is not available on this device.`);
+  const camera = dialog.querySelector('.student-face-camera');
+  camera?.setAttribute('data-facing-mode', actualFacingMode || facingMode);
+  try {
+    // Register readiness listeners before assigning srcObject (fast cameras can
+    // otherwise fire metadata before the handler exists).
+    await waitForCameraFrames(video, stream);
+    if (!dialog.open || dialog.cameraGeneration !== generation) throw new Error('Face verification was cancelled.');
+    const ratio = video.videoWidth / video.videoHeight;
+    if (camera && ratio > 0) {
+      camera.style.aspectRatio = String(ratio);
+      camera.style.maxWidth = `${Math.round(360 * ratio)}px`;
+    }
+    const track = stream.getVideoTracks?.()[0];
+    const capabilities = track?.getCapabilities?.() || {};
+    if (capabilities.focusMode?.includes('continuous')) {
+      await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+    }
+    const select = dialog.querySelector('[data-face-camera-select]');
+    if (select && navigator.mediaDevices.enumerateDevices) {
+      const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+      select.querySelectorAll('[data-camera-device]').forEach((option) => option.remove());
+      devices.filter((device) => device.kind === 'videoinput' && device.deviceId).forEach((device, index) => {
+        const option = document.createElement('option');
+        option.value = `device:${device.deviceId}`;
+        option.textContent = device.label || `Camera ${index + 1}`;
+        option.dataset.cameraDevice = 'true';
+        select.appendChild(option);
+      });
+      if (selectedDevice.startsWith('device:')) select.value = selectedDevice;
+    }
+  } catch (error) {
+    stream.getTracks().forEach((track) => track.stop());
+    if (video.srcObject === stream) stopCamera(video);
+    throw error;
   }
-  dialog.querySelector('.student-face-camera')?.setAttribute('data-facing-mode', facingMode);
-  video.srcObject = activeStream;
-  await new Promise((resolve, reject) => {
-    const timeout = window.setTimeout(() => reject(new Error('The camera did not become ready.')), 10000);
-    video.onloadedmetadata = () => {
-      window.clearTimeout(timeout);
-      resolve();
-    };
-  });
-  await video.play();
   setStatus(dialog, `${cameraFacingLabel(facingMode)} ready. Preparing the private face model...`, 'good');
+}
+
+export async function waitForCameraFrames(video, stream) {
+  await new Promise((resolve, reject) => {
+    const finish = (error) => {
+      clearTimeout(timeout);
+      video.removeEventListener('loadeddata', ready);
+      video.removeEventListener('canplay', ready);
+      if (error) reject(error); else resolve();
+    };
+    const ready = () => { if (video.readyState >= 2 && video.videoWidth && video.videoHeight) finish(); };
+    const timeout = setTimeout(() => finish(new Error('The camera did not deliver video frames. Close other camera apps and retry.')), 10000);
+    video.addEventListener('loadeddata', ready);
+    video.addEventListener('canplay', ready);
+    video.srcObject = stream;
+    try { Promise.resolve(video.play()).then(ready, finish); } catch (error) { finish(error); }
+  });
+}
+
+function detectFrame(human, video, options) {
+  // Human owns reusable tensors; overlapping preview/capture calls can corrupt
+  // results, especially when a dialog is closed and immediately reopened.
+  const detection = detectionQueue.then(() => human.detect(video, options));
+  detectionQueue = detection.catch(() => {});
+  return detection;
+}
+
+function lockCaptureControls(dialog, locked) {
+  dialog.captureRunning = locked;
+  dialog.querySelector('[data-face-start]').disabled = locked;
+  const select = dialog.querySelector('[data-face-camera-select]');
+  if (select) select.disabled = locked;
+}
+
+async function previewFace(dialog, human) {
+  const video = dialog.querySelector('[data-face-video]');
+  const stream = video.srcObject;
+  const generation = dialog.cameraGeneration;
+  while (dialog.open && video.srcObject === stream && stream && !dialog.captureRunning && dialog.cameraGeneration === generation) {
+    try {
+      const result = await detectFrame(human, video, { face: { description: { enabled: false } } });
+      if (!dialog.open || dialog.captureRunning || video.srcObject !== stream) break;
+      const faces = result?.face || [];
+      const readiness = faces.length === 1 ? captureReadiness(faces[0], video) : {
+        ready: false, state: 'searching', message: faces.length ? 'Only one person may be in the camera frame.' : 'Move your face into the camera frame.'
+      };
+      setGuideState(dialog, readiness.state);
+      setStatus(dialog, readiness.ready ? 'Face detected. Choose the capture button and follow the live instruction.' : readiness.message, readiness.ready ? 'good' : 'warn');
+    } catch (error) {
+      if (dialog.open && !dialog.captureRunning) setStatus(dialog, formatCameraError(error), 'bad');
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
 }
 
 function bindCameraSelector(dialog, captureButton) {
@@ -321,6 +404,7 @@ function bindCameraSelector(dialog, captureButton) {
   const video = dialog?.querySelector('[data-face-video]');
   if (!select || !video) return;
   select.addEventListener('change', async () => {
+    if (dialog.captureRunning) return;
     const facingMode = selectedCameraFacingMode(dialog);
     dialog.querySelector('.student-face-camera')?.setAttribute('data-facing-mode', facingMode);
     if (!activeStream || !video.srcObject) {
@@ -328,16 +412,20 @@ function bindCameraSelector(dialog, captureButton) {
       return;
     }
     select.disabled = true;
+    dialog.querySelector('[data-face-start]').disabled = true;
     captureButton.disabled = true;
     try {
       await startCamera(dialog);
+      const human = await loadHuman(dialog);
       captureButton.disabled = false;
       setStatus(dialog, `${cameraFacingLabel(facingMode)} is ready. Continue with the live face check.`, 'good');
+      void previewFace(dialog, human);
     } catch (failure) {
       stopCamera(video);
       setStatus(dialog, formatCameraError(failure), 'bad');
     } finally {
       select.disabled = false;
+      dialog.querySelector('[data-face-start]').disabled = false;
     }
   });
 }
@@ -366,29 +454,29 @@ function faceGeometry(face, video) {
   };
 }
 
-function eyeOpenness(face) {
+export function eyeOpenness(face) {
   const mesh = Array.isArray(face?.mesh) ? face.mesh : [];
   if (mesh.length <= 450) return null;
+  const distance = (a, b) => Math.hypot(Number(mesh[a]?.[0]) - Number(mesh[b]?.[0]), Number(mesh[a]?.[1]) - Number(mesh[b]?.[1]));
   const ratio = (top, bottom, outer, inner) => {
-    const numerator = Math.abs(Number(mesh[top]?.[1]) - Number(mesh[bottom]?.[1]));
-    const denominator = Math.abs(Number(mesh[outer]?.[1]) - Number(mesh[inner]?.[1]));
+    const numerator = distance(top, bottom);
+    const denominator = distance(outer, inner);
     return Number.isFinite(numerator) && denominator > 0 ? numerator / denominator : null;
   };
-  const left = ratio(374, 386, 443, 450);
-  const right = ratio(145, 159, 223, 230);
+  // Eyelid separation / eye-corner width, invariant to head roll. The former
+  // landmarks were outside the eye corners and prevented reliable blink checks.
+  const left = ratio(374, 386, 263, 362);
+  const right = ratio(145, 159, 33, 133);
   return Number.isFinite(left) && Number.isFinite(right) ? { left, right } : null;
 }
 
-function blinkFrameState(face, result) {
-  const gestures = flattenedGestures(result);
+export function blinkFrameState(face, baseline = null) {
   const openness = eyeOpenness(face);
-  const gestureClosed = gestures.some((gesture) => gesture.includes('blink left eye')) &&
-    gestures.some((gesture) => gesture.includes('blink right eye'));
-  const meshClosed = openness && Math.max(openness.left, openness.right) < 0.23;
-  const meshOpen = openness && openness.left > 0.24 && openness.right > 0.24;
+  const meshClosed = baseline && openness && openness.left < baseline.left * 0.55 && openness.right < baseline.right * 0.55;
+  const meshOpen = openness && openness.left > (baseline ? baseline.left * 0.8 : 0.16) && openness.right > (baseline ? baseline.right * 0.8 : 0.16);
   return {
-    closed: Boolean(gestureClosed || meshClosed),
-    open: Boolean(!gestureClosed && (meshOpen || !openness))
+    closed: Boolean(meshClosed),
+    open: Boolean(meshOpen)
   };
 }
 
@@ -412,7 +500,7 @@ function roundedMovement(value) {
   return Math.round(Number(value || 0) * 1000) / 1000;
 }
 
-function captureReadiness(face, video) {
+export function captureReadiness(face, video) {
   const geometry = faceGeometry(face, video);
   const score = Number(face?.faceScore || face?.boxScore || 0);
   if (!geometry || score < 0.55) {
@@ -443,14 +531,22 @@ function averageDescriptors(samples) {
   return average.map((value) => Math.round((value / samples.length) * 1e6) / 1e6);
 }
 
-async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_SAMPLE_COUNT, options = {}) {
+export async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_SAMPLE_COUNT, options = {}) {
   const video = dialog.querySelector('[data-face-video]');
   const progress = dialog.querySelector('[data-face-progress]');
-  if (!activeStream || !video.srcObject) throw new Error('Start the camera first.');
+  if (!video.srcObject) throw new Error('Start the camera first.');
+  const stream = video.srcObject;
+  const generation = dialog.cameraGeneration;
+  const ensureActive = () => {
+    if (!dialog.open || !dialog.isConnected || video.srcObject !== stream || dialog.cameraGeneration !== generation || stream.getVideoTracks().some((track) => track.readyState === 'ended')) {
+      throw new Error('Face verification was cancelled.');
+    }
+  };
   const challenge = normalizeLivenessChallenge(options.challenge);
   const samples = [];
   const started = Date.now();
   let neutralPose = null;
+  let neutralEyes = null;
   let neutralFrames = 0;
   let actionObserved = false;
   let returnFrames = 0;
@@ -472,11 +568,22 @@ async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_SAMPLE_
   progress.max = sampleCount;
   progress.value = 0;
   while (Date.now() - started < CAPTURE_TIMEOUT_MS && samples.length < sampleCount) {
-    const result = await human.detect(video, {
+    ensureActive();
+    const result = await detectFrame(human, video, {
       face: { description: { enabled: livenessConfirmed } }
     });
+    ensureActive();
     const faces = result?.face || [];
     if (faces.length !== 1) {
+      neutralPose = null;
+      neutralEyes = null;
+      neutralFrames = 0;
+      actionObserved = false;
+      closedEyesSeen = false;
+      livenessConfirmed = false;
+      returnFrames = 0;
+      samples.length = 0;
+      progress.value = 0;
       setGuideState(dialog, 'searching');
       setStatus(dialog, faces.length ? 'Only one person may be in the camera frame.' : 'Move your face into the camera frame.', 'warn');
       await new Promise((resolve) => window.setTimeout(resolve, 60));
@@ -486,13 +593,14 @@ async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_SAMPLE_
     const readiness = captureReadiness(face, video);
     const pose = facePose(face);
     const gestures = flattenedGestures(result);
-    const blink = blinkFrameState(face, result);
+    const blink = blinkFrameState(face, neutralEyes);
     if (readiness.ready && pose && !neutralPose) {
-      const neutralNow = gestures.includes('facing center') &&
+      const neutralNow = blink.open &&
         Math.abs(pose.yaw) <= 0.24 && Math.abs(pose.pitch) <= 0.24 && Math.abs(pose.roll) <= 0.28;
       neutralFrames = neutralNow ? neutralFrames + 1 : 0;
       if (neutralFrames >= NEUTRAL_POSE_FRAMES) {
         neutralPose = { ...pose };
+        neutralEyes = eyeOpenness(face);
         setGuideState(dialog, 'ready');
         setStatus(dialog, challenge.instruction, 'good');
       }
@@ -514,7 +622,7 @@ async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_SAMPLE_
         if (actionObserved && blink.open) {
           returnFrames += 1;
           if (returnFrames >= RETURN_POSE_FRAMES) livenessConfirmed = true;
-        }
+        } else returnFrames = 0;
       } else {
         const wantedGesture = challenge.action === 'TURN_LEFT'
           ? 'facing left'
@@ -532,13 +640,14 @@ async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_SAMPLE_
         if (actionObserved) {
           const returned = Math.abs(yawDelta) <= RETURN_POSE_THRESHOLD &&
             Math.abs(pitchDelta) <= RETURN_POSE_THRESHOLD &&
-            (challenge.action === 'CHIN_UP' || gestures.includes('facing center'));
+            blink.open;
           returnFrames = returned ? returnFrames + 1 : 0;
           if (returnFrames >= RETURN_POSE_FRAMES) livenessConfirmed = true;
         }
       }
     }
-    const embeddingReady = Array.isArray(face.embedding) && face.embedding.length === DESCRIPTOR_LENGTH;
+    const embeddingReady = Array.isArray(face.embedding) && face.embedding.length === DESCRIPTOR_LENGTH && face.embedding.every(Number.isFinite);
+    const frontal = pose && Math.abs(pose.yaw) <= 0.24 && Math.abs(pose.pitch) <= 0.24 && Math.abs(pose.roll) <= 0.28 && blink.open;
     if (!readiness.ready) {
       setGuideState(dialog, readiness.state);
       setStatus(dialog, readiness.message, 'warn');
@@ -552,6 +661,9 @@ async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_SAMPLE_
             ? 'Blink detected. Open your eyes and hold still.'
             : 'Movement detected. Return your face to the centre and hold still.')
         : challenge.instruction, 'good');
+    } else if (!frontal) {
+      setGuideState(dialog, 'warning');
+      setStatus(dialog, 'Look straight at the camera with your eyes open for a clear sample.', 'warn');
     } else if (!embeddingReady) {
       setGuideState(dialog, 'capture');
       setStatus(dialog, 'Liveness confirmed. Hold still while the face template is prepared.', 'good');
@@ -564,6 +676,7 @@ async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_SAMPLE_
     }
     await new Promise((resolve) => window.setTimeout(resolve, 50));
   }
+  ensureActive();
   progress.hidden = true;
   if (samples.length < sampleCount) {
     setGuideState(dialog, 'warning');
@@ -671,6 +784,7 @@ export async function openStudentFaceLookup(options = {}) {
   if (allowCameraSelection) bindCameraSelector(dialog, captureButton);
 
   const close = () => {
+    dialog.cameraGeneration = (dialog.cameraGeneration || 0) + 1;
     stopCamera(video);
     if (dialog.open) dialog.close();
   };
@@ -690,26 +804,33 @@ export async function openStudentFaceLookup(options = {}) {
     if (startButton.disabled) return;
     captureButton.disabled = true;
     setBusy(startButton, true, 'Preparing camera...');
+    const select = dialog.querySelector('[data-face-camera-select]');
+    if (select) select.disabled = true;
     try {
-      await Promise.all([startCamera(dialog), loadHuman(dialog)]);
+      const [, human] = await Promise.all([startCamera(dialog), loadHuman(dialog)]);
       if (!dialog.isConnected || !dialog.open) {
         stopCamera(video);
         return;
       }
       captureButton.disabled = false;
       setStatus(dialog, 'Camera and private face model are ready. Choose Scan face.', 'good');
+      void previewFace(dialog, human);
     } catch (failure) {
+      dialog.cameraGeneration = (dialog.cameraGeneration || 0) + 1;
       stopCamera(video);
       captureButton.disabled = true;
       setStatus(dialog, formatCameraError(failure), 'bad');
     } finally {
       setBusy(startButton, false);
+      if (select) select.disabled = false;
     }
   });
 
   captureButton.addEventListener('click', async () => {
     if (captureButton.disabled) return;
     setBusy(captureButton, true, mode === 'enroll' ? 'Enrolling...' : 'Scanning...');
+    lockCaptureControls(dialog, true);
+    dialog.querySelector('[data-face-match]').hidden = true;
     try {
       const human = await loadHuman(dialog);
       const descriptor = await captureDescriptor(dialog, human, sampleCount);
@@ -743,6 +864,8 @@ export async function openStudentFaceLookup(options = {}) {
         : ' Start the camera to try again.';
       setStatus(dialog, `${formatCameraError(failure)}${retryHint}`, 'bad');
     } finally {
+      dialog.querySelector('[data-face-progress]').hidden = true;
+      lockCaptureControls(dialog, false);
       setBusy(captureButton, false);
       captureButton.disabled = !activeStream;
     }
@@ -825,7 +948,7 @@ function attendanceFaceDialogMarkup(mode) {
     <div class="student-face-camera">
       <video data-face-video playsinline muted aria-label="Live staff face camera preview"></video>
       <div class="student-face-guide is-searching" aria-hidden="true"></div>
-      ${enrollment ? '<label class="student-face-camera-select"><span>Camera</span><select data-face-camera-select aria-label="Choose front or back camera for face enrollment"><option value="user">Front</option><option value="environment">Back</option></select></label>' : ''}
+      <label class="student-face-camera-select"><span>Camera</span><select data-face-camera-select aria-label="Choose camera for face capture"><option value="user">Front</option><option value="environment">Back</option></select></label>
       <div class="student-face-challenge" data-face-challenge hidden aria-live="assertive">
         <span data-face-challenge-symbol aria-hidden="true">◉</span>
         <strong data-face-challenge-label>Live action</strong>
@@ -858,7 +981,7 @@ export function captureStaffAttendanceFace(options = {}) {
   let preparing = false;
   let capturing = false;
   initializeAudioGuidance(dialog);
-  if (mode === 'enroll') bindCameraSelector(dialog, captureButton);
+  bindCameraSelector(dialog, captureButton);
 
   return new Promise((resolve, reject) => {
     const finish = (value, error = null) => {
@@ -889,6 +1012,7 @@ export function captureStaffAttendanceFace(options = {}) {
       if (capturing || settled) return;
       capturing = true;
       setBusy(captureButton, true, mode === 'enroll' ? 'Saving...' : 'Verifying...');
+      lockCaptureControls(dialog, true);
       try {
         const human = await loadHuman(dialog);
         if (mode === 'verify' && !activeChallenge) {
@@ -924,6 +1048,8 @@ export function captureStaffAttendanceFace(options = {}) {
         setStatus(dialog, `${formatCameraError(error)} You can try again without reopening the camera.`, 'bad');
       } finally {
         capturing = false;
+        dialog.querySelector('[data-face-progress]').hidden = true;
+        lockCaptureControls(dialog, false);
         if (captureButton.isConnected) {
           setBusy(captureButton, false);
           captureButton.disabled = !activeStream;
@@ -932,9 +1058,10 @@ export function captureStaffAttendanceFace(options = {}) {
     };
 
     const prepareCamera = async (captureAutomatically = false) => {
-      if (preparing || settled) return;
+      if (preparing || capturing || settled) return;
       preparing = true;
       setBusy(startButton, true, 'Preparing camera...');
+      dialog.querySelector('[data-face-camera-select]').disabled = true;
       try {
         const challengePromise = mode === 'verify'
           ? staffAttendanceFaceRequest('challenge', {
@@ -942,7 +1069,7 @@ export function captureStaffAttendanceFace(options = {}) {
               Direction: options.direction
             })
           : Promise.resolve(null);
-        const [, , challengeResult] = await Promise.all([startCamera(dialog), loadHuman(dialog), challengePromise]);
+        const [, human, challengeResult] = await Promise.all([startCamera(dialog), loadHuman(dialog), challengePromise]);
         activeChallenge = challengeResult;
         setLivenessChallenge(dialog, activeChallenge);
         if (!dialog.isConnected || !dialog.open) {
@@ -954,13 +1081,16 @@ export function captureStaffAttendanceFace(options = {}) {
           ? (activeChallenge?.instruction || 'Camera ready. Follow the live instruction.')
           : 'Camera and private face model are ready.', 'good');
         if (captureAutomatically) await captureAndSubmit();
+        else void previewFace(dialog, human);
       } catch (error) {
+        dialog.cameraGeneration = (dialog.cameraGeneration || 0) + 1;
         stopCamera(video);
         captureButton.disabled = true;
         setStatus(dialog, formatCameraError(error), 'bad');
       } finally {
         preparing = false;
         if (startButton.isConnected) setBusy(startButton, false);
+        dialog.querySelector('[data-face-camera-select]').disabled = false;
       }
     };
 

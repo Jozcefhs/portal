@@ -4,6 +4,11 @@
   const recentForegroundAlerts = new Map();
   let messagingInstance = null;
 
+  navigator.serviceWorker?.addEventListener('message', (event) => {
+    if (event.data?.type !== 'dynamax:push-notification') return;
+    window.dispatchEvent(new CustomEvent('dynamax:foreground-notification', { detail: event.data.payload }));
+  });
+
   function deviceId() {
     let value = localStorage.getItem(DEVICE_KEY);
     if (!value) {

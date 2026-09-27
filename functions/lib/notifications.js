@@ -415,12 +415,12 @@ export function notificationTargetsRecipient(notification = {}, recipient = {}) 
   if (audience === 'staff') {
     if (!sameScope(notification, recipient)) return false;
     const username = lower(recipient.username || recipient.Username);
-    const role = lower(recipient.role || recipient.Role);
+    const recipientRoles = lowerValues([recipient.role || recipient.Role, ...(recipient.roles || [])]);
     const department = lower(recipient.department || recipient.Department);
     const usernames = lowerValues(notification.TargetUsernames);
     const roles = lowerValues(notification.TargetRoles);
     const departments = lowerValues(notification.TargetDepartments);
-    return Boolean((username && usernames.includes(username)) || (role && roles.includes(role)) || (department && departments.includes(department)));
+    return Boolean((username && usernames.includes(username)) || recipientRoles.some((role) => roles.includes(role)) || (department && departments.includes(department)));
   }
   if (audience === 'parent') {
     const email = lower(recipient.email || recipient.ParentEmail || recipient.Email);
@@ -464,10 +464,10 @@ async function queryTargetedNotifications(env, recipient, query, limit) {
   const lookups = [];
   if (audience === 'staff') {
     const username = lower(recipient.username || recipient.Username);
-    const role = clean(recipient.role || recipient.Role);
+    const roles = values([recipient.role || recipient.Role, ...(recipient.roles || [])]);
     const department = lower(recipient.department || recipient.Department);
     if (username) lookups.push({ field: 'TargetUsernames', value: username });
-    if (role) lookups.push({ field: 'TargetRoles', value: role });
+    roles.forEach((role) => lookups.push({ field: 'TargetRoles', value: role }));
     if (department) lookups.push({ field: 'TargetDepartments', value: department });
   } else if (audience === 'parent') {
     const email = lower(recipient.email || recipient.ParentEmail || recipient.Email);
@@ -645,6 +645,7 @@ export async function listNotifications(env, recipient, options = {}) {
   notifications = notifications.slice(0, requestedLimit);
   return {
     notifications,
+    quietHoursActive: quietHoursActive(preferences),
     unreadCount: notifications.filter((row) => !row.Read).length,
     hasMore,
     nextCursor: hasMore ? clean(notifications[notifications.length - 1]?.CreatedAt) : ''

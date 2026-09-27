@@ -125,6 +125,7 @@ async function sendToFcm(env, token, notification) {
         data: {
           notificationId: clean(notification.NotificationId),
           category: clean(notification.Category || notification.Type),
+          expiresAt: clean(notification.ExpiresAt),
           actionUrl: clean(notification.ActionUrl || '/')
         },
         webpush

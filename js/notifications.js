@@ -83,6 +83,7 @@
             <div><button type="button" data-enable-push>Enable on this device</button><button type="button" class="notification-device-delete" data-disable-push aria-label="Delete this device" title="Delete this device">&#128465;</button><button type="button" data-test-push>Send test</button></div>
           </div>
           <div class="notification-device-list" aria-label="Subscribed devices"></div>
+          <fieldset><legend>Spoken staff alerts</legend><label><input type="checkbox" data-spoken-alerts> Read requisition and presence notifications aloud</label><p>Speech works while the app is visible, after you tap or click it. Closed-app push uses your device's notification sound. Device mute and Do Not Disturb still apply.</p><button type="button" data-test-spoken-alerts>Test voice</button></fieldset>
           <fieldset class="notification-quiet-settings"><legend>Personal quiet hours</legend><label><input type="checkbox" name="QuietHoursEnabled"> Enable quiet hours</label><label>From <input type="time" name="QuietHoursStart"></label><label>To <input type="time" name="QuietHoursEnd"></label><label>Timezone <input name="Timezone" maxlength="80"></label></fieldset>
           <button type="submit">Save quiet hours</button>
           <fieldset class="notification-system-settings" hidden><legend data-system-policy-title>School notification policy</legend><p class="notification-policy-help" data-system-policy-help>Choose the channels and notification types available to each group of app users.</p><div class="notification-audience-policy-grid">${audiencePolicyMarkup('Parent', 'Parent portal users')}${audiencePolicyMarkup('Member', 'Church members')}${audiencePolicyMarkup('Staff', 'Staff app users')}</div><label data-school-policy-only>Before due (days) <input name="FeeDueIntervals"></label><label data-school-policy-only>After due (days) <input name="FeeOverdueIntervals"></label><label data-school-policy-only>Submission reviewer roles <input name="SubmittedRoles"></label><label data-school-policy-only>Processing roles <input name="ProcessingRoles"></label><label data-school-policy-only>Management roles <input name="ManagementRoles"></label><label class="notification-template-field">Templates (JSON) <textarea name="Templates" rows="8"></textarea></label><button type="button" data-save-system-settings>Save school notification policy</button></fieldset>
@@ -108,6 +109,7 @@
   let historyRecords = [];
   let currentData = {};
   let loading = false;
+  let pushRefreshPending = false;
   let loadGeneration = 0;
   let lastLoadedAt = 0;
   let activeEdition = '';
@@ -227,6 +229,12 @@
     };
     configureEdition(currentData);
     records = Array.isArray(data.notifications) ? data.notifications : [];
+    window.DynamaxSpokenNotifications?.configure({
+      recipientKey: currentData.recipientKey,
+      branchId: currentData.branchId,
+      quietHoursActive: currentData.quietHoursActive === true
+    });
+    records.slice().reverse().forEach((row) => window.DynamaxSpokenNotifications?.announce(row));
     const unread = Number(data.unreadCount || 0);
     badge.textContent = unread > 99 ? '99+' : String(unread);
     badge.hidden = unread < 1;
@@ -242,12 +250,16 @@
     loading = true;
     try {
       const params = new URLSearchParams({ limit: '20' });
-      if (includeMetadata) params.set('includeMeta', 'true');
+      if (includeMetadata || !currentData.metadataIncluded) params.set('includeMeta', 'true');
       const response = await request(`/api/staff-notifications?${params}`, { cache: 'no-store' });
       const data = await response.json().catch(() => ({}));
       if (generation === loadGeneration && response.ok && data.ok) { render(data); lastLoadedAt = Date.now(); }
     } finally {
       if (generation === loadGeneration) loading = false;
+      if (pushRefreshPending && !document.hidden && !identity.hidden) {
+        pushRefreshPending = false;
+        void load(true).catch(() => {});
+      }
     }
   }
 
@@ -334,6 +346,10 @@
     const edition = configureEdition(data);
     const form = dialog.querySelector('.notification-settings-form');
     const settings = data.settings || {};
+    const speaker = window.DynamaxSpokenNotifications;
+    form.querySelector('[data-spoken-alerts]').checked = speaker?.enabled() === true;
+    form.querySelector('[data-spoken-alerts]').disabled = !speaker?.supported();
+    form.querySelector('[data-test-spoken-alerts]').disabled = !speaker?.enabled();
     const permission = window.DynamaxWebPush?.permission?.() || 'unsupported';
     const thisDevice = (data.subscriptions || []).find((row) => row.DeviceId === window.DynamaxWebPush?.deviceId?.());
     const pushConfigured = data.messaging?.enabled === true;
@@ -488,6 +504,11 @@
   markAll.addEventListener('click', () => update('markAllRead').catch(() => {}));
 
   const settingsForm = dialog.querySelector('.notification-settings-form');
+  settingsForm.querySelector('[data-spoken-alerts]').addEventListener('change', (event) => {
+    window.DynamaxSpokenNotifications?.setEnabled(event.target.checked);
+    settingsForm.querySelector('[data-test-spoken-alerts]').disabled = !event.target.checked;
+  });
+  settingsForm.querySelector('[data-test-spoken-alerts]').addEventListener('click', () => window.DynamaxSpokenNotifications?.test());
   async function enablePushOnThisDevice() {
     const status = settingsForm.querySelector('.notification-settings-status');
     pushPromptButton.disabled = true;
@@ -565,13 +586,22 @@
     } catch (error) { status.textContent = error instanceof SyntaxError ? 'Templates must be valid JSON.' : error.message; }
   });
 
-  window.addEventListener('dynamax:foreground-notification', () => load(true));
+  window.addEventListener('dynamax:foreground-notification', () => {
+    // Fetch the authenticated inbox, never speak the raw push payload: this
+    // browser may have switched staff accounts since the token was registered.
+    pushRefreshPending = true;
+    if (!loading && !document.hidden) {
+      pushRefreshPending = false;
+      void load(true).catch(() => {});
+    }
+  });
   window.addEventListener('dynamax:staff-branch-changed', () => {
     loadGeneration += 1;
     loading = false;
     records = [];
     historyRecords = [];
     currentData = {};
+    window.DynamaxSpokenNotifications?.configure(null);
     lastLoadedAt = 0;
     badge.textContent = '0';
     badge.hidden = true;
@@ -585,12 +615,18 @@
     void load(true, true);
   });
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && Date.now() - lastLoadedAt >= foregroundRefreshAgeMs) load();
+    if (!document.hidden && (pushRefreshPending || Date.now() - lastLoadedAt >= foregroundRefreshAgeMs)) load(true);
   });
   window.addEventListener('online', () => load(true));
   new MutationObserver(() => {
     if (!identity.hidden) load(true);
-    else { popover.hidden = true; trigger.setAttribute('aria-expanded', 'false'); }
+    else {
+      loadGeneration += 1;
+      loading = false;
+      currentData = {};
+      window.DynamaxSpokenNotifications?.configure(null);
+      popover.hidden = true; trigger.setAttribute('aria-expanded', 'false');
+    }
   }).observe(identity, { attributes: true, attributeFilter: ['hidden'] });
   new MutationObserver(() => configureEdition({
     edition: document.documentElement.dataset.edition === 'church' ? 'church' : 'school'

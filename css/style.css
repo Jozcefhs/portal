@@ -3149,8 +3149,7 @@ html[data-theme="dark"] .student-conduct-summary{scrollbar-color:#526d82 transpa
   position:relative;
   width:calc(100% - 44px);
   aspect-ratio:16/9;
-  max-height:360px;
-  margin:0 22px;
+  margin:0 auto;
   overflow:hidden;
   border:1px solid #233f59;
   border-radius:14px;
@@ -3161,7 +3160,7 @@ html[data-theme="dark"] .student-conduct-summary{scrollbar-color:#526d82 transpa
   height:100%;
   border:0;
   background:transparent;
-  object-fit:cover;
+  object-fit:contain;
   transform:scaleX(-1);
 }
 .student-face-camera[data-facing-mode="environment"] video{transform:none}
@@ -3371,7 +3370,7 @@ html[data-theme="dark"] .student-face-dialog>footer button.secondary{border-colo
   .student-face-camera-toolbar>small{text-align:left}
   .student-face-camera-field{width:100%;justify-content:space-between}
   .student-face-camera-field select{min-width:132px}
-  .student-face-camera{width:calc(100% - 30px);aspect-ratio:4/3;margin:0 15px}
+  .student-face-camera{width:calc(100% - 30px);aspect-ratio:4/3;margin:0 auto}
   .student-face-guide{inset:10% 25%}
   .student-face-challenge{top:8px;left:8px;max-width:calc(100% - 126px);min-height:36px;padding:5px 8px}
   .student-face-challenge span{width:25px;height:25px;flex-basis:25px;font-size:17px}

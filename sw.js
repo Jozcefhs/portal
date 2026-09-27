@@ -1,5 +1,7 @@
-const CACHE = 'dynamax-v300-owner-tutorial-fix';
+const CACHE = 'dynamax-v301-spoken-alerts-face-capture';
 const SHELL = ['/', '/index.html', '/school.html', '/admin.html', '/setup.html', '/activate-account.html', '/onboarding-status.html', '/parent-dashboard.html', '/payments.html', '/buy-form.html', '/register-organization.html', '/subscription-payment.html', '/plan-management.html', '/give.html', '/store.html', '/hotel-booking.html', '/verify-result.html', '/verify-transcript.html', '/css/style.css', '/css/school-landing.css', '/css/guest-fee-payment.css', '/css/notifications.css', '/css/payment-methods.css', '/css/store.css', '/css/store-compact.css', '/css/hotel-booking.css', '/js/preferences.js', '/js/action-feedback.js', '/js/app-dialogs.js', '/js/activate-account.js', '/js/onboarding-status.js', '/js/financial-values.js', '/js/launcher.js', '/js/site-config.js', '/js/list-sorting.js', '/js/academic-results-analysis.js', '/js/admin.js', '/js/student-face-lookup.js', '/js/setup.js', '/js/tutorial-module-catalogue.js', '/js/payment-methods.js', '/js/buy-form.js', '/js/give.js', '/js/payments.js', '/js/store.js', '/js/hotel-booking.js', '/js/notifications.js', '/js/web-push.js', '/js/parent-dashboard.js', '/js/verify-result.js', '/js/verify-transcript.js', '/js/register-organization.js', '/js/subscription-payment.js', '/js/plan-management.js', '/images/Logo.png'];
+
+SHELL.push('/js/spoken-notifications.js');
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -57,6 +59,11 @@ self.addEventListener('push', (event) => {
   const title = notification.title || data.title || 'Dynamax notification';
   const tag = data.notificationId || undefined;
   event.waitUntil((async () => {
+    if (data.expiresAt && Date.parse(data.expiresAt) <= Date.now()) return;
+    // The page validates the signed-in recipient before speaking. Service workers
+    // cannot use speech synthesis, but can wake the open notification centre.
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    windows.forEach((client) => client.postMessage({ type: 'dynamax:push-notification', payload }));
     if (tag) {
       const visible = await self.registration.getNotifications({ tag });
       if (visible.length) return;

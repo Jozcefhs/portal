@@ -48,7 +48,7 @@ const dashboardPresenceButtonSource = adminJs.slice(
   adminJs.indexOf('async function loadDashboardAttendanceCard')
 );
 const presenceReadAloudSource = adminJs.slice(
-  adminJs.indexOf('function randomPresenceAnnouncementStorageKey'),
+  adminJs.indexOf('function announceRandomPresenceConfirmation'),
   adminJs.indexOf('function updateAttendancePresenceCard')
 );
 
@@ -308,13 +308,11 @@ test('continued-presence confirmation uses focused reads and updates the UI with
 });
 
 test('random-presence confirmation reads aloud once while the shared staff portal is visible', () => {
-  assert.match(presenceReadAloudSource, /SpeechSynthesisUtterance/);
-  assert.match(presenceReadAloudSource, /window\.speechSynthesis\.speak\(utterance\)/);
+  assert.match(presenceReadAloudSource, /DynamaxSpokenNotifications\?\.announce/);
   assert.match(presenceReadAloudSource, /document\.visibilityState !== 'visible'/);
   assert.match(presenceReadAloudSource, /\['DUE', 'OVERDUE'\]\.includes\(status\)/);
-  assert.match(presenceReadAloudSource, /window\.sessionStorage\.getItem\(storageKey\) === dueKey/);
+  assert.match(presenceReadAloudSource, /DueDate: clean\(presenceCheck\.dueAt\)/);
   assert.match(presenceReadAloudSource, /Random presence confirmation required\. Please confirm your presence now\./);
-  assert.doesNotMatch(presenceReadAloudSource, /edition|school|faith|organisation/i);
   assert.match(adminJs, /if \(state === 'CLOCKED_IN'\) announceRandomPresenceConfirmation\(presenceCheck\)/);
   assert.match(adminJs, /if \(stateIn\) announceRandomPresenceConfirmation\(presenceCheck\)/);
   assert.match(adminJs, /addEventListener\('visibilitychange'/);

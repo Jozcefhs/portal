@@ -396,7 +396,7 @@ test('the browser UI keeps frames on-device, requires a live action and always s
   assert.match(uiSource, /typeof window\.DynamaxStaffFetch === 'function'/);
   assert.match(uiSource, /window\.fetch\.bind\(window\)/);
   assert.match(uiSource, /navigator\.mediaDevices\.getUserMedia/);
-  assert.match(uiSource, /human\.detect\(video, \{[\s\S]*?description: \{ enabled: livenessConfirmed \}/);
+  assert.match(uiSource, /detectFrame\(human, video, \{[\s\S]*?description: \{ enabled: livenessConfirmed \}/);
   assert.match(uiSource, /actionObserved && blink\.open/);
   assert.match(uiSource, /faces\.length !== 1/);
   assert.match(uiSource, /captureReadiness\(face, video\)/);
@@ -412,10 +412,10 @@ test('the browser UI keeps frames on-device, requires a live action and always s
 test('front and back camera selection covers staff enrollment and every student face capture', () => {
   assert.match(uiSource, /facingMode: \{ ideal: facingMode \}/);
   assert.match(uiSource, /cameraFacingLabel\(facingMode\)/);
-  assert.match(uiSource, /setAttribute\('data-facing-mode', facingMode\)/);
+  assert.match(uiSource, /setAttribute\('data-facing-mode', actualFacingMode \|\| facingMode\)/);
   assert.match(cssSource, /data-facing-mode="environment"/);
-  assert.match(uiSource, /\$\{enrollment \? '<label class="student-face-camera-select"/);
-  assert.match(uiSource, /if \(mode === 'enroll'\) bindCameraSelector\(dialog, captureButton\)/);
+  assert.match(uiSource, /<label class="student-face-camera-select"/);
+  assert.match(uiSource, /bindCameraSelector\(dialog, captureButton\)/);
   assert.match(uiSource, /allowCameraSelection \? '<div class="student-face-camera-toolbar"/);
   assert.match(uiSource, /Camera for this lookup/);
   assert.match(uiSource, /Front camera/);
@@ -483,7 +483,7 @@ test('eligible Records Desk sessions prepare the model during idle time without 
   assert.match(adminSource, /requestIdleCallback/);
   assert.match(adminSource, /window\.setTimeout\(preload, 300\)/);
   assert.match(adminSource, /preloadFaceRecognitionModel\(\)/);
-  assert.match(adminSource, /student-face-lookup\.js\?v=20260923-authenticated-enrollment/);
+  assert.match(adminSource, /student-face-lookup\.js\?v=20260927-camera-reliability/);
   const preloaderStart = uiSource.indexOf('export function preloadFaceRecognitionModel');
   const preloaderEnd = uiSource.indexOf('async function startCamera', preloaderStart);
   const preloaderSource = uiSource.slice(preloaderStart, preloaderEnd);

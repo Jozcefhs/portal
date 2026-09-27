@@ -77,3 +77,27 @@ test('attendance settings and protected scheduler expose configurable push deliv
   assert.match(workflowSource, /expectedEdition/);
   assert.doesNotMatch(workflowSource, /NOTIFICATION_SCHEDULER_URL/);
 });
+
+test('empty completed markers and stale attendance days cannot starve due presence alerts', async () => {
+  const states = [
+    { __id: 'finished', Username: 'finished', NextPresenceNotificationAt: '' },
+    { __id: 'old', __updateTime: 'old-version', Username: 'old', State: 'CLOCKED_IN', AttendanceDate: '2026-08-12', NextPresenceNotificationAt: '2026-08-12T10:00:00.000Z' },
+    { __id: 'due', Username: 'due', State: 'CLOCKED_IN', AttendanceDate: '2026-08-13', NextPresenceNotificationAt: '2026-08-13T10:00:00.000Z' }
+  ];
+  const notices = [];
+  const options = {
+    now: '2026-08-13T10:05:00.000Z', limit: 1, structure: { Branches: [{ Id: 'main' }] },
+    getDocument: async () => policy,
+    queryCollection: async (_env, _path, query) => states.filter((row) => query.filters.every((filter) => filter.op === '>'
+      ? row[filter.field] > filter.value : row[filter.field] <= filter.value)).sort((a,b) => a.NextPresenceNotificationAt.localeCompare(b.NextPresenceNotificationAt)).slice(0, query.limit),
+    patchDocumentFields: async (_env, _path, id, fields, condition) => {
+      if (id === 'old') assert.equal(condition.updateTime, 'old-version');
+      Object.assign(states.find((row) => row.__id === id), fields);
+    },
+    createNotification: async (_env, row) => { notices.push(row); return { created: true }; }
+  };
+  await processAttendancePresenceNotifications({}, options);
+  await processAttendancePresenceNotifications({}, options);
+  assert.equal(notices.length, 1);
+  assert.deepEqual(notices[0].TargetUsernames, ['due']);
+});

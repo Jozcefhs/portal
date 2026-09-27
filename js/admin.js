@@ -131,7 +131,6 @@ let staffAttendanceLoadedAt = 0;
 let staffAttendanceFormDirty = false;
 let staffAttendanceRefreshPromise = null;
 let latestPresenceCheckForReadAloud = null;
-let lastPresenceReadAloudKey = '';
 const ATTENDANCE_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const ATTENDANCE_PRESENCE_SYNC_INTERVAL_MS = 60 * 1000;
 const dashboardSectionRequests = new Map();
@@ -1116,7 +1115,7 @@ async function attendancePasskeyProof(siteId, direction) {
 
 function attendanceFaceModule() {
   if (!attendanceFaceModulePromise) {
-    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260923-authenticated-enrollment').catch((error) => {
+    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260927-camera-reliability').catch((error) => {
       attendanceFaceModulePromise = null;
       throw error;
     });
@@ -7411,40 +7410,20 @@ function attendancePresenceStatusText(presenceCheck = {}) {
   return 'No random presence confirmation is currently due.';
 }
 
-function randomPresenceAnnouncementStorageKey() {
-  const username = clean(currentUser?.username || currentUser?.Username || 'staff').toLowerCase();
-  return `dynamax:attendance:presence-read-aloud:${username}`;
-}
-
 function announceRandomPresenceConfirmation(presenceCheck = {}) {
   latestPresenceCheckForReadAloud = presenceCheck;
   const status = clean(presenceCheck.status).toUpperCase();
   if (!['DUE', 'OVERDUE'].includes(status) || presenceCheck.canConfirm !== true) return false;
   if (document.visibilityState !== 'visible') return false;
-  if (!('speechSynthesis' in window) || !('SpeechSynthesisUtterance' in window)) return false;
-  const dueKey = clean(presenceCheck.dueAt) || `${status}:${Number(presenceCheck.sequence || 0)}`;
-  const storageKey = randomPresenceAnnouncementStorageKey();
-  const announcementKey = `${storageKey}|${dueKey}`;
-  if (lastPresenceReadAloudKey === announcementKey) return false;
-  try {
-    if (window.sessionStorage.getItem(storageKey) === dueKey) return false;
-  } catch (_error) { /* In-memory deduplication remains available. */ }
   const message = status === 'OVERDUE'
     ? 'Random presence confirmation is overdue. Please confirm your presence immediately.'
     : 'Random presence confirmation required. Please confirm your presence now.';
-  const utterance = new window.SpeechSynthesisUtterance(message);
-  utterance.lang = clean(window.navigator.language) || 'en';
-  utterance.rate = 0.95;
-  utterance.pitch = 1;
-  utterance.volume = 1;
-  try {
-    window.speechSynthesis.speak(utterance);
-  } catch (_error) {
-    return false;
-  }
-  lastPresenceReadAloudKey = announcementKey;
-  try { window.sessionStorage.setItem(storageKey, dueKey); } catch (_error) { /* Storage is optional. */ }
-  return true;
+  return window.DynamaxSpokenNotifications?.announce({
+    Type: 'Presence confirmation', Category: 'Attendance',
+    DueDate: clean(presenceCheck.dueAt),
+    Title: 'Presence confirmation', Message: message,
+    ExpiresAt: presenceCheck.graceEndsAt || ''
+  }) || false;
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -9329,7 +9308,7 @@ function preloadRecordsDeskFaceRecognition() {
   recordsDeskFacePreloadScheduled = true;
   const preload = () => {
     recordsDeskFacePreloadScheduled = false;
-    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260923-authenticated-enrollment')
+    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260927-camera-reliability')
       .then((module) => module.preloadFaceRecognitionModel())
       .catch(() => {
         recordsDeskFacePreloadPromise = null;
@@ -9343,7 +9322,7 @@ function preloadRecordsDeskFaceRecognition() {
 }
 
 async function openStudentFaceLookupDialog(options = {}) {
-  const module = await import('./student-face-lookup.js?v=20260923-authenticated-enrollment');
+  const module = await import('./student-face-lookup.js?v=20260927-camera-reliability');
   return module.openStudentFaceLookup(options);
 }
 
