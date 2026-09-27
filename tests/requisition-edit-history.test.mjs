@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
-import { recordRequisitionEdit, requisitionEditHistory, requisitionEditDetails, requisitionChangedFields } from '../functions/lib/requisition-edit-history.js';
+import { recordRequisitionEdit, requisitionEditHistory, requisitionEditDetails, requisitionChangedFields, resolvedRequisitionEditHistory } from '../functions/lib/requisition-edit-history.js';
 import { assertRequisitionEditPermission } from '../functions/lib/requisition-edit-permission.js';
 import { buildRequisitionResubmission } from '../functions/api/finance-workflow.js';
 import { applyAuthoritativeActor } from '../functions/lib/backend-security.js';
@@ -12,6 +12,75 @@ const timestamp = '2026-09-27T10:00:00Z';
 const officer = { username: 'ada', displayName: 'Ada Director', role: 'Super Admin', assignedRole: 'Director' };
 const before = { ExpenseNo: 'REQ-1', Description: 'Repairs', Date: '2026-09-27', Amount: 100,
   Status: 'Submitted', RevisionNumber: 1, __updateTime: 'version-1', RequestedByUsername: 'ada' };
+
+const materials = [
+  { SNo: 1, Item: 'Fuel', Specification: 'Litres', Quantity: 50, UnitPrice: 1450, Total: 72500 },
+  { SNo: 2, Item: 'Doors', Specification: '4x8', Quantity: 5, UnitPrice: 18000, Total: 90000 }
+];
+
+test('material edits name quantity and unit price, not the entire items table', () => {
+  const previous = { MaterialItems: materials, Amount: 162500 };
+  const updated = { MaterialItems: [
+    { ...materials[0], Quantity: 100, Total: 145000 },
+    { ...materials[1], UnitPrice: 19000, Total: 95000 }
+  ], Amount: 240000 };
+  assert.deepEqual(requisitionChangedFields(previous, updated), ['Amount', 'Quantity', 'Unit price']);
+  assert.deepEqual(requisitionChangedFields(previous, { ...previous,
+    MaterialItems: [{ ...materials[0], Quantity: 100 }, materials[1]] }), ['Quantity']);
+  const event = recordRequisitionEdit({ ...before, ...previous }, { ...before, ...updated }, officer, timestamp);
+  assert.match(requisitionEditDetails(event), /changed: Amount, Quantity, Unit price/);
+  assert.doesNotMatch(requisitionEditDetails(event), /Material items/);
+});
+
+test('material comparisons ignore formatting and numbering but identify each actual editable column', () => {
+  const previous = { MaterialItems: materials };
+  assert.deepEqual(requisitionChangedFields(previous, { MaterialItems: materials.map(row => ({ ...row,
+    SNo: String(row.SNo), Quantity: String(row.Quantity), UnitPrice: String(row.UnitPrice), Total: String(row.Total) })) }), []);
+  for (const [key, value, label] of [['Item', 'Diesel', 'Item'], ['Specification', 'Gallons', 'Specification'],
+    ['Quantity', 60, 'Quantity'], ['UnitPrice', 1600, 'Unit price'], ['Total', 80000, 'Line total']]) {
+    assert.deepEqual(requisitionChangedFields(previous, { MaterialItems: [{ ...materials[0], [key]: value }, materials[1]] }), [label]);
+  }
+  assert.deepEqual(requisitionChangedFields(previous, { MaterialItems: [...materials].reverse() }), ['Item order']);
+  assert.deepEqual(requisitionChangedFields(previous, { MaterialItems: [...materials, { Item: 'Cement' }] }), ['Items added']);
+  assert.deepEqual(requisitionChangedFields(previous, { MaterialItems: [{ Item: 'Cement' }, ...materials] }), ['Items added']);
+  assert.deepEqual(requisitionChangedFields(previous, { MaterialItems: [
+    { Item: 'Cement' }, { ...materials[0], Quantity: 100 }, materials[1]
+  ] }), ['Items added', 'Quantity']);
+  assert.deepEqual(requisitionChangedFields(previous, { MaterialItems: materials.slice(0, 1) }), ['Items removed']);
+  assert.deepEqual(requisitionChangedFields(previous, { MaterialItems: materials.slice(1) }), ['Items removed']);
+  assert.deepEqual(requisitionChangedFields(previous, { MaterialItems: JSON.stringify(materials) }), []);
+  assert.deepEqual(requisitionChangedFields(previous, { MaterialItems: materials.map(row => ({
+    item: row.Item, specification: row.Specification, quantity: row.Quantity, unitPrice: row.UnitPrice, total: row.Total
+  })) }), []);
+});
+
+test('older coarse history is clarified from the correct saved before/after snapshots without rewriting audit data', async () => {
+  const original = { ...before, BranchId: 'main', MaterialItems: materials };
+  const second = { ...original, RevisionNumber: 2, MaterialItems: [{ ...materials[0], Quantity: 100 }, materials[1]] };
+  const third = { ...second, RevisionNumber: 3, MaterialItems: [second.MaterialItems[0], { ...materials[1], UnitPrice: 19000 }],
+    EditHistory: [
+      { RevisionNumber: 2, Timestamp: timestamp, Officer: 'Mary', ChangedFields: ['Amount', 'Material items'] },
+      { RevisionNumber: 3, Timestamp: timestamp, Officer: 'Ada', ChangedFields: ['Amount', 'Material items'] }
+    ] };
+  const archives = new Map([[1, original], [2, second]].map(([number, Snapshot]) => [number, {
+    ExpenseNo: 'REQ-1', RevisionNumber: number, BranchId: 'main', ArchivedAt: timestamp, Snapshot
+  }]));
+  const reads = [];
+  const history = await resolvedRequisitionEditHistory(third, async number => { reads.push(number); return archives.get(number); });
+  assert.deepEqual(history[0].ChangedFields, ['Amount', 'Quantity']);
+  assert.deepEqual(history[1].ChangedFields, ['Amount', 'Unit price']);
+  assert.deepEqual(history.map(entry => entry.Officer), ['Mary', 'Ada']);
+  assert.deepEqual(reads, [1, 2]);
+  assert.deepEqual(third.EditHistory[0].ChangedFields, ['Amount', 'Material items']);
+  assert.deepEqual((await resolvedRequisitionEditHistory(third, async () => null)), third.EditHistory);
+  assert.deepEqual((await resolvedRequisitionEditHistory(third, async number => ({ ...archives.get(number), BranchId: 'other' }))), third.EditHistory);
+  assert.deepEqual((await resolvedRequisitionEditHistory(third, async number => ({ ...archives.get(number), ExpenseNo: 'REQ-OTHER' }))), third.EditHistory);
+  assert.deepEqual((await resolvedRequisitionEditHistory(third, async number => ({ ...archives.get(number), ArchivedAt: 'different-edit-time' }))), third.EditHistory);
+  assert.deepEqual((await resolvedRequisitionEditHistory(third, async () => { throw new Error('snapshot unavailable'); })), third.EditHistory);
+  let preciseReads = 0;
+  await resolvedRequisitionEditHistory({ ...third, EditHistory: history }, async () => { preciseReads++; });
+  assert.equal(preciseReads, 0);
+});
 
 test('web resubmission records the authenticated editor, exact action and changed fields', () => {
   const { payload, revision } = buildRequisitionResubmission(before, {

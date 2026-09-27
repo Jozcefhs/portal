@@ -15,6 +15,9 @@ Open **Staff & Permissions → Manage Staff Account → Allow this officer to ed
 
 ## Recorded history
 
+- Material edits name the actual changed columns: Item, Specification, Quantity and Unit price. The grand-total Amount remains a separate field; recomputed line totals do not create a misleading "Material items" entry. Numeric formatting and line numbering are not edits.
+- On View / Print, older "Material items" entries are clarified from matching saved before/after revision snapshots where available. This read-only display correction preserves officer names, timestamps and stored audit records. If snapshots are missing or cannot be verified, the original description is retained rather than guessed.
+
 - Requisition edits now preserve the authenticated officer's display name, username, assigned role, timestamp, action, revision number and changed business-field names. Approval passwords and proofs are never part of the edit event.
 - Web edit/resubmit and desktop edits archive the prior record and commit the edited record plus audit event together, with database-version preconditions. A stale desktop edit from the updated client is rejected instead of overwriting another officer's changes.
 - View / Print Requisition includes an **Edit and resubmission history** table, separate from approval and rejection endorsements. Later decisions do not replace the earlier editor's identity.

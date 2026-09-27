@@ -71,7 +71,7 @@ import { getWebBranding, saveWebBranding } from '../lib/web-branding.js';
 import { saveDocumentBranding } from '../lib/document-branding.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
-import { recordRequisitionEdit, requisitionEditDetails, requisitionEditHistory, requisitionChangedFields } from '../lib/requisition-edit-history.js';
+import { recordRequisitionEdit, requisitionEditDetails, resolvedRequisitionEditHistory, requisitionChangedFields } from '../lib/requisition-edit-history.js';
 import { canEditRequisitions, assertRequisitionEditPermission, requisitionEditGrant, requisitionEditPermissionAuditWrite } from '../lib/requisition-edit-permission.js';
 import { resubmitRequisition } from './finance-workflow.js';
 import { explicitAuditAction, securityAuditAction } from '../lib/security-audit.js';
@@ -8980,7 +8980,8 @@ async function getAccountingRequisitionDocument(env, body = {}) {
   return {
     ok: true,
     message: 'Requisition document loaded.',
-    record: { ...record, EditHistory: requisitionEditHistory(record) },
+    record: { ...record, EditHistory: await resolvedRequisitionEditHistory(record,
+      revision => getDocument(env, 'accountingExpenseRevisions', safeDocumentId(`${record.ExpenseNo}-REV-${String(revision).padStart(3, '0')}`))) },
     endorsements: { approval, admin, accounts, management, 'admin-review': adminReview, director }
   };
 }

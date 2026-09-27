@@ -8,7 +8,7 @@ import {
 } from '../lib/staff-auth.js';
 import { loadStaffApprovalProfile, publicStaffApprovalProfile } from '../lib/staff-approval-profile.js';
 import { notifyStaffRequisitionEvent, notifyStaffRequisitionSubmitted } from '../lib/notifications.js';
-import { recordRequisitionEdit, requisitionEditDetails, requisitionEditHistory } from '../lib/requisition-edit-history.js';
+import { recordRequisitionEdit, requisitionEditDetails, resolvedRequisitionEditHistory } from '../lib/requisition-edit-history.js';
 import { explicitAuditAction } from '../lib/security-audit.js';
 import { canEditRequisitions, assertRequisitionEditPermission } from '../lib/requisition-edit-permission.js';
 import {
@@ -1459,7 +1459,8 @@ async function documentRecord(env, user, body) {
   ]);
   return {
     ok: true,
-    record: publicRows([{ ...existing, ...(!isBill ? { EditHistory: requisitionEditHistory(existing) } : {}) }])[0],
+    record: publicRows([{ ...existing, ...(!isBill ? { EditHistory: await resolvedRequisitionEditHistory(existing,
+      revision => getDocument(env, 'accountingExpenseRevisions', safeId(`${existing.ExpenseNo}-REV-${String(revision).padStart(3, '0')}`))) } : {}) }])[0],
     endorsements: {
       approval: approvalEndorsement || null,
       admin: adminEndorsement || null,
