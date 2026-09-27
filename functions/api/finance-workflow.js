@@ -11,6 +11,7 @@ import { notifyStaffRequisitionEvent, notifyStaffRequisitionSubmitted } from '..
 import { recordRequisitionEdit, requisitionEditDetails, resolvedRequisitionEditHistory } from '../lib/requisition-edit-history.js';
 import { explicitAuditAction } from '../lib/security-audit.js';
 import { canEditRequisitions, assertRequisitionEditPermission } from '../lib/requisition-edit-permission.js';
+import { postApprovedRequisition } from '../lib/requisition-posting.js';
 import {
   REQUISITION_STATUS,
   assertRequisitionTransition,
@@ -685,6 +686,7 @@ function requestedRequisitionStatus(decision) {
     'management authorized': REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
     'management authorised': REQUISITION_STATUS.MANAGEMENT_AUTHORIZED,
     approved: REQUISITION_STATUS.APPROVED,
+    posted: REQUISITION_STATUS.POSTED,
     rejected: REQUISITION_STATUS.REJECTED
   })[lower(decision)] || clean(decision);
 }
@@ -706,6 +708,24 @@ async function advanceRequisition(env, user, body, request) {
 
   const requestedStatus = requestedRequisitionStatus(body.decision || body.status);
   const transition = assertRequisitionTransition(existing, user.assignedRole || user.role, requestedStatus);
+  if (transition.event === 'Posted') {
+    if (!clean(body.recordVersion) || clean(body.recordVersion) !== clean(existing.__updateTime)) {
+      const err = new Error('Refresh the requisition before posting it; its version has changed or was not supplied.');
+      err.status = 409;
+      err.code = 'FINANCE_WRITE_CONFLICT';
+      throw err;
+    }
+    const postingDate = validIsoDate(body.postingDate, 'posting date');
+    const reference = clean(body.paymentReference);
+    if (!reference) { const err = new Error('Enter the payment or posting reference.'); err.status = 400; throw err; }
+    const authorizationMethod = await requireDecisionAuthorization(env, user, body, request, 'requisition:posted');
+    const endorsement = await buildEndorsement(env, user, body, id, 'posting');
+    const result = await postApprovedRequisition(env, existing, user, {
+      postingDate, reference, notes: body.notes, authorizationMethod
+    }, endorsement ? [{ collectionPath: 'financeDocumentEndorsements', documentId: endorsementId(id, 'posting'), data: endorsement }] : []);
+    await notifyStaffRequisitionEvent(env, result.record, 'Posted', actor(user)).catch(() => null);
+    return result;
+  }
   const timestamp = nowIso();
   const notes = clean(body.notes);
   const authorizationMethod = transition.event === 'Rejected'
@@ -1449,13 +1469,14 @@ async function documentRecord(env, user, body) {
     err.status = 404;
     throw err;
   }
-  const [approvalEndorsement, adminEndorsement, accountsEndorsement, managementEndorsement, adminReviewEndorsement, directorEndorsement] = await Promise.all([
+  const [approvalEndorsement, adminEndorsement, accountsEndorsement, managementEndorsement, adminReviewEndorsement, directorEndorsement, postingEndorsement] = await Promise.all([
     getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'approval')),
     getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'admin')),
     getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'accounts')),
     getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'management')),
     getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'admin-review')),
-    getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'director'))
+    getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'director')),
+    getDocument(env, 'financeDocumentEndorsements', endorsementId(id, 'posting'))
   ]);
   return {
     ok: true,
@@ -1467,7 +1488,8 @@ async function documentRecord(env, user, body) {
       accounts: accountsEndorsement || null,
       management: managementEndorsement || null,
       'admin-review': adminReviewEndorsement || null,
-      director: directorEndorsement || null
+      director: directorEndorsement || null,
+      posting: postingEndorsement || null
     }
   };
 }

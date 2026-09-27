@@ -290,6 +290,14 @@ async function authenticationOptions(request, env, body) {
   });
 }
 
+export function validDocumentApprovalScope(scope) {
+  if (!clean(scope.recordId)) return false;
+  if (['requisition', 'bill'].includes(scope.recordType) && ['review:Approved', 'accountsReview'].includes(scope.action)) return true;
+  return scope.recordType === 'requisition' && [
+    'requisition:confirmed', 'requisition:reviewed', 'requisition:authorized', 'requisition:approved', 'requisition:posted'
+  ].includes(scope.action);
+}
+
 async function approvalOptions(request, env, body) {
   const user = await requireStaffSession(env, request);
   const scope = {
@@ -297,8 +305,7 @@ async function approvalOptions(request, env, body) {
     recordType: lower(body.recordType),
     action: clean(body.decisionAction)
   };
-  if (!scope.recordId || !['requisition', 'bill'].includes(scope.recordType) ||
-      !['review:Approved', 'accountsReview'].includes(scope.action)) {
+  if (!validDocumentApprovalScope(scope)) {
     return response({ ok: false, message: 'The document approval request is invalid.' }, 400);
   }
   const credentials = (await userPasskeys(env, user.username)).filter((item) => isActive(item.Active));

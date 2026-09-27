@@ -16751,10 +16751,11 @@ function openFinanceDecision(button) {
   const action = button.dataset.workflowAction;
   const decision = button.dataset.decision || '';
   const requisitionAdvance = action === 'advanceRequisition';
+  const requisitionPosting = requisitionAdvance && decision === 'Posted';
   const secureDecision = decision === 'Approved' || action === 'accountsReview' ||
     (requisitionAdvance && decision !== 'Rejected') ||
     action === 'issueImprest' || (action === 'reviewImprestRetirement' && decision === 'Verified');
-  const posting = action === 'accountsReview' || decision === 'Accounts Confirmed';
+  const posting = action === 'accountsReview' || decision === 'Accounts Confirmed' || requisitionPosting;
   const imprestAction = ['reviewImprest', 'issueImprest', 'reviewImprestRetirement'].includes(action);
   const profile = financeData?.approvalProfile || {};
   pendingFinanceDecision = {
@@ -16763,6 +16764,7 @@ function openFinanceDecision(button) {
     decision,
     recordType: button.dataset.recordType,
     recordId: button.dataset.recordId,
+    recordVersion: button.dataset.recordVersion || '',
     amount: Number(button.dataset.amount || 0),
     idempotencyKey: newIdempotencyKey()
   };
@@ -16779,19 +16781,24 @@ function openFinanceDecision(button) {
           ? 'Confirm Requisition — Accounts'
           : decision === 'Admin Reviewed'
             ? 'Review Requisition — Admin'
-            : requisitionAdvance
-              ? 'Approve Requisition — Director / Super Admin'
-              : posting ? 'Accounts Review / Posting' : imprestAction ? 'Approve Imprest' : 'Approve Document';
+            : requisitionPosting
+              ? 'Post / Pay Requisition — Accounts'
+              : requisitionAdvance
+                ? 'Approve Requisition — Director / Super Admin'
+                : posting ? 'Accounts Review / Posting' : imprestAction ? 'Approve Imprest' : 'Approve Document';
   document.getElementById('financeDecisionRecord').textContent = button.dataset.recordId;
   document.getElementById('financeEndorsementOptions').hidden = !secureDecision || imprestAction;
   document.getElementById('financeDecisionVerification').hidden = !secureDecision;
   const extra = document.getElementById('financeDecisionExtra');
+  document.getElementById('financeDecisionExtraLegend').textContent = requisitionPosting ? 'Posting / payment details' : 'Imprest details';
   const extraFields = {
     approvedAmount: action === 'reviewImprest' && decision === 'Approved',
     paymentAccount: action === 'issueImprest',
     disbursementReference: action === 'issueImprest',
     issueDate: action === 'issueImprest',
-    retirementDate: action === 'reviewImprestRetirement' && decision === 'Verified'
+    retirementDate: action === 'reviewImprestRetirement' && decision === 'Verified',
+    postingDate: requisitionPosting,
+    paymentReference: requisitionPosting
   };
   extra.hidden = !Object.values(extraFields).some(Boolean);
   extra.querySelectorAll('[data-decision-extra]').forEach((label) => {
@@ -16804,6 +16811,14 @@ function openFinanceDecision(button) {
   financeDecisionForm.elements.paymentAccount.value = '1020';
   financeDecisionForm.elements.issueDate.value = new Date().toISOString().slice(0, 10);
   financeDecisionForm.elements.retirementDate.value = new Date().toISOString().slice(0, 10);
+  const requisition = (financeData?.requisitions || []).find(row => clean(row.ExpenseNo) === clean(button.dataset.recordId));
+  financeDecisionForm.elements.postingDate.value = new Date().toISOString().slice(0, 10);
+  financeDecisionForm.elements.paymentReference.value = requisitionPosting ? clean(requisition?.Reference) : '';
+  const postingSummary = document.getElementById('financePostingSummary');
+  postingSummary.hidden = !requisitionPosting;
+  postingSummary.textContent = requisitionPosting
+    ? `Approved amount: ${money(requisition?.Amount ?? pendingFinanceDecision.amount)}. Expense account: ${clean(requisition?.ExpenseAccount) || '6090'}. Payment / payable account: ${clean(requisition?.PaymentAccount) || '1020'}. This creates the accounting entry and records the reference; it does not send a bank transfer. Check these details before confirming.`
+    : '';
   const signatureInput = financeDecisionForm.elements.applySignature;
   const stampInput = financeDecisionForm.elements.applyStamp;
   signatureInput.disabled = !profile.HasSignature;
@@ -16822,7 +16837,7 @@ function openFinanceDecision(button) {
     ? 'Issue Imprest'
     : action === 'reviewImprestRetirement'
       ? (decision === 'Verified' ? 'Verify and Retire' : 'Return for Correction')
-      : decision === 'Rejected' ? 'Reject' : 'Confirm Decision';
+      : decision === 'Rejected' ? 'Reject' : requisitionPosting ? 'Post / Pay' : 'Confirm Decision';
   financeDecisionDialog.showModal();
 }
 
@@ -16835,7 +16850,7 @@ async function verifyFinanceDecisionBiometric() {
       recordId: pendingFinanceDecision?.recordId,
       recordType: pendingFinanceDecision?.recordType,
       decisionAction: pendingFinanceDecision?.action === 'advanceRequisition'
-        ? `requisition:${clean(pendingFinanceDecision?.decision).toLowerCase().replace(/^accounts /, '').replace(/^management /, '')}`
+        ? `requisition:${clean(pendingFinanceDecision?.decision).toLowerCase().replace(/^accounts /, '').replace(/^management /, '').replace(/^admin /, '')}`
         : pendingFinanceDecision?.action === 'accountsReview'
         ? 'accountsReview'
         : pendingFinanceDecision?.action === 'issueImprest'
@@ -16887,6 +16902,7 @@ async function submitFinanceDecision(event) {
     const data = await financeRequest(context.action, {
       recordType: context.recordType,
       recordId: context.recordId,
+      recordVersion: context.recordVersion,
       decision: context.decision,
       notes: financeDecisionForm.elements.notes.value,
       approvedAmount: financeDecisionForm.elements.approvedAmount.value,
@@ -16894,6 +16910,8 @@ async function submitFinanceDecision(event) {
       disbursementReference: financeDecisionForm.elements.disbursementReference.value,
       issueDate: financeDecisionForm.elements.issueDate.value,
       retirementDate: financeDecisionForm.elements.retirementDate.value,
+      postingDate: financeDecisionForm.elements.postingDate.value,
+      paymentReference: financeDecisionForm.elements.paymentReference.value,
       approvalPassword: password,
       applySignature: financeDecisionForm.elements.applySignature.checked,
       applyStamp: financeDecisionForm.elements.applyStamp.checked,
@@ -16917,7 +16935,7 @@ async function submitFinanceDecision(event) {
       ? 'Issue Imprest'
       : context.action === 'reviewImprestRetirement'
         ? (context.decision === 'Verified' ? 'Verify and Retire' : 'Return for Correction')
-        : context.decision === 'Rejected' ? 'Reject' : 'Confirm Decision');
+        : context.decision === 'Rejected' ? 'Reject' : context.decision === 'Posted' ? 'Post / Pay' : 'Confirm Decision');
   }
 }
 
@@ -17009,10 +17027,16 @@ function financeRecordRow(record, type, capabilities) {
       nextDecision = 'Approved';
       nextLabel = 'Approve as Director or Super Admin';
       buttonLabel = 'Approve';
+    } else if (capabilities.canPostRequisitions && workflowStatus === 'approved' && administrativelyApproved) {
+      nextDecision = 'Posted';
+      nextLabel = 'Post / Pay as Accounts Officer';
+      buttonLabel = 'Post / Pay';
     }
     if (nextDecision) {
-      actions += `<button type="button" class="compact-icon-action compact-approve-action finance-stage-action" data-workflow-action="advanceRequisition" data-decision="${escapeHtml(nextDecision)}" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="${escapeHtml(nextLabel)} ${escapeHtml(id)}" title="${escapeHtml(nextLabel)}"><span aria-hidden="true">&#10003;</span> ${escapeHtml(buttonLabel)}</button>`;
-      actions += `<button type="button" class="compact-icon-action compact-reject-action" data-workflow-action="advanceRequisition" data-decision="Rejected" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Reject ${escapeHtml(id)} at the current stage" title="Reject at current stage"><span aria-hidden="true">&#10005;</span></button>`;
+      actions += `<button type="button" class="compact-icon-action compact-approve-action finance-stage-action" data-workflow-action="advanceRequisition" data-decision="${escapeHtml(nextDecision)}" data-record-type="${type}" data-record-id="${escapeHtml(id)}" data-record-version="${escapeHtml(record.__updateTime || '')}" data-amount="${escapeHtml(record.Amount || 0)}" aria-label="${escapeHtml(nextLabel)} ${escapeHtml(id)}" title="${escapeHtml(nextLabel)}"><span aria-hidden="true">&#10003;</span> ${escapeHtml(buttonLabel)}</button>`;
+      if (nextDecision !== 'Posted') {
+        actions += `<button type="button" class="compact-icon-action compact-reject-action" data-workflow-action="advanceRequisition" data-decision="Rejected" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Reject ${escapeHtml(id)} at the current stage" title="Reject at current stage"><span aria-hidden="true">&#10005;</span></button>`;
+      }
     }
   } else {
     if (capabilities.canApprove && clean(status).toLowerCase() === 'submitted') {
@@ -17105,6 +17129,7 @@ function openFinanceRecordPrint(record, type, endorsements = {}, printableWindow
          ${record.ManagementAuthorizedBy || record.ManagementAuthorizedAt || (!record.AdminReviewedAt && record.ApprovedBy) ? `<tr><th>Legacy Management Authorized By</th><td>${escapeHtml(record.ManagementAuthorizedBy || record.ApprovedBy || '-')}</td><th>Authorized At</th><td>${escapeHtml(record.ManagementAuthorizedAt || record.ApprovedAt || '-')}</td></tr>` : ''}
          <tr><th>Admin Reviewed By</th><td>${escapeHtml(record.AdminStageReviewedBy || '-')}</td><th>Reviewed At</th><td>${escapeHtml(record.AdminStageReviewedAt || '-')}</td></tr>
          <tr><th>Director / Super Admin Approved By</th><td>${escapeHtml(record.AdminReviewedBy || (record.AdminReviewedAt ? record.ApprovedBy : '') || '-')}</td><th>Approved At</th><td>${escapeHtml(record.AdminReviewedAt || '-')}</td></tr>
+         ${record.PostedAt ? `<tr><th>Posted By Accounts</th><td>${escapeHtml(record.PostedBy || '-')}</td><th>Posted At</th><td>${escapeHtml(record.PostedAt)}</td></tr><tr><th>Posting Date / Reference</th><td>${escapeHtml(record.PostingDate || record.Date || '-')} / ${escapeHtml(record.PaymentReference || record.Reference || '-')}</td><th>Journal</th><td>${escapeHtml(record.JournalNo || '-')}</td></tr>` : ''}
          ${clean(record.Status).toLowerCase() === 'rejected' ? `<tr><th>Rejected By</th><td>${escapeHtml(record.RejectedBy || record.UpdatedBy || '-')}</td><th>Rejected At</th><td>${escapeHtml(record.RejectedAt || '-')}</td></tr><tr><th>Officer Role</th><td>${escapeHtml(record.RejectedByRole || '-')}</td><th>Rejected At Stage</th><td>${escapeHtml(record.RejectedStage || '-')}</td></tr><tr><th>Action</th><td>Rejected</td><th></th><td></td></tr>` : ''}`
       : `<tr><th>Approved By</th><td>${escapeHtml(record.ApprovedBy || '-')}</td><th>Approved At</th><td>${escapeHtml(record.ApprovedAt || '-')}</td></tr>`}
   </tbody></table>${materialTable}${record.Notes ? `<p class="notes"><strong>Notes:</strong> ${escapeHtml(record.Notes)}</p>` : ''}${record.ReviewNotes ? `<p class="notes"><strong>Review:</strong> ${escapeHtml(record.ReviewNotes)}</p>` : ''}${clean(record.Status).toLowerCase() === 'rejected' && record.RejectionNotes ? `<p class="notes"><strong>Rejection reason:</strong> ${escapeHtml(record.RejectionNotes)}</p>` : ''}
@@ -17113,6 +17138,7 @@ function openFinanceRecordPrint(record, type, endorsements = {}, printableWindow
        ${approvalEndorsementBlock('Management authorization', record.ManagementAuthorizedBy || (!record.AdminReviewedAt ? record.ApprovedBy : ''), record.ManagementAuthorizedAt || (!record.AdminReviewedAt ? record.ApprovedAt : ''), endorsements.management || (!record.AdminReviewedAt ? endorsements.approval : null))}
        ${approvalEndorsementBlock('Admin review', record.AdminStageReviewedBy, record.AdminStageReviewedAt, endorsements['admin-review'])}
        ${approvalEndorsementBlock('Director / Super Admin approval', record.AdminReviewedBy || (record.AdminReviewedAt ? record.ApprovedBy : ''), record.AdminReviewedAt, endorsements.director || endorsements.admin)}
+       ${approvalEndorsementBlock('Accounts posting / payment record', record.PostedBy, record.PostedAt, endorsements.posting)}
        ${clean(record.Status).toLowerCase() === 'rejected' ? approvalEndorsementBlock(`Rejection at ${record.RejectedStage || 'review'} stage`, record.RejectedBy || record.UpdatedBy, record.RejectedAt, null) : ''}`
     : `${approvalEndorsementBlock('Approved by', record.ApprovedBy, record.ApprovedAt, endorsements.approval)}
        ${approvalEndorsementBlock('Administrative approval', record.AdminReviewedBy, record.AdminReviewedAt, endorsements.admin)}

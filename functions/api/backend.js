@@ -74,6 +74,7 @@ import { readJsonBody } from '../lib/request-security.js';
 import { recordRequisitionEdit, requisitionEditDetails, resolvedRequisitionEditHistory, requisitionChangedFields } from '../lib/requisition-edit-history.js';
 import { canEditRequisitions, assertRequisitionEditPermission, requisitionEditGrant, requisitionEditPermissionAuditWrite } from '../lib/requisition-edit-permission.js';
 import { resubmitRequisition } from './finance-workflow.js';
+import { postApprovedRequisition } from '../lib/requisition-posting.js';
 import { explicitAuditAction, securityAuditAction } from '../lib/security-audit.js';
 import {
   clearOrganizationRestoreCollection,
@@ -7652,27 +7653,13 @@ async function saveAccountingExpense(env, body) {
     });
   }
   if (requestedStatus === REQUISITION_STATUS.POSTED) {
-    const journal = await saveAccountingJournal(env, {
-      JournalNo: `SYS-EXP-${safeDocumentId(expenseNo)}`, Date: payload.Date, Status: 'Posted',
-      Description: payload.Description, Reference: payload.Reference || expenseNo, Source: 'Expense', SourceId: expenseNo,
-      BranchId: branchId, Department: payload.Department, CostCentre: payload.CostCentre, RecordedBy: clean(body.RecordedBy || body.recordedBy),
-      Lines: [
-        { AccountCode: payload.ExpenseAccount, Debit: amount, Credit: 0, Description: payload.Description, Department: payload.Department },
-        { AccountCode: payload.PaymentAccount, Debit: 0, Credit: amount, Description: payload.Vendor || payload.PaymentMethod }
-      ]
-    }, true);
-    payload.JournalNo = journal.JournalNo;
-    payload.PostedAt = timestamp;
-    payload.PostedBy = actorName;
-    payload.PostedByUsername = actorUsername;
-  }
-  // Posting is a payment action, not a content edit. Keep its existing journal path unchanged.
-  if (requestedStatus === REQUISITION_STATUS.POSTED) {
-    await upsertDocument(env, 'accountingExpenses', safeDocumentId(expenseNo), payload);
-    await writeAccountingAudit(env, 'POSTED REQUISITION', 'Expense Requisition', expenseNo, body,
-      `${currentWorkflowStatus} → ${requestedStatus}; journal ${payload.JournalNo}`);
-    await notifyStaffRequisitionEvent(env, payload, 'Posted', actorName).catch(() => null);
-    return { ok: true, message: `Expense saved as ${requestedStatus}.`, expense: payload };
+    const result = await postApprovedRequisition(env, existing, editActor, {
+      postingDate: payload.Date, reference: payload.Reference || expenseNo, notes: clean(body.Notes || body.notes),
+      warningAcknowledged: payload.PostingWarningAcknowledged, warningDetails: payload.PostingWarningDetails,
+      authorizationMethod: 'Desktop authorization'
+    });
+    await notifyStaffRequisitionEvent(env, result.record, 'Posted', actorName).catch(() => null);
+    return { ok: true, message: result.message, expense: result.record };
   }
   const edit = existing.ExpenseNo ? recordRequisitionEdit(existing, payload, {
     displayName: actorName, username: actorUsername, role: actorRole
@@ -8969,20 +8956,21 @@ async function getAccountingRequisitionDocument(env, body = {}) {
     'financeDocumentEndorsements',
     safeDocumentId(`${expenseNo}-${stage}`)
   ).catch(() => null);
-  const [approval, admin, accounts, management, adminReview, director] = await Promise.all([
+  const [approval, admin, accounts, management, adminReview, director, posting] = await Promise.all([
     endorsement('approval'),
     endorsement('admin'),
     endorsement('accounts'),
     endorsement('management'),
     endorsement('admin-review'),
-    endorsement('director')
+    endorsement('director'),
+    endorsement('posting')
   ]);
   return {
     ok: true,
     message: 'Requisition document loaded.',
     record: { ...record, EditHistory: await resolvedRequisitionEditHistory(record,
       revision => getDocument(env, 'accountingExpenseRevisions', safeDocumentId(`${record.ExpenseNo}-REV-${String(revision).padStart(3, '0')}`))) },
-    endorsements: { approval, admin, accounts, management, 'admin-review': adminReview, director }
+    endorsements: { approval, admin, accounts, management, 'admin-review': adminReview, director, posting }
   };
 }
 

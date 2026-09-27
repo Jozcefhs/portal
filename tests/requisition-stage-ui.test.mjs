@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { buildRequisitionResubmission } from '../functions/api/finance-workflow.js';
+import { buildRequisitionPosting } from '../functions/lib/requisition-posting.js';
 import { assertRequisitionTransition, requisitionCapabilities, REQUISITION_STATUS } from '../functions/lib/requisition-workflow.js';
 
 const [adminSource, workflowSource] = await Promise.all([
@@ -23,12 +24,20 @@ const timestamp = '2026-09-27T13:00:00Z';
 function approvalHarness(initial) {
   let record = { ...initial, __updateTime: 'v2' };
   const events = [];
+  const journals = [];
   const source = workflowSource.slice(workflowSource.indexOf('function requestedRequisitionStatus('), workflowSource.indexOf('\nasync function reviewRecord('));
   const advance = vm.runInNewContext(`(() => { ${source}; return advanceRequisition; })()`, {
     clean, lower, REQUISITION_STATUS, assertRequisitionTransition,
     getDocument: async () => record, findOneByField: async () => null, safeId: value => value,
     scopedRows: rows => rows, capabilities: requisitionCapabilities, nowIso: () => timestamp,
     requireDecisionAuthorization: async () => 'Password', buildEndorsement: async () => ({}),
+    validIsoDate: value => value,
+    postApprovedRequisition: async (_env, existing, user, options) => {
+      const posting = buildRequisitionPosting(existing, user, options, timestamp);
+      journals.push(posting.journal);
+      record = { ...posting.record, __updateTime: 'posted' };
+      return { ok: true, record };
+    },
     actor: user => user.displayName, removeFirestoreMetadata: row => row,
     documentVersion: row => row.__updateTime, endorsementId: (id, stage) => `${id}-${stage}`,
     auditWrite: (_user, action) => ({ collectionPath: 'accountingAudit', data: { Action: action } }),
@@ -40,8 +49,9 @@ function approvalHarness(initial) {
     notifyStaffRequisitionEvent: async (_env, _payload, event) => { events.push(event); }
   });
   return {
-    advance: (user, decision) => advance({}, user, { recordId: initial.ExpenseNo, decision }, {}),
-    record: () => record, events
+    advance: (user, decision) => advance({}, user, { recordId: initial.ExpenseNo, decision,
+      recordVersion: record.__updateTime, postingDate: '2026-09-27', paymentReference: 'BANK-123' }, {}),
+    record: () => record, events, journals
   };
 }
 
@@ -60,7 +70,7 @@ test('Director sees why approval is unavailable at Accounts Confirmed, while Adm
   assert.doesNotMatch(adminHtml, /data-decision="Approved"/);
 });
 
-test('an Admin-edited revision reaches Director approval only after fresh Accounts and Admin decisions in every edition', async () => {
+test('an Admin-edited revision completes Accounts confirmation, Admin review, Director approval and Accounts posting in every edition', async () => {
   const admin = { role: 'Management', assignedRole: 'Admin', username: 'admin', displayName: 'Admin Editor', requisitionEditEnabled: true };
   for (const Edition of ['School', 'Church', 'Other Organisation']) {
     for (const RequisitionType of ['Standard', 'Material']) {
@@ -94,6 +104,15 @@ test('an Admin-edited revision reaches Director approval only after fresh Accoun
         assert.equal(flow.record().ApprovedBy, 'Final Approver');
         assert.deepEqual(flow.events, ['Confirmed', 'Reviewed', 'Approved']);
         assert.match(render(flow.record(), 'requisition', access(finalRole)), /Awaiting Accounts posting \/ payment/);
+        assert.match(render(flow.record(), 'requisition', access('Accounts Officer')), /data-decision="Posted"/);
+        await flow.advance({ role: 'Accounts Officer', username: 'accounts', displayName: 'Accounts Officer' }, 'Posted');
+        assert.equal(flow.record().Status, 'Posted');
+        assert.equal(flow.record().PostedBy, 'Accounts Officer');
+        assert.equal(flow.journals.length, 1);
+        assert.equal(flow.journals[0].TotalDebit, 200);
+        assert.equal(flow.journals[0].TotalCredit, 200);
+        assert.deepEqual(flow.events, ['Confirmed', 'Reviewed', 'Approved', 'Posted']);
+        assert.doesNotMatch(render(flow.record(), 'requisition', access('Accounts Officer')), /data-decision="Posted"/);
       }
     }
   }

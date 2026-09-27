@@ -6,7 +6,7 @@
   <title>Organisation Staff Portal</title>
   <meta name="theme-color" content="#071b33">
   <script src="js/preferences.js?v=20260812-audio-face-guidance"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260927-requisition-next-step">
+  <link rel="stylesheet" href="css/style.css?v=20260927-requisition-post-pay">
   <link rel="stylesheet" href="css/notifications.css?v=20260804-read-efficiency">
 </head>
 <body class="staff-page">
@@ -401,6 +401,7 @@
     </div>
     <form id="financeDecisionForm" class="workflow-form">
       <p id="financeDecisionRecord" class="decision-record-reference"></p>
+      <p id="financePostingSummary" class="muted" hidden></p>
       <label>Decision notes<textarea name="notes" rows="2"></textarea></label>
       <fieldset id="financeDecisionExtra" class="decision-verification" hidden>
         <legend id="financeDecisionExtraLegend">Imprest details</legend>
@@ -409,6 +410,8 @@
         <label data-decision-extra="disbursementReference">Disbursement reference<input name="disbursementReference"></label>
         <label data-decision-extra="issueDate">Issue date<input name="issueDate" type="date"></label>
         <label data-decision-extra="retirementDate">Retirement date<input name="retirementDate" type="date"></label>
+        <label data-decision-extra="postingDate">Posting / payment date<input name="postingDate" type="date"></label>
+        <label data-decision-extra="paymentReference">Payment / posting reference<input name="paymentReference" placeholder="Bank transfer, cheque, cash voucher or payable reference"></label>
       </fieldset>
       <fieldset id="financeEndorsementOptions" class="approval-defaults">
         <legend>Apply to this document</legend>
@@ -434,7 +437,7 @@
   <script src="js/app-dialogs.js?v=20260910-detailed-messages"></script>
   <script src="js/list-sorting.js?v=20260815-shared-list-sorting"></script>
   <script src="js/academic-results-analysis.js?v=20260918-academic-readability"></script>
-  <script src="js/admin.js?v=20260927-requisition-next-step"></script>
+  <script src="js/admin.js?v=20260927-requisition-post-pay"></script>
   <script src="js/web-push.js?v=20260927-spoken-alerts"></script>
   <script src="js/spoken-notifications.js?v=20260927-spoken-alerts"></script>
   <script src="js/notifications.js?v=20260927-spoken-alerts"></script>
