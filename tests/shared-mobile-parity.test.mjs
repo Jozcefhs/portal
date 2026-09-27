@@ -5,13 +5,13 @@ import { readFile } from 'node:fs/promises';
 const portalRoot = new URL('../', import.meta.url);
 const sharedVersion = '20260903-hotel-tabs';
 const pageStyleVersions = new Map([
-  ['admin.html', '20260924-senior-classroom-departments'],
+  ['admin.html', '20260927-simple-face-capture'],
   ['setup.html', '20260923-youtube-tutorials'],
   ['parent-dashboard.html', '20260923-parent-tutorials'],
   ['plan-management.html', '20260830-dual-currency-pricing'],
   ['register-organization.html', '20260918-neutral-plan-cards']
 ]);
-const adminScriptVersion = '20260927-officer-requisition-edit';
+const adminScriptVersion = '20260927-simple-face-capture';
 const parentScriptVersion = '20260923-parent-tutorials';
 const notificationScriptVersion = '20260927-spoken-alerts';
 const notificationStyleVersion = '20260804-read-efficiency';
@@ -120,7 +120,7 @@ test('all portal pages reference the current shared stylesheet version', () => {
 });
 
 test('service worker refreshes the shared school, church, and parent assets', () => {
-  assert.match(serviceWorker, /dynamax-v303-officer-requisition-edit/);
+  assert.match(serviceWorker, /dynamax-v304-simple-face-capture/);
   assert.match(serviceWorker, /'\/verify-result\.html'/);
   assert.match(serviceWorker, /'\/js\/verify-result\.js'/);
   assert.match(serviceWorker, /'\/css\/school-landing\.css'/);

@@ -414,10 +414,10 @@ test('front and back camera selection covers staff enrollment and every student 
   assert.match(uiSource, /cameraFacingLabel\(facingMode\)/);
   assert.match(uiSource, /setAttribute\('data-facing-mode', actualFacingMode \|\| facingMode\)/);
   assert.match(cssSource, /data-facing-mode="environment"/);
-  assert.match(uiSource, /<label class="student-face-camera-select"/);
+  assert.match(uiSource, /<label class="student-face-camera-field"/);
   assert.match(uiSource, /bindCameraSelector\(dialog, captureButton\)/);
-  assert.match(uiSource, /allowCameraSelection \? '<div class="student-face-camera-toolbar"/);
-  assert.match(uiSource, /Camera for this lookup/);
+  assert.match(uiSource, /allowCameraSelection \? '<label class="student-face-camera-field"/);
+  assert.match(uiSource, /Choose camera for face capture/);
   assert.match(uiSource, /Front camera/);
   assert.match(uiSource, /Back camera/);
   assert.match(uiSource, /const allowCameraSelection = options\.allowCameraSelection !== false/);
@@ -456,12 +456,12 @@ test('the capture pipeline keeps enrollment strong while making routine checks f
   assert.match(uiSource, /sampleCount: ENROLLMENT_SAMPLE_COUNT/);
   assert.match(uiSource, /Move closer to the camera\./);
   assert.match(uiSource, /Improve the lighting and hold the phone steady\./);
-  assert.match(uiSource, /Move your face toward the centre of the oval\./);
+  assert.match(uiSource, /Move your face toward the centre of the guide\./);
   assert.match(uiSource, /Blink detected\. Open your eyes and hold still\./);
-  assert.match(uiSource, /You can try again without reopening the camera\./);
+  assert.match(uiSource, /Tap Capture face to retry\./);
 });
 
-test('staff attendance uses a server-issued random blink or head-pose challenge', () => {
+test('staff attendance uses a server-issued head-turn challenge and accepts existing blink tokens', () => {
   for (const action of ['BLINK', 'TURN_LEFT', 'TURN_RIGHT', 'CHIN_UP']) {
     assert.match(uiSource, new RegExp(action));
   }
@@ -473,7 +473,7 @@ test('staff attendance uses a server-issued random blink or head-pose challenge'
   assert.match(uiSource, /staffAttendanceFaceRequest\('challenge'/);
   assert.match(uiSource, /LivenessChallengeToken: activeChallenge\?\.challengeToken/);
   assert.match(uiSource, /LivenessEvidence: livenessEvidence/);
-  assert.match(uiSource, /one random live action is required for each attendance check/);
+  assert.match(uiSource, /Follow one gentle head movement/);
   assert.match(cssSource, /\.student-face-challenge/);
 });
 
@@ -483,7 +483,7 @@ test('eligible Records Desk sessions prepare the model during idle time without 
   assert.match(adminSource, /requestIdleCallback/);
   assert.match(adminSource, /window\.setTimeout\(preload, 300\)/);
   assert.match(adminSource, /preloadFaceRecognitionModel\(\)/);
-  assert.match(adminSource, /student-face-lookup\.js\?v=20260927-camera-reliability/);
+  assert.match(adminSource, /student-face-lookup\.js\?v=20260927-simple-face-capture/);
   const preloaderStart = uiSource.indexOf('export function preloadFaceRecognitionModel');
   const preloaderEnd = uiSource.indexOf('async function startCamera', preloaderStart);
   const preloaderSource = uiSource.slice(preloaderStart, preloaderEnd);
@@ -523,5 +523,5 @@ test('lookup and enrollment are explicitly initiated without consent fields, and
   assert.match(cssSource, /\.student-face-camera-toolbar/);
   assert.match(cssSource, /html\[data-theme="dark"\] \.student-face-dialog/);
   assert.match(cssSource, /@media\(max-width:680px\)/);
-  assert.match(adminHtmlSource, /css\/style\.css\?v=20260924-senior-classroom-departments/);
+  assert.match(adminHtmlSource, /css\/style\.css\?v=20260927-simple-face-capture/);
 });

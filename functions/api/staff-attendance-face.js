@@ -27,10 +27,10 @@ import {
 const clean = (value) => String(value ?? '').trim();
 const lower = (value) => clean(value).toLowerCase();
 const LIVENESS_CHALLENGES = Object.freeze([
-  { action: 'BLINK', label: 'Blink once', instruction: 'Blink once, then keep looking at the camera.', symbol: '\u25c9' },
-  { action: 'TURN_LEFT', label: 'Turn left', instruction: 'Turn your head towards the left arrow, then return to the centre.', symbol: '\u2190' },
-  { action: 'TURN_RIGHT', label: 'Turn right', instruction: 'Turn your head towards the right arrow, then return to the centre.', symbol: '\u2192' },
-  { action: 'CHIN_UP', label: 'Raise your chin', instruction: 'Raise your chin slightly, then return your face to the centre.', symbol: '\u2191' }
+  // Sustained, small movements work on slow cameras too. Keep BLINK validation
+  // below for already-issued challenges; do not require a split-second blink.
+  { action: 'TURN_LEFT', label: 'Turn left', instruction: 'Slowly turn your head a little to your left and hold.', symbol: '\u2190' },
+  { action: 'TURN_RIGHT', label: 'Turn right', instruction: 'Slowly turn your head a little to your right and hold.', symbol: '\u2192' }
 ]);
 
 function failure(message, status = 400) {
@@ -143,7 +143,7 @@ function attendanceScope(body = {}) {
   return { direction, siteId };
 }
 
-function randomLivenessChallenge() {
+export function randomLivenessChallenge() {
   const random = crypto.getRandomValues(new Uint32Array(1))[0];
   return LIVENESS_CHALLENGES[random % LIVENESS_CHALLENGES.length];
 }
@@ -168,7 +168,7 @@ async function challenge(env, user, body) {
   };
 }
 
-function validateLivenessEvidence(action, evidence = {}) {
+export function validateLivenessEvidence(action, evidence = {}) {
   const suppliedAction = clean(evidence.action).toUpperCase();
   const durationMs = Number(evidence.durationMs);
   if (suppliedAction !== action || evidence.completed !== true || evidence.neutralEstablished !== true ||

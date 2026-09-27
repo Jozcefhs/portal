@@ -1115,7 +1115,7 @@ async function attendancePasskeyProof(siteId, direction) {
 
 function attendanceFaceModule() {
   if (!attendanceFaceModulePromise) {
-    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260927-camera-reliability').catch((error) => {
+    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260927-simple-face-capture').catch((error) => {
       attendanceFaceModulePromise = null;
       throw error;
     });
@@ -7718,7 +7718,7 @@ async function loadStaffAttendance() {
           </section>
           <section class="attendance-settings-panel" id="attendancePolicyPanelIdentity" role="tabpanel" aria-labelledby="attendancePolicyTabIdentity" data-attendance-policy-panel="identity" hidden>
             <div class="config-grid"><label>Clock identity verification <select name="IdentityVerification"><option value="NONE"${selectedOption(identityMode, 'NONE')}>Location/network only</option><option value="PASSKEY"${selectedOption(identityMode, 'PASSKEY')}>Device unlock required</option><option value="FACE"${selectedOption(identityMode, 'FACE')}>Live face recognition required</option></select></label></div>
-            <p class="attendance-settings-note"><strong>Device unlock</strong> uses the phone or computer PIN, password, fingerprint or built-in face unlock. <strong>Live face recognition</strong> uses the staff member's encrypted mathematical face template, requires a blink, and provides visual and spoken camera guidance.</p>
+            <p class="attendance-settings-note"><strong>Device unlock</strong> uses the phone or computer PIN, password, fingerprint or built-in face unlock. <strong>Live face recognition</strong> uses the staff member's encrypted mathematical face template and one gentle head movement, with visual and spoken camera guidance.</p>
           </section>
           <section class="attendance-settings-panel" id="attendancePolicyPanelPresence" role="tabpanel" aria-labelledby="attendancePolicyTabPresence" data-attendance-policy-panel="presence" hidden>
             <div class="config-grid">
@@ -9308,7 +9308,7 @@ function preloadRecordsDeskFaceRecognition() {
   recordsDeskFacePreloadScheduled = true;
   const preload = () => {
     recordsDeskFacePreloadScheduled = false;
-    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260927-camera-reliability')
+    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260927-simple-face-capture')
       .then((module) => module.preloadFaceRecognitionModel())
       .catch(() => {
         recordsDeskFacePreloadPromise = null;
@@ -9322,7 +9322,7 @@ function preloadRecordsDeskFaceRecognition() {
 }
 
 async function openStudentFaceLookupDialog(options = {}) {
-  const module = await import('./student-face-lookup.js?v=20260927-camera-reliability');
+  const module = await import('./student-face-lookup.js?v=20260927-simple-face-capture');
   return module.openStudentFaceLookup(options);
 }
 

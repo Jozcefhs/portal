@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { eyeOpenness, blinkFrameState, waitForCameraFrames, captureReadiness, captureDescriptor } from '../js/student-face-lookup.js';
+import { eyeOpenness, blinkFrameState, waitForCameraFrames, captureReadiness, captureDescriptor, faceGuideSize } from '../js/student-face-lookup.js';
+import { randomLivenessChallenge, validateLivenessEvidence } from '../functions/api/staff-attendance-face.js';
 
 function faceEyes(gap, rotation = 0) {
   const mesh = Array.from({ length: 468 }, () => [0, 0, 0]);
@@ -50,6 +51,111 @@ test('face guidance refuses low confidence, tiny, clipped and off-centre capture
   assert.equal(captureReadiness({ ...good, box: [300,200,40,60] }, video).ready, false);
   assert.equal(captureReadiness({ ...good, box: [10,0,440,450] }, video).ready, false);
   assert.equal(captureReadiness({ ...good, box: [560,100,160,230] }, video).ready, false);
+});
+
+test('portrait and landscape guides keep face proportions and accept a face that fits the actual frame', () => {
+  for (const [width, height] of [[480, 640], [640, 480], [360, 640], [1280, 720]]) {
+    const guide = faceGuideSize(width, height);
+    assert.ok(Math.abs((guide.width * width) / (guide.height * height) - 0.76) < 0.001);
+    assert.ok(guide.width <= 78.001 && guide.height <= 76.001);
+  }
+  const video = { videoWidth: 480, videoHeight: 640 };
+  assert.equal(captureReadiness({ faceScore: 0.9, box: [100, 100, 270, 430] }, video).ready, true);
+  assert.equal(captureReadiness({ faceScore: 0.9, box: [-5, 100, 270, 430] }, video).ready, false);
+});
+
+test('new server challenges use head turns and validation still rejects incomplete or wrong evidence', () => {
+  for (let index = 0; index < 100; index++) {
+    const challenge = randomLivenessChallenge();
+    assert.ok(['TURN_LEFT', 'TURN_RIGHT'].includes(challenge.action));
+    assert.match(challenge.instruction, /hold/);
+  }
+  const valid = { action: 'TURN_LEFT', completed: true, neutralEstablished: true, actionObserved: true,
+    returnedToCentre: true, durationMs: 2000, observedGesture: 'facing left', maximumAbsoluteYawDelta: 0.3 };
+  assert.doesNotThrow(() => validateLivenessEvidence('TURN_LEFT', valid));
+  for (const invalid of [{ returnedToCentre: false }, { actionObserved: false }, { neutralEstablished: false },
+    { maximumAbsoluteYawDelta: 0.05 }, { observedGesture: 'facing right' }, { action: 'BLINK' }]) {
+    assert.throws(() => validateLivenessEvidence('TURN_LEFT', { ...valid, ...invalid }));
+  }
+});
+
+function liveFrame({ yaw = 0, pitch = 0.32, gap = 2.4, gesture = '', count = 1 } = {}) {
+  const face = { ...faceEyes(gap), faceScore: 0.95, box: [100, 100, 270, 430],
+    rotation: { angle: { yaw, pitch, roll: 0.04 } } };
+  return { face: Array.from({ length: count }, () => structuredClone(face)),
+    gesture: gesture ? [{ face: 0, gesture }] : [] };
+}
+
+function captureHarness(t, frames, { inferenceMs = 350 } = {}) {
+  let now = 10000;
+  t.mock.method(Date, 'now', () => now);
+  globalThis.window = { setTimeout: callback => { now += 50; queueMicrotask(callback); } };
+  t.after(() => { delete globalThis.window; });
+  const video = { videoWidth: 480, videoHeight: 640, srcObject: { getVideoTracks: () => [{ readyState: 'live' }] } };
+  const elements = { '[data-face-video]': video, '[data-face-progress]': {}, '[data-face-status]': {}, '.student-face-guide': {} };
+  const dialog = { open: true, isConnected: true, cameraGeneration: 1, querySelector: key => elements[key] || null };
+  let index = 0;
+  const detections = [];
+  const human = { detect: async (_video, options) => {
+    now += inferenceMs;
+    const frame = structuredClone(frames[Math.min(index++, frames.length - 1)]);
+    detections.push(options.face.description.enabled);
+    if (options.face.description.enabled) for (const face of frame.face) face.embedding = Array(1024).fill(0.25);
+    return frame;
+  } };
+  return { dialog, human, detections };
+}
+
+test('slow portrait capture finishes with a gentle turn, natural narrow eyes and no blink', async t => {
+  const still = liveFrame();
+  const { dialog, human, detections } = captureHarness(t, [still, still, still,
+    liveFrame({ yaw: 0.3, gesture: 'facing left' }), still, still, still, still, still]);
+  let evidence;
+  const descriptor = await captureDescriptor(dialog, human, 3, { onLivenessEvidence: value => { evidence = value; } });
+  assert.equal(descriptor.length, 1024);
+  assert.equal(descriptor[0], 0.25);
+  assert.equal(evidence.action, 'TURN_LEFT');
+  assert.equal(evidence.blinkClosedSeen, false);
+  assert.equal(evidence.actionObserved, true);
+  assert.equal(evidence.returnedToCentre, true);
+  assert.equal(evidence.observedGesture, 'facing left');
+  assert.ok(detections.slice(0, 6).every(value => value === false), 'descriptor work waits until the live action finishes');
+});
+
+test('signed right-turn and legacy blink challenges require their own movement sequence', async t => {
+  const still = liveFrame();
+  for (const [challenge, action] of [
+    [{ action: 'TURN_RIGHT' }, liveFrame({ yaw: -0.3, gesture: 'facing right' })],
+    [{ action: 'BLINK' }, liveFrame({ gap: 0.7 })]
+  ]) {
+    const { dialog, human } = captureHarness(t, [still, still, still, action, action, still, still, still]);
+    let evidence;
+    await captureDescriptor(dialog, human, 1, { challenge, onLivenessEvidence: value => { evidence = value; } });
+    assert.equal(evidence.action, challenge.action);
+    assert.equal(evidence.completed, true);
+    assert.equal(evidence.blinkClosedSeen, challenge.action === 'BLINK');
+  }
+});
+
+test('static frames, a wrong direction and a face that never returns cannot pass capture', async t => {
+  const still = liveFrame();
+  for (const frames of [
+    [still],
+    [still, still, still, liveFrame({ yaw: -0.3, gesture: 'facing right' }), still],
+    [still, still, still, liveFrame({ yaw: 0.3, gesture: 'facing left' })]
+  ]) {
+    const { dialog, human } = captureHarness(t, frames, { inferenceMs: 600 });
+    let evidence;
+    await assert.rejects(captureDescriptor(dialog, human, 1, { onLivenessEvidence: value => { evidence = value; } }), /Capture paused/);
+    assert.equal(evidence, undefined);
+  }
+});
+
+test('another person entering the frame invalidates the observed live action', async t => {
+  const still = liveFrame();
+  const { dialog, human } = captureHarness(t, [still, still, still,
+    liveFrame({ yaw: 0.3, gesture: 'facing left' }), liveFrame({ count: 2 }), still]);
+  await assert.rejects(captureDescriptor(dialog, human, 1), /Capture paused/);
 });
 
 test('closing the dialog during inference cancels before evidence or a descriptor is returned', async () => {
