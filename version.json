@@ -1,7 +1,7 @@
 {
-  "version": "3.1.8",
+  "version": "3.1.9",
   "channel": "stable",
-  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.8.exe",
-  "sha256": "0041fc5e1895244ffaedce5f82566ffe70991c27d65bb97e53eae4062bf2e691",
-  "notes": "Dynamax Desktop v3.1.8 fixes approved-device connection failing with 'main thread is not in main loop' during first-run pairing."
+  "installer_url": "https://github.com/Jozcefhs/portal/releases/download/desktop-stable/Dynamax_Setup_v3.1.9.exe",
+  "sha256": "ebdacc6bcfb006ff4734531086a242a119b62033b2d25be72ae02ad017244e37",
+  "notes": "Dynamax Desktop v3.1.9 restores Accounts Officer Post / Pay after sign-in and user switching, refreshes approval-role actions, and keeps accounting buttons visible on narrower screens."
 }
