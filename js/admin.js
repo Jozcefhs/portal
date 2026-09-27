@@ -16955,6 +16955,21 @@ function financeWorkflowStatus(record = {}, type = '') {
     : status;
 }
 
+function financeRequisitionStageHelp(record, capabilities) {
+  const status = clean(financeWorkflowStatus(record, 'requisition')).toLowerCase();
+  const next = {
+    submitted: 'Awaiting Accounts confirmation',
+    'accounts confirmed': 'Awaiting Admin review',
+    'admin reviewed': 'Awaiting Director / Super Admin approval',
+    'management authorized': 'Awaiting Director / Super Admin approval',
+    approved: 'Awaiting Accounts posting / payment'
+  }[status];
+  if (!next) return '';
+  const directorWaiting = capabilities.canApproveRequisitions && ['submitted', 'accounts confirmed'].includes(status);
+  const revised = clean(record.ResubmittedAt) && ['submitted', 'accounts confirmed', 'admin reviewed'].includes(status);
+  return `<small class="finance-next-step">${escapeHtml(next)}${directorWaiting ? '<br>Director approval becomes available after Admin review.' : ''}${revised ? '<br>Edited and resubmitted: earlier approvals were reset.' : ''}</small>`;
+}
+
 function financeRecordRow(record, type, capabilities) {
   const id = pick(record, type === 'bill' ? ['BillNo', '__id'] : ['ExpenseNo', '__id']);
   const status = financeWorkflowStatus(record, type);
@@ -16981,18 +16996,22 @@ function financeRecordRow(record, type, capabilities) {
       : clean(status).toLowerCase();
     let nextDecision = '';
     let nextLabel = '';
+    let buttonLabel = '';
     if (capabilities.canConfirmRequisitions && workflowStatus === 'submitted') {
       nextDecision = 'Accounts Confirmed';
       nextLabel = 'Confirm as Accounts Officer';
+      buttonLabel = 'Confirm';
     } else if (capabilities.canReviewRequisitions && workflowStatus === 'accounts confirmed') {
       nextDecision = 'Admin Reviewed';
       nextLabel = 'Review as Admin';
+      buttonLabel = 'Review';
     } else if (capabilities.canApproveRequisitions && ['admin reviewed', 'management authorized'].includes(workflowStatus)) {
       nextDecision = 'Approved';
       nextLabel = 'Approve as Director or Super Admin';
+      buttonLabel = 'Approve';
     }
     if (nextDecision) {
-      actions += `<button type="button" class="compact-icon-action compact-approve-action" data-workflow-action="advanceRequisition" data-decision="${escapeHtml(nextDecision)}" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="${escapeHtml(nextLabel)} ${escapeHtml(id)}" title="${escapeHtml(nextLabel)}"><span aria-hidden="true">&#10003;</span></button>`;
+      actions += `<button type="button" class="compact-icon-action compact-approve-action finance-stage-action" data-workflow-action="advanceRequisition" data-decision="${escapeHtml(nextDecision)}" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="${escapeHtml(nextLabel)} ${escapeHtml(id)}" title="${escapeHtml(nextLabel)}"><span aria-hidden="true">&#10003;</span> ${escapeHtml(buttonLabel)}</button>`;
       actions += `<button type="button" class="compact-icon-action compact-reject-action" data-workflow-action="advanceRequisition" data-decision="Rejected" data-record-type="${type}" data-record-id="${escapeHtml(id)}" aria-label="Reject ${escapeHtml(id)} at the current stage" title="Reject at current stage"><span aria-hidden="true">&#10005;</span></button>`;
     }
   } else {
@@ -17017,7 +17036,7 @@ function financeRecordRow(record, type, capabilities) {
       <td>${escapeHtml(record.Department || '-')}</td>
       <td>${escapeHtml(record.Date || '-')}</td>
       <td>${escapeHtml(type === 'bill' ? (record.DueDate || '-') : (record.Vendor || '-'))}</td>
-      <td><span class="workflow-status status-${escapeHtml(clean(status).toLowerCase().replace(/\s+/g, '-'))}">${escapeHtml(status)}</span></td>
+      <td><span class="workflow-status status-${escapeHtml(clean(status).toLowerCase().replace(/\s+/g, '-'))}">${escapeHtml(status)}</span>${type === 'requisition' ? financeRequisitionStageHelp(record, capabilities) : ''}</td>
       <td><div class="finance-row-actions">${actions}</div></td>
     </tr>
   `;
@@ -17521,7 +17540,7 @@ function openRequisitionEditor(record) {
   if (submitButton) submitButton.textContent = 'Resubmit Requisition';
   setStatus(
     form.querySelector('[data-form-status]'),
-    `Editing revision ${revision}. Resubmission archives this revision and restarts Accounts confirmation, Management authorization, and Admin approval.`
+    `Editing revision ${revision}. Resubmission archives this revision and restarts Accounts confirmation, Admin review, and Director / Super Admin approval. Editing as Admin does not count as reviewing the revised request.`
   );
   dialog.showModal();
 }

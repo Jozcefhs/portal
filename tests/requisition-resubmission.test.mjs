@@ -170,7 +170,8 @@ test('web companion gives Super Admin a populated edit-and-resubmit form', () =>
   assert.match(adminJs, /function openRequisitionEditor\(record\)/);
   assert.match(adminJs, /recordVersion/);
   assert.match(adminJs, /resubmitRequisition/);
-  assert.match(adminJs, /Resubmission archives this revision and restarts Accounts confirmation, Management authorization, and Admin approval/);
+  assert.match(adminJs, /Resubmission archives this revision and restarts Accounts confirmation, Admin review, and Director \/ Super Admin approval/);
+  assert.match(adminJs, /Editing as Admin does not count as reviewing the revised request/);
   assert.match(adminJs, /const administrativelyApproved = Boolean\(clean\(record\.AdminReviewedAt\)\)/);
   assert.match(adminJs, /administrativelyApproved[\s\S]*?disabled aria-label="Editing locked after administrative approval/);
 });

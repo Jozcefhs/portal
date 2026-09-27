@@ -605,7 +605,7 @@ export async function resubmitRequisition(env, user, body) {
   await notifyStaffRequisitionSubmitted(env, payload, actor(user)).catch(() => null);
   return {
     ok: true,
-    message: `Requisition edited and resubmitted as revision ${nextRevision}.`,
+    message: `Requisition edited and resubmitted as revision ${nextRevision}. Awaiting Accounts confirmation, then Admin review and Director / Super Admin approval.`,
     requisition: payload,
     revision: {
       RevisionId: revisionId,

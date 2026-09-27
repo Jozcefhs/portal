@@ -11,6 +11,7 @@ Open **Staff & Permissions → Manage Staff Account → Allow this officer to ed
 - Other officers start without edit access. Revoking the grant takes effect on the next authenticated request; refresh the finance workspace to update buttons. Client-supplied permission flags cannot override the stored grant.
 - Grants and revocations are logged in the security audit. The officer keeps the existing branch, department and school-section restrictions.
 - Editing a submitted or reviewed requisition uses the common edit/resubmit transaction: earlier endorsements are cleared, the prior revision is archived, and approval restarts at Accounts. Final-approved, paid, posted and cancelled records remain locked. Approval/status actions cannot silently alter requisition contents.
+- An Admin edit is not an Admin review of the new revision. After resubmission, Accounts must confirm and Admin must select **Review** before Director / Super Admin sees **Approve**. The register shows the pending office and explains why Director approval is not yet available; it never skips a stage or reuses an earlier revision's approval.
 - A requester may still prepare their own desktop draft without delegated edit access. Native desktop uses **Edit / Resubmit Selected**; material item quantities/prices are edited through the existing web material editor.
 
 ## Recorded history
