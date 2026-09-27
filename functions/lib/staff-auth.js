@@ -13,6 +13,7 @@ import {
   withRequiredRoleModules
 } from './role-module-access.js';
 import { getSchoolStructure } from './school-scope.js';
+import { requisitionEditGrant } from './requisition-edit-permission.js';
 import { applyStaffBranchContext } from './staff-branch-context.js';
 import { refreshOrganizationPlanPolicy } from './plan-policy-sync.js';
 
@@ -252,6 +253,7 @@ function publicUser(user) {
     branchId: clean(user.BranchId || user.branchId),
     schoolSectionAccess: clean(user.SchoolSectionAccess || user.schoolSectionAccess) || 'All',
     approvalEnabled: !['no', 'false', '0', ''].includes(lower(user.ApprovalEnabled ?? user.approvalEnabled ?? false)),
+    requisitionEditEnabled: requisitionEditGrant(user.RequisitionEditEnabled ?? user.requisitionEditEnabled, user),
     approvalMaxAmount: Number(user.ApprovalMaxAmount || user.approvalMaxAmount || 0) || 0,
     approvalAccounts: Array.isArray(user.ApprovalAccounts || user.approvalAccounts)
       ? (user.ApprovalAccounts || user.approvalAccounts).map(clean).filter(Boolean)

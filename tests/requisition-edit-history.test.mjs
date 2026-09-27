@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
-import { recordRequisitionEdit, requisitionEditHistory, requisitionEditDetails } from '../functions/lib/requisition-edit-history.js';
+import { recordRequisitionEdit, requisitionEditHistory, requisitionEditDetails, requisitionChangedFields } from '../functions/lib/requisition-edit-history.js';
+import { assertRequisitionEditPermission } from '../functions/lib/requisition-edit-permission.js';
 import { buildRequisitionResubmission } from '../functions/api/finance-workflow.js';
 import { applyAuthoritativeActor } from '../functions/lib/backend-security.js';
 import { REQUISITION_STATUS, requisitionWorkflowStatus, assertRequisitionTransition } from '../functions/lib/requisition-workflow.js';
@@ -48,11 +49,12 @@ test('legacy resubmissions are visible but a reviewer is never misrepresented as
 });
 
 const backend = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
-const saveSource = backend.slice(backend.indexOf('async function saveAccountingExpense('), backend.indexOf('\nfunction validImprestDate('));
+const saveSource = backend.slice(backend.indexOf('function accountingRequisitionActor('), backend.indexOf('\nfunction validImprestDate('));
 function desktopHarness(existing, commit) {
-  return vm.runInNewContext(`(${saveSource})`, {
+  return vm.runInNewContext(`(() => { ${saveSource}; return saveAccountingExpense; })()`, {
     clean: value => String(value ?? '').trim(), lower: value => String(value ?? '').trim().toLowerCase(),
     requireAccountingRole() {}, DEPARTMENT_ACCOUNTING_ROLES: [],
+    accountingRequestBranch: () => 'main', accountingDepartment: () => '', assertRequisitionEditPermission, requisitionChangedFields,
     getDocumentByIdOrField: async () => structuredClone(existing), accountingWriteBranch: () => 'main',
     asMoneyNumber: Number, REQUISITION_STATUS, requisitionWorkflowStatus, assertRequisitionTransition,
     enforceDepartmentSubmission: () => '', nowIso: () => timestamp, recordRequisitionEdit, requisitionEditDetails,
@@ -65,8 +67,9 @@ function desktopHarness(existing, commit) {
 test('desktop saves edit, previous snapshot and named audit in a single conditional commit in every edition', async () => {
   for (const Edition of ['School', 'Church', 'Other Organisation']) {
     let writes;
-    const save = desktopHarness(before, async (_env, batch) => { writes = batch; });
-    const body = applyAuthoritativeActor({ ...before, Amount: 150, RecordVersion: 'version-1',
+    const draft = { ...before, Status: 'Draft' };
+    const save = desktopHarness(draft, async (_env, batch) => { writes = batch; });
+    const body = applyAuthoritativeActor({ ...draft, Amount: 150, RecordVersion: 'version-1',
       RecordedBy: 'Spoof', UserRole: 'Super Admin', Edition }, { ...officer, role: 'Director' });
     const result = await save({}, body);
     assert.equal(result.expense.EditedBy, 'Ada Director');
@@ -83,8 +86,9 @@ test('desktop saves edit, previous snapshot and named audit in a single conditio
 
 test('desktop refuses stale edits and surfaces atomic commit failures', async () => {
   let commits = 0;
-  const save = desktopHarness(before, async () => { commits++; throw new Error('conflict'); });
-  const body = applyAuthoritativeActor({ ...before, Amount: 130 }, { ...officer, role: 'Director' });
+  const draft = { ...before, Status: 'Draft' };
+  const save = desktopHarness(draft, async () => { commits++; throw new Error('conflict'); });
+  const body = applyAuthoritativeActor({ ...draft, Amount: 130 }, { ...officer, role: 'Director' });
   await assert.rejects(save({}, { ...body, RecordVersion: 'old' }), error => error.code === 'FINANCE_WRITE_CONFLICT');
   assert.equal(commits, 0);
   await assert.rejects(save({}, body), /conflict/);

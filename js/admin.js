@@ -16966,9 +16966,9 @@ function financeRecordRow(record, type, capabilities) {
     : pick(record, ['Description']) || 'Requisition';
   const description = pick(record, ['Description']);
   const accountsReviewed = clean(record.AccountsReviewStatus).toLowerCase() === 'reviewed';
-  const administrativelyApproved = Boolean(clean(record.AdminReviewedAt));
+  const administrativelyApproved = Boolean(clean(record.AdminReviewedAt)) || clean(status).toLowerCase() === 'approved';
   let actions = `<button type="button" class="compact-icon-action compact-print-action" data-print-finance-record="${escapeHtml(id)}" data-record-type="${type}" aria-label="View and print ${escapeHtml(id)}" title="View and print"><span aria-hidden="true">&#128424;&#65038;</span></button>`;
-  if (type === 'requisition' && capabilities.canAdminOverride) {
+  if (type === 'requisition' && capabilities.canEditRequisitions) {
     if (administrativelyApproved) {
       actions += `<button type="button" class="compact-icon-action compact-edit-action" disabled aria-label="Editing locked after administrative approval for ${escapeHtml(id)}" title="Editing locked after administrative approval"><span aria-hidden="true">&#9998;</span></button>`;
     } else if (!['paid', 'posted', 'processed', 'voided', 'cancelled', 'canceled'].includes(clean(status).toLowerCase())) {
@@ -18604,6 +18604,8 @@ function renderStaffUsers() {
         </div></section>
         <section class="config-group"><header><strong>Finance approval</strong><small>Approval is blocked unless explicitly enabled by an administrator.</small></header><div class="config-grid">
           <label class="check-row config-switch"><input name="ApprovalEnabled" type="checkbox"> Allow this user to approve finance documents</label>
+          <label class="check-row config-switch"><input name="RequisitionEditEnabled" type="checkbox"> Allow this officer to edit and resubmit requisitions</label>
+          <small data-requisition-edit-help>Separate from approval authority. Edits restart Accounts review and record the officer's name. Final-approved, paid and posted documents remain locked.</small>
           <label>Maximum approval amount<input name="ApprovalMaxAmount" type="number" min="0" step="0.01" value="0" data-finance-input><small>Zero blocks approval. Super Admin is unrestricted.</small></label>
         </div><div class="approval-account-list config-option-list"><strong>Accounts this user may approve directly from</strong>${staffApprovalAccounts.length ? staffApprovalAccounts.map((account) => `<label class="check-row"><input type="checkbox" name="ApprovalAccountOption" value="${escapeHtml(account.Code)}"> ${escapeHtml(account.Code)} - ${escapeHtml(account.Name || '')}</label>`).join('') : '<small>Create active Chart of Accounts entries in the desktop Finance tab first.</small>'}</div></section>
         <section class="config-group"><header><strong>Web companion access</strong><small>Optional user-specific override. Leave all clear to inherit the module access saved for the selected role. My Payroll and Finance Requests &amp; Imprest remain available to every staff account.</small></header><div class="approval-account-list config-option-list config-option-grid">${permissionTabs.map(([key, label]) => `<label class="check-row"><input type="checkbox" name="TabAccessOption" value="${escapeHtml(key)}"> ${escapeHtml(label)}</label>`).join('')}</div></section>
@@ -18679,6 +18681,23 @@ function syncSchoolLeadershipSectionForRole(form) {
   syncSchoolLeadershipRoleOptions(form);
 }
 
+function syncRequisitionEditPermission(form, roleChanged = false) {
+  const input = form.elements.RequisitionEditEnabled;
+  if (!input) return;
+  const role = clean(form.elements.Role.value);
+  const administrator = ['Super Admin', 'Director'].includes(role);
+  const eligible = administrator || ['Accounts Officer', 'Admin', 'Management'].includes(role)
+    || form.elements.ApprovalEnabled.checked;
+  if (roleChanged || !eligible) input.checked = false;
+  if (administrator) input.checked = true;
+  input.disabled = administrator || !eligible;
+  form.querySelector('[data-requisition-edit-help]').textContent = administrator
+    ? 'Super Admin and Director retain administrator edit access. Final-approved, paid and posted documents remain locked.'
+    : eligible
+      ? 'Grant this officer edit access separately from approval authority. Every edit restarts Accounts review and records the officer’s name.'
+      : 'Available to finance workflow officers or staff authorised to approve finance documents.';
+}
+
 function openStaffUserDialog(username = '') {
   const dialog = document.getElementById('staffUserDialog');
   const form = document.getElementById('staffUserForm');
@@ -18703,6 +18722,7 @@ function openStaffUserDialog(username = '') {
       form.elements.SchoolSectionAccess.value = user.SchoolSectionAccess || 'All';
     }
     form.elements.ApprovalEnabled.checked = yes(user.ApprovalEnabled);
+    form.elements.RequisitionEditEnabled.checked = yes(user.RequisitionEditEnabled);
     setFinancialInputValue(form.elements.ApprovalMaxAmount, user.ApprovalMaxAmount || 0);
     const allowedAccounts = new Set(user.ApprovalAccounts || []);
     form.querySelectorAll('[name="ApprovalAccountOption"]').forEach((input) => { input.checked = allowedAccounts.has(input.value); });
@@ -18721,9 +18741,11 @@ function openStaffUserDialog(username = '') {
     form.elements.Active.checked = true;
     form.elements.MustChangePassword.checked = true;
     form.elements.ApprovalEnabled.checked = false;
+    form.elements.RequisitionEditEnabled.checked = false;
     if (form.elements.BiometricLookupEnabled) form.elements.BiometricLookupEnabled.checked = false;
   }
   syncSchoolLeadershipRoleOptions(form);
+  syncRequisitionEditPermission(form);
   dialog.showModal();
 }
 
@@ -18738,6 +18760,10 @@ function bindStaffUserEvents() {
   });
   document.querySelector('#staffUserForm [name="Role"]')?.addEventListener('change', (event) => {
     syncSchoolLeadershipSectionForRole(event.currentTarget.form);
+    syncRequisitionEditPermission(event.currentTarget.form, true);
+  });
+  document.querySelector('#staffUserForm [name="ApprovalEnabled"]')?.addEventListener('change', (event) => {
+    syncRequisitionEditPermission(event.currentTarget.form);
   });
   document.getElementById('newStaffUser')?.addEventListener('click', () => openStaffUserDialog());
   document.getElementById('refreshStaffUsers')?.addEventListener('click', (event) => {
@@ -18895,6 +18921,7 @@ function bindStaffUserEvents() {
     payload.Active = form.elements.Active.checked;
     payload.MustChangePassword = form.elements.MustChangePassword.checked;
     payload.ApprovalEnabled = form.elements.ApprovalEnabled.checked;
+    payload.RequisitionEditEnabled = form.elements.RequisitionEditEnabled.checked;
     if (form.elements.BiometricLookupEnabled) {
       payload.BiometricLookupEnabled = form.elements.BiometricLookupEnabled.checked;
     }

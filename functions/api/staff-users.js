@@ -34,6 +34,7 @@ import {
 import { refreshOrganizationPlanPolicy } from '../lib/plan-policy-sync.js';
 import { loadOrganizationNameProfile } from '../lib/organization-name-format.js';
 import { formatPersonName } from '../lib/person-name-format.js';
+import { canEditRequisitions, requisitionEditGrant, requisitionEditPermissionAuditWrite } from '../lib/requisition-edit-permission.js';
 
 function clean(value) { return String(value ?? '').trim(); }
 function lower(value) { return clean(value).toLowerCase(); }
@@ -164,6 +165,7 @@ function publicUser(row, edition = 'school', featureFlags = null, profile = {}) 
         || row.Edition || row.edition
     ),
     ApprovalEnabled: row.ApprovalEnabled === undefined ? false : activeValue(row.ApprovalEnabled),
+    RequisitionEditEnabled: canEditRequisitions(row),
     ApprovalMaxAmount: Number(row.ApprovalMaxAmount || 0) || 0,
     ApprovalAccounts: scopedApprovalAccounts(row.ApprovalAccounts, normalizedEdition),
     BiometricLookupEnabled: explicitOptIn(row.BiometricLookupEnabled) && normalizedEdition === 'school',
@@ -306,6 +308,9 @@ async function saveUser(env, actor, body) {
       role, body.SchoolSectionAccess || body.schoolSectionAccess, edition
     ),
     ApprovalEnabled: role === 'Super Admin' ? true : activeValue(body.ApprovalEnabled ?? false),
+    RequisitionEditEnabled: requisitionEditGrant(body.RequisitionEditEnabled ?? existing?.RequisitionEditEnabled, {
+      Role: role, ApprovalEnabled: activeValue(body.ApprovalEnabled ?? false)
+    }),
     ApprovalMaxAmount: Math.max(0, Number(body.ApprovalMaxAmount || 0) || 0),
     ApprovalAccounts: scopedApprovalAccounts(body.ApprovalAccounts, edition),
     BiometricLookupEnabled: explicitOptIn(body.BiometricLookupEnabled) && edition === 'school',
@@ -321,7 +326,11 @@ async function saveUser(env, actor, body) {
   };
   delete payload.__id;
   delete payload.__name;
-  await upsertDocument(env, 'staffUsers', id, payload);
+  const permissionAudit = requisitionEditPermissionAuditWrite(existing || {}, payload, actor);
+  await batchUpsertDocuments(env, [
+    { collectionPath: 'staffUsers', documentId: id, data: payload },
+    ...(permissionAudit ? [permissionAudit] : [])
+  ]);
   await audit(env, actor, existing ? 'UPDATE USER' : 'CREATE USER', username, `${role}${department ? ` | ${department}` : ''}`, branchId);
   return { ok: true, message: existing ? 'Staff account updated.' : 'Staff account created.', user: publicUser(payload, edition, actor.featureFlags, profile || {}) };
 }
@@ -354,7 +363,7 @@ async function importUsers(env, actor, body) {
     getSchoolStructure(env),
     loadOrganizationNameProfile(env)
   ]);
-  const writes = []; const failures = []; const seen = new Set();
+  const writes = []; const writeGroups = []; const failures = []; const seen = new Set();
   for (let index = 0; index < users.length; index += 1) {
     try {
       const row = users[index] || {};
@@ -416,6 +425,10 @@ async function importUsers(env, actor, body) {
         ApprovalMaxAmount: clean(row.ApprovalMaxAmount) === ''
           ? Math.max(0, Number(existing?.ApprovalMaxAmount || 0) || 0)
           : Math.max(0, Number(row.ApprovalMaxAmount || 0) || 0),
+        RequisitionEditEnabled: requisitionEditGrant(
+          clean(row.RequisitionEditEnabled) === '' ? existing?.RequisitionEditEnabled : row.RequisitionEditEnabled,
+          { Role: role, ApprovalEnabled: clean(row.ApprovalEnabled) === '' ? existing?.ApprovalEnabled : row.ApprovalEnabled }
+        ),
         ApprovalAccounts: scopedApprovalAccounts(
           clean(row.ApprovalAccounts) === '' ? existing?.ApprovalAccounts : row.ApprovalAccounts,
           edition
@@ -434,12 +447,25 @@ async function importUsers(env, actor, body) {
         UpdatedAt: nowIso(), UpdatedBy: actor.displayName || actor.username
       };
       delete payload.__id; delete payload.__name;
-      writes.push({ collectionPath: 'staffUsers', documentId: id, data: payload });
+      const write = { collectionPath: 'staffUsers', documentId: id, data: payload };
+      const permissionAudit = requisitionEditPermissionAuditWrite(existing || {}, payload, actor);
+      writes.push(write);
+      writeGroups.push([write, ...(permissionAudit ? [permissionAudit] : [])]);
     } catch (error) {
       failures.push({ row: index + 2, username: clean(users[index]?.Username), message: error.message || String(error) });
     }
   }
-  if (writes.length) await batchUpsertDocuments(env, writes);
+  // Keep each staff permission change and its audit in the same transaction,
+  // without exceeding Firestore's 500-write batch limit on large imports.
+  let batch = [];
+  for (const group of writeGroups) {
+    if (batch.length + group.length > 500) {
+      await batchUpsertDocuments(env, batch);
+      batch = [];
+    }
+    batch.push(...group);
+  }
+  if (batch.length) await batchUpsertDocuments(env, batch);
   const imported = writes.length;
   const passwordSetupRequired = writes.filter((write) => write.data.PasswordSetupRequired === true).length;
   await audit(env, actor, 'BULK IMPORT', `${imported} staff`, `${failures.length} failed`, actorBranchScope(actor) || 'main');

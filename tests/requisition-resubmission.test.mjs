@@ -28,7 +28,7 @@ test('standard requisition resubmission archives the prior revision and resets d
     Description: 'Old purpose',
     Amount: 12000,
     Vendor: 'Old vendor',
-    Status: 'Approved',
+    Status: 'Admin Reviewed',
     RevisionNumber: 2,
     RequestedAt: '2026-07-20T09:00:00.000Z',
     ApprovedAt: '2026-07-21T09:00:00.000Z',
@@ -51,7 +51,7 @@ test('standard requisition resubmission archives the prior revision and resets d
   assert.equal(result.nextRevision, 3);
   assert.equal(result.revision.RevisionNumber, 2);
   assert.equal(result.revision.Snapshot.Description, 'Old purpose');
-  assert.equal(result.revision.Snapshot.Status, 'Approved');
+  assert.equal(result.revision.Snapshot.Status, 'Admin Reviewed');
   assert.equal(result.revision.Snapshot.__updateTime, undefined);
   assert.equal(result.payload.Description, 'Corrected purpose');
   assert.equal(result.payload.Amount, 14500);
@@ -153,8 +153,8 @@ test('administratively approved material requisitions cannot be edited and resub
   }, admin), /administratively approved requisition cannot be edited or resubmitted/i);
 });
 
-test('finance workflow exposes a Super Admin edit and resubmit action with concurrency and audit controls', () => {
-  assert.match(workflowApi, /clean\(user\.role\) !== 'Super Admin'/);
+test('finance workflow enforces delegated edit permission with concurrency and audit controls', () => {
+  assert.match(workflowApi, /assertRequisitionEditPermission\(user\)/);
   assert.match(workflowApi, /!existing \|\| !scopedRows\(\[existing\], user, capabilities\(user\)\)\.length/);
   assert.match(workflowApi, /assertRequisitionResubmittable\(existing\);\s*const clientVersion/);
   assert.match(workflowApi, /clientVersion !== clean\(existing\.__updateTime\)/);

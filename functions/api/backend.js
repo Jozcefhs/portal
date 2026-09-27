@@ -71,7 +71,9 @@ import { getWebBranding, saveWebBranding } from '../lib/web-branding.js';
 import { saveDocumentBranding } from '../lib/document-branding.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
-import { recordRequisitionEdit, requisitionEditDetails, requisitionEditHistory } from '../lib/requisition-edit-history.js';
+import { recordRequisitionEdit, requisitionEditDetails, requisitionEditHistory, requisitionChangedFields } from '../lib/requisition-edit-history.js';
+import { canEditRequisitions, assertRequisitionEditPermission, requisitionEditGrant, requisitionEditPermissionAuditWrite } from '../lib/requisition-edit-permission.js';
+import { resubmitRequisition } from './finance-workflow.js';
 import { explicitAuditAction, securityAuditAction } from '../lib/security-audit.js';
 import {
   clearOrganizationRestoreCollection,
@@ -7458,6 +7460,19 @@ async function saveChartAccount(env, body) {
   return { ok: true, message: 'Chart of account saved.', account: payload };
 }
 
+function accountingRequisitionActor(body) {
+  const requestedBranch = accountingRequestBranch(body);
+  return {
+    username: clean(body.UserUsername), displayName: clean(body.RecordedBy),
+    role: clean(body.UserRole), assignedRole: clean(body.UserAssignedRole || body.UserRole),
+    department: accountingDepartment(body), branchId: requestedBranch === 'all' ? '' : requestedBranch,
+    schoolSectionAccess: clean(body.UserSchoolSectionAccess) || 'All',
+    approvalEnabled: body.UserApprovalEnabled === true,
+    requisitionEditEnabled: body.UserRequisitionEditEnabled === true,
+    sourcePlatform: 'Desktop'
+  };
+}
+
 async function saveAccountingExpense(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer', 'Management', ...DEPARTMENT_ACCOUNTING_ROLES]);
   const expenseNo = clean(body.ExpenseNo || body.expenseNo) || ledgerDocumentId('EXP');
@@ -7500,6 +7515,19 @@ async function saveAccountingExpense(env, body) {
   const actorName = clean(body.RecordedBy || body.recordedBy);
   const actorUsername = clean(body.UserUsername || body.userUsername);
   const currentWorkflowStatus = requisitionWorkflowStatus(existing);
+  const editActor = accountingRequisitionActor(body);
+  if (existing.ExpenseNo && currentWorkflowStatus !== REQUISITION_STATUS.DRAFT && requestedStatus === REQUISITION_STATUS.SUBMITTED) {
+    // Use the same scoped, version-checked edit/resubmit transaction as the web.
+    // This also clears earlier approvals and signatures before restarting Accounts review.
+    return resubmitRequisition(env, editActor, {
+      ...body, recordId: expenseNo, recordVersion: clean(body.RecordVersion || body.__updateTime),
+      MaterialItems: body.MaterialItems ?? existing.MaterialItems
+    });
+  }
+  if (existing.ExpenseNo && currentWorkflowStatus === REQUISITION_STATUS.DRAFT
+      && lower(actorUsername) !== lower(existing.RequestedByUsername)) {
+    assertRequisitionEditPermission(editActor);
+  }
   let transition = null;
   if (!existing.ExpenseNo) {
     if (![REQUISITION_STATUS.DRAFT, REQUISITION_STATUS.SUBMITTED].includes(requestedStatus)) {
@@ -7545,6 +7573,20 @@ async function saveAccountingExpense(env, body) {
     UpdatedAt: timestamp,
     UpdatedBy: actorName
   };
+  if (transition) {
+    const businessChanges = requisitionChangedFields({
+      ...existing, ExpenseAccount: clean(existing.ExpenseAccount) || '6090',
+      PaymentAccount: clean(existing.PaymentAccount) || '1020'
+    }, payload).filter((field) => field !== 'Notes');
+    if (businessChanges.length) {
+      const err = new Error('Edit and resubmit this requisition before changing its approval status. Approval actions cannot change its contents.');
+      err.status = 409;
+      err.code = 'REQUISITION_EDIT_REQUIRES_RESUBMISSION';
+      throw err;
+    }
+    // Review notes belong to the decision; they are not an edit to the requester's notes.
+    payload.Notes = clean(existing.Notes);
+  }
   if (transition?.event === 'Confirmed') {
     Object.assign(payload, {
       AccountsReviewStatus: 'Confirmed',
@@ -8828,6 +8870,7 @@ async function getAccountingOverview(env, body = {}) {
     ]);
     return {
       ok: true, message: `${department} requisitions and bills loaded.`, synchronized: 0,
+      canEditRequisitions: canEditRequisitions(accountingRequisitionActor(body)),
       branchId, chart: accountingChartForEdition(chart, edition), expenses: branchRows(expenses).filter((row) => sameText(row.Department, department)),
       budgets: branchRows(budgets).filter((row) => sameText(row.Department, department)), vendors: branchRows(vendors),
       supplierBills: branchRows(supplierBills).filter((row) => sameText(row.Department, department)),
@@ -8891,7 +8934,7 @@ async function getAccountingOverview(env, body = {}) {
   reports.receivablesAgeing = buildReceivablesAgeing(scopedInvoices, scopedPayments, filter.DateTo || nowIso().slice(0, 10));
   reports.payablesAgeing = buildAgeing(scopedSupplierBills, filter.DateTo || nowIso().slice(0, 10), 'payable');
   const gatewayReport = buildGatewayCollectionsReport(scopedFormSales, scopedGatewayCharges, filter, scopedPayments, scopedDonations);
-  return { ok: true, message: `Finance and accounting records loaded for ${branchId === 'all' ? 'all branches' : `branch ${branchId}`}.`, synchronized, branchId, filter, chart: scopedChart, journals: scopedJournals, expenses: scopedExpenses, budgets: scopedBudgets, banks: scopedBanks, reconciliations: scopedReconciliations, periods, audit: scopedAudit,
+  return { ok: true, message: `Finance and accounting records loaded for ${branchId === 'all' ? 'all branches' : `branch ${branchId}`}.`, synchronized, branchId, filter, canEditRequisitions: canEditRequisitions(accountingRequisitionActor(body)), chart: scopedChart, journals: scopedJournals, expenses: scopedExpenses, budgets: scopedBudgets, banks: scopedBanks, reconciliations: scopedReconciliations, periods, audit: scopedAudit,
     vendors: scopedVendors, supplierBills: scopedSupplierBills, supplierPayments: scopedSupplierPayments, imprests: scopedImprests, assets: scopedAssets, adjustments: scopedAdjustments, approvalLimits, closeChecklist: scopedCloseChecklist, bankStatementItems: scopedBankStatementItems,
     payrollProfiles: scopedPayrollProfiles, payrollRuns: scopedPayrollRuns, payrollItems: scopedPayrollItems, payrollPayments: scopedPayrollPayments, payrollAudit: scopedPayrollAudit, payrollTaxProfiles: payrollTaxProfilesWithUsage, payrollTaxOverrides: scopedPayrollTaxOverrides,
     payrollSalaryComponents, payrollTaxBands, payrollTaxReliefs, payrollLedgerMappings, donations: scopedDonations, gatewayReport, reports };
@@ -9496,13 +9539,22 @@ async function saveStaffUserFromDesktop(env, body) {
     PasswordHash: clean(incoming.PasswordHash),
     PasswordIterations: asMoneyNumber(incoming.PasswordIterations || 10000),
     MustChangePassword: incoming.MustChangePassword === undefined ? Boolean(existing?.MustChangePassword) : staffUserIsActive({ Active: incoming.MustChangePassword }),
+    RequisitionEditEnabled: requisitionEditGrant(incoming.RequisitionEditEnabled ?? existing?.RequisitionEditEnabled, {
+      Role: role, ApprovalEnabled: existing?.ApprovalEnabled
+    }),
     CreatedAt: existing?.CreatedAt || clean(incoming.CreatedAt) || nowIso(),
     UpdatedAt: nowIso(),
     UpdatedBy: clean(body.RecordedBy || body.recordedBy) || 'Desktop Super Admin'
   };
   delete payload.__id;
   delete payload.__name;
-  await upsertDocument(env, 'staffUsers', safeDocumentId(lower(username)), payload);
+  const permissionAudit = requisitionEditPermissionAuditWrite(existing || {}, payload, {
+    displayName: body.RecordedBy, username: body.UserUsername, sourcePlatform: 'Desktop'
+  });
+  await batchUpsertDocuments(env, [
+    { collectionPath: 'staffUsers', documentId: safeDocumentId(lower(username)), data: payload },
+    ...(permissionAudit ? [permissionAudit] : [])
+  ]);
   await upsertDocument(env, 'staffSecurityAudit', safeDocumentId(`DESKTOP-${Date.now()}-${username}`), {
     Timestamp: nowIso(), Action: existing ? 'UPDATE USER' : 'CREATE USER', Username: username,
     Actor: clean(body.RecordedBy) || 'Desktop Super Admin', SourcePlatform: 'Desktop'

@@ -10,6 +10,7 @@ import { loadStaffApprovalProfile, publicStaffApprovalProfile } from '../lib/sta
 import { notifyStaffRequisitionEvent, notifyStaffRequisitionSubmitted } from '../lib/notifications.js';
 import { recordRequisitionEdit, requisitionEditDetails, requisitionEditHistory } from '../lib/requisition-edit-history.js';
 import { explicitAuditAction } from '../lib/security-audit.js';
+import { canEditRequisitions, assertRequisitionEditPermission } from '../lib/requisition-edit-permission.js';
 import {
   REQUISITION_STATUS,
   assertRequisitionTransition,
@@ -111,7 +112,7 @@ function finalFinanceStatus(status) {
 }
 
 function assertRequisitionResubmittable(existing = {}) {
-  if (clean(existing.AdminReviewedAt)) {
+  if (clean(existing.AdminReviewedAt) || lower(existing.Status) === 'approved') {
     const err = new Error('An administratively approved requisition cannot be edited or resubmitted.');
     err.status = 409;
     err.code = 'REQUISITION_ADMIN_APPROVAL_LOCKED';
@@ -176,6 +177,11 @@ export function buildRequisitionResubmission(existing = {}, body = {}, user = {}
     Description: description,
     Amount: value,
     ...(isMaterial ? { MaterialItems: materialItems } : {}),
+    ExpenseAccount: clean(body.expenseAccount ?? body.ExpenseAccount ?? existing.ExpenseAccount),
+    PaymentAccount: clean(body.paymentAccount ?? body.PaymentAccount ?? existing.PaymentAccount),
+    CostCentre: clean(body.costCentre ?? body.CostCentre ?? existing.CostCentre),
+    BudgetCode: clean(body.budgetCode ?? body.BudgetCode ?? existing.BudgetCode),
+    PaymentMethod: clean(body.paymentMethod ?? body.PaymentMethod ?? existing.PaymentMethod),
     Reference: clean(body.reference ?? body.Reference),
     AttachmentUrl: clean(body.attachmentUrl ?? body.AttachmentUrl),
     Notes: clean(body.notes ?? body.Notes),
@@ -301,6 +307,7 @@ function capabilities(user) {
     canSubmit: Boolean(userDepartment(user)),
     canApprove: clean(user.role) === 'Super Admin' || Boolean(user.approvalEnabled),
     canAdminOverride: clean(user.role) === 'Super Admin',
+    canEditRequisitions: canEditRequisitions(user),
     canAccountsReview: ['Super Admin', 'Accounts Officer'].includes(clean(user.role)),
     canViewAll: ['Super Admin', 'Management', 'Accounts Officer'].includes(clean(user.role)),
     ...requisitionCapabilities(user)
@@ -371,7 +378,7 @@ function auditWrite(user, action, recordType, recordId, details = '', timestamp 
         || (clean(user.schoolSectionAccess) === 'All' ? 'Secondary' : user.schoolSectionAccess)
         || 'Secondary'
       ),
-      SourcePlatform: 'Web'
+      SourcePlatform: clean(user.sourcePlatform) || 'Web'
     }
   };
 }
@@ -515,12 +522,8 @@ async function submitMaterialRequisition(env, user, body) {
   return { ok: true, message: 'Material requisition submitted for approval.', requisition: payload };
 }
 
-async function resubmitRequisition(env, user, body) {
-  if (clean(user.role) !== 'Super Admin') {
-    const err = new Error('Only Super Admin can edit and resubmit an existing requisition.');
-    err.status = 403;
-    throw err;
-  }
+export async function resubmitRequisition(env, user, body) {
+  assertRequisitionEditPermission(user);
   const id = clean(body.recordId || body.ExpenseNo);
   if (!id) {
     const err = new Error('Select a requisition to edit and resubmit.');
