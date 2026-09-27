@@ -71,6 +71,8 @@ import { getWebBranding, saveWebBranding } from '../lib/web-branding.js';
 import { saveDocumentBranding } from '../lib/document-branding.js';
 import { finishRequestMetric, startRequestMetric } from '../lib/request-metrics.js';
 import { readJsonBody } from '../lib/request-security.js';
+import { recordRequisitionEdit, requisitionEditDetails, requisitionEditHistory } from '../lib/requisition-edit-history.js';
+import { explicitAuditAction, securityAuditAction } from '../lib/security-audit.js';
 import {
   clearOrganizationRestoreCollection,
   completeOrganizationRestore,
@@ -7057,19 +7059,26 @@ function normalizedJournal(payload) {
   return { ...payload, Lines: lines };
 }
 
-async function writeAccountingAudit(env, action, entityType, entityId, body, details = '') {
+function accountingAuditWrite(action, entityType, entityId, body, details = '', timestamp = nowIso()) {
   const auditId = ledgerDocumentId('AUD');
-  await upsertDocument(env, 'accountingAudit', safeDocumentId(auditId), {
+  return { collectionPath: 'accountingAudit', documentId: safeDocumentId(auditId), data: {
     AuditId: auditId,
-    Timestamp: nowIso(),
-    Action: clean(action),
+    Timestamp: timestamp,
+    Action: explicitAuditAction(action, entityType),
     EntityType: clean(entityType),
     EntityId: clean(entityId),
-    UserRole: clean(body.UserRole || body.userRole),
+    UserRole: clean(body.UserAssignedRole || body.UserRole || body.userRole),
+    ActorUsername: clean(body.UserUsername || body.userUsername),
     UserName: clean(body.RecordedBy || body.UpdatedBy || body.UserName || body.userName),
     BranchId: accountingWriteBranch(body),
-    Details: clean(details)
-  });
+    Details: clean(details),
+    SourcePlatform: 'Desktop'
+  } };
+}
+
+async function writeAccountingAudit(env, action, entityType, entityId, body, details = '') {
+  const write = accountingAuditWrite(action, entityType, entityId, body, details);
+  await upsertDocument(env, write.collectionPath, write.documentId, write.data);
 }
 
 export async function saveAccountingJournal(env, body, system = false) {
@@ -7453,6 +7462,12 @@ async function saveAccountingExpense(env, body) {
   requireAccountingRole(body, ['Super Admin', 'Accounts Officer', 'Management', ...DEPARTMENT_ACCOUNTING_ROLES]);
   const expenseNo = clean(body.ExpenseNo || body.expenseNo) || ledgerDocumentId('EXP');
   const existing = await getDocumentByIdOrField(env, 'accountingExpenses', expenseNo, 'ExpenseNo') || {};
+  if (clean(body.RecordVersion) && clean(body.RecordVersion) !== clean(existing.__updateTime)) {
+    const err = new Error('This requisition changed after it was loaded. Refresh it before saving your edits.');
+    err.status = 409;
+    err.code = 'FINANCE_WRITE_CONFLICT';
+    throw err;
+  }
   const branchId = accountingWriteBranch(body, existing);
   if (lower(existing.Status) === 'posted') {
     const err = new Error('Posted expenses cannot be edited. Use a reversal.'); err.status = 409; throw err;
@@ -7609,8 +7624,46 @@ async function saveAccountingExpense(env, body) {
     payload.PostedBy = actorName;
     payload.PostedByUsername = actorUsername;
   }
-  await upsertDocument(env, 'accountingExpenses', safeDocumentId(expenseNo), payload);
-  await writeAccountingAudit(env, existing.ExpenseNo ? 'UPDATE' : 'CREATE', 'Expense', expenseNo, body, requestedStatus);
+  // Posting is a payment action, not a content edit. Keep its existing journal path unchanged.
+  if (requestedStatus === REQUISITION_STATUS.POSTED) {
+    await upsertDocument(env, 'accountingExpenses', safeDocumentId(expenseNo), payload);
+    await writeAccountingAudit(env, 'POSTED REQUISITION', 'Expense Requisition', expenseNo, body,
+      `${currentWorkflowStatus} → ${requestedStatus}; journal ${payload.JournalNo}`);
+    await notifyStaffRequisitionEvent(env, payload, 'Posted', actorName).catch(() => null);
+    return { ok: true, message: `Expense saved as ${requestedStatus}.`, expense: payload };
+  }
+  const edit = existing.ExpenseNo ? recordRequisitionEdit(existing, payload, {
+    displayName: actorName, username: actorUsername, role: actorRole
+  }, timestamp, {
+    resubmitted: requestedStatus === REQUISITION_STATUS.SUBMITTED && currentWorkflowStatus === REQUISITION_STATUS.REJECTED
+  }) : null;
+  const audit = accountingAuditWrite(
+    edit?.Action || (transition ? `${transition.event.toUpperCase()} REQUISITION` : existing.ExpenseNo ? 'SAVE REQUISITION' : 'CREATE REQUISITION'),
+    'Expense Requisition', expenseNo, body,
+    edit ? requisitionEditDetails(edit) : `${currentWorkflowStatus || 'New'} → ${requestedStatus}`, timestamp
+  );
+  const writes = [
+    { collectionPath: 'accountingExpenses', documentId: safeDocumentId(expenseNo), data: payload,
+      ...(existing.__updateTime ? { updateTime: existing.__updateTime } : { exists: false }) },
+    audit
+  ];
+  if (edit) {
+    const snapshot = { ...existing };
+    for (const key of ['__id', '__name', '__createTime', '__updateTime']) delete snapshot[key];
+    writes.push({
+      collectionPath: 'accountingExpenseRevisions',
+      documentId: safeDocumentId(`${expenseNo}-REV-${String(edit.RevisionNumber - 1).padStart(3, '0')}`),
+      exists: false,
+      data: { ExpenseNo: expenseNo, RevisionNumber: edit.RevisionNumber - 1, ArchivedAt: timestamp,
+        ArchivedBy: actorName, ArchivedByUsername: actorUsername, BranchId: branchId,
+        StatusAtArchive: existing.Status, Edit: edit, Snapshot: snapshot }
+    });
+    if (transition) writes.push(accountingAuditWrite(
+      `${transition.event.toUpperCase()} REQUISITION`, 'Expense Requisition', expenseNo, body,
+      `${currentWorkflowStatus} → ${requestedStatus}`, timestamp
+    ));
+  }
+  await batchUpsertDocuments(env, writes);
   const event = transition?.event || (
     requestedStatus === REQUISITION_STATUS.SUBMITTED && currentWorkflowStatus !== REQUISITION_STATUS.SUBMITTED
       ? 'Submitted'
@@ -8884,7 +8937,7 @@ async function getAccountingRequisitionDocument(env, body = {}) {
   return {
     ok: true,
     message: 'Requisition document loaded.',
-    record,
+    record: { ...record, EditHistory: requisitionEditHistory(record) },
     endorsements: { approval, admin, accounts, management, 'admin-review': adminReview, director }
   };
 }
@@ -10249,6 +10302,14 @@ export async function onRequestPost(context) {
     requireFirestoreEnv(env);
     const deploymentIdentity = await loadDeploymentIdentity(env, { identity: configuredIdentity });
     body = await verifyDesktopActor(env, action, body);
+    if (context.data) {
+      // Shared with middleware only after authoritative authentication; never trust a posted name.
+      if (VERIFIED_ACTOR_ACTIONS.has(action)) context.data.securityAuditActor = {
+        username: body.UserUsername, displayName: body.RecordedBy,
+        role: body.UserAssignedRole || body.UserRole, branchId: body.UserBranchId
+      };
+      context.data.securityAuditAction = securityAuditAction({ pathname: '/api/backend', method: 'POST', body });
+    }
     // An authoritative actor lookup can replace UserBranchId. Reapplying the
     // device scope both detects a user assigned elsewhere and preserves the
     // approved computer branch for downstream reads and writes.

@@ -50,6 +50,17 @@ function titleWords(value) {
     .toUpperCase();
 }
 
+const GENERIC_ACTION = /^(?:CREATE|UPDATE|EDIT|SAVE|DELETE|REMOVE|LIST|VIEW|GET|READ|PRINT|EXPORT|IMPORT|SEARCH|REVIEW|APPROVE|APPROVED|REJECT|REJECTED|POST|POSTED|SUBMIT|STATUS|USE|VERIFY|ENABLE|DISABLE|EDIT AND RESUBMIT|ACCOUNTS REVIEW|PLATFORM ACTION)$/;
+
+export function explicitAuditAction(action, entityType = '', module = '', route = '') {
+  const label = titleWords(action);
+  const target = titleWords(entityType || module || route.replace(/^\/api\//, ''));
+  if (!label || label === 'PLATFORM ACTION') {
+    return target ? `ACTION NOT RECORDED — ${target}` : 'ACTION NOT RECORDED IN SOURCE AUDIT';
+  }
+  return (GENERIC_ACTION.test(label) && target ? `${label} ${target}` : label).slice(0, 180);
+}
+
 function safeField(body, names) {
   for (const name of names) {
     if (SENSITIVE_ACTION_KEYS.has(lower(name))) continue;
@@ -98,15 +109,22 @@ export function securityAuditAction({ pathname = '', method = 'GET', body = {} }
     return `VIEW ${titleWords(safeField(body, ['section']))}`.slice(0, 120);
   }
   const declared = safeField(body, ['action', 'Action', 'mode', 'Mode', 'operation', 'Operation']);
-  if (declared) return titleWords(declared).slice(0, 120);
+  if (declared) {
+    const target = safeField(body, ['EntityType', 'entityType', 'RecordType', 'recordType', 'section', 'Section']);
+    const routeTarget = titleWords(path.replace(/^\/api\//, ''));
+    const named = explicitAuditAction(declared, target || routeTarget);
+    const decision = safeField(body, ['decision', 'Decision', 'Status', 'status']);
+    const qualifier = decision ? ` — REQUESTED ${titleWords(decision)}` : '';
+    return `${named}${qualifier}`.slice(0, 180);
+  }
   if (path === '/api/staff-session') {
     if (verb === 'DELETE') return 'SIGN OUT';
     if (verb === 'POST') return 'SIGN IN';
     return 'CHECK SESSION';
   }
-  const target = titleWords(path.split('/').filter(Boolean).pop() || 'API');
-  const operation = verb === 'GET' || verb === 'HEAD' ? 'VIEW' : verb === 'POST' ? 'USE' : verb;
-  return `${operation} ${target}`.slice(0, 120);
+  const target = titleWords(path.replace(/^\/api\//, '') || 'API');
+  const operation = verb === 'GET' || verb === 'HEAD' ? 'VIEW' : verb === 'POST' ? 'SUBMIT TO' : verb === 'PATCH' || verb === 'PUT' ? 'UPDATE' : verb;
+  return `${operation} ${target}`.slice(0, 180);
 }
 
 async function requestAuditInput(request, pathname) {
@@ -120,13 +138,20 @@ async function requestAuditInput(request, pathname) {
     body = await request.clone().json().catch(() => ({}));
     if (!body || typeof body !== 'object' || Array.isArray(body)) body = {};
   }
+  // Read only known routing/record identifiers from the URL; never log its raw query
+  // (one-time login links, pairing codes and signatures may be present there).
+  const query = new URL(request.url).searchParams;
+  for (const key of ['action', 'mode', 'section', 'recordType', 'recordId', 'id', 'branchId']) {
+    if (!body[key] && query.has(key)) body[key] = query.get(key);
+  }
   return {
     body,
     action: securityAuditAction({ pathname, method, body }),
     actorHint: safeField(body, ['ActorUsername', 'actorUsername', 'RecordedBy', 'recordedBy', 'UpdatedBy', 'updatedBy', 'Username', 'username', 'Email', 'email']),
     subject: safeField(body, ['TargetUsername', 'targetUsername', 'Username', 'username', 'AdmissionNo', 'admissionNo', 'Reference', 'reference']),
     entityType: safeField(body, ['EntityType', 'entityType', 'RecordType', 'recordType', 'section', 'Section']),
-    entityId: safeField(body, ['EntityId', 'entityId', 'RecordId', 'recordId', 'Reference', 'reference', 'id', 'Id']),
+    entityId: safeField(body, ['EntityId', 'entityId', 'RecordId', 'recordId', 'ExpenseNo', 'expenseNo', 'BillNo', 'billNo', 'JournalNo', 'journalNo', 'ImprestNo', 'AccountRef', 'AdmissionNo', 'StaffId', 'Reference', 'reference', 'id', 'Id']),
+    requestedStatus: safeField(body, ['decision', 'Decision', 'Status', 'status']),
     branchId: safeField(body, ['BranchId', 'branchId'])
   };
 }
@@ -160,7 +185,7 @@ export async function writeSecurityAudit(env, event = {}) {
   const payload = {
     AuditId: id,
     Timestamp: timestamp,
-    Action: clean(event.action || 'PLATFORM ACTION').slice(0, 120),
+    Action: explicitAuditAction(event.action, event.entityType, event.module, event.route),
     Module: clean(event.module || 'Platform operations').slice(0, 100),
     Outcome: clean(event.outcome || 'Success').slice(0, 30),
     HttpStatus: Math.max(0, Number(event.status || 0) || 0),
@@ -185,8 +210,8 @@ export async function writeSecurityAudit(env, event = {}) {
   return payload;
 }
 
-export async function persistRequestSecurityAudit({ env, request, prepared, response, failure, requestId, durationMs } = {}) {
-  const actor = await readStaffSession(env, request).catch(() => null);
+export async function persistRequestSecurityAudit({ env, request, prepared, response, failure, requestId, durationMs, authoritativeActor, authoritativeAction } = {}) {
+  const actor = authoritativeActor || await readStaffSession(env, request).catch(() => null);
   if (!shouldPersistSecurityAudit(prepared, actor)) return null;
   const status = Number(response?.status || failure?.status || 500);
   const headerBranch = clean(prepared.requestedBranchId);
@@ -194,15 +219,15 @@ export async function persistRequestSecurityAudit({ env, request, prepared, resp
   return writeSecurityAudit(env, {
     timestamp: new Date().toISOString(),
     requestId,
-    action: prepared.action,
+    action: authoritativeAction || prepared.action,
     module: securityAuditModuleForRoute(prepared.pathname),
     outcome: securityAuditOutcome(status),
     status,
     method: prepared.method,
     route: prepared.pathname,
     actorDisplayName: actor?.displayName,
-    actorUsername: actor?.username || prepared.actorHint,
-    actorRole: actor?.role,
+    actorUsername: actor?.username,
+    actorRole: actor?.assignedRole || actor?.role,
     subject: prepared.subject,
     entityType: prepared.entityType,
     entityId: prepared.entityId,
@@ -212,7 +237,11 @@ export async function persistRequestSecurityAudit({ env, request, prepared, resp
     country: prepared.country,
     colo: prepared.colo,
     durationMs,
-    details: `${prepared.method} ${prepared.pathname}`
+    details: [authoritativeAction || prepared.action, prepared.entityId ? `Record: ${prepared.entityId}` : '',
+      !actor && prepared.actorHint ? `Unverified claimed account: ${prepared.actorHint}` : '',
+      prepared.subject ? `Subject: ${prepared.subject}` : '',
+      `${securityAuditOutcome(status)} (HTTP ${status}); ${prepared.method} ${prepared.pathname}`
+    ].filter(Boolean).join('; ')
   });
 }
 
@@ -225,15 +254,16 @@ function sourceDateRange(fromDate, toDate) {
   };
 }
 
-function normalizedLegacyAudit(row, source) {
-  const actorUsername = clean(row.ActorUsername || row.UserName || row.Username || row.Actor);
-  const actor = clean(row.Actor || row.UserName || actorUsername || 'System');
+export function normalizedLegacyAudit(row, source) {
+  const actorUsername = clean(row.ActorUsername || row.UserUsername || row.UserName || row.User || row.Actor || row.Username);
+  const actor = clean(row.Actor || row.UserName || row.User || actorUsername || 'Officer not recorded');
   const module = clean(row.Module || source.module || 'Platform operations');
   const status = Number(row.HttpStatus || 0) || 0;
   return {
     AuditId: clean(row.AuditId || row.__id),
     Timestamp: clean(row.Timestamp || row.CreatedAt || row.UpdatedAt),
-    Action: clean(row.Action || 'PLATFORM ACTION'),
+    Action: explicitAuditAction(row.Action, row.EntityType || row.RecordType, module, row.Route),
+    OriginalAction: clean(row.Action),
     Module: module,
     Outcome: clean(row.Outcome || (status ? securityAuditOutcome(status) : 'Success')),
     HttpStatus: status,
@@ -243,9 +273,9 @@ function normalizedLegacyAudit(row, source) {
     Actor: actor,
     ActorUsername: actorUsername,
     ActorRole: clean(row.ActorRole || row.UserRole || row.Role),
-    Subject: clean(row.Subject || row.Username || row.Reference || row.EntityId),
+    Subject: clean(row.Subject || row.Username || row.Reference || row.EntityId || row.RecordId),
     EntityType: clean(row.EntityType || row.RecordType),
-    EntityId: clean(row.EntityId || row.Reference || row.CorrespondenceId),
+    EntityId: clean(row.EntityId || row.RecordId || row.Reference || row.CorrespondenceId),
     BranchId: clean(row.BranchId || 'main'),
     SourcePlatform: clean(row.SourcePlatform || (source.collection === SECURITY_AUDIT_COLLECTION ? 'Web' : 'Legacy audit')),
     ClientAddress: clean(row.ClientAddress),

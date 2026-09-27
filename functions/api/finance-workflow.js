@@ -8,6 +8,8 @@ import {
 } from '../lib/staff-auth.js';
 import { loadStaffApprovalProfile, publicStaffApprovalProfile } from '../lib/staff-approval-profile.js';
 import { notifyStaffRequisitionEvent, notifyStaffRequisitionSubmitted } from '../lib/notifications.js';
+import { recordRequisitionEdit, requisitionEditDetails, requisitionEditHistory } from '../lib/requisition-edit-history.js';
+import { explicitAuditAction } from '../lib/security-audit.js';
 import {
   REQUISITION_STATUS,
   assertRequisitionTransition,
@@ -230,6 +232,7 @@ export function buildRequisitionResubmission(existing = {}, body = {}, user = {}
     RejectedStage: '',
     RejectionNotes: ''
   });
+  const edit = recordRequisitionEdit(existing, payload, user, timestamp, { resubmitted: true });
   const revision = {
     RevisionId: revisionId,
     ExpenseNo: expenseNo,
@@ -237,6 +240,7 @@ export function buildRequisitionResubmission(existing = {}, body = {}, user = {}
     ArchivedAt: timestamp,
     ArchivedBy: revisedBy,
     ArchivedByUsername: clean(user.username),
+    Edit: edit,
     StatusAtArchive: clean(existing.Status || 'Submitted'),
     BranchId: clean(existing.BranchId || user.branchId) || 'main',
     SchoolSection: clean(existing.SchoolSection || user.schoolSectionAccess || 'Secondary'),
@@ -351,12 +355,14 @@ function auditWrite(user, action, recordType, recordId, details = '', timestamp 
     data: {
       AuditId: id,
       Timestamp: timestamp,
-      Action: action,
+      Action: explicitAuditAction(action, recordType),
       RecordType: recordType,
       RecordId: recordId,
       Details: clean(details),
       User: actor(user),
-      UserRole: user.role,
+      UserName: actor(user),
+      ActorUsername: clean(user.username),
+      UserRole: user.assignedRole || user.role,
       Department: userDepartment(user),
       BranchId: clean(scope.BranchId || scope.branchId || user.branchId) || 'main',
       SchoolSection: clean(
@@ -544,7 +550,7 @@ async function resubmitRequisition(env, user, body) {
     'EDIT AND RESUBMIT',
     'Expense Requisition',
     id,
-    `Revision ${nextRevision}; previous status ${clean(existing.Status || 'Submitted')}; archived as ${revisionId}`,
+    `${requisitionEditDetails(revision.Edit)}; archived as ${revisionId}`,
     timestamp,
     existing
   );
@@ -1450,7 +1456,7 @@ async function documentRecord(env, user, body) {
   ]);
   return {
     ok: true,
-    record: publicRows([existing])[0],
+    record: publicRows([{ ...existing, ...(!isBill ? { EditHistory: requisitionEditHistory(existing) } : {}) }])[0],
     endorsements: {
       approval: approvalEndorsement || null,
       admin: adminEndorsement || null,

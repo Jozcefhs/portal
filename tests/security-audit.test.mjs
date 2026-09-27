@@ -9,6 +9,35 @@ import {
   securityAuditOutcome,
   shouldPersistSecurityAudit
 } from '../functions/lib/security-audit.js';
+import { explicitAuditAction, normalizedLegacyAudit } from '../functions/lib/security-audit.js';
+
+test('generic audit verbs identify their exact record type and preserve historical actor/reference fields', () => {
+  const row = normalizedLegacyAudit({ Action: 'UPDATE', User: 'Ada Officer', ActorUsername: 'ada',
+    UserRole: 'Admin', RecordType: 'Material Requisition', RecordId: 'WEB-MAT-42', Details: 'Changed quantity' },
+  { collection: 'accountingAudit', module: 'Finance & accounting' });
+  assert.equal(row.Action, 'UPDATE MATERIAL REQUISITION');
+  assert.equal(row.OriginalAction, 'UPDATE');
+  assert.equal(row.Actor, 'Ada Officer');
+  assert.equal(row.ActorUsername, 'ada');
+  assert.equal(row.EntityId, 'WEB-MAT-42');
+  assert.equal(row.ActorRole, 'Admin');
+  assert.equal(explicitAuditAction('', 'Requisition'), 'ACTION NOT RECORDED — REQUISITION');
+});
+
+test('routing metadata distinguishes list, decisions, document reads and desktop saves', async () => {
+  assert.equal(securityAuditAction({ pathname: '/api/finance-workflow', method: 'POST', body: { action: 'list' } }), 'LIST FINANCE WORKFLOW');
+  assert.equal(securityAuditAction({ pathname: '/api/finance-workflow', method: 'POST', body: { action: 'review', recordType: 'bill', decision: 'Rejected' } }), 'REVIEW BILL — REQUESTED REJECTED');
+  const prepared = await prepareSecurityAudit(new Request('https://example.test/api/staff-records?action=export&recordType=student&recordId=S1&token=secret&password=hidden'), '/api/staff-records');
+  assert.equal(prepared.action, 'EXPORT STUDENT');
+  assert.equal(prepared.entityId, 'S1');
+  assert.doesNotMatch(JSON.stringify(prepared), /secret|hidden/);
+  const desktop = await prepareSecurityAudit(new Request('https://example.test/api/backend', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ Action: 'saveAccountingExpense', ExpenseNo: 'REQ-42', Status: 'Submitted', ApprovalPassword: 'secret' })
+  }), '/api/backend');
+  assert.equal(desktop.entityId, 'REQ-42');
+  assert.equal(desktop.action, 'SAVE ACCOUNTING EXPENSE — REQUESTED SUBMITTED');
+  assert.doesNotMatch(JSON.stringify(desktop), /secret/);
+});
 import { defaultModulesForRole, modulesForEdition } from '../functions/lib/role-module-access.js';
 
 test('security audit classifies modules, declared actions and outcomes consistently', () => {

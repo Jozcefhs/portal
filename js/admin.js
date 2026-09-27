@@ -17045,6 +17045,21 @@ function approvalEndorsementBlock(title, officer, timestamp, endorsement) {
     ${signature || stamp ? `<div class="approval-images">${signature ? `<figure><img src="${escapeHtml(signature)}" alt="Signature"><figcaption>Signature</figcaption></figure>` : ''}${stamp ? `<figure><img src="${escapeHtml(stamp)}" alt="Official stamp"><figcaption>Official stamp</figcaption></figure>` : ''}</div>` : ''}</section>`;
 }
 
+function requisitionEditHistoryBlock(record) {
+  const history = Array.isArray(record.EditHistory) ? [...record.EditHistory] : [];
+  if (!history.length && record.ResubmittedAt) history.push({
+    Action: 'EDIT AND RESUBMIT REQUISITION', Officer: record.ResubmittedBy || record.ResubmittedByUsername,
+    Username: record.ResubmittedByUsername, Timestamp: record.ResubmittedAt, Legacy: true
+  });
+  if (!history.length) return '';
+  return `<h2>Edit and resubmission history</h2><table class="admin-table"><thead><tr><th>Action / revision</th><th>Officer</th><th>Time</th><th>Changed fields</th></tr></thead><tbody>${history.map((entry) => `<tr>
+    <td>${escapeHtml(entry.Action || 'Edit requisition')}${entry.RevisionNumber ? ` · Revision ${escapeHtml(entry.RevisionNumber)}` : ''}</td>
+    <td>${escapeHtml(entry.Officer || entry.Username || 'Not recorded')}<br>${escapeHtml([entry.Role, entry.Username].filter(Boolean).join(' · '))}</td>
+    <td>${escapeHtml(entry.Timestamp || 'Not recorded')}</td>
+    <td>${escapeHtml((entry.ChangedFields || []).join(', ') || (entry.Legacy ? 'Not recorded in this older revision' : 'No business fields changed; resubmitted'))}</td>
+  </tr>`).join('')}</tbody></table>`;
+}
+
 function openFinanceRecordPrint(record, type, endorsements = {}, printableWindow = null) {
   if (!record) return;
   const id = pick(record, type === 'bill' ? ['BillNo', '__id'] : ['ExpenseNo', '__id']);
@@ -17083,6 +17098,7 @@ function openFinanceRecordPrint(record, type, endorsements = {}, printableWindow
     : `${approvalEndorsementBlock('Approved by', record.ApprovedBy, record.ApprovedAt, endorsements.approval)}
        ${approvalEndorsementBlock('Administrative approval', record.AdminReviewedBy, record.AdminReviewedAt, endorsements.admin)}
        ${approvalEndorsementBlock('Accounts review / posting', record.AccountsReviewedBy, record.AccountsReviewedAt, endorsements.accounts)}`}
+  ${type === 'requisition' ? requisitionEditHistoryBlock(record) : ''}
   </body></html>`);
   printable.document.close();
   printable.focus();
