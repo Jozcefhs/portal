@@ -15,7 +15,7 @@ import {
   normalizeAcademicTimetableEntry,
   normalizeAcademicTimetablePeriods
 } from '../functions/lib/academic-timetable-attendance.js';
-import { academicManagementCapabilities, academicTimetableTargetCopyPlan } from '../functions/lib/academic-management.js';
+import { academicManagementCapabilities, academicTimetableBatchPlan, academicTimetableTargetCopyPlan } from '../functions/lib/academic-management.js';
 
 const source = await readFile(new URL('../functions/lib/academic-management.js', import.meta.url), 'utf8');
 const backendSource = await readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8');
@@ -84,6 +84,35 @@ test('timetable entries occupy exact periods and detect classroom, teacher and r
     { EntryId: 'two', VersionId: 'version-1', DayCode: 'MON', PeriodCodes: ['P1'], ClassId: 'class-11', ArmId: 'arm-b', TeacherUsername: 'teacher-a', Room: 'Lab 1' }
   ]);
   assert.deepEqual(conflicts.map((row) => row.Type).sort(), ['Classroom', 'Room', 'Teacher']);
+});
+
+test('batch timetable planning validates all lessons together before an atomic save', () => {
+  const version = { VersionId: 'version-1', Status: 'Draft', SessionId: '2026', TermId: 'term-1', ...settings };
+  const state = {
+    timetableVersions: [version], timetableEntries: [], timetableConstraints: [],
+    classes: [{ ClassId: 'class-10', Status: 'Active' }, { ClassId: 'class-11', Status: 'Active' }],
+    arms: [{ ArmId: 'arm-a', ClassId: 'class-10', Status: 'Active' }, { ArmId: 'arm-b', ClassId: 'class-11', Status: 'Active' }],
+    subjects: [{ SubjectId: 'math', Status: 'Active' }, { SubjectId: 'english', Status: 'Active' }],
+    teacherAllocations: [
+      { SessionId: '2026', TermId: 'term-1', ClassId: 'class-10', ArmId: 'arm-a', SubjectId: 'math', TeacherUsername: 'teacher-a', AllocationRole: 'Subject Teacher', Status: 'Active' },
+      { SessionId: '2026', TermId: 'term-1', ClassId: 'class-11', ArmId: 'arm-b', SubjectId: 'english', TeacherUsername: 'teacher-b', AllocationRole: 'Subject Teacher', Status: 'Active' }
+    ]
+  };
+  const context = { session: { SessionId: '2026' }, term: { TermId: 'term-1' }, scope: { branchId: 'main', section: 'secondary' } };
+  const first = { DayCode: 'MON', StartPeriodCode: 'P1', DurationPeriods: 1, ClassId: 'class-10', ArmId: 'arm-a', SubjectId: 'math', TeacherUsername: 'teacher-a', Room: 'Lab 1' };
+  const second = { DayCode: 'MON', StartPeriodCode: 'P2', DurationPeriods: 1, ClassId: 'class-10', ArmId: 'arm-a', SubjectId: 'math', TeacherUsername: 'teacher-a' };
+  const planned = academicTimetableBatchPlan(state, { VersionId: 'version-1', Entries: [first, second] }, context);
+  assert.equal(planned.length, 2);
+  assert.equal(new Set(planned.map((row) => row.EntryId)).size, 2);
+  assert.equal(state.timetableEntries.length, 0);
+  assert.throws(() => academicTimetableBatchPlan(state, { VersionId: 'version-1', Entries: [first, { ...second, StartPeriodCode: 'P1' }] }, context), /Lesson 2:.*classroom.*timetable conflict/i);
+  assert.throws(() => academicTimetableBatchPlan(state, { VersionId: 'version-1', Entries: [first, { ...second, ClassId: 'class-11', ArmId: 'arm-b', SubjectId: 'english', TeacherUsername: 'teacher-b', StartPeriodCode: 'P1', Room: 'Lab 1' }] }, context), /Lesson 2:.*room timetable conflict/i);
+  assert.throws(() => academicTimetableBatchPlan(state, { VersionId: 'version-1', Entries: [first, { ...second, TeacherUsername: 'unallocated' }] }, context), /Lesson 2:.*Assign this teacher/i);
+  const savedLesson = { ...planned[0], EntryId: 'saved', RecordId: 'saved' };
+  assert.throws(() => academicTimetableBatchPlan({ ...state, timetableEntries: [savedLesson] }, { VersionId: 'version-1', Entries: [first] }, context), /Lesson 1:.*classroom.*timetable conflict/i);
+  assert.throws(() => academicTimetableBatchPlan({ ...state, timetableConstraints: [{ TeacherUsername: 'teacher-a', SessionId: '2026', TermId: 'term-1', MaxPeriodsPerDay: 1, Status: 'Active' }] }, { VersionId: 'version-1', Entries: [first, second] }, context), /Lesson 2:.*daily maximum/i);
+  assert.throws(() => academicTimetableBatchPlan(state, { VersionId: 'version-1', Entries: Array.from({ length: 51 }, () => first) }, context), /at most 50/i);
+  assert.throws(() => academicTimetableBatchPlan({ ...state, timetableVersions: [{ ...version, Status: 'Published' }] }, { VersionId: 'version-1', Entries: [first] }, context), /Only a draft timetable/i);
 });
 
 test('teacher availability and workload limits use exact lesson periods', () => {
@@ -178,7 +207,7 @@ test('academic roles separate timetable publishing from allocated attendance mar
 test('timetable publication and attendance corrections use protected audited workflows', () => {
   for (const action of [
     'saveAcademicTimetableSettings', 'createAcademicTimetableVersion', 'updateAcademicTimetableVersion',
-    'deleteAcademicTimetableVersion', 'saveAcademicTimetableEntry',
+    'deleteAcademicTimetableVersion', 'saveAcademicTimetableEntry', 'bulkSaveAcademicTimetableEntries',
     'saveAcademicTimetableConstraint', 'copyAcademicTimetableVersion', 'changeAcademicTimetableVersionStatus',
     'previewAcademicTimetableCopy', 'copyAcademicTimetableSelection',
     'saveAcademicTimetableSubstitution', 'cancelAcademicTimetableSubstitution',
@@ -204,6 +233,7 @@ test('timetable publication and attendance corrections use protected audited wor
   assert.match(source, /attendance or substitution history and cannot be deleted/);
   assert.match(backendSource, /case 'updateAcademicTimetableVersion':/);
   assert.match(backendSource, /case 'deleteAcademicTimetableVersion':/);
+  assert.match(backendSource, /case 'bulkSaveAcademicTimetableEntries':/);
 });
 
 test('staff workspace exposes focused timetable and attendance interfaces', () => {
@@ -213,6 +243,10 @@ test('staff workspace exposes focused timetable and attendance interfaces', () =
   assert.match(adminSource, /Day\(s\) \| Code \| Name \| Start \| End/);
   assert.match(adminSource, /data-academic-timetable-day/);
   assert.match(adminSource, /data-academic-timetable-entry/);
+  assert.match(adminSource, /data-academic-timetable-queue/);
+  assert.match(adminSource, /data-academic-timetable-save-batch/);
+  assert.match(adminSource, /bulkSaveAcademicTimetableEntries/);
+  assert.match(portalCss, /\.academic-timetable-batch\{/);
   assert.match(adminSource, /data-academic-timetable-status/);
   assert.match(adminSource, /data-academic-timetable-constraint/);
   assert.match(adminSource, /form\.academic-management-editor-wide/);
@@ -236,7 +270,7 @@ test('staff workspace exposes focused timetable and attendance interfaces', () =
   assert.match(adminSource, /data-academic-attendance-report/);
   assert.match(adminSource, /printAcademicAttendanceReport/);
   assert.match(adminSource, /All students start as Present/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260928-parent-link-face-capture/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260928-timetable-batch/);
   assert.match(portalCss, /\.academic-attendance-table\{max-height:480px;overflow:auto/);
   assert.match(portalCss, /\.academic-attendance-table th\{[^}]*white-space:nowrap;overflow-wrap:normal;word-break:normal/);
   assert.match(portalCss, /\.academic-attendance-report \.academic-attendance-table td:first-child\{font-size:12px;line-height:1\.3\}/);

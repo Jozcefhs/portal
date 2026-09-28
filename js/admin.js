@@ -165,6 +165,7 @@ let academicClassroomDraft = { sessionId: '', termId: '', classId: '', armId: ''
 let academicStudentAllocationDraft = { sessionId: '', termId: '', classId: '', armId: '' };
 let academicArmSubjectDraft = { sessionId: '', termId: '', classId: '', armId: '' };
 let academicTimetableDraft = { versionId: '', entryId: '', classId: '', armId: '', dayCode: '' };
+const academicTimetableBatches = new Map();
 let academicAttendanceDraft = { date: '', mode: 'Daily', classId: '', armId: '', subjectId: '', timetableEntryId: '', reportArmId: '', reportMode: 'Daily' };
 let academicScorebookDraft = { classId: '', armId: '', subjectId: '', teacherUsername: '', importPreview: null, importRows: [], importFileName: '', importFormat: 'CSV' };
 let academicResultDraft = { armId: '' };
@@ -12342,6 +12343,18 @@ function printAcademicTimetableSchedule(mode, version, entries, data, rows) {
   printable.focus();
 }
 
+function academicTimetableBatchKey(versionId) {
+  return [clean(currentUser?.username).toLowerCase(), clean(selectedBranchId).toLowerCase(),
+    clean(academicManagementFilters.section).toLowerCase(), clean(academicManagementFilters.sessionId),
+    clean(academicManagementFilters.termId), clean(versionId)].join('|');
+}
+
+function academicTimetableBatchEntries(versionId) {
+  const key = academicTimetableBatchKey(versionId);
+  if (!academicTimetableBatches.has(key)) academicTimetableBatches.set(key, []);
+  return academicTimetableBatches.get(key);
+}
+
 function academicTimetableWorkspace(data, rows) {
   const canManage = data.permissions?.canManageTimetables;
   const canPublish = data.permissions?.canPublishTimetables;
@@ -12368,6 +12381,7 @@ function academicTimetableWorkspace(data, rows) {
     && row.AllocationRole === 'Subject Teacher'
     && (!selectedArm || (row.ClassId === selectedArm.ClassId && (!row.ArmId || row.ArmId === selectedArm.ArmId))));
   const existingEntry = academicFind(entries, academicTimetableDraft.entryId);
+  const batchEntries = version?.Status === 'Draft' ? academicTimetableBatchEntries(version.VersionId) : [];
   const selectedDayCode = clean(academicTimetableDraft.dayCode || existingEntry?.DayCode || version?.Days?.[0]?.DayCode);
   academicTimetableDraft.dayCode = selectedDayCode;
   const lessonPeriods = academicPeriodsForDay(version || {}, selectedDayCode).filter((row) => row.Kind === 'Lesson');
@@ -12489,7 +12503,8 @@ function academicTimetableWorkspace(data, rows) {
       <label>Room or location<input name="Room" value="${escapeHtml(existingEntry?.Room || '')}" placeholder="Optional"></label>
       <label>Notes<input name="Notes" value="${escapeHtml(existingEntry?.Notes || '')}" placeholder="Optional"></label>
     </div>
-    <button type="submit">${existingEntry ? 'Update lesson' : 'Add lesson'}</button>
+    <div class="academic-timetable-builder-actions"><button type="submit">${existingEntry ? 'Update lesson' : 'Save this lesson now'}</button>${existingEntry ? '' : '<button type="button" class="secondary" data-academic-timetable-queue>Add to batch</button>'}</div>
+    ${existingEntry ? '' : `<section class="academic-timetable-batch" aria-label="Unsubmitted timetable lessons"><div class="academic-timetable-batch-heading"><h4>Lesson batch <span>${batchEntries.length}/50</span></h4><p class="muted">Prepare several lessons, then save them together. Nothing in this list is saved yet.</p></div>${batchEntries.length ? `<ol>${batchEntries.map((item, index) => `<li><span>${escapeHtml(item.label)}</span><button type="button" class="secondary" data-academic-timetable-batch-remove="${index}" aria-label="Remove lesson ${index + 1} from batch">Remove</button></li>`).join('')}</ol>` : '<p class="muted academic-timetable-batch-empty">No lessons added to the batch.</p>'}<button type="button" data-academic-timetable-save-batch ${batchEntries.length ? '' : 'disabled'}>Save all ${batchEntries.length} lesson${batchEntries.length === 1 ? '' : 's'}</button></section>`}
   </form>` : `<section class="academic-management-editor academic-management-editor-wide"><h3>${version ? `${escapeHtml(version.Name)} is ${escapeHtml(version.Status.toLowerCase())}` : 'Create a timetable version'}</h3><p class="muted">${version ? 'Only a Draft version can be edited.' : 'Configure days and periods, then create a Draft version.'}</p></section>`;
   const entryActions = (row) => version?.Status === 'Draft' && canManage ? `<div class="academic-management-row-actions"><button type="button" class="compact-icon-action compact-edit-action" data-academic-timetable-edit="${escapeHtml(row.EntryId)}" title="Edit lesson">&#9998;</button><button type="button" class="compact-icon-action academic-archive-action" data-academic-timetable-delete="${escapeHtml(row.EntryId)}" data-academic-revision="${escapeHtml(row.RevisionToken)}" title="Delete lesson">&#128465;</button></div>` : '<span class="muted">Locked</span>';
   const entryTable = table('Timetable Lessons', entries, [
@@ -14698,6 +14713,55 @@ function bindAcademicManagement() {
     academicTimetableDraft.entryId = '';
     academicTimetableDraft.dayCode = '';
     renderAcademicManagement(academicManagementData || {});
+  });
+  const timetableEntryForm = panelEl.querySelector('[data-academic-timetable-entry]');
+  timetableEntryForm?.querySelector('[data-academic-timetable-queue]')?.addEventListener('click', () => {
+    const status = document.getElementById('academicManagementStatus');
+    try {
+      if (!timetableEntryForm.reportValidity()) return;
+      const entry = academicWorkflowPayload(timetableEntryForm);
+      const batch = academicTimetableBatchEntries(entry.VersionId);
+      if (batch.length >= 50) throw new Error('Save this batch before adding more than 50 lessons.');
+      const payload = Object.fromEntries(['ClassId', 'ArmId', 'SubjectId', 'TeacherUsername', 'DayCode', 'StartPeriodCode', 'DurationPeriods', 'LessonType', 'Room', 'Notes']
+        .map((key) => [key, entry[key]]));
+      if (batch.some((item) => ['ClassId', 'ArmId', 'DayCode', 'StartPeriodCode', 'SubjectId', 'TeacherUsername']
+        .every((key) => item.payload[key] === payload[key]))) throw new Error('This lesson is already in the batch.');
+      const chosen = (name) => clean(timetableEntryForm.elements[name]?.selectedOptions?.[0]?.textContent);
+      batch.push({ payload, label: `${chosen('DayCode')} · ${chosen('StartPeriodCode')} · ${chosen('ClassroomId')} · ${chosen('AllocationId')}` });
+      academicTimetableDraft.entryId = '';
+      renderAcademicManagement(academicManagementData || {}, `${batch.length} lesson${batch.length === 1 ? '' : 's'} ready to save together.`);
+    } catch (error) { setStatus(status, error.message || String(error), 'bad'); }
+  });
+  timetableEntryForm?.querySelectorAll('[data-academic-timetable-batch-remove]').forEach((button) => button.addEventListener('click', () => {
+    const batch = academicTimetableBatchEntries(timetableEntryForm.elements.VersionId.value);
+    batch.splice(Number(button.dataset.academicTimetableBatchRemove), 1);
+    renderAcademicManagement(academicManagementData || {}, 'Lesson removed from the unsaved batch.');
+  }));
+  timetableEntryForm?.querySelector('[data-academic-timetable-save-batch]')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const batch = academicTimetableBatchEntries(timetableEntryForm.elements.VersionId.value);
+    if (!batch.length) return;
+    const entries = batch.map((item) => ({ ...item.payload }));
+    await runButtonAction(button, 'Saving batch...', async () => {
+      const status = document.getElementById('academicManagementStatus');
+      const otherButtons = [...timetableEntryForm.querySelectorAll('button:not([data-academic-timetable-save-batch])')];
+      otherButtons.forEach((item) => { item.disabled = true; });
+      try {
+        const data = await academicManagementRequest('bulkSaveAcademicTimetableEntries', {
+          SchoolSection: timetableEntryForm.elements.SchoolSection.value,
+          SessionId: timetableEntryForm.elements.SessionId.value,
+          TermId: timetableEntryForm.elements.TermId.value,
+          VersionId: timetableEntryForm.elements.VersionId.value,
+          Entries: entries
+        });
+        batch.splice(0, entries.length);
+        academicTimetableDraft.entryId = '';
+        renderAcademicManagement(data, data.message || `${entries.length} lessons saved.`);
+      } catch (error) {
+        setStatus(status, error.message || String(error), 'bad');
+        otherButtons.forEach((item) => { item.disabled = false; });
+      }
+    });
   });
   panelEl.querySelectorAll('[data-academic-timetable-edit]').forEach((button) => button.addEventListener('click', () => {
     const entry = academicFind(academicManagementData?.timetableEntries || [], button.dataset.academicTimetableEdit);

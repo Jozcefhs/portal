@@ -901,7 +901,7 @@ const BRANCH_BOUND_DEVICE_ACTIONS = new Set([
   'saveAcademicTimetableSettings', 'saveAcademicTimetableConstraint', 'deleteAcademicTimetableConstraint',
   'createAcademicTimetableVersion', 'updateAcademicTimetableVersion', 'deleteAcademicTimetableVersion',
   'copyAcademicTimetableVersion', 'previewAcademicTimetableCopy',
-  'copyAcademicTimetableSelection', 'saveAcademicTimetableEntry', 'deleteAcademicTimetableEntry',
+  'copyAcademicTimetableSelection', 'saveAcademicTimetableEntry', 'bulkSaveAcademicTimetableEntries', 'deleteAcademicTimetableEntry',
   'saveAcademicTimetableSubstitution', 'cancelAcademicTimetableSubstitution',
   'changeAcademicTimetableVersionStatus', 'saveAcademicStudentAttendance', 'decideAcademicAttendanceCorrection',
   'getAcademicScorebookContext', 'applyActiveAcademicScoreLayout', 'saveAcademicScoreDraft',
@@ -9810,6 +9810,7 @@ async function routeAction(env, action, body = {}, deploymentIdentity = null, pu
     case 'previewAcademicTimetableCopy':
     case 'copyAcademicTimetableSelection':
     case 'saveAcademicTimetableEntry':
+    case 'bulkSaveAcademicTimetableEntries':
     case 'deleteAcademicTimetableEntry':
     case 'saveAcademicTimetableSubstitution':
     case 'cancelAcademicTimetableSubstitution':

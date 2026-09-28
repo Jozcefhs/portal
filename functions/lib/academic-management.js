@@ -3894,6 +3894,66 @@ export async function saveAcademicTimetableEntry(env, user = {}, input = {}) {
   return academicOperationalResponse(env, user, input, scope, 'Timetable lesson saved without conflicts.');
 }
 
+export function academicTimetableBatchPlan(state = {}, input = {}, context = {}) {
+  const lessons = Array.isArray(input.Entries) ? input.Entries : [];
+  if (!lessons.length) throw failure('Add at least one lesson to the batch.');
+  if (lessons.length > 50) throw failure('Save at most 50 timetable lessons in one batch.');
+  const version = assertReference(findById(state.timetableVersions || [], input.VersionId), 'Choose an active timetable version.');
+  if (version.SessionId !== context.session?.SessionId || version.TermId !== context.term?.TermId) {
+    throw failure('The timetable version belongs to another academic period.');
+  }
+  if (lower(version.Status) !== 'draft') throw failure('Only a draft timetable can be changed.', 409, 'ACADEMIC_TIMETABLE_LOCKED');
+  const projectedEntries = (state.timetableEntries || []).filter(statusActive).slice();
+  return lessons.map((lesson, index) => {
+    try {
+      if (!lesson || typeof lesson !== 'object' || Array.isArray(lesson) || clean(lesson.EntryId || lesson.RecordId)) {
+        throw failure('Batch lessons must be new entries. Edit saved lessons individually.');
+      }
+      const entryId = academicId('timetable-entry', version.VersionId, globalThis.crypto.randomUUID());
+      const record = {
+        ...normalizeAcademicTimetableEntry(lesson, version),
+        RecordId: entryId, EntryId: entryId, VersionId: version.VersionId,
+        SessionId: context.session.SessionId, TermId: context.term.TermId,
+        BranchId: context.scope.branchId, SchoolSection: context.scope.section,
+        Status: 'Active'
+      };
+      const schoolClass = assertReference(findById(state.classes || [], record.ClassId), 'Choose an active class.');
+      const arm = assertReference(findById(state.arms || [], record.ArmId), 'Choose an active classroom arm.');
+      if (arm.ClassId !== schoolClass.ClassId) throw failure('The selected arm does not belong to this class.');
+      assertReference(findById(state.subjects || [], record.SubjectId), 'Choose an active subject.');
+      if (!academicSubjectTeacherAllocation(state, record)) {
+        throw failure('Assign this teacher to the selected subject and classroom before scheduling the lesson.');
+      }
+      const conflicts = academicTimetableConflicts(record, projectedEntries);
+      if (conflicts.length) {
+        const types = [...new Set(conflicts.map((row) => row.Type))].join(', ').toLowerCase();
+        throw failure(`Resolve the ${types} timetable conflict before saving.`, 409, 'ACADEMIC_TIMETABLE_CONFLICT');
+      }
+      assertAcademicTeacherScheduleRules(state, record, projectedEntries);
+      projectedEntries.push(record);
+      return record;
+    } catch (error) {
+      throw failure(`Lesson ${index + 1}: ${clean(error?.message || error)}`, Number(error?.status) || 400, clean(error?.code));
+    }
+  });
+}
+
+export async function bulkSaveAcademicTimetableEntries(env, user = {}, input = {}) {
+  const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
+  const records = academicTimetableBatchPlan(context.state, input, context);
+  const timestamp = nowIso();
+  const writes = records.flatMap((record) => {
+    const saved = { ...record, CreatedAt: timestamp, CreatedBy: actorName(user), UpdatedAt: timestamp, UpdatedBy: actorName(user) };
+    return [
+      { collectionPath: ACADEMIC_MANAGEMENT_COLLECTIONS.timetableEntries, documentId: record.EntryId, data: withoutMetadata(saved), exists: false },
+      auditWrite(user, 'CREATE', 'timetableEntry', saved, `${record.DayCode} ${record.PeriodCodes.join(', ')}; batch of ${records.length}`)
+    ];
+  });
+  await commitAcademicBatch(env, writes, 'The timetable changed while this batch was being saved. Reload and review the lessons before trying again.');
+  return academicOperationalResponse(env, user, input, context.scope,
+    `${records.length} timetable lesson${records.length === 1 ? '' : 's'} saved without conflicts.`);
+}
+
 export async function deleteAcademicTimetableEntry(env, user = {}, input = {}) {
   const context = await academicOperationalContext(env, user, input, 'canManageTimetables');
   const { scope, state } = context;
@@ -7018,6 +7078,7 @@ export async function handleAcademicManagementAction(env, user = {}, input = {})
   if (['previewacademictimetablecopy', 'previewtimetablecopy'].includes(action)) return previewAcademicTimetableCopy(env, user, input);
   if (['copyacademictimetableselection', 'copytimetableselection'].includes(action)) return copyAcademicTimetableSelection(env, user, input);
   if (['saveacademictimetableentry', 'savetimetableentry'].includes(action)) return saveAcademicTimetableEntry(env, user, input);
+  if (action === 'bulksaveacademictimetableentries') return bulkSaveAcademicTimetableEntries(env, user, input);
   if (['deleteacademictimetableentry', 'deletetimetableentry'].includes(action)) return deleteAcademicTimetableEntry(env, user, input);
   if (['saveacademictimetablesubstitution', 'savetimetablesubstitution'].includes(action)) return saveAcademicTimetableSubstitution(env, user, input);
   if (['cancelacademictimetablesubstitution', 'canceltimetablesubstitution'].includes(action)) return cancelAcademicTimetableSubstitution(env, user, input);
