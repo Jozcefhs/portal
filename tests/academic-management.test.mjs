@@ -228,6 +228,67 @@ test('checking an existing class selects its classroom arms without losing manua
   assert.deepEqual(checked(form, 'ArmTemplateIds'), ['brilliance', 'classic']);
 });
 
+test('selecting a class checks its saved subjects for the period without copying subjects from other classes', () => {
+  const selectionSource = adminSource.slice(
+    adminSource.indexOf('function academicSavedClassSubjectIds'),
+    adminSource.indexOf('function academicClassroomCheckboxField')
+  );
+  const checked = (form, name) => form.inputs.filter((input) => input.name === name && input.checked).map((input) => input.value);
+  const setChecked = (form, name, values) => {
+    const selected = new Set(values);
+    form.inputs.filter((input) => input.name === name).forEach((input) => { input.checked = selected.has(input.value); });
+  };
+  const { academicSavedClassSubjectIds, bindAcademicClassSubjectSelection } = new Function(
+    'academicIsActive', 'clean', 'academicCheckedValues', 'setAcademicCheckedValues',
+    `${selectionSource}; return { academicSavedClassSubjectIds, bindAcademicClassSubjectSelection };`
+  )((row) => row && !/archived|inactive|closed|withdrawn/i.test(String(row.Status || '')),
+    (value) => String(value ?? '').trim(), checked, setChecked);
+  const offering = (classId, subjectId, overrides = {}) => ({
+    ClassId: classId, SubjectId: subjectId, SessionId: 'session-1', TermId: 'term-1', ArmId: '', Status: 'Active', ...overrides
+  });
+  const offerings = [
+    offering('grade-7', 'math'), offering('grade-7', 'english'),
+    offering('grade-8', 'math'), offering('grade-8', 'science'),
+    offering('grade-7', 'french', { ArmId: 'arm-a' }),
+    offering('grade-7', 'geography', { Status: 'Archived' }),
+    offering('grade-7', 'biology', { TermId: 'term-2' })
+  ];
+  assert.deepEqual(academicSavedClassSubjectIds('grade-7', 'session-1', 'term-1', offerings), ['math', 'english']);
+  const inputs = [
+    ...['grade-7', 'grade-8'].map((value) => ({ name: 'ClassIds', value, checked: false })),
+    ...['math', 'english', 'science', 'french', 'biology'].map((value) => ({ name: 'SubjectIds', value, checked: false, indeterminate: false }))
+  ];
+  const summary = { textContent: '' };
+  const form = {
+    inputs, elements: { SessionId: { value: 'session-1' }, TermId: { value: 'term-1' } },
+    querySelector: (selector) => selector === '[data-academic-curriculum-summary]' ? summary : null,
+    querySelectorAll: (selector) => selector === 'input[name="SubjectIds"]' ? inputs.filter((input) => input.name === 'SubjectIds') : [],
+    addEventListener: (_name, listener) => { form.onChange = listener; }
+  };
+  const change = (name, value, isChecked) => {
+    const input = inputs.find((row) => row.name === name && row.value === value);
+    input.checked = isChecked;
+    form.onChange({ target: input });
+  };
+  bindAcademicClassSubjectSelection(form, offerings);
+  change('ClassIds', 'grade-7', true);
+  assert.deepEqual(checked(form, 'SubjectIds'), ['math', 'english']);
+  change('ClassIds', 'grade-8', true);
+  assert.deepEqual(checked(form, 'SubjectIds'), ['math']);
+  assert.equal(inputs.find((input) => input.value === 'english').indeterminate, true);
+  assert.equal(inputs.find((input) => input.value === 'science').indeterminate, true);
+  assert.match(summary.textContent, /saved in only some classes and not auto-checked/);
+  change('SubjectIds', 'english', true);
+  assert.deepEqual(checked(form, 'SubjectIds'), ['math', 'english']);
+  change('ClassIds', 'grade-7', false);
+  assert.deepEqual(checked(form, 'SubjectIds'), ['math', 'english', 'science']);
+  change('SubjectIds', 'science', false);
+  assert.deepEqual(checked(form, 'SubjectIds'), ['math', 'english']);
+  form.elements.TermId.value = 'term-2';
+  form.onChange({ target: { name: 'TermId' } });
+  assert.deepEqual(checked(form, 'SubjectIds'), ['english']);
+});
+
 test('selecting a subject teacher restores saved subjects and classrooms for the exact period', () => {
   const helpersSource = adminSource.slice(
     adminSource.indexOf('function academicSavedSubjectTeacherAllocations'),
@@ -1289,7 +1350,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
   assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260918-academic-readability/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260928-visible-subject-category/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260928-class-subject-restore/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

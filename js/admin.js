@@ -10835,6 +10835,61 @@ function bindAcademicClassroomArmSelection(form, arms = [], templates = []) {
   sync();
 }
 
+function academicSavedClassSubjectIds(classId, sessionId, termId, offerings = []) {
+  return [...new Set(offerings.filter((offering) => academicIsActive(offering)
+    && clean(offering.ClassId) === clean(classId)
+    && clean(offering.SessionId) === clean(sessionId)
+    && clean(offering.TermId) === clean(termId)
+    && !clean(offering.ArmId))
+    .map((offering) => clean(offering.SubjectId)).filter(Boolean))];
+}
+
+function bindAcademicClassSubjectSelection(form, offerings = []) {
+  if (!form) return;
+  const manual = new Set();
+  const excluded = new Set();
+  const summary = form.querySelector('[data-academic-curriculum-summary]');
+  const sync = () => {
+    const selectedClasses = academicCheckedValues(form, 'ClassIds');
+    const sessionId = clean(form.elements.SessionId?.value);
+    const termId = clean(form.elements.TermId?.value);
+    const savedSets = selectedClasses.map((classId) => new Set(
+      academicSavedClassSubjectIds(classId, sessionId, termId, offerings)
+    ));
+    const common = savedSets.length
+      ? [...savedSets[0]].filter((subjectId) => savedSets.every((saved) => saved.has(subjectId)))
+      : [];
+    const allSaved = new Set(savedSets.flatMap((saved) => [...saved]));
+    const mixed = new Set([...allSaved].filter((subjectId) => !common.includes(subjectId)));
+    const checked = [...new Set([...common, ...manual])].filter((subjectId) => !excluded.has(subjectId));
+    const savedCheckedCount = common.filter((subjectId) => !excluded.has(subjectId)).length;
+    setAcademicCheckedValues(form, 'SubjectIds', checked);
+    form.querySelectorAll('input[name="SubjectIds"]').forEach((input) => {
+      input.indeterminate = !input.checked && !excluded.has(input.value) && mixed.has(input.value);
+      input.title = input.indeterminate ? 'Saved for some selected classes. Check to apply to every selected class.' : '';
+    });
+    if (summary) summary.textContent = !selectedClasses.length
+      ? 'Select a class to see its saved subjects.'
+      : selectedClasses.length === 1
+        ? `${savedCheckedCount} saved subject${savedCheckedCount === 1 ? '' : 's'} checked for this class.`
+        : `${savedCheckedCount} subject${savedCheckedCount === 1 ? '' : 's'} shared by all selected classes checked. ${mixed.size} saved in only some classes and not auto-checked.`;
+  };
+  form.addEventListener('change', (event) => {
+    const input = event.target;
+    if (input?.name === 'SubjectIds') {
+      if (input.checked) {
+        manual.add(input.value);
+        excluded.delete(input.value);
+      } else {
+        manual.delete(input.value);
+        excluded.add(input.value);
+      }
+    }
+    if (['ClassIds', 'SubjectIds', 'SessionId', 'TermId'].includes(input?.name)) sync();
+  });
+  sync();
+}
+
 function academicClassroomCheckboxField(classes = [], classrooms = []) {
   let armIndex = 0;
   const groups = classes.map((schoolClass, classIndex) => {
@@ -12015,7 +12070,7 @@ function academicOfferingsWorkspace(data, rows) {
       <button type="submit">Save Senior subject choices</button>
     </form>` : '';
   const compulsoryCurriculumForm = canManage ? `
-    <form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="bulkApplyAcademicSubjects">
+    <form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="bulkApplyAcademicSubjects" data-academic-class-subject-selection>
       <div class="academic-management-editor-heading"><div><small>${secondary ? 'Junior Secondary' : 'Primary'} curriculum</small><h3>Select subjects applicable to ${secondary ? 'Junior Secondary' : 'Primary'}</h3><p class="muted">Select the ${secondary ? 'JSS' : 'Primary'} classes and reusable subjects below. Every selected subject is assigned to every selected class and is compulsory for all students in those classes.</p></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
       <input type="hidden" name="SubjectRole" value="Core">
@@ -12031,8 +12086,9 @@ function academicOfferingsWorkspace(data, rows) {
       ${academicCheckboxField({
         name: 'SubjectIds', label: secondary ? 'Applicable Junior Secondary subjects' : 'Applicable Primary subjects', required: true, idPrefix: 'compulsory-curriculum-subjects',
         options: subjects.map((row) => ({ value: row.SubjectId, label: `${row.Code} - ${row.Name}` })),
-        help: `Choose every subject taken by students in the selected ${secondary ? 'JSS' : 'Primary'} classes. Existing matching assignments are retained and skipped safely.`
+        help: `Choose every subject taken by students in the selected ${secondary ? 'JSS' : 'Primary'} classes. Saved subjects for the selected period are checked automatically. Unchecking one does not remove its existing assignment; use the Offering register for removal.`
       })}
+      <p class="muted" data-academic-curriculum-summary aria-live="polite">Select a class to see its saved subjects.</p>
       <button type="submit">Apply subjects to selected ${secondary ? 'JSS' : 'Primary'} classes</button>
     </form>` : '';
   const form = canManage && !secondary ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-form="offering">
@@ -14293,6 +14349,9 @@ function bindAcademicManagement() {
   );
   panelEl.querySelectorAll('[data-academic-class-arm-selection]').forEach((form) => bindAcademicClassroomArmSelection(
     form, academicManagementData?.arms || [], academicManagementData?.armTemplates || []
+  ));
+  panelEl.querySelectorAll('[data-academic-class-subject-selection]').forEach((form) => bindAcademicClassSubjectSelection(
+    form, academicManagementData?.offerings || []
   ));
   panelEl.querySelectorAll('[data-academic-copy-record-id]').forEach((button) => button.addEventListener('click', async () => {
     const original = button.textContent;
