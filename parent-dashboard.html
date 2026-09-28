@@ -6,7 +6,7 @@
   <title>Parent Dashboard</title>
   <meta name="theme-color" content="#0f3d66"><link rel="manifest" href="/api/app-manifest?v=20260809-branded-app-icon"><link rel="icon" type="image/png" href="images/Logo.png?v=20260801-transparent-app-logo"><link rel="apple-touch-icon" href="images/Logo.png?v=20260801-transparent-app-logo">
   <script src="js/preferences.js?v=20260726-biometric"></script>
-  <link rel="stylesheet" href="css/style.css?v=20260923-parent-tutorials">
+  <link rel="stylesheet" href="css/style.css?v=20260928-parent-mobile-onboarding">
   <link rel="stylesheet" href="css/notifications.css?v=20260804-read-efficiency">
 </head>
 <body class="parent-dashboard-page" data-fresh-site-profile>
@@ -50,7 +50,7 @@
         <img src="images/Logo.png" alt="School logo" class="logo small" onerror="this.style.display='none'">
         <div>
           <h1>Parent Dashboard</h1>
-          <p class="muted"><span data-school-name>School Portal</span> - monitor results, payments, wallet spending, clinic visits, and student activity.</p>
+          <p class="muted"><span data-school-name>School Portal</span><span class="parent-header-description"> · Results, payments, and student activity</span></p>
         </div>
         <button type="button" id="parentTutorialButton" class="parent-tutorial-button" aria-label="Open tutorial for this operation" title="Open tutorial for this operation">
           <span class="parent-tutorial-icon" aria-hidden="true">&#9654;</span>
@@ -80,9 +80,9 @@
           <div>
             <small>NEW STUDENT PROFILE</small>
             <h2>Complete your child's information</h2>
-            <p class="muted">Use the shared school link, then enter the student's admission number and the one-time password supplied by the school.</p>
+            <p class="muted">Enter the admission number and temporary password to review and correct your child's details.</p>
           </div>
-          <button type="button" id="closeParentOnboardingBtn" class="secondary">Back to sign in</button>
+          <button type="button" id="closeParentOnboardingBtn" class="secondary">&larr; Sign in</button>
         </div>
 
         <form id="parentOnboardingAccessForm" class="parent-onboarding-form" autocomplete="off">
@@ -353,6 +353,6 @@
   <script src="js/password-toggle.js?v=20260726-biometric"></script>
   <script src="js/financial-values.js?v=20260803-finance-commas"></script>
   <script src="js/payment-methods.js?v=20260809-direct-transfer-sharp-text"></script>
-  <script src="js/parent-dashboard.js?v=20260928-full-student-profile"></script>
+  <script src="js/parent-dashboard.js?v=20260928-parent-mobile-onboarding"></script>
 </body>
 </html>

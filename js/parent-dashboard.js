@@ -84,7 +84,9 @@ const onboardingHash = new URLSearchParams(window.location.hash.replace(/^#/, ''
 const parentOnboardingRequested = onboardingHash.has('onboarding') || onboardingHash.has('onboard');
 const parentOnboardingAdmission = onboardingHash.get('admission') || '';
 let parentPasswordSetupToken = '';
-if (window.location.hash) window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}`);
+if (window.location.hash && !parentOnboardingRequested) {
+  window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}`);
+}
 const PARENT_DOCUMENT_MAX_FILE_SIZE = 8 * 1024 * 1024;
 const parentTutorialContexts = Object.freeze({
   signIn: { storageKey: 'Parent Portal - Sign In', label: 'parent sign in' },
@@ -389,6 +391,7 @@ function setInlineStatus(element, message, type = '') {
 }
 
 function openParentOnboarding() {
+  window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}#onboarding=1`);
   dashboardContent.hidden = true;
   loginForm.hidden = true;
   parentOnboardingPanel.hidden = false;
@@ -405,6 +408,7 @@ function openParentOnboarding() {
 }
 
 function closeParentOnboarding() {
+  window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}`);
   parentOnboardingAccessForm?.reset();
   parentOnboardingProfileForm?.reset();
   parentOnboardingPanel.hidden = true;
@@ -532,6 +536,7 @@ parentOnboardingProfileForm?.addEventListener('submit', async (event) => {
     if (!response.ok || !data.ok) throw new Error(data.message || 'Could not complete the student profile.');
     parentOnboardingProfileForm.reset();
     parentOnboardingAccessForm.reset();
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}`);
     parentOnboardingPanel.hidden = true;
     loginForm.hidden = false;
     updateParentTutorialControl();

@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { onboardingStatus } from '../functions/api/parent-dashboard.js';
 
-const [backend, api, html, script, staffStudents, admin] = await Promise.all([
+const [backend, api, html, script, css, staffStudents, admin] = await Promise.all([
   readFile(new URL('../functions/api/backend.js', import.meta.url), 'utf8'),
   readFile(new URL('../functions/api/parent-dashboard.js', import.meta.url), 'utf8'),
   readFile(new URL('../parent-dashboard.html', import.meta.url), 'utf8'),
   readFile(new URL('../js/parent-dashboard.js', import.meta.url), 'utf8'),
+  readFile(new URL('../css/style.css', import.meta.url), 'utf8'),
   readFile(new URL('../functions/api/staff-students.js', import.meta.url), 'utf8'),
   readFile(new URL('../js/admin.js', import.meta.url), 'utf8')
 ]);
@@ -71,6 +72,20 @@ test('staff can re-enable onboarding for an existing student and copy the shared
   assert.match(admin, /data-copy-shared-parent-onboarding/);
   assert.match(admin, /\/parent-dashboard#onboarding=1/);
   assert.match(admin, /copyTextToClipboard\(onboardingUrl\)/);
+});
+
+test('shared onboarding stays open after refresh and mobile layout gives the form room', () => {
+  const bootstrap = script.slice(script.indexOf('const onboardingHash ='), script.indexOf('const PARENT_DOCUMENT_MAX_FILE_SIZE'));
+  const opening = script.slice(script.indexOf('function openParentOnboarding()'), script.indexOf('function closeParentOnboarding()'));
+  const closing = script.slice(script.indexOf('function closeParentOnboarding()'), script.indexOf('parentOnboardingAccessForm?.addEventListener'));
+  assert.match(bootstrap, /window\.location\.hash && !parentOnboardingRequested/);
+  assert.match(opening, /#onboarding=1/);
+  assert.match(closing, /replaceState\(window\.history\.state, '', `\$\{window\.location\.pathname\}\$\{window\.location\.search\}`\)/);
+  assert.match(script, /if \(parentOnboardingRequested\) \{\s*openParentOnboarding\(\);\s*return;/);
+  assert.match(html, /class="parent-header-description"/);
+  assert.match(css, /@media \(max-width:680px\)\{[\s\S]*?\.parent-dashboard-page \.form-header\{display:grid/);
+  assert.match(css, /\.parent-dashboard-page \.form-header \.parent-header-description\{display:none\}/);
+  assert.match(css, /\.parent-dashboard-page \.parent-onboarding-form button\[type="submit"\]\{width:100%/);
 });
 
 test('parent completion can correct the full student identity and profile without changing school-issued identifiers', () => {
