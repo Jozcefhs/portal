@@ -399,6 +399,17 @@ test('AM-002 subjects are bulk-created once and reused through class offerings',
   assert.throws(() => parseAcademicSubjectBatch({ SubjectLines: 'Mathematics MATH Core' }), /Line 1 is not in the required format/);
 });
 
+test('subjects can be timetable-only without changing their curriculum role', () => {
+  const rows = parseAcademicSubjectBatch({ SubjectLines: 'L.E.A.P | LEAP | TimetableOnly\nDIY | DIY\nLIB | LIB | TimetableOnly' });
+  assert.deepEqual(rows.map((row) => row.AssessmentCategory || 'Graded'), ['TimetableOnly', 'Graded', 'TimetableOnly']);
+  const leap = normalizeAcademicSubject(rows[0], scope);
+  assert.equal(leap.AssessmentCategory, 'TimetableOnly');
+  assert.equal(normalizeAcademicSubject({ Name: 'DIY', Code: 'DIY' }, scope).AssessmentCategory, 'Graded');
+  assert.equal(normalizeAcademicSubject({ Name: 'DIY', Code: 'DIY', AssessmentCategory: 'TimetableOnly' }, scope,
+    { ...normalizeAcademicSubject({ Name: 'DIY', Code: 'DIY' }, scope) }).AssessmentCategory, 'TimetableOnly');
+  assert.throws(() => normalizeAcademicSubject({ Name: 'LIB', Code: 'LIB', AssessmentCategory: 'Core' }, scope), /assessment category/);
+});
+
 test('AM-002 reusable Secondary subjects carry one school-wide Senior choice role', () => {
   const trade = normalizeAcademicSubject({ Name: 'Catering Craft', Code: 'CATER', SeniorChoiceRole: 'Trade' }, scope);
   const optional = normalizeAcademicSubject({ Name: 'Music', Code: 'MUSIC', SeniorChoiceRole: 'Optional' }, scope);
@@ -1273,7 +1284,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
   assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260918-academic-readability/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260928-timetable-batch/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260928-timetable-only-subjects/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

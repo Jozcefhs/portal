@@ -816,9 +816,14 @@ export function normalizeAcademicSubject(input = {}, context = {}, existing = nu
   const seniorChoiceRole = input.SeniorChoiceRole === undefined
     ? oneOf(existing?.SeniorChoiceRole, ACADEMIC_SENIOR_CHOICE_ROLES, '')
     : oneOf(input.SeniorChoiceRole, ACADEMIC_SENIOR_CHOICE_ROLES, '');
+  const assessmentCategory = clean(input.AssessmentCategory ?? existing?.AssessmentCategory ?? 'Graded');
+  if (!['Graded', 'TimetableOnly'].includes(assessmentCategory)) {
+    throw failure('Choose Graded or Timetable-only for the subject assessment category.');
+  }
   const record = {
     ...(existing || {}), RecordId: subjectId, SubjectId: subjectId, Name: name, Code: code,
     SeniorChoiceRole: section === 'secondary' ? seniorChoiceRole : '',
+    AssessmentCategory: assessmentCategory,
     Status: oneOf(input.Status, ACADEMIC_RECORD_STATUSES, existing?.Status || 'Active'),
     BranchId: branchId, SchoolSection: section
   };
@@ -954,7 +959,7 @@ const ACADEMIC_RECORD_STATE_KEYS = Object.freeze({
   class: Object.freeze(['classes', 'arms', 'studentMemberships']),
   armtemplate: Object.freeze(['armTemplates']),
   arm: Object.freeze(['classes', 'arms', 'departments', 'studentMemberships']),
-  subject: Object.freeze(['subjects']),
+  subject: Object.freeze(['subjects', 'scoreSheets', 'cbtTests']),
   department: Object.freeze(['subjects', 'departments']),
   offering: Object.freeze(['sessions', 'terms', 'classes', 'arms', 'subjects', 'offerings']),
   teacherallocation: ACADEMIC_SUBJECT_TEACHER_STATE_KEYS,
@@ -1946,6 +1951,12 @@ export async function saveAcademicManagementRecord(env, user = {}, input = {}) {
   const normalizedInput = type === 'studentmembership' && !existing ? { ...input, Status: 'Active' } : input;
   const record = definition.normalize(normalizedInput, scope, existing);
   validateAcademicRecord(state, type, record, { ...people, existing });
+  if (type === 'subject' && existing && clean(existing.AssessmentCategory || 'Graded') !== record.AssessmentCategory
+    && record.AssessmentCategory === 'TimetableOnly'
+    && (state.scoreSheets.some((row) => lower(row.SubjectId) === lower(record.SubjectId))
+      || state.cbtTests.some((row) => lower(row.SubjectId) === lower(record.SubjectId)))) {
+    throw failure('This subject already has score sheets or CBT tests. Keep it Graded so existing assessment history is not hidden.', 409, 'ACADEMIC_SUBJECT_ASSESSMENT_HISTORY');
+  }
   if (type === 'studentmembership' && existing && membershipMateriallyChanged(existing, record)) {
     throw failure('Use the transfer, curriculum-change, withdrawal or reinstatement workflow so this membership change is preserved in history.', 409, 'ACADEMIC_MOVEMENT_REQUIRED');
   }
@@ -2081,14 +2092,17 @@ export function parseAcademicArmTemplateBatch(input = {}) {
 export function parseAcademicSubjectBatch(input = {}) {
   if (Array.isArray(input.Subjects)) return input.Subjects.map((row) => ({ ...row }));
   return batchLines(input.SubjectLines || input.Subjects).map((line, index) => {
-    const parts = batchParts(line, index, 2, 'Name | Code');
-    return { Name: parts[0], Code: parts[1] };
+    const count = line.split('|').length;
+    if (![2, 3].includes(count)) throw failure(`Line ${index + 1} is not in the required format. Use Name | Code | optional TimetableOnly.`);
+    const parts = batchParts(line, index, count, 'Name | Code | optional TimetableOnly');
+    return { Name: parts[0], Code: parts[1], ...(parts[2] ? { AssessmentCategory: parts[2] } : {}) };
   });
 }
 
 function sameSetupRecord(existing, record, keys) {
   return statusActive(existing) && keys.every((key) => {
     if (['Capacity', 'DefaultCapacity', 'SortOrder'].includes(key)) return Number(existing[key] || 0) === Number(record[key] || 0);
+    if (key === 'AssessmentCategory') return clean(existing[key] || 'Graded') === clean(record[key] || 'Graded');
     return clean(existing[key]) === clean(record[key]);
   });
 }
@@ -2208,7 +2222,7 @@ export async function bulkCreateAcademicSubjects(env, user = {}, input = {}) {
     const record = normalizeAcademicSubject({ ...row, Status: 'Active' }, scope);
     const existing = findById(projected.subjects, record.SubjectId);
     if (existing) {
-      if (sameSetupRecord(existing, record, ['Name', 'Code'])) {
+      if (sameSetupRecord(existing, record, ['Name', 'Code', 'AssessmentCategory'])) {
         skipped += 1;
         continue;
       }
@@ -4385,6 +4399,9 @@ async function academicScoreSheetContext(env, user, input, capability = 'canEnte
   const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
   const arm = assertReference(findById(state.arms, input.ArmId), 'Choose an active classroom arm.');
   const subject = assertReference(findById(state.subjects, input.SubjectId), 'Choose an active subject.');
+  if (subject.AssessmentCategory === 'TimetableOnly') {
+    throw failure('This subject is timetable-only and does not accept scores.', 409, 'ACADEMIC_SUBJECT_NOT_ASSESSED');
+  }
   if (arm.ClassId !== schoolClass.ClassId) throw failure('The selected arm does not belong to this class.');
   if (schoolClass.SchoolSection !== scope.section || subject.SchoolSection !== scope.section) {
     throw failure('The selected scorebook belongs to another school section.', 403, 'ACADEMIC_SECTION_FORBIDDEN');
@@ -6109,6 +6126,9 @@ async function academicCbtClassContext(env, user = {}, input = {}) {
   const { permissions, scope, state, session, term } = context;
   const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
   const subject = assertReference(findById(state.subjects, input.SubjectId), 'Choose an active subject.');
+  if (subject.AssessmentCategory === 'TimetableOnly') {
+    throw failure('This subject is timetable-only and does not accept CBT marks.', 409, 'ACADEMIC_SUBJECT_NOT_ASSESSED');
+  }
   if (schoolClass.SchoolSection !== scope.section || subject.SchoolSection !== scope.section) {
     throw failure('The selected CBT class or subject belongs to another school section.', 403, 'ACADEMIC_SECTION_FORBIDDEN');
   }
@@ -6746,6 +6766,9 @@ export async function prepareLocalCbtIdentityPackage(env, user = {}, input = {})
     const schoolClass = assertReference(findById(state.classes, input.ClassId), 'Choose an active class.');
     const arm = assertReference(findById(state.arms, input.ArmId), 'Choose an active classroom arm.');
     const subject = assertReference(findById(state.subjects, input.SubjectId), 'Choose an active subject.');
+    if (subject.AssessmentCategory === 'TimetableOnly') {
+      throw failure('This subject is timetable-only and does not accept CBT marks.', 409, 'ACADEMIC_SUBJECT_NOT_ASSESSED');
+    }
     if (arm.ClassId !== schoolClass.ClassId) throw failure('The selected arm does not belong to this class.');
     if (schoolClass.SchoolSection !== scope.section || subject.SchoolSection !== scope.section) {
       throw failure('The selected CBT roster belongs to another school section.', 403, 'ACADEMIC_SECTION_FORBIDDEN');

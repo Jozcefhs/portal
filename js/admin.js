@@ -11817,6 +11817,7 @@ function academicStructureWorkspace(data, rows) {
         ${academicRecordFields()}<div class="academic-management-editor-heading"><div><small>Curriculum catalogue</small><h3>Subject</h3></div><button type="button" class="academic-form-reset" data-academic-reset="subject">Clear</button></div>
         <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
         <div class="academic-management-form-grid"><label>Subject name<input name="Name" placeholder="Mathematics" required></label><label>Code<input name="Code" placeholder="MATH" required></label></div>
+        <label>Assessment category<select name="AssessmentCategory"><option value="Graded">Graded — scores and results</option><option value="TimetableOnly">Timetable-only — no marks</option></select><small>Timetable-only subjects such as L.E.A.P, DIY and LIB can be assigned to classes and teachers and scheduled, but are excluded from scorebooks, CBT marks and result averages.</small></label>
         <p class="muted">Core status is assigned within each Senior Secondary department, not on the subject catalogue record.</p>
         <label>Status<select name="Status"><option>Active</option><option>Inactive</option></select></label>
         <button type="submit">Save subject</button>
@@ -11861,6 +11862,7 @@ function academicStructureWorkspace(data, rows) {
       ], { emptyMessage: 'No reusable arm has been applied to a class yet. Use Apply to classes in the Reusable Arm Catalogue above.' })}
       ${table('Reusable Subject Catalogue', rows.subjects, [
         { label: 'Code', value: (row) => row.Code }, { label: 'Subject', value: (row) => row.Name },
+        { label: 'Assessment', value: (row) => row.AssessmentCategory === 'TimetableOnly' ? 'Timetable-only' : 'Graded' },
         { label: 'Senior choice', value: (row) => row.SeniorChoiceRole || 'General / department Core' },
         { label: 'Status', value: (row) => row.Status },
         { label: 'Actions', render: (row) => academicActionButtons('subject', row, canManage, permissions.canArchive, permissions.canDelete) }
@@ -11914,7 +11916,7 @@ function academicBulkSetupWorkspace(data, rows) {
     <form class="academic-management-editor" data-academic-workflow="bulkCreateAcademicSubjects">
       <div class="academic-management-editor-heading"><div><small>Up to 50 at once</small><h3>Build reusable subject catalogue</h3></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
-      <label>Subject definitions<textarea name="SubjectLines" rows="9" required placeholder="Mathematics | MATH&#10;English Language | ENG&#10;Computer Studies | COMP"></textarea><small>One subject per line: Name | Code. Create a subject once for this school section, then reuse it across classes, departments and teacher allocations. Core subjects are selected inside each Senior Secondary department.</small></label>
+      <label>Subject definitions<textarea name="SubjectLines" rows="9" required placeholder="Mathematics | MATH&#10;English Language | ENG&#10;L.E.A.P | LEAP | TimetableOnly"></textarea><small>One subject per line: Name | Code | optional TimetableOnly. Subjects without the third value are graded. Timetable-only subjects can be scheduled but have no marks or result average. Core subjects are selected inside each Senior Secondary department.</small></label>
       <button type="submit">Create all reusable subjects</button>
     </form>
   </div>
@@ -12718,7 +12720,8 @@ function academicScorebookWorkspace(data, rows) {
   const classrooms = rows.arms.filter((row) => academicIsActive(row)
     && (row.IsClassroom === true || /^(yes|true|1)$/i.test(clean(row.IsClassroom))));
   const allocations = rows.teacherAllocations.filter((row) => academicIsActive(row)
-    && row.AllocationRole === 'Subject Teacher');
+    && row.AllocationRole === 'Subject Teacher'
+    && academicFind(rows.subjects, row.SubjectId)?.AssessmentCategory !== 'TimetableOnly');
   const permittedClassrooms = classrooms.filter((arm) => allocations.some((allocation) => allocation.ClassId === arm.ClassId
     && (!allocation.ArmId || allocation.ArmId === arm.ArmId)));
   let selectedArm = academicFind(permittedClassrooms, academicScorebookDraft.armId) || permittedClassrooms[0] || null;
@@ -13471,7 +13474,8 @@ function academicCbtPaperPreviewMarkup(files = [], options = {}) {
 
 function academicCbtContexts(data, rows) {
   const allocations = rows.teacherAllocations.filter((row) => academicIsActive(row)
-    && row.AllocationRole === 'Subject Teacher' && clean(row.SubjectId));
+    && row.AllocationRole === 'Subject Teacher' && clean(row.SubjectId)
+    && academicFind(rows.subjects, row.SubjectId)?.AssessmentCategory !== 'TimetableOnly');
   const contexts = [];
   const seen = new Set();
   allocations.forEach((allocation) => {

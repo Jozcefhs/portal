@@ -98,6 +98,27 @@ test('Milestone 9 blocks the classroom calculation when any subject sheet or stu
   assert.ok(incomplete.Issues.some((issue) => issue.includes('no complete approved score')));
 });
 
+test('timetable-only subjects need no score sheet and do not affect averages or subject counts', () => {
+  const withTimetableSubject = calculation({
+    Memberships: memberships.map((row) => ({ ...row, SubjectIds: [...row.SubjectIds, 'leap'] })),
+    Subjects: [
+      { SubjectId: 'math', Name: 'Mathematics' },
+      { SubjectId: 'eng', Name: 'English Language' },
+      { SubjectId: 'leap', Name: 'L.E.A.P', AssessmentCategory: 'TimetableOnly' }
+    ]
+  });
+  assert.equal(withTimetableSubject.Ready, true);
+  assert.deepEqual(withTimetableSubject.Results.map((row) => row.OverallAverage), [75, 65]);
+  assert.ok(withTimetableSubject.Results.every((row) => row.SubjectCount === 2
+    && row.Subjects.every((subject) => subject.SubjectId !== 'leap')));
+  const onlyTimetable = calculation({
+    Memberships: memberships.map((row) => ({ ...row, SubjectIds: ['leap'] })),
+    Subjects: [{ SubjectId: 'leap', Name: 'L.E.A.P', AssessmentCategory: 'TimetableOnly' }]
+  });
+  assert.equal(onlyTimetable.Ready, false);
+  assert.ok(onlyTimetable.Issues.some((issue) => issue.includes('no graded subjects assigned')));
+});
+
 test('Milestone 9 applies the configured position display mode without forcing class position', () => {
   const noPosition = calculation({ Policy: resultPolicy('none') });
   assert.equal('OverallPosition' in noPosition.Results[0], false);

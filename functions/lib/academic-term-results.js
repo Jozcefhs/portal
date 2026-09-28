@@ -193,9 +193,10 @@ export function calculateAcademicTermResultDrafts(input = {}) {
 
   const results = memberships.map((membership) => {
     const studentRef = clean(membership.StudentRef);
-    const subjectIds = uniqueIds(membership.SubjectIds);
+    const subjectIds = uniqueIds(membership.SubjectIds)
+      .filter((subjectId) => subjects.get(lower(subjectId))?.AssessmentCategory !== 'TimetableOnly');
     const coreSubjectIds = new Set(uniqueIds(membership.CoreSubjectIds).map(lower));
-    if (!subjectIds.length) issues.push(`${studentRef} has no assigned subjects.`);
+    if (!subjectIds.length) issues.push(`${studentRef} has no graded subjects assigned.`);
     const Subjects = subjectIds.flatMap((subjectId) => {
       const sheet = sheetsBySubject.get(lower(subjectId));
       if (!sheet) {
