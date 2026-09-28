@@ -50,7 +50,7 @@ test('shared parent completion link becomes unusable after profile completion an
   assert.match(html, /id="onboardingParentEmail"/);
   assert.match(html, /for="onboardingStudentNin">Student's NIN/);
   assert.match(html, /id="onboardingStudentNin"[^>]+pattern="\[0-9\]\{11\}"/);
-  assert.doesNotMatch(html, /id="onboardingPreviousSchool"/);
+  assert.match(html, /id="onboardingPreviousSchool"/);
   assert.match(html, /id="requiredNewParentPassword"/);
   assert.match(script, /onboardingHash\.has\('onboarding'\)/);
   assert.match(script, /onboardingStudentNin: student\.studentNin/);
@@ -58,7 +58,7 @@ test('shared parent completion link becomes unusable after profile completion an
   assert.match(api, /studentNin: clean\(student\.NIN\)/);
   assert.match(api, /NIN: clean\(profile\.studentNin \|\| profile\.NIN\)/);
   assert.match(api, /values\.NIN && !\/\^\\d\{11\}\$\//);
-  assert.doesNotMatch(api.slice(api.indexOf('function publicOnboardingStudent'), api.indexOf('async function assertParentOnboardingAllowance')), /previousSchool|PreviousSchool/);
+  assert.match(api.slice(api.indexOf('function publicOnboardingStudent'), api.indexOf('async function assertParentOnboardingAllowance')), /previousSchool: clean\(student\.PreviousSchool\)/);
   assert.match(script, /window\.history\.replaceState/);
   assert.doesNotMatch(script, /(?:localStorage|sessionStorage)\.setItem\([^\n]*(?:onboard|passwordSetupToken|temporaryPassword)/i);
 });
@@ -71,6 +71,22 @@ test('staff can re-enable onboarding for an existing student and copy the shared
   assert.match(admin, /data-copy-shared-parent-onboarding/);
   assert.match(admin, /\/parent-dashboard#onboarding=1/);
   assert.match(admin, /copyTextToClipboard\(onboardingUrl\)/);
+});
+
+test('parent completion can correct the full student identity and profile without changing school-issued identifiers', () => {
+  for (const field of ['FirstName', 'MiddleName', 'Surname', 'Gender', 'PreviousSchool']) {
+    assert.match(api, new RegExp(`${field}: clean\\(profile\\.`));
+  }
+  for (const id of ['onboardingFirstName', 'onboardingMiddleName', 'onboardingSurname', 'onboardingGender', 'onboardingPreviousSchool']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+    assert.match(script, new RegExp(`${id}: student\\.`));
+    assert.match(script, new RegExp(`getElementById\\('${id}'\\)\\.value`));
+  }
+  assert.match(api, /DisplayName: correctedName/);
+  assert.match(api, /ApplicantName: correctedName/);
+  assert.match(api, /formatPersonName\(values, schoolProfile\)/);
+  const completion = api.slice(api.indexOf('async function completeParentOnboardingProfile'), api.indexOf('async function pendingParentPasswordStudent'));
+  assert.doesNotMatch(completion, /ClassName: clean\(profile\.|AdmissionNo: clean\(profile\./);
 });
 
 test('legacy incomplete student profiles can begin onboarding without an explicit status', () => {

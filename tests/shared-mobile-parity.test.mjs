@@ -12,7 +12,7 @@ const pageStyleVersions = new Map([
   ['register-organization.html', '20260918-neutral-plan-cards']
 ]);
 const adminScriptVersion = '20260928-parent-link-face-capture';
-const parentScriptVersion = '20260923-parent-tutorials';
+const parentScriptVersion = '20260928-full-student-profile';
 const notificationScriptVersion = '20260927-spoken-alerts';
 const notificationStyleVersion = '20260804-read-efficiency';
 const pageNames = [

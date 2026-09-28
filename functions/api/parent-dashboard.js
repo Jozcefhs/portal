@@ -111,8 +111,12 @@ function publicOnboardingStudent(student = {}) {
   return {
     admissionNo: clean(student.AdmissionNo || student.__id),
     studentName: clean(student.DisplayName || student.ApplicantName),
+    firstName: clean(student.FirstName),
+    middleName: clean(student.MiddleName),
+    surname: clean(student.Surname),
     gender: clean(student.Gender),
     className: clean(student.ClassName || student.ClassAdmitted),
+    previousSchool: clean(student.PreviousSchool),
     dateOfBirth: clean(student.DateOfBirth),
     studentType: clean(student.StudentType),
     parentName: clean(student.ParentName),
@@ -159,8 +163,13 @@ async function completeParentOnboardingProfile(env, body, request) {
   const profile = body.profile && typeof body.profile === 'object' ? body.profile : {};
   const confirmedParentEmail = lower(profile.confirmParentEmail || profile.ConfirmParentEmail);
   const values = {
+    FirstName: clean(profile.firstName || profile.FirstName),
+    MiddleName: clean(profile.middleName || profile.MiddleName),
+    Surname: clean(profile.surname || profile.Surname),
+    Gender: clean(profile.gender || profile.Gender),
     DateOfBirth: clean(profile.dateOfBirth || profile.DateOfBirth),
     StudentType: clean(profile.studentType || profile.StudentType),
+    PreviousSchool: clean(profile.previousSchool || profile.PreviousSchool),
     ParentName: clean(profile.parentName || profile.ParentName),
     ParentEmail: lower(profile.parentEmail || profile.ParentEmail),
     ParentPhone: clean(profile.parentPhone || profile.ParentPhone),
@@ -175,6 +184,9 @@ async function completeParentOnboardingProfile(env, body, request) {
     NIN: clean(profile.studentNin || profile.NIN)
   };
   const required = [
+    ['First name', values.FirstName],
+    ['Surname', values.Surname],
+    ['Gender', values.Gender],
     ['Date of birth', values.DateOfBirth],
     ['Student type', values.StudentType],
     ['Parent or guardian name', values.ParentName],
@@ -205,6 +217,11 @@ async function completeParentOnboardingProfile(env, body, request) {
     error.status = 400;
     throw error;
   }
+  if (!['Male', 'Female'].includes(values.Gender)) {
+    const error = new Error('Select a valid gender.');
+    error.status = 400;
+    throw error;
+  }
   if (!['Day Student', 'Boarding Student'].includes(values.StudentType)) {
     const error = new Error('Select a valid student type.');
     error.status = 400;
@@ -225,10 +242,14 @@ async function completeParentOnboardingProfile(env, body, request) {
     throw error;
   }
   const existingCredential = await getParentCredential(env, values.ParentEmail);
+  const schoolProfile = await getSchoolProfile(env, student.BranchId);
+  const correctedName = formatPersonName(values, schoolProfile);
   const now = nowIso();
   const updated = {
     ...student,
     ...values,
+    DisplayName: correctedName,
+    ApplicantName: correctedName,
     ParentOnboardingTokenHash: '',
     ParentOnboardingStatus: existingCredential ? 'Complete' : 'AwaitingPassword',
     ParentOnboardingProfileCompletedAt: now,

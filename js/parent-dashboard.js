@@ -417,12 +417,16 @@ function closeParentOnboarding() {
 function populateParentOnboardingProfile(student = {}) {
   document.getElementById('onboardingStudentName').textContent = student.studentName || 'Student';
   document.getElementById('onboardingStudentAdmission').textContent = student.admissionNo || '';
-  document.getElementById('onboardingStudentGender').textContent = student.gender || '';
   document.getElementById('onboardingStudentClass').textContent = student.className || '';
   const values = {
+    onboardingFirstName: student.firstName,
+    onboardingMiddleName: student.middleName,
+    onboardingSurname: student.surname,
+    onboardingGender: student.gender,
     onboardingDateOfBirth: student.dateOfBirth,
     onboardingStudentType: student.studentType,
     onboardingStudentNin: student.studentNin,
+    onboardingPreviousSchool: student.previousSchool,
     onboardingParentName: student.parentName,
     onboardingParentEmail: student.parentEmail,
     onboardingConfirmParentEmail: student.parentEmail,
@@ -501,9 +505,14 @@ parentOnboardingProfileForm?.addEventListener('submit', async (event) => {
         admissionNo: document.getElementById('onboardingAdmissionNo').value.trim(),
         temporaryPassword: document.getElementById('onboardingTemporaryPassword').value,
         profile: {
+          firstName: document.getElementById('onboardingFirstName').value,
+          middleName: document.getElementById('onboardingMiddleName').value,
+          surname: document.getElementById('onboardingSurname').value,
+          gender: document.getElementById('onboardingGender').value,
           dateOfBirth: document.getElementById('onboardingDateOfBirth').value,
           studentType: document.getElementById('onboardingStudentType').value,
           studentNin: document.getElementById('onboardingStudentNin').value,
+          previousSchool: document.getElementById('onboardingPreviousSchool').value,
           parentName: document.getElementById('onboardingParentName').value,
           parentEmail: document.getElementById('onboardingParentEmail').value,
           confirmParentEmail: document.getElementById('onboardingConfirmParentEmail').value,
