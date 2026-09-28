@@ -3530,7 +3530,7 @@ async function importStudents(env, body) {
       AdmissionNo: admissionNo,
       DisplayName: applicantName,
       TemporaryPassword: '12345678',
-      ParentOnboardingPath: '/parent-dashboard.html#onboarding=1',
+      ParentOnboardingPath: '/parent-dashboard#onboarding=1',
       OnboardingStatus: 'Pending profile completion'
     });
     imported += 1;
@@ -3554,8 +3554,8 @@ async function reissueParentOnboarding(env, body) {
   });
   return {
     ok: true,
-    message: 'Parent onboarding has been reissued. The generic link is ready to copy.',
-    onboardingPath: '/parent-dashboard.html#onboarding=1',
+    message: 'Parent onboarding is ready. The shared link is available to copy.',
+    onboardingPath: '/parent-dashboard#onboarding=1',
     admissionNo: student.AdmissionNo,
     temporaryPassword: '12345678',
     student

@@ -24,7 +24,7 @@ test('minimal student import keeps separate names and applies the configured dis
   assert.match(importer, /ParentOnboardingTokenHash: ''/);
   assert.match(importer, /ParentOnboardingStatus: 'PendingProfile'/);
   assert.match(importer, /TemporaryPassword: '12345678'/);
-  assert.match(importer, /ParentOnboardingPath: '\/parent-dashboard\.html#onboarding=1'/);
+  assert.match(importer, /ParentOnboardingPath: '\/parent-dashboard#onboarding=1'/);
 
   const persistedStudent = importer.slice(importer.indexOf('const student = {'), importer.indexOf('const saved ='));
   assert.doesNotMatch(persistedStudent, /TemporaryPassword|ParentOnboardingToken:/);
@@ -32,12 +32,14 @@ test('minimal student import keeps separate names and applies the configured dis
   assert.match(persistedStudent, /VerificationCode: ''/);
 });
 
-test('generic parent completion link is single-use and dashboard access waits for a private password', () => {
+test('shared parent completion link becomes unusable after profile completion and dashboard access waits for a private password', () => {
   const verifier = api.slice(api.indexOf('async function requireParentOnboardingStudent'), api.indexOf('function publicOnboardingStudent'));
   assert.doesNotMatch(verifier, /onboardingToken|ParentOnboardingToken/);
   assert.match(verifier, /admissionNo/);
   assert.match(verifier, /PARENT_ONBOARDING_TEMPORARY_PASSWORD/);
   assert.match(api, /ParentOnboardingTokenHash: ''/);
+  assert.match(api, /updateTime: student\.__updateTime/);
+  assert.match(api, /onboardingStatus\(student\) !== expectedStatus/);
   assert.match(api, /ParentOnboardingStatus: existingCredential \? 'Complete' : 'AwaitingPassword'/);
   assert.match(api, /passwordChangeRequired: true/);
   assert.match(api, /completeParentPasswordSetup/);
@@ -60,10 +62,12 @@ test('generic parent completion link is single-use and dashboard access waits fo
   assert.doesNotMatch(script, /(?:localStorage|sessionStorage)\.setItem\([^\n]*(?:onboard|passwordSetupToken|temporaryPassword)/i);
 });
 
-test('staff can reissue onboarding for any existing student and copy the shared link', () => {
+test('staff can re-enable onboarding for an existing student and copy the shared link', () => {
   assert.match(staffStudents, /reissueparentonboarding/);
   assert.match(staffStudents, /ParentOnboardingStatus: 'PendingProfile'/);
-  assert.match(staffStudents, /onboardingPath: '\/parent-dashboard\.html#onboarding=1'/);
+  assert.match(staffStudents, /onboardingPath: '\/parent-dashboard#onboarding=1'/);
   assert.match(admin, /data-parent-onboarding-student/);
+  assert.match(admin, /data-copy-shared-parent-onboarding/);
+  assert.match(admin, /\/parent-dashboard#onboarding=1/);
   assert.match(admin, /copyTextToClipboard\(onboardingUrl\)/);
 });

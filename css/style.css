@@ -670,10 +670,16 @@ html[data-theme="dark"] .preference-switch-row:has(.preference-switch input:chec
 .staff-desktop-tools{display:flex;align-items:center;gap:7px}
 .staff-header-icon{display:grid;place-items:center;flex:0 0 38px;width:38px;height:38px;min-height:38px;margin:0;padding:0;border:1px solid #cad5e0;border-radius:10px;background:#f7fafc;color:var(--finance-navy);box-shadow:none}
 .staff-header-icon:hover{border-color:#8fa8c0;background:#eaf0f6}.staff-header-icon span{font-size:20px;line-height:1}.staff-header-icon.is-loading span{display:none}
+.staff-header-icon.staff-tutorial-button{border-color:#e00000;background:#ff0000;color:#fff}
+.staff-header-icon.staff-tutorial-button:hover{border-color:#b90000;background:#cc0000;color:#fff}
+.staff-header-icon.staff-tutorial-button:focus-visible{outline:3px solid #ffb3b3;outline-offset:2px}
+.student-onboarding-link-action{display:flex;justify-content:flex-end;margin:0 0 12px}
 .staff-header-signout{display:grid;place-items:center;flex:0 0 38px;width:38px;height:38px;min-height:38px;margin:0;padding:0;border-radius:10px}.staff-header-signout span{font-size:19px;line-height:1}
 .staff-sidebar-theme{display:none}
 html[data-theme="dark"] .staff-header-icon{border-color:#3b526b;background:#14263a;color:#eaf2ff}
 html[data-theme="dark"] .staff-header-icon:hover{background:#1b334c;color:#fff}
+html[data-theme="dark"] .staff-header-icon.staff-tutorial-button{border-color:#e00000;background:#ff0000;color:#fff}
+html[data-theme="dark"] .staff-header-icon.staff-tutorial-button:hover{border-color:#b90000;background:#cc0000;color:#fff}
 .staff-menu-toggle,.staff-sidebar-scrim{display:none}.staff-menu-toggle{align-items:center;gap:6px;margin:0;border:1px solid #cad5e0;background:#fff;color:var(--finance-navy)}.staff-menu-toggle span{font-size:18px;line-height:1}
 .staff-page .staff-shell{max-width:none;margin:0;padding:0}
 .staff-page .staff-dashboard{display:block}

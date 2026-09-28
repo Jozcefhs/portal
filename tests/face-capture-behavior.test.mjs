@@ -122,10 +122,32 @@ test('slow portrait capture finishes with a gentle turn, natural narrow eyes and
   assert.ok(detections.slice(0, 6).every(value => value === false), 'descriptor work waits until the live action finishes');
 });
 
+test('head-turn enrollment works when a phone omits gesture labels and eye landmarks', async t => {
+  const frames = [liveFrame(), liveFrame(), liveFrame(), liveFrame({ yaw: 0.3 }),
+    liveFrame(), liveFrame(), liveFrame(), liveFrame(), liveFrame()];
+  frames.forEach((frame) => frame.face.forEach((face) => { face.mesh = []; }));
+  const { dialog, human } = captureHarness(t, frames);
+  let evidence;
+  const descriptor = await captureDescriptor(dialog, human, 3, {
+    onLivenessEvidence: value => { evidence = value; }
+  });
+  assert.equal(descriptor.length, 1024);
+  assert.equal(evidence.observedGesture, 'facing left');
+  assert.equal(evidence.returnedToCentre, true);
+});
+
+test('slow mobile inference has enough time for a complete live action and samples', async t => {
+  const still = liveFrame();
+  const { dialog, human } = captureHarness(t, [still, still, still, liveFrame({ yaw: 0.3 }),
+    still, still, still, still, still], { inferenceMs: 3500 });
+  const descriptor = await captureDescriptor(dialog, human, 3);
+  assert.equal(descriptor.length, 1024);
+});
+
 test('signed right-turn and legacy blink challenges require their own movement sequence', async t => {
   const still = liveFrame();
   for (const [challenge, action] of [
-    [{ action: 'TURN_RIGHT' }, liveFrame({ yaw: -0.3, gesture: 'facing right' })],
+    [{ action: 'TURN_RIGHT' }, liveFrame({ yaw: -0.3 })],
     [{ action: 'BLINK' }, liveFrame({ gap: 0.7 })]
   ]) {
     const { dialog, human } = captureHarness(t, [still, still, still, action, action, still, still, still]);

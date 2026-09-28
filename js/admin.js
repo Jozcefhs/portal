@@ -1115,7 +1115,7 @@ async function attendancePasskeyProof(siteId, direction) {
 
 function attendanceFaceModule() {
   if (!attendanceFaceModulePromise) {
-    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260927-simple-face-capture').catch((error) => {
+    attendanceFaceModulePromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture').catch((error) => {
       attendanceFaceModulePromise = null;
       throw error;
     });
@@ -3521,6 +3521,15 @@ function openStudentEditor(student) {
 }
 
 function bindStudentEditor(students) {
+  panelEl.querySelector('[data-copy-shared-parent-onboarding]')?.addEventListener('click', async () => {
+    const onboardingUrl = new URL('/parent-dashboard#onboarding=1', window.location.origin).href;
+    try {
+      await copyTextToClipboard(onboardingUrl);
+      setStatus(dashboardStatus, `Shared parent profile link copied: ${onboardingUrl}. Parents enter their child's admission number and the temporary password 12345678.`, 'ok');
+    } catch (error) {
+      setStatus(dashboardStatus, error.message || String(error), 'bad');
+    }
+  });
   document.querySelector('[data-close-student-dialog]')?.addEventListener('click', () => document.getElementById('studentProfileDialog')?.close());
   panelEl.querySelectorAll('[data-edit-student]').forEach((button) => button.addEventListener('click', () => {
     const student = students.find((row) => clean(pick(row, ['AdmissionNo', 'AccountRef', '__id'])).toLowerCase() === clean(button.dataset.editStudent).toLowerCase());
@@ -3574,10 +3583,10 @@ function bindStudentEditor(students) {
       });
       const data = await response.json().catch(() => ({ ok: false, message: 'Student service did not return JSON.' }));
       if (!response.ok || !data.ok) throw new Error(data.message || 'Could not reissue parent onboarding.');
-      const onboardingUrl = new URL(data.onboardingPath || '/parent-dashboard.html#onboarding=1', window.location.origin).href;
+      const onboardingUrl = new URL(data.onboardingPath || '/parent-dashboard#onboarding=1', window.location.origin).href;
       await copyTextToClipboard(onboardingUrl);
       await loadDashboard();
-      setStatus(dashboardStatus, `Parent onboarding reissued for ${admissionNo}. The generic link was copied. Send it with admission number ${admissionNo} and one-time password 12345678.`, 'ok');
+      setStatus(dashboardStatus, `Parent profile access enabled for ${admissionNo}. The shared link was copied. Send the admission number and one-time password 12345678 to the parent.`, 'ok');
     } catch (error) {
       setStatus(dashboardStatus, error.message || String(error), 'bad');
       setButtonLoading(button, false, '', '🔗');
@@ -9308,7 +9317,7 @@ function preloadRecordsDeskFaceRecognition() {
   recordsDeskFacePreloadScheduled = true;
   const preload = () => {
     recordsDeskFacePreloadScheduled = false;
-    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260927-simple-face-capture')
+    recordsDeskFacePreloadPromise = import('./student-face-lookup.js?v=20260928-reliable-turn-capture')
       .then((module) => module.preloadFaceRecognitionModel())
       .catch(() => {
         recordsDeskFacePreloadPromise = null;
@@ -9322,7 +9331,7 @@ function preloadRecordsDeskFaceRecognition() {
 }
 
 async function openStudentFaceLookupDialog(options = {}) {
-  const module = await import('./student-face-lookup.js?v=20260927-simple-face-capture');
+  const module = await import('./student-face-lookup.js?v=20260928-reliable-turn-capture');
   return module.openStudentFaceLookup(options);
 }
 
@@ -16423,7 +16432,7 @@ function renderSection(active) {
     const learner = staffLearnerTerms();
     const handoff = takeRecordsDeskHandoff('students');
     const reference = recordsDeskHandoffReference(handoff);
-    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + table(learner.Plural, students, [
+    panelEl.innerHTML = recordsDeskHandoffBanner(handoff, reference) + '<div class="student-onboarding-link-action"><button type="button" class="secondary" data-copy-shared-parent-onboarding>Copy shared parent completion link</button></div>' + table(learner.Plural, students, [
       { label: 'Admission No', value: (row) => pick(row, ['AdmissionNo', 'AccountRef', '__id']) },
       { label: 'Name', render: studentSearchIdentity },
       { label: 'Class', value: (row) => [pick(row, ['ClassName']), pick(row, ['ClassArm'])].filter(Boolean).join(' ') },

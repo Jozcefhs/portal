@@ -55,8 +55,8 @@ export async function onRequestPost(context) {
       });
       return Response.json({
         ok: true,
-        message: 'Parent onboarding has been reissued. The generic link is ready to copy.',
-        onboardingPath: '/parent-dashboard.html#onboarding=1',
+        message: 'Parent onboarding is ready. The shared link is available to copy.',
+        onboardingPath: '/parent-dashboard#onboarding=1',
         admissionNo: clean(saved.AdmissionNo || saved.__id),
         temporaryPassword: '12345678'
       });

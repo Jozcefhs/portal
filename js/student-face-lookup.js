@@ -2,7 +2,7 @@ const MODEL_ID = 'human-faceres-3.3.6';
 const DESCRIPTOR_LENGTH = 1024;
 const ENROLLMENT_SAMPLE_COUNT = 3;
 const ROUTINE_SAMPLE_COUNT = 1;
-const CAPTURE_TIMEOUT_MS = 30000;
+const CAPTURE_TIMEOUT_MS = 40000;
 const SPOKEN_GUIDANCE_DELAY_MS = 220;
 const LIVENESS_ACTIONS = new Set(['BLINK', 'TURN_LEFT', 'TURN_RIGHT', 'CHIN_UP']);
 const NEUTRAL_POSE_FRAMES = 3;
@@ -232,7 +232,7 @@ async function createHuman() {
     hand: { enabled: false },
     object: { enabled: false },
     segmentation: { enabled: false },
-    gesture: { enabled: true }
+    gesture: { enabled: false }
   };
   let human = new module.Human(config);
   try {
@@ -447,13 +447,6 @@ function bindCameraSelector(dialog, captureButton) {
   });
 }
 
-function flattenedGestures(result = {}) {
-  const source = Array.isArray(result.gesture)
-    ? result.gesture
-    : Object.values(result.gesture || {});
-  return source.map((entry) => clean(entry?.gesture || entry).toLowerCase()).filter(Boolean);
-}
-
 function faceGeometry(face, video) {
   const box = Array.isArray(face?.box) ? face.box : [];
   if (box.length < 4 || !video.videoWidth || !video.videoHeight) return null;
@@ -627,12 +620,13 @@ export async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_
     const face = faces[0];
     const readiness = captureReadiness(face, video);
     const pose = facePose(face);
-    const gestures = flattenedGestures(result);
     const blink = blinkFrameState(face, neutralEyes);
     if (readiness.ready && pose && !neutralPose) {
       const stable = !previousNeutralPose || (Math.abs(pose.yaw - previousNeutralPose.yaw) < 0.08
         && Math.abs(pose.pitch - previousNeutralPose.pitch) < 0.08);
-      const neutralNow = blink.open && frontalPose(pose);
+      // Head-turn checks do not depend on eyelid landmarks. Some mobile
+      // cameras resolve pose reliably but never resolve a usable blink.
+      const neutralNow = frontalPose(pose) && (challenge.action !== 'BLINK' || blink.open);
       neutralFrames = neutralNow ? (stable ? neutralFrames + 1 : 1) : 0;
       previousNeutralPose = { ...pose };
       if (neutralFrames >= NEUTRAL_POSE_FRAMES) {
@@ -666,10 +660,13 @@ export async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_
           : challenge.action === 'TURN_RIGHT'
             ? 'facing right'
             : 'head up';
-        const movementDetected = gestures.includes(wantedGesture) &&
-          (challenge.action === 'CHIN_UP'
-            ? Math.abs(pitchDelta) >= CHIN_UP_PITCH_THRESHOLD
-            : Math.abs(yawDelta) >= TURN_YAW_THRESHOLD);
+        // Human's gesture label is intermittent on mobile even when the
+        // measured head rotation is clear. Use signed pose movement instead.
+        const movementDetected = challenge.action === 'CHIN_UP'
+          ? pitchDelta >= CHIN_UP_PITCH_THRESHOLD
+          : challenge.action === 'TURN_LEFT'
+            ? yawDelta >= TURN_YAW_THRESHOLD
+            : yawDelta <= -TURN_YAW_THRESHOLD;
         if (movementDetected) {
           actionObserved = true;
           observedGesture = wantedGesture;
@@ -677,14 +674,14 @@ export async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_
         if (actionObserved) {
           const returned = Math.abs(yawDelta) <= RETURN_POSE_THRESHOLD &&
             Math.abs(pitchDelta) <= RETURN_POSE_THRESHOLD &&
-            blink.open;
+            (challenge.action !== 'BLINK' || blink.open);
           returnFrames = returned ? returnFrames + 1 : 0;
           if (returnFrames >= RETURN_POSE_FRAMES) livenessConfirmed = true;
         }
       }
     }
     const embeddingReady = Array.isArray(face.embedding) && face.embedding.length === DESCRIPTOR_LENGTH && face.embedding.every(Number.isFinite);
-    const frontal = frontalPose(pose) && blink.open;
+    const frontal = frontalPose(pose) && (challenge.action !== 'BLINK' || blink.open);
     if (!readiness.ready) {
       if (!neutralPose) { neutralFrames = 0; previousNeutralPose = null; }
       setGuideState(dialog, readiness.state);
@@ -692,7 +689,7 @@ export async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_
       setStatus(dialog, lastGuidance, 'warn');
     } else if (!neutralPose) {
       setGuideState(dialog, 'ready');
-      lastGuidance = 'Look at the camera with your eyes open. Hold your phone at eye level.';
+      lastGuidance = 'Look straight at the camera. Hold your phone at eye level.';
       setStatus(dialog, lastGuidance, 'good');
     } else if (!livenessConfirmed) {
       setGuideState(dialog, actionObserved ? 'capture' : 'ready');
@@ -704,7 +701,7 @@ export async function captureDescriptor(dialog, human, sampleCount = ENROLLMENT_
       setStatus(dialog, lastGuidance, 'good');
     } else if (!frontal) {
       setGuideState(dialog, 'warning');
-      lastGuidance = 'Look straight at the camera with your eyes open for a clear sample.';
+      lastGuidance = 'Look straight at the camera for a clear sample.';
       setStatus(dialog, lastGuidance, 'warn');
     } else if (!embeddingReady) {
       setGuideState(dialog, 'capture');

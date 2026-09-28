@@ -226,7 +226,23 @@ async function completeParentOnboardingProfile(env, body, request) {
     UpdatedAt: now,
     UpdatedBy: 'Parent onboarding'
   };
-  await upsertSchoolDocument(env, 'students', safeDocumentId(student.__id || student.AdmissionNo), updated);
+  if (!student.__updateTime) {
+    const error = new Error('The student record could not be verified for a one-time update. Please retry.');
+    error.status = 503;
+    throw error;
+  }
+  try {
+    // Firestore's version precondition makes simultaneous completions for the
+    // same admission number mutually exclusive.
+    await upsertSchoolDocument(env, 'students', safeDocumentId(student.__id || student.AdmissionNo), updated, {
+      updateTime: student.__updateTime
+    });
+  } catch (error) {
+    if (![409, 412].includes(Number(error?.status))) throw error;
+    const conflict = new Error('This student profile was already completed or changed. Contact the school if you still need to update it.');
+    conflict.status = 409;
+    throw conflict;
+  }
   return {
     ok: true,
     parentEmail: values.ParentEmail,

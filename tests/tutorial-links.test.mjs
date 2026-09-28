@@ -13,6 +13,7 @@ const settingsSource = await readFile(new URL('../functions/api/settings.js', im
 const adminApiSource = await readFile(new URL('../functions/api/admin.js', import.meta.url), 'utf8');
 const adminHtml = await readFile(new URL('../admin.html', import.meta.url), 'utf8');
 const adminJs = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
+const adminCss = await readFile(new URL('../css/style.css', import.meta.url), 'utf8');
 const setupHtml = await readFile(new URL('../setup.html', import.meta.url), 'utf8');
 const setupJs = await readFile(new URL('../js/setup.js', import.meta.url), 'utf8');
 const parentHtml = await readFile(new URL('../parent-dashboard.html', import.meta.url), 'utf8');
@@ -80,6 +81,7 @@ test('owner catalogue exposes edition-specific YouTube fields for Church and des
 
 test('staff companion exposes the tutorial for the active module on desktop and mobile', () => {
   assert.match(adminHtml, /id="staffTutorialButton"/);
+  assert.match(adminCss, /\.staff-header-icon\.staff-tutorial-button\{[^}]*background:#ff0000;color:#fff/);
   assert.match(adminHtml, /id="staffTutorialMenu"/);
   assert.doesNotMatch(adminHtml, /id="staffTutorialSettings"/);
   assert.match(adminJs, /function openCurrentTutorial\(\)/);

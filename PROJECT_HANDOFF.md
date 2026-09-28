@@ -418,7 +418,7 @@ optional. The backend stores the separate names and combines them into
 student identity. Parent contact, medical, billing and academic-allocation
 fields are not accepted from this import.
 
-All parents receive the same generic `parent-dashboard.html#onboarding=1` link.
+All parents receive the same shared `/parent-dashboard#onboarding=1` link and use their child's admission number plus the temporary password. The link no longer relies on the Pages `.html` redirect preserving its fragment.
 The student admission number is the only family-specific distribution value.
 The shared bootstrap password is `12345678`, but it is never stored as a student
 login code or credential and cannot open the dashboard. Staff can reissue an
