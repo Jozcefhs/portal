@@ -25,3 +25,18 @@ test('targeted scoped query keeps the parent path and supports IN filters', () =
     ['DCA/1', 'DCA/2']
   );
 });
+
+test('focused query projects only requested fields for lightweight counts', () => {
+  const result = buildStructuredQuery('academicStudentMemberships', {
+    filters: [{ field: 'BranchId', op: '==', value: 'main' }],
+    select: ['BranchId', 'SchoolSection', 'Status']
+  });
+  assert.deepEqual(result.structuredQuery.select, {
+    fields: [
+      { fieldPath: 'BranchId' },
+      { fieldPath: 'SchoolSection' },
+      { fieldPath: 'Status' }
+    ]
+  });
+  assert.equal(result.structuredQuery.where.fieldFilter.value.stringValue, 'main');
+});

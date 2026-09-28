@@ -2862,10 +2862,10 @@ function renderModuleSummary(active, liveData = null) {
   } else if (active === 'academics' && liveData) {
     const summary = liveData.summary || {};
     cards = [
-      { icon, label: 'Classes', value: summary.Classes || 0, note: `${summary.Arms || 0} active arm(s) from ${summary.ArmTemplates || 0} reusable definition(s)` },
-      { icon: '\u{1F4DA}', label: 'Subjects', value: summary.Subjects || 0, note: `${summary.Departments || 0} senior department(s)` },
-      { icon: '\u{1F9D1}\u200D\u{1F3EB}', label: 'Teacher allocations', value: summary.TeacherAllocations || 0, note: 'Selected branch and scope' },
-      { icon: '\u{1F393}', label: 'Student memberships', value: summary.StudentMemberships || 0, note: 'Class, arm and subjects' }
+      { icon, label: 'Classes', value: summary.Classes ?? '—', note: `${summary.Arms ?? '—'} active arm(s) from ${summary.ArmTemplates ?? '—'} reusable definition(s)` },
+      { icon: '\u{1F4DA}', label: 'Subjects', value: summary.Subjects ?? '—', note: `${summary.Departments ?? '—'} senior department(s)` },
+      { icon: '\u{1F9D1}\u200D\u{1F3EB}', label: 'Teacher allocations', value: summary.TeacherAllocations ?? '—', note: 'Selected branch and scope' },
+      { icon: '\u{1F393}', label: 'Student memberships', value: summary.StudentMemberships ?? '—', note: 'Class, arm and subjects' }
     ];
   } else if (active === 'accounts') {
     const data = departments.accounts || {};

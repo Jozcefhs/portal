@@ -8,11 +8,13 @@ import {
   ACADEMIC_SUBJECT_TEACHER_STATE_KEYS,
   ACADEMIC_STUDENT_IMPORT_COLUMNS,
   ACADEMIC_STUDENT_IMPORT_REQUIRED_COLUMNS,
+  ACADEMIC_SUMMARY_STATE_KEYS,
   ACADEMIC_VIEW_STATE_KEYS,
   applyAcademicStudentCurriculum,
   assertAcademicMembershipCapacity,
   academicPermanentDeleteDependants,
   academicManagementCapabilities,
+  academicManagementSummary,
   academicManagementViewStateKeys,
   academicMembershipCanReceiveInitialArm,
   academicLegacyClassCompatibilityEnabled,
@@ -96,6 +98,32 @@ test('every academic workspace stays focused below the Worker subrequest ceiling
   assert.match(adminSource, /data-academic-view-select/);
   assert.match(adminSource, /academicManagementView = select\.value;[\s\S]{0,400}void loadAcademicManagement\(\);/);
   assert.match(adminSource, /availableViews\.some\(\(\[key\]\) => key === academicManagementView\)/);
+});
+
+test('Academic Management cards count active records in the selected section without expanding focused payloads', () => {
+  assert.deepEqual(ACADEMIC_SUMMARY_STATE_KEYS, [
+    'classes', 'arms', 'armTemplates', 'subjects', 'departments',
+    'teacherAllocations', 'studentMemberships'
+  ]);
+  const scoped = (rows) => scopedAcademicRows(rows, {
+    section: 'secondary', structure: { Sections: ['primary', 'secondary'] }
+  });
+  const state = {
+    classes: scoped([{ SchoolSection: 'secondary', Status: 'Active' }, { SchoolSection: 'primary', Status: 'Active' }]),
+    arms: scoped([{ SchoolSection: 'secondary' }, { SchoolSection: 'secondary', Status: 'Archived' }]),
+    armTemplates: scoped([{ SchoolSection: 'secondary', Status: 'Active' }]),
+    subjects: scoped([{ SchoolSection: 'secondary' }, { SchoolSection: 'secondary', Status: 'Inactive' }]),
+    departments: scoped([{ SchoolSection: 'secondary', Status: 'Active' }]),
+    teacherAllocations: scoped([{ SchoolSection: 'secondary', Status: 'Active' }, { SchoolSection: 'primary', Status: 'Active' }]),
+    studentMemberships: scoped([{ SchoolSection: 'secondary', Status: 'Active' }, { SchoolSection: 'secondary', Status: 'Withdrawn' }])
+  };
+  assert.deepEqual(academicManagementSummary(state), {
+    Classes: 1, Arms: 1, ArmTemplates: 1, Subjects: 1,
+    Departments: 1, TeacherAllocations: 1, StudentMemberships: 1
+  });
+  assert.match(librarySource, /summary = await loadAcademicManagementSummary\(env, scope, rawState, focusedStateKeys\)/);
+  assert.match(librarySource, /permissions,\s*summary,\s*scope:/);
+  assert.match(adminSource, /summary\.Classes \?\? '—'/);
 });
 
 test('AM-003 sessions and terms are effective-dated and date validated', () => {
@@ -1350,7 +1378,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
   assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260918-academic-readability/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260928-class-subject-restore/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260928-academic-summary-restore/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

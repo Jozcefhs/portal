@@ -338,9 +338,11 @@ export function buildStructuredQuery(collectionPath, options = {}) {
   const location = collectionQueryLocation(collectionPath);
   const filters = Array.isArray(options.filters) ? options.filters.filter(Boolean) : [];
   const orderBy = Array.isArray(options.orderBy) ? options.orderBy.filter(Boolean) : [];
+  const select = Array.isArray(options.select) ? options.select.map((field) => String(field || '').trim()).filter(Boolean) : [];
   const structuredQuery = {
     from: [{ collectionId: location.collectionId }]
   };
+  if (select.length) structuredQuery.select = { fields: select.map((fieldPath) => ({ fieldPath })) };
   if (filters.length === 1) {
     structuredQuery.where = structuredFieldFilter(filters[0]);
   } else if (filters.length > 1) {

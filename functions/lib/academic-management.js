@@ -370,6 +370,11 @@ export const ACADEMIC_READINESS_STATE_KEYS = Object.freeze([
   'offerings', 'teacherAllocations', 'studentMemberships'
 ]);
 
+export const ACADEMIC_SUMMARY_STATE_KEYS = Object.freeze([
+  'classes', 'arms', 'armTemplates', 'subjects', 'departments',
+  'teacherAllocations', 'studentMemberships'
+]);
+
 export const ACADEMIC_VIEW_STATE_KEYS = Object.freeze({
   classrooms: ACADEMIC_CLASSROOM_STATE_KEYS,
   classstaff: ACADEMIC_CLASS_TEACHER_STATE_KEYS,
@@ -1697,6 +1702,33 @@ async function loadScopedAcademicState(env, scope, requestedKeys) {
   return scopedAcademicState(await loadAcademicState(env, scope.branchId, requestedKeys), scope);
 }
 
+export function academicManagementSummary(state = {}) {
+  const count = (key) => (state[key] || []).filter(statusActive).length;
+  return {
+    Classes: count('classes'),
+    Arms: count('arms'),
+    ArmTemplates: count('armTemplates'),
+    Subjects: count('subjects'),
+    Departments: count('departments'),
+    TeacherAllocations: count('teacherAllocations'),
+    StudentMemberships: count('studentMemberships')
+  };
+}
+
+async function loadAcademicManagementSummary(env, scope, focusedState, focusedStateKeys) {
+  const missingKeys = ACADEMIC_SUMMARY_STATE_KEYS.filter((key) => !focusedStateKeys.includes(key));
+  // Only status and section are needed for counts. Avoid transferring entire student
+  // membership and allocation documents into every focused academic workspace.
+  const additional = await Promise.all(missingKeys.map(async (key) => {
+    const rows = await queryCollection(env, ACADEMIC_MANAGEMENT_COLLECTIONS[key], {
+      filters: [{ field: 'BranchId', op: '==', value: scope.branchId }],
+      select: ['BranchId', 'SchoolSection', 'Status']
+    });
+    return [key, scopedAcademicRows(rows.filter((row) => lower(row.BranchId) === lower(scope.branchId)), scope)];
+  }));
+  return academicManagementSummary({ ...focusedState, ...Object.fromEntries(additional) });
+}
+
 function displayStaff(rows = []) {
   return rows.map((row) => ({
     Username: clean(row.Username || row.username || row.__id),
@@ -1838,6 +1870,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
       ? getDocument(env, 'settings', 'schoolProfile').catch(() => ({}))
       : Promise.resolve(null)
   ]);
+  const summary = await loadAcademicManagementSummary(env, scope, rawState, focusedStateKeys);
   let state = rawState;
   let students = people.students;
   if (permissions.financeView) {
@@ -1914,6 +1947,7 @@ export async function bootstrapAcademicManagement(env, user = {}, input = {}) {
       ? 'Online CBT schedule and class-wide rosters loaded.'
       : `${focusedView.charAt(0).toUpperCase()}${focusedView.slice(1)} academic workspace loaded.`,
     permissions,
+    summary,
     scope: { BranchId: scope.branchId, SchoolSection: scope.section || 'all' },
     sections: scope.structure.Sections,
     ...(selection ? { selection } : {}),
