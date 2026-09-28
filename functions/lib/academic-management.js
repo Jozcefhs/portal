@@ -2090,12 +2090,15 @@ export function parseAcademicArmTemplateBatch(input = {}) {
 }
 
 export function parseAcademicSubjectBatch(input = {}) {
-  if (Array.isArray(input.Subjects)) return input.Subjects.map((row) => ({ ...row }));
+  if (Array.isArray(input.Subjects)) return input.Subjects.map((row) => ({
+    ...row, AssessmentCategory: row.AssessmentCategory || input.AssessmentCategory || 'Graded'
+  }));
   return batchLines(input.SubjectLines || input.Subjects).map((line, index) => {
     const count = line.split('|').length;
     if (![2, 3].includes(count)) throw failure(`Line ${index + 1} is not in the required format. Use Name | Code | optional TimetableOnly.`);
     const parts = batchParts(line, index, count, 'Name | Code | optional TimetableOnly');
-    return { Name: parts[0], Code: parts[1], ...(parts[2] ? { AssessmentCategory: parts[2] } : {}) };
+    const assessmentCategory = parts[2] || clean(input.AssessmentCategory);
+    return { Name: parts[0], Code: parts[1], ...(assessmentCategory ? { AssessmentCategory: assessmentCategory } : {}) };
   });
 }
 

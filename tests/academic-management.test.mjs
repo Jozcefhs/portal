@@ -408,6 +408,11 @@ test('subjects can be timetable-only without changing their curriculum role', ()
   assert.equal(normalizeAcademicSubject({ Name: 'DIY', Code: 'DIY', AssessmentCategory: 'TimetableOnly' }, scope,
     { ...normalizeAcademicSubject({ Name: 'DIY', Code: 'DIY' }, scope) }).AssessmentCategory, 'TimetableOnly');
   assert.throws(() => normalizeAcademicSubject({ Name: 'LIB', Code: 'LIB', AssessmentCategory: 'Core' }, scope), /assessment category/);
+  assert.deepEqual(parseAcademicSubjectBatch({
+    AssessmentCategory: 'TimetableOnly', SubjectLines: 'L.E.A.P | LEAP\nMathematics | MATH | Graded'
+  }).map((row) => row.AssessmentCategory), ['TimetableOnly', 'Graded']);
+  assert.match(adminSource, /data-academic-workflow="bulkCreateAcademicSubjects"[\s\S]{0,600}name="AssessmentCategory"/);
+  assert.match(adminSource, /register\('Reusable Subject Catalogue'\)/);
 });
 
 test('AM-002 reusable Secondary subjects carry one school-wide Senior choice role', () => {
@@ -1284,7 +1289,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
   assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260918-academic-readability/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260928-timetable-only-subjects/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260928-visible-subject-category/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

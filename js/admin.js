@@ -11408,7 +11408,7 @@ function academicTaskDefinitions(view, root) {
       { key: 'classes', label: 'Build classes', title: 'Create classes in bulk', description: 'Paste several reusable class definitions and create them in one operation.', nodes: nodes(form('[data-academic-workflow="bulkCreateAcademicClasses"]')) },
       { key: 'arms', label: 'Build arms', title: 'Create reusable arms', description: 'Bulk-create arm definitions or correct one existing definition.', nodes: nodes(form('[data-academic-workflow="bulkCreateAcademicArmTemplates"]'), form('[data-academic-form="armTemplate"]'), register('Reusable Arm Catalogue')) },
       { key: 'applyArms', label: 'Apply arms', title: 'Apply arms to classes', description: 'Select the class and reusable arm combinations that should become classrooms.', nodes: nodes(form('[data-academic-workflow="bulkApplyAcademicArmTemplates"]')) },
-      { key: 'subjects', label: 'Build subjects', title: 'Create subjects in bulk', description: 'Add several reusable subjects and their stable codes at once.', nodes: nodes(form('[data-academic-workflow="bulkCreateAcademicSubjects"]')) }
+      { key: 'subjects', label: 'Build subjects', title: 'Create or review subjects', description: 'Choose an assessment category for new subjects, or edit an existing subject below.', nodes: nodes(form('[data-academic-workflow="bulkCreateAcademicSubjects"]'), register('Reusable Subject Catalogue')) }
     ],
     departments: [
       { key: 'register', label: 'Department register', title: 'Senior Secondary departments', description: 'Review departments and their core subject sets.', nodes: nodes(register('Senior Secondary Departments')) },
@@ -11916,7 +11916,8 @@ function academicBulkSetupWorkspace(data, rows) {
     <form class="academic-management-editor" data-academic-workflow="bulkCreateAcademicSubjects">
       <div class="academic-management-editor-heading"><div><small>Up to 50 at once</small><h3>Build reusable subject catalogue</h3></div></div>
       <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}">
-      <label>Subject definitions<textarea name="SubjectLines" rows="9" required placeholder="Mathematics | MATH&#10;English Language | ENG&#10;L.E.A.P | LEAP | TimetableOnly"></textarea><small>One subject per line: Name | Code | optional TimetableOnly. Subjects without the third value are graded. Timetable-only subjects can be scheduled but have no marks or result average. Core subjects are selected inside each Senior Secondary department.</small></label>
+      <label>Assessment category for new subjects<select name="AssessmentCategory"><option value="Graded">Graded — scores and results</option><option value="TimetableOnly">Timetable-only — no marks</option></select><small>Timetable-only subjects can be placed on the timetable but have no scores, CBT marks or result average.</small></label>
+      <label>Subject definitions<textarea name="SubjectLines" rows="9" required placeholder="Mathematics | MATH&#10;English Language | ENG&#10;L.E.A.P | LEAP"></textarea><small>One subject per line: Name | Code. The category above applies to every row; add | TimetableOnly or | Graded to override it for one row. To change an existing subject, use its Edit button in the catalogue below. Core status is configured separately in Senior departments.</small></label>
       <button type="submit">Create all reusable subjects</button>
     </form>
   </div>
@@ -11926,6 +11927,13 @@ function academicBulkSetupWorkspace(data, rows) {
     { label: 'Default capacity', value: (row) => Number(row.DefaultCapacity) > 0 ? row.DefaultCapacity : 'Unlimited' },
     { label: 'Status', value: (row) => row.Status },
     { label: 'Actions', render: (row) => academicActionButtons('armTemplate', row, canManage, data.permissions?.canArchive, data.permissions?.canDelete) }
+  ])}
+  ${table('Reusable Subject Catalogue', rows.subjects, [
+    { label: 'Code', value: (row) => row.Code },
+    { label: 'Subject', value: (row) => row.Name },
+    { label: 'Assessment', value: (row) => row.AssessmentCategory === 'TimetableOnly' ? 'Timetable-only' : 'Graded' },
+    { label: 'Status', value: (row) => row.Status },
+    { label: 'Actions', render: (row) => academicActionButtons('subject', row, canManage, data.permissions?.canArchive, data.permissions?.canDelete) }
   ])}`;
 }
 
@@ -16011,6 +16019,11 @@ function bindAcademicManagement() {
     if (type === 'armTemplate' && !panelEl.querySelector('[data-academic-form="armTemplate"]')) {
       academicManagementView = 'bulkSetup';
       academicManagementTaskViews.bulkSetup = 'arms';
+      renderAcademicManagement(academicManagementData || {});
+    }
+    if (type === 'subject' && !panelEl.querySelector('[data-academic-form="subject"]')) {
+      academicManagementView = 'structure';
+      academicManagementTaskViews.structure = 'subjects';
       renderAcademicManagement(academicManagementData || {});
     }
     const task = ({
