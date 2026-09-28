@@ -1037,7 +1037,7 @@ test('subject teachers are batch-assigned only to the exact selected classrooms'
     librarySource.indexOf('export async function bulkAllocateAcademicStudents')
   );
   assert.match(bulkTeacherSource, /const classroomIds = uniqueIds\(input\.ClassroomIds/);
-  assert.match(bulkTeacherSource, /for \(const classroom of classrooms\)/);
+  assert.match(bulkTeacherSource, /for \(const \[index, classroom\] of classrooms\.entries\(\)\)/);
   assert.match(bulkTeacherSource, /activeValue\(classroom\.IsClassroom, false\)/);
   assert.doesNotMatch(bulkTeacherSource, /for \(const schoolClass of classes\)/);
   assert.doesNotMatch(bulkTeacherSource, /for \(const armTemplate of armTemplates\)/);
@@ -1058,6 +1058,10 @@ test('selected timetable-only subjects can be assigned to each classroom’s sav
   assert.match(bulkTeacherSource, /subject\.AssessmentCategory !== 'TimetableOnly'/);
   assert.match(bulkTeacherSource, /academicFormTeacherForClassroom\(state\.teacherAllocations, classroom, sessionId, termId\)/);
   assert.match(bulkTeacherSource, /assertAcademicClassTeacherSnapshot\(\[formTeacher\]/);
+  assert.match(bulkTeacherSource, /formTeacherSnapshots\.get\(classroom\.ArmId\)/);
+  assert.match(bulkTeacherSource, /supplied\.length !== classroomIds\.length/);
+  assert.match(bulkTeacherSource, /formTeacherSnapshots\.has\(classroomId\)/);
+  assert.doesNotMatch(bulkTeacherSource, /classroomIds\.length !== 1/);
   assert.match(bulkTeacherSource, /TeacherUsername: classroomTeacherUsername/);
   assert.match(bulkTeacherSource, /validateAcademicRecord\(projected, 'teacherallocation', record/);
   const formClassroom = { ClassId: 'grade-7', ArmId: 'arm-a', Name: 'Brilliance' };
@@ -1092,8 +1096,35 @@ test('selected timetable-only subjects can be assigned to each classroom’s sav
   ] };
   assert.equal(available(senior, classroom, leap), true);
   assert.match(adminSource, /data-academic-form-teacher-subjects/);
+  assert.match(adminSource, /data-academic-form-teacher-select-all/);
+  assert.match(adminSource, /academicClassroomCheckboxField\(classes, classTeacherClassrooms/);
+  assert.match(adminSource, /payload\.FormTeacherSnapshots = selectedClassrooms\.map/);
+  assert.match(adminSource, /selectedClassrooms\.length \* \(payload\.SubjectIds \|\| \[\]\)\.length > 200/);
+  assert.match(adminSource, /academicTimetableOnlySubjectAvailable\(academicManagementData \|\| \{\}, classroom, subject\)/);
   assert.match(adminSource, /name="AssignToFormTeachers" value="true"/);
   assert.match(adminSource, /bindAcademicFormTeacherSubjects\(panelEl\.querySelector/);
+});
+
+test('class-teacher timetable-only picker exposes unique multi-class and all-class controls', () => {
+  const fieldSource = adminSource.slice(
+    adminSource.indexOf('function academicClassroomCheckboxField'),
+    adminSource.indexOf('function academicSavedSubjectTeacherAllocations')
+  );
+  const renderField = new Function('escapeHtml', `${fieldSource}; return academicClassroomCheckboxField;`)(
+    (value) => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;')
+  );
+  const html = renderField(
+    [{ ClassId: 'g7', Name: 'Grade 7' }, { ClassId: 'g8', Name: 'Grade 8' }],
+    [{ ClassId: 'g7', ArmId: 'a', Name: 'Brilliance' }, { ClassId: 'g7', ArmId: 'b', Name: 'Classic' },
+      { ClassId: 'g8', ArmId: 'c', Name: 'Distinction' }],
+    { prefix: 'form-teacher-subject', label: 'Classrooms for these timetable-only subjects' }
+  );
+  assert.equal((html.match(/<input type="checkbox" id="form-teacher-subject-arm-[^"]+" name="ClassroomIds"/g) || []).length, 3);
+  assert.equal((html.match(/data-academic-checkbox-group-toggle/g) || []).length, 2);
+  assert.match(html, /id="form-teacher-subject-arm-3"/);
+  assert.match(html, /Classrooms for these timetable-only subjects/);
+  assert.match(adminSource, /Select all classrooms with class teachers/);
+  assert.match(adminSource, /inputs\.forEach\(\(input\) => \{ input\.checked = checkAll; \}\)/);
 });
 
 test('class teachers and assistants are assigned across multiple classroom rows in one protected batch', () => {
@@ -1427,7 +1458,7 @@ test('staff web workspace exposes responsive academic registers and online-only 
   assert.match(styleSource, /\.academic-task-workspace\{display:grid/);
   assert.match(styleSource, /\.academic-register-card/);
   assert.match(adminHtml, /js\/academic-results-analysis\.js\?v=20260918-academic-readability/);
-  assert.match(adminHtml, /js\/admin\.js\?v=20260928-form-teacher-timetable-only/);
+  assert.match(adminHtml, /js\/admin\.js\?v=20260928-form-teacher-multi-class/);
 });
 
 test('Academic root collections are included in dynamic organisation backup and restore', () => {

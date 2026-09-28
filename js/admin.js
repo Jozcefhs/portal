@@ -10890,30 +10890,31 @@ function bindAcademicClassSubjectSelection(form, offerings = []) {
   sync();
 }
 
-function academicClassroomCheckboxField(classes = [], classrooms = []) {
+function academicClassroomCheckboxField(classes = [], classrooms = [], options = {}) {
+  const prefix = options.prefix || 'subject-teacher';
   let armIndex = 0;
   const groups = classes.map((schoolClass, classIndex) => {
     const classArms = classrooms.filter((classroom) => classroom.ClassId === schoolClass.ClassId);
     if (!classArms.length) return '';
-    const classToggleId = `subject-teacher-class-${classIndex + 1}`;
+    const classToggleId = `${prefix}-class-${classIndex + 1}`;
     const armChoices = classArms.map((classroom) => {
       armIndex += 1;
-      const armId = `subject-teacher-arm-${armIndex}`;
-      return `<label class="academic-checkbox-option academic-classroom-arm-option" for="${escapeHtml(armId)}"><input type="checkbox" id="${escapeHtml(armId)}" name="ClassroomIds" value="${escapeHtml(classroom.ArmId)}"><span>${escapeHtml(classroom.Name)}</span></label>`;
+      const armId = `${prefix}-arm-${armIndex}`;
+      return `<label class="academic-checkbox-option academic-classroom-arm-option" for="${escapeHtml(armId)}"><input type="checkbox" id="${escapeHtml(armId)}" name="ClassroomIds" value="${escapeHtml(classroom.ArmId)}"><span>${escapeHtml(options.classroomLabel ? options.classroomLabel(classroom) : classroom.Name)}</span></label>`;
     }).join('');
     return `<section class="academic-classroom-checkbox-group" data-academic-checkbox-group>
       <label class="academic-checkbox-option academic-classroom-class-option" for="${escapeHtml(classToggleId)}"><input type="checkbox" id="${escapeHtml(classToggleId)}" data-academic-checkbox-group-toggle><span>${escapeHtml(schoolClass.Name)}</span></label>
       <div class="academic-classroom-arm-options">${armChoices}</div>
     </section>`;
   }).filter(Boolean).join('');
-  const legendId = 'subject-teacher-classrooms-legend';
-  const helpId = 'subject-teacher-classrooms-help';
+  const legendId = `${prefix}-classrooms-legend`;
+  const helpId = `${prefix}-classrooms-help`;
   return `<fieldset class="academic-checkbox-field" data-academic-checkbox-field data-academic-checkbox-name="ClassroomIds" data-academic-checkbox-label="classroom arm" data-academic-checkbox-required="true" data-academic-checkbox-purpose="subject-teacher-classrooms">
-    <legend id="${legendId}">Classes and arms taught for this subject <span aria-hidden="true">*</span><span class="academic-checkbox-count" data-academic-checkbox-count aria-live="polite">0 arms selected</span></legend>
+    <legend id="${legendId}">${escapeHtml(options.label || 'Classes and arms taught for this subject')} <span aria-hidden="true">*</span><span class="academic-checkbox-count" data-academic-checkbox-count aria-live="polite">0 arms selected</span></legend>
     <div class="academic-checkbox-options academic-classroom-checkbox-options" role="group" aria-labelledby="${legendId}" aria-describedby="${helpId}">
       ${groups ? `<div class="academic-classroom-checkbox-heading" aria-hidden="true"><span>Class</span><span>Arms</span></div>${groups}` : '<span class="academic-checkbox-empty">No classrooms are currently available.</span>'}
     </div>
-    <small id="${helpId}" data-academic-checkbox-help>${groups ? 'Saved classrooms are checked for the selected teacher, subject and period. Tick a class to select all its arms, or choose individual arms. Unchecking a saved arm here does not remove its assignment; use Saved assignments to delete it.' : 'Create classrooms before assigning subject teachers.'}</small>
+    <small id="${helpId}" data-academic-checkbox-help>${groups ? escapeHtml(options.help || 'Saved classrooms are checked for the selected teacher, subject and period. Tick a class to select all its arms, or choose individual arms. Unchecking a saved arm here does not remove its assignment; use Saved assignments to delete it.') : escapeHtml(options.empty || 'Create classrooms before assigning subject teachers.')}</small>
   </fieldset>`;
 }
 
@@ -11477,7 +11478,7 @@ function academicTaskDefinitions(view, root) {
     ],
     teachers: [
       { key: 'assign', label: 'Assign teacher', title: 'Assign a subject teacher', description: 'Choose one teacher and subject, then check every classroom they teach.', nodes: nodes(form('[data-academic-workflow="bulkAssignAcademicSubjectTeacher"]')) },
-      { key: 'formTeacher', label: 'Class teacher subjects', title: 'Assign timetable-only subjects to class teachers', description: 'Choose a classroom and select the timetable-only subjects its saved class teacher will teach.', nodes: nodes(form('[data-academic-form-teacher-subjects]')) },
+      { key: 'formTeacher', label: 'Class teacher subjects', title: 'Assign timetable-only subjects to class teachers', description: 'Select classrooms individually, by class, or all at once; each keeps its own saved class teacher.', nodes: nodes(form('[data-academic-form-teacher-subjects]')) },
       { key: 'register', label: 'Saved assignments', title: 'Subject-teacher assignments', description: 'Review allocations and open any record for correction or deletion.', nodes: nodes(form('[data-academic-teacher-edit]'), register('Subject Teacher Allocations')) }
     ],
     students: [
@@ -12156,15 +12157,16 @@ function academicTeacherWorkspace(data, rows) {
     <button type="submit">Save subject-teacher assignments</button>
   </form>` : '<div class="academic-view-only-note"><strong>My teaching allocations</strong><span>Only administrators can change allocations.</span></div>';
   const formTeacherSubjects = canManage ? `<form class="academic-management-editor academic-management-editor-wide" data-academic-workflow="bulkAssignAcademicSubjectTeacher" data-academic-form-teacher-subjects>
-    <div class="academic-management-editor-heading"><div><small>Class teacher lessons</small><h3>Assign timetable-only subjects to a class teacher</h3><p class="muted">Choose a classroom, then check the timetable-only subjects its saved form/class teacher will teach. These subjects remain excluded from scores and results.</p></div></div>
-    <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(academicManagementFilters.sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(academicManagementFilters.termId)}"><input type="hidden" name="AssignToFormTeachers" value="true"><input type="hidden" name="FormTeacherAllocationId"><input type="hidden" name="FormTeacherRevisionToken">
-    <label>Classroom<select name="ArmId" required>${academicSelectOptions(classTeacherClassrooms, '', (row) => `${academicLabel(classes, row.ClassId)} / ${row.Name} · ${academicLabel(data.staff, classTeacherAllocations.find((allocation) => allocation.ArmId === row.ArmId)?.TeacherUsername)}`, classTeacherClassrooms.length ? 'Choose classroom' : 'Assign class teachers first')}</select></label>
+    <div class="academic-management-editor-heading"><div><small>Class teacher lessons</small><h3>Assign timetable-only subjects to class teachers</h3><p class="muted">Choose one or more classrooms, or select all classrooms with a saved class teacher. Each subject is appended to that classroom's own teacher. These subjects remain excluded from scores and results.</p></div></div>
+    <input type="hidden" name="SchoolSection" value="${escapeHtml(academicManagementFilters.section)}"><input type="hidden" name="SessionId" value="${escapeHtml(academicManagementFilters.sessionId)}"><input type="hidden" name="TermId" value="${escapeHtml(academicManagementFilters.termId)}"><input type="hidden" name="AssignToFormTeachers" value="true">
+    <button type="button" class="academic-form-reset" data-academic-form-teacher-select-all ${classTeacherClassrooms.length ? '' : 'disabled'}>Select all classrooms with class teachers</button>
+    ${academicClassroomCheckboxField(classes, classTeacherClassrooms, { prefix: 'form-teacher-subject', label: 'Classrooms for these timetable-only subjects', classroomLabel: (row) => `${row.Name} · ${academicLabel(data.staff, classTeacherAllocations.find((allocation) => allocation.ArmId === row.ArmId)?.TeacherUsername)}`, help: 'Tick a class to include all of its opened arms, or tick individual classrooms. Select all includes every classroom with a saved class teacher. Existing assignments are retained; unchecking does not remove one.', empty: 'Assign class teachers to opened classrooms first.' })}
     <fieldset class="academic-checkbox-field" data-academic-checkbox-field data-academic-checkbox-name="SubjectIds" data-academic-checkbox-label="timetable-only subject" data-academic-checkbox-required="true">
       <legend>Timetable-only subjects <span aria-hidden="true">*</span><span class="academic-checkbox-count" data-academic-checkbox-count aria-live="polite">0 selected</span></legend>
-      <div class="academic-checkbox-options">${timetableOnlySubjects.length ? timetableOnlySubjects.map((subject) => `<label class="academic-checkbox-option"><input type="checkbox" name="SubjectIds" value="${escapeHtml(subject.SubjectId)}" disabled><span>${escapeHtml(subject.Code)} - ${escapeHtml(subject.Name)}</span></label>`).join('') : '<span class="academic-checkbox-empty">No timetable-only subjects have been created in this section.</span>'}</div>
-      <small data-academic-form-teacher-subject-help>Choose a classroom to see the subjects configured for it. Saved selections are checked; unchecking one here does not delete its assignment. Use Saved assignments to remove it.</small>
+      <div class="academic-checkbox-options">${timetableOnlySubjects.length ? timetableOnlySubjects.map((subject) => `<label class="academic-checkbox-option"><input type="checkbox" name="SubjectIds" value="${escapeHtml(subject.SubjectId)}"><span>${escapeHtml(subject.Code)} - ${escapeHtml(subject.Name)}</span></label>`).join('') : '<span class="academic-checkbox-empty">No timetable-only subjects have been created in this section.</span>'}</div>
+      <small data-academic-form-teacher-subject-help>Select classrooms to see saved subjects. A subject must already be configured for every selected classroom; missing curriculum is never created by this action.</small>
     </fieldset>
-    <button type="submit" ${classTeacherClassrooms.length && timetableOnlySubjects.length ? '' : 'disabled'}>Assign selected subjects to class teacher</button>
+    <button type="submit" ${classTeacherClassrooms.length && timetableOnlySubjects.length ? '' : 'disabled'}>Append selected subjects to class teachers</button>
   </form>` : '';
   const editForm = canManage ? `<form hidden class="academic-management-editor academic-management-editor-wide" data-academic-form="teacherAllocation" data-academic-action="updateAcademicSubjectTeacherAllocation" data-academic-teacher-edit>
     ${academicRecordFields()}<input type="hidden" name="AllocationRole" value="Subject Teacher"><input type="hidden" name="ClassId"><input type="hidden" name="ArmId"><input type="hidden" name="Status" value="Active">
@@ -12205,40 +12207,66 @@ function academicTimetableOnlySubjectAvailable(data, classroom, subject) {
 
 function bindAcademicFormTeacherSubjects(form, data = {}) {
   if (!form) return;
-  const classroomSelect = form.elements.namedItem('ArmId');
-  const drafts = new Map();
-  let previousClassroomId = '';
+  const manual = new Set();
+  const excluded = new Set();
+  const timetableOnlyIds = new Set((data.subjects || []).filter((row) => academicIsActive(row)
+    && row.AssessmentCategory === 'TimetableOnly').map((row) => row.SubjectId));
+  const classroomField = form.querySelector('[data-academic-checkbox-name="ClassroomIds"]');
+  const formTeacherFor = (classroomId) => (data.teacherAllocations || []).find((row) => academicIsActive(row)
+    && row.AllocationRole === 'Form Teacher' && row.SessionId === academicManagementFilters.sessionId
+    && row.TermId === academicManagementFilters.termId && row.ArmId === classroomId);
   const sync = () => {
-    if (previousClassroomId) drafts.set(previousClassroomId, academicCheckedValues(form, 'SubjectIds'));
-    const classroomId = clean(classroomSelect?.value);
-    const classroom = academicFind(data.arms || [], classroomId);
-    const formTeacher = (data.teacherAllocations || []).find((row) => academicIsActive(row)
-      && row.AllocationRole === 'Form Teacher' && row.SessionId === academicManagementFilters.sessionId
-      && row.TermId === academicManagementFilters.termId && row.ArmId === classroomId);
-    form.elements.FormTeacherAllocationId.value = academicRecordId(formTeacher || {});
-    form.elements.FormTeacherRevisionToken.value = clean(formTeacher?.RevisionToken);
-    let available = 0;
-    form.querySelectorAll('input[name="SubjectIds"]').forEach((input) => {
-      const subject = academicFind(data.subjects || [], input.value);
-      input.disabled = !formTeacher || !academicTimetableOnlySubjectAvailable(data, classroom, subject);
-      if (!input.disabled) available += 1;
+    const selectedClassrooms = academicCheckedValues(form, 'ClassroomIds').map((id) => academicFind(data.arms || [], id)).filter(Boolean);
+    const savedSets = selectedClassrooms.map((classroom) => {
+      const teacher = formTeacherFor(classroom.ArmId);
+      return new Set((data.teacherAllocations || []).filter((row) => academicIsActive(row)
+        && row.AllocationRole === 'Subject Teacher'
+        && row.SessionId === academicManagementFilters.sessionId && row.TermId === academicManagementFilters.termId
+        && row.ArmId === classroom.ArmId
+        && clean(row.TeacherUsername).toLowerCase() === clean(teacher?.TeacherUsername).toLowerCase())
+        .map((row) => row.SubjectId).filter((id) => timetableOnlyIds.has(id)));
     });
-    const saved = (data.teacherAllocations || []).filter((row) => academicIsActive(row)
-      && row.AllocationRole === 'Subject Teacher'
-      && row.SessionId === academicManagementFilters.sessionId && row.TermId === academicManagementFilters.termId
-      && row.ArmId === classroomId && clean(row.TeacherUsername).toLowerCase() === clean(formTeacher?.TeacherUsername).toLowerCase())
-      .map((row) => row.SubjectId);
-    setAcademicCheckedValues(form, 'SubjectIds', drafts.get(classroomId) || saved);
+    const common = savedSets.length ? [...savedSets[0]].filter((id) => savedSets.every((set) => set.has(id))) : [];
+    const mixed = new Set(savedSets.flatMap((set) => [...set]).filter((id) => !common.includes(id)));
+    const checked = [...new Set([...common, ...manual])].filter((id) => !excluded.has(id));
+    setAcademicCheckedValues(form, 'SubjectIds', checked);
+    form.querySelectorAll('input[name="SubjectIds"]').forEach((input) => {
+      input.indeterminate = !input.checked && !excluded.has(input.value) && mixed.has(input.value);
+      input.title = input.indeterminate ? 'Saved in some selected classrooms. Check to append to every selected classroom.' : '';
+    });
+    const missing = selectedClassrooms.flatMap((classroom) => checked.filter((id) =>
+      !academicTimetableOnlySubjectAvailable(data, classroom, academicFind(data.subjects || [], id))
+    ).map((id) => `${academicLabel(data.classes || [], classroom.ClassId)} / ${classroom.Name}: ${academicLabel(data.subjects || [], id)}`));
     const help = form.querySelector('[data-academic-form-teacher-subject-help]');
-    if (help) help.textContent = !classroomId ? 'Choose a classroom to see the subjects configured for it.'
-      : !formTeacher ? 'Assign a form/class teacher to this classroom first.'
-        : !available ? 'No timetable-only subjects are configured for this classroom. Add them under Class subjects first.'
-          : `${available} timetable-only subject${available === 1 ? '' : 's'} available. Saved assignments for this class teacher are checked. Uncheck does not delete; use Saved assignments to remove one.`;
-    const submit = form.querySelector('button[type="submit"]');
-    if (submit) submit.disabled = !formTeacher || !available;
-    previousClassroomId = classroomId;
+    const selectAll = form.querySelector('[data-academic-form-teacher-select-all]');
+    if (selectAll && classroomField) {
+      const inputs = academicCheckboxInputs(classroomField);
+      selectAll.textContent = inputs.length && inputs.every((input) => input.checked)
+        ? 'Clear all classroom selections' : 'Select all classrooms with class teachers';
+    }
+    if (help) help.textContent = !selectedClassrooms.length
+      ? 'Select one or more classrooms to see saved subjects. A subject must be configured for every classroom selected.'
+      : missing.length
+        ? `Configure these subjects under Class subjects before assigning: ${missing.slice(0, 3).join('; ')}${missing.length > 3 ? `; and ${missing.length - 3} more` : ''}.`
+        : selectedClassrooms.length * checked.length > 200
+          ? 'This selection exceeds 200 classroom-subject combinations. Select fewer classrooms or subjects per batch.'
+          : `${common.length} subject${common.length === 1 ? '' : 's'} saved in every selected classroom ${common.length === 1 ? 'is' : 'are'} checked; ${mixed.size} saved in only some classrooms ${mixed.size === 1 ? 'is' : 'are'} not auto-checked. Unchecking does not delete an assignment.`;
   };
-  classroomSelect?.addEventListener('change', sync);
+  form.querySelector('[data-academic-form-teacher-select-all]')?.addEventListener('click', () => {
+    const inputs = academicCheckboxInputs(classroomField);
+    const checkAll = !inputs.every((input) => input.checked);
+    inputs.forEach((input) => { input.checked = checkAll; });
+    classroomField.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  form.addEventListener('change', (event) => {
+    const input = event.target;
+    if (input?.name === 'SubjectIds') {
+      if (input.checked) { manual.add(input.value); excluded.delete(input.value); }
+      else { manual.delete(input.value); excluded.add(input.value); }
+    }
+    if (input?.name === 'SubjectIds' || input?.name === 'ClassroomIds'
+      || input?.hasAttribute?.('data-academic-checkbox-group-toggle') || input === classroomField) sync();
+  });
   sync();
 }
 
@@ -14118,6 +14146,33 @@ function academicWorkflowPayload(form) {
     const name = field.dataset.academicCheckboxName;
     payload[name] = academicCheckedValues(form, name);
   });
+  if (form.hasAttribute('data-academic-form-teacher-subjects')) {
+    const selectedClassrooms = (payload.ClassroomIds || []).map((id) => {
+      const classroom = academicFind(academicManagementData?.arms || [], id);
+      if (!classroom || !academicIsActive(classroom)) throw new Error('One selected classroom is no longer active. Refresh and try again.');
+      const teacher = (academicManagementData?.teacherAllocations || []).find((row) => academicIsActive(row)
+        && row.AllocationRole === 'Form Teacher' && row.SessionId === payload.SessionId
+        && row.TermId === payload.TermId && row.ArmId === id);
+      if (!teacher) throw new Error(`${academicLabel(academicManagementData?.classes || [], classroom.ClassId)} / ${classroom.Name} needs a saved class teacher.`);
+      return { classroom, teacher };
+    });
+    if (selectedClassrooms.length * (payload.SubjectIds || []).length > 200) {
+      throw new Error('Assign at most 200 classroom-subject combinations in one batch.');
+    }
+    for (const { classroom } of selectedClassrooms) {
+      for (const id of payload.SubjectIds || []) {
+        const subject = academicFind(academicManagementData?.subjects || [], id);
+        if (!academicTimetableOnlySubjectAvailable(academicManagementData || {}, classroom, subject)) {
+          throw new Error(`${academicLabel(academicManagementData?.classes || [], classroom.ClassId)} / ${classroom.Name} does not have ${subject?.Name || 'this subject'} configured. Add it under Class subjects first.`);
+        }
+      }
+    }
+    payload.FormTeacherSnapshots = selectedClassrooms.map(({ classroom, teacher }) => ({
+      ClassroomId: classroom.ArmId,
+      FormTeacherAllocationId: academicRecordId(teacher),
+      FormTeacherRevisionToken: clean(teacher.RevisionToken)
+    }));
+  }
   if (form.dataset.academicWorkflow === 'configureAcademicSeniorChoiceSubjects') {
     const tradeSubjects = new Set(payload.TradeSubjectIds || []);
     if ((payload.OptionalSubjectIds || []).some((subjectId) => tradeSubjects.has(subjectId))) {

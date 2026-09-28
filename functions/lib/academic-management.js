@@ -2743,9 +2743,6 @@ export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {
   if (!classroomIds.length) {
     throw failure('Choose at least one classroom.');
   }
-  if (assignToFormTeachers && classroomIds.length !== 1) {
-    throw failure('Choose one classroom when assigning subjects to its form teacher.');
-  }
   if (!assignToFormTeachers && subjectIds.length !== 1) {
     throw failure('Choose one subject for a named subject teacher.');
   }
@@ -2754,6 +2751,27 @@ export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {
   }
   if (classroomIds.length * subjectIds.length > 200) {
     throw failure('Assign at most 200 classroom-subject combinations in one batch.');
+  }
+  const formTeacherSnapshots = new Map();
+  if (assignToFormTeachers) {
+    const supplied = Array.isArray(input.FormTeacherSnapshots) ? input.FormTeacherSnapshots : [];
+    if (supplied.length) {
+      if (supplied.length !== classroomIds.length) throw failure('Provide a class-teacher snapshot for every selected classroom.');
+      supplied.forEach((snapshot) => {
+        const classroomId = clean(snapshot?.ClassroomId);
+        if (!classroomIds.includes(classroomId) || formTeacherSnapshots.has(classroomId)) {
+          throw failure('Class-teacher snapshots must match the selected classrooms exactly.');
+        }
+        formTeacherSnapshots.set(classroomId, snapshot);
+      });
+    } else if (classroomIds.length === 1) {
+      formTeacherSnapshots.set(classroomIds[0], {
+        FormTeacherAllocationId: input.FormTeacherAllocationId,
+        FormTeacherRevisionToken: input.FormTeacherRevisionToken
+      });
+    } else {
+      throw failure('Refresh and select the classrooms again before assigning their class teachers.');
+    }
   }
   const [state, people] = await Promise.all([
     loadScopedAcademicState(env, scope, ACADEMIC_SUBJECT_TEACHER_STATE_KEYS),
@@ -2774,8 +2792,8 @@ export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {
   let created = 0;
   let restored = 0;
   let skipped = 0;
-  let assignedClassTeacherUsername = '';
-  for (const classroom of classrooms) {
+  const assignedClassTeacherUsernames = new Set();
+  for (const [index, classroom] of classrooms.entries()) {
     if (!activeValue(classroom.IsClassroom, false)) {
       throw failure(`${classroom.Name} is an arm definition, not an opened classroom.`, 409, 'ACADEMIC_CLASSROOM_REQUIRED');
     }
@@ -2786,11 +2804,12 @@ export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {
     const formTeacher = assignToFormTeachers
       ? academicFormTeacherForClassroom(state.teacherAllocations, classroom, sessionId, termId) : null;
     if (assignToFormTeachers) {
-      assertAcademicClassTeacherSnapshot([formTeacher], input.FormTeacherAllocationId,
-        input.FormTeacherRevisionToken, 1, 'Form Teacher');
+      const snapshot = formTeacherSnapshots.get(classroom.ArmId);
+      assertAcademicClassTeacherSnapshot([formTeacher], snapshot?.FormTeacherAllocationId,
+        snapshot?.FormTeacherRevisionToken, index + 1, 'Form Teacher');
     }
     const classroomTeacherUsername = assignToFormTeachers ? lower(formTeacher.TeacherUsername) : teacherUsername;
-    if (assignToFormTeachers) assignedClassTeacherUsername = classroomTeacherUsername;
+    if (assignToFormTeachers) assignedClassTeacherUsernames.add(classroomTeacherUsername);
     for (const subject of subjects) {
       const candidate = normalizeAcademicTeacherAllocation({
         SessionId: sessionId, TermId: termId, TeacherUsername: classroomTeacherUsername,
@@ -2831,9 +2850,10 @@ export async function bulkAssignAcademicSubjectTeacher(env, user = {}, input = {
   if (created || restored) {
     writes.push(auditWrite(user, 'BULK ASSIGN', 'teacherallocation', {
       BranchId: scope.branchId, SchoolSection: scope.section, SessionId: sessionId, TermId: termId,
-      TeacherUsername: assignToFormTeachers ? assignedClassTeacherUsername : teacherUsername,
+      TeacherUsername: assignToFormTeachers && assignedClassTeacherUsernames.size === 1
+        ? [...assignedClassTeacherUsernames][0] : (assignToFormTeachers ? '' : teacherUsername),
       SubjectId: subjects.length === 1 ? subjects[0].SubjectId : '', AllocationId: `bulk-${Date.now()}`
-    }, `${created} subject-teacher allocation(s) created; ${restored} restored; ${skipped} already active${assignToFormTeachers ? ` for class teacher ${assignedClassTeacherUsername}: ${subjects.map((subject) => subject.Name).join(', ')}` : ''}.`));
+    }, `${created} subject-teacher allocation(s) created; ${restored} restored; ${skipped} already active${assignToFormTeachers ? ` across ${classrooms.length} classroom(s) and ${assignedClassTeacherUsernames.size} class teacher(s): ${subjects.map((subject) => subject.Name).join(', ')}` : ''}.`));
   }
   await commitAcademicBatch(env, writes, 'A selected class, arm or teacher allocation changed while the batch was being saved. Reload and try again.');
   const response = await bootstrapAcademicManagement(env, user, {
